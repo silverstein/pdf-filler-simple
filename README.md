@@ -20,7 +20,7 @@ A Claude Desktop MCP extension that enables Claude to read and fill PDF forms on
 
 ### Quick Install
 
-1. Download the latest `.dxt` file from the [Releases](https://github.com/yourusername/pdf-filler-claude/releases) page
+1. Download the latest `.dxt` file from the [Releases](https://github.com/silverstein/pdf-filler-claude/releases) page
 2. Open Claude Desktop
 3. Go to Settings → Extensions → Developer
 4. Click "Install Extension" and select the downloaded `.dxt` file
@@ -29,7 +29,7 @@ A Claude Desktop MCP extension that enables Claude to read and fill PDF forms on
 
 ```bash
 # Clone the repository
-git clone https://github.com/yourusername/pdf-filler-claude.git
+git clone https://github.com/silverstein/pdf-filler-claude.git
 cd pdf-filler-claude
 
 # Install dependencies
