@@ -1,6 +1,14 @@
-# PDF Filler for Claude Desktop
+# PDF Filler - Universal Claude Integration
 
-A Claude Desktop MCP extension that enables Claude to read and fill PDF forms on your computer.
+A PDF form filling solution that works with **both** Claude Desktop (as an extension) **and** Cursor (as an MCP server). Choose your preferred Claude environment!
+
+## 🎯 **Choose Your Platform**
+
+### 🖥️ **Claude Desktop Extension**
+Perfect for dedicated Claude Desktop users who want PDF filling built-in.
+
+### ⚡ **Cursor MCP Server** 
+Perfect for developers who want PDF filling while coding in Cursor.
 
 ## Features
 
@@ -10,100 +18,123 @@ A Claude Desktop MCP extension that enables Claude to read and fill PDF forms on
 - ✏️ Fill PDF forms programmatically
 - 💾 Save filled PDFs to new files
 
-### Advanced Features (v0.2.0)
+### Advanced Features
 - 📊 **Bulk Fill from CSV** - Fill multiple PDFs using data from spreadsheets
 - 👤 **Profile System** - Save and reuse common form data
 - 📤 **Extract to CSV** - Export data from filled PDFs to spreadsheets
 - ✅ **Form Validation** - Check for missing required fields
+- 🚀 **Easy Sharing** - Share with friends via simple installer package
 
 ## Installation
 
-### Quick Install
+### 🖥️ **For Claude Desktop**
 
-1. Download the latest `.dxt` file from the [Releases](https://github.com/silverstein/pdf-filler-claude/releases) page
+#### Quick Install
+1. Download the `.dxt` file from releases  and drag it to Claude Desktop. Or:
 2. Open Claude Desktop
 3. Go to Settings → Extensions → Developer
-4. Click "Install Extension" and select the downloaded `.dxt` file
+4. Click "Install Extension" and select the `.dxt` file
 
-### Build from Source
-
+#### Build from Source
 ```bash
-# Clone the repository
-git clone https://github.com/silverstein/pdf-filler-claude.git
-cd pdf-filler-claude
+git clone [your-repo-url]
+cd pdf-filler-simple
+npm install
+npm install -g @anthropic-ai/dxt
+dxt pack
+# Install the generated .dxt file in Claude Desktop
+```
 
-# Install dependencies
+### ⚡ **For Cursor**
+
+#### 📦 Easy Install (Get from a Friend)
+1. **Get the installer package** (`pdf-filler-mcp.zip`) 
+2. **Unzip** the file anywhere
+3. **Mac users**: Double-click `install.command` 
+4. **All users**: Or run `./smart-install.sh` in Terminal
+5. **Restart Cursor** - Look for "pdf-filler" with "10 tools enabled"
+
+#### 🛠️ Developer Install
+```bash
+git clone [your-repo-url]
+cd pdf-filler-simple
 npm install
 
-# Install the DXT CLI tool
-npm install -g @anthropic-ai/dxt
+# Add to your ~/.cursor/mcp.json:
+{
+  "mcpServers": {
+    "pdf-filler": {
+      "command": "node",
+      "args": ["/full/path/to/pdf-filler-simple/server/index.js"]
+    }
+  }
+}
 
-# Package the extension
-dxt pack
-
-# The .dxt file will be created in the current directory
+# Restart Cursor
 ```
 
 ## Usage
 
-Once installed, you can ask Claude to:
+Works the same way in both Claude Desktop and Cursor! Ask Claude to:
 
 ### List PDFs
-```
-"List all PDFs in my Documents folder"
-"Show me PDF files in /Users/myname/Downloads"
-```
+*"List all PDFs in my Documents folder"*
+*"Show me PDF files in /Users/myname/Downloads"*
 
 ### Read PDF Form Fields
-```
-"What form fields are in the file /path/to/form.pdf?"
-"Read the form fields from application.pdf on my Desktop"
-```
+*"What form fields are in this PDF file?"*
+*"Read the form fields from application.pdf on my Desktop"*
 
 ### Fill PDF Forms
-```
-"Fill the PDF at /path/to/form.pdf with:
-- name: John Doe
-- email: john@example.com
-- date: 2024-01-15
-Save it to /path/to/filled-form.pdf"
-```
+*"Fill this W-9 PDF with my business information"*
+*"Fill the PDF at /path/to/form.pdf with John Doe as the name and save it to filled-form.pdf"*
 
 ### Bulk Fill from CSV
-```
-"Fill the template.pdf with data from employees.csv 
-Save all PDFs to /Users/me/filled-forms/
-Use the 'employee_name' column for filenames"
-```
+*"Fill the template.pdf with data from employees.csv and save all PDFs to /Users/me/filled-forms/"*
+*"Use the 'employee_name' column for filenames"*
 
 ### Save and Use Profiles
-```
-"Save this as my 'work' profile:
-- name: John Doe
-- title: Software Engineer
-- company: Tech Corp
-- email: john@techcorp.com"
-
-"Fill application.pdf using my work profile and save to filled-app.pdf"
-```
+*"Save this as my 'work' profile: name John Doe, title Software Engineer, company Tech Corp"*
+*"Fill application.pdf using my work profile and save to filled-app.pdf"*
 
 ### Extract Data to Spreadsheet
-```
-"Extract all data from these PDFs to summary.csv:
-- /path/to/form1.pdf
-- /path/to/form2.pdf
-- /path/to/form3.pdf"
-```
+*"Extract all data from these PDFs to summary.csv"*
 
 ### Validate Forms
+*"Validate if all required fields are filled in application.pdf"*
+
+## Sharing with Friends
+
+### 🎁 Create Shareable Cursor Package
+```bash
+# For Cursor users - creates easy installer
+node package-for-friend.js
+# Share the generated pdf-filler-mcp.zip
 ```
-"Validate if all required fields are filled in application.pdf"
+
+### 🖥️ Share Claude Desktop Extension
+```bash
+# For Claude Desktop users
+dxt pack
+# Share the generated .dxt file
 ```
+
+### 🚀 What Your Friends Get
+
+**Cursor Users:**
+- **Double-click installer** (Mac)
+- **Smart terminal installer** (all platforms)
+- **Auto-detects paths** - no manual configuration
+- **Safe installation** - moves files to permanent location
+
+**Claude Desktop Users:**
+- **Simple .dxt file install**
+- **Built-in extension experience**
 
 ## How It Works
 
-This extension uses:
-- [MCP (Model Context Protocol)](https://github.com/anthropics/mcp) for Claude Desktop integration
+This solution uses:
+- [MCP (Model Context Protocol)](https://github.com/anthropics/mcp) for both Claude Desktop and Cursor integration
 - [pdf-lib](https://github.com/Hopding/pdf-lib) for PDF manipulation
 - Node.js for the server runtime
 
@@ -111,15 +142,19 @@ This extension uses:
 
 ### Project Structure
 ```
-pdf-filler-claude/
-├── manifest.json      # Extension metadata
-├── package.json       # Node.js dependencies
-├── server/
-│   └── index.js      # MCP server implementation
-└── README.md         # This file
+pdf-filler-simple/
+├── server/index.js           # MCP server (works for both!)
+├── package.json             # Node.js dependencies
+├── manifest.json            # Claude Desktop extension metadata
+├── pdf-filler-simple.dxt    # Claude Desktop extension package
+├── pdf-filler-mcp-share/    # Cursor shareable package
+├── pdf-filler-mcp.zip       # Cursor ready-to-share installer
+└── README.md               # This file
 ```
 
 ### Available Tools
+
+Same 10 tools work in both Claude Desktop and Cursor:
 
 1. **list_pdfs** - Lists all PDF files in a specified directory
 2. **read_pdf_fields** - Extracts form field information from a PDF
@@ -134,9 +169,26 @@ pdf-filler-claude/
 
 ## Requirements
 
+**For Claude Desktop:**
 - Claude Desktop (with developer mode enabled)
 - Node.js 18+ (for building from source)
-- macOS, Windows, or Linux
+
+**For Cursor:**
+- Cursor with MCP support
+- Node.js 18+
+
+**Both support:** macOS, Windows, Linux
+
+## Examples
+
+### W-9 Tax Form
+*"Fill this W-9 with my business info: Company Name LLC, 123 Main St, Tax ID 12-3456789"*
+
+### Job Applications
+*"Use my 'personal' profile to fill this job application PDF"*
+
+### Bulk Processing
+*"Fill 50 contract PDFs using the client data from contracts.csv"*
 
 ## License
 
@@ -144,8 +196,9 @@ MIT
 
 ## Contributing
 
-Pull requests are welcome! Please feel free to submit issues or PRs.
+Pull requests welcome! This project supports both Claude Desktop extensions and Cursor MCP servers.
 
-## Acknowledgments
+---
 
-Built with the [Desktop Extension Toolkit (DXT)](https://github.com/anthropics/dxt) for Claude Desktop.
+**🎉 Best of both worlds - use with Claude Desktop OR Cursor!**  
+**Perfect for W-9s, contracts, job applications, and any repetitive PDF form filling!** 📄✨
