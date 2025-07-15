@@ -38,7 +38,7 @@ Perfect for developers who want PDF filling while coding in Cursor.
 
 #### Build from Source
 ```bash
-git clone [your-repo-url]
+git clone https://github.com/silverstein/pdf-filler-simple
 cd pdf-filler-simple
 npm install
 npm install -g @anthropic-ai/dxt
@@ -57,7 +57,7 @@ dxt pack
 
 #### 🛠️ Developer Install
 ```bash
-git clone [your-repo-url]
+git clone https://github.com/silverstein/pdf-filler-simple
 cd pdf-filler-simple
 npm install
 
