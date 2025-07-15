@@ -32,7 +32,7 @@ Perfect for developers who want PDF filling while coding in Cursor.
 
 #### Quick Install
 1. Download the `.dxt` file from releases and drag it to Claude Desktop or double click it to install. 
-Or:
+tOr:
 2. Open Claude Desktop
 3. Go to Settings → Extensions → Browse Extensions → Desktop Extensions → Advanced Settings  
 4. Click "Install Extension" and select the `.dxt` file

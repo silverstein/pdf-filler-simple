@@ -14,7 +14,7 @@ const { homedir } = require("os");
 const server = new Server(
   {
     name: "pdf-filler",
-    version: "0.2.0",
+    version: "0.2.1",
   },
   {
     capabilities: {
@@ -41,9 +41,19 @@ function parseCSV(content) {
 }
 
 // Helper function to fill PDF fields
-async function fillPdfFields(pdfPath, fieldData) {
+async function fillPdfFields(pdfPath, fieldData, password = null) {
   const pdfBytes = await fs.readFile(pdfPath);
-  const pdfDoc = await PDFDocument.load(pdfBytes);
+  
+  let pdfDoc;
+  try {
+    pdfDoc = await PDFDocument.load(pdfBytes, { password });
+  } catch (error) {
+    if (error.message?.includes('password') || error.message?.includes('encrypt')) {
+      throw new Error(`PDF is password-protected. Please provide the correct password using the 'password' parameter.`);
+    }
+    throw new Error(`Failed to load PDF: ${error.message}`);
+  }
+  
   const form = pdfDoc.getForm();
   const filledFields = [];
   const errors = [];
@@ -67,7 +77,11 @@ async function fillPdfFields(pdfPath, fieldData) {
       }
       filledFields.push(fieldName);
     } catch (e) {
-      errors.push(`Field '${fieldName}': ${e.message}`);
+      if (e.message?.includes('No field')) {
+        errors.push(`Field '${fieldName}' not found in PDF. Check field name or use 'read_pdf_fields' to see available fields.`);
+      } else {
+        errors.push(`Field '${fieldName}': ${e.message}`);
+      }
     }
   }
   
@@ -100,6 +114,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             pdf_path: {
               type: "string",
               description: "Path to the PDF file"
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)"
             }
           },
           required: ["pdf_path"]
@@ -122,6 +140,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             field_data: {
               type: "object",
               description: "Object with field names as keys and values to fill"
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)"
             }
           },
           required: ["pdf_path", "output_path", "field_data"]
@@ -148,6 +170,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             filename_column: {
               type: "string",
               description: "CSV column to use for output filenames (optional)"
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)"
             }
           },
           required: ["pdf_path", "csv_path", "output_directory"]
@@ -214,6 +240,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             additional_data: {
               type: "object",
               description: "Additional fields to fill/override (optional)"
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)"
             }
           },
           required: ["pdf_path", "output_path", "profile_name"]
@@ -247,6 +277,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             pdf_path: {
               type: "string",
               description: "Path to the PDF file to validate"
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)"
             }
           },
           required: ["pdf_path"]
@@ -280,9 +314,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "read_pdf_fields": {
-        const { pdf_path } = args;
+        const { pdf_path, password } = args;
         const pdfBytes = await fs.readFile(pdf_path);
-        const pdfDoc = await PDFDocument.load(pdfBytes);
+        
+        let pdfDoc;
+        try {
+          pdfDoc = await PDFDocument.load(pdfBytes, { password });
+        } catch (error) {
+          if (error.message?.includes('password') || error.message?.includes('encrypt')) {
+            throw new Error(`PDF is password-protected. Please provide the correct password using the 'password' parameter.`);
+          }
+          throw new Error(`Failed to load PDF: ${error.message}`);
+        }
+        
         const form = pdfDoc.getForm();
         const fields = form.getFields();
         
@@ -325,8 +369,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "fill_pdf": {
-        const { pdf_path, output_path, field_data } = args;
-        const { pdfDoc, filledFields, errors } = await fillPdfFields(pdf_path, field_data);
+        const { pdf_path, output_path, field_data, password } = args;
+        const { pdfDoc, filledFields, errors } = await fillPdfFields(pdf_path, field_data, password);
         
         const filledPdfBytes = await pdfDoc.save();
         await fs.writeFile(output_path, filledPdfBytes);
@@ -346,7 +390,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "bulk_fill_from_csv": {
-        const { pdf_path, csv_path, output_directory, filename_column } = args;
+        const { pdf_path, csv_path, output_directory, filename_column, password } = args;
         
         // Read CSV
         const csvContent = await fs.readFile(csv_path, 'utf8');
@@ -364,7 +408,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const outputPath = path.join(output_directory, filename);
           
           try {
-            const { pdfDoc, filledFields, errors } = await fillPdfFields(pdf_path, record);
+            const { pdfDoc, filledFields, errors } = await fillPdfFields(pdf_path, record, password);
             const filledPdfBytes = await pdfDoc.save();
             await fs.writeFile(outputPath, filledPdfBytes);
             results.push(`✓ ${filename}: ${filledFields.length} fields filled`);
@@ -426,7 +470,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "fill_with_profile": {
-        const { pdf_path, output_path, profile_name, additional_data = {} } = args;
+        const { pdf_path, output_path, profile_name, additional_data = {}, password } = args;
         
         // Load profile
         const profilePath = path.join(PROFILES_DIR, `${profile_name}.json`);
@@ -435,7 +479,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Merge profile data with additional data
         const mergedData = { ...profileData, ...additional_data };
         
-        const { pdfDoc, filledFields, errors } = await fillPdfFields(pdf_path, mergedData);
+        const { pdfDoc, filledFields, errors } = await fillPdfFields(pdf_path, mergedData, password);
         
         const filledPdfBytes = await pdfDoc.save();
         await fs.writeFile(output_path, filledPdfBytes);
@@ -503,9 +547,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "validate_pdf": {
-        const { pdf_path } = args;
+        const { pdf_path, password } = args;
         const pdfBytes = await fs.readFile(pdf_path);
-        const pdfDoc = await PDFDocument.load(pdfBytes);
+        
+        let pdfDoc;
+        try {
+          pdfDoc = await PDFDocument.load(pdfBytes, { password });
+        } catch (error) {
+          if (error.message?.includes('password') || error.message?.includes('encrypt')) {
+            throw new Error(`PDF is password-protected. Please provide the correct password using the 'password' parameter.`);
+          }
+          throw new Error(`Failed to load PDF: ${error.message}`);
+        }
+        
         const form = pdfDoc.getForm();
         const fields = form.getFields();
         
