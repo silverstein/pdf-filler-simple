@@ -23,3 +23,6 @@ npm-debug.log*
 # Temporary files
 *.tmp
 *.temp
+
+# Private Claude context
+.claude/

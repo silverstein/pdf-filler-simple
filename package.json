@@ -1,6 +1,6 @@
 {
   "name": "pdf-filler",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "PDF filler MCP server for Claude Desktop",
   "main": "server/index.js",
   "license": "MIT",

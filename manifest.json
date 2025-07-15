@@ -4,7 +4,7 @@
   "display_name": "PDF Filler",
   "description": "Fill PDF forms with Claude Desktop",
   "long_description": "A powerful PDF form filling extension for Claude Desktop that enables automated form completion, bulk processing, and data extraction. Features include reading PDF form fields, filling forms with custom data, saving reusable profiles, bulk filling from CSV files, extracting filled data to CSV, and validating completed forms. Perfect for streamlining document workflows and automating repetitive PDF form tasks.",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "author": {
     "name": "Mat Silverstein",
     "url": "https://github.com/silverstein",
