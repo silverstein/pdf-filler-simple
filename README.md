@@ -31,10 +31,13 @@ Perfect for developers who want PDF filling while coding in Cursor.
 ### 🖥️ **For Claude Desktop**
 
 #### Quick Install
-1. Download the `.dxt` file from releases  and drag it to Claude Desktop. Or:
+1. Download the `.dxt` file from releases and drag it to Claude Desktop or double click it to install. 
+Or:
 2. Open Claude Desktop
-3. Go to Settings → Extensions → Developer
+3. Go to Settings → Extensions → Browse Extensions → Desktop Extensions → Advanced Settings  
 4. Click "Install Extension" and select the `.dxt` file
+
+NOTE: There's a brand new Claude Extensions page and PDF Filler is featured by Claude. However, that version might not be compatible with the latest Claude Desktops versions, so in the meantime, use the above instructions.
 
 #### Build from Source
 ```bash
