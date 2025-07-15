@@ -17,6 +17,7 @@ Perfect for developers who want PDF filling while coding in Cursor.
 - 🔍 Read form fields from PDFs (text fields, checkboxes, dropdowns, etc.)
 - ✏️ Fill PDF forms programmatically
 - 💾 Save filled PDFs to new files
+- 🔐 **Password Support** - Handle password-protected PDFs
 
 ### Advanced Features
 - 📊 **Bulk Fill from CSV** - Fill multiple PDFs using data from spreadsheets
@@ -157,15 +158,15 @@ pdf-filler-simple/
 Same 10 tools work in both Claude Desktop and Cursor:
 
 1. **list_pdfs** - Lists all PDF files in a specified directory
-2. **read_pdf_fields** - Extracts form field information from a PDF
-3. **fill_pdf** - Fills a PDF form with provided data
-4. **bulk_fill_from_csv** - Fill multiple PDFs using CSV data
+2. **read_pdf_fields** - Extracts form field information from a PDF (supports password parameter)
+3. **fill_pdf** - Fills a PDF form with provided data (supports password parameter)
+4. **bulk_fill_from_csv** - Fill multiple PDFs using CSV data (supports password parameter)
 5. **save_profile** - Save form data as a reusable profile
 6. **load_profile** - Load a saved profile
 7. **list_profiles** - List all saved profiles
-8. **fill_with_profile** - Fill a PDF using a saved profile
+8. **fill_with_profile** - Fill a PDF using a saved profile (supports password parameter)
 9. **extract_to_csv** - Extract data from PDFs to CSV
-10. **validate_pdf** - Check for missing required fields
+10. **validate_pdf** - Check for missing required fields (supports password parameter)
 
 ## Requirements
 
@@ -189,6 +190,10 @@ Same 10 tools work in both Claude Desktop and Cursor:
 
 ### Bulk Processing
 *"Fill 50 contract PDFs using the client data from contracts.csv"*
+
+### Password-Protected PDFs
+*"Read the fields from this encrypted PDF using password 'mypassword123'"*
+*"Fill this protected PDF with my data, the password is 'secure456'"*
 
 ## License
 
