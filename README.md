@@ -18,6 +18,8 @@ Perfect for developers who want PDF filling while coding in Cursor.
 - ✏️ Fill PDF forms programmatically
 - 💾 Save filled PDFs to new files
 - 🔐 **Password Support** - Handle password-protected PDFs
+- 📖 **Read PDF Content** - Extract and analyze full PDF content (text, images, structure)
+- 🔍 **OCR Support** - Automatically extracts text from scanned PDFs using vision capabilities
 
 ### Advanced Features
 - 📊 **Bulk Fill from CSV** - Fill multiple PDFs using data from spreadsheets
@@ -107,6 +109,16 @@ Works the same way in both Claude Desktop and Cursor! Ask Claude to:
 ### Validate Forms
 *"Validate if all required fields are filled in application.pdf"*
 
+### Read PDF Content (NEW! v0.3.0)
+*"Read the content of this PDF: /path/to/document.pdf"*
+*"Convert this PDF to markdown format"*
+*"Extract all text from my estate planning PDF"*
+*"Summarize the main points in this contract PDF"*
+*"What does this PDF say about payment terms?"*
+*"Analyze this scanned invoice PDF"* (automatically uses OCR)
+
+**Note**: The `read_pdf_content` tool automatically handles both text-based and scanned PDFs
+
 ## Sharing with Friends
 
 ### 🎁 Create Shareable Cursor Package
@@ -158,7 +170,7 @@ pdf-filler-simple/
 
 ### Available Tools
 
-Same 10 tools work in both Claude Desktop and Cursor:
+Same 11 tools work in both Claude Desktop and Cursor:
 
 1. **list_pdfs** - Lists all PDF files in a specified directory
 2. **read_pdf_fields** - Extracts form field information from a PDF (supports password parameter)
@@ -170,6 +182,7 @@ Same 10 tools work in both Claude Desktop and Cursor:
 8. **fill_with_profile** - Fill a PDF using a saved profile (supports password parameter)
 9. **extract_to_csv** - Extract data from PDFs to CSV
 10. **validate_pdf** - Check for missing required fields (supports password parameter)
+11. **read_pdf_content** - Read and analyze full PDF content - extract text, summarize, convert formats, answer questions
 
 ## Requirements
 

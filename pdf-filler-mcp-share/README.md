@@ -42,7 +42,7 @@ Just **double-click `install.command`** - that's it!
 ## After Installation
 1. **Completely quit Cursor** (Cmd+Q on Mac, Alt+F4 on Windows)
 2. **Restart Cursor**
-3. **Look for "pdf-filler"** in MCP servers showing "10 tools enabled"
+3. **Look for "pdf-filler"** in MCP servers showing "11 tools enabled"
 4. **Toggle it on** if needed
 
 ## Usage Examples
@@ -52,6 +52,8 @@ Once installed, ask Claude in Cursor:
 - *"List all PDFs in my Documents folder"*
 - *"Create a profile with my personal info for future forms"*
 - *"Fill 50 PDFs using data from this spreadsheet"*
+- *"Read the content of this PDF document"*
+- *"Analyze this scanned invoice PDF"*
 
 ## Tools Available
 - **list_pdfs** - List PDF files in directories
@@ -62,6 +64,7 @@ Once installed, ask Claude in Cursor:
 - **fill_with_profile** - Fill PDFs using saved profiles
 - **extract_to_csv** - Export PDF data to spreadsheets
 - **validate_pdf** - Check for missing required fields
+- **read_pdf_content** - Read and analyze full PDF content (with OCR support for scanned PDFs)
 
 ## Troubleshooting
 - **Node.js not found?** Install from [nodejs.org](https://nodejs.org)
@@ -77,5 +80,7 @@ This MCP server lets Claude directly:
 - Save common data as reusable profiles
 - Process multiple PDFs from spreadsheet data
 - Validate forms for completeness
+- Extract and analyze full PDF content
+- Handle scanned PDFs with automatic OCR
 
-Perfect for W-9s, job applications, contracts, and any repetitive form filling! 
+Perfect for W-9s, job applications, contracts, invoices, and any PDF processing! 

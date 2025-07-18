@@ -5,20 +5,109 @@ const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio
 const {
   CallToolRequestSchema,
   ListToolsRequestSchema,
+  ListResourcesRequestSchema,
+  ReadResourceRequestSchema,
 } = require("@modelcontextprotocol/sdk/types.js");
 const { PDFDocument } = require("pdf-lib");
+const pdfParse = require("pdf-parse");
 const fs = require("fs/promises");
 const path = require("path");
 const { homedir } = require("os");
 
+// Lazy load these heavy dependencies only when needed
+let pdfjsLib = null;
+let createCanvas = null;
+
+function loadImageDependencies() {
+  if (!pdfjsLib || !createCanvas) {
+    try {
+      pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
+      const canvas = require("canvas");
+      createCanvas = canvas.createCanvas;
+      console.error("[PDF Filler] Image dependencies loaded successfully");
+    } catch (error) {
+      console.error("[PDF Filler] Failed to load image dependencies:", error.message);
+      throw new Error("Image extraction is not available. Canvas dependencies could not be loaded.");
+    }
+  }
+}
+
+// Helper function to resolve paths (handles ~, relative paths, etc.)
+function resolvePath(inputPath) {
+  if (!inputPath) return inputPath;
+  
+  // Handle ~ for home directory
+  if (inputPath.startsWith('~')) {
+    return path.join(homedir(), inputPath.slice(1));
+  }
+  
+  // If it's already absolute, return as-is
+  if (path.isAbsolute(inputPath)) {
+    return inputPath;
+  }
+  
+  // Otherwise, resolve relative to current working directory
+  return path.resolve(inputPath);
+}
+
+// Helper function to convert PDF page to image
+async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0) {
+  try {
+    // Load dependencies only when needed
+    loadImageDependencies();
+    // Load the PDF
+    const loadingTask = pdfjsLib.getDocument({ 
+      data: pdfBuffer,
+      useSystemFonts: true,
+      disableFontFace: true, // Disable font loading to avoid issues
+      verbosity: 0 // Suppress warnings
+    });
+    const pdfDocument = await loadingTask.promise;
+    
+    // Validate page number
+    const numPages = pdfDocument.numPages;
+    if (pageNumber < 1 || pageNumber > numPages) {
+      throw new Error(`Invalid page number. PDF has ${numPages} pages.`);
+    }
+    
+    // Get the page
+    const page = await pdfDocument.getPage(pageNumber);
+    
+    // Set up the canvas with proper dimensions
+    const viewport = page.getViewport({ scale });
+    const canvas = createCanvas(viewport.width, viewport.height);
+    const context = canvas.getContext('2d');
+    
+    // Set white background
+    context.fillStyle = 'white';
+    context.fillRect(0, 0, viewport.width, viewport.height);
+    
+    // Render the page
+    await page.render({
+      canvasContext: context,
+      viewport: viewport
+    }).promise;
+    
+    // Cleanup
+    await pdfDocument.destroy();
+    
+    // Return as PNG buffer
+    return canvas.toBuffer('image/png');
+  } catch (error) {
+    console.error('Error converting PDF to image:', error);
+    throw error;
+  }
+}
+
 const server = new Server(
   {
     name: "pdf-filler",
-    version: "0.2.1",
+    version: "0.3.0",
   },
   {
     capabilities: {
       tools: {},
+      resources: {},
     },
   }
 );
@@ -285,6 +374,34 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path"]
         },
+      },
+      {
+        name: "read_pdf_content",
+        description: "Read and analyze the full content of a PDF file. Claude can extract text, summarize, convert to markdown, answer questions, or analyze the document structure. Use this when you need to understand PDF contents beyond just form fields.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: {
+              type: "string",
+              description: "Path to the PDF file"
+            }
+          },
+          required: ["pdf_path"]
+        },
+      },
+      {
+        name: "get_pdf_resource_uri",
+        description: "Get a resource URI for a PDF file that can be used with Claude's built-in PDF reading capabilities via the Resources API",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: {
+              type: "string",
+              description: "Path to the PDF file"
+            }
+          },
+          required: ["pdf_path"]
+        },
       }
     ],
   };
@@ -297,7 +414,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
   try {
     switch (name) {
       case "list_pdfs": {
-        const directory = args.directory || DEFAULT_PDF_DIR;
+        const directory = resolvePath(args.directory || DEFAULT_PDF_DIR);
         const files = await fs.readdir(directory);
         const pdfFiles = files
           .filter(file => file.toLowerCase().endsWith('.pdf'))
@@ -315,7 +432,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "read_pdf_fields": {
         const { pdf_path, password } = args;
-        const pdfBytes = await fs.readFile(pdf_path);
+        const resolvedPath = resolvePath(pdf_path);
+        const pdfBytes = await fs.readFile(resolvedPath);
         
         let pdfDoc;
         try {
@@ -370,10 +488,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "fill_pdf": {
         const { pdf_path, output_path, field_data, password } = args;
-        const { pdfDoc, filledFields, errors } = await fillPdfFields(pdf_path, field_data, password);
+        const resolvedPdfPath = resolvePath(pdf_path);
+        const resolvedOutputPath = resolvePath(output_path);
+        const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, field_data, password);
         
         const filledPdfBytes = await pdfDoc.save();
-        await fs.writeFile(output_path, filledPdfBytes);
+        await fs.writeFile(resolvedOutputPath, filledPdfBytes);
         
         let message = `PDF filled successfully and saved to: ${output_path}\n`;
         message += `Fields filled: ${filledFields.length}`;
@@ -391,13 +511,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "bulk_fill_from_csv": {
         const { pdf_path, csv_path, output_directory, filename_column, password } = args;
+        const resolvedPdfPath = resolvePath(pdf_path);
+        const resolvedCsvPath = resolvePath(csv_path);
+        const resolvedOutputDir = resolvePath(output_directory);
         
         // Read CSV
-        const csvContent = await fs.readFile(csv_path, 'utf8');
+        const csvContent = await fs.readFile(resolvedCsvPath, 'utf8');
         const records = parseCSV(csvContent);
         
         // Ensure output directory exists
-        await fs.mkdir(output_directory, { recursive: true });
+        await fs.mkdir(resolvedOutputDir, { recursive: true });
         
         const results = [];
         for (let i = 0; i < records.length; i++) {
@@ -405,10 +528,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           const filename = filename_column && record[filename_column] 
             ? `${record[filename_column]}.pdf`
             : `filled_${i + 1}.pdf`;
-          const outputPath = path.join(output_directory, filename);
+          const outputPath = path.join(resolvedOutputDir, filename);
           
           try {
-            const { pdfDoc, filledFields, errors } = await fillPdfFields(pdf_path, record, password);
+            const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, record, password);
             const filledPdfBytes = await pdfDoc.save();
             await fs.writeFile(outputPath, filledPdfBytes);
             results.push(`✓ ${filename}: ${filledFields.length} fields filled`);
@@ -471,6 +594,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "fill_with_profile": {
         const { pdf_path, output_path, profile_name, additional_data = {}, password } = args;
+        const resolvedPdfPath = resolvePath(pdf_path);
+        const resolvedOutputPath = resolvePath(output_path);
         
         // Load profile
         const profilePath = path.join(PROFILES_DIR, `${profile_name}.json`);
@@ -479,10 +604,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Merge profile data with additional data
         const mergedData = { ...profileData, ...additional_data };
         
-        const { pdfDoc, filledFields, errors } = await fillPdfFields(pdf_path, mergedData, password);
+        const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, mergedData, password);
         
         const filledPdfBytes = await pdfDoc.save();
-        await fs.writeFile(output_path, filledPdfBytes);
+        await fs.writeFile(resolvedOutputPath, filledPdfBytes);
         
         return {
           content: [{
@@ -494,12 +619,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "extract_to_csv": {
         const { pdf_paths, output_csv } = args;
+        const resolvedOutputCsv = resolvePath(output_csv);
         const allData = [];
         const allFieldNames = new Set();
         
         // Extract data from each PDF
         for (const pdfPath of pdf_paths) {
-          const pdfBytes = await fs.readFile(pdfPath);
+          const resolvedPdfPath = resolvePath(pdfPath);
+          const pdfBytes = await fs.readFile(resolvedPdfPath);
           const pdfDoc = await PDFDocument.load(pdfBytes);
           const form = pdfDoc.getForm();
           const fields = form.getFields();
@@ -536,7 +663,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           csvLines.push(values.map(v => `"${v}"`).join(','));
         }
         
-        await fs.writeFile(output_csv, csvLines.join('\n'));
+        await fs.writeFile(resolvedOutputCsv, csvLines.join('\n'));
         
         return {
           content: [{
@@ -548,7 +675,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "validate_pdf": {
         const { pdf_path, password } = args;
-        const pdfBytes = await fs.readFile(pdf_path);
+        const resolvedPath = resolvePath(pdf_path);
+        const pdfBytes = await fs.readFile(resolvedPath);
         
         let pdfDoc;
         try {
@@ -632,6 +760,145 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case "read_pdf_content": {
+        const { pdf_path } = args;
+        const resolvedPath = resolvePath(pdf_path);
+        
+        try {
+          // Verify the file exists
+          await fs.access(resolvedPath);
+          
+          // Get file info
+          const stats = await fs.stat(resolvedPath);
+          const fileName = path.basename(resolvedPath);
+          const fileSizeKB = (stats.size / 1024).toFixed(2);
+          
+          // Read the PDF buffer
+          const pdfBuffer = await fs.readFile(resolvedPath);
+          
+          // Extract text content using pdf-parse
+          let pdfData;
+          try {
+            // Suppress console output during pdf-parse to avoid TrueType warnings
+            const originalError = console.error;
+            console.error = () => {}; // Temporarily disable console.error
+            
+            pdfData = await pdfParse(pdfBuffer);
+            
+            // Restore console.error
+            console.error = originalError;
+          } catch (parseError) {
+            // If parsing fails completely, restore console and rethrow
+            console.error = originalError;
+            throw parseError;
+          }
+          
+          // Get page count from pdf-lib for additional info
+          const pdfDoc = await PDFDocument.load(pdfBuffer);
+          const pageCount = pdfDoc.getPages().length;
+          
+          // Prepare the response
+          let response = `PDF Content Extracted Successfully!\n\n`;
+          response += `File: ${fileName}\n`;
+          response += `Size: ${fileSizeKB} KB\n`;
+          response += `Pages: ${pageCount}\n`;
+          response += `Text Length: ${pdfData.text.length} characters\n`;
+          response += `\n${"=".repeat(50)}\n`;
+          response += `EXTRACTED TEXT:\n`;
+          response += `${"=".repeat(50)}\n\n`;
+          response += pdfData.text;
+          
+          // Check if text was extracted
+          if (!pdfData.text || pdfData.text.trim().length === 0) {
+            // No text found - try to extract first page as image
+            try {
+              response = `No text could be extracted from this PDF (likely a scanned document).\n`;
+              response += `Converting page 1 to image for visual analysis...\n\n`;
+              response += `File: ${fileName}\n`;
+              response += `Size: ${fileSizeKB} KB\n`;
+              response += `Pages: ${pageCount}\n`;
+              
+              // Calculate scale to keep image size reasonable
+              // Target ~500KB after base64 encoding (roughly 375KB raw)
+              const targetSizeKB = 375;
+              const scaleFactor = Math.min(1.5, Math.sqrt(targetSizeKB / parseFloat(fileSizeKB)));
+              
+              // Convert first page to image
+              const imageBuffer = await convertPdfPageToImage(pdfBuffer, 1, scaleFactor);
+              const imageSizeKB = (imageBuffer.length / 1024).toFixed(2);
+              
+              response += `\nPage 1 extracted as image (${imageSizeKB} KB, scale: ${scaleFactor.toFixed(2)})\n`;
+              
+              // Return as image content
+              return {
+                content: [{
+                  type: "text",
+                  text: response
+                }, {
+                  type: "image",
+                  data: imageBuffer.toString("base64"),
+                  mimeType: "image/png"
+                }],
+              };
+            } catch (imageError) {
+              // If image extraction also fails, return error message
+              response += `\n\nNote: No text could be extracted from this PDF, and image extraction also failed.\n`;
+              response += `Error: ${imageError.message}\n`;
+              response += `This might be because:\n`;
+              response += `- The PDF is encrypted or has restrictions\n`;
+              response += `- The PDF is corrupted\n`;
+              response += `- Memory limitations\n`;
+            }
+          }
+          
+          return {
+            content: [{
+              type: "text",
+              text: response
+            }],
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text",
+              text: `Error reading PDF file: ${error.message}\n\nPlease ensure the file path is correct and the file exists.`
+            }],
+          };
+        }
+      }
+
+      case "get_pdf_resource_uri": {
+        const { pdf_path } = args;
+        const resolvedPath = resolvePath(pdf_path);
+        
+        try {
+          // Verify the file exists
+          await fs.access(resolvedPath);
+          
+          // Get file info
+          const stats = await fs.stat(resolvedPath);
+          const fileName = path.basename(resolvedPath);
+          const fileSizeKB = (stats.size / 1024).toFixed(2);
+          
+          // Create the resource URI
+          const resourceUri = `pdf://${resolvedPath}`;
+          
+          return {
+            content: [{
+              type: "text",
+              text: `Resource URI created: ${resourceUri}\n\nFile: ${fileName}\nSize: ${fileSizeKB} KB\n\nClaude can now read this PDF through the Resources API using this URI.`
+            }],
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text",
+              text: `Error accessing PDF file: ${error.message}\n\nPlease ensure the file path is correct and the file exists.`
+            }],
+          };
+        }
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -644,6 +911,55 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
       ],
     };
+  }
+});
+
+// Resource handlers for PDFs
+server.setRequestHandler(ListResourcesRequestSchema, async () => {
+  console.error(`[Resources] ListResourcesRequest received`);
+  // For now, we'll return an empty list since we're using dynamic PDF resources
+  // In the future, we could list recently accessed PDFs or PDFs in a specific directory
+  return {
+    resources: []
+  };
+});
+
+server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  const { uri } = request.params;
+  console.error(`[Resources] ReadResourceRequest for URI: ${uri}`);
+  
+  // Check if this is a PDF resource request
+  if (!uri.startsWith("pdf://")) {
+    console.error(`[Resources] Unsupported URI scheme: ${uri}`);
+    throw new Error(`Unsupported resource URI: ${uri}`);
+  }
+  
+  // Extract the file path from the URI
+  const pdfPath = uri.replace("pdf://", "");
+  const resolvedPath = resolvePath(pdfPath);
+  console.error(`[Resources] Reading PDF from path: ${pdfPath} -> ${resolvedPath}`);
+  
+  try {
+    // Read the PDF file
+    const pdfBytes = await fs.readFile(resolvedPath);
+    const fileName = path.basename(resolvedPath);
+    console.error(`[Resources] Successfully read PDF: ${fileName} (${pdfBytes.length} bytes)`);
+    
+    // Return the PDF as blob content
+    const response = {
+      contents: [
+        {
+          uri: uri,
+          mimeType: "application/pdf",
+          blob: pdfBytes.toString("base64")
+        }
+      ]
+    };
+    console.error(`[Resources] Returning blob content with ${response.contents[0].blob.length} base64 chars`);
+    return response;
+  } catch (error) {
+    console.error(`[Resources] Error reading PDF: ${error.message}`);
+    throw new Error(`Failed to read PDF: ${error.message}`);
   }
 });
 
@@ -660,4 +976,8 @@ async function main() {
 }
 
 // Run the main function
-main().catch(console.error);
+main().catch((error) => {
+  console.error("[PDF Filler] Fatal error:", error);
+  console.error("[PDF Filler] Stack trace:", error.stack);
+  process.exit(1);
+});
