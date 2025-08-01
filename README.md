@@ -33,11 +33,13 @@ Perfect for developers who want PDF filling while coding in Cursor.
 ### 🖥️ **For Claude Desktop**
 
 #### Quick Install
-1. Download the `.dxt` file from releases and drag it to Claude Desktop or double click it to install. 
-tOr:
-2. Open Claude Desktop
-3. Go to Settings → Extensions → Browse Extensions → Desktop Extensions → Advanced Settings  
-4. Click "Install Extension" and select the `.dxt` file
+1. **[Download the latest .dxt file from Releases](https://github.com/silverstein/pdf-filler-simple/releases/latest)**
+2. Double-click the `.dxt` file or drag it to Claude Desktop to install
+
+Or manually:
+1. Open Claude Desktop
+2. Go to Settings → Extensions → Browse Extensions → Desktop Extensions → Advanced Settings  
+3. Click "Install Extension" and select the `.dxt` file
 
 NOTE: There's a brand new Claude Extensions page and PDF Filler is featured by Claude. However, that version might not be compatible with the latest Claude Desktops versions, so in the meantime, use the above instructions.
 
@@ -53,12 +55,12 @@ dxt pack
 
 ### ⚡ **For Cursor**
 
-#### 📦 Easy Install (Get from a Friend)
-1. **Get the installer package** (`pdf-filler-mcp.zip`) 
+#### 📦 Easy Install
+1. **[Download pdf-filler-mcp.zip from Releases](https://github.com/silverstein/pdf-filler-simple/releases/latest)**
 2. **Unzip** the file anywhere
 3. **Mac users**: Double-click `install.command` 
 4. **All users**: Or run `./smart-install.sh` in Terminal
-5. **Restart Cursor** - Look for "pdf-filler" with "10 tools enabled"
+5. **Restart Cursor** - Look for "pdf-filler" with "11 tools enabled"
 
 #### 🛠️ Developer Install
 ```bash
