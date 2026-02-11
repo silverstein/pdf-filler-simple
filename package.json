@@ -15,9 +15,8 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.26.0",
-    "canvas": "^3.2.1",
+    "@napi-rs/canvas": "^0.1.88",
     "pdf-lib": "^1.17.1",
-    "pdf-parse": "^1.1.1",
-    "pdfjs-dist": "^2.16.105"
+    "pdfjs-dist": "^5.4.624"
   }
 }
