@@ -3,7 +3,6 @@
   "version": "0.4.1",
   "description": "PDF Tools MCP server for Claude Desktop",
   "main": "server/index.js",
-  "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
