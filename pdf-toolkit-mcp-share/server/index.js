@@ -1,34 +1,88 @@
 #!/usr/bin/env node
 
-const { Server } = require("@modelcontextprotocol/sdk/server/index.js");
-const { StdioServerTransport } = require("@modelcontextprotocol/sdk/server/stdio.js");
-const {
+import { Server } from "@modelcontextprotocol/sdk/server/index.js";
+import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
-} = require("@modelcontextprotocol/sdk/types.js");
-const { PDFDocument } = require("pdf-lib");
-const pdfParse = require("pdf-parse");
-const fs = require("fs/promises");
-const path = require("path");
-const { homedir } = require("os");
+} from "@modelcontextprotocol/sdk/types.js";
+import { PDFDocument } from "pdf-lib";
+import { createRequire } from "module";
+import { pathToFileURL } from "url";
+import fs from "fs/promises";
+import path from "path";
+import { homedir } from "os";
 
-// Lazy load these heavy dependencies only when needed
+const _require = createRequire(import.meta.url);
+
+// Polyfill browser globals that pdfjs-dist v5 expects but Node.js lacks
+if (typeof globalThis.DOMMatrix === "undefined") {
+  globalThis.DOMMatrix = class DOMMatrix {
+    constructor(init) {
+      const v = Array.isArray(init) ? init : [1, 0, 0, 1, 0, 0];
+      this.a = v[0]; this.b = v[1]; this.c = v[2];
+      this.d = v[3]; this.e = v[4]; this.f = v[5];
+      this.is2D = true; this.isIdentity = v[0] === 1 && v[1] === 0 && v[2] === 0 && v[3] === 1 && v[4] === 0 && v[5] === 0;
+    }
+    multiplySelf() { return this; }
+    preMultiplySelf() { return this; }
+    translateSelf() { return this; }
+    scaleSelf() { return this; }
+    rotateSelf() { return this; }
+    invertSelf() { return this; }
+    static fromMatrix(m) { return new DOMMatrix([m.a, m.b, m.c, m.d, m.e, m.f]); }
+    static fromFloat32Array(a) { return new DOMMatrix(Array.from(a)); }
+    static fromFloat64Array(a) { return new DOMMatrix(Array.from(a)); }
+  };
+}
+if (typeof globalThis.Path2D === "undefined") {
+  globalThis.Path2D = class Path2D { constructor() {} addPath() {} closePath() {} moveTo() {} lineTo() {} bezierCurveTo() {} quadraticCurveTo() {} arc() {} arcTo() {} ellipse() {} rect() {} };
+}
+if (typeof globalThis.ImageData === "undefined") {
+  globalThis.ImageData = class ImageData { constructor(w, h) { this.width = w; this.height = h; this.data = new Uint8ClampedArray(w * h * 4); } };
+}
+
+// Lazy load heavy dependencies only when needed
 let pdfjsLib = null;
 let createCanvas = null;
+let _pdfjsLoading = null;
 
-function loadImageDependencies() {
-  if (!pdfjsLib || !createCanvas) {
+// Load pdfjs-dist only (for text extraction — no canvas needed)
+async function loadPdfjs() {
+  if (pdfjsLib) return;
+  if (_pdfjsLoading) return _pdfjsLoading;
+  _pdfjsLoading = (async () => {
     try {
-      pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
-      const canvas = require("canvas");
-      createCanvas = canvas.createCanvas;
-      console.error("[PDF Filler] Image dependencies loaded successfully");
+      const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      pdfjsLib = pdfjs.default || pdfjs;
+      // Disable worker threads — not needed for server-side, avoids spawn issues
+      pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(
+        _require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs")
+      ).href;
+      pdfjsLib.GlobalWorkerOptions.isEvalSupported = false;
+      console.error("[PDF Filler] pdfjs-dist loaded successfully");
     } catch (error) {
-      console.error("[PDF Filler] Failed to load image dependencies:", error.message);
-      throw new Error("Image extraction is not available. Canvas dependencies could not be loaded.");
+      _pdfjsLoading = null;
+      console.error("[PDF Filler] Failed to load pdfjs-dist:", error.message);
+      throw new Error("PDF text extraction is not available: " + error.message);
     }
+  })();
+  return _pdfjsLoading;
+}
+
+// Load pdfjs-dist + canvas (for image rendering / OCR fallback)
+async function loadImageDependencies() {
+  await loadPdfjs();
+  if (createCanvas) return;
+  try {
+    const canvas = await import("@napi-rs/canvas");
+    createCanvas = canvas.createCanvas;
+    console.error("[PDF Filler] Canvas loaded successfully");
+  } catch (error) {
+    console.error("[PDF Filler] Failed to load canvas:", error.message);
+    throw new Error("Image extraction is not available. Canvas dependency could not be loaded: " + error.message);
   }
 }
 
@@ -73,13 +127,16 @@ async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0) {
   try {
     return await withSuppressedStderr(async () => {
       // Load dependencies only when needed
-      loadImageDependencies();
+      await loadImageDependencies();
       // Load the PDF
-      const loadingTask = pdfjsLib.getDocument({ 
-        data: pdfBuffer,
+      const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(pdfBuffer),
         useSystemFonts: true,
-        disableFontFace: true, // Disable font loading to avoid issues
-        verbosity: 0 // Suppress warnings
+        disableFontFace: true,
+        disableAutoFetch: true,
+        useWorkerFetch: false,
+        isEvalSupported: false,
+        verbosity: 0
       });
       const pdfDocument = await loadingTask.promise;
       
@@ -117,6 +174,29 @@ async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0) {
     console.error('Error converting PDF to image:', error);
     throw error;
   }
+}
+
+// Extract text from all pages of a PDF using pdfjs-dist
+async function extractPdfText(pdfBuffer, maxPages) {
+  await loadPdfjs();
+  const doc = await pdfjsLib.getDocument({
+    data: new Uint8Array(pdfBuffer),
+    useSystemFonts: true,
+    disableFontFace: true,
+    verbosity: 0
+  }).promise;
+
+  const totalPages = doc.numPages;
+  const pagesToRead = maxPages ? Math.min(maxPages, totalPages) : totalPages;
+  const pages = [];
+  for (let i = 1; i <= pagesToRead; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    const text = content.items.map(item => item.str).join("");
+    pages.push(text);
+  }
+  await doc.destroy();
+  return { text: pages.join("\n\n"), pagesRead: pagesToRead, totalPages };
 }
 
 const server = new Server(
@@ -405,6 +485,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             pdf_path: {
               type: "string",
               description: "Path to the PDF file"
+            },
+            max_pages: {
+              type: "number",
+              description: "Maximum number of pages to extract (default: all pages, but output is capped at 50000 characters)"
             }
           },
           required: ["pdf_path"]
@@ -782,41 +866,58 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "read_pdf_content": {
-        const { pdf_path } = args;
+        const { pdf_path, max_pages } = args;
         const resolvedPath = resolvePath(pdf_path);
-        
+        const MAX_CHARS = 50000;
+
         try {
           // Verify the file exists
           await fs.access(resolvedPath);
-          
+
           // Get file info
           const stats = await fs.stat(resolvedPath);
           const fileName = path.basename(resolvedPath);
           const fileSizeKB = (stats.size / 1024).toFixed(2);
-          
+
           // Read the PDF buffer
           const pdfBuffer = await fs.readFile(resolvedPath);
-          
-          // Extract text content using pdf-parse
-          const pdfData = await withSuppressedStderr(() => pdfParse(pdfBuffer));
-          
-          // Get page count from pdf-lib for additional info
-          const pdfDoc = await PDFDocument.load(pdfBuffer);
-          const pageCount = pdfDoc.getPages().length;
-          
+
+          // Extract text content using pdfjs-dist
+          const result = await withSuppressedStderr(() => extractPdfText(pdfBuffer, max_pages));
+          let extractedText = result.text;
+          const pageCount = result.totalPages;
+          const pagesRead = result.pagesRead;
+
           // Prepare the response
           let response = `PDF Content Extracted Successfully!\n\n`;
           response += `File: ${fileName}\n`;
           response += `Size: ${fileSizeKB} KB\n`;
-          response += `Pages: ${pageCount}\n`;
-          response += `Text Length: ${pdfData.text.length} characters\n`;
+          response += `Pages: ${pageCount}`;
+          if (pagesRead < pageCount) {
+            response += ` (extracted ${pagesRead} of ${pageCount})`;
+          }
+          response += `\n`;
+          response += `Text Length: ${extractedText.length} characters\n`;
+
+          // Truncate if too large for context window
+          let truncated = false;
+          if (extractedText.length > MAX_CHARS) {
+            extractedText = extractedText.substring(0, MAX_CHARS);
+            truncated = true;
+            response += `\n⚠️ Output truncated to ${MAX_CHARS} characters. Use max_pages to limit extraction scope.\n`;
+          }
+
           response += `\n${"=".repeat(50)}\n`;
           response += `EXTRACTED TEXT:\n`;
           response += `${"=".repeat(50)}\n\n`;
-          response += pdfData.text;
-          
+          response += extractedText;
+
+          if (truncated) {
+            response += `\n\n... [TRUNCATED — ${MAX_CHARS} char limit reached] ...`;
+          }
+
           // Check if text was extracted
-          if (!pdfData.text || pdfData.text.trim().length === 0) {
+          if (!extractedText || extractedText.trim().length === 0) {
             // No text found - try to extract first page as image
             try {
               response = `No text could be extracted from this PDF (likely a scanned document).\n`;
@@ -824,18 +925,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               response += `File: ${fileName}\n`;
               response += `Size: ${fileSizeKB} KB\n`;
               response += `Pages: ${pageCount}\n`;
-              
+
               // Calculate scale to keep image size reasonable
               // Target ~500KB after base64 encoding (roughly 375KB raw)
               const targetSizeKB = 375;
               const scaleFactor = Math.min(1.5, Math.sqrt(targetSizeKB / parseFloat(fileSizeKB)));
-              
+
               // Convert first page to image
               const imageBuffer = await convertPdfPageToImage(pdfBuffer, 1, scaleFactor);
               const imageSizeKB = (imageBuffer.length / 1024).toFixed(2);
-              
+
               response += `\nPage 1 extracted as image (${imageSizeKB} KB, scale: ${scaleFactor.toFixed(2)})\n`;
-              
+
               // Return as image content
               return {
                 content: [{
@@ -857,7 +958,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               response += `- Memory limitations\n`;
             }
           }
-          
+
           return {
             content: [{
               type: "text",
