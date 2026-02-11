@@ -21,7 +21,7 @@ PDF Toolkit is a Claude Desktop extension (MCPB) and MCP server that enables aut
 ## Technical Architecture
 
 ### Technology Stack
-- **Runtime**: Node.js (CommonJS modules for Claude Desktop compatibility)
+- **Runtime**: Node.js (ES modules)
 - **PDF Libraries**: pdf-lib, pdf-parse, pdfjs-dist
 - **Protocol**: MCP (Model Context Protocol)
 - **Extension Format**: MCPB (built via `mcpb pack`)
@@ -36,14 +36,12 @@ PDF Toolkit is a Claude Desktop extension (MCPB) and MCP server that enables aut
 - `docs/MAINTAINERS.md` - Maintainer onboarding and operations
 - `docs/RELEASE.md` - Release checklist
 
-## Critical: CommonJS Format
+## Module Format: ESM
 
-The project uses CommonJS modules for Claude Desktop compatibility. This is **required**:
-- Use `require()` instead of `import`
-- Use `module.exports` instead of `export`
-- Do NOT convert to ES modules
-
-This constraint exists because Claude Desktop's extension runtime expects CommonJS.
+The project uses ES modules (`"type": "module"` in package.json):
+- Use `import`/`export` syntax
+- Dynamic `await import()` for lazy-loaded dependencies (pdfjs-dist, @napi-rs/canvas)
+- The MCP SDK, MCPB runtime, and Claude Desktop all support ESM
 
 ## Password Support
 
@@ -127,7 +125,7 @@ Reuse existing helpers in `server/index.js`:
 ## Common Issues & Solutions
 
 ### Module not found errors
-Ensure CommonJS syntax is used throughout. Check for any `import`/`export` statements that should be `require()`/`module.exports`.
+Ensure ESM syntax is used throughout (`import`/`export`). Check that `package.json` has `"type": "module"`.
 
 ### Password-protected PDF errors
 Pass the `password` parameter to relevant tools. The error message should indicate if a password is required.

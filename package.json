@@ -2,6 +2,7 @@
   "name": "pdf-tools",
   "version": "0.4.1",
   "description": "PDF Tools MCP server for Claude Desktop",
+  "type": "module",
   "main": "server/index.js",
   "license": "MIT",
   "repository": {
