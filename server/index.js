@@ -9,7 +9,6 @@ const {
   ReadResourceRequestSchema,
 } = require("@modelcontextprotocol/sdk/types.js");
 const { PDFDocument } = require("pdf-lib");
-const pdfParse = require("pdf-parse");
 const fs = require("fs/promises");
 const path = require("path");
 const { homedir } = require("os");
@@ -21,8 +20,8 @@ let createCanvas = null;
 function loadImageDependencies() {
   if (!pdfjsLib || !createCanvas) {
     try {
-      pdfjsLib = require("pdfjs-dist/legacy/build/pdf.js");
-      const canvas = require("canvas");
+      pdfjsLib = require("pdfjs-dist/legacy/build/pdf.mjs");
+      const canvas = require("@napi-rs/canvas");
       createCanvas = canvas.createCanvas;
       console.error("[PDF Filler] Image dependencies loaded successfully");
     } catch (error) {
@@ -75,11 +74,14 @@ async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0) {
       // Load dependencies only when needed
       loadImageDependencies();
       // Load the PDF
-      const loadingTask = pdfjsLib.getDocument({ 
-        data: pdfBuffer,
+      const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(pdfBuffer),
         useSystemFonts: true,
-        disableFontFace: true, // Disable font loading to avoid issues
-        verbosity: 0 // Suppress warnings
+        disableFontFace: true,
+        disableAutoFetch: true,
+        useWorkerFetch: false,
+        isEvalSupported: false,
+        verbosity: 0
       });
       const pdfDocument = await loadingTask.promise;
       
@@ -117,6 +119,27 @@ async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0) {
     console.error('Error converting PDF to image:', error);
     throw error;
   }
+}
+
+// Extract text from all pages of a PDF using pdfjs-dist
+async function extractPdfText(pdfBuffer) {
+  loadImageDependencies();
+  const doc = await pdfjsLib.getDocument({
+    data: new Uint8Array(pdfBuffer),
+    useSystemFonts: true,
+    disableFontFace: true,
+    verbosity: 0
+  }).promise;
+
+  const pages = [];
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const content = await page.getTextContent();
+    const text = content.items.map(item => item.str).join("");
+    pages.push(text);
+  }
+  await doc.destroy();
+  return pages.join("\n\n");
 }
 
 const server = new Server(
@@ -797,8 +820,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           // Read the PDF buffer
           const pdfBuffer = await fs.readFile(resolvedPath);
           
-          // Extract text content using pdf-parse
-          const pdfData = await withSuppressedStderr(() => pdfParse(pdfBuffer));
+          // Extract text content using pdfjs-dist
+          const extractedText = await withSuppressedStderr(() => extractPdfText(pdfBuffer));
           
           // Get page count from pdf-lib for additional info
           const pdfDoc = await PDFDocument.load(pdfBuffer);
@@ -809,14 +832,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           response += `File: ${fileName}\n`;
           response += `Size: ${fileSizeKB} KB\n`;
           response += `Pages: ${pageCount}\n`;
-          response += `Text Length: ${pdfData.text.length} characters\n`;
+          response += `Text Length: ${extractedText.length} characters\n`;
           response += `\n${"=".repeat(50)}\n`;
           response += `EXTRACTED TEXT:\n`;
           response += `${"=".repeat(50)}\n\n`;
-          response += pdfData.text;
+          response += extractedText;
           
           // Check if text was extracted
-          if (!pdfData.text || pdfData.text.trim().length === 0) {
+          if (!extractedText || extractedText.trim().length === 0) {
             // No text found - try to extract first page as image
             try {
               response = `No text could be extracted from this PDF (likely a scanned document).\n`;
