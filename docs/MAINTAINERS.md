@@ -28,9 +28,10 @@ manual checklist before publishing (see below).
 
 - `server/index.js` is the MCP server entry point.
 - Tool definitions and helpers live in `server/index.js`.
-- Profile storage lives under `~/.pdf-filler-profiles`.
-- PDF utilities use `pdf-lib`, `pdf-parse`, and `pdfjs-dist`.
+- Profile storage lives under `~/.pdf-toolkit-files` (migrated from `~/.pdf-filler-profiles`).
+- PDF utilities use `pdf-lib` and `pdfjs-dist`.
 - OCR/image extraction is lazy loaded to avoid startup overhead.
+- Interactive viewer UI lives in `ui/`, built to `dist-ui/` via Vite.
 
 ## Data flow (ASCII map)
 
@@ -38,14 +39,17 @@ manual checklist before publishing (see below).
 Claude Desktop / Cursor
         │
         ▼
-   MCP transport
+   MCP transport (stdio)
         │
         ▼
   server/index.js
         │
+        ├─ display_pdf ──→ MCP App viewer (dist-ui/index.html)
+        │                    └─ calls read_pdf_bytes for chunked loading
+        │                    └─ PDF.js renders pages client-side
         ├─ form fill/read (pdf-lib)
-        ├─ text extract (pdf-parse)
-        └─ OCR/image (pdfjs-dist + canvas)
+        ├─ text extract (pdfjs-dist)
+        └─ OCR/image (pdfjs-dist + @napi-rs/canvas)
         │
         ▼
  local filesystem
@@ -107,8 +111,11 @@ releases instead.
 
 Run these after any tool or packaging change:
 
+- `display_pdf` on `example-fw9.pdf` — viewer renders, form fields in sidebar
+- `display_pdf` on a non-form PDF — viewer renders, no sidebar
+- `display_pdf` page navigation, zoom, search, fullscreen
 - `list_pdfs` against a local directory
-- `read_pdf_fields` on `example-fw9.pdf`
+- `read_pdf_fields` on `example-fw9.pdf` — viewer + sidebar with field values
 - `fill_pdf` on `example-fw9.pdf`
 - `save_profile`, `load_profile`, `fill_with_profile`
 - `bulk_fill_from_csv` using a two-row CSV with a comma in one value
@@ -116,6 +123,8 @@ Run these after any tool or packaging change:
 - `validate_pdf` on a partially filled form
 - `read_pdf_content` on text and scanned PDFs
 - `get_pdf_resource_uri` with a local path
+- `npm run build:ui` produces single-file HTML in `dist-ui/`
+- `mcpb pack` builds successfully
 
 ## Upstream tracking (MCP + MCPB)
 
