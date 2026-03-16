@@ -1,238 +1,147 @@
-# PDF Tools - Analyze, Extract, Fill, Compare
+# PDF Tools - Fill, Analyze, Extract, View
 
-A comprehensive PDF toolkit for Claude that enables document analysis, data extraction, form filling, and comparison. Works with **both** Claude Desktop (as an extension) **and** Cursor (as an MCP server).
-
-## 🎯 **Choose Your Platform**
-
-### 🖥️ **Claude Desktop Extension**
-Perfect for dedicated Claude Desktop users who want PDF filling built-in.
-
-### ⚡ **Cursor MCP Server** 
-Perfect for developers who want PDF filling while coding in Cursor.
+The complete PDF toolkit for Claude Desktop. Work with PDFs already on your computer — fill forms, analyze documents, extract data, and view them interactively without uploading.
 
 ## Features
 
-### Core Features
-- 📖 **Analyze Documents** - Extract and analyze full PDF content (300+ pages)
-- 📊 **Extract Data** - Pull tables, text, and structured data from any PDF
-- 🔍 **Compare Contracts** - Identify changes between document versions
-- ✏️ **Fill Forms** - Automate form completion (W-9, 1099, I-9, etc.)
-- 📋 **List & Organize** - Browse and manage PDF collections
-- 🔐 **Password Support** - Handle encrypted and protected PDFs
-- 👁️ **OCR Support** - Extract text from scanned documents
+### Interactive PDF Viewer
+- View any PDF with page navigation, zoom, and fullscreen
+- Search text across all pages with highlighted results
+- Select and copy text directly from PDFs
+- Form field sidebar shows all fields with fill status
 
-### Advanced Features
-- 📊 **Bulk Fill from CSV** - Fill multiple PDFs using data from spreadsheets
-- 👤 **Profile System** - Save and reuse common form data
-- 📤 **Extract to CSV** - Export data from filled PDFs to spreadsheets
-- ✅ **Form Validation** - Check for missing required fields
-- 🚀 **Easy Sharing** - Share with friends via simple installer package
+### Fill Forms & Automate
+- Fill out W-9, 1099, I-9, rental applications, and any fillable PDF
+- Bulk fill hundreds of PDFs from CSV data
+- Save reusable profiles for common forms
+- Validate required fields before submission
+
+### Analyze & Extract
+- Analyze research papers and academic documents
+- Extract tables and structured data to CSV
+- Compare contract versions
+- Summarize 300+ page reports
+- OCR support for scanned documents
+
+### Works with any PDF type
+Scientific papers, legal contracts, technical manuals, financial statements, invoices, and forms. Handles fillable forms, scanned documents, and encrypted PDFs.
 
 ## Installation
 
-### 🖥️ **For Claude Desktop**
+### Claude Desktop Extension
 
 #### Quick Install
 1. **[Download the latest .mcpb file from Releases](https://github.com/Open-Document-Alliance/PDF-Tools/releases/latest)**
 2. Double-click the `.mcpb` file to install in Claude Desktop
 
-Or manually:
-1. Open Claude Desktop
-2. Go to Settings → Developer → Edit Config
-3. The `.mcpb` file will auto-configure itself when opened
-
-NOTE: The extension is also available in the Claude Extensions directory. If installing from there doesn't work with your Claude Desktop version, use the `.mcpb` file from our releases instead.
+The extension is also available in the Claude Extensions directory.
 
 #### Build from Source
 ```bash
 git clone https://github.com/Open-Document-Alliance/PDF-Tools
 cd PDF-Tools
 npm install
+npm run build:ui
 npm install -g @anthropic-ai/mcpb
 mcpb pack
 # Install the generated .mcpb file in Claude Desktop
 ```
 
-MCPB repo: https://github.com/modelcontextprotocol/mcpb
+### Cursor / Other MCP Hosts
 
-### ⚡ **For Cursor**
-
-#### 📦 Easy Install
-1. **[Download pdf-toolkit-mcp.zip from Releases](https://github.com/Open-Document-Alliance/PDF-Tools/releases/latest)**
-2. **Unzip** the file anywhere
-3. **Mac users**: Double-click `install.command` 
-4. **All users**: Or run `./smart-install.sh` in Terminal
-5. **Restart Cursor** - Look for "pdf-filler" with "12 tools enabled"
-
-#### 🛠️ Developer Install
 ```bash
 git clone https://github.com/Open-Document-Alliance/PDF-Tools
 cd PDF-Tools
 npm install
 
-# Add to your ~/.cursor/mcp.json:
+# Add to your MCP client config:
 {
   "mcpServers": {
-    "pdf-filler": {
+    "pdf-tools": {
       "command": "node",
       "args": ["/full/path/to/PDF-Tools/server/index.js"]
     }
   }
 }
-
-# Restart Cursor
 ```
 
 ## Usage
 
-Works the same way in both Claude Desktop and Cursor! Ask Claude to:
+Ask Claude to:
 
-### List PDFs
-*"List all PDFs in my Documents folder"*
-*"Show me PDF files in /Users/myname/Downloads"*
+### View PDFs
+*"Open my W-9 and show me the fields"*
+*"Display the contract PDF in my Documents folder"*
 
-### Read PDF Form Fields
-*"What form fields are in this PDF file?"*
-*"Read the form fields from application.pdf on my Desktop"*
+### Fill Forms
+*"Fill this W-9 with my business info: Company Name LLC, 123 Main St, Tax ID 12-3456789"*
+*"Use my 'work' profile to fill this application"*
 
-### Fill PDF Forms
-*"Fill this W-9 PDF with my business information"*
-*"Fill the PDF at /path/to/form.pdf with John Doe as the name and save it to filled-form.pdf"*
+### Analyze Documents
+*"Summarize this research paper"*
+*"What does this contract say about payment terms?"*
+*"Extract all text from this scanned invoice"* (OCR)
 
-### Bulk Fill from CSV
-*"Fill the template.pdf with data from employees.csv and save all PDFs to /Users/me/filled-forms/"*
-*"Use the 'employee_name' column for filenames"*
+### Bulk Processing
+*"Fill 50 contract PDFs using the client data from contracts.csv"*
+*"Extract data from all PDFs in this folder to summary.csv"*
 
-### Save and Use Profiles
-*"Save this as my 'work' profile: name John Doe, title Software Engineer, company Tech Corp"*
-*"Fill application.pdf using my work profile and save to filled-app.pdf"*
+### Password-Protected PDFs
+*"Read the fields from this encrypted PDF using password 'mypassword123'"*
 
-### Extract Data to Spreadsheet
-*"Extract all data from these PDFs to summary.csv"*
+## Available Tools
 
-### Validate Forms
-*"Validate if all required fields are filled in application.pdf"*
-
-### Read PDF Content
-*"Read the content of this PDF: /path/to/document.pdf"*
-*"Convert this PDF to markdown format"*
-*"Extract all text from my estate planning PDF"*
-*"Summarize the main points in this contract PDF"*
-*"What does this PDF say about payment terms?"*
-*"Analyze this scanned invoice PDF"* (automatically uses OCR)
-
-**Note**: The `read_pdf_content` tool automatically handles both text-based and scanned PDFs
-
-## Sharing with Friends
-
-### 🎁 Create Shareable Cursor Package
-```bash
-# For Cursor users - creates easy installer
-node package-for-friend.js
-# Share the generated pdf-toolkit-mcp.zip
-```
-
-### 🖥️ Share Claude Desktop Extension
-```bash
-# For Claude Desktop users
-mcpb pack
-# Share the generated .mcpb file
-```
-
-### 🚀 What Your Friends Get
-
-**Cursor Users:**
-- **Double-click installer** (Mac)
-- **Smart terminal installer** (all platforms)
-- **Auto-detects paths** - no manual configuration
-- **Safe installation** - moves files to permanent location
-
-**Claude Desktop Users:**
-- **Simple .mcpb file install**
-- **Built-in extension experience**
-
-## How It Works
-
-This solution uses:
-- [MCP (Model Context Protocol)](https://github.com/modelcontextprotocol) for both Claude Desktop and Cursor integration
-- [pdf-lib](https://github.com/Hopding/pdf-lib) for PDF manipulation
-- Node.js for the server runtime
+| Tool | Description |
+|------|-------------|
+| `display_pdf` | Interactive PDF viewer with search, navigation, zoom, and form field sidebar |
+| `list_pdfs` | List PDF files in a directory |
+| `read_pdf_fields` | Read form field names, types, and current values |
+| `fill_pdf` | Fill a PDF form with data and save |
+| `bulk_fill_from_csv` | Fill multiple PDFs from CSV data |
+| `save_profile` | Save form data as a reusable profile |
+| `load_profile` | Load a saved profile |
+| `list_profiles` | List all saved profiles |
+| `fill_with_profile` | Fill a PDF using a saved profile |
+| `extract_to_csv` | Extract form data from PDFs to CSV |
+| `validate_pdf` | Check for missing required fields |
+| `read_pdf_content` | Extract text content (with OCR fallback for scans) |
+| `get_pdf_resource_uri` | Get a resource URI for Claude's Resources API |
 
 ## Development
 
 ### Project Structure
 ```
 PDF-Tools/
-├── server/index.js           # MCP server (works for both!)
-├── package.json             # Node.js dependencies
+├── server/index.js          # MCP server (all tool definitions)
+├── ui/                      # Interactive viewer source (TypeScript)
+├── dist-ui/                 # Built viewer (single-file HTML)
+├── vite.config.mjs          # Vite build config for viewer
 ├── manifest.json            # Claude Desktop extension metadata
-├── pdf-toolkit-mcp-share/   # Cursor shareable package
-├── pdf-toolkit-mcp.zip      # Cursor ready-to-share installer
-└── README.md               # This file
+├── manifest.mcpb.json       # MCPB packaging manifest
+├── package.json             # Dependencies
+├── docs/                    # Maintainer and release docs
+└── scripts/reinstall.sh     # Dev helper for extension reinstall
+```
+
+### Build Commands
+```bash
+npm install              # Install dependencies
+npm run build:ui         # Build the interactive viewer
+node server/index.js     # Run MCP server locally
+mcpb pack                # Build Claude Desktop extension
 ```
 
 ### Maintainer Docs
-
-- `docs/MAINTAINERS.md`
-- `docs/RELEASE.md`
-- `docs/SUPPORT.md`
-
-### Maintainer Quickstart
-
-- `npm install`
-- `node server/index.js` (run MCP server for Claude Desktop or Cursor)
-- `mcpb pack` (Claude Desktop .mcpb) and `node package-for-friend.js` (Cursor zip)
-- Follow `docs/RELEASE.md` before publishing
-
-### Available Tools
-
-Same 12 tools work in both Claude Desktop and Cursor:
-
-1. **list_pdfs** - Lists all PDF files in a specified directory
-2. **read_pdf_fields** - Extracts form field information from a PDF (supports password parameter)
-3. **fill_pdf** - Fills a PDF form with provided data (supports password parameter)
-4. **bulk_fill_from_csv** - Fill multiple PDFs using CSV data (supports password parameter)
-5. **save_profile** - Save form data as a reusable profile
-6. **load_profile** - Load a saved profile
-7. **list_profiles** - List all saved profiles
-8. **fill_with_profile** - Fill a PDF using a saved profile (supports password parameter)
-9. **extract_to_csv** - Extract data from PDFs to CSV
-10. **validate_pdf** - Check for missing required fields (supports password parameter)
-11. **read_pdf_content** - Read and analyze full PDF content - extract text, summarize, convert formats, answer questions
-12. **get_pdf_resource_uri** - Generate a resource URI for local PDFs so Claude can ingest them via the Resources API
-
-## Requirements
-
-**For Claude Desktop:**
-- Claude Desktop (with developer mode enabled)
-- Node.js 18+ (for building from source)
-
-**For Cursor:**
-- Cursor with MCP support
-- Node.js 18+
-
-**Both support:** macOS, Windows, Linux
+- `docs/MAINTAINERS.md` — Architecture and operations
+- `docs/RELEASE.md` — Release checklist
+- `docs/SUPPORT.md` — Issue triage
 
 ## Upstream Dependencies
 
-- MCP spec and org: https://github.com/modelcontextprotocol
+- MCP spec: https://github.com/modelcontextprotocol
 - MCPB CLI: https://github.com/modelcontextprotocol/mcpb
-- SDK package: `@modelcontextprotocol/sdk`
-
-## Examples
-
-### W-9 Tax Form
-*"Fill this W-9 with my business info: Company Name LLC, 123 Main St, Tax ID 12-3456789"*
-
-### Job Applications
-*"Use my 'personal' profile to fill this job application PDF"*
-
-### Bulk Processing
-*"Fill 50 contract PDFs using the client data from contracts.csv"*
-
-### Password-Protected PDFs
-*"Read the fields from this encrypted PDF using password 'mypassword123'"*
-*"Fill this protected PDF with my data, the password is 'secure456'"*
+- MCP Apps: https://github.com/modelcontextprotocol/ext-apps
+- SDK: `@modelcontextprotocol/sdk`
 
 ## License
 
@@ -240,9 +149,4 @@ MIT
 
 ## Contributing
 
-Pull requests welcome! This project supports both Claude Desktop extensions and Cursor MCP servers.
-
----
-
-**🎉 Best of both worlds - use with Claude Desktop OR Cursor!**  
-**Perfect for W-9s, contracts, job applications, and any repetitive PDF form filling!** 📄✨
+Pull requests welcome. See `docs/MAINTAINERS.md` for architecture details.
