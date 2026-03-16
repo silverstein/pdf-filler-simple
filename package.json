@@ -1,10 +1,13 @@
 {
   "name": "pdf-tools",
-  "version": "0.4.1",
+  "version": "0.5.0",
   "description": "PDF Tools MCP server for Claude Desktop",
   "type": "module",
   "main": "server/index.js",
   "license": "MIT",
+  "scripts": {
+    "build:ui": "vite build"
+  },
   "repository": {
     "type": "git",
     "url": "https://github.com/Open-Document-Alliance/PDF-Tools.git"
@@ -14,9 +17,14 @@
     "url": "https://github.com/Open-Document-Alliance/PDF-Tools/issues"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.26.0",
-    "@napi-rs/canvas": "^0.1.88",
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "@napi-rs/canvas": "^0.1.97",
     "pdf-lib": "^1.17.1",
     "pdfjs-dist": "^5.4.624"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.2.2",
+    "vite": "^7.3.1",
+    "vite-plugin-singlefile": "^2.3.2"
   }
 }

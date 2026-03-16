@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PDF Tools Viewer</title>
+  <link rel="stylesheet" href="./src/mcp-app.css" />
+</head>
+<body>
+  <div class="main">
+    <!-- Loading -->
+    <div id="loading">
+      <div class="loading-content">
+        <div class="progress-track"><div class="progress-fill" id="progress-bar"></div></div>
+        <span id="loading-text">Initializing...</span>
+      </div>
+    </div>
+
+    <!-- Error -->
+    <div id="error" style="display:none">
+      <div class="error-icon">!</div>
+      <div id="error-message"></div>
+    </div>
+
+    <!-- Viewer -->
+    <div id="viewer" style="display:none">
+      <div class="toolbar">
+        <span id="pdf-title" class="toolbar-title"></span>
+        <div class="toolbar-separator"></div>
+        <button id="prev-btn" disabled title="Previous page">&larr;</button>
+        <input id="page-input" type="number" min="1" value="1" />
+        <span id="total-pages">of 0</span>
+        <button id="next-btn" disabled title="Next page">&rarr;</button>
+        <div class="toolbar-separator"></div>
+        <button id="zoom-out-btn" title="Zoom out">&minus;</button>
+        <span id="zoom-level">100%</span>
+        <button id="zoom-in-btn" title="Zoom in">+</button>
+        <div class="toolbar-separator"></div>
+        <button id="search-btn" title="Search (Ctrl+F)">&#128269;</button>
+        <button id="fullscreen-btn" title="Fullscreen">&#x26F6;</button>
+        <div id="loading-indicator" style="display:none" title="Loading pages...">
+          <svg width="20" height="20" viewBox="0 0 20 20">
+            <circle cx="10" cy="10" r="8" fill="none" stroke="var(--border-color)" stroke-width="2"/>
+            <circle class="loading-indicator-arc" cx="10" cy="10" r="8" fill="none" stroke="var(--accent)" stroke-width="2"
+              stroke-dasharray="50.27" stroke-dashoffset="50.27" stroke-linecap="round"
+              transform="rotate(-90 10 10)"/>
+          </svg>
+        </div>
+        <button id="sidebar-toggle-btn" style="display:none" title="Toggle form fields">Fields</button>
+      </div>
+
+      <!-- Search bar -->
+      <div id="search-bar" style="display:none">
+        <input id="search-input" type="text" placeholder="Search in document..." />
+        <span id="search-match-count"></span>
+        <button id="search-prev-btn" disabled title="Previous match">&uarr;</button>
+        <button id="search-next-btn" disabled title="Next match">&darr;</button>
+        <button id="search-close-btn" title="Close search">&times;</button>
+      </div>
+
+      <div class="viewer-body">
+        <!-- PDF canvas area -->
+        <div class="canvas-container">
+          <div class="page-wrapper">
+            <canvas id="pdf-canvas"></canvas>
+            <div id="text-layer" class="text-layer"></div>
+            <div id="highlight-layer" class="highlight-layer"></div>
+          </div>
+        </div>
+
+        <!-- Form field sidebar -->
+        <div id="sidebar" class="sidebar" style="display:none">
+          <div class="sidebar-header">
+            <span class="sidebar-title">Form Fields</span>
+            <span id="field-count">0 fields</span>
+          </div>
+          <div id="fill-progress" class="fill-progress" style="display:none">
+            <div class="fill-progress-bar"><div class="fill-progress-value" id="fill-progress-value"></div></div>
+            <span id="fill-progress-text">0 of 0 filled</span>
+          </div>
+          <div class="sidebar-filter">
+            <input id="field-filter" type="text" placeholder="Filter fields..." />
+          </div>
+          <div id="fields-list" class="fields-list"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="./src/mcp-app.ts"></script>
+</body>
+</html>

@@ -82,20 +82,22 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 7. `validate_pdf` on a partially filled form
 8. `read_pdf_content` on text and scanned PDFs
 
-## Available Tools (12 total)
+## Available Tools (13 + 1 app-only)
 
-1. **list_pdfs** - Lists PDF files in a directory
-2. **read_pdf_fields** - Extracts form field information
-3. **fill_pdf** - Fills a PDF form with data
-4. **bulk_fill_from_csv** - Fill multiple PDFs from CSV
-5. **save_profile** - Save form data as reusable profile
-6. **load_profile** - Load a saved profile
-7. **list_profiles** - List all saved profiles
-8. **fill_with_profile** - Fill PDF using saved profile
-9. **extract_to_csv** - Extract data from PDFs to CSV
-10. **validate_pdf** - Check for missing required fields
-11. **read_pdf_content** - Extract text/images from PDFs (OCR support)
-12. **get_pdf_resource_uri** - Get resource URI for a PDF file
+1. **display_pdf** - Interactive PDF viewer with search, navigation, zoom, and form field sidebar
+2. **list_pdfs** - Lists PDF files in a directory
+3. **read_pdf_fields** - Extracts form field information (opens viewer with form sidebar)
+4. **fill_pdf** - Fills a PDF form with data
+5. **bulk_fill_from_csv** - Fill multiple PDFs from CSV
+6. **save_profile** - Save form data as reusable profile
+7. **load_profile** - Load a saved profile
+8. **list_profiles** - List all saved profiles
+9. **fill_with_profile** - Fill PDF using saved profile
+10. **extract_to_csv** - Extract data from PDFs to CSV
+11. **validate_pdf** - Check for missing required fields
+12. **read_pdf_content** - Extract text/images from PDFs (OCR support)
+13. **get_pdf_resource_uri** - Get resource URI for a PDF file
+14. **read_pdf_bytes** - (app-only) Chunked byte streaming for the interactive viewer
 
 ## Code Standards
 
