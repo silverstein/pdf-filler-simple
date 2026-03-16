@@ -58,6 +58,7 @@ let searchDebounceTimer: ReturnType<typeof setTimeout> | null = null;
 const pageTextCache = new Map<number, string>();
 let allMatches: { pageNum: number; index: number; length: number }[] = [];
 let currentMatchIndex = -1;
+let fieldMatches: { fieldName: string; fieldIndex: number }[] = [];
 
 // Preloading
 let preloadPaused = false;
@@ -252,8 +253,6 @@ async function renderPage() {
     ctx.scale(dpr, dpr);
 
     clearChildren(textLayerEl);
-    textLayerEl.style.width = `${viewport.width}px`;
-    textLayerEl.style.height = `${viewport.height}px`;
     textLayerEl.style.setProperty("--scale-factor", `${scale}`);
 
     const renderTask = (page as any).render({ canvasContext: ctx, viewport });
@@ -419,7 +418,13 @@ function performSearch(query: string) {
   currentMatchIndex = -1;
   searchQuery = query;
 
-  if (!query) { updateSearchUI(); clearHighlights(); return; }
+  if (!query) {
+    updateSearchUI();
+    clearHighlights();
+    fieldMatches = [];
+    if (fields.length > 0) renderFields();
+    return;
+  }
 
   const lower = query.toLowerCase();
   for (let p = 1; p <= totalPages; p++) {
@@ -432,6 +437,23 @@ function performSearch(query: string) {
       if (found === -1) break;
       allMatches.push({ pageNum: p, index: found, length: query.length });
       idx = found + 1;
+    }
+  }
+
+  // Also search form field names and values
+  fieldMatches = [];
+  if (fields.length > 0) {
+    for (let i = 0; i < fields.length; i++) {
+      const f = fields[i];
+      const val = String(f.currentValue || "").toLowerCase();
+      const name = f.name.toLowerCase();
+      if ((val && val.includes(lower)) || name.includes(lower)) {
+        fieldMatches.push({ fieldName: f.name, fieldIndex: i });
+      }
+    }
+    if (fieldMatches.length > 0) {
+      renderFields();
+      if (!sidebarVisible) showSidebar();
     }
   }
 
@@ -516,10 +538,16 @@ function updateSearchUI() {
   const hasQuery = searchQuery.length > 0;
   const loading = totalPages > 0 && pagesLoaded < totalPages;
   const suffix = loading ? " (loading\u2026)" : "";
-  if (allMatches.length === 0) {
+  const textCount = allMatches.length;
+  const fCount = fieldMatches.length;
+
+  if (textCount === 0 && fCount === 0) {
     searchMatchCountEl.textContent = hasQuery ? `No matches${suffix}` : "";
   } else {
-    searchMatchCountEl.textContent = `${currentMatchIndex + 1} of ${allMatches.length}${suffix}`;
+    const parts: string[] = [];
+    if (textCount > 0) parts.push(`${currentMatchIndex + 1} of ${textCount}`);
+    if (fCount > 0) parts.push(`${fCount} field${fCount !== 1 ? "s" : ""}`);
+    searchMatchCountEl.textContent = parts.join(", ") + suffix;
   }
   searchPrevBtn.disabled = allMatches.length === 0;
   searchNextBtn.disabled = allMatches.length === 0;
@@ -541,7 +569,9 @@ function closeSearch() {
   searchInputEl.value = "";
   allMatches = [];
   currentMatchIndex = -1;
+  fieldMatches = [];
   clearHighlights();
+  if (fields.length > 0) renderFields();
 }
 
 function goToNextMatch() {
@@ -603,7 +633,8 @@ function renderFields() {
     const icons: Record<string, string> = { text: "T", checkbox: "\u2611", radio: "\u25C9", dropdown: "\u25BE", unknown: "?" };
 
     const item = document.createElement("div");
-    item.className = `field-item${selectedField === field.name ? " selected" : ""}`;
+    const isSearchMatch = fieldMatches.some(fm => fm.fieldName === field.name);
+    item.className = `field-item${selectedField === field.name ? " selected" : ""}${isSearchMatch ? " search-match" : ""}`;
 
     const header = document.createElement("div");
     header.className = "field-header";
@@ -800,10 +831,13 @@ app.ontoolresult = async (result: CallToolResult) => {
     const initialPage = data.initialPage || 1;
     viewUUID = meta?.viewUUID ? String(meta.viewUUID) : undefined;
 
-    // Load form field data if present
-    const fieldData = data.fields || meta?.fields;
-    const fCount = data.fieldCount || meta?.fieldCount || 0;
-    const hasFields = data.hasFormFields || meta?.hasFormFields || false;
+    // Load form field data — check all possible sources
+    const fieldData = (Array.isArray(data.fields) && data.fields.length > 0) ? data.fields
+      : (Array.isArray(meta?.fields) && meta.fields.length > 0) ? meta.fields
+      : (Array.isArray(sc?.fields) && sc.fields.length > 0) ? sc.fields
+      : null;
+    const fCount = data.fieldCount || meta?.fieldCount || sc?.fieldCount || 0;
+    const hasFields = data.hasFormFields || meta?.hasFormFields || sc?.hasFormFields || false;
 
     if (hasFields && fCount > 0) {
       sidebarToggleBtn.style.display = "";

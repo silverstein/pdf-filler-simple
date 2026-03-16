@@ -279,33 +279,53 @@ body {
   display: block;
 }
 
-/* Text layer for selection */
+/* Text layer for selection — must match pdfjs-dist v5 expectations */
 .text-layer {
   position: absolute;
-  top: 0;
-  left: 0;
-  overflow: hidden;
+  text-align: initial;
+  inset: 0;
+  overflow: clip;
   opacity: 0.25;
   line-height: 1;
+  text-size-adjust: none;
+  forced-color-adjust: none;
+  transform-origin: 0 0;
+  z-index: 2;
+  --min-font-size: 1;
+  --total-scale-factor: calc(var(--scale-factor, 1) * var(--user-unit, 1));
+  --text-scale-factor: calc(var(--total-scale-factor) * var(--min-font-size));
+  --min-font-size-inv: calc(1 / var(--min-font-size));
 }
 
-.text-layer span {
+.text-layer :is(span, br) {
+  color: transparent;
   position: absolute;
   white-space: pre;
-  color: transparent;
   pointer-events: all;
+  transform-origin: 0% 0%;
+}
+
+.text-layer > :not(.markedContent),
+.text-layer .markedContent span:not(.markedContent) {
+  z-index: 1;
+  --font-height: 0;
+  font-size: calc(var(--text-scale-factor) * var(--font-height));
+  --scale-x: 1;
+  --rotate: 0deg;
+  transform: rotate(var(--rotate)) scaleX(var(--scale-x)) scale(var(--min-font-size-inv));
 }
 
 .text-layer span::selection {
   background: rgba(0, 100, 200, 0.3);
 }
 
-/* Highlight layer for search */
+/* Highlight layer for search — below text layer so text stays selectable */
 .highlight-layer {
   position: absolute;
   top: 0;
   left: 0;
   pointer-events: none;
+  z-index: 1;
 }
 
 .search-highlight {
@@ -419,6 +439,15 @@ body {
 .field-item.selected {
   background: var(--accent-light);
   outline: 1px solid var(--accent);
+}
+
+.field-item.search-match {
+  background: rgba(255, 200, 0, 0.15);
+  outline: 1px solid rgba(255, 200, 0, 0.5);
+}
+
+[data-theme="dark"] .field-item.search-match {
+  background: rgba(255, 200, 0, 0.1);
 }
 
 .field-header {
