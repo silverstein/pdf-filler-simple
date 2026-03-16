@@ -41,5 +41,5 @@
 - SDK: `@modelcontextprotocol/sdk`
 
 ## Security & Configuration Tips
-- Never hard-code personal paths; rely on `resolvePath` and default directories (`~/Documents`, `~/.pdf-filler-profiles`).
+- Never hard-code personal paths; rely on `resolvePath` and default directories (`~/Documents`, `~/.pdf-toolkit-files`).
 - Scrub PDFs or CSVs before committing, and point contributors to local-only credentials files when testing protected documents.

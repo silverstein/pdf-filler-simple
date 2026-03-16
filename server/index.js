@@ -62,10 +62,10 @@ async function loadPdfjs() {
         _require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs")
       ).href;
       pdfjsLib.GlobalWorkerOptions.isEvalSupported = false;
-      console.error("[PDF Filler] pdfjs-dist loaded successfully");
+      console.error("[PDF Tools] pdfjs-dist loaded successfully");
     } catch (error) {
       _pdfjsLoading = null;
-      console.error("[PDF Filler] Failed to load pdfjs-dist:", error.message);
+      console.error("[PDF Tools] Failed to load pdfjs-dist:", error.message);
       throw new Error("PDF text extraction is not available: " + error.message);
     }
   })();
@@ -79,9 +79,9 @@ async function loadImageDependencies() {
   try {
     const canvas = await import("@napi-rs/canvas");
     createCanvas = canvas.createCanvas;
-    console.error("[PDF Filler] Canvas loaded successfully");
+    console.error("[PDF Tools] Canvas loaded successfully");
   } catch (error) {
-    console.error("[PDF Filler] Failed to load canvas:", error.message);
+    console.error("[PDF Tools] Failed to load canvas:", error.message);
     throw new Error("Image extraction is not available. Canvas dependency could not be loaded: " + error.message);
   }
 }
@@ -1323,7 +1323,7 @@ async function main() {
 
 // Run the main function
 main().catch((error) => {
-  console.error("[PDF Filler] Fatal error:", error);
-  console.error("[PDF Filler] Stack trace:", error.stack);
+  console.error("[PDF Tools] Fatal error:", error);
+  console.error("[PDF Tools] Stack trace:", error.stack);
   process.exit(1);
 });
