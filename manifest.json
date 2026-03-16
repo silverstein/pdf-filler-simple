@@ -1,13 +1,13 @@
 {
-  "manifest_version": "0.2",
+  "manifest_version": "0.3",
   "name": "pdf-toolkit",
-  "display_name": "PDF Tools - Analyze, Extract, Fill, Compare",
-  "description": "Let Claude work with PDFs on your computer: read, analyze, fill forms, extract data",
-  "long_description": "Powerful PDF analysis toolkit for Claude Desktop.\n\n**What Claude can do with your PDFs:**\n• Analyze lengthy research papers and academic documents\n• Extract data from technical documentation\n• Compare multiple contract versions\n• Fill out forms automatically\n• Summarize complex reports\n\n**Works with any PDF type:** Scientific papers, legal contracts, technical manuals, financial statements, invoices, and forms (W-9, 1099, I-9). Handles fillable forms, scanned documents, and encrypted PDFs.\n\n**Key features:**\n• Work with PDFs already on your computer without uploading\n• Extract tables and structured data to CSV\n• Bulk process hundreds of documents\n• Handle password-protected files\n• Save reusable profiles for common forms\n\n**Perfect for:** Researchers analyzing literature, lawyers comparing contracts, engineers reviewing specifications, and businesses processing invoices. Claude excels at maintaining context across 300+ page documents.",
-  "version": "0.4.1",
+  "display_name": "PDF Tools - Fill, Analyze, Extract, View",
+  "description": "Let Claude work with PDFs on your computer: fill forms, analyze documents, extract data, and view them interactively — no uploading required.",
+  "long_description": "The complete PDF toolkit for Claude Desktop. Work with PDFs already on your computer without uploading.\n\n**Fill Forms & Automate:**\n• Fill out W-9, 1099, I-9, rental applications, and any fillable PDF\n• Bulk fill hundreds of PDFs from CSV data\n• Save reusable profiles for common forms\n• Validate required fields before submission\n\n**Interactive PDF Viewer:**\n• View any PDF with page navigation, zoom, and fullscreen\n• Search text across all pages with highlighted results\n• Select and copy text directly from PDFs\n• Form field sidebar shows all fields with fill status\n\n**Analyze & Extract:**\n• Analyze research papers and academic documents\n• Extract tables and structured data to CSV\n• Compare contract versions\n• Summarize 300+ page reports\n\n**Works with any PDF type:** Scientific papers, legal contracts, technical manuals, financial statements, invoices, and forms. Handles fillable forms, scanned documents, and encrypted PDFs.\n\n**Perfect for:** Researchers analyzing literature, lawyers comparing contracts, engineers reviewing specifications, accountants processing tax forms, and businesses automating invoices.",
+  "version": "0.5.0",
   "author": {
-    "name": "Mat Silverstein",
-    "url": "https://github.com/silverstein",
+    "name": "Open Document Alliance",
+    "url": "https://github.com/Open-Document-Alliance",
     "email": "mat@businessvacation.com"
   },
   "repository": {
@@ -18,9 +18,13 @@
   "documentation": "https://github.com/Open-Document-Alliance/PDF-Tools/blob/master/README.md",
   "support": "https://github.com/Open-Document-Alliance/PDF-Tools/issues",
   "license": "MIT",
-  "keywords": ["pdf", "research", "academic", "analyze", "compare", "extract", "documentation", "contracts", "forms", "fill", "w9", "1099", "tax", "invoice", "literature"],
+  "keywords": ["pdf", "viewer", "interactive", "search", "research", "academic", "analyze", "compare", "extract", "documentation", "contracts", "forms", "fill", "w9", "1099", "tax", "invoice"],
   "icon": "icon.png",
   "tools": [
+    {
+      "name": "display_pdf",
+      "description": "Display an interactive PDF viewer with search, navigation, zoom, and form field detection"
+    },
     {
       "name": "list_pdfs",
       "description": "List all PDF files in a directory"
@@ -72,10 +76,16 @@
   ],
   "prompts": [
     {
+      "name": "view_and_analyze_pdf",
+      "description": "Open and analyze any PDF document",
+      "arguments": ["focus"],
+      "text": "I'll open your PDF in the interactive viewer and analyze it, focusing on ${arguments.focus}. I can extract key findings, summarize sections, answer questions about specific pages, pull out structured data, and identify form fields if present."
+    },
+    {
       "name": "research_paper_analysis",
       "description": "Analyze & summarize research papers",
       "arguments": ["focus_area"],
-      "text": "I'll analyze your research paper or academic document, focusing on ${arguments.focus_area}. I can extract key findings and methodology, identify research gaps, create chapter-by-chapter summaries, pull out all citations, and generate a literature review outline."
+      "text": "I'll open your research paper in the interactive viewer and analyze it, focusing on ${arguments.focus_area}. I can extract key findings and methodology, identify research gaps, create chapter-by-chapter summaries, pull out all citations, and generate a literature review outline."
     },
     {
       "name": "contract_comparison",
@@ -110,7 +120,7 @@
     {
       "name": "fill_w9_business",
       "description": "Fill W-9 for business entity",
-      "text": "I'll help fill the W-9 for your business. I need: Business legal name, DBA/trade name (if different), business type (LLC/Corp/Partnership), tax classification, EIN, and business address. I'll properly check the correct tax classification boxes and ensure the form meets IRS requirements."
+      "text": "I'll open your W-9 in the interactive viewer so you can see it, then fill it for your business. I need: Business legal name, DBA/trade name (if different), business type (LLC/Corp/Partnership), tax classification, EIN, and business address. I'll properly check the correct tax classification boxes and ensure the form meets IRS requirements."
     },
     {
       "name": "batch_invoices",
@@ -120,7 +130,7 @@
     {
       "name": "rental_application",
       "description": "Fill rental application",
-      "text": "I'll help complete rental applications. Have ready: personal info, employment history (3 years), income verification, previous addresses (3 years), references, vehicle info, and emergency contact. I'll ensure all required fields are filled and flag any that need supporting documents."
+      "text": "I'll open your rental application in the viewer and help complete it. Have ready: personal info, employment history (3 years), income verification, previous addresses (3 years), references, vehicle info, and emergency contact. I'll ensure all required fields are filled and flag any that need supporting documents."
     },
     {
       "name": "extract_1099_data",
@@ -136,7 +146,7 @@
       "args": ["${__dirname}/server/index.js"],
       "env": {
         "DEFAULT_PDF_DIR": "${DOCUMENTS}",
-        "DEFAULT_PROFILES_DIR": "${HOME}/.pdf-filler-profiles"
+        "DEFAULT_PROFILES_DIR": "${HOME}/.pdf-toolkit-files"
       }
     }
   }
