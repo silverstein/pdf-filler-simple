@@ -189,5 +189,5 @@ Watch the MCPB repo for releases and breaking changes.
 
 ## Project Links
 
-- **Repository**: https://github.com/matsilverstein/pdf-toolkit-mcp
-- **Issues**: https://github.com/matsilverstein/pdf-toolkit-mcp/issues
+- **Repository**: https://github.com/Open-Document-Alliance/PDF-Tools
+- **Issues**: https://github.com/Open-Document-Alliance/PDF-Tools/issues
