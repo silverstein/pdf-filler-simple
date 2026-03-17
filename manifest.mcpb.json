@@ -4,7 +4,7 @@
   "display_name": "PDF Tools - Fill, Analyze, Extract, View",
   "description": "Let Claude work with PDFs on your computer: fill forms, analyze documents, extract data, and view them interactively — no uploading required.",
   "long_description": "The complete PDF toolkit for Claude Desktop. Work with PDFs already on your computer without uploading.\n\n**Fill Forms & Automate:**\n• Fill out W-9, 1099, I-9, rental applications, and any fillable PDF\n• Bulk fill hundreds of PDFs from CSV data\n• Save reusable profiles for common forms\n• Validate required fields before submission\n\n**Interactive PDF Viewer:**\n• View any PDF with page navigation, zoom, and fullscreen\n• Search text across all pages with highlighted results\n• Select and copy text directly from PDFs\n• Form field sidebar shows all fields with fill status\n\n**Analyze & Extract:**\n• Analyze research papers and academic documents\n• Extract tables and structured data to CSV\n• Compare contract versions\n• Summarize 300+ page reports\n\n**Works with any PDF type:** Scientific papers, legal contracts, technical manuals, financial statements, invoices, and forms. Handles fillable forms, scanned documents, and encrypted PDFs.\n\n**Perfect for:** Researchers analyzing literature, lawyers comparing contracts, engineers reviewing specifications, accountants processing tax forms, and businesses automating invoices.",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "author": {
     "name": "Open Document Alliance",
     "url": "https://github.com/Open-Document-Alliance",

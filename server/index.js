@@ -202,7 +202,7 @@ async function extractPdfText(pdfBuffer, maxPages) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.5.0",
+    version: "0.5.1",
   },
   {
     capabilities: {
@@ -295,6 +295,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
           }
         },
+        annotations: {
+          title: "List PDF Files",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "read_pdf_fields",
@@ -312,6 +319,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
           },
           required: ["pdf_path"]
+        },
+        annotations: {
+          title: "Read PDF Form Fields",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
         },
         _meta: {
           ui: {
@@ -344,6 +358,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path", "output_path", "field_data"]
         },
+        annotations: {
+          title: "Fill PDF Form",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "bulk_fill_from_csv",
@@ -374,6 +395,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path", "csv_path", "output_directory"]
         },
+        annotations: {
+          title: "Bulk Fill PDFs from CSV",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "save_profile",
@@ -392,6 +420,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["profile_name", "field_data"]
         },
+        annotations: {
+          title: "Save Form Profile",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "load_profile",
@@ -406,6 +441,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["profile_name"]
         },
+        annotations: {
+          title: "Load Form Profile",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "list_profiles",
@@ -414,6 +456,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {}
         },
+        annotations: {
+          title: "List Saved Profiles",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "fill_with_profile",
@@ -444,6 +493,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path", "output_path", "profile_name"]
         },
+        annotations: {
+          title: "Fill PDF with Profile",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "extract_to_csv",
@@ -463,6 +519,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_paths", "output_csv"]
         },
+        annotations: {
+          title: "Extract PDF Data to CSV",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "validate_pdf",
@@ -481,6 +544,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path"]
         },
+        annotations: {
+          title: "Validate PDF Form",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "read_pdf_content",
@@ -499,6 +569,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path"]
         },
+        annotations: {
+          title: "Read PDF Content",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "get_pdf_resource_uri",
@@ -513,6 +590,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path"]
         },
+        annotations: {
+          title: "Get PDF Resource URI",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "display_pdf",
@@ -530,6 +614,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
           },
           required: ["pdf_path"]
+        },
+        annotations: {
+          title: "Display PDF Viewer",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
         },
         _meta: {
           ui: {
@@ -557,6 +648,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             }
           },
           required: ["pdf_path", "offset", "byteCount"]
+        },
+        annotations: {
+          title: "Read PDF Bytes",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
         },
         _meta: {
           ui: {

@@ -5,6 +5,7 @@
 
 # Ignore sharing/distribution folders
 pdf-filler-mcp-share/
+pdf-toolkit-mcp-share/
 pdf-filler-mcp/
 
 # Ignore test files

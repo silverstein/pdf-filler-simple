@@ -10,7 +10,7 @@ import {
 } from "@modelcontextprotocol/sdk/types.js";
 import { PDFDocument } from "pdf-lib";
 import { createRequire } from "module";
-import { pathToFileURL } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import fs from "fs/promises";
 import path from "path";
 import { homedir } from "os";
@@ -62,10 +62,10 @@ async function loadPdfjs() {
         _require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs")
       ).href;
       pdfjsLib.GlobalWorkerOptions.isEvalSupported = false;
-      console.error("[PDF Filler] pdfjs-dist loaded successfully");
+      console.error("[PDF Tools] pdfjs-dist loaded successfully");
     } catch (error) {
       _pdfjsLoading = null;
-      console.error("[PDF Filler] Failed to load pdfjs-dist:", error.message);
+      console.error("[PDF Tools] Failed to load pdfjs-dist:", error.message);
       throw new Error("PDF text extraction is not available: " + error.message);
     }
   })();
@@ -79,9 +79,9 @@ async function loadImageDependencies() {
   try {
     const canvas = await import("@napi-rs/canvas");
     createCanvas = canvas.createCanvas;
-    console.error("[PDF Filler] Canvas loaded successfully");
+    console.error("[PDF Tools] Canvas loaded successfully");
   } catch (error) {
-    console.error("[PDF Filler] Failed to load canvas:", error.message);
+    console.error("[PDF Tools] Failed to load canvas:", error.message);
     throw new Error("Image extraction is not available. Canvas dependency could not be loaded: " + error.message);
   }
 }
@@ -201,8 +201,8 @@ async function extractPdfText(pdfBuffer, maxPages) {
 
 const server = new Server(
   {
-    name: "pdf-filler",
-    version: "0.4.1",
+    name: "pdf-tools",
+    version: "0.5.1",
   },
   {
     capabilities: {
@@ -215,7 +215,8 @@ const server = new Server(
 // Default directories - use environment variables from manifest or fallback to defaults
 const DEFAULT_PDF_DIR = process.env.DEFAULT_PDF_DIR || path.join(homedir(), "Documents");
 // Keep in sync with manifest.json and share bundle defaults
-const PROFILES_DIR = process.env.DEFAULT_PROFILES_DIR || path.join(homedir(), ".pdf-filler-profiles");
+const PROFILES_DIR = process.env.DEFAULT_PROFILES_DIR || path.join(homedir(), ".pdf-toolkit-files");
+const OLD_PROFILES_DIR = path.join(homedir(), ".pdf-filler-profiles");
 
 // Helper function to parse CSV
 function parseCSV(content) {
@@ -284,20 +285,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
     tools: [
       {
         name: "list_pdfs",
-        description: "List all PDF files in a directory",
+        description: "List all PDF files in a directory. This tool operates on the user's local filesystem — all paths must be absolute paths on the user's machine (e.g. /Users/name/Documents/), NOT paths on Claude's container (/mnt/...).",
         inputSchema: {
           type: "object",
           properties: {
             directory: {
               type: "string",
-              description: "Directory path to search for PDFs (default: ~/Documents)"
+              description: "Directory path to search for PDFs (default: ~/Documents). Must be a local filesystem path."
             }
           }
         },
+        annotations: {
+          title: "List PDF Files",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "read_pdf_fields",
-        description: "Read all form fields from a PDF file",
+        description: "Read all form fields from a PDF file and display them in an interactive viewer. Returns field names, types, and current values. Also renders the PDF visually — no need to also call display_pdf. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           properties: {
@@ -312,10 +320,22 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path"]
         },
+        annotations: {
+          title: "Read PDF Form Fields",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        },
+        _meta: {
+          ui: {
+            resourceUri: "ui://pdf-toolkit/viewer"
+          }
+        }
       },
       {
         name: "fill_pdf",
-        description: "Fill a PDF form with provided data and save it",
+        description: "Fill a PDF form with provided data and save it. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           properties: {
@@ -338,6 +358,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path", "output_path", "field_data"]
         },
+        annotations: {
+          title: "Fill PDF Form",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "bulk_fill_from_csv",
@@ -368,6 +395,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path", "csv_path", "output_directory"]
         },
+        annotations: {
+          title: "Bulk Fill PDFs from CSV",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "save_profile",
@@ -386,6 +420,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["profile_name", "field_data"]
         },
+        annotations: {
+          title: "Save Form Profile",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "load_profile",
@@ -400,6 +441,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["profile_name"]
         },
+        annotations: {
+          title: "Load Form Profile",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "list_profiles",
@@ -408,6 +456,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {}
         },
+        annotations: {
+          title: "List Saved Profiles",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "fill_with_profile",
@@ -438,6 +493,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path", "output_path", "profile_name"]
         },
+        annotations: {
+          title: "Fill PDF with Profile",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "extract_to_csv",
@@ -457,6 +519,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_paths", "output_csv"]
         },
+        annotations: {
+          title: "Extract PDF Data to CSV",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "validate_pdf",
@@ -475,10 +544,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path"]
         },
+        annotations: {
+          title: "Validate PDF Form",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "read_pdf_content",
-        description: "Read and analyze the full content of a PDF file. Claude can extract text, summarize, convert to markdown, answer questions, or analyze the document structure. Use this when you need to understand PDF contents beyond just form fields.",
+        description: "Read and analyze the full content of a PDF file. Claude can extract text, summarize, convert to markdown, answer questions, or analyze the document structure. Use this when you need to understand PDF contents beyond just form fields. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           properties: {
@@ -493,6 +569,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path"]
         },
+        annotations: {
+          title: "Read PDF Content",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       },
       {
         name: "get_pdf_resource_uri",
@@ -507,6 +590,77 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           },
           required: ["pdf_path"]
         },
+        annotations: {
+          title: "Get PDF Resource URI",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "display_pdf",
+        description: "Display an interactive PDF viewer with page navigation, zoom, search, and text selection. Automatically detects and displays form fields in a sidebar — no need to also call read_pdf_fields. This is the primary tool for viewing any PDF. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: {
+              type: "string",
+              description: "Path to the PDF file"
+            },
+            page: {
+              type: "number",
+              description: "Initial page number to display (default: 1)"
+            }
+          },
+          required: ["pdf_path"]
+        },
+        annotations: {
+          title: "Display PDF Viewer",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        },
+        _meta: {
+          ui: {
+            resourceUri: "ui://pdf-toolkit/viewer"
+          }
+        }
+      },
+      {
+        name: "read_pdf_bytes",
+        description: "Read PDF file bytes in chunks (for UI rendering)",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: {
+              type: "string",
+              description: "Path to the PDF file"
+            },
+            offset: {
+              type: "number",
+              description: "Byte offset to start reading from"
+            },
+            byteCount: {
+              type: "number",
+              description: "Number of bytes to read (max 524288)"
+            }
+          },
+          required: ["pdf_path", "offset", "byteCount"]
+        },
+        annotations: {
+          title: "Read PDF Bytes",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        },
+        _meta: {
+          ui: {
+            visibility: ["app"]
+          }
+        }
       }
     ],
   };
@@ -588,6 +742,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text: `PDF has ${fields.length} form fields:\n${JSON.stringify(fieldInfo, null, 2)}`
             }
           ],
+          _meta: {
+            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
+            pdfPath: resolvedPath,
+            fieldCount: fields.length
+          }
         };
       }
 
@@ -925,18 +1084,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               response += `File: ${fileName}\n`;
               response += `Size: ${fileSizeKB} KB\n`;
               response += `Pages: ${pageCount}\n`;
-
+              
               // Calculate scale to keep image size reasonable
               // Target ~500KB after base64 encoding (roughly 375KB raw)
               const targetSizeKB = 375;
               const scaleFactor = Math.min(1.5, Math.sqrt(targetSizeKB / parseFloat(fileSizeKB)));
-
+              
               // Convert first page to image
               const imageBuffer = await convertPdfPageToImage(pdfBuffer, 1, scaleFactor);
               const imageSizeKB = (imageBuffer.length / 1024).toFixed(2);
-
+              
               response += `\nPage 1 extracted as image (${imageSizeKB} KB, scale: ${scaleFactor.toFixed(2)})\n`;
-
+              
               // Return as image content
               return {
                 content: [{
@@ -958,7 +1117,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               response += `- Memory limitations\n`;
             }
           }
-
+          
           return {
             content: [{
               type: "text",
@@ -1007,6 +1166,136 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
       }
 
+      case "display_pdf": {
+        const { pdf_path, page } = args;
+        const resolvedPath = resolvePath(pdf_path);
+        const MAX_FILE_SIZE = 100 * 1024 * 1024; // 100MB
+
+        await fs.access(resolvedPath);
+        const stats = await fs.stat(resolvedPath);
+
+        if (stats.size > MAX_FILE_SIZE) {
+          return {
+            content: [{ type: "text", text: `PDF exceeds 100MB limit (${(stats.size / 1024 / 1024).toFixed(1)}MB). Use read_pdf_content for text extraction instead.` }],
+            isError: true,
+          };
+        }
+
+        const fileName = path.basename(resolvedPath);
+        const initialPage = Math.max(1, page || 1);
+
+        // Detect and extract form fields
+        let hasFormFields = false;
+        let fieldCount = 0;
+        let fieldInfo = [];
+        try {
+          const pdfBytes = await fs.readFile(resolvedPath);
+          const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+          const form = pdfDoc.getForm();
+          const fields = form.getFields();
+          fieldCount = fields.length;
+          hasFormFields = fieldCount > 0;
+
+          if (hasFormFields) {
+            fieldInfo = fields.map(field => {
+              const name = field.getName();
+              let type = "unknown";
+              let options = [];
+              let currentValue = "";
+              try {
+                if (field.constructor.name.includes("TextField")) {
+                  type = "text";
+                  currentValue = field.getText() || "";
+                } else if (field.constructor.name.includes("CheckBox")) {
+                  type = "checkbox";
+                  currentValue = field.isChecked();
+                } else if (field.constructor.name.includes("RadioGroup")) {
+                  type = "radio";
+                  currentValue = field.getSelected() || "";
+                } else if (field.constructor.name.includes("Dropdown")) {
+                  type = "dropdown";
+                  options = field.getOptions();
+                  currentValue = field.getSelected() || "";
+                }
+              } catch {}
+              return { name, type, options, currentValue };
+            });
+          }
+        } catch {
+          // Not a form PDF or encrypted — that's fine
+        }
+
+        let text = `Displaying: ${fileName} (${(stats.size / 1024).toFixed(0)} KB)`;
+        if (hasFormFields) {
+          text += `\n${fieldCount} form fields detected.`;
+        }
+
+        return {
+          content: [{ type: "text", text }],
+          structuredContent: {
+            pdfPath: resolvedPath,
+            totalBytes: stats.size,
+            initialPage,
+            hasFormFields,
+            fieldCount,
+            fields: fieldInfo,
+          },
+          _meta: {
+            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
+            viewUUID: `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            pdfPath: resolvedPath,
+            totalBytes: stats.size,
+            initialPage,
+            hasFormFields,
+            fieldCount,
+            fields: fieldInfo,
+          },
+        };
+      }
+
+      case "read_pdf_bytes": {
+        const { pdf_path, offset, byteCount } = args;
+        const resolvedPath = resolvePath(pdf_path);
+        const MAX_CHUNK = 524288; // 512KB max per chunk
+        const clampedByteCount = Math.min(byteCount || MAX_CHUNK, MAX_CHUNK);
+
+        const stats = await fs.stat(resolvedPath);
+        const totalBytes = stats.size;
+        const clampedOffset = Math.min(offset || 0, totalBytes);
+        const end = Math.min(clampedOffset + clampedByteCount, totalBytes);
+
+        let fileHandle;
+        try {
+          fileHandle = await fs.open(resolvedPath, "r");
+        } catch (err) {
+          return {
+            content: [{ type: "text", text: `Error opening file: ${err.message}` }],
+            isError: true,
+          };
+        }
+        const buffer = Buffer.alloc(end - clampedOffset);
+        await fileHandle.read(buffer, 0, buffer.length, clampedOffset);
+        await fileHandle.close();
+
+        const bytes = buffer.toString("base64");
+        const hasMore = end < totalBytes;
+
+        return {
+          content: [{
+            type: "text",
+            text: `${buffer.length} bytes at ${clampedOffset}/${totalBytes}`
+          }],
+          structuredContent: {
+            pdfPath: resolvedPath,
+            bytes,
+            offset: clampedOffset,
+            byteCount: buffer.length,
+            totalBytes,
+            hasMore,
+          },
+        };
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1025,17 +1314,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 // Resource handlers for PDFs
 server.setRequestHandler(ListResourcesRequestSchema, async () => {
   console.error(`[Resources] ListResourcesRequest received`);
-  // For now, we'll return an empty list since we're using dynamic PDF resources
-  // In the future, we could list recently accessed PDFs or PDFs in a specific directory
   return {
-    resources: []
+    resources: [
+      {
+        uri: "ui://pdf-toolkit/viewer",
+        name: "PDF Form Viewer",
+        mimeType: "text/html;profile=mcp-app"
+      }
+    ]
   };
 });
 
 server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
   const { uri } = request.params;
   console.error(`[Resources] ReadResourceRequest for URI: ${uri}`);
-  
+
+  // Handle UI resource requests (MCP Apps)
+  if (uri === "ui://pdf-toolkit/viewer") {
+    const htmlPath = path.join(
+      path.dirname(fileURLToPath(import.meta.url)),
+      "..",
+      "dist-ui",
+      "index.html"
+    );
+    console.error(`[Resources] Reading UI resource from: ${htmlPath}`);
+    const html = await fs.readFile(htmlPath, "utf-8");
+    return {
+      contents: [{
+        uri,
+        mimeType: "text/html;profile=mcp-app",
+        text: html
+      }]
+    };
+  }
+
   // Check if this is a PDF resource request
   if (!uri.startsWith("pdf://")) {
     console.error(`[Resources] Unsupported URI scheme: ${uri}`);
@@ -1075,17 +1387,41 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 async function main() {
   // Ensure profiles directory exists
   await fs.mkdir(PROFILES_DIR, { recursive: true }).catch(() => {});
-  
+
+  // Migrate profiles from old directory (~/.pdf-filler-profiles) if it exists
+  try {
+    const oldFiles = await fs.readdir(OLD_PROFILES_DIR);
+    const jsonFiles = oldFiles.filter(f => f.endsWith(".json"));
+    if (jsonFiles.length > 0) {
+      let migrated = 0;
+      for (const file of jsonFiles) {
+        const dest = path.join(PROFILES_DIR, file);
+        try {
+          await fs.access(dest);
+          // Already exists in new dir, skip
+        } catch {
+          await fs.copyFile(path.join(OLD_PROFILES_DIR, file), dest);
+          migrated++;
+        }
+      }
+      if (migrated > 0) {
+        console.error(`[PDF Tools] Migrated ${migrated} profile(s) from ${OLD_PROFILES_DIR} to ${PROFILES_DIR}`);
+      }
+    }
+  } catch {
+    // Old directory doesn't exist — nothing to migrate
+  }
+
   // Start the server
   const transport = new StdioServerTransport();
   await server.connect(transport);
-  
-  console.error("PDF Filler MCP server running...");
+
+  console.error("PDF Tools MCP server running...");
 }
 
 // Run the main function
 main().catch((error) => {
-  console.error("[PDF Filler] Fatal error:", error);
-  console.error("[PDF Filler] Stack trace:", error.stack);
+  console.error("[PDF Tools] Fatal error:", error);
+  console.error("[PDF Tools] Stack trace:", error.stack);
   process.exit(1);
 });
