@@ -24,7 +24,7 @@
   },
   "devDependencies": {
     "@modelcontextprotocol/ext-apps": "^1.2.2",
-    "vite": "^7.3.1",
+    "vite": "^8.0.2",
     "vite-plugin-singlefile": "^2.3.2"
   }
 }
