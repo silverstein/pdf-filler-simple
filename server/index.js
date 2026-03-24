@@ -8,7 +8,7 @@ import {
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, degrees as pdfDegrees } from "pdf-lib";
 import { createRequire } from "module";
 import { fileURLToPath, pathToFileURL } from "url";
 import fs from "fs/promises";
@@ -199,10 +199,38 @@ async function extractPdfText(pdfBuffer, maxPages) {
   return { text: pages.join("\n\n"), pagesRead: pagesToRead, totalPages };
 }
 
+// Helper: load a PDF from disk with password support and clear error messages
+async function loadPdf(inputPath, password = null) {
+  const resolvedPath = resolvePath(inputPath);
+  const pdfBytes = await fs.readFile(resolvedPath);
+  let pdfDoc;
+  try {
+    pdfDoc = await PDFDocument.load(pdfBytes, password ? { password } : {});
+  } catch (error) {
+    if (error.message?.includes("password") || error.message?.includes("encrypt")) {
+      throw new Error("PDF is password-protected. Please provide the correct password using the 'password' parameter.");
+    }
+    throw new Error(`Failed to load PDF: ${error.message}`);
+  }
+  return { pdfDoc, resolvedPath, pdfBytes };
+}
+
+// Import parsePageRanges from helpers (extracted for testability)
+import { parsePageRanges } from "./helpers.js";
+
+// Helper: validate profile name to prevent path traversal
+function validateProfileName(name) {
+  if (!name || typeof name !== "string") throw new Error("Profile name is required.");
+  if (!/^[\w\-. ]+$/.test(name)) {
+    throw new Error("Profile name may only contain letters, numbers, hyphens, underscores, spaces, and dots.");
+  }
+  return name;
+}
+
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.5.1",
+    version: "0.6.0",
   },
   {
     capabilities: {
@@ -233,18 +261,8 @@ function parseCSV(content) {
 
 // Helper function to fill PDF fields
 async function fillPdfFields(pdfPath, fieldData, password = null) {
-  const pdfBytes = await fs.readFile(pdfPath);
-  
-  let pdfDoc;
-  try {
-    pdfDoc = await PDFDocument.load(pdfBytes, { password });
-  } catch (error) {
-    if (error.message?.includes('password') || error.message?.includes('encrypt')) {
-      throw new Error(`PDF is password-protected. Please provide the correct password using the 'password' parameter.`);
-    }
-    throw new Error(`Failed to load PDF: ${error.message}`);
-  }
-  
+  const { pdfDoc } = await loadPdf(pdfPath, password);
+
   const form = pdfDoc.getForm();
   const filledFields = [];
   const errors = [];
@@ -661,6 +679,181 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             visibility: ["app"]
           }
         }
+      },
+      {
+        name: "merge_pdfs",
+        description: "Merge multiple PDF files into a single PDF. All paths must be absolute paths on the user's local machine.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            input_paths: {
+              type: "array",
+              items: { type: "string" },
+              description: "Array of PDF file paths to merge (in order)"
+            },
+            output_path: {
+              type: "string",
+              description: "Path where the merged PDF will be saved"
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional, applied to all inputs)"
+            }
+          },
+          required: ["input_paths", "output_path"]
+        },
+        annotations: {
+          title: "Merge PDFs",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        },
+        _meta: {
+          ui: {
+            resourceUri: "ui://pdf-toolkit/viewer"
+          }
+        }
+      },
+      {
+        name: "split_pdf",
+        description: "Split a PDF into multiple files by page ranges (e.g. '1-5,6-10') or at regular intervals (e.g. 'every 5'). All paths must be absolute paths on the user's local machine.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            input_path: {
+              type: "string",
+              description: "Path to the PDF file to split"
+            },
+            page_ranges: {
+              type: "string",
+              description: "Page ranges: '1-5,6-10,11-15' or 'every 5' for uniform splits"
+            },
+            output_directory: {
+              type: "string",
+              description: "Directory where split PDFs will be saved"
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)"
+            }
+          },
+          required: ["input_path", "page_ranges", "output_directory"]
+        },
+        annotations: {
+          title: "Split PDF",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "rotate_pdf_pages",
+        description: "Rotate pages in a PDF by 90, 180, or 270 degrees. All paths must be absolute paths on the user's local machine.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            input_path: {
+              type: "string",
+              description: "Path to the source PDF file"
+            },
+            output_path: {
+              type: "string",
+              description: "Path where the rotated PDF will be saved"
+            },
+            pages: {
+              type: "array",
+              items: { type: "number" },
+              description: "Array of 1-based page numbers to rotate (omit or empty array for all pages)"
+            },
+            degrees: {
+              type: "number",
+              description: "Rotation angle: 90, 180, or 270"
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)"
+            }
+          },
+          required: ["input_path", "output_path", "degrees"]
+        },
+        annotations: {
+          title: "Rotate PDF Pages",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        },
+        _meta: {
+          ui: {
+            resourceUri: "ui://pdf-toolkit/viewer"
+          }
+        }
+      },
+      {
+        name: "reorder_pdf_pages",
+        description: "Rearrange the pages of a PDF in a new order. All pages must be included exactly once (strict permutation). All paths must be absolute paths on the user's local machine.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            input_path: {
+              type: "string",
+              description: "Path to the source PDF file"
+            },
+            output_path: {
+              type: "string",
+              description: "Path where the reordered PDF will be saved"
+            },
+            page_order: {
+              type: "array",
+              items: { type: "number" },
+              description: "Array of 1-based page numbers in desired order, e.g. [3, 1, 2, 4]"
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)"
+            }
+          },
+          required: ["input_path", "output_path", "page_order"]
+        },
+        annotations: {
+          title: "Reorder PDF Pages",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        },
+        _meta: {
+          ui: {
+            resourceUri: "ui://pdf-toolkit/viewer"
+          }
+        }
+      },
+      {
+        name: "get_pdf_info",
+        description: "Get metadata about a PDF file: page count, file size, page dimensions, form field count, and whether it is encrypted. All paths must be absolute paths on the user's local machine.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: {
+              type: "string",
+              description: "Path to the PDF file"
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)"
+            }
+          },
+          required: ["pdf_path"]
+        },
+        annotations: {
+          title: "Get PDF Info",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
       }
     ],
   };
@@ -691,19 +884,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "read_pdf_fields": {
         const { pdf_path, password } = args;
-        const resolvedPath = resolvePath(pdf_path);
-        const pdfBytes = await fs.readFile(resolvedPath);
-        
-        let pdfDoc;
-        try {
-          pdfDoc = await PDFDocument.load(pdfBytes, { password });
-        } catch (error) {
-          if (error.message?.includes('password') || error.message?.includes('encrypt')) {
-            throw new Error(`PDF is password-protected. Please provide the correct password using the 'password' parameter.`);
-          }
-          throw new Error(`Failed to load PDF: ${error.message}`);
-        }
-        
+        const { pdfDoc, resolvedPath } = await loadPdf(pdf_path, password);
+
         const form = pdfDoc.getForm();
         const fields = form.getFields();
         
@@ -789,9 +971,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const results = [];
         for (let i = 0; i < records.length; i++) {
           const record = records[i];
-          const filename = filename_column && record[filename_column] 
-            ? `${record[filename_column]}.pdf`
-            : `filled_${i + 1}.pdf`;
+          let rawName = filename_column && record[filename_column]
+            ? record[filename_column]
+            : `filled_${i + 1}`;
+          // Sanitize filename to prevent path traversal
+          rawName = path.basename(rawName).replace(/[/\\]/g, "_");
+          const filename = `${rawName}.pdf`;
           const outputPath = path.join(resolvedOutputDir, filename);
           
           try {
@@ -814,6 +999,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "save_profile": {
         const { profile_name, field_data } = args;
+        validateProfileName(profile_name);
         const profilePath = path.join(PROFILES_DIR, `${profile_name}.json`);
         
         await fs.writeFile(profilePath, JSON.stringify(field_data, null, 2));
@@ -828,6 +1014,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "load_profile": {
         const { profile_name } = args;
+        validateProfileName(profile_name);
         const profilePath = path.join(PROFILES_DIR, `${profile_name}.json`);
         
         const profileData = await fs.readFile(profilePath, 'utf8');
@@ -858,9 +1045,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "fill_with_profile": {
         const { pdf_path, output_path, profile_name, additional_data = {}, password } = args;
+        validateProfileName(profile_name);
         const resolvedPdfPath = resolvePath(pdf_path);
         const resolvedOutputPath = resolvePath(output_path);
-        
+
         // Load profile
         const profilePath = path.join(PROFILES_DIR, `${profile_name}.json`);
         const profileData = JSON.parse(await fs.readFile(profilePath, 'utf8'));
@@ -939,19 +1127,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "validate_pdf": {
         const { pdf_path, password } = args;
-        const resolvedPath = resolvePath(pdf_path);
-        const pdfBytes = await fs.readFile(resolvedPath);
-        
-        let pdfDoc;
-        try {
-          pdfDoc = await PDFDocument.load(pdfBytes, { password });
-        } catch (error) {
-          if (error.message?.includes('password') || error.message?.includes('encrypt')) {
-            throw new Error(`PDF is password-protected. Please provide the correct password using the 'password' parameter.`);
-          }
-          throw new Error(`Failed to load PDF: ${error.message}`);
-        }
-        
+        const { pdfDoc } = await loadPdf(pdf_path, password);
+
         const form = pdfDoc.getForm();
         const fields = form.getFields();
         
@@ -1296,6 +1473,262 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case "merge_pdfs": {
+        const { input_paths, output_path, password } = args;
+        if (!input_paths || input_paths.length === 0) {
+          throw new Error("input_paths must be a non-empty array of PDF file paths.");
+        }
+        const resolvedOutputPath = resolvePath(output_path);
+
+        // Check no input path equals output path
+        const resolvedInputPaths = input_paths.map(p => resolvePath(p));
+        if (resolvedInputPaths.includes(resolvedOutputPath)) {
+          throw new Error("output_path must be different from all input paths to prevent file corruption.");
+        }
+
+        // Memory guard: check total file size
+        let totalSize = 0;
+        for (const rp of resolvedInputPaths) {
+          const s = await fs.stat(rp);
+          totalSize += s.size;
+        }
+        const MAX_MERGE_SIZE = 500 * 1024 * 1024;
+        if (totalSize > MAX_MERGE_SIZE) {
+          throw new Error(`Total input size (${(totalSize / 1024 / 1024).toFixed(1)}MB) exceeds 500MB limit.`);
+        }
+
+        const mergedDoc = await PDFDocument.create();
+        let totalPageCount = 0;
+        for (let fi = 0; fi < resolvedInputPaths.length; fi++) {
+          const rp = resolvedInputPaths[fi];
+          let srcDoc;
+          try {
+            ({ pdfDoc: srcDoc } = await loadPdf(rp, password));
+          } catch (err) {
+            throw new Error(`File ${fi + 1} (${path.basename(rp)}): ${err.message}`);
+          }
+          const pageIndices = srcDoc.getPageIndices();
+          const copiedPages = await mergedDoc.copyPages(srcDoc, pageIndices);
+          for (const page of copiedPages) {
+            mergedDoc.addPage(page);
+          }
+          totalPageCount += pageIndices.length;
+        }
+
+        const mergedBytes = await mergedDoc.save();
+        await fs.writeFile(resolvedOutputPath, mergedBytes);
+        const outputStats = await fs.stat(resolvedOutputPath);
+
+        return {
+          content: [{
+            type: "text",
+            text: `Merged ${input_paths.length} PDFs into: ${output_path}\nTotal pages: ${totalPageCount}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`
+          }],
+          _meta: {
+            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
+            pdfPath: resolvedOutputPath,
+            totalBytes: outputStats.size,
+            initialPage: 1,
+            hasFormFields: false,
+            fieldCount: 0,
+            fields: [],
+          },
+        };
+      }
+
+      case "split_pdf": {
+        const { input_path, page_ranges, output_directory, password } = args;
+        const { pdfDoc, resolvedPath: resolvedInputPath } = await loadPdf(input_path, password);
+        const resolvedOutputDir = resolvePath(output_directory);
+        await fs.mkdir(resolvedOutputDir, { recursive: true });
+
+        const totalPages = pdfDoc.getPageCount();
+        const ranges = parsePageRanges(page_ranges, totalPages);
+        const baseName = path.basename(resolvedInputPath, ".pdf");
+
+        const results = [];
+        for (let ri = 0; ri < ranges.length; ri++) {
+          const [start, end] = ranges[ri];
+          const newDoc = await PDFDocument.create();
+          const pageIndices = [];
+          for (let i = start - 1; i <= end - 1; i++) {
+            pageIndices.push(i);
+          }
+          const copiedPages = await newDoc.copyPages(pdfDoc, pageIndices);
+          for (const page of copiedPages) {
+            newDoc.addPage(page);
+          }
+
+          const suffix = ranges.length > 1 ? `_${ri + 1}` : "";
+          const filename = `${baseName}_pages_${start}-${end}${suffix}.pdf`;
+          const outputPath = path.join(resolvedOutputDir, filename);
+          const savedBytes = await newDoc.save();
+          await fs.writeFile(outputPath, savedBytes);
+          results.push(`${filename} (${end - start + 1} pages)`);
+        }
+
+        return {
+          content: [{
+            type: "text",
+            text: `Split ${path.basename(resolvedInputPath)} into ${results.length} files:\n${results.join("\n")}\nSaved to: ${output_directory}`
+          }],
+        };
+      }
+
+      case "rotate_pdf_pages": {
+        const { input_path, output_path, pages, degrees, password } = args;
+        if (![90, 180, 270].includes(degrees)) {
+          throw new Error(`Invalid rotation angle: ${degrees}. Must be 90, 180, or 270.`);
+        }
+        const resolvedInputPath = resolvePath(input_path);
+        const resolvedOutputPath = resolvePath(output_path);
+        if (resolvedInputPath === resolvedOutputPath) {
+          throw new Error("output_path must be different from input_path to prevent file corruption.");
+        }
+
+        const { pdfDoc } = await loadPdf(input_path, password);
+        const allPages = pdfDoc.getPages();
+        const totalPages = allPages.length;
+
+        // Determine which pages to rotate
+        const targetPages = (!pages || pages.length === 0)
+          ? allPages
+          : pages.map(p => {
+              if (p < 1 || p > totalPages) throw new Error(`Page ${p} is out of range (1-${totalPages}).`);
+              return allPages[p - 1];
+            });
+
+        for (const page of targetPages) {
+          const currentRotation = page.getRotation().angle;
+          page.setRotation(pdfDegrees((currentRotation + degrees) % 360));
+        }
+
+        const rotatedBytes = await pdfDoc.save();
+        await fs.writeFile(resolvedOutputPath, rotatedBytes);
+        const outputStats = await fs.stat(resolvedOutputPath);
+
+        return {
+          content: [{
+            type: "text",
+            text: `Rotated ${targetPages.length} page(s) by ${degrees}° and saved to: ${output_path}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`
+          }],
+          _meta: {
+            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
+            pdfPath: resolvedOutputPath,
+            totalBytes: outputStats.size,
+            initialPage: 1,
+            hasFormFields: false,
+            fieldCount: 0,
+            fields: [],
+          },
+        };
+      }
+
+      case "reorder_pdf_pages": {
+        const { input_path, output_path, page_order, password } = args;
+        if (!page_order || page_order.length === 0) {
+          throw new Error("page_order must be a non-empty array of page numbers.");
+        }
+        const resolvedInputPath = resolvePath(input_path);
+        const resolvedOutputPath = resolvePath(output_path);
+        if (resolvedInputPath === resolvedOutputPath) {
+          throw new Error("output_path must be different from input_path to prevent file corruption.");
+        }
+
+        const { pdfDoc } = await loadPdf(input_path, password);
+        const totalPages = pdfDoc.getPageCount();
+
+        // Validate strict permutation
+        const sorted = [...page_order].sort((a, b) => a - b);
+        const expected = Array.from({ length: totalPages }, (_, i) => i + 1);
+        if (sorted.length !== expected.length || !sorted.every((v, i) => v === expected[i])) {
+          throw new Error(`page_order must be a permutation of all pages (1-${totalPages}). Got: [${page_order.join(", ")}]`);
+        }
+
+        const newDoc = await PDFDocument.create();
+        const pageIndices = page_order.map(p => p - 1);
+        const copiedPages = await newDoc.copyPages(pdfDoc, pageIndices);
+        for (const page of copiedPages) {
+          newDoc.addPage(page);
+        }
+
+        const reorderedBytes = await newDoc.save();
+        await fs.writeFile(resolvedOutputPath, reorderedBytes);
+        const outputStats = await fs.stat(resolvedOutputPath);
+
+        return {
+          content: [{
+            type: "text",
+            text: `Reordered ${totalPages} pages and saved to: ${output_path}\nNew order: [${page_order.join(", ")}]\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`
+          }],
+          _meta: {
+            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
+            pdfPath: resolvedOutputPath,
+            totalBytes: outputStats.size,
+            initialPage: 1,
+            hasFormFields: false,
+            fieldCount: 0,
+            fields: [],
+          },
+        };
+      }
+
+      case "get_pdf_info": {
+        const { pdf_path, password } = args;
+        const resolvedPath = resolvePath(pdf_path);
+        const stats = await fs.stat(resolvedPath);
+        const fileName = path.basename(resolvedPath);
+        const fileSizeKB = (stats.size / 1024).toFixed(2);
+
+        let pageCount = 0;
+        let hasFormFields = false;
+        let fieldCount = 0;
+        let isEncrypted = false;
+        let pageDimensions = null;
+
+        try {
+          const pdfBytes = await fs.readFile(resolvedPath);
+          const loadOpts = password ? { password } : { ignoreEncryption: true };
+          const pdfDoc = await PDFDocument.load(pdfBytes, loadOpts);
+          const pages = pdfDoc.getPages();
+          pageCount = pages.length;
+
+          if (pages.length > 0) {
+            const firstPage = pages[0];
+            const { width, height } = firstPage.getSize();
+            pageDimensions = { width: Math.round(width), height: Math.round(height) };
+          }
+
+          try {
+            const form = pdfDoc.getForm();
+            const fields = form.getFields();
+            fieldCount = fields.length;
+            hasFormFields = fieldCount > 0;
+          } catch {
+            // No form or encrypted form — fine
+          }
+        } catch (error) {
+          if (error.message?.includes("password") || error.message?.includes("encrypt")) {
+            isEncrypted = true;
+          } else {
+            throw error;
+          }
+        }
+
+        let info = `File: ${fileName}\n`;
+        info += `Size: ${fileSizeKB} KB\n`;
+        info += `Pages: ${pageCount}\n`;
+        if (pageDimensions) {
+          info += `Page size: ${pageDimensions.width} x ${pageDimensions.height} pts\n`;
+        }
+        info += `Form fields: ${hasFormFields ? fieldCount : "none"}\n`;
+        info += `Encrypted: ${isEncrypted ? "yes" : "no"}`;
+
+        return {
+          content: [{ type: "text", text: info }],
+        };
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -1425,3 +1858,4 @@ main().catch((error) => {
   console.error("[PDF Tools] Stack trace:", error.stack);
   process.exit(1);
 });
+

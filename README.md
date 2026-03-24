@@ -77,6 +77,12 @@ Ask Claude to:
 *"Fill this W-9 with my business info: Company Name LLC, 123 Main St, Tax ID 12-3456789"*
 *"Use my 'work' profile to fill this application"*
 
+### Merge, Split & Organize
+*"Merge these three contracts into one PDF"*
+*"Split this report into chapters — every 10 pages"*
+*"Rotate page 3 by 90 degrees"*
+*"Reorder the pages so page 5 comes first"*
+
 ### Analyze Documents
 *"Summarize this research paper"*
 *"What does this contract say about payment terms?"*
@@ -106,6 +112,11 @@ Ask Claude to:
 | `validate_pdf` | Check for missing required fields |
 | `read_pdf_content` | Extract text content (with OCR fallback for scans) |
 | `get_pdf_resource_uri` | Get a resource URI for Claude's Resources API |
+| `merge_pdfs` | Merge multiple PDFs into a single document |
+| `split_pdf` | Split a PDF by page ranges or at regular intervals |
+| `rotate_pdf_pages` | Rotate pages by 90, 180, or 270 degrees |
+| `reorder_pdf_pages` | Rearrange pages in a new order |
+| `get_pdf_info` | Get page count, file size, dimensions, form field info |
 
 ## Development
 
@@ -113,8 +124,10 @@ Ask Claude to:
 ```
 PDF-Tools/
 ├── server/index.js          # MCP server (all tool definitions)
+├── server/helpers.js         # Shared helpers (parsePageRanges)
 ├── ui/                      # Interactive viewer source (TypeScript)
 ├── dist-ui/                 # Built viewer (single-file HTML)
+├── test/                    # Unit tests (vitest)
 ├── vite.config.mjs          # Vite build config for viewer
 ├── manifest.json            # Claude Desktop extension metadata
 ├── manifest.mcpb.json       # MCPB packaging manifest
@@ -127,6 +140,7 @@ PDF-Tools/
 ```bash
 npm install              # Install dependencies
 npm run build:ui         # Build the interactive viewer
+npm test                 # Run unit tests
 node server/index.js     # Run MCP server locally
 mcpb pack                # Build Claude Desktop extension
 ```

@@ -1,12 +1,13 @@
 {
   "name": "pdf-tools",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "PDF Tools MCP server for Claude Desktop",
   "type": "module",
   "main": "server/index.js",
   "license": "MIT",
   "scripts": {
-    "build:ui": "vite build"
+    "build:ui": "vite build",
+    "test": "vitest run"
   },
   "repository": {
     "type": "git",
@@ -25,6 +26,7 @@
   "devDependencies": {
     "@modelcontextprotocol/ext-apps": "^1.2.2",
     "vite": "^8.0.2",
-    "vite-plugin-singlefile": "^2.3.2"
+    "vite-plugin-singlefile": "^2.3.2",
+    "vitest": "^4.1.1"
   }
 }

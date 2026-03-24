@@ -1,10 +1,10 @@
 {
   "manifest_version": "0.3",
   "name": "pdf-toolkit",
-  "display_name": "PDF Tools - Fill, Analyze, Extract, View",
-  "description": "Let Claude work with PDFs on your computer: fill forms, analyze documents, extract data, and view them interactively — no uploading required.",
-  "long_description": "The complete PDF toolkit for Claude Desktop. Work with PDFs already on your computer without uploading.\n\n**Fill Forms & Automate:**\n• Fill out W-9, 1099, I-9, rental applications, and any fillable PDF\n• Bulk fill hundreds of PDFs from CSV data\n• Save reusable profiles for common forms\n• Validate required fields before submission\n\n**Interactive PDF Viewer:**\n• View any PDF with page navigation, zoom, and fullscreen\n• Search text across all pages with highlighted results\n• Select and copy text directly from PDFs\n• Form field sidebar shows all fields with fill status\n\n**Analyze & Extract:**\n• Analyze research papers and academic documents\n• Extract tables and structured data to CSV\n• Compare contract versions\n• Summarize 300+ page reports\n\n**Works with any PDF type:** Scientific papers, legal contracts, technical manuals, financial statements, invoices, and forms. Handles fillable forms, scanned documents, and encrypted PDFs.\n\n**Perfect for:** Researchers analyzing literature, lawyers comparing contracts, engineers reviewing specifications, accountants processing tax forms, and businesses automating invoices.",
-  "version": "0.5.1",
+  "display_name": "PDF Tools - View, Fill, Merge, Split, Extract, Analyze",
+  "description": "Let Claude work with PDFs on your computer: view, fill forms, merge, split, rotate, reorder pages, analyze documents, and extract data — all locally, no uploading required.",
+  "long_description": "The complete PDF toolkit for Claude Desktop. Work with PDFs already on your computer without uploading.\n\n**Merge, Split & Organize:**\n• Merge multiple PDFs into one document\n• Split PDFs by page ranges or at regular intervals\n• Rotate and reorder pages\n• All operations are local — your documents never leave your computer\n\n**Fill Forms & Automate:**\n• Fill out W-9, 1099, I-9, rental applications, and any fillable PDF\n• Bulk fill hundreds of PDFs from CSV data\n• Save reusable profiles for common forms\n• Validate required fields before submission\n\n**Interactive PDF Viewer:**\n• View any PDF with page navigation, zoom, and fullscreen\n• Search text across all pages with highlighted results\n• Select and copy text directly from PDFs\n• Form field sidebar shows all fields with fill status\n\n**Analyze & Extract:**\n• Analyze research papers and academic documents\n• Extract tables and structured data to CSV\n• Compare contract versions\n• Summarize 300+ page reports\n\n**Works with any PDF type:** Scientific papers, legal contracts, technical manuals, financial statements, invoices, and forms. Handles fillable forms, scanned documents, and encrypted PDFs.\n\n**Perfect for:** Researchers analyzing literature, lawyers comparing contracts, engineers reviewing specifications, accountants processing tax forms, businesses automating invoices, and anyone who needs to merge, split, or organize PDFs without uploading to web tools.",
+  "version": "0.6.0",
   "author": {
     "name": "Open Document Alliance",
     "url": "https://github.com/Open-Document-Alliance",
@@ -18,7 +18,7 @@
   "documentation": "https://github.com/Open-Document-Alliance/PDF-Tools/blob/master/README.md",
   "support": "https://github.com/Open-Document-Alliance/PDF-Tools/issues",
   "license": "MIT",
-  "keywords": ["pdf", "viewer", "interactive", "search", "research", "academic", "analyze", "compare", "extract", "documentation", "contracts", "forms", "fill", "w9", "1099", "tax", "invoice"],
+  "keywords": ["pdf", "merge", "split", "rotate", "reorder", "viewer", "interactive", "search", "research", "academic", "analyze", "compare", "extract", "documentation", "contracts", "forms", "fill", "w9", "1099", "tax", "invoice"],
   "icon": "icon.png",
   "tools": [
     {
@@ -72,6 +72,26 @@
     {
       "name": "get_pdf_resource_uri",
       "description": "Get a resource URI for a PDF file that can be used with Claude's built-in PDF reading capabilities via the Resources API"
+    },
+    {
+      "name": "merge_pdfs",
+      "description": "Merge multiple PDF files into a single PDF"
+    },
+    {
+      "name": "split_pdf",
+      "description": "Split a PDF into multiple files by page ranges or intervals"
+    },
+    {
+      "name": "rotate_pdf_pages",
+      "description": "Rotate pages in a PDF by 90, 180, or 270 degrees"
+    },
+    {
+      "name": "reorder_pdf_pages",
+      "description": "Rearrange the pages of a PDF in a new order"
+    },
+    {
+      "name": "get_pdf_info",
+      "description": "Get metadata about a PDF: page count, file size, dimensions, form fields"
     }
   ],
   "prompts": [
@@ -136,6 +156,21 @@
       "name": "extract_1099_data",
       "description": "Extract data from 1099 forms",
       "text": "I'll extract all data from your 1099 forms (1099-NEC, 1099-MISC, 1099-DIV, 1099-INT, etc.) and create a tax summary. I'll organize by payer, identify the type of income, sum totals by category, and format it for easy import into tax software."
+    },
+    {
+      "name": "merge_documents",
+      "description": "Combine multiple PDFs into one document",
+      "text": "I'll merge your PDF files into a single document. Just tell me which files to combine and where to save the result. I'll preserve the page order and show you the merged result in the viewer so you can verify it looks right. All processing happens locally on your computer — nothing is uploaded."
+    },
+    {
+      "name": "split_large_document",
+      "description": "Split a PDF into smaller files",
+      "text": "I'll split your PDF into separate files. You can specify exact page ranges (e.g., pages 1-10, 11-20) or split at regular intervals (e.g., every 5 pages). I'll save each section as its own PDF file. Great for breaking up large reports, separating chapters, or extracting specific sections."
+    },
+    {
+      "name": "organize_scanned_pages",
+      "description": "Rotate and reorder scanned PDF pages",
+      "text": "I'll help fix up your scanned PDF. I can rotate sideways or upside-down pages (90°, 180°, or 270°), and reorder pages that were scanned out of sequence. I'll show you the result in the viewer so you can confirm everything looks right before saving."
     }
   ],
   "server": {

@@ -123,6 +123,20 @@ Run these after any tool or packaging change:
 - `validate_pdf` on a partially filled form
 - `read_pdf_content` on text and scanned PDFs
 - `get_pdf_resource_uri` with a local path
+- `merge_pdfs` with two PDFs — merged result opens in viewer, page order preserved
+- `merge_pdfs` with empty array — clear error message
+- `merge_pdfs` with same input and output path — rejection error
+- `split_pdf` with "1-5,6-10" on a 10-page PDF — two files created
+- `split_pdf` with "every 3" on a 10-page PDF — 4 files, last has 1 page
+- `split_pdf` with invalid range "5-3" — clear error message
+- `rotate_pdf_pages` on page 1 by 90° — page visually rotated in viewer
+- `rotate_pdf_pages` with all pages (empty array) — all rotated
+- `rotate_pdf_pages` with invalid angle 45° — clear error message
+- `reorder_pdf_pages` with reversed order — pages reversed in output
+- `reorder_pdf_pages` with duplicate page — rejection error
+- `get_pdf_info` on example-fw9.pdf — returns page count, size, form fields
+- `get_pdf_info` on a non-form PDF — returns "none" for form fields
+- `npm test` — all parsePageRanges tests pass
 - `npm run build:ui` produces single-file HTML in `dist-ui/`
 - `mcpb pack` builds successfully
 

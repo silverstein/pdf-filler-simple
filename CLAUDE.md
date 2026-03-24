@@ -82,7 +82,7 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 7. `validate_pdf` on a partially filled form
 8. `read_pdf_content` on text and scanned PDFs
 
-## Available Tools (13 + 1 app-only)
+## Available Tools (18 + 1 app-only)
 
 1. **display_pdf** - Interactive PDF viewer with search, navigation, zoom, and form field sidebar
 2. **list_pdfs** - Lists PDF files in a directory
@@ -98,6 +98,11 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 12. **read_pdf_content** - Extract text/images from PDFs (OCR support)
 13. **get_pdf_resource_uri** - Get resource URI for a PDF file
 14. **read_pdf_bytes** - (app-only) Chunked byte streaming for the interactive viewer
+15. **merge_pdfs** - Merge multiple PDFs into a single document
+16. **split_pdf** - Split a PDF by page ranges or at regular intervals
+17. **rotate_pdf_pages** - Rotate pages by 90, 180, or 270 degrees
+18. **reorder_pdf_pages** - Rearrange pages in a new order
+19. **get_pdf_info** - Get page count, file size, dimensions, form field info
 
 ## Code Standards
 
