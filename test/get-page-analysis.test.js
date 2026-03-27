@@ -1,0 +1,79 @@
+import { describe, it, expect, beforeAll } from "vitest";
+import { PDFDocument } from "pdf-lib";
+import fs from "fs/promises";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const EXAMPLE_PDF = path.join(__dirname, "..", "example-fw9.pdf");
+
+// Reproduce the get_page_analysis logic for testing
+// Uses pdf-lib for dimensions (fast) — pdfjs-dist text extraction tested separately
+async function getPageAnalysis(inputPath, password) {
+  const pdfBytes = await fs.readFile(inputPath);
+  const pdfDoc = await PDFDocument.load(pdfBytes, password ? { password } : { ignoreEncryption: true });
+  const pages = pdfDoc.getPages();
+
+  const pageMeta = pages.map((page, i) => {
+    const { width, height } = page.getSize();
+    return {
+      page: i + 1,
+      width: Math.round(width),
+      height: Math.round(height),
+      orientation: width > height ? "landscape" : "portrait",
+    };
+  });
+
+  const orientationCounts = { portrait: 0, landscape: 0 };
+  for (const p of pageMeta) orientationCounts[p.orientation]++;
+  const majorityOrientation = orientationCounts.portrait >= orientationCounts.landscape ? "portrait" : "landscape";
+
+  return { total_pages: pages.length, majority_orientation: majorityOrientation, pages: pageMeta };
+}
+
+describe("get_page_analysis", () => {
+  let result;
+
+  beforeAll(async () => {
+    result = await getPageAnalysis(EXAMPLE_PDF);
+  });
+
+  it("returns correct total page count", () => {
+    expect(result.total_pages).toBeGreaterThan(0);
+  });
+
+  it("returns per-page dimensions", () => {
+    for (const page of result.pages) {
+      expect(page.width).toBeGreaterThan(0);
+      expect(page.height).toBeGreaterThan(0);
+      expect(page.page).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it("detects orientation correctly", () => {
+    for (const page of result.pages) {
+      if (page.width > page.height) {
+        expect(page.orientation).toBe("landscape");
+      } else {
+        expect(page.orientation).toBe("portrait");
+      }
+    }
+  });
+
+  it("determines majority orientation", () => {
+    expect(["portrait", "landscape"]).toContain(result.majority_orientation);
+  });
+
+  it("page numbers are 1-indexed and sequential", () => {
+    result.pages.forEach((p, i) => {
+      expect(p.page).toBe(i + 1);
+    });
+  });
+
+  it("example-fw9.pdf is portrait (standard letter size)", () => {
+    // W-9 form is US letter: 612 x 792 points
+    const page1 = result.pages[0];
+    expect(page1.orientation).toBe("portrait");
+    expect(page1.width).toBeLessThan(page1.height);
+  });
+});

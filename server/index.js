@@ -230,7 +230,7 @@ function validateProfileName(name) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.6.0",
+    version: "0.7.0",
   },
   {
     capabilities: {
@@ -849,6 +849,77 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         annotations: {
           title: "Get PDF Info",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "apply_page_plan",
+        description: "Apply a page plan to a PDF: reorder, rotate, and delete pages in one pass. Pages not listed in page_order are excluded (deleted). Writes a new file — original is never modified. All paths must be absolute.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            input_path: {
+              type: "string",
+              description: "Path to the source PDF file"
+            },
+            output_path: {
+              type: "string",
+              description: "Path where the new PDF will be saved (must differ from input_path)"
+            },
+            plan: {
+              type: "object",
+              description: "Page plan object",
+              properties: {
+                page_order: {
+                  type: "array",
+                  items: { type: "integer" },
+                  description: "1-indexed page numbers in desired order. Pages not listed are excluded (deleted)."
+                },
+                rotations: {
+                  type: "object",
+                  description: "Map of original page number (string) to rotation degrees (90, 180, or 270). Entries for excluded pages are silently ignored.",
+                  additionalProperties: { type: "number" }
+                }
+              },
+              required: ["page_order"]
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)"
+            }
+          },
+          required: ["input_path", "output_path", "plan"]
+        },
+        annotations: {
+          title: "Apply Page Plan",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "get_page_analysis",
+        description: "Analyze a PDF and return per-page metadata: text length, text snippet, image presence, dimensions, and orientation. Use this to identify blank pages, sideways pages, and potential duplicates. All paths must be absolute.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: {
+              type: "string",
+              description: "Path to the PDF file"
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)"
+            }
+          },
+          required: ["pdf_path"]
+        },
+        annotations: {
+          title: "Get Page Analysis",
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
@@ -1726,6 +1797,179 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         return {
           content: [{ type: "text", text: info }],
+        };
+      }
+
+      case "apply_page_plan": {
+        const { input_path, output_path, plan, password } = args;
+        const { page_order, rotations = {} } = plan;
+
+        if (!page_order || page_order.length === 0) {
+          throw new Error("plan.page_order must be a non-empty array of page numbers.");
+        }
+
+        const resolvedInputPath = resolvePath(input_path);
+        const resolvedOutputPath = resolvePath(output_path);
+        if (resolvedInputPath === resolvedOutputPath) {
+          throw new Error("output_path must be different from input_path to prevent file corruption.");
+        }
+
+        const { pdfDoc } = await loadPdf(input_path, password);
+        const totalPages = pdfDoc.getPageCount();
+
+        // Validate page numbers
+        const seen = new Set();
+        for (const p of page_order) {
+          if (!Number.isInteger(p) || p < 1 || p > totalPages) {
+            throw new Error(`Page ${p} is invalid (must be integer 1-${totalPages}).`);
+          }
+          if (seen.has(p)) {
+            throw new Error(`Duplicate page number in page_order: ${p}`);
+          }
+          seen.add(p);
+        }
+
+        // Validate rotation degrees
+        const validDegrees = [0, 90, 180, 270];
+        for (const [pageStr, deg] of Object.entries(rotations)) {
+          if (!validDegrees.includes(deg)) {
+            throw new Error(`Invalid rotation ${deg}° for page ${pageStr}. Must be 0, 90, 180, or 270.`);
+          }
+        }
+
+        // Build the new PDF
+        const newDoc = await PDFDocument.create();
+        const pageIndices = page_order.map(p => p - 1);
+        const copiedPages = await newDoc.copyPages(pdfDoc, pageIndices);
+
+        for (let i = 0; i < copiedPages.length; i++) {
+          const page = copiedPages[i];
+          const originalPageNum = page_order[i];
+          const rotationDeg = rotations[String(originalPageNum)];
+
+          if (rotationDeg) {
+            const currentRotation = page.getRotation().angle;
+            page.setRotation(pdfDegrees((currentRotation + rotationDeg) % 360));
+          }
+
+          newDoc.addPage(page);
+        }
+
+        const newBytes = await newDoc.save();
+        let outputStats;
+        try {
+          await fs.writeFile(resolvedOutputPath, newBytes);
+          outputStats = await fs.stat(resolvedOutputPath);
+        } catch (writeErr) {
+          // Clean up partial file if it exists
+          try { await fs.unlink(resolvedOutputPath); } catch {}
+          throw new Error(`Failed to save PDF: ${writeErr.message}. Check that the output directory exists and is writable.`);
+        }
+
+        const deletedCount = totalPages - page_order.length;
+        const rotatedCount = Object.keys(rotations).filter(k => seen.has(Number(k))).length;
+        let summary = `Saved ${page_order.length}-page PDF to: ${output_path}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`;
+        if (deletedCount > 0) summary += `\n${deletedCount} page(s) removed`;
+        if (rotatedCount > 0) summary += `\n${rotatedCount} page(s) rotated`;
+
+        return {
+          content: [{ type: "text", text: summary }],
+          _meta: {
+            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
+            pdfPath: resolvedOutputPath,
+            totalBytes: outputStats.size,
+            initialPage: 1,
+            hasFormFields: false,
+            fieldCount: 0,
+            fields: [],
+          },
+        };
+      }
+
+      case "get_page_analysis": {
+        const { pdf_path, password } = args;
+        const resolvedPath = resolvePath(pdf_path);
+
+        // Use pdf-lib for fast dimension extraction, keep pdfBytes for pdfjs-dist reuse
+        const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
+        const pdfLibPages = pdfDoc.getPages();
+        const totalPages = pdfLibPages.length;
+
+        // Pre-extract dimensions from pdf-lib (instant)
+        const pageMeta = pdfLibPages.map((page, i) => {
+          const { width, height } = page.getSize();
+          return {
+            page: i + 1,
+            width: Math.round(width),
+            height: Math.round(height),
+            orientation: width > height ? "landscape" : "portrait",
+            text_length: 0,
+            text_snippet: "",
+            has_images: false,
+          };
+        });
+
+        // Use pdfjs-dist for text extraction (slower — only first 100 chars per page)
+        try {
+          await loadPdfjs();
+          const pdfjsDoc = await pdfjsLib.getDocument({
+            data: new Uint8Array(pdfBytes),
+            password: password || undefined,
+            useSystemFonts: true,
+            disableFontFace: true,
+            verbosity: 0
+          }).promise;
+
+          const maxPages = Math.min(totalPages, 200);
+          for (let i = 0; i < maxPages; i++) {
+            try {
+              const page = await pdfjsDoc.getPage(i + 1);
+              const content = await page.getTextContent();
+              const fullText = content.items.map(item => item.str).join("");
+              pageMeta[i].text_length = fullText.length;
+              pageMeta[i].text_snippet = fullText.slice(0, 100);
+
+              // Check for images via operatorList
+              const ops = await page.getOperatorList();
+              const imageOps = [
+                pdfjsLib.OPS?.paintImageXObject,
+                pdfjsLib.OPS?.paintJpegXObject,
+                pdfjsLib.OPS?.paintImageMaskXObject,
+              ].filter(Boolean);
+              pageMeta[i].has_images = ops.fnArray.some(fn => imageOps.includes(fn));
+            } catch {
+              // Per-page error — leave defaults for this page
+            }
+          }
+
+          await pdfjsDoc.destroy();
+        } catch (textErr) {
+          // pdfjs-dist failed entirely — return dimension-only data
+          console.error("[get_page_analysis] Text extraction failed:", textErr.message);
+        }
+
+        // Compute majority orientation for detecting sideways pages
+        const orientationCounts = { portrait: 0, landscape: 0 };
+        for (const p of pageMeta) orientationCounts[p.orientation]++;
+        const majorityOrientation = orientationCounts.portrait >= orientationCounts.landscape ? "portrait" : "landscape";
+
+        // Only flag blank pages that were actually analyzed (not beyond the 200-page cap)
+        const analyzedCount = Math.min(totalPages, 200);
+        let summary = `Analyzed ${totalPages} pages`;
+        if (totalPages > 200) summary += ` (text extracted from first 200 only)`;
+        summary += ".";
+        const blankPages = pageMeta.filter(p => p.page <= analyzedCount && p.text_length === 0 && !p.has_images);
+        const sidewaysPages = pageMeta.filter(p => p.orientation !== majorityOrientation);
+        if (blankPages.length > 0) summary += ` ${blankPages.length} likely blank page(s): ${blankPages.map(p => p.page).join(", ")}.`;
+        if (sidewaysPages.length > 0) summary += ` ${sidewaysPages.length} page(s) in ${sidewaysPages[0].orientation} orientation (majority is ${majorityOrientation}): ${sidewaysPages.map(p => p.page).join(", ")}.`;
+
+        return {
+          content: [{ type: "text", text: summary }],
+          structuredContent: {
+            total_pages: totalPages,
+            majority_orientation: majorityOrientation,
+            pages: pageMeta,
+          },
         };
       }
 

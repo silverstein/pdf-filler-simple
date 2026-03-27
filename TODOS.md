@@ -2,6 +2,26 @@
 
 ## P1 — Ship Next
 
+### v0.7.0: Visual Page Manager + AI Cleanup
+- **What:** "Manage Pages" mode in display_pdf viewer — thumbnail grid with drag-to-reorder, rotate, delete. Two new tools: `apply_page_plan` and `get_page_analysis`. Chat-only AI suggestions (no visual overlay).
+- **Design:** APPROVED — `~/.gstack/projects/Open-Document-Alliance-PDF-Tools/silverbook-master-design-20260325-174508.md`
+- **Eng review:** CLEARED — 6 issues resolved, 3 critical gaps to address during implementation (disk write errors, corrupt page handling, thumbnail memory guard)
+- **Prerequisites:** (1) Test HTML5 DnD in MCP App sandbox, (2) Benchmark thumbnail rendering
+- **Effort:** M-L (CC: ~1.5 hours)
+- **Depends on:** Prerequisites passing
+
+### v0.7.0: Set up vitest test infrastructure
+- **What:** vitest config + test fixtures + tests for 2 new tools + smoke tests for 5 existing tools
+- **Why:** Zero test coverage across 21 tools shipping to 369K users
+- **Effort:** S (CC: ~25min)
+- **Depends on:** Nothing
+
+### v0.7.1: Modular refactor of server/index.js
+- **What:** Extract tool handlers from ~2,000-line switch statement into separate modules
+- **Why:** Eng review decision — ship v0.7.0 into monolith, refactor immediately after
+- **Effort:** M (CC: ~20min)
+- **Depends on:** v0.7.0 shipped + test suite in place
+
 ### parseCSV bug fix
 - **What:** parseCSV helper (server/index.js:222) doesn't handle quoted commas in CSV values
 - **Why:** Users with commas in their form data (addresses, company names) get corrupted bulk fills
@@ -9,16 +29,7 @@
 - **Depends on:** Nothing
 - **Context:** Known issue, called out in v0.5.0 plan as "separate PR." The function uses naive `.split(',')` instead of proper CSV parsing.
 
-## P2 — After v0.6.0
-
-### Visual page manager MCP App
-- **What:** Thumbnail strip view showing all pages. Drag-to-reorder, visual split point selection, merge preview.
-- **Why:** Transforms manipulation from "type page numbers" to "see and drag." Matches SmallPDF's UX inside Claude.
-- **Pros:** Killer feature, strong differentiation, natural extension of existing viewer
-- **Cons:** ~2 hours CC effort, new interaction patterns, heavier bundle
-- **Effort:** L (human) → M (CC)
-- **Depends on:** v0.6.0 manipulation tools proving usage frequency
-- **Context:** Deferred from v0.6.0 CEO review (2026-03-24). Build only if merge/split/rotate/reorder get used.
+## P2 — After v0.7.0
 
 ### PDF compression tool
 - **What:** compress_pdf tool that meaningfully reduces file size for image-heavy PDFs
@@ -40,22 +51,9 @@
 
 ## P3 — Tech Debt
 
-### Modular refactor of server/index.js
-- **What:** Break 1,427-line single file into modules (tools/merge.js, tools/split.js, etc.)
-- **Why:** Single file is increasingly hard to navigate. Blocks automated testing. Makes contributing harder.
-- **Pros:** Foundation for tests, cleaner for contributors, each tool independently testable
-- **Cons:** Larger diff, regression risk on working code shipping to 369K users
-- **Effort:** M (human) → S (CC)
-- **Depends on:** v0.6.0 shipped (don't refactor AND add features in same release)
-- **Context:** Acknowledged in both v0.5.0 and v0.6.0 plans. Do after v0.6.0 adds ~300 more lines.
+### ~~Modular refactor~~ — promoted to P1 (v0.7.1)
 
-### Automated test suite
-- **What:** Unit and integration tests for all tools
-- **Why:** Manual testing doesn't scale. Each new tool makes the manual checklist longer.
-- **Pros:** Confidence in releases, faster iteration, contributor-friendly
-- **Cons:** Initial setup effort, need test fixtures
-- **Effort:** M (human) → S (CC)
-- **Depends on:** Modular refactor (easier to test modules than a 1,700-line switch statement)
+### ~~Automated test suite~~ — promoted to P1 (v0.7.0)
 
 ### Cursor share bundle sync
 - **What:** Update pdf-toolkit-mcp-share/ to mirror current server/index.js capabilities

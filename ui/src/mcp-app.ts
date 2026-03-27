@@ -40,6 +40,21 @@ let isRendering = false;
 let pendingPage: number | null = null;
 let currentDisplayMode: "inline" | "fullscreen" = "inline";
 
+// Manage pages state
+type ManageMode = "view" | "manage";
+let manageMode: ManageMode = "view";
+
+interface PageState {
+  originalIndex: number; // 1-indexed
+  rotation: number; // cumulative degrees: 0, 90, 180, 270
+  deleted: boolean;
+  selected: boolean;
+  thumbnailDataUrl: string | null;
+}
+let pageStates: PageState[] = [];
+let dragSourceIndex: number | null = null;
+let hasUnsavedChanges = false;
+
 // Form fields
 interface FieldInfo {
   name: string;
@@ -729,6 +744,407 @@ async function startPreloading() {
   if (searchOpen && searchQuery) performSearch(searchQuery);
 }
 
+// ─── Manage Pages DOM ────────────────────────────────────────────────────────
+
+const modeTabsEl = $("mode-tabs");
+const modeViewBtn = $("mode-view-btn") as HTMLButtonElement;
+const modeManageBtn = $("mode-manage-btn") as HTMLButtonElement;
+const managePanelEl = $("manage-panel");
+const manageGridEl = $("manage-grid");
+const manageStatusEl = $("manage-status");
+const manageRotateCwBtn = $("manage-rotate-cw") as HTMLButtonElement;
+const manageRotateCcwBtn = $("manage-rotate-ccw") as HTMLButtonElement;
+const manageDeleteBtn = $("manage-delete") as HTMLButtonElement;
+const manageResetBtn = $("manage-reset") as HTMLButtonElement;
+const manageApplyBtn = $("manage-apply") as HTMLButtonElement;
+
+// ─── Manage Pages Logic ─────────────────────────────────────────────────────
+
+function initPageStates() {
+  pageStates = [];
+  for (let i = 1; i <= totalPages; i++) {
+    pageStates.push({
+      originalIndex: i,
+      rotation: 0,
+      deleted: false,
+      selected: false,
+      thumbnailDataUrl: null,
+    });
+  }
+  hasUnsavedChanges = false;
+}
+
+function switchMode(mode: ManageMode) {
+  manageMode = mode;
+  modeViewBtn.classList.toggle("active", mode === "view");
+  modeManageBtn.classList.toggle("active", mode === "manage");
+
+  const canvasContainer = document.querySelector(".canvas-container") as HTMLElement;
+  const searchBar = $("search-bar");
+
+  if (mode === "manage") {
+    canvasContainer.style.display = "none";
+    managePanelEl.style.display = "flex";
+    sidebarEl.style.display = "none";
+    searchBar.style.display = "none";
+    if (pageStates.length === 0) initPageStates();
+    renderManageGrid();
+  } else {
+    canvasContainer.style.display = "";
+    managePanelEl.style.display = "none";
+    renderPage();
+  }
+}
+
+function getSelectedPages(): number[] {
+  return pageStates
+    .map((ps, i) => ps.selected && !ps.deleted ? i : -1)
+    .filter(i => i >= 0);
+}
+
+function updateManageActions() {
+  const selected = getSelectedPages();
+  const hasSelection = selected.length > 0;
+  manageRotateCwBtn.disabled = !hasSelection;
+  manageRotateCcwBtn.disabled = !hasSelection;
+  manageDeleteBtn.disabled = !hasSelection;
+
+  const changes: string[] = [];
+  const deletedCount = pageStates.filter(p => p.deleted).length;
+  const rotatedCount = pageStates.filter(p => p.rotation !== 0).length;
+  const reordered = pageStates.some((ps, i) => ps.originalIndex !== i + 1);
+  if (deletedCount > 0) changes.push(`${deletedCount} deleted`);
+  if (rotatedCount > 0) changes.push(`${rotatedCount} rotated`);
+  if (reordered) changes.push("reordered");
+  hasUnsavedChanges = changes.length > 0;
+  manageResetBtn.disabled = !hasUnsavedChanges;
+  manageApplyBtn.disabled = !hasUnsavedChanges;
+  manageStatusEl.textContent = hasUnsavedChanges ? `\u26A0\uFE0F ${changes.join(", ")}` : "";
+}
+
+async function renderThumbnail(pageNum: number): Promise<string> {
+  if (!pdfDocument) return "";
+  const page = await pdfDocument.getPage(pageNum);
+  const baseViewport = page.getViewport({ scale: 1 });
+  const thumbScale = 120 / baseViewport.width;
+  const viewport = page.getViewport({ scale: thumbScale });
+
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.floor(viewport.width);
+  canvas.height = Math.floor(viewport.height);
+  const ctx = canvas.getContext("2d")!;
+  ctx.fillStyle = "white";
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+  await page.render({ canvasContext: ctx, viewport }).promise;
+  return canvas.toDataURL("image/jpeg", 0.7);
+}
+
+function createThumbItem(ps: PageState, idx: number, observer: IntersectionObserver): HTMLElement {
+  const item = document.createElement("div");
+  item.className = "manage-thumb-item";
+  item.dataset.idx = String(idx);
+  item.setAttribute("role", "option");
+  item.setAttribute("aria-label", `Page ${ps.originalIndex}`);
+  item.setAttribute("aria-selected", String(ps.selected));
+  item.tabIndex = 0;
+
+  if (ps.selected) item.classList.add("selected");
+  if (ps.deleted) item.classList.add("deleted");
+
+  // Image or placeholder
+  const img = document.createElement("img");
+  img.className = "manage-thumb-img";
+  img.alt = `Page ${ps.originalIndex}`;
+  img.draggable = false;
+  if (ps.thumbnailDataUrl) {
+    img.src = ps.thumbnailDataUrl;
+  } else {
+    img.style.display = "none";
+    const placeholder = document.createElement("div");
+    placeholder.className = "manage-thumb-placeholder";
+    item.appendChild(placeholder);
+    observer.observe(item);
+  }
+  item.appendChild(img);
+
+  // Page number label
+  const label = document.createElement("span");
+  label.className = "manage-thumb-label";
+  label.textContent = String(ps.originalIndex);
+  item.appendChild(label);
+
+  // Rotation badge
+  if (ps.rotation > 0) {
+    const badge = document.createElement("span");
+    badge.className = "manage-thumb-badge";
+    badge.textContent = `\u21BB${ps.rotation}\u00B0`;
+    item.appendChild(badge);
+  }
+
+  // Hover action buttons
+  const actions = document.createElement("div");
+  actions.className = "manage-thumb-actions";
+
+  const cwBtn = document.createElement("button");
+  cwBtn.className = "thumb-action";
+  cwBtn.title = "Rotate CW";
+  cwBtn.textContent = "\u21BB";
+  cwBtn.addEventListener("click", (e) => { e.stopPropagation(); ps.rotation = (ps.rotation + 90) % 360; renderManageGrid(); updateManageActions(); });
+
+  const ccwBtn = document.createElement("button");
+  ccwBtn.className = "thumb-action";
+  ccwBtn.title = "Rotate CCW";
+  ccwBtn.textContent = "\u21BA";
+  ccwBtn.addEventListener("click", (e) => { e.stopPropagation(); ps.rotation = (ps.rotation + 270) % 360; renderManageGrid(); updateManageActions(); });
+
+  const delBtn = document.createElement("button");
+  delBtn.className = "thumb-action";
+  delBtn.title = ps.deleted ? "Restore" : "Delete";
+  delBtn.textContent = ps.deleted ? "\u21A9" : "\u2715";
+  delBtn.addEventListener("click", (e) => { e.stopPropagation(); ps.deleted = !ps.deleted; ps.selected = false; renderManageGrid(); updateManageActions(); });
+
+  actions.appendChild(cwBtn);
+  actions.appendChild(ccwBtn);
+  actions.appendChild(delBtn);
+  item.appendChild(actions);
+
+  // Click to select
+  item.addEventListener("click", (e) => {
+    if ((e.target as HTMLElement).closest(".thumb-action")) return;
+    handleThumbClick(idx, e);
+  });
+
+  // Keyboard nav
+  item.addEventListener("keydown", (e) => {
+    if (e.key === " ") { e.preventDefault(); handleThumbClick(idx, e); }
+    if (e.key === "ArrowRight") focusThumb(idx + 1);
+    if (e.key === "ArrowLeft") focusThumb(idx - 1);
+    if (e.key === "ArrowDown") focusThumb(idx + 3);
+    if (e.key === "ArrowUp") focusThumb(idx - 3);
+  });
+
+  // Pointer-based drag
+  if (!ps.deleted) {
+    item.addEventListener("pointerdown", (e) => {
+      if ((e.target as HTMLElement).closest(".thumb-action")) return;
+      startDrag(idx, e);
+    });
+  }
+
+  return item;
+}
+
+function renderManageGrid() {
+  clearChildren(manageGridEl);
+
+  if (totalPages <= 1) {
+    const empty = document.createElement("div");
+    empty.className = "manage-empty";
+    const text = document.createElement("div");
+    text.className = "manage-empty-text";
+    text.textContent = "Only 1 page \u2014 nothing to rearrange.";
+    const btn = document.createElement("button");
+    btn.className = "manage-empty-btn";
+    btn.textContent = "Back to View";
+    btn.addEventListener("click", () => switchMode("view"));
+    empty.appendChild(text);
+    empty.appendChild(btn);
+    manageGridEl.appendChild(empty);
+    updateManageActions();
+    return;
+  }
+
+  const observer = new IntersectionObserver((entries) => {
+    for (const entry of entries) {
+      if (entry.isIntersecting) {
+        const el = entry.target as HTMLElement;
+        const idx = parseInt(el.dataset.idx!, 10);
+        const ps = pageStates[idx];
+        if (!ps.thumbnailDataUrl) {
+          renderThumbnail(ps.originalIndex).then(url => {
+            ps.thumbnailDataUrl = url;
+            const img = el.querySelector(".manage-thumb-img") as HTMLImageElement;
+            if (img) { img.src = url; img.style.display = ""; }
+            const placeholder = el.querySelector(".manage-thumb-placeholder");
+            if (placeholder) placeholder.remove();
+          });
+        }
+        observer.unobserve(el);
+      }
+    }
+  }, { rootMargin: "100px" });
+
+  pageStates.forEach((ps, idx) => {
+    manageGridEl.appendChild(createThumbItem(ps, idx, observer));
+  });
+
+  updateManageActions();
+}
+
+function focusThumb(idx: number) {
+  const items = manageGridEl.querySelectorAll(".manage-thumb-item");
+  const clamped = Math.max(0, Math.min(idx, items.length - 1));
+  (items[clamped] as HTMLElement).focus();
+}
+
+function handleThumbClick(idx: number, e: MouseEvent | KeyboardEvent) {
+  if (e.shiftKey) {
+    const lastSelected = pageStates.findIndex(p => p.selected);
+    const start = Math.min(lastSelected >= 0 ? lastSelected : idx, idx);
+    const end = Math.max(lastSelected >= 0 ? lastSelected : idx, idx);
+    pageStates.forEach((ps, i) => { ps.selected = i >= start && i <= end && !ps.deleted; });
+  } else if (e.ctrlKey || e.metaKey) {
+    pageStates[idx].selected = !pageStates[idx].selected;
+  } else {
+    pageStates.forEach(ps => { ps.selected = false; });
+    pageStates[idx].selected = !pageStates[idx].deleted;
+  }
+  renderManageGrid();
+}
+
+// ─── Pointer Drag ────────────────────────────────────────────────────────────
+
+let dragClone: HTMLElement | null = null;
+let dragOverIdx: number | null = null;
+
+function startDrag(idx: number, e: PointerEvent) {
+  dragSourceIndex = idx;
+  const item = e.currentTarget as HTMLElement;
+  item.setPointerCapture(e.pointerId);
+
+  const rect = item.getBoundingClientRect();
+  dragClone = item.cloneNode(true) as HTMLElement;
+  dragClone.classList.add("manage-drag-clone");
+  dragClone.style.width = `${rect.width}px`;
+  dragClone.style.height = `${rect.height}px`;
+  dragClone.style.left = `${e.clientX - rect.width / 2}px`;
+  dragClone.style.top = `${e.clientY - rect.height / 2}px`;
+  document.body.appendChild(dragClone);
+
+  item.classList.add("dragging");
+
+  const onMove = (me: PointerEvent) => {
+    if (!dragClone) return;
+    dragClone.style.left = `${me.clientX - rect.width / 2}px`;
+    dragClone.style.top = `${me.clientY - rect.height / 2}px`;
+
+    const items = manageGridEl.querySelectorAll(".manage-thumb-item");
+    let newOverIdx: number | null = null;
+    items.forEach((el, i) => {
+      const r = el.getBoundingClientRect();
+      if (me.clientX >= r.left && me.clientX <= r.right && me.clientY >= r.top && me.clientY <= r.bottom) {
+        newOverIdx = i;
+      }
+      el.classList.remove("drop-before", "drop-after");
+    });
+
+    if (newOverIdx !== null && newOverIdx !== dragSourceIndex) {
+      dragOverIdx = newOverIdx;
+      const target = items[newOverIdx] as HTMLElement;
+      target.classList.add(newOverIdx < dragSourceIndex! ? "drop-before" : "drop-after");
+    } else {
+      dragOverIdx = null;
+    }
+  };
+
+  const onUp = () => {
+    item.releasePointerCapture(e.pointerId);
+    item.removeEventListener("pointermove", onMove);
+    item.removeEventListener("pointerup", onUp);
+    item.classList.remove("dragging");
+
+    if (dragClone) { dragClone.remove(); dragClone = null; }
+
+    if (dragOverIdx !== null && dragSourceIndex !== null && dragOverIdx !== dragSourceIndex) {
+      const [moved] = pageStates.splice(dragSourceIndex, 1);
+      pageStates.splice(dragOverIdx, 0, moved);
+    }
+
+    dragSourceIndex = null;
+    dragOverIdx = null;
+    manageGridEl.querySelectorAll(".manage-thumb-item").forEach(el => el.classList.remove("drop-before", "drop-after"));
+
+    renderManageGrid();
+    updateManageActions();
+  };
+
+  item.addEventListener("pointermove", onMove);
+  item.addEventListener("pointerup", onUp);
+}
+
+// ─── Manage Actions ─────────────────────────────────────────────────────────
+
+function rotateSelected(deg: number) {
+  for (const idx of getSelectedPages()) {
+    pageStates[idx].rotation = (pageStates[idx].rotation + deg) % 360;
+  }
+  renderManageGrid();
+  updateManageActions();
+}
+
+function deleteSelected() {
+  for (const idx of getSelectedPages()) {
+    pageStates[idx].deleted = true;
+    pageStates[idx].selected = false;
+  }
+  renderManageGrid();
+  updateManageActions();
+}
+
+function resetPages() {
+  initPageStates();
+  renderManageGrid();
+  updateManageActions();
+}
+
+async function applyPagePlan() {
+  if (!hasUnsavedChanges || !pdfPath) return;
+
+  const activePages = pageStates.filter(ps => !ps.deleted);
+  const page_order = activePages.map(ps => ps.originalIndex);
+  const rotations: Record<string, number> = {};
+  for (const ps of activePages) {
+    if (ps.rotation > 0) rotations[String(ps.originalIndex)] = ps.rotation;
+  }
+
+  const dir = pdfPath.substring(0, pdfPath.lastIndexOf("/"));
+  const name = pdfPath.split("/").pop()!.replace(/\.pdf$/i, "");
+  const output_path = `${dir}/${name}_managed.pdf`;
+
+  manageApplyBtn.disabled = true;
+  manageApplyBtn.textContent = "Saving...";
+  manageStatusEl.textContent = "Saving...";
+
+  try {
+    const result = await app.callServerTool({
+      name: "apply_page_plan",
+      arguments: {
+        input_path: pdfPath,
+        output_path,
+        plan: { page_order, rotations },
+      },
+    });
+
+    if (result.isError) {
+      const errText = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Unknown error";
+      manageStatusEl.textContent = `\u274C ${errText}`;
+      manageApplyBtn.textContent = "Save as new file";
+      manageApplyBtn.disabled = false;
+      return;
+    }
+
+    manageStatusEl.textContent = `\u2705 Saved to ${output_path}`;
+    manageApplyBtn.textContent = "Save as new file";
+    manageGridEl.classList.add("manage-success-flash");
+    setTimeout(() => manageGridEl.classList.remove("manage-success-flash"), 500);
+  } catch (err: any) {
+    manageStatusEl.textContent = `\u274C Save failed: ${err.message}`;
+    manageApplyBtn.textContent = "Save as new file";
+    manageApplyBtn.disabled = false;
+  }
+}
+
 // ─── Event Listeners ─────────────────────────────────────────────────────────
 
 prevBtn.addEventListener("click", () => goToPage(currentPage - 1));
@@ -741,6 +1157,15 @@ searchPrevBtn.addEventListener("click", goToPrevMatch);
 searchNextBtn.addEventListener("click", goToNextMatch);
 fullscreenBtn.addEventListener("click", toggleFullscreen);
 sidebarToggleBtn.addEventListener("click", toggleSidebar);
+
+// Manage mode listeners
+modeViewBtn.addEventListener("click", () => switchMode("view"));
+modeManageBtn.addEventListener("click", () => switchMode("manage"));
+manageRotateCwBtn.addEventListener("click", () => rotateSelected(90));
+manageRotateCcwBtn.addEventListener("click", () => rotateSelected(270));
+manageDeleteBtn.addEventListener("click", deleteSelected);
+manageResetBtn.addEventListener("click", resetPages);
+manageApplyBtn.addEventListener("click", applyPagePlan);
 
 searchInputEl.addEventListener("input", () => {
   if (searchDebounceTimer) clearTimeout(searchDebounceTimer);
@@ -865,6 +1290,12 @@ app.ontoolresult = async (result: CallToolResult) => {
       showViewer();
       renderPage();
       startPreloading();
+
+      // Show mode tabs for multi-page PDFs
+      if (totalPages > 1) {
+        modeTabsEl.style.display = "";
+        initPageStates();
+      }
     } catch (err: any) {
       console.error("[viewer] Load error:", err);
       showError(err.message || "Failed to load PDF");

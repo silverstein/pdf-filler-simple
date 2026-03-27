@@ -82,7 +82,7 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 7. `validate_pdf` on a partially filled form
 8. `read_pdf_content` on text and scanned PDFs
 
-## Available Tools (18 + 1 app-only)
+## Available Tools (20 + 1 app-only)
 
 1. **display_pdf** - Interactive PDF viewer with search, navigation, zoom, and form field sidebar
 2. **list_pdfs** - Lists PDF files in a directory
@@ -103,6 +103,8 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 17. **rotate_pdf_pages** - Rotate pages by 90, 180, or 270 degrees
 18. **reorder_pdf_pages** - Rearrange pages in a new order
 19. **get_pdf_info** - Get page count, file size, dimensions, form field info
+20. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
+21. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
 
 ## Code Standards
 

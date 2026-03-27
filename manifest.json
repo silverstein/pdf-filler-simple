@@ -1,10 +1,10 @@
 {
   "manifest_version": "0.3",
   "name": "pdf-toolkit",
-  "display_name": "PDF Tools - View, Fill, Merge, Split, Extract, Analyze",
+  "display_name": "PDF Tools - View, Fill, Merge, Split, Manage Pages, Extract",
   "description": "Let Claude work with PDFs on your computer: view, fill forms, merge, split, rotate, reorder pages, analyze documents, and extract data — all locally, no uploading required.",
   "long_description": "The complete PDF toolkit for Claude Desktop. Work with PDFs already on your computer without uploading.\n\n**Merge, Split & Organize:**\n• Merge multiple PDFs into one document\n• Split PDFs by page ranges or at regular intervals\n• Rotate and reorder pages\n• All operations are local — your documents never leave your computer\n\n**Fill Forms & Automate:**\n• Fill out W-9, 1099, I-9, rental applications, and any fillable PDF\n• Bulk fill hundreds of PDFs from CSV data\n• Save reusable profiles for common forms\n• Validate required fields before submission\n\n**Interactive PDF Viewer:**\n• View any PDF with page navigation, zoom, and fullscreen\n• Search text across all pages with highlighted results\n• Select and copy text directly from PDFs\n• Form field sidebar shows all fields with fill status\n\n**Analyze & Extract:**\n• Analyze research papers and academic documents\n• Extract tables and structured data to CSV\n• Compare contract versions\n• Summarize 300+ page reports\n\n**Works with any PDF type:** Scientific papers, legal contracts, technical manuals, financial statements, invoices, and forms. Handles fillable forms, scanned documents, and encrypted PDFs.\n\n**Perfect for:** Researchers analyzing literature, lawyers comparing contracts, engineers reviewing specifications, accountants processing tax forms, businesses automating invoices, and anyone who needs to merge, split, or organize PDFs without uploading to web tools.",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "author": {
     "name": "Open Document Alliance",
     "url": "https://github.com/Open-Document-Alliance",
@@ -96,6 +96,14 @@
     {
       "name": "get_pdf_info",
       "description": "Get metadata about a PDF: page count, file size, dimensions, form fields"
+    },
+    {
+      "name": "apply_page_plan",
+      "description": "Reorder, rotate, and delete PDF pages in one pass — saves as a new file"
+    },
+    {
+      "name": "get_page_analysis",
+      "description": "Analyze PDF pages for blank detection, orientation, text content, and image presence"
     }
   ],
   "prompts": [

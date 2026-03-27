@@ -58,6 +58,12 @@
         <button id="search-close-btn" title="Close search">&times;</button>
       </div>
 
+      <!-- Mode tabs (below toolbar) -->
+      <div id="mode-tabs" class="mode-tabs" style="display:none">
+        <button id="mode-view-btn" class="mode-tab active" title="View PDF">&#128196; View</button>
+        <button id="mode-manage-btn" class="mode-tab" title="Manage pages">&#9638; Manage</button>
+      </div>
+
       <div class="viewer-body">
         <!-- PDF canvas area -->
         <div class="canvas-container">
@@ -66,6 +72,20 @@
             <div id="text-layer" class="text-layer"></div>
             <div id="highlight-layer" class="highlight-layer"></div>
           </div>
+        </div>
+
+        <!-- Manage Pages panel -->
+        <div id="manage-panel" class="manage-panel" style="display:none">
+          <div class="manage-actions">
+            <button id="manage-rotate-cw" title="Rotate clockwise" disabled>&#8635;</button>
+            <button id="manage-rotate-ccw" title="Rotate counter-clockwise" disabled>&#8634;</button>
+            <button id="manage-delete" title="Delete selected" disabled>&#128465;</button>
+            <button id="manage-reset" title="Reset to original" disabled>Reset</button>
+            <div class="manage-spacer"></div>
+            <button id="manage-apply" class="manage-apply-btn" title="Saves as a new file — original unchanged" disabled>Save as new file</button>
+          </div>
+          <div id="manage-grid" class="manage-grid" role="listbox" aria-label="PDF pages"></div>
+          <div id="manage-status" class="manage-status"></div>
         </div>
 
         <!-- Form field sidebar -->
