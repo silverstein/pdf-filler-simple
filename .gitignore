@@ -26,6 +26,7 @@ npm-debug.log*
 
 # Private Claude context (business-sensitive notes)
 .claude/
+.agents/
 
 # Legacy file (merged into CLAUDE.md)
 AGENTS.md
