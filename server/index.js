@@ -230,7 +230,7 @@ function validateProfileName(name) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.7.0",
+    version: "0.7.1",
   },
   {
     capabilities: {
@@ -2102,4 +2102,3 @@ main().catch((error) => {
   console.error("[PDF Tools] Stack trace:", error.stack);
   process.exit(1);
 });
-
