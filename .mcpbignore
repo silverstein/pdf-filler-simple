@@ -50,7 +50,15 @@ node_modules/postcss/
 node_modules/esbuild/
 
 # Docs and dev files
+.agents/
+.github/
 docs/
+test/
+scripts/
+package-lock.json
+AGENTS.md
 CLAUDE.md
 .claude/
+DESIGN.md
+TODOS.md
 example-fw9.pdf

@@ -7,7 +7,7 @@ function show_manual_method() {
     echo ""
     echo "{"
     echo '  "mcpServers": {'
-    echo '    "pdf-filler": {'
+    echo '    "pdf-tools": {'
     echo '      "command": "node",'
     echo "      \"args\": [\"$FULL_PATH\"]"
     echo '    }'
@@ -19,7 +19,7 @@ function show_manual_method() {
 # Navigate to the script's directory
 cd "$(dirname "$0")"
 
-echo "🚀 PDF Filler MCP Server Installer"
+echo "🚀 PDF Tools MCP Server Installer"
 echo "==================================="
 echo ""
 
@@ -31,7 +31,7 @@ if [[ "$CURRENT_DIR" == *"/Downloads/"* ]]; then
     echo ""
     
     # Create permanent location
-    PERMANENT_DIR="$HOME/.pdf-filler-mcp"
+    PERMANENT_DIR="$HOME/.pdf-tools-mcp"
     
     if [ -d "$PERMANENT_DIR" ]; then
         echo "🔄 Updating existing installation at $PERMANENT_DIR"
@@ -77,7 +77,7 @@ echo ""
 if [ -f "$MCP_CONFIG" ]; then
     echo "📂 Found existing MCP config"
     echo ""
-    echo "🤖 Should I automatically add pdf-filler to your Cursor config?"
+    echo "🤖 Should I automatically add pdf-tools to your Cursor config?"
     echo "   Type 'y' for Yes, 'n' for No"
     read -r response
     
@@ -86,9 +86,9 @@ if [ -f "$MCP_CONFIG" ]; then
         cp "$MCP_CONFIG" "$MCP_CONFIG.backup"
         echo "💾 Backup created: $MCP_CONFIG.backup"
         
-        # Check if pdf-filler already exists and remove old entry
-        if grep -q '"pdf-filler"' "$MCP_CONFIG"; then
-            echo "🔄 Updating existing pdf-filler configuration..."
+        # Check if pdf-tools already exists and remove old entry
+        if grep -q '"pdf-tools"' "$MCP_CONFIG"; then
+            echo "🔄 Updating existing pdf-tools configuration..."
         fi
         
         # Use python to safely update JSON
@@ -103,8 +103,8 @@ try:
     if 'mcpServers' not in config:
         config['mcpServers'] = {}
     
-    # Update or add pdf-filler config
-    config['mcpServers']['pdf-filler'] = {
+    # Update or add pdf-tools config
+    config['mcpServers']['pdf-tools'] = {
         'command': 'node',
         'args': ['$FULL_PATH']
     }
@@ -112,7 +112,7 @@ try:
     with open('$MCP_CONFIG', 'w') as f:
         json.dump(config, f, indent=2)
     
-    print('✅ Successfully updated pdf-filler in MCP config!')
+    print('✅ Successfully updated pdf-tools in MCP config!')
 except Exception as e:
     print(f'❌ Error: {e}')
     sys.exit(1)
@@ -120,14 +120,14 @@ except Exception as e:
         
         if [ $? -eq 0 ]; then
             echo ""
-            echo "🎉 SUCCESS! PDF Filler has been installed!"
+            echo "🎉 SUCCESS! PDF Tools has been installed!"
             echo ""
             echo "📍 Permanent location: $FULL_PATH"
             echo ""
             echo "🔄 Final steps:"
             echo "1. Completely quit Cursor (Cmd+Q)"
             echo "2. Restart Cursor"
-            echo "3. Look for 'pdf-filler' with '10 tools enabled'"
+            echo "3. Look for 'pdf-tools' in Cursor's MCP servers"
             echo ""
             echo "✨ You're all set! Safe to delete Downloads folder now."
         else
@@ -143,7 +143,7 @@ else
     cat > "$MCP_CONFIG" << EOF
 {
   "mcpServers": {
-    "pdf-filler": {
+    "pdf-tools": {
       "command": "node",
       "args": ["$FULL_PATH"]
     }
@@ -158,7 +158,7 @@ EOF
     echo "🔄 Final steps:"
     echo "1. Completely quit Cursor (Cmd+Q)"
     echo "2. Restart Cursor"  
-    echo "3. Look for 'pdf-filler' with '10 tools enabled'"
+    echo "3. Look for 'pdf-tools' in Cursor's MCP servers"
     echo ""
     echo "✨ Safe to delete Downloads folder now!"
 fi

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-echo "🚀 Installing PDF Filler MCP Server..."
+echo "🚀 Installing PDF Tools MCP Server..."
 npm install
 echo "✅ Dependencies installed!"
 echo ""
@@ -13,7 +13,7 @@ echo ""
 echo "==============================================="
 echo '{'
 echo '  "mcpServers": {'
-echo '    "pdf-filler": {'
+echo '    "pdf-tools": {'
 echo '      "command": "node",'
 echo "      \"args\": [\"$FULL_PATH\"]"
 echo '    }'
@@ -28,11 +28,11 @@ echo "💡 To open it quickly:"
 echo "   Mac/Linux: open ~/.cursor/mcp.json"
 echo "   Or: code ~/.cursor/mcp.json"
 echo ""
-echo "📝 If you already have other MCP servers, just add the pdf-filler part inside your existing mcpServers section!"
+echo "📝 If you already have other MCP servers, just add the pdf-tools part inside your existing mcpServers section!"
 echo ""
 echo "🔄 After saving the file:"
 echo "1. Completely quit Cursor"
 echo "2. Restart Cursor" 
-echo "3. Look for 'pdf-filler' showing '10 tools enabled'"
+echo "3. Look for 'pdf-tools' in Cursor's MCP servers"
 echo ""
 echo "✨ The full server path detected: $FULL_PATH"

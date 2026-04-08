@@ -1,13 +1,13 @@
-# PDF Filler MCP Server - Quick Setup
+# PDF Tools MCP Server - Quick Setup
 
-Fill PDF forms with Claude in Cursor! No more manual form filling.
+Work with PDFs locally in Cursor: view, fill, merge, split, rotate, reorder, and extract data without uploading.
 
 ## Installation Methods
 
 ### 🖱️ **Option 1: Double-Click Install** (Easiest - Mac only)
 Just **double-click `install.command`** - that's it!
 - Opens Terminal automatically
-- **Auto-moves files** from Downloads to permanent location (`~/.pdf-filler-mcp`)
+- **Auto-moves files** from Downloads to permanent location (`~/.pdf-tools-mcp`)
 - Installs everything 
 - Can auto-update your Cursor config
 - **Safe to delete Downloads** after install
@@ -35,14 +35,14 @@ Just **double-click `install.command`** - that's it!
 - **Cursor** with MCP support
 
 ## 🗂️ **Installation Location**
-- **If run from Downloads**: Auto-moves to `~/.pdf-filler-mcp` (permanent)
+- **If run from Downloads**: Auto-moves to `~/.pdf-tools-mcp` (permanent)
 - **If run elsewhere**: Installs in current location
 - **Safe cleanup**: Can delete original files after install
 
 ## After Installation
 1. **Completely quit Cursor** (Cmd+Q on Mac, Alt+F4 on Windows)
 2. **Restart Cursor**
-3. **Look for "pdf-filler"** in MCP servers showing "11 tools enabled"
+3. **Look for "pdf-tools"** in MCP servers
 4. **Toggle it on** if needed
 
 ## Usage Examples
@@ -54,8 +54,12 @@ Once installed, ask Claude in Cursor:
 - *"Fill 50 PDFs using data from this spreadsheet"*
 - *"Read the content of this PDF document"*
 - *"Analyze this scanned invoice PDF"*
+- *"Merge these contracts and show me the result"*
+- *"Split this report every 10 pages"*
+- *"Rotate page 3 by 90 degrees"*
 
 ## Tools Available
+- **display_pdf** - Interactive PDF viewer with search and form sidebar
 - **list_pdfs** - List PDF files in directories
 - **read_pdf_fields** - Read form fields from PDFs
 - **fill_pdf** - Fill PDF forms with data
@@ -65,6 +69,9 @@ Once installed, ask Claude in Cursor:
 - **extract_to_csv** - Export PDF data to spreadsheets
 - **validate_pdf** - Check for missing required fields
 - **read_pdf_content** - Read and analyze full PDF content (with OCR support for scanned PDFs)
+- **merge_pdfs** / **split_pdf** - Combine and split documents
+- **rotate_pdf_pages** / **reorder_pdf_pages** - Organize scanned or shuffled pages
+- **get_pdf_info** / **get_page_analysis** - Inspect pages, blank detection, orientation, and metadata
 
 ## Troubleshooting
 - **Node.js not found?** Install from [nodejs.org](https://nodejs.org)
@@ -75,12 +82,13 @@ Once installed, ask Claude in Cursor:
 
 ## What This Does
 This MCP server lets Claude directly:
-- Read PDF form fields 
-- Fill out forms programmatically
+- View PDFs interactively with search, zoom, and navigation
+- Read PDF form fields and fill out forms programmatically
 - Save common data as reusable profiles
 - Process multiple PDFs from spreadsheet data
 - Validate forms for completeness
+- Merge, split, rotate, and reorder pages
 - Extract and analyze full PDF content
 - Handle scanned PDFs with automatic OCR
 
-Perfect for W-9s, job applications, contracts, invoices, and any PDF processing! 
+Perfect for W-9s, job applications, contracts, invoices, research papers, and general PDF processing.
