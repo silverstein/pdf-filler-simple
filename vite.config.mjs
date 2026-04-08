@@ -11,11 +11,7 @@ export default defineConfig({
     outDir: "../dist-ui",
     emptyOutDir: true,
     target: "esnext",
-    rollupOptions: {
-      output: {
-        inlineDynamicImports: true,
-      },
-    },
+    codeSplitting: false,
   },
   worker: {
     format: "es",
