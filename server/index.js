@@ -14,6 +14,7 @@ import { fileURLToPath, pathToFileURL } from "url";
 import fs from "fs/promises";
 import path from "path";
 import { homedir } from "os";
+import { createScopedStderrSuppressor } from "./stderr-suppression.js";
 
 const _require = createRequire(import.meta.url);
 
@@ -104,22 +105,10 @@ function resolvePath(inputPath) {
   return path.resolve(inputPath);
 }
 
-async function withSuppressedStderr(action) {
-  const originalWrite = process.stderr.write.bind(process.stderr);
-  process.stderr.write = (chunk, encoding, callback) => {
-    if (typeof encoding === "function") {
-      encoding();
-    } else if (typeof callback === "function") {
-      callback();
-    }
-    return true;
-  };
+const stderrSuppressor = createScopedStderrSuppressor();
 
-  try {
-    return await action();
-  } finally {
-    process.stderr.write = originalWrite;
-  }
+async function withSuppressedStderr(action) {
+  return await stderrSuppressor.run(action);
 }
 
 // Helper function to convert PDF page to image
@@ -215,8 +204,8 @@ async function loadPdf(inputPath, password = null) {
   return { pdfDoc, resolvedPath, pdfBytes };
 }
 
-// Import parsePageRanges from helpers (extracted for testability)
-import { parsePageRanges } from "./helpers.js";
+// Import helpers extracted for testability
+import { getPageDisplayMetrics, parsePageRanges } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
 function validateProfileName(name) {
@@ -230,7 +219,7 @@ function validateProfileName(name) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.7.1",
+    version: "0.7.2",
   },
   {
     capabilities: {
@@ -1888,8 +1877,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "get_page_analysis": {
         const { pdf_path, password } = args;
-        const resolvedPath = resolvePath(pdf_path);
-
         // Use pdf-lib for fast dimension extraction, keep pdfBytes for pdfjs-dist reuse
         const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
         const pdfLibPages = pdfDoc.getPages();
@@ -1898,11 +1885,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         // Pre-extract dimensions from pdf-lib (instant)
         const pageMeta = pdfLibPages.map((page, i) => {
           const { width, height } = page.getSize();
+          const metrics = getPageDisplayMetrics({ width, height, rotation: page.getRotation().angle });
           return {
             page: i + 1,
-            width: Math.round(width),
-            height: Math.round(height),
-            orientation: width > height ? "landscape" : "portrait",
+            width: metrics.width,
+            height: metrics.height,
+            display_width: metrics.display_width,
+            display_height: metrics.display_height,
+            rotation: metrics.rotation,
+            orientation: metrics.orientation,
             text_length: 0,
             text_snippet: "",
             has_images: false,

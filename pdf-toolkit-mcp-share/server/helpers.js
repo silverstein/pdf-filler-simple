@@ -44,3 +44,24 @@ export function parsePageRanges(rangeString, totalPages) {
   }
   return ranges;
 }
+
+export function normalizeRotation(rotation) {
+  const normalized = rotation % 360;
+  return normalized < 0 ? normalized + 360 : normalized;
+}
+
+export function getPageDisplayMetrics({ width, height, rotation = 0 }) {
+  const normalizedRotation = normalizeRotation(rotation);
+  const swapsAxes = normalizedRotation === 90 || normalizedRotation === 270;
+  const displayWidth = swapsAxes ? height : width;
+  const displayHeight = swapsAxes ? width : height;
+
+  return {
+    width: Math.round(width),
+    height: Math.round(height),
+    rotation: normalizedRotation,
+    display_width: Math.round(displayWidth),
+    display_height: Math.round(displayHeight),
+    orientation: displayWidth > displayHeight ? "landscape" : "portrait",
+  };
+}

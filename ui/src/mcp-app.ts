@@ -16,6 +16,8 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import * as pdfjsLib from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist";
 import "./mcp-app.css";
+import { buildManagedPdfPath, getHostBaseName } from "./path-utils";
+import { getPdfToolLoadData } from "./tool-result";
 
 // PDF.js worker — inline as blob URL for single-file build
 import PdfWorker from "pdfjs-dist/build/pdf.worker.mjs?url";
@@ -78,6 +80,7 @@ let fieldMatches: { fieldName: string; fieldIndex: number }[] = [];
 // Preloading
 let preloadPaused = false;
 let pagesLoaded = 0;
+let lastLoadedResultKey = "";
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
 
@@ -152,7 +155,7 @@ function showViewer() {
 }
 
 function updateControls() {
-  titleEl.textContent = pdfPath.split("/").pop() || pdfPath;
+  titleEl.textContent = getHostBaseName(pdfPath);
   titleEl.title = pdfPath;
   pageInputEl.value = String(currentPage);
   pageInputEl.max = String(totalPages);
@@ -414,7 +417,7 @@ async function updatePageContext() {
       }
     }
 
-    const fileName = pdfPath.split("/").pop() || pdfPath;
+    const fileName = getHostBaseName(pdfPath);
     const header = `PDF Tools Viewer | "${fileName}" | Page ${currentPage}/${totalPages}`;
     let contextText = `${header}\n\nPage content:\n${content}`;
 
@@ -625,6 +628,7 @@ function toggleSidebar() {
 
 function renderFields() {
   clearChildren(fieldsListEl);
+  fillProgressEl.style.display = "none";
 
   if (fields.length === 0) {
     const el = document.createElement("div");
@@ -1108,9 +1112,7 @@ async function applyPagePlan() {
     if (ps.rotation > 0) rotations[String(ps.originalIndex)] = ps.rotation;
   }
 
-  const dir = pdfPath.substring(0, pdfPath.lastIndexOf("/"));
-  const name = pdfPath.split("/").pop()!.replace(/\.pdf$/i, "");
-  const output_path = `${dir}/${name}_managed.pdf`;
+  const output_path = buildManagedPdfPath(pdfPath);
 
   manageApplyBtn.disabled = true;
   manageApplyBtn.textContent = "Saving...";
@@ -1134,6 +1136,7 @@ async function applyPagePlan() {
       return;
     }
 
+    await loadPdfFromToolResult(result);
     manageStatusEl.textContent = `\u2705 Saved to ${output_path}`;
     manageApplyBtn.textContent = "Save as new file";
     manageGridEl.classList.add("manage-success-flash");
@@ -1244,62 +1247,7 @@ fieldFilterEl.addEventListener("input", () => {
 app.ontoolresult = async (result: CallToolResult) => {
   console.log("[viewer] Tool result:", result);
 
-  // Check if this is a display_pdf result
-  // Try structuredContent first, fall back to _meta (host may not forward structuredContent to apps)
-  const sc = result.structuredContent as any;
-  const meta = result._meta as any;
-  const data = (sc?.pdfPath && sc?.totalBytes) ? sc : (meta?.pdfPath && meta?.totalBytes) ? meta : null;
-
-  if (data) {
-    pdfPath = data.pdfPath;
-    const totalBytes = data.totalBytes;
-    const initialPage = data.initialPage || 1;
-    viewUUID = meta?.viewUUID ? String(meta.viewUUID) : undefined;
-
-    // Load form field data — check all possible sources
-    const fieldData = (Array.isArray(data.fields) && data.fields.length > 0) ? data.fields
-      : (Array.isArray(meta?.fields) && meta.fields.length > 0) ? meta.fields
-      : (Array.isArray(sc?.fields) && sc.fields.length > 0) ? sc.fields
-      : null;
-    const fCount = data.fieldCount || meta?.fieldCount || sc?.fieldCount || 0;
-    const hasFields = data.hasFormFields || meta?.hasFormFields || sc?.hasFormFields || false;
-
-    if (hasFields && fCount > 0) {
-      sidebarToggleBtn.style.display = "";
-      sidebarToggleBtn.textContent = `Fields (${fCount})`;
-
-      if (fieldData && Array.isArray(fieldData) && fieldData.length > 0) {
-        fields = fieldData;
-        renderFields();
-      }
-    }
-
-    showLoading("Loading PDF...");
-
-    try {
-      pdfDocument = await loadPdfProgressively(pdfPath, totalBytes);
-      totalPages = pdfDocument.numPages;
-
-      // Restore saved page or use initial
-      const saved = loadSavedPage();
-      currentPage = (saved && saved <= totalPages) ? saved : initialPage;
-
-      pagesLoaded = 0;
-      pageTextCache.clear();
-
-      showViewer();
-      renderPage();
-      startPreloading();
-
-      // Show mode tabs for multi-page PDFs
-      if (totalPages > 1) {
-        modeTabsEl.style.display = "";
-        initPageStates();
-      }
-    } catch (err: any) {
-      console.error("[viewer] Load error:", err);
-      showError(err.message || "Failed to load PDF");
-    }
+  if (await loadPdfFromToolResult(result)) {
     return;
   }
 
@@ -1354,6 +1302,62 @@ app.ontoolresult = async (result: CallToolResult) => {
     showError(err.message || "Error processing result");
   }
 };
+
+async function loadPdfFromToolResult(result: CallToolResult) {
+  const payload = getPdfToolLoadData(result);
+  if (!payload) return false;
+  if (payload.key === lastLoadedResultKey && pdfDocument && pdfPath === payload.pdfPath) return true;
+
+  lastLoadedResultKey = payload.key;
+  pdfPath = payload.pdfPath;
+  viewUUID = payload.viewUUID;
+
+  if (payload.hasFormFields && payload.fieldCount > 0) {
+    sidebarToggleBtn.style.display = "";
+    sidebarToggleBtn.textContent = `Fields (${payload.fieldCount})`;
+    fields = payload.fields as FieldInfo[];
+    renderFields();
+  } else {
+    fields = [];
+    selectedField = null;
+    renderFields();
+    hideSidebar();
+    sidebarToggleBtn.style.display = "none";
+    fillProgressEl.style.display = "none";
+  }
+
+  showLoading("Loading PDF...");
+
+  try {
+    pdfDocument = await loadPdfProgressively(pdfPath, payload.totalBytes);
+    totalPages = pdfDocument.numPages;
+
+    const saved = loadSavedPage();
+    currentPage = (saved && saved <= totalPages) ? saved : payload.initialPage;
+
+    pagesLoaded = 0;
+    pageTextCache.clear();
+    pageStates = [];
+    hasUnsavedChanges = false;
+
+    showViewer();
+    modeTabsEl.style.display = totalPages > 1 ? "" : "none";
+    if (totalPages > 1) {
+      initPageStates();
+    }
+    updateManageActions();
+    manageStatusEl.textContent = "";
+    manageApplyBtn.textContent = "Save as new file";
+    switchMode("view");
+    startPreloading();
+  } catch (err: any) {
+    lastLoadedResultKey = "";
+    console.error("[viewer] Load error:", err);
+    showError(err.message || "Failed to load PDF");
+  }
+
+  return true;
+}
 
 app.onerror = (err: unknown) => {
   console.error("[viewer] App error:", err);

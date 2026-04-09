@@ -1,11 +1,13 @@
-import { describe, it, expect, beforeAll } from "vitest";
-import { PDFDocument } from "pdf-lib";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { PDFDocument, degrees } from "pdf-lib";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import { getPageDisplayMetrics } from "../server/helpers.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXAMPLE_PDF = path.join(__dirname, "..", "example-fw9.pdf");
+const TMP_DIR = path.join(__dirname, "..", ".test-tmp-analysis");
 
 // Reproduce the get_page_analysis logic for testing
 // Uses pdf-lib for dimensions (fast) — pdfjs-dist text extraction tested separately
@@ -16,11 +18,15 @@ async function getPageAnalysis(inputPath, password) {
 
   const pageMeta = pages.map((page, i) => {
     const { width, height } = page.getSize();
+    const metrics = getPageDisplayMetrics({ width, height, rotation: page.getRotation().angle });
     return {
       page: i + 1,
-      width: Math.round(width),
-      height: Math.round(height),
-      orientation: width > height ? "landscape" : "portrait",
+      width: metrics.width,
+      height: metrics.height,
+      display_width: metrics.display_width,
+      display_height: metrics.display_height,
+      rotation: metrics.rotation,
+      orientation: metrics.orientation,
     };
   });
 
@@ -35,7 +41,12 @@ describe("get_page_analysis", () => {
   let result;
 
   beforeAll(async () => {
+    await fs.mkdir(TMP_DIR, { recursive: true });
     result = await getPageAnalysis(EXAMPLE_PDF);
+  });
+
+  afterAll(async () => {
+    await fs.rm(TMP_DIR, { recursive: true, force: true });
   });
 
   it("returns correct total page count", () => {
@@ -52,7 +63,7 @@ describe("get_page_analysis", () => {
 
   it("detects orientation correctly", () => {
     for (const page of result.pages) {
-      if (page.width > page.height) {
+      if (page.display_width > page.display_height) {
         expect(page.orientation).toBe("landscape");
       } else {
         expect(page.orientation).toBe("portrait");
@@ -75,5 +86,19 @@ describe("get_page_analysis", () => {
     const page1 = result.pages[0];
     expect(page1.orientation).toBe("portrait");
     expect(page1.width).toBeLessThan(page1.height);
+  });
+
+  it("treats a 90-degree rotated portrait page as landscape for display", async () => {
+    const rotatedPath = path.join(TMP_DIR, "rotated-analysis.pdf");
+    const doc = await PDFDocument.create();
+    doc.addPage([612, 792]);
+    const rotatedPage = doc.addPage([612, 792]);
+    rotatedPage.setRotation(degrees(90));
+    await fs.writeFile(rotatedPath, await doc.save());
+
+    const rotatedResult = await getPageAnalysis(rotatedPath);
+    expect(rotatedResult.pages[1].rotation).toBe(90);
+    expect(rotatedResult.pages[1].orientation).toBe("landscape");
+    expect(rotatedResult.pages[1].display_width).toBeGreaterThan(rotatedResult.pages[1].display_height);
   });
 });
