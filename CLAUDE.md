@@ -164,6 +164,19 @@ Keep versions aligned. See `docs/RELEASE.md` for the full checklist.
 
 Watch the MCPB repo for releases and breaking changes.
 
+### pdfjs-dist — PINNED VERSION, DO NOT UPGRADE WITHOUT TESTING
+
+**`pdfjs-dist` is pinned to `5.4.624` (exact, no caret).** Do not upgrade.
+
+The interactive PDF viewer (`display_pdf`) runs inside Claude Desktop's Electron sandbox, which ships an older Chromium. Newer pdfjs-dist versions (5.5+) use ES2025 APIs like `Map.prototype.getOrInsertComputed` (Chrome 134+) that crash the viewer with `TypeError: this[#t].getOrInsertComputed is not a function`. The server-side Node.js code works fine — only the viewer breaks, making the regression invisible until you test in Claude Desktop.
+
+**If upgrading pdfjs-dist:**
+1. Grep the new version for ES2025+ APIs: `grep -r "getOrInsertComputed\|sumPrecise" node_modules/pdfjs-dist/build/`
+2. Rebuild the UI: `npm run build:ui`
+3. Run `mcpb pack` and install in Claude Desktop
+4. Test `display_pdf` on at least one PDF — confirm pages render without errors
+5. Check Claude Desktop logs: `~/Library/Logs/Claude/claude.ai-web.log` for `[viewer] Render error`
+
 ## Commit & Pull Request Guidelines
 
 ### Commit Style

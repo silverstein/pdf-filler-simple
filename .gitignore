@@ -33,3 +33,4 @@ AGENTS.md
 
 # Build artifacts (attach to releases, don't commit)
 pdf-toolkit-mcp.zip
+*.mcpb
