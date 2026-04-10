@@ -1,32 +1,22 @@
+/* Theme tokens — alias host-provided CSS variables (set by applyHostStyleVariables)
+   with hardcoded fallbacks for standalone / non-MCP-App usage. */
 :root {
-  --bg-primary: #ffffff;
-  --bg-secondary: #f7f7f8;
-  --bg-tertiary: #ececf1;
-  --text-primary: #1a1a2e;
-  --text-secondary: #6b6b80;
-  --text-muted: #9b9baf;
-  --border-color: #e0e0e6;
-  --accent: #5b5fc7;
-  --accent-light: #eeeef8;
-  --success: #16a34a;
-  --warning: #d97706;
-  --error: #dc2626;
-  --radius: 8px;
-  --radius-sm: 4px;
+  --bg-primary: var(--color-background-primary, #ffffff);
+  --bg-secondary: var(--color-background-secondary, #f7f7f8);
+  --bg-tertiary: var(--color-background-tertiary, #ececf1);
+  --text-primary: var(--color-text-primary, #1a1a2e);
+  --text-secondary: var(--color-text-secondary, #6b6b80);
+  --text-muted: var(--color-text-tertiary, #9b9baf);
+  --border-color: var(--color-border-primary, #e0e0e6);
+  --accent: var(--color-ring-primary, #5b5fc7);
+  --accent-light: var(--color-background-info, #eeeef8);
+  --success: var(--color-text-success, #16a34a);
+  --warning: var(--color-text-warning, #d97706);
+  --error: var(--color-text-danger, #dc2626);
+  --radius: var(--border-radius-md, 8px);
+  --radius-sm: var(--border-radius-sm, 4px);
   --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
   --shadow: 0 2px 8px rgba(0,0,0,0.08);
-}
-
-[data-theme="dark"] {
-  --bg-primary: #1a1a2e;
-  --bg-secondary: #222236;
-  --bg-tertiary: #2a2a40;
-  --text-primary: #e8e8ed;
-  --text-secondary: #9b9baf;
-  --text-muted: #6b6b80;
-  --border-color: #353550;
-  --accent: #7b7fc7;
-  --accent-light: #2a2a50;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -130,7 +120,7 @@ body {
   align-items: center;
   gap: 6px;
   padding: 6px 12px;
-  background: var(--bg-secondary);
+  background: var(--bg-primary);
   border-bottom: 1px solid var(--border-color);
   flex-shrink: 0;
   font-size: 13px;
@@ -264,7 +254,7 @@ body {
   overflow: auto;
   display: flex;
   padding: 16px;
-  background: var(--bg-tertiary);
+  background: var(--bg-primary);
   min-width: 0;
 }
 
