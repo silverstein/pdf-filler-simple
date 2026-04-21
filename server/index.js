@@ -210,6 +210,7 @@ import {
   getPageDisplayMetrics,
   parsePageRanges,
   downloadPdfFromUrl,
+  findUniquePath,
   validateSignatureName,
   parseImageDataUrl,
   validateSigningIntent,
@@ -262,6 +263,7 @@ const DEFAULT_DOWNLOAD_DIR = envPathOrDefault("DEFAULT_DOWNLOAD_DIR", path.join(
 // Keep in sync with manifest.json and share bundle defaults
 const PROFILES_DIR = process.env.DEFAULT_PROFILES_DIR || path.join(homedir(), ".pdf-toolkit-files");
 const SIGNATURES_DIR = path.join(PROFILES_DIR, "signatures");
+const BACKUPS_DIR = path.join(PROFILES_DIR, "backups");
 const OLD_PROFILES_DIR = path.join(homedir(), ".pdf-filler-profiles");
 
 function tempOutputPath(targetPath) {
@@ -281,6 +283,48 @@ async function writePdfOutputAtomic(targetPath, bytes) {
   }
 }
 
+const backupPathByCanonical = new Map();
+const activeDocumentState = {
+  activePath: null,
+  backupPath: null,
+  lastOpenedAt: null,
+  lastMutationTool: null,
+  lastMutationAt: null,
+};
+
+function backupFileNameFor(pdfPath) {
+  const ext = path.extname(pdfPath) || ".pdf";
+  const base = path.basename(pdfPath, ext).replace(/[^\w.-]+/g, "_");
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${base}__${stamp}${ext}`;
+}
+
+async function ensureBackupForCanonicalPath(pdfPath) {
+  const resolvedPath = resolvePath(pdfPath);
+  const existing = backupPathByCanonical.get(resolvedPath);
+  if (existing) {
+    try {
+      await fs.access(existing);
+      return existing;
+    } catch {
+      // Fall through and recreate the missing backup.
+    }
+  }
+
+  await fs.mkdir(BACKUPS_DIR, { recursive: true });
+  const target = await findUniquePath(path.join(BACKUPS_DIR, backupFileNameFor(resolvedPath)));
+  await fs.copyFile(resolvedPath, target);
+  backupPathByCanonical.set(resolvedPath, target);
+  return target;
+}
+
+function noteDocumentOpened(pdfPath) {
+  const resolvedPath = resolvePath(pdfPath);
+  activeDocumentState.activePath = resolvedPath;
+  activeDocumentState.backupPath = backupPathByCanonical.get(resolvedPath) || null;
+  activeDocumentState.lastOpenedAt = new Date().toISOString();
+}
+
 async function buildPdfLoadPayload(pdfPath, initialPage = 1, extra = {}) {
   const stats = await fs.stat(pdfPath);
   return {
@@ -292,6 +336,61 @@ async function buildPdfLoadPayload(pdfPath, initialPage = 1, extra = {}) {
     hasFormFields: false,
     ...extra,
   };
+}
+
+async function buildActiveDocumentPayload(pdfPath, initialPage = 1, extra = {}) {
+  const resolvedPath = resolvePath(pdfPath);
+  let defaultFormInfo = {};
+  if (extra.fields === undefined && extra.fieldCount === undefined && extra.hasFormFields === undefined) {
+    try {
+      const { pdfDoc } = await loadPdf(resolvedPath);
+      defaultFormInfo = getFormFieldInfo(pdfDoc);
+    } catch {
+      defaultFormInfo = { fields: [], fieldCount: 0, hasFormFields: false };
+    }
+  }
+  const payload = await buildPdfLoadPayload(resolvedPath, initialPage, {
+    ...defaultFormInfo,
+    ...extra,
+  });
+  const backupPath = backupPathByCanonical.get(resolvedPath) || null;
+  return {
+    ...payload,
+    active_path: resolvedPath,
+    backup_path: backupPath,
+    last_mutation_tool: activeDocumentState.activePath === resolvedPath ? activeDocumentState.lastMutationTool : null,
+    last_mutation_at: activeDocumentState.activePath === resolvedPath ? activeDocumentState.lastMutationAt : null,
+  };
+}
+
+async function persistPdfMutation({
+  pdfDoc,
+  inputPath,
+  outputPath,
+  toolName,
+  initialPage = 1,
+  extraPayload = {},
+}) {
+  const resolvedInputPath = resolvePath(inputPath);
+  const resolvedOutputPath = resolvePath(outputPath);
+  let backupPath = backupPathByCanonical.get(resolvedOutputPath) || null;
+  if (resolvedInputPath === resolvedOutputPath) {
+    backupPath = await ensureBackupForCanonicalPath(resolvedOutputPath);
+  }
+
+  const bytes = await pdfDoc.save();
+  await writePdfOutputAtomic(resolvedOutputPath, bytes);
+
+  activeDocumentState.activePath = resolvedOutputPath;
+  activeDocumentState.backupPath = backupPath;
+  activeDocumentState.lastMutationTool = toolName;
+  activeDocumentState.lastMutationAt = new Date().toISOString();
+
+  const payload = await buildActiveDocumentPayload(resolvedOutputPath, initialPage, {
+    ...getFormFieldInfo(pdfDoc),
+    ...extraPayload,
+  });
+  return { payload, backupPath };
 }
 
 function getFormFieldInfo(pdfDoc) {
@@ -736,6 +835,21 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: "get_active_document",
+        description: "Return the toolkit's current active PDF document, including its canonical active_path, any backup_path created on first mutation, and the last mutation metadata. Use this when an agent needs to resume work on the current document without guessing which file is canonical.",
+        inputSchema: {
+          type: "object",
+          properties: {}
+        },
+        annotations: {
+          title: "Get Active Document",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
         name: "read_pdf_bytes",
         description: "Read PDF file bytes in chunks (for UI rendering)",
         inputSchema: {
@@ -1095,7 +1209,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             pdf_path: { type: "string", description: "Path to the input PDF" },
-            output_path: { type: "string", description: "Path to save the output PDF (must be different from pdf_path)" },
+            output_path: { type: "string", description: "Path to save the output PDF. May be the same as pdf_path for in-place editing; the original will be backed up on the first mutation." },
             page: { type: "integer", description: "Page number (1-indexed)" },
             x: { type: "number", description: "Left edge of the signature box, in points from the left of the page" },
             y: { type: "number", description: "Top edge of the signature box, in points from the TOP of the page" },
@@ -1134,7 +1248,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             pdf_path: { type: "string", description: "Path to the input PDF" },
-            output_path: { type: "string", description: "Path to save the signed PDF (must be different from pdf_path — original is preserved)" },
+            output_path: { type: "string", description: "Path to save the signed PDF. May be the same as pdf_path for in-place signing; the original will be backed up on the first mutation." },
             signature_name: { type: "string", description: "Name of a previously-saved signature (see create_signature / list_signatures)" },
             page: { type: "integer", description: "Page number (1-indexed)" },
             x: { type: "number", description: "Left edge in points, TOP-LEFT origin" },
@@ -1163,7 +1277,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             overwrite: {
               type: "boolean",
-              description: "Allow same-path overwrite when re-stamping an existing working copy (default: false)."
+              description: "Legacy no-op. Same-path in-place signing is allowed and creates a backup on the first mutation."
             },
             password: { type: "string", description: "Password for encrypted PDFs (optional)" }
           },
@@ -1184,7 +1298,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             pdf_path: { type: "string", description: "Path to the input PDF" },
-            output_path: { type: "string", description: "Path to save the prepared PDF (must be different from pdf_path)" },
+            output_path: { type: "string", description: "Path to save the prepared PDF. May be the same as pdf_path for in-place editing; the original will be backed up on the first mutation." },
             field_values: {
               type: "object",
               description: "Optional map of AcroForm field name → value. Same shape as fill_pdf's 'fields' argument.",
@@ -1230,7 +1344,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
           type: "object",
           properties: {
             pdf_path: { type: "string", description: "Path to the input PDF" },
-            output_path: { type: "string", description: "Path to save the stamped PDF (must be different from pdf_path)" },
+            output_path: { type: "string", description: "Path to save the stamped PDF. May be the same as pdf_path for in-place editing; the original will be backed up on the first mutation." },
             page: { type: "integer", description: "Page number (1-indexed)" },
             x: { type: "number", description: "Left edge in points, TOP-LEFT origin" },
             y: { type: "number", description: "Top edge in points, TOP-LEFT origin" },
@@ -1242,7 +1356,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false — the XFA layer will be stripped)" },
             overwrite: {
               type: "boolean",
-              description: "Allow same-path overwrite when re-stamping an existing working copy (default: false)."
+              description: "Legacy no-op. Same-path in-place stamping is allowed and creates a backup on the first mutation."
             },
             password: { type: "string", description: "Password for encrypted PDFs (optional)" }
           },
@@ -1323,7 +1437,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "reveal_in_finder",
-        description: "Open the OS file manager with the given file selected (macOS: Finder → Reveal; Windows: Explorer → select; Linux: opens the enclosing folder). Used by the viewer to surface a working copy after stamping so the user can immediately see the saved file.",
+        description: "Open the OS file manager with the given file selected (macOS: Finder → Reveal; Windows: Explorer → select; Linux: opens the enclosing folder). Used by the viewer to surface the active PDF or its backup so the user can immediately see the relevant file.",
         inputSchema: {
           type: "object",
           properties: {
@@ -1369,6 +1483,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       case "read_pdf_fields": {
         const { pdf_path, password } = args;
         const { pdfDoc, resolvedPath } = await loadPdf(pdf_path, password);
+        noteDocumentOpened(resolvedPath);
 
         const form = pdfDoc.getForm();
         const fields = form.getFields();
@@ -1401,6 +1516,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           return { name, type, options, currentValue };
         });
         
+        const payload = await buildActiveDocumentPayload(resolvedPath, 1, {
+          fields: fieldInfo,
+          fieldCount: fields.length,
+          hasFormFields: fields.length > 0,
+        });
         return {
           content: [
             {
@@ -1408,10 +1528,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text: `PDF has ${fields.length} form fields:\n${JSON.stringify(fieldInfo, null, 2)}`
             }
           ],
+          structuredContent: payload,
           _meta: {
             ui: { resourceUri: "ui://pdf-toolkit/viewer" },
-            pdfPath: resolvedPath,
-            fieldCount: fields.length
+            viewUUID: `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            ...payload,
           }
         };
       }
@@ -1421,12 +1542,22 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const resolvedPdfPath = resolvePath(pdf_path);
         const resolvedOutputPath = resolvePath(output_path);
         const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, field_data, password);
-        
-        const filledPdfBytes = await pdfDoc.save();
-        await fs.writeFile(resolvedOutputPath, filledPdfBytes);
+        const { payload, backupPath } = await persistPdfMutation({
+          pdfDoc,
+          inputPath: resolvedPdfPath,
+          outputPath: resolvedOutputPath,
+          toolName: "fill_pdf",
+          extraPayload: {
+            filled_fields: filledFields,
+            fill_errors: errors,
+          },
+        });
         
         let message = `PDF filled successfully and saved to: ${output_path}\n`;
         message += `Fields filled: ${filledFields.length}`;
+        if (backupPath) {
+          message += `\nOriginal backed up to: ${backupPath}`;
+        }
         if (errors.length > 0) {
           message += `\nErrors:\n${errors.join('\n')}`;
         }
@@ -1436,6 +1567,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             type: "text",
             text: message
           }],
+          structuredContent: payload,
         };
       }
 
@@ -1541,15 +1673,26 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const mergedData = { ...profileData, ...additional_data };
         
         const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, mergedData, password);
-        
-        const filledPdfBytes = await pdfDoc.save();
-        await fs.writeFile(resolvedOutputPath, filledPdfBytes);
+        const { payload, backupPath } = await persistPdfMutation({
+          pdfDoc,
+          inputPath: resolvedPdfPath,
+          outputPath: resolvedOutputPath,
+          toolName: "fill_with_profile",
+          extraPayload: {
+            profile_name,
+            filled_fields: filledFields,
+            fill_errors: errors,
+          },
+        });
         
         return {
           content: [{
             type: "text",
-            text: `PDF filled with profile '${profile_name}' and saved to: ${output_path}\nFields filled: ${filledFields.length}`
+            text:
+              `PDF filled with profile '${profile_name}' and saved to: ${output_path}\nFields filled: ${filledFields.length}` +
+              (backupPath ? `\nOriginal backed up to: ${backupPath}` : "")
           }],
+          structuredContent: payload,
         };
       }
 
@@ -1844,6 +1987,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         const fileName = path.basename(resolvedPath);
         const initialPage = Math.max(1, page || 1);
+        noteDocumentOpened(resolvedPath);
 
         // Detect and extract form fields
         let hasFormFields = false;
@@ -1891,26 +2035,48 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           text += `\n${fieldCount} form fields detected.`;
         }
 
+        const payload = await buildActiveDocumentPayload(resolvedPath, initialPage, {
+          hasFormFields,
+          fieldCount,
+          fields: fieldInfo,
+        });
         return {
           content: [{ type: "text", text }],
-          structuredContent: {
-            pdfPath: resolvedPath,
-            totalBytes: stats.size,
-            initialPage,
-            hasFormFields,
-            fieldCount,
-            fields: fieldInfo,
-          },
+          structuredContent: payload,
           _meta: {
             ui: { resourceUri: "ui://pdf-toolkit/viewer" },
             viewUUID: `pdf-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
-            pdfPath: resolvedPath,
-            totalBytes: stats.size,
-            initialPage,
-            hasFormFields,
-            fieldCount,
-            fields: fieldInfo,
+            ...payload,
           },
+        };
+      }
+
+      case "get_active_document": {
+        if (!activeDocumentState.activePath) {
+          return {
+            content: [{
+              type: "text",
+              text: "No active document yet. Open a PDF with display_pdf or read_pdf_fields, or fetch one with fetch_pdf_from_url first."
+            }],
+            structuredContent: {
+              active_path: null,
+              backup_path: null,
+              last_mutation_tool: null,
+              last_mutation_at: null,
+            },
+          };
+        }
+
+        const payload = await buildActiveDocumentPayload(activeDocumentState.activePath);
+        return {
+          content: [{
+            type: "text",
+            text:
+              `Active document: ${payload.active_path}\n` +
+              (payload.backup_path ? `Backup: ${payload.backup_path}\n` : "Backup: none\n") +
+              (payload.last_mutation_tool ? `Last mutation: ${payload.last_mutation_tool} at ${payload.last_mutation_at}` : "Last mutation: none")
+          }],
+          structuredContent: payload,
         };
       }
 
@@ -2557,9 +2723,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { pdf_path, output_path, page, x, y, width, height, label, allow_resign = false, password, force_xfa = false } = args;
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
-        if (resolvedInput === resolvedOutput) {
-          throw new Error("output_path must be different from pdf_path (never overwrite the original).");
-        }
         const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
         const existingSigs = detectExistingSignatures(pdfDoc);
         if (existingSigs.present && !allow_resign) {
@@ -2577,15 +2740,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           );
         }
         await drawSignatureFieldOnPage(pdfDoc, { page, x, y, width, height, label });
-        const bytes = await pdfDoc.save();
-        await writePdfOutputAtomic(resolvedOutput, bytes);
-        const payload = await buildPdfLoadPayload(resolvedOutput, page, getFormFieldInfo(pdfDoc));
+        const { payload, backupPath } = await persistPdfMutation({
+          pdfDoc,
+          inputPath: resolvedInput,
+          outputPath: resolvedOutput,
+          toolName: "add_signature_field",
+          initialPage: page,
+        });
         return {
           content: [{
             type: "text",
             text:
               `Added signature field to page ${page} at (${x}, ${y}) — ${width}x${height} pts\n` +
               `Output: ${resolvedOutput}\n` +
+              (backupPath ? `Original backed up to: ${backupPath}\n` : "") +
               `The field is a visible placeholder; use apply_signature to stamp a signature there.`
           }],
           structuredContent: {
@@ -2609,15 +2777,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           draw_audit_line = false,
           allow_resign = false,
           force_xfa = false,
-          overwrite = false,
           password,
         } = args;
 
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
-        if (resolvedInput === resolvedOutput && !overwrite) {
-          throw new Error("output_path must be different from pdf_path (never overwrite the original). Pass overwrite=true when re-stamping an existing working copy.");
-        }
 
         // 1. Validate intent — rejects missing/stale/invented intent signals
         const { statement, confirmedAt } = validateSigningIntent({ user_intent_statement, user_confirmed_at });
@@ -2684,9 +2848,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         pdfDoc.setModificationDate(new Date());
 
         // 6. Save
-        const bytes = await pdfDoc.save();
-        await writePdfOutputAtomic(resolvedOutput, bytes);
-        const payload = await buildPdfLoadPayload(resolvedOutput, page, getFormFieldInfo(pdfDoc));
+        const { payload, backupPath } = await persistPdfMutation({
+          pdfDoc,
+          inputPath: resolvedInput,
+          outputPath: resolvedOutput,
+          toolName: "apply_signature",
+          initialPage: page,
+        });
 
         return {
           content: [{
@@ -2694,6 +2862,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text:
               `Signed: "${displayName}" stamped on page ${page} at (${x}, ${y})\n` +
               `Output: ${resolvedOutput}\n` +
+              (backupPath ? `Original backed up to: ${backupPath}\n` : "") +
               `Audit trail: ${auditLine}\n\n` +
               `NOTE: This is a basic visible stamp, not a cryptographic signature. ` +
               `For legally-binding signing, use a compliance-grade service.`
@@ -2715,9 +2884,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { pdf_path, output_path, field_values, signature_locations = [], allow_resign = false, password, force_xfa = false } = args;
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
-        if (resolvedInput === resolvedOutput) {
-          throw new Error("output_path must be different from pdf_path.");
-        }
 
         const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
         const existingSigs = detectExistingSignatures(pdfDoc);
@@ -2781,14 +2947,24 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           });
         }
 
-        const bytes = await pdfDoc.save();
-        await writePdfOutputAtomic(resolvedOutput, bytes);
-        const payload = await buildPdfLoadPayload(resolvedOutput, manifest[0]?.page || 1, getFormFieldInfo(pdfDoc));
+        const { payload, backupPath } = await persistPdfMutation({
+          pdfDoc,
+          inputPath: resolvedInput,
+          outputPath: resolvedOutput,
+          toolName: "prepare_signing_packet",
+          initialPage: manifest[0]?.page || 1,
+          extraPayload: {
+            pending_signatures: manifest,
+            filled_count: filledCount,
+            fill_errors: fillErrors,
+          },
+        });
 
         const summary =
           `Prepared signing packet: ${path.basename(resolvedOutput)}\n` +
           `  Filled: ${filledCount} field${filledCount === 1 ? "" : "s"}\n` +
           (fillErrors.length ? `  Errors: ${fillErrors.length} (${fillErrors.slice(0,3).map(e => e.field).join(", ")})\n` : "") +
+          (backupPath ? `  Backup: ${backupPath}\n` : "") +
           `  Signature fields added: ${manifest.length}\n` +
           `  Output: ${resolvedOutput}`;
 
@@ -2815,15 +2991,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           text, font_style = "normal",
           allow_resign = false,
           force_xfa = false,
-          overwrite = false,
           password,
         } = args;
 
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
-        if (resolvedInput === resolvedOutput && !overwrite) {
-          throw new Error("output_path must be different from pdf_path (never overwrite the original). Pass overwrite=true when re-stamping an existing working copy.");
-        }
 
         const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
 
@@ -2851,15 +3023,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         pdfDoc.setKeywords([existingKeywords ? `${existingKeywords}\n${auditLine}` : auditLine]);
         pdfDoc.setModificationDate(new Date());
 
-        const bytes = await pdfDoc.save();
-        await writePdfOutputAtomic(resolvedOutput, bytes);
-        const payload = await buildPdfLoadPayload(resolvedOutput, page, getFormFieldInfo(pdfDoc));
+        const { payload, backupPath } = await persistPdfMutation({
+          pdfDoc,
+          inputPath: resolvedInput,
+          outputPath: resolvedOutput,
+          toolName: "apply_text",
+          initialPage: page,
+        });
 
         return {
           content: [{
             type: "text",
             text:
               `Stamped text "${text}" on page ${page} at (${x}, ${y}).\n` +
+              (backupPath ? `Original backed up to: ${backupPath}\n` : "") +
               `Output: ${resolvedOutput}`
           }],
           structuredContent: {
@@ -2929,8 +3106,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           headers: headers || {},
           allowPrivateHosts: allow_private_hosts,
         });
+        noteDocumentOpened(result.path);
 
         const sizeKb = (result.bytes / 1024).toFixed(0);
+        const payload = await buildActiveDocumentPayload(result.path);
         return {
           content: [{
             type: "text",
@@ -2940,6 +3119,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               `You can now pass this path to read_pdf_fields, fill_pdf, validate_pdf, or any other PDF tool.`
           }],
           structuredContent: {
+            ...payload,
             pdf_path: result.path,
             bytes: result.bytes,
             content_type: result.contentType,
@@ -3081,6 +3261,7 @@ async function main() {
   // Ensure profiles and signatures directories exist
   await fs.mkdir(PROFILES_DIR, { recursive: true }).catch(() => {});
   await fs.mkdir(SIGNATURES_DIR, { recursive: true }).catch(() => {});
+  await fs.mkdir(BACKUPS_DIR, { recursive: true }).catch(() => {});
 
   // Migrate profiles from old directory (~/.pdf-filler-profiles) if it exists
   try {

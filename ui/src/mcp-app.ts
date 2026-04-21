@@ -16,7 +16,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import * as pdfjsLib from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist";
 import "./mcp-app.css";
-import { buildManagedPdfPath, buildSignedWorkingPdfPath, getHostBaseName } from "./path-utils";
+import { buildManagedPdfPath, getHostBaseName } from "./path-utils";
 import { getPdfToolLoadData } from "./tool-result";
 
 // PDF.js worker — inline as blob URL for single-file build
@@ -65,11 +65,7 @@ interface SignatureZone {
 }
 let signatureZones: SignatureZone[] = [];
 let zonesLoadingForPath = "";
-// After the first stamp, subsequent stamps must read from the *stamped* file,
-// not the original — otherwise each apply clobbers the previous one (Phase B2
-// review B1). Tracks the path that next apply_signature / apply_text should
-// use as input.
-let workingPdfPath = "";
+let activeBackupPath: string | null = null;
 // Remember which zones we've stamped so page navigation / mode toggles don't
 // lose the ✓ Signed indicator. Key: `${pdfPath}|${type}|${page}|${x}|${y}`.
 const appliedZoneKeys = new Set<string>();
@@ -509,6 +505,10 @@ async function updatePageContext() {
     const fileName = getHostBaseName(pdfPath);
     const header = `PDF Tools Viewer | "${fileName}" | Page ${currentPage}/${totalPages}`;
     let contextText = `${header}\n\nPage content:\n${content}`;
+    contextText += `\n\nActive document path: ${pdfPath}`;
+    if (activeBackupPath) {
+      contextText += `\nOriginal backup preserved at: ${activeBackupPath}`;
+    }
 
     if (selectedField) {
       contextText += `\n\nSelected form field: ${selectedField}`;
@@ -1564,11 +1564,10 @@ async function onConfirmSign() {
   signModalErrorEl.style.display = "none";
 
   try {
-    // Each apply reads the working path (original PDF on first call, the
-    // previously-stamped output on subsequent calls) and writes to a new
-    // unique file. This stacks stamps instead of silently clobbering them.
-    const inputForApply = workingPdfPath || pdfPath;
-    const outputPath = buildNextStampOutputPath();
+    // The canonical document path stays stable. Mutations write back to that
+    // same file, and the server creates a one-time backup on the first edit.
+    const inputForApply = pdfPath;
+    const outputPath = pdfPath;
 
     if (activeModalMode === "date") {
       // ─── Date path → apply_text ───
@@ -1581,8 +1580,6 @@ async function onConfirmSign() {
           page: zone.page,
           x: zone.x, y: zone.y, width: zone.width, height: zone.height,
           text: pickedDate,
-          // Re-stamps read from and write to the same working copy.
-          overwrite: true,
         },
       });
       if (applyResult.isError) {
@@ -1592,8 +1589,8 @@ async function onConfirmSign() {
       zone.applied = true;
       zone.appliedValue = pickedDate;
       appliedZoneKeys.add(zoneKey(pdfPath, zone));
-      const sc = applyResult.structuredContent as { pdf_path?: string } | undefined;
-      workingPdfPath = sc?.pdf_path ?? outputPath;
+      const sc = applyResult.structuredContent as { pdf_path?: string; backup_path?: string | null } | undefined;
+      activeBackupPath = sc?.backup_path ?? activeBackupPath;
       // Invalidate the tool-result short-circuit so a replay of the original
       // display_pdf result forces a clean reload (Codex P1-B).
       lastLoadedResultKey = "";
@@ -1601,7 +1598,7 @@ async function onConfirmSign() {
       let reloadOk = true;
       let reloadErr: string | undefined;
       try {
-        await reloadPdfForStamp(workingPdfPath);
+        await reloadPdfForStamp(pdfPath);
       } catch (err: any) {
         reloadOk = false;
         reloadErr = err?.message ?? String(err);
@@ -1655,8 +1652,6 @@ async function onConfirmSign() {
         x: zone.x, y: zone.y, width: zone.width, height: zone.height,
         user_intent_statement: statement,
         user_confirmed_at: timestamp,
-        // Re-stamps read from and write to the same working copy.
-        overwrite: true,
       },
     });
     if (applyResult.isError) {
@@ -1666,8 +1661,8 @@ async function onConfirmSign() {
 
     zone.applied = true;
     appliedZoneKeys.add(zoneKey(pdfPath, zone));
-    const sc = applyResult.structuredContent as { pdf_path?: string } | undefined;
-    workingPdfPath = sc?.pdf_path ?? outputPath;
+    const sc = applyResult.structuredContent as { pdf_path?: string; backup_path?: string | null } | undefined;
+    activeBackupPath = sc?.backup_path ?? activeBackupPath;
     // Invalidate the tool-result short-circuit so a replay of the original
     // display_pdf result forces a clean reload (Codex P1-B).
     lastLoadedResultKey = "";
@@ -1675,7 +1670,7 @@ async function onConfirmSign() {
     let reloadOk = true;
     let reloadErr: string | undefined;
     try {
-      await reloadPdfForStamp(workingPdfPath);
+      await reloadPdfForStamp(pdfPath);
     } catch (err: any) {
       reloadOk = false;
       reloadErr = err?.message ?? String(err);
@@ -1855,15 +1850,6 @@ async function onSaveDrawnSignature() {
   }
 }
 
-// Every stamp in a session writes to a single `{stem}-signed.pdf` working
-// copy. Each subsequent stamp reads from that same file and overwrites it,
-// so we don't pile up `signed-1.pdf`, `signed-2.pdf`, … in Downloads. The
-// server apply helpers read bytes into memory before writing, so same-path
-// read-then-write is safe.
-function buildNextStampOutputPath(): string {
-  return buildSignedWorkingPdfPath(pdfPath);
-}
-
 // Reload the renderer from the stamped output so the canvas shows the actual
 // signatures/dates the server wrote to disk. Keeps `pdfPath` as the original
 // (that's the logical identity for zone keys + output-path stems); only the
@@ -1933,21 +1919,21 @@ async function reloadPdfForStamp(stampedPath: string) {
 }
 
 function updateWorkingCopyBanner() {
-  if (!workingPdfPath) {
+  if (!activeBackupPath) {
     signPanelWorkingCopyEl.style.display = "none";
     return;
   }
   signPanelWorkingCopyEl.style.display = "";
-  signPanelWorkingCopyPathEl.textContent = workingPdfPath;
-  signPanelWorkingCopyPathEl.title = workingPdfPath;
+  signPanelWorkingCopyPathEl.textContent = activeBackupPath;
+  signPanelWorkingCopyPathEl.title = activeBackupPath;
 }
 
 async function onRevealWorkingCopy() {
-  if (!workingPdfPath) return;
+  if (!activeBackupPath) return;
   try {
     const result = await app.callServerTool({
       name: "reveal_in_finder",
-      arguments: { path: workingPdfPath },
+      arguments: { path: activeBackupPath },
     });
     if (result.isError) {
       const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Reveal failed";
@@ -1959,7 +1945,7 @@ async function onRevealWorkingCopy() {
 }
 
 async function onCopyWorkingCopyPath() {
-  if (!workingPdfPath) return;
+  if (!activeBackupPath) return;
   const original = signPanelWorkingCopyCopyBtn.textContent ?? "Copy path";
   const flash = (msg: string) => {
     signPanelWorkingCopyCopyBtn.textContent = msg;
@@ -1971,7 +1957,7 @@ async function onCopyWorkingCopyPath() {
   // a real confirmation — silent failure here makes the button look broken.
   try {
     if (navigator.clipboard?.writeText) {
-      await navigator.clipboard.writeText(workingPdfPath);
+      await navigator.clipboard.writeText(activeBackupPath);
       flash("Copied");
       return;
     }
@@ -1979,7 +1965,7 @@ async function onCopyWorkingCopyPath() {
   } catch (err) {
     try {
       const ta = document.createElement("textarea");
-      ta.value = workingPdfPath;
+      ta.value = activeBackupPath;
       ta.setAttribute("readonly", "");
       ta.style.position = "absolute";
       ta.style.left = "-9999px";
@@ -2470,7 +2456,7 @@ async function applyPagePlan() {
     const result = await app.callServerTool({
       name: "apply_page_plan",
       arguments: {
-        input_path: workingPdfPath || pdfPath,
+        input_path: pdfPath,
         output_path,
         plan: { page_order, rotations },
       },
@@ -2735,11 +2721,13 @@ app.ontoolresult = async (result: CallToolResult) => {
 async function loadPdfFromToolResult(result: CallToolResult) {
   const payload = getPdfToolLoadData(result);
   if (!payload) return false;
-  if (payload.key === lastLoadedResultKey && pdfDocument && pdfPath === payload.pdfPath) return true;
+  const nextPdfPath = payload.activePath || payload.pdfPath;
+  if (payload.key === lastLoadedResultKey && pdfDocument && pdfPath === nextPdfPath) return true;
 
   lastLoadedResultKey = payload.key;
-  pdfPath = payload.pdfPath;
+  pdfPath = nextPdfPath;
   viewUUID = payload.viewUUID;
+  activeBackupPath = payload.backupPath ?? null;
 
   if (payload.hasFormFields && payload.fieldCount > 0) {
     sidebarToggleBtn.style.display = "";
@@ -2773,7 +2761,6 @@ async function loadPdfFromToolResult(result: CallToolResult) {
     hasUnsavedChanges = false;
 
     // Reset signing state — a fresh document starts a new stamp chain.
-    workingPdfPath = "";
     appliedZoneKeys.clear();
     signatureZones = [];
     zoneCacheByPath.delete(pdfPath);

@@ -2,6 +2,8 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 
 export interface PdfToolLoadData {
   pdfPath: string;
+  activePath?: string;
+  backupPath?: string | null;
   totalBytes: number;
   initialPage: number;
   fields: unknown[];
@@ -32,6 +34,8 @@ export function getPdfToolLoadData(result: CallToolResult | null | undefined): P
 
   return {
     pdfPath: data.pdfPath,
+    activePath: data.active_path ?? structured?.active_path ?? meta?.active_path,
+    backupPath: data.backup_path ?? structured?.backup_path ?? meta?.backup_path ?? null,
     totalBytes: data.totalBytes,
     initialPage,
     fields,

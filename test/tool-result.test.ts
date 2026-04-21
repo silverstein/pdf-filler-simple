@@ -15,6 +15,8 @@ describe("getPdfToolLoadData", () => {
 
     expect(payload).toMatchObject({
       pdfPath: "C:\\Users\\alice\\Documents\\filled.pdf",
+      activePath: undefined,
+      backupPath: null,
       totalBytes: 2048,
       initialPage: 2,
       viewUUID: "view-123",
@@ -36,6 +38,7 @@ describe("getPdfToolLoadData", () => {
     } as any);
 
     expect(payload?.pdfPath).toBe("/tmp/from-structured.pdf");
+    expect(payload?.backupPath).toBeNull();
     expect(payload?.totalBytes).toBe(4096);
   });
 
@@ -62,6 +65,25 @@ describe("getPdfToolLoadData", () => {
       pdfPath: "/tmp/form-signed.pdf",
       totalBytes: 8192,
       initialPage: 3,
+    });
+  });
+
+  it("captures canonical active_path and backup_path when present", () => {
+    const payload = getPdfToolLoadData({
+      content: [],
+      structuredContent: {
+        pdfPath: "/tmp/form.pdf",
+        active_path: "/tmp/form.pdf",
+        backup_path: "/tmp/backups/form__2026-04-21.pdf",
+        totalBytes: 1024,
+        initialPage: 1,
+      },
+    } as any);
+
+    expect(payload).toMatchObject({
+      pdfPath: "/tmp/form.pdf",
+      activePath: "/tmp/form.pdf",
+      backupPath: "/tmp/backups/form__2026-04-21.pdf",
     });
   });
 });

@@ -118,6 +118,10 @@
       "description": "Load one saved signature by name, including preview data for image signatures"
     },
     {
+      "name": "get_active_document",
+      "description": "Return the toolkit's current canonical PDF path, backup path, and last mutation metadata"
+    },
+    {
       "name": "add_signature_field",
       "description": "Draw a visible 'Sign here' placeholder box on a PDF page (marks location — does NOT sign)"
     },
@@ -139,7 +143,7 @@
     },
     {
       "name": "reveal_in_finder",
-      "description": "Open the OS file manager with the given file selected — used by the viewer to surface a stamped working copy"
+      "description": "Open the OS file manager with the given file selected — used by the viewer to surface the active PDF or its backup"
     }
   ],
   "prompts": [
