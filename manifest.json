@@ -118,6 +118,10 @@
       "description": "List all saved signatures"
     },
     {
+      "name": "load_signature",
+      "description": "Load one saved signature by name, including preview data for image signatures"
+    },
+    {
       "name": "add_signature_field",
       "description": "Draw a visible 'Sign here' placeholder box on a PDF page (marks location — does NOT sign)"
     },

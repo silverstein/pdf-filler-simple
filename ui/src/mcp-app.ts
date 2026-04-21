@@ -94,6 +94,7 @@ interface ZonePreviewState {
 
 let savedSignatures: SavedSignatureSummary[] = [];
 let activeZonePreview: ZonePreviewState | null = null;
+const signaturePreviewCache = new Map<string, SavedSignatureSummary>();
 
 function zoneKey(pdfPath: string, z: { type: string; page: number; x: number; y: number }): string {
   return `${pdfPath}|${z.type}|${z.page}|${z.x.toFixed(1)}|${z.y.toFixed(1)}`;
@@ -951,7 +952,7 @@ function clearZoneOverlay() {
 }
 
 function getSavedSignatureByName(name: string) {
-  return savedSignatures.find(sig => sig.name === name) || null;
+  return signaturePreviewCache.get(name) || savedSignatures.find(sig => sig.name === name) || null;
 }
 
 function updateZonePreviewState() {
@@ -1387,6 +1388,7 @@ async function populateSavedSignatures() {
     const sc = result.structuredContent as { signatures?: SavedSignatureSummary[] } | undefined;
     const sigs = sc?.signatures ?? [];
     savedSignatures = sigs;
+    signaturePreviewCache.clear();
     for (const s of sigs) {
       const opt = document.createElement("option");
       opt.value = s.name;
@@ -1403,10 +1405,29 @@ async function populateSavedSignatures() {
   }
 }
 
+async function ensureSavedSignaturePreview(signatureName: string) {
+  if (!signatureName) return null;
+  const cached = signaturePreviewCache.get(signatureName);
+  if (cached?.preview_data_url || cached?.style === "typed") return cached;
+
+  const result = await app.callServerTool({
+    name: "load_signature",
+    arguments: { signature_name: signatureName },
+  });
+  if (result.isError) {
+    const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "load_signature failed";
+    throw new Error(text);
+  }
+  const sc = result.structuredContent as SavedSignatureSummary | undefined;
+  if (!sc) return null;
+  signaturePreviewCache.set(signatureName, sc);
+  return sc;
+}
+
 // When the user picks a saved signature, auto-fill the typed-name field from
 // the signature's display_name so the attestation preview + Sign button are
 // immediately usable — no "why is this still greyed out?" moment.
-function onSavedSignatureChange() {
+async function onSavedSignatureChange() {
   const opt = signModalExistingEl.selectedOptions[0];
   if (!opt) return;
   const displayName = opt.dataset.displayName || "";
@@ -1416,6 +1437,13 @@ function onSavedSignatureChange() {
   if (!current || current === signModalNameEl.dataset.autofilledFrom) {
     signModalNameEl.value = displayName;
     signModalNameEl.dataset.autofilledFrom = displayName;
+  }
+  try {
+    if (opt.value) {
+      await ensureSavedSignaturePreview(opt.value);
+    }
+  } catch (err) {
+    console.warn("[viewer] load_signature failed (preview omitted):", err);
   }
   updateStatementPreview();
   updateZonePreviewState();
@@ -1792,6 +1820,7 @@ async function onSaveDrawnSignature() {
     if (signModalEl.style.display === "flex") {
       await populateSavedSignatures();
       signModalExistingEl.value = name;
+      await onSavedSignatureChange();
       updateStatementPreview();
     }
   } catch (err: any) {

@@ -1068,6 +1068,27 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
+        name: "load_signature",
+        description: "Load one saved signature by name. Returns the style, display name, and for image signatures a preview data URL so the viewer can render the selected asset on demand.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            signature_name: {
+              type: "string",
+              description: "Name of a previously-saved signature."
+            }
+          },
+          required: ["signature_name"]
+        },
+        annotations: {
+          title: "Load Signature",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
         name: "add_signature_field",
         description: "Draw a visible 'Sign here' placeholder box on a PDF page and save as a new file. Marks where a signature should go — does NOT sign the document. Useful when preparing a PDF to send to another party for signing. Coordinates are in points (72pt = 1 inch), TOP-LEFT origin: x=distance from left, y=distance from top.",
         inputSchema: {
@@ -2478,9 +2499,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               name: rec.name,
               style: rec.style,
               display_name: rec.display_name || null,
-              preview_data_url: rec.style === "image" && rec.image_data_b64 && rec.image_mime
-                ? `data:${rec.image_mime};base64,${rec.image_data_b64}`
-                : null,
               created_at: rec.created_at,
             });
           } catch {
@@ -2500,6 +2518,38 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: `Saved signatures (${entries.length}):\n${lines.join("\n")}`
           }],
           structuredContent: { signatures: entries },
+        };
+      }
+
+      case "load_signature": {
+        const { signature_name } = args;
+        const cleanSigName = validateSignatureName(signature_name);
+        const sigSlug = cleanSigName.replace(/\s+/g, "-");
+        const sigPath = path.join(SIGNATURES_DIR, `${sigSlug}.json`);
+        let rec;
+        try {
+          rec = JSON.parse(await fs.readFile(sigPath, "utf8"));
+        } catch (err) {
+          if (err.code === "ENOENT") {
+            throw new Error(`Signature "${cleanSigName}" not found. Use create_signature to save it first, or list_signatures to see available ones.`);
+          }
+          throw err;
+        }
+        const previewDataUrl = rec.style === "image" && rec.image_data_b64 && rec.image_mime
+          ? `data:${rec.image_mime};base64,${rec.image_data_b64}`
+          : null;
+        return {
+          content: [{
+            type: "text",
+            text: `Loaded signature "${cleanSigName}" (${rec.style}).`
+          }],
+          structuredContent: {
+            name: rec.name,
+            style: rec.style,
+            display_name: rec.display_name || null,
+            preview_data_url: previewDataUrl,
+            created_at: rec.created_at,
+          },
         };
       }
 
@@ -2658,10 +2708,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             intent_statement: statement,
             tier: "basic-local-stamp",
           },
-          _meta: {
-            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
-            ...payload,
-          }
         };
       }
 
@@ -2822,10 +2868,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             page, x, y, width, height,
             text,
           },
-          _meta: {
-            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
-            ...payload,
-          }
         };
       }
 
