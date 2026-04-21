@@ -241,9 +241,31 @@ function clearChildren(el: HTMLElement) {
 
 const rangeCache = new Map<string, { bytes: Uint8Array; totalBytes: number }>();
 const inflightRequests = new Map<string, Promise<{ bytes: Uint8Array; totalBytes: number }>>();
+const pathCacheEpochs = new Map<string, number>();
+
+function getPathCacheEpoch(filePath: string) {
+  return pathCacheEpochs.get(filePath) ?? 0;
+}
+
+function buildRangeCacheKey(filePath: string, begin: number, end: number, epoch = getPathCacheEpoch(filePath)) {
+  return `${filePath}@${epoch}:${begin}-${end}`;
+}
+
+function invalidateRangeCacheForPath(filePath: string) {
+  const nextEpoch = getPathCacheEpoch(filePath) + 1;
+  pathCacheEpochs.set(filePath, nextEpoch);
+  const prefix = `${filePath}@`;
+  for (const key of Array.from(rangeCache.keys())) {
+    if (key.startsWith(prefix)) rangeCache.delete(key);
+  }
+  for (const key of Array.from(inflightRequests.keys())) {
+    if (key.startsWith(prefix)) inflightRequests.delete(key);
+  }
+}
 
 async function fetchChunk(path: string, begin: number, end: number) {
-  const key = `${path}:${begin}-${end}`;
+  const epoch = getPathCacheEpoch(path);
+  const key = buildRangeCacheKey(path, begin, end, epoch);
   if (rangeCache.has(key)) return rangeCache.get(key)!;
   if (inflightRequests.has(key)) return inflightRequests.get(key)!;
 
@@ -1867,6 +1889,7 @@ async function reloadPdfForStamp(stampedPath: string) {
   // Content-specific caches: page text may include our new stamp text.
   pageTextCache.clear();
   pagesLoaded = 0;
+  invalidateRangeCacheForPath(stampedPath);
 
   try {
     const probe = await app.callServerTool({
@@ -1891,6 +1914,7 @@ async function reloadPdfForStamp(stampedPath: string) {
     console.error("[viewer] reloadPdfForStamp failed:", err);
     // Best-effort: reload from original so we don't leave the viewer empty.
     try {
+      invalidateRangeCacheForPath(pdfPath);
       const probe = await app.callServerTool({
         name: "read_pdf_bytes",
         arguments: { pdf_path: pdfPath, offset: 0, byteCount: 1 },
