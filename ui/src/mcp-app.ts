@@ -518,6 +518,21 @@ async function updatePageContext() {
   } catch {}
 }
 
+async function syncActiveDocumentState() {
+  if (!pdfPath) return;
+  try {
+    await app.callServerTool({
+      name: "set_active_document",
+      arguments: {
+        pdf_path: pdfPath,
+        ...(activeBackupPath ? { backup_path: activeBackupPath } : {}),
+      },
+    });
+  } catch (err) {
+    console.warn("[viewer] set_active_document failed:", err);
+  }
+}
+
 // ─── Search ──────────────────────────────────────────────────────────────────
 
 function performSearch(query: string) {
@@ -2701,6 +2716,7 @@ app.ontoolresult = async (result: CallToolResult) => {
           pageTextCache.clear();
           showViewer();
           renderPage();
+          syncActiveDocumentState();
           startPreloading();
         }
       } catch (err: any) {
@@ -2775,6 +2791,7 @@ async function loadPdfFromToolResult(result: CallToolResult) {
     manageStatusEl.textContent = "";
     manageApplyBtn.textContent = "Save as new file";
     switchMode("view");
+    syncActiveDocumentState();
     startPreloading();
   } catch (err: any) {
     lastLoadedResultKey = "";
@@ -2811,4 +2828,7 @@ app.connect().then(() => {
   console.log("[viewer] Connected");
   const ctx = app.getHostContext();
   if (ctx) handleHostContext(ctx);
+  if (pdfPath) {
+    syncActiveDocumentState();
+  }
 });

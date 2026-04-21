@@ -325,6 +325,23 @@ function noteDocumentOpened(pdfPath) {
   activeDocumentState.lastOpenedAt = new Date().toISOString();
 }
 
+function syncActiveDocumentState({ pdfPath, backupPath = null, lastMutationTool = null, lastMutationAt = null }) {
+  const resolvedPath = resolvePath(pdfPath);
+  const resolvedBackupPath = backupPath ? resolvePath(backupPath) : null;
+  activeDocumentState.activePath = resolvedPath;
+  activeDocumentState.backupPath = resolvedBackupPath;
+  activeDocumentState.lastOpenedAt = new Date().toISOString();
+  if (resolvedBackupPath) {
+    backupPathByCanonical.set(resolvedPath, resolvedBackupPath);
+  }
+  if (lastMutationTool) {
+    activeDocumentState.lastMutationTool = lastMutationTool;
+  }
+  if (lastMutationAt) {
+    activeDocumentState.lastMutationAt = lastMutationAt;
+  }
+}
+
 async function buildPdfLoadPayload(pdfPath, initialPage = 1, extra = {}) {
   const stats = await fs.stat(pdfPath);
   return {
@@ -844,6 +861,39 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         annotations: {
           title: "Get Active Document",
           readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "set_active_document",
+        description: "Set or rehydrate the toolkit's active document state from a viewer session. Intended for the viewer to resync the canonical active_path and optional backup_path after MCP/server restarts.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: {
+              type: "string",
+              description: "Canonical active PDF path currently shown in the viewer."
+            },
+            backup_path: {
+              type: "string",
+              description: "Optional backup path previously created for this document."
+            },
+            last_mutation_tool: {
+              type: "string",
+              description: "Optional last mutation tool name to preserve across rehydration."
+            },
+            last_mutation_at: {
+              type: "string",
+              description: "Optional ISO-8601 timestamp of the last mutation."
+            }
+          },
+          required: ["pdf_path"]
+        },
+        annotations: {
+          title: "Set Active Document",
+          readOnlyHint: false,
           destructiveHint: false,
           idempotentHint: true,
           openWorldHint: false
@@ -2075,6 +2125,27 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               `Active document: ${payload.active_path}\n` +
               (payload.backup_path ? `Backup: ${payload.backup_path}\n` : "Backup: none\n") +
               (payload.last_mutation_tool ? `Last mutation: ${payload.last_mutation_tool} at ${payload.last_mutation_at}` : "Last mutation: none")
+          }],
+          structuredContent: payload,
+        };
+      }
+
+      case "set_active_document": {
+        const { pdf_path, backup_path = null, last_mutation_tool = null, last_mutation_at = null } = args;
+        if (!pdf_path || typeof pdf_path !== "string") {
+          throw new Error("'pdf_path' is required and must be a string.");
+        }
+        syncActiveDocumentState({
+          pdfPath: pdf_path,
+          backupPath: backup_path,
+          lastMutationTool: last_mutation_tool,
+          lastMutationAt: last_mutation_at,
+        });
+        const payload = await buildActiveDocumentPayload(pdf_path);
+        return {
+          content: [{
+            type: "text",
+            text: `Active document synced: ${payload.active_path}`
           }],
           structuredContent: payload,
         };

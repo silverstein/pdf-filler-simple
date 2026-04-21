@@ -126,6 +126,10 @@
       "description": "Return the toolkit's current canonical PDF path, backup path, and last mutation metadata"
     },
     {
+      "name": "set_active_document",
+      "description": "Rehydrate the toolkit's active document state from the currently open viewer session"
+    },
+    {
       "name": "add_signature_field",
       "description": "Draw a visible 'Sign here' placeholder box on a PDF page (marks location — does NOT sign)"
     },
