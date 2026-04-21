@@ -22,6 +22,100 @@
       <div id="error-message"></div>
     </div>
 
+    <!-- Draw-signature modal -->
+    <div id="draw-modal" class="sign-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="draw-modal-title">
+      <div class="sign-modal-backdrop"></div>
+      <div class="sign-modal-content draw-modal-content">
+        <div class="sign-modal-header">
+          <span id="draw-modal-title">Draw your signature</span>
+          <button id="draw-modal-close" class="sign-modal-close" title="Cancel">&times;</button>
+        </div>
+        <div class="sign-modal-body">
+          <div class="draw-canvas-wrap">
+            <canvas id="draw-canvas" width="560" height="200"></canvas>
+            <div id="draw-canvas-hint" class="draw-canvas-hint">Draw with your mouse, trackpad, or finger. Saving stores this as a reusable signature — it won't stamp onto the PDF until you click a sign-here zone and pick it.</div>
+          </div>
+          <div class="draw-canvas-actions">
+            <button id="draw-undo-btn" class="sign-modal-btn" title="Undo last stroke">Undo</button>
+            <button id="draw-clear-btn" class="sign-modal-btn" title="Clear canvas">Clear</button>
+          </div>
+          <div class="sign-modal-row">
+            <label for="draw-legal-name-input" class="sign-modal-label">Your full legal name</label>
+            <input id="draw-legal-name-input" type="text" autocomplete="name" placeholder="e.g. Mat Silverstein" />
+            <div class="draw-canvas-hint">Used in the attestation when you sign ("I, {name}, sign…"). Without this, you'll have to retype every time.</div>
+          </div>
+          <div class="sign-modal-row">
+            <label for="draw-name-input" class="sign-modal-label">Save as (short label)</label>
+            <input id="draw-name-input" type="text" placeholder="e.g. mat-drawn" />
+          </div>
+          <div id="draw-modal-error" class="sign-modal-error" style="display:none"></div>
+        </div>
+        <div class="sign-modal-actions">
+          <button id="draw-modal-cancel" class="sign-modal-btn">Cancel</button>
+          <button id="draw-modal-save" class="sign-modal-btn sign-modal-btn-primary" disabled>Save signature</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Signature confirm modal -->
+    <div id="sign-modal" class="sign-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="sign-modal-title">
+      <div class="sign-modal-backdrop"></div>
+      <div class="sign-modal-content">
+        <div class="sign-modal-header">
+          <span id="sign-modal-title">Confirm signature</span>
+          <button id="sign-modal-close" class="sign-modal-close" title="Cancel">&times;</button>
+        </div>
+        <div class="sign-modal-body">
+          <div class="sign-modal-row">
+            <label class="sign-modal-label">Document</label>
+            <div id="sign-modal-doc" class="sign-modal-readonly"></div>
+          </div>
+          <div class="sign-modal-row">
+            <label class="sign-modal-label">Zone</label>
+            <div id="sign-modal-zone" class="sign-modal-readonly"></div>
+          </div>
+          <div id="sign-modal-type-row" class="sign-modal-row" style="display:none">
+            <label for="sign-modal-type" class="sign-modal-label">What goes here?</label>
+            <select id="sign-modal-type">
+              <option value="signature">Signature</option>
+              <option value="initials">Initials</option>
+              <option value="date">Date</option>
+            </select>
+          </div>
+
+          <!-- Identity fields — shown for signature + initials modes only -->
+          <div id="sign-modal-identity-rows">
+            <div class="sign-modal-row">
+              <label for="sign-modal-name" id="sign-modal-name-label" class="sign-modal-label">Type your full name</label>
+              <input id="sign-modal-name" type="text" autocomplete="name" placeholder="Your legal name" />
+            </div>
+            <div class="sign-modal-row">
+              <label for="sign-modal-existing" class="sign-modal-label">Or use a saved signature</label>
+              <select id="sign-modal-existing">
+                <option value="">— Create a typed signature from the name above —</option>
+              </select>
+            </div>
+          </div>
+
+          <!-- Date field — shown for date mode only -->
+          <div id="sign-modal-date-row" class="sign-modal-row" style="display:none">
+            <label for="sign-modal-date" class="sign-modal-label">Date to stamp</label>
+            <input id="sign-modal-date" type="date" />
+          </div>
+
+          <div class="sign-modal-attestation">
+            <div class="sign-modal-attestation-label" id="sign-modal-attestation-heading">You are attesting:</div>
+            <div id="sign-modal-statement" class="sign-modal-statement">Type your name above to see the attestation.</div>
+          </div>
+          <div id="sign-modal-error" class="sign-modal-error" style="display:none"></div>
+        </div>
+        <div class="sign-modal-actions">
+          <button id="sign-modal-cancel" class="sign-modal-btn">Cancel</button>
+          <button id="sign-modal-confirm" class="sign-modal-btn sign-modal-btn-primary" disabled>Sign</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Viewer -->
     <div id="viewer" style="display:none">
       <div class="toolbar">
@@ -62,6 +156,7 @@
       <div id="mode-tabs" class="mode-tabs" style="display:none">
         <button id="mode-view-btn" class="mode-tab active" title="View PDF">&#128196; View</button>
         <button id="mode-manage-btn" class="mode-tab" title="Manage pages">&#9638; Manage</button>
+        <button id="mode-sign-btn" class="mode-tab" title="Sign this PDF">&#9997; Sign</button>
       </div>
 
       <div class="viewer-body">
@@ -71,6 +166,33 @@
             <canvas id="pdf-canvas"></canvas>
             <div id="text-layer" class="text-layer"></div>
             <div id="highlight-layer" class="highlight-layer"></div>
+            <div id="zone-layer" class="zone-layer"></div>
+          </div>
+        </div>
+
+        <!-- Sign panel -->
+        <div id="sign-panel" class="sign-panel" style="display:none">
+          <div class="sign-panel-header">
+            <span class="sign-panel-title">Signatures</span>
+            <span id="sign-zone-count" class="sign-panel-subtitle">0 zones</span>
+          </div>
+          <div id="sign-panel-working-copy" class="sign-panel-working-copy" style="display:none">
+            <div class="working-copy-label">Working copy (viewer is showing this file):</div>
+            <div id="sign-panel-working-copy-path" class="working-copy-path" title=""></div>
+            <div class="working-copy-actions">
+              <button id="sign-panel-working-copy-reveal" class="working-copy-btn" title="Show this file in Finder/Explorer">Reveal in Finder</button>
+              <button id="sign-panel-working-copy-copy" class="working-copy-btn" title="Copy path to clipboard">Copy path</button>
+            </div>
+          </div>
+          <div class="sign-panel-actions">
+            <button id="sign-panel-draw-btn" class="sign-panel-action-btn" title="Draw a new signature">&#9998; Draw signature</button>
+          </div>
+          <div id="sign-panel-status" class="sign-panel-status"></div>
+          <div id="sign-panel-list" class="sign-panel-list" role="list"></div>
+          <div class="sign-panel-legend">
+            <span class="sign-legend-swatch sign-legend-signature"></span> Signature
+            <span class="sign-legend-swatch sign-legend-initials"></span> Initials
+            <span class="sign-legend-swatch sign-legend-date"></span> Date
           </div>
         </div>
 

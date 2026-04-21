@@ -158,6 +158,12 @@ body {
   cursor: default;
 }
 
+/* Push the fullscreen button to the far right of the toolbar — standard UX
+   pattern: controls on the left, view-mode toggles on the right. */
+#fullscreen-btn {
+  margin-left: auto;
+}
+
 .toolbar-separator {
   width: 1px;
   height: 20px;
@@ -808,4 +814,679 @@ body {
     animation: none !important;
     transition: none !important;
   }
+}
+
+/* ─── Signature zones (Sign mode) ─────────────────────────────────────────── */
+
+.zone-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.sig-zone {
+  position: absolute;
+  border: 1.5px dashed var(--accent);
+  background: rgba(59, 130, 246, 0.08);
+  border-radius: 3px;
+  cursor: pointer;
+  pointer-events: auto;
+  transition: background 120ms, border-color 120ms, box-shadow 120ms;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-family: ui-monospace, 'SF Mono', Monaco, 'Cascadia Code', monospace;
+  color: var(--text-secondary);
+  user-select: none;
+}
+
+.sig-zone[data-type="signature"] {
+  border-color: #3b82f6;
+  background: rgba(59, 130, 246, 0.08);
+}
+
+.sig-zone[data-type="initials"] {
+  border-color: #d97706;
+  background: rgba(217, 119, 6, 0.09);
+}
+
+.sig-zone[data-type="date"] {
+  border-color: #6b7280;
+  background: rgba(107, 114, 128, 0.08);
+}
+
+.sig-zone:hover {
+  background: rgba(59, 130, 246, 0.18);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+
+.sig-zone[data-type="initials"]:hover {
+  background: rgba(217, 119, 6, 0.2);
+  box-shadow: 0 0 0 1px #d97706;
+}
+
+.sig-zone[data-type="date"]:hover {
+  background: rgba(107, 114, 128, 0.18);
+  box-shadow: 0 0 0 1px #6b7280;
+}
+
+.sig-zone[data-applied="true"] {
+  border: 1px solid #16a34a;
+  background: transparent;   /* let the stamped canvas show through */
+  cursor: default;
+  pointer-events: none;       /* don't swallow drag-to-create over signed areas */
+}
+
+.sig-zone[data-applied="true"] .sig-zone-label {
+  background: rgba(22, 163, 74, 0.92);
+  color: #ffffff;
+  font-size: 10px;
+  font-weight: 600;
+  position: absolute;
+  left: 0;
+  /* Default: float above the zone (doesn't cover the stamp). The
+     [data-label-placement="inside"] variant below handles top-edge zones. */
+  top: -16px;
+  padding: 1px 5px;
+  border-radius: 2px;
+  z-index: 2;
+}
+
+.sig-zone[data-applied="true"][data-label-placement="inside"] .sig-zone-label {
+  /* Zone is near the top of the page — badge would be clipped off-canvas if
+     we floated it above. Dock it inside the top-left corner instead. */
+  top: 2px;
+}
+
+/* Drag-to-create preview (only visible during the drag gesture) */
+.sig-zone-draft {
+  position: absolute;
+  border: 1.5px dashed var(--accent);
+  background: rgba(59, 130, 246, 0.14);
+  border-radius: 3px;
+  pointer-events: none;
+  box-sizing: border-box;
+}
+
+/* In sign mode, enable pointer events on zone-layer so empty-area drags
+   create custom zones. sig-zone children retain their own click handlers.
+   Use default cursor so the mode doesn't scream "you're about to draw" —
+   crosshair activates only while a drag is in progress (via the .dragging
+   class set in TypeScript). */
+.page-wrapper.mode-sign .zone-layer {
+  pointer-events: auto;
+}
+
+.page-wrapper.mode-sign .zone-layer.dragging {
+  cursor: crosshair;
+}
+
+/* Per-zone delete button for user-drag zones — hover-revealed */
+.sig-zone-delete {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1px solid var(--border-color);
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 11px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0;
+  opacity: 0;
+  transition: opacity 120ms;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.sig-zone:hover .sig-zone-delete {
+  opacity: 1;
+}
+
+.sig-zone-delete:hover {
+  background: #fef2f2;
+  color: #dc2626;
+  border-color: #dc2626;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sig-zone-delete:hover {
+    background: rgba(220, 38, 38, 0.15);
+  }
+}
+
+.sig-zone-label {
+  background: rgba(255, 255, 255, 0.85);
+  padding: 1px 4px;
+  border-radius: 2px;
+  white-space: nowrap;
+  max-width: calc(100% - 4px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+@media (prefers-color-scheme: dark) {
+  .sig-zone-label {
+    background: rgba(30, 30, 30, 0.9);
+    color: var(--text-secondary);
+  }
+}
+
+.sig-zone-preview-ghost {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none;
+  overflow: hidden;
+  opacity: 0.68;
+}
+
+.sig-zone-preview-ghost::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 2px;
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.08), rgba(255, 255, 255, 0.02));
+}
+
+.sig-zone-preview-text {
+  position: relative;
+  z-index: 1;
+  color: rgba(15, 23, 42, 0.82);
+  text-align: center;
+  white-space: nowrap;
+  max-width: calc(100% - 6px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sig-zone-preview-text.signature,
+.sig-zone-preview-text.initials {
+  font-style: italic;
+  color: rgba(16, 24, 40, 0.82);
+}
+
+.sig-zone-preview-text.date {
+  font-style: normal;
+  letter-spacing: 0.02em;
+}
+
+.sig-zone-preview-image {
+  position: relative;
+  z-index: 1;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  filter: saturate(0.92);
+}
+
+/* Sign panel (right sidebar in sign mode) */
+.sign-panel {
+  width: 280px;
+  border-left: 1px solid var(--border-color);
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.sign-panel-header {
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  background: var(--bg-secondary);
+}
+
+.sign-panel-title {
+  font-weight: 600;
+  font-size: 13px;
+  color: var(--text-primary);
+}
+
+.sign-panel-subtitle {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+}
+
+.sign-panel-status {
+  padding: 8px 16px;
+  font-size: 12px;
+  color: var(--text-secondary);
+  border-bottom: 1px solid var(--border-color);
+}
+
+.sign-panel-status.empty {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.sign-panel-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.sign-panel-item {
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-color);
+  cursor: pointer;
+  font-size: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  transition: background 120ms;
+}
+
+.sign-panel-item:hover {
+  background: var(--bg-secondary);
+}
+
+.sign-panel-item.active {
+  background: var(--bg-tertiary);
+}
+
+.sign-panel-item-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.sign-panel-item-type {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  padding: 1px 5px;
+  border-radius: 2px;
+  font-weight: 600;
+}
+
+.sign-panel-item-type[data-type="signature"] { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
+.sign-panel-item-type[data-type="initials"]  { background: rgba(217, 119, 6, 0.15);  color: #d97706; }
+.sign-panel-item-type[data-type="date"]      { background: rgba(107, 114, 128, 0.15); color: #6b7280; }
+
+.sign-panel-item-page {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+}
+
+.sign-panel-item-label {
+  color: var(--text-primary);
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sign-panel-item-status {
+  font-size: 10px;
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.sign-panel-legend {
+  padding: 10px 16px;
+  border-top: 1px solid var(--border-color);
+  font-size: 11px;
+  color: var(--text-secondary);
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.sign-legend-swatch {
+  display: inline-block;
+  width: 10px;
+  height: 10px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+
+.sign-legend-swatch.sign-legend-signature { background: rgba(59, 130, 246, 0.25); border: 1px dashed #3b82f6; }
+.sign-legend-swatch.sign-legend-initials  { background: rgba(217, 119, 6, 0.25);  border: 1px dashed #d97706; }
+.sign-legend-swatch.sign-legend-date      { background: rgba(107, 114, 128, 0.25); border: 1px dashed #6b7280; }
+
+/* Signature confirm modal */
+.sign-modal {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.sign-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+}
+
+.sign-modal-content {
+  position: relative;
+  width: min(500px, calc(100vw - 32px));
+  max-height: calc(100vh - 48px);
+  background: var(--bg-primary);
+  border-radius: 8px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.sign-modal-header {
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+.sign-modal-close {
+  background: transparent;
+  border: none;
+  font-size: 20px;
+  line-height: 1;
+  color: var(--text-secondary);
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 3px;
+}
+
+.sign-modal-close:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
+.sign-modal-body {
+  padding: 16px 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+}
+
+.sign-modal-row {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.sign-modal-label {
+  font-size: 12px;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+
+.sign-modal-readonly {
+  padding: 6px 8px;
+  background: var(--bg-secondary);
+  border-radius: 3px;
+  font-size: 13px;
+  color: var(--text-primary);
+  font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+  word-break: break-all;
+}
+
+.sign-modal-row input,
+.sign-modal-row select {
+  padding: 8px 10px;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  font-size: 13px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-family: inherit;
+}
+
+.sign-modal-row input:focus,
+.sign-modal-row select:focus {
+  outline: 2px solid var(--accent);
+  outline-offset: -1px;
+  border-color: var(--accent);
+}
+
+.sign-modal-attestation {
+  margin-top: 4px;
+  padding: 10px 12px;
+  background: rgba(59, 130, 246, 0.06);
+  border-left: 3px solid var(--accent);
+  border-radius: 3px;
+}
+
+.sign-modal-attestation-label {
+  font-size: 11px;
+  color: var(--text-secondary);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 4px;
+  font-weight: 600;
+}
+
+.sign-modal-statement {
+  font-size: 13px;
+  color: var(--text-primary);
+  font-style: italic;
+  line-height: 1.4;
+}
+
+.sign-modal-statement.empty {
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.sign-modal-error {
+  padding: 8px 10px;
+  background: rgba(220, 38, 38, 0.08);
+  border-left: 3px solid #dc2626;
+  border-radius: 3px;
+  font-size: 12px;
+  color: #dc2626;
+}
+
+.sign-modal-actions {
+  padding: 12px 18px;
+  border-top: 1px solid var(--border-color);
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  background: var(--bg-secondary);
+}
+
+.sign-modal-btn {
+  padding: 8px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 13px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 120ms;
+}
+
+.sign-modal-btn:hover {
+  background: var(--bg-tertiary);
+}
+
+.sign-modal-btn-primary {
+  background: var(--accent);
+  color: white;
+  border-color: var(--accent);
+}
+
+.sign-modal-btn-primary:hover:not(:disabled) {
+  filter: brightness(0.9);
+  background: var(--accent);
+}
+
+.sign-modal-btn-primary:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+/* Working-copy banner — shows the currently-rendered stamped file */
+.sign-panel-working-copy {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  background: rgba(22, 163, 74, 0.08);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.working-copy-label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #16a34a;
+  font-weight: 600;
+}
+
+.working-copy-path {
+  font-size: 11px;
+  color: var(--text-primary);
+  font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+  word-break: break-all;
+  line-height: 1.3;
+}
+
+.working-copy-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.working-copy-btn {
+  font-size: 11px;
+  padding: 4px 8px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms;
+}
+
+.working-copy-btn:hover {
+  background: var(--bg-secondary);
+}
+
+/* Sign panel action bar */
+.sign-panel-actions {
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--border-color);
+  display: flex;
+  gap: 8px;
+}
+
+.sign-panel-action-btn {
+  padding: 6px 10px;
+  font-size: 12px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 3px;
+  color: var(--text-primary);
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 120ms;
+}
+
+.sign-panel-action-btn:hover {
+  background: var(--bg-secondary);
+}
+
+/* Draw-signature modal */
+.draw-modal-content {
+  width: min(620px, calc(100vw - 32px));
+}
+
+.draw-canvas-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+#draw-canvas {
+  width: 100%;
+  max-width: 560px;
+  height: 200px;
+  border: 1px solid var(--border-color);
+  border-radius: 4px;
+  background: white;
+  /* Prevent scrolling / gestures on touch devices during draw */
+  touch-action: none;
+  cursor: crosshair;
+}
+
+.draw-canvas-hint {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-style: italic;
+}
+
+.draw-canvas-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 4px;
+}
+
+.draw-canvas-actions .sign-modal-btn {
+  padding: 5px 12px;
+  font-size: 12px;
+}
+
+/* Toast for post-sign success */
+.sign-toast {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  background: var(--bg-primary);
+  border: 1px solid #16a34a;
+  border-left: 4px solid #16a34a;
+  padding: 10px 14px;
+  border-radius: 4px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+  z-index: 1001;
+  max-width: 380px;
+  font-size: 12px;
+  animation: sign-toast-in 200ms ease-out;
+}
+
+.sign-toast-title {
+  font-weight: 600;
+  color: #16a34a;
+  margin-bottom: 2px;
+}
+
+.sign-toast-body {
+  color: var(--text-primary);
+  word-break: break-all;
+  font-family: ui-monospace, 'SF Mono', Monaco, monospace;
+  font-size: 11px;
+}
+
+@keyframes sign-toast-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
 }

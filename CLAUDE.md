@@ -82,7 +82,7 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 7. `validate_pdf` on a partially filled form
 8. `read_pdf_content` on text and scanned PDFs
 
-## Available Tools (20 + 1 app-only)
+## Available Tools (27 + 1 app-only)
 
 1. **display_pdf** - Interactive PDF viewer with search, navigation, zoom, and form field sidebar
 2. **list_pdfs** - Lists PDF files in a directory
@@ -105,6 +105,28 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 19. **get_pdf_info** - Get page count, file size, dimensions, form field info
 20. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
 21. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
+22. **fetch_pdf_from_url** - Download a PDF from a URL to the user's local machine (bypasses Claude's WebFetch sandbox)
+23. **create_signature** - Save a reusable typed or image signature
+24. **list_signatures** - List saved signatures
+25. **add_signature_field** - Draw a "Sign here" placeholder box (does NOT sign)
+26. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent — see Signature Architecture below)
+27. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
+28. **detect_signature_zones** - Locate signature/initials/date zones with coordinates (use BEFORE apply_signature)
+
+## Signature Architecture (v0.8.0)
+
+The signature tools implement a **two-tier model** agreed with Max Ferguson on 2026-04-09:
+
+- **Tier 1 (this repo, local, free)**: Visible stamp via pdf-lib. `apply_signature` stamps a saved signature + writes an audit trail to PDF metadata. NOT legally-binding. NOT cryptographic.
+- **Tier 2 (Lumin API handoff, future)**: Cryptographic signing with timestamp and certificate. `request_lumin_signature` will route prepared packets to Lumin.
+
+**Human-intent constraint** (critical): `apply_signature` requires `user_intent_statement` + `user_confirmed_at` (ISO-8601, within last 24h). This is a legal requirement per Max: *"there's gotta be intent. Having the agent just kind of go and stamp signatures on a document without someone telling it to is not really allowed."* Agents MUST obtain these from the user and never fabricate. The validation enforces length/recency sanity checks; the intent is stored in PDF Keywords metadata for audit.
+
+**Coordinate system**: All signature tools use **top-left origin** (x from left, y from top) in PDF points (72pt = 1 inch). Internally converted to pdf-lib's bottom-left — agents/users never need to think about it.
+
+**Agent-safe vs human-gated split**:
+- Agent-safe (no intent check): `create_signature`, `list_signatures`, `add_signature_field`, `prepare_signing_packet`
+- Human-gated (requires intent): `apply_signature` only
 
 ## Code Standards
 

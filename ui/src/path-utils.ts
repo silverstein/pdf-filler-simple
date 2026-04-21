@@ -34,3 +34,13 @@ export function buildManagedPdfPath(pdfPath: string) {
   const { dir, base } = splitHostPath(pdfPath);
   return joinHostPath(dir, `${stripPdfExtension(base)}_managed.pdf`);
 }
+
+export function stripSignedPdfSuffix(fileName: string) {
+  return fileName.replace(/-signed(?=\.pdf$)/i, "");
+}
+
+export function buildSignedWorkingPdfPath(pdfPath: string) {
+  const { dir, base } = splitHostPath(pdfPath);
+  const canonicalBase = stripSignedPdfSuffix(base);
+  return joinHostPath(dir, `${stripPdfExtension(canonicalBase)}-signed.pdf`);
+}

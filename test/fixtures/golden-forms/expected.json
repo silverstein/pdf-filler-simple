@@ -1,0 +1,55 @@
+{
+  "_notes": "Golden-set ground truth for signature-zone detection. Zones are hand-labeled approximations — where a reasonable human signer would expect to place their signature. Coordinates use top-left origin in points (72pt = 1 inch). Use generous IoU thresholds (0.2-0.3) because text-heuristic detection is fuzzy by nature.",
+  "fixtures": [
+    {
+      "id": "example-fw9",
+      "source": "local",
+      "path": "../../../example-fw9.pdf",
+      "description": "Older IRS W-9 shipped with the repo — 4-page layout",
+      "min_score": 0.5,
+      "expected_zones": [
+        {
+          "type": "signature",
+          "page": 1,
+          "note": "Signature of U.S. person line — bottom of page 1 (older layout)",
+          "x_min": 100, "x_max": 500,
+          "y_min": 490, "y_max": 580,
+          "min_iou": 0.2
+        },
+        {
+          "type": "date",
+          "page": 1,
+          "note": "Date field to the right of the signature",
+          "x_min": 380, "x_max": 560,
+          "y_min": 490, "y_max": 580,
+          "min_iou": 0.15
+        }
+      ]
+    },
+    {
+      "id": "irs-fw9-2024",
+      "source": "url",
+      "url": "https://www.irs.gov/pub/irs-pdf/fw9.pdf",
+      "description": "Current IRS W-9 (rev 3-2024)",
+      "min_score": 0.5,
+      "expected_zones": [
+        {
+          "type": "signature",
+          "page": 1,
+          "note": "Signature of U.S. person line — Part II Certification block",
+          "x_min": 100, "x_max": 500,
+          "y_min": 540, "y_max": 640,
+          "min_iou": 0.2
+        },
+        {
+          "type": "date",
+          "page": 1,
+          "note": "Date field to the right of the signature",
+          "x_min": 380, "x_max": 570,
+          "y_min": 540, "y_max": 640,
+          "min_iou": 0.15
+        }
+      ]
+    }
+  ]
+}

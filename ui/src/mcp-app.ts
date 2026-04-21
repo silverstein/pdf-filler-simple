@@ -16,7 +16,7 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import * as pdfjsLib from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist";
 import "./mcp-app.css";
-import { buildManagedPdfPath, getHostBaseName } from "./path-utils";
+import { buildManagedPdfPath, buildSignedWorkingPdfPath, getHostBaseName } from "./path-utils";
 import { getPdfToolLoadData } from "./tool-result";
 
 // PDF.js worker — inline as blob URL for single-file build
@@ -43,8 +43,68 @@ let pendingPage: number | null = null;
 let currentDisplayMode: "inline" | "fullscreen" = "inline";
 
 // Manage pages state
-type ManageMode = "view" | "manage";
+type ManageMode = "view" | "manage" | "sign";
 let manageMode: ManageMode = "view";
+
+// Signature zones (Sign mode)
+interface SignatureZone {
+  type: "signature" | "initials" | "date";
+  label: string;
+  page: number;
+  x: number;        // native top-left origin, points
+  y: number;
+  width: number;
+  height: number;
+  confidence: number;
+  source: string;
+  id?: string;      // assigned client-side for DOM linking
+  applied?: boolean;
+  // For date zones, the value stamped (e.g. "2026-04-20") so the overlay
+  // badge can show the actual date instead of a generic "Signed" label.
+  appliedValue?: string;
+}
+let signatureZones: SignatureZone[] = [];
+let zonesLoadingForPath = "";
+// After the first stamp, subsequent stamps must read from the *stamped* file,
+// not the original — otherwise each apply clobbers the previous one (Phase B2
+// review B1). Tracks the path that next apply_signature / apply_text should
+// use as input.
+let workingPdfPath = "";
+// Remember which zones we've stamped so page navigation / mode toggles don't
+// lose the ✓ Signed indicator. Key: `${pdfPath}|${type}|${page}|${x}|${y}`.
+const appliedZoneKeys = new Set<string>();
+// Cache last-fetched zones per pdfPath so re-entering sign mode doesn't
+// re-run detection unnecessarily.
+const zoneCacheByPath = new Map<string, SignatureZone[]>();
+
+interface SavedSignatureSummary {
+  name: string;
+  style: string;
+  display_name: string | null;
+  preview_data_url?: string | null;
+}
+
+interface ZonePreviewState {
+  zoneId: string;
+  mode: SignModalMode;
+  text?: string;
+  imageDataUrl?: string;
+  displayName?: string;
+}
+
+let savedSignatures: SavedSignatureSummary[] = [];
+let activeZonePreview: ZonePreviewState | null = null;
+
+function zoneKey(pdfPath: string, z: { type: string; page: number; x: number; y: number }): string {
+  return `${pdfPath}|${z.type}|${z.page}|${z.x.toFixed(1)}|${z.y.toFixed(1)}`;
+}
+
+function localDateString(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 
 interface PageState {
   originalIndex: number; // 1-indexed
@@ -81,6 +141,10 @@ let fieldMatches: { fieldName: string; fieldIndex: number }[] = [];
 let preloadPaused = false;
 let pagesLoaded = 0;
 let lastLoadedResultKey = "";
+// Bumped whenever the underlying pdfDocument is replaced so an in-flight
+// preloader from a previous generation aborts instead of polluting caches
+// belonging to the new doc.
+let pdfGeneration = 0;
 
 // ─── DOM ─────────────────────────────────────────────────────────────────────
 
@@ -97,6 +161,7 @@ const canvasContainerEl = document.querySelector(".canvas-container") as HTMLEle
 const canvasEl = $("pdf-canvas") as HTMLCanvasElement;
 const textLayerEl = $("text-layer");
 const highlightLayerEl = $("highlight-layer");
+const zoneLayerEl = $("zone-layer");
 const titleEl = $("pdf-title");
 const pageInputEl = $("page-input") as HTMLInputElement;
 const totalPagesEl = $("total-pages");
@@ -307,6 +372,7 @@ async function renderPage() {
     highlightLayerEl.style.height = `${viewport.height}px`;
 
     if (searchOpen && searchQuery) renderHighlights();
+    if (manageMode === "sign") renderZoneOverlay();
 
     updateControls();
     updatePageContext();
@@ -723,12 +789,21 @@ function updateLoadingIndicator() {
 
 async function startPreloading() {
   if (!pdfDocument) return;
+  const myGen = pdfGeneration;
   for (let i = 1; i <= totalPages; i++) {
+    // A reload bumped the generation — abandon this run. The new run will
+    // index the new doc from scratch.
+    if (myGen !== pdfGeneration) return;
     if (pageTextCache.has(i)) { pagesLoaded++; updateLoadingIndicator(); continue; }
-    while (preloadPaused) await new Promise(r => setTimeout(r, 50));
+    while (preloadPaused) {
+      await new Promise(r => setTimeout(r, 50));
+      if (myGen !== pdfGeneration) return;
+    }
     try {
       const page = await pdfDocument.getPage(i);
+      if (myGen !== pdfGeneration) return;
       const tc = await page.getTextContent();
+      if (myGen !== pdfGeneration) return;
       const items = (tc.items as { str?: string }[]).map(it => it.str || "");
       pageTextCache.set(i, items.join(""));
       pagesLoaded++;
@@ -753,7 +828,44 @@ async function startPreloading() {
 const modeTabsEl = $("mode-tabs");
 const modeViewBtn = $("mode-view-btn") as HTMLButtonElement;
 const modeManageBtn = $("mode-manage-btn") as HTMLButtonElement;
+const modeSignBtn = $("mode-sign-btn") as HTMLButtonElement;
 const managePanelEl = $("manage-panel");
+const signPanelEl = $("sign-panel");
+const signPanelStatusEl = $("sign-panel-status");
+const signPanelListEl = $("sign-panel-list");
+const signZoneCountEl = $("sign-zone-count");
+const signPanelWorkingCopyEl = $("sign-panel-working-copy");
+const signPanelWorkingCopyPathEl = $("sign-panel-working-copy-path");
+const signPanelWorkingCopyRevealBtn = $("sign-panel-working-copy-reveal") as HTMLButtonElement;
+const signPanelWorkingCopyCopyBtn = $("sign-panel-working-copy-copy") as HTMLButtonElement;
+const signModalEl = $("sign-modal");
+const signModalDocEl = $("sign-modal-doc");
+const signModalZoneEl = $("sign-modal-zone");
+const signModalTypeRowEl = $("sign-modal-type-row");
+const signModalTypeEl = $("sign-modal-type") as HTMLSelectElement;
+const signModalNameEl = $("sign-modal-name") as HTMLInputElement;
+const signModalExistingEl = $("sign-modal-existing") as HTMLSelectElement;
+const signModalStatementEl = $("sign-modal-statement");
+const signModalErrorEl = $("sign-modal-error");
+const signModalCancelBtn = $("sign-modal-cancel") as HTMLButtonElement;
+const signModalConfirmBtn = $("sign-modal-confirm") as HTMLButtonElement;
+const signModalCloseBtn = $("sign-modal-close") as HTMLButtonElement;
+const signModalTitleEl = $("sign-modal-title");
+const signModalNameLabelEl = $("sign-modal-name-label");
+const signModalIdentityRowsEl = $("sign-modal-identity-rows");
+const signModalDateRowEl = $("sign-modal-date-row");
+const signModalDateInputEl = $("sign-modal-date") as HTMLInputElement;
+const signPanelDrawBtn = $("sign-panel-draw-btn") as HTMLButtonElement;
+const drawModalEl = $("draw-modal");
+const drawCanvasEl = $("draw-canvas") as HTMLCanvasElement;
+const drawNameInputEl = $("draw-name-input") as HTMLInputElement;
+const drawLegalNameInputEl = $("draw-legal-name-input") as HTMLInputElement;
+const drawUndoBtn = $("draw-undo-btn") as HTMLButtonElement;
+const drawClearBtn = $("draw-clear-btn") as HTMLButtonElement;
+const drawSaveBtn = $("draw-modal-save") as HTMLButtonElement;
+const drawCancelBtn = $("draw-modal-cancel") as HTMLButtonElement;
+const drawCloseBtn = $("draw-modal-close") as HTMLButtonElement;
+const drawErrorEl = $("draw-modal-error");
 const manageGridEl = $("manage-grid");
 const manageStatusEl = $("manage-status");
 const manageRotateCwBtn = $("manage-rotate-cw") as HTMLButtonElement;
@@ -778,24 +890,1207 @@ function initPageStates() {
   hasUnsavedChanges = false;
 }
 
+// ─── Signature zones (Sign mode) ─────────────────────────────────────────────
+
+async function fetchSignatureZones(force = false) {
+  if (!pdfPath) return;
+  // If we already have zones cached for this exact file, reuse them — don't
+  // throw away the user's ✓ Signed flags on every mode toggle.
+  if (!force && zoneCacheByPath.has(pdfPath)) {
+    signatureZones = zoneCacheByPath.get(pdfPath)!;
+    renderSignPanel();
+    renderZoneOverlay();
+    return;
+  }
+  // Guard against multiple concurrent fetches for the same file
+  if (zonesLoadingForPath === pdfPath) return;
+  zonesLoadingForPath = pdfPath;
+
+  signPanelStatusEl.textContent = "Detecting signature zones…";
+  signPanelStatusEl.classList.remove("empty");
+
+  try {
+    const result = await app.callServerTool({
+      name: "detect_signature_zones",
+      arguments: { pdf_path: pdfPath },
+    });
+    if (result.isError) {
+      const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Unknown error";
+      throw new Error(text);
+    }
+    const sc = result.structuredContent as { zones?: SignatureZone[] } | undefined;
+    const zones = (sc?.zones ?? []).map((z, i) => ({
+      ...z,
+      id: `zone-${i}`,
+      // Carry forward the applied flag if we've stamped this same zone before.
+      // Key is stable across re-fetches: pdfPath + type + page + rounded coords.
+      applied: appliedZoneKeys.has(zoneKey(pdfPath, z)),
+    }));
+    signatureZones = zones;
+    zoneCacheByPath.set(pdfPath, zones);
+  } catch (err: any) {
+    console.error("[viewer] detect_signature_zones failed:", err);
+    signatureZones = [];
+    signPanelStatusEl.textContent = `Detection failed: ${err?.message ?? err}`;
+  } finally {
+    zonesLoadingForPath = "";
+  }
+
+  renderSignPanel();
+  renderZoneOverlay();
+}
+
+function clearZoneOverlay() {
+  // Preserve an in-progress drag draft so zoom / re-render during a drag
+  // doesn't cancel the user's drag gesture (Phase B review B2).
+  const preserve = activeDrag?.draftEl;
+  const children = Array.from(zoneLayerEl.children);
+  for (const child of children) {
+    if (child !== preserve) zoneLayerEl.removeChild(child);
+  }
+}
+
+function getSavedSignatureByName(name: string) {
+  return savedSignatures.find(sig => sig.name === name) || null;
+}
+
+function updateZonePreviewState() {
+  if (!activeSignZone || signModalEl.style.display !== "flex") {
+    activeZonePreview = null;
+    renderZoneOverlay();
+    return;
+  }
+
+  if (activeModalMode === "date") {
+    const pickedDate = signModalDateInputEl.value;
+    activeZonePreview = pickedDate ? {
+      zoneId: activeSignZone.id || "",
+      mode: activeModalMode,
+      text: pickedDate,
+    } : null;
+    renderZoneOverlay();
+    return;
+  }
+
+  const existing = signModalExistingEl.value;
+  const name = signModalNameEl.value.trim();
+  const saved = existing ? getSavedSignatureByName(existing) : null;
+  if (saved?.preview_data_url) {
+    activeZonePreview = {
+      zoneId: activeSignZone.id || "",
+      mode: activeModalMode,
+      imageDataUrl: saved.preview_data_url,
+      displayName: saved.display_name || name || saved.name,
+    };
+  } else if (name) {
+    activeZonePreview = {
+      zoneId: activeSignZone.id || "",
+      mode: activeModalMode,
+      text: name,
+      displayName: name,
+    };
+  } else {
+    activeZonePreview = null;
+  }
+  renderZoneOverlay();
+}
+
+function buildZonePreviewGhost(zone: SignatureZone) {
+  if (!activeZonePreview || activeZonePreview.zoneId !== (zone.id || "") || zone.applied) return null;
+
+  const ghost = document.createElement("div");
+  ghost.className = "sig-zone-preview-ghost";
+
+  if (activeZonePreview.imageDataUrl) {
+    const img = document.createElement("img");
+    img.className = "sig-zone-preview-image";
+    img.src = activeZonePreview.imageDataUrl;
+    img.alt = activeZonePreview.displayName || "Signature preview";
+    ghost.appendChild(img);
+    return ghost;
+  }
+
+  if (activeZonePreview.text) {
+    const text = document.createElement("div");
+    text.className = `sig-zone-preview-text ${activeZonePreview.mode}`;
+    text.textContent = activeZonePreview.text;
+    const widthPx = zone.width * scale;
+    const heightPx = zone.height * scale;
+    const estimated = widthPx / Math.max(activeZonePreview.text.length * 0.58, 1);
+    const fontSize = Math.max(
+      9,
+      Math.min(activeZonePreview.mode === "date" ? 18 : 30, heightPx * 0.72, estimated)
+    );
+    text.style.fontSize = `${fontSize}px`;
+    ghost.appendChild(text);
+    return ghost;
+  }
+
+  return null;
+}
+
+function renderZoneOverlay() {
+  clearZoneOverlay();
+  if (manageMode !== "sign") return;
+  if (!pdfDocument) return;
+
+  // Size overlay to match canvas
+  zoneLayerEl.style.width = canvasEl.style.width;
+  zoneLayerEl.style.height = canvasEl.style.height;
+
+  // If scale changed mid-drag, update the draft rectangle so it stays
+  // visually consistent with the new zoom.
+  if (activeDrag) updateDraftRectangle();
+
+  const pageZones = signatureZones.filter(z => z.page === currentPage);
+  for (const z of pageZones) {
+    const el = document.createElement("div");
+    el.className = "sig-zone";
+    el.dataset.type = z.type;
+    el.dataset.zoneId = z.id || "";
+    if (z.applied) {
+      el.dataset.applied = "true";
+      // Badge default is floated above the zone (-16px). If the zone is near
+      // the top of the page, it'd be clipped off-canvas — dock it inside
+      // instead. Threshold: zone top is within 20 CSS px of canvas top.
+      if (z.y * scale < 20) el.dataset.labelPlacement = "inside";
+    }
+    // Zone coords are in native PDF points (top-left origin). Multiply by scale.
+    el.style.left = `${z.x * scale}px`;
+    el.style.top = `${z.y * scale}px`;
+    el.style.width = `${z.width * scale}px`;
+    el.style.height = `${z.height * scale}px`;
+    el.title = `${z.label} (conf ${(z.confidence * 100).toFixed(0)}%)`;
+
+    if (z.width * scale > 48) {
+      const label = document.createElement("span");
+      label.className = "sig-zone-label";
+      if (z.applied) {
+        // For date zones, surface the actual value that was stamped; for
+        // signatures/initials the canvas now shows the stamp itself, so a
+        // compact "✓ Signed / Initialed" badge is the most useful hint.
+        if (z.type === "date" && z.appliedValue) {
+          label.textContent = `✓ ${z.appliedValue}`;
+        } else if (z.type === "initials") {
+          label.textContent = "✓ Initialed";
+        } else {
+          label.textContent = "✓ Signed";
+        }
+      } else {
+        label.textContent = z.type === "signature" ? "Sign here" :
+                            z.type === "initials"  ? "Initials" : "Date";
+      }
+      el.appendChild(label);
+    }
+
+    const previewGhost = buildZonePreviewGhost(z);
+    if (previewGhost) {
+      el.appendChild(previewGhost);
+    }
+
+    // Applied zones are inert — no click handler, no pointer events (CSS handles cursor).
+    if (!z.applied) {
+      el.addEventListener("click", () => onZoneClick(z));
+    }
+
+    // User-created zones get a ✕ delete button in the corner (detected zones
+    // aren't deletable — removing them would mask the form's real sign-here
+    // spots). Zones already signed skip the delete too (audit-trail risk).
+    if (z.source === "user-drag" && !z.applied) {
+      const del = document.createElement("button");
+      del.className = "sig-zone-delete";
+      del.type = "button";
+      del.setAttribute("aria-label", "Delete this custom zone");
+      del.title = "Remove this zone";
+      del.textContent = "✕";
+      del.addEventListener("click", (ev) => {
+        ev.stopPropagation();
+        deleteCustomZone(z);
+      });
+      el.appendChild(del);
+    }
+    zoneLayerEl.appendChild(el);
+  }
+}
+
+function deleteCustomZone(zone: SignatureZone) {
+  const idx = signatureZones.indexOf(zone);
+  if (idx < 0) return;
+  signatureZones.splice(idx, 1);
+  renderZoneOverlay();
+  renderSignPanel();
+}
+
+function onZoneClick(zone: SignatureZone) {
+  if (zone.applied) return; // already signed
+  openSignModal(zone);
+}
+
+// ─── Drag-to-create custom zone (Sign mode) ──────────────────────────────────
+
+interface DragState {
+  // Start position stored in PDF points (native, scale-invariant) — so that
+  // mid-drag zoom doesn't skew the resulting zone (Phase B review B1).
+  startXpts: number;
+  startYpts: number;
+  currentXpts: number;
+  currentYpts: number;
+  pointerId: number;
+  draftEl: HTMLElement;
+}
+let activeDrag: DragState | null = null;
+// Raised from 20×10 to 60×15 — the old threshold was so low that casual clicks
+// with any mouse jitter produced stray zones, which then cluttered the PDF.
+// 60×15 still accepts a clearly-intentional drag (most signature lines are
+// 150pt+ wide) while filtering out accidental pointer twitches.
+const MIN_CUSTOM_ZONE_WIDTH = 60;
+const MIN_CUSTOM_ZONE_HEIGHT = 15;
+
+function getZoneLayerPointerPoints(e: PointerEvent): [number, number] {
+  const rect = zoneLayerEl.getBoundingClientRect();
+  // Convert to PDF points: CSS offset / scale.
+  return [(e.clientX - rect.left) / scale, (e.clientY - rect.top) / scale];
+}
+
+function updateDraftRectangle() {
+  if (!activeDrag) return;
+  const xPts = Math.min(activeDrag.startXpts, activeDrag.currentXpts);
+  const yPts = Math.min(activeDrag.startYpts, activeDrag.currentYpts);
+  const widthPts = Math.abs(activeDrag.currentXpts - activeDrag.startXpts);
+  const heightPts = Math.abs(activeDrag.currentYpts - activeDrag.startYpts);
+  activeDrag.draftEl.style.left = `${xPts * scale}px`;
+  activeDrag.draftEl.style.top = `${yPts * scale}px`;
+  activeDrag.draftEl.style.width = `${widthPts * scale}px`;
+  activeDrag.draftEl.style.height = `${heightPts * scale}px`;
+}
+
+function onZoneLayerPointerDown(e: PointerEvent) {
+  if (manageMode !== "sign") return;
+  // Only primary button / primary pointer — ignore secondary touches and right-clicks.
+  if (!e.isPrimary) return;
+  if (e.button !== 0 && (e.pointerType === "mouse" || e.pointerType === "pen")) return;
+  // If the target is a sig-zone or its descendant, let the zone's own handler take it.
+  if ((e.target as HTMLElement).closest(".sig-zone")) return;
+  e.preventDefault();
+
+  const [xPts, yPts] = getZoneLayerPointerPoints(e);
+  const draft = document.createElement("div");
+  draft.className = "sig-zone-draft";
+  zoneLayerEl.appendChild(draft);
+
+  activeDrag = {
+    startXpts: xPts, startYpts: yPts,
+    currentXpts: xPts, currentYpts: yPts,
+    pointerId: e.pointerId,
+    draftEl: draft,
+  };
+  updateDraftRectangle();
+  zoneLayerEl.classList.add("dragging");
+  try { zoneLayerEl.setPointerCapture(e.pointerId); } catch { /* ignore */ }
+}
+
+function onZoneLayerPointerMove(e: PointerEvent) {
+  if (!activeDrag || e.pointerId !== activeDrag.pointerId) return;
+  const [xPts, yPts] = getZoneLayerPointerPoints(e);
+  activeDrag.currentXpts = xPts;
+  activeDrag.currentYpts = yPts;
+  updateDraftRectangle();
+}
+
+function onZoneLayerPointerUp(e: PointerEvent) {
+  if (!activeDrag || e.pointerId !== activeDrag.pointerId) return;
+  try { zoneLayerEl.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+
+  // Final bbox in PDF points — scale-invariant regardless of mid-drag zoom.
+  const xPts = Math.min(activeDrag.startXpts, activeDrag.currentXpts);
+  const yPts = Math.min(activeDrag.startYpts, activeDrag.currentYpts);
+  const widthPts = Math.abs(activeDrag.currentXpts - activeDrag.startXpts);
+  const heightPts = Math.abs(activeDrag.currentYpts - activeDrag.startYpts);
+
+  try { activeDrag.draftEl.remove(); } catch { /* may already be detached */ }
+  activeDrag = null;
+  zoneLayerEl.classList.remove("dragging");
+
+  if (widthPts < MIN_CUSTOM_ZONE_WIDTH || heightPts < MIN_CUSTOM_ZONE_HEIGHT) {
+    return; // too small — stray click, don't create a zone
+  }
+
+  const newZone: SignatureZone = {
+    type: "signature",
+    label: "Custom zone",
+    page: currentPage,
+    x: xPts, y: yPts,
+    width: widthPts, height: heightPts,
+    confidence: 1.0,
+    source: "user-drag",
+    id: `zone-custom-${Date.now()}`,
+    applied: false,
+  };
+  signatureZones.push(newZone);
+  renderZoneOverlay();
+  renderSignPanel();
+  openSignModal(newZone);
+}
+
+function onZoneLayerPointerCancel(e: PointerEvent) {
+  if (!activeDrag || e.pointerId !== activeDrag.pointerId) return;
+  try { activeDrag.draftEl.remove(); } catch { /* ignore */ }
+  activeDrag = null;
+  zoneLayerEl.classList.remove("dragging");
+}
+
+// ─── Confirm modal ───────────────────────────────────────────────────────────
+
+type SignModalMode = "signature" | "initials" | "date";
+
+let activeSignZone: SignatureZone | null = null;
+let activeModalMode: SignModalMode = "signature";
+let signingInFlight = false;
+
+// Per-mode copy + layout configuration. Centralized so we don't scatter
+// "is it a date?" branches across the codebase.
+const MODAL_MODE_CONFIG: Record<SignModalMode, {
+  title: string;
+  buttonLabel: string;
+  signingLabel: string;
+  showIdentity: boolean;
+  showDate: boolean;
+  nameLabel: string;
+  verb: string;
+  attestationHeading: string;
+  attestationEmpty: string;
+}> = {
+  signature: {
+    title: "Confirm signature",
+    buttonLabel: "Sign",
+    signingLabel: "Signing…",
+    showIdentity: true,
+    showDate: false,
+    nameLabel: "Type your full name",
+    verb: "sign",
+    attestationHeading: "You are attesting:",
+    attestationEmpty: "Type your name above to see the attestation.",
+  },
+  initials: {
+    title: "Confirm initials",
+    buttonLabel: "Stamp initials",
+    signingLabel: "Stamping…",
+    showIdentity: true,
+    showDate: false,
+    nameLabel: "Type your full name — we'll stamp it compressed to fit the initials box. For a proper \"M.S.\"-style asset, use \"Draw signature\" first and pick it from the dropdown.",
+    verb: "initial",
+    attestationHeading: "You are attesting:",
+    attestationEmpty: "Type your name above to see the attestation.",
+  },
+  date: {
+    title: "Insert date",
+    buttonLabel: "Insert date",
+    signingLabel: "Stamping…",
+    showIdentity: false,
+    showDate: true,
+    nameLabel: "",
+    verb: "",
+    attestationHeading: "You are inserting:",
+    attestationEmpty: "Pick a date above.",
+  },
+};
+
+function modeForZoneType(type: SignatureZone["type"]): SignModalMode {
+  // Exhaustive guard — if detection evolves to emit a new type (e.g. "name"),
+  // fail loudly rather than silently falling back to signature mode (Phase B2
+  // review F3). Cast to string so TS doesn't narrow us away from the check.
+  const t = type as string;
+  if (t === "signature") return "signature";
+  if (t === "initials") return "initials";
+  if (t === "date") return "date";
+  throw new Error(`Unknown zone type "${t}" — viewer doesn't know how to sign it. Update modeForZoneType.`);
+}
+
+function applyModalMode(mode: SignModalMode) {
+  const cfg = MODAL_MODE_CONFIG[mode];
+  signModalTitleEl.textContent = cfg.title;
+  signModalConfirmBtn.textContent = cfg.buttonLabel;
+  signModalNameLabelEl.textContent = cfg.nameLabel;
+  signModalIdentityRowsEl.style.display = cfg.showIdentity ? "" : "none";
+  signModalDateRowEl.style.display = cfg.showDate ? "flex" : "none";
+  const heading = document.getElementById("sign-modal-attestation-heading");
+  if (heading) heading.textContent = cfg.attestationHeading;
+}
+
+function refreshActiveZoneCopy() {
+  if (!activeSignZone) return;
+  signModalZoneEl.textContent = `${activeSignZone.type} on page ${activeSignZone.page} — ${activeSignZone.label}`;
+}
+
+async function openSignModal(zone: SignatureZone) {
+  // Guard: if a sign is already underway, don't swap the active zone (Phase B review B4).
+  if (signingInFlight) return;
+  activeSignZone = zone;
+  activeModalMode = modeForZoneType(zone.type);
+  signModalTypeRowEl.style.display = zone.source === "user-drag" ? "flex" : "none";
+  signModalTypeEl.value = zone.type;
+  applyModalMode(activeModalMode);
+
+  signModalErrorEl.style.display = "none";
+  signModalErrorEl.textContent = "";
+
+  // Populate readonly fields
+  const baseName = pdfPath.split(/[\/\\]/).pop() || "document.pdf";
+  signModalDocEl.textContent = baseName;
+  refreshActiveZoneCopy();
+
+  // Reset inputs per mode
+  signModalNameEl.value = "";
+  delete signModalNameEl.dataset.autofilledFrom;
+  signModalExistingEl.selectedIndex = 0;
+  if (activeModalMode === "date") {
+    // Default to today's date
+    signModalDateInputEl.value = localDateString();
+  }
+  signModalConfirmBtn.disabled = true;
+  updateStatementPreview();
+
+  // Load saved signatures only when identity fields are visible
+  if (activeModalMode !== "date") {
+    await populateSavedSignatures();
+  }
+
+  // Show modal + focus the right field
+  signModalEl.style.display = "flex";
+  updateZonePreviewState();
+  setTimeout(() => {
+    if (activeModalMode === "date") signModalDateInputEl.focus();
+    else signModalNameEl.focus();
+  }, 20);
+}
+
+function closeSignModal() {
+  signModalEl.style.display = "none";
+  activeZonePreview = null;
+  activeSignZone = null;
+  signModalErrorEl.style.display = "none";
+  renderZoneOverlay();
+}
+
+async function populateSavedSignatures() {
+  // Clear all but the default option
+  while (signModalExistingEl.options.length > 1) signModalExistingEl.remove(1);
+  try {
+    const result = await app.callServerTool({
+      name: "list_signatures",
+      arguments: {},
+    });
+    if (result.isError) {
+      savedSignatures = [];
+      return;
+    }
+    const sc = result.structuredContent as { signatures?: SavedSignatureSummary[] } | undefined;
+    const sigs = sc?.signatures ?? [];
+    savedSignatures = sigs;
+    for (const s of sigs) {
+      const opt = document.createElement("option");
+      opt.value = s.name;
+      // Stash display_name so the selector can auto-fill the typed-name field
+      // when the user picks a saved signature (avoids the "sign button stays greyed" trap).
+      opt.dataset.displayName = s.display_name ?? "";
+      const displayPart = s.display_name ? ` — ${s.display_name}` : "";
+      opt.textContent = `${s.name} (${s.style}${displayPart})`;
+      signModalExistingEl.appendChild(opt);
+    }
+  } catch (err) {
+    console.warn("[viewer] list_signatures failed (modal still usable):", err);
+    savedSignatures = [];
+  }
+}
+
+// When the user picks a saved signature, auto-fill the typed-name field from
+// the signature's display_name so the attestation preview + Sign button are
+// immediately usable — no "why is this still greyed out?" moment.
+function onSavedSignatureChange() {
+  const opt = signModalExistingEl.selectedOptions[0];
+  if (!opt) return;
+  const displayName = opt.dataset.displayName || "";
+  // Only overwrite the name field if it's empty OR still matches a previous
+  // display-name auto-fill (don't trample user input).
+  const current = signModalNameEl.value.trim();
+  if (!current || current === signModalNameEl.dataset.autofilledFrom) {
+    signModalNameEl.value = displayName;
+    signModalNameEl.dataset.autofilledFrom = displayName;
+  }
+  updateStatementPreview();
+  updateZonePreviewState();
+}
+
+function onCustomZoneTypeChange() {
+  if (!activeSignZone || activeSignZone.source !== "user-drag") return;
+  const nextType = signModalTypeEl.value as SignatureZone["type"];
+  activeSignZone.type = nextType;
+  activeModalMode = modeForZoneType(nextType);
+  applyModalMode(activeModalMode);
+  refreshActiveZoneCopy();
+  if (activeModalMode === "date" && !signModalDateInputEl.value) {
+    signModalDateInputEl.value = localDateString();
+  }
+  renderSignPanel();
+  updateStatementPreview();
+}
+
+// A "meaningful" name has ≥3 alphanumeric characters. Rejects 2-char
+// placeholders ("XY"), pure punctuation (".."), and zero-width junk.
+// Server's validateSigningIntent enforces an 8-char floor on the full
+// statement, which is trivially padded by the boilerplate ("I, {name}, sign
+// {filename} on {date}."), so the real defense has to happen here (Phase B B5).
+function isMeaningfulName(name: string): boolean {
+  const alnum = name.replace(/[^\p{L}\p{N}]/gu, "");
+  return alnum.length >= 3;
+}
+
+function updateStatementPreview() {
+  const cfg = MODAL_MODE_CONFIG[activeModalMode];
+  const baseName = (pdfPath.split(/[\/\\]/).pop() || "this document");
+
+  if (activeModalMode === "date") {
+    const picked = signModalDateInputEl.value;
+    if (!picked) {
+      signModalStatementEl.textContent = cfg.attestationEmpty;
+      signModalStatementEl.classList.add("empty");
+      signModalConfirmBtn.disabled = true;
+      return;
+    }
+    signModalStatementEl.textContent = `Stamping "${picked}" at this location on ${baseName}.`;
+    signModalStatementEl.classList.remove("empty");
+    signModalConfirmBtn.disabled = false;
+    updateZonePreviewState();
+    return;
+  }
+
+  // signature + initials share identity-based flow
+  const name = signModalNameEl.value.trim();
+  const existing = signModalExistingEl.value;
+  const today = localDateString();
+
+  if (!name) {
+    if (existing) {
+      // User picked a saved sig but that sig has no display_name (image sigs
+      // drawn in older versions, mostly). Be specific about why we still need
+      // a typed name.
+      const opt = signModalExistingEl.selectedOptions[0];
+      const savedHasName = !!(opt?.dataset.displayName);
+      signModalStatementEl.textContent = savedHasName
+        ? `Pick a saved signature above or type your name — the attestation must reference you.`
+        : `This saved signature doesn't have a legal name saved — type yours above to finish the attestation. (Tip: when drawing a signature, fill in "Your full legal name" so this isn't needed every time.)`;
+    } else {
+      signModalStatementEl.textContent = cfg.attestationEmpty;
+    }
+    signModalStatementEl.classList.add("empty");
+    signModalConfirmBtn.disabled = true;
+    updateZonePreviewState();
+    return;
+  }
+
+  signModalStatementEl.textContent = `I, ${name}, ${cfg.verb} ${baseName} on ${today}.`;
+  signModalStatementEl.classList.remove("empty");
+  signModalConfirmBtn.disabled = !isMeaningfulName(name);
+  updateZonePreviewState();
+}
+
+async function onConfirmSign() {
+  if (!activeSignZone) return;
+  const zone = activeSignZone;
+  const cfg = MODAL_MODE_CONFIG[activeModalMode];
+  const baseName = (pdfPath.split(/[\/\\]/).pop() || "this document");
+
+  // Preflight validation per mode
+  if (activeModalMode === "date") {
+    if (!signModalDateInputEl.value) return;
+  } else {
+    const name = signModalNameEl.value.trim();
+    if (!isMeaningfulName(name)) return;
+  }
+
+  signingInFlight = true;
+  signModalConfirmBtn.disabled = true;
+  signModalConfirmBtn.textContent = cfg.signingLabel;
+  signModalErrorEl.style.display = "none";
+
+  try {
+    // Each apply reads the working path (original PDF on first call, the
+    // previously-stamped output on subsequent calls) and writes to a new
+    // unique file. This stacks stamps instead of silently clobbering them.
+    const inputForApply = workingPdfPath || pdfPath;
+    const outputPath = buildNextStampOutputPath();
+
+    if (activeModalMode === "date") {
+      // ─── Date path → apply_text ───
+      const pickedDate = signModalDateInputEl.value; // YYYY-MM-DD
+      const applyResult = await app.callServerTool({
+        name: "apply_text",
+        arguments: {
+          pdf_path: inputForApply,
+          output_path: outputPath,
+          page: zone.page,
+          x: zone.x, y: zone.y, width: zone.width, height: zone.height,
+          text: pickedDate,
+          // Re-stamps read from and write to the same working copy.
+          overwrite: true,
+        },
+      });
+      if (applyResult.isError) {
+        const text = applyResult.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "apply_text failed";
+        throw new Error(text);
+      }
+      zone.applied = true;
+      zone.appliedValue = pickedDate;
+      appliedZoneKeys.add(zoneKey(pdfPath, zone));
+      const sc = applyResult.structuredContent as { pdf_path?: string } | undefined;
+      workingPdfPath = sc?.pdf_path ?? outputPath;
+      // Invalidate the tool-result short-circuit so a replay of the original
+      // display_pdf result forces a clean reload (Codex P1-B).
+      lastLoadedResultKey = "";
+      updateWorkingCopyBanner();
+      let reloadOk = true;
+      let reloadErr: string | undefined;
+      try {
+        await reloadPdfForStamp(workingPdfPath);
+      } catch (err: any) {
+        reloadOk = false;
+        reloadErr = err?.message ?? String(err);
+        console.warn("[viewer] post-stamp reload failed:", err);
+      }
+      renderZoneOverlay();
+      renderSignPanel();
+      if (reloadOk) {
+        showStampToast(sc?.pdf_path ?? outputPath, "date");
+      } else {
+        // Stamp IS on disk; viewer just couldn't re-render. Tell the user.
+        showStampToast(
+          sc?.pdf_path ?? outputPath,
+          "date",
+          "warning",
+          `Reload failed — switch modes or reopen to see it. (${reloadErr ?? "unknown error"})`,
+        );
+      }
+      closeSignModal();
+      return;
+    }
+
+    // ─── Signature / initials path → apply_signature ───
+    const name = signModalNameEl.value.trim();
+    const existing = signModalExistingEl.value;
+    const timestamp = new Date().toISOString();
+    const today = localDateString();
+    const statement = `I, ${name}, ${cfg.verb} ${baseName} on ${today}.`;
+
+    let signatureName = existing;
+    if (!signatureName) {
+      const quickName = "__pdf-tools-quick-typed__";
+      const createResult = await app.callServerTool({
+        name: "create_signature",
+        arguments: { name: quickName, display_name: name, overwrite: true },
+      });
+      if (createResult.isError) {
+        const text = createResult.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "create_signature failed";
+        throw new Error(text);
+      }
+      signatureName = quickName;
+    }
+
+    const applyResult = await app.callServerTool({
+      name: "apply_signature",
+      arguments: {
+        pdf_path: inputForApply,
+        output_path: outputPath,
+        signature_name: signatureName,
+        page: zone.page,
+        x: zone.x, y: zone.y, width: zone.width, height: zone.height,
+        user_intent_statement: statement,
+        user_confirmed_at: timestamp,
+        // Re-stamps read from and write to the same working copy.
+        overwrite: true,
+      },
+    });
+    if (applyResult.isError) {
+      const text = applyResult.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "apply_signature failed";
+      throw new Error(text);
+    }
+
+    zone.applied = true;
+    appliedZoneKeys.add(zoneKey(pdfPath, zone));
+    const sc = applyResult.structuredContent as { pdf_path?: string } | undefined;
+    workingPdfPath = sc?.pdf_path ?? outputPath;
+    // Invalidate the tool-result short-circuit so a replay of the original
+    // display_pdf result forces a clean reload (Codex P1-B).
+    lastLoadedResultKey = "";
+    updateWorkingCopyBanner();
+    let reloadOk = true;
+    let reloadErr: string | undefined;
+    try {
+      await reloadPdfForStamp(workingPdfPath);
+    } catch (err: any) {
+      reloadOk = false;
+      reloadErr = err?.message ?? String(err);
+      console.warn("[viewer] post-stamp reload failed:", err);
+    }
+    renderZoneOverlay();
+    renderSignPanel();
+    const toastMode = activeModalMode === "initials" ? "initials" : "signature";
+    if (reloadOk) {
+      showStampToast(sc?.pdf_path ?? outputPath, toastMode);
+    } else {
+      showStampToast(
+        sc?.pdf_path ?? outputPath,
+        toastMode,
+        "warning",
+        `Reload failed — switch modes or reopen to see it. (${reloadErr ?? "unknown error"})`,
+      );
+    }
+    closeSignModal();
+  } catch (err: any) {
+    signModalErrorEl.textContent = err?.message ?? String(err);
+    signModalErrorEl.style.display = "block";
+    signModalConfirmBtn.disabled = false;
+    signModalConfirmBtn.textContent = cfg.buttonLabel;
+  } finally {
+    signingInFlight = false;
+  }
+}
+
+// ─── Drawing canvas (Sign mode) ──────────────────────────────────────────────
+
+interface Stroke { points: Array<[number, number]>; }
+let drawStrokes: Stroke[] = [];
+let drawCurrentStroke: Stroke | null = null;
+let drawCanvasCtx: CanvasRenderingContext2D | null = null;
+
+function getDrawCtx(): CanvasRenderingContext2D {
+  if (!drawCanvasCtx) {
+    drawCanvasCtx = drawCanvasEl.getContext("2d", { willReadFrequently: false })!;
+    drawCanvasCtx.lineCap = "round";
+    drawCanvasCtx.lineJoin = "round";
+  }
+  return drawCanvasCtx;
+}
+
+function clearDrawCanvas() {
+  const ctx = getDrawCtx();
+  // Reset transform in case DPR scaling was applied previously
+  ctx.setTransform(1, 0, 0, 1, 0, 0);
+  ctx.clearRect(0, 0, drawCanvasEl.width, drawCanvasEl.height);
+  // Redraw a white background so saved PNG has white (not transparent) bg
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, drawCanvasEl.width, drawCanvasEl.height);
+}
+
+function redrawAllStrokes() {
+  clearDrawCanvas();
+  const ctx = getDrawCtx();
+  ctx.strokeStyle = "#111111";
+  ctx.lineWidth = 2.5;
+  for (const stroke of drawStrokes) {
+    if (stroke.points.length === 0) continue;
+    ctx.beginPath();
+    ctx.moveTo(stroke.points[0][0], stroke.points[0][1]);
+    for (let i = 1; i < stroke.points.length; i++) {
+      ctx.lineTo(stroke.points[i][0], stroke.points[i][1]);
+    }
+    if (stroke.points.length === 1) {
+      const [x, y] = stroke.points[0];
+      ctx.arc(x, y, 1.25, 0, Math.PI * 2);
+      ctx.fillStyle = "#111111";
+      ctx.fill();
+    } else {
+      ctx.stroke();
+    }
+  }
+  updateDrawSaveState();
+}
+
+function pointerCoordsRelativeToCanvas(e: PointerEvent): [number, number] {
+  const rect = drawCanvasEl.getBoundingClientRect();
+  const scaleX = drawCanvasEl.width / rect.width;
+  const scaleY = drawCanvasEl.height / rect.height;
+  return [(e.clientX - rect.left) * scaleX, (e.clientY - rect.top) * scaleY];
+}
+
+function onDrawPointerDown(e: PointerEvent) {
+  if (drawModalEl.style.display === "none") return;
+  drawCanvasEl.setPointerCapture(e.pointerId);
+  drawCurrentStroke = { points: [pointerCoordsRelativeToCanvas(e)] };
+  drawStrokes.push(drawCurrentStroke);
+  redrawAllStrokes();
+}
+
+function onDrawPointerMove(e: PointerEvent) {
+  if (!drawCurrentStroke) return;
+  drawCurrentStroke.points.push(pointerCoordsRelativeToCanvas(e));
+  redrawAllStrokes();
+}
+
+function onDrawPointerUp(e: PointerEvent) {
+  if (!drawCurrentStroke) return;
+  try { drawCanvasEl.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+  drawCurrentStroke = null;
+  redrawAllStrokes();
+}
+
+function openDrawModal() {
+  drawStrokes = [];
+  drawCurrentStroke = null;
+  drawNameInputEl.value = "";
+  drawLegalNameInputEl.value = "";
+  drawErrorEl.style.display = "none";
+  drawErrorEl.textContent = "";
+  clearDrawCanvas();
+  updateDrawSaveState();
+  drawModalEl.style.display = "flex";
+  setTimeout(() => drawCanvasEl.focus(), 20);
+}
+
+function closeDrawModal() {
+  drawModalEl.style.display = "none";
+  drawCurrentStroke = null;
+}
+
+function updateDrawSaveState() {
+  const hasStrokes = drawStrokes.some(s => s.points.length > 0);
+  const hasLabel = drawNameInputEl.value.trim().length >= 2;
+  // Legal name is optional but strongly recommended — if omitted, users have
+  // to retype on every sign. Allow save either way but warn via the hint text.
+  drawSaveBtn.disabled = !hasStrokes || !hasLabel;
+}
+
+async function onSaveDrawnSignature() {
+  const name = drawNameInputEl.value.trim();
+  const legalName = drawLegalNameInputEl.value.trim();
+  if (!name) return;
+  if (drawStrokes.every(s => s.points.length === 0)) return;
+
+  drawSaveBtn.disabled = true;
+  drawSaveBtn.textContent = "Saving…";
+  drawErrorEl.style.display = "none";
+
+  try {
+    const dataUrl = drawCanvasEl.toDataURL("image/png");
+    const createArgs: Record<string, unknown> = {
+      name,
+      image_data_url: dataUrl,
+      overwrite: false,
+    };
+    // Pass legal name through as display_name so the confirm modal can
+    // auto-fill the attestation field when this signature is picked later.
+    if (legalName) createArgs.display_name = legalName;
+    const result = await app.callServerTool({
+      name: "create_signature",
+      arguments: createArgs,
+    });
+    if (result.isError) {
+      const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "create_signature failed";
+      throw new Error(text);
+    }
+    closeDrawModal();
+    // If the confirm modal is open, refresh its dropdown so the new signature appears immediately.
+    if (signModalEl.style.display === "flex") {
+      await populateSavedSignatures();
+      signModalExistingEl.value = name;
+      updateStatementPreview();
+    }
+  } catch (err: any) {
+    drawErrorEl.textContent = err?.message ?? String(err);
+    drawErrorEl.style.display = "block";
+  } finally {
+    drawSaveBtn.disabled = false;
+    drawSaveBtn.textContent = "Save signature";
+    updateDrawSaveState();
+  }
+}
+
+// Every stamp in a session writes to a single `{stem}-signed.pdf` working
+// copy. Each subsequent stamp reads from that same file and overwrites it,
+// so we don't pile up `signed-1.pdf`, `signed-2.pdf`, … in Downloads. The
+// server apply helpers read bytes into memory before writing, so same-path
+// read-then-write is safe.
+function buildNextStampOutputPath(): string {
+  return buildSignedWorkingPdfPath(pdfPath);
+}
+
+// Reload the renderer from the stamped output so the canvas shows the actual
+// signatures/dates the server wrote to disk. Keeps `pdfPath` as the original
+// (that's the logical identity for zone keys + output-path stems); only the
+// bytes feeding pdfjs change. Preserves currentPage + scale.
+async function reloadPdfForStamp(stampedPath: string) {
+  // Cancel any in-flight render so we don't tear down the old doc mid-raster.
+  if (currentRenderTask) {
+    try { currentRenderTask.cancel(); } catch { /* ignore */ }
+    currentRenderTask = null;
+  }
+  isRendering = false;
+  pendingPage = null;
+
+  // Bump generation FIRST so any in-flight preloader from the old doc sees
+  // it mismatch on the next iteration and aborts cleanly (Codex P2-A).
+  pdfGeneration++;
+  const oldDoc = pdfDocument;
+  pdfDocument = null;
+  if (oldDoc) {
+    try { await oldDoc.destroy(); } catch { /* best-effort */ }
+  }
+
+  // Content-specific caches: page text may include our new stamp text.
+  pageTextCache.clear();
+  pagesLoaded = 0;
+
+  try {
+    const probe = await app.callServerTool({
+      name: "read_pdf_bytes",
+      arguments: { pdf_path: stampedPath, offset: 0, byteCount: 1 },
+    });
+    if (probe.isError) {
+      const text = probe.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Stamped-file probe failed";
+      throw new Error(text);
+    }
+    const probeSc = probe.structuredContent as { totalBytes?: number } | undefined;
+    if (!probeSc?.totalBytes) throw new Error("Stamped file has no size reported");
+
+    pdfDocument = await loadPdfProgressively(stampedPath, probeSc.totalBytes);
+    // New doc should have the same page count — guard defensively.
+    totalPages = pdfDocument.numPages;
+    if (currentPage > totalPages) currentPage = totalPages;
+    await renderPage();
+    // Re-index the new doc so search + model context reflect stamped content.
+    startPreloading();
+  } catch (err: any) {
+    console.error("[viewer] reloadPdfForStamp failed:", err);
+    // Best-effort: reload from original so we don't leave the viewer empty.
+    try {
+      const probe = await app.callServerTool({
+        name: "read_pdf_bytes",
+        arguments: { pdf_path: pdfPath, offset: 0, byteCount: 1 },
+      });
+      const probeSc = probe.structuredContent as { totalBytes?: number } | undefined;
+      if (probeSc?.totalBytes) {
+        pdfDocument = await loadPdfProgressively(pdfPath, probeSc.totalBytes);
+        totalPages = pdfDocument.numPages;
+        if (currentPage > totalPages) currentPage = totalPages;
+        await renderPage();
+        startPreloading();
+      }
+    } catch { /* give up — error already logged */ }
+    throw err;
+  }
+}
+
+function updateWorkingCopyBanner() {
+  if (!workingPdfPath) {
+    signPanelWorkingCopyEl.style.display = "none";
+    return;
+  }
+  signPanelWorkingCopyEl.style.display = "";
+  signPanelWorkingCopyPathEl.textContent = workingPdfPath;
+  signPanelWorkingCopyPathEl.title = workingPdfPath;
+}
+
+async function onRevealWorkingCopy() {
+  if (!workingPdfPath) return;
+  try {
+    const result = await app.callServerTool({
+      name: "reveal_in_finder",
+      arguments: { path: workingPdfPath },
+    });
+    if (result.isError) {
+      const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Reveal failed";
+      console.warn("[viewer] reveal_in_finder error:", text);
+    }
+  } catch (err) {
+    console.warn("[viewer] reveal_in_finder call failed:", err);
+  }
+}
+
+async function onCopyWorkingCopyPath() {
+  if (!workingPdfPath) return;
+  const original = signPanelWorkingCopyCopyBtn.textContent ?? "Copy path";
+  const flash = (msg: string) => {
+    signPanelWorkingCopyCopyBtn.textContent = msg;
+    setTimeout(() => { signPanelWorkingCopyCopyBtn.textContent = original; }, 1800);
+  };
+
+  // Clipboard API isn't always available (non-secure contexts, sandboxed
+  // webviews). Fall back to a hidden textarea + execCommand so the user sees
+  // a real confirmation — silent failure here makes the button look broken.
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(workingPdfPath);
+      flash("Copied");
+      return;
+    }
+    throw new Error("clipboard API unavailable");
+  } catch (err) {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = workingPdfPath;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      flash(ok ? "Copied" : "Copy failed");
+    } catch (fallbackErr) {
+      console.warn("[viewer] clipboard fallback failed:", fallbackErr, err);
+      flash("Copy failed");
+    }
+  }
+}
+
+const TOAST_TITLES: Record<string, string> = {
+  signature: "✓ Signed",
+  initials:  "✓ Initialed",
+  date:      "✓ Date inserted",
+};
+
+type StampToastVariant = "success" | "warning";
+
+function showStampToast(
+  outputPath: string,
+  mode: string,
+  variant: StampToastVariant = "success",
+  extraBody?: string,
+) {
+  const toast = document.createElement("div");
+  toast.className = variant === "warning" ? "sign-toast sign-toast-warning" : "sign-toast";
+  const title = document.createElement("div");
+  title.className = "sign-toast-title";
+  if (variant === "warning") {
+    title.textContent = "⚠︎ Saved — viewer needs refresh";
+  } else {
+    title.textContent = TOAST_TITLES[mode] ?? "✓ Done";
+  }
+  const body = document.createElement("div");
+  body.className = "sign-toast-body";
+  body.textContent = `Saved to: ${outputPath}`;
+  toast.appendChild(title);
+  toast.appendChild(body);
+  if (extraBody) {
+    const extra = document.createElement("div");
+    extra.className = "sign-toast-body";
+    extra.style.marginTop = "4px";
+    extra.style.fontFamily = "inherit";
+    extra.textContent = extraBody;
+    toast.appendChild(extra);
+  }
+  document.body.appendChild(toast);
+  // Warning toasts linger longer — the user needs to read the guidance.
+  setTimeout(() => toast.remove(), variant === "warning" ? 8000 : 4500);
+}
+
+function renderSignPanel() {
+  const count = signatureZones.length;
+  signZoneCountEl.textContent = `${count} zone${count === 1 ? "" : "s"}`;
+  clearChildren(signPanelListEl);
+
+  if (count === 0) {
+    signPanelStatusEl.textContent = "No signature zones detected. The form may be flat/scanned, or use an unusual layout.";
+    signPanelStatusEl.classList.add("empty");
+    return;
+  }
+
+  signPanelStatusEl.textContent = "Click a zone to sign it. Unknown spot? Drag on the PDF to create a custom zone.";
+  signPanelStatusEl.classList.remove("empty");
+
+  for (const z of signatureZones) {
+    const item = document.createElement("div");
+    item.className = "sign-panel-item";
+    item.setAttribute("role", "button");
+    item.tabIndex = 0;
+    item.dataset.zoneId = z.id || "";
+
+    const header = document.createElement("div");
+    header.className = "sign-panel-item-header";
+
+    const typeBadge = document.createElement("span");
+    typeBadge.className = "sign-panel-item-type";
+    typeBadge.dataset.type = z.type;
+    typeBadge.textContent = z.type;
+    header.appendChild(typeBadge);
+
+    const pageLabel = document.createElement("span");
+    pageLabel.className = "sign-panel-item-page";
+    pageLabel.textContent = `p${z.page}`;
+    header.appendChild(pageLabel);
+
+    item.appendChild(header);
+
+    const label = document.createElement("div");
+    label.className = "sign-panel-item-label";
+    label.textContent = z.label || "(no label)";
+    item.appendChild(label);
+
+    if (z.applied) {
+      const status = document.createElement("div");
+      status.className = "sign-panel-item-status";
+      status.textContent = z.type === "date" && z.appliedValue
+        ? `✓ ${z.appliedValue}`
+        : z.type === "initials"
+          ? "✓ Initialed"
+          : "✓ Signed";
+      item.appendChild(status);
+    }
+
+    const activate = () => {
+      // Jump to the page the zone lives on
+      if (z.page !== currentPage) {
+        currentPage = z.page;
+        renderPage();
+      }
+      onZoneClick(z);
+    };
+    item.addEventListener("click", activate);
+    item.addEventListener("keydown", (e) => {
+      if (e.key === "Enter" || e.key === " ") {
+        e.preventDefault();
+        activate();
+      }
+    });
+
+    signPanelListEl.appendChild(item);
+  }
+}
+
 function switchMode(mode: ManageMode) {
   manageMode = mode;
   modeViewBtn.classList.toggle("active", mode === "view");
   modeManageBtn.classList.toggle("active", mode === "manage");
+  modeSignBtn.classList.toggle("active", mode === "sign");
 
   const canvasContainer = document.querySelector(".canvas-container") as HTMLElement;
+  const pageWrapper = document.querySelector(".page-wrapper") as HTMLElement;
+  pageWrapper?.classList.toggle("mode-sign", mode === "sign");
   const searchBar = $("search-bar");
 
   if (mode === "manage") {
     canvasContainer.style.display = "none";
     managePanelEl.style.display = "flex";
+    signPanelEl.style.display = "none";
     sidebarEl.style.display = "none";
     searchBar.style.display = "none";
+    clearZoneOverlay();
     if (pageStates.length === 0) initPageStates();
     renderManageGrid();
-  } else {
+  } else if (mode === "sign") {
     canvasContainer.style.display = "";
     managePanelEl.style.display = "none";
+    signPanelEl.style.display = "flex";
+    sidebarEl.style.display = "none";
+    searchBar.style.display = "none";
+    updateWorkingCopyBanner();
+    renderPage();
+    fetchSignatureZones();
+  } else {
+    // view
+    canvasContainer.style.display = "";
+    managePanelEl.style.display = "none";
+    signPanelEl.style.display = "none";
+    clearZoneOverlay();
     renderPage();
   }
 }
@@ -1122,7 +2417,7 @@ async function applyPagePlan() {
     const result = await app.callServerTool({
       name: "apply_page_plan",
       arguments: {
-        input_path: pdfPath,
+        input_path: workingPdfPath || pdfPath,
         output_path,
         plan: { page_order, rotations },
       },
@@ -1164,6 +2459,81 @@ sidebarToggleBtn.addEventListener("click", toggleSidebar);
 // Manage mode listeners
 modeViewBtn.addEventListener("click", () => switchMode("view"));
 modeManageBtn.addEventListener("click", () => switchMode("manage"));
+modeSignBtn.addEventListener("click", () => switchMode("sign"));
+
+// Confirm modal wiring
+signModalNameEl.addEventListener("input", () => {
+  // Manual typing voids the auto-fill lock so picking a different saved sig
+  // won't clobber the user's hand-typed name.
+  delete signModalNameEl.dataset.autofilledFrom;
+  updateStatementPreview();
+});
+signModalTypeEl.addEventListener("change", onCustomZoneTypeChange);
+signModalExistingEl.addEventListener("change", onSavedSignatureChange);
+signModalDateInputEl.addEventListener("input", updateStatementPreview);
+signModalDateInputEl.addEventListener("change", updateStatementPreview);
+signModalCancelBtn.addEventListener("click", closeSignModal);
+signModalCloseBtn.addEventListener("click", closeSignModal);
+signModalConfirmBtn.addEventListener("click", onConfirmSign);
+signModalEl.addEventListener("keydown", (e: Event) => {
+  const keyEvent = e as KeyboardEvent;
+  if (keyEvent.key === "Escape") {
+    closeSignModal();
+  } else if (keyEvent.key === "Enter" && !signModalConfirmBtn.disabled) {
+    // Let the native button click fire — but only if focus isn't on a textarea
+    if ((keyEvent.target as HTMLElement).tagName !== "TEXTAREA") {
+      keyEvent.preventDefault();
+      onConfirmSign();
+    }
+  }
+});
+// Click on backdrop cancels
+signModalEl.addEventListener("click", (e) => {
+  if ((e.target as HTMLElement).classList.contains("sign-modal-backdrop")) closeSignModal();
+});
+
+// Drag-to-create wiring (only actively listens — handlers no-op when not in sign mode)
+zoneLayerEl.addEventListener("pointerdown", onZoneLayerPointerDown);
+zoneLayerEl.addEventListener("pointermove", onZoneLayerPointerMove);
+zoneLayerEl.addEventListener("pointerup", onZoneLayerPointerUp);
+zoneLayerEl.addEventListener("pointercancel", onZoneLayerPointerCancel);
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && activeDrag) {
+    activeDrag.draftEl.remove();
+    activeDrag = null;
+  }
+});
+
+// Working-copy banner wiring
+signPanelWorkingCopyRevealBtn.addEventListener("click", onRevealWorkingCopy);
+signPanelWorkingCopyCopyBtn.addEventListener("click", onCopyWorkingCopyPath);
+
+// Draw-signature modal wiring
+signPanelDrawBtn.addEventListener("click", openDrawModal);
+drawCanvasEl.addEventListener("pointerdown", onDrawPointerDown);
+drawCanvasEl.addEventListener("pointermove", onDrawPointerMove);
+drawCanvasEl.addEventListener("pointerup", onDrawPointerUp);
+drawCanvasEl.addEventListener("pointercancel", onDrawPointerUp);
+drawCanvasEl.addEventListener("pointerleave", onDrawPointerUp);
+drawUndoBtn.addEventListener("click", () => {
+  drawStrokes.pop();
+  redrawAllStrokes();
+});
+drawClearBtn.addEventListener("click", () => {
+  drawStrokes = [];
+  redrawAllStrokes();
+});
+drawNameInputEl.addEventListener("input", updateDrawSaveState);
+drawLegalNameInputEl.addEventListener("input", updateDrawSaveState);
+drawSaveBtn.addEventListener("click", onSaveDrawnSignature);
+drawCancelBtn.addEventListener("click", closeDrawModal);
+drawCloseBtn.addEventListener("click", closeDrawModal);
+drawModalEl.addEventListener("click", (e) => {
+  if ((e.target as HTMLElement).classList.contains("sign-modal-backdrop")) closeDrawModal();
+});
+drawModalEl.addEventListener("keydown", (e: Event) => {
+  if ((e as KeyboardEvent).key === "Escape") closeDrawModal();
+});
 manageRotateCwBtn.addEventListener("click", () => rotateSelected(90));
 manageRotateCcwBtn.addEventListener("click", () => rotateSelected(270));
 manageDeleteBtn.addEventListener("click", deleteSelected);
@@ -1196,7 +2566,13 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  if (document.activeElement === searchInputEl || document.activeElement === pageInputEl) return;
+  // Bail if any editable element has focus (modal inputs, page input, search input, etc.)
+  // so shortcuts like space-bar-to-next-page don't steal typed characters from a form field.
+  const active = document.activeElement as HTMLElement | null;
+  if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT" || active.isContentEditable)) return;
+
+  // Also bail when any modal is open — modals should own keyboard focus entirely.
+  if (signModalEl.style.display === "flex" || drawModalEl.style.display === "flex") return;
 
   if ((e.ctrlKey || e.metaKey) && e.key === "0") { resetZoom(); e.preventDefault(); return; }
 
@@ -1329,6 +2705,9 @@ async function loadPdfFromToolResult(result: CallToolResult) {
   showLoading("Loading PDF...");
 
   try {
+    // New doc → new preload generation so any straggler preloader from a
+    // previous load (including reloadPdfForStamp) drops out.
+    pdfGeneration++;
     pdfDocument = await loadPdfProgressively(pdfPath, payload.totalBytes);
     totalPages = pdfDocument.numPages;
 
@@ -1339,6 +2718,13 @@ async function loadPdfFromToolResult(result: CallToolResult) {
     pageTextCache.clear();
     pageStates = [];
     hasUnsavedChanges = false;
+
+    // Reset signing state — a fresh document starts a new stamp chain.
+    workingPdfPath = "";
+    appliedZoneKeys.clear();
+    signatureZones = [];
+    zoneCacheByPath.delete(pdfPath);
+    updateWorkingCopyBanner();
 
     showViewer();
     modeTabsEl.style.display = totalPages > 1 ? "" : "none";

@@ -13,7 +13,8 @@ import { createRequire } from "module";
 import { fileURLToPath, pathToFileURL } from "url";
 import fs from "fs/promises";
 import path from "path";
-import { homedir } from "os";
+import { homedir, platform as osPlatform } from "os";
+import { spawn } from "child_process";
 import { createScopedStderrSuppressor } from "./stderr-suppression.js";
 
 const _require = createRequire(import.meta.url);
@@ -205,7 +206,23 @@ async function loadPdf(inputPath, password = null) {
 }
 
 // Import helpers extracted for testability
-import { getPageDisplayMetrics, parsePageRanges } from "./helpers.js";
+import {
+  getPageDisplayMetrics,
+  parsePageRanges,
+  downloadPdfFromUrl,
+  validateSignatureName,
+  parseImageDataUrl,
+  validateSigningIntent,
+  stampSignatureOnPage,
+  stampTextOnPage,
+  drawSignatureFieldOnPage,
+  formatSigningAuditLine,
+  detectExistingSignatures,
+  detectXfaForm,
+  detectSignatureZones,
+  computeIoU,
+  extractPdfTextWithBounds,
+} from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
 function validateProfileName(name) {
@@ -230,10 +247,93 @@ const server = new Server(
 );
 
 // Default directories - use environment variables from manifest or fallback to defaults
-const DEFAULT_PDF_DIR = process.env.DEFAULT_PDF_DIR || path.join(homedir(), "Documents");
+// Defensive env read — if Claude Desktop couldn't substitute a user_config
+// template (MCPB version mismatch, missing config), the raw literal
+// "${user_config.X}" would reach us and break readdir. Treat any template-
+// shaped value as unset and fall through to the safe home-dir default.
+function envPathOrDefault(name, fallback) {
+  const val = process.env[name];
+  if (!val) return fallback;
+  if (val.includes("${")) return fallback;
+  return val;
+}
+const DEFAULT_PDF_DIR = envPathOrDefault("DEFAULT_PDF_DIR", path.join(homedir(), "Documents"));
+const DEFAULT_DOWNLOAD_DIR = envPathOrDefault("DEFAULT_DOWNLOAD_DIR", path.join(homedir(), "Downloads"));
 // Keep in sync with manifest.json and share bundle defaults
 const PROFILES_DIR = process.env.DEFAULT_PROFILES_DIR || path.join(homedir(), ".pdf-toolkit-files");
+const SIGNATURES_DIR = path.join(PROFILES_DIR, "signatures");
 const OLD_PROFILES_DIR = path.join(homedir(), ".pdf-filler-profiles");
+
+function tempOutputPath(targetPath) {
+  const dir = path.dirname(targetPath);
+  const base = path.basename(targetPath);
+  return path.join(dir, `.${base}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
+}
+
+async function writePdfOutputAtomic(targetPath, bytes) {
+  const tmpPath = tempOutputPath(targetPath);
+  try {
+    await fs.writeFile(tmpPath, bytes);
+    await fs.rename(tmpPath, targetPath);
+  } catch (error) {
+    try { await fs.unlink(tmpPath); } catch {}
+    throw error;
+  }
+}
+
+async function buildPdfLoadPayload(pdfPath, initialPage = 1, extra = {}) {
+  const stats = await fs.stat(pdfPath);
+  return {
+    pdfPath,
+    totalBytes: stats.size,
+    initialPage,
+    fields: [],
+    fieldCount: 0,
+    hasFormFields: false,
+    ...extra,
+  };
+}
+
+function getFormFieldInfo(pdfDoc) {
+  try {
+    const form = pdfDoc.getForm();
+    const fields = form.getFields();
+    const fieldInfo = fields.map(field => {
+      const name = field.getName();
+      let type = "unknown";
+      let options = [];
+      let currentValue = "";
+      try {
+        if (field.constructor.name.includes("TextField")) {
+          type = "text";
+          currentValue = field.getText() || "";
+        } else if (field.constructor.name.includes("CheckBox")) {
+          type = "checkbox";
+          currentValue = field.isChecked();
+        } else if (field.constructor.name.includes("RadioGroup")) {
+          type = "radio";
+          currentValue = field.getSelected() || "";
+        } else if (field.constructor.name.includes("Dropdown")) {
+          type = "dropdown";
+          options = field.getOptions();
+          currentValue = field.getSelected() || "";
+        }
+      } catch {}
+      return { name, type, options, currentValue };
+    });
+    return {
+      fields: fieldInfo,
+      fieldCount: fieldInfo.length,
+      hasFormFields: fieldInfo.length > 0,
+    };
+  } catch {
+    return {
+      fields: [],
+      fieldCount: 0,
+      hasFormFields: false,
+    };
+  }
+}
 
 // Helper function to parse CSV
 function parseCSV(content) {
@@ -607,7 +707,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "display_pdf",
-        description: "Display an interactive PDF viewer with page navigation, zoom, search, and text selection. Automatically detects and displays form fields in a sidebar — no need to also call read_pdf_fields. This is the primary tool for viewing any PDF. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Display an interactive PDF viewer with page navigation, zoom, search, text selection, form-field sidebar, and Sign mode. This is the primary tool for viewing any PDF. **If the user gave you a URL instead of a local path, call fetch_pdf_from_url FIRST to get a local path, then pass that path here — do not try bash/curl/WebFetch.** Automatically detects and displays form fields in a sidebar — no need to also call read_pdf_fields. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           properties: {
@@ -909,6 +1009,309 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         annotations: {
           title: "Get Page Analysis",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "create_signature",
+        description: "Save a reusable signature the user can apply to PDFs. Two styles: 'typed' uses the user's display name rendered in italic script on apply, 'image' uses a PNG/JPEG the user provides (a scan or photo of their actual signature, or a drawn signature as a data URL). Signatures are stored locally at ~/.pdf-toolkit-files/signatures/. This tool is agent-safe — it does NOT sign any document; it just saves the signature asset for later use by apply_signature.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            name: {
+              type: "string",
+              description: "Short identifier for this signature (letters, numbers, hyphens, underscores, spaces, dots). Used to look it up later — e.g. 'mat-default', 'business'."
+            },
+            display_name: {
+              type: "string",
+              description: "The user's name as it should appear in attestations, e.g. 'Mat Silverstein'. If provided without an image source, creates a typed signature. If provided with image_path or image_data_url, it is stored as metadata alongside the image signature."
+            },
+            image_path: {
+              type: "string",
+              description: "[Image style] Local path to a PNG or JPEG image of the signature (a scan/photo of a handwritten signature). Must be an absolute path on the user's machine."
+            },
+            image_data_url: {
+              type: "string",
+              description: "[Image style] Base64 data URL of the signature image, e.g. 'data:image/png;base64,iVBOR...'. Use when the signature was drawn in the viewer or captured from another source."
+            },
+            overwrite: {
+              type: "boolean",
+              description: "If a signature with this name already exists, overwrite it (default: false)."
+            }
+          },
+          required: ["name"]
+        },
+        annotations: {
+          title: "Create Signature",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "list_signatures",
+        description: "List all saved signatures in ~/.pdf-toolkit-files/signatures/. Returns each signature's name, style (typed or image), display name (for typed), and creation timestamp.",
+        inputSchema: {
+          type: "object",
+          properties: {}
+        },
+        annotations: {
+          title: "List Signatures",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "add_signature_field",
+        description: "Draw a visible 'Sign here' placeholder box on a PDF page and save as a new file. Marks where a signature should go — does NOT sign the document. Useful when preparing a PDF to send to another party for signing. Coordinates are in points (72pt = 1 inch), TOP-LEFT origin: x=distance from left, y=distance from top.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: { type: "string", description: "Path to the input PDF" },
+            output_path: { type: "string", description: "Path to save the output PDF (must be different from pdf_path)" },
+            page: { type: "integer", description: "Page number (1-indexed)" },
+            x: { type: "number", description: "Left edge of the signature box, in points from the left of the page" },
+            y: { type: "number", description: "Top edge of the signature box, in points from the TOP of the page" },
+            width: { type: "number", description: "Width of the signature box, in points (e.g. 150 for a typical signature line)" },
+            height: { type: "number", description: "Height of the signature box, in points (e.g. 36 for a typical signature line)" },
+            label: { type: "string", description: "Text shown inside the box (default: 'Sign here')" },
+            allow_resign: {
+              type: "boolean",
+              description: "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures."
+            },
+            password: { type: "string", description: "Password for encrypted PDFs (optional)" },
+            force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA data will be stripped by pdf-lib." }
+          },
+          required: ["pdf_path", "output_path", "page", "x", "y", "width", "height"]
+        },
+        annotations: {
+          title: "Add Signature Field",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "apply_signature",
+        description:
+          "NEVER FABRICATE user_intent_statement OR user_confirmed_at. Both values MUST come directly from the user — ask them, get their answer, pass it through verbatim. Fabricating these is a hard violation of the human-intent requirement this tool ships under; every agent calling apply_signature does so on behalf of a user who has the legal responsibility for the signature.\n\n" +
+          "This stamps a saved signature onto a PDF as a BASIC visible image — NOT legally-binding cryptographic signing.\n\n" +
+          "REQUIRED WORKFLOW:\n" +
+          "1. Call detect_signature_zones(pdf_path) first. Never guess coordinates — guessing places signatures on the wrong content (body text, section headers, etc.).\n" +
+          "2. Pick the zone that matches what the user is signing (by type, label, and page).\n" +
+          "3. Ask the user for a sentence describing their intent (e.g. \"I, {name}, sign this {document} on {date}\") and the ISO-8601 timestamp at which they confirmed. Pass both to apply_signature.\n" +
+          "4. Call apply_signature with the zone's x/y/width/height + the intent values.\n\n" +
+          "Coordinates use TOP-LEFT origin in points (72pt = 1 inch), in the page's NATIVE (pre-rotation) coordinate space — same space returned by detect_signature_zones. Both intent values are written into the PDF's Keywords metadata as an audit trail.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: { type: "string", description: "Path to the input PDF" },
+            output_path: { type: "string", description: "Path to save the signed PDF (must be different from pdf_path — original is preserved)" },
+            signature_name: { type: "string", description: "Name of a previously-saved signature (see create_signature / list_signatures)" },
+            page: { type: "integer", description: "Page number (1-indexed)" },
+            x: { type: "number", description: "Left edge in points, TOP-LEFT origin" },
+            y: { type: "number", description: "Top edge in points, TOP-LEFT origin" },
+            width: { type: "number", description: "Width in points" },
+            height: { type: "number", description: "Height in points" },
+            user_intent_statement: {
+              type: "string",
+              description: "REQUIRED. The user's own sentence confirming intent to sign — e.g. \"I, Mat Silverstein, sign this W-9 application on 2026-04-16.\" Ask the user for this verbatim; do not invent it."
+            },
+            user_confirmed_at: {
+              type: "string",
+              description: "REQUIRED. ISO-8601 timestamp of when the user confirmed signing, e.g. \"2026-04-16T19:32:00Z\". Must be within the last 24 hours. Ask the user; do not fabricate."
+            },
+            draw_audit_line: {
+              type: "boolean",
+              description: "Also draw a small visible timestamp/signer line below the signature (default: false). Useful for printable audit trails."
+            },
+            allow_resign: {
+              type: "boolean",
+              description: "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures. Only enable if the user explicitly wants to re-sign a previously-signed document."
+            },
+            force_xfa: {
+              type: "boolean",
+              description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped by pdf-lib."
+            },
+            overwrite: {
+              type: "boolean",
+              description: "Allow same-path overwrite when re-stamping an existing working copy (default: false)."
+            },
+            password: { type: "string", description: "Password for encrypted PDFs (optional)" }
+          },
+          required: ["pdf_path", "output_path", "signature_name", "page", "x", "y", "width", "height", "user_intent_statement", "user_confirmed_at"]
+        },
+        annotations: {
+          title: "Apply Signature",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "prepare_signing_packet",
+        description: "One-shot workflow: fill form fields AND add 'Sign here' placeholder boxes to a PDF in a single pass, saving as a new file. Returns a manifest of all pending signature locations (named by label). Does NOT apply any signatures — that still requires apply_signature with human intent. Use this when an agent has filled out everything it can and is preparing the PDF for the user (or another party) to sign.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: { type: "string", description: "Path to the input PDF" },
+            output_path: { type: "string", description: "Path to save the prepared PDF (must be different from pdf_path)" },
+            field_values: {
+              type: "object",
+              description: "Optional map of AcroForm field name → value. Same shape as fill_pdf's 'fields' argument.",
+              additionalProperties: true
+            },
+            signature_locations: {
+              type: "array",
+              description: "Sign-here boxes to add. Coordinates use TOP-LEFT origin in points.",
+              items: {
+                type: "object",
+                properties: {
+                  label: { type: "string", description: "Label shown in the box, e.g. 'Signature (Applicant)'" },
+                  page: { type: "integer" },
+                  x: { type: "number" },
+                  y: { type: "number" },
+                  width: { type: "number" },
+                  height: { type: "number" }
+                },
+                required: ["page", "x", "y", "width", "height"]
+              }
+            },
+            allow_resign: {
+              type: "boolean",
+              description: "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures."
+            },
+            password: { type: "string", description: "Password for encrypted PDFs (optional)" },
+            force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped." }
+          },
+          required: ["pdf_path", "output_path"]
+        },
+        annotations: {
+          title: "Prepare Signing Packet",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "apply_text",
+        description: "Stamp a plain text string at a location on a PDF, saving the result as a new file. Use this for date zones (stamp today's date), or any other \"put these characters here\" operation that isn't a signature. NO user_intent_statement required — text is not a signature. Coordinates use TOP-LEFT origin in points, same as apply_signature. Writes a one-line audit entry to the PDF's Keywords metadata.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: { type: "string", description: "Path to the input PDF" },
+            output_path: { type: "string", description: "Path to save the stamped PDF (must be different from pdf_path)" },
+            page: { type: "integer", description: "Page number (1-indexed)" },
+            x: { type: "number", description: "Left edge in points, TOP-LEFT origin" },
+            y: { type: "number", description: "Top edge in points, TOP-LEFT origin" },
+            width: { type: "number", description: "Width in points" },
+            height: { type: "number", description: "Height in points" },
+            text: { type: "string", description: "Text to stamp (max 200 chars)" },
+            font_style: { type: "string", enum: ["normal", "italic"], description: "Font style (default: normal)" },
+            allow_resign: { type: "boolean", description: "Proceed even if the PDF has existing cryptographic signatures (default: false — saving would invalidate them)" },
+            force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false — the XFA layer will be stripped)" },
+            overwrite: {
+              type: "boolean",
+              description: "Allow same-path overwrite when re-stamping an existing working copy (default: false)."
+            },
+            password: { type: "string", description: "Password for encrypted PDFs (optional)" }
+          },
+          required: ["pdf_path", "output_path", "page", "x", "y", "width", "height", "text"]
+        },
+        annotations: {
+          title: "Apply Text",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "detect_signature_zones",
+        description: "Find every place in a PDF where a signature, initials, or date should go. Returns a typed list of zones with coordinates (top-left origin, points). Use this BEFORE apply_signature — never guess coordinates, always apply at a returned zone. Detection layers: (1) AcroForm signature fields (confidence 0.99), (2) AcroForm fields named 'signature' / 'initials' (0.85), (3) text patterns like 'Signature of…', 'Sign Here', 'Initials:' (0.70-0.92). Each zone includes: type (signature/initials/date), label, page, x/y/width/height, confidence, source. Multi-page forms return zones for every page. If nothing is detected (flat scans, unusual forms), the agent should ask the user to pick a location in the viewer rather than guess.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: { type: "string", description: "Path to the PDF file" },
+            password: { type: "string", description: "Password for encrypted PDFs (optional)" }
+          },
+          required: ["pdf_path"]
+        },
+        annotations: {
+          title: "Detect Signature Zones",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "fetch_pdf_from_url",
+        description: "Download a PDF from any URL — the PREFERRED way to grab any PDF from a URL for the user. **Always use this for PDF URLs; do NOT use bash, curl, wget, or WebFetch first.** Those run in Claude's sandbox and fail on many domains (gov sites, enterprise, auth-required URLs); this tool runs on the user's machine with full network access and succeeds where they don't. Returns a local file path that plugs into every other PDF tool here (display_pdf, read_pdf_fields, fill_pdf, validate_pdf, detect_signature_zones, apply_signature, merge_pdfs, etc.). If the user mentions a PDF URL in any way — \"download this,\" \"open this link,\" \"sign this,\" \"fill out\" — this is your first move before any other tool.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            url: {
+              type: "string",
+              description: "HTTP or HTTPS URL of a PDF to download"
+            },
+            filename: {
+              type: "string",
+              description: "Optional filename for the saved PDF (default: derived from the URL and sanitized; '.pdf' appended if missing)"
+            },
+            destination_dir: {
+              type: "string",
+              description: "Optional local directory to save into (default: ~/Downloads/). Must be a local path on the user's machine — NOT a Claude container path like /mnt/..."
+            },
+            overwrite: {
+              type: "boolean",
+              description: "Overwrite if a file with the same name exists (default: false — appends ' (2)', ' (3)', etc.)"
+            },
+            max_size_mb: {
+              type: "number",
+              description: "Maximum download size in MB (default: 100). Raise for larger PDFs."
+            },
+            headers: {
+              type: "object",
+              description: "Optional HTTP headers, e.g. { \"Authorization\": \"Bearer ...\" } for authenticated URLs.",
+              additionalProperties: { type: "string" }
+            },
+            allow_private_hosts: {
+              type: "boolean",
+              description: "Allow downloads from localhost / private IP ranges. Default false for safety. Only enable for trusted intranet PDFs."
+            }
+          },
+          required: ["url"]
+        },
+        annotations: {
+          title: "Fetch PDF from URL",
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: false,
+          openWorldHint: true
+        }
+      },
+      {
+        name: "reveal_in_finder",
+        description: "Open the OS file manager with the given file selected (macOS: Finder → Reveal; Windows: Explorer → select; Linux: opens the enclosing folder). Used by the viewer to surface a working copy after stamping so the user can immediately see the saved file.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            path: { type: "string", description: "Absolute path to the file to reveal." }
+          },
+          required: ["path"]
+        },
+        annotations: {
+          title: "Reveal File in Finder",
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
@@ -1964,6 +2367,586 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         };
       }
 
+      case "create_signature": {
+        const { name, display_name, image_path, image_data_url, overwrite = false } = args;
+        const cleanName = validateSignatureName(name);
+        const cleanDisplayName = typeof display_name === "string" ? display_name.trim() : "";
+        if (cleanDisplayName.length > 120) {
+          throw new Error("display_name is too long (>120 chars).");
+        }
+        const imageSourcesProvided = [image_path, image_data_url].filter(Boolean).length;
+        const typedOnly = cleanDisplayName.length > 0 && imageSourcesProvided === 0;
+        if (!typedOnly && imageSourcesProvided === 0) {
+          throw new Error("Provide either display_name for a typed signature, or exactly one image source: image_path or image_data_url.");
+        }
+        if (imageSourcesProvided > 1) {
+          throw new Error("Provide only one image source: image_path or image_data_url.");
+        }
+
+        const slug = cleanName.replace(/\s+/g, "-");
+        const sigPath = path.join(SIGNATURES_DIR, `${slug}.json`);
+
+        if (!overwrite) {
+          let alreadyExists = false;
+          try {
+            await fs.access(sigPath);
+            alreadyExists = true;
+          } catch (err) {
+            if (err.code !== "ENOENT") throw err;
+          }
+          if (alreadyExists) {
+            throw new Error(`Signature "${cleanName}" already exists. Use overwrite=true to replace it.`);
+          }
+        }
+
+        let signatureRecord;
+        if (typedOnly) {
+          signatureRecord = {
+            name: cleanName,
+            style: "typed",
+            display_name: cleanDisplayName,
+            created_at: new Date().toISOString(),
+          };
+        } else if (image_path) {
+          const resolvedImgPath = resolvePath(image_path);
+          const imgBytes = await fs.readFile(resolvedImgPath);
+          const ext = path.extname(resolvedImgPath).toLowerCase();
+          let mime;
+          if (ext === ".png" || imgBytes.subarray(0, 8).toString("hex") === "89504e470d0a1a0a") mime = "image/png";
+          else if (ext === ".jpg" || ext === ".jpeg" || imgBytes.subarray(0, 3).toString("hex") === "ffd8ff") mime = "image/jpeg";
+          else throw new Error(`Unsupported image format: "${ext}". Use PNG or JPEG.`);
+          signatureRecord = {
+            name: cleanName,
+            style: "image",
+            image_mime: mime,
+            image_data_b64: imgBytes.toString("base64"),
+            ...(cleanDisplayName ? { display_name: cleanDisplayName } : {}),
+            source_path: resolvedImgPath,
+            created_at: new Date().toISOString(),
+          };
+        } else {
+          const { mime, bytes } = parseImageDataUrl(image_data_url);
+          signatureRecord = {
+            name: cleanName,
+            style: "image",
+            image_mime: mime,
+            image_data_b64: bytes.toString("base64"),
+            ...(cleanDisplayName ? { display_name: cleanDisplayName } : {}),
+            created_at: new Date().toISOString(),
+          };
+        }
+
+        await fs.writeFile(sigPath, JSON.stringify(signatureRecord, null, 2));
+        const bytesOnDisk = (await fs.stat(sigPath)).size;
+        return {
+          content: [{
+            type: "text",
+            text:
+              `Signature saved: "${cleanName}" (${signatureRecord.style})\n` +
+              `Location: ${sigPath}\n` +
+              `Use apply_signature with signature_name="${cleanName}" to stamp it onto a PDF.`
+          }],
+          structuredContent: {
+            name: cleanName,
+            style: signatureRecord.style,
+            path: sigPath,
+            bytes: bytesOnDisk,
+          },
+        };
+      }
+
+      case "list_signatures": {
+        let files;
+        try {
+          files = await fs.readdir(SIGNATURES_DIR);
+        } catch (err) {
+          if (err.code === "ENOENT") {
+            return { content: [{ type: "text", text: "No signatures yet. Use create_signature to save one." }] };
+          }
+          throw err;
+        }
+        const entries = [];
+        for (const file of files) {
+          if (!file.endsWith(".json")) continue;
+          try {
+            const raw = await fs.readFile(path.join(SIGNATURES_DIR, file), "utf8");
+            const rec = JSON.parse(raw);
+            if (typeof rec.name === "string" && rec.name.startsWith("__pdf-tools-quick-")) {
+              continue;
+            }
+            entries.push({
+              name: rec.name,
+              style: rec.style,
+              display_name: rec.display_name || null,
+              preview_data_url: rec.style === "image" && rec.image_data_b64 && rec.image_mime
+                ? `data:${rec.image_mime};base64,${rec.image_data_b64}`
+                : null,
+              created_at: rec.created_at,
+            });
+          } catch {
+            // Skip malformed files
+          }
+        }
+        entries.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
+        if (entries.length === 0) {
+          return { content: [{ type: "text", text: "No signatures yet. Use create_signature to save one." }] };
+        }
+        const lines = entries.map(e =>
+          `  • ${e.name} (${e.style}${e.display_name ? ` — "${e.display_name}"` : ""}) — ${e.created_at}`
+        );
+        return {
+          content: [{
+            type: "text",
+            text: `Saved signatures (${entries.length}):\n${lines.join("\n")}`
+          }],
+          structuredContent: { signatures: entries },
+        };
+      }
+
+      case "add_signature_field": {
+        const { pdf_path, output_path, page, x, y, width, height, label, allow_resign = false, password, force_xfa = false } = args;
+        const resolvedOutput = resolvePath(output_path);
+        const resolvedInput = resolvePath(pdf_path);
+        if (resolvedInput === resolvedOutput) {
+          throw new Error("output_path must be different from pdf_path (never overwrite the original).");
+        }
+        const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
+        const existingSigs = detectExistingSignatures(pdfDoc);
+        if (existingSigs.present && !allow_resign) {
+          throw new Error(
+            `This PDF already contains ${existingSigs.fieldNames.length} cryptographic signature field(s) ` +
+            `(${existingSigs.fieldNames.slice(0, 3).join(", ")}${existingSigs.fieldNames.length > 3 ? "..." : ""}). ` +
+            `Saving would invalidate those signatures. Pass allow_resign=true if you intend to modify a signed PDF.`
+          );
+        }
+        if (!force_xfa && detectXfaForm(pdfBytes)) {
+          throw new Error(
+            "This PDF uses XFA forms, which pdf-lib cannot preserve — saving it would destroy the form data. " +
+            "Convert the form to AcroForm first (e.g. via Adobe Acrobat's 'Flatten Form'), or pass force_xfa=true " +
+            "if you understand that the XFA layer will be stripped."
+          );
+        }
+        await drawSignatureFieldOnPage(pdfDoc, { page, x, y, width, height, label });
+        const bytes = await pdfDoc.save();
+        await writePdfOutputAtomic(resolvedOutput, bytes);
+        const payload = await buildPdfLoadPayload(resolvedOutput, page, getFormFieldInfo(pdfDoc));
+        return {
+          content: [{
+            type: "text",
+            text:
+              `Added signature field to page ${page} at (${x}, ${y}) — ${width}x${height} pts\n` +
+              `Output: ${resolvedOutput}\n` +
+              `The field is a visible placeholder; use apply_signature to stamp a signature there.`
+          }],
+          structuredContent: {
+            ...payload,
+            pdf_path: resolvedOutput,
+            page, x, y, width, height,
+            label: label || "Sign here",
+          },
+          _meta: {
+            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
+            ...payload,
+          }
+        };
+      }
+
+      case "apply_signature": {
+        const {
+          pdf_path, output_path, signature_name,
+          page, x, y, width, height,
+          user_intent_statement, user_confirmed_at,
+          draw_audit_line = false,
+          allow_resign = false,
+          force_xfa = false,
+          overwrite = false,
+          password,
+        } = args;
+
+        const resolvedOutput = resolvePath(output_path);
+        const resolvedInput = resolvePath(pdf_path);
+        if (resolvedInput === resolvedOutput && !overwrite) {
+          throw new Error("output_path must be different from pdf_path (never overwrite the original). Pass overwrite=true when re-stamping an existing working copy.");
+        }
+
+        // 1. Validate intent — rejects missing/stale/invented intent signals
+        const { statement, confirmedAt } = validateSigningIntent({ user_intent_statement, user_confirmed_at });
+
+        // 2. Load the signature record
+        const cleanSigName = validateSignatureName(signature_name);
+        const sigSlug = cleanSigName.replace(/\s+/g, "-");
+        const sigPath = path.join(SIGNATURES_DIR, `${sigSlug}.json`);
+        let signatureRecord;
+        try {
+          signatureRecord = JSON.parse(await fs.readFile(sigPath, "utf8"));
+        } catch (err) {
+          if (err.code === "ENOENT") {
+            throw new Error(`Signature "${cleanSigName}" not found. Use create_signature to save it first, or list_signatures to see available ones.`);
+          }
+          throw err;
+        }
+
+        // 3. Load the PDF
+        const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
+
+        // 3a. Refuse to invalidate existing cryptographic signatures (pdf-lib
+        // round-trip breaks them). Users opt in with allow_resign=true.
+        const existingSigs = detectExistingSignatures(pdfDoc);
+        if (existingSigs.present && !allow_resign) {
+          throw new Error(
+            `This PDF already contains ${existingSigs.fieldNames.length} cryptographic signature field(s) ` +
+            `(${existingSigs.fieldNames.slice(0, 3).join(", ")}${existingSigs.fieldNames.length > 3 ? "..." : ""}). ` +
+            `Saving would invalidate those signatures. Pass allow_resign=true if you intend to re-sign.`
+          );
+        }
+
+        // 3b. Refuse to silently strip XFA data.
+        if (!force_xfa && detectXfaForm(pdfBytes)) {
+          throw new Error(
+            "This PDF uses XFA forms, which pdf-lib cannot preserve — saving it would destroy the form data. " +
+            "Convert the form to AcroForm first (e.g. via Adobe Acrobat's 'Flatten Form'), or pass force_xfa=true " +
+            "if you understand that the XFA layer will be stripped."
+          );
+        }
+
+        // 4. Stamp
+        const displayName = signatureRecord.display_name || signatureRecord.name;
+        const auditText = draw_audit_line
+          ? `Signed by ${displayName} at ${confirmedAt.toISOString()}`
+          : "";
+        await stampSignatureOnPage(pdfDoc, signatureRecord, {
+          page, x, y, width, height,
+          drawAuditLine: draw_audit_line,
+          auditText,
+        });
+
+        // 5. Write audit trail into PDF metadata (Keywords)
+        const auditLine = formatSigningAuditLine({
+          display_name: displayName,
+          statement,
+          confirmedAt,
+        });
+        const existingKeywords = pdfDoc.getKeywords() || "";
+        const mergedKeywords = existingKeywords
+          ? `${existingKeywords}\n${auditLine}`
+          : auditLine;
+        pdfDoc.setKeywords([mergedKeywords]);
+        pdfDoc.setModificationDate(new Date());
+
+        // 6. Save
+        const bytes = await pdfDoc.save();
+        await writePdfOutputAtomic(resolvedOutput, bytes);
+        const payload = await buildPdfLoadPayload(resolvedOutput, page, getFormFieldInfo(pdfDoc));
+
+        return {
+          content: [{
+            type: "text",
+            text:
+              `Signed: "${displayName}" stamped on page ${page} at (${x}, ${y})\n` +
+              `Output: ${resolvedOutput}\n` +
+              `Audit trail: ${auditLine}\n\n` +
+              `NOTE: This is a basic visible stamp, not a cryptographic signature. ` +
+              `For legally-binding signing, use a compliance-grade service.`
+          }],
+          structuredContent: {
+            ...payload,
+            pdf_path: resolvedOutput,
+            signature_name: cleanSigName,
+            page, x, y, width, height,
+            signer: displayName,
+            confirmed_at: confirmedAt.toISOString(),
+            intent_statement: statement,
+            tier: "basic-local-stamp",
+          },
+          _meta: {
+            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
+            ...payload,
+          }
+        };
+      }
+
+      case "prepare_signing_packet": {
+        const { pdf_path, output_path, field_values, signature_locations = [], allow_resign = false, password, force_xfa = false } = args;
+        const resolvedOutput = resolvePath(output_path);
+        const resolvedInput = resolvePath(pdf_path);
+        if (resolvedInput === resolvedOutput) {
+          throw new Error("output_path must be different from pdf_path.");
+        }
+
+        const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
+        const existingSigs = detectExistingSignatures(pdfDoc);
+        if (existingSigs.present && !allow_resign) {
+          throw new Error(
+            `This PDF already contains ${existingSigs.fieldNames.length} cryptographic signature field(s) ` +
+            `(${existingSigs.fieldNames.slice(0, 3).join(", ")}${existingSigs.fieldNames.length > 3 ? "..." : ""}). ` +
+            `Saving would invalidate those signatures. Pass allow_resign=true if you intend to modify a signed PDF.`
+          );
+        }
+        if (!force_xfa && detectXfaForm(pdfBytes)) {
+          throw new Error(
+            "This PDF uses XFA forms, which pdf-lib cannot preserve — saving it would destroy the form data. " +
+            "Convert the form to AcroForm first (e.g. via Adobe Acrobat's 'Flatten Form'), or pass force_xfa=true " +
+            "if you understand that the XFA layer will be stripped."
+          );
+        }
+
+        // 1. Fill form fields if provided
+        let filledCount = 0;
+        const fillErrors = [];
+        if (field_values && typeof field_values === "object") {
+          const form = pdfDoc.getForm();
+          for (const [fieldName, value] of Object.entries(field_values)) {
+            try {
+              const field = form.getField(fieldName);
+              const typeName = field.constructor.name;
+              if (typeName.includes("TextField")) {
+                field.setText(String(value ?? ""));
+              } else if (typeName.includes("CheckBox")) {
+                if (value === true || value === "true" || value === 1 || value === "1" || value === "yes") field.check();
+                else field.uncheck();
+              } else if (typeName.includes("RadioGroup")) {
+                field.select(String(value));
+              } else if (typeName.includes("Dropdown") || typeName.includes("OptionList")) {
+                field.select(String(value));
+              }
+              filledCount++;
+            } catch (err) {
+              fillErrors.push({ field: fieldName, error: err.message });
+            }
+          }
+        }
+
+        // 2. Add signature fields
+        const manifest = [];
+        for (const loc of signature_locations) {
+          await drawSignatureFieldOnPage(pdfDoc, {
+            page: loc.page,
+            x: loc.x,
+            y: loc.y,
+            width: loc.width,
+            height: loc.height,
+            label: loc.label || "Sign here",
+          });
+          manifest.push({
+            label: loc.label || "Sign here",
+            page: loc.page,
+            x: loc.x, y: loc.y,
+            width: loc.width, height: loc.height,
+          });
+        }
+
+        const bytes = await pdfDoc.save();
+        await writePdfOutputAtomic(resolvedOutput, bytes);
+        const payload = await buildPdfLoadPayload(resolvedOutput, manifest[0]?.page || 1, getFormFieldInfo(pdfDoc));
+
+        const summary =
+          `Prepared signing packet: ${path.basename(resolvedOutput)}\n` +
+          `  Filled: ${filledCount} field${filledCount === 1 ? "" : "s"}\n` +
+          (fillErrors.length ? `  Errors: ${fillErrors.length} (${fillErrors.slice(0,3).map(e => e.field).join(", ")})\n` : "") +
+          `  Signature fields added: ${manifest.length}\n` +
+          `  Output: ${resolvedOutput}`;
+
+        return {
+          content: [{ type: "text", text: summary }],
+          structuredContent: {
+            ...payload,
+            pdf_path: resolvedOutput,
+            filled_count: filledCount,
+            fill_errors: fillErrors,
+            pending_signatures: manifest,
+          },
+          _meta: {
+            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
+            ...payload,
+          }
+        };
+      }
+
+      case "apply_text": {
+        const {
+          pdf_path, output_path,
+          page, x, y, width, height,
+          text, font_style = "normal",
+          allow_resign = false,
+          force_xfa = false,
+          overwrite = false,
+          password,
+        } = args;
+
+        const resolvedOutput = resolvePath(output_path);
+        const resolvedInput = resolvePath(pdf_path);
+        if (resolvedInput === resolvedOutput && !overwrite) {
+          throw new Error("output_path must be different from pdf_path (never overwrite the original). Pass overwrite=true when re-stamping an existing working copy.");
+        }
+
+        const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
+
+        // Same safety rails as apply_signature: refuse to invalidate existing
+        // crypto sigs or strip XFA data silently.
+        const existingSigs = detectExistingSignatures(pdfDoc);
+        if (existingSigs.present && !allow_resign) {
+          throw new Error(
+            `This PDF already contains ${existingSigs.fieldNames.length} cryptographic signature field(s). ` +
+            `Saving would invalidate them. Pass allow_resign=true if you intend to modify a signed PDF.`
+          );
+        }
+        if (!force_xfa && detectXfaForm(pdfBytes)) {
+          throw new Error(
+            "This PDF uses XFA forms, which pdf-lib cannot preserve — saving would destroy the form data. " +
+            "Pass force_xfa=true if you accept that the XFA layer will be stripped."
+          );
+        }
+
+        await stampTextOnPage(pdfDoc, { page, x, y, width, height, text, fontStyle: font_style });
+
+        // Short audit line so filling dates/initials shows up in Keywords.
+        const auditLine = `stamped text via pdf-toolkit; text="${String(text).replace(/\s+/g, " ").slice(0, 80)}"; at=${new Date().toISOString()}; page=${page}`;
+        const existingKeywords = pdfDoc.getKeywords() || "";
+        pdfDoc.setKeywords([existingKeywords ? `${existingKeywords}\n${auditLine}` : auditLine]);
+        pdfDoc.setModificationDate(new Date());
+
+        const bytes = await pdfDoc.save();
+        await writePdfOutputAtomic(resolvedOutput, bytes);
+        const payload = await buildPdfLoadPayload(resolvedOutput, page, getFormFieldInfo(pdfDoc));
+
+        return {
+          content: [{
+            type: "text",
+            text:
+              `Stamped text "${text}" on page ${page} at (${x}, ${y}).\n` +
+              `Output: ${resolvedOutput}`
+          }],
+          structuredContent: {
+            ...payload,
+            pdf_path: resolvedOutput,
+            page, x, y, width, height,
+            text,
+          },
+          _meta: {
+            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
+            ...payload,
+          }
+        };
+      }
+
+      case "detect_signature_zones": {
+        const { pdf_path, password } = args;
+        const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
+        await loadPdfjs();
+        const zones = await detectSignatureZones({
+          pdfDoc,
+          pdfBytes,
+          pdfjsLib,
+          password,
+        });
+
+        const byType = zones.reduce((acc, z) => {
+          acc[z.type] = (acc[z.type] || 0) + 1;
+          return acc;
+        }, {});
+        const summary = zones.length === 0
+          ? `No signature zones detected in ${path.basename(pdf_path)}. The form may be flat/scanned or use an unusual layout — ask the user to pick a signature location in the viewer.`
+          : `Found ${zones.length} zone(s) in ${path.basename(pdf_path)}: ` +
+            Object.entries(byType).map(([t, n]) => `${n} ${t}${n === 1 ? "" : "s"}`).join(", ") +
+            `.\n\nUse apply_signature at one of these zones — do not guess coordinates.`;
+
+        return {
+          content: [{ type: "text", text: summary }],
+          structuredContent: { zones },
+        };
+      }
+
+      case "fetch_pdf_from_url": {
+        const {
+          url,
+          filename,
+          destination_dir,
+          overwrite = false,
+          max_size_mb = 100,
+          headers,
+          allow_private_hosts = false,
+        } = args;
+
+        if (!url || typeof url !== "string") {
+          throw new Error("'url' is required and must be a string.");
+        }
+
+        // Destination directory priority:
+        //   1. caller-supplied destination_dir (one-off override)
+        //   2. user_config.download_directory from the extension settings UI
+        //   3. helper's internal default (~/Downloads)
+        const resolvedDestDir = destination_dir
+          ? resolvePath(destination_dir)
+          : DEFAULT_DOWNLOAD_DIR;
+
+        const result = await downloadPdfFromUrl(url, {
+          filename,
+          destinationDir: resolvedDestDir,
+          overwrite,
+          maxSizeMb: max_size_mb,
+          headers: headers || {},
+          allowPrivateHosts: allow_private_hosts,
+        });
+
+        const sizeKb = (result.bytes / 1024).toFixed(0);
+        return {
+          content: [{
+            type: "text",
+            text:
+              `Downloaded ${sizeKb} KB to:\n${result.path}\n\n` +
+              `Source: ${result.sourceUrl}\n` +
+              `You can now pass this path to read_pdf_fields, fill_pdf, validate_pdf, or any other PDF tool.`
+          }],
+          structuredContent: {
+            pdf_path: result.path,
+            bytes: result.bytes,
+            content_type: result.contentType,
+            source_url: result.sourceUrl,
+          },
+        };
+      }
+
+      case "reveal_in_finder": {
+        const rawPath = args?.path;
+        if (!rawPath || typeof rawPath !== "string") {
+          throw new Error("'path' is required and must be a string.");
+        }
+        const resolved = resolvePath(rawPath);
+        // Existence check first — better error than spawn failure.
+        try { await fs.access(resolved); } catch {
+          throw new Error(`File not found: ${resolved}`);
+        }
+
+        const plat = osPlatform();
+        let cmd, cmdArgs;
+        if (plat === "darwin") {
+          cmd = "open";
+          cmdArgs = ["-R", resolved];
+        } else if (plat === "win32") {
+          cmd = "explorer.exe";
+          // /select, must be a single argv entry with the path joined.
+          cmdArgs = [`/select,${resolved}`];
+        } else {
+          // Linux / other POSIX — best-effort: open the enclosing directory.
+          cmd = "xdg-open";
+          cmdArgs = [path.dirname(resolved)];
+        }
+
+        await new Promise((resolve, reject) => {
+          const child = spawn(cmd, cmdArgs, { stdio: "ignore", detached: true });
+          child.on("error", reject);
+          // Detach so the child outlives this handler.
+          child.unref();
+          // We don't wait for exit on detached GUI launchers (they fork-and-return).
+          resolve();
+        });
+
+        return {
+          content: [{ type: "text", text: `Revealed ${resolved}` }],
+          structuredContent: { path: resolved, platform: plat },
+        };
+      }
+
       default:
         throw new Error(`Unknown tool: ${name}`);
     }
@@ -2053,8 +3036,9 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
 
 // Initialize and start the server
 async function main() {
-  // Ensure profiles directory exists
+  // Ensure profiles and signatures directories exist
   await fs.mkdir(PROFILES_DIR, { recursive: true }).catch(() => {});
+  await fs.mkdir(SIGNATURES_DIR, { recursive: true }).catch(() => {});
 
   // Migrate profiles from old directory (~/.pdf-filler-profiles) if it exists
   try {

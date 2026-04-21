@@ -38,4 +38,30 @@ describe("getPdfToolLoadData", () => {
     expect(payload?.pdfPath).toBe("/tmp/from-structured.pdf");
     expect(payload?.totalBytes).toBe(4096);
   });
+
+  it("accepts signing-tool payloads that include viewer reload metadata plus extra fields", () => {
+    const payload = getPdfToolLoadData({
+      content: [],
+      structuredContent: {
+        pdfPath: "/tmp/form-signed.pdf",
+        totalBytes: 8192,
+        initialPage: 3,
+        pdf_path: "/tmp/form-signed.pdf",
+        page: 3,
+        signer: "Mat Silverstein",
+      },
+      _meta: {
+        ui: { resourceUri: "ui://pdf-toolkit/viewer" },
+        pdfPath: "/tmp/form-signed.pdf",
+        totalBytes: 8192,
+        initialPage: 3,
+      },
+    } as any);
+
+    expect(payload).toMatchObject({
+      pdfPath: "/tmp/form-signed.pdf",
+      totalBytes: 8192,
+      initialPage: 3,
+    });
+  });
 });

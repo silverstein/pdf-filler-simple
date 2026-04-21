@@ -2,6 +2,41 @@
 
 ## P1 — Ship Next
 
+### v0.8.0: Close-the-loop release (IMPLEMENTED — needs PR + release)
+Bundles URL fetch + signature tooling into one "agent can now download, fill, and sign" release.
+
+**New tools (6):**
+1. `fetch_pdf_from_url` — download a PDF from an HTTP(S) URL to `~/.pdf-toolkit-files/inbox/` (closes the Lumin gap — MCP server has full network where Claude's WebFetch doesn't)
+2. `create_signature` — save a reusable typed or image signature
+3. `list_signatures` — enumerate saved signatures
+4. `add_signature_field` — draw a visible "Sign here" placeholder box on a page
+5. `apply_signature` — stamp a saved signature at a location (requires explicit human intent — see Signature Architecture in CLAUDE.md)
+6. `prepare_signing_packet` — fill form fields + add sign-here boxes in one pass
+
+**Status:** Code + 53 new tests (103/103 passing). Smoke-tested end-to-end via MCP stdio round-trip: Sandy Springs GA business license downloaded (727 KB, previously blocked by Claude sandbox), IRS W-9 downloaded and signed with audit trail in Keywords metadata.
+
+**Still to do:** Pack `mcpb pack`, test interactive paths in Claude Desktop, update README, open PR, cut release.
+
+**Depends on:** Nothing.
+
+**Design:** `project_signature_strategy.md` + `project_signature_intent_constraint.md` in memory.
+
+### v0.8.1: Viewer-gated signature UX
+- "Sign here" button overlay in display_pdf at each add_signature_field location
+- Click dispatches apply_signature with viewer-origin intent token (better than CLI intent string for UX)
+- Drawn-in-viewer signature capture (canvas stroke → PNG data URL → create_signature)
+- Depends on v0.9.0 landing
+
+### v0.9.0: Lumin API handoff (Tier 2)
+- `request_lumin_signature` tool that routes prepared packets to Lumin's API for cryptographic/compliance-grade signing
+- Requires `LUMIN_API_KEY` env var
+- Needs API spec from Max
+
+### 10/10 vision follow-ups (post-v0.8.x)
+- `analyze_form_gaps` — per-field semantic classification + suggested search queries ("who handles waste for {address}" → route to Gmail/Drive/Stripe MCPs)
+- Three-state field sidebar in `display_pdf`: filled / missing-known / missing-unknown with inline search-query dispatch
+- Autoresearch-style evals for form-fill accuracy and signature placement (see `reference_autoresearch_eval_pattern.md`)
+
 ### v0.7.0: Visual Page Manager + AI Cleanup
 - **What:** "Manage Pages" mode in display_pdf viewer — thumbnail grid with drag-to-reorder, rotate, delete. Two new tools: `apply_page_plan` and `get_page_analysis`. Chat-only AI suggestions (no visual overlay).
 - **Design:** APPROVED — `~/.gstack/projects/Open-Document-Alliance-PDF-Tools/silverbook-master-design-20260325-174508.md`

@@ -4,7 +4,7 @@
   "display_name": "PDF Tools - View, Fill, Merge, Split, Manage Pages, Extract",
   "description": "A full local PDF workflow for Claude: interactive viewing, form filling with reusable profiles, page organization, extraction, and analysis — far beyond basic PDF reading.",
   "long_description": "PDF Tools turns Claude Desktop into a complete local PDF workstation. Instead of just opening a PDF, you can inspect it visually, fill forms, save reusable profiles, reorganize pages, extract structured data, and analyze document content without uploading files anywhere.\n\n**Interactive PDF Viewer:**\n• View PDFs with page navigation, zoom, search, text selection, and fullscreen\n• See form fields in a sidebar with fill status\n• Use visual page management to reorder, rotate, and remove pages before saving a new copy\n\n**Forms & Reusable Profiles:**\n• Fill W-9s, 1099s, rental applications, waivers, and any fillable PDF\n• Save personal or business details as reusable profiles\n• List, load, and apply saved profiles so repeated forms take seconds instead of minutes\n• Bulk fill many PDFs from CSV data and validate required fields before submission\n\n**Page Organization Tools:**\n• Merge multiple PDFs into one document\n• Split PDFs by exact page ranges or regular intervals\n• Rotate and reorder pages, or apply a full page plan in one pass\n• Keep the original intact by saving organized output as a new file\n\n**Extraction & Analysis:**\n• Read document text for summarization, question answering, and research workflows\n• Extract structured data to CSV\n• Inspect page-level details like orientation, text presence, images, and likely blank pages\n• Review metadata such as page count, dimensions, form fields, and file size\n\n**Works with many PDF types:** Forms, contracts, research papers, technical manuals, invoices, financial statements, scanned documents, and encrypted PDFs.\n\n**Best for:** People who need more than a viewer — researchers reviewing papers, operators processing forms, lawyers organizing contracts, accountants handling tax documents, and anyone who wants local PDF workflows without sending files to a web app.",
-  "version": "0.7.3",
+  "version": "0.8.0",
   "author": {
     "name": "Open Document Alliance",
     "url": "https://github.com/Open-Document-Alliance",
@@ -104,6 +104,42 @@
     {
       "name": "get_page_analysis",
       "description": "Analyze PDF pages for blank detection, orientation, text content, and image presence"
+    },
+    {
+      "name": "fetch_pdf_from_url",
+      "description": "Download a PDF from an HTTP(S) URL to the user's local machine — works when Claude's WebFetch is blocked"
+    },
+    {
+      "name": "create_signature",
+      "description": "Save a reusable typed-name or image signature to ~/.pdf-toolkit-files/signatures/"
+    },
+    {
+      "name": "list_signatures",
+      "description": "List all saved signatures"
+    },
+    {
+      "name": "add_signature_field",
+      "description": "Draw a visible 'Sign here' placeholder box on a PDF page (marks location — does NOT sign)"
+    },
+    {
+      "name": "apply_signature",
+      "description": "Stamp a saved signature at a specific location — requires explicit human intent (user_intent_statement + user_confirmed_at). Basic local stamp, not cryptographic signing."
+    },
+    {
+      "name": "prepare_signing_packet",
+      "description": "Fill form fields AND add sign-here placeholder boxes in one pass — returns a pending-signatures manifest"
+    },
+    {
+      "name": "detect_signature_zones",
+      "description": "Find every place in a PDF where a signature, initials, or date should go — typed zone list with coordinates. Use BEFORE apply_signature; never guess coordinates."
+    },
+    {
+      "name": "apply_text",
+      "description": "Stamp a plain text string at a location (for date zones or arbitrary text fills — no intent required)"
+    },
+    {
+      "name": "reveal_in_finder",
+      "description": "Open the OS file manager with the given file selected — used by the viewer to surface a stamped working copy"
     }
   ],
   "prompts": [
@@ -185,6 +221,22 @@
       "text": "I'll help fix up your scanned PDF. I can rotate sideways or upside-down pages (90°, 180°, or 270°), and reorder pages that were scanned out of sequence. I'll show you the result in the viewer so you can confirm everything looks right before saving."
     }
   ],
+  "user_config": {
+    "download_directory": {
+      "type": "directory",
+      "title": "Download Directory",
+      "description": "Where PDFs saved via fetch_pdf_from_url land by default. You can still override per-call with the destination_dir argument, but this is the default for new downloads.",
+      "default": "${HOME}/Downloads",
+      "required": false
+    },
+    "default_pdf_directory": {
+      "type": "directory",
+      "title": "Default PDFs Folder",
+      "description": "Where list_pdfs looks when no directory is specified.",
+      "default": "${HOME}/Documents",
+      "required": false
+    }
+  },
   "server": {
     "type": "node",
     "entry_point": "server/index.js",
@@ -192,8 +244,9 @@
       "command": "node",
       "args": ["${__dirname}/server/index.js"],
       "env": {
-        "DEFAULT_PDF_DIR": "${DOCUMENTS}",
-        "DEFAULT_PROFILES_DIR": "${HOME}/.pdf-toolkit-files"
+        "DEFAULT_PDF_DIR": "${user_config.default_pdf_directory}",
+        "DEFAULT_PROFILES_DIR": "${HOME}/.pdf-toolkit-files",
+        "DEFAULT_DOWNLOAD_DIR": "${user_config.download_directory}"
       }
     }
   }
