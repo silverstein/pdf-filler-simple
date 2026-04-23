@@ -639,15 +639,96 @@ function getFormFieldInfo(pdfDoc) {
 
 // Helper function to parse CSV
 function parseCSV(content) {
-  const lines = content.trim().split('\n');
-  const headers = lines[0].split(',').map(h => h.trim());
-  return lines.slice(1).map(line => {
-    const values = line.split(',').map(v => v.trim());
+  const rows = [];
+  let row = [];
+  let value = "";
+  let inQuotes = false;
+  let wasQuoted = false;
+
+  const pushValue = () => {
+    row.push(wasQuoted ? value : value.trim());
+    value = "";
+    wasQuoted = false;
+  };
+
+  const pushRow = () => {
+    pushValue();
+    if (row.some(cell => cell !== "")) {
+      rows.push(row);
+    }
+    row = [];
+  };
+
+  for (let i = 0; i < content.length; i++) {
+    const char = content[i];
+
+    if (inQuotes) {
+      if (char === '"') {
+        if (content[i + 1] === '"') {
+          value += '"';
+          i++;
+        } else {
+          inQuotes = false;
+        }
+      } else {
+        value += char;
+      }
+      continue;
+    }
+
+    if (char === '"' && value.trim() === "") {
+      inQuotes = true;
+      wasQuoted = true;
+      value = "";
+    } else if (char === ",") {
+      pushValue();
+    } else if (char === "\n") {
+      pushRow();
+    } else if (char === "\r") {
+      if (content[i + 1] === "\n") i++;
+      pushRow();
+    } else {
+      value += char;
+    }
+  }
+
+  if (inQuotes) {
+    throw new Error("Malformed CSV: unterminated quoted field");
+  }
+
+  if (value !== "" || row.length > 0) {
+    pushRow();
+  }
+
+  if (rows.length === 0) return [];
+
+  const headers = rows[0].map((header, index) => {
+    const normalized = index === 0 ? header.replace(/^\uFEFF/, "").trim() : header.trim();
+    if (!normalized) {
+      throw new Error(`Malformed CSV: blank header at column ${index + 1}`);
+    }
+    return normalized;
+  });
+  const duplicateHeader = headers.find((header, index) => headers.indexOf(header) !== index);
+  if (duplicateHeader) {
+    throw new Error(`Malformed CSV: duplicate header "${duplicateHeader}"`);
+  }
+
+  return rows.slice(1).map((values, rowIndex) => {
+    if (values.length !== headers.length) {
+      throw new Error(
+        `Malformed CSV: row ${rowIndex + 2} has ${values.length} values, expected ${headers.length}`
+      );
+    }
     return headers.reduce((obj, header, index) => {
-      obj[header] = values[index] || '';
+      obj[header] = values[index] || "";
       return obj;
     }, {});
   });
+}
+
+function formatCSVValue(value) {
+  return `"${String(value ?? "").replace(/"/g, "\"\"")}"`;
 }
 
 // Helper function to fill PDF fields
@@ -2053,17 +2134,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, record, password);
             const filledPdfBytes = await pdfDoc.save();
             await fs.writeFile(outputPath, filledPdfBytes);
-            results.push(`✓ ${filename}: ${filledFields.length} fields filled`);
+            results.push({
+              filename,
+              output_path: outputPath,
+              fields_filled: filledFields.length,
+              errors,
+              status: errors.length > 0 ? "warning" : "ok",
+            });
           } catch (e) {
-            results.push(`✗ ${filename}: ${e.message}`);
+            results.push({
+              filename,
+              output_path: outputPath,
+              fields_filled: 0,
+              errors: [e.message],
+              status: "error",
+            });
           }
         }
+
+        const resultLines = results.map(result => {
+          const marker = result.status === "error" ? "✗" : result.status === "warning" ? "!" : "✓";
+          const suffix = result.errors.length > 0 ? ` (${result.errors.length} warnings/errors)` : "";
+          return `${marker} ${result.filename}: ${result.fields_filled} fields filled${suffix}`;
+        });
         
         return {
           content: [{
             type: "text",
-            text: `Bulk fill complete!\n${results.join('\n')}`
+            text: `Bulk fill complete!\n${resultLines.join('\n')}`
           }],
+          structuredContent: {
+            row_count: records.length,
+            results,
+            preview_records: records.slice(0, 3),
+          },
         };
       }
 
@@ -2189,11 +2293,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         
         // Create CSV
         const headers = ['_filename', ...Array.from(allFieldNames).sort()];
-        const csvLines = [headers.join(',')];
+        const csvLines = [headers.map(formatCSVValue).join(',')];
         
         for (const row of allData) {
           const values = headers.map(h => row[h] || "");
-          csvLines.push(values.map(v => `"${v}"`).join(','));
+          csvLines.push(values.map(formatCSVValue).join(','));
         }
         
         await fs.writeFile(resolvedOutputCsv, csvLines.join('\n'));
@@ -2201,8 +2305,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         return {
           content: [{
             type: "text",
-            text: `Extracted data from ${pdf_paths.length} PDFs to: ${output_csv}\nFields extracted: ${allFieldNames.size}`
+            text: `Extracted data from ${pdf_paths.length} PDFs to: ${output_csv}\nFields extracted: ${allFieldNames.size}\nPreview rows returned in structuredContent.`
           }],
+          structuredContent: {
+            output_csv: resolvedOutputCsv,
+            source_pdf_count: pdf_paths.length,
+            field_count: allFieldNames.size,
+            row_count: allData.length,
+            preview_row_count: Math.min(allData.length, 3),
+            headers,
+            preview_rows: allData.slice(0, 3),
+          },
         };
       }
 
