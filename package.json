@@ -6,6 +6,7 @@
   "main": "server/index.js",
   "license": "MIT",
   "scripts": {
+    "dev:ui": "vite --host 127.0.0.1",
     "build:ui": "vite build",
     "test": "vitest run"
   },

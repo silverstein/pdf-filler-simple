@@ -181,12 +181,21 @@ PDF-Tools/
 
 ```bash
 npm install
+npm run dev:ui
 npm run build:ui
 npm test
 node server/index.js
 mcpb pack
 node package-for-friend.js
 ```
+
+### Viewer Dev Mode
+
+`npm run dev:ui` starts the Vite viewer with a mocked ext-apps host and a real local MCP subprocess behind `/__dev__/tool`.
+
+- Default URL: `http://127.0.0.1:5173/?pdf_path=example-fw9.pdf`
+- You can point at another file with `?pdf_path=/absolute/path/to/file.pdf`
+- The dev bridge is serve-only; `npm run build:ui` still produces the production single-file viewer for packaging
 
 ### Maintainer Docs
 
