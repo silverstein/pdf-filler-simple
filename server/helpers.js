@@ -918,6 +918,53 @@ export function getPageRenderScale({
   return Math.round(boundedScale * 100) / 100;
 }
 
+export function validatePdfRegionBox({
+  pageWidth,
+  pageHeight,
+  x,
+  y,
+  width,
+  height,
+}) {
+  if (![pageWidth, pageHeight, x, y, width, height].every(Number.isFinite)) {
+    throw new Error("pageWidth, pageHeight, x, y, width, and height must all be finite numbers.");
+  }
+  if (pageWidth <= 0 || pageHeight <= 0) {
+    throw new Error("pageWidth and pageHeight must be positive numbers.");
+  }
+  if (width <= 0 || height <= 0) {
+    throw new Error("width and height must be positive numbers.");
+  }
+  if (x < 0 || y < 0 || x + width > pageWidth || y + height > pageHeight) {
+    throw new Error(
+      `Region (${x}, ${y}, ${width}x${height}) falls outside page bounds ` +
+      `(${pageWidth.toFixed(0)}x${pageHeight.toFixed(0)} pts).`
+    );
+  }
+}
+
+export function getRegionPixelRect({
+  x,
+  y,
+  width,
+  height,
+  scale,
+}) {
+  if (![x, y, width, height, scale].every(Number.isFinite)) {
+    throw new Error("x, y, width, height, and scale must all be finite numbers.");
+  }
+  if (scale <= 0) {
+    throw new Error("scale must be a positive number.");
+  }
+
+  return {
+    left: Math.round(x * scale),
+    top: Math.round(y * scale),
+    width: Math.max(1, Math.round(width * scale)),
+    height: Math.max(1, Math.round(height * scale)),
+  };
+}
+
 function normalizeExtractedText(text) {
   return String(text ?? "")
     .replace(/\r\n/g, "\n")

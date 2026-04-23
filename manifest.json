@@ -78,6 +78,10 @@
       "description": "Render one PDF page to PNG for visual reasoning on scanned or image-heavy documents"
     },
     {
+      "name": "render_pdf_region",
+      "description": "Render a bounded PDF region to PNG using top-left point coordinates"
+    },
+    {
       "name": "search_pdf_text",
       "description": "Search extracted PDF text for a phrase and return page-numbered snippets"
     },

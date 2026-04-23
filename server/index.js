@@ -173,6 +173,68 @@ async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0, pas
   }
 }
 
+async function convertPdfRegionToImage(pdfBuffer, {
+  pageNumber = 1,
+  scale = 1.0,
+  x,
+  y,
+  width,
+  height,
+  password = null,
+}) {
+  try {
+    return await withSuppressedStderr(async () => {
+      await loadImageDependencies();
+      const loadingTask = pdfjsLib.getDocument({
+        data: new Uint8Array(pdfBuffer),
+        password: password || undefined,
+        useSystemFonts: true,
+        disableFontFace: true,
+        disableAutoFetch: true,
+        useWorkerFetch: false,
+        isEvalSupported: false,
+        verbosity: 0
+      });
+      const pdfDocument = await loadingTask.promise;
+      const numPages = pdfDocument.numPages;
+      if (pageNumber < 1 || pageNumber > numPages) {
+        throw new Error(`Invalid page number. PDF has ${numPages} pages.`);
+      }
+
+      const page = await pdfDocument.getPage(pageNumber);
+      // render_pdf_region uses the toolkit's native top-left PDF coordinate
+      // system, which matches signing / zone-detection math before any page
+      // rotation is applied. Force rotation=0 so cropping stays aligned.
+      const viewport = page.getViewport({ scale, rotation: 0 });
+      const fullCanvas = createCanvas(viewport.width, viewport.height);
+      const fullContext = fullCanvas.getContext("2d");
+      fullContext.fillStyle = "white";
+      fullContext.fillRect(0, 0, viewport.width, viewport.height);
+      await page.render({
+        canvasContext: fullContext,
+        viewport,
+      }).promise;
+
+      const crop = getRegionPixelRect({ x, y, width, height, scale });
+      const cropCanvas = createCanvas(crop.width, crop.height);
+      const cropContext = cropCanvas.getContext("2d");
+      cropContext.fillStyle = "white";
+      cropContext.fillRect(0, 0, crop.width, crop.height);
+      cropContext.drawImage(
+        fullCanvas,
+        crop.left, crop.top, crop.width, crop.height,
+        0, 0, crop.width, crop.height
+      );
+
+      await pdfDocument.destroy();
+      return cropCanvas.toBuffer("image/png");
+    });
+  } catch (error) {
+    console.error("Error converting PDF region to image:", error);
+    throw error;
+  }
+}
+
 // Extract text from all pages of a PDF using pdfjs-dist
 async function extractPdfText(pdfBuffer, maxPages) {
   await loadPdfjs();
@@ -237,7 +299,9 @@ import {
   extractPdfTextWithBounds,
   buildPageTextSegments,
   getPageRenderScale,
+  getRegionPixelRect,
   searchPageTexts,
+  validatePdfRegionBox,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
@@ -895,6 +959,66 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         annotations: {
           title: "Render PDF Page",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "render_pdf_region",
+        description: "Render a rectangular region from one PDF page to a PNG image using the toolkit's top-left point coordinate system. Use this for signatures, handwritten notes, stamps, tables, or any small visual area where the full page is too broad. Coordinates are in PDF points (72 pt = 1 inch) with a TOP-LEFT origin, matching detect_signature_zones and the signing tools. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: {
+              type: "string",
+              description: "Absolute path to the PDF file."
+            },
+            page: {
+              type: "number",
+              description: "Page number to render (1-indexed)."
+            },
+            x: {
+              type: "number",
+              description: "Left edge of the region, in points from the left side of the page."
+            },
+            y: {
+              type: "number",
+              description: "Top edge of the region, in points from the TOP of the page."
+            },
+            width: {
+              type: "number",
+              description: "Width of the region in points."
+            },
+            height: {
+              type: "number",
+              description: "Height of the region in points."
+            },
+            max_dimension_px: {
+              type: "number",
+              description: "Maximum width or height in rendered pixels for the cropped region (default: 1400)."
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)."
+            }
+          },
+          required: ["pdf_path", "page", "x", "y", "width", "height"],
+          examples: [
+            {
+              pdf_path: "/Users/alice/Documents/contract.pdf",
+              page: 8,
+              x: 72,
+              y: 620,
+              width: 220,
+              height: 80,
+              max_dimension_px: 1200
+            }
+          ]
+        },
+        annotations: {
+          title: "Render PDF Region",
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
@@ -2318,6 +2442,97 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [{
               type: "text",
               text: `Error rendering PDF page: ${error.message}\n\nPlease ensure the file path is correct and the requested page can be rendered.`
+            }],
+          };
+        }
+      }
+
+      case "render_pdf_region": {
+        const {
+          pdf_path,
+          page,
+          x,
+          y,
+          width,
+          height,
+          max_dimension_px = 1400,
+          password = null,
+        } = args;
+        const resolvedPath = resolvePath(pdf_path);
+
+        try {
+          await fs.access(resolvedPath);
+
+          const { pdfDoc, pdfBytes } = await loadPdf(resolvedPath, password);
+          const totalPages = pdfDoc.getPageCount();
+          const targetPage = Math.max(1, Number(page) || 1);
+          if (targetPage > totalPages) {
+            throw new Error(`Page ${targetPage} is out of range (1-${totalPages}).`);
+          }
+
+          const targetPdfPage = pdfDoc.getPages()[targetPage - 1];
+          const { width: pageWidth, height: pageHeight } = targetPdfPage.getSize();
+          const region = {
+            x: Number(x),
+            y: Number(y),
+            width: Number(width),
+            height: Number(height),
+          };
+          validatePdfRegionBox({
+            pageWidth,
+            pageHeight,
+            ...region,
+          });
+
+          const scale = getPageRenderScale({
+            width: region.width,
+            height: region.height,
+            maxDimensionPx: Number(max_dimension_px) || 1400,
+            minScale: 0.1,
+            maxScale: 4,
+          });
+          const crop = getRegionPixelRect({
+            ...region,
+            scale,
+          });
+          const imageBuffer = await convertPdfRegionToImage(pdfBytes, {
+            pageNumber: targetPage,
+            scale,
+            ...region,
+            password,
+          });
+          const fileName = path.basename(resolvedPath);
+
+          return {
+            content: [{
+              type: "text",
+              text:
+                `Rendered region from page ${targetPage} of ${fileName} as PNG.\n` +
+                `Region (pt): (${region.x}, ${region.y}, ${region.width} x ${region.height})\n` +
+                `Rendered crop: ${crop.width} x ${crop.height} px\n` +
+                `Scale: ${scale.toFixed(2)}x`
+            }, {
+              type: "image",
+              data: imageBuffer.toString("base64"),
+              mimeType: "image/png",
+            }],
+            structuredContent: {
+              pdf_path: resolvedPath,
+              file_name: fileName,
+              page: targetPage,
+              total_pages: totalPages,
+              region_points: region,
+              rendered_width_px: crop.width,
+              rendered_height_px: crop.height,
+              scale,
+              mime_type: "image/png",
+            },
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text",
+              text: `Error rendering PDF region: ${error.message}\n\nPlease ensure the file path, page, and region coordinates are valid.`
             }],
           };
         }

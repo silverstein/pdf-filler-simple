@@ -102,6 +102,7 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 - "Summarize this research paper"
 - "Extract all text from this scanned invoice"
 - "Render page 1 of this scanned invoice so you can inspect it visually"
+- "Render just the signature block on page 3 so you can inspect it visually"
 - "Read pages 8 through 10 of this contract"
 - "Search this PDF for every mention of governing law"
 - "Export all the filled fields from these PDFs into a CSV"
@@ -116,6 +117,7 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 - `read_pdf_content`
 - `read_pdf_pages`
 - `render_pdf_page`
+- `render_pdf_region`
 - `search_pdf_text`
 - `get_pdf_resource_uri`
 
