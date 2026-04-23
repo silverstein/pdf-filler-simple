@@ -923,6 +923,7 @@ const regionPreviewDocEl = $("region-preview-doc");
 const regionPreviewCoordsEl = $("region-preview-coords");
 const regionPreviewImageEl = $("region-preview-image") as HTMLImageElement;
 const regionPreviewCopyBtn = $("region-preview-copy") as HTMLButtonElement;
+const regionPreviewCreateZoneBtn = $("region-preview-create-zone") as HTMLButtonElement;
 const regionPreviewDoneBtn = $("region-preview-done") as HTMLButtonElement;
 const regionPreviewCloseBtn = $("region-preview-close") as HTMLButtonElement;
 const manageGridEl = $("manage-grid");
@@ -2125,6 +2126,32 @@ function closeRegionPreviewModal() {
   regionPreviewImageEl.src = "";
 }
 
+function createCustomSignatureZoneFromPreview(preview: RegionPreviewState): SignatureZone {
+  return {
+    type: "signature",
+    label: "Custom zone",
+    page: preview.page,
+    x: preview.x,
+    y: preview.y,
+    width: preview.width,
+    height: preview.height,
+    confidence: 1.0,
+    source: "user-drag",
+    id: `zone-custom-${Date.now()}`,
+    applied: false,
+  };
+}
+
+function useRegionPreviewAsSignatureZone() {
+  if (!activeRegionPreview) return;
+  const zone = createCustomSignatureZoneFromPreview(activeRegionPreview);
+  signatureZones.push(zone);
+  closeRegionPreviewModal();
+  renderZoneOverlay();
+  renderSignPanel();
+  openSignModal(zone);
+}
+
 function openRegionPreviewModal(preview: RegionPreviewState) {
   activeRegionPreview = preview;
   regionPreviewDocEl.textContent = getHostBaseName(pdfPath);
@@ -2723,6 +2750,7 @@ signPanelInspectBtn.addEventListener("click", () => {
 
 // Region preview modal wiring
 regionPreviewCopyBtn.addEventListener("click", copyRegionCoords);
+regionPreviewCreateZoneBtn.addEventListener("click", useRegionPreviewAsSignatureZone);
 regionPreviewDoneBtn.addEventListener("click", closeRegionPreviewModal);
 regionPreviewCloseBtn.addEventListener("click", closeRegionPreviewModal);
 regionPreviewModalEl.addEventListener("click", (e) => {
