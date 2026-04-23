@@ -8,6 +8,7 @@
   "scripts": {
     "dev:ui": "vite --host 127.0.0.1",
     "smoke:ui-dev": "node scripts/dev-ui-smoke.mjs",
+    "smoke:ui-sign": "node scripts/dev-ui-sign-smoke.mjs",
     "build:ui": "vite build",
     "test": "vitest run"
   },

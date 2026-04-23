@@ -183,6 +183,7 @@ PDF-Tools/
 npm install
 npm run dev:ui
 npm run smoke:ui-dev
+npm run smoke:ui-sign
 npm run build:ui
 npm test
 node server/index.js
@@ -198,6 +199,7 @@ node package-for-friend.js
 - You can point at another file with `?pdf_path=/absolute/path/to/file.pdf`
 - The dev bridge is serve-only; `npm run build:ui` still produces the production single-file viewer for packaging
 - `npm run smoke:ui-dev` starts the dev server on a throwaway port, verifies the HTML loads, and round-trips a real `display_pdf` tool call through `/__dev__/tool`
+- `npm run smoke:ui-sign` boots the dev server, opens a real browser session with `agent-browser`, switches to sign mode, and verifies a sign-panel interaction opens a signing modal
 
 ### Maintainer Docs
 
