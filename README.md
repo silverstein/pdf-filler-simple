@@ -186,6 +186,7 @@ npm run smoke:ui-dev
 npm run smoke:ui-sign
 npm run smoke:ui-inspect
 npm run smoke:ui-preview-zone
+npm run smoke:ui-draw
 npm run build:ui
 npm test
 node server/index.js
@@ -204,6 +205,7 @@ node package-for-friend.js
 - `npm run smoke:ui-sign` boots the dev server, opens a real browser session with `agent-browser`, switches to sign mode, and verifies a sign-panel interaction opens a signing modal
 - `npm run smoke:ui-inspect` boots the dev server, opens a real browser session with `agent-browser`, switches to sign mode, arms inspect-region, drags a rectangle, and verifies the region preview modal opens
 - `npm run smoke:ui-preview-zone` boots the dev server, opens a real browser session, drives inspect-region, creates a zone from the preview modal, and verifies the sign modal opens on that new custom zone
+- `npm run smoke:ui-draw` boots the dev server, opens the draw-signature modal in a real browser session, sketches a small stroke, fills the save fields, and verifies the modal closes after saving
 
 ### Maintainer Docs
 

@@ -11,6 +11,7 @@
     "smoke:ui-sign": "node scripts/dev-ui-sign-smoke.mjs",
     "smoke:ui-inspect": "node scripts/dev-ui-inspect-smoke.mjs",
     "smoke:ui-preview-zone": "node scripts/dev-ui-preview-zone-smoke.mjs",
+    "smoke:ui-draw": "node scripts/dev-ui-draw-smoke.mjs",
     "build:ui": "vite build",
     "test": "vitest run"
   },
