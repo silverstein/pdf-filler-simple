@@ -7,6 +7,20 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const repoRoot = path.resolve(__dirname, "..", "..");
 
+function addRepoRootToAllowedDirectories(value) {
+  if (!value) return repoRoot;
+  const trimmed = value.trim();
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return JSON.stringify([...parsed, repoRoot]);
+    } catch {}
+  }
+  return `${value}${path.delimiter}${repoRoot}`;
+}
+
+const devAllowedDirectories = addRepoRootToAllowedDirectories(process.env.ALLOWED_DIRECTORIES);
+
 function jsonResponse(res, statusCode, body) {
   const payload = JSON.stringify(body);
   res.statusCode = statusCode;
@@ -30,6 +44,9 @@ export function createMcpBridgePlugin() {
         command: process.execPath,
         args: [path.join(repoRoot, "server", "index.js")],
         cwd: repoRoot,
+        env: {
+          ALLOWED_DIRECTORIES: devAllowedDirectories,
+        },
         stderr: "pipe",
       });
 

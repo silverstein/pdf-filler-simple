@@ -11,6 +11,7 @@ import {
 import { PDFDocument, degrees as pdfDegrees } from "pdf-lib";
 import { createRequire } from "module";
 import { fileURLToPath, pathToFileURL } from "url";
+import { existsSync, realpathSync } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { homedir, platform as osPlatform } from "os";
@@ -94,22 +95,68 @@ async function loadImageDependencies() {
   }
 }
 
-// Helper function to resolve paths (handles ~, relative paths, etc.)
+function expandUserPath(inputPath) {
+  if (!inputPath) return inputPath;
+  if (inputPath === "~") return homedir();
+  if (inputPath.startsWith("~/") || inputPath.startsWith("~\\")) {
+    return path.join(homedir(), inputPath.slice(2));
+  }
+  return inputPath;
+}
+
+function normalizeUserPath(inputPath) {
+  const expanded = expandUserPath(inputPath);
+  return path.resolve(expanded);
+}
+
+function canonicalizePathForPolicy(resolvedPath) {
+  const absolutePath = path.resolve(resolvedPath);
+  if (existsSync(absolutePath)) {
+    return realpathSync.native(absolutePath);
+  }
+
+  let ancestor = absolutePath;
+  const missingParts = [];
+  while (!existsSync(ancestor)) {
+    const parent = path.dirname(ancestor);
+    if (parent === ancestor) break;
+    missingParts.unshift(path.basename(ancestor));
+    ancestor = parent;
+  }
+
+  const canonicalAncestor = existsSync(ancestor)
+    ? realpathSync.native(ancestor)
+    : ancestor;
+  return path.join(canonicalAncestor, ...missingParts);
+}
+
+function isPathInsideDirectory(candidatePath, directoryPath) {
+  const relative = path.relative(directoryPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function assertPathAllowed(resolvedPath) {
+  const canonicalPath = canonicalizePathForPolicy(resolvedPath);
+  const isAllowed = ALLOWED_DIRECTORIES.some((directory) =>
+    isPathInsideDirectory(canonicalPath, directory.canonical)
+  );
+
+  if (!isAllowed) {
+    const allowed = ALLOWED_DIRECTORIES.map((directory) => directory.display).join(", ");
+    throw new Error(
+      `This extension is only allowed to access: ${allowed}. ` +
+      `Tried to access: ${resolvedPath}. ` +
+      "Update allowed_directories in the Claude Desktop extension settings to include this folder."
+    );
+  }
+
+  return resolvedPath;
+}
+
+// Helper function to resolve paths and enforce the extension filesystem sandbox.
 function resolvePath(inputPath) {
   if (!inputPath) return inputPath;
-  
-  // Handle ~ for home directory
-  if (inputPath.startsWith('~')) {
-    return path.join(homedir(), inputPath.slice(1));
-  }
-  
-  // If it's already absolute, return as-is
-  if (path.isAbsolute(inputPath)) {
-    return inputPath;
-  }
-  
-  // Otherwise, resolve relative to current working directory
-  return path.resolve(inputPath);
+  return assertPathAllowed(normalizeUserPath(inputPath));
 }
 
 const stderrSuppressor = createScopedStderrSuppressor();
@@ -317,7 +364,7 @@ function validateProfileName(name) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.7.2",
+    version: "0.8.1",
   },
   {
     capabilities: {
@@ -341,10 +388,69 @@ function envPathOrDefault(name, fallback) {
 const DEFAULT_PDF_DIR = envPathOrDefault("DEFAULT_PDF_DIR", path.join(homedir(), "Documents"));
 const DEFAULT_DOWNLOAD_DIR = envPathOrDefault("DEFAULT_DOWNLOAD_DIR", path.join(homedir(), "Downloads"));
 // Keep in sync with manifest.json and share bundle defaults
-const PROFILES_DIR = process.env.DEFAULT_PROFILES_DIR || path.join(homedir(), ".pdf-toolkit-files");
+const PROFILES_DIR = envPathOrDefault("DEFAULT_PROFILES_DIR", path.join(homedir(), ".pdf-toolkit-files"));
 const SIGNATURES_DIR = path.join(PROFILES_DIR, "signatures");
 const BACKUPS_DIR = path.join(PROFILES_DIR, "backups");
 const OLD_PROFILES_DIR = path.join(homedir(), ".pdf-filler-profiles");
+const DEFAULT_ALLOWED_DIRECTORIES = [
+  path.join(homedir(), "Documents"),
+  path.join(homedir(), "Downloads"),
+  path.join(homedir(), "Desktop"),
+];
+
+function parsePathListValue(value) {
+  if (!value || value.includes("${")) return null;
+
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+
+  if (trimmed.startsWith("[")) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) return parsed.filter(item => typeof item === "string");
+    } catch {}
+  }
+
+  const delimiters = [
+    "\n",
+    path.delimiter,
+    ",",
+  ].filter((delimiter, index, all) => delimiter && all.indexOf(delimiter) === index);
+  const delimiter = delimiters.find((candidate) => trimmed.includes(candidate));
+  if (!delimiter) return [trimmed];
+  return trimmed
+    .split(delimiter)
+    .map(item => item.trim())
+    .filter(Boolean);
+}
+
+function envPathListOrDefault(name, fallbackPaths) {
+  return parsePathListValue(process.env[name]) || fallbackPaths;
+}
+
+function buildAllowedDirectories() {
+  const configuredDirectories = envPathListOrDefault("ALLOWED_DIRECTORIES", DEFAULT_ALLOWED_DIRECTORIES);
+  const directories = [
+    ...configuredDirectories,
+    PROFILES_DIR,
+  ];
+
+  const seen = new Set();
+  return directories
+    .map((directory) => normalizeUserPath(directory))
+    .map((directory) => ({
+      display: directory,
+      canonical: canonicalizePathForPolicy(directory),
+    }))
+    .filter((directory) => {
+      const key = directory.canonical;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+}
+
+const ALLOWED_DIRECTORIES = buildAllowedDirectories();
 
 function tempOutputPath(targetPath) {
   const dir = path.dirname(targetPath);
@@ -3787,9 +3893,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         //   1. caller-supplied destination_dir (one-off override)
         //   2. user_config.download_directory from the extension settings UI
         //   3. helper's internal default (~/Downloads)
-        const resolvedDestDir = destination_dir
-          ? resolvePath(destination_dir)
-          : DEFAULT_DOWNLOAD_DIR;
+        const resolvedDestDir = resolvePath(destination_dir || DEFAULT_DOWNLOAD_DIR);
 
         const result = await downloadPdfFromUrl(url, {
           filename,

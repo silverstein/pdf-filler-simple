@@ -15,6 +15,12 @@ This package targets Claude Desktop and other local MCP hosts today. It does not
 
 The extension is also available in the Claude Extensions directory.
 
+Claude Desktop settings include an **Allowed PDF Directories** field. By default,
+PDF Tools can access `~/Documents`, `~/Downloads`, and `~/Desktop`. Add any other
+folder you want Claude to use before asking it to read, fill, sign, merge, or save
+PDFs there. Saved profiles and signatures live in the extension's private local
+store and do not need to be added manually.
+
 ### Cursor / Other MCP Hosts
 
 ```json
@@ -37,6 +43,7 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 - **Page organization:** merge, split, rotate, reorder, and apply full page plans in one pass
 - **Extraction and analysis:** text extraction, CSV export, page-level analysis, metadata, and validation
 - **Local-first:** files stay on your machine
+- **Directory sandbox:** Claude Desktop users can choose which local folders PDF Tools may read from or write to
 
 ## What You Can Do
 

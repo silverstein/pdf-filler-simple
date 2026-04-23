@@ -86,6 +86,9 @@ describe("render_pdf_page MCP tool", () => {
       command: process.execPath,
       args: [path.join(REPO_ROOT, "server", "index.js")],
       cwd: REPO_ROOT,
+      env: {
+        ALLOWED_DIRECTORIES: REPO_ROOT,
+      },
       stderr: "pipe",
     });
     await client.connect(transport);
