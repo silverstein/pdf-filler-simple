@@ -294,6 +294,7 @@ import {
   formatSigningAuditLine,
   detectExistingSignatures,
   detectXfaForm,
+  assertXfaMutationAllowed,
   detectSignatureZones,
   computeIoU,
   extractPdfTextWithBounds,
@@ -656,6 +657,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             password: {
               type: "string",
               description: "Password for encrypted PDFs (optional)"
+            },
+            force_xfa: {
+              type: "boolean",
+              description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped by pdf-lib."
             }
           },
           required: ["pdf_path", "output_path", "field_data"]
@@ -693,6 +698,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             password: {
               type: "string",
               description: "Password for encrypted PDFs (optional)"
+            },
+            force_xfa: {
+              type: "boolean",
+              description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped by pdf-lib."
             }
           },
           required: ["pdf_path", "csv_path", "output_directory"]
@@ -1418,6 +1427,10 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             password: {
               type: "string",
               description: "Password for encrypted PDFs (optional)"
+            },
+            force_xfa: {
+              type: "boolean",
+              description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped by pdf-lib."
             }
           },
           required: ["input_path", "output_path", "plan"]
@@ -1869,9 +1882,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "fill_pdf": {
-        const { pdf_path, output_path, field_data, password } = args;
+        const { pdf_path, output_path, field_data, password, force_xfa = false } = args;
         const resolvedPdfPath = resolvePath(pdf_path);
         const resolvedOutputPath = resolvePath(output_path);
+        const rawPdfBytes = await fs.readFile(resolvedPdfPath);
+        assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
         const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, field_data, password);
         const { payload, backupPath } = await persistPdfMutation({
           pdfDoc,
@@ -1903,10 +1918,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "bulk_fill_from_csv": {
-        const { pdf_path, csv_path, output_directory, filename_column, password } = args;
+        const { pdf_path, csv_path, output_directory, filename_column, password, force_xfa = false } = args;
         const resolvedPdfPath = resolvePath(pdf_path);
         const resolvedCsvPath = resolvePath(csv_path);
         const resolvedOutputDir = resolvePath(output_directory);
+        const rawPdfBytes = await fs.readFile(resolvedPdfPath);
+        assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
         
         // Read CSV
         const csvContent = await fs.readFile(resolvedCsvPath, 'utf8');
@@ -3072,7 +3089,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       }
 
       case "apply_page_plan": {
-        const { input_path, output_path, plan, password } = args;
+        const { input_path, output_path, plan, password, force_xfa = false } = args;
         const { page_order, rotations = {} } = plan;
 
         if (!page_order || page_order.length === 0) {
@@ -3085,6 +3102,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           throw new Error("output_path must be different from input_path to prevent file corruption.");
         }
 
+        const rawPdfBytes = await fs.readFile(resolvedInputPath);
+        assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
         const { pdfDoc } = await loadPdf(input_path, password);
         const totalPages = pdfDoc.getPageCount();
 
@@ -3424,13 +3443,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             `Saving would invalidate those signatures. Pass allow_resign=true if you intend to modify a signed PDF.`
           );
         }
-        if (!force_xfa && detectXfaForm(pdfBytes)) {
-          throw new Error(
-            "This PDF uses XFA forms, which pdf-lib cannot preserve — saving it would destroy the form data. " +
-            "Convert the form to AcroForm first (e.g. via Adobe Acrobat's 'Flatten Form'), or pass force_xfa=true " +
-            "if you understand that the XFA layer will be stripped."
-          );
-        }
+        assertXfaMutationAllowed(pdfBytes, { forceXfa: force_xfa });
         await drawSignatureFieldOnPage(pdfDoc, { page, x, y, width, height, label });
         const { payload, backupPath } = await persistPdfMutation({
           pdfDoc,
@@ -3508,13 +3521,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         // 3b. Refuse to silently strip XFA data.
-        if (!force_xfa && detectXfaForm(pdfBytes)) {
-          throw new Error(
-            "This PDF uses XFA forms, which pdf-lib cannot preserve — saving it would destroy the form data. " +
-            "Convert the form to AcroForm first (e.g. via Adobe Acrobat's 'Flatten Form'), or pass force_xfa=true " +
-            "if you understand that the XFA layer will be stripped."
-          );
-        }
+        assertXfaMutationAllowed(pdfBytes, { forceXfa: force_xfa });
 
         // 4. Stamp
         const displayName = signatureRecord.display_name || signatureRecord.name;
@@ -3591,13 +3598,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             `Saving would invalidate those signatures. Pass allow_resign=true if you intend to modify a signed PDF.`
           );
         }
-        if (!force_xfa && detectXfaForm(pdfBytes)) {
-          throw new Error(
-            "This PDF uses XFA forms, which pdf-lib cannot preserve — saving it would destroy the form data. " +
-            "Convert the form to AcroForm first (e.g. via Adobe Acrobat's 'Flatten Form'), or pass force_xfa=true " +
-            "if you understand that the XFA layer will be stripped."
-          );
-        }
+        assertXfaMutationAllowed(pdfBytes, { forceXfa: force_xfa });
 
         // 1. Fill form fields if provided
         let filledCount = 0;
@@ -3705,12 +3706,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             `Saving would invalidate them. Pass allow_resign=true if you intend to modify a signed PDF.`
           );
         }
-        if (!force_xfa && detectXfaForm(pdfBytes)) {
-          throw new Error(
-            "This PDF uses XFA forms, which pdf-lib cannot preserve — saving would destroy the form data. " +
-            "Pass force_xfa=true if you accept that the XFA layer will be stripped."
-          );
-        }
+        assertXfaMutationAllowed(pdfBytes, { forceXfa: force_xfa });
 
         await stampTextOnPage(pdfDoc, { page, x, y, width, height, text, fontStyle: font_style });
 

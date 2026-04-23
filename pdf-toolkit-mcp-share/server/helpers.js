@@ -321,6 +321,16 @@ export function detectXfaForm(pdfBytes) {
   return /\/XFA[\s\[<\/]/.test(sample);
 }
 
+export function assertXfaMutationAllowed(pdfBytes, { forceXfa = false } = {}) {
+  if (!forceXfa && detectXfaForm(pdfBytes)) {
+    throw new Error(
+      "This PDF uses XFA forms, which pdf-lib cannot preserve — saving it would destroy the form data. " +
+      "Convert the form to AcroForm first (e.g. via Adobe Acrobat's 'Flatten Form'), or pass force_xfa=true " +
+      "if you understand that the XFA layer will be stripped."
+    );
+  }
+}
+
 // ─── Signature zone detection ────────────────────────────────────────────────
 // Finds "Sign here", initials, and date zones in a PDF so agents/viewers can
 // place signatures at real locations instead of guessing coordinates.
