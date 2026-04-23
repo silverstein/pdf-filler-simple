@@ -7,6 +7,8 @@
 pdf-filler-mcp-share/
 pdf-toolkit-mcp-share/
 pdf-filler-mcp/
+_config.yml
+_includes/
 
 # Ignore test files
 test-*.pdf
@@ -20,6 +22,10 @@ test-*.pdf
 # Ignore git files (already handled by default)
 .git/
 .gitignore
+
+# Ignore local issue tracker and generated test state
+.beads/
+.test-tmp*/
 
 # Ignore old/backup files
 *.backup
@@ -39,8 +45,11 @@ ui/
 vite.config.mjs
 
 # Dev dependencies not needed in MCPB bundle (Vite + transitive deps)
+node_modules/.vite/
 node_modules/vite/
 node_modules/vite-plugin-singlefile/
+node_modules/vitest/
+node_modules/@vitest/
 node_modules/@modelcontextprotocol/ext-apps/
 node_modules/@oven/
 node_modules/@esbuild/
@@ -55,7 +64,9 @@ node_modules/esbuild/
 docs/
 test/
 scripts/
+plans/
 package-lock.json
+package-for-friend.js
 AGENTS.md
 CLAUDE.md
 .claude/
