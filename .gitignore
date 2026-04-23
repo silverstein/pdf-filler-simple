@@ -23,6 +23,7 @@ npm-debug.log*
 # Temporary files
 *.tmp
 *.temp
+.test-tmp*/
 
 # Local planning artifacts
 plans/*.local
