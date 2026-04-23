@@ -182,6 +182,7 @@ PDF-Tools/
 ```bash
 npm install
 npm run dev:ui
+npm run smoke:ui-dev
 npm run build:ui
 npm test
 node server/index.js
@@ -196,6 +197,7 @@ node package-for-friend.js
 - Default URL: `http://127.0.0.1:5173/?pdf_path=example-fw9.pdf`
 - You can point at another file with `?pdf_path=/absolute/path/to/file.pdf`
 - The dev bridge is serve-only; `npm run build:ui` still produces the production single-file viewer for packaging
+- `npm run smoke:ui-dev` starts the dev server on a throwaway port, verifies the HTML loads, and round-trips a real `display_pdf` tool call through `/__dev__/tool`
 
 ### Maintainer Docs
 

@@ -7,6 +7,7 @@
   "license": "MIT",
   "scripts": {
     "dev:ui": "vite --host 127.0.0.1",
+    "smoke:ui-dev": "node scripts/dev-ui-smoke.mjs",
     "build:ui": "vite build",
     "test": "vitest run"
   },
