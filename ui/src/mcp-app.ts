@@ -88,9 +88,22 @@ interface ZonePreviewState {
   displayName?: string;
 }
 
+interface RegionPreviewState {
+  page: number;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  imageDataUrl: string;
+}
+
 let savedSignatures: SavedSignatureSummary[] = [];
 let activeZonePreview: ZonePreviewState | null = null;
 const signaturePreviewCache = new Map<string, SavedSignatureSummary>();
+let inspectRegionArmed = false;
+let activeRegionPreview: RegionPreviewState | null = null;
+let inspectPreviewRequestSeq = 0;
+let inspectPreviewInFlight = false;
 
 function zoneKey(pdfPath: string, z: { type: string; page: number; x: number; y: number }): string {
   return `${pdfPath}|${z.type}|${z.page}|${z.x.toFixed(1)}|${z.y.toFixed(1)}`;
@@ -894,6 +907,7 @@ const signModalIdentityRowsEl = $("sign-modal-identity-rows");
 const signModalDateRowEl = $("sign-modal-date-row");
 const signModalDateInputEl = $("sign-modal-date") as HTMLInputElement;
 const signPanelDrawBtn = $("sign-panel-draw-btn") as HTMLButtonElement;
+const signPanelInspectBtn = $("sign-panel-inspect-btn") as HTMLButtonElement;
 const drawModalEl = $("draw-modal");
 const drawCanvasEl = $("draw-canvas") as HTMLCanvasElement;
 const drawNameInputEl = $("draw-name-input") as HTMLInputElement;
@@ -904,6 +918,13 @@ const drawSaveBtn = $("draw-modal-save") as HTMLButtonElement;
 const drawCancelBtn = $("draw-modal-cancel") as HTMLButtonElement;
 const drawCloseBtn = $("draw-modal-close") as HTMLButtonElement;
 const drawErrorEl = $("draw-modal-error");
+const regionPreviewModalEl = $("region-preview-modal");
+const regionPreviewDocEl = $("region-preview-doc");
+const regionPreviewCoordsEl = $("region-preview-coords");
+const regionPreviewImageEl = $("region-preview-image") as HTMLImageElement;
+const regionPreviewCopyBtn = $("region-preview-copy") as HTMLButtonElement;
+const regionPreviewDoneBtn = $("region-preview-done") as HTMLButtonElement;
+const regionPreviewCloseBtn = $("region-preview-close") as HTMLButtonElement;
 const manageGridEl = $("manage-grid");
 const manageStatusEl = $("manage-status");
 const manageRotateCwBtn = $("manage-rotate-cw") as HTMLButtonElement;
@@ -1183,6 +1204,8 @@ let activeDrag: DragState | null = null;
 // 150pt+ wide) while filtering out accidental pointer twitches.
 const MIN_CUSTOM_ZONE_WIDTH = 60;
 const MIN_CUSTOM_ZONE_HEIGHT = 15;
+const MIN_INSPECT_REGION_WIDTH = 12;
+const MIN_INSPECT_REGION_HEIGHT = 12;
 
 function getZoneLayerPointerPoints(e: PointerEvent): [number, number] {
   const rect = zoneLayerEl.getBoundingClientRect();
@@ -1249,8 +1272,19 @@ function onZoneLayerPointerUp(e: PointerEvent) {
   activeDrag = null;
   zoneLayerEl.classList.remove("dragging");
 
-  if (widthPts < MIN_CUSTOM_ZONE_WIDTH || heightPts < MIN_CUSTOM_ZONE_HEIGHT) {
+  const minWidth = inspectRegionArmed ? MIN_INSPECT_REGION_WIDTH : MIN_CUSTOM_ZONE_WIDTH;
+  const minHeight = inspectRegionArmed ? MIN_INSPECT_REGION_HEIGHT : MIN_CUSTOM_ZONE_HEIGHT;
+  if (widthPts < minWidth || heightPts < minHeight) {
     return; // too small — stray click, don't create a zone
+  }
+
+  if (inspectRegionArmed) {
+    inspectRegionSelection({
+      page: currentPage,
+      x: xPts, y: yPts,
+      width: widthPts, height: heightPts,
+    });
+    return;
   }
 
   const newZone: SignatureZone = {
@@ -1363,6 +1397,7 @@ function refreshActiveZoneCopy() {
 async function openSignModal(zone: SignatureZone) {
   // Guard: if a sign is already underway, don't swap the active zone (Phase B review B4).
   if (signingInFlight) return;
+  setInspectRegionArmed(false);
   activeSignZone = zone;
   activeModalMode = modeForZoneType(zone.type);
   signModalTypeRowEl.style.display = zone.source === "user-drag" ? "flex" : "none";
@@ -1794,6 +1829,7 @@ function onDrawPointerUp(e: PointerEvent) {
 }
 
 function openDrawModal() {
+  setInspectRegionArmed(false);
   drawStrokes = [];
   drawCurrentStroke = null;
   drawNameInputEl.value = "";
@@ -2037,18 +2073,129 @@ function showStampToast(
   setTimeout(() => toast.remove(), variant === "warning" ? 8000 : 4500);
 }
 
+function formatRegionCoords(region: Pick<RegionPreviewState, "page" | "x" | "y" | "width" | "height">) {
+  return `Page ${region.page} — x:${region.x.toFixed(1)} y:${region.y.toFixed(1)} w:${region.width.toFixed(1)} h:${region.height.toFixed(1)} pt`;
+}
+
+function setInspectRegionArmed(next: boolean) {
+  inspectRegionArmed = next;
+  signPanelInspectBtn.classList.toggle("active", next);
+  signPanelInspectBtn.disabled = inspectPreviewInFlight;
+  signPanelInspectBtn.textContent = next ? "Cancel inspect" : "🔍 Inspect region";
+  zoneLayerEl.classList.toggle("inspect-armed", next && manageMode === "sign");
+}
+
+async function copyRegionCoords() {
+  if (!activeRegionPreview) return;
+  const text = formatRegionCoords(activeRegionPreview);
+  const original = regionPreviewCopyBtn.textContent ?? "Copy coordinates";
+  const flash = (msg: string) => {
+    regionPreviewCopyBtn.textContent = msg;
+    setTimeout(() => { regionPreviewCopyBtn.textContent = original; }, 1800);
+  };
+
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      flash("Copied");
+      return;
+    }
+    throw new Error("clipboard API unavailable");
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.setAttribute("readonly", "");
+      ta.style.position = "absolute";
+      ta.style.left = "-9999px";
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand("copy");
+      document.body.removeChild(ta);
+      flash(ok ? "Copied" : "Copy failed");
+    } catch {
+      flash("Copy failed");
+    }
+  }
+}
+
+function closeRegionPreviewModal() {
+  regionPreviewModalEl.style.display = "none";
+  activeRegionPreview = null;
+  regionPreviewImageEl.src = "";
+}
+
+function openRegionPreviewModal(preview: RegionPreviewState) {
+  activeRegionPreview = preview;
+  regionPreviewDocEl.textContent = getHostBaseName(pdfPath);
+  regionPreviewCoordsEl.textContent = formatRegionCoords(preview);
+  regionPreviewImageEl.src = preview.imageDataUrl;
+  regionPreviewModalEl.style.display = "flex";
+  setTimeout(() => regionPreviewDoneBtn.focus(), 20);
+}
+
+async function inspectRegionSelection(region: Pick<RegionPreviewState, "page" | "x" | "y" | "width" | "height">) {
+  if (!pdfPath) return;
+  const requestId = ++inspectPreviewRequestSeq;
+  inspectPreviewInFlight = true;
+  setInspectRegionArmed(false);
+  signPanelStatusEl.textContent = "Rendering region preview…";
+  signPanelStatusEl.classList.remove("empty");
+  try {
+    const result = await app.callServerTool({
+      name: "render_pdf_region",
+      arguments: {
+        pdf_path: pdfPath,
+        page: region.page,
+        x: region.x,
+        y: region.y,
+        width: region.width,
+        height: region.height,
+      },
+    });
+    if (result.isError) {
+      const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Region preview failed";
+      throw new Error(text);
+    }
+    const imageItem = result.content?.find((c: any) => c.type === "image");
+    if (!imageItem?.data) {
+      throw new Error("Region preview returned no image.");
+    }
+    if (requestId !== inspectPreviewRequestSeq) return;
+    openRegionPreviewModal({
+      ...region,
+      imageDataUrl: `data:${imageItem.mimeType || "image/png"};base64,${imageItem.data}`,
+    });
+    renderSignPanel();
+  } catch (err: any) {
+    if (requestId !== inspectPreviewRequestSeq) return;
+    console.error("[viewer] render_pdf_region failed:", err);
+    signPanelStatusEl.textContent = `Region preview failed: ${err?.message ?? err}`;
+    signPanelStatusEl.classList.remove("empty");
+  } finally {
+    if (requestId === inspectPreviewRequestSeq) {
+      inspectPreviewInFlight = false;
+      signPanelInspectBtn.disabled = false;
+    }
+  }
+}
+
 function renderSignPanel() {
   const count = signatureZones.length;
   signZoneCountEl.textContent = `${count} zone${count === 1 ? "" : "s"}`;
   clearChildren(signPanelListEl);
 
   if (count === 0) {
-    signPanelStatusEl.textContent = "No signature zones detected. The form may be flat/scanned, or use an unusual layout.";
+    signPanelStatusEl.textContent = inspectRegionArmed
+      ? "Inspect mode armed. Drag a rectangle on the PDF to preview that region."
+      : "No signature zones detected. The form may be flat/scanned, or use an unusual layout.";
     signPanelStatusEl.classList.add("empty");
     return;
   }
 
-  signPanelStatusEl.textContent = "Click a zone to sign it. Unknown spot? Drag on the PDF to create a custom zone.";
+  signPanelStatusEl.textContent = inspectRegionArmed
+    ? "Inspect mode armed. Drag a rectangle on the PDF to preview that region."
+    : "Click a zone to sign it. Unknown spot? Drag on the PDF to create a custom zone.";
   signPanelStatusEl.classList.remove("empty");
 
   for (const z of signatureZones) {
@@ -2111,6 +2258,9 @@ function renderSignPanel() {
 }
 
 function switchMode(mode: ManageMode) {
+  if (mode !== "sign" && inspectRegionArmed) {
+    setInspectRegionArmed(false);
+  }
   manageMode = mode;
   modeViewBtn.classList.toggle("active", mode === "view");
   modeManageBtn.classList.toggle("active", mode === "manage");
@@ -2119,6 +2269,7 @@ function switchMode(mode: ManageMode) {
   const canvasContainer = document.querySelector(".canvas-container") as HTMLElement;
   const pageWrapper = document.querySelector(".page-wrapper") as HTMLElement;
   pageWrapper?.classList.toggle("mode-sign", mode === "sign");
+  zoneLayerEl.classList.toggle("inspect-armed", inspectRegionArmed && mode === "sign");
   const searchBar = $("search-bar");
 
   if (mode === "manage") {
@@ -2555,12 +2706,31 @@ document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && activeDrag) {
     activeDrag.draftEl.remove();
     activeDrag = null;
+    zoneLayerEl.classList.remove("dragging");
+  } else if (e.key === "Escape" && inspectRegionArmed) {
+    setInspectRegionArmed(false);
+    renderSignPanel();
   }
 });
 
 // Working-copy banner wiring
 signPanelWorkingCopyRevealBtn.addEventListener("click", onRevealWorkingCopy);
 signPanelWorkingCopyCopyBtn.addEventListener("click", onCopyWorkingCopyPath);
+signPanelInspectBtn.addEventListener("click", () => {
+  setInspectRegionArmed(!inspectRegionArmed);
+  renderSignPanel();
+});
+
+// Region preview modal wiring
+regionPreviewCopyBtn.addEventListener("click", copyRegionCoords);
+regionPreviewDoneBtn.addEventListener("click", closeRegionPreviewModal);
+regionPreviewCloseBtn.addEventListener("click", closeRegionPreviewModal);
+regionPreviewModalEl.addEventListener("click", (e) => {
+  if ((e.target as HTMLElement).classList.contains("sign-modal-backdrop")) closeRegionPreviewModal();
+});
+regionPreviewModalEl.addEventListener("keydown", (e: Event) => {
+  if ((e as KeyboardEvent).key === "Escape") closeRegionPreviewModal();
+});
 
 // Draw-signature modal wiring
 signPanelDrawBtn.addEventListener("click", openDrawModal);
@@ -2626,7 +2796,7 @@ document.addEventListener("keydown", (e) => {
   if (active && (active.tagName === "INPUT" || active.tagName === "TEXTAREA" || active.tagName === "SELECT" || active.isContentEditable)) return;
 
   // Also bail when any modal is open — modals should own keyboard focus entirely.
-  if (signModalEl.style.display === "flex" || drawModalEl.style.display === "flex") return;
+  if (signModalEl.style.display === "flex" || drawModalEl.style.display === "flex" || regionPreviewModalEl.style.display === "flex") return;
 
   if ((e.ctrlKey || e.metaKey) && e.key === "0") { resetZoom(); e.preventDefault(); return; }
 

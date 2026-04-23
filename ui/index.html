@@ -116,6 +116,37 @@
       </div>
     </div>
 
+    <!-- Region preview modal -->
+    <div id="region-preview-modal" class="sign-modal" style="display:none" role="dialog" aria-modal="true" aria-labelledby="region-preview-title">
+      <div class="sign-modal-backdrop"></div>
+      <div class="sign-modal-content region-preview-modal-content">
+        <div class="sign-modal-header">
+          <span id="region-preview-title">Region preview</span>
+          <button id="region-preview-close" class="sign-modal-close" title="Close">&times;</button>
+        </div>
+        <div class="sign-modal-body">
+          <div class="sign-modal-row">
+            <label class="sign-modal-label">Document</label>
+            <div id="region-preview-doc" class="sign-modal-readonly"></div>
+          </div>
+          <div class="sign-modal-row">
+            <label class="sign-modal-label">Region</label>
+            <div id="region-preview-coords" class="sign-modal-readonly"></div>
+          </div>
+          <div class="sign-modal-row">
+            <label class="sign-modal-label">Rendered image</label>
+            <div class="region-preview-image-wrap">
+              <img id="region-preview-image" class="region-preview-image" alt="Cropped PDF region preview" />
+            </div>
+          </div>
+        </div>
+        <div class="sign-modal-actions">
+          <button id="region-preview-copy" class="sign-modal-btn">Copy coordinates</button>
+          <button id="region-preview-done" class="sign-modal-btn sign-modal-btn-primary">Done</button>
+        </div>
+      </div>
+    </div>
+
     <!-- Viewer -->
     <div id="viewer" style="display:none">
       <div class="toolbar">
@@ -186,6 +217,7 @@
           </div>
           <div class="sign-panel-actions">
             <button id="sign-panel-draw-btn" class="sign-panel-action-btn" title="Draw a new signature">&#9998; Draw signature</button>
+            <button id="sign-panel-inspect-btn" class="sign-panel-action-btn" title="Drag a box on the PDF and preview the cropped region">&#128269; Inspect region</button>
           </div>
           <div id="sign-panel-status" class="sign-panel-status"></div>
           <div id="sign-panel-list" class="sign-panel-list" role="list"></div>
