@@ -1593,6 +1593,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
               type: "boolean",
               description: "Also draw a small visible timestamp/signer line below the signature (default: false). Useful for printable audit trails."
             },
+            signing_mode: {
+              type: "string",
+              enum: ["signature", "initials"],
+              description: "Optional semantic label for the visible mark. Use 'initials' when applying a mark to an initials zone so results and audit metadata say 'initialed' instead of 'signed'."
+            },
             allow_resign: {
               type: "boolean",
               description: "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures. Only enable if the user explicitly wants to re-sign a previously-signed document."
@@ -3462,6 +3467,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           page, x, y, width, height,
           user_intent_statement, user_confirmed_at,
           draw_audit_line = false,
+          signing_mode = "signature",
           allow_resign = false,
           force_xfa = false,
           password,
@@ -3512,8 +3518,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         // 4. Stamp
         const displayName = signatureRecord.display_name || signatureRecord.name;
+        const auditVerb = signing_mode === "initials" ? "Initialed" : "Signed";
+        const auditAction = signing_mode === "initials" ? "initialed" : "signed";
         const auditText = draw_audit_line
-          ? `Signed by ${displayName} at ${confirmedAt.toISOString()}`
+          ? `${auditVerb} by ${displayName} at ${confirmedAt.toISOString()}`
           : "";
         await stampSignatureOnPage(pdfDoc, signatureRecord, {
           page, x, y, width, height,
@@ -3526,6 +3534,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           display_name: displayName,
           statement,
           confirmedAt,
+          action: auditAction,
         });
         const existingKeywords = pdfDoc.getKeywords() || "";
         const mergedKeywords = existingKeywords
@@ -3547,7 +3556,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           content: [{
             type: "text",
             text:
-              `Signed: "${displayName}" stamped on page ${page} at (${x}, ${y})\n` +
+              `${auditVerb}: "${displayName}" stamped on page ${page} at (${x}, ${y})\n` +
               `Output: ${resolvedOutput}\n` +
               (backupPath ? `Original backed up to: ${backupPath}\n` : "") +
               `Audit trail: ${auditLine}\n\n` +
@@ -3562,6 +3571,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             signer: displayName,
             confirmed_at: confirmedAt.toISOString(),
             intent_statement: statement,
+            signing_mode,
             tier: "basic-local-stamp",
           },
         };

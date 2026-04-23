@@ -648,11 +648,11 @@ export async function detectSignatureZones({ pdfDoc, pdfBytes, pdfjsLib, passwor
 }
 
 // Build a compact one-line audit trail to store in PDF metadata.
-export function formatSigningAuditLine({ display_name, statement, confirmedAt }) {
+export function formatSigningAuditLine({ display_name, statement, confirmedAt, action = "signed" }) {
   const iso = confirmedAt.toISOString();
   // Sanitize statement — metadata should be single-line
   const flat = statement.replace(/\s+/g, " ").trim();
-  return `signed via pdf-toolkit; signer="${display_name}"; at=${iso}; intent="${flat}"`;
+  return `${action} via pdf-toolkit; signer="${display_name}"; at=${iso}; intent="${flat}"`;
 }
 
 // Parse page range strings like "1-5,6-10" or "every 5"

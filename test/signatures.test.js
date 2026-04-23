@@ -150,6 +150,18 @@ describe("formatSigningAuditLine", () => {
       `signed via pdf-toolkit; signer="Mat Silverstein"; at=2026-04-16T19:30:00.000Z; intent="I, Mat sign this."`
     );
   });
+
+  it("supports alternate action verbs for initials flows", () => {
+    const line = formatSigningAuditLine({
+      display_name: "Mat Silverstein",
+      statement: "I, Mat, initial this.",
+      confirmedAt: new Date("2026-04-16T19:30:00Z"),
+      action: "initialed",
+    });
+    expect(line).toBe(
+      `initialed via pdf-toolkit; signer="Mat Silverstein"; at=2026-04-16T19:30:00.000Z; intent="I, Mat, initial this."`
+    );
+  });
 });
 
 describe("stampSignatureOnPage + drawSignatureFieldOnPage", () => {

@@ -95,6 +95,7 @@ interface RegionPreviewState {
   width: number;
   height: number;
   imageDataUrl: string;
+  zoneType?: SignatureZone["type"];
 }
 
 let savedSignatures: SavedSignatureSummary[] = [];
@@ -104,6 +105,7 @@ let inspectRegionArmed = false;
 let activeRegionPreview: RegionPreviewState | null = null;
 let inspectPreviewRequestSeq = 0;
 let inspectPreviewInFlight = false;
+let activeZoneOriginalType: SignatureZone["type"] | null = null;
 
 function zoneKey(pdfPath: string, z: { type: string; page: number; x: number; y: number }): string {
   return `${pdfPath}|${z.type}|${z.page}|${z.x.toFixed(1)}|${z.y.toFixed(1)}`;
@@ -1401,6 +1403,7 @@ async function openSignModal(zone: SignatureZone) {
   if (signingInFlight) return;
   setInspectRegionArmed(false);
   activeSignZone = zone;
+  activeZoneOriginalType = zone.source === "user-drag" ? zone.type : null;
   activeModalMode = modeForZoneType(zone.type);
   signModalTypeRowEl.style.display = zone.source === "user-drag" ? "flex" : "none";
   signModalTypeEl.value = zone.type;
@@ -1439,10 +1442,16 @@ async function openSignModal(zone: SignatureZone) {
   }, 20);
 }
 
-function closeSignModal() {
+function closeSignModal(revertCustomType = true) {
+  if (revertCustomType && activeSignZone?.source === "user-drag" && activeZoneOriginalType && activeSignZone.type !== activeZoneOriginalType) {
+    activeSignZone.type = activeZoneOriginalType;
+    renderSignPanel();
+    renderZoneOverlay();
+  }
   signModalEl.style.display = "none";
   activeZonePreview = null;
   activeSignZone = null;
+  activeZoneOriginalType = null;
   signModalErrorEl.style.display = "none";
   renderZoneOverlay();
 }
@@ -1704,6 +1713,7 @@ async function onConfirmSign() {
         x: zone.x, y: zone.y, width: zone.width, height: zone.height,
         user_intent_statement: statement,
         user_confirmed_at: timestamp,
+        signing_mode: activeModalMode === "initials" ? "initials" : "signature",
       },
     });
     if (applyResult.isError) {
@@ -1741,7 +1751,7 @@ async function onConfirmSign() {
         `Reload failed — switch modes or reopen to see it. (${reloadErr ?? "unknown error"})`,
       );
     }
-    closeSignModal();
+    closeSignModal(false);
   } catch (err: any) {
     signModalErrorEl.textContent = err?.message ?? String(err);
     signModalErrorEl.style.display = "block";
@@ -2173,14 +2183,14 @@ function openRegionPreviewModal(preview: RegionPreviewState) {
   activeRegionPreview = preview;
   regionPreviewDocEl.textContent = getHostBaseName(pdfPath);
   regionPreviewCoordsEl.textContent = formatRegionCoords(preview);
-  regionPreviewZoneTypeEl.value = "signature";
+  regionPreviewZoneTypeEl.value = preview.zoneType || "signature";
   updateRegionPreviewCreateButton();
   regionPreviewImageEl.src = preview.imageDataUrl;
   regionPreviewModalEl.style.display = "flex";
   setTimeout(() => regionPreviewDoneBtn.focus(), 20);
 }
 
-async function inspectRegionSelection(region: Pick<RegionPreviewState, "page" | "x" | "y" | "width" | "height">) {
+async function inspectRegionSelection(region: Pick<RegionPreviewState, "page" | "x" | "y" | "width" | "height" | "zoneType">) {
   if (!pdfPath) return;
   const requestId = ++inspectPreviewRequestSeq;
   inspectPreviewInFlight = true;
@@ -2237,6 +2247,7 @@ async function previewExistingZone(zone: SignatureZone) {
     y: zone.y,
     width: zone.width,
     height: zone.height,
+    zoneType: zone.type,
   });
 }
 
