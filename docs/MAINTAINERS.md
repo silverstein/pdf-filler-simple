@@ -27,6 +27,7 @@ manual checklist before publishing (see below).
 ## Architecture (high level)
 
 - `server/index.js` is the MCP server entry point.
+- The current package is a local-first stdio MCP server for Claude Desktop and other local MCP hosts. Remote HTTP/Cowork support would be a separate server/product boundary, not a packaging toggle.
 - Tool definitions and helpers live in `server/index.js`.
 - Profile storage lives under `~/.pdf-toolkit-files` (migrated from `~/.pdf-filler-profiles`).
 - PDF utilities use `pdf-lib` and `pdfjs-dist`.

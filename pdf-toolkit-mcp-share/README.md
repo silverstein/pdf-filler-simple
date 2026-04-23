@@ -69,6 +69,8 @@ Once installed, ask Claude in Cursor:
 - **extract_to_csv** - Export PDF data to spreadsheets
 - **validate_pdf** - Check for missing required fields
 - **read_pdf_content** - Read and analyze full PDF content (with OCR support for scanned PDFs)
+- **read_pdf_pages** - Read a bounded page range with page-numbered structured output
+- **search_pdf_text** - Search extracted PDF text and return page-numbered snippets
 - **merge_pdfs** / **split_pdf** - Combine and split documents
 - **rotate_pdf_pages** / **reorder_pdf_pages** - Organize scanned or shuffled pages
 - **get_pdf_info** / **get_page_analysis** - Inspect pages, blank detection, orientation, and metadata

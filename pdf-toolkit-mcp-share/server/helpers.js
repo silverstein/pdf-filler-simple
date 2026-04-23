@@ -898,3 +898,147 @@ export function getPageDisplayMetrics({ width, height, rotation = 0 }) {
     orientation: displayWidth > displayHeight ? "landscape" : "portrait",
   };
 }
+
+function normalizeExtractedText(text) {
+  return String(text ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function buildPageTextSegments(pageTexts, {
+  startPage = 1,
+  endPage = pageTexts.length,
+  maxCharsPerPage = 4000,
+  maxTotalChars = 16000,
+} = {}) {
+  if (!Array.isArray(pageTexts)) {
+    throw new Error("pageTexts must be an array.");
+  }
+  if (!Number.isInteger(startPage) || startPage < 1) {
+    throw new Error("startPage must be an integer >= 1.");
+  }
+  if (!Number.isInteger(endPage) || endPage < startPage) {
+    throw new Error("endPage must be an integer >= startPage.");
+  }
+  if (!Number.isInteger(maxCharsPerPage) || maxCharsPerPage < 1) {
+    throw new Error("maxCharsPerPage must be an integer >= 1.");
+  }
+  if (!Number.isInteger(maxTotalChars) || maxTotalChars < 1) {
+    throw new Error("maxTotalChars must be an integer >= 1.");
+  }
+  if (pageTexts.length === 0) {
+    return {
+      totalPages: 0,
+      startPage,
+      endPage,
+      totalSourceChars: 0,
+      totalReturnedChars: 0,
+      truncated: false,
+      pages: [],
+    };
+  }
+  if (endPage > pageTexts.length) {
+    throw new Error(`endPage ${endPage} is out of range (1-${pageTexts.length}).`);
+  }
+
+  const selectedPages = pageTexts.slice(startPage - 1, endPage);
+  const pages = [];
+  let remainingChars = maxTotalChars;
+  let totalSourceChars = 0;
+  let totalReturnedChars = 0;
+  let truncated = false;
+
+  for (const rawPage of selectedPages) {
+    const normalizedText = normalizeExtractedText(rawPage?.text);
+    totalSourceChars += normalizedText.length;
+
+    const charsAvailable = Math.max(Math.min(remainingChars, maxCharsPerPage), 0);
+    const returnedText = normalizedText.slice(0, charsAvailable);
+    const pageTruncated = normalizedText.length > returnedText.length;
+    if (pageTruncated) truncated = true;
+
+    pages.push({
+      page: rawPage?.page,
+      char_count: normalizedText.length,
+      returned_chars: returnedText.length,
+      truncated: pageTruncated,
+      text: returnedText,
+    });
+
+    totalReturnedChars += returnedText.length;
+    remainingChars -= returnedText.length;
+  }
+
+  return {
+    totalPages: pageTexts.length,
+    startPage,
+    endPage,
+    totalSourceChars,
+    totalReturnedChars,
+    truncated,
+    pages,
+  };
+}
+
+function buildMatchSnippet(text, matchIndex, matchLength, contextChars) {
+  const start = Math.max(0, matchIndex - contextChars);
+  const end = Math.min(text.length, matchIndex + matchLength + contextChars);
+  let snippet = text.slice(start, end).replace(/\s+/g, " ").trim();
+  if (start > 0) snippet = `...${snippet}`;
+  if (end < text.length) snippet = `${snippet}...`;
+  return snippet;
+}
+
+export function searchPageTexts(pageTexts, query, {
+  maxResults = 10,
+  contextChars = 160,
+} = {}) {
+  if (!Array.isArray(pageTexts)) {
+    throw new Error("pageTexts must be an array.");
+  }
+  const normalizedQuery = String(query ?? "").trim();
+  if (!normalizedQuery) {
+    throw new Error("query must be a non-empty string.");
+  }
+  if (!Number.isInteger(maxResults) || maxResults < 1) {
+    throw new Error("maxResults must be an integer >= 1.");
+  }
+  if (!Number.isInteger(contextChars) || contextChars < 10) {
+    throw new Error("contextChars must be an integer >= 10.");
+  }
+
+  const loweredQuery = normalizedQuery.toLowerCase();
+  const matches = [];
+
+  for (const rawPage of pageTexts) {
+    const normalizedText = normalizeExtractedText(rawPage?.text);
+    if (!normalizedText) continue;
+
+    const loweredText = normalizedText.toLowerCase();
+    let fromIndex = 0;
+    while (matches.length < maxResults) {
+      const matchIndex = loweredText.indexOf(loweredQuery, fromIndex);
+      if (matchIndex === -1) break;
+
+      matches.push({
+        page: rawPage?.page,
+        char_index: matchIndex,
+        match_text: normalizedText.slice(matchIndex, matchIndex + normalizedQuery.length),
+        snippet: buildMatchSnippet(normalizedText, matchIndex, normalizedQuery.length, contextChars),
+      });
+
+      fromIndex = matchIndex + normalizedQuery.length;
+    }
+
+    if (matches.length >= maxResults) break;
+  }
+
+  return {
+    query: normalizedQuery,
+    matchCount: matches.length,
+    truncated: matches.length >= maxResults,
+    matches,
+  };
+}

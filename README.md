@@ -1,8 +1,10 @@
-# PDF Tools for Claude
+# PDF Tools for Claude Desktop and Local MCP Hosts
 
 The full local PDF workflow for Claude Desktop and MCP hosts.
 
 Instead of just opening a PDF, PDF Tools lets Claude view it interactively, fill forms, save reusable profiles, merge and split files, reorganize pages visually, extract structured data, and analyze document content without uploading anything to a web app.
+
+This package targets Claude Desktop and other local MCP hosts today. It does not yet include a remote connector for Claude Cowork / web-hosted Claude.
 
 ## Install
 
@@ -99,6 +101,8 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 
 - "Summarize this research paper"
 - "Extract all text from this scanned invoice"
+- "Read pages 8 through 10 of this contract"
+- "Search this PDF for every mention of governing law"
 - "Export all the filled fields from these PDFs into a CSV"
 - "Analyze this PDF for blank pages and sideways pages"
 
@@ -109,6 +113,8 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 - `display_pdf`
 - `list_pdfs`
 - `read_pdf_content`
+- `read_pdf_pages`
+- `search_pdf_text`
 - `get_pdf_resource_uri`
 
 ### Forms and Profiles

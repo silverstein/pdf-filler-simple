@@ -183,10 +183,15 @@ async function extractPdfText(pdfBuffer, maxPages) {
     const page = await doc.getPage(i);
     const content = await page.getTextContent();
     const text = content.items.map(item => item.str).join("");
-    pages.push(text);
+    pages.push({ page: i, text });
   }
   await doc.destroy();
-  return { text: pages.join("\n\n"), pagesRead: pagesToRead, totalPages };
+  return {
+    text: pages.map(page => page.text).join("\n\n"),
+    pages,
+    pagesRead: pagesToRead,
+    totalPages,
+  };
 }
 
 // Helper: load a PDF from disk with password support and clear error messages
@@ -223,6 +228,8 @@ import {
   detectSignatureZones,
   computeIoU,
   extractPdfTextWithBounds,
+  buildPageTextSegments,
+  searchPageTexts,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
@@ -752,13 +759,13 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "validate_pdf",
-        description: "Validate if all required fields in a PDF are filled",
+        description: "Validate a fillable PDF and report whether required fields are complete. Use this before submission or signing to catch empty required fields without mutating the original document.",
         inputSchema: {
           type: "object",
           properties: {
             pdf_path: {
               type: "string",
-              description: "Path to the PDF file to validate"
+              description: "Absolute path to the fillable PDF on the user's machine."
             },
             password: {
               type: "string",
@@ -777,20 +784,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "read_pdf_content",
-        description: "Read and analyze the full content of a PDF file. Claude can extract text, summarize, convert to markdown, answer questions, or analyze the document structure. Use this when you need to understand PDF contents beyond just form fields. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Read PDF text for broad understanding of the document. Best for full-document summarization, question answering, and exploratory analysis when you want a single text-oriented view of the file. If you need page-bounded excerpts or keyword search results, prefer read_pdf_pages or search_pdf_text. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           properties: {
             pdf_path: {
               type: "string",
-              description: "Path to the PDF file"
+              description: "Absolute path to the PDF file."
             },
             max_pages: {
               type: "number",
-              description: "Maximum number of pages to extract (default: all pages, but output is capped at 50000 characters)"
+              description: "Maximum number of pages to extract. Useful for very large PDFs when you only need the opening section."
             }
           },
-          required: ["pdf_path"]
+          required: ["pdf_path"],
+          examples: [
+            {
+              pdf_path: "/Users/alice/Documents/contract.pdf",
+              max_pages: 12
+            }
+          ]
         },
         annotations: {
           title: "Read PDF Content",
@@ -801,17 +814,102 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         }
       },
       {
-        name: "get_pdf_resource_uri",
-        description: "Get a resource URI for a PDF file that can be used with Claude's built-in PDF reading capabilities via the Resources API",
+        name: "read_pdf_pages",
+        description: "Read a specific page range from a PDF with page-numbered structured output. Use this when the model should inspect or quote a bounded slice of the document instead of loading the whole thing at once. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           properties: {
             pdf_path: {
               type: "string",
-              description: "Path to the PDF file"
+              description: "Absolute path to the PDF file."
+            },
+            start_page: {
+              type: "number",
+              description: "First page to read (1-indexed, default: 1)."
+            },
+            end_page: {
+              type: "number",
+              description: "Last page to read (1-indexed, inclusive, default: start_page)."
+            },
+            max_chars_per_page: {
+              type: "number",
+              description: "Maximum characters to return per page in the structured output (default: 4000)."
             }
           },
-          required: ["pdf_path"]
+          required: ["pdf_path"],
+          examples: [
+            {
+              pdf_path: "/Users/alice/Documents/nda.pdf",
+              start_page: 4,
+              end_page: 6
+            }
+          ]
+        },
+        annotations: {
+          title: "Read PDF Pages",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "search_pdf_text",
+        description: "Search extracted PDF text for a literal phrase and return page-numbered snippets. Use this when you need to find mentions of a clause, person, amount, or keyword before deciding which pages to inspect more deeply. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: {
+              type: "string",
+              description: "Absolute path to the PDF file."
+            },
+            query: {
+              type: "string",
+              description: "Literal text to search for, such as \"indemnification\" or \"governing law\"."
+            },
+            max_results: {
+              type: "number",
+              description: "Maximum number of matching snippets to return (default: 10)."
+            },
+            context_chars: {
+              type: "number",
+              description: "Approximate number of surrounding characters to include around each match (default: 160)."
+            }
+          },
+          required: ["pdf_path", "query"],
+          examples: [
+            {
+              pdf_path: "/Users/alice/Documents/master-services-agreement.pdf",
+              query: "indemnification",
+              max_results: 5
+            }
+          ]
+        },
+        annotations: {
+          title: "Search PDF Text",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "get_pdf_resource_uri",
+        description: "Return the PDF's `pdf://...` resource URI so Claude-compatible MCP hosts can reference the binary directly through this server's Resources API. Use this when the host supports MCP resources and you want to hand Claude the document itself rather than only extracted text.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: {
+              type: "string",
+              description: "Absolute path to the PDF file."
+            }
+          },
+          required: ["pdf_path"],
+          examples: [
+            {
+              pdf_path: "/Users/alice/Documents/report.pdf"
+            }
+          ]
         },
         annotations: {
           title: "Get PDF Resource URI",
@@ -823,20 +921,26 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "display_pdf",
-        description: "Display an interactive PDF viewer with page navigation, zoom, search, text selection, form-field sidebar, and Sign mode. This is the primary tool for viewing any PDF. **If the user gave you a URL instead of a local path, call fetch_pdf_from_url FIRST to get a local path, then pass that path here — do not try bash/curl/WebFetch.** Automatically detects and displays form fields in a sidebar — no need to also call read_pdf_fields. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Open the interactive PDF viewer with page navigation, zoom, in-document search, text selection, form-field sidebar, and Sign mode. This is the primary tool for visually working with a PDF. If the user gave you a URL instead of a local path, call fetch_pdf_from_url first, then pass the downloaded local path here. Automatically detects form fields, so you usually do not need to also call read_pdf_fields. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           properties: {
             pdf_path: {
               type: "string",
-              description: "Path to the PDF file"
+              description: "Absolute path to the PDF file."
             },
             page: {
               type: "number",
-              description: "Initial page number to display (default: 1)"
+              description: "Initial page number to display (default: 1)."
             }
           },
-          required: ["pdf_path"]
+          required: ["pdf_path"],
+          examples: [
+            {
+              pdf_path: "/Users/alice/Documents/w9.pdf",
+              page: 2
+            }
+          ]
         },
         annotations: {
           title: "Display PDF Viewer",
@@ -1882,6 +1986,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const { pdf_path, max_pages } = args;
         const resolvedPath = resolvePath(pdf_path);
         const MAX_CHARS = 50000;
+        const PREVIEW_MAX_CHARS = 12000;
 
         try {
           // Verify the file exists
@@ -1900,6 +2005,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           let extractedText = result.text;
           const pageCount = result.totalPages;
           const pagesRead = result.pagesRead;
+          const pagePreview = buildPageTextSegments(result.pages, {
+            startPage: 1,
+            endPage: pagesRead,
+            maxCharsPerPage: 2000,
+            maxTotalChars: PREVIEW_MAX_CHARS,
+          });
 
           // Prepare the response
           let response = `PDF Content Extracted Successfully!\n\n`;
@@ -1960,6 +2071,18 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   data: imageBuffer.toString("base64"),
                   mimeType: "image/png"
                 }],
+                structuredContent: {
+                  pdf_path: resolvedPath,
+                  file_name: fileName,
+                  total_pages: pageCount,
+                  pages_read: pagesRead,
+                  text_length: 0,
+                  text_truncated: false,
+                  text_found: false,
+                  page_previews: [],
+                  preview_truncated: false,
+                  extraction_mode: "image-fallback",
+                },
               };
             } catch (imageError) {
               // If image extraction also fails, return error message
@@ -1977,12 +2100,175 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               type: "text",
               text: response
             }],
+            structuredContent: {
+              pdf_path: resolvedPath,
+              file_name: fileName,
+              total_pages: pageCount,
+              pages_read: pagesRead,
+              text_length: result.text.length,
+              text_truncated: truncated,
+              text_found: extractedText.trim().length > 0,
+              page_previews: pagePreview.pages,
+              preview_truncated: pagePreview.truncated,
+              extraction_mode: "text",
+            },
           };
         } catch (error) {
           return {
             content: [{
               type: "text",
               text: `Error reading PDF file: ${error.message}\n\nPlease ensure the file path is correct and the file exists.`
+            }],
+          };
+        }
+      }
+
+      case "read_pdf_pages": {
+        const {
+          pdf_path,
+          start_page = 1,
+          end_page = start_page || 1,
+          max_chars_per_page = 4000,
+        } = args;
+        const resolvedPath = resolvePath(pdf_path);
+
+        try {
+          await fs.access(resolvedPath);
+
+          const stats = await fs.stat(resolvedPath);
+          const fileName = path.basename(resolvedPath);
+          const fileSizeKB = (stats.size / 1024).toFixed(2);
+          const pdfBuffer = await fs.readFile(resolvedPath);
+          const requestedStart = Math.max(1, Number(start_page) || 1);
+          const requestedEnd = Math.max(requestedStart, Number(end_page) || requestedStart);
+
+          const result = await withSuppressedStderr(() => extractPdfText(pdfBuffer, requestedEnd));
+          if (requestedStart > result.totalPages) {
+            throw new Error(`start_page ${requestedStart} is out of range (1-${result.totalPages}).`);
+          }
+          if (requestedEnd > result.totalPages) {
+            throw new Error(`end_page ${requestedEnd} is out of range (1-${result.totalPages}).`);
+          }
+
+          const segments = buildPageTextSegments(result.pages, {
+            startPage: requestedStart,
+            endPage: requestedEnd,
+            maxCharsPerPage: Number(max_chars_per_page) || 4000,
+            maxTotalChars: 16000,
+          });
+
+          let response =
+            `Read pages ${requestedStart}-${requestedEnd} from ${fileName}\n` +
+            `Size: ${fileSizeKB} KB\n` +
+            `Document pages: ${result.totalPages}\n` +
+            `Returned pages: ${segments.pages.length}\n`;
+
+          if (segments.truncated) {
+            response += `\nSome page text was truncated to keep the result bounded. Use a narrower page range if you need more detail.\n`;
+          }
+
+          const nonEmptyPages = segments.pages.filter(page => page.text.trim().length > 0);
+          if (nonEmptyPages.length === 0) {
+            response += `\nNo extractable text was found on the requested pages. The document may be scanned or image-only.`;
+          } else {
+            response += `\n`;
+            for (const page of segments.pages) {
+              response += `\n${"=".repeat(20)} PAGE ${page.page} ${"=".repeat(20)}\n`;
+              response += page.text || "[No extractable text]";
+              if (page.truncated) {
+                response += `\n\n...[PAGE ${page.page} TRUNCATED]...`;
+              }
+              response += `\n`;
+            }
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: response.trimEnd(),
+            }],
+            structuredContent: {
+              pdf_path: resolvedPath,
+              file_name: fileName,
+              total_pages: result.totalPages,
+              start_page: requestedStart,
+              end_page: requestedEnd,
+              pages: segments.pages,
+              text_found: nonEmptyPages.length > 0,
+              truncated: segments.truncated,
+            },
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text",
+              text: `Error reading PDF pages: ${error.message}\n\nPlease ensure the file path is correct and the requested page range is valid.`
+            }],
+          };
+        }
+      }
+
+      case "search_pdf_text": {
+        const {
+          pdf_path,
+          query,
+          max_results = 10,
+          context_chars = 160,
+        } = args;
+        const resolvedPath = resolvePath(pdf_path);
+
+        try {
+          await fs.access(resolvedPath);
+
+          const stats = await fs.stat(resolvedPath);
+          const fileName = path.basename(resolvedPath);
+          const fileSizeKB = (stats.size / 1024).toFixed(2);
+          const pdfBuffer = await fs.readFile(resolvedPath);
+
+          const result = await withSuppressedStderr(() => extractPdfText(pdfBuffer));
+          const matches = searchPageTexts(result.pages, query, {
+            maxResults: Number(max_results) || 10,
+            contextChars: Number(context_chars) || 160,
+          });
+
+          let response =
+            `Search results for "${matches.query}" in ${fileName}\n` +
+            `Size: ${fileSizeKB} KB\n` +
+            `Document pages: ${result.totalPages}\n` +
+            `Matches returned: ${matches.matchCount}\n`;
+
+          if (matches.matchCount === 0) {
+            response += `\nNo matches found.`;
+          } else {
+            if (matches.truncated) {
+              response += `\nShowing the first ${matches.matchCount} matches. Narrow the query or increase max_results for more.\n`;
+            }
+            response += `\n`;
+            for (const match of matches.matches) {
+              response += `\n- Page ${match.page}: ${match.snippet}\n`;
+            }
+          }
+
+          return {
+            content: [{
+              type: "text",
+              text: response.trimEnd(),
+            }],
+            structuredContent: {
+              pdf_path: resolvedPath,
+              file_name: fileName,
+              total_pages: result.totalPages,
+              query: matches.query,
+              match_count: matches.matchCount,
+              truncated: matches.truncated,
+              matches: matches.matches,
+            },
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text",
+              text: `Error searching PDF text: ${error.message}\n\nPlease ensure the file path is correct and the query is valid.`
             }],
           };
         }
