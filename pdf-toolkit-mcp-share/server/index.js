@@ -81,6 +81,12 @@ async function loadImageDependencies() {
   try {
     const canvas = await import("@napi-rs/canvas");
     createCanvas = canvas.createCanvas;
+    // When native canvas bindings are available, prefer their DOM-like types
+    // over our minimal JS fallbacks so pdfjs rendering can hand real Path2D /
+    // ImageData objects to the rasterizer.
+    if (canvas.DOMMatrix) globalThis.DOMMatrix = canvas.DOMMatrix;
+    if (canvas.Path2D) globalThis.Path2D = canvas.Path2D;
+    if (canvas.ImageData) globalThis.ImageData = canvas.ImageData;
     console.error("[PDF Tools] Canvas loaded successfully");
   } catch (error) {
     console.error("[PDF Tools] Failed to load canvas:", error.message);
@@ -113,7 +119,7 @@ async function withSuppressedStderr(action) {
 }
 
 // Helper function to convert PDF page to image
-async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0) {
+async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0, password = null) {
   try {
     return await withSuppressedStderr(async () => {
       // Load dependencies only when needed
@@ -121,6 +127,7 @@ async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0) {
       // Load the PDF
       const loadingTask = pdfjsLib.getDocument({
         data: new Uint8Array(pdfBuffer),
+        password: password || undefined,
         useSystemFonts: true,
         disableFontFace: true,
         disableAutoFetch: true,
@@ -229,6 +236,7 @@ import {
   computeIoU,
   extractPdfTextWithBounds,
   buildPageTextSegments,
+  getPageRenderScale,
   searchPageTexts,
 } from "./helpers.js";
 
@@ -847,6 +855,46 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         },
         annotations: {
           title: "Read PDF Pages",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "render_pdf_page",
+        description: "Render one PDF page to a PNG image for visual reasoning. Use this when text extraction is weak, the PDF is scanned/image-only, or the model needs to inspect layout, signatures, handwriting, or tables visually. Returns the rendered page as image content plus page metadata. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: {
+              type: "string",
+              description: "Absolute path to the PDF file."
+            },
+            page: {
+              type: "number",
+              description: "Page number to render (1-indexed, default: 1)."
+            },
+            max_dimension_px: {
+              type: "number",
+              description: "Maximum width or height in rendered pixels (default: 1800). Use smaller values for lighter previews."
+            },
+            password: {
+              type: "string",
+              description: "Password for encrypted PDFs (optional)."
+            }
+          },
+          required: ["pdf_path"],
+          examples: [
+            {
+              pdf_path: "/Users/alice/Documents/scanned-invoice.pdf",
+              page: 1,
+              max_dimension_px: 1600
+            }
+          ]
+        },
+        annotations: {
+          title: "Render PDF Page",
           readOnlyHint: true,
           destructiveHint: false,
           idempotentHint: true,
@@ -2203,6 +2251,73 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             content: [{
               type: "text",
               text: `Error reading PDF pages: ${error.message}\n\nPlease ensure the file path is correct and the requested page range is valid.`
+            }],
+          };
+        }
+      }
+
+      case "render_pdf_page": {
+        const {
+          pdf_path,
+          page = 1,
+          max_dimension_px = 1800,
+          password = null,
+        } = args;
+        const resolvedPath = resolvePath(pdf_path);
+
+        try {
+          await fs.access(resolvedPath);
+
+          const { pdfDoc, pdfBytes } = await loadPdf(resolvedPath, password);
+          const totalPages = pdfDoc.getPageCount();
+          const targetPage = Math.max(1, Number(page) || 1);
+          if (targetPage > totalPages) {
+            throw new Error(`Page ${targetPage} is out of range (1-${totalPages}).`);
+          }
+
+          const targetPdfPage = pdfDoc.getPages()[targetPage - 1];
+          const { width, height } = targetPdfPage.getSize();
+          const scale = getPageRenderScale({
+            width,
+            height,
+            maxDimensionPx: Number(max_dimension_px) || 1800,
+          });
+          const imageBuffer = await convertPdfPageToImage(pdfBytes, targetPage, scale, password);
+          const renderedWidth = Math.round(width * scale);
+          const renderedHeight = Math.round(height * scale);
+          const fileName = path.basename(resolvedPath);
+
+          return {
+            content: [{
+              type: "text",
+              text:
+                `Rendered page ${targetPage} of ${fileName} as PNG.\n` +
+                `Document pages: ${totalPages}\n` +
+                `Rendered size: ${renderedWidth} x ${renderedHeight} px\n` +
+                `Scale: ${scale.toFixed(2)}x`
+            }, {
+              type: "image",
+              data: imageBuffer.toString("base64"),
+              mimeType: "image/png",
+            }],
+            structuredContent: {
+              pdf_path: resolvedPath,
+              file_name: fileName,
+              page: targetPage,
+              total_pages: totalPages,
+              width_points: Math.round(width),
+              height_points: Math.round(height),
+              rendered_width_px: renderedWidth,
+              rendered_height_px: renderedHeight,
+              scale,
+              mime_type: "image/png",
+            },
+          };
+        } catch (error) {
+          return {
+            content: [{
+              type: "text",
+              text: `Error rendering PDF page: ${error.message}\n\nPlease ensure the file path is correct and the requested page can be rendered.`
             }],
           };
         }

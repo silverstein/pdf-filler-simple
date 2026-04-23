@@ -70,6 +70,7 @@ Once installed, ask Claude in Cursor:
 - **validate_pdf** - Check for missing required fields
 - **read_pdf_content** - Read and analyze full PDF content (with OCR support for scanned PDFs)
 - **read_pdf_pages** - Read a bounded page range with page-numbered structured output
+- **render_pdf_page** - Render a page to PNG for visual inspection of scanned/image-heavy PDFs
 - **search_pdf_text** - Search extracted PDF text and return page-numbered snippets
 - **merge_pdfs** / **split_pdf** - Combine and split documents
 - **rotate_pdf_pages** / **reorder_pdf_pages** - Organize scanned or shuffled pages

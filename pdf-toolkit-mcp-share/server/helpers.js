@@ -899,6 +899,25 @@ export function getPageDisplayMetrics({ width, height, rotation = 0 }) {
   };
 }
 
+export function getPageRenderScale({
+  width,
+  height,
+  maxDimensionPx = 1800,
+  minScale = 1,
+  maxScale = 2.5,
+}) {
+  if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) {
+    throw new Error("width and height must be positive numbers.");
+  }
+  if (!Number.isFinite(maxDimensionPx) || maxDimensionPx <= 0) {
+    throw new Error("maxDimensionPx must be a positive number.");
+  }
+  const dominantSide = Math.max(width, height);
+  const scaleFromDimension = maxDimensionPx / dominantSide;
+  const boundedScale = Math.min(Math.max(scaleFromDimension, minScale), maxScale);
+  return Math.round(boundedScale * 100) / 100;
+}
+
 function normalizeExtractedText(text) {
   return String(text ?? "")
     .replace(/\r\n/g, "\n")
