@@ -184,6 +184,7 @@ npm install
 npm run dev:ui
 npm run smoke:ui-dev
 npm run smoke:ui-sign
+npm run smoke:ui-inspect
 npm run build:ui
 npm test
 node server/index.js
@@ -200,6 +201,7 @@ node package-for-friend.js
 - The dev bridge is serve-only; `npm run build:ui` still produces the production single-file viewer for packaging
 - `npm run smoke:ui-dev` starts the dev server on a throwaway port, verifies the HTML loads, and round-trips a real `display_pdf` tool call through `/__dev__/tool`
 - `npm run smoke:ui-sign` boots the dev server, opens a real browser session with `agent-browser`, switches to sign mode, and verifies a sign-panel interaction opens a signing modal
+- `npm run smoke:ui-inspect` boots the dev server, opens a real browser session with `agent-browser`, switches to sign mode, arms inspect-region, drags a rectangle, and verifies the region preview modal opens
 
 ### Maintainer Docs
 

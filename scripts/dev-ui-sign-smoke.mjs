@@ -1,40 +1,12 @@
 import path from "node:path";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
-import { withDevUiServer } from "./dev-ui-smoke-helpers.mjs";
+import { createAgentBrowserSessionRunner, withDevUiServer } from "./dev-ui-smoke-helpers.mjs";
 
 const port = Number(process.env.PDF_TOOLS_DEV_UI_PORT || 4174);
 const origin = `http://127.0.0.1:${port}`;
 const repoRoot = process.cwd();
 const examplePdfPath = path.join(repoRoot, "example-fw9.pdf");
 const session = `pdf-tools-sign-smoke-${Date.now()}`;
-
-async function runAgentBrowser(args) {
-  const child = spawn("agent-browser", ["--session", session, ...args], {
-    cwd: repoRoot,
-    stdio: ["ignore", "pipe", "pipe"],
-    env: process.env,
-  });
-
-  let stdout = "";
-  let stderr = "";
-  child.stdout.on("data", (chunk) => {
-    const text = chunk.toString();
-    stdout += text;
-    process.stdout.write(text);
-  });
-  child.stderr.on("data", (chunk) => {
-    const text = chunk.toString();
-    stderr += text;
-    process.stderr.write(text);
-  });
-
-  const [code] = await once(child, "exit");
-  if (code !== 0) {
-    throw new Error(`agent-browser ${args.join(" ")} failed with code ${code}\n${stderr || stdout}`);
-  }
-  return stdout;
-}
+const runAgentBrowser = createAgentBrowserSessionRunner(session);
 
 async function closeBrowserSession() {
   try {

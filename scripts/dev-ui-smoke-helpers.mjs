@@ -1,4 +1,5 @@
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -65,4 +66,33 @@ export async function withDevUiServer(port, work) {
   } finally {
     await stopDevUiServer(child);
   }
+}
+
+export function createAgentBrowserSessionRunner(session) {
+  return async function runAgentBrowser(args) {
+    const child = spawn("agent-browser", ["--session", session, ...args], {
+      cwd: repoRoot,
+      stdio: ["ignore", "pipe", "pipe"],
+      env: process.env,
+    });
+
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (chunk) => {
+      const text = chunk.toString();
+      stdout += text;
+      process.stdout.write(text);
+    });
+    child.stderr.on("data", (chunk) => {
+      const text = chunk.toString();
+      stderr += text;
+      process.stderr.write(text);
+    });
+
+    const [code] = await once(child, "exit");
+    if (code !== 0) {
+      throw new Error(`agent-browser ${args.join(" ")} failed with code ${code}\n${stderr || stdout}`);
+    }
+    return stdout;
+  };
 }
