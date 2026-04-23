@@ -2226,6 +2226,20 @@ async function inspectRegionSelection(region: Pick<RegionPreviewState, "page" | 
   }
 }
 
+async function previewExistingZone(zone: SignatureZone) {
+  if (zone.page !== currentPage) {
+    currentPage = zone.page;
+    await renderPage();
+  }
+  await inspectRegionSelection({
+    page: zone.page,
+    x: zone.x,
+    y: zone.y,
+    width: zone.width,
+    height: zone.height,
+  });
+}
+
 function renderSignPanel() {
   const count = signatureZones.length;
   signZoneCountEl.textContent = `${count} zone${count === 1 ? "" : "s"}`;
@@ -2264,6 +2278,17 @@ function renderSignPanel() {
     pageLabel.className = "sign-panel-item-page";
     pageLabel.textContent = `p${z.page}`;
     header.appendChild(pageLabel);
+
+    const previewBtn = document.createElement("button");
+    previewBtn.className = "sign-panel-item-preview";
+    previewBtn.type = "button";
+    previewBtn.textContent = "Preview";
+    previewBtn.title = "Preview this zone";
+    previewBtn.addEventListener("click", async (e) => {
+      e.stopPropagation();
+      await previewExistingZone(z);
+    });
+    header.appendChild(previewBtn);
 
     item.appendChild(header);
 

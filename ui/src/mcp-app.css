@@ -1143,6 +1143,23 @@ body {
   font-family: ui-monospace, 'SF Mono', Monaco, monospace;
 }
 
+.sign-panel-item-preview {
+  margin-left: auto;
+  padding: 2px 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-primary);
+  color: var(--text-secondary);
+  font-size: 10px;
+  cursor: pointer;
+  font-family: inherit;
+}
+
+.sign-panel-item-preview:hover {
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+}
+
 .sign-panel-item-label {
   color: var(--text-primary);
   font-size: 12px;
