@@ -921,6 +921,7 @@ const drawErrorEl = $("draw-modal-error");
 const regionPreviewModalEl = $("region-preview-modal");
 const regionPreviewDocEl = $("region-preview-doc");
 const regionPreviewCoordsEl = $("region-preview-coords");
+const regionPreviewZoneTypeEl = $("region-preview-zone-type") as HTMLSelectElement;
 const regionPreviewImageEl = $("region-preview-image") as HTMLImageElement;
 const regionPreviewCopyBtn = $("region-preview-copy") as HTMLButtonElement;
 const regionPreviewCreateZoneBtn = $("region-preview-create-zone") as HTMLButtonElement;
@@ -2126,10 +2127,26 @@ function closeRegionPreviewModal() {
   regionPreviewImageEl.src = "";
 }
 
+function updateRegionPreviewCreateButton() {
+  const type = regionPreviewZoneTypeEl.value as SignatureZone["type"];
+  const label = type === "signature"
+    ? "Create signature zone"
+    : type === "initials"
+      ? "Create initials zone"
+      : "Create date zone";
+  regionPreviewCreateZoneBtn.textContent = label;
+}
+
 function createCustomSignatureZoneFromPreview(preview: RegionPreviewState): SignatureZone {
+  const type = regionPreviewZoneTypeEl.value as SignatureZone["type"];
+  const label = type === "signature"
+    ? "Custom signature zone"
+    : type === "initials"
+      ? "Custom initials zone"
+      : "Custom date zone";
   return {
-    type: "signature",
-    label: "Custom zone",
+    type,
+    label,
     page: preview.page,
     x: preview.x,
     y: preview.y,
@@ -2156,6 +2173,8 @@ function openRegionPreviewModal(preview: RegionPreviewState) {
   activeRegionPreview = preview;
   regionPreviewDocEl.textContent = getHostBaseName(pdfPath);
   regionPreviewCoordsEl.textContent = formatRegionCoords(preview);
+  regionPreviewZoneTypeEl.value = "signature";
+  updateRegionPreviewCreateButton();
   regionPreviewImageEl.src = preview.imageDataUrl;
   regionPreviewModalEl.style.display = "flex";
   setTimeout(() => regionPreviewDoneBtn.focus(), 20);
@@ -2750,6 +2769,7 @@ signPanelInspectBtn.addEventListener("click", () => {
 
 // Region preview modal wiring
 regionPreviewCopyBtn.addEventListener("click", copyRegionCoords);
+regionPreviewZoneTypeEl.addEventListener("change", updateRegionPreviewCreateButton);
 regionPreviewCreateZoneBtn.addEventListener("click", useRegionPreviewAsSignatureZone);
 regionPreviewDoneBtn.addEventListener("click", closeRegionPreviewModal);
 regionPreviewCloseBtn.addEventListener("click", closeRegionPreviewModal);
