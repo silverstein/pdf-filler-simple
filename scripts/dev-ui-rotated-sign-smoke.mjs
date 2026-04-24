@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { PDFDocument, degrees } from "pdf-lib";
-import { createAgentBrowserSessionRunner, withDevUiServer } from "./dev-ui-smoke-helpers.mjs";
+import { createAgentBrowserSessionRunner, evalJson, withDevUiServer } from "./dev-ui-smoke-helpers.mjs";
 
 const port = Number(process.env.PDF_TOOLS_DEV_UI_PORT || 4176);
 const origin = `http://127.0.0.1:${port}`;
@@ -13,15 +13,15 @@ const runAgentBrowser = createAgentBrowserSessionRunner(session);
 const cases = [
   {
     degrees: 90,
-    expected: { left: [258, 268], top: [120, 140], tall: true },
+    expected: { left: [257, 267], top: [120, 140], tall: true },
   },
   {
     degrees: 180,
-    expected: { left: [226, 246], top: [258, 268], tall: false },
+    expected: { left: [226, 246], top: [257, 267], tall: false },
   },
   {
     degrees: 270,
-    expected: { left: [505, 515], top: [226, 246], tall: true },
+    expected: { left: [508, 518], top: [226, 246], tall: true },
   },
 ];
 
@@ -33,14 +33,6 @@ async function createRotatedFixture(rotationDegrees) {
   doc.getPage(0).setRotation(degrees(rotationDegrees));
   await fs.writeFile(rotatedPdfPath, await doc.save());
   return rotatedPdfPath;
-}
-
-function parseEvalJson(raw) {
-  const jsonLine = raw
-    .split(/\n/)
-    .map(line => line.trim())
-    .find(line => line.startsWith("\"{") && line.endsWith("}\""));
-  return jsonLine ? JSON.parse(JSON.parse(jsonLine)) : null;
 }
 
 async function closeBrowserSession() {
@@ -60,7 +52,7 @@ async function main() {
       await runAgentBrowser(["click", "#mode-sign-btn"]);
       await runAgentBrowser(["wait", "1200"]);
 
-      const raw = await runAgentBrowser(["eval", `(() => {
+      const result = await evalJson(runAgentBrowser, `(() => {
         const zone = document.querySelector(".sig-zone[data-type=signature]");
         if (!zone) return JSON.stringify({ ok: false, reason: "no signature zone" });
         const label = zone.querySelector(".sig-zone-label");
@@ -76,10 +68,9 @@ async function main() {
           label: lr ? { width: lr.width, height: lr.height } : null,
           transform,
         });
-      })()`]);
-      const result = parseEvalJson(raw);
+      })()`);
       if (!result?.ok) {
-        throw new Error(`No signature zone found for rotation ${testCase.degrees}. Browser output: ${raw}`);
+        throw new Error(`No signature zone found for rotation ${testCase.degrees}.`);
       }
       const shapeIsTall = result.zone.height > result.zone.width * 4;
       if (shapeIsTall !== testCase.expected.tall) {

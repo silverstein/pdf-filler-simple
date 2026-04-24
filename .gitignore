@@ -24,6 +24,8 @@ npm-debug.log*
 *.tmp
 *.temp
 .test-tmp*/
+.playwright-mcp/
+*-sign.png
 
 # Local planning artifacts
 plans/*.local

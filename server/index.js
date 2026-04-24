@@ -621,7 +621,7 @@ function validateProfileName(name) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.8.5",
+    version: "0.8.6",
   },
   {
     capabilities: {
@@ -4254,7 +4254,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           ? `No signature zones detected in ${path.basename(pdf_path)}. The form may be flat/scanned or use an unusual layout — ask the user to pick a signature location in the viewer.`
           : `Found ${zones.length} zone(s) in ${path.basename(pdf_path)}: ` +
             Object.entries(byType).map(([t, n]) => `${n} ${t}${n === 1 ? "" : "s"}`).join(", ") +
-            `.\n\nUse apply_signature at one of these zones — do not guess coordinates.`;
+            `.\n\nDetected zones (top-left origin, points; use these exact coordinates, do not guess):\n` +
+            zones.map((z, idx) => (
+              `${idx + 1}. ${z.type.toUpperCase()} p${z.page} ` +
+              `x=${Number(z.x).toFixed(1)} y=${Number(z.y).toFixed(1)} ` +
+              `width=${Number(z.width).toFixed(1)} height=${Number(z.height).toFixed(1)} ` +
+              `label="${z.label || ""}" confidence=${Number(z.confidence ?? 0).toFixed(2)} source=${z.source || "unknown"}`
+            )).join("\n") +
+            `\n\nFor dates, use apply_text at a returned DATE zone. For signatures, use apply_signature at a returned SIGNATURE zone.`;
 
         return {
           content: [{ type: "text", text: summary }],

@@ -531,10 +531,13 @@ function markerAnchoredZone(item, allItems, pat, gap, zoneHeight, rightBound) {
   const baselineRightBound = nextText ? Math.min(rightBound, nextText.x - gap) : rightBound;
   const zoneWidth = Math.min(pat.zoneWidth, Math.max(baselineRightBound - zoneX, 0));
   if (zoneWidth < 24) return null;
-  const markerAboveLineY = marker.y - zoneHeight - 2;
   const markerPointsToCaptionedLine =
     Boolean(continuationMarker) ||
     /^(Signature|Initials?|Date)$/i.test(item.text.trim());
+  const effectiveZoneHeight = markerPointsToCaptionedLine
+    ? Math.min(zoneHeight, 16)
+    : zoneHeight;
+  const captionedLineY = marker.y - effectiveZoneHeight - 1;
   return {
     zoneX,
     // W-9-style arrows often live on the label/continuation baseline, while
@@ -542,10 +545,11 @@ function markerAnchoredZone(item, allItems, pat, gap, zoneHeight, rightBound) {
     // marker to find horizontal start, but only use above-line vertical
     // placement for captioned rows. Same-baseline "Signature of X -> line"
     // layouts stay centered on the marker row.
-    zoneY: pat.placement === "above" && markerPointsToCaptionedLine && markerAboveLineY >= 4
-      ? markerAboveLineY
+    zoneY: pat.placement === "above" && markerPointsToCaptionedLine && captionedLineY >= 4
+      ? captionedLineY
       : marker.y - (zoneHeight - marker.height) / 2,
     zoneWidth,
+    zoneHeight: effectiveZoneHeight,
   };
 }
 
@@ -576,13 +580,14 @@ export function scanPageForLabels(page) {
         break; // matched but suppressed — don't fall through to other patterns
       }
       const gap = 6;
-      const zoneHeight = Math.max(item.height * 1.3, 18);
+      let zoneHeight = Math.max(item.height * 1.3, 18);
       const rightBound = page.width - 18;
       let zoneX, zoneY, zoneWidth;
 
       const markerZone = markerAnchoredZone(item, page.items, pat, gap, zoneHeight, rightBound);
       if (markerZone) {
         ({ zoneX, zoneY, zoneWidth } = markerZone);
+        zoneHeight = markerZone.zoneHeight || zoneHeight;
       } else if (pat.placement === "above") {
         // Line sits above the label; the zone rests on the line with its
         // bottom roughly at the label's top edge. Shift up by (zoneHeight + 2)

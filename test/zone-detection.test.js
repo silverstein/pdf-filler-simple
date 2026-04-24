@@ -186,14 +186,16 @@ describe("detectSignatureZones — AcroForm layer", () => {
     // which was in-bounds but visibly covered the label text in Sign mode.
     expect(sig.x).toBeGreaterThanOrEqual(120);
     expect(sig.x).toBeLessThanOrEqual(140);
-    expect(sig.y).toBeGreaterThanOrEqual(508);
+    expect(sig.y).toBeGreaterThanOrEqual(512);
     expect(sig.y).toBeLessThanOrEqual(516);
+    expect(sig.height).toBe(16);
     expect(sig.x + sig.width).toBeLessThan(date.x - 20);
 
     expect(date.x).toBeGreaterThanOrEqual(400);
     expect(date.x).toBeLessThanOrEqual(420);
-    expect(date.y).toBeGreaterThanOrEqual(508);
+    expect(date.y).toBeGreaterThanOrEqual(512);
     expect(date.y).toBeLessThanOrEqual(516);
+    expect(date.height).toBe(16);
     // The signing boxes should start on the blank signing row above the
     // captions, not down on the marker/label baseline.
     expect(sig.y).toBeLessThan(522);

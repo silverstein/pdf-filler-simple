@@ -17,6 +17,7 @@
 
 import { describe, it, expect, beforeAll } from "vitest";
 import { PDFDocument } from "pdf-lib";
+import { createHash } from "crypto";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -30,6 +31,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const FIXTURES_DIR = path.join(__dirname, "fixtures", "golden-forms");
 const CACHE_DIR = path.join(__dirname, "..", ".test-tmp-golden");
 const OFFLINE = process.env.OFFLINE === "1";
+const RELEASE_GATES = process.env.RELEASE_GATES === "1";
 
 if (typeof globalThis.DOMMatrix === "undefined") {
   globalThis.DOMMatrix = class DOMMatrix {
@@ -72,7 +74,12 @@ async function resolveFixturePath(fixture) {
     return path.resolve(FIXTURES_DIR, fixture.path);
   }
   if (fixture.source === "url") {
-    if (OFFLINE) return null;
+    if (OFFLINE) {
+      if (fixture.required_for_release && RELEASE_GATES) {
+        throw new Error(`Fixture ${fixture.id} is required for release gates and cannot be skipped with OFFLINE=1.`);
+      }
+      return null;
+    }
     await fs.mkdir(CACHE_DIR, { recursive: true });
     const cached = path.join(CACHE_DIR, `${fixture.id}.pdf`);
     try {
@@ -89,6 +96,10 @@ async function resolveFixturePath(fixture) {
     return result.path;
   }
   throw new Error(`Unknown fixture source: ${fixture.source}`);
+}
+
+function sha256(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
 }
 
 // An expected zone is a region (x_min/x_max, y_min/y_max) rather than an exact box.
@@ -147,6 +158,9 @@ describe("Golden-set signature-zone placement", () => {
         expect(z.x_min).toBeLessThan(z.x_max);
         expect(z.y_min).toBeLessThan(z.y_max);
       }
+      if (fx.sha256) {
+        expect(fx.sha256).toMatch(/^[a-f0-9]{64}$/);
+      }
     }
   });
 
@@ -166,6 +180,9 @@ describe("Golden-set signature-zone placement", () => {
       }
 
       const pdfBytes = await fs.readFile(pdfPath);
+      if (fixture.sha256) {
+        expect(sha256(pdfBytes)).toBe(fixture.sha256);
+      }
       const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
       const zones = await detectSignatureZones({ pdfDoc, pdfBytes, pdfjsLib });
 

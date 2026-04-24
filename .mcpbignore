@@ -25,7 +25,9 @@ test-*.pdf
 
 # Ignore local issue tracker and generated test state
 .beads/
+.playwright-mcp/
 .test-tmp*/
+*-sign.png
 
 # Ignore old/backup files
 *.backup

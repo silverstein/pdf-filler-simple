@@ -1,5 +1,5 @@
 import path from "node:path";
-import { createAgentBrowserSessionRunner, withDevUiServer } from "./dev-ui-smoke-helpers.mjs";
+import { createAgentBrowserSessionRunner, evalJson, withDevUiServer } from "./dev-ui-smoke-helpers.mjs";
 
 const port = Number(process.env.PDF_TOOLS_DEV_UI_PORT || 4177);
 const origin = `http://127.0.0.1:${port}`;
@@ -26,8 +26,15 @@ async function main() {
     await runAgentBrowser(["click", "#sign-panel-draw-btn"]);
     await runAgentBrowser(["wait", "600"]);
 
-    const modalSnapshot = await runAgentBrowser(["snapshot", "-i"]);
-    if (!modalSnapshot.includes("Save signature")) {
+    const modalState = await evalJson(runAgentBrowser, `(() => {
+      const modal = document.querySelector("#draw-modal");
+      return JSON.stringify({
+        modalOpen: !!modal && getComputedStyle(modal).display !== "none",
+        hasSave: !!document.querySelector("#draw-modal-save"),
+        hasCanvas: !!document.querySelector("#draw-canvas")
+      });
+    })()`);
+    if (!modalState.modalOpen || !modalState.hasSave || !modalState.hasCanvas) {
       throw new Error("Draw-signature modal did not open.");
     }
 
@@ -38,11 +45,18 @@ async function main() {
     await runAgentBrowser(["click", "#draw-modal-save"]);
     await runAgentBrowser(["wait", "1000"]);
 
-    const afterSnapshot = await runAgentBrowser(["snapshot", "-i"]);
-    if (afterSnapshot.includes("Save signature") && afterSnapshot.includes("Undo")) {
+    const afterState = await evalJson(runAgentBrowser, `(() => {
+      const modal = document.querySelector("#draw-modal");
+      return JSON.stringify({
+        modalOpen: !!modal && getComputedStyle(modal).display !== "none",
+        signPanelVisible: getComputedStyle(document.querySelector("#sign-panel")).display !== "none",
+        hasDrawButton: !!document.querySelector("#sign-panel-draw-btn")
+      });
+    })()`);
+    if (afterState.modalOpen) {
       throw new Error("Draw-signature modal appears to still be open after save.");
     }
-    if (!afterSnapshot.includes("✎ Draw signature")) {
+    if (!afterState.signPanelVisible || !afterState.hasDrawButton) {
       throw new Error("Viewer did not return to sign mode after saving the drawn signature.");
     }
 

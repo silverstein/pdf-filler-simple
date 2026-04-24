@@ -1,5 +1,5 @@
 import path from "node:path";
-import { createAgentBrowserSessionRunner, withDevUiServer } from "./dev-ui-smoke-helpers.mjs";
+import { createAgentBrowserSessionRunner, evalJson, withDevUiServer } from "./dev-ui-smoke-helpers.mjs";
 
 const port = Number(process.env.PDF_TOOLS_DEV_UI_PORT || 4176);
 const origin = `http://127.0.0.1:${port}`;
@@ -24,30 +24,61 @@ async function main() {
     await runAgentBrowser(["click", "#mode-sign-btn"]);
     await runAgentBrowser(["wait", "1000"]);
 
-    await runAgentBrowser(["click", "#sign-panel-inspect-btn"]);
+    const signState = await evalJson(runAgentBrowser, `(() => JSON.stringify({
+      hasInspect: !!document.querySelector("#sign-panel-inspect-btn"),
+      zoneCount: document.querySelectorAll(".sig-zone").length,
+      signPanelVisible: getComputedStyle(document.querySelector("#sign-panel")).display !== "none"
+    }))()`);
+    if (!signState.hasInspect || !signState.signPanelVisible) {
+      throw new Error("Sign mode did not expose the inspect-region control.");
+    }
+
+    await evalJson(runAgentBrowser, `(() => {
+      document.querySelector("#sign-panel-inspect-btn").click();
+      return JSON.stringify({ clicked: true });
+    })()`);
     await runAgentBrowser(["batch", "mouse move 250 200", "mouse down", "mouse move 360 270", "mouse up"]);
     await runAgentBrowser(["wait", "1200"]);
 
-    const previewSnapshot = await runAgentBrowser(["snapshot", "-i"]);
-    if (!previewSnapshot.includes("Create")) {
+    const previewState = await evalJson(runAgentBrowser, `(() => {
+      const modal = document.querySelector("#region-preview-modal");
+      return JSON.stringify({
+        modalOpen: !!modal && getComputedStyle(modal).display !== "none",
+        hasCreate: !!document.querySelector("#region-preview-create-zone")
+      });
+    })()`);
+    if (!previewState.modalOpen || !previewState.hasCreate) {
       throw new Error("Preview modal did not expose a create-zone action.");
     }
 
-    await runAgentBrowser(["click", "#region-preview-create-zone"]);
+    await evalJson(runAgentBrowser, `(() => {
+      document.querySelector("#region-preview-create-zone").click();
+      return JSON.stringify({ clicked: true });
+    })()`);
     await runAgentBrowser(["wait", "800"]);
 
-    const signSnapshot = await runAgentBrowser(["snapshot", "-i"]);
-    if (!signSnapshot.includes("Cancel")) {
+    const modalState = await evalJson(runAgentBrowser, `(() => {
+      const modal = document.querySelector("#sign-modal");
+      const title = document.querySelector("#sign-modal-title")?.textContent || "";
+      const panelText = document.querySelector("#sign-panel-list")?.textContent || "";
+      return JSON.stringify({
+        signModalOpen: !!modal && getComputedStyle(modal).display !== "none",
+        title,
+        hasCancel: !!document.querySelector("#sign-modal-cancel"),
+        hasCustomZone: panelText.includes("Custom")
+      });
+    })()`);
+    if (!modalState.signModalOpen || !modalState.hasCancel) {
       throw new Error("Creating a zone from preview did not open the sign modal.");
     }
     const openedKnownMode =
-      signSnapshot.includes("Sign") ||
-      signSnapshot.includes("Insert date") ||
-      signSnapshot.includes("Stamp initials");
+      modalState.title.includes("Confirm signature") ||
+      modalState.title.includes("Insert date") ||
+      modalState.title.includes("Confirm initials");
     if (!openedKnownMode) {
       throw new Error("The preview-to-zone handoff did not open a recognized signing modal.");
     }
-    if (!signSnapshot.includes("Preview Custom")) {
+    if (!modalState.hasCustomZone) {
       throw new Error("The sign panel did not show the new custom zone after creating it from preview.");
     }
 

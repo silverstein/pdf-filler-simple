@@ -78,6 +78,13 @@ export function createAgentBrowserSessionRunner(session) {
 
     let stdout = "";
     let stderr = "";
+    const timeoutMs = Number(process.env.PDF_TOOLS_AGENT_BROWSER_TIMEOUT_MS || 20_000);
+    const timeout = setTimeout(() => {
+      child.kill("SIGTERM");
+      setTimeout(() => child.kill("SIGKILL"), 2_000).unref();
+    }, timeoutMs);
+    timeout.unref();
+
     child.stdout.on("data", (chunk) => {
       const text = chunk.toString();
       stdout += text;
@@ -89,10 +96,30 @@ export function createAgentBrowserSessionRunner(session) {
       process.stderr.write(text);
     });
 
-    const [code] = await once(child, "exit");
+    const [code, signal] = await once(child, "exit");
+    clearTimeout(timeout);
     if (code !== 0) {
-      throw new Error(`agent-browser ${args.join(" ")} failed with code ${code}\n${stderr || stdout}`);
+      const exitSummary = signal ? `signal ${signal}` : `code ${code}`;
+      throw new Error(`agent-browser ${args.join(" ")} failed with ${exitSummary}\n${stderr || stdout}`);
     }
     return stdout;
   };
+}
+
+export function parseAgentBrowserEvalJson(raw) {
+  const trimmedLines = raw.split(/\n/).map(line => line.trim()).filter(Boolean);
+  for (const line of trimmedLines) {
+    if (line.startsWith("\"{") && line.endsWith("}\"")) {
+      return JSON.parse(JSON.parse(line));
+    }
+    if (line.startsWith("{") && line.endsWith("}")) {
+      return JSON.parse(line);
+    }
+  }
+  throw new Error(`Could not parse agent-browser eval JSON from output: ${raw}`);
+}
+
+export async function evalJson(runAgentBrowser, expression) {
+  const raw = await runAgentBrowser(["eval", expression]);
+  return parseAgentBrowserEvalJson(raw);
 }

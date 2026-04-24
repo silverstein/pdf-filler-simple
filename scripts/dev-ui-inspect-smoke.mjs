@@ -1,5 +1,5 @@
 import path from "node:path";
-import { createAgentBrowserSessionRunner, withDevUiServer } from "./dev-ui-smoke-helpers.mjs";
+import { createAgentBrowserSessionRunner, evalJson, withDevUiServer } from "./dev-ui-smoke-helpers.mjs";
 
 const port = Number(process.env.PDF_TOOLS_DEV_UI_PORT || 4175);
 const origin = `http://127.0.0.1:${port}`;
@@ -24,8 +24,12 @@ async function main() {
     await runAgentBrowser(["click", "#mode-sign-btn"]);
     await runAgentBrowser(["wait", "1000"]);
 
-    const signSnapshot = await runAgentBrowser(["snapshot", "-i"]);
-    if (!signSnapshot.includes("🔍 Inspect region")) {
+    const signState = await evalJson(runAgentBrowser, `(() => JSON.stringify({
+      hasInspect: !!document.querySelector("#sign-panel-inspect-btn"),
+      zoneCount: document.querySelectorAll(".sig-zone").length,
+      signPanelVisible: getComputedStyle(document.querySelector("#sign-panel")).display !== "none"
+    }))()`);
+    if (!signState.hasInspect || !signState.signPanelVisible || signState.zoneCount < 1) {
       throw new Error("Sign mode did not expose the inspect-region control.");
     }
 
@@ -33,11 +37,20 @@ async function main() {
     await runAgentBrowser(["batch", "mouse move 250 200", "mouse down", "mouse move 360 270", "mouse up"]);
     await runAgentBrowser(["wait", "1200"]);
 
-    const previewSnapshot = await runAgentBrowser(["snapshot", "-i"]);
-    if (!previewSnapshot.includes("Copy coordinates") || !previewSnapshot.includes("Done")) {
+    const previewState = await evalJson(runAgentBrowser, `(() => {
+      const modal = document.querySelector("#region-preview-modal");
+      return JSON.stringify({
+        modalOpen: !!modal && getComputedStyle(modal).display !== "none",
+        hasCopy: !!document.querySelector("#region-preview-copy"),
+        hasDone: !!document.querySelector("#region-preview-done"),
+        hasCreate: !!document.querySelector("#region-preview-create-zone"),
+        coords: document.querySelector("#region-preview-coords")?.textContent || ""
+      });
+    })()`);
+    if (!previewState.modalOpen || !previewState.hasCopy || !previewState.hasDone) {
       throw new Error("Inspect-region drag did not open the preview modal.");
     }
-    if (!previewSnapshot.includes("Create")) {
+    if (!previewState.hasCreate) {
       throw new Error("Inspect-region preview did not expose any create-zone action.");
     }
 
