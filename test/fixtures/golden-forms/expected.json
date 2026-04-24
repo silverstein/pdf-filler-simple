@@ -6,22 +6,22 @@
       "source": "local",
       "path": "../../../example-fw9.pdf",
       "description": "Older IRS W-9 shipped with the repo — 4-page layout",
-      "min_score": 0.5,
+      "min_score": 1,
       "expected_zones": [
         {
           "type": "signature",
           "page": 1,
-          "note": "Signature of U.S. person line — bottom of page 1 (older layout)",
-          "x_min": 100, "x_max": 500,
-          "y_min": 490, "y_max": 580,
+          "note": "Signature of U.S. person row after the arrow marker — bottom of page 1 (older layout)",
+          "x_min": 120, "x_max": 385,
+          "y_min": 520, "y_max": 545,
           "min_iou": 0.2
         },
         {
           "type": "date",
           "page": 1,
-          "note": "Date field to the right of the signature",
-          "x_min": 380, "x_max": 560,
-          "y_min": 490, "y_max": 580,
+          "note": "Date field to the right of its arrow marker",
+          "x_min": 400, "x_max": 560,
+          "y_min": 520, "y_max": 545,
           "min_iou": 0.15
         }
       ]

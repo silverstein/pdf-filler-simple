@@ -508,13 +508,32 @@ use. This is a Sonnet/tool-use discipline check, not a server blocker.
 | Output verification | Pass | `get_pdf_info` returned 4 pages, 123.80 KB, 612x792 pt, 22 form fields, encrypted no; local SHA1 `5788441716a373279661ef2b592f89e0c594e466` |
 | Region render verification | Pass | `render_pdf_region` on the exact zone returned PNG metadata `1040 x 72 px`, `scale=4`, `renderer=native-canvas`, `mime_type=image/png`. Direct stdio used `native-canvas`; Claude Desktop chat runtime render fallback remains previously verified as `macos-sips`. |
 
-Conclusion: the server handles exact detected-zone coordinates correctly. The
-bad coordinate in the previous batch is a Sonnet/tool-use discipline issue, not
-a server placement bug.
+Conclusion superseded by the Sign-tab visual check below. The server handled
+the exact coordinates it was given, but the detected coordinates themselves
+were visually misaligned for the IRS W-9 signing row. The previous batch caught
+Sonnet's guessed-coordinate issue but missed the server placement bug because
+it verified metadata, hashes, and a cropped region rather than the full-page
+human-visible overlay.
 
 Next action: recover Claude Desktop's visible/accessibility window before more
 Chat-level tests, or continue low-level installed-MCP validation for fixtures
 that do not need model/host behavior.
+
+## Sign-Tab Visual Regression: IRS W-9 Zone Alignment - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| User-reported visual defect | Confirmed | Screenshot `CleanShot 2026-04-23 at 20.49.08@2x.png` shows the page-1 signature zone in `pageops-merged-084.pdf` sitting too high/left relative to the visible `Signature of U.S. person` signing line; date zone is also high |
+| Root cause | Confirmed | `SIGNATURE_PATTERNS` used `placement: "above"` for `Signature of...` and bare `Date`; on this W-9 the text is split across `Signature of` at `y=522.1`, `U.S. person` + arrow at `y=530.8`, and `Date` + arrow at `y=530.8`, so the old heuristic emitted `signature x=79 y=502.1` and `date x=381.6 y=510.8` |
+| Why prior tests missed it | Confirmed | `test/zone-detection.test.js` only checked zone existence/bounds, and the golden fixture allowed a broad `y=490..580` region with `min_score=0.5`, so a visibly high zone still passed |
+| Fix implemented | Pass local repo | Detector now anchors zones after decorative arrow markers and stops before the next same-row label; local `example-fw9.pdf` now detects `signature x=130.7 y=524.3 width=244.9 height=18` and `date x=410.2 y=524.3 width=110 height=18` |
+| Regression guard | Pass local repo | Added an IRS W-9 row-placement assertion and tightened `test/fixtures/golden-forms/expected.json` for `example-fw9` to `min_score=1` with narrower signing-row bounds |
+| Test command | Pass | `npm test -- --run test/zone-detection.test.js test/golden-set-placement.test.js` passed `22` tests; Vitest still reports the existing post-pass close timeout due to an open server handle |
+| Full local suite | Pass | `npm test` passed `17` test files and `173` tests; same existing Vitest post-pass close timeout warning appeared |
+| Adversarial review follow-up | Pass local repo | Reviewer flagged overly broad decorative-marker anchoring; code now only treats known arrow glyphs as signing anchors, falls back when marker-derived zones are too narrow, and adds a synthetic bullet regression so ordinary bullets do not move a `Signature` zone |
+| Re-test after review fix | Pass | `npm test -- --run test/zone-detection.test.js test/golden-set-placement.test.js` passed `23` tests; helper files are byte-identical between `server/` and `pdf-toolkit-mcp-share/server/` |
+| Full local suite after review fix | Pass | `npm test` passed `17` test files and `174` tests; same existing Vitest post-pass close timeout warning appeared |
+| Rebuilt extension artifact | Pass local repo | `npm run build:ui` passed and `mcpb pack` produced `pdf-toolkit-mcp.mcpb` / `pdf-toolkit-0.8.4.mcpb`, package size `32.5MB`, shasum `e53d7f51b0fc717ae3b222afaf357d84f70aff62` |
 
 ## Direct Installed MCP Non-Form, Image-Only, Permissions - 2026-04-24
 

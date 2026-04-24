@@ -469,12 +469,80 @@ function isDecorativeGlyph(text) {
   return !/[A-Za-z0-9.,;:!?@#$%&*()\[\]{}\-_+=<>\/\\]/.test(text);
 }
 
+function isSigningArrowMarker(text) {
+  // W-9-style labels use arrow glyphs to point at the signing surface.
+  // Do not treat bullets/checkmarks as anchors; they are common in body copy.
+  return /^[\u25B6\u25B8\u25BA\u2794\u279C\u2192]$/.test(text);
+}
+
+function sameBaseline(a, b, tolerance = Math.max(a.height, b.height) * 1.2) {
+  return Math.abs(a.y - b.y) <= tolerance;
+}
+
+function findSigningArrowMarkerToRight(item, allItems, { maxGap = 120 } = {}) {
+  const itemRight = item.x + item.width;
+  return allItems
+    .filter(other =>
+      other !== item &&
+      isSigningArrowMarker(other.text) &&
+      sameBaseline(item, other) &&
+      other.x >= itemRight &&
+      other.x - itemRight <= maxGap
+    )
+    .sort((a, b) => a.x - b.x)[0] ?? null;
+}
+
+function findContinuationMarkerBelow(item, allItems) {
+  const lowerLines = allItems
+    .filter(other =>
+      other !== item &&
+      !isDecorativeGlyph(other.text) &&
+      Math.abs(other.x - item.x) <= 8 &&
+      other.y > item.y &&
+      other.y - item.y <= Math.max(item.height * 2.5, 18)
+    )
+    .sort((a, b) => a.y - b.y || a.x - b.x);
+
+  for (const line of lowerLines) {
+    const marker = findSigningArrowMarkerToRight(line, allItems, { maxGap: 80 });
+    if (marker) return marker;
+  }
+  return null;
+}
+
+function findNextTextToRightOnBaseline(anchor, allItems, minX) {
+  return allItems
+    .filter(other =>
+      !isDecorativeGlyph(other.text) &&
+      sameBaseline(anchor, other) &&
+      other.x > minX
+    )
+    .sort((a, b) => a.x - b.x)[0] ?? null;
+}
+
+function markerAnchoredZone(item, allItems, pat, gap, zoneHeight, rightBound) {
+  const marker =
+    findSigningArrowMarkerToRight(item, allItems) ||
+    findContinuationMarkerBelow(item, allItems);
+  if (!marker) return null;
+
+  const zoneX = marker.x + marker.width + gap;
+  const nextText = findNextTextToRightOnBaseline(marker, allItems, zoneX);
+  const baselineRightBound = nextText ? Math.min(rightBound, nextText.x - gap) : rightBound;
+  const zoneWidth = Math.min(pat.zoneWidth, Math.max(baselineRightBound - zoneX, 0));
+  if (zoneWidth < 24) return null;
+  return {
+    zoneX,
+    zoneY: marker.y - (zoneHeight - marker.height) / 2,
+    zoneWidth,
+  };
+}
+
 function hasRoomToRight(item, allItems, minPts) {
   const labelRightEdge = item.x + item.width;
   for (const other of allItems) {
     if (other === item) continue;
-    const sameBaseline = Math.abs(other.y - item.y) < item.height * 0.7;
-    if (!sameBaseline) continue;
+    if (!sameBaseline(item, other, item.height * 0.7)) continue;
     if (other.x <= labelRightEdge) continue;
     if (isDecorativeGlyph(other.text)) continue;
     const gap = other.x - labelRightEdge;
@@ -501,7 +569,10 @@ function scanPageForLabels(page) {
       const rightBound = page.width - 18;
       let zoneX, zoneY, zoneWidth;
 
-      if (pat.placement === "above") {
+      const markerZone = markerAnchoredZone(item, page.items, pat, gap, zoneHeight, rightBound);
+      if (markerZone) {
+        ({ zoneX, zoneY, zoneWidth } = markerZone);
+      } else if (pat.placement === "above") {
         // Line sits above the label; the zone rests on the line with its
         // bottom roughly at the label's top edge. Shift up by (zoneHeight + 2)
         // so the zone's bottom ≈ line's y.

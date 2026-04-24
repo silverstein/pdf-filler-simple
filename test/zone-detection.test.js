@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, StandardFonts } from "pdf-lib";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -172,6 +172,43 @@ describe("detectSignatureZones — AcroForm layer", () => {
     expect(sigZones.length).toBeGreaterThan(0);
     // At least one should be on page 1 and reference "Signature" in its label
     expect(sigZones.some(z => z.page === 1 && /signature/i.test(z.label))).toBe(true);
+  });
+
+  it("places the IRS W-9 signature/date zones on the signing row after the arrow markers", async () => {
+    const zones = await detectSignatureZones({ pdfDoc, pdfBytes, pdfjsLib });
+    const sig = zones.find(z => z.page === 1 && z.type === "signature" && /signature/i.test(z.label));
+    const date = zones.find(z => z.page === 1 && z.type === "date" && /^date$/i.test(z.label));
+
+    expect(sig).toBeDefined();
+    expect(date).toBeDefined();
+    // Regression guard: the old "above label" heuristic emitted x=79/y=502.1,
+    // which was in-bounds but visibly too high and too far left in Sign mode.
+    expect(sig.x).toBeGreaterThanOrEqual(120);
+    expect(sig.x).toBeLessThanOrEqual(140);
+    expect(sig.y).toBeGreaterThanOrEqual(520);
+    expect(sig.y).toBeLessThanOrEqual(530);
+    expect(sig.x + sig.width).toBeLessThan(date.x - 20);
+
+    expect(date.x).toBeGreaterThanOrEqual(400);
+    expect(date.x).toBeLessThanOrEqual(420);
+    expect(date.y).toBeGreaterThanOrEqual(520);
+    expect(date.y).toBeLessThanOrEqual(530);
+  });
+
+  it("does not treat non-arrow decorative bullets as signature-row anchors", async () => {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([612, 792]);
+    const font = await doc.embedFont(StandardFonts.Helvetica);
+    page.drawText("Signature", { x: 72, y: 500, size: 10, font });
+    page.drawText(String.fromCharCode(0x2022), { x: 150, y: 500, size: 10, font });
+
+    const bytes = await doc.save();
+    const reloaded = await PDFDocument.load(bytes, { ignoreEncryption: true });
+    const zones = await detectSignatureZones({ pdfDoc: reloaded, pdfBytes: bytes, pdfjsLib });
+    const sig = zones.find(z => z.type === "signature" && z.label === "Signature");
+
+    expect(sig).toBeDefined();
+    expect(sig.x).toBeLessThan(100);
   });
 
   it("detects a Date zone on IRS W-9", async () => {
