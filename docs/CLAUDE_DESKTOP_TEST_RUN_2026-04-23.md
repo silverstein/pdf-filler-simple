@@ -647,3 +647,22 @@ not the printed caption line. Rotated overlay expectations were adjusted to the
 new native coordinates, but a clean browser-driver smoke rerun in a healthy
 `agent-browser` session is still worth doing before calling the Claude Desktop
 visual pass fully closed.
+
+## Claude Desktop 0.8.5 Reinstall + Visual Zone Confirmation - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Start state | Pass | User requested explicit uninstall/reinstall of rebuilt `pdf-toolkit-mcp.mcpb` in Claude Desktop and visual confirmation that W-9 signature/date zones land on the signing row. Artifact installed: `/Users/silverbook/Sites/pdf-toolkit-mcp/pdf-toolkit-mcp.mcpb`, SHA256 `9662465fe9ce3aeae853ab7d1e4a69f86faae2e08b3926904bf5e627f6cd7b29`. |
+| Uninstall old extension | Pass | Quit Claude Desktop, backed up old `local.mcpb.open-document-alliance.pdf-toolkit` extension/settings/registry to `/tmp/pdf-toolkit-claude-extension-backup-2026-04-24`, then removed only the PDF Tools extension directory, settings file, and `extensions-installations.json` entry. Verified `extension_dir_removed`, `settings_removed`, and `registry_removed`. |
+| Reinstall 0.8.5 MCPB | Pass | Opened `/Users/silverbook/Sites/pdf-toolkit-mcp/pdf-toolkit-mcp.mcpb` explicitly with Claude Desktop after uninstall. Claude installer/details dialog shows PDF Tools enabled, `Version 0.8.5`, and an `Uninstall` button, confirming the rebuilt extension is installed. |
+| Installed registry verification | Pass | Claude Desktop `extensions-installations.json` contains `local.mcpb.open-document-alliance.pdf-toolkit` version `0.8.5`, hash `9662465fe9ce3aeae853ab7d1e4a69f86faae2e08b3926904bf5e627f6cd7b29`, installed at `2026-04-24T17:22:49.847Z`. Installed manifest also reports `version: 0.8.5`. |
+| Claude Desktop tool run | Pass with response caveat | Fresh Claude Desktop chat `PDF Tools 0.8.5 signature zone detection test` loaded PDF Tools, ran `detect_signature_zones`, then ran `display_pdf` on `/Users/silverbook/Downloads/pdf-toolkit-test-run-2026-04-23/pageops-merged-084.pdf`. Claude's natural-language response confirmed `4 zones` (`2 signature zones and 2 date zones`) and the viewer rendered successfully, but the raw coordinate JSON was not exposed in Claude's final text. |
+| Installed-code coordinate verification | Pass | Imported the installed extension's own `server/helpers.js` from `~/Library/Application Support/Claude/Claude Extensions/local.mcpb.open-document-alliance.pdf-toolkit` and ran `detectSignatureZones` against the test PDF. Page 1 returns signature `x=130.7 y=510.8 width=244.9 height=18` and date `x=410.2 y=510.8 width=110 height=18`. |
+| Desktop visual overlay verification | Pass | In the live Claude Desktop `display_pdf` embedded viewer, switched to the `Sign` tab. The page 1 W-9 overlay shows `Sign here` on the blank certification signing line and `Date` on the date line, not on the old printed-label baseline at `y=524.3`. No signing or PDF mutation was performed. |
+
+Conclusion: 0.8.5 was fully uninstalled/reinstalled in Claude Desktop and the
+installed extension is the rebuilt MCPB hash. The W-9 signature/date zone fix is
+confirmed in installed-code coordinates and in the live Claude Desktop embedded
+viewer. The only caveat is Claude's chat response did not surface raw zone JSON,
+so exact coordinate confirmation came from the installed extension files on disk
+rather than Claude's final prose.
