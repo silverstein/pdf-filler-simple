@@ -699,6 +699,7 @@ rather than Claude's final prose.
 | Post-review final local gates | Pass | After fixing adversarial-review findings and rebuilding artifacts, reran `npm test` (`19` files / `179` tests passed, known Vitest close-timeout warning), `npm run build:ui` (passed), and `npm run smoke:ui-dev` (passed). |
 | Post-review Claude Desktop reinstall | Pass | Reopened the rebuilt `/Users/silverbook/Sites/pdf-toolkit-mcp/pdf-toolkit-mcp.mcpb` in Claude Desktop after adversarial-review fixes. Claude Desktop extension registry now records `local.mcpb.open-document-alliance.pdf-toolkit` version `0.8.6`, installed at `2026-04-24T18:50:01.171Z`, with hash `c6e9e4df2882f4c2f25266f0f9f54c88e249303e94826dd411b5269090a5e152`, matching the local MCPB SHA256. |
 | Post-review Claude Desktop sanity chat | Pass | Fresh Claude Desktop chat `PDF Tools 0.8.6 signature detection and rendering validation` used the installed post-review artifact. Claude reported W-9 visible coordinates: page 1 signature `x=130.7 y=513.8 width=244.9 height=16.0`, page 1 date `x=410.2 y=513.8 width=110.0 height=16.0`; `display_pdf` rendered the W-9; `display_pdf` rendered `/Users/silverbook/Downloads/pdf-toolkit-release-hardening-2026-04-24/w9-xfa-desktop-086.pdf` with `22` form fields and no `Invalid PDF Structure`; Claude stated the extension is PDF Tools `0.8.6`. |
+| Clean share-package local-MCP install | Pass | Extracted `pdf-toolkit-mcp.zip` into fresh temp root `/tmp/pdf-toolkit-share-install.JAsf1X`, ran `npm install --omit=dev --cache /tmp/pdf-toolkit-share-install.JAsf1X/npm-cache` in the extracted `pdf-toolkit-mcp-share` (first run hit a local `~/.npm` cache permission issue, isolated-cache rerun passed with `0` vulnerabilities), then launched `server/index.js` over MCP stdio with `ALLOWED_DIRECTORIES=/Users/silverbook/Downloads`. The clean extracted server exposed `37` tools, including `display_pdf`, `detect_signature_zones`, `read_pdf_fields`, and `fill_pdf`; `detect_signature_zones` returned W-9 visible coordinate text for p1 signature `x=130.7 y=513.8 width=244.9 height=16.0` and p1 date `x=410.2 y=513.8 width=110.0 height=16.0`; `display_pdf` returned `_meta.ui.resourceUri: ui://pdf-toolkit/viewer` and active path metadata. This validates the Cursor/other-stdio-host share package without modifying real Cursor config. |
 
 Conclusion: the biggest model-facing gap is fixed: agents can now see exact
 signature/date coordinates in the text response. Browser-level product behavior
@@ -707,5 +708,7 @@ Playwright MCP. The W-9 overlay polish and Sandy Springs non-standard PDF check
 are green locally and in Claude Desktop. The post-adversarial-review `0.8.6`
 MCPB hash `c6e9e4df2882f4c2f25266f0f9f54c88e249303e94826dd411b5269090a5e152`
 is installed in Claude Desktop and passed the final coordinate/display/XFA sanity
-chat. The main remaining release gate is a clean-profile or second-host install
-pass.
+chat. A fresh extracted share-package stdio install also passed as a clean
+local-MCP/Cursor-path validation without touching real Cursor config. The only
+remaining pre-release confidence item, if desired, is a true second-machine
+Claude Desktop install; no repo-local blocker remains.
