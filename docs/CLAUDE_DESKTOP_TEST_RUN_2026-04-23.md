@@ -605,3 +605,26 @@ can mutate the current canonical PDF in place with one backup. Page-management
 tools create a new managed output by design, and that output becomes the
 canonical active document for the next Claude/viewer operation. Rotating a
 fillable PDF preserves immediate form metadata in the viewer payload.
+
+## Claude Desktop Host Reinstall + Save Lifecycle - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Install artifact | Pass | User reported they installed rebuilt `pdf-toolkit-mcp.mcpb` after uninstall, and Claude Desktop subsequently loaded PDF Tools `0.8.4` tools from the installed extension. Local artifact shasum before install: `7f78a7411de83fa541480f0895d0cc0ce41d6a80` |
+| Fixture setup | Pass | Created `/Users/silverbook/Downloads/pdf-toolkit-lifecycle-host-2026-04-24/lifecycle-host-w9.pdf` and `lifecycle-host-managed.pdf`, both initial SHA1 `701a9e72dfe1c92ae42ce6e4b89dfa706d9c71b1` |
+| Host-level lifecycle test | Pass | Fresh Claude Desktop chat `PDF Tools host-level lifecycle test` ran installed PDF Tools `0.8.4` tools: `read_pdf_fields`, `fill_pdf`, `detect_signature_zones`, `create_signature`, `apply_signature`, `get_active_document`, `apply_page_plan`, `apply_text`, and `list_pdfs` |
+| Same-path fill/sign | Pass | Claude filled and signed `/Users/silverbook/Downloads/pdf-toolkit-lifecycle-host-2026-04-24/lifecycle-host-w9.pdf` with `output_path == pdf_path`; final SHA1 `f481290e30d8e2b4609bf3a2362872299c275371`; `pdf-lib` loads it as 4 pages / 22 fields with signature audit metadata |
+| W-9 backup | Pass | Backup `/Users/silverbook/.pdf-toolkit-files/backups/lifecycle-host-w9__2026-04-24T14-35-18-058Z.pdf` exists and SHA1 is `701a9e72dfe1c92ae42ce6e4b89dfa706d9c71b1`, matching the pre-test source |
+| Managed output lifecycle | Pass | `apply_page_plan` created `/Users/silverbook/Downloads/pdf-toolkit-lifecycle-host-2026-04-24/lifecycle-host-managed_managed.pdf`; `apply_text` then mutated that same managed output in place; final SHA1 `c302c3bfa36773f58806581e80f5ae3436638644`; `pdf-lib` loads it as 1 page / 0 fields with text-stamp audit metadata |
+| Managed source untouched | Pass | `/Users/silverbook/Downloads/pdf-toolkit-lifecycle-host-2026-04-24/lifecycle-host-managed.pdf` remains SHA1 `701a9e72dfe1c92ae42ce6e4b89dfa706d9c71b1` |
+| Managed backup | Pass | Backup `/Users/silverbook/.pdf-toolkit-files/backups/lifecycle-host-managed_managed__2026-04-24T14-38-21-789Z.pdf` exists; SHA1 `cd2ccb55927f1495ad132a70045866a9ec518202` |
+| Folder file inventory | Pass | Independent shell check found exactly three PDFs in the fixture folder: `lifecycle-host-w9.pdf`, `lifecycle-host-managed.pdf`, and `lifecycle-host-managed_managed.pdf`; no `lifecycle-host-managed_managed_managed.pdf` or signed sibling was created |
+| Active-document behavior | Pass per Claude Desktop tool results | Claude reported `get_active_document` returned W-9 `active_path` with `last_mutation_tool=apply_signature`, then managed output `active_path` with `last_mutation_tool=apply_page_plan`, then managed output with `last_mutation_tool=apply_text` and backup path after stamping |
+| Embedded viewer after XFA fill | Needs follow-up | After `fill_pdf` with `force_xfa=true`, the embedded viewer panel displayed `Invalid PDF structure` even though `fill_pdf` succeeded, `detect_signature_zones` and `apply_signature` worked afterward, and independent `pdf-lib` loading succeeded. Treat as a host/viewer render regression or XFA round-trip display edge case to investigate separately. |
+
+Conclusion: the reinstalled Claude Desktop extension passes the save-lifecycle
+test at host level. The canonical-file behavior is correct: same-path fill/sign
+mutates the active file with backup, page management creates one managed output
+by design, and subsequent edits mutate that managed output in place. The only
+new follow-up is the embedded viewer's `Invalid PDF structure` display after an
+XFA in-place fill despite successful tool operations and parseable output.
