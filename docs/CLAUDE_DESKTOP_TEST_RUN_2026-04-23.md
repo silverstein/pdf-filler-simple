@@ -28,13 +28,13 @@ session can resume without relying on chat context.
 | Date | 2026-04-23 |
 | Repo | `/Users/silverbook/Sites/pdf-toolkit-mcp` |
 | Branch | `master` |
-| Latest pushed commit | `9aa68dd chore(release): tighten mcpb package ignores` |
+| Latest pushed commit | `c09a34d fix(render): fall back to macos pdf renderer` |
 | MCPB artifact | `/Users/silverbook/Sites/pdf-toolkit-mcp/pdf-toolkit-mcp.mcpb` |
 | Original MCPB SHA1 | `71cd7ae1a650e0c2f92a2156de3b8a12353473a6` |
 | Rebuilt fixed MCPB SHA1 | `c7cbfe3831386efce4b44e672908e312421466cb` |
 | Latest hardened MCPB SHA1 | `8dd4a308bbd183bfd3738ae4f79826c00c51e095` |
 | Installed extension id | `local.mcpb.open-document-alliance.pdf-toolkit` |
-| Installed version | `0.8.4` by backed-up manual overlay; normal Claude Desktop installer UI was blocked, and chat-level runtime retest remains blocked by Claude Desktop windowlessness |
+| Installed version | `0.8.4` by backed-up manual overlay; normal Claude Desktop installer UI was blocked, but final Claude chat/runtime render retest passed after window recovery |
 | Claude Desktop modes | Chat supported; Cowork boundary confirmed unsupported for local MCPB |
 
 ## Fixtures
@@ -46,6 +46,9 @@ session can resume without relying on chat context.
 | Batch test folder | `/Users/silverbook/Downloads/pdf-toolkit-test-run-2026-04-23` | Dedicated allowed-folder outputs |
 | Batch 1 W-9 source copy | `/Users/silverbook/Downloads/pdf-toolkit-test-run-2026-04-23/w9-form-source.pdf` | SHA1 `701a9e72dfe1c92ae42ce6e4b89dfa706d9c71b1` |
 | Batch 1 filled W-9 output | `/Users/silverbook/Downloads/pdf-toolkit-test-run-2026-04-23/w9-filled-batch1.pdf` | SHA1 `a962504b160091735124c23637ba7af3f384e46d` |
+| Non-form text fixture | `/Users/silverbook/Downloads/pdf-toolkit-test-run-2026-04-23/non-form-text-084.pdf` | Generated harmless one-page fixture; SHA1 `b054e95a10a123d439b4f95155528498b8678ea1` |
+| Image-only fixture | `/Users/silverbook/Downloads/pdf-toolkit-test-run-2026-04-23/image-only-084.pdf` | Generated harmless one-page image-only fixture; SHA1 `7fbbc752eddb41520715b2e73849ecc34b413292` |
+| Public URL fetch fixture | `/Users/silverbook/Downloads/pdf-toolkit-test-run-2026-04-23/fetched-dummy-084.pdf` | W3C dummy PDF fetched through installed MCP; SHA1 `90ffd2359008d82298821d16b21778c5c39aec36` |
 
 ## Claude Chat Ledger
 
@@ -57,6 +60,13 @@ session can resume without relying on chat context.
 | 4 | Chat | `claude.ai/chat/22ce6b12-2415-48e0-a3f4-9e46de6d8d56` | Batch 2 viewer/file workflow | Pass | Sonnet 4.6 ran `display_pdf`, `list_pdfs`, `get_pdf_info`, `get_pdf_resource_uri`; manual viewer controls passed |
 | 5 | Chat | `claude.ai/chat/33f761d2-0cdb-42be-a42b-aa208f1c2f68` | Batch 3 profile/CSV workflow | Fail | Profiles passed, but CSV comma round-trip failed by local CSV inspection; Sonnet overclaimed pass without direct CSV evidence |
 | 6 | Chat | `claude.ai/chat/e7ee5dc5-9716-4cb2-8c5b-395566cbb872` | Batch 3 rerun after reinstall | Pass with host caveat | Tool/file-level CSV round-trip passed after reinstall; Sonnet correctly marked visible `structuredContent` preview-row evidence insufficient because Claude Desktop did not render row-level JSON |
+| 7 | Chat | `claude.ai/chat/23676ac8-d714-4682-ae02-a153c82bcfdf` | 0.8.4 render retest | Pass with host caveat | `render_pdf_page` and `render_pdf_region` returned PNGs via `macos-sips`; `get_page_analysis` structuredContent was present in MCP log but Claude visible text underreported it |
+| 8 | Chat | `claude.ai/chat/6d708ca8-de66-48c1-bc3f-1158aa5cdc74` | 0.8.4 positive page ops | Pass with host caveat | Merge/split/rotate/reorder/apply-plan passed; Claude duplicated `split_pdf` once |
+| 9 | Chat | `claude.ai/chat/48f5a78a-2bd4-4447-beec-1d5aeb917967` | 0.8.4 page-op error paths | Pass with host caveat | Five intentional errors returned clear text errors; Claude showed empty embedded viewers for two error results even though no output files were written |
+| 10 | Chat | `claude.ai/chat/7cc9b84e-a216-418f-aba9-31ef65639597` | 0.8.4 signature guardrails | Pass with model caveat | Detection/create/list/load and intent rejections passed; Sonnet guessed placeholder coordinates instead of using detected zone coordinates |
+| 11 | Direct stdio | Installed extension server | Corrective signature coordinate check | Pass with host caveat | Claude Desktop window disappeared after restart, so exact detected-zone placeholder was verified through the installed MCP server directly |
+| 12 | Direct stdio | Installed extension server | Non-form/image/permissions checks | Pass with host caveat | Claude Desktop window still unavailable; installed MCP server passed fixture and permission checks directly |
+| 13 | Direct stdio | Installed extension server | URL fetch security checks | Pass with host caveat | Public PDF download passed with documented parameters; loopback URL rejected |
 
 ## Completed Evidence
 
@@ -73,7 +83,7 @@ session can resume without relying on chat context.
 | Full test suite after CSV fix | Pass locally | `npm test` passed: 17 files, 172 tests after adversarial-review hardening; same post-success Vitest shutdown warning |
 | MCPB packaging | Pass | `mcpb pack` produced 33 MB artifact |
 | Package hygiene | Pass | Archive grep showed no `.beads`, `.test-tmp`, local plans, Vitest, or dev-only package helper files |
-| Claude install | Pass | Installed manifest is version `0.8.1` and includes `allowed_directories` user config |
+| Claude install | Pass | Installed manifest is version `0.8.4` after backed-up manual overlay; Claude runtime initialized PDF Tools with `serverInfo.version` `0.8.4` |
 | Claude host startup | Pass | `mcp.log` shows server initialized, tools listed, resources listed |
 | Viewer smoke in Chat | Pass | `display_pdf` called on `/Users/silverbook/Downloads/pdf-toolkit-smoke-example-fw9.pdf` |
 | MCP app resource | Pass | `resources/read` fetched `ui://pdf-toolkit/viewer` |
@@ -90,7 +100,7 @@ session can resume without relying on chat context.
 | Viewer | Zoom controls | Pass in Claude Chat | Manual embedded viewer click changed zoom from `100%` to `125%` |
 | Viewer | Search | Pass in Claude Chat | Search panel opened; query `FATCA` showed `7 of 15` with visible highlights |
 | Viewer | Fullscreen | Pass in Claude Chat | Fullscreen mode opened and exit control returned the viewer to embedded state |
-| Viewer | Non-form PDF render | Not run | Need non-form fixture in allowed folder |
+| Viewer | Non-form PDF render | Pass direct installed MCP | `non-form-text-084.pdf` rendered page 1 to PNG `698 x 903 px`; direct stdio renderer `native-canvas` |
 | Forms | `read_pdf_fields` | Pass in Claude Chat | 22 fields enumerated; representative names included `f1_1`, `f1_2`, `c1_1`, `f1_7`, `f1_14`/`f1_15` |
 | Forms | `fill_pdf` | Pass in Claude Chat | Synthetic values written to `w9-filled-batch1.pdf`; tool reported 14 field writes |
 | Forms | `validate_pdf` partially filled | Pass in Claude Chat | Output reported 13 filled / 9 empty; empty fields were optional or intentionally blank in test |
@@ -98,38 +108,42 @@ session can resume without relying on chat context.
 | Profiles | `fill_with_profile` | Pass in Claude Chat | Output `w9-profile-batch3.pdf`; 6 fields filled |
 | CSV | `bulk_fill_from_csv` | Pass after reinstall | Original installed MCPB failed on quoted commas; fixed MCPB rerun preserved `"789 Comma Blvd, Suite 5"` through generated CSV -> bulk fill -> re-extract |
 | CSV | `extract_to_csv` | Pass with host caveat | Generated valid quoted CSV and returns row previews in `structuredContent`; Claude Desktop did not render row-level preview JSON visibly to Sonnet in the chat UI |
-| Text/visual | `read_pdf_content` text PDF | Not run | Need fixture |
-| Text/visual | scanned/image PDF behavior | Not run | Need fixture or generated image-only PDF |
-| Text/visual | `read_pdf_pages` | Not run | Use W-9 sample |
-| Text/visual | `search_pdf_text` | Not run | Search known W-9 text |
-| Text/visual | `render_pdf_page` | Not run | Use W-9 page 1 |
-| Text/visual | `render_pdf_region` | Not run | Use a visible W-9 region |
+| Text/visual | `read_pdf_content` text PDF | Pass in Claude Chat | W-9 text extraction returned 32,942 characters in Batch 4 |
+| Text/visual | scanned/image PDF behavior | Pass direct installed MCP | `image-only-084.pdf` returned no text, `extraction_mode=image-fallback`, `has_images=true`, and page render PNG `698 x 903 px` |
+| Text/visual | `read_pdf_pages` | Pass in Claude Chat | Page-scoped snippets returned for W-9 pages 1 and 2 in Batch 4 |
+| Text/visual | `search_pdf_text` | Pass in Claude Chat | `FATCA` returned 10 matches across pages 1-2 in Batch 4 |
+| Text/visual | `render_pdf_page` | Pass in Claude Chat | Final 0.8.4 chat retest returned PNG, `1236 x 1600 px`, `scale=2.02`, `renderer=macos-sips` |
+| Text/visual | `render_pdf_region` | Pass in Claude Chat | Final 0.8.4 chat retest returned PNG crop, `1200 x 320 px`, `scale=4`, `renderer=macos-sips` |
 | Files | `list_pdfs` allowed folder | Pass in Claude Chat | Found `w9-form-source.pdf` and `w9-filled-batch1.pdf` in the dedicated Downloads test folder |
 | Files | `get_pdf_info` form PDF | Pass in Claude Chat | Source: 4 pages, 123.26 KB, 22 fields, not encrypted; filled: 4 pages, 128.38 KB, 22 fields, not encrypted |
-| Files | `get_pdf_info` non-form PDF | Not run | Need fixture |
+| Files | `get_pdf_info` non-form PDF | Pass direct installed MCP | `non-form-text-084.pdf`: 1 page, 0.97 KB, no form fields, encrypted no |
 | Files | `get_pdf_resource_uri` | Pass in Claude Chat | Returned `pdf:///Users/silverbook/Downloads/pdf-toolkit-test-run-2026-04-23/w9-form-source.pdf` |
-| Page ops | `merge_pdfs` success | Not run | Need two fixture copies |
-| Page ops | `merge_pdfs` empty array error | Not run | Verify clear error |
-| Page ops | `merge_pdfs` same input/output error | Not run | Verify rejection |
-| Page ops | `split_pdf` exact ranges | Not run | Use 4-page W-9 or generated fixture |
+| Page ops | `merge_pdfs` success | Pass in Claude Chat | `pageops-merged-084.pdf`, 8 pages, SHA1 `7839fb61aed4fd930082f6a79226e5dfd7decb40` |
+| Page ops | `merge_pdfs` empty array error | Pass in Claude Chat | MCP log id `32`: `Error: input_paths must be a non-empty array of PDF file paths.`; no error-output file written |
+| Page ops | `merge_pdfs` same input/output error | Pass in Claude Chat | MCP log id `34`: `Error: output_path must be different from all input paths to prevent file corruption.`; source SHA1 remained `701a9e72dfe1c92ae42ce6e4b89dfa706d9c71b1` |
+| Page ops | `split_pdf` exact ranges | Pass in Claude Chat | `1-2,3-4` produced two 2-page PDFs; SHA1s `a8fbb09c81428bff97a08ba3e129f2d56e62f814`, `226907c084b92129dfd3ab1bd73af044d4fa1130` |
 | Page ops | `split_pdf` every-N pages | Not run | Use 4-page W-9 or generated fixture |
-| Page ops | `split_pdf` invalid range | Not run | Verify clear error |
-| Page ops | `rotate_pdf_pages` | Not run | Verify output visually |
-| Page ops | `reorder_pdf_pages` | Not run | Verify output visually |
+| Page ops | `split_pdf` invalid range | Pass in Claude Chat | MCP log id `35`: `Error: Page 100 is out of range (1-4).`; no output directory/file written |
+| Page ops | `rotate_pdf_pages` | Pass in Claude Chat | `pageops-rotated-084.pdf`, 4 pages, 22 form fields preserved, SHA1 `e2bdee07ecd3ad2b92bb89ffc063f47a9b7bd783` |
+| Page ops | `rotate_pdf_pages` invalid page | Pass in Claude Chat | MCP log id `37`: `Error: Page 99 is out of range (1-4).`; no error-output file written |
+| Page ops | `reorder_pdf_pages` | Pass in Claude Chat | `pageops-reordered-084.pdf`, 4 pages, SHA1 `3218dc9ad97257481ce488430122ba9c64f511cd` |
+| Page ops | `apply_page_plan` | Pass in Claude Chat | `pageops-plan-084.pdf`, 2 pages, 2 pages removed and 1 rotated, SHA1 `810228e1047114a0f1c76ae06c16ef3a03fd8bc7` |
+| Page ops | `apply_page_plan` invalid page | Pass in Claude Chat | MCP log id `38`: `Error: Page 99 is invalid (must be integer 1-4).`; no error-output file written |
 | Page ops UI | Manage tab rotate/reorder/delete/save | Not run | Needs Chat UI interaction |
-| Signatures | `detect_signature_zones` | Not run | Use W-9 or signing fixture |
+| Signatures | `detect_signature_zones` | Pass in Claude Chat | MCP log id `39`: found 2 zones; signature zone page 1 `x=79`, `y=502.1`, `width=260`, `height=18`, confidence `0.92`; date zone page 1 `x=381.6`, `y=510.8`, `width=110`, `height=18` |
 | Signatures | Sign tab opens | Pass in dev smoke | `smoke:ui-sign` opened Sign mode and signing modal in real browser dev harness |
-| Signatures | `create_signature` typed | Not run | Synthetic test name only |
-| Signatures | `list_signatures` / `load_signature` | Not run | Synthetic test signature |
-| Signatures | `add_signature_field` placeholder | Not run | Does not sign document |
-| Signatures | `apply_signature` missing intent rejection | Not run | Must verify legal guard |
-| Signatures | `apply_signature` stale timestamp rejection | Not run | Must verify legal guard |
-| Signatures | `apply_signature` fresh intent success | Not run | Use synthetic signature and explicit test intent only |
-| Permissions | Allowed directory succeeds | Not run | `~/Downloads` |
-| Permissions | Disallowed directory rejected | Not run | Use repo path without adding allowed directory |
+| Signatures | `create_signature` typed | Pass in Claude Chat | MCP log id `40`: saved typed synthetic local asset `pdf-toolkit-synthetic-typed-084`; no PDF signed |
+| Signatures | `list_signatures` / `load_signature` | Pass in Claude Chat | MCP log ids `41` and `42`: listed 5 signatures and loaded `pdf-toolkit-synthetic-typed-084` with display name `PDF Toolkit Synthetic Tester` |
+| Signatures | `add_signature_field` placeholder | Pass with model caveat | MCP log id `43`: wrote `sign-placeholder-084.pdf`, SHA1 `0e52bf134f446718ffa29422d3a5d40889b7ab00`; Sonnet guessed `(72,670,200,36)` instead of using detected zone `(79,502.1,260,18)` |
+| Signatures | `add_signature_field` exact detected zone | Pass direct installed MCP | Direct installed stdio call wrote `sign-placeholder-detected-084.pdf` at `(79,502.1,260,18)`, SHA1 `5788441716a373279661ef2b592f89e0c594e466`; `get_pdf_info` verified 4 pages and 22 fields |
+| Signatures | `apply_signature` missing intent rejection | Pass in Claude Chat | MCP log id `44`: rejected empty intent/timestamp; no `sign-error-missing-intent-084.pdf` written |
+| Signatures | `apply_signature` stale timestamp rejection | Pass in Claude Chat | MCP log id `45`: rejected `2026-04-22T00:00:00Z` as more than 24 hours old; no `sign-error-stale-intent-084.pdf` written |
+| Signatures | `apply_signature` fresh intent success | Deferred | Do not run until the user provides a verbatim signing-intent sentence for this exact synthetic signing test |
+| Permissions | Allowed directory succeeds | Pass direct installed MCP | `list_pdfs` with `ALLOWED_DIRECTORIES=~/Downloads` found 13 PDFs in the dedicated Downloads test folder |
+| Permissions | Disallowed directory rejected | Pass direct installed MCP | `get_pdf_info` on repo `example-fw9.pdf` rejected with allowed-directory error listing `~/Downloads` and `~/.pdf-toolkit-files` |
 | Permissions | User config allowed directory update | Not run | Only if needed; avoid broad access |
-| Security | `fetch_pdf_from_url` public URL | Not run | Use safe public PDF if network allowed |
-| Security | `fetch_pdf_from_url` private/metadata blocked | Not run | Automated tests already cover helper-level SSRF |
+| Security | `fetch_pdf_from_url` public URL | Pass direct installed MCP | W3C dummy PDF fetched to `fetched-dummy-084.pdf`, 13 KB, 1 page, SHA1 `90ffd2359008d82298821d16b21778c5c39aec36` |
+| Security | `fetch_pdf_from_url` private/metadata blocked | Pass direct installed MCP | Loopback URL `http://127.0.0.1:80/private.pdf` rejected: `Refusing to download from private/loopback host "127.0.0.1"` |
 | Model behavior | Sonnet tool choice | Partial | Sonnet in Chat selected PDF Tools correctly across Batches 1-3 |
 | Model behavior | Sonnet evidence discipline | Fail observed | In Batch 3 Sonnet marked CSV round-trip PASS without direct access to CSV contents; local inspection showed failure |
 | Model behavior | Opus tool choice | Not run | Start a separate fresh Chat if available |
@@ -232,33 +246,30 @@ structured preview fields, row-width/header validation, and bounded
 
 ## Latest Observation
 
-Claude Desktop Chat Batches 1, 2, and the Batch 3 rerun are green at the
-tool/file level. The original Batch 3 exposed a real release blocker in the
-installed MCPB's CSV handling: `bulk_fill_from_csv` corrupted quoted comma
-values generated by `extract_to_csv`, because the installed server CSV parser
-split on every comma instead of respecting quoted fields. This is now fixed in
-the local repo, covered by a regression test, rebuilt into the MCPB, verified
-in the installed Claude Desktop extension bundle, and rerun successfully in a
-fresh Claude Desktop chat.
+Installed Claude Desktop runtime is now verified on `0.8.4`, including the
+macOS `sips` render fallback. Final Chat retest returned PNGs from
+`render_pdf_page` and `render_pdf_region` with structured
+`renderer=macos-sips` metadata. Positive page operations are green:
+merge/split/rotate/reorder/apply-plan all produced valid PDFs and were verified
+with `get_pdf_info` plus local SHA1 evidence.
 
-Sonnet 4.6 used the installed PDF Tools MCPB correctly for display, field
-reading, synthetic form fill, output display, validation, file listing, PDF
-info, resource URI generation, profiles, and CSV tools. The original Batch 3
-showed a model/tooling evidence gap because Sonnet marked the comma round-trip
-as PASS without direct CSV row evidence. The rerun improved that behavior:
-Sonnet refused to overclaim when Claude Desktop did not visibly render row-level
-`structuredContent` preview data.
+The page-operation error-path batch is also green. Empty merge, same
+input/output merge, out-of-range split, out-of-range rotate, and invalid
+`apply_page_plan` all returned clear error text and wrote no error-output files.
+The source fixture checksum stayed `701a9e72dfe1c92ae42ce6e4b89dfa706d9c71b1`
+after the self-overwrite rejection test.
 
-Manual embedded viewer controls are also green in Claude Desktop: page
-navigation moved to page `2 of 4`, zoom changed to `125%`, search found
-`FATCA` with `7 of 15` matches and visible highlights, and fullscreen mode
-opened/exited without losing viewer state.
-
-Automated build/test/dev-viewer gates are green. The real-browser dev harness
-confirmed that Sign mode, inspect-region, preview-to-zone, and draw-signature
-flows still respond after the current package build. The only failure observed
-in the automated batch was sandbox-related: `agent-browser` could not write to
-`~/.agent-browser` until the command was rerun with escalation.
+Four host/model caveats remain on the docket. Claude Desktop sometimes renders
+empty embedded PDF viewers after tool calls that actually returned text errors,
+it still does not visibly expose all structuredContent details to Sonnet for
+evidence-heavy claims, Sonnet ignored detected signature-zone coordinates in
+the first signature placeholder batch by guessing `(72,670,200,36)`, and
+Claude Desktop's accessibility window disappeared again after restart. The
+exact detected-zone placeholder was verified through the installed MCP server
+directly at `(79,502.1,260,18)`. Non-form, image-only, permission, and URL
+fetch security checks also passed through direct installed MCP stdio while the
+Claude window was unavailable. For release confidence, continue pairing Claude
+visible chat output with MCP log and local file/hash inspection.
 
 Cowork did not expose local PDF Tools desktop extension tools. This confirms the
 local MCPB should be tested and documented as Claude Desktop Chat/local MCP host
@@ -266,11 +277,11 @@ functionality, while Cowork requires a separate remote connector path.
 
 ## Next Batch
 
-Recommended next step: continue the release docket with a fresh Claude Desktop
-chat for text/visual tools (`read_pdf_content`, `read_pdf_pages`,
-`search_pdf_text`, `render_pdf_page`, `render_pdf_region`) and then page
-operations/signature guardrails. Keep using local CSV/file inspection for any
-data-integrity claims that Claude Desktop does not render directly.
+Recommended next step: recover Claude Desktop's visible/accessibility window if
+possible, then continue with permissions, non-form/image-only PDFs, and optional
+Opus tool-choice behavior if the model picker exposes Opus. Keep using local
+CSV/file/hash inspection for any data-integrity claims that Claude Desktop does
+not render directly.
 
 ## Claude Desktop Batch 3 Rerun - 2026-04-23 16:32 PT
 
@@ -422,3 +433,122 @@ Claude Desktop retest in a fresh chat.
 Next action: recover a visible Claude Desktop window/accessibility surface, then
 retest `render_pdf_page`, `render_pdf_region`, and `get_page_analysis` in a
 fresh Claude chat against the already-loaded `0.8.4` MCP runtime.
+
+## Claude Desktop 0.8.4 Final Chat Retest - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Claude Desktop window recovery | Pass | User confirmed Claude Desktop was open; Computer Use attached successfully to `com.anthropic.claudefordesktop` on `claude.ai/new` |
+| Runtime before chat retest | Pass | Previous Claude MCP log initialization showed PDF Tools `serverInfo.version` `0.8.4` after final overlay/restart |
+| Fresh chat started | Pass | `claude.ai/chat/23676ac8-d714-4682-ae02-a153c82bcfdf`, titled `PDF Tools 0.8.4 render testing`, on Sonnet 4.6 |
+| Installed MCP runtime in chat | Pass | Claude MCP log initialized PDF Tools with `serverInfo.version` `0.8.4` at `2026-04-24T01:33:05.998Z` |
+| Tool selection discipline | Pass / extra call | Claude used the installed `PDF Tools - View, Fill, Merge, Split, Manage Pages, Extract` integration. It made one extra `render_pdf_page` call without `max_dimension_px` before the exact requested call. |
+| `render_pdf_page` exact call | Pass | MCP log id `4`: `page=1`, `max_dimension_px=1600`, returned PNG image; structured metadata `rendered_width_px=1236`, `rendered_height_px=1600`, `scale=2.02`, `renderer=macos-sips`, `mime_type=image/png` |
+| `render_pdf_region` exact call | Pass | MCP log id `5`: `page=1`, `x=20`, `y=20`, `width=300`, `height=80`, `max_dimension_px=1200`, returned PNG image; structured metadata `rendered_width_px=1200`, `rendered_height_px=320`, `scale=4`, `renderer=macos-sips`, `mime_type=image/png` |
+| `get_page_analysis` exact call | Pass / host-partial | MCP log id `6` returned structuredContent with `total_pages=4`, `majority_orientation=portrait`, and per-page width/height/display width/display height/rotation/orientation/text_length/text_snippet/has_images. Claude visible chat incorrectly summarized that structured per-page metadata was not returned. |
+
+## Claude Desktop 0.8.4 Page Ops Batch - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Fresh chat cadence | Pass | Started a new Claude Desktop chat after the render batch to avoid compaction/tool-history drag |
+| Chat | Pass | `claude.ai/chat/6d708ca8-de66-48c1-bc3f-1158aa5cdc74`, titled `PDF Tools 0.8.4 page operations batch test` |
+| Batch scope | Pass | Positive page operations: `merge_pdfs`, `split_pdf`, `rotate_pdf_pages`, `reorder_pdf_pages`, `apply_page_plan`, and `get_pdf_info` verification on outputs |
+| `merge_pdfs` | Pass | MCP log id `9`: merged `w9-form-source.pdf` + `w9-filled-batch1.pdf` into `pageops-merged-084.pdf`, 8 pages, 116 KB; `get_pdf_info` id `25` verified 8 pages |
+| `split_pdf` exact ranges | Pass / duplicate call | MCP log ids `13` and `14`: split `w9-form-source.pdf` by `1-2,3-4`; both calls produced `w9-form-source_pages_1-2_1.pdf` and `w9-form-source_pages_3-4_2.pdf`; `get_pdf_info` ids `29` and `30` verified 2 pages each |
+| `rotate_pdf_pages` | Pass | MCP log id `16`: rotated pages `[1,3]` by 90 degrees into `pageops-rotated-084.pdf`; `get_pdf_info` id `26` verified 4 pages and 22 form fields |
+| `reorder_pdf_pages` | Pass | MCP log id `21`: reordered pages `[4,3,2,1]` into `pageops-reordered-084.pdf`; `get_pdf_info` id `27` verified 4 pages |
+| `apply_page_plan` | Pass | MCP log id `24`: wrote `pageops-plan-084.pdf` with `page_order=[2,1]` and rotation on original page 2; tool reported 2 pages removed and 1 rotated; `get_pdf_info` id `28` verified 2 pages |
+| Host/tool-loading behavior | Noted | Claude loaded the PDF Tools app resource and embedded viewers for page-operation outputs, which triggered `read_pdf_bytes` and `set_active_document` calls. This is host UI behavior, not a server failure. |
+| Output file evidence | Pass | Local SHA1s: merged `7839fb61aed4fd930082f6a79226e5dfd7decb40`; rotated `e2bdee07ecd3ad2b92bb89ffc063f47a9b7bd783`; reordered `3218dc9ad97257481ce488430122ba9c64f511cd`; plan `810228e1047114a0f1c76ae06c16ef3a03fd8bc7`; split files `a8fbb09c81428bff97a08ba3e129f2d56e62f814` and `226907c084b92129dfd3ab1bd73af044d4fa1130` |
+
+## Claude Desktop 0.8.4 Page Ops Error Batch - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Fresh chat cadence | Pass | Started a new Claude Desktop chat after the positive page-ops batch to avoid compaction/tool-history drag |
+| Chat | Pass | `claude.ai/chat/48f5a78a-2bd4-4447-beec-1d5aeb917967`, titled `PDF Tools error path testing batch`, on Sonnet 4.6 |
+| Batch scope | Pass | Intentional error cases for `merge_pdfs`, `split_pdf`, `rotate_pdf_pages`, and `apply_page_plan` using only the installed PDF Tools MCP extension |
+| `merge_pdfs` empty array | Pass | MCP log id `32`: `Error: input_paths must be a non-empty array of PDF file paths.` No `pageops-error-empty-merge.pdf` exists on disk |
+| `merge_pdfs` same input/output | Pass | MCP log id `34`: `Error: output_path must be different from all input paths to prevent file corruption.` Source file SHA1 remained `701a9e72dfe1c92ae42ce6e4b89dfa706d9c71b1`, matching repo `example-fw9.pdf` |
+| `split_pdf` invalid range | Pass | MCP log id `35`: `Error: Page 100 is out of range (1-4).` No output files were created in `pageops-error-invalid-range` |
+| `rotate_pdf_pages` invalid page | Pass | MCP log id `37`: `Error: Page 99 is out of range (1-4).` No `pageops-error-rotate.pdf` exists on disk |
+| `apply_page_plan` invalid page | Pass | MCP log id `38`: `Error: Page 99 is invalid (must be integer 1-4).` No `pageops-error-plan.pdf` exists on disk |
+| Host error-result caveat | Noted | Claude displayed empty embedded PDF viewers for the two `merge_pdfs` error responses even though the MCP log shows text-only errors and no output files. Treat as Claude host/UI behavior to watch, not server data loss. |
+
+Next action: start a fresh Claude Desktop chat for signature/legal guardrails,
+then non-form/image-only fixtures and permissions.
+
+## Claude Desktop 0.8.4 Signature Guardrail Batch - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Fresh chat cadence | Pass | Started a new Claude Desktop chat after the page-op error batch |
+| Chat | Pass | `claude.ai/chat/7cc9b84e-a216-418f-aba9-31ef65639597`, titled `PDF signature guardrail batch testing`, on Sonnet 4.6 |
+| Batch scope | Pass | Signature-zone detection, synthetic typed signature asset create/list/load, placeholder field write, and two intentional `apply_signature` rejection cases |
+| `detect_signature_zones` | Pass | MCP log id `39`: found 2 zones; signature zone page 1 `x=79`, `y=502.1`, `width=260`, `height=18`, confidence `0.92`; date zone page 1 `x=381.6`, `y=510.8`, `width=110`, `height=18` |
+| `create_signature` typed asset | Pass | MCP log id `40`: saved `pdf-toolkit-synthetic-typed-084` at `~/.pdf-toolkit-files/signatures/pdf-toolkit-synthetic-typed-084.json`; local SHA1 `220285cc2c180c28b968c737a4016f0e0e578b46`; this does not sign a PDF |
+| `list_signatures` / `load_signature` | Pass | MCP log ids `41` and `42`: listed 5 signatures and loaded the synthetic typed signature with display name `PDF Toolkit Synthetic Tester` |
+| `add_signature_field` placeholder | Pass with model caveat | MCP log id `43`: wrote `sign-placeholder-084.pdf`, size 126,765 bytes, SHA1 `0e52bf134f446718ffa29422d3a5d40889b7ab00`. Sonnet guessed coordinates `(72,670,200,36)` instead of using detected zone `(79,502.1,260,18)` despite being asked to use a detected zone. |
+| `apply_signature` empty intent | Pass | MCP log id `44`: rejected with `Error: apply_signature requires 'user_intent_statement' ... Agents must elicit this from the user before calling this tool; do not invent one.` No `sign-error-missing-intent-084.pdf` exists on disk. |
+| `apply_signature` stale intent timestamp | Pass | MCP log id `45`: rejected with `Error: user_confirmed_at is more than 24 hours old (50.0h). Re-confirm with the user before signing.` No `sign-error-stale-intent-084.pdf` exists on disk. |
+| Fresh valid signature | Deferred | Correctly not attempted. User has not provided a verbatim signing-intent sentence for this exact synthetic signing test, and the tool instructions prohibit fabricating one. |
+| Source safety | Pass | `w9-form-source.pdf` SHA1 remained `701a9e72dfe1c92ae42ce6e4b89dfa706d9c71b1` after the batch |
+
+Next action: run a focused corrective batch for exact signature-zone coordinate
+use. This is a Sonnet/tool-use discipline check, not a server blocker.
+
+## Direct Installed MCP Exact Signature-Zone Check - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Claude Desktop window state | Blocked | After `osascript activate`, `open -a Claude`, quit, and relaunch, Computer Use could not reacquire a Claude Desktop accessibility window (`cgWindowNotFound`, then 120s timeout) |
+| Fallback path | Pass | Ran the installed extension server directly over MCP stdio from `~/Library/Application Support/Claude/Claude Extensions/local.mcpb.open-document-alliance.pdf-toolkit/server/index.js` with `ALLOWED_DIRECTORIES=~/Downloads` |
+| Exact detected-zone placeholder | Pass | `add_signature_field` wrote `/Users/silverbook/Downloads/pdf-toolkit-test-run-2026-04-23/sign-placeholder-detected-084.pdf` at page 1, `x=79`, `y=502.1`, `width=260`, `height=18`, label `Synthetic QA detected zone` |
+| Output verification | Pass | `get_pdf_info` returned 4 pages, 123.80 KB, 612x792 pt, 22 form fields, encrypted no; local SHA1 `5788441716a373279661ef2b592f89e0c594e466` |
+| Region render verification | Pass | `render_pdf_region` on the exact zone returned PNG metadata `1040 x 72 px`, `scale=4`, `renderer=native-canvas`, `mime_type=image/png`. Direct stdio used `native-canvas`; Claude Desktop chat runtime render fallback remains previously verified as `macos-sips`. |
+
+Conclusion: the server handles exact detected-zone coordinates correctly. The
+bad coordinate in the previous batch is a Sonnet/tool-use discipline issue, not
+a server placement bug.
+
+Next action: recover Claude Desktop's visible/accessibility window before more
+Chat-level tests, or continue low-level installed-MCP validation for fixtures
+that do not need model/host behavior.
+
+## Direct Installed MCP Non-Form, Image-Only, Permissions - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Fixture generation | Pass | Created harmless fixtures in `/Users/silverbook/Downloads/pdf-toolkit-test-run-2026-04-23`: `non-form-text-084.pdf` SHA1 `b054e95a10a123d439b4f95155528498b8678ea1`; `image-only-084.pdf` SHA1 `7fbbc752eddb41520715b2e73849ecc34b413292` |
+| Hung fixture attempt | Noted | First image-fixture generation attempt hung on an invalid/overcomplicated PNG embed path and was stopped with `pkill -f "PDF Toolkit non-form text fixture"`; no repo files were touched |
+| Fallback path | Pass | Ran installed extension server directly over MCP stdio with `ALLOWED_DIRECTORIES=~/Downloads` because Claude Desktop accessibility remained unavailable |
+| Non-form `get_pdf_info` | Pass | `non-form-text-084.pdf`: 1 page, 0.97 KB, 612x792 pt, form fields none, encrypted no |
+| Non-form `read_pdf_content` | Pass | Extracted 111 characters; `structuredContent.text_found=true`, `extraction_mode=text`, 1 page read |
+| Non-form `get_page_analysis` | Pass | 1 portrait page, `text_length=111`, `has_images=false` |
+| Non-form `render_pdf_page` | Pass | Returned PNG metadata `698 x 903 px`, `scale=1.14`, direct stdio renderer `native-canvas` |
+| Image-only `get_pdf_info` | Pass | `image-only-084.pdf`: 1 page, 0.93 KB, 612x792 pt, form fields none, encrypted no |
+| Image-only `read_pdf_content` | Pass | Returned no extracted text and image fallback: `text_found=false`, `extraction_mode=image-fallback`, `image_renderer=native-canvas` |
+| Image-only `get_page_analysis` | Pass | 1 portrait page, `text_length=0`, `has_images=true` |
+| Image-only `render_pdf_page` | Pass | Returned PNG metadata `698 x 903 px`, `scale=1.14`, direct stdio renderer `native-canvas` |
+| Allowed directory | Pass | `list_pdfs` in the dedicated Downloads test folder found 13 PDFs with `ALLOWED_DIRECTORIES=~/Downloads` |
+| Disallowed directory | Pass | `get_pdf_info` on `/Users/silverbook/Sites/pdf-toolkit-mcp/example-fw9.pdf` rejected: extension only allowed `/Users/silverbook/Downloads` and `/Users/silverbook/.pdf-toolkit-files` |
+
+Conclusion: server-level fixture and permission behavior is green in the
+installed bundle. Remaining release-confidence gaps are Claude Desktop
+host/model behavior, not these underlying tool paths.
+
+## Direct Installed MCP URL Fetch Security - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Fallback path | Pass | Ran installed extension server directly over MCP stdio with `ALLOWED_DIRECTORIES=~/Downloads` because Claude Desktop accessibility remained unavailable |
+| Public fetch, wrong parameter attempt | Noted | A first call used unsupported `output_path`; tool ignored it and correctly defaulted to `/Users/silverbook/Downloads/dummy.pdf`. Follow-up `get_pdf_info` on the nonexistent requested path failed. This is caller/API-shape friction, not a server failure. |
+| Public fetch, documented parameters | Pass | `fetch_pdf_from_url` with `destination_dir` and `filename` downloaded W3C dummy PDF to `/Users/silverbook/Downloads/pdf-toolkit-test-run-2026-04-23/fetched-dummy-084.pdf`, 13 KB, SHA1 `90ffd2359008d82298821d16b21778c5c39aec36` |
+| Public fetch verification | Pass | `get_pdf_info` on `fetched-dummy-084.pdf`: 1 page, 12.95 KB, 595x842 pt, form fields none, encrypted no |
+| Private/loopback block | Pass | `fetch_pdf_from_url` on `http://127.0.0.1:80/private.pdf` rejected with `Error: Refusing to download from private/loopback host "127.0.0.1". Set allow_private_hosts=true if this is intentional.` |
+| Local artifact caveat | Noted | The initial unsupported-parameter call left `/Users/silverbook/Downloads/dummy.pdf` with the same SHA1 as the final fetched fixture. It is harmless but outside the dedicated test folder. |
+
+Conclusion: installed MCP URL fetch works for public PDFs and blocks loopback by
+default. The main product caveat is that Claude/model callers should use
+`destination_dir` + `filename`, not `output_path`.
