@@ -1,8 +1,12 @@
 # PDF Tools for Claude Desktop and Local MCP Hosts
 
-The full local PDF workflow for Claude Desktop and MCP hosts.
+The local PDF workflow for Claude Desktop and MCP hosts: fill, sign, merge,
+split, extract, and analyze PDFs without sending files to a web app.
 
-Instead of just opening a PDF, PDF Tools lets Claude view it interactively, fill forms, save reusable profiles, merge and split files, reorganize pages visually, extract structured data, and analyze document content without uploading anything to a web app.
+Instead of just opening a PDF, PDF Tools lets Claude fetch PDF URLs to your
+machine, inspect documents visually, fill forms, save reusable profiles, add
+signature/date zones, merge and split files, reorganize pages visually, extract
+structured data, and analyze document content locally.
 
 This package targets Claude Desktop and other local MCP hosts today. It does not yet include a remote connector for Claude Cowork / web-hosted Claude.
 
@@ -40,8 +44,10 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 
 - **Interactive viewer:** page navigation, zoom, search, fullscreen, text selection, and form-field sidebar
 - **Form workflows:** `fill_pdf`, `read_pdf_fields`, `bulk_fill_from_csv`, and reusable profiles
+- **Sign mode:** signature/date zone detection, saved or drawn local signatures, text stamping, inspect-region, and preview-to-zone flows
+- **URL-to-PDF workflows:** fetch HTTP(S) PDF links to the local machine when sandboxed web fetches are blocked
 - **Page organization:** merge, split, rotate, reorder, and apply full page plans in one pass
-- **Extraction and analysis:** text extraction, CSV export, page-level analysis, metadata, and validation
+- **Extraction and analysis:** page-bounded reads, text search, page/region rendering, CSV export, page-level analysis, metadata, and validation
 - **Local-first:** files stay on your machine
 - **Directory sandbox:** Claude Desktop users can choose which local folders PDF Tools may read from or write to
 
@@ -54,12 +60,27 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 - See form fields in a sidebar with fill status
 - Use visual page management to reorder, rotate, and remove pages before saving a new copy
 
+### URL-to-PDF Workflows
+
+- Download PDFs from HTTP(S) URLs to your local machine
+- Open downloaded PDFs immediately in the viewer for fill, sign, page management, extraction, or analysis
+- Use the local MCP host for cases where Claude's normal web/proxy fetch path cannot retrieve the PDF
+- Keep downloaded PDFs inside user-approved local directories
+
 ### Forms and Reusable Profiles
 
 - Fill W-9s, 1099s, rental applications, waivers, and any fillable PDF
 - Save personal or business details as reusable profiles
 - List, load, and apply saved profiles so repeated forms take seconds instead of minutes
 - Bulk fill many PDFs from CSV data and validate required fields before submission
+
+### Sign Mode and Local Signatures
+
+- Detect likely signature, initials, and date zones with model-readable coordinates
+- Switch to the viewer's Sign tab to place signatures, dates, or text on detected zones
+- Draw or reuse saved local signatures
+- Inspect a region, preview it, and turn it into a typed signing zone when automatic detection is not enough
+- Keep signing edits local, with active-document tracking and backup behavior for same-file mutations
 
 ### Page Organization Tools
 
@@ -90,12 +111,20 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 - "Open my W-9 and show me the fields"
 - "Display the contract PDF in my Documents folder"
 - "Search this report for every mention of indemnification"
+- "Download this PDF URL locally, open it, and tell me what needs to be filled out"
 
 ### Fill Forms
 
 - "Fill this W-9 with my business info: Company Name LLC, 123 Main St, Tax ID 12-3456789"
 - "Use my work profile to fill this application"
 - "Save this data as a reusable profile called advisor-office"
+
+### Sign and Date
+
+- "Find every place this PDF needs a signature or date"
+- "Open Sign mode so I can draw and place my signature"
+- "Add sign-here and date boxes to this completed form"
+- "Inspect the signature block on page 5 and create a custom signing zone there"
 
 ### Organize Pages
 
@@ -120,6 +149,7 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 ### Viewer and Reading
 
 - `display_pdf`
+- `fetch_pdf_from_url`
 - `list_pdfs`
 - `read_pdf_content`
 - `read_pdf_pages`
@@ -139,6 +169,17 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 - `fill_with_profile`
 - `validate_pdf`
 
+### Signatures
+
+- `detect_signature_zones`
+- `add_signature_field`
+- `prepare_signing_packet`
+- `create_signature`
+- `list_signatures`
+- `load_signature`
+- `apply_signature`
+- `apply_text`
+
 ### Organization and Page Management
 
 - `merge_pdfs`
@@ -152,6 +193,14 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 - `extract_to_csv`
 - `get_pdf_info`
 - `get_page_analysis`
+
+### Active Document and Host Helpers
+
+- `get_active_document`
+- `set_active_document`
+- `get_pdf_resource_uri`
+- `read_pdf_bytes`
+- `reveal_in_finder`
 
 ## Build From Source
 
