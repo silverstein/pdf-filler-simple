@@ -32,9 +32,9 @@ session can resume without relying on chat context.
 | MCPB artifact | `/Users/silverbook/Sites/pdf-toolkit-mcp/pdf-toolkit-mcp.mcpb` |
 | Original MCPB SHA1 | `71cd7ae1a650e0c2f92a2156de3b8a12353473a6` |
 | Rebuilt fixed MCPB SHA1 | `c7cbfe3831386efce4b44e672908e312421466cb` |
-| Latest hardened MCPB SHA1 | `6ab474388c6445ae6c3db1533ce1d85ba8fd31c1` |
+| Latest hardened MCPB SHA1 | `8dd4a308bbd183bfd3738ae4f79826c00c51e095` |
 | Installed extension id | `local.mcpb.open-document-alliance.pdf-toolkit` |
-| Installed version | `0.8.1` verified during Batch 3 rerun; latest built package is `0.8.2` and still needs Claude Desktop update/install |
+| Installed version | `0.8.4` by backed-up manual overlay; normal Claude Desktop installer UI was blocked, and chat-level runtime retest remains blocked by Claude Desktop windowlessness |
 | Claude Desktop modes | Chat supported; Cowork boundary confirmed unsupported for local MCPB |
 
 ## Fixtures
@@ -213,13 +213,10 @@ Local CSV evidence:
 | Reinstalled MCPB SHA | Pass in Claude Desktop | Source artifact verified as SHA1 `c7cbfe3831386efce4b44e672908e312421466cb`; installed server timestamp `Apr 23 16:29:40 2026` |
 | Hardened MCPB rebuild after adversarial review | Pass locally | `mcpb pack` produced `/Users/silverbook/Sites/pdf-toolkit-mcp/pdf-toolkit-mcp.mcpb`, version `0.8.2`, SHA1 `6ab474388c6445ae6c3db1533ce1d85ba8fd31c1`, 32.5 MB |
 
-Important status: the comma fix is active in Claude Desktop. The installed
-local extension bundle contains the fixed parser/writer and the structured
-preview fields used for the Batch 3 rerun. The later adversarial-review
-hardening is built into the latest local MCPB artifact as version `0.8.2`, but
-it was added after the Claude Desktop reinstall; update/install the latest
-hardened MCPB before any further Claude Desktop validation that depends on
-row-width rejection or bounded `extract_to_csv` metadata.
+Important status: the final hardened `0.8.2` MCPB is active in Claude Desktop.
+The installed local extension bundle contains the fixed parser/writer,
+structured preview fields, row-width/header validation, and bounded
+`extract_to_csv` metadata.
 
 ## Automated Batch 1 - 2026-04-23 15:59 PT
 
@@ -311,5 +308,117 @@ cases that mattered for this release candidate.
 
 Packaging note: after this review, `mcpb pack` rebuilt
 `/Users/silverbook/Sites/pdf-toolkit-mcp/pdf-toolkit-mcp.mcpb` as version
-`0.8.2` with SHA1 `6ab474388c6445ae6c3db1533ce1d85ba8fd31c1`. That artifact is
-newer than the currently verified Claude Desktop installation.
+`0.8.2` with SHA1 `6ab474388c6445ae6c3db1533ce1d85ba8fd31c1`.
+
+## Claude Desktop 0.8.2 Reinstall - 2026-04-23 16:49 PT
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| User uninstall | Done by user | User confirmed they uninstalled the previous PDF Tools extension before reinstall |
+| `0.8.2` MCPB opened | Pass | `/Users/silverbook/Sites/pdf-toolkit-mcp/pdf-toolkit-mcp.mcpb`, SHA1 `6ab474388c6445ae6c3db1533ce1d85ba8fd31c1` |
+| Install completed | Pass | Claude Desktop extension details modal shows `Uninstall`, `Enabled`, and version `0.8.2` |
+| Installed manifest verification | Pass | Installed manifest reports version `0.8.2` |
+| Installed server verification | Pass | Installed server contains `Malformed CSV: row`, `duplicate header`, `blank header`, `row_count`, `preview_row_count`, and `preview_rows`; no `rows: allData` or `line.split` match |
+| Installed server timestamp | Pass | `Apr 23 16:49:34 2026`, size `159805` bytes |
+
+Next action: start a fresh Claude Desktop chat for the text/visual tools batch.
+
+## Claude Desktop Batch 4 Text/Visual Tools - 2026-04-23 16:50 PT
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Fresh chat started | In progress | `claude.ai/chat/fab75b46-1197-492e-86e0-956f9ca64c3c` |
+| Installed bundle before batch | Pass | Installed PDF Tools version `0.8.2`; server contains row-width/header hardening and bounded preview metadata |
+| Batch scope | In progress | `get_pdf_info`, `read_pdf_content`, `read_pdf_pages`, `search_pdf_text`, `get_page_analysis`, `render_pdf_page`, `render_pdf_region`, `display_pdf` on W-9 fixture |
+| `get_pdf_info` | Pass | 4 pages, 22 form fields, 612x792 pt, 123.26 KB, not encrypted |
+| `read_pdf_content` | Pass | 32,942 characters extracted; snippets included W-9 header text and page 4 identity-theft text |
+| `read_pdf_pages` | Pass | Page-scoped snippets returned for pages 1 and 2 |
+| `search_pdf_text` | Pass | `FATCA` returned 10 matches across pages 1-2 with page-numbered snippet evidence |
+| `get_page_analysis` | Pass / host-partial | MCP log confirms structuredContent included `total_pages`, `majority_orientation`, per-page dimensions, rotation, orientation, text lengths, snippets, and image flags. Claude's visible chat only summarized `Analyzed 4 pages`. |
+| `render_pdf_page` | Fail | Tool error: native canvas binding missing, `Cannot find native binding`; PNG render unavailable |
+| `render_pdf_region` | Fail | Same native canvas binding failure as `render_pdf_page` |
+| `display_pdf` | Pass | Viewer opened `w9-form-source.pdf`, 123 KB, 22 form fields detected |
+
+Conclusion: text/search/viewer path is green in installed `0.8.2`, but
+server-side visual rendering is release-blocked by missing native canvas binding
+inside the installed MCPB runtime. Next action is to inspect package contents and
+dependency resolution before rebuilding/reinstalling.
+
+## Render Binding Follow-up - 2026-04-23 16:57 PT
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Installed native package present | Pass | Installed bundle contains `node_modules/@napi-rs/canvas-darwin-arm64/skia.darwin-arm64.node` |
+| Shell import from installed bundle | Pass | `import("@napi-rs/canvas")` works from the installed extension cwd and exposes `createCanvas` |
+| Claude runtime failure reproduced in logs | Pass | Claude MCP log shows `render_pdf_page` and `render_pdf_region` failed with `Cannot find native binding`; Claude main log shows stack at installed `server/index.js:94` |
+| Likely failure class | In progress | The installed package is present and shell-loadable, so the working hypothesis is Electron/Claude MCP utility-process module resolution or native binding loading behavior, not a missing file |
+| Code mitigation | Pass locally | `server/index.js` now pre-resolves the platform native binding path and temporarily sets `NAPI_RS_NATIVE_LIBRARY_PATH` during `@napi-rs/canvas` import; failures now include nested cause-chain details |
+| Version bump | Pass locally | Updated package/manifest versions to `0.8.3` so Claude Desktop can distinguish the render-binding rebuild from installed `0.8.2` |
+| Full local tests | Pass | `npm test`: 17 files, 172 tests passed; known post-success Vitest close-timeout warning remains |
+| Render local tests | Pass | `npx vitest run test/render-pdf-page.test.js`: 1 file, 9 tests passed; known post-success close-timeout warning remains |
+
+Next action: pack `0.8.3`, reinstall it into Claude Desktop, restart/start a
+fresh Claude chat, and rerun the two render tools plus `get_page_analysis`
+visibility check.
+
+## Claude Desktop 0.8.3 Reinstall - 2026-04-23 17:02 PT
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| `0.8.3` MCPB packed | Pass | `mcpb pack` produced `/Users/silverbook/Sites/pdf-toolkit-mcp/pdf-toolkit-mcp.mcpb`, SHA1 `b74ec44d010374e4852fc7dfa741e3502fecdb50`, 32.5 MB |
+| Computer Use install | Pass | Used Computer Use to click Claude Desktop `Update`, `Install`, and confirmation `Install` controls |
+| Claude UI state | Pass | Extension details modal shows `Uninstall`, `Enabled`, and version `0.8.3` |
+| Installed manifest verification | Pass | Installed manifest reports version `0.8.3` |
+| Installed server verification | Pass | Installed server contains `getCanvasNativeBindingCandidate`, `NAPI_RS_NATIVE_LIBRARY_PATH`, and `formatErrorChain` mitigation |
+| Installed native package verification | Pass | Installed bundle contains `@napi-rs/canvas-darwin-arm64/skia.darwin-arm64.node` |
+
+Next action: start a fresh Claude chat and rerun `render_pdf_page`,
+`render_pdf_region`, and `get_page_analysis` on the W-9 fixture.
+
+## Render Binding Root Cause and 0.8.4 Fix - 2026-04-23 17:14 PT
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| `0.8.3` Claude render retest | Fail | Fresh chat `claude.ai/chat/5038ef66-bc5c-4513-a066-f7ef6a69e3ee`; `render_pdf_page` and `render_pdf_region` still failed |
+| Root cause clarified | Pass | New error chain shows `ERR_DLOPEN_FAILED`: `@napi-rs/canvas-darwin-arm64/skia.darwin-arm64.node` code signature is not valid inside Claude UtilityProcess because mapped file and process have different Team IDs |
+| `get_page_analysis` retest | Pass / host-partial | MCP log again confirms structuredContent with 4 pages, dimensions, orientation, text lengths/snippets, and `has_images`; visible chat may summarize only |
+| System-renderer fallback | Pass locally | Added macOS `sips` fallback for render tools when native canvas fails or `PDF_TOOLS_FORCE_SYSTEM_RENDERER=1` is set |
+| MCP server version | Pass locally | Updated hard-coded MCP `serverInfo.version` from stale `0.8.1` to `0.8.4` |
+| Full local tests | Pass | `npm test`: 17 files, 172 tests passed; known post-success Vitest close-timeout warning remains |
+| Forced fallback render tests | Pass | `PDF_TOOLS_FORCE_SYSTEM_RENDERER=1 npx vitest run test/render-pdf-page.test.js`: 1 file, 9 tests passed; known close-timeout warning remains |
+
+Next action: pack and reinstall `0.8.4`, then rerun the render/page-analysis
+Claude Desktop retest in a fresh chat.
+
+## Claude Desktop 0.8.4 Reinstall - 2026-04-23 17:15 PT
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| `0.8.4` MCPB packed | Pass | `mcpb pack` produced `/Users/silverbook/Sites/pdf-toolkit-mcp/pdf-toolkit-mcp.mcpb`, SHA1 `42490de9d2054f4bef7f778b1174c236d90c4d25`, 32.5 MB |
+| Claude Desktop install attempt | Blocked | Opening the MCPB caused Claude main log to record `Handling DXT/MCPB file`, but no visible install/update window was controllable |
+| Computer Use visibility | Blocked | `get_app_state("Claude")` timed out after 120s while Claude processes were running |
+| Installed manifest after manual reinstall | Fail | Installed extension still reports version `0.8.3`; `0.8.4` is not installed yet |
+| Claude Desktop relaunch recovery | Blocked | Clean quit/reopen and targeted GUI-process terminate/reopen both left Claude Desktop running with no visible window; screenshots showed only desktop wallpaper |
+| Fallback decision | In progress | Normal Claude Desktop installer UI is unreachable through Computer Use. Next step is a backed-up manual overlay from the unpacked `0.8.4` MCPB into Claude's local extension directory, then manifest/server verification. |
+| Manual overlay backup | Pass | Backed up installed `0.8.3` extension to `/tmp/pdf-toolkit-claude-extension-backup-0.8.3-20260423-1746` before writing new files |
+| Manual overlay install | Pass | Overlaid `/tmp/pdf-toolkit-mcpb-084-unpack` into Claude's local PDF Tools extension directory using `ditto` |
+| Installed manifest after overlay | Pass | Installed extension now reports version `0.8.4` |
+| Installed server after overlay | Pass | Installed server contains `renderSinglePagePdfWithSips`, `PDF_TOOLS_FORCE_SYSTEM_RENDERER`, `NAPI_RS_NATIVE_LIBRARY_PATH`, and `serverInfo.version` `0.8.4`; installed server hash matches unpacked `0.8.4` server hash `be2d80a6356b5bef513ceb3751efe10169441cff` |
+| Direct installed MCP render smoke | Pass | Launched the installed extension server over MCP stdio with `PDF_TOOLS_FORCE_SYSTEM_RENDERER=1`; `render_pdf_page` returned PNG + structured metadata `930x1204` scale `1.52`; `render_pdf_region` returned PNG + structured metadata `720x240` scale `4` |
+| Claude Desktop chat retest | Blocked | Claude Desktop runtime starts and logs extension scanning, but no visible/accessibility window is available for Computer Use or chat entry |
+| Claude window recovery attempts | Blocked | `osascript activate`, `open -a Claude`, targeted GUI-process terminate/reopen, and `open 'claude://new'` did not produce a visible/accessibility window; System Events reports zero Claude windows and Computer Use continues to time out |
+| Share bundle sync | Pass | Ran `node package-for-friend.js`; copied the updated server/helpers/UI into `pdf-toolkit-mcp-share/` and rebuilt `pdf-toolkit-mcp.zip` |
+| Final full test suite | Pass | `npm test`: 17 files, 172 tests passed; known post-success Vitest close-timeout warning remains |
+| Final forced system-render test | Pass | `PDF_TOOLS_FORCE_SYSTEM_RENDERER=1 npx vitest run test/render-pdf-page.test.js`: 1 file, 9 tests passed; known post-success Vitest close-timeout warning remains |
+| Test runner caveat | Noted | Do not run the full render suite and forced-render suite concurrently; both touch `.test-tmp-render`, and concurrent cleanup can cause a false ENOENT failure |
+| Adversarial review fixes | Pass | Added renderer provenance to render tool text/structured output, tightened forced/system-renderer fallback gating, made timed-out child cleanup wait for process close, fixed top-level ledger install status, and resynced the share bundle server |
+| Final `0.8.4` MCPB packed | Pass | Rebuilt `/Users/silverbook/Sites/pdf-toolkit-mcp/pdf-toolkit-mcp.mcpb`, SHA1 `8dd4a308bbd183bfd3738ae4f79826c00c51e095`, 32.5 MB |
+| Final installed overlay | Pass | Unpacked final MCPB to `/tmp/pdf-toolkit-mcpb-084-final-unpack` and overlaid it into Claude's local extension directory |
+| Final installed hash verification | Pass | Installed server, final MCPB unpack server, root `server/index.js`, and share `pdf-toolkit-mcp-share/server/index.js` all hash to `4563518f2b032ee32083fb73c287f0438885e538` |
+| Final installed MCP render smoke | Pass | Installed extension stdio smoke with `PDF_TOOLS_FORCE_SYSTEM_RENDERER=1` returned PNGs and structured `renderer: macos-sips`; page `930x1204` scale `1.52`, region `720x240` scale `4` |
+| Final Claude MCP runtime reload | Pass | After terminating/reopening Claude Desktop, Claude's own MCP log initialized PDF Tools with `serverInfo.version` `0.8.4` at `2026-04-24T01:21:47.797Z` |
+| Final Computer Use UI check | Blocked | `get_app_state("com.anthropic.claudefordesktop")` still timed out after runtime reload, so chat-level retest is still blocked by Claude Desktop window/accessibility state |
+
+Next action: recover a visible Claude Desktop window/accessibility surface, then
+retest `render_pdf_page`, `render_pdf_region`, and `get_page_analysis` in a
+fresh Claude chat against the already-loaded `0.8.4` MCP runtime.

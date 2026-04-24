@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from "url";
 import { existsSync, realpathSync } from "fs";
 import fs from "fs/promises";
 import path from "path";
-import { homedir, platform as osPlatform } from "os";
+import { homedir, platform as osPlatform, tmpdir } from "os";
 import { spawn } from "child_process";
 import { createScopedStderrSuppressor } from "./stderr-suppression.js";
 
@@ -51,6 +51,110 @@ if (typeof globalThis.ImageData === "undefined") {
 let pdfjsLib = null;
 let createCanvas = null;
 let _pdfjsLoading = null;
+let nativeCanvasUnavailable = false;
+
+function getCanvasNativeBindingCandidate() {
+  const platformArch = `${process.platform}-${process.arch}`;
+  const packageByPlatform = {
+    "darwin-arm64": "@napi-rs/canvas-darwin-arm64",
+    "darwin-x64": "@napi-rs/canvas-darwin-x64",
+    "win32-arm64": "@napi-rs/canvas-win32-arm64-msvc",
+    "win32-x64": "@napi-rs/canvas-win32-x64-msvc",
+    "linux-arm64": "@napi-rs/canvas-linux-arm64-gnu",
+    "linux-x64": "@napi-rs/canvas-linux-x64-gnu",
+  };
+  const packageName = packageByPlatform[platformArch];
+  if (!packageName) return null;
+
+  try {
+    return _require.resolve(packageName);
+  } catch {
+    try {
+      const canvasPackageDir = path.dirname(_require.resolve("@napi-rs/canvas/package.json"));
+      const scopedPackagesDir = path.dirname(canvasPackageDir);
+      const nativeFile = packageName.split("/").pop().replace("canvas-", "skia.") + ".node";
+      const candidate = path.join(scopedPackagesDir, packageName.split("/").pop(), nativeFile);
+      return existsSync(candidate) ? candidate : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function formatErrorChain(error, maxDepth = 6) {
+  const messages = [];
+  let current = error;
+  let depth = 0;
+  while (current && depth < maxDepth) {
+    const code = current.code ? ` ${current.code}` : "";
+    const message = current.message || String(current);
+    messages.push(`${current.name || "Error"}${code}: ${message}`);
+    current = current.cause;
+    depth += 1;
+  }
+  if (current) messages.push("...");
+  return messages.join(" <- caused by ");
+}
+
+function shouldUseSystemPdfRenderer() {
+  return process.platform === "darwin" && process.env.PDF_TOOLS_DISABLE_SYSTEM_RENDERER !== "1";
+}
+
+function shouldForceSystemPdfRenderer() {
+  return process.env.PDF_TOOLS_FORCE_SYSTEM_RENDERER === "1";
+}
+
+function isCanvasDependencyError(error) {
+  const message = formatErrorChain(error);
+  return message.includes("Canvas dependency") ||
+    message.includes("Cannot find native binding") ||
+    message.includes("ERR_DLOPEN_FAILED") ||
+    message.includes("different Team IDs");
+}
+
+async function runCommand(command, args, { timeoutMs = 30_000 } = {}) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
+    const stdout = [];
+    const stderr = [];
+    let settled = false;
+    let timedOut = false;
+    let hardKillTimeout = null;
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGTERM");
+      hardKillTimeout = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, 2_000);
+    }, timeoutMs);
+
+    child.stdout.on("data", chunk => stdout.push(chunk));
+    child.stderr.on("data", chunk => stderr.push(chunk));
+    child.on("error", error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      reject(error);
+    });
+    child.on("close", code => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (hardKillTimeout) clearTimeout(hardKillTimeout);
+      const out = Buffer.concat(stdout).toString("utf8");
+      const err = Buffer.concat(stderr).toString("utf8");
+      if (timedOut) {
+        reject(new Error(`${path.basename(command)} timed out after ${timeoutMs}ms: ${err || out}`.trim()));
+        return;
+      }
+      if (code === 0) {
+        resolve({ stdout: out, stderr: err });
+      } else {
+        reject(new Error(`${path.basename(command)} exited with code ${code}: ${err || out}`.trim()));
+      }
+    });
+  });
+}
 
 // Load pdfjs-dist only (for text extraction — no canvas needed)
 async function loadPdfjs() {
@@ -79,6 +183,11 @@ async function loadPdfjs() {
 async function loadImageDependencies() {
   await loadPdfjs();
   if (createCanvas) return;
+  const previousNativeLibraryPath = process.env.NAPI_RS_NATIVE_LIBRARY_PATH;
+  const nativeBindingCandidate = previousNativeLibraryPath ? null : getCanvasNativeBindingCandidate();
+  if (nativeBindingCandidate) {
+    process.env.NAPI_RS_NATIVE_LIBRARY_PATH = nativeBindingCandidate;
+  }
   try {
     const canvas = await import("@napi-rs/canvas");
     createCanvas = canvas.createCanvas;
@@ -90,8 +199,18 @@ async function loadImageDependencies() {
     if (canvas.ImageData) globalThis.ImageData = canvas.ImageData;
     console.error("[PDF Tools] Canvas loaded successfully");
   } catch (error) {
-    console.error("[PDF Tools] Failed to load canvas:", error.message);
-    throw new Error("Image extraction is not available. Canvas dependency could not be loaded: " + error.message);
+    nativeCanvasUnavailable = true;
+    const details = formatErrorChain(error);
+    console.error("[PDF Tools] Failed to load canvas:", details);
+    throw new Error("Image extraction is not available. Canvas dependency could not be loaded: " + details);
+  } finally {
+    if (nativeBindingCandidate) {
+      if (previousNativeLibraryPath) {
+        process.env.NAPI_RS_NATIVE_LIBRARY_PATH = previousNativeLibraryPath;
+      } else {
+        delete process.env.NAPI_RS_NATIVE_LIBRARY_PATH;
+      }
+    }
   }
 }
 
@@ -165,8 +284,107 @@ async function withSuppressedStderr(action) {
   return await stderrSuppressor.run(action);
 }
 
+async function writeSinglePagePdf(pdfBuffer, pageNumber, outputPath, password = null) {
+  const sourceDoc = await PDFDocument.load(pdfBuffer, password ? { password } : {});
+  const pageIndex = pageNumber - 1;
+  const singlePageDoc = await PDFDocument.create();
+  const [copiedPage] = await singlePageDoc.copyPages(sourceDoc, [pageIndex]);
+  singlePageDoc.addPage(copiedPage);
+  await fs.writeFile(outputPath, await singlePageDoc.save());
+}
+
+async function renderSinglePagePdfWithSips(pdfBuffer, {
+  pageNumber = 1,
+  scale = 1.0,
+  password = null,
+}) {
+  const tempDir = await fs.mkdtemp(path.join(tmpdir(), "pdf-tools-render-"));
+  const singlePagePath = path.join(tempDir, "page.pdf");
+  const basePngPath = path.join(tempDir, "page.png");
+  const scaledPngPath = path.join(tempDir, "page-scaled.png");
+
+  try {
+    await writeSinglePagePdf(pdfBuffer, pageNumber, singlePagePath, password);
+    await runCommand("/usr/bin/sips", [
+      "-s", "format", "png",
+      singlePagePath,
+      "--out", basePngPath,
+    ]);
+
+    if (Math.abs(scale - 1) > 0.01) {
+      const pageDoc = await PDFDocument.load(pdfBuffer, password ? { password } : {});
+      const page = pageDoc.getPages()[pageNumber - 1];
+      const { width, height } = page.getSize();
+      const targetMaxDimension = Math.max(1, Math.round(Math.max(width, height) * scale));
+      await runCommand("/usr/bin/sips", [
+        "-Z", String(targetMaxDimension),
+        basePngPath,
+        "--out", scaledPngPath,
+      ]);
+      return await fs.readFile(scaledPngPath);
+    }
+
+    return await fs.readFile(basePngPath);
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
+async function renderPdfPageWithSystemRenderer(pdfBuffer, pageNumber = 1, scale = 1.0, password = null) {
+  if (!shouldUseSystemPdfRenderer()) {
+    throw new Error("System PDF renderer is only available on macOS.");
+  }
+  return {
+    buffer: await renderSinglePagePdfWithSips(pdfBuffer, { pageNumber, scale, password }),
+    renderer: "macos-sips",
+  };
+}
+
+async function renderPdfRegionWithSystemRenderer(pdfBuffer, {
+  pageNumber = 1,
+  scale = 1.0,
+  x,
+  y,
+  width,
+  height,
+  password = null,
+}) {
+  if (!shouldUseSystemPdfRenderer()) {
+    throw new Error("System PDF renderer is only available on macOS.");
+  }
+
+  const tempDir = await fs.mkdtemp(path.join(tmpdir(), "pdf-tools-region-"));
+  const fullPngPath = path.join(tempDir, "full.png");
+  const cropPngPath = path.join(tempDir, "crop.png");
+
+  try {
+    const fullImage = await renderSinglePagePdfWithSips(pdfBuffer, { pageNumber, scale, password });
+    await fs.writeFile(fullPngPath, fullImage);
+    const crop = getRegionPixelRect({ x, y, width, height, scale });
+    await runCommand("/usr/bin/sips", [
+      "-c", String(crop.height), String(crop.width),
+      "--cropOffset", String(crop.top), String(crop.left),
+      fullPngPath,
+      "--out", cropPngPath,
+    ]);
+    return {
+      buffer: await fs.readFile(cropPngPath),
+      renderer: "macos-sips",
+    };
+  } finally {
+    await fs.rm(tempDir, { recursive: true, force: true });
+  }
+}
+
 // Helper function to convert PDF page to image
 async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0, password = null) {
+  if (shouldForceSystemPdfRenderer() && !shouldUseSystemPdfRenderer()) {
+    throw new Error("System PDF renderer was forced but is only available on macOS.");
+  }
+  if (shouldUseSystemPdfRenderer() && (shouldForceSystemPdfRenderer() || nativeCanvasUnavailable)) {
+    return await renderPdfPageWithSystemRenderer(pdfBuffer, pageNumber, scale, password);
+  }
+
   try {
     return await withSuppressedStderr(async () => {
       // Load dependencies only when needed
@@ -212,9 +430,17 @@ async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0, pas
       await pdfDocument.destroy();
       
       // Return as PNG buffer
-      return canvas.toBuffer('image/png');
+      return {
+        buffer: canvas.toBuffer('image/png'),
+        renderer: "native-canvas",
+      };
     });
   } catch (error) {
+    if (shouldUseSystemPdfRenderer() && isCanvasDependencyError(error)) {
+      nativeCanvasUnavailable = true;
+      console.error("[PDF Tools] Falling back to macOS system PDF renderer:", formatErrorChain(error));
+      return await renderPdfPageWithSystemRenderer(pdfBuffer, pageNumber, scale, password);
+    }
     console.error('Error converting PDF to image:', error);
     throw error;
   }
@@ -229,6 +455,21 @@ async function convertPdfRegionToImage(pdfBuffer, {
   height,
   password = null,
 }) {
+  if (shouldForceSystemPdfRenderer() && !shouldUseSystemPdfRenderer()) {
+    throw new Error("System PDF renderer was forced but is only available on macOS.");
+  }
+  if (shouldUseSystemPdfRenderer() && (shouldForceSystemPdfRenderer() || nativeCanvasUnavailable)) {
+    return await renderPdfRegionWithSystemRenderer(pdfBuffer, {
+      pageNumber,
+      scale,
+      x,
+      y,
+      width,
+      height,
+      password,
+    });
+  }
+
   try {
     return await withSuppressedStderr(async () => {
       await loadImageDependencies();
@@ -274,9 +515,25 @@ async function convertPdfRegionToImage(pdfBuffer, {
       );
 
       await pdfDocument.destroy();
-      return cropCanvas.toBuffer("image/png");
+      return {
+        buffer: cropCanvas.toBuffer("image/png"),
+        renderer: "native-canvas",
+      };
     });
   } catch (error) {
+    if (shouldUseSystemPdfRenderer() && isCanvasDependencyError(error)) {
+      nativeCanvasUnavailable = true;
+      console.error("[PDF Tools] Falling back to macOS system PDF renderer:", formatErrorChain(error));
+      return await renderPdfRegionWithSystemRenderer(pdfBuffer, {
+        pageNumber,
+        scale,
+        x,
+        y,
+        width,
+        height,
+        password,
+      });
+    }
     console.error("Error converting PDF region to image:", error);
     throw error;
   }
@@ -364,7 +621,7 @@ function validateProfileName(name) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.8.1",
+    version: "0.8.4",
   },
   {
     capabilities: {
@@ -2469,7 +2726,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               const scaleFactor = Math.min(1.5, Math.sqrt(targetSizeKB / parseFloat(fileSizeKB)));
               
               // Convert first page to image
-              const imageBuffer = await convertPdfPageToImage(pdfBuffer, 1, scaleFactor);
+              const renderedImage = await convertPdfPageToImage(pdfBuffer, 1, scaleFactor);
+              const imageBuffer = renderedImage.buffer;
               const imageSizeKB = (imageBuffer.length / 1024).toFixed(2);
               
               response += `\nPage 1 extracted as image (${imageSizeKB} KB, scale: ${scaleFactor.toFixed(2)})\n`;
@@ -2495,6 +2753,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   page_previews: [],
                   preview_truncated: false,
                   extraction_mode: "image-fallback",
+                  image_renderer: renderedImage.renderer,
                 },
               };
             } catch (imageError) {
@@ -2647,7 +2906,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             height,
             maxDimensionPx: Number(max_dimension_px) || 1800,
           });
-          const imageBuffer = await convertPdfPageToImage(pdfBytes, targetPage, scale, password);
+          const renderedImage = await convertPdfPageToImage(pdfBytes, targetPage, scale, password);
+          const imageBuffer = renderedImage.buffer;
           const renderedWidth = Math.round(width * scale);
           const renderedHeight = Math.round(height * scale);
           const fileName = path.basename(resolvedPath);
@@ -2659,6 +2919,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 `Rendered page ${targetPage} of ${fileName} as PNG.\n` +
                 `Document pages: ${totalPages}\n` +
                 `Rendered size: ${renderedWidth} x ${renderedHeight} px\n` +
+                `Renderer: ${renderedImage.renderer}\n` +
                 `Scale: ${scale.toFixed(2)}x`
             }, {
               type: "image",
@@ -2675,6 +2936,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               rendered_width_px: renderedWidth,
               rendered_height_px: renderedHeight,
               scale,
+              renderer: renderedImage.renderer,
               mime_type: "image/png",
             },
           };
@@ -2736,12 +2998,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             ...region,
             scale,
           });
-          const imageBuffer = await convertPdfRegionToImage(pdfBytes, {
+          const renderedImage = await convertPdfRegionToImage(pdfBytes, {
             pageNumber: targetPage,
             scale,
             ...region,
             password,
           });
+          const imageBuffer = renderedImage.buffer;
           const fileName = path.basename(resolvedPath);
 
           return {
@@ -2751,6 +3014,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 `Rendered region from page ${targetPage} of ${fileName} as PNG.\n` +
                 `Region (pt): (${region.x}, ${region.y}, ${region.width} x ${region.height})\n` +
                 `Rendered crop: ${crop.width} x ${crop.height} px\n` +
+                `Renderer: ${renderedImage.renderer}\n` +
                 `Scale: ${scale.toFixed(2)}x`
             }, {
               type: "image",
@@ -2766,6 +3030,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               rendered_width_px: crop.width,
               rendered_height_px: crop.height,
               scale,
+              renderer: renderedImage.renderer,
               mime_type: "image/png",
             },
           };
