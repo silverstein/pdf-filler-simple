@@ -35,7 +35,7 @@
     },
     {
       "name": "fill_pdf",
-      "description": "Fill a PDF form with provided data and save it"
+      "description": "Fill a PDF form; may save in place with automatic backup"
     },
     {
       "name": "bulk_fill_from_csv",

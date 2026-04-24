@@ -582,3 +582,26 @@ host/model behavior, not these underlying tool paths.
 Conclusion: installed MCP URL fetch works for public PDFs and blocks loopback by
 default. The main product caveat is that Claude/model callers should use
 `destination_dir` + `filename`, not `output_path`.
+
+## Canonical Save Lifecycle: Fill, Sign, Managed Output - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| User question | Answered in local MCP test | Prior Claude Desktop batches had verified visual placement, form filling, and page outputs, but had not explicitly tested whether fill/sign mutate the existing active file or create a new chain of files |
+| In-place fill behavior | Pass local repo | `fill_pdf` with `pdf_path === output_path` modified `.test-tmp-save-lifecycle/w9-working.pdf`, returned `active_path` equal to the same path, and created a first-mutation backup under the test `DEFAULT_PROFILES_DIR` |
+| In-place signature behavior | Pass local repo | `apply_signature` with the same `pdf_path`/`output_path` kept `active_path` on `w9-working.pdf`, reused the same `backup_path`, and did not create a sibling signed PDF |
+| Active document after sign | Pass local repo | `get_active_document` returned `active_path=.test-tmp-save-lifecycle/w9-working.pdf`, `backup_path` matching the first fill backup, and `last_mutation_tool=apply_signature` |
+| Managed page edit behavior | Fixed and tested | `apply_page_plan` still writes a separate `_managed.pdf` by design, but now immediately returns structured active-document payload and updates server state so `get_active_document` points at the managed output before the viewer catch-up path runs |
+| Post-managed mutation behavior | Pass local repo | `apply_text` on `.test-tmp-save-lifecycle/w9-managed-source_managed.pdf` mutated that managed output in place, created a backup for the managed file, and did not create `_managed_managed.pdf` or other sibling outputs |
+| Regression guard | Pass | Added `test/save-lifecycle.test.js` covering same-path fill + actual signature and managed-output + subsequent same-path text stamp |
+| Test command | Pass | `npm test -- test/save-lifecycle.test.js` passed 1 file / 3 tests; same existing Vitest close-timeout warning appeared after pass |
+| Adversarial review follow-up | Pass local repo | Reviewer found that new-output helper forced `hasFormFields=false`, which would hide fields after `rotate_pdf_pages` even when rotation preserved the AcroForm. Helper now lets `buildActiveDocumentPayload` detect fields, and the lifecycle test asserts rotated W-9 output remains `hasFormFields=true` with 22 fields. |
+| Backup-content guard | Pass local repo | Lifecycle test now hashes the same-path backup against the original file before mutation and hashes the managed-file backup against the managed output before the next stamp. |
+| Full local suite | Pass | `npm test` passed 18 test files / 177 tests; same existing Vitest close-timeout warning appeared after pass |
+| Packaging | Pass local repo | `npm run build:ui`, `node package-for-friend.js`, and `mcpb pack` passed. Rebuilt MCPB shasum `7f78a7411de83fa541480f0895d0cc0ce41d6a80`; zip shasum `1e942035fb2b8499ab63ed5b94098fc3cfdba8a1` |
+
+Conclusion: the intended UX is now explicit and guarded. Fill/sign/date tools
+can mutate the current canonical PDF in place with one backup. Page-management
+tools create a new managed output by design, and that output becomes the
+canonical active document for the next Claude/viewer operation. Rotating a
+fillable PDF preserves immediate form metadata in the viewer payload.

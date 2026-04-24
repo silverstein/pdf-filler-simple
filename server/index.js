@@ -823,6 +823,16 @@ async function buildActiveDocumentPayload(pdfPath, initialPage = 1, extra = {}) 
   };
 }
 
+async function buildNewOutputDocumentPayload(outputPath, toolName, initialPage = 1, extra = {}) {
+  const mutationAt = new Date().toISOString();
+  syncActiveDocumentState({
+    pdfPath: outputPath,
+    lastMutationTool: toolName,
+    lastMutationAt: mutationAt,
+  });
+  return await buildActiveDocumentPayload(outputPath, initialPage, extra);
+}
+
 async function persistPdfMutation({
   pdfDoc,
   inputPath,
@@ -1082,7 +1092,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
       },
       {
         name: "fill_pdf",
-        description: "Fill a PDF form with provided data and save it. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Fill a PDF form with provided data and save it. output_path may be the same as pdf_path for in-place editing; the original is backed up on the first same-path mutation. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           properties: {
@@ -3361,20 +3371,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const mergedBytes = await mergedDoc.save();
         await fs.writeFile(resolvedOutputPath, mergedBytes);
         const outputStats = await fs.stat(resolvedOutputPath);
+        const payload = await buildNewOutputDocumentPayload(resolvedOutputPath, "merge_pdfs", 1, {
+          total_pages: totalPageCount,
+        });
 
         return {
           content: [{
             type: "text",
             text: `Merged ${input_paths.length} PDFs into: ${output_path}\nTotal pages: ${totalPageCount}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`
           }],
+          structuredContent: payload,
           _meta: {
             ui: { resourceUri: "ui://pdf-toolkit/viewer" },
-            pdfPath: resolvedOutputPath,
-            totalBytes: outputStats.size,
-            initialPage: 1,
-            hasFormFields: false,
-            fieldCount: 0,
-            fields: [],
+            ...payload,
           },
         };
       }
@@ -3449,20 +3458,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const rotatedBytes = await pdfDoc.save();
         await fs.writeFile(resolvedOutputPath, rotatedBytes);
         const outputStats = await fs.stat(resolvedOutputPath);
+        const payload = await buildNewOutputDocumentPayload(resolvedOutputPath, "rotate_pdf_pages", 1, {
+          rotated_pages: targetPages.length,
+          degrees,
+        });
 
         return {
           content: [{
             type: "text",
             text: `Rotated ${targetPages.length} page(s) by ${degrees}° and saved to: ${output_path}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`
           }],
+          structuredContent: payload,
           _meta: {
             ui: { resourceUri: "ui://pdf-toolkit/viewer" },
-            pdfPath: resolvedOutputPath,
-            totalBytes: outputStats.size,
-            initialPage: 1,
-            hasFormFields: false,
-            fieldCount: 0,
-            fields: [],
+            ...payload,
           },
         };
       }
@@ -3498,20 +3507,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const reorderedBytes = await newDoc.save();
         await fs.writeFile(resolvedOutputPath, reorderedBytes);
         const outputStats = await fs.stat(resolvedOutputPath);
+        const payload = await buildNewOutputDocumentPayload(resolvedOutputPath, "reorder_pdf_pages", 1, {
+          page_order,
+        });
 
         return {
           content: [{
             type: "text",
             text: `Reordered ${totalPages} pages and saved to: ${output_path}\nNew order: [${page_order.join(", ")}]\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`
           }],
+          structuredContent: payload,
           _meta: {
             ui: { resourceUri: "ui://pdf-toolkit/viewer" },
-            pdfPath: resolvedOutputPath,
-            totalBytes: outputStats.size,
-            initialPage: 1,
-            hasFormFields: false,
-            fieldCount: 0,
-            fields: [],
+            ...payload,
           },
         };
       }
@@ -3645,17 +3653,19 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         let summary = `Saved ${page_order.length}-page PDF to: ${output_path}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`;
         if (deletedCount > 0) summary += `\n${deletedCount} page(s) removed`;
         if (rotatedCount > 0) summary += `\n${rotatedCount} page(s) rotated`;
+        const payload = await buildNewOutputDocumentPayload(resolvedOutputPath, "apply_page_plan", 1, {
+          deleted_pages: deletedCount,
+          rotated_pages: rotatedCount,
+          page_order,
+          rotations,
+        });
 
         return {
           content: [{ type: "text", text: summary }],
+          structuredContent: payload,
           _meta: {
             ui: { resourceUri: "ui://pdf-toolkit/viewer" },
-            pdfPath: resolvedOutputPath,
-            totalBytes: outputStats.size,
-            initialPage: 1,
-            hasFormFields: false,
-            fieldCount: 0,
-            fields: [],
+            ...payload,
           },
         };
       }
