@@ -7,6 +7,7 @@ import {
   computeIoU,
   extractPdfTextWithBounds,
   detectSignatureZones,
+  scanPageForLabels,
 } from "../server/helpers.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -181,18 +182,24 @@ describe("detectSignatureZones — AcroForm layer", () => {
 
     expect(sig).toBeDefined();
     expect(date).toBeDefined();
-    // Regression guard: the old "above label" heuristic emitted x=79/y=502.1,
-    // which was in-bounds but visibly too high and too far left in Sign mode.
+    // Regression guard: the old marker-baseline heuristic emitted y=524.3,
+    // which was in-bounds but visibly covered the label text in Sign mode.
     expect(sig.x).toBeGreaterThanOrEqual(120);
     expect(sig.x).toBeLessThanOrEqual(140);
-    expect(sig.y).toBeGreaterThanOrEqual(520);
-    expect(sig.y).toBeLessThanOrEqual(530);
+    expect(sig.y).toBeGreaterThanOrEqual(508);
+    expect(sig.y).toBeLessThanOrEqual(516);
     expect(sig.x + sig.width).toBeLessThan(date.x - 20);
 
     expect(date.x).toBeGreaterThanOrEqual(400);
     expect(date.x).toBeLessThanOrEqual(420);
-    expect(date.y).toBeGreaterThanOrEqual(520);
-    expect(date.y).toBeLessThanOrEqual(530);
+    expect(date.y).toBeGreaterThanOrEqual(508);
+    expect(date.y).toBeLessThanOrEqual(516);
+    // The signing boxes should start on the blank signing row above the
+    // captions, not down on the marker/label baseline.
+    expect(sig.y).toBeLessThan(522);
+    expect(sig.y + sig.height).toBeLessThanOrEqual(530);
+    expect(date.y).toBeLessThan(522);
+    expect(date.y + date.height).toBeLessThanOrEqual(530);
   });
 
   it("does not treat non-arrow decorative bullets as signature-row anchors", async () => {
@@ -209,6 +216,25 @@ describe("detectSignatureZones — AcroForm layer", () => {
 
     expect(sig).toBeDefined();
     expect(sig.x).toBeLessThan(100);
+  });
+
+  it("keeps same-baseline Signature-of arrow layouts on the marker row", async () => {
+    const zones = scanPageForLabels({
+      page: 1,
+      width: 612,
+      height: 792,
+      items: [
+        { text: "Signature of Applicant", x: 72, y: 282, width: 104, height: 10 },
+        { text: String.fromCharCode(0x25B6), x: 180, y: 282, width: 5, height: 5 },
+      ],
+    });
+    const sig = zones.find(z => z.type === "signature" && z.label === "Signature of Applicant");
+
+    expect(sig).toBeDefined();
+    expect(sig.x).toBeGreaterThan(180);
+    // If the W-9 captioned-row fix were applied to every direct arrow marker,
+    // this same-baseline form would be shifted roughly 20pt too high.
+    expect(sig.y).toBeGreaterThan(270);
   });
 
   it("detects a Date zone on IRS W-9", async () => {

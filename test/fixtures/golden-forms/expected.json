@@ -1,5 +1,5 @@
 {
-  "_notes": "Golden-set ground truth for signature-zone detection. Zones are hand-labeled approximations — where a reasonable human signer would expect to place their signature. Coordinates use top-left origin in points (72pt = 1 inch). Use generous IoU thresholds (0.2-0.3) because text-heuristic detection is fuzzy by nature.",
+  "_notes": "Golden-set ground truth for signature-zone detection. Zones are hand-labeled approximations — where a reasonable human signer would expect to place their signature. Coordinates use top-left origin in points (72pt = 1 inch). These regions intentionally sit on the blank signing/date surfaces, not on the printed label text below them.",
   "fixtures": [
     {
       "id": "example-fw9",
@@ -11,18 +11,18 @@
         {
           "type": "signature",
           "page": 1,
-          "note": "Signature of U.S. person row after the arrow marker — bottom of page 1 (older layout)",
+          "note": "Signature of U.S. person blank signing line after the arrow marker — above the label text",
           "x_min": 120, "x_max": 385,
-          "y_min": 520, "y_max": 545,
-          "min_iou": 0.2
+          "y_min": 508, "y_max": 530,
+          "min_iou": 0.25
         },
         {
           "type": "date",
           "page": 1,
-          "note": "Date field to the right of its arrow marker",
+          "note": "Date blank line to the right of its arrow marker — above the Date label",
           "x_min": 400, "x_max": 560,
-          "y_min": 520, "y_max": 545,
-          "min_iou": 0.15
+          "y_min": 508, "y_max": 530,
+          "min_iou": 0.25
         }
       ]
     },

@@ -13,15 +13,15 @@ const runAgentBrowser = createAgentBrowserSessionRunner(session);
 const cases = [
   {
     degrees: 90,
-    expected: { left: [240, 260], top: [120, 140], tall: true },
+    expected: { left: [258, 268], top: [120, 140], tall: true },
   },
   {
     degrees: 180,
-    expected: { left: [226, 246], top: [240, 260], tall: false },
+    expected: { left: [226, 246], top: [258, 268], tall: false },
   },
   {
     degrees: 270,
-    expected: { left: [514, 534], top: [226, 246], tall: true },
+    expected: { left: [505, 515], top: [226, 246], tall: true },
   },
 ];
 

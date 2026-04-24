@@ -521,9 +521,9 @@ function findNextTextToRightOnBaseline(anchor, allItems, minX) {
 }
 
 function markerAnchoredZone(item, allItems, pat, gap, zoneHeight, rightBound) {
-  const marker =
-    findSigningArrowMarkerToRight(item, allItems) ||
-    findContinuationMarkerBelow(item, allItems);
+  const directMarker = findSigningArrowMarkerToRight(item, allItems);
+  const continuationMarker = directMarker ? null : findContinuationMarkerBelow(item, allItems);
+  const marker = directMarker || continuationMarker;
   if (!marker) return null;
 
   const zoneX = marker.x + marker.width + gap;
@@ -531,9 +531,20 @@ function markerAnchoredZone(item, allItems, pat, gap, zoneHeight, rightBound) {
   const baselineRightBound = nextText ? Math.min(rightBound, nextText.x - gap) : rightBound;
   const zoneWidth = Math.min(pat.zoneWidth, Math.max(baselineRightBound - zoneX, 0));
   if (zoneWidth < 24) return null;
+  const markerAboveLineY = marker.y - zoneHeight - 2;
+  const markerPointsToCaptionedLine =
+    Boolean(continuationMarker) ||
+    /^(Signature|Initials?|Date)$/i.test(item.text.trim());
   return {
     zoneX,
-    zoneY: marker.y - (zoneHeight - marker.height) / 2,
+    // W-9-style arrows often live on the label/continuation baseline, while
+    // the actual signing surface is the blank row above the label. Use the
+    // marker to find horizontal start, but only use above-line vertical
+    // placement for captioned rows. Same-baseline "Signature of X -> line"
+    // layouts stay centered on the marker row.
+    zoneY: pat.placement === "above" && markerPointsToCaptionedLine && markerAboveLineY >= 4
+      ? markerAboveLineY
+      : marker.y - (zoneHeight - marker.height) / 2,
     zoneWidth,
   };
 }
@@ -553,7 +564,7 @@ function hasRoomToRight(item, allItems, minPts) {
 
 // Scan one page's text items for signature/initials/date labels.
 // Zone begins right after the label; width comes from the pattern config.
-function scanPageForLabels(page) {
+export function scanPageForLabels(page) {
   const zones = [];
   for (const item of page.items) {
     const text = item.text.trim();

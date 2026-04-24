@@ -628,3 +628,22 @@ mutates the active file with backup, page management creates one managed output
 by design, and subsequent edits mutate that managed output in place. The only
 new follow-up is the embedded viewer's `Invalid PDF structure` display after an
 XFA in-place fill despite successful tool operations and parseable output.
+
+## W-9 Signature Zone Placement Fix - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| Bug reproduced | Pass | Screenshot showed the W-9 signature overlay sitting on the printed `Signature of U.S. person` label baseline and the date overlay slightly high/misaligned. Local render overlay confirmed the old marker-baseline output placed signature/date zones at `y=524.3`, covering the label row. |
+| Root cause | Pass | `markerAnchoredZone` used arrow marker baseline for both horizontal and vertical placement. On W-9-style captioned rows, the arrow identifies the horizontal start, but the signing/date surface is the blank row above the caption/arrow baseline. |
+| Fix | Pass | `server/helpers.js` now distinguishes direct markers from continuation markers. Captioned rows (`Signature`, `Initials`, `Date`, or continuation-marker layouts) use marker-x with above-line y; same-baseline `Signature of X -> line` layouts stay centered on the marker row. |
+| W-9 corrected coordinates | Pass | On `/Users/silverbook/Downloads/pdf-toolkit-test-run-2026-04-23/pageops-merged-084.pdf`, `detectSignatureZones` now returns page 1 signature `x=130.7 y=510.8 width=244.9 height=18` and date `x=410.2 y=510.8 width=110 height=18`, placing both on the blank signing row rather than the printed labels. |
+| Regression tests | Pass | Added/updated tests for W-9 blank-line placement, same-baseline arrow layouts, and golden fixture expectations. `npm test -- --run test/zone-detection.test.js test/golden-set-placement.test.js test/signatures.test.js` passed `66` tests. Full `npm test` passed `178` tests. Vitest still prints the existing post-pass `close timed out after 10000ms` warning. |
+| Rotated overlay math | Pass with driver caveat | Deterministic PDF.js viewport check for corrected native zone produced rotated overlay positions: 90° `left=263.2/top=130.7`, 180° `left=236.4/top=263.2`, 270° `left=510.8/top=236.4`. `scripts/dev-ui-rotated-sign-smoke.mjs` expectations were updated accordingly. Browser smoke was attempted twice, but `agent-browser` failed with `Resource temporarily unavailable`; prior pre-fix smoke had passed and the failure was driver/daemon read failure, not a product assertion. |
+| Adversarial review | Pass | Subagent review found three issues: runtime version still advertised `0.8.4`, same-baseline arrow layouts could be shifted too high, and rotated smoke expectations were stale. All three were addressed before packaging. |
+| Package artifacts | Pass | Version bumped to `0.8.5` across `package.json`, `package-lock.json`, `manifest.json`, `manifest.mcpb.json`, share package, and runtime server info. Rebuilt `pdf-toolkit-mcp.zip` SHA256 `968e6810e2b639b3e758539a7ecac5910fec26cf323855e53b504b7c46c7c429`; rebuilt `pdf-toolkit-mcp.mcpb` SHA256 `9662465fe9ce3aeae853ab7d1e4a69f86faae2e08b3926904bf5e627f6cd7b29`. |
+
+Conclusion: W-9 signature/date overlays now target the blank signing surface,
+not the printed caption line. Rotated overlay expectations were adjusted to the
+new native coordinates, but a clean browser-driver smoke rerun in a healthy
+`agent-browser` session is still worth doing before calling the Claude Desktop
+visual pass fully closed.

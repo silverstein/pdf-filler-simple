@@ -621,7 +621,7 @@ function validateProfileName(name) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.8.4",
+    version: "0.8.5",
   },
   {
     capabilities: {
