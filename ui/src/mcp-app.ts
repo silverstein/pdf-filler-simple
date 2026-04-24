@@ -41,6 +41,8 @@ let currentRenderTask: { cancel: () => void } | null = null;
 let isRendering = false;
 let pendingPage: number | null = null;
 let currentDisplayMode: "inline" | "fullscreen" = "inline";
+let currentViewport: any = null;
+let currentViewportPage = 0;
 
 // Manage pages state
 type ManageMode = "view" | "manage" | "sign";
@@ -355,6 +357,8 @@ async function renderPage() {
 
   isRendering = true;
   pendingPage = null;
+  currentViewport = null;
+  currentViewportPage = 0;
 
   try {
     const pageNum = currentPage;
@@ -385,6 +389,8 @@ async function renderPage() {
     }
 
     if (pageNum !== currentPage) return;
+    currentViewport = viewport;
+    currentViewportPage = pageNum;
 
     // TextLayer for selection
     const textContent = await page.getTextContent();
@@ -1063,6 +1069,7 @@ function buildZonePreviewGhost(zone: SignatureZone) {
 
   const ghost = document.createElement("div");
   ghost.className = "sig-zone-preview-ghost";
+  placeZoneContentInNativeBox(ghost, zone);
 
   if (activeZonePreview.imageDataUrl) {
     const img = document.createElement("img");
@@ -1092,10 +1099,84 @@ function buildZonePreviewGhost(zone: SignatureZone) {
   return null;
 }
 
+function currentNativePageHeight(): number {
+  const viewBox = currentViewport?.viewBox;
+  if (Array.isArray(viewBox) && viewBox.length >= 4) {
+    return Math.abs(viewBox[3] - viewBox[1]);
+  }
+  return canvasEl.height / (window.devicePixelRatio || 1) / scale;
+}
+
+function currentPageRotation(): number {
+  const rotation = Number(currentViewport?.rotation ?? 0) % 360;
+  return rotation < 0 ? rotation + 360 : rotation;
+}
+
+function nativeRectToViewportRect(rect: Pick<SignatureZone, "x" | "y" | "width" | "height">) {
+  if (!currentViewport?.convertToViewportRectangle) {
+    return {
+      left: rect.x * scale,
+      top: rect.y * scale,
+      width: rect.width * scale,
+      height: rect.height * scale,
+    };
+  }
+
+  const pageH = currentNativePageHeight();
+  const pdfRect = [
+    rect.x,
+    pageH - rect.y - rect.height,
+    rect.x + rect.width,
+    pageH - rect.y,
+  ];
+  const viewportRect = currentViewport.convertToViewportRectangle(pdfRect);
+  const [x1, y1, x2, y2] = viewportRect;
+  return {
+    left: Math.min(x1, x2),
+    top: Math.min(y1, y2),
+    width: Math.abs(x2 - x1),
+    height: Math.abs(y2 - y1),
+  };
+}
+
+function placeElementAtViewportRect(
+  el: HTMLElement,
+  rect: { left: number; top: number; width: number; height: number },
+) {
+  el.style.left = `${rect.left}px`;
+  el.style.top = `${rect.top}px`;
+  el.style.width = `${rect.width}px`;
+  el.style.height = `${rect.height}px`;
+}
+
+function placeZoneContentInNativeBox(
+  el: HTMLElement,
+  zone: SignatureZone,
+  { fitBox = true }: { fitBox?: boolean } = {},
+) {
+  const rotation = currentPageRotation();
+  el.style.position = "absolute";
+  el.style.inset = "auto";
+  el.style.left = "50%";
+  el.style.top = "50%";
+  el.style.maxWidth = `${zone.width * scale}px`;
+  if (fitBox) {
+    el.style.width = `${zone.width * scale}px`;
+    el.style.height = `${zone.height * scale}px`;
+    el.style.display = "flex";
+    el.style.alignItems = "center";
+    el.style.justifyContent = "center";
+  }
+  el.style.transformOrigin = "center center";
+  el.style.transform = `translate(-50%, -50%) rotate(${rotation}deg)`;
+}
+
 function renderZoneOverlay() {
   clearZoneOverlay();
   if (manageMode !== "sign") return;
   if (!pdfDocument) return;
+  if (!currentViewport) return;
+  if (currentViewportPage !== currentPage) return;
 
   // Size overlay to match canvas
   zoneLayerEl.style.width = canvasEl.style.width;
@@ -1116,13 +1197,11 @@ function renderZoneOverlay() {
       // Badge default is floated above the zone (-16px). If the zone is near
       // the top of the page, it'd be clipped off-canvas — dock it inside
       // instead. Threshold: zone top is within 20 CSS px of canvas top.
-      if (z.y * scale < 20) el.dataset.labelPlacement = "inside";
+      if (nativeRectToViewportRect(z).top < 20) el.dataset.labelPlacement = "inside";
     }
-    // Zone coords are in native PDF points (top-left origin). Multiply by scale.
-    el.style.left = `${z.x * scale}px`;
-    el.style.top = `${z.y * scale}px`;
-    el.style.width = `${z.width * scale}px`;
-    el.style.height = `${z.height * scale}px`;
+    // Zone coords are native top-left PDF points. Map them through PDF.js'
+    // viewport so overlays track rotated pages exactly like the canvas does.
+    placeElementAtViewportRect(el, nativeRectToViewportRect(z));
     el.title = `${z.label} (conf ${(z.confidence * 100).toFixed(0)}%)`;
 
     if (z.width * scale > 48) {
@@ -1139,9 +1218,11 @@ function renderZoneOverlay() {
         } else {
           label.textContent = "✓ Signed";
         }
+        placeZoneContentInNativeBox(label, z, { fitBox: false });
       } else {
         label.textContent = z.type === "signature" ? "Sign here" :
                             z.type === "initials"  ? "Initials" : "Date";
+        placeZoneContentInNativeBox(label, z);
       }
       el.appendChild(label);
     }
@@ -1213,8 +1294,15 @@ const MIN_INSPECT_REGION_HEIGHT = 12;
 
 function getZoneLayerPointerPoints(e: PointerEvent): [number, number] {
   const rect = zoneLayerEl.getBoundingClientRect();
-  // Convert to PDF points: CSS offset / scale.
-  return [(e.clientX - rect.left) / scale, (e.clientY - rect.top) / scale];
+  const x = e.clientX - rect.left;
+  const y = e.clientY - rect.top;
+  if (currentViewport?.convertToPdfPoint && currentViewportPage === currentPage) {
+    const [pdfX, pdfY] = currentViewport.convertToPdfPoint(x, y);
+    const pageH = currentNativePageHeight();
+    return [pdfX, pageH - pdfY];
+  }
+  // Fallback for early-load states before PDF.js exposes a viewport.
+  return [x / scale, y / scale];
 }
 
 function updateDraftRectangle() {
@@ -1223,10 +1311,10 @@ function updateDraftRectangle() {
   const yPts = Math.min(activeDrag.startYpts, activeDrag.currentYpts);
   const widthPts = Math.abs(activeDrag.currentXpts - activeDrag.startXpts);
   const heightPts = Math.abs(activeDrag.currentYpts - activeDrag.startYpts);
-  activeDrag.draftEl.style.left = `${xPts * scale}px`;
-  activeDrag.draftEl.style.top = `${yPts * scale}px`;
-  activeDrag.draftEl.style.width = `${widthPts * scale}px`;
-  activeDrag.draftEl.style.height = `${heightPts * scale}px`;
+  placeElementAtViewportRect(
+    activeDrag.draftEl,
+    nativeRectToViewportRect({ x: xPts, y: yPts, width: widthPts, height: heightPts }),
+  );
 }
 
 function onZoneLayerPointerDown(e: PointerEvent) {

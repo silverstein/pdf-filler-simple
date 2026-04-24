@@ -535,6 +535,17 @@ that do not need model/host behavior.
 | Full local suite after review fix | Pass | `npm test` passed `17` test files and `174` tests; same existing Vitest post-pass close timeout warning appeared |
 | Rebuilt extension artifact | Pass local repo | `npm run build:ui` passed and `mcpb pack` produced `pdf-toolkit-mcp.mcpb` / `pdf-toolkit-0.8.4.mcpb`, package size `32.5MB`, shasum `e53d7f51b0fc717ae3b222afaf357d84f70aff62` |
 
+## Sign-Tab Visual Regression: Rotated Page Zone Alignment - 2026-04-24
+
+| Item | Status | Evidence |
+| --- | --- | --- |
+| User-reported visual defect | Confirmed | Screenshot `CleanShot 2026-04-23 at 20.49.45@2x.png` shows `pageops-rotated-084.pdf` page 1 rotated 90 degrees while the Sign overlay remains horizontal/unrotated relative to the page content |
+| Root cause | Confirmed | The PDF canvas used PDF.js viewport rotation, but Sign mode positioned zones with raw native coordinates (`x * scale`, `y * scale`) and did not transform label/preview content by page rotation |
+| Fix implemented | Pass local repo | Viewer now stores the current rendered PDF.js viewport, maps native top-left zone rectangles through `convertToViewportRectangle`, maps pointer drags back through `convertToPdfPoint`, rotates zone label/preview/applied-badge content inside the native signing box, and ignores stale viewports during page/render transitions |
+| Durable smoke | Pass | Added `npm run smoke:ui-sign-rotated`; it creates 90/180/270-degree W-9 fixtures and asserts expected overlay shape, position, and transform. Observed 90° `18 x 244.890625` at `left=249.65625, top=130.6875`; 180° `244.890625 x 18` at `left=236.375, top=249.65625`; 270° `18 x 244.890625` at `left=524.296875, top=236.375` |
+| Full local suite | Pass | `npm test` passed `17` test files and `174` tests; same existing Vitest post-pass close timeout warning appeared |
+| Packaging | Pass local repo | `npm run build:ui`, `node package-for-friend.js`, and `mcpb pack` passed; rebuilt MCPB shasum `601d5b26fc13472bfdad940076583d93a206c38e` |
+
 ## Direct Installed MCP Non-Form, Image-Only, Permissions - 2026-04-24
 
 | Item | Status | Evidence |
