@@ -31,7 +31,7 @@
     "pdfjs-dist": "5.4.624"
   },
   "devDependencies": {
-    "@modelcontextprotocol/ext-apps": "^1.7.0",
+    "@modelcontextprotocol/ext-apps": "^1.7.1",
     "vite": "^8.0.9",
     "vite-plugin-singlefile": "^2.3.3",
     "vitest": "^4.1.4"
