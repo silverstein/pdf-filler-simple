@@ -359,11 +359,28 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("marks tool execution failures with isError", async () => {
-    const missing = await client.callTool({
-      name: "get_pdf_resource_uri",
-      arguments: { pdf_path: path.join(stateRoot, "missing.pdf") },
-    });
-    expect(missing.isError).toBe(true);
+    const missingPdf = path.join(stateRoot, "missing.pdf");
+    const failingCalls = [
+      { name: "get_pdf_resource_uri", arguments: { pdf_path: missingPdf } },
+      { name: "read_pdf_bytes", arguments: { pdf_path: missingPdf, offset: 0, byteCount: 8 } },
+      { name: "read_pdf_content", arguments: { pdf_path: missingPdf } },
+      { name: "read_pdf_pages", arguments: { pdf_path: missingPdf, start_page: 1, end_page: 1 } },
+      { name: "render_pdf_page", arguments: { pdf_path: missingPdf, page: 1 } },
+      {
+        name: "render_pdf_region",
+        arguments: { pdf_path: missingPdf, page: 1, x: 0, y: 0, width: 10, height: 10 },
+      },
+      { name: "search_pdf_text", arguments: { pdf_path: missingPdf, query: "needle" } },
+    ];
+
+    for (const request of failingCalls) {
+      const result = await client.callTool(request);
+      expect(result.isError, request.name).toBe(true);
+      expect(result.content?.[0], request.name).toMatchObject({
+        type: "text",
+        text: expect.stringMatching(/^Error\b/),
+      });
+    }
 
     const disallowed = await client.callTool({
       name: "get_pdf_resource_uri",

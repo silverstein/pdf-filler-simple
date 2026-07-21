@@ -82,14 +82,17 @@ encodes the absolute platform path as one percent-encoded segment under the
 canonical `pdf://local/` authority. The symmetric decoder handles POSIX,
 Windows-drive, UNC, Unicode, and RFC 3986 reserved characters without allowing
 URI query/fragment ambiguity. `resources/read` re-applies the allowlist before
-returning the PDF as an `application/pdf` blob. Invalid URIs return `-32602`;
-missing or expected-permission-unavailable resources return `-32002`. Genuine
-filesystem/runtime faults remain `-32603` instead of being mislabeled as a
-missing resource.
+returning the PDF as an `application/pdf` blob. Schema-valid string URIs that
+do not match a supported resource form return `-32602`; missing or
+expected-permission-unavailable resources return `-32002`. Inputs rejected by
+the SDK before the handler runs can use the SDK's own protocol-error mapping.
+Genuine filesystem/runtime faults remain `-32603` instead of being mislabeled
+as a missing resource.
 
 The finite tools, prompts, and resource lists do not issue pagination cursors.
-Supplying any cursor therefore returns `-32602` instead of silently restarting
-at the first page.
+Supplying a schema-valid string cursor therefore returns `-32602` instead of
+silently restarting at the first page. Inputs rejected by the SDK schema before
+the handler runs can use the SDK's own protocol-error mapping.
 
 ## Verification
 

@@ -3034,6 +3034,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         } catch (error) {
           return {
+            isError: true,
             content: [{
               type: "text",
               text: `Error reading PDF file: ${error.message}\n\nPlease ensure the file path is correct and the file exists.`
@@ -3119,6 +3120,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         } catch (error) {
           return {
+            isError: true,
             content: [{
               type: "text",
               text: `Error reading PDF pages: ${error.message}\n\nPlease ensure the file path is correct and the requested page range is valid.`
@@ -3189,6 +3191,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         } catch (error) {
           return {
+            isError: true,
             content: [{
               type: "text",
               text: `Error rendering PDF page: ${error.message}\n\nPlease ensure the file path is correct and the requested page can be rendered.`
@@ -3283,6 +3286,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         } catch (error) {
           return {
+            isError: true,
             content: [{
               type: "text",
               text: `Error rendering PDF region: ${error.message}\n\nPlease ensure the file path, page, and region coordinates are valid.`
@@ -3349,6 +3353,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           };
         } catch (error) {
           return {
+            isError: true,
             content: [{
               type: "text",
               text: `Error searching PDF text: ${error.message}\n\nPlease ensure the file path is correct and the query is valid.`
