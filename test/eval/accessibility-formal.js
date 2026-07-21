@@ -131,6 +131,12 @@ function validateContract(contract) {
     if (!/^[a-z0-9][a-z0-9.-]+$/.test(fixture.id ?? "")) errors.push("formal fixture IDs must be path-safe");
     if (ids.has(fixture.id)) errors.push(`duplicate formal fixture ${fixture.id}`);
     ids.add(fixture.id);
+    if (typeof fixture.filename !== "string"
+      || !/^[A-Za-z0-9][A-Za-z0-9._-]*\.pdf$/.test(fixture.filename)
+      || path.posix.basename(fixture.filename) !== fixture.filename
+      || path.win32.basename(fixture.filename) !== fixture.filename) {
+      errors.push(`${fixture.id} filename must be a single safe PDF basename`);
+    }
     if (!SHA256.test(fixture.sha256 ?? "")) errors.push(`${fixture.id} must pin SHA-256`);
     if (!Number.isInteger(fixture.size) || fixture.size < 1) errors.push(`${fixture.id} must pin a positive byte size`);
     if (!/^https:\/\//.test(fixture.source_url ?? "")) errors.push(`${fixture.id} must have an HTTPS source URL`);
@@ -254,9 +260,7 @@ function formalConfusion(results) {
       harness_failures: 0,
     };
     const expectedDefect = !result.expected_machine_compliant;
-    const detectedDefect = result.evidence
-      ? !result.evidence.machine_compliant && result.evidence.exact_failed_rules_match
-      : false;
+    const detectedDefect = result.evidence ? !result.evidence.machine_compliant : false;
     if (result.harness_error) byFamily[family].harness_failures += 1;
     else if (expectedDefect && detectedDefect) byFamily[family].true_positives += 1;
     else if (!expectedDefect && !detectedDefect) byFamily[family].true_negatives += 1;

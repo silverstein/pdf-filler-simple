@@ -78,7 +78,7 @@ function rawReport({
   }));
 }
 
-async function fakeFormalEnvironment() {
+async function fakeFormalEnvironment({ misclassifyKnownGood = false } = {}) {
   const root = await temporaryDirectory("pdf-tools-formal-accessibility-");
   const corpus = path.join(root, "corpus");
   const validatorRoot = path.join(root, "validator");
@@ -112,7 +112,7 @@ if (args.includes("--version")) {
   process.stdout.write("veraPDF 1.30.2\\n");
   process.exit(0);
 }
-const defective = args.at(-1).endsWith("fail.pdf");
+const defective = args.at(-1).endsWith("fail.pdf") || (${misclassifyKnownGood} && args.at(-1).endsWith("pass.pdf"));
 const input = args.at(-1);
 const rules = defective ? [{ specification: "ISO 14289-1:2014", clause: "5", testNumber: 1 }] : [];
 process.stdout.write(JSON.stringify({ report: {
@@ -253,6 +253,31 @@ describe("formal accessibility machine-evidence pilot", () => {
     expect(report.results.every(result => result.raw_report_sha256.match(/^[a-f0-9]{64}$/))).toBe(true);
   });
 
+  it("counts an erroneous non-compliant result on known-good input as a false positive", async () => {
+    const environment = await fakeFormalEnvironment({ misclassifyKnownGood: true });
+    const report = await runFormalAccessibilityEvaluation({
+      contractPath: environment.contractPath,
+      corpusDirectory: environment.corpus,
+      validatorPath: environment.validator,
+      validatorArtifactPath: environment.artifact,
+      runtimeArchivePath: environment.runtimeArchive,
+      javaHome: environment.javaHome,
+      reportDirectory: environment.reports,
+    });
+    expect(report.passed).toBe(false);
+    expect(report.rule_family_confusion.version_identification).toEqual({
+      true_positives: 1,
+      true_negatives: 0,
+      false_positives: 1,
+      false_negatives: 0,
+      harness_failures: 0,
+    });
+    const knownGood = report.results.find(result => result.id === "fake.pass");
+    expect(knownGood.evidence.machine_compliant).toBe(false);
+    expect(knownGood.evidence.exact_failed_rules_match).toBe(false);
+    expect(knownGood.expectation_met).toBe(false);
+  });
+
   it("fetches only hash-matching external corpus bytes", async () => {
     const environment = await fakeFormalEnvironment();
     const output = path.join(path.dirname(environment.contractPath), "fetched");
@@ -274,6 +299,43 @@ describe("formal accessibility machine-evidence pilot", () => {
       outputDirectory: corruptOutput,
       fetchImpl: async () => new Response("wrong bytes", { status: 200 }),
     })).rejects.toThrow("downloaded SHA-256 mismatch");
+  });
+
+  it("rejects hostile fixture basenames, symlinked output parents, and symlink targets", async () => {
+    const environment = await fakeFormalEnvironment();
+    const hostile = structuredClone(environment.contract);
+    hostile.fixtures[0].filename = "../../escape.pdf";
+    const hostileContract = path.join(path.dirname(environment.contractPath), "hostile.json");
+    await fs.writeFile(hostileContract, JSON.stringify(hostile));
+    await expect(loadFormalAccessibilityContract(hostileContract))
+      .rejects.toThrow("single safe PDF basename");
+
+    const outside = await temporaryDirectory("pdf-tools-formal-fetch-outside-");
+    const linkedParent = path.join(path.dirname(environment.contractPath), "linked-parent");
+    await fs.symlink(outside, linkedParent);
+    let fetchCalled = false;
+    const shouldNotFetch = async () => {
+      fetchCalled = true;
+      return new Response("unexpected", { status: 200 });
+    };
+    await expect(fetchFormalAccessibilityCorpus({
+      contractPath: environment.contractPath,
+      outputDirectory: path.join(linkedParent, "corpus"),
+      fetchImpl: shouldNotFetch,
+    })).rejects.toThrow("must not contain symbolic links");
+    expect(fetchCalled).toBe(false);
+
+    const targetRoot = path.join(path.dirname(environment.contractPath), "target-root");
+    await fs.mkdir(targetRoot);
+    const outsideTarget = path.join(outside, "outside.pdf");
+    await fs.writeFile(outsideTarget, "outside");
+    await fs.symlink(outsideTarget, path.join(targetRoot, "pass.pdf"));
+    await expect(fetchFormalAccessibilityCorpus({
+      contractPath: environment.contractPath,
+      outputDirectory: targetRoot,
+      fetchImpl: shouldNotFetch,
+    })).rejects.toThrow("output target must not be a symbolic link");
+    expect(fetchCalled).toBe(false);
   });
 
   it("fails closed on exit/report disagreement, processing failures, and unexpected rules", async () => {

@@ -197,6 +197,13 @@ caller-selected evidence directory and records their SHA-256. Repository
 evidence stores non-normative derived fields rather than copying validator
 renderings of standards requirements.
 
+Formal confusion classification uses the validator's compliance boolean: a
+non-compliant result on known-good input is a false positive even if its failed
+rule keys are unexpected. Exact failed-rule agreement remains a separate hard
+expectation gate. Corpus filenames must be single safe PDF basenames, and the
+fetcher rejects path escapes, symlinked output components or targets, existing
+targets, and non-hash-matching downloads.
+
 The child process does not inherit the caller's environment. It receives the
 exact Java home, a minimal path, fixed `C.UTF-8` locale and UTC timezone, and a
 disposable home/config/cache/temp tree that is also the child working directory.
