@@ -12,6 +12,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  symlinkSync,
   writeFileSync,
 } from "fs";
 import { tmpdir } from "os";
@@ -93,6 +94,20 @@ function expectThrow(operation, pattern, message) {
 function writeExecutable(filename, contents) {
   writeFileSync(filename, contents);
   chmodSync(filename, 0o755);
+}
+
+function populateNodeOnlyInstallerPath(directory, cwd) {
+  mkdirSync(directory, { recursive: true });
+  for (const command of ["bash", "basename", "chmod", "cp", "dirname", "grep", "mkdir", "mktemp", "mv", "node", "rm"]) {
+    const executable = run("sh", ["-c", `command -v ${command}`], cwd).trim();
+    symlinkSync(executable, path.join(directory, command));
+  }
+  writeExecutable(path.join(directory, "npm"), "#!/bin/bash\nexit 0\n");
+  const pythonProbe = spawnSync("/bin/sh", ["-c", "command -v python3"], {
+    env: { ...process.env, PATH: directory },
+    encoding: "utf8",
+  });
+  if (pythonProbe.status === 0) throw new Error("Node-only installer PATH unexpectedly exposes python3");
 }
 
 function assertNoInstallerTemps(parent, targetName) {
@@ -224,13 +239,12 @@ function testSuccessfulWrapperConfigs(sourcePackageRoot, tempRoot) {
   const hostileBin = path.join(hostileHome, "bin");
   const hostileConfig = path.join(hostileHome, ".cursor", "mcp.json");
   mkdirSync(path.dirname(hostileConfig), { recursive: true });
-  mkdirSync(hostileBin, { recursive: true });
-  writeExecutable(path.join(hostileBin, "npm"), "#!/bin/bash\nexit 0\n");
+  populateNodeOnlyInstallerPath(hostileBin, tempRoot);
   writeFileSync(hostileConfig, `${JSON.stringify({ sentinel: "preserve-me", mcpServers: { existing: { command: "ok" } } }, null, 2)}\n`);
   const hostileEnvironment = {
     ...process.env,
     HOME: hostileHome,
-    PATH: `${hostileBin}:${process.env.PATH}`,
+    PATH: hostileBin,
   };
   run("bash", [path.join(sourcePackageRoot, "smart-install.sh")], tempRoot, {
     env: hostileEnvironment,
@@ -245,15 +259,33 @@ function testSuccessfulWrapperConfigs(sourcePackageRoot, tempRoot) {
 
   const newHome = path.join(tempRoot, "new home 'apostrophe \"double\" \\backslash");
   const newBin = path.join(newHome, "bin");
-  mkdirSync(newBin, { recursive: true });
-  writeExecutable(path.join(newBin, "npm"), "#!/bin/bash\nexit 0\n");
+  populateNodeOnlyInstallerPath(newBin, tempRoot);
   run("bash", [path.join(sourcePackageRoot, "install.command")], tempRoot, {
-    env: { ...process.env, HOME: newHome, PATH: `${newBin}:${process.env.PATH}` },
+    env: { ...process.env, HOME: newHome, PATH: newBin },
     input: "\n",
   });
   assertConfiguredServer(
     path.join(newHome, ".cursor", "mcp.json"),
     path.join(newHome, ".pdf-tools-mcp", "server", "index.js"),
+  );
+
+  const hostileManualSource = path.join(tempRoot, "manual source 'apostrophe \"double\" \\backslash");
+  const manualBin = path.join(tempRoot, "manual-node-only-bin");
+  cpSync(sourcePackageRoot, hostileManualSource, { recursive: true });
+  populateNodeOnlyInstallerPath(manualBin, tempRoot);
+  const manualOutput = run("bash", [path.join(hostileManualSource, "install.sh")], tempRoot, {
+    env: { ...process.env, HOME: newHome, PATH: manualBin },
+  });
+  const separator = "===============================================";
+  const outputLines = manualOutput.split(/\r?\n/);
+  const firstSeparator = outputLines.indexOf(separator);
+  const secondSeparator = outputLines.indexOf(separator, firstSeparator + 1);
+  if (firstSeparator < 0 || secondSeparator < 0) throw new Error("Manual installer did not emit a JSON block");
+  const printedConfig = JSON.parse(outputLines.slice(firstSeparator + 1, secondSeparator).join("\n"));
+  assertEqual(
+    printedConfig.mcpServers?.["pdf-tools"]?.args?.[0],
+    path.join(hostileManualSource, "server", "index.js"),
+    "Manual installer path did not round-trip exactly through JSON",
   );
 }
 

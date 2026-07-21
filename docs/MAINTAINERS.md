@@ -134,9 +134,10 @@ bundled server, lists its tools, and requires native `render_pdf_page` output.
 - The smart and double-click installers run `npm ci` in a sibling staging
   directory, move the working installation to a backup only after install
   success, atomically activate the stage, and roll back if activation fails.
-  Cursor config paths are passed to a single-quoted Python heredoc as arguments;
-  both existing and new configs are emitted with `json.dump`, never shell-built
-  or interpolated Python/JSON source.
+  Cursor config paths are passed to a single-quoted Node heredoc as arguments;
+  existing, new, and manual config JSON is handled with `JSON.parse` and
+  `JSON.stringify`, never shell-built or interpolated program/JSON source. The
+  same helper fsyncs and atomically renames config updates and backups.
 - Generate with:
 
 ```

@@ -1,7 +1,8 @@
 #!/bin/bash
 
 set -e
-cd "$(dirname "${BASH_SOURCE[0]}")"
+SOURCE_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+cd "$SOURCE_DIR"
 
 echo "🚀 Installing PDF Tools MCP Server..."
 echo "📦 Installing the reviewed production dependency graph..."
@@ -15,14 +16,7 @@ FULL_PATH="$(pwd)/server/index.js"
 echo "🎯 COPY THIS EXACT TEXT to your ~/.cursor/mcp.json:"
 echo ""
 echo "==============================================="
-echo '{'
-echo '  "mcpServers": {'
-echo '    "pdf-tools": {'
-echo '      "command": "node",'
-echo "      \"args\": [\"$FULL_PATH\"]"
-echo '    }'
-echo '  }'
-echo '}'
+"$SOURCE_DIR/configure-cursor.sh" print "$FULL_PATH"
 echo "==============================================="
 echo ""
 echo "📂 Your MCP config file is located at:"

@@ -38,8 +38,12 @@ if [ -f "$MCP_CONFIG" ]; then
     read -r response
     
     if [[ "$response" =~ ^[Yy]$ ]]; then
-        # Create backup
-        cp "$MCP_CONFIG" "$MCP_CONFIG.backup"
+        # Create and fsync an atomic backup before changing the config.
+        if ! "$SOURCE_DIR/configure-cursor.sh" backup "$MCP_CONFIG" "$MCP_CONFIG.backup"; then
+            echo "❌ Could not create a safe config backup. Configuration was not changed."
+            show_manual_instructions
+            exit 1
+        fi
         echo "💾 Backup created: $MCP_CONFIG.backup"
         
         # Check if pdf-tools already exists and remove old entry
