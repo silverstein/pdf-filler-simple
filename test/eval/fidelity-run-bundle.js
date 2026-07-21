@@ -23,6 +23,24 @@ function safeArtifactPath(root, relativePath) {
   return resolved.startsWith(`${root}${path.sep}`) ? resolved : null;
 }
 
+async function validateArtifactPath(root, relativePath) {
+  const resolved = safeArtifactPath(root, relativePath);
+  if (!resolved) throw new Error("path escapes run root");
+  const rootStat = await fs.lstat(root);
+  if (!rootStat.isDirectory() || rootStat.isSymbolicLink() || await fs.realpath(root) !== root) {
+    throw new Error("run root is not a real directory");
+  }
+  const components = path.relative(root, resolved).split(path.sep);
+  let current = root;
+  for (const [index, component] of components.entries()) {
+    current = path.join(current, component);
+    const stat = await fs.lstat(current);
+    if (stat.isSymbolicLink()) throw new Error("path contains a symlink");
+    if (index < components.length - 1 && !stat.isDirectory()) throw new Error("path parent is not a directory");
+  }
+  return resolved;
+}
+
 async function readCanonical(filePath, errors, label) {
   try {
     const bytes = await fs.readFile(filePath);
@@ -87,19 +105,17 @@ export async function verifyFidelityRunBundle(runRoot, { repoRoot = DEFAULT_REPO
 
   const reportArtifacts = new Map(report.artifacts.map(artifact => [artifact.artifact_id, artifact]));
   if (reportArtifacts.size !== report.artifacts.length) errors.push("report artifact ids are not unique");
+  if (new Set(report.artifacts.map(artifact => artifact.path)).size !== report.artifacts.length) errors.push("report artifact paths are not unique");
   const indexRunArtifacts = index.artifacts.filter(artifact => artifact.role === "report" || artifact.role === "score");
   if (indexRunArtifacts.length !== 2) errors.push("index must bind exactly one report and one score artifact");
+  if (new Set(index.artifacts.map(artifact => artifact.artifact_id)).size !== index.artifacts.length) errors.push("index artifact ids are not unique");
+  if (new Set(index.artifacts.map(artifact => artifact.path)).size !== index.artifacts.length) errors.push("index artifact paths are not unique");
   const indexCellArtifacts = index.artifacts.filter(artifact => artifact.role !== "report" && artifact.role !== "score");
   if (!equal(indexCellArtifacts, report.artifacts)) errors.push("index cell artifacts differ from report artifacts");
   let evidenceIntegrity = true;
   for (const artifact of index.artifacts) {
-    const resolved = safeArtifactPath(root, artifact.path);
-    if (!resolved) {
-      errors.push(`artifact path escapes run root: ${artifact.path}`);
-      evidenceIntegrity = false;
-      continue;
-    }
     try {
+      const resolved = await validateArtifactPath(root, artifact.path);
       const stat = await fs.lstat(resolved);
       if (!stat.isFile() || stat.isSymbolicLink() || stat.size !== artifact.byte_length || stat.size === 0) throw new Error("not the bound nonempty regular file");
       const bytes = await fs.readFile(resolved);
