@@ -52,8 +52,11 @@ and per-repeat nonce. The campaign record additionally binds the exact Codex
 and Node.js versions plus hashes of the complete server source surface,
 lockfile, controller, ingester, evaluator, shared PNG validator, grader,
 corpus manifest, suite, trust registry, and tool contracts. A self-checking
-launch-contract digest covers the campaign fields. A `run` refuses to launch
-if any of those inputs, fields, or its planned workspace changed.
+launch-contract digest covers the campaign fields. It also fingerprints the
+resolved Codex and Node executables, MCP SDK, `pdf-lib`, `pdfjs-dist`, JavaScript
+canvas package, platform-native canvas binary, and the lexical and real
+`node_modules` roots. A `run` refuses to launch if any of those inputs, fields,
+installed runtimes, retained planning files, or its planned workspace changed.
 
 Planner and result signatures remain null. These are unsigned descriptive
 measurements on one repeated fixture instance, not independent benchmark
@@ -104,8 +107,12 @@ The classification boundary matches the trajectory ingester:
 - If any `pdf_tools` MCP call completed, the attempt is a product trial. A bad
   answer, failed tool result, malformed later event, nonzero Codex exit, or
   retained host diagnostic cannot relabel it as a harness failure.
-- An attempt with no completed PDF call is recorded as a harness failure, with
-  launcher exit, signal, timeout, stderr digest, and a retained host event.
+- If Codex completes its turn without any PDF call, the attempt is still a
+  failed product trial. This keeps tool-avoidance failures in the product
+  denominator.
+- A spawn failure, timeout, or process that ends before a completed turn and
+  before any completed PDF call is a harness failure, with launcher exit,
+  signal, timeout, stderr digest, and a retained host event.
 
 The exclusive `launch-claim.json` prevents accidentally paying for the same
 planned invocation twice. If the controller itself is killed before it can
@@ -143,9 +150,13 @@ measured-trials.json
 trajectory-report.json
 ```
 
-`finalize` checks every planned entry before creating the batch manifest. It
-then invokes `scripts/eval-ingest-codex-trajectory.mjs` once for the complete
-batch and evaluates the resulting trial set with
+`finalize` checks every retained file for every planned entry before creating
+the batch manifest. It replays raw JSONL against the arrival ledger, verifies
+the launch claim and exact command, arguments, source/runtime fingerprints,
+stdout/stderr digests, pre/post filesystem snapshots, and then rederives the
+entire observer sidecar from those retained inputs. It then invokes
+`scripts/eval-ingest-codex-trajectory.mjs` once for the complete batch and
+evaluates the resulting trial set with
 `scripts/eval-run-trajectories.mjs`. A partial first result cannot redefine the
 denominator.
 
@@ -157,6 +168,9 @@ Controller tests do not invoke Codex:
 npx vitest run test/eval/codex-comparison-controller.test.js
 ```
 
-They cover exact plan cardinality, isolation arguments, chunked JSONL arrival
-timestamps, product/harness classification, deterministic evidence binding,
-filesystem effects, observer construction, and complete batch manifests.
+They cover exact plan cardinality, isolation arguments, split UTF-8 JSONL,
+product/harness classification, deterministic evidence binding, filesystem
+effects, observer construction, and complete batch manifests. An offline fake
+Codex executable also exercises plan-to-finalize success, a completed no-tool
+product failure, exclusive concurrent claims, prompt and descendant-symlink
+tampering, altered arrival evidence, and timeout accounting.

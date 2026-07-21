@@ -1,15 +1,17 @@
 #!/usr/bin/env node
 
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash, randomBytes } from "node:crypto";
 import fsSync from "node:fs";
 import fs from "node:fs/promises";
+import { createRequire } from "node:module";
 import { homedir, hostname, platform, arch } from "node:os";
 import path from "node:path";
 import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(import.meta.url);
 const SUITE_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
 const DOCUMENTS_ROOT = path.join(homedir(), "Documents");
 const JOB_ID = "pdf-tools.trajectory.v1.compare-and-explain";
@@ -105,6 +107,64 @@ function nodeRuntime() {
   };
 }
 
+async function resolveExecutable(command) {
+  if (path.isAbsolute(command)) return fs.realpath(command);
+  for (const directory of (process.env.PATH ?? "").split(path.delimiter).filter(Boolean)) {
+    const candidate = path.join(directory, command);
+    try {
+      await fs.access(candidate, fsSync.constants.X_OK);
+      return await fs.realpath(candidate);
+    } catch {
+      // Keep searching PATH.
+    }
+  }
+  throw new Error(`Executable is not available on PATH: ${command}`);
+}
+
+async function fingerprintRuntimeFile(filename) {
+  const realPath = await fs.realpath(filename);
+  const bytes = await fs.readFile(realPath);
+  return { path: filename, real_path: realPath, size: bytes.length, sha256: sha256(bytes) };
+}
+
+async function runtimeFingerprints(codexExecutable = "codex") {
+  const nativeCanvasPackage = {
+    "darwin-arm64": "@napi-rs/canvas-darwin-arm64",
+    "darwin-x64": "@napi-rs/canvas-darwin-x64",
+    "linux-arm64": "@napi-rs/canvas-linux-arm64-gnu",
+    "linux-x64": "@napi-rs/canvas-linux-x64-gnu",
+    "win32-arm64": "@napi-rs/canvas-win32-arm64-msvc",
+    "win32-x64": "@napi-rs/canvas-win32-x64-msvc",
+  }[`${process.platform}-${process.arch}`];
+  if (!nativeCanvasPackage) throw new Error(`Unsupported canvas runtime ${process.platform}-${process.arch}`);
+  const resolvedCodex = await resolveExecutable(codexExecutable);
+  const nodeModulesPath = path.join(REPO_ROOT, "node_modules");
+  const files = {
+    controller_node: process.execPath,
+    mcp_node: process.execPath,
+    codex: resolvedCodex,
+    mcp_sdk_entry: require.resolve("@modelcontextprotocol/sdk/server/index.js"),
+    pdf_lib_entry: require.resolve("pdf-lib"),
+    pdf_lib_manifest: require.resolve("pdf-lib/package.json"),
+    pdfjs_entry: require.resolve("pdfjs-dist/legacy/build/pdf.mjs"),
+    pdfjs_manifest: require.resolve("pdfjs-dist/package.json"),
+    canvas_entry: require.resolve("@napi-rs/canvas"),
+    canvas_manifest: require.resolve("@napi-rs/canvas/package.json"),
+    canvas_native_entry: require.resolve(nativeCanvasPackage),
+    canvas_native_manifest: require.resolve(`${nativeCanvasPackage}/package.json`),
+  };
+  const fingerprints = {};
+  for (const [label, filename] of Object.entries(files)) {
+    fingerprints[label] = await fingerprintRuntimeFile(filename);
+  }
+  fingerprints.node_modules_root = {
+    path: nodeModulesPath,
+    real_path: await fs.realpath(nodeModulesPath),
+    type: "directory",
+  };
+  return fingerprints;
+}
+
 export function campaignCommitmentSha256(campaign) {
   const payload = Object.fromEntries(Object.entries(campaign)
     .filter(([key]) => key !== "launch_contract_sha256"));
@@ -117,6 +177,10 @@ function runName(repeatIndex) {
 
 function normalizeRelative(filename) {
   return filename.split(path.sep).join("/");
+}
+
+function isObjectRecord(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
 function exactObjectKeys(value, expected, location) {
@@ -146,21 +210,20 @@ async function readJson(filename) {
   return JSON.parse(await fs.readFile(filename, "utf8"));
 }
 
+async function readRegularFile(filename, encoding = null) {
+  const stat = await fs.lstat(filename);
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`Expected a retained regular file: ${filename}`);
+  }
+  return fs.readFile(filename, encoding ?? undefined);
+}
+
 async function loadSuite() {
   const suite = await readJson(SUITE_PATH);
   if (suite?.suite_id !== "pdf-tools.trajectory.v1" || !Array.isArray(suite.jobs)) {
     throw new Error("Trajectory suite is missing its pinned ID or jobs array");
   }
   return suite;
-}
-
-async function exists(filename) {
-  try {
-    await fs.access(filename);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 export async function assertCampaignPath(campaignPath, documentsRoot = DOCUMENTS_ROOT, { mayNotExist = false } = {}) {
@@ -178,6 +241,26 @@ export async function assertCampaignPath(campaignPath, documentsRoot = DOCUMENTS
     throw new Error(`Campaign must be a child of ${documentsReal}`);
   }
   return resolved;
+}
+
+async function assertDirectoryChain(root, candidate, label) {
+  const rootReal = await fs.realpath(root);
+  const resolved = path.resolve(candidate);
+  const relative = path.relative(rootReal, resolved);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) {
+    throw new Error(`${label} must be a child of ${rootReal}`);
+  }
+  let current = rootReal;
+  for (const segment of relative.split(path.sep)) {
+    current = path.join(current, segment);
+    const stat = await fs.lstat(current);
+    if (stat.isSymbolicLink() || !stat.isDirectory()) {
+      throw new Error(`${label} ancestry must contain only real directories: ${current}`);
+    }
+  }
+  const currentReal = await fs.realpath(current);
+  if (currentReal !== current) throw new Error(`${label} resolves outside its lexical directory chain`);
+  return currentReal;
 }
 
 async function snapshotEntry(root, absolute, relative) {
@@ -243,6 +326,40 @@ function inputSnapshotFromManifest(manifest) {
   };
 }
 
+async function validatePlannedRunInputs({ campaignRoot, run }) {
+  const runRoot = await assertDirectoryChain(
+    campaignRoot, path.join(campaignRoot, run.directory), "Campaign run directory",
+  );
+  const workspace = await assertDirectoryChain(
+    runRoot, path.join(runRoot, "workspace"), "Campaign workspace",
+  );
+  const manifestPath = path.join(runRoot, "planned-workspace-manifest.json");
+  const promptPath = path.join(runRoot, "prompt.txt");
+  const [manifestText, prompt] = await Promise.all([
+    readRegularFile(manifestPath, "utf8"),
+    readRegularFile(promptPath, "utf8"),
+  ]);
+  if (sha256(manifestText) !== run.workspace_manifest_raw_sha256) {
+    throw new Error("Raw planned workspace manifest changed after planning");
+  }
+  if (sha256(prompt) !== run.prompt_sha256) throw new Error("Prompt changed after planning");
+  const manifest = JSON.parse(manifestText);
+  if (!Array.isArray(manifest.entries)
+    || manifest.manifest_sha256 !== sha256(canonicalJson(manifest.entries))
+    || manifest.manifest_sha256 !== run.workspace_manifest_sha256) {
+    throw new Error("Planned workspace manifest does not match its frozen canonical digest");
+  }
+  const inputSnapshot = inputSnapshotFromManifest(manifest);
+  if (sha256(canonicalJson(inputSnapshot)) !== run.input_sha256) {
+    throw new Error("Planned input snapshot does not match its frozen digest");
+  }
+  const currentManifest = await snapshotTree(workspace);
+  if (currentManifest.manifest_sha256 !== run.workspace_manifest_sha256) {
+    throw new Error("Run workspace changed after planning");
+  }
+  return { runRoot, workspace, manifest, manifestText, prompt, currentManifest };
+}
+
 export function fixtureInstanceRecord() {
   return {
     fixture_instance_schema_version: 1,
@@ -306,7 +423,12 @@ function tomlInlineStringTable(value) {
   return `{${Object.entries(value).map(([key, item]) => `${key}=${tomlString(item)}`).join(",")}}`;
 }
 
-export function buildCodexArgs({ workspace, model = DEFAULT_MODEL, serverPath = path.join(REPO_ROOT, "server", "index.js") }) {
+export function buildCodexArgs({
+  workspace,
+  model = DEFAULT_MODEL,
+  serverPath = path.join(REPO_ROOT, "server", "index.js"),
+  nodeExecutable = process.execPath,
+}) {
   const serverEnvironment = {
     ALLOWED_DIRECTORIES: workspace,
     DEFAULT_PROFILES_DIR: path.join(workspace, "state"),
@@ -338,7 +460,7 @@ export function buildCodexArgs({ workspace, model = DEFAULT_MODEL, serverPath = 
   ];
   for (const feature of DISABLED_FEATURES) args.push("--disable", feature);
   args.push(
-    "-c", "mcp_servers.pdf_tools.command=\"node\"",
+    "-c", `mcp_servers.pdf_tools.command=${tomlString(nodeExecutable)}`,
     "-c", `mcp_servers.pdf_tools.args=${JSON.stringify([serverPath])}`,
     "-c", `mcp_servers.pdf_tools.cwd=${tomlString(workspace)}`,
     "-c", `mcp_servers.pdf_tools.env=${tomlInlineStringTable(serverEnvironment)}`,
@@ -418,8 +540,12 @@ function completedPdfCalls(arrivals) {
   return arrivals.map(completedItem).filter(item => item?.type === "mcp_tool_call" && item.server === "pdf_tools");
 }
 
-export function classifyRunOutcome(arrivals) {
-  return completedPdfCalls(arrivals).length > 0 ? "completed" : "harness_failure";
+export function classifyRunOutcome(arrivals, exit = {}) {
+  if (completedPdfCalls(arrivals).length > 0) return "completed";
+  if (exit.spawn_error || exit.timed_out) return "harness_failure";
+  return arrivals.some(arrival => arrival.event?.type === "turn.completed")
+    ? "completed"
+    : "harness_failure";
 }
 
 function successfulCall(item) {
@@ -525,6 +651,21 @@ function hostEvent(eventId, type, source, observedAt, reference, provenance) {
     reference,
     provenance,
   };
+}
+
+function campaignEvidenceDigest({
+  campaign, launcherRecordSha256, preManifestRawSha256, postManifestRawSha256,
+}) {
+  return sha256(canonicalJson({
+    launch_contract_sha256: campaign.launch_contract_sha256,
+    codex_version: campaign.codex_version,
+    node_runtime: campaign.node_runtime,
+    source_fingerprints: campaign.source_fingerprints,
+    runtime_fingerprints: campaign.runtime_fingerprints,
+    launcher_record_sha256: launcherRecordSha256,
+    pre_manifest_raw_sha256: preManifestRawSha256,
+    post_manifest_raw_sha256: postManifestRawSha256,
+  }));
 }
 
 function sourceObservationMap({ runId, preObservedAt, preManifest }) {
@@ -635,6 +776,9 @@ export function buildObserver({
   const inputSha256 = sha256(canonicalJson(inputSnapshot));
   const effectsDiff = diffManifests(preManifest, postManifest);
   const effectsEventId = `${runId}.event.effects`;
+  const campaignDigest = campaignEvidenceDigest({
+    campaign, launcherRecordSha256, preManifestRawSha256, postManifestRawSha256,
+  });
   const planDigest = sha256(canonicalJson(plan));
   const effects = {
     effects_schema_version: 1,
@@ -685,8 +829,16 @@ export function buildObserver({
       `sha256:${launcherRecordSha256}`,
       eventProvenance("agent_host", "launcher_record_sha256", launcherRecordSha256),
     ),
+    hostEvent(
+      `${runId}.event.campaign-evidence`,
+      "campaign_evidence_bound",
+      "codex_comparison_controller",
+      launcherObservedAt,
+      `sha256:${campaignDigest}`,
+      eventProvenance("agent_host", "campaign_evidence_digest", campaignDigest),
+    ),
   ];
-  const outcome = classifyRunOutcome(arrivals);
+  const outcome = classifyRunOutcome(arrivals, exit);
   let failure = null;
   if (outcome === "harness_failure") {
     failure = harnessFailure({ runId, finishedAt, exit, stderrSha256 });
@@ -745,6 +897,248 @@ export function buildBatchManifest(campaign) {
   };
 }
 
+const RETAINED_RUN_FILES = Object.freeze([
+  "prompt.txt",
+  "planned-workspace-manifest.json",
+  "launch-claim.json",
+  "launcher-start.json",
+  "codex.jsonl",
+  "codex.stderr",
+  "jsonl-arrivals.jsonl",
+  "pre-filesystem-manifest.json",
+  "post-filesystem-manifest.json",
+  "launcher-record.json",
+  "observer.json",
+]);
+
+const LAUNCHER_START_KEYS = Object.freeze([
+  "launcher_schema_version", "invocation_id", "command", "args", "cwd", "model", "codex_version",
+  "started_at", "timeout_ms", "prompt_sha256", "plan_sha256", "source_fingerprints",
+  "runtime_fingerprints",
+]);
+
+const LAUNCHER_RECORD_KEYS = Object.freeze([
+  ...LAUNCHER_START_KEYS,
+  "finished_at", "exit", "stdout_sha256", "stderr_sha256", "arrival_count", "parse_error_count",
+  "completed_pdf_call_count", "classified_outcome", "host_diagnostics", "limitations",
+]);
+
+const ARRIVAL_KEYS = Object.freeze([
+  "arrival_schema_version", "line_number", "observed_at", "line_sha256", "event", "parse_error",
+]);
+
+function rawJsonlLines(text) {
+  const lines = text.split("\n");
+  if (lines.at(-1) === "") lines.pop();
+  return lines.map(line => line.replace(/\r$/, ""));
+}
+
+async function verifyCompletedRunEvidence({ campaignRoot, campaign, plan, job, run, entry }) {
+  const runRoot = await assertDirectoryChain(
+    campaignRoot, path.join(campaignRoot, run.directory), "Campaign run directory",
+  );
+  const workspace = await assertDirectoryChain(
+    runRoot, path.join(runRoot, "workspace"), "Campaign workspace",
+  );
+  for (const filename of RETAINED_RUN_FILES) {
+    const stat = await fs.lstat(path.join(runRoot, filename));
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw new Error(`${run.directory}/${filename} must be a retained regular file`);
+    }
+  }
+  const [
+    prompt, plannedManifestText, claim, launcherStart, rawText, stderrBytes, arrivalsText,
+    preManifestText, postManifestText, launcherText, observerText,
+  ] = await Promise.all([
+    fs.readFile(path.join(runRoot, "prompt.txt"), "utf8"),
+    fs.readFile(path.join(runRoot, "planned-workspace-manifest.json"), "utf8"),
+    readJson(path.join(runRoot, "launch-claim.json")),
+    readJson(path.join(runRoot, "launcher-start.json")),
+    fs.readFile(path.join(runRoot, "codex.jsonl"), "utf8"),
+    fs.readFile(path.join(runRoot, "codex.stderr")),
+    fs.readFile(path.join(runRoot, "jsonl-arrivals.jsonl"), "utf8"),
+    fs.readFile(path.join(runRoot, "pre-filesystem-manifest.json"), "utf8"),
+    fs.readFile(path.join(runRoot, "post-filesystem-manifest.json"), "utf8"),
+    fs.readFile(path.join(runRoot, "launcher-record.json"), "utf8"),
+    fs.readFile(path.join(runRoot, "observer.json"), "utf8"),
+  ]);
+  if (sha256(prompt) !== run.prompt_sha256
+    || sha256(plannedManifestText) !== run.workspace_manifest_raw_sha256) {
+    throw new Error(`${run.directory} prompt or planned manifest no longer matches the launch contract`);
+  }
+  const plannedManifest = JSON.parse(plannedManifestText);
+  const preManifest = JSON.parse(preManifestText);
+  const postManifest = JSON.parse(postManifestText);
+  for (const [label, manifest] of [
+    ["planned", plannedManifest], ["pre", preManifest], ["post", postManifest],
+  ]) {
+    if (!Array.isArray(manifest.entries)
+      || manifest.manifest_sha256 !== sha256(canonicalJson(manifest.entries))) {
+      throw new Error(`${run.directory} ${label} manifest failed canonical verification`);
+    }
+  }
+  if (plannedManifest.manifest_sha256 !== run.workspace_manifest_sha256
+    || preManifest.manifest_sha256 !== run.workspace_manifest_sha256
+    || sha256(canonicalJson(inputSnapshotFromManifest(preManifest))) !== run.input_sha256) {
+    throw new Error(`${run.directory} pre-run workspace does not match the frozen inputs`);
+  }
+  const currentManifest = await snapshotTree(workspace);
+  if (currentManifest.manifest_sha256 !== postManifest.manifest_sha256) {
+    throw new Error(`${run.directory} workspace changed after post-run capture`);
+  }
+  exactObjectKeys(claim, ["launch_claim_schema_version", "invocation_id", "claimed_at"], "launch claim");
+  if (claim.launch_claim_schema_version !== 1 || claim.invocation_id !== entry.invocation_id
+    || !Number.isFinite(Date.parse(claim.claimed_at))) {
+    throw new Error(`${run.directory} launch claim does not bind the planned invocation`);
+  }
+  exactObjectKeys(launcherStart, LAUNCHER_START_KEYS, "launcher start");
+  const expectedArgs = buildCodexArgs({ workspace, model: campaign.model });
+  if (launcherStart.launcher_schema_version !== 1
+    || launcherStart.invocation_id !== entry.invocation_id
+    || launcherStart.command !== campaign.codex_executable
+    || launcherStart.cwd !== workspace
+    || launcherStart.model !== campaign.model
+    || launcherStart.codex_version !== campaign.codex_version
+    || launcherStart.timeout_ms !== campaign.timeout_ms
+    || launcherStart.prompt_sha256 !== run.prompt_sha256
+    || launcherStart.plan_sha256 !== campaign.plan_sha256
+    || !Number.isFinite(Date.parse(launcherStart.started_at))
+    || Date.parse(claim.claimed_at) > Date.parse(launcherStart.started_at)
+    || canonicalJson(launcherStart.args) !== canonicalJson(expectedArgs)
+    || canonicalJson(launcherStart.source_fingerprints) !== canonicalJson(campaign.source_fingerprints)
+    || canonicalJson(launcherStart.runtime_fingerprints) !== canonicalJson(campaign.runtime_fingerprints)) {
+    throw new Error(`${run.directory} launcher start record does not match the frozen launch contract`);
+  }
+  const launcher = JSON.parse(launcherText);
+  exactObjectKeys(launcher, LAUNCHER_RECORD_KEYS, "launcher record");
+  exactObjectKeys(launcher.exit, ["exit_code", "signal", "timed_out", "spawn_error"], "launcher exit");
+  for (const [key, value] of Object.entries(launcherStart)) {
+    if (canonicalJson(launcher[key]) !== canonicalJson(value)) {
+      throw new Error(`${run.directory} launcher record changed start field ${key}`);
+    }
+  }
+  if (!Number.isFinite(Date.parse(launcher.finished_at))
+    || Date.parse(launcher.finished_at) < Date.parse(launcher.started_at)
+    || typeof launcher.exit.timed_out !== "boolean"
+    || (launcher.exit.exit_code !== null && !Number.isInteger(launcher.exit.exit_code))
+    || (launcher.exit.signal !== null && typeof launcher.exit.signal !== "string")
+    || (launcher.exit.spawn_error !== null && typeof launcher.exit.spawn_error !== "string")) {
+    throw new Error(`${run.directory} launcher completion record is invalid`);
+  }
+  if (launcher.stdout_sha256 !== sha256(rawText)
+    || launcher.stderr_sha256 !== sha256(stderrBytes)) {
+    throw new Error(`${run.directory} launcher stdout/stderr digests do not match retained bytes`);
+  }
+  const rawLines = rawJsonlLines(rawText);
+  const arrivals = rawJsonlLines(arrivalsText).map((line, index) => {
+    try {
+      return JSON.parse(line);
+    } catch {
+      throw new Error(`${run.directory} arrival ledger line ${index + 1} is not JSON`);
+    }
+  });
+  if (arrivals.length !== rawLines.length || launcher.arrival_count !== arrivals.length) {
+    throw new Error(`${run.directory} arrival ledger does not cover the raw transcript denominator`);
+  }
+  for (const [index, arrival] of arrivals.entries()) {
+    exactObjectKeys(arrival, ARRIVAL_KEYS, `arrival ${index + 1}`);
+    if (arrival.arrival_schema_version !== 1
+      || arrival.line_number !== index + 1
+      || arrival.line_sha256 !== sha256(rawLines[index])
+      || !Number.isFinite(Date.parse(arrival.observed_at))
+      || Date.parse(arrival.observed_at) < Date.parse(launcher.started_at)
+      || Date.parse(arrival.observed_at) > Date.parse(launcher.finished_at)) {
+      throw new Error(`${run.directory} arrival ${index + 1} failed line/timestamp verification`);
+    }
+    try {
+      const event = JSON.parse(rawLines[index]);
+      if (arrival.parse_error !== null || canonicalJson(arrival.event) !== canonicalJson(event)) {
+        throw new Error(`${run.directory} arrival ${index + 1} changed its parsed event`);
+      }
+    } catch (error) {
+      if (error.message.includes("changed its parsed event")) throw error;
+      if (arrival.event !== null || arrival.parse_error !== error.message) {
+        throw new Error(`${run.directory} arrival ${index + 1} did not retain its parse failure`);
+      }
+    }
+  }
+  const parseErrorCount = arrivals.filter(item => item.parse_error !== null).length;
+  if (launcher.parse_error_count !== parseErrorCount
+    || launcher.completed_pdf_call_count !== completedPdfCalls(arrivals).length
+    || launcher.classified_outcome !== classifyRunOutcome(arrivals, launcher.exit)) {
+    throw new Error(`${run.directory} launcher summary does not replay from retained arrivals`);
+  }
+  const observer = JSON.parse(observerText);
+  if (observer.outcome !== launcher.classified_outcome) {
+    throw new Error(`${run.directory} observer outcome does not match replayed classification`);
+  }
+  const launcherSha256 = sha256(launcherText);
+  const launcherEvent = observer.run?.events?.find(event => event?.type === "agent_launch_observed");
+  const campaignEvent = observer.run?.events?.find(event => event?.type === "campaign_evidence_bound");
+  const campaignDigest = campaignEvidenceDigest({
+    campaign,
+    launcherRecordSha256: launcherSha256,
+    preManifestRawSha256: sha256(preManifestText),
+    postManifestRawSha256: sha256(postManifestText),
+  });
+  if (launcherEvent?.reference !== `sha256:${launcherSha256}`
+    || launcherEvent?.provenance?.raw_sha256 !== launcherSha256
+    || campaignEvent?.reference !== `sha256:${campaignDigest}`
+    || campaignEvent?.provenance?.raw_sha256 !== campaignDigest) {
+    throw new Error(`${run.directory} observer does not bind the launcher and campaign evidence`);
+  }
+  const planEvent = observer.run.events.find(event => event?.type === "run_plan_committed");
+  const inputEvent = observer.run.events.find(event => event?.type === "input_snapshot_observed");
+  const effectsEvent = observer.run.events.find(event => event?.type === "effects_observed");
+  if (planEvent?.provenance?.raw_sha256 !== campaign.plan_raw_sha256
+    || inputEvent?.provenance?.raw_sha256 !== sha256(preManifestText)
+    || effectsEvent?.provenance?.raw_sha256 !== sha256(postManifestText)) {
+    throw new Error(`${run.directory} observer filesystem/plan provenance does not match retained files`);
+  }
+  for (const [label, observedAt] of [
+    ["input", inputEvent?.observed_at],
+    ["effects", effectsEvent?.observed_at],
+    ["launcher", launcherEvent?.observed_at],
+  ]) {
+    if (!Number.isFinite(Date.parse(observedAt))) {
+      throw new Error(`${run.directory} observer ${label} timestamp is invalid`);
+    }
+  }
+  if (Date.parse(inputEvent.observed_at) < Date.parse(launcher.started_at)
+    || Date.parse(effectsEvent.observed_at) < Date.parse(inputEvent.observed_at)
+    || Date.parse(launcher.finished_at) < Date.parse(effectsEvent.observed_at)
+    || Date.parse(launcherEvent.observed_at) < Date.parse(launcher.finished_at)
+    || !Number.isFinite(Date.parse(observer.run?.finished_at))
+    || Date.parse(observer.run.finished_at) < Date.parse(launcherEvent.observed_at)) {
+    throw new Error(`${run.directory} observer timestamps are not monotonic`);
+  }
+  const expectedObserver = buildObserver({
+    campaign,
+    plan,
+    entry,
+    job,
+    arrivals,
+    preManifest,
+    postManifest,
+    preManifestRawSha256: sha256(preManifestText),
+    postManifestRawSha256: sha256(postManifestText),
+    planRawSha256: campaign.plan_raw_sha256,
+    stdoutSha256: launcher.stdout_sha256,
+    stderrSha256: launcher.stderr_sha256,
+    launcherRecordSha256: launcherSha256,
+    startedAt: launcher.started_at,
+    preObservedAt: inputEvent.observed_at,
+    effectsObservedAt: effectsEvent.observed_at,
+    launcherObservedAt: launcherEvent.observed_at,
+    finishedAt: observer.run.finished_at,
+    exit: launcher.exit,
+  });
+  if (canonicalJson(observer) !== canonicalJson(expectedObserver)) {
+    throw new Error(`${run.directory} observer cannot be rederived from retained run evidence`);
+  }
+  return { runRoot, observer, launcher, arrivals };
+}
+
 async function commandOutput(command, args, options = {}) {
   return await new Promise((resolve, reject) => {
     const child = spawn(command, args, { ...options, stdio: ["ignore", "pipe", "pipe"] });
@@ -785,11 +1179,18 @@ async function createWorkspace(workspace) {
 }
 
 function campaignId(now) {
-  return `pdf-tools.trajectory.codex-comparison.${now.replace(/[-:.TZ]/g, "")}`;
+  return `pdf-tools.trajectory.codex-comparison.${now.replace(/[-:.TZ]/g, "")}.${randomBytes(8).toString("hex")}`;
 }
 
-async function planCampaign({ campaignPath, count, model, timeoutMs }) {
-  const campaignRoot = await assertCampaignPath(campaignPath, DOCUMENTS_ROOT, { mayNotExist: true });
+export async function planCampaign({
+  campaignPath,
+  count,
+  model,
+  timeoutMs,
+  documentsRoot = DOCUMENTS_ROOT,
+  codexExecutable = "codex",
+}) {
+  const campaignRoot = await assertCampaignPath(campaignPath, documentsRoot, { mayNotExist: true });
   await fs.mkdir(campaignRoot, { recursive: false, mode: 0o700 });
   const suite = await loadSuite();
   const job = suite.jobs.find(item => item.id === JOB_ID);
@@ -808,14 +1209,19 @@ async function planCampaign({ campaignPath, count, model, timeoutMs }) {
     await createWorkspace(workspace);
     const manifest = await snapshotTree(workspace);
     const inputSnapshot = inputSnapshotFromManifest(manifest);
-    await writeJson(path.join(runRoot, "planned-workspace-manifest.json"), manifest, { exclusive: true });
-    await fs.writeFile(path.join(runRoot, "prompt.txt"), `${buildPrompt(job)}\n`, { flag: "wx", mode: 0o600 });
+    const manifestText = await writeJson(
+      path.join(runRoot, "planned-workspace-manifest.json"), manifest, { exclusive: true },
+    );
+    const promptText = `${buildPrompt(job)}\n`;
+    await fs.writeFile(path.join(runRoot, "prompt.txt"), promptText, { flag: "wx", mode: 0o600 });
     runs.push({
       repeat_index: entry.repeat_index,
       invocation_id: entry.invocation_id,
       directory: normalizeRelative(directory),
       workspace_manifest_sha256: manifest.manifest_sha256,
+      workspace_manifest_raw_sha256: sha256(manifestText),
       input_sha256: sha256(canonicalJson(inputSnapshot)),
+      prompt_sha256: sha256(promptText),
     });
   }
   const planText = await writeJson(path.join(campaignRoot, "pre-run-plan.json"), plan, { exclusive: true });
@@ -823,7 +1229,8 @@ async function planCampaign({ campaignPath, count, model, timeoutMs }) {
   if (sha256(canonicalJson(finalSuite)) !== plan.suite_sha256) {
     throw new Error("Trajectory suite changed while the pre-run plan was being created");
   }
-  const codexVersion = await commandOutput("codex", ["--version"]);
+  const resolvedCodexExecutable = await resolveExecutable(codexExecutable);
+  const codexVersion = await commandOutput(resolvedCodexExecutable, ["--version"]);
   const gitCommit = await commandOutput("git", ["rev-parse", "HEAD"], { cwd: REPO_ROOT });
   const campaign = {
     campaign_schema_version: CAMPAIGN_SCHEMA_VERSION,
@@ -835,8 +1242,10 @@ async function planCampaign({ campaignPath, count, model, timeoutMs }) {
     claim_boundary: CLAIM_BOUNDARY,
     created_at: plannedAt,
     timeout_ms: timeoutMs,
+    codex_executable: resolvedCodexExecutable,
     codex_version: codexVersion,
     node_runtime: nodeRuntime(),
+    runtime_fingerprints: await runtimeFingerprints(resolvedCodexExecutable),
     git_commit: gitCommit,
     suite_sha256: sha256(canonicalJson(suite)),
     plan_sha256: sha256(canonicalJson(plan)),
@@ -853,7 +1262,8 @@ async function planCampaign({ campaignPath, count, model, timeoutMs }) {
 export function validateCampaign(campaign, plan) {
   exactObjectKeys(campaign, [
     "campaign_schema_version", "trial_set_id", "suite_id", "job_id", "count", "model", "claim_boundary",
-    "created_at", "timeout_ms", "codex_version", "node_runtime", "git_commit", "suite_sha256", "plan_sha256",
+    "created_at", "timeout_ms", "codex_executable", "codex_version", "node_runtime", "runtime_fingerprints",
+    "git_commit", "suite_sha256", "plan_sha256",
     "plan_raw_sha256", "fixture_instance_sha256", "source_fingerprints", "runs", "launch_contract_sha256",
   ], "campaign");
   if (campaign.campaign_schema_version !== CAMPAIGN_SCHEMA_VERSION) throw new Error("Unsupported campaign schema");
@@ -873,6 +1283,9 @@ export function validateCampaign(campaign, plan) {
     throw new Error("Campaign denominator does not match the frozen plan");
   }
   if (typeof campaign.model !== "string" || campaign.model.length === 0) throw new Error("Campaign model must be non-empty");
+  if (!path.isAbsolute(campaign.codex_executable) || !isObjectRecord(campaign.runtime_fingerprints)) {
+    throw new Error("Campaign runtime fingerprints and Codex executable are invalid");
+  }
   if (!Number.isInteger(campaign.timeout_ms) || campaign.timeout_ms < 1_000) {
     throw new Error("Campaign timeout must be at least 1000 ms");
   }
@@ -881,7 +1294,8 @@ export function validateCampaign(campaign, plan) {
   const seenRepeats = new Set();
   for (const run of campaign.runs) {
     exactObjectKeys(run, [
-      "repeat_index", "invocation_id", "directory", "workspace_manifest_sha256", "input_sha256",
+      "repeat_index", "invocation_id", "directory", "workspace_manifest_sha256",
+      "workspace_manifest_raw_sha256", "input_sha256", "prompt_sha256",
     ], "campaign.runs[]");
     const entry = planByRepeat.get(run.repeat_index);
     if (!entry || entry.invocation_id !== run.invocation_id || seenRepeats.has(run.repeat_index)) {
@@ -890,15 +1304,17 @@ export function validateCampaign(campaign, plan) {
     if (run.directory !== normalizeRelative(path.join("runs", runName(run.repeat_index)))) {
       throw new Error("Campaign run directory does not match its repeat index");
     }
-    for (const key of ["workspace_manifest_sha256", "input_sha256"]) {
+    for (const key of [
+      "workspace_manifest_sha256", "workspace_manifest_raw_sha256", "input_sha256", "prompt_sha256",
+    ]) {
       if (!/^[a-f0-9]{64}$/.test(run[key])) throw new Error(`Campaign ${key} must be SHA-256`);
     }
     seenRepeats.add(run.repeat_index);
   }
 }
 
-async function loadCampaign(campaignPath) {
-  const campaignRoot = await assertCampaignPath(campaignPath);
+async function loadCampaign(campaignPath, { documentsRoot = DOCUMENTS_ROOT } = {}) {
+  const campaignRoot = await assertCampaignPath(campaignPath, documentsRoot);
   const campaign = await readJson(path.join(campaignRoot, "campaign.json"));
   const planText = await fs.readFile(path.join(campaignRoot, "pre-run-plan.json"), "utf8");
   const plan = JSON.parse(planText);
@@ -912,10 +1328,14 @@ async function loadCampaign(campaignPath) {
   if (canonicalJson(fingerprints) !== canonicalJson(campaign.source_fingerprints)) {
     throw new Error("Pinned controller/server/evaluation sources changed after planning");
   }
-  const currentCodexVersion = await commandOutput("codex", ["--version"]);
+  const currentCodexVersion = await commandOutput(campaign.codex_executable, ["--version"]);
   if (currentCodexVersion !== campaign.codex_version) throw new Error("Codex CLI version changed after planning");
   if (canonicalJson(nodeRuntime()) !== canonicalJson(campaign.node_runtime)) {
     throw new Error("Node.js runtime changed after planning");
+  }
+  if (canonicalJson(await runtimeFingerprints(campaign.codex_executable))
+    !== canonicalJson(campaign.runtime_fingerprints)) {
+    throw new Error("Installed Codex, Node, or PDF runtime changed after planning");
   }
   return { campaignRoot, campaign, plan, suite, job, planText };
 }
@@ -926,7 +1346,7 @@ async function appendArrival(stream, arrival) {
   });
 }
 
-async function runCodexProcess({ args, prompt, cwd, timeoutMs, stdoutPath, stderrPath, arrivalsPath }) {
+async function runCodexProcess({ executable, args, prompt, cwd, timeoutMs, stdoutPath, stderrPath, arrivalsPath }) {
   const stdoutStream = fsSync.createWriteStream(stdoutPath, { flags: "wx", mode: 0o600 });
   const stderrStream = fsSync.createWriteStream(stderrPath, { flags: "wx", mode: 0o600 });
   const arrivalStream = fsSync.createWriteStream(arrivalsPath, { flags: "wx", mode: 0o600 });
@@ -936,7 +1356,7 @@ async function runCodexProcess({ args, prompt, cwd, timeoutMs, stdoutPath, stder
   let timedOut = false;
   let timeout;
   const result = await new Promise(resolve => {
-    const child = spawn("codex", args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
+    const child = spawn(executable, args, { cwd, stdio: ["pipe", "pipe", "pipe"] });
     timeout = setTimeout(() => {
       timedOut = true;
       child.kill("SIGTERM");
@@ -975,32 +1395,32 @@ async function runCodexProcess({ args, prompt, cwd, timeoutMs, stdoutPath, stder
   };
 }
 
-async function runCampaignEntry({ campaignPath, repeatIndex }) {
-  const { campaignRoot, campaign, plan, job, planText } = await loadCampaign(campaignPath);
+export async function runCampaignEntry({ campaignPath, repeatIndex, documentsRoot = DOCUMENTS_ROOT }) {
+  const { campaignRoot, campaign, plan, job, planText } = await loadCampaign(
+    campaignPath, { documentsRoot },
+  );
   const entry = plan.entries.find(item => item.repeat_index === repeatIndex);
   const run = campaign.runs.find(item => item.repeat_index === repeatIndex);
   if (!entry || !run) throw new Error(`Repeat ${repeatIndex} is outside the frozen denominator`);
-  const runRoot = path.join(campaignRoot, run.directory);
+  const plannedInputs = await validatePlannedRunInputs({ campaignRoot, run });
+  const runRoot = plannedInputs.runRoot;
   await writeJson(path.join(runRoot, "launch-claim.json"), {
     launch_claim_schema_version: 1,
     invocation_id: entry.invocation_id,
     claimed_at: isoNow(),
   }, { exclusive: true });
-  const workspace = path.join(runRoot, "workspace");
-  const plannedManifest = await readJson(path.join(runRoot, "planned-workspace-manifest.json"));
+  const claimedInputs = await validatePlannedRunInputs({ campaignRoot, run });
+  const workspace = claimedInputs.workspace;
   const startedAt = isoNow();
-  const preManifest = await snapshotTree(workspace);
-  if (preManifest.manifest_sha256 !== plannedManifest.manifest_sha256) {
-    throw new Error("Run workspace changed after planning; invocation remains claimed for operator audit");
-  }
+  const preManifest = claimedInputs.currentManifest;
   const preObservedAt = isoNow();
   const preText = await writeJson(path.join(runRoot, "pre-filesystem-manifest.json"), preManifest, { exclusive: true });
-  const prompt = await fs.readFile(path.join(runRoot, "prompt.txt"), "utf8");
+  const prompt = claimedInputs.prompt;
   const args = buildCodexArgs({ workspace, model: campaign.model });
   const launcherStart = {
     launcher_schema_version: 1,
     invocation_id: entry.invocation_id,
-    command: "codex",
+    command: campaign.codex_executable,
     args,
     cwd: workspace,
     model: campaign.model,
@@ -1010,9 +1430,12 @@ async function runCampaignEntry({ campaignPath, repeatIndex }) {
     prompt_sha256: sha256(prompt),
     plan_sha256: campaign.plan_sha256,
     source_fingerprints: campaign.source_fingerprints,
+    runtime_fingerprints: campaign.runtime_fingerprints,
   };
   await writeJson(path.join(runRoot, "launcher-start.json"), launcherStart, { exclusive: true });
+  await validatePlannedRunInputs({ campaignRoot, run });
   const processResult = await runCodexProcess({
+    executable: campaign.codex_executable,
     args,
     prompt,
     cwd: workspace,
@@ -1037,7 +1460,7 @@ async function runCampaignEntry({ campaignPath, repeatIndex }) {
     arrival_count: processResult.arrivals.length,
     parse_error_count: processResult.arrivals.filter(item => item.parse_error).length,
     completed_pdf_call_count: completedPdfCalls(processResult.arrivals).length,
-    classified_outcome: classifyRunOutcome(processResult.arrivals),
+    classified_outcome: classifyRunOutcome(processResult.arrivals, processResult.exit),
     host_diagnostics: diagnostics,
     limitations: [HOST_LIMITATION, TRANSPORT_LIMITATION],
   };
@@ -1069,18 +1492,16 @@ async function runCampaignEntry({ campaignPath, repeatIndex }) {
   return { runRoot, observer, launcherRecord };
 }
 
-async function finalizeCampaign(campaignPath) {
-  const { campaignRoot, campaign } = await loadCampaign(campaignPath);
-  const missing = [];
+export async function finalizeCampaign(campaignPath, { documentsRoot = DOCUMENTS_ROOT } = {}) {
+  const { campaignRoot, campaign, plan, job } = await loadCampaign(campaignPath, { documentsRoot });
   for (const run of campaign.runs) {
-    for (const filename of ["codex.jsonl", "observer.json", "launcher-record.json"]) {
-      if (!await exists(path.join(campaignRoot, run.directory, filename))) {
-        missing.push(`${run.directory}/${filename}`);
-      }
+    const entry = plan.entries.find(item => item.repeat_index === run.repeat_index);
+    if (!entry) throw new Error(`${run.directory} is absent from the frozen run plan`);
+    try {
+      await verifyCompletedRunEvidence({ campaignRoot, campaign, plan, job, run, entry });
+    } catch (error) {
+      throw new Error(`Frozen denominator is unresolved or invalid for ${run.directory}: ${error.message}`);
     }
-  }
-  if (missing.length > 0) {
-    throw new Error(`Frozen denominator is unresolved; refusing partial ingestion:\n- ${missing.join("\n- ")}`);
   }
   const batch = buildBatchManifest(campaign);
   const batchPath = path.join(campaignRoot, "batch-manifest.json");

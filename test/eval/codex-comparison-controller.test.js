@@ -1,7 +1,7 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import {
   JsonlArrivalCollector,
@@ -16,9 +16,13 @@ import {
   classifyRunOutcome,
   diffManifests,
   fixtureInstanceRecord,
+  finalizeCampaign,
+  planCampaign,
+  runCampaignEntry,
   sha256,
   validateCampaign,
 } from "../../scripts/eval-run-codex-comparison.mjs";
+import { createTestTempDirectory, removeTestTempDirectory } from "../helpers/temp-directory.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SUITE_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
@@ -100,6 +104,39 @@ function workspaceManifest(extraEntries = []) {
   };
 }
 
+async function writeFakeCodex(filename, { timeout = false } = {}) {
+  const answer = JSON.stringify({
+    before_page_1: "PAGE ONE - PORTRAIT",
+    after_page_1: "PAGE TWO - ROTATED",
+    changed: true,
+  });
+  const events = [
+    { type: "thread.started", thread_id: "fake-thread" },
+    { type: "turn.started" },
+    { type: "item.started", item: { id: "answer-1", type: "agent_message", status: "in_progress" } },
+    { type: "item.completed", item: { id: "answer-1", type: "agent_message", status: "completed", text: answer } },
+    { type: "turn.completed", usage: {} },
+  ];
+  const body = timeout
+    ? `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  process.stdout.write("codex-cli fake-timeout-1.0\\n");
+} else {
+  setTimeout(() => {}, 60_000);
+}
+`
+    : `#!/usr/bin/env node
+if (process.argv.includes("--version")) {
+  process.stdout.write("codex-cli fake-1.0\\n");
+} else {
+  const events = ${JSON.stringify(events)};
+  for (const event of events) process.stdout.write(JSON.stringify(event) + "\\n");
+}
+`;
+  await fs.writeFile(filename, body, { mode: 0o700 });
+  await fs.chmod(filename, 0o700);
+}
+
 describe("headless Codex comparison controller", () => {
   let suite;
   let job;
@@ -148,8 +185,10 @@ describe("headless Codex comparison controller", () => {
       claim_boundary: plan.claim_boundary,
       created_at: plan.planned_at,
       timeout_ms: 900_000,
+      codex_executable: "/usr/bin/codex",
       codex_version: "codex-cli 0.144.6",
       node_runtime: { version: "v22.22.3", modules: "127", napi: "10", v8: "12" },
+      runtime_fingerprints: {},
       git_commit: "a".repeat(40),
       suite_sha256: plan.suite_sha256,
       plan_sha256: sha256(canonicalJson(plan)),
@@ -161,7 +200,9 @@ describe("headless Codex comparison controller", () => {
         invocation_id: entry.invocation_id,
         directory: `runs/repeat-${String(entry.repeat_index).padStart(2, "0")}`,
         workspace_manifest_sha256: "c".repeat(64),
+        workspace_manifest_raw_sha256: "e".repeat(64),
         input_sha256: "d".repeat(64),
+        prompt_sha256: "f".repeat(64),
       })),
     };
     campaign.launch_contract_sha256 = campaignCommitmentSha256(campaign);
@@ -229,10 +270,16 @@ describe("headless Codex comparison controller", () => {
 
   it("classifies any completed PDF call as a product trial even after a bad process exit", () => {
     const arrivals = successfulArrivals();
-    expect(classifyRunOutcome(arrivals)).toBe("completed");
+    expect(classifyRunOutcome(arrivals, { exit_code: 7 })).toBe("completed");
     expect(classifyRunOutcome([arrival(1, "2026-07-21T10:00:00.000Z", {
       type: "item.completed", item: { id: "warning", type: "error", message: "warning" },
     })])).toBe("harness_failure");
+    const completedNoToolTurn = [arrival(1, "2026-07-21T10:00:00.000Z", {
+      type: "turn.completed", usage: {},
+    })];
+    expect(classifyRunOutcome(completedNoToolTurn, { exit_code: 0 })).toBe("completed");
+    expect(classifyRunOutcome(completedNoToolTurn, { exit_code: null, timed_out: true }))
+      .toBe("harness_failure");
   });
 
   it("requires started and completed call identities to agree before recording observations", () => {
@@ -369,6 +416,110 @@ describe("headless Codex comparison controller", () => {
         raw: `runs/repeat-0${repeat}/codex.jsonl`,
         observer: `runs/repeat-0${repeat}/observer.json`,
       })),
+    });
+  });
+});
+
+describe("headless Codex comparison controller integration", () => {
+  let testRoot;
+  let documentsRoot;
+  let fakeCodex;
+
+  beforeAll(async () => {
+    testRoot = await createTestTempDirectory(REPO_ROOT, "codex-controller");
+    documentsRoot = path.join(testRoot, "documents");
+    await fs.mkdir(documentsRoot);
+    fakeCodex = path.join(testRoot, "fake-codex.mjs");
+    await writeFakeCodex(fakeCodex);
+  });
+
+  afterAll(async () => {
+    await removeTestTempDirectory(testRoot);
+  });
+
+  async function planOne(name, executable = fakeCodex, timeoutMs = 5_000) {
+    return planCampaign({
+      campaignPath: path.join(documentsRoot, name),
+      count: 1,
+      model: "fake-model",
+      timeoutMs,
+      documentsRoot,
+      codexExecutable: executable,
+    });
+  }
+
+  it("replays plan through claim, fake process, observer, and final grading", async () => {
+    const { campaignRoot } = await planOne("complete-no-tool-turn");
+    const completed = await runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot });
+    expect(completed.observer.outcome).toBe("completed");
+    expect(completed.launcherRecord.completed_pdf_call_count).toBe(0);
+
+    const finalized = await finalizeCampaign(campaignRoot, { documentsRoot });
+    expect(finalized.report).toMatchObject({
+      attempted_trials: 1,
+      product_trials: 1,
+      harness_failures: 0,
+      passed_trials: 0,
+    });
+
+    await fs.appendFile(path.join(campaignRoot, "runs", "repeat-01", "jsonl-arrivals.jsonl"), "{}\n");
+    await expect(finalizeCampaign(campaignRoot, { documentsRoot })).rejects.toThrow(
+      /arrival ledger does not cover the raw transcript denominator/,
+    );
+  });
+
+  it("rejects prompt tampering before acquiring a launch claim", async () => {
+    const { campaignRoot } = await planOne("prompt-tamper");
+    const runRoot = path.join(campaignRoot, "runs", "repeat-01");
+    await fs.appendFile(path.join(runRoot, "prompt.txt"), "tampered\n");
+    await expect(runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot }))
+      .rejects.toThrow(/Prompt changed after planning/);
+    await expect(fs.access(path.join(runRoot, "launch-claim.json"))).rejects.toThrow();
+  });
+
+  it("rejects descendant workspace symlinks before acquiring a launch claim", async () => {
+    const { campaignRoot } = await planOne("workspace-symlink");
+    const runRoot = path.join(campaignRoot, "runs", "repeat-01");
+    await fs.rename(path.join(runRoot, "workspace"), path.join(runRoot, "workspace-backing"));
+    await fs.symlink("workspace-backing", path.join(runRoot, "workspace"), "dir");
+    await expect(runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot }))
+      .rejects.toThrow(/ancestry must contain only real directories/);
+    await expect(fs.access(path.join(runRoot, "launch-claim.json"))).rejects.toThrow();
+  });
+
+  it("rejects hash-equivalent prompt symlinks before acquiring a launch claim", async () => {
+    const { campaignRoot } = await planOne("prompt-symlink");
+    const runRoot = path.join(campaignRoot, "runs", "repeat-01");
+    await fs.rename(path.join(runRoot, "prompt.txt"), path.join(runRoot, "prompt-backing.txt"));
+    await fs.symlink("prompt-backing.txt", path.join(runRoot, "prompt.txt"));
+    await expect(runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot }))
+      .rejects.toThrow(/Expected a retained regular file/);
+    await expect(fs.access(path.join(runRoot, "launch-claim.json"))).rejects.toThrow();
+  });
+
+  it("allows exactly one concurrent claimant for a planned invocation", async () => {
+    const { campaignRoot } = await planOne("concurrent-claim");
+    const results = await Promise.allSettled([
+      runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot }),
+      runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot }),
+    ]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
+  });
+
+  it("accounts a timed-out process as a retained harness failure", async () => {
+    const timeoutCodex = path.join(testRoot, "fake-codex-timeout.mjs");
+    await writeFakeCodex(timeoutCodex, { timeout: true });
+    const { campaignRoot } = await planOne("timeout", timeoutCodex, 1_000);
+    const completed = await runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot });
+    expect(completed.observer.outcome).toBe("harness_failure");
+    expect(completed.launcherRecord.exit.timed_out).toBe(true);
+    const finalized = await finalizeCampaign(campaignRoot, { documentsRoot });
+    expect(finalized.report).toMatchObject({
+      attempted_trials: 1,
+      product_trials: 0,
+      harness_failures: 1,
+      passed_trials: 0,
     });
   });
 });

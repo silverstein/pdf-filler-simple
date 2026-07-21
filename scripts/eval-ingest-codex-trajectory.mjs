@@ -458,7 +458,6 @@ export async function ingestCodexTrajectory({
   if (unfinished.length > 0) throw new Error(`Raw transcript contains unfinished MCP calls: ${unfinished.join(", ")}`);
   const unstarted = [...completedIds].filter(id => !startedIds.includes(id));
   if (unstarted.length > 0) throw new Error(`Raw transcript contains completed MCP calls without item.started: ${unstarted.join(", ")}`);
-  if (observer.outcome === "completed" && calls.length === 0) throw new Error("Raw transcript contains no pdf_tools MCP calls");
   if (observer.outcome === "harness_failure" && calls.length > 0) {
     throw new Error("A run with completed PDF tool calls is a product trial and cannot be relabeled as a harness failure");
   }
