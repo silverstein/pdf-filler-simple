@@ -85,8 +85,8 @@ function catalogPresence(pdf) {
 export async function inspectFidelityDocument(filePath, renderer = { scale: 2 }) {
   const bytes = await fs.readFile(filePath);
   const pdf = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
-  const textPages = await extractComparisonText(bytes);
   const pages = pdf.getPages();
+  const textPages = await extractComparisonText(bytes, { media_boxes: pages.map(page => Object.values(page.getMediaBox())) });
   const rawAnnotations = [];
   const pagesByWidget = new Map();
   const duplicatePageWidgetRefs = [];

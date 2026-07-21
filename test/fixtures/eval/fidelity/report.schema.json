@@ -189,12 +189,13 @@
     "cellBinding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["cell_id", "case_id", "repetition", "outcome", "cell_sha256", "artifact_ids"],
+      "required": ["cell_id", "case_id", "repetition", "outcome", "case_contract_sha256", "cell_sha256", "artifact_ids"],
       "properties": {
         "cell_id": { "$ref": "#/$defs/cellId" },
         "case_id": { "$ref": "#/$defs/caseId" },
         "repetition": { "type": "integer", "minimum": 1 },
         "outcome": { "enum": ["completed", "harness_failure"] },
+        "case_contract_sha256": { "$ref": "#/$defs/sha256" },
         "cell_sha256": { "$ref": "#/$defs/sha256" },
         "artifact_ids": {
           "type": "array",
@@ -213,7 +214,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "cell_schema_version", "cell_id", "case_id", "repetition", "outcome", "provenance",
+        "cell_schema_version", "cell_id", "case_id", "case_contract_sha256", "repetition", "outcome", "provenance",
         "artifact_ids", "tool_calls", "engines", "sources", "outputs", "visual_comparisons",
         "filesystem", "lifecycle", "backup", "failure_evidence", "harness_failure"
       ],
@@ -221,6 +222,7 @@
         "cell_schema_version": { "const": 2 },
         "cell_id": { "$ref": "#/$defs/cellId" },
         "case_id": { "$ref": "#/$defs/caseId" },
+        "case_contract_sha256": { "$ref": "#/$defs/sha256" },
         "repetition": { "type": "integer", "minimum": 1 },
         "outcome": { "const": "completed" },
         "provenance": { "$ref": "#/$defs/cellProvenance" },
@@ -245,13 +247,14 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "cell_schema_version", "cell_id", "case_id", "repetition", "outcome", "provenance",
+        "cell_schema_version", "cell_id", "case_id", "case_contract_sha256", "repetition", "outcome", "provenance",
         "artifact_ids", "harness_failure"
       ],
       "properties": {
         "cell_schema_version": { "const": 2 },
         "cell_id": { "$ref": "#/$defs/cellId" },
         "case_id": { "$ref": "#/$defs/caseId" },
+        "case_contract_sha256": { "$ref": "#/$defs/sha256" },
         "repetition": { "type": "integer", "minimum": 1 },
         "outcome": { "const": "harness_failure" },
         "provenance": { "$ref": "#/$defs/cellProvenance" },
@@ -279,12 +282,15 @@
     "toolCall": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "arguments_sha256", "is_error", "error_text"],
+      "required": ["call_index", "name", "arguments_sha256", "result_sha256", "is_error", "error_text", "reported_output_paths"],
       "properties": {
+        "call_index": { "type": "integer", "minimum": 1 },
         "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
         "arguments_sha256": { "$ref": "#/$defs/sha256" },
+        "result_sha256": { "$ref": "#/$defs/sha256" },
         "is_error": { "type": "boolean" },
-        "error_text": { "type": ["string", "null"] }
+        "error_text": { "type": ["string", "null"] },
+        "reported_output_paths": { "type": "array", "items": { "$ref": "#/$defs/logicalPath" }, "uniqueItems": true }
       }
     },
     "cellEngines": {
@@ -329,15 +335,26 @@
     "page": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["page", "media_box", "crop_box", "rotation", "marker", "text", "text_sha256"],
+      "required": ["page", "media_box", "crop_box", "rotation", "user_unit", "marker", "text", "text_sha256", "text_items"],
       "properties": {
         "page": { "type": "integer", "minimum": 1 },
         "media_box": { "$ref": "#/$defs/box" },
         "crop_box": { "$ref": "#/$defs/box" },
         "rotation": { "enum": [0, 90, 180, 270] },
+        "user_unit": { "type": "number", "exclusiveMinimum": 0 },
         "marker": { "type": ["string", "null"] },
         "text": { "type": "string" },
-        "text_sha256": { "$ref": "#/$defs/sha256" }
+        "text_sha256": { "$ref": "#/$defs/sha256" },
+        "text_items": { "type": "array", "items": { "$ref": "#/$defs/textItem" } }
+      }
+    },
+    "textItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["text", "region"],
+      "properties": {
+        "text": { "type": "string" },
+        "region": { "$ref": "#/$defs/region" }
       }
     },
     "widget": {
@@ -442,12 +459,15 @@
     "pdfjsRender": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["page", "width", "height", "scale", "rgba_sha256"],
+      "required": ["page", "width", "height", "scale", "rotation", "view_box", "viewport_transform", "rgba_sha256"],
       "properties": {
         "page": { "type": "integer", "minimum": 1 },
         "width": { "type": "integer", "minimum": 1 },
         "height": { "type": "integer", "minimum": 1 },
         "scale": { "type": "number", "exclusiveMinimum": 0 },
+        "rotation": { "enum": [0, 90, 180, 270] },
+        "view_box": { "$ref": "#/$defs/box" },
+        "viewport_transform": { "type": "array", "items": { "type": "number" }, "minItems": 6, "maxItems": 6 },
         "rgba_sha256": { "$ref": "#/$defs/sha256" }
       }
     },
@@ -509,9 +529,10 @@
     "presentOutput": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["exists", "inspection", "poppler"],
+      "required": ["exists", "producer_call_index", "inspection", "poppler"],
       "properties": {
         "exists": { "const": true },
+        "producer_call_index": { "type": "integer", "minimum": 1 },
         "inspection": { "$ref": "#/$defs/inspection" },
         "poppler": { "$ref": "#/$defs/popplerObservation" }
       }
@@ -519,9 +540,10 @@
     "missingOutput": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["exists", "error", "inspection", "poppler"],
+      "required": ["exists", "producer_call_index", "error", "inspection", "poppler"],
       "properties": {
         "exists": { "const": false },
+        "producer_call_index": { "type": "integer", "minimum": 1 },
         "error": { "type": "string", "minLength": 1 },
         "inspection": { "type": "null" },
         "poppler": { "$ref": "#/$defs/closedPopplerObservation" }
@@ -573,7 +595,7 @@
     "visualComparison": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["engine", "output_path", "output_page", "source_path", "source_page", "rotation_delta", "metrics"],
+      "required": ["engine", "output_path", "output_page", "source_path", "source_page", "rotation_delta", "metrics", "region_metrics"],
       "properties": {
         "engine": { "enum": ["pdfjs", "poppler"] },
         "output_path": { "$ref": "#/$defs/logicalPath" },
@@ -585,7 +607,18 @@
         "rotation_delta": { "enum": [0, 90, 180, 270, null] },
         "metrics": {
           "oneOf": [{ "$ref": "#/$defs/visualMetrics" }, { "type": "null" }]
-        }
+        },
+        "region_metrics": { "type": "array", "items": { "$ref": "#/$defs/regionMetric" } }
+      }
+    },
+    "regionMetric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["region_index", "region", "metrics"],
+      "properties": {
+        "region_index": { "type": "integer", "minimum": 0 },
+        "region": { "$ref": "#/$defs/region" },
+        "metrics": { "$ref": "#/$defs/visualMetrics" }
       }
     },
     "filesystemEntry": {
@@ -662,18 +695,22 @@
     "activeDocument": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["active_path", "backup_path", "last_mutation_tool"],
+      "required": ["active_path", "backup_path", "last_mutation_tool", "last_mutation_at"],
       "properties": {
         "active_path": { "oneOf": [{ "$ref": "#/$defs/logicalPath" }, { "type": "null" }] },
         "backup_path": { "oneOf": [{ "$ref": "#/$defs/logicalPath" }, { "type": "null" }] },
-        "last_mutation_tool": { "type": ["string", "null"] }
+        "last_mutation_tool": { "type": ["string", "null"] },
+        "last_mutation_at": { "type": ["string", "null"] }
       }
     },
     "lifecycle": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["active"],
-      "properties": { "active": { "$ref": "#/$defs/activeDocument" } }
+      "required": ["active", "before_expected_failure"],
+      "properties": {
+        "active": { "$ref": "#/$defs/activeDocument" },
+        "before_expected_failure": { "oneOf": [{ "$ref": "#/$defs/activeDocument" }, { "type": "null" }] }
+      }
     },
     "nullableSha256": {
       "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]

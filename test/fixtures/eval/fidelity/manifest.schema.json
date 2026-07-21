@@ -17,7 +17,7 @@
     "measurement_policy": { "$ref": "#/$defs/measurementPolicy" },
     "cases": {
       "type": "array",
-      "minItems": 7,
+      "minItems": 8,
       "items": { "$ref": "#/$defs/case" }
     }
   },

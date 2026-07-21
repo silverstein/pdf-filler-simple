@@ -1,9 +1,9 @@
-import { createHash } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadFidelityManifest } from "./fidelity-manifest.js";
 import { producerCallIndex } from "./fidelity-manifest.js";
+import { digestCanonical, digestCell } from "./fidelity-integrity.js";
 import { scoreFidelityReport } from "./fidelity-scorer.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -67,7 +67,10 @@ function cleanCell(item, repetition) {
         widget_consistency: { passed: true },
         metadata: {
           ...sources[semantic?.metadata.preserve_from]?.metadata,
-          ...Object.fromEntries(Object.entries(semantic?.metadata.required_patterns ?? {}).map(([key]) => [key, key === "Keywords" ? "stamped text via pdf-toolkit; text=\"Reviewed 2026-07-21\"; page=2" : "match"])),
+          ...Object.fromEntries(Object.entries(semantic?.metadata.required_patterns ?? {}).map(([key]) => {
+            const targetText = item.intended_regions.find(region => region.target_evidence.kind === "text_run")?.target_evidence.expected_text;
+            return [key, key === "Keywords" ? `stamped text via pdf-toolkit; text="${targetText}"; page=2` : "match"];
+          })),
         },
       },
       poppler: { opened: true, page_count: lineages.length, render_count: lineages.length },
@@ -90,30 +93,41 @@ function cleanCell(item, repetition) {
       ? { second_call_error: true, hash_before_second: "b".repeat(64), hash_after_second: "b".repeat(64), created_paths_after_fault: [] }
       : {};
   return {
-    case_id: item.id, repetition,
+    cell_schema_version: 2,
+    cell_id: `pdf-tools.fidelity.cell.${item.id.replace("pdf-tools.fidelity.case.", "")}.r${repetition}`,
+    case_id: item.id,
+    case_contract_sha256: digestCanonical("case", item),
+    repetition,
+    outcome: "completed",
+    provenance: { provenance_schema_version: 1, invocation_id: `${item.id}.r${repetition}`, started_at: "2026-07-21T00:00:00.000Z", finished_at: "2026-07-21T00:00:01.000Z" },
+    artifact_ids: [],
     tool_calls: item.tool_calls.map(call => ({
       name: call.name,
-      arguments_sha256: createHash("sha256").update(JSON.stringify(call.arguments)).digest("hex"),
+      arguments_sha256: digestCanonical("tool-arguments", call.arguments),
       is_error: call.expect_error === true,
     })),
     engines: { poppler: { family: "poppler", available: true } },
     sources, outputs, visual_comparisons: visual,
     filesystem: { diff: { created, modified: [...item.filesystem.modified], deleted: [...item.filesystem.deleted] }, after: [] },
     lifecycle: { active, before_expected_failure: item.lifecycle.backup_policy === "missing-original-fail-closed" ? structuredClone(active) : null }, backup,
+    failure_evidence: [],
+    harness_failure: null,
   };
 }
 
 async function cleanReport() {
   const manifest = await loadFidelityManifest(MANIFEST_PATH);
   cleanCell.manifestDocuments = new Map(manifest.documents.map(document => [document.id, document.sha256]));
-  return {
-    manifest,
-    report: {
-      schema_version: 1, benchmark_id: manifest.benchmark_id, benchmark_version: manifest.benchmark_version,
-      failure_evidence_integrity: true,
-      cells: manifest.cases.flatMap(item => [1, 2, 3].map(repetition => cleanCell(item, repetition))),
-    },
-  };
+  const cells = manifest.cases.flatMap(item => [1, 2, 3].map(repetition => cleanCell(item, repetition)));
+  return { manifest, report: {
+    schema_version: 2, report_schema_version: 2, benchmark_id: manifest.benchmark_id, benchmark_version: manifest.benchmark_version,
+    digests: { manifest_sha256: digestCanonical("manifest", manifest) },
+    cells,
+    cell_bindings: cells.map(cell => ({
+      cell_id: cell.cell_id, case_id: cell.case_id, case_contract_sha256: cell.case_contract_sha256,
+      repetition: cell.repetition, outcome: cell.outcome, cell_sha256: digestCell(cell), artifact_ids: cell.artifact_ids,
+    })),
+  } };
 }
 
 describe("fidelity conjunction scorer", () => {
@@ -122,7 +136,7 @@ describe("fidelity conjunction scorer", () => {
     const score = scoreFidelityReport(manifest, report);
     expect(score.valid, score.validation_errors.join("\n")).toBe(true);
     expect(score.passed, JSON.stringify(score.required_failures, null, 2)).toBe(true);
-    expect(score.denominator).toEqual({ planned: 21, observed: 21, unique: 21 });
+    expect(score.denominator).toEqual({ planned: 24, observed: 24, unique: 24, completed: 24, harness_failures: 0 });
   });
 
   it("rejects missing and duplicate attempts", async () => {
@@ -135,14 +149,20 @@ describe("fidelity conjunction scorer", () => {
 
   it("retains a planned harness failure in the denominator and fails closed", async () => {
     const { manifest, report } = await cleanReport();
+    const original = report.cells[0];
     report.cells[0] = {
-      case_id: report.cells[0].case_id,
-      repetition: report.cells[0].repetition,
-      harness_failure: { phase: "source_inspection", name: "Error", message: "fixture could not be opened" },
+      cell_schema_version: 2, cell_id: original.cell_id, case_id: original.case_id,
+      case_contract_sha256: original.case_contract_sha256, repetition: original.repetition,
+      outcome: "harness_failure", provenance: original.provenance, artifact_ids: ["artifact.harness-log"],
+      harness_failure: { harness_schema_version: 1, code: "source_inspection", phase: "source_inspection", detail: "fixture could not be opened", artifact_id: "artifact.harness-log" },
+    };
+    report.cell_bindings[0] = {
+      cell_id: report.cells[0].cell_id, case_id: report.cells[0].case_id, case_contract_sha256: report.cells[0].case_contract_sha256,
+      repetition: report.cells[0].repetition, outcome: report.cells[0].outcome, cell_sha256: digestCell(report.cells[0]), artifact_ids: report.cells[0].artifact_ids,
     };
     const score = scoreFidelityReport(manifest, report);
     expect(score.valid).toBe(true);
-    expect(score.denominator).toEqual({ planned: 21, observed: 21, unique: 21 });
+    expect(score.denominator).toEqual({ planned: 24, observed: 24, unique: 24, completed: 23, harness_failures: 1 });
     expect(score.passed).toBe(false);
     expect(score.required_failures.some(item => item.gate === "harness")).toBe(true);
   });

@@ -6,6 +6,7 @@ export const FIDELITY_BENCHMARK_ID = "pdf-tools.mutation-fidelity.v1";
 export const FIDELITY_CASE_IDS = Object.freeze([
   "pdf-tools.fidelity.case.fill-new-output",
   "pdf-tools.fidelity.case.apply-text",
+  "pdf-tools.fidelity.case.apply-text-rotated-crop",
   "pdf-tools.fidelity.case.prepare-signing-packet",
   "pdf-tools.fidelity.case.page-plan-reorder-rotate",
   "pdf-tools.fidelity.case.merge-split-roundtrip",

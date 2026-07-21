@@ -107,9 +107,10 @@
     "result": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["valid", "passed", "product_failures", "harness_failures"],
+      "required": ["valid", "execution_complete", "passed", "product_failures", "harness_failures"],
       "properties": {
         "valid": { "type": "boolean" },
+        "execution_complete": { "type": "boolean" },
         "passed": { "type": "boolean" },
         "product_failures": { "type": "integer", "minimum": 0 },
         "harness_failures": { "type": "integer", "minimum": 0 }
@@ -167,12 +168,13 @@
     "cellBinding": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["cell_id", "case_id", "repetition", "outcome", "cell_sha256", "artifact_ids"],
+      "required": ["cell_id", "case_id", "repetition", "outcome", "case_contract_sha256", "cell_sha256", "artifact_ids"],
       "properties": {
         "cell_id": { "$ref": "#/$defs/cellId" },
         "case_id": { "$ref": "#/$defs/caseId" },
         "repetition": { "type": "integer", "minimum": 1 },
         "outcome": { "enum": ["completed", "harness_failure"] },
+        "case_contract_sha256": { "$ref": "#/$defs/sha256" },
         "cell_sha256": { "$ref": "#/$defs/sha256" },
         "artifact_ids": {
           "type": "array",

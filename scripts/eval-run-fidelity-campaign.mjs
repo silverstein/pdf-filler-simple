@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 import { execFile } from "node:child_process";
-import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -28,6 +27,13 @@ import {
   verifyFidelityDocuments,
 } from "../test/eval/fidelity-manifest.js";
 import { evaluateFidelityCell, scoreFidelityReport } from "../test/eval/fidelity-scorer.js";
+import {
+  digestCanonical,
+  digestCell,
+  digestReport,
+  digestRunIndex,
+  prettyCanonicalJson,
+} from "../test/eval/fidelity-integrity.js";
 
 const runFile = promisify(execFile);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -37,8 +43,27 @@ if (!requestedOutput) throw new Error("Usage: node scripts/eval-run-fidelity-cam
 const OUTPUT_ROOT = path.resolve(requestedOutput);
 const LOGICAL_PATH = /^(input|output|profiles)\/[A-Za-z0-9._/-]+$/;
 
-function digestJson(value) {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+function fidelityCellId(caseId, repetition) {
+  return `pdf-tools.fidelity.cell.${caseId.replace("pdf-tools.fidelity.case.", "")}.r${repetition}`;
+}
+
+function normalizeResultValue(workspace, value) {
+  if (typeof value === "string") {
+    const logical = toLogical(workspace, value);
+    return logical ?? value.replaceAll(`${workspace}${path.sep}`, "<workspace>/");
+  }
+  if (Array.isArray(value)) return value.map(item => normalizeResultValue(workspace, item));
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.entries(value).map(([key, item]) => [key, normalizeResultValue(workspace, item)]));
+  }
+  return value;
+}
+
+function collectLogicalResultPaths(value, paths = []) {
+  if (typeof value === "string" && LOGICAL_PATH.test(value)) paths.push(value);
+  else if (Array.isArray(value)) value.forEach(item => collectLogicalResultPaths(item, paths));
+  else if (value && typeof value === "object") Object.values(value).forEach(item => collectLogicalResultPaths(item, paths));
+  return [...new Set(paths)].sort();
 }
 
 function resolveLogical(workspace, logicalPath) {
@@ -169,6 +194,7 @@ async function openServer(workspace) {
 }
 
 async function runCell(manifest, caseDefinition, repetition, engineFingerprint) {
+  const startedAt = new Date().toISOString();
   const cellDirectory = path.join(OUTPUT_ROOT, "runs", caseDefinition.id.replaceAll(".", "_"), `repeat-${repetition}`);
   const workspace = path.join(cellDirectory, "workspace");
   const rasterTemp = path.join(cellDirectory, "raster-tmp");
@@ -211,11 +237,15 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
     runtime = await openServer(workspace);
     for (const [index, call] of caseDefinition.tool_calls.entries()) {
       const result = await runtime.client.callTool({ name: call.name, arguments: resolveArguments(workspace, call.arguments) });
+      const normalizedResult = normalizeResultValue(workspace, result);
       toolCalls.push({
+        call_index: index + 1,
         name: call.name,
-        arguments_sha256: digestJson(call.arguments),
+        arguments_sha256: digestCanonical("tool-arguments", call.arguments),
+        result_sha256: digestCanonical("report", normalizedResult),
         is_error: result.isError === true,
         error_text: result.isError ? textFromResult(result) : null,
+        reported_output_paths: collectLogicalResultPaths(normalizedResult.structuredContent),
       });
       const reportedBackup = result.structuredContent?.backup_path;
       if (index === 0 && reportedBackup) {
@@ -293,7 +323,11 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
       const source = transformed?.[engine] ?? sourceRenders[engine][lineage.source_path]?.[lineage.source_page - 1];
       const output = outputRenders[engine][lineage.output_path]?.[lineage.output_page - 1];
       if (!source || !output) {
-        visualComparisons.push({ engine, output_path: lineage.output_path, output_page: lineage.output_page, metrics: null });
+        visualComparisons.push({
+          engine, output_path: lineage.output_path, output_page: lineage.output_page,
+          source_path: lineage.source_path, source_page: lineage.source_page,
+          rotation_delta: lineage.rotation_delta, metrics: null, region_metrics: [],
+        });
         continue;
       }
       const outputInspection = outputInspections[lineage.output_path]?.inspection;
@@ -330,8 +364,19 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
   const firstLogical = toLogical(workspace, firstBackupPath);
   const finalBackup = firstLogical ? finalSnapshot.find(entry => entry.path === firstLogical) : null;
   const cell = {
+    cell_schema_version: 2,
+    cell_id: fidelityCellId(caseDefinition.id, repetition),
     case_id: caseDefinition.id,
+    case_contract_sha256: digestCanonical("case", caseDefinition),
     repetition,
+    outcome: "completed",
+    provenance: {
+      provenance_schema_version: 1,
+      invocation_id: `${caseDefinition.id}.r${repetition}`,
+      started_at: startedAt,
+      finished_at: new Date().toISOString(),
+    },
+    artifact_ids: [],
     tool_calls: toolCalls,
     engines: { poppler: engineFingerprint },
     sources: Object.fromEntries(Object.entries(sourceInspections).map(([key, value]) => [key, serializableInspection(value)])),
@@ -351,6 +396,7 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
       hash_after_second: hashAfterSecond,
       created_paths_after_fault: faultDiff?.created.filter(item => /^profiles\/backups\/.*\.pdf$/.test(item)) ?? [],
     },
+    harness_failure: null,
   };
   const preliminary = evaluateFidelityCell(manifest, caseDefinition, cell);
   cell.failure_evidence = [];
@@ -381,7 +427,7 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
 }
 
 await fs.mkdir(OUTPUT_ROOT, { recursive: true });
-for (const reserved of ["runs", "fidelity-report.v1.json", "fidelity-score.v1.json", "run-index.v1.json"]) {
+for (const reserved of ["runs", "fidelity-report.v2.json", "fidelity-score.v2.json", "run-index.v2.json"]) {
   try {
     await fs.lstat(path.join(OUTPUT_ROOT, reserved));
     throw new Error(`Output root is not fresh; reserved path already exists: ${reserved}`);
@@ -395,6 +441,10 @@ if (!fixtureBindings.every(binding => binding.passed)) throw new Error("Fidelity
 const engineFingerprint = await popplerFingerprint();
 const productRendererFingerprint = rendererFingerprint(manifest.measurement_policy.renderer);
 const sourceRevision = (await runFile("git", ["rev-parse", "HEAD"], { cwd: REPO_ROOT })).stdout.trim();
+const sourceTree = (await runFile("git", ["rev-parse", "HEAD^{tree}"], { cwd: REPO_ROOT })).stdout.trim();
+const dirty = (await runFile("git", ["status", "--porcelain"], { cwd: REPO_ROOT })).stdout.trim();
+if (dirty) throw new Error("Fidelity campaigns require a tracked-clean source tree");
+const campaignStartedAt = new Date().toISOString();
 const cells = [];
 for (const caseDefinition of manifest.cases) {
   for (let repetition = 1; repetition <= manifest.measurement_policy.repetitions; repetition += 1) {
@@ -402,50 +452,133 @@ for (const caseDefinition of manifest.cases) {
     try {
       cells.push(await runCell(manifest, caseDefinition, repetition, engineFingerprint));
     } catch (error) {
+      const cellId = fidelityCellId(caseDefinition.id, repetition);
+      const cellDirectory = path.join(OUTPUT_ROOT, "runs", caseDefinition.id.replaceAll(".", "_"), `repeat-${repetition}`);
+      await fs.mkdir(cellDirectory, { recursive: true });
+      const detail = (error instanceof Error ? error.message : String(error))
+        .replaceAll(REPO_ROOT, "<repo>").replaceAll(OUTPUT_ROOT, "<output>");
+      const logPath = path.join(cellDirectory, "harness.log");
+      await fs.writeFile(logPath, `${detail}\n`, { mode: 0o600 });
+      const artifactId = `artifact.${cellId.replace("pdf-tools.fidelity.cell.", "")}.harness-log`;
       cells.push({
+        cell_schema_version: 2,
+        cell_id: cellId,
         case_id: caseDefinition.id,
+        case_contract_sha256: digestCanonical("case", caseDefinition),
         repetition,
+        outcome: "harness_failure",
+        provenance: {
+          provenance_schema_version: 1,
+          invocation_id: `${caseDefinition.id}.r${repetition}`,
+          started_at: campaignStartedAt,
+          finished_at: new Date().toISOString(),
+        },
+        artifact_ids: [artifactId],
         harness_failure: {
+          harness_schema_version: 1,
+          code: "run_cell_failure",
           phase: "run_cell",
-          name: error instanceof Error ? error.name : "Error",
-          message: error instanceof Error ? error.message : String(error),
+          detail,
+          artifact_id: artifactId,
         },
       });
     }
   }
 }
+const artifacts = [];
+for (const cell of cells) {
+  if (cell.outcome === "harness_failure") {
+    const artifactPath = `runs/${cell.case_id.replaceAll(".", "_")}/repeat-${cell.repetition}/harness.log`;
+    const bytes = await fs.readFile(path.join(OUTPUT_ROOT, artifactPath));
+    artifacts.push({ artifact_id: cell.artifact_ids[0], role: "harness_log", path: artifactPath, media_type: "text/plain", sha256: sha256(bytes), byte_length: bytes.length, cell_id: cell.cell_id });
+    continue;
+  }
+  for (const [evidenceIndex, evidence] of cell.failure_evidence.entries()) {
+    for (const [key, role] of [["before", "failure_before"], ["after", "failure_after"], ["unexpected_delta_gt8", "failure_delta"]]) {
+      const image = evidence[key];
+      const artifactId = `artifact.${cell.cell_id.replace("pdf-tools.fidelity.cell.", "")}.${evidenceIndex + 1}.${role.replace("failure_", "")}`;
+      const bytes = await fs.readFile(path.join(OUTPUT_ROOT, image.path));
+      artifacts.push({ artifact_id: artifactId, role, path: image.path, media_type: "image/png", sha256: image.sha256, byte_length: bytes.length, cell_id: cell.cell_id });
+      cell.artifact_ids.push(artifactId);
+    }
+  }
+}
+const cellBindings = cells.map(cell => ({
+  cell_id: cell.cell_id,
+  case_id: cell.case_id,
+  case_contract_sha256: cell.case_contract_sha256,
+  repetition: cell.repetition,
+  outcome: cell.outcome,
+  cell_sha256: digestCell(cell),
+  artifact_ids: [...cell.artifact_ids],
+}));
 const report = {
-  schema_version: 1,
+  schema_version: 2,
+  report_schema_version: 2,
   benchmark_id: manifest.benchmark_id,
   benchmark_version: manifest.benchmark_version,
   claim_boundary: "Linux source-server evidence with PDF.js 5.4.624 and installed Poppler at 144 DPI; not packed MCPB or native Claude Desktop evidence.",
   generated_at: new Date().toISOString(),
-  manifest_sha256: sha256(await fs.readFile(MANIFEST_PATH)),
-  runner_sha256: sha256(await fs.readFile(fileURLToPath(import.meta.url))),
-  source_revision: sourceRevision,
+  digests: {
+    manifest_sha256: digestCanonical("manifest", manifest),
+    runner_sha256: sha256(await fs.readFile(fileURLToPath(import.meta.url))),
+    source_revision: sourceRevision,
+    source_tree_sha256: sha256(Buffer.from(sourceTree)),
+  },
+  provenance: {
+    provenance_schema_version: 1,
+    producer: "scripts/eval-run-fidelity-campaign.mjs",
+    capture_mode: "source_server",
+    started_at: campaignStartedAt,
+    finished_at: new Date().toISOString(),
+    host: { platform: process.platform, arch: process.arch, node_version: process.version, hostname_sha256: sha256(Buffer.from(os.hostname())) },
+  },
   fixture_bindings: fixtureBindings,
   engine_fingerprints: { pdfjs_canvas_runtime_sha256: productRendererFingerprint, poppler: engineFingerprint },
   failure_evidence_integrity: await verifyFailureEvidence(cells),
+  artifacts,
+  cell_bindings: cellBindings,
   cells,
 };
 const score = scoreFidelityReport(manifest, report);
-const reportPath = path.join(OUTPUT_ROOT, "fidelity-report.v1.json");
-const scorePath = path.join(OUTPUT_ROOT, "fidelity-score.v1.json");
-await fs.writeFile(reportPath, `${JSON.stringify(report, null, 2)}\n`);
-await fs.writeFile(scorePath, `${JSON.stringify(score, null, 2)}\n`);
+const reportPath = path.join(OUTPUT_ROOT, "fidelity-report.v2.json");
+const scorePath = path.join(OUTPUT_ROOT, "fidelity-score.v2.json");
+await fs.writeFile(reportPath, prettyCanonicalJson(report));
+await fs.writeFile(scorePath, prettyCanonicalJson(score));
+const reportBytes = await fs.readFile(reportPath);
+const scoreBytes = await fs.readFile(scorePath);
 const index = {
-  schema_version: 1,
+  schema_version: 2,
+  run_index_schema_version: 2,
   benchmark_id: manifest.benchmark_id,
+  benchmark_version: manifest.benchmark_version,
   generated_at: report.generated_at,
   benchmark_claim_ready: score.passed,
   claim_boundary: report.claim_boundary,
+  digests: {
+    manifest_sha256: report.digests.manifest_sha256,
+    runner_sha256: report.digests.runner_sha256,
+    source_revision: sourceRevision,
+    report_sha256: sha256(reportBytes),
+    score_sha256: sha256(scoreBytes),
+    cell_set_sha256: digestCanonical("report", cellBindings),
+  },
+  provenance: report.provenance,
   denominator: score.denominator,
-  result: { valid: score.valid, passed: score.passed, failures: score.required_failures.length },
+  result: {
+    valid: score.valid,
+    execution_complete: score.execution_complete,
+    passed: score.passed,
+    product_failures: score.required_failures.filter(failure => failure.gate !== "harness").length,
+    harness_failures: score.denominator.harness_failures,
+  },
   artifacts: [
-    { path: path.basename(reportPath), sha256: sha256(await fs.readFile(reportPath)) },
-    { path: path.basename(scorePath), sha256: sha256(await fs.readFile(scorePath)) },
+    { artifact_id: "artifact.report", role: "report", path: path.basename(reportPath), media_type: "application/json", sha256: sha256(reportBytes), byte_length: reportBytes.length, cell_id: null },
+    { artifact_id: "artifact.score", role: "score", path: path.basename(scorePath), media_type: "application/json", sha256: sha256(scoreBytes), byte_length: scoreBytes.length, cell_id: null },
+    ...artifacts,
   ],
-  run_sha256: digestJson({ manifest_sha256: report.manifest_sha256, cells: cells.map(cell => [cell.case_id, cell.repetition]) }),
+  cell_bindings: cellBindings,
 };
-await fs.writeFile(path.join(OUTPUT_ROOT, "run-index.v1.json"), `${JSON.stringify(index, null, 2)}\n`);
+index.run_sha256 = digestRunIndex(index);
+await fs.writeFile(path.join(OUTPUT_ROOT, "run-index.v2.json"), prettyCanonicalJson(index));
 process.stdout.write(`${JSON.stringify(index, null, 2)}\n`);

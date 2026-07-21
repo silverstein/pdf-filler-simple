@@ -71,9 +71,11 @@ function inspection() {
       media_box: [0, 0, 612, 792],
       crop_box: [0, 0, 612, 792],
       rotation: 0,
+      user_unit: 1,
       marker: "PAGE-ID: SERVICE",
       text: "PAGE-ID: SERVICE",
       text_sha256: SHA_B,
+      text_items: [],
     }],
     fields: [{
       name: "ReviewStatus",
@@ -128,7 +130,7 @@ function inspection() {
       ViewerPreferences: false,
       OpenAction: false,
     },
-    renders: [{ page: 1, width: 1224, height: 1584, scale: 2, rgba_sha256: SHA_C }],
+    renders: [{ page: 1, width: 1224, height: 1584, scale: 2, rotation: 0, view_box: [0, 0, 612, 792], viewport_transform: [2, 0, 0, -2, 0, 1584], rgba_sha256: SHA_C }],
   };
 }
 
@@ -137,21 +139,26 @@ function completedCell() {
     cell_schema_version: 2,
     cell_id: COMPLETED_CELL_ID,
     case_id: CASE_ID,
+    case_contract_sha256: SHA_C,
     repetition: 1,
     outcome: "completed",
     provenance: cellProvenance(1),
     artifact_ids: ["artifact.completed-diagnostic"],
     tool_calls: [{
+      call_index: 1,
       name: "fill_pdf",
       arguments_sha256: SHA_A,
+      result_sha256: SHA_B,
       is_error: false,
       error_text: null,
+      reported_output_paths: ["output/filled.pdf"],
     }],
     engines: { poppler: popplerFingerprint() },
     sources: { "input/source.pdf": inspection() },
     outputs: {
       "output/filled.pdf": {
         exists: true,
+        producer_call_index: 1,
         inspection: { ...inspection(), sha256: SHA_B },
         poppler: { opened: true, page_count: 1, render_count: 1 },
       },
@@ -172,6 +179,7 @@ function completedCell() {
         intended_pixels: 1000,
         total_pixels: 1938816,
       },
+      region_metrics: [],
     }],
     filesystem: {
       before: [{ path: "input/source.pdf", type: "file", mode: 420, size: 1024, sha256: SHA_A }],
@@ -186,7 +194,9 @@ function completedCell() {
         active_path: "output/filled.pdf",
         backup_path: null,
         last_mutation_tool: "fill_pdf",
+        last_mutation_at: FINISHED_AT,
       },
+      before_expected_failure: null,
     },
     backup: {
       original_sha256: null,
@@ -210,6 +220,7 @@ function harnessFailureCell() {
     cell_schema_version: 2,
     cell_id: HARNESS_CELL_ID,
     case_id: CASE_ID,
+    case_contract_sha256: SHA_C,
     repetition: 2,
     outcome: "harness_failure",
     provenance: cellProvenance(2),
@@ -242,6 +253,7 @@ function binding(cell, digest) {
     case_id: cell.case_id,
     repetition: cell.repetition,
     outcome: cell.outcome,
+    case_contract_sha256: cell.case_contract_sha256,
     cell_sha256: digest,
     artifact_ids: [...cell.artifact_ids],
   };
@@ -305,7 +317,7 @@ function validRunIndex() {
     },
     provenance: provenance(),
     denominator: { planned: 21, observed: 2, unique: 2, completed: 1, harness_failures: 1 },
-    result: { valid: false, passed: false, product_failures: 0, harness_failures: 1 },
+    result: { valid: false, execution_complete: false, passed: false, product_failures: 0, harness_failures: 1 },
     artifacts: [
       artifact("artifact.report", "report", "fidelity-report.v2.json", null),
       artifact("artifact.score", "score", "fidelity-score.v2.json", null),

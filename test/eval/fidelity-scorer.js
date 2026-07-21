@@ -1,5 +1,5 @@
-import { createHash } from "node:crypto";
 import { FIDELITY_GATES, producerCallIndex } from "./fidelity-manifest.js";
+import { digestCanonical, digestCell } from "./fidelity-integrity.js";
 
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -41,7 +41,7 @@ function evaluateTools(caseDefinition, cell) {
     for (const [index, expected] of caseDefinition.tool_calls.entries()) {
       const observed = cell.tool_calls[index];
       if (observed.name !== expected.name) reasons.push(`call ${index + 1} used ${observed.name} instead of ${expected.name}`);
-      const expectedArgumentsSha256 = createHash("sha256").update(JSON.stringify(expected.arguments)).digest("hex");
+      const expectedArgumentsSha256 = digestCanonical("tool-arguments", expected.arguments);
       if (observed.arguments_sha256 !== expectedArgumentsSha256) reasons.push(`call ${index + 1} arguments are not bound to the manifest`);
       if (observed.is_error !== (expected.expect_error === true)) reasons.push(`call ${index + 1} error disposition differed from contract`);
     }
@@ -311,9 +311,9 @@ export function evaluateFidelityCell(manifest, caseDefinition, cell) {
 
 export function scoreFidelityReport(manifest, report) {
   const errors = [];
-  if (report?.schema_version !== 1) errors.push("report.schema_version must be 1");
+  if (report?.schema_version !== 2 || report?.report_schema_version !== 2) errors.push("report schema version must be 2");
   if (report?.benchmark_id !== manifest.benchmark_id || report?.benchmark_version !== manifest.benchmark_version) errors.push("report benchmark binding differs from manifest");
-  if (report?.failure_evidence_integrity !== true) errors.push("report failure evidence was not hash-verified");
+  if (report?.digests?.manifest_sha256 !== digestCanonical("manifest", manifest)) errors.push("report manifest digest differs from canonical manifest");
   const expected = manifest.cases.flatMap(item => Array.from({ length: manifest.measurement_policy.repetitions }, (_, index) => `${item.id}#${index + 1}`));
   const cells = Array.isArray(report?.cells) ? report.cells : [];
   const actual = cells.map(cell => `${cell.case_id}#${cell.repetition}`);
@@ -321,26 +321,40 @@ export function scoreFidelityReport(manifest, report) {
   for (const key of expected) if (!actual.includes(key)) errors.push(`report is missing planned cell ${key}`);
   for (const key of actual) if (!expected.includes(key)) errors.push(`report contains unplanned cell ${key}`);
   const caseById = new Map(manifest.cases.map(item => [item.id, item]));
-  const results = cells.filter(cell => caseById.has(cell.case_id))
+  const bindings = Array.isArray(report?.cell_bindings) ? report.cell_bindings : [];
+  if (bindings.length !== cells.length) errors.push("report cell binding denominator differs from cells");
+  for (const [index, cell] of cells.entries()) {
+    const caseDefinition = caseById.get(cell.case_id);
+    const expectedCellId = `pdf-tools.fidelity.cell.${cell.case_id?.replace("pdf-tools.fidelity.case.", "")}.r${cell.repetition}`;
+    if (cell.cell_schema_version !== 2 || cell.cell_id !== expectedCellId) errors.push(`cell ${index + 1} identity is not canonical`);
+    if (caseDefinition && cell.case_contract_sha256 !== digestCanonical("case", caseDefinition)) errors.push(`${cell.cell_id} case contract digest differs from manifest`);
+    const binding = bindings[index];
+    if (!binding || binding.cell_id !== cell.cell_id || binding.case_id !== cell.case_id || binding.repetition !== cell.repetition
+      || binding.outcome !== cell.outcome || binding.case_contract_sha256 !== cell.case_contract_sha256
+      || binding.cell_sha256 !== digestCell(cell) || !equal(binding.artifact_ids, cell.artifact_ids)) {
+      errors.push(`${cell.cell_id ?? `cell ${index + 1}`} binding differs from canonical cell content`);
+    }
+  }
+  const completedCells = cells.filter(cell => cell.outcome === "completed");
+  const harnessCells = cells.filter(cell => cell.outcome === "harness_failure");
+  if (completedCells.length + harnessCells.length !== cells.length) errors.push("report cells contain an unsupported outcome");
+  const results = completedCells.filter(cell => caseById.has(cell.case_id))
     .map(cell => evaluateFidelityCell(manifest, caseById.get(cell.case_id), cell));
   const requiredFailures = results.flatMap(item => Object.entries(item.gates)
     .filter(([gate, gateResult]) => caseById.get(item.case_id).required_gates.includes(gate) && gateResult.status !== "pass")
     .map(([gate, gateResult]) => ({ case_id: item.case_id, repetition: item.repetition, gate, reasons: gateResult.reasons })));
-  for (const item of results.filter(resultItem => resultItem.harness_failure)) {
-    requiredFailures.push({
-      case_id: item.case_id,
-      repetition: item.repetition,
-      gate: "harness",
-      reasons: [`${item.harness_failure.phase}: ${item.harness_failure.message}`],
-    });
+  for (const cell of harnessCells) {
+    requiredFailures.push({ case_id: cell.case_id, repetition: cell.repetition, gate: "harness", reasons: [`${cell.harness_failure?.phase}: ${cell.harness_failure?.detail}`] });
   }
+  const executionComplete = completedCells.length === expected.length && harnessCells.length === 0;
   return {
-    schema_version: 1,
+    schema_version: 2,
     benchmark_id: manifest.benchmark_id,
     benchmark_version: manifest.benchmark_version,
     valid: errors.length === 0,
-    passed: errors.length === 0 && results.length === expected.length && requiredFailures.length === 0,
-    denominator: { planned: expected.length, observed: cells.length, unique: new Set(actual).size },
+    execution_complete: executionComplete,
+    passed: errors.length === 0 && executionComplete && requiredFailures.length === 0,
+    denominator: { planned: expected.length, observed: cells.length, unique: new Set(actual).size, completed: completedCells.length, harness_failures: harnessCells.length },
     validation_errors: errors,
     results,
     required_failures: requiredFailures,

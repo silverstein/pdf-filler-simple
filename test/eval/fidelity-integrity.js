@@ -83,7 +83,7 @@ function normalizedJsonValue(value) {
   return normalizeValue(value, new WeakSet(), "$root");
 }
 
-function prettyCanonicalJson(value) {
+export function prettyCanonicalJson(value) {
   return `${JSON.stringify(normalizedJsonValue(value), null, 2)}\n`;
 }
 

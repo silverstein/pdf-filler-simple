@@ -59,7 +59,7 @@ function pdfjsOptions(bytes) {
   };
 }
 
-function textRegion(item, pageHeight) {
+function textRegion(item, pageHeight, mediaBox = null) {
   const transform = item.transform ?? [1, 0, 0, 1, 0, 0];
   const fontSize = Math.abs(transform[3]) > 0.01
     ? Math.abs(transform[3])
@@ -67,10 +67,13 @@ function textRegion(item, pageHeight) {
   const width = typeof item.width === "number" && item.width > 0
     ? item.width
     : fontSize * item.str.length * 0.5;
-  return [transform[4], pageHeight - transform[5] - fontSize * 0.75, width, fontSize];
+  const originX = mediaBox?.[0] ?? 0;
+  const originY = mediaBox?.[1] ?? 0;
+  const nativeHeight = mediaBox?.[3] ?? pageHeight;
+  return [transform[4] - originX, originY + nativeHeight - transform[5] - fontSize * 0.75, width, fontSize];
 }
 
-export async function extractComparisonText(bytes) {
+export async function extractComparisonText(bytes, { media_boxes: mediaBoxes = [] } = {}) {
   const { pdfjs: library } = await loadRenderingDependencies();
   const loadingTask = library.getDocument(pdfjsOptions(bytes));
   const document = await loadingTask.promise;
@@ -82,7 +85,7 @@ export async function extractComparisonText(bytes) {
       const content = await page.getTextContent();
       const items = content.items.filter(item => typeof item?.str === "string" && item.str.trim()).map(item => ({
         text: normalizeComparisonText(item.str),
-        region: textRegion(item, viewport.height),
+        region: textRegion(item, viewport.height, mediaBoxes[pageNumber - 1]),
       }));
       const text = normalizeComparisonText(items.map(item => item.text).join(" "));
       const marker = items.map(item => item.text).find(value => /^PAGE-ID: [A-Z]+$/.test(value)) ?? null;

@@ -72,6 +72,27 @@
       "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "target_evidence", "intended_visual", "forbidden_visual", "filesystem", "lifecycle"]
     },
     {
+      "id": "pdf-tools.fidelity.case.apply-text-rotated-crop",
+      "family": "text",
+      "inputs": [{ "logical_path": "input/source.pdf", "document_id": "pdf-tools.fidelity.document.page-order-source" }],
+      "tool_calls": [{ "name": "apply_text", "arguments": { "pdf_path": "input/source.pdf", "output_path": "output/stamped.pdf", "page": 2, "x": 72, "y": 250, "width": 180, "height": 30, "text": "ROTATED CHECK" } }],
+      "expected_outputs": ["output/stamped.pdf"],
+      "page_lineage": [
+        { "output_path": "output/stamped.pdf", "output_page": 1, "source_path": "input/source.pdf", "source_page": 1, "anchor": "PAGE ONE - PORTRAIT", "rotation_delta": 0 },
+        { "output_path": "output/stamped.pdf", "output_page": 2, "source_path": "input/source.pdf", "source_page": 2, "anchor": "PAGE TWO - ROTATED", "rotation_delta": 0 }
+      ],
+      "intended_regions": [{ "output_path": "output/stamped.pdf", "page": 2, "region": [72, 250, 180, 30], "reason": "text stamp on cropped and intrinsically rotated page", "required_visible_delta": true, "target_evidence": { "kind": "text_run", "expected_text": "ROTATED CHECK" } }],
+      "semantics": [{
+        "output_path": "output/stamped.pdf",
+        "fields": [],
+        "annotations": [],
+        "metadata": { "preserve_from": "input/source.pdf", "preserve_keys": ["Title", "Author", "Subject", "Creator", "CreationDate"], "allowed_change_keys": ["Keywords", "Producer", "ModDate"], "required_patterns": { "Keywords": "stamped text via pdf-toolkit; text=\\\"ROTATED CHECK\\\";.*page=2" } }
+      }],
+      "filesystem": { "created": ["output/stamped.pdf"], "created_directories": [], "modified": [], "deleted": [], "dynamic_created_patterns": [] },
+      "lifecycle": { "active_path": "output/stamped.pdf", "last_mutation_tool": "apply_text", "backup_policy": "none" },
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "target_evidence", "intended_visual", "forbidden_visual", "filesystem", "lifecycle"]
+    },
+    {
       "id": "pdf-tools.fidelity.case.prepare-signing-packet",
       "family": "signing_preparation",
       "inputs": [{ "logical_path": "input/source.pdf", "document_id": "pdf-tools.fidelity.document.comparison-base" }],
