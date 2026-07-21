@@ -15,11 +15,12 @@ import {
 import { PDFDocument, StandardFonts, degrees as pdfDegrees } from "pdf-lib";
 import { createRequire } from "module";
 import { fileURLToPath, pathToFileURL } from "url";
-import { existsSync, realpathSync } from "fs";
+import { constants as fsConstants, existsSync, realpathSync } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { homedir, platform as osPlatform, tmpdir } from "os";
 import { spawn } from "child_process";
+import { createHash } from "crypto";
 import { createScopedStderrSuppressor } from "./stderr-suppression.js";
 import {
   isUnavailableResourceError,
@@ -1263,16 +1264,27 @@ function tempOutputPath(targetPath) {
 
 async function writePdfOutputAtomic(targetPath, bytes) {
   const tmpPath = tempOutputPath(targetPath);
+  let handle;
   try {
-    await fs.writeFile(tmpPath, bytes);
+    handle = await fs.open(tmpPath, "wx", 0o600);
+    await handle.writeFile(bytes);
+    await handle.sync();
+    await handle.close();
+    handle = null;
     await fs.rename(tmpPath, targetPath);
+    try {
+      const directory = await fs.open(path.dirname(targetPath), "r");
+      try { await directory.sync(); } finally { await directory.close(); }
+    } catch {}
   } catch (error) {
+    try { await handle?.close(); } catch {}
     try { await fs.unlink(tmpPath); } catch {}
     throw error;
   }
 }
 
 const backupPathByCanonical = new Map();
+const backupOperationByCanonical = new Map();
 const activeDocumentState = {
   activePath: null,
   backupPath: null,
@@ -1281,30 +1293,285 @@ const activeDocumentState = {
   lastMutationAt: null,
 };
 
-function backupFileNameFor(pdfPath) {
-  const ext = path.extname(pdfPath) || ".pdf";
-  const base = path.basename(pdfPath, ext).replace(/[^\w.-]+/g, "_");
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return `${base}__${stamp}${ext}`;
+function backupIdentityId(pdfPath) {
+  return sha256Bytes(Buffer.from(pdfPath));
 }
 
-async function ensureBackupForCanonicalPath(pdfPath) {
-  const resolvedPath = resolvePath(pdfPath);
-  const existing = backupPathByCanonical.get(resolvedPath);
-  if (existing) {
-    try {
-      await fs.access(existing);
-      return existing;
-    } catch {
-      // Fall through and recreate the missing backup.
-    }
-  }
+function backupFileNameFor(pdfPath) {
+  const ext = path.extname(pdfPath) || ".pdf";
+  const base = backupBaseNameFor(pdfPath);
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return `${base}__${backupIdentityId(pdfPath).slice(0, 16)}-${stamp}-${process.pid}-${Math.random().toString(36).slice(2, 8)}${ext}`;
+}
 
-  await fs.mkdir(BACKUPS_DIR, { recursive: true });
-  const target = await findUniquePath(path.join(BACKUPS_DIR, backupFileNameFor(resolvedPath)));
-  await fs.copyFile(resolvedPath, target);
-  backupPathByCanonical.set(resolvedPath, target);
-  return target;
+function backupBaseNameFor(pdfPath) {
+  const ext = path.extname(pdfPath) || ".pdf";
+  return path.basename(pdfPath, ext).replace(/[^\w.-]+/g, "_");
+}
+
+function sha256Bytes(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function backupIdentityError(code, message, cause) {
+  const error = new Error(`${code}: ${message}`);
+  error.code = code;
+  if (cause) error.cause = cause;
+  return error;
+}
+
+function backupRecordPath(canonicalPath) {
+  return path.join(BACKUPS_DIR, `.original-${backupIdentityId(canonicalPath)}.v1.json`);
+}
+
+async function ensureManagedBackupDirectory() {
+  await fs.mkdir(BACKUPS_DIR, { recursive: true, mode: 0o700 });
+  const [stat, real] = await Promise.all([fs.lstat(BACKUPS_DIR), fs.realpath(BACKUPS_DIR)]);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || real !== path.resolve(BACKUPS_DIR)) {
+    throw backupIdentityError("BACKUP_DIRECTORY_INVALID", "The managed backup directory must be a real directory, not a symlink.");
+  }
+  if (typeof process.getuid === "function" && (stat.uid !== process.getuid() || (stat.mode & 0o022) !== 0)) {
+    throw backupIdentityError("BACKUP_DIRECTORY_PERMISSIONS", "The managed backup directory has unsafe ownership or write permissions.");
+  }
+}
+
+async function acquireMutationLock(canonicalPath) {
+  await ensureManagedBackupDirectory();
+  const lockPath = path.join(BACKUPS_DIR, `.mutation-${backupIdentityId(canonicalPath)}.lock`);
+  let handle;
+  try {
+    handle = await fs.open(lockPath, "wx", 0o600);
+    await handle.writeFile(`${JSON.stringify({ schema_version: 1, canonical_path: canonicalPath, pid: process.pid, created_at: new Date().toISOString() })}\n`);
+    await handle.sync();
+  } catch (error) {
+    try { await handle?.close(); } catch {}
+    if (error.code === "EEXIST") {
+      throw backupIdentityError("CONCURRENT_MODIFICATION", "Another process is already committing a mutation for this document.", error);
+    }
+    throw backupIdentityError("MUTATION_LOCK_FAILED", "The document mutation lock could not be established.", error);
+  }
+  return async () => {
+    try { await handle.close(); } finally { await fs.unlink(lockPath); }
+  };
+}
+
+async function readBackupRecord(canonicalPath) {
+  const recordPath = backupRecordPath(canonicalPath);
+  let bytes;
+  try {
+    const stat = await fs.lstat(recordPath);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw backupIdentityError("BACKUP_RECORD_INVALID", "The original-backup identity record is not a regular file.");
+    }
+    const handle = await fs.open(recordPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    try {
+      const opened = await handle.stat();
+      if (!opened.isFile() || opened.size > 64 * 1024) throw new Error("invalid record file");
+      bytes = await handle.readFile();
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (error.code === "ENOENT") return null;
+    if (error.code === "BACKUP_RECORD_INVALID") throw error;
+    throw backupIdentityError("BACKUP_RECORD_UNAVAILABLE", "The original-backup identity record could not be read.", error);
+  }
+  try {
+    const parsed = JSON.parse(bytes);
+    if (parsed?.schema_version !== 1 || parsed.canonical_path !== canonicalPath
+      || typeof parsed.backup_file !== "string" || path.basename(parsed.backup_file) !== parsed.backup_file
+      || !/^[a-f0-9]{64}$/.test(parsed.original_sha256 ?? "")
+      || !/^[a-f0-9]{64}$/.test(parsed.last_committed_sha256 ?? "")
+      || !(parsed.pending_sha256 === null || /^[a-f0-9]{64}$/.test(parsed.pending_sha256 ?? ""))
+      || Object.keys(parsed).sort().join(",") !== "backup_file,canonical_path,last_committed_sha256,original_sha256,pending_sha256,schema_version") throw new Error("invalid record");
+    return parsed;
+  } catch (error) {
+    throw backupIdentityError("BACKUP_RECORD_INVALID", "The original-backup identity record is corrupt or has an unsupported format.", error);
+  }
+}
+
+async function publishBackupRecord(record) {
+  await ensureManagedBackupDirectory();
+  const recordPath = backupRecordPath(record.canonical_path);
+  const bytes = Buffer.from(`${JSON.stringify(record, null, 2)}\n`);
+  const temporary = `${recordPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  try {
+    const handle = await fs.open(temporary, "wx", 0o600);
+    try {
+      await handle.writeFile(bytes);
+      await handle.sync();
+    } finally {
+      await handle.close();
+    }
+    await fs.link(temporary, recordPath);
+    try {
+      const directory = await fs.open(BACKUPS_DIR, "r");
+      try { await directory.sync(); } finally { await directory.close(); }
+    } catch {}
+    return true;
+  } catch (error) {
+    if (error.code === "EEXIST") return false;
+    throw backupIdentityError("BACKUP_RECORD_WRITE_FAILED", "The original-backup identity record could not be published atomically.", error);
+  } finally {
+    try { await fs.unlink(temporary); } catch {}
+  }
+}
+
+async function replaceBackupRecord(record) {
+  const recordPath = backupRecordPath(record.canonical_path);
+  const temporary = `${recordPath}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  let handle;
+  try {
+    handle = await fs.open(temporary, "wx", 0o600);
+    await handle.writeFile(`${JSON.stringify(record, null, 2)}\n`);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await fs.rename(temporary, recordPath);
+    try {
+      const directory = await fs.open(BACKUPS_DIR, "r");
+      try { await directory.sync(); } finally { await directory.close(); }
+    } catch {}
+  } catch (error) {
+    try { await handle?.close(); } catch {}
+    try { await fs.unlink(temporary); } catch {}
+    throw backupIdentityError("BACKUP_RECORD_WRITE_FAILED", "The original-backup identity record could not be replaced atomically.", error);
+  }
+}
+
+async function validateBackupRecord(record) {
+  const resolvedBackup = path.resolve(BACKUPS_DIR, record.backup_file);
+  const backupRoot = path.resolve(BACKUPS_DIR);
+  if (!resolvedBackup.startsWith(`${backupRoot}${path.sep}`) || path.extname(resolvedBackup).toLowerCase() !== ".pdf") {
+    throw backupIdentityError("BACKUP_IDENTITY_INVALID", "The recorded original backup path is outside the managed backup directory.");
+  }
+  let bytes;
+  try {
+    const stat = await fs.lstat(resolvedBackup);
+    if (!stat.isFile() || stat.isSymbolicLink()) {
+      throw backupIdentityError("BACKUP_IDENTITY_INVALID", "The recorded original backup is not a regular PDF file.");
+    }
+    const handle = await fs.open(resolvedBackup, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+    try {
+      const opened = await handle.stat();
+      if (!opened.isFile()) throw backupIdentityError("BACKUP_IDENTITY_INVALID", "The recorded original backup is not a regular PDF file.");
+      bytes = await handle.readFile();
+    } finally {
+      await handle.close();
+    }
+  } catch (error) {
+    if (error.code === "BACKUP_IDENTITY_INVALID") throw error;
+    throw backupIdentityError(
+      "ORIGINAL_BACKUP_MISSING",
+      `Refusing to mutate ${path.basename(record.canonical_path)} because its recorded original backup is unavailable at ${resolvedBackup}. Restore that file before retrying.`,
+      error,
+    );
+  }
+  if (sha256Bytes(bytes) !== record.original_sha256) {
+    throw backupIdentityError(
+      "ORIGINAL_BACKUP_MISMATCH",
+      `Refusing to mutate ${path.basename(record.canonical_path)} because its recorded original backup no longer matches the immutable original identity.`,
+    );
+  }
+  return resolvedBackup;
+}
+
+async function serializeBackupOperation(canonicalPath, operation) {
+  const prior = backupOperationByCanonical.get(canonicalPath) ?? Promise.resolve();
+  const current = prior.then(operation, operation);
+  const tail = current.catch(() => {});
+  backupOperationByCanonical.set(canonicalPath, tail);
+  try {
+    return await current;
+  } finally {
+    if (backupOperationByCanonical.get(canonicalPath) === tail) backupOperationByCanonical.delete(canonicalPath);
+  }
+}
+
+async function ensureBackupForCanonicalPath(pdfPath, expectedOriginalBytes, expectedOriginalSha256) {
+  const resolvedPath = await fs.realpath(resolvePath(pdfPath));
+  return serializeBackupOperation(resolvedPath, async () => {
+    const record = await readBackupRecord(resolvedPath);
+    const rememberedPath = backupPathByCanonical.get(resolvedPath);
+    if (record) {
+      if (rememberedPath && path.resolve(rememberedPath) !== path.resolve(BACKUPS_DIR, record.backup_file)) {
+        throw backupIdentityError("BACKUP_IDENTITY_MISMATCH", "In-memory and persisted original-backup identities disagree.");
+      }
+      const validated = await validateBackupRecord(record);
+      backupPathByCanonical.set(resolvedPath, validated);
+      return validated;
+    }
+    if (rememberedPath) {
+      throw backupIdentityError(
+        "BACKUP_IDENTITY_UNVERIFIED",
+        "A backup path was rehydrated without a persisted immutable-original identity. Refusing to manufacture or adopt an original backup from ambiguous state.",
+      );
+    }
+
+    await ensureManagedBackupDirectory();
+    if (!Buffer.isBuffer(expectedOriginalBytes) || sha256Bytes(expectedOriginalBytes) !== expectedOriginalSha256) {
+      throw backupIdentityError(
+        "BACKUP_INPUT_IDENTITY_INVALID",
+        "The bytes supplied for first-backup publication do not match their captured SHA-256 identity.",
+      );
+    }
+    const identityPrefix = `__${backupIdentityId(resolvedPath).slice(0, 16)}-`;
+    const backupEntries = await fs.readdir(BACKUPS_DIR);
+    const priorBackupEvidence = backupEntries.some(entry => entry.includes(identityPrefix) && entry.toLowerCase().endsWith(".pdf"));
+    if (priorBackupEvidence) {
+      throw backupIdentityError(
+        "BACKUP_RECORD_MISSING",
+        "A managed original backup exists without its immutable identity record. Refusing to create a replacement from ambiguous state.",
+      );
+    }
+    const legacyPrefix = `${backupBaseNameFor(resolvedPath)}__`;
+    const legacyBackupEvidence = backupEntries.some(entry => entry.startsWith(legacyPrefix) && entry.toLowerCase().endsWith(".pdf"));
+    if (legacyBackupEvidence) {
+      throw backupIdentityError(
+        "BACKUP_MIGRATION_REQUIRED",
+        "A legacy original backup exists without a durable identity record. Resolve that backup lineage before retrying this mutation.",
+      );
+    }
+
+    const target = await findUniquePath(path.join(BACKUPS_DIR, backupFileNameFor(resolvedPath)));
+    const temporary = `${target}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    try {
+      const handle = await fs.open(temporary, "wx", 0o600);
+      try {
+        await handle.writeFile(expectedOriginalBytes);
+        await handle.sync();
+      } finally {
+        await handle.close();
+      }
+      await fs.rename(temporary, target);
+      try {
+        const directory = await fs.open(BACKUPS_DIR, "r");
+        try { await directory.sync(); } finally { await directory.close(); }
+      } catch {}
+      const published = await publishBackupRecord({
+        schema_version: 1,
+        canonical_path: resolvedPath,
+        backup_file: path.basename(target),
+        original_sha256: expectedOriginalSha256,
+        last_committed_sha256: expectedOriginalSha256,
+        pending_sha256: null,
+      });
+      if (!published) {
+        await fs.unlink(target);
+        const winningRecord = await readBackupRecord(resolvedPath);
+        if (!winningRecord) throw backupIdentityError("BACKUP_RECORD_RACE", "A competing backup identity publication disappeared.");
+        const validated = await validateBackupRecord(winningRecord);
+        backupPathByCanonical.set(resolvedPath, validated);
+        return validated;
+      }
+    } catch (error) {
+      try { await fs.unlink(temporary); } catch {}
+      try { await fs.unlink(target); } catch {}
+      throw error;
+    }
+    backupPathByCanonical.set(resolvedPath, target);
+    return target;
+  });
 }
 
 function noteDocumentOpened(pdfPath) {
@@ -1342,6 +1609,8 @@ async function buildPdfLoadPayload(pdfPath, initialPage = 1, extra = {}) {
 
 async function buildActiveDocumentPayload(pdfPath, initialPage = 1, extra = {}) {
   const resolvedPath = resolvePath(pdfPath);
+  let canonicalPath = resolvedPath;
+  try { canonicalPath = await fs.realpath(resolvedPath); } catch {}
   let defaultFormInfo = {};
   if (extra.fields === undefined && extra.fieldCount === undefined && extra.hasFormFields === undefined) {
     try {
@@ -1355,7 +1624,7 @@ async function buildActiveDocumentPayload(pdfPath, initialPage = 1, extra = {}) 
     ...defaultFormInfo,
     ...extra,
   });
-  const backupPath = backupPathByCanonical.get(resolvedPath) || null;
+  const backupPath = backupPathByCanonical.get(canonicalPath) || backupPathByCanonical.get(resolvedPath) || null;
   return {
     ...payload,
     active_path: resolvedPath,
@@ -1380,29 +1649,81 @@ async function persistPdfMutation({
   inputPath,
   outputPath,
   toolName,
+  expectedInputSha256,
   initialPage = 1,
   extraPayload = {},
 }) {
   const resolvedInputPath = resolvePath(inputPath);
   const resolvedOutputPath = resolvePath(outputPath);
-  let backupPath = backupPathByCanonical.get(resolvedOutputPath) || null;
-  if (resolvedInputPath === resolvedOutputPath) {
-    backupPath = await ensureBackupForCanonicalPath(resolvedOutputPath);
-  }
+  const inputCanonical = await fs.realpath(resolvedInputPath);
+  let outputCanonical = null;
+  try { outputCanonical = await fs.realpath(resolvedOutputPath); } catch {}
+  const sameDocument = inputCanonical === outputCanonical;
 
-  const bytes = await pdfDoc.save();
-  await writePdfOutputAtomic(resolvedOutputPath, bytes);
+  const commit = async () => {
+    let backupPath = backupPathByCanonical.get(inputCanonical) || null;
+    let record = null;
+    const bytes = Buffer.from(await pdfDoc.save());
+    const pendingSha256 = sha256Bytes(bytes);
+    if (sameDocument) {
+      if (!/^[a-f0-9]{64}$/.test(expectedInputSha256 ?? "")) {
+        throw backupIdentityError("MUTATION_INPUT_IDENTITY_REQUIRED", "Same-document mutations require the SHA-256 captured when the input was loaded.");
+      }
+      const currentBytes = await fs.readFile(inputCanonical);
+      const currentSha256 = sha256Bytes(currentBytes);
+      if (currentSha256 !== expectedInputSha256) {
+        throw backupIdentityError("CONCURRENT_MODIFICATION", "The PDF changed after this mutation loaded its input. Reload the current document and retry.");
+      }
+      backupPath = await ensureBackupForCanonicalPath(inputCanonical, currentBytes, currentSha256);
+      record = await readBackupRecord(inputCanonical);
+      if (!record) throw backupIdentityError("BACKUP_RECORD_MISSING", "The immutable original identity record disappeared before commit.");
+      await validateBackupRecord(record);
+      if (record.pending_sha256) {
+        if (currentSha256 === record.pending_sha256) {
+          record.last_committed_sha256 = record.pending_sha256;
+          record.pending_sha256 = null;
+          await replaceBackupRecord(record);
+        } else if (currentSha256 === record.last_committed_sha256) {
+          record.pending_sha256 = null;
+          await replaceBackupRecord(record);
+        } else {
+          throw backupIdentityError("BACKUP_JOURNAL_CONFLICT", "The working PDF matches neither the committed nor pending mutation identity.");
+        }
+      }
+      if (currentSha256 !== record.last_committed_sha256 || currentSha256 !== expectedInputSha256) {
+        throw backupIdentityError("CONCURRENT_MODIFICATION", "The PDF changed after this mutation loaded its input. Reload the current document and retry.");
+      }
+      record.pending_sha256 = pendingSha256;
+      await replaceBackupRecord(record);
+      if (sha256Bytes(await fs.readFile(inputCanonical)) !== currentSha256) {
+        record.pending_sha256 = null;
+        await replaceBackupRecord(record);
+        throw backupIdentityError("CONCURRENT_MODIFICATION", "The PDF changed while this mutation was preparing to commit. Reload the current document and retry.");
+      }
+    }
 
-  activeDocumentState.activePath = resolvedOutputPath;
-  activeDocumentState.backupPath = backupPath;
-  activeDocumentState.lastMutationTool = toolName;
-  activeDocumentState.lastMutationAt = new Date().toISOString();
+    await writePdfOutputAtomic(sameDocument ? inputCanonical : resolvedOutputPath, bytes);
+    if (record) {
+      record.last_committed_sha256 = pendingSha256;
+      record.pending_sha256 = null;
+      await replaceBackupRecord(record);
+    }
 
-  const payload = await buildActiveDocumentPayload(resolvedOutputPath, initialPage, {
-    ...getFormFieldInfo(pdfDoc),
-    ...extraPayload,
-  });
-  return { payload, backupPath };
+    activeDocumentState.activePath = resolvedOutputPath;
+    activeDocumentState.backupPath = backupPath;
+    activeDocumentState.lastMutationTool = toolName;
+    activeDocumentState.lastMutationAt = new Date().toISOString();
+
+    const payload = await buildActiveDocumentPayload(resolvedOutputPath, initialPage, {
+      ...getFormFieldInfo(pdfDoc),
+      ...extraPayload,
+    });
+    return { payload, backupPath };
+  };
+
+  if (!sameDocument) return commit();
+  const release = await acquireMutationLock(inputCanonical);
+  try { return await commit(); } finally { await release(); }
 }
 
 function getFormFieldInfo(pdfDoc) {
@@ -2890,6 +3211,7 @@ async function handleToolCall(request) {
           inputPath: resolvedPdfPath,
           outputPath: resolvedOutputPath,
           toolName: "fill_pdf",
+          expectedInputSha256: sha256Bytes(rawPdfBytes),
           extraPayload: {
             filled_fields: filledFields,
             fill_errors: errors,
@@ -3039,13 +3361,14 @@ async function handleToolCall(request) {
         
         // Merge profile data with additional data
         const mergedData = { ...profileData, ...additional_data };
-        
+        const rawPdfBytes = await fs.readFile(resolvedPdfPath);
         const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, mergedData, password);
         const { payload, backupPath } = await persistPdfMutation({
           pdfDoc,
           inputPath: resolvedPdfPath,
           outputPath: resolvedOutputPath,
           toolName: "fill_with_profile",
+          expectedInputSha256: sha256Bytes(rawPdfBytes),
           extraPayload: {
             profile_name,
             filled_fields: filledFields,
@@ -3871,7 +4194,7 @@ async function handleToolCall(request) {
         if (!pdfStats.isFile()) {
           throw new Error(`Active PDF path is not a file: ${resolvedPdfPath}`);
         }
-        const resolvedBackupPath = normalized.backup_path === null
+        let resolvedBackupPath = normalized.backup_path === null
           ? null
           : resolvePath(normalized.backup_path);
         if (resolvedBackupPath !== null) {
@@ -3879,6 +4202,23 @@ async function handleToolCall(request) {
           if (!backupStats.isFile()) {
             throw new Error(`Backup PDF path is not a file: ${resolvedBackupPath}`);
           }
+          const canonicalPdfPath = await fs.realpath(resolvedPdfPath);
+          const record = await readBackupRecord(canonicalPdfPath);
+          if (!record) {
+            throw backupIdentityError(
+              "BACKUP_IDENTITY_UNVERIFIED",
+              "The supplied backup has no durable immutable-original identity record.",
+            );
+          }
+          const validatedBackupPath = await validateBackupRecord(record);
+          const suppliedBackupPath = await fs.realpath(resolvedBackupPath);
+          if (suppliedBackupPath !== validatedBackupPath) {
+            throw backupIdentityError(
+              "BACKUP_IDENTITY_MISMATCH",
+              "The supplied backup does not match the durable immutable-original identity for this document.",
+            );
+          }
+          resolvedBackupPath = validatedBackupPath;
         }
 
         syncActiveDocumentState({
@@ -4542,6 +4882,7 @@ async function handleToolCall(request) {
           inputPath: resolvedInput,
           outputPath: resolvedOutput,
           toolName: "add_signature_field",
+          expectedInputSha256: sha256Bytes(pdfBytes),
           initialPage: page,
         });
         return {
@@ -4649,6 +4990,7 @@ async function handleToolCall(request) {
           inputPath: resolvedInput,
           outputPath: resolvedOutput,
           toolName: "apply_signature",
+          expectedInputSha256: sha256Bytes(pdfBytes),
           initialPage: page,
         });
 
@@ -4746,6 +5088,7 @@ async function handleToolCall(request) {
           inputPath: resolvedInput,
           outputPath: resolvedOutput,
           toolName: "prepare_signing_packet",
+          expectedInputSha256: sha256Bytes(pdfBytes),
           initialPage: manifest[0]?.page || 1,
           extraPayload: {
             pending_signatures: manifest,
@@ -4817,6 +5160,7 @@ async function handleToolCall(request) {
           inputPath: resolvedInput,
           outputPath: resolvedOutput,
           toolName: "apply_text",
+          expectedInputSha256: sha256Bytes(pdfBytes),
           initialPage: page,
         });
 
