@@ -477,6 +477,10 @@ export function withToolOutputSchema(tool) {
   return outputSchema ? { ...tool, outputSchema } : tool;
 }
 
+export function hasToolOutputSchema(toolName) {
+  return Object.prototype.hasOwnProperty.call(TOOL_OUTPUT_SCHEMAS, toolName);
+}
+
 export function validateStructuredToolResult(toolName, result) {
   if (result?.isError === true) {
     if (result.structuredContent === undefined) return result;

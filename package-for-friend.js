@@ -26,6 +26,7 @@ const SHARE_FILES = [
   "package.json",
   "server/helpers.js",
   "server/index.js",
+  "server/output-schemas.js",
   "server/resource-uri.js",
   "server/stderr-suppression.js",
   "smart-install.sh",
@@ -329,6 +330,10 @@ async function syncSharePackage() {
   await Promise.all([
     fs.copyFile(path.join(PROJECT_ROOT, "server", "index.js"), path.join(shareServerDir, "index.js")),
     fs.copyFile(path.join(PROJECT_ROOT, "server", "helpers.js"), path.join(shareServerDir, "helpers.js")),
+    fs.copyFile(
+      path.join(PROJECT_ROOT, "server", "output-schemas.js"),
+      path.join(shareServerDir, "output-schemas.js"),
+    ),
     fs.copyFile(path.join(PROJECT_ROOT, "server", "resource-uri.js"), path.join(shareServerDir, "resource-uri.js")),
     fs.copyFile(
       path.join(PROJECT_ROOT, "server", "stderr-suppression.js"),

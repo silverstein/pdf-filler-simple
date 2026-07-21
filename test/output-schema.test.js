@@ -278,4 +278,17 @@ describe("live output schema contract", () => {
       },
     });
   });
+
+  it("does not attach undeclared structured content to text-only tool errors", async () => {
+    const result = await client.callTool({
+      name: "list_pdfs",
+      arguments: { directory: path.join(stateRoot, "missing-directory") },
+    });
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toBeUndefined();
+    expect(result.content).toEqual([expect.objectContaining({
+      type: "text",
+      text: expect.stringMatching(/^Error:/),
+    })]);
+  });
 });

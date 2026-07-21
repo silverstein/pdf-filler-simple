@@ -487,15 +487,11 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
       name: "get_pdf_info",
       arguments: { pdf_path: path.join(path.parse(REPO_ROOT).root, "outside.pdf") },
     });
-    expect(deniedInfo).toMatchObject({
-      isError: true,
-      structuredContent: {
-        status: "failed",
-        error: {
-          error_schema_version: 1,
-          code: "path_policy_denied",
-        },
-      },
+    expect(deniedInfo.isError).toBe(true);
+    expect(deniedInfo.structuredContent).toBeUndefined();
+    expect(deniedInfo.content?.[0]).toMatchObject({
+      type: "text",
+      text: expect.stringMatching(/^Error:/),
     });
   });
 

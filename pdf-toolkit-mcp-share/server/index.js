@@ -27,6 +27,7 @@ import {
   pdfResourceUriToPath,
 } from "./resource-uri.js";
 import {
+  hasToolOutputSchema,
   validateStructuredToolResult,
   withToolOutputSchema,
 } from "./output-schemas.js";
@@ -717,6 +718,178 @@ function normalizeStoredSignatureSummary(record) {
   };
 }
 
+function requireArgumentObject(args, toolName) {
+  if (!args || typeof args !== "object" || Array.isArray(args)) {
+    throw new Error(`${toolName} arguments must be an object.`);
+  }
+  return args;
+}
+
+function requireStringArgument(value, name, { maxLength = null } = {}) {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new Error(`'${name}' is required and must be a non-empty string.`);
+  }
+  if (maxLength !== null && value.length > maxLength) {
+    throw new Error(`'${name}' must not exceed ${maxLength} characters.`);
+  }
+  return value;
+}
+
+function optionalStringArgument(value, name, { maxLength = null } = {}) {
+  if (value === undefined) return null;
+  return requireStringArgument(value, name, { maxLength });
+}
+
+function optionalBooleanArgument(value, name, fallback = false) {
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean") {
+    throw new Error(`'${name}' must be a boolean.`);
+  }
+  return value;
+}
+
+function requireIntegerArgument(value, name, { min = null } = {}) {
+  if (!Number.isInteger(value) || (min !== null && value < min)) {
+    const suffix = min === null ? "an integer" : `an integer >= ${min}`;
+    throw new Error(`'${name}' must be ${suffix}.`);
+  }
+  return value;
+}
+
+function requireNumberArgument(value, name, { min = null, exclusiveMin = false } = {}) {
+  const belowMinimum = min !== null && (exclusiveMin ? value <= min : value < min);
+  if (typeof value !== "number" || !Number.isFinite(value) || belowMinimum) {
+    const suffix = min === null
+      ? "a finite number"
+      : `a finite number ${exclusiveMin ? ">" : ">="} ${min}`;
+    throw new Error(`'${name}' must be ${suffix}.`);
+  }
+  return value;
+}
+
+function normalizePlacementArguments(value, name = "arguments") {
+  const args = requireArgumentObject(value, name);
+  return {
+    page: requireIntegerArgument(args.page, `${name}.page`, { min: 1 }),
+    x: requireNumberArgument(args.x, `${name}.x`, { min: 0 }),
+    y: requireNumberArgument(args.y, `${name}.y`, { min: 0 }),
+    width: requireNumberArgument(args.width, `${name}.width`, { min: 0, exclusiveMin: true }),
+    height: requireNumberArgument(args.height, `${name}.height`, { min: 0, exclusiveMin: true }),
+  };
+}
+
+function normalizeMutationArguments(value, toolName) {
+  const args = requireArgumentObject(value, toolName);
+  return {
+    pdf_path: requireStringArgument(args.pdf_path, "pdf_path"),
+    output_path: requireStringArgument(args.output_path, "output_path"),
+    allow_resign: optionalBooleanArgument(args.allow_resign, "allow_resign"),
+    force_xfa: optionalBooleanArgument(args.force_xfa, "force_xfa"),
+    password: optionalStringArgument(args.password, "password"),
+    ...normalizePlacementArguments(args),
+  };
+}
+
+function normalizeAddSignatureFieldArguments(value) {
+  const args = requireArgumentObject(value, "add_signature_field");
+  const normalized = normalizeMutationArguments(args, "add_signature_field");
+  let label = "Sign here";
+  if (args.label !== undefined) {
+    if (typeof args.label !== "string") {
+      throw new Error("'label' must be a string.");
+    }
+    label = args.label || "Sign here";
+  }
+  return { ...normalized, label };
+}
+
+function normalizeApplyTextArguments(value) {
+  const args = requireArgumentObject(value, "apply_text");
+  const normalized = normalizeMutationArguments(args, "apply_text");
+  const text = requireStringArgument(args.text, "text", { maxLength: 200 });
+  const fontStyle = args.font_style === undefined ? "normal" : args.font_style;
+  if (!["normal", "italic"].includes(fontStyle)) {
+    throw new Error("'font_style' must be 'normal' or 'italic'.");
+  }
+  optionalBooleanArgument(args.overwrite, "overwrite");
+  return { ...normalized, text, font_style: fontStyle };
+}
+
+function normalizeApplySignatureArguments(value) {
+  const args = requireArgumentObject(value, "apply_signature");
+  const normalized = normalizeMutationArguments(args, "apply_signature");
+  const signingMode = args.signing_mode === undefined ? "signature" : args.signing_mode;
+  if (!["signature", "initials"].includes(signingMode)) {
+    throw new Error("'signing_mode' must be 'signature' or 'initials'.");
+  }
+  optionalBooleanArgument(args.overwrite, "overwrite");
+  return {
+    ...normalized,
+    signature_name: requireStringArgument(args.signature_name, "signature_name"),
+    user_intent_statement: requireStringArgument(args.user_intent_statement, "user_intent_statement"),
+    user_confirmed_at: requireStringArgument(args.user_confirmed_at, "user_confirmed_at"),
+    draw_audit_line: optionalBooleanArgument(args.draw_audit_line, "draw_audit_line"),
+    signing_mode: signingMode,
+  };
+}
+
+function normalizePrepareSigningPacketArguments(value) {
+  const args = requireArgumentObject(value, "prepare_signing_packet");
+  if (
+    args.field_values !== undefined &&
+    (!args.field_values || typeof args.field_values !== "object" || Array.isArray(args.field_values))
+  ) {
+    throw new Error("'field_values' must be an object.");
+  }
+  if (args.signature_locations !== undefined && !Array.isArray(args.signature_locations)) {
+    throw new Error("'signature_locations' must be an array.");
+  }
+  const signatureLocations = (args.signature_locations || []).map((location, index) => {
+    const normalized = normalizePlacementArguments(location, `signature_locations[${index}]`);
+    let label = "Sign here";
+    if (location.label !== undefined) {
+      if (typeof location.label !== "string") {
+        throw new Error(`'signature_locations[${index}].label' must be a string.`);
+      }
+      label = location.label || "Sign here";
+    }
+    return { ...normalized, label };
+  });
+  return {
+    pdf_path: requireStringArgument(args.pdf_path, "pdf_path"),
+    output_path: requireStringArgument(args.output_path, "output_path"),
+    field_values: args.field_values === undefined ? null : args.field_values,
+    signature_locations: signatureLocations,
+    allow_resign: optionalBooleanArgument(args.allow_resign, "allow_resign"),
+    force_xfa: optionalBooleanArgument(args.force_xfa, "force_xfa"),
+    password: optionalStringArgument(args.password, "password"),
+  };
+}
+
+function normalizeSetActiveDocumentArguments(value) {
+  const args = requireArgumentObject(value, "set_active_document");
+  const lastMutationTool = optionalStringArgument(
+    args.last_mutation_tool,
+    "last_mutation_tool",
+    { maxLength: 128 },
+  );
+  const rawMutationAt = optionalStringArgument(args.last_mutation_at, "last_mutation_at");
+  let lastMutationAt = null;
+  if (rawMutationAt !== null) {
+    const parsed = new Date(rawMutationAt);
+    if (Number.isNaN(parsed.getTime())) {
+      throw new Error("'last_mutation_at' must be a valid ISO-8601 timestamp.");
+    }
+    lastMutationAt = parsed.toISOString();
+  }
+  return {
+    pdf_path: requireStringArgument(args.pdf_path, "pdf_path"),
+    backup_path: optionalStringArgument(args.backup_path, "backup_path"),
+    last_mutation_tool: lastMutationTool,
+    last_mutation_at: lastMutationAt,
+  };
+}
+
 const PROMPT_TEMPLATES = [
   {
     name: "view_and_analyze_pdf",
@@ -1044,12 +1217,8 @@ function syncActiveDocumentState({ pdfPath, backupPath = null, lastMutationTool 
   if (resolvedBackupPath) {
     backupPathByCanonical.set(resolvedPath, resolvedBackupPath);
   }
-  if (lastMutationTool) {
-    activeDocumentState.lastMutationTool = lastMutationTool;
-  }
-  if (lastMutationAt) {
-    activeDocumentState.lastMutationAt = lastMutationAt;
-  }
+  activeDocumentState.lastMutationTool = lastMutationTool;
+  activeDocumentState.lastMutationAt = lastMutationAt;
 }
 
 async function buildPdfLoadPayload(pdfPath, initialPage = 1, extra = {}) {
@@ -3590,17 +3759,29 @@ async function handleToolCall(request) {
       }
 
       case "set_active_document": {
-        const { pdf_path, backup_path = null, last_mutation_tool = null, last_mutation_at = null } = args;
-        if (!pdf_path || typeof pdf_path !== "string") {
-          throw new Error("'pdf_path' is required and must be a string.");
+        const normalized = normalizeSetActiveDocumentArguments(args);
+        const resolvedPdfPath = resolvePath(normalized.pdf_path);
+        const pdfStats = await fs.stat(resolvedPdfPath);
+        if (!pdfStats.isFile()) {
+          throw new Error(`Active PDF path is not a file: ${resolvedPdfPath}`);
         }
+        const resolvedBackupPath = normalized.backup_path === null
+          ? null
+          : resolvePath(normalized.backup_path);
+        if (resolvedBackupPath !== null) {
+          const backupStats = await fs.stat(resolvedBackupPath);
+          if (!backupStats.isFile()) {
+            throw new Error(`Backup PDF path is not a file: ${resolvedBackupPath}`);
+          }
+        }
+
         syncActiveDocumentState({
-          pdfPath: pdf_path,
-          backupPath: backup_path,
-          lastMutationTool: last_mutation_tool,
-          lastMutationAt: last_mutation_at,
+          pdfPath: resolvedPdfPath,
+          backupPath: resolvedBackupPath,
+          lastMutationTool: normalized.last_mutation_tool,
+          lastMutationAt: normalized.last_mutation_at,
         });
-        const payload = await buildActiveDocumentPayload(pdf_path);
+        const payload = await buildActiveDocumentPayload(resolvedPdfPath);
         return {
           content: [{
             type: "text",
@@ -4223,7 +4404,10 @@ async function handleToolCall(request) {
       }
 
       case "add_signature_field": {
-        const { pdf_path, output_path, page, x, y, width, height, label, allow_resign = false, password, force_xfa = false } = args;
+        const {
+          pdf_path, output_path, page, x, y, width, height, label,
+          allow_resign, password, force_xfa,
+        } = normalizeAddSignatureFieldArguments(args);
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
         const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
@@ -4257,7 +4441,7 @@ async function handleToolCall(request) {
             ...payload,
             pdf_path: resolvedOutput,
             page, x, y, width, height,
-            label: label || "Sign here",
+            label,
           },
           _meta: {
             ui: { resourceUri: "ui://pdf-toolkit/viewer" },
@@ -4271,12 +4455,12 @@ async function handleToolCall(request) {
           pdf_path, output_path, signature_name,
           page, x, y, width, height,
           user_intent_statement, user_confirmed_at,
-          draw_audit_line = false,
-          signing_mode = "signature",
-          allow_resign = false,
-          force_xfa = false,
+          draw_audit_line,
+          signing_mode,
+          allow_resign,
+          force_xfa,
           password,
-        } = args;
+        } = normalizeApplySignatureArguments(args);
 
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
@@ -4377,7 +4561,10 @@ async function handleToolCall(request) {
       }
 
       case "prepare_signing_packet": {
-        const { pdf_path, output_path, field_values, signature_locations = [], allow_resign = false, password, force_xfa = false } = args;
+        const {
+          pdf_path, output_path, field_values, signature_locations,
+          allow_resign, password, force_xfa,
+        } = normalizePrepareSigningPacketArguments(args);
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
 
@@ -4427,10 +4614,10 @@ async function handleToolCall(request) {
             y: loc.y,
             width: loc.width,
             height: loc.height,
-            label: loc.label || "Sign here",
+            label: loc.label,
           });
           manifest.push({
-            label: loc.label || "Sign here",
+            label: loc.label,
             page: loc.page,
             x: loc.x, y: loc.y,
             width: loc.width, height: loc.height,
@@ -4478,11 +4665,11 @@ async function handleToolCall(request) {
         const {
           pdf_path, output_path,
           page, x, y, width, height,
-          text, font_style = "normal",
-          allow_resign = false,
-          force_xfa = false,
+          text, font_style,
+          allow_resign,
+          force_xfa,
           password,
-        } = args;
+        } = normalizeApplyTextArguments(args);
 
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
@@ -4673,13 +4860,15 @@ async function handleToolCall(request) {
           text: `Error: ${error.message}`
         }
       ],
-      structuredContent: {
-        status: "failed",
-        error: {
-          error_schema_version: 1,
-          code: errorCode,
+      ...(hasToolOutputSchema(name) ? {
+        structuredContent: {
+          status: "failed",
+          error: {
+            error_schema_version: 1,
+            code: errorCode,
+          },
         },
-      },
+      } : {}),
       isError: true,
     };
   }

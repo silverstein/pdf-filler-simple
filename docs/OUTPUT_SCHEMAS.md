@@ -53,7 +53,15 @@ an `isError` result is never forced through a success schema.
 
 The following six tools remain intentionally text-only and therefore do not
 advertise `outputSchema`: `get_pdf_info`, `list_pdfs`, `list_profiles`,
-`load_profile`, `save_profile`, and `split_pdf`.
+`load_profile`, `save_profile`, and `split_pdf`. Their error results are also
+text-only; attaching an undeclared `structuredContent` error would create a
+wire contract that discovery does not publish.
+
+The low-level MCP server does not apply advertised input schemas on its own.
+Session rehydration and coordinate-bearing mutations therefore validate and
+normalize typed arguments before changing active-document state, opening an
+output, creating a backup, or editing a PDF. Returned placement and timestamp
+fields are the normalized values actually used for the operation.
 
 The executable source of truth is `server/output-schemas.js`. The MCP contract
 tests assert this complete 31/6 matrix, compile every schema through the pinned
