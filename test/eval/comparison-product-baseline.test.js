@@ -1,0 +1,41 @@
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+import { loadComparisonManifest, resolveComparisonDocumentPath } from "./comparison-manifest.js";
+import { buildProductPrimitiveReport } from "./comparison-product-baseline.js";
+import { scoreComparisonReport, validateComparisonReport } from "./comparison-scorer.js";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const MANIFEST_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "comparison", "manifest.v1.json");
+
+describe("current published PDF Tools primitive baseline", () => {
+  it("records real tool capabilities and preserves unsupported channels as misses", async () => {
+    const manifest = await loadComparisonManifest(MANIFEST_PATH);
+    const documents = new Map(manifest.documents.map(document => [document.id, document]));
+    const report = await buildProductPrimitiveReport({
+      benchmarkId: manifest.benchmark_id,
+      benchmarkVersion: manifest.benchmark_version,
+      renderer: manifest.canonical_renderer,
+      repositoryRoot: REPO_ROOT,
+      pairs: manifest.pairs.map(pair => ({
+        pairId: pair.id,
+        beforePath: resolveComparisonDocumentPath(MANIFEST_PATH, documents.get(pair.before_document_id)),
+        afterPath: resolveComparisonDocumentPath(MANIFEST_PATH, documents.get(pair.after_document_id)),
+        beforeSha256: documents.get(pair.before_document_id).sha256,
+        afterSha256: documents.get(pair.after_document_id).sha256,
+      })),
+    });
+    expect(validateComparisonReport(manifest, report)).toEqual([]);
+    const scored = scoreComparisonReport(manifest, report);
+    expect(scored.valid).toBe(true);
+    expect(scored.passed).toBe(false);
+    expect(scored.aggregate.pairs_passed).toBe(2);
+    expect(scored.aggregate.event_metrics).toMatchObject({ tp: 1, fp: 5, fn: 8 });
+    expect(scored.aggregate.channel_metrics.visual).toMatchObject({ tp: 0, fp: 5, fn: 5 });
+    expect(scored.aggregate.channel_metrics.annotation.fn).toBe(1);
+    expect(scored.aggregate.channel_metrics.metadata.fn).toBe(2);
+    expect(report.pairs.every(pair => pair.channel_status.annotation === "unavailable")).toBe(true);
+    expect(report.pairs.every(pair => pair.channel_status.metadata === "unavailable")).toBe(true);
+    expect(report.engine.provenance).toContain("not executed");
+  }, 120_000);
+});

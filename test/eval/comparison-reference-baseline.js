@@ -42,7 +42,7 @@ function makeObservation(state, channel, document, pageNumber, region, valueSha2
     region,
     value_sha256: valueSha256,
     raw_result_sha256: digest(payload),
-    capture: "deterministic_baseline",
+    capture: state.capture,
   });
   return id;
 }
@@ -267,6 +267,30 @@ export async function buildSharedLibraryPairReport({ pairId, beforePath, afterPa
     else timingSamples.push(elapsed);
   }
   const { before, after } = inspected;
+  return buildComparisonPairFromInspections({
+    pairId,
+    before,
+    after,
+    renderer,
+    timingSamples,
+    peakRss,
+    toolCalls: 0,
+    capture: "deterministic_baseline",
+    channelStatus: Object.fromEntries(COMPARISON_CHANNELS.map(channel => [channel, "supported"])),
+  });
+}
+
+export function buildComparisonPairFromInspections({
+  pairId,
+  before,
+  after,
+  renderer,
+  timingSamples,
+  peakRss,
+  toolCalls,
+  capture,
+  channelStatus,
+}) {
   const alignments = deriveAlignments(before, after);
   const pages = alignedPages(before, after, alignments);
   const state = {
@@ -275,6 +299,7 @@ export async function buildSharedLibraryPairReport({ pairId, beforePath, afterPa
     observations: [],
     detectedEvents: [],
     presentationDecisions: [],
+    capture,
   };
   const textChanges = detectTextChanges(state, before, after, pages, renderer);
   const structureChanges = detectStructureChange(state, before, after, alignments);
@@ -294,7 +319,7 @@ export async function buildSharedLibraryPairReport({ pairId, beforePath, afterPa
     before_sha256: before.sha256,
     after_sha256: after.sha256,
     status: "completed",
-    channel_status: Object.fromEntries(COMPARISON_CHANNELS.map(channel => [channel, "supported"])),
+    channel_status: channelStatus,
     alignments,
     observations: state.observations,
     detected_events: state.detectedEvents,
@@ -303,7 +328,7 @@ export async function buildSharedLibraryPairReport({ pairId, beforePath, afterPa
     peak_rss_bytes: peakRss,
     rendered_pixels: [...before.renders, ...after.renders]
       .reduce((sum, render) => sum + render.width * render.height, 0),
-    tool_calls: 0,
+    tool_calls: toolCalls,
     bytes_read: before.size + after.size,
     source_immutable: true,
     undeclared_requests: [],

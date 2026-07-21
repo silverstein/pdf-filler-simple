@@ -17,6 +17,12 @@ Regenerate the evidence from the repository root:
 node scripts/eval-run-comparison-baselines.mjs
 ```
 
-Every JSON artifact is bound by SHA-256 in `run-index.v1.json`. Timing and RSS
-are measured observations and will change across runs; corpus and renderer
-digests must not drift without a versioned benchmark change.
+Every raw and scored report is bound by SHA-256 in `run-index.v1.json`. Timing
+and RSS are measured observations and will change across runs; corpus and
+renderer digests must not drift without a versioned benchmark change.
+
+The current-product lane starts `server/index.js` over MCP stdio and uses only
+the published `read_pdf_pages`, `read_pdf_fields`, and `render_pdf_page` tools.
+It deliberately preserves missing metadata, annotation, and canonical
+region-observation capabilities as false negatives. It does not execute the
+candidate MCPB or claim native Claude Desktop coverage.

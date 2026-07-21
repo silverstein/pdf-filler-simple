@@ -10,6 +10,7 @@ import {
   resolveComparisonDocumentPath,
 } from "../test/eval/comparison-manifest.js";
 import { buildSharedLibraryReferenceReport } from "../test/eval/comparison-reference-baseline.js";
+import { buildProductPrimitiveReport } from "../test/eval/comparison-product-baseline.js";
 import { scoreComparisonReport, validateComparisonReport } from "../test/eval/comparison-scorer.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -73,6 +74,20 @@ try {
   }
   const scoredReport = scoreComparisonReport(manifest, rawReport);
   if (!scoredReport.valid) throw new Error("Generated report did not pass scorer validation");
+  const productReport = await buildProductPrimitiveReport({
+    benchmarkId: manifest.benchmark_id,
+    benchmarkVersion: manifest.benchmark_version,
+    renderer: manifest.canonical_renderer,
+    pairs,
+    repositoryRoot: REPO_ROOT,
+    allowedDirectory: isolatedDirectory,
+  });
+  const productValidationErrors = validateComparisonReport(manifest, productReport);
+  if (productValidationErrors.length) {
+    throw new Error(`Generated product report is invalid:\n${productValidationErrors.join("\n")}`);
+  }
+  const productScore = scoreComparisonReport(manifest, productReport);
+  if (!productScore.valid) throw new Error("Generated product report did not pass scorer validation");
 
   await fs.mkdir(OUTPUT_DIRECTORY, { recursive: true });
   const rawArtifact = await writeJson(
@@ -82,6 +97,14 @@ try {
   const scoredArtifact = await writeJson(
     path.join(OUTPUT_DIRECTORY, "shared-library-score.v1.json"),
     scoredReport,
+  );
+  const productArtifact = await writeJson(
+    path.join(OUTPUT_DIRECTORY, "current-product-report.v1.json"),
+    productReport,
+  );
+  const productScoreArtifact = await writeJson(
+    path.join(OUTPUT_DIRECTORY, "current-product-score.v1.json"),
+    productScore,
   );
   const runIndex = {
     schema_version: 1,
@@ -96,13 +119,22 @@ try {
       sha256: digest(await fs.readFile(MANIFEST_PATH)),
     },
     renderer_fingerprint_sha256: digest(JSON.stringify(manifest.canonical_renderer)),
-    artifacts: [rawArtifact, scoredArtifact],
+    artifacts: [rawArtifact, scoredArtifact, productArtifact, productScoreArtifact],
     result: {
-      passed: scoredReport.passed,
-      pairs_passed: scoredReport.aggregate.pairs_passed,
-      pairs_total: scoredReport.aggregate.pairs_total,
-      event_f1: scoredReport.aggregate.event_metrics.f1,
-      evidence_completeness: scoredReport.aggregate.evidence_metrics.completeness,
+      shared_library: {
+        passed: scoredReport.passed,
+        pairs_passed: scoredReport.aggregate.pairs_passed,
+        pairs_total: scoredReport.aggregate.pairs_total,
+        event_f1: scoredReport.aggregate.event_metrics.f1,
+        evidence_completeness: scoredReport.aggregate.evidence_metrics.completeness,
+      },
+      current_product: {
+        passed: productScore.passed,
+        pairs_passed: productScore.aggregate.pairs_passed,
+        pairs_total: productScore.aggregate.pairs_total,
+        event_f1: productScore.aggregate.event_metrics.f1,
+        evidence_completeness: productScore.aggregate.evidence_metrics.completeness,
+      },
     },
   };
   const indexArtifact = await writeJson(path.join(OUTPUT_DIRECTORY, "run-index.v1.json"), runIndex);
