@@ -32,7 +32,7 @@
         </div>
         <div class="sign-modal-body">
           <div class="draw-canvas-wrap">
-            <canvas id="draw-canvas" width="560" height="200"></canvas>
+            <canvas id="draw-canvas" width="560" height="200" tabindex="0" aria-label="Signature drawing canvas"></canvas>
             <div id="draw-canvas-hint" class="draw-canvas-hint">Draw with your mouse, trackpad, or finger. Saving stores this as a reusable signature — it won't stamp onto the PDF until you click a sign-here zone and pick it.</div>
           </div>
           <div class="draw-canvas-actions">
@@ -228,7 +228,7 @@
             <button id="sign-panel-draw-btn" class="sign-panel-action-btn" title="Draw a new signature">&#9998; Draw signature</button>
             <button id="sign-panel-inspect-btn" class="sign-panel-action-btn" title="Drag a box on the PDF and preview the cropped region">&#128269; Inspect region</button>
           </div>
-          <div id="sign-panel-status" class="sign-panel-status"></div>
+          <div id="sign-panel-status" class="sign-panel-status" role="status" aria-live="polite"></div>
           <div id="sign-panel-list" class="sign-panel-list" role="list"></div>
           <div class="sign-panel-legend">
             <span class="sign-legend-swatch sign-legend-signature"></span> Signature

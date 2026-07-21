@@ -17,6 +17,7 @@ import * as pdfjsLib from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist";
 import "./mcp-app.css";
 import { buildManagedPdfPath, getHostBaseName } from "./path-utils";
+import { getCanvasBufferSize, getSignPanelStatus, getWrappedFocusIndex } from "./sign-mode-utils";
 import { getPdfToolLoadData } from "./tool-result";
 
 // PDF.js worker — inline as blob URL for single-file build
@@ -74,6 +75,7 @@ const appliedZoneKeys = new Set<string>();
 // Cache last-fetched zones per pdfPath so re-entering sign mode doesn't
 // re-run detection unnecessarily.
 const zoneCacheByPath = new Map<string, SignatureZone[]>();
+const zoneDetectionErrorByPath = new Map<string, string>();
 
 interface SavedSignatureSummary {
   name: string;
@@ -943,6 +945,59 @@ const manageDeleteBtn = $("manage-delete") as HTMLButtonElement;
 const manageResetBtn = $("manage-reset") as HTMLButtonElement;
 const manageApplyBtn = $("manage-apply") as HTMLButtonElement;
 
+const modalElements = [signModalEl, drawModalEl, regionPreviewModalEl];
+const modalPreviousFocus = new WeakMap<HTMLElement, HTMLElement>();
+const MODAL_FOCUSABLE_SELECTOR = [
+  "button:not([disabled])",
+  "input:not([disabled])",
+  "select:not([disabled])",
+  "textarea:not([disabled])",
+  "a[href]",
+  "[tabindex]:not([tabindex='-1'])",
+].join(",");
+
+function getModalFocusableElements(modal: HTMLElement) {
+  return Array.from(modal.querySelectorAll<HTMLElement>(MODAL_FOCUSABLE_SELECTOR))
+    .filter(el => el.getClientRects().length > 0 && getComputedStyle(el).visibility !== "hidden");
+}
+
+function setViewerModalInert() {
+  viewerEl.toggleAttribute("inert", modalElements.some(modal => modal.style.display === "flex"));
+}
+
+function openModal(modal: HTMLElement, initialFocus: HTMLElement) {
+  const active = document.activeElement;
+  if (active instanceof HTMLElement && !modal.contains(active)) {
+    modalPreviousFocus.set(modal, active);
+  }
+  modal.style.display = "flex";
+  setViewerModalInert();
+  setTimeout(() => {
+    if (modal.style.display === "flex") initialFocus.focus();
+  }, 20);
+}
+
+function closeModal(modal: HTMLElement) {
+  modal.style.display = "none";
+  setViewerModalInert();
+  const previousFocus = modalPreviousFocus.get(modal);
+  modalPreviousFocus.delete(modal);
+  if (previousFocus?.isConnected) previousFocus.focus();
+}
+
+function trapModalFocus(modal: HTMLElement, event: KeyboardEvent) {
+  if (event.key !== "Tab") return;
+  const focusable = getModalFocusableElements(modal);
+  if (focusable.length === 0) {
+    event.preventDefault();
+    return;
+  }
+  const currentIndex = focusable.indexOf(document.activeElement as HTMLElement);
+  const nextIndex = getWrappedFocusIndex(currentIndex, focusable.length, event.shiftKey);
+  event.preventDefault();
+  focusable[nextIndex].focus();
+}
+
 // ─── Manage Pages Logic ─────────────────────────────────────────────────────
 
 function initPageStates() {
@@ -974,9 +1029,7 @@ async function fetchSignatureZones(force = false) {
   // Guard against multiple concurrent fetches for the same file
   if (zonesLoadingForPath === pdfPath) return;
   zonesLoadingForPath = pdfPath;
-
-  signPanelStatusEl.textContent = "Detecting signature zones…";
-  signPanelStatusEl.classList.remove("empty");
+  renderSignPanel();
 
   try {
     const result = await app.callServerTool({
@@ -997,10 +1050,11 @@ async function fetchSignatureZones(force = false) {
     }));
     signatureZones = zones;
     zoneCacheByPath.set(pdfPath, zones);
+    zoneDetectionErrorByPath.delete(pdfPath);
   } catch (err: any) {
     console.error("[viewer] detect_signature_zones failed:", err);
     signatureZones = [];
-    signPanelStatusEl.textContent = `Detection failed: ${err?.message ?? err}`;
+    zoneDetectionErrorByPath.set(pdfPath, err?.message ?? String(err));
   } finally {
     zonesLoadingForPath = "";
   }
@@ -1522,12 +1576,8 @@ async function openSignModal(zone: SignatureZone) {
   }
 
   // Show modal + focus the right field
-  signModalEl.style.display = "flex";
   updateZonePreviewState();
-  setTimeout(() => {
-    if (activeModalMode === "date") signModalDateInputEl.focus();
-    else signModalNameEl.focus();
-  }, 20);
+  openModal(signModalEl, activeModalMode === "date" ? signModalDateInputEl : signModalNameEl);
 }
 
 function closeSignModal(revertCustomType = true) {
@@ -1536,7 +1586,7 @@ function closeSignModal(revertCustomType = true) {
     renderSignPanel();
     renderZoneOverlay();
   }
-  signModalEl.style.display = "none";
+  closeModal(signModalEl);
   activeZonePreview = null;
   activeSignZone = null;
   activeZoneOriginalType = null;
@@ -1856,6 +1906,7 @@ interface Stroke { points: Array<[number, number]>; }
 let drawStrokes: Stroke[] = [];
 let drawCurrentStroke: Stroke | null = null;
 let drawCanvasCtx: CanvasRenderingContext2D | null = null;
+let drawPointerId: number | null = null;
 
 function getDrawCtx(): CanvasRenderingContext2D {
   if (!drawCanvasCtx) {
@@ -1876,11 +1927,25 @@ function clearDrawCanvas() {
   ctx.fillRect(0, 0, drawCanvasEl.width, drawCanvasEl.height);
 }
 
+function resizeDrawCanvasForDpr() {
+  const rect = drawCanvasEl.getBoundingClientRect();
+  const cssWidth = rect.width || 560;
+  const cssHeight = rect.height || 200;
+  const { width, height } = getCanvasBufferSize(cssWidth, cssHeight, window.devicePixelRatio || 1);
+  if (drawCanvasEl.width !== width || drawCanvasEl.height !== height) {
+    drawCanvasEl.width = width;
+    drawCanvasEl.height = height;
+    drawCanvasCtx = null;
+  }
+}
+
 function redrawAllStrokes() {
   clearDrawCanvas();
   const ctx = getDrawCtx();
+  const rect = drawCanvasEl.getBoundingClientRect();
+  const pixelScale = rect.width > 0 ? drawCanvasEl.width / rect.width : 1;
   ctx.strokeStyle = "#111111";
-  ctx.lineWidth = 2.5;
+  ctx.lineWidth = 2.5 * pixelScale;
   for (const stroke of drawStrokes) {
     if (stroke.points.length === 0) continue;
     ctx.beginPath();
@@ -1890,7 +1955,7 @@ function redrawAllStrokes() {
     }
     if (stroke.points.length === 1) {
       const [x, y] = stroke.points[0];
-      ctx.arc(x, y, 1.25, 0, Math.PI * 2);
+      ctx.arc(x, y, 1.25 * pixelScale, 0, Math.PI * 2);
       ctx.fillStyle = "#111111";
       ctx.fill();
     } else {
@@ -1908,7 +1973,9 @@ function pointerCoordsRelativeToCanvas(e: PointerEvent): [number, number] {
 }
 
 function onDrawPointerDown(e: PointerEvent) {
-  if (drawModalEl.style.display === "none") return;
+  if (drawModalEl.style.display === "none" || drawPointerId !== null || !e.isPrimary) return;
+  e.preventDefault();
+  drawPointerId = e.pointerId;
   drawCanvasEl.setPointerCapture(e.pointerId);
   drawCurrentStroke = { points: [pointerCoordsRelativeToCanvas(e)] };
   drawStrokes.push(drawCurrentStroke);
@@ -1916,15 +1983,20 @@ function onDrawPointerDown(e: PointerEvent) {
 }
 
 function onDrawPointerMove(e: PointerEvent) {
-  if (!drawCurrentStroke) return;
+  if (!drawCurrentStroke || e.pointerId !== drawPointerId) return;
+  if (e.pointerType === "mouse" && e.buttons === 0) {
+    onDrawPointerUp(e);
+    return;
+  }
   drawCurrentStroke.points.push(pointerCoordsRelativeToCanvas(e));
   redrawAllStrokes();
 }
 
 function onDrawPointerUp(e: PointerEvent) {
-  if (!drawCurrentStroke) return;
+  if (!drawCurrentStroke || e.pointerId !== drawPointerId) return;
   try { drawCanvasEl.releasePointerCapture(e.pointerId); } catch { /* ignore */ }
   drawCurrentStroke = null;
+  drawPointerId = null;
   redrawAllStrokes();
 }
 
@@ -1932,19 +2004,21 @@ function openDrawModal() {
   setInspectRegionArmed(false);
   drawStrokes = [];
   drawCurrentStroke = null;
+  drawPointerId = null;
   drawNameInputEl.value = "";
   drawLegalNameInputEl.value = "";
   drawErrorEl.style.display = "none";
   drawErrorEl.textContent = "";
+  openModal(drawModalEl, drawCanvasEl);
+  resizeDrawCanvasForDpr();
   clearDrawCanvas();
   updateDrawSaveState();
-  drawModalEl.style.display = "flex";
-  setTimeout(() => drawCanvasEl.focus(), 20);
 }
 
 function closeDrawModal() {
-  drawModalEl.style.display = "none";
+  closeModal(drawModalEl);
   drawCurrentStroke = null;
+  drawPointerId = null;
 }
 
 function updateDrawSaveState() {
@@ -2220,7 +2294,7 @@ async function copyRegionCoords() {
 }
 
 function closeRegionPreviewModal() {
-  regionPreviewModalEl.style.display = "none";
+  closeModal(regionPreviewModalEl);
   activeRegionPreview = null;
   regionPreviewImageEl.src = "";
 }
@@ -2274,8 +2348,7 @@ function openRegionPreviewModal(preview: RegionPreviewState) {
   regionPreviewZoneTypeEl.value = preview.zoneType || "signature";
   updateRegionPreviewCreateButton();
   regionPreviewImageEl.src = preview.imageDataUrl;
-  regionPreviewModalEl.style.display = "flex";
-  setTimeout(() => regionPreviewDoneBtn.focus(), 20);
+  openModal(regionPreviewModalEl, regionPreviewDoneBtn);
 }
 
 async function inspectRegionSelection(region: Pick<RegionPreviewState, "page" | "x" | "y" | "width" | "height" | "zoneType">) {
@@ -2344,18 +2417,19 @@ function renderSignPanel() {
   signZoneCountEl.textContent = `${count} zone${count === 1 ? "" : "s"}`;
   clearChildren(signPanelListEl);
 
+  const status = getSignPanelStatus({
+    count,
+    loading: zonesLoadingForPath === pdfPath,
+    detectionError: zoneDetectionErrorByPath.get(pdfPath) ?? null,
+    inspectArmed: inspectRegionArmed,
+  });
+  signPanelStatusEl.textContent = status.message;
+  signPanelStatusEl.classList.toggle("empty", status.tone === "empty");
+  signPanelStatusEl.classList.toggle("error", status.tone === "error");
+
   if (count === 0) {
-    signPanelStatusEl.textContent = inspectRegionArmed
-      ? "Inspect mode armed. Drag a rectangle on the PDF to preview that region."
-      : "No signature zones detected. The form may be flat/scanned, or use an unusual layout.";
-    signPanelStatusEl.classList.add("empty");
     return;
   }
-
-  signPanelStatusEl.textContent = inspectRegionArmed
-    ? "Inspect mode armed. Drag a rectangle on the PDF to preview that region."
-    : "Click a zone to sign it. Unknown spot? Drag on the PDF to create a custom zone.";
-  signPanelStatusEl.classList.remove("empty");
 
   for (const z of signatureZones) {
     const item = document.createElement("div");
@@ -2852,6 +2926,7 @@ signModalCloseBtn.addEventListener("click", closeSignModal);
 signModalConfirmBtn.addEventListener("click", onConfirmSign);
 signModalEl.addEventListener("keydown", (e: Event) => {
   const keyEvent = e as KeyboardEvent;
+  trapModalFocus(signModalEl, keyEvent);
   if (keyEvent.key === "Escape") {
     closeSignModal();
   } else if (keyEvent.key === "Enter" && !signModalConfirmBtn.disabled) {
@@ -2901,7 +2976,9 @@ regionPreviewModalEl.addEventListener("click", (e) => {
   if ((e.target as HTMLElement).classList.contains("sign-modal-backdrop")) closeRegionPreviewModal();
 });
 regionPreviewModalEl.addEventListener("keydown", (e: Event) => {
-  if ((e as KeyboardEvent).key === "Escape") closeRegionPreviewModal();
+  const keyEvent = e as KeyboardEvent;
+  trapModalFocus(regionPreviewModalEl, keyEvent);
+  if (keyEvent.key === "Escape") closeRegionPreviewModal();
 });
 
 // Draw-signature modal wiring
@@ -2910,7 +2987,6 @@ drawCanvasEl.addEventListener("pointerdown", onDrawPointerDown);
 drawCanvasEl.addEventListener("pointermove", onDrawPointerMove);
 drawCanvasEl.addEventListener("pointerup", onDrawPointerUp);
 drawCanvasEl.addEventListener("pointercancel", onDrawPointerUp);
-drawCanvasEl.addEventListener("pointerleave", onDrawPointerUp);
 drawUndoBtn.addEventListener("click", () => {
   drawStrokes.pop();
   redrawAllStrokes();
@@ -2928,7 +3004,9 @@ drawModalEl.addEventListener("click", (e) => {
   if ((e.target as HTMLElement).classList.contains("sign-modal-backdrop")) closeDrawModal();
 });
 drawModalEl.addEventListener("keydown", (e: Event) => {
-  if ((e as KeyboardEvent).key === "Escape") closeDrawModal();
+  const keyEvent = e as KeyboardEvent;
+  trapModalFocus(drawModalEl, keyEvent);
+  if (keyEvent.key === "Escape") closeDrawModal();
 });
 manageRotateCwBtn.addEventListener("click", () => rotateSelected(90));
 manageRotateCcwBtn.addEventListener("click", () => rotateSelected(270));
@@ -3122,6 +3200,7 @@ async function loadPdfFromToolResult(result: CallToolResult) {
     appliedZoneKeys.clear();
     signatureZones = [];
     zoneCacheByPath.delete(pdfPath);
+    zoneDetectionErrorByPath.delete(pdfPath);
     updateWorkingCopyBanner();
 
     showViewer();

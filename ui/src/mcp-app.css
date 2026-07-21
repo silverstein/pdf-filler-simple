@@ -1092,6 +1092,10 @@ body {
   font-style: italic;
 }
 
+.sign-panel-status.error {
+  color: var(--error);
+}
+
 .sign-panel-list {
   flex: 1;
   overflow-y: auto;
@@ -1506,6 +1510,11 @@ body {
   /* Prevent scrolling / gestures on touch devices during draw */
   touch-action: none;
   cursor: crosshair;
+}
+
+#draw-canvas:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 .draw-canvas-hint {
