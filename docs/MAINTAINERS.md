@@ -79,6 +79,43 @@ stable and in sync across:
 - README tool list
 - Actual tool registrations in `server/index.js`
 
+## PDF output commit policy
+
+Every user-visible PDF output follows an explicit commit policy:
+
+- `fill_pdf`, `fill_with_profile`, `add_signature_field`, `apply_signature`,
+  `prepare_signing_packet`, and `apply_text` save through the shared mutation
+  lifecycle. New-path outputs use a same-directory staged commit. Same-document
+  mutations additionally require the immutable-original backup record,
+  per-document lock, input identity recheck, and pending/committed journal.
+- `merge_pdfs`, `rotate_pdf_pages`, `reorder_pdf_pages`, and `apply_page_plan`
+  completely write and fsync a private same-directory stage before replacing an
+  existing output. A write, permission, rename, or directory-sync failure rolls
+  the replacement back and does not advance active-document state. Filesystems
+  that explicitly report directory fsync as unsupported retain atomic rename
+  semantics without claiming the unavailable crash-durability signal.
+- `split_pdf` and `bulk_fill_from_csv` generate and stage the entire declared
+  output set before changing any destination. Batch producers generate, fsync,
+  and release one PDF at a time to keep peak memory bounded. Existing outputs are held in
+  private same-directory rollback entries during commit. A failure restores the
+  full prior set and removes any newly activated outputs. Bulk-derived output
+  filenames must be unique; duplicate names fail before commit.
+- `fetch_pdf_from_url` uses the same single-output staged commit. Its default
+  `overwrite=false` policy selects a unique filename. With `overwrite=true`, it
+  atomically replaces the selected existing target.
+
+Successful handlers report paths and update lifecycle state only after commit.
+Existing output entries must be regular files; symlinks, directories, and other
+special files are rejected instead of being followed or silently replaced.
+The focused fault matrix in `test/atomic-output.test.js` injects permission,
+disk-full, sync, rename, collision, and concurrent-replacement failures. The
+tool-level matrix in `test/atomic-tool-output.test.js` verifies split and bulk
+all-or-nothing behavior plus active-state gating.
+
+Multi-output rollback covers failures observed by the running handler. Recovery
+after abrupt process or host termination during the short activation window is
+a separate durability boundary and must use a persisted transaction journal.
+
 ## Local dev
 
 ```
