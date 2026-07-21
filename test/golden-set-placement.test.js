@@ -26,6 +26,7 @@ import {
   downloadPdfFromUrl,
   computeIoU,
 } from "../server/helpers.js";
+import { generateGoldenFixtures } from "../scripts/generate-golden-fixtures.mjs";
 import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -104,6 +105,10 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function boxValues(box) {
+  return [box.x, box.y, box.width, box.height];
+}
+
 // An expected zone is a region (x_min/x_max, y_min/y_max) rather than an exact box.
 // Treat it as a rectangle when computing overlap with a detected box.
 function expectedAsRect(expected) {
@@ -168,7 +173,33 @@ describe("Golden-set signature-zone placement", () => {
       if (fx.sha256) {
         expect(fx.sha256).toMatch(/^[a-f0-9]{64}$/);
       }
+      if (fx.expected_page_geometry) {
+        expect(fx.expected_page_geometry.page).toBeGreaterThanOrEqual(1);
+        expect(fx.expected_page_geometry.media_box).toHaveLength(4);
+        expect(fx.expected_page_geometry.crop_box).toHaveLength(4);
+        expect([0, 90, 180, 270]).toContain(fx.expected_page_geometry.rotation);
+      }
+      if (fx.required_detection) {
+        expect(["signature", "initials", "date"]).toContain(fx.required_detection.type);
+        expect(fx.required_detection.page).toBeGreaterThanOrEqual(1);
+        for (const key of ["x", "y", "width", "height"]) {
+          expect(Number.isFinite(fx.required_detection[key])).toBe(true);
+        }
+      }
     }
+  });
+
+  it("reproduces the synthetic rotated fixture byte for byte", async () => {
+    const fixture = expected.fixtures.find(item => item.id === "rotated-cropped-signature");
+    const generatedDirectory = path.join(CACHE_DIR, "generated");
+    await generateGoldenFixtures(generatedDirectory);
+    const [generated, committed] = await Promise.all([
+      fs.readFile(path.join(generatedDirectory, "rotated-signature.pdf")),
+      fs.readFile(path.join(FIXTURES_DIR, fixture.path)),
+    ]);
+
+    expect(sha256(generated)).toBe(fixture.sha256);
+    expect(generated.equals(committed)).toBe(true);
   });
 
   // Generate one test per fixture. Vitest handles async `it.each`-style
@@ -191,7 +222,17 @@ describe("Golden-set signature-zone placement", () => {
         expect(sha256(pdfBytes)).toBe(fixture.sha256);
       }
       const pdfDoc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
+      if (fixture.expected_page_geometry) {
+        const geometry = fixture.expected_page_geometry;
+        const page = pdfDoc.getPage(geometry.page - 1);
+        expect(boxValues(page.getMediaBox())).toEqual(geometry.media_box);
+        expect(boxValues(page.getCropBox())).toEqual(geometry.crop_box);
+        expect(page.getRotation().angle).toBe(geometry.rotation);
+      }
       const zones = await detectSignatureZones({ pdfDoc, pdfBytes, pdfjsLib });
+      if (fixture.required_detection) {
+        expect(zones).toContainEqual(expect.objectContaining(fixture.required_detection));
+      }
 
       let hits = 0;
       const perZone = [];

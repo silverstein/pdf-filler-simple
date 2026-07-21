@@ -12,6 +12,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const EXAMPLE_PDF = path.join(__dirname, "..", "example-fw9.pdf");
+const ROTATED_CROPPED_PDF = path.join(__dirname, "fixtures", "golden-forms", "rotated-signature.pdf");
 
 // Polyfills for pdfjs-dist v5 (match server/index.js init)
 if (typeof globalThis.DOMMatrix === "undefined") {
@@ -124,6 +125,21 @@ describe("extractPdfTextWithBounds", () => {
   it("respects maxPages", async () => {
     const pages = await extractPdfTextWithBounds(pdfjsLib, pdfBytes, { maxPages: 1 });
     expect(pages.length).toBe(1);
+  });
+
+  it("reports rotated CropBox text in native MediaBox coordinates", async () => {
+    const rotatedBytes = await fs.readFile(ROTATED_CROPPED_PDF);
+    const [page] = await extractPdfTextWithBounds(pdfjsLib, rotatedBytes);
+    const signature = page.items.find(item => item.text === "Signature");
+
+    expect(page.width).toBe(480);
+    expect(page.height).toBe(360);
+    expect(signature).toMatchObject({ x: 72, y: 201, width: 51.36, height: 12 });
+  });
+
+  it("fails closed when a caller supplies incomplete MediaBox geometry", async () => {
+    await expect(extractPdfTextWithBounds(pdfjsLib, pdfBytes, { mediaBoxes: [] }))
+      .rejects.toThrow(/MediaBox geometry for page 1/);
   });
 });
 

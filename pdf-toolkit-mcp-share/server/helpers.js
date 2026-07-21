@@ -790,7 +790,22 @@ export function computeIoU(a, b) {
 // rotation when rendering clicks back into zone coords.
 // Takes a loaded pdfjs module so helpers.js doesn't need its own init.
 // Returns: [{ page, width, height, items: [{ text, x, y, width, height, fontSize }] }]
-export async function extractPdfTextWithBounds(pdfjsLib, pdfBytes, { password, maxPages = 500 } = {}) {
+export async function extractPdfTextWithBounds(pdfjsLib, pdfBytes, { password, maxPages = 500, mediaBoxes } = {}) {
+  let nativeMediaBoxes = mediaBoxes;
+  if (!nativeMediaBoxes) {
+    try {
+      const geometryDocument = await PDFDocument.load(pdfBytes, {
+        ignoreEncryption: true,
+        updateMetadata: false,
+      });
+      nativeMediaBoxes = geometryDocument.getPages().map(page => page.getMediaBox());
+    } catch {
+      nativeMediaBoxes = null;
+    }
+  }
+  if (!nativeMediaBoxes) {
+    throw new Error("Native signature-zone coordinates require PDF MediaBox geometry");
+  }
   const doc = await pdfjsLib.getDocument({
     data: new Uint8Array(pdfBytes),
     password: password || undefined,
@@ -804,11 +819,12 @@ export async function extractPdfTextWithBounds(pdfjsLib, pdfBytes, { password, m
     const numPages = Math.min(doc.numPages, maxPages);
     for (let i = 1; i <= numPages; i++) {
       const page = await doc.getPage(i);
-      // Force rotation=0 so viewport.width/height are always native — otherwise
-      // a /Rotate 90 page returns swapped axes and breaks our y-conversion math.
-      const viewport = page.getViewport({ scale: 1, rotation: 0 });
-      const pageW = viewport.width;
-      const pageH = viewport.height;
+      const mediaBox = nativeMediaBoxes?.[i - 1];
+      if (!mediaBox) {
+        throw new Error(`Native signature-zone coordinates require MediaBox geometry for page ${i}`);
+      }
+      const pageW = mediaBox.width;
+      const pageH = mediaBox.height;
       const textContent = await page.getTextContent();
       const items = [];
       for (const it of textContent.items) {
@@ -824,7 +840,7 @@ export async function extractPdfTextWithBounds(pdfjsLib, pdfBytes, { password, m
         const textWidth = typeof it.width === "number" && it.width > 0 ? it.width : fontSize * str.length * 0.5;
         // PDF baseline in bottom-left origin: baselineY_bl = f
         // Top of glyph in bottom-left: f + fontSize * 0.75 (ascent)
-        // Convert to top-left origin: topY_tl = pageH - (f + fontSize * 0.75)
+        // Convert to the native top-left convention used by the stamping tools.
         const xTopLeft = e;
         const yTopLeft = pageH - f - fontSize * 0.75;
         items.push({
@@ -1163,7 +1179,8 @@ export async function detectSignatureZones({ pdfDoc, pdfBytes, pdfjsLib, passwor
   // Layer 3: Text-heuristic pattern matching
   if (pdfjsLib && pdfBytes) {
     try {
-      const pages = await extractPdfTextWithBounds(pdfjsLib, pdfBytes, { password });
+      const mediaBoxes = pdfDoc.getPages().map(page => page.getMediaBox());
+      const pages = await extractPdfTextWithBounds(pdfjsLib, pdfBytes, { password, mediaBoxes });
       for (const page of pages) {
         zones.push(...scanPageForLabels(page));
       }

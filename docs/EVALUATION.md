@@ -96,6 +96,10 @@ existing blank 2014 IRS W-9 golden fixture in place. Its upstream source is the
 [IRS prior-year form](https://www.irs.gov/pub/irs-prior/fw9--2014.pdf), and its
 redistribution basis is recorded as a United States government work under
 [17 U.S.C. section 105](https://www.copyright.gov/title17/92chap1.html#105).
+The signature-zone golden set includes a SHA-bound synthetic `/Rotate 90` page
+with a nonzero CropBox. Regenerate it with
+`node scripts/generate-golden-fixtures.mjs`; its test requires byte-for-byte
+reproducibility and a 1.0 native-coordinate placement score.
 
 The v0 scorers cover parseability, exact page and form-field counts,
 tolerance-bounded media/crop boxes, rotation, basic per-page text extraction

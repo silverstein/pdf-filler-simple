@@ -27,6 +27,41 @@
       ]
     },
     {
+      "id": "rotated-cropped-signature",
+      "source": "local",
+      "path": "./rotated-signature.pdf",
+      "sha256": "a6a0424171a4ab24ed28f34490da24b278768dd610defba2d811c4a747a3d1b6",
+      "description": "Synthetic /Rotate 90 signature label with a nonzero CropBox",
+      "min_score": 1,
+      "expected_page_geometry": {
+        "page": 1,
+        "media_box": [0, 0, 480, 360],
+        "crop_box": [20, 24, 430, 300],
+        "rotation": 90
+      },
+      "required_detection": {
+        "type": "signature",
+        "page": 1,
+        "x": 72,
+        "y": 181,
+        "width": 240,
+        "height": 18,
+        "source": "text-heuristic"
+      },
+      "expected_zones": [
+        {
+          "type": "signature",
+          "page": 1,
+          "note": "Blank signing line above the Signature label in native MediaBox coordinates",
+          "x_min": 72,
+          "x_max": 312,
+          "y_min": 181,
+          "y_max": 199,
+          "min_iou": 0.99
+        }
+      ]
+    },
+    {
       "id": "irs-fw9-2024",
       "source": "url",
       "url": "https://www.irs.gov/pub/irs-pdf/fw9.pdf",
