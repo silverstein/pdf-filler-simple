@@ -461,14 +461,14 @@ describe("agent trajectory grader v4 integrity contract", () => {
       expected: false,
     };
     addFailureRef(failed, "failed-required-call");
-    const failedGrade = gradeTrajectoryTrial(jobs.get(failed.job_id), failed);
+    const failedGrade = await gradeTrajectoryTrial(jobs.get(failed.job_id), failed);
     expect(check(failedGrade, "required_tools/inspect_and_read_back_fields").passed).toBe(false);
     expect(check(failedGrade, "unexpected_tool_errors").passed).toBe(false);
 
     const noOp = trialFor(trialSet, "fill-and-validate");
     noOp.trajectory.find(step => step.tool === "fill_pdf").arguments = {};
     addFailureRef(noOp, "argument-free-call");
-    const noOpGrade = gradeTrajectoryTrial(jobs.get(noOp.job_id), noOp);
+    const noOpGrade = await gradeTrajectoryTrial(jobs.get(noOp.job_id), noOp);
     expect(check(noOpGrade, "required_tools/fill_copy").passed).toBe(false);
   });
 
@@ -477,7 +477,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const trial = trialFor(trialSet, "fill-and-validate");
     trial.trajectory = trial.trajectory.filter((step, index) => index !== 0);
     addFailureRef(trial, "late-readback-is-not-preinspection");
-    const grade = gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
+    const grade = await gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
     expect(check(grade, "artifact_integrity").passed).toBe(true);
     expect(check(grade, "verified_artifacts").passed).toBe(true);
     expect(check(grade, "required_tools/inspect_and_read_back_fields").passed).toBe(false);
@@ -491,7 +491,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     trial.final_answer.evidence[1].source = "input/before.pdf";
     trial.final_answer.evidence[3].source = "input/before.pdf";
     addFailureRef(trial, "fake-comparison-source");
-    const grade = gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
+    const grade = await gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
     expect(grade.passed).toBe(false);
     expect(check(grade, "evidence/result_bindings").passed).toBe(false);
     expect(check(grade, "evidence/source/input/after.pdf").passed).toBe(false);
@@ -500,7 +500,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     invented.final_answer.evidence[0].result_id = "invented-result";
     addFailureRef(invented, "invented-result");
     expect(check(
-      gradeTrajectoryTrial(jobs.get(invented.job_id), invented),
+      await gradeTrajectoryTrial(jobs.get(invented.job_id), invented),
       "evidence/result_bindings"
     ).passed).toBe(false);
   });
@@ -513,7 +513,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const missing = structuredClone(base);
     missing.trajectory.find(step => step.tool === "render_pdf_page")
       .result.semantic_observations.render_regions = [];
-    const missingGrade = gradeTrajectoryTrial(job, missing);
+    const missingGrade = await gradeTrajectoryTrial(job, missing);
     expect(check(missingGrade, "semantic_result_bindings").passed).toBe(false);
     expect(check(missingGrade, "expected_observation/before-page-one-render").passed).toBe(false);
     expect(check(missingGrade, "evidence/result_bindings").passed).toBe(false);
@@ -521,12 +521,12 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const wrongRegion = structuredClone(base);
     wrongRegion.trajectory.find(step => step.tool === "render_pdf_page")
       .result.semantic_observations.render_regions[0].region = [0, 0, 359, 480];
-    expect(check(gradeTrajectoryTrial(job, wrongRegion), "semantic_result_bindings").passed).toBe(false);
+    expect(check(await gradeTrajectoryTrial(job, wrongRegion), "semantic_result_bindings").passed).toBe(false);
 
     const wrongMaxDimension = structuredClone(base);
     wrongMaxDimension.trajectory.find(step => step.tool === "render_pdf_page")
       .result.semantic_observations.render_regions[0].max_dimension_px = 1199;
-    expect(check(gradeTrajectoryTrial(job, wrongMaxDimension), "semantic_result_bindings").passed).toBe(false);
+    expect(check(await gradeTrajectoryTrial(job, wrongMaxDimension), "semantic_result_bindings").passed).toBe(false);
 
     const forgedRender = structuredClone(base);
     for (const step of forgedRender.trajectory.filter(item => item.tool === "render_pdf_page")) {
@@ -542,7 +542,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
         observed_image_height_px: 1,
       });
     }
-    const forgedGrade = gradeTrajectoryTrial(job, forgedRender);
+    const forgedGrade = await gradeTrajectoryTrial(job, forgedRender);
     expect(forgedGrade.passed).toBe(false);
     expect(check(forgedGrade, "trial_schema").passed).toBe(false);
     expect(check(forgedGrade, "semantic_result_bindings").passed).toBe(false);
@@ -553,19 +553,19 @@ describe("agent trajectory grader v4 integrity contract", () => {
     driftRender.image_sha256 = "0".repeat(64);
     imageDigestDrift.run.events.find(event => event.event_id === driftRender.render_observation_event_id)
       .reference = renderObservationReference(driftRender);
-    expect(check(gradeTrajectoryTrial(job, imageDigestDrift), "semantic_result_bindings").passed).toBe(false);
+    expect(check(await gradeTrajectoryTrial(job, imageDigestDrift), "semantic_result_bindings").passed).toBe(false);
 
     const retainedRawDrift = structuredClone(base);
     retainedRawDrift.trajectory.find(step => step.tool === "render_pdf_page")
       .result.retained_raw_result.content[1].data = TINY_PNG_BASE64.replace(/.$/, "A");
-    expect(check(gradeTrajectoryTrial(job, retainedRawDrift), "semantic_result_bindings").passed).toBe(false);
+    expect(check(await gradeTrajectoryTrial(job, retainedRawDrift), "semantic_result_bindings").passed).toBe(false);
 
     const untrustedEvent = structuredClone(base);
     const render = untrustedEvent.trajectory.find(step => step.tool === "render_pdf_page")
       .result.semantic_observations.render_regions[0];
     untrustedEvent.run.events.find(event => event.event_id === render.source_observation_event_id)
       .provenance.authority = "ingester";
-    expect(check(gradeTrajectoryTrial(job, untrustedEvent), "semantic_result_bindings").passed).toBe(false);
+    expect(check(await gradeTrajectoryTrial(job, untrustedEvent), "semantic_result_bindings").passed).toBe(false);
 
     const fabricated = structuredClone(base);
     const textStep = fabricated.trajectory.find(step => step.tool === "read_pdf_pages");
@@ -573,7 +573,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
       fabricated.trajectory.find(step => step.tool === "render_pdf_page")
         .result.semantic_observations.render_regions,
     );
-    expect(check(gradeTrajectoryTrial(job, fabricated), "semantic_result_bindings").passed).toBe(false);
+    expect(check(await gradeTrajectoryTrial(job, fabricated), "semantic_result_bindings").passed).toBe(false);
   });
 
   it("rejects self-verification and requires path/hash agreement in producer and later verifier results", async () => {
@@ -582,7 +582,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     trial.artifacts[0].verification_step_id = trial.artifacts[0].producer_step_id;
     addFailureRef(trial, "self-verification");
     expect(check(
-      gradeTrajectoryTrial(jobs.get(trial.job_id), trial),
+      await gradeTrajectoryTrial(jobs.get(trial.job_id), trial),
       "verified_artifacts"
     ).passed).toBe(false);
 
@@ -590,7 +590,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     forgedHash.artifacts[0].sha256 = "0".repeat(64);
     addFailureRef(forgedHash, "forged-hash");
     expect(check(
-      gradeTrajectoryTrial(jobs.get(forgedHash.job_id), forgedHash),
+      await gradeTrajectoryTrial(jobs.get(forgedHash.job_id), forgedHash),
       "verified_artifacts"
     ).passed).toBe(false);
   });
@@ -602,11 +602,35 @@ describe("agent trajectory grader v4 integrity contract", () => {
       .result.semantic_observations.render_regions[0];
     render.visual_oracle.foreground_iou = 0;
     render.visual_oracle.passed = false;
-    const grade = gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
+    const grade = await gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
     expect(grade.passed).toBe(false);
     expect(check(grade, "trial_schema").actual).toEqual(expect.arrayContaining([
       expect.stringContaining("trusted perceptual thresholds"),
     ]));
+
+    const blankSubstitution = trialFor(trialSet, "compare-and-explain");
+    const blankStep = blankSubstitution.trajectory.find(step => step.tool === "render_pdf_page");
+    const blankRender = blankStep.result.semantic_observations.render_regions[0];
+    const canvas = createCanvas(
+      blankRender.observed_image_width_px,
+      blankRender.observed_image_height_px,
+    );
+    const context = canvas.getContext("2d");
+    context.fillStyle = "white";
+    context.fillRect(0, 0, canvas.width, canvas.height);
+    const blankPng = canvas.toBuffer("image/png");
+    blankStep.result.retained_raw_result.content[1].data = blankPng.toString("base64");
+    blankRender.image_sha256 = digest(blankPng);
+    blankRender.image_byte_length = blankPng.length;
+    blankStep.result.raw_result_sha256 = digest(JSON.stringify(blankStep.result.retained_raw_result));
+    const blankEvent = blankSubstitution.run.events.find(
+      event => event.event_id === blankRender.render_observation_event_id
+    );
+    blankEvent.reference = renderObservationReference(blankRender);
+    blankEvent.provenance.raw_sha256 = blankStep.result.raw_result_sha256;
+    const blankGrade = await gradeTrajectoryTrial(jobs.get(blankSubstitution.job_id), blankSubstitution);
+    expect(blankGrade.passed).toBe(false);
+    expect(check(blankGrade, "semantic_result_bindings").passed).toBe(false);
   });
 
   it("rejects success mislabeled as an expected error and undeclared effect keys", async () => {
@@ -615,7 +639,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     trial.trajectory[0].expected_error = true;
     trial.effects.network = [];
     addFailureRef(trial, "schema-smuggling");
-    const grade = gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
+    const grade = await gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
     expect(grade.passed).toBe(false);
     expect(check(grade, "trial_schema").actual).toEqual(expect.arrayContaining([
       expect.stringContaining("expected_error is not allowed"),
@@ -649,8 +673,8 @@ describe("agent trajectory grader v4 integrity contract", () => {
     expect(validateTrajectoryTrial(semanticsJob, malformedSemantics)).toContain(
       "trial.trajectory[0].result.semantic_observations.pages must be an array",
     );
-    expect(() => gradeTrajectoryTrial(semanticsJob, malformedSemantics)).not.toThrow();
-    expect(check(gradeTrajectoryTrial(semanticsJob, malformedSemantics), "trial_schema").passed)
+    await expect(gradeTrajectoryTrial(semanticsJob, malformedSemantics)).resolves.toBeDefined();
+    expect(check(await gradeTrajectoryTrial(semanticsJob, malformedSemantics), "trial_schema").passed)
       .toBe(false);
 
     const malformedEvents = trialFor(trialSet, "compare-and-explain");
@@ -660,8 +684,8 @@ describe("agent trajectory grader v4 integrity contract", () => {
     expect(validateTrajectoryTrial(eventsJob, malformedEvents)).toContain(
       "trial.run.events must contain observed host events",
     );
-    expect(() => gradeTrajectoryTrial(eventsJob, malformedEvents)).not.toThrow();
-    expect(check(gradeTrajectoryTrial(eventsJob, malformedEvents), "trial_schema").passed)
+    await expect(gradeTrajectoryTrial(eventsJob, malformedEvents)).resolves.toBeDefined();
+    expect(check(await gradeTrajectoryTrial(eventsJob, malformedEvents), "trial_schema").passed)
       .toBe(false);
 
     const malformedPlan = structuredClone(trialSet);
@@ -701,8 +725,8 @@ describe("agent trajectory grader v4 integrity contract", () => {
       mutate(candidate);
       expect(() => validateTrajectoryTrial(baseJob, candidate), label).not.toThrow();
       expect(validateTrajectoryTrial(baseJob, candidate).length, label).toBeGreaterThan(0);
-      expect(() => gradeTrajectoryTrial(baseJob, candidate), label).not.toThrow();
-      expect(check(gradeTrajectoryTrial(baseJob, candidate), "trial_schema").passed, label).toBe(false);
+      await expect(gradeTrajectoryTrial(baseJob, candidate), label).resolves.toBeDefined();
+      expect(check(await gradeTrajectoryTrial(baseJob, candidate), "trial_schema").passed, label).toBe(false);
 
       const candidateSet = structuredClone(trialSet);
       const index = candidateSet.trials.findIndex(trial => trial.trial_id === candidate.trial_id);
@@ -716,8 +740,8 @@ describe("agent trajectory grader v4 integrity contract", () => {
     malformedField.trajectory.at(-1).result.semantic_observations.fields = [null];
     expect(() => validateTrajectoryTrial(fieldJob, malformedField)).not.toThrow();
     expect(validateTrajectoryTrial(fieldJob, malformedField).length).toBeGreaterThan(0);
-    expect(() => gradeTrajectoryTrial(fieldJob, malformedField)).not.toThrow();
-    expect(check(gradeTrajectoryTrial(fieldJob, malformedField), "trial_schema").passed).toBe(false);
+    await expect(gradeTrajectoryTrial(fieldJob, malformedField)).resolves.toBeDefined();
+    expect(check(await gradeTrajectoryTrial(fieldJob, malformedField), "trial_schema").passed).toBe(false);
 
     for (const [label, mutate] of [
       ["null run-plan entry", candidate => { candidate.run_plan.entries[0] = null; }],
@@ -765,7 +789,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     };
     addFailureRef(trial, "success-as-error");
     expect(check(
-      gradeTrajectoryTrial(jobs.get(trial.job_id), trial),
+      await gradeTrajectoryTrial(jobs.get(trial.job_id), trial),
       "error_recovery"
     ).passed).toBe(false);
 
@@ -773,7 +797,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     delete unbound.trajectory[1].recovery_of_step_id;
     addFailureRef(unbound, "unbound-recovery");
     expect(check(
-      gradeTrajectoryTrial(jobs.get(unbound.job_id), unbound),
+      await gradeTrajectoryTrial(jobs.get(unbound.job_id), unbound),
       "error_recovery"
     ).passed).toBe(false);
   });
@@ -791,7 +815,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     event.observed_at = stale.intent.confirmed_at;
     apply.arguments.user_intent_statement = stale.intent.statement;
     apply.arguments.user_confirmed_at = stale.intent.confirmed_at;
-    const staleGrade = gradeTrajectoryTrial(jobs.get(stale.job_id), stale);
+    const staleGrade = await gradeTrajectoryTrial(jobs.get(stale.job_id), stale);
     expect(check(staleGrade, "human_intent")).toMatchObject({ passed: false });
     expect(check(staleGrade, "human_intent").actual.errors[0].error).toMatch(/too short/);
 
@@ -802,7 +826,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     unproven.intent.confirmed_at = new Date(Date.parse(unprovenApply.started_at) - 60 * 1000).toISOString();
     unprovenApply.arguments.user_intent_statement = unproven.intent.statement;
     unprovenApply.arguments.user_confirmed_at = unproven.intent.confirmed_at;
-    const unprovenGrade = gradeTrajectoryTrial(jobs.get(unproven.job_id), unproven);
+    const unprovenGrade = await gradeTrajectoryTrial(jobs.get(unproven.job_id), unproven);
     expect(check(unprovenGrade, "human_intent").actual).toMatchObject({
       provenance_valid: false,
       production_valid: true,
@@ -1375,7 +1399,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const trialSet = await ingestCodexTrajectory({ rawPath, observerPath, planPath });
     expect(trialSet.run_plan.entries).toHaveLength(1);
     expect(trialSet.trials[0]).toMatchObject({ outcome: "harness_failure" });
-    const report = summarizeTrajectoryTrials(suite, trialSet.trials, {
+    const report = await summarizeTrajectoryTrials(suite, trialSet.trials, {
       calibration: false,
       attestation: trialSet.attestation,
       trialSetId: trialSet.trial_set_id,
@@ -1438,7 +1462,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const sourceForgery = trialFor(trialSet, "inspect-and-answer");
     sourceForgery.trajectory[0].result.observed_sources = ["input/after.pdf"];
     addFailureRef(sourceForgery, "source-not-in-arguments");
-    const sourceGrade = gradeTrajectoryTrial(jobs.get(sourceForgery.job_id), sourceForgery);
+    const sourceGrade = await gradeTrajectoryTrial(jobs.get(sourceForgery.job_id), sourceForgery);
     expect(check(sourceGrade, "trial_schema").actual).toEqual(expect.arrayContaining([
       expect.stringContaining("not bound to a path argument"),
     ]));
@@ -1449,14 +1473,14 @@ describe("agent trajectory grader v4 integrity contract", () => {
     artifactEvent.provenance.authority = "ingester";
     artifactEvent.reference = `sha256:${"0".repeat(64)}`;
     addFailureRef(artifactForgery, "untrusted-filesystem-hash");
-    const artifactGrade = gradeTrajectoryTrial(jobs.get(artifactForgery.job_id), artifactForgery);
+    const artifactGrade = await gradeTrajectoryTrial(jobs.get(artifactForgery.job_id), artifactForgery);
     expect(check(artifactGrade, "artifact_integrity").passed).toBe(false);
 
     const decoyOutput = trialFor(trialSet, "fill-and-validate");
     decoyOutput.trajectory.find(step => step.tool === "fill_pdf").arguments.output_path = "output/decoy.pdf";
     addFailureRef(decoyOutput, "artifact-decoy-output");
     expect(check(
-      gradeTrajectoryTrial(jobs.get(decoyOutput.job_id), decoyOutput), "artifact_integrity"
+      await gradeTrajectoryTrial(jobs.get(decoyOutput.job_id), decoyOutput), "artifact_integrity"
     ).passed).toBe(false);
 
     const unrelatedVerifier = trialFor(trialSet, "fill-and-validate");
@@ -1464,7 +1488,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
       step.step_id === unrelatedVerifier.artifacts[0].verification_step_id).arguments.pdf_path = "input/form.pdf";
     addFailureRef(unrelatedVerifier, "artifact-unrelated-verifier");
     expect(check(
-      gradeTrajectoryTrial(jobs.get(unrelatedVerifier.job_id), unrelatedVerifier), "artifact_integrity"
+      await gradeTrajectoryTrial(jobs.get(unrelatedVerifier.job_id), unrelatedVerifier), "artifact_integrity"
     ).passed).toBe(false);
 
     const earlyObservation = trialFor(trialSet, "fill-and-validate");
@@ -1473,7 +1497,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     observationEvent.observed_at = earlyObservation.run.started_at;
     addFailureRef(earlyObservation, "artifact-observed-before-mutation");
     expect(check(
-      gradeTrajectoryTrial(jobs.get(earlyObservation.job_id), earlyObservation), "artifact_integrity"
+      await gradeTrajectoryTrial(jobs.get(earlyObservation.job_id), earlyObservation), "artifact_integrity"
     ).passed).toBe(false);
 
     const inFlightObservation = trialFor(trialSet, "fill-and-validate");
@@ -1484,7 +1508,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     inFlightEvent.observed_at = new Date(Date.parse(verifier.started_at) + 500).toISOString();
     expect(Date.parse(inFlightEvent.observed_at)).toBeLessThan(Date.parse(verifier.finished_at));
     expect(check(
-      gradeTrajectoryTrial(jobs.get(inFlightObservation.job_id), inFlightObservation), "artifact_integrity"
+      await gradeTrajectoryTrial(jobs.get(inFlightObservation.job_id), inFlightObservation), "artifact_integrity"
     ).passed).toBe(false);
   });
 
@@ -1493,7 +1517,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
 
     const wrongPage = trialFor(trialSet, "inspect-and-answer");
     wrongPage.trajectory[0].arguments = { pdf_path: "input/source.pdf", start_page: 1, end_page: 1 };
-    const pageGrade = gradeTrajectoryTrial(jobs.get(wrongPage.job_id), wrongPage);
+    const pageGrade = await gradeTrajectoryTrial(jobs.get(wrongPage.job_id), wrongPage);
     expect(check(pageGrade, "semantic_result_bindings").passed).toBe(false);
     expect(check(pageGrade, "expected_semantics/inspect-page-two").passed).toBe(false);
     expect(check(pageGrade, "evidence/result_bindings").passed).toBe(true);
@@ -1503,7 +1527,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const fill = wrongFill.trajectory.find(step => step.tool === "fill_pdf");
     fill.arguments.field_values = fill.arguments.field_data;
     delete fill.arguments.field_data;
-    const fillGrade = gradeTrajectoryTrial(jobs.get(wrongFill.job_id), wrongFill);
+    const fillGrade = await gradeTrajectoryTrial(jobs.get(wrongFill.job_id), wrongFill);
     expect(check(fillGrade, "trial_schema").actual).toEqual(expect.arrayContaining([
       expect.stringContaining("field_data is required by the runtime tool schema"),
     ]));
@@ -1516,7 +1540,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
       output_path: plan.arguments.output_path,
       page_plan: [{ source_page: 2 }, { source_page: 1 }],
     };
-    const planGrade = gradeTrajectoryTrial(jobs.get(wrongPlan.job_id), wrongPlan);
+    const planGrade = await gradeTrajectoryTrial(jobs.get(wrongPlan.job_id), wrongPlan);
     expect(check(planGrade, "trial_schema").actual).toEqual(expect.arrayContaining([
       expect.stringContaining("input_path is required by the runtime tool schema"),
       expect.stringContaining("plan is required by the runtime tool schema"),
@@ -1527,7 +1551,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const extraPlan = extraMutation.trajectory.find(step => step.tool === "apply_page_plan");
     extraPlan.arguments.plan.rotations = { "1": 90 };
     extraPlan.result.semantic_observations.page_plans[0].rotations = { "1": 90 };
-    const extraMutationGrade = gradeTrajectoryTrial(jobs.get(extraMutation.job_id), extraMutation);
+    const extraMutationGrade = await gradeTrajectoryTrial(jobs.get(extraMutation.job_id), extraMutation);
     expect(check(extraMutationGrade, "semantic_result_bindings").passed).toBe(true);
     expect(check(extraMutationGrade, "expected_semantics/reverse-pages").passed).toBe(false);
     expect(extraMutationGrade.passed).toBe(false);
@@ -1536,7 +1560,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const prepare = wrongSignature.trajectory.find(step => step.tool === "prepare_signing_packet");
     prepare.arguments.signature_fields = prepare.arguments.signature_locations;
     delete prepare.arguments.signature_locations;
-    const signatureGrade = gradeTrajectoryTrial(jobs.get(wrongSignature.job_id), wrongSignature);
+    const signatureGrade = await gradeTrajectoryTrial(jobs.get(wrongSignature.job_id), wrongSignature);
     expect(check(signatureGrade, "required_tools/prepare_packet").passed).toBe(false);
     expect(check(signatureGrade, "expected_semantics/prepare-known-signature-location").passed).toBe(false);
     expect(check(signatureGrade, "semantic_result_bindings").passed).toBe(false);
@@ -1544,7 +1568,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const wrongAnswer = trialFor(trialSet, "inspect-and-answer");
     wrongAnswer.final_answer.answer_value_sha256 = digest(canonicalJson({ marker: "PAGE ONE - PORTRAIT", page: 1 }));
     expect(check(
-      gradeTrajectoryTrial(jobs.get(wrongAnswer.job_id), wrongAnswer), "answer_correctness"
+      await gradeTrajectoryTrial(jobs.get(wrongAnswer.job_id), wrongAnswer), "answer_correctness"
     ).passed).toBe(false);
   });
 
@@ -1556,7 +1580,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     message.observed_at = new Date(Date.parse(trial.trajectory[0].started_at) - 1).toISOString();
     turn.observed_at = new Date(Date.parse(message.observed_at) - 1).toISOString();
     addFailureRef(trial, "answer-before-final-call");
-    expect(check(gradeTrajectoryTrial(jobs.get(trial.job_id), trial), "terminal_answer").passed).toBe(false);
+    expect(check(await gradeTrajectoryTrial(jobs.get(trial.job_id), trial), "terminal_answer").passed).toBe(false);
 
     const inFlight = trialFor(trialSet, "inspect-and-answer");
     const inFlightStep = inFlight.trajectory[0];
@@ -1568,7 +1592,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     inFlightTurn.observed_at = new Date(Date.parse(inFlightMessage.observed_at) + 1).toISOString();
     expect(Date.parse(inFlightMessage.observed_at)).toBeLessThan(Date.parse(inFlightStep.finished_at));
     expect(check(
-      gradeTrajectoryTrial(jobs.get(inFlight.job_id), inFlight), "terminal_answer"
+      await gradeTrajectoryTrial(jobs.get(inFlight.job_id), inFlight), "terminal_answer"
     ).passed).toBe(false);
   });
 
@@ -1577,7 +1601,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const missingRaw = trialFor(trialSet, "error-recovery");
     missingRaw.trajectory[0].error.raw_error_sha256 = "not-a-digest";
     addFailureRef(missingRaw, "recovery-without-raw-failure");
-    const missingRawGrade = gradeTrajectoryTrial(jobs.get(missingRaw.job_id), missingRaw);
+    const missingRawGrade = await gradeTrajectoryTrial(jobs.get(missingRaw.job_id), missingRaw);
     expect(check(missingRawGrade, "trial_schema").passed).toBe(false);
     expect(check(missingRawGrade, "error_recovery").passed).toBe(false);
 
@@ -1585,7 +1609,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     wrongDeniedArgument.trajectory[0].arguments.pdf_path = "input/source.pdf";
     addFailureRef(wrongDeniedArgument, "wrong-denied-argument");
     expect(check(
-      gradeTrajectoryTrial(jobs.get(wrongDeniedArgument.job_id), wrongDeniedArgument),
+      await gradeTrajectoryTrial(jobs.get(wrongDeniedArgument.job_id), wrongDeniedArgument),
       "error_recovery"
     ).passed).toBe(false);
   });
@@ -1618,7 +1642,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const cloneBoundary = "Clone detection test; no benchmark claim.";
     const runPlan = runPlanFor("pdf-tools.trajectory.clone-test.v1", trials, suite, cloneBoundary);
     const attestation = unsignedMeasuredAttestation(suite, trials, runPlan);
-    const report = summarizeTrajectoryTrials(suite, trials, {
+    const report = await summarizeTrajectoryTrials(suite, trials, {
       calibration: false,
       attestation,
       trialSetId: "pdf-tools.trajectory.clone-test.v1",
@@ -1650,7 +1674,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     trial.trajectory.push(lateApply);
     trial.run.finished_at = new Date(Date.parse(lateApply.started_at) + 60_000).toISOString();
     addFailureRef(trial, "intent-expired-on-later-signature");
-    const grade = gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
+    const grade = await gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
     expect(check(grade, "human_intent")).toMatchObject({ passed: false });
     expect(check(grade, "human_intent").actual.errors).toEqual(expect.arrayContaining([
       expect.objectContaining({ step_id: lateApply.step_id }),
@@ -1675,7 +1699,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
       regression_id: "pdf-tools.regression.trajectory.v1.fake",
       relationship: "failure",
     }];
-    const grade = gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
+    const grade = await gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
     expect(check(grade, "trial_schema").actual).toEqual(expect.arrayContaining([
       expect.stringContaining("bead_id is not in the approved lineage registry"),
     ]));
@@ -1701,7 +1725,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
       regression_id: "pdf-tools.regression.trajectory.v1.fill-and-validate.failed-required-call",
       relationship: "failure",
     }];
-    const crossJobGrade = gradeTrajectoryTrial(jobs.get(crossJob.job_id), crossJob);
+    const crossJobGrade = await gradeTrajectoryTrial(jobs.get(crossJob.job_id), crossJob);
     expect(check(crossJobGrade, "trial_schema").actual).toEqual(expect.arrayContaining([
       expect.stringContaining("regression_id is not in the approved lineage registry"),
     ]));
@@ -1716,7 +1740,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
       regression_id: "pdf-tools.regression.trajectory.v1.inspect-and-answer.unsupported-claim",
       relationship: "failure",
     }];
-    const sameJobWrongGrade = gradeTrajectoryTrial(jobs.get(sameJobWrongFailure.job_id), sameJobWrongFailure);
+    const sameJobWrongGrade = await gradeTrajectoryTrial(jobs.get(sameJobWrongFailure.job_id), sameJobWrongFailure);
     expect(check(sameJobWrongGrade, "terminal_answer").passed).toBe(false);
     expect(check(sameJobWrongGrade, "failure_linkage")).toMatchObject({
       passed: false,
@@ -1770,11 +1794,11 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const { trialSet, jobs } = await loadFixtures();
     const missing = trialFor(trialSet, "inspect-and-answer");
     missing.final_answer.claims[0].evidence_ids = [];
-    const grade = gradeTrajectoryTrial(jobs.get(missing.job_id), missing);
+    const grade = await gradeTrajectoryTrial(jobs.get(missing.job_id), missing);
     expect(check(grade, "failure_linkage").passed).toBe(false);
 
     const calibratedFailure = trialFor(trialSet, "inspect-and-answer", 3);
-    const calibratedGrade = gradeTrajectoryTrial(jobs.get(calibratedFailure.job_id), calibratedFailure);
+    const calibratedGrade = await gradeTrajectoryTrial(jobs.get(calibratedFailure.job_id), calibratedFailure);
     expect(check(calibratedGrade, "failure_linkage").passed).toBe(true);
     expect(calibratedGrade.correction_refs[0]).toEqual({
       bead_id: "pdf-toolkit-mcp-igr.2",
@@ -1788,6 +1812,6 @@ describe("agent trajectory grader v4 integrity contract", () => {
       regression_id: "pdf-tools.regression.trajectory.v1.inspect-and-answer.accepted-fix",
       relationship: "accepted_fix",
     }];
-    expect(gradeTrajectoryTrial(jobs.get(acceptedFix.job_id), acceptedFix).passed).toBe(true);
+    expect((await gradeTrajectoryTrial(jobs.get(acceptedFix.job_id), acceptedFix)).passed).toBe(true);
   });
 });

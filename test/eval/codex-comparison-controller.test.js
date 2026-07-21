@@ -19,6 +19,7 @@ import {
   diffManifests,
   fixtureInstanceRecord,
   finalizeCampaign,
+  fingerprintResolvedPackageClosure,
   fingerprintRuntimeTree,
   planCampaign,
   runCampaignEntry,
@@ -586,6 +587,40 @@ describe("headless Codex comparison controller integration", () => {
     expect(after.file_count).toBe(before.file_count);
   });
 
+  it("binds a hoisted runtime dependency into the resolved package closure", async () => {
+    const modules = path.join(testRoot, "hoisted-runtime", "node_modules");
+    const rootPackage = path.join(modules, "root-runtime");
+    const dependencyPackage = path.join(modules, "hoisted-runtime-dependency");
+    await fs.mkdir(rootPackage, { recursive: true });
+    await fs.mkdir(dependencyPackage, { recursive: true });
+    await fs.writeFile(path.join(rootPackage, "package.json"), JSON.stringify({
+      name: "root-runtime",
+      version: "1.0.0",
+      main: "index.js",
+      dependencies: { "hoisted-runtime-dependency": "1.0.0" },
+    }));
+    await fs.writeFile(path.join(rootPackage, "index.js"), "module.exports = require('hoisted-runtime-dependency');\n");
+    await fs.writeFile(path.join(dependencyPackage, "package.json"), JSON.stringify({
+      name: "hoisted-runtime-dependency",
+      version: "1.0.0",
+      main: "index.js",
+    }));
+    await fs.writeFile(path.join(dependencyPackage, "index.js"), "module.exports = 1;\n");
+
+    const before = await fingerprintResolvedPackageClosure({ root_runtime: rootPackage });
+    expect(before.packages.map(item => item.name)).toEqual([
+      "hoisted-runtime-dependency",
+      "root-runtime",
+    ]);
+    await fs.writeFile(path.join(dependencyPackage, "index.js"), "module.exports = 2;\n");
+    const after = await fingerprintResolvedPackageClosure({ root_runtime: rootPackage });
+    expect(after.closure_sha256).not.toBe(before.closure_sha256);
+    expect(after.packages.find(item => item.name === "root-runtime")?.tree_sha256)
+      .toBe(before.packages.find(item => item.name === "root-runtime")?.tree_sha256);
+    expect(after.packages.find(item => item.name === "hoisted-runtime-dependency")?.tree_sha256)
+      .not.toBe(before.packages.find(item => item.name === "hoisted-runtime-dependency")?.tree_sha256);
+  });
+
   it("passes a complete four-call read/render trajectory through final grading", async () => {
     const successfulCodex = path.join(testRoot, "fake-codex-success.mjs");
     await writeFakeCodex(successfulCodex, { successfulCalls: true });
@@ -644,6 +679,23 @@ describe("headless Codex comparison controller integration", () => {
     await expect(runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot }))
       .rejects.toThrow(/Expected a retained regular file/);
     await expect(fs.access(path.join(runRoot, "launch-claim.json"))).rejects.toThrow();
+  }, 30_000);
+
+  it("rejects symlinked authoritative campaign and pre-run plan files", async () => {
+    const { campaignRoot } = await planOne("authoritative-file-symlink");
+    const campaignPath = path.join(campaignRoot, "campaign.json");
+    await fs.rename(campaignPath, path.join(campaignRoot, "campaign-backing.json"));
+    await fs.symlink("campaign-backing.json", campaignPath);
+    await expect(runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot }))
+      .rejects.toThrow(/Expected a retained regular file/);
+
+    await fs.unlink(campaignPath);
+    await fs.rename(path.join(campaignRoot, "campaign-backing.json"), campaignPath);
+    const planPath = path.join(campaignRoot, "pre-run-plan.json");
+    await fs.rename(planPath, path.join(campaignRoot, "pre-run-plan-backing.json"));
+    await fs.symlink("pre-run-plan-backing.json", planPath);
+    await expect(runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot }))
+      .rejects.toThrow(/Expected a retained regular file/);
   }, 30_000);
 
   it("allows exactly one concurrent claimant for a planned invocation", async () => {

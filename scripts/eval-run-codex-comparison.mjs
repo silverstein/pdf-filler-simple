@@ -156,7 +156,7 @@ async function findPackageRoot(filename) {
 export async function fingerprintRuntimeTree(root, { excludeDirectories = [] } = {}) {
   const realRoot = await fs.realpath(root);
   const excluded = new Set(excludeDirectories);
-  const entries = [];
+  const files = [];
   async function visit(directory, relativeDirectory = "") {
     const children = await fs.readdir(directory, { withFileTypes: true });
     children.sort((left, right) => left.name.localeCompare(right.name));
@@ -164,25 +164,130 @@ export async function fingerprintRuntimeTree(root, { excludeDirectories = [] } =
       if (child.isDirectory() && excluded.has(child.name)) continue;
       const relative = normalizeRelative(path.join(relativeDirectory, child.name));
       const absolute = path.join(directory, child.name);
-      const stat = await fs.lstat(absolute);
-      if (stat.isSymbolicLink()) throw new Error(`Runtime tree contains unsupported symlink: ${absolute}`);
-      if (stat.isDirectory()) {
+      if (child.isSymbolicLink()) throw new Error(`Runtime tree contains unsupported symlink: ${absolute}`);
+      if (child.isDirectory()) {
         await visit(absolute, relative);
-      } else if (stat.isFile()) {
-        const bytes = await fs.readFile(absolute);
-        entries.push({ path: relative, mode: stat.mode & 0o777, size: bytes.length, sha256: sha256(bytes) });
+      } else if (child.isFile()) {
+        files.push({ path: relative, absolute });
       } else {
         throw new Error(`Runtime tree contains unsupported entry: ${absolute}`);
       }
     }
   }
   await visit(realRoot);
+  const entries = new Array(files.length);
+  let nextFile = 0;
+  await Promise.all(Array.from({ length: Math.min(32, files.length) }, async () => {
+    while (nextFile < files.length) {
+      const index = nextFile;
+      nextFile += 1;
+      const file = files[index];
+      const [stat, bytes] = await Promise.all([fs.lstat(file.absolute), fs.readFile(file.absolute)]);
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error(`Runtime tree file changed type during fingerprinting: ${file.absolute}`);
+      }
+      entries[index] = {
+        path: file.path,
+        mode: stat.mode & 0o777,
+        size: bytes.length,
+        sha256: sha256(bytes),
+      };
+    }
+  }));
+  entries.sort((left, right) => left.path.localeCompare(right.path));
   return {
     root,
     real_root: realRoot,
     file_count: entries.length,
     total_bytes: entries.reduce((sum, entry) => sum + entry.size, 0),
     tree_sha256: sha256(canonicalJson(entries)),
+  };
+}
+
+async function resolveDependencyPackageRoot(packageRoot, dependencyName) {
+  const packageRequire = createRequire(path.join(packageRoot, "package.json"));
+  try {
+    const manifest = packageRequire.resolve(`${dependencyName}/package.json`);
+    const info = await findPackageRoot(manifest);
+    if (info.name === dependencyName) return info.root;
+  } catch {
+    // Export maps may hide package.json. Resolve the executable entry instead.
+  }
+  const entry = packageRequire.resolve(dependencyName);
+  const info = await findPackageRoot(entry);
+  if (info.name !== dependencyName) {
+    throw new Error(`Resolved ${dependencyName} to unexpected package ${info.name}`);
+  }
+  return info.root;
+}
+
+export async function fingerprintResolvedPackageClosure(rootPackages) {
+  if (!rootPackages || typeof rootPackages !== "object" || Array.isArray(rootPackages)) {
+    throw new Error("Runtime closure roots must be a labeled object");
+  }
+  const roots = {};
+  const queue = [];
+  for (const [label, root] of Object.entries(rootPackages).sort(([left], [right]) => left.localeCompare(right))) {
+    const realRoot = await fs.realpath(root);
+    const info = await findPackageRoot(path.join(realRoot, "package.json"));
+    if (info.root !== realRoot) throw new Error(`Runtime closure root is not a package root: ${root}`);
+    roots[label] = { name: info.name, root, real_root: realRoot };
+    queue.push(realRoot);
+  }
+  const packagesByRoot = new Map();
+  const unresolvedOptional = [];
+  while (queue.length > 0) {
+    const packageRoot = queue.shift();
+    if (packagesByRoot.has(packageRoot)) continue;
+    const manifestPath = path.join(packageRoot, "package.json");
+    const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+    if (typeof manifest.name !== "string" || manifest.name.length === 0) {
+      throw new Error(`Runtime package has no name: ${packageRoot}`);
+    }
+    const tree = await fingerprintRuntimeTree(packageRoot);
+    packagesByRoot.set(packageRoot, {
+      name: manifest.name,
+      version: typeof manifest.version === "string" ? manifest.version : null,
+      root: packageRoot,
+      real_root: tree.real_root,
+      file_count: tree.file_count,
+      total_bytes: tree.total_bytes,
+      tree_sha256: tree.tree_sha256,
+    });
+    const dependencies = manifest.dependencies ?? {};
+    const optionalDependencies = manifest.optionalDependencies ?? {};
+    const peerDependencies = manifest.peerDependencies ?? {};
+    const peerMetadata = manifest.peerDependenciesMeta ?? {};
+    const dependencyNames = [...new Set([
+      ...Object.keys(dependencies),
+      ...Object.keys(optionalDependencies),
+      ...Object.keys(peerDependencies),
+    ])].sort();
+    for (const dependencyName of dependencyNames) {
+      const optional = Object.hasOwn(optionalDependencies, dependencyName)
+        || (Object.hasOwn(peerDependencies, dependencyName)
+          && peerMetadata[dependencyName]?.optional === true
+          && !Object.hasOwn(dependencies, dependencyName));
+      try {
+        queue.push(await resolveDependencyPackageRoot(packageRoot, dependencyName));
+      } catch (error) {
+        if (!optional) {
+          throw new Error(`${manifest.name} runtime dependency ${dependencyName} is unresolved: ${error.message}`);
+        }
+        unresolvedOptional.push({ from: manifest.name, dependency: dependencyName });
+      }
+    }
+  }
+  const packages = [...packagesByRoot.values()].sort((left, right) =>
+    left.name.localeCompare(right.name) || left.real_root.localeCompare(right.real_root));
+  unresolvedOptional.sort((left, right) =>
+    left.from.localeCompare(right.from) || left.dependency.localeCompare(right.dependency));
+  return {
+    closure_schema_version: 1,
+    roots,
+    packages,
+    unresolved_optional: unresolvedOptional,
+    closure_sha256: sha256(canonicalJson({ roots, packages, unresolved_optional: unresolvedOptional })),
   };
 }
 
@@ -275,15 +380,26 @@ async function runtimeFingerprints(codexExecutable = "codex") {
   for (const [label, filename] of Object.entries(files)) {
     fingerprints[label] = await fingerprintRuntimeFile(filename);
   }
-  const packageManifests = {
-    mcp_sdk_tree: require.resolve("@modelcontextprotocol/sdk/package.json"),
-    pdf_lib_tree: require.resolve("pdf-lib/package.json"),
-    pdfjs_tree: require.resolve("pdfjs-dist/package.json"),
-    canvas_tree: require.resolve("@napi-rs/canvas/package.json"),
-    canvas_native_tree: require.resolve(`${nativeCanvasPackage}/package.json`),
+  const packageRoots = {
+    mcp_sdk_tree: (await findPackageRoot(files.mcp_sdk_entry)).root,
+    pdf_lib_tree: (await findPackageRoot(files.pdf_lib_entry)).root,
+    pdfjs_tree: (await findPackageRoot(files.pdfjs_entry)).root,
+    canvas_tree: (await findPackageRoot(files.canvas_entry)).root,
+    canvas_native_tree: (await findPackageRoot(files.canvas_native_entry)).root,
   };
-  for (const [label, manifest] of Object.entries(packageManifests)) {
-    fingerprints[label] = await fingerprintRuntimeTree(path.dirname(manifest));
+  const runtimeClosure = await fingerprintResolvedPackageClosure(packageRoots);
+  fingerprints.mcp_runtime_package_closure = runtimeClosure;
+  for (const [label, packageRoot] of Object.entries(packageRoots)) {
+    const realRoot = await fs.realpath(packageRoot);
+    const packageFingerprint = runtimeClosure.packages.find(item => item.real_root === realRoot);
+    if (!packageFingerprint) throw new Error(`Runtime closure omitted ${label}`);
+    fingerprints[label] = {
+      root: packageRoot,
+      real_root: realRoot,
+      file_count: packageFingerprint.file_count,
+      total_bytes: packageFingerprint.total_bytes,
+      tree_sha256: packageFingerprint.tree_sha256,
+    };
   }
   if (codexPackageInfo.name === "@openai/codex") {
     const codexRequire = createRequire(resolvedCodex);
@@ -1495,8 +1611,8 @@ export function validateCampaign(campaign, plan) {
 
 async function loadCampaign(campaignPath, { documentsRoot = DOCUMENTS_ROOT } = {}) {
   const campaignRoot = await assertCampaignPath(campaignPath, documentsRoot);
-  const campaign = await readJson(path.join(campaignRoot, "campaign.json"));
-  const planText = await fs.readFile(path.join(campaignRoot, "pre-run-plan.json"), "utf8");
+  const campaign = JSON.parse(await readRegularFile(path.join(campaignRoot, "campaign.json"), "utf8"));
+  const planText = await readRegularFile(path.join(campaignRoot, "pre-run-plan.json"), "utf8");
   const plan = JSON.parse(planText);
   validateCampaign(campaign, plan);
   if (campaign.plan_raw_sha256 !== sha256(planText)) throw new Error("Raw pre-run plan file changed after planning");

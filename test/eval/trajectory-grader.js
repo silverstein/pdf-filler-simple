@@ -15,6 +15,7 @@ import {
   parsePngEvidence,
 } from "./png-evidence.js";
 import {
+  buildTrustedVisualOracle,
   VISUAL_ORACLE_MAX_ASPECT_ERROR,
   VISUAL_ORACLE_MAX_MAE,
   VISUAL_ORACLE_MIN_FOREGROUND_IOU,
@@ -1357,7 +1358,7 @@ function evidenceBound(reference, successfulResults, artifactsByPath) {
   return false;
 }
 
-function semanticObservationIssues(step, runEvents = []) {
+async function semanticObservationIssues(step, runEvents = []) {
   const issues = [];
   const semantic = step.result?.semantic_observations;
   if (!semantic) return ["missing semantic observations"];
@@ -1422,6 +1423,7 @@ function semanticObservationIssues(step, runEvents = []) {
       && new Set(["filesystem_stat_sha256", "synthetic_calibration"]).has(item.observation_method));
     const sourceEvent = runEvents.find(event => event?.event_id === render.source_observation_event_id);
     let retainedRawResultValid = false;
+    let retainedImageBytes = null;
     try {
       const retained = step.result.retained_raw_result;
       const images = retained.content.map((block, index) => ({ block, index }))
@@ -1452,6 +1454,7 @@ function semanticObservationIssues(step, runEvents = []) {
         && Number(structured.rendered_width_px) === render.server_rendered_width_px
         && Number(structured.rendered_height_px) === render.server_rendered_height_px
         && Number(structured.scale) === render.server_scale;
+      retainedImageBytes = parsedImage.bytes;
     } catch {
       retainedRawResultValid = false;
     }
@@ -1509,11 +1512,24 @@ function semanticObservationIssues(step, runEvents = []) {
         && render.image_transport === "synthetic_calibration"
       : new Set(["native-canvas", "macos-sips"]).has(render.server_renderer)
         && render.image_transport === "codex_jsonl_host_visible";
-    const visualOracleValid = render.visual_oracle?.passed === true
-      && render.visual_oracle.reference_source_sha256 === render.source_sha256
-      && render.visual_oracle.mean_absolute_error <= VISUAL_ORACLE_MAX_MAE
-      && render.visual_oracle.foreground_iou >= VISUAL_ORACLE_MIN_FOREGROUND_IOU
-      && render.visual_oracle.aspect_ratio_error <= VISUAL_ORACLE_MAX_ASPECT_ERROR;
+    let visualOracleValid = false;
+    try {
+      const replayedOracle = await buildTrustedVisualOracle({
+        imageBytes: retainedImageBytes,
+        sourceSha256: render.source_sha256,
+        page: render.page,
+        scale: render.server_scale,
+        region: step.tool === "render_pdf_region" ? render.region : null,
+      });
+      visualOracleValid = canonicalJson(replayedOracle) === canonicalJson(render.visual_oracle)
+        && replayedOracle.passed === true
+        && replayedOracle.reference_source_sha256 === render.source_sha256
+        && replayedOracle.mean_absolute_error <= VISUAL_ORACLE_MAX_MAE
+        && replayedOracle.foreground_iou >= VISUAL_ORACLE_MIN_FOREGROUND_IOU
+        && replayedOracle.aspect_ratio_error <= VISUAL_ORACLE_MAX_ASPECT_ERROR;
+    } catch {
+      visualOracleValid = false;
+    }
     if (step.arguments.pdf_path !== render.source || expectedPage !== render.page
       || expectedMaxDimension !== render.max_dimension_px
       || canonicalJson(expectedRegion) !== canonicalJson(render.region)
@@ -1561,7 +1577,7 @@ function validateHumanIntent(trial, steps) {
   };
 }
 
-export function gradeTrajectoryTrial(job, trial) {
+export async function gradeTrajectoryTrial(job, trial) {
   const checks = [];
   if (!isObject(trial)) throw new Error("trial must be an object");
   if (trial.outcome === "harness_failure") {
@@ -1594,8 +1610,9 @@ export function gradeTrajectoryTrial(job, trial) {
   const forbidden = new Set(job.policy.forbidden_tools);
   gradeCheck(checks, "job_id", trial.job_id === job.id, job.id, trial.job_id);
   gradeCheck(checks, "trajectory_non_empty", steps.length > 0, "> 0 steps", steps.length);
-  const semanticIssues = successfulSteps.flatMap(step =>
-    semanticObservationIssues(step, runEvents).map(issue => ({ step_id: step.step_id, issue })));
+  const semanticIssues = (await Promise.all(successfulSteps.map(async step =>
+    (await semanticObservationIssues(step, runEvents))
+      .map(issue => ({ step_id: step.step_id, issue }))))).flat();
   gradeCheck(
     checks,
     "semantic_result_bindings",
@@ -1953,7 +1970,7 @@ function independentProductTrials(productTrials, minimum) {
   return dimensions.every(values => values.every(nonEmptyString) && unique(values));
 }
 
-export function summarizeTrajectoryTrials(suite, trials, {
+export async function summarizeTrajectoryTrials(suite, trials, {
   calibration = false, attestation = null, trialSetId = "inline", claimBoundary = "Inline validated trial collection.",
   runPlan = null,
 } = {}) {
@@ -1969,7 +1986,9 @@ export function summarizeTrajectoryTrials(suite, trials, {
   });
   if (validation.length > 0) throw new Error(`Invalid trajectory trials:\n- ${validation.join("\n- ")}`);
   const jobs = new Map(suite.jobs.map(job => [job.id, job]));
-  const results = trials.map(trial => gradeTrajectoryTrial(jobs.get(trial.job_id), trial));
+  const results = await Promise.all(trials.map(
+    trial => gradeTrajectoryTrial(jobs.get(trial.job_id), trial)
+  ));
   const byJob = suite.jobs.map(job => {
     const jobTrials = trials.filter(trial => trial.job_id === job.id);
     const jobResults = results.filter(result => result.job_id === job.id);

@@ -183,7 +183,7 @@ prepare-for-signature, and path-policy error recovery. Each job declares:
   file evidence;
 - verified-output and limitation requirements.
 
-The v3 grader uses strict, independently versioned suite, trial-set, trial, run,
+The v4 grader uses strict, independently versioned suite, trial-set, trial, run,
 host-event, step (currently v2), result, effects, artifact, evidence, claim, and harness-failure
 records. Unknown fields and ambiguous success/error records are rejected. A
 required tool counts only after a successful call with its required arguments
@@ -228,6 +228,12 @@ Harness failures are classified separately only when a strict phase/error record
 binds to trusted host provenance; a bare `harness_failure` label is invalid, and
 a benchmark stays blocked when the configured maximum harness-failure rate is
 exceeded.
+
+For render evidence, grading decodes the retained PNG again, independently
+renders the SHA-256-pinned corpus source, recomputes the normalized pixel and
+foreground comparison, and requires the complete replayed oracle to equal the
+stored ingestion result. Stored pass flags or similarity metrics cannot replace
+that replay.
 
 The trust registry pins the canonical digest of the entire suite, including
 prompts, thresholds, policies, and forbidden tools. Correction lineage is

@@ -34,7 +34,7 @@ export async function runTrajectoryEvaluation({ suitePath = DEFAULT_SUITE, trial
   if (validationErrors.length > 0) {
     throw new Error(`Invalid trajectory trial set:\n- ${validationErrors.join("\n- ")}`);
   }
-  const summary = summarizeTrajectoryTrials(suite, trialSet.trials, {
+  const summary = await summarizeTrajectoryTrials(suite, trialSet.trials, {
     calibration: trialSet.calibration,
     attestation: trialSet.attestation,
     trialSetId: trialSet.trial_set_id,

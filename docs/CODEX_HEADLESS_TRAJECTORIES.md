@@ -56,10 +56,12 @@ launch-contract digest covers the campaign fields. It also fingerprints the
 resolved Codex and Node executables, MCP SDK, `pdf-lib`, `pdfjs-dist`, JavaScript
 canvas package, platform-native canvas binary, and the lexical and real
 `node_modules` roots. Deterministic package-tree commitments cover the actual
-ESM SDK, PDF libraries, canvas bindings, Codex launcher, and current-platform
-native Codex package, rather than only their entry files. A `run` refuses to
-launch if any of those inputs, fields, installed runtimes, retained planning
-files, or its planned workspace changed.
+ESM SDK, PDF libraries, canvas bindings, their recursively resolved production,
+optional, and peer dependency closure, the Codex launcher, and the
+current-platform native Codex package, rather than only their entry files.
+Hoisted dependencies are fingerprinted at their resolved package roots. A `run`
+refuses to launch if any of those inputs, fields, installed runtimes, retained
+planning files, or its planned workspace changed.
 
 Planner and result signatures remain null. These are unsigned descriptive
 measurements on one repeated fixture instance, not independent benchmark
@@ -116,7 +118,9 @@ hash/dimensions separately from the server-declared renderer, scale, and pixel
 geometry. A transformation-tolerant visual oracle also normalizes that PNG and
 compares it with an independently rendered, SHA-256-pinned corpus fixture. Page
 aspect ratio, normalized pixel error, and foreground overlap must all pass;
-valid-but-blank or unrelated images are rejected. It does not claim that JSONL
+valid-but-blank or unrelated images are rejected. Final grading recomputes the
+complete oracle from the retained PNG and pinned source fixture and requires
+exact agreement with the ingested oracle record. It does not claim that JSONL
 contains the byte-identical original MCP image. Proving original MCP transport
 bytes would require a separately reviewed transparent stdio observer.
 
