@@ -13,7 +13,78 @@ const REPO_ROOT = path.join(__dirname, "..");
 const SOURCE_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.json"), "utf8"));
 const MCPB_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.mcpb.json"), "utf8"));
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TOOL_CONTRACT_SHA256 = "3ea717d4b29c5c36827eb4bf56f0edf76e8d920d2959b2982d076935e3232bce";
+const TOOL_CONTRACT_SHA256 = "065fd7e06116045efa594047125ed6d04574ed5cdefcc37a25057dc877c71116";
+
+const CLOSED_READ = Object.freeze({
+  readOnlyHint: true,
+  destructiveHint: false,
+  idempotentHint: true,
+  openWorldHint: false,
+});
+const CLOSED_SESSION_ACTION = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: false,
+  idempotentHint: false,
+  openWorldHint: false,
+});
+const CLOSED_IDEMPOTENT_OVERWRITE = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: true,
+  openWorldHint: false,
+});
+const CLOSED_NON_IDEMPOTENT_OVERWRITE = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: false,
+});
+const OPEN_NON_IDEMPOTENT_OVERWRITE = Object.freeze({
+  readOnlyHint: false,
+  destructiveHint: true,
+  idempotentHint: false,
+  openWorldHint: true,
+});
+
+const TOOL_EFFECT_ANNOTATIONS = {
+  list_pdfs: CLOSED_READ,
+  read_pdf_fields: CLOSED_SESSION_ACTION,
+  fill_pdf: CLOSED_IDEMPOTENT_OVERWRITE,
+  bulk_fill_from_csv: CLOSED_IDEMPOTENT_OVERWRITE,
+  save_profile: CLOSED_IDEMPOTENT_OVERWRITE,
+  load_profile: CLOSED_READ,
+  list_profiles: CLOSED_READ,
+  fill_with_profile: CLOSED_IDEMPOTENT_OVERWRITE,
+  extract_to_csv: CLOSED_IDEMPOTENT_OVERWRITE,
+  validate_pdf: CLOSED_READ,
+  read_pdf_content: CLOSED_READ,
+  read_pdf_pages: CLOSED_READ,
+  render_pdf_page: CLOSED_READ,
+  render_pdf_region: CLOSED_READ,
+  search_pdf_text: CLOSED_READ,
+  get_pdf_resource_uri: CLOSED_READ,
+  display_pdf: CLOSED_SESSION_ACTION,
+  get_active_document: CLOSED_READ,
+  set_active_document: CLOSED_SESSION_ACTION,
+  read_pdf_bytes: CLOSED_READ,
+  merge_pdfs: CLOSED_IDEMPOTENT_OVERWRITE,
+  split_pdf: CLOSED_IDEMPOTENT_OVERWRITE,
+  rotate_pdf_pages: CLOSED_IDEMPOTENT_OVERWRITE,
+  reorder_pdf_pages: CLOSED_IDEMPOTENT_OVERWRITE,
+  get_pdf_info: CLOSED_READ,
+  apply_page_plan: CLOSED_IDEMPOTENT_OVERWRITE,
+  get_page_analysis: CLOSED_READ,
+  create_signature: CLOSED_NON_IDEMPOTENT_OVERWRITE,
+  list_signatures: CLOSED_READ,
+  load_signature: CLOSED_READ,
+  add_signature_field: CLOSED_NON_IDEMPOTENT_OVERWRITE,
+  apply_signature: CLOSED_NON_IDEMPOTENT_OVERWRITE,
+  prepare_signing_packet: CLOSED_NON_IDEMPOTENT_OVERWRITE,
+  apply_text: CLOSED_NON_IDEMPOTENT_OVERWRITE,
+  detect_signature_zones: CLOSED_READ,
+  fetch_pdf_from_url: OPEN_NON_IDEMPOTENT_OVERWRITE,
+  reveal_in_finder: CLOSED_SESSION_ACTION,
+};
 
 const RUNTIMES = [
   { name: "source checkout", root: REPO_ROOT },
@@ -180,7 +251,18 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
         idempotentHint: expect.any(Boolean),
         openWorldHint: expect.any(Boolean),
       });
+      expect(
+        {
+          readOnlyHint: tool.annotations.readOnlyHint,
+          destructiveHint: tool.annotations.destructiveHint,
+          idempotentHint: tool.annotations.idempotentHint,
+          openWorldHint: tool.annotations.openWorldHint,
+        },
+        `${tool.name} effect annotations`,
+      ).toEqual(TOOL_EFFECT_ANNOTATIONS[tool.name]);
     }
+
+    expect(sorted(Object.keys(TOOL_EFFECT_ANNOTATIONS))).toEqual(sorted(names(tools)));
 
     const appOnlyTools = tools.filter(tool => tool._meta?.ui?.visibility?.includes("app"));
     expect(names(appOnlyTools)).toEqual(["read_pdf_bytes"]);

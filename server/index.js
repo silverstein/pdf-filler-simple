@@ -1320,9 +1320,9 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         },
         annotations: {
           title: "Read PDF Form Fields",
-          readOnlyHint: true,
+          readOnlyHint: false,
           destructiveHint: false,
-          idempotentHint: true,
+          idempotentHint: false,
           openWorldHint: false
         },
         _meta: {
@@ -1363,7 +1363,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Fill PDF Form",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: true,
           openWorldHint: false
         }
@@ -1404,7 +1404,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Bulk Fill PDFs from CSV",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: true,
           openWorldHint: false
         }
@@ -1429,7 +1429,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Save Form Profile",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: true,
           openWorldHint: false
         }
@@ -1502,7 +1502,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Fill PDF with Profile",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: true,
           openWorldHint: false
         }
@@ -1528,7 +1528,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Extract PDF Data to CSV",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: true,
           openWorldHint: false
         }
@@ -1820,9 +1820,9 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         },
         annotations: {
           title: "Display PDF Viewer",
-          readOnlyHint: true,
+          readOnlyHint: false,
           destructiveHint: false,
-          idempotentHint: true,
+          idempotentHint: false,
           openWorldHint: false
         },
         _meta: {
@@ -1875,7 +1875,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           title: "Set Active Document",
           readOnlyHint: false,
           destructiveHint: false,
-          idempotentHint: true,
+          idempotentHint: false,
           openWorldHint: false
         }
       },
@@ -1938,7 +1938,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Merge PDFs",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: true,
           openWorldHint: false
         },
@@ -1976,7 +1976,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Split PDF",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: true,
           openWorldHint: false
         }
@@ -2014,7 +2014,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Rotate PDF Pages",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: true,
           openWorldHint: false
         },
@@ -2053,7 +2053,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Reorder PDF Pages",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: true,
           openWorldHint: false
         },
@@ -2133,7 +2133,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Apply Page Plan",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: true,
           openWorldHint: false
         }
@@ -2195,7 +2195,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Create Signature",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: false,
           openWorldHint: false
         }
@@ -2262,7 +2262,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Add Signature Field",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: false,
           openWorldHint: false
         }
@@ -2325,7 +2325,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Apply Signature",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: false,
           openWorldHint: false
         }
@@ -2371,7 +2371,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Prepare Signing Packet",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: false,
           openWorldHint: false
         }
@@ -2404,7 +2404,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Apply Text",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: false,
           openWorldHint: false
         }
@@ -2469,7 +2469,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         annotations: {
           title: "Fetch PDF from URL",
           readOnlyHint: false,
-          destructiveHint: false,
+          destructiveHint: true,
           idempotentHint: false,
           openWorldHint: true
         }
@@ -2486,9 +2486,9 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         },
         annotations: {
           title: "Reveal File in Finder",
-          readOnlyHint: true,
+          readOnlyHint: false,
           destructiveHint: false,
-          idempotentHint: true,
+          idempotentHint: false,
           openWorldHint: false
         }
       }

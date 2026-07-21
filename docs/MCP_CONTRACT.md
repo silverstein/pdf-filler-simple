@@ -31,9 +31,10 @@ The runtime returns 37 uniquely named tools. Every tool has an object input
 schema plus `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, and
 `openWorldHint` annotations. Annotations are user-interface hints, never an
 authorization boundary; path allowlists and signature-intent checks remain the
-enforced controls. The contract test enforces annotation presence and types,
-not the policy judgment for every overwrite-capable path; that semantic
-classification requires its own host-UX and handler-by-handler review.
+enforced controls. The contract test enforces the exact four-hint policy for
+every tool in both runtime copies. The handler evidence and classification
+rules are recorded in
+[`TOOL_ANNOTATION_AUDIT_2026-07-21.md`](TOOL_ANNOTATION_AUDIT_2026-07-21.md).
 
 The source manifest lists all 37 tools. The packed MCPB manifest lists the 36
 normal model-workflow tools and omits `read_pdf_bytes`, whose runtime metadata
