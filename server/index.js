@@ -7,6 +7,10 @@ import {
   ListToolsRequestSchema,
   ListResourcesRequestSchema,
   ReadResourceRequestSchema,
+  ListPromptsRequestSchema,
+  GetPromptRequestSchema,
+  ErrorCode,
+  McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 import { PDFDocument, degrees as pdfDegrees } from "pdf-lib";
 import { createRequire } from "module";
@@ -677,6 +681,117 @@ function validateProfileName(name) {
   return name;
 }
 
+const PROMPT_TEMPLATES = [
+  {
+    name: "view_and_analyze_pdf",
+    description: "Open and analyze any PDF document",
+    arguments: ["focus"],
+    text: "I'll open your PDF in the interactive viewer and analyze it, focusing on ${arguments.focus}. I can extract key findings, summarize sections, answer questions about specific pages, pull out structured data, and identify form fields if present.",
+  },
+  {
+    name: "research_paper_analysis",
+    description: "Analyze & summarize research papers",
+    arguments: ["focus_area"],
+    text: "I'll open your research paper in the interactive viewer and analyze it, focusing on ${arguments.focus_area}. I can extract key findings and methodology, identify research gaps, create chapter-by-chapter summaries, pull out all citations, and generate a literature review outline.",
+  },
+  {
+    name: "contract_comparison",
+    description: "Compare legal documents & contracts",
+    arguments: ["comparison_focus"],
+    text: "I'll compare multiple contracts or legal documents, focusing on ${arguments.comparison_focus}. I'll highlight changed clauses, modified terms, added/removed sections, pricing differences, liability changes, and create a comparison summary.",
+  },
+  {
+    name: "financial_report_extraction",
+    description: "Extract data from financial statements",
+    arguments: ["output_format"],
+    text: "I'll extract and analyze data from your financial PDFs including all tables and key metrics. I'll convert the data to ${arguments.output_format} format for analysis, with specific page references for all extracted information.",
+  },
+  {
+    name: "document_qa_session",
+    description: "Interactive Q&A about your documents",
+    arguments: ["initial_question"],
+    text: "Let's discuss your PDF document. Starting with: ${arguments.initial_question}. I can find specific information, explain complex sections, cross-reference different parts, extract quotes with page numbers, and answer 'what if' scenarios.",
+  },
+  {
+    name: "bulk_invoice_processing",
+    description: "Process multiple invoices into structured data",
+    arguments: ["folder_path", "output_format"],
+    text: "I'll process all invoice PDFs in ${arguments.folder_path} and create a unified dataset in ${arguments.output_format} format. I'll extract vendor names, invoice numbers, dates, line items, totals, tax amounts, and payment terms.",
+  },
+  {
+    name: "technical_documentation_summary",
+    description: "Summarize technical manuals & documentation",
+    arguments: ["summary_type"],
+    text: "I'll analyze your technical documentation and create ${arguments.summary_type}. I'll extract code examples, create reference guides, identify implementation steps, and summarize troubleshooting sections.",
+  },
+  {
+    name: "fill_w9_business",
+    description: "Fill W-9 for business entity",
+    arguments: [],
+    text: "I'll open your W-9 in the interactive viewer so you can see it, then fill it for your business. I need: Business legal name, DBA/trade name (if different), business type (LLC/Corp/Partnership), tax classification, EIN, and business address. I'll properly check the correct tax classification boxes and ensure the form meets IRS requirements.",
+  },
+  {
+    name: "batch_invoices",
+    description: "Process multiple invoices",
+    arguments: [],
+    text: "I'll help you batch process invoices. Point me to the folder containing your invoice PDFs. I can: extract all amounts and dates, create a summary spreadsheet, identify missing information, calculate totals by vendor/date/category. What specific data do you need extracted?",
+  },
+  {
+    name: "rental_application",
+    description: "Fill rental application",
+    arguments: [],
+    text: "I'll open your rental application in the viewer and help complete it. Have ready: personal info, employment history (3 years), income verification, previous addresses (3 years), references, vehicle info, and emergency contact. I'll ensure all required fields are filled and flag any that need supporting documents.",
+  },
+  {
+    name: "extract_1099_data",
+    description: "Extract data from 1099 forms",
+    arguments: [],
+    text: "I'll extract all data from your 1099 forms (1099-NEC, 1099-MISC, 1099-DIV, 1099-INT, etc.) and create a tax summary. I'll organize by payer, identify the type of income, sum totals by category, and format it for easy import into tax software.",
+  },
+  {
+    name: "merge_documents",
+    description: "Combine multiple PDFs into one document",
+    arguments: [],
+    text: "I'll merge your PDF files into a single document. Just tell me which files to combine and where to save the result. I'll preserve the page order and show you the merged result in the viewer so you can verify it looks right. All processing happens locally on your computer — nothing is uploaded.",
+  },
+  {
+    name: "split_large_document",
+    description: "Split a PDF into smaller files",
+    arguments: [],
+    text: "I'll split your PDF into separate files. You can specify exact page ranges (e.g., pages 1-10, 11-20) or split at regular intervals (e.g., every 5 pages). I'll save each section as its own PDF file. Great for breaking up large reports, separating chapters, or extracting specific sections.",
+  },
+  {
+    name: "organize_scanned_pages",
+    description: "Rotate and reorder scanned PDF pages",
+    arguments: [],
+    text: "I'll help fix up your scanned PDF. I can rotate sideways or upside-down pages (90°, 180°, or 270°), and reorder pages that were scanned out of sequence. I'll show you the result in the viewer so you can confirm everything looks right before saving.",
+  },
+];
+
+function renderPromptTemplate(prompt, suppliedArguments = {}) {
+  const expectedArguments = new Set(prompt.arguments);
+  const unknownArguments = Object.keys(suppliedArguments)
+    .filter(name => !expectedArguments.has(name));
+  if (unknownArguments.length > 0) {
+    throw new McpError(
+      ErrorCode.InvalidParams,
+      `Unknown argument(s) for prompt ${prompt.name}: ${unknownArguments.join(", ")}`,
+    );
+  }
+
+  let text = prompt.text;
+  for (const argumentName of prompt.arguments) {
+    if (!Object.prototype.hasOwnProperty.call(suppliedArguments, argumentName)) {
+      throw new McpError(
+        ErrorCode.InvalidParams,
+        `Missing required argument for prompt ${prompt.name}: ${argumentName}`,
+      );
+    }
+    text = text.split(`\${arguments.${argumentName}}`).join(suppliedArguments[argumentName]);
+  }
+  return text;
+}
+
 const server = new Server(
   {
     name: "pdf-tools",
@@ -686,6 +801,7 @@ const server = new Server(
     capabilities: {
       tools: {},
       resources: {},
+      prompts: {},
     },
   }
 );
@@ -4508,6 +4624,34 @@ server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     console.error(`[Resources] Error reading PDF: ${error.message}`);
     throw new Error(`Failed to read PDF: ${error.message}`);
   }
+});
+
+server.setRequestHandler(ListPromptsRequestSchema, async () => ({
+  prompts: PROMPT_TEMPLATES.map(prompt => ({
+    name: prompt.name,
+    description: prompt.description,
+    ...(prompt.arguments.length > 0 ? {
+      arguments: prompt.arguments.map(name => ({ name, required: true })),
+    } : {}),
+  })),
+}));
+
+server.setRequestHandler(GetPromptRequestSchema, async (request) => {
+  const prompt = PROMPT_TEMPLATES.find(candidate => candidate.name === request.params.name);
+  if (!prompt) {
+    throw new McpError(ErrorCode.InvalidParams, `Unknown prompt: ${request.params.name}`);
+  }
+
+  return {
+    description: prompt.description,
+    messages: [{
+      role: "user",
+      content: {
+        type: "text",
+        text: renderPromptTemplate(prompt, request.params.arguments),
+      },
+    }],
+  };
 });
 
 // Initialize and start the server

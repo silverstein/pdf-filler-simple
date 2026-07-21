@@ -166,6 +166,7 @@
       "description": "Open the OS file manager with the given file selected — used by the viewer to surface the active PDF or its backup"
     }
   ],
+  "tools_generated": true,
   "prompts": [
     {
       "name": "view_and_analyze_pdf",
