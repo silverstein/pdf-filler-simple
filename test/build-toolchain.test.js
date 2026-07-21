@@ -2,7 +2,11 @@ import { afterEach, describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "fs/promises";
 import { tmpdir } from "os";
 import path from "path";
-import { verifyInstalledBuildToolchain } from "../scripts/build-toolchain.mjs";
+import {
+  SUPPORTED_BUILD_NODE_RANGE,
+  verifyBuildNodeVersion,
+  verifyInstalledBuildToolchain,
+} from "../scripts/build-toolchain.mjs";
 
 const temporaryDirectories = [];
 
@@ -10,10 +14,16 @@ async function toolchainFixture({ declared = "^8.1.5", locked = "8.1.5", install
   const root = await mkdtemp(path.join(tmpdir(), "pdf-tools-build-toolchain-"));
   temporaryDirectories.push(root);
   await mkdir(path.join(root, "node_modules", "vite"), { recursive: true });
-  await writeFile(path.join(root, "package.json"), JSON.stringify({ devDependencies: { vite: declared } }));
+  await writeFile(path.join(root, "package.json"), JSON.stringify({
+    engines: { node: SUPPORTED_BUILD_NODE_RANGE },
+    devDependencies: { vite: declared },
+  }));
   await writeFile(path.join(root, "package-lock.json"), JSON.stringify({
     packages: {
-      "": { devDependencies: { vite: declared } },
+      "": {
+        engines: { node: SUPPORTED_BUILD_NODE_RANGE },
+        devDependencies: { vite: declared },
+      },
       "node_modules/vite": { version: locked },
     },
   }));
@@ -41,9 +51,34 @@ describe("MCPB build toolchain preflight", () => {
   it("rejects package and lock declarations that drift apart", async () => {
     const root = await toolchainFixture();
     const packageJson = path.join(root, "package.json");
-    await writeFile(packageJson, JSON.stringify({ devDependencies: { vite: "^8.0.9" } }));
+    await writeFile(packageJson, JSON.stringify({
+      engines: { node: SUPPORTED_BUILD_NODE_RANGE },
+      devDependencies: { vite: "^8.0.9" },
+    }));
     expect(() => verifyInstalledBuildToolchain(root, ["vite"])).toThrow(
       "Build toolchain lock is incomplete or stale for vite",
+    );
+  });
+
+  it.each(["20.19.0", "20.20.1", "22.12.0", "22.22.3", "24.0.0", "25.1.0"])(
+    "accepts supported contributor Node version %s",
+    version => {
+      expect(() => verifyBuildNodeVersion(version)).not.toThrow();
+    },
+  );
+
+  it.each(["18.20.8", "20.18.1", "21.7.3", "22.11.0", "22.12.0-rc.1", "not-a-version"])(
+    "rejects unsupported contributor Node version %s",
+    version => {
+      expect(() => verifyBuildNodeVersion(version)).toThrow(
+        `PDF Tools build/test requires Node ${SUPPORTED_BUILD_NODE_RANGE}; found ${version}.`,
+      );
+    },
+  );
+
+  it("rejects engine metadata drift", () => {
+    expect(() => verifyBuildNodeVersion("22.22.3", ">=18")).toThrow(
+      `package.json engines.node must remain ${SUPPORTED_BUILD_NODE_RANGE}; found >=18`,
     );
   });
 });

@@ -14,6 +14,15 @@ up with upstream MCP changes.
 
 ## Maintainer quickstart
 
+Contributor installs, tests, and UI/MCPB builds require Node.js 20.19+ or
+22.12+. The range is declared in `package.json`; `npm test`, `npm run build:ui`,
+and `npm run build:mcpb` also fail early when the active Node version is outside
+that range. Run `npm ci` again after changing Node versions.
+
+This is the repository tooling floor imposed by Vite and Vitest. It does not
+substitute for testing the packed extension against the Node/Electron runtime
+actually embedded by each supported desktop host.
+
 ```
 npm install
 node server/index.js

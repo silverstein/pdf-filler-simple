@@ -10,7 +10,9 @@
 - `display_pdf`, `list_pdfs`, `read_pdf_fields`, `fill_pdf`, `bulk_fill_from_csv`, `save_profile`, `load_profile`, `list_profiles`, `fill_with_profile`, `extract_to_csv`, `validate_pdf`, `read_pdf_content`, `get_pdf_resource_uri`, `read_pdf_bytes` (app-only).
 
 ## Build, Test, and Development Commands
-- `npm install`: install runtime dependencies (Node.js 18+).
+- `npm install`: install dependencies with Node.js 20.19+ or 22.12+; this is
+  the contributor build/test floor imposed by Vite, not a claim about the
+  Node runtime embedded by a desktop host.
 - `node server/index.js`: run the MCP server over stdio for local hosts (Cursor, Claude) and watch stderr for diagnostics.
 - `node package-for-friend.js`: regenerate `pdf-toolkit-mcp.zip`; requires the `zip` CLI and ensures shareable installers stay current.
 - `npm run build:mcpb`: build the UI, create a clean production bundle with the locked macOS/Windows native canvas packages, and verify the `.mcpb` contents.
