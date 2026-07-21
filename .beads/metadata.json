@@ -2,6 +2,6 @@
   "database": "dolt",
   "backend": "dolt",
   "dolt_mode": "server",
-  "dolt_database": "pdf_toolkit_mcp",
+  "dolt_database": "dolt",
   "project_id": "53ba99b4-ec04-4dfc-9329-2d740a4b6eef"
 }
