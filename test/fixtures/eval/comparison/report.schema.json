@@ -95,6 +95,8 @@
       }
     },
     "region": {
+      "$comment": "pdfToolsWithinPageBox is a fail-closed Ajv extension enforced by the canonical validator because JSON Schema has no portable array cross-item arithmetic.",
+      "pdfToolsWithinPageBox": [612, 792],
       "type": "array",
       "prefixItems": [
         { "type": "number", "minimum": 0 }, { "type": "number", "minimum": 0 },
@@ -165,7 +167,7 @@
         "pair_id", "before_sha256", "after_sha256", "status", "channel_status", "alignments",
         "observations", "detected_events", "presentation_decisions", "timing_samples_ms",
         "warmup_ms", "warmup_cost", "iteration_costs", "peak_rss_bytes", "resource_measurement_status",
-        "rendered_pixels", "tool_calls", "bytes_read", "source_immutable",
+        "rendered_pixels", "tool_calls", "logical_input_bytes", "source_immutable",
         "undeclared_requests", "model_transport_requests"
       ],
       "properties": {
@@ -186,7 +188,7 @@
         "resource_measurement_status": { "enum": ["in_process", "child_process", "unavailable"] },
         "rendered_pixels": { "type": "integer", "minimum": 0 },
         "tool_calls": { "type": "integer", "minimum": 0 },
-        "bytes_read": { "type": "integer", "minimum": 0 },
+        "logical_input_bytes": { "type": "integer", "minimum": 0 },
         "source_immutable": { "type": "boolean" },
         "undeclared_requests": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "model_transport_requests": { "type": "integer", "minimum": 0 }
@@ -195,10 +197,10 @@
     "iterationCost": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["tool_calls", "bytes_read", "rendered_pixels", "peak_rss_bytes"],
+      "required": ["tool_calls", "logical_input_bytes", "rendered_pixels", "peak_rss_bytes"],
       "properties": {
         "tool_calls": { "type": "integer", "minimum": 0 },
-        "bytes_read": { "type": "integer", "minimum": 0 },
+        "logical_input_bytes": { "type": "integer", "minimum": 0 },
         "rendered_pixels": { "type": "integer", "minimum": 0 },
         "peak_rss_bytes": { "type": ["integer", "null"], "minimum": 0 }
       }

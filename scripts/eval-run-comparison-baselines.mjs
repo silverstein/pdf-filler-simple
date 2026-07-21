@@ -6,7 +6,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import Ajv2020 from "ajv/dist/2020.js";
 import {
   loadComparisonManifest,
   resolveComparisonDocumentPath,
@@ -16,6 +15,7 @@ import { buildProductPrimitiveReport } from "../test/eval/comparison-product-bas
 import { buildPopplerComparisonSensor } from "../test/eval/comparison-poppler-baseline.js";
 import { buildControllerObservationRegistry } from "../test/eval/comparison-observation-registry.js";
 import { rendererFingerprint } from "../test/eval/comparison-observations.js";
+import { createComparisonAjv } from "../test/eval/comparison-schema-ajv.js";
 import { scoreComparisonReport, validateComparisonReport } from "../test/eval/comparison-scorer.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -49,7 +49,7 @@ async function writeJson(filePath, value) {
 }
 
 const manifest = await loadComparisonManifest(MANIFEST_PATH);
-const ajv = new Ajv2020({ allErrors: true, strict: true, allowUnionTypes: true });
+const ajv = createComparisonAjv();
 const manifestSchema = JSON.parse(await fs.readFile(path.join(
   REPO_ROOT, "test", "fixtures", "eval", "comparison", "manifest.schema.json"
 ), "utf8"));

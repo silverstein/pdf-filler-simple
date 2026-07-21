@@ -131,6 +131,8 @@
       }
     },
     "region": {
+      "$comment": "pdfToolsWithinPageBox is a fail-closed Ajv extension enforced by the canonical validator because JSON Schema has no portable array cross-item arithmetic.",
+      "pdfToolsWithinPageBox": [612, 792],
       "type": "array",
       "prefixItems": [
         { "type": "number", "minimum": 0 },

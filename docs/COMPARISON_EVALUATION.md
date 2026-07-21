@@ -154,7 +154,10 @@ their shell boundary is not OS-enforced, and network denial is not enforced.
 They therefore report those states honestly and cannot pass the global scorer,
 even when individual pair-level capability metrics are useful. Their separate
 controller observation registries freeze report and observation digests, but
-are unsigned and are not independent attestations.
+are unsigned and are not independent attestations. The scorer reserves global
+`passed: true` for a verified controller attestation; v1 deliberately implements
+no path that upgrades an unsigned registry to verified, even when caller-supplied
+isolation flags say otherwise. Pair-level diagnostic passes remain available.
 
 All system-under-test and tool network access is denied during a scored run.
 When a remote model is used, only its predeclared inference endpoint is
@@ -223,7 +226,7 @@ The report keeps these metrics separate:
 - explanation salience and factuality, scored only after deterministic facts;
 - source immutability and undeclared external requests;
 - wall latency, peak child RSS, rendered pixels, pages inspected, tool calls,
-  and bytes read; and
+  and logical input bytes processed (not instrumented physical I/O); and
 - operating system, architecture, Node/runtime, parser, renderer, host, and
   model cost where applicable.
 
@@ -249,6 +252,8 @@ are not treated as factual merely because the underlying event matched.
 - no fabricated event, unsupported candidate facet, channel false positive, or
   evidence reference that fails binding;
 - no undeclared external request;
+- independently retained raw-result bindings for every observation and a
+  verified controller attestation for any global pass;
 - every material claim has evidence from both versions when both regions exist;
 - every candidate event has exactly one mode-matched presentation decision,
   and every matched event has the correct predeclared salience;

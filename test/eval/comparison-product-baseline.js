@@ -6,6 +6,7 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { COMPARISON_CHANNELS } from "./comparison-manifest.js";
+import { registerControllerObservationRecords } from "./comparison-observation-registry.js";
 import { rendererFingerprint } from "./comparison-observations.js";
 import { buildComparisonPairFromInspections } from "./comparison-reference-baseline.js";
 
@@ -143,6 +144,7 @@ export async function buildProductPrimitiveReport({
   });
   await client.connect(transport);
   const pairReports = [];
+  const controllerRecords = [];
   try {
     for (const pair of pairs) {
       let inspected;
@@ -156,7 +158,7 @@ export async function buildProductPrimitiveReport({
         const elapsed = performance.now() - started;
         const candidateCost = {
           tool_calls: 8,
-          bytes_read: candidate.before.size + candidate.after.size,
+          logical_input_bytes: candidate.before.size + candidate.after.size,
           rendered_pixels: [...candidate.before.renders, ...candidate.after.renders]
             .reduce((sum, render) => sum + render.width * render.height, 0),
           peak_rss_bytes: null,
@@ -174,7 +176,7 @@ export async function buildProductPrimitiveReport({
         fs.readFile(pair.beforePath).then(digest),
         fs.readFile(pair.afterPath).then(digest),
       ]);
-      const report = buildComparisonPairFromInspections({
+      const built = buildComparisonPairFromInspections({
         pairId: pair.pairId,
         ...inspected,
         renderer,
@@ -190,6 +192,8 @@ export async function buildProductPrimitiveReport({
           ["annotation", "metadata"].includes(channel) ? "unavailable" : "supported",
         ])),
       });
+      const report = built.pairReport;
+      controllerRecords.push(...built.controllerRecords);
       report.source_immutable = sourceHashes[0] === report.before_sha256
         && sourceHashes[1] === report.after_sha256;
       pairReports.push(report);
@@ -198,7 +202,7 @@ export async function buildProductPrimitiveReport({
     await transport.close();
   }
   const packageJson = JSON.parse(await fs.readFile(path.join(repositoryRoot, "package.json"), "utf8"));
-  return {
+  const report = {
     report_schema_version: 1,
     benchmark_id: benchmarkId,
     benchmark_version: benchmarkVersion,
@@ -234,4 +238,5 @@ export async function buildProductPrimitiveReport({
     },
     pairs: pairReports,
   };
+  return registerControllerObservationRecords(report, controllerRecords);
 }

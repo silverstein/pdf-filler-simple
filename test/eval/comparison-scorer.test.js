@@ -1,15 +1,18 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { loadComparisonManifest } from "./comparison-manifest.js";
-import { buildControllerObservationRegistry } from "./comparison-observation-registry.js";
+import {
+  buildControllerObservationRegistry,
+  copyControllerObservationRecords,
+} from "./comparison-observation-registry.js";
 import {
   buildOracleCalibrationReport,
   scoreComparisonReport,
   validateComparisonReport,
 } from "./comparison-scorer.js";
+import { createComparisonAjv } from "./comparison-schema-ajv.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MANIFEST_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "comparison", "manifest.v1.json");
@@ -17,7 +20,8 @@ const REPORT_SCHEMA_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "com
 
 function mutate(report, callback) {
   const copy = structuredClone(report);
-  callback(copy);
+  const additionalControllerRecords = callback(copy) ?? [];
+  copyControllerObservationRecords(report, copy, additionalControllerRecords);
   return copy;
 }
 
@@ -39,13 +43,14 @@ describe("comparison scorer calibration", () => {
     const manifest = await loadComparisonManifest(MANIFEST_PATH);
     const report = buildOracleCalibrationReport(manifest);
     const schema = JSON.parse(await fs.readFile(REPORT_SCHEMA_PATH, "utf8"));
-    const ajv = new Ajv2020({ allErrors: true, strict: true, allowUnionTypes: true });
+    const ajv = createComparisonAjv();
     const validateSchema = ajv.compile(schema);
     expect(validateSchema(report), JSON.stringify(validateSchema.errors)).toBe(true);
     expect(validateComparisonReport(manifest, report)).toEqual([]);
     const scored = scoreReport(manifest, report);
     expect(scored.valid).toBe(true);
-    expect(scored.passed).toBe(true);
+    expect(scored.passed).toBe(false);
+    expect(scored.aggregate.isolation_passed).toBe(false);
     expect(scored.benchmark_claim_ready).toBe(false);
     expect(scored.aggregate.event_metrics).toMatchObject({ tp: 9, fp: 0, fn: 0, precision: 1, recall: 1, f1: 1 });
     expect(scored.aggregate.evidence_metrics).toMatchObject({
@@ -211,6 +216,12 @@ describe("comparison scorer hostile reports", () => {
         disposition: "report",
         rationale: "Hostile duplicate with unsupported evidence.",
       });
+      return [{
+        pair_id: target.pair_id,
+        observation_id: "evidence.orphan.visual",
+        raw_result_sha256: target.observations.at(-1).raw_result_sha256,
+        capture: target.observations.at(-1).capture,
+      }];
     });
     const scored = scoreReport(manifest, report);
     const target = scored.pairs.find(pair => pair.role === "material_text");
@@ -250,12 +261,12 @@ describe("comparison scorer hostile reports", () => {
     expect(scored.passed).toBe(false);
   });
 
-  it("hard-fails fabricated extra facets and wrong salience", async () => {
+  it("rejects cross-channel evidence reuse and hard-fails wrong salience", async () => {
     const manifest = await loadComparisonManifest(MANIFEST_PATH);
-    const report = mutate(buildOracleCalibrationReport(manifest), copy => {
+    const base = buildOracleCalibrationReport(manifest);
+    const crossChannel = mutate(base, copy => {
       const target = reportPair(copy, "visual_status");
       const event = target.detected_events[0];
-      event.salience = "unknown";
       event.facets.push({
         channel: "semantic",
         operation: "modified",
@@ -263,11 +274,15 @@ describe("comparison scorer hostile reports", () => {
         after_evidence_id: event.facets[0].after_evidence_id,
       });
     });
+    const crossChannelScore = scoreReport(manifest, crossChannel);
+    expect(crossChannelScore.valid).toBe(false);
+    expect(crossChannelScore.validation_errors.some(error => error.includes("different channel"))).toBe(true);
+
+    const report = mutate(base, copy => {
+      reportPair(copy, "visual_status").detected_events[0].salience = "unknown";
+    });
     const scored = scoreReport(manifest, report);
     const target = scored.pairs.find(pair => pair.role === "visual_only");
-    expect(target.channel_metrics.semantic.fp).toBe(1);
-    expect(target.hard_gates.no_unsupported_candidate_facets).toBe(false);
-    expect(target.hard_gates.no_channel_false_positives).toBe(false);
     expect(target.hard_gates.salience_correct).toBe(false);
     expect(scored.passed).toBe(false);
   });
@@ -301,6 +316,8 @@ describe("comparison scorer hostile reports", () => {
       reportPair(copy, "material_text").observations[0].region[0] = -1;
     });
     expect(validateComparisonReport(manifest, report).some(error => error.includes("within the page box"))).toBe(true);
+    const schema = JSON.parse(await fs.readFile(REPORT_SCHEMA_PATH, "utf8"));
+    expect(createComparisonAjv().compile(schema)(report)).toBe(false);
   });
 
   it("rejects candidate evidence and isolation digests that drift after controller freeze", async () => {
@@ -325,6 +342,32 @@ describe("comparison scorer hostile reports", () => {
     expect(isolationScore.valid).toBe(false);
     expect(isolationScore.validation_errors)
       .toContain("registry.allowed_directory_evidence_sha256 does not bind report isolation evidence");
+  });
+
+  it("rejects a forged raw-result digest even when the registry is built afterward", async () => {
+    const manifest = await loadComparisonManifest(MANIFEST_PATH);
+    const forged = mutate(buildOracleCalibrationReport(manifest), copy => {
+      reportPair(copy, "material_text").observations[0].raw_result_sha256 = "0".repeat(64);
+    });
+    const scored = scoreReport(manifest, forged);
+    expect(scored.valid).toBe(false);
+    expect(scored.validation_errors.some(error =>
+      error.includes("not bound to an independently retained raw result"))).toBe(true);
+  });
+
+  it("never lets caller-supplied isolation flags turn an unsigned registry into a global pass", async () => {
+    const manifest = await loadComparisonManifest(MANIFEST_PATH);
+    const report = buildOracleCalibrationReport(manifest);
+    const registry = buildControllerObservationRegistry(report, {
+      truth_loaded_after_report_freeze: true,
+      network_enforcement: "denied",
+    });
+    expect(registry.controller.attestation_status).toBe("unsigned");
+    const scored = scoreComparisonReport(manifest, report, registry);
+    expect(scored.valid).toBe(true);
+    expect(scored.aggregate.pairs_passed).toBe(7);
+    expect(scored.aggregate.isolation_passed).toBe(false);
+    expect(scored.passed).toBe(false);
   });
 
   it("fails closed when the report's observed renderer identity drifts", async () => {

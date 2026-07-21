@@ -1,6 +1,9 @@
 import { createHash } from "node:crypto";
 import { COMPARISON_CHANNELS } from "./comparison-manifest.js";
-import { validateControllerObservationRegistry } from "./comparison-observation-registry.js";
+import {
+  registerControllerObservationRecords,
+  validateControllerObservationRegistry,
+} from "./comparison-observation-registry.js";
 import { rendererFingerprint } from "./comparison-observations.js";
 
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -56,7 +59,7 @@ function validateAlignment(value, location, errors) {
   }
 }
 
-function validateObservation(value, location, allowedHashes, observationIds, errors) {
+function validateObservation(value, location, allowedHashes, observationIds, observationChannels, errors) {
   if (!exactKeys(value, [
     "id", "channel", "document_sha256", "page", "page_box", "rotation", "region",
     "value_sha256", "raw_result_sha256", "capture",
@@ -64,6 +67,7 @@ function validateObservation(value, location, allowedHashes, observationIds, err
   if (!/^evidence\.[a-z0-9.-]+$/.test(value.id ?? "")) errors.push(`${location}.id is invalid`);
   if (observationIds.has(value.id)) errors.push(`${location}.id is duplicated`);
   observationIds.add(value.id);
+  observationChannels.set(value.id, value.channel);
   if (!CHANNELS.has(value.channel)) errors.push(`${location}.channel is unsupported`);
   if (!allowedHashes.has(value.document_sha256)) errors.push(`${location}.document_sha256 is not one of the exact pair inputs`);
   if (!Number.isInteger(value.page) || value.page < 1) errors.push(`${location}.page must be positive`);
@@ -77,7 +81,7 @@ function validateObservation(value, location, allowedHashes, observationIds, err
   }
 }
 
-function validateDetectedEvent(value, location, truthIds, observationIds, eventIds, errors) {
+function validateDetectedEvent(value, location, truthIds, observationIds, observationChannels, eventIds, errors) {
   if (!exactKeys(value, ["id", "salience", "confidence", "summary", "facets"], [], location, errors)) return;
   if (!/^candidate\.[a-z0-9.-]+$/.test(value.id ?? "")) errors.push(`${location}.id is invalid`);
   if (truthIds.has(value.id)) errors.push(`${location}.id must not equal a truth event ID`);
@@ -101,6 +105,9 @@ function validateDetectedEvent(value, location, truthIds, observationIds, eventI
     for (const key of ["before_evidence_id", "after_evidence_id"]) {
       const id = facet[key];
       if (id !== null && !observationIds.has(id)) errors.push(`${facetLocation}.${key} references unknown evidence`);
+      if (id !== null && observationChannels.get(id) !== facet.channel) {
+        errors.push(`${facetLocation}.${key} references evidence from a different channel`);
+      }
     }
     if (facet.operation === "added" && facet.before_evidence_id !== null) errors.push(`${facetLocation}.before_evidence_id must be null for added`);
     if (facet.operation === "removed" && facet.after_evidence_id !== null) errors.push(`${facetLocation}.after_evidence_id must be null for removed`);
@@ -116,7 +123,7 @@ function validatePairReport(pairReport, truthPair, truthIds, reportMode, errors,
     "pair_id", "before_sha256", "after_sha256", "status", "channel_status",
     "alignments", "observations", "detected_events", "presentation_decisions",
     "timing_samples_ms", "warmup_ms", "warmup_cost", "iteration_costs", "peak_rss_bytes",
-    "resource_measurement_status", "rendered_pixels", "tool_calls", "bytes_read",
+    "resource_measurement_status", "rendered_pixels", "tool_calls", "logical_input_bytes",
     "source_immutable", "undeclared_requests", "model_transport_requests",
   ], [], location, errors)) return;
   if (!truthPair) {
@@ -133,14 +140,21 @@ function validatePairReport(pairReport, truthPair, truthIds, reportMode, errors,
   if (!Array.isArray(pairReport.alignments)) errors.push(`${location}.alignments must be an array`);
   else pairReport.alignments.forEach((alignment, index) => validateAlignment(alignment, `${location}.alignments[${index}]`, errors));
   const observationIds = new Set();
+  const observationChannels = new Map();
   const allowedHashes = new Set([truthPair.before.sha256, truthPair.after.sha256]);
   if (!Array.isArray(pairReport.observations)) errors.push(`${location}.observations must be an array`);
   else pairReport.observations.forEach((observation, index) =>
-    validateObservation(observation, `${location}.observations[${index}]`, allowedHashes, observationIds, errors));
+    validateObservation(
+      observation, `${location}.observations[${index}]`, allowedHashes,
+      observationIds, observationChannels, errors,
+    ));
   const eventIds = new Set();
   if (!Array.isArray(pairReport.detected_events)) errors.push(`${location}.detected_events must be an array`);
   else pairReport.detected_events.forEach((event, index) =>
-    validateDetectedEvent(event, `${location}.detected_events[${index}]`, truthIds, observationIds, eventIds, errors));
+    validateDetectedEvent(
+      event, `${location}.detected_events[${index}]`, truthIds,
+      observationIds, observationChannels, eventIds, errors,
+    ));
   if (!Array.isArray(pairReport.presentation_decisions)) errors.push(`${location}.presentation_decisions must be an array`);
   else {
     const decided = new Set();
@@ -165,8 +179,8 @@ function validatePairReport(pairReport, truthPair, truthIds, reportMode, errors,
     errors.push(`${location}.warmup_ms must be nonnegative`);
   }
   const validateCost = (cost, costLocation) => {
-    if (!exactKeys(cost, ["tool_calls", "bytes_read", "rendered_pixels", "peak_rss_bytes"], [], costLocation, errors)) return;
-    for (const key of ["tool_calls", "bytes_read", "rendered_pixels"]) {
+    if (!exactKeys(cost, ["tool_calls", "logical_input_bytes", "rendered_pixels", "peak_rss_bytes"], [], costLocation, errors)) return;
+    for (const key of ["tool_calls", "logical_input_bytes", "rendered_pixels"]) {
       if (!Number.isInteger(cost[key]) || cost[key] < 0) errors.push(`${costLocation}.${key} must be a nonnegative integer`);
     }
     if (cost.peak_rss_bytes !== null && (!Number.isInteger(cost.peak_rss_bytes) || cost.peak_rss_bytes < 0)) {
@@ -187,11 +201,11 @@ function validatePairReport(pairReport, truthPair, truthIds, reportMode, errors,
     && (!Number.isInteger(pairReport.peak_rss_bytes) || pairReport.peak_rss_bytes < 0)) {
     errors.push(`${location}.peak_rss_bytes must be measured when resource measurement is available`);
   }
-  for (const key of ["rendered_pixels", "tool_calls", "bytes_read", "model_transport_requests"]) {
+  for (const key of ["rendered_pixels", "tool_calls", "logical_input_bytes", "model_transport_requests"]) {
     if (!Number.isInteger(pairReport[key]) || pairReport[key] < 0) errors.push(`${location}.${key} must be a nonnegative integer`);
   }
   if (pairReport.warmup_cost && Array.isArray(pairReport.iteration_costs)) {
-    for (const key of ["rendered_pixels", "tool_calls", "bytes_read"]) {
+    for (const key of ["rendered_pixels", "tool_calls", "logical_input_bytes"]) {
       const measuredTotal = pairReport.warmup_cost[key]
         + pairReport.iteration_costs.reduce((sum, cost) => sum + (cost?.[key] ?? 0), 0);
       if (pairReport[key] !== measuredTotal) errors.push(`${location}.${key} does not equal warm-up plus measured iterations`);
@@ -293,7 +307,7 @@ function intersectionOverUnion(left, right) {
   return union === 0 ? 0 : intersection / union;
 }
 
-function assessAnchor(expected, evidenceId, observations) {
+function assessAnchor(expected, evidenceId, observations, channel) {
   if (expected === null) return {
     content_matched: evidenceId === null,
     evidence_matched: evidenceId === null,
@@ -303,6 +317,7 @@ function assessAnchor(expected, evidenceId, observations) {
   if (evidenceId === null) return { content_matched: false, evidence_matched: false, expected: true, iou: null };
   const actual = observations.get(evidenceId);
   const sourceBound = Boolean(actual
+    && actual.channel === channel
     && actual.document_sha256 === expected.document_sha256
     && actual.page === expected.page
     && canonical(actual.page_box) === canonical(expected.page_box)
@@ -317,8 +332,8 @@ function assessAnchor(expected, evidenceId, observations) {
 }
 
 function assessFacet(expected, actual, observations) {
-  const before = assessAnchor(expected.before, actual?.before_evidence_id ?? null, observations);
-  const after = assessAnchor(expected.after, actual?.after_evidence_id ?? null, observations);
+  const before = assessAnchor(expected.before, actual?.before_evidence_id ?? null, observations, expected.channel);
+  const after = assessAnchor(expected.after, actual?.after_evidence_id ?? null, observations, expected.channel);
   return {
     before,
     after,
@@ -572,7 +587,7 @@ function scorePair(truthPair, pairReport, mode) {
       resource_measurement_status: pairReport.resource_measurement_status,
       rendered_pixels: pairReport.rendered_pixels,
       tool_calls: pairReport.tool_calls,
-      bytes_read: pairReport.bytes_read,
+      logical_input_bytes: pairReport.logical_input_bytes,
       model_transport_requests: pairReport.model_transport_requests,
     },
   };
@@ -625,7 +640,8 @@ export function scoreComparisonReport(manifest, report, registry) {
       && report.isolation.shell_access === false
       && report.isolation.sut_network === "denied"
       && registry.controller.truth_loaded_after_report_freeze === true
-      && registry.controller.network_enforcement === "denied",
+      && registry.controller.network_enforcement === "denied"
+      && registry.controller.attestation_status === "verified",
     benchmark_id: manifest.benchmark_id,
     benchmark_version: manifest.benchmark_version,
     report_sha256: digest(report),
@@ -658,15 +674,23 @@ export function scoreComparisonReport(manifest, report, registry) {
         && report.isolation.shell_access === false
         && report.isolation.sut_network === "denied"
         && registry.controller.truth_loaded_after_report_freeze === true
-        && registry.controller.network_enforcement === "denied",
+        && registry.controller.network_enforcement === "denied"
+        && registry.controller.attestation_status === "verified",
     },
     pairs: pairScores,
   };
   return result;
 }
 
-function calibrationObservation(anchor, channel, id) {
+function calibrationObservation(anchor, channel, id, pairId, controllerRecords) {
   if (anchor === null) return null;
+  const rawResultSha256 = digest({ anchor, channel });
+  controllerRecords.push({
+    pair_id: pairId,
+    observation_id: id,
+    raw_result_sha256: rawResultSha256,
+    capture: "oracle_calibration",
+  });
   return {
     id,
     channel,
@@ -676,14 +700,15 @@ function calibrationObservation(anchor, channel, id) {
     rotation: anchor.rotation,
     region: anchor.region,
     value_sha256: anchor.value_sha256,
-    raw_result_sha256: digest({ anchor, channel }),
+    raw_result_sha256: rawResultSha256,
     capture: "oracle_calibration",
   };
 }
 
 export function buildOracleCalibrationReport(manifest, mode = "default_material") {
   const documentById = new Map(manifest.documents.map(document => [document.id, document]));
-  return {
+  const controllerRecords = [];
+  const report = {
     report_schema_version: 1,
     benchmark_id: manifest.benchmark_id,
     benchmark_version: manifest.benchmark_version,
@@ -726,8 +751,12 @@ export function buildOracleCalibrationReport(manifest, mode = "default_material"
         summary: event.summary,
         facets: event.facets.map((facet, facetIndex) => {
           const prefix = `evidence.p${pairIndex + 1}.e${eventIndex + 1}.f${facetIndex + 1}`;
-          const before = calibrationObservation(facet.before, facet.channel, `${prefix}.before`);
-          const after = calibrationObservation(facet.after, facet.channel, `${prefix}.after`);
+          const before = calibrationObservation(
+            facet.before, facet.channel, `${prefix}.before`, pair.id, controllerRecords,
+          );
+          const after = calibrationObservation(
+            facet.after, facet.channel, `${prefix}.after`, pair.id, controllerRecords,
+          );
           if (before) observations.push(before);
           if (after) observations.push(after);
           return {
@@ -755,19 +784,20 @@ export function buildOracleCalibrationReport(manifest, mode = "default_material"
         })),
         timing_samples_ms: [0, 0, 0, 0, 0],
         warmup_ms: 0,
-        warmup_cost: { tool_calls: 0, bytes_read: 0, rendered_pixels: 0, peak_rss_bytes: 0 },
+        warmup_cost: { tool_calls: 0, logical_input_bytes: 0, rendered_pixels: 0, peak_rss_bytes: 0 },
         iteration_costs: Array.from({ length: 5 }, () => ({
-          tool_calls: 0, bytes_read: 0, rendered_pixels: 0, peak_rss_bytes: 0,
+          tool_calls: 0, logical_input_bytes: 0, rendered_pixels: 0, peak_rss_bytes: 0,
         })),
         peak_rss_bytes: 0,
         resource_measurement_status: "in_process",
         rendered_pixels: 0,
         tool_calls: 0,
-        bytes_read: 0,
+        logical_input_bytes: 0,
         source_immutable: true,
         undeclared_requests: [],
         model_transport_requests: 0,
       };
     }),
   };
+  return registerControllerObservationRecords(report, controllerRecords);
 }

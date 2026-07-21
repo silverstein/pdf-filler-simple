@@ -7,6 +7,7 @@ import {
   rendererFingerprint,
 } from "./comparison-observations.js";
 import { COMPARISON_CHANNELS } from "./comparison-manifest.js";
+import { registerControllerObservationRecords } from "./comparison-observation-registry.js";
 
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -33,6 +34,7 @@ function makeObservation(state, channel, document, pageNumber, region, valueSha2
   const id = `evidence.reference.${state.observationSequence}`;
   state.observationSequence += 1;
   const page = document.pages[pageNumber - 1];
+  const rawResultSha256 = digest(payload);
   state.observations.push({
     id,
     channel,
@@ -42,7 +44,13 @@ function makeObservation(state, channel, document, pageNumber, region, valueSha2
     rotation: 0,
     region,
     value_sha256: valueSha256,
-    raw_result_sha256: digest(payload),
+    raw_result_sha256: rawResultSha256,
+    capture: state.capture,
+  });
+  state.controllerRecords.push({
+    pair_id: state.pairId,
+    observation_id: id,
+    raw_result_sha256: rawResultSha256,
     capture: state.capture,
   });
   return id;
@@ -269,7 +277,7 @@ export async function buildSharedLibraryPairReport({ pairId, beforePath, afterPa
     peakRss = Math.max(peakRss, process.memoryUsage().rss);
     const candidateCost = {
       tool_calls: 0,
-      bytes_read: candidate.before.size + candidate.after.size,
+      logical_input_bytes: candidate.before.size + candidate.after.size,
       rendered_pixels: [...candidate.before.renders, ...candidate.after.renders]
         .reduce((sum, render) => sum + render.width * render.height, 0),
       peak_rss_bytes: peakRss,
@@ -317,11 +325,13 @@ export function buildComparisonPairFromInspections({
   const alignments = deriveAlignments(before, after);
   const pages = alignedPages(before, after, alignments);
   const state = {
+    pairId,
     observationSequence: 1,
     eventSequence: 1,
     observations: [],
     detectedEvents: [],
     presentationDecisions: [],
+    controllerRecords: [],
     capture,
   };
   const textChanges = detectTextChanges(state, before, after, pages, renderer);
@@ -337,7 +347,7 @@ export function buildComparisonPairFromInspections({
     renderer,
     textChanges + structureChanges + fieldChanges + annotationChanges + metadataChanges,
   );
-  return {
+  return { pairReport: {
     pair_id: pairId,
     before_sha256: before.sha256,
     after_sha256: after.sha256,
@@ -356,11 +366,12 @@ export function buildComparisonPairFromInspections({
     rendered_pixels: warmupCost.rendered_pixels
       + iterationCosts.reduce((sum, cost) => sum + cost.rendered_pixels, 0),
     tool_calls: warmupCost.tool_calls + iterationCosts.reduce((sum, cost) => sum + cost.tool_calls, 0),
-    bytes_read: warmupCost.bytes_read + iterationCosts.reduce((sum, cost) => sum + cost.bytes_read, 0),
+    logical_input_bytes: warmupCost.logical_input_bytes
+      + iterationCosts.reduce((sum, cost) => sum + cost.logical_input_bytes, 0),
     source_immutable: true,
     undeclared_requests: [],
     model_transport_requests: 0,
-  };
+  }, controllerRecords: state.controllerRecords };
 }
 
 export async function buildSharedLibraryReferenceReport({
@@ -370,8 +381,13 @@ export async function buildSharedLibraryReferenceReport({
   pairs,
 }) {
   const pairReports = [];
-  for (const pair of pairs) pairReports.push(await buildSharedLibraryPairReport({ ...pair, renderer }));
-  return {
+  const controllerRecords = [];
+  for (const pair of pairs) {
+    const built = await buildSharedLibraryPairReport({ ...pair, renderer });
+    pairReports.push(built.pairReport);
+    controllerRecords.push(...built.controllerRecords);
+  }
+  const report = {
     report_schema_version: 1,
     benchmark_id: benchmarkId,
     benchmark_version: benchmarkVersion,
@@ -407,4 +423,5 @@ export async function buildSharedLibraryReferenceReport({
     },
     pairs: pairReports,
   };
+  return registerControllerObservationRecords(report, controllerRecords);
 }

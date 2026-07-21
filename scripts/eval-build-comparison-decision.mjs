@@ -82,6 +82,7 @@ const sourceBindingPaths = [
   "test/fixtures/eval/comparison/decision.schema.json",
   "test/eval/comparison-manifest.js",
   "test/eval/comparison-observations.js",
+  "test/eval/comparison-schema-ajv.js",
   "test/eval/comparison-observation-registry.js",
   "test/eval/comparison-scorer.js",
   "test/eval/comparison-reference-baseline.js",

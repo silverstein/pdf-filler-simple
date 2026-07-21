@@ -2,7 +2,6 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import Ajv2020 from "ajv/dist/2020.js";
 import { PDFArray, PDFDocument, PDFName } from "pdf-lib";
 import { afterEach, describe, expect, it } from "vitest";
 import { generateComparisonFixtures } from "../../scripts/eval-generate-comparison-fixtures.mjs";
@@ -13,6 +12,7 @@ import {
   validateComparisonManifest,
   verifyComparisonDocuments,
 } from "./comparison-manifest.js";
+import { createComparisonAjv } from "./comparison-schema-ajv.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MANIFEST_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "comparison", "manifest.v1.json");
@@ -41,7 +41,7 @@ describe("comparison corpus contract", () => {
     ]);
     const schema = JSON.parse(schemaText);
     const manifest = JSON.parse(manifestText);
-    const ajv = new Ajv2020({ allErrors: true, strict: true });
+    const ajv = createComparisonAjv();
     const validate = ajv.compile(schema);
     expect(validate(manifest), JSON.stringify(validate.errors)).toBe(true);
     expect(validateComparisonManifest(manifest)).toEqual([]);
@@ -159,5 +159,9 @@ describe("comparison manifest hostile mutations", () => {
       pair(copy, "material_text").events[0].facets[0].before.region = [600, 780, 20, 20];
     });
     expect(validateComparisonManifest(overflow).some(error => error.includes("within the 612x792 page box"))).toBe(true);
+    const schema = JSON.parse(await fs.readFile(SCHEMA_PATH, "utf8"));
+    const validateSchema = createComparisonAjv().compile(schema);
+    expect(validateSchema(negative)).toBe(false);
+    expect(validateSchema(overflow)).toBe(false);
   });
 });

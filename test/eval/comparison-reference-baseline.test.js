@@ -40,7 +40,7 @@ describe("truth-blind shared-library comparison reference", () => {
     expect(report.benchmark_claim_ready).toBe(false);
     expect(report.claim_boundary).toContain("not independent confirmation");
     expect(report.pairs.every(pair => pair.tool_calls === 0
-      && pair.bytes_read === pair.warmup_cost.bytes_read * 6
+      && pair.logical_input_bytes === pair.warmup_cost.logical_input_bytes * 6
       && pair.rendered_pixels === pair.warmup_cost.rendered_pixels * 6)).toBe(true);
   }, 60_000);
 });
