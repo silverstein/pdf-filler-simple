@@ -12,7 +12,7 @@ import {
   ErrorCode,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
-import { PDFDocument, degrees as pdfDegrees } from "pdf-lib";
+import { PDFDocument, StandardFonts, degrees as pdfDegrees } from "pdf-lib";
 import { createRequire } from "module";
 import { fileURLToPath, pathToFileURL } from "url";
 import { existsSync, realpathSync } from "fs";
@@ -695,26 +695,132 @@ function validateProfileName(name) {
   return name;
 }
 
-function normalizeStoredSignatureSummary(record) {
-  if (!record || typeof record !== "object") {
+function normalizeStoredSignatureMetadata(record) {
+  if (!record || typeof record !== "object" || Array.isArray(record)) {
     throw new Error("Stored signature record must be an object.");
   }
-  if (typeof record.name !== "string" || !record.name.trim()) {
+  const name = validateSignatureName(record.name);
+  if (!name) {
     throw new Error("Stored signature record is missing a valid name.");
   }
   if (!["typed", "image"].includes(record.style)) {
     throw new Error("Stored signature record has an unsupported style.");
   }
+
+  let displayName = null;
+  if (record.display_name !== undefined && record.display_name !== null) {
+    if (typeof record.display_name !== "string") {
+      throw new Error("Stored signature display_name must be a string.");
+    }
+    displayName = record.display_name.trim() || null;
+    if (displayName && displayName.length > 120) {
+      throw new Error("Stored signature display_name is too long (>120 chars).");
+    }
+  }
+
+  let createdAt = null;
+  if (record.created_at !== undefined && record.created_at !== null && record.created_at !== "") {
+    if (typeof record.created_at !== "string") {
+      throw new Error("Stored signature created_at must be a string when present.");
+    }
+    createdAt = record.created_at;
+  }
+
   return {
-    name: record.name,
+    name,
     style: record.style,
-    display_name: typeof record.display_name === "string" && record.display_name
-      ? record.display_name
-      : null,
+    display_name: displayName,
     // Signatures saved before created_at was introduced remain usable.
-    created_at: typeof record.created_at === "string" && record.created_at
-      ? record.created_at
-      : null,
+    created_at: createdAt,
+  };
+}
+
+function decodeStoredSignatureImage(record, mime) {
+  if (typeof record.image_data_b64 !== "string" || !record.image_data_b64.trim()) {
+    throw new Error("Stored image signature is missing image_data_b64.");
+  }
+  const encoded = record.image_data_b64.replace(/\s+/g, "");
+  const canonicalBase64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+  if (encoded.length % 4 !== 0 || !canonicalBase64.test(encoded)) {
+    throw new Error("Stored image signature contains invalid base64 data.");
+  }
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.length === 0 || bytes.toString("base64") !== encoded) {
+    throw new Error("Stored image signature contains invalid base64 data.");
+  }
+  const isPng = bytes.subarray(0, 8).toString("hex") === "89504e470d0a1a0a";
+  const isJpeg = bytes.subarray(0, 3).toString("hex") === "ffd8ff";
+  if ((mime === "image/png" && !isPng) || (mime === "image/jpeg" && !isJpeg)) {
+    throw new Error(`Stored image signature bytes do not match ${mime}.`);
+  }
+  return { bytes, encoded };
+}
+
+async function normalizeStoredSignatureRecord(record, expectedName = null) {
+  const metadata = normalizeStoredSignatureMetadata(record);
+  if (expectedName !== null && metadata.name !== expectedName) {
+    throw new Error(
+      `Stored signature record name "${metadata.name}" does not match requested signature "${expectedName}".`
+    );
+  }
+  if (metadata.style === "typed") {
+    if (!metadata.display_name) {
+      throw new Error("Stored typed signature is missing a valid display_name.");
+    }
+    try {
+      const probeDocument = await PDFDocument.create();
+      const probeFont = await probeDocument.embedFont(StandardFonts.HelveticaOblique);
+      probeFont.widthOfTextAtSize(metadata.display_name, 12);
+    } catch {
+      throw new Error("Stored typed signature display_name cannot be rendered by the signature font.");
+    }
+    return metadata;
+  }
+
+  if (typeof record.image_mime !== "string") {
+    throw new Error("Stored image signature is missing image_mime.");
+  }
+  const mime = record.image_mime.toLowerCase() === "image/jpg"
+    ? "image/jpeg"
+    : record.image_mime.toLowerCase();
+  if (mime !== "image/png" && mime !== "image/jpeg") {
+    throw new Error("Stored image signature image_mime must be image/png or image/jpeg.");
+  }
+  const { bytes, encoded } = decodeStoredSignatureImage(record, mime);
+
+  // Probe the exact decoder used during stamping before the target PDF is loaded.
+  // Header-only checks are insufficient: corrupt PNG/JPEG payloads can have valid magic bytes.
+  try {
+    const probeDocument = await PDFDocument.create();
+    if (mime === "image/png") await probeDocument.embedPng(bytes);
+    else await probeDocument.embedJpg(bytes);
+  } catch {
+    throw new Error(`Stored image signature contains invalid ${mime} image data.`);
+  }
+
+  let sourcePath;
+  if (record.source_path !== undefined && record.source_path !== null) {
+    if (typeof record.source_path !== "string" || !record.source_path) {
+      throw new Error("Stored image signature source_path must be a non-empty string when present.");
+    }
+    sourcePath = record.source_path;
+  }
+
+  return {
+    ...metadata,
+    image_mime: mime,
+    image_data_b64: encoded,
+    ...(sourcePath ? { source_path: sourcePath } : {}),
+  };
+}
+
+async function normalizeStoredSignatureSummary(record) {
+  const normalized = await normalizeStoredSignatureRecord(record);
+  return {
+    name: normalized.name,
+    style: normalized.style,
+    display_name: normalized.display_name,
+    created_at: normalized.created_at,
   };
 }
 
@@ -4303,6 +4409,7 @@ async function handleToolCall(request) {
           };
         }
 
+        signatureRecord = await normalizeStoredSignatureRecord(signatureRecord);
         await fs.writeFile(sigPath, JSON.stringify(signatureRecord, null, 2));
         const bytesOnDisk = (await fs.stat(sigPath)).size;
         return {
@@ -4341,7 +4448,10 @@ async function handleToolCall(request) {
           try {
             const raw = await fs.readFile(path.join(SIGNATURES_DIR, file), "utf8");
             const rec = JSON.parse(raw);
-            const summary = normalizeStoredSignatureSummary(rec);
+            const summary = await normalizeStoredSignatureSummary(rec);
+            if (file !== `${summary.name.replace(/\s+/g, "-")}.json`) {
+              throw new Error("Stored signature filename does not match its record name.");
+            }
             if (summary.name.startsWith("__pdf-tools-quick-")) {
               continue;
             }
@@ -4384,14 +4494,20 @@ async function handleToolCall(request) {
           }
           throw err;
         }
-        const summary = normalizeStoredSignatureSummary(rec);
-        const previewDataUrl = rec.style === "image" && rec.image_data_b64 && rec.image_mime
-          ? `data:${rec.image_mime};base64,${rec.image_data_b64}`
+        const normalizedRecord = await normalizeStoredSignatureRecord(rec, cleanSigName);
+        const summary = {
+          name: normalizedRecord.name,
+          style: normalizedRecord.style,
+          display_name: normalizedRecord.display_name,
+          created_at: normalizedRecord.created_at,
+        };
+        const previewDataUrl = normalizedRecord.style === "image"
+          ? `data:${normalizedRecord.image_mime};base64,${normalizedRecord.image_data_b64}`
           : null;
         return {
           content: [{
             type: "text",
-            text: `Loaded signature "${cleanSigName}" (${rec.style}).`
+            text: `Loaded signature "${cleanSigName}" (${normalizedRecord.style}).`
           }],
           structuredContent: {
             name: summary.name,
@@ -4481,6 +4597,7 @@ async function handleToolCall(request) {
           }
           throw err;
         }
+        signatureRecord = await normalizeStoredSignatureRecord(signatureRecord, cleanSigName);
 
         // 3. Load the PDF
         const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);

@@ -63,6 +63,15 @@ normalize typed arguments before changing active-document state, opening an
 output, creating a backup, or editing a PDF. Returned placement and timestamp
 fields are the normalized values actually used for the operation.
 
+Saved signature JSON is treated as untrusted input. A shared validator binds
+the record name to the requested signature, preserves legacy records that omit
+`created_at`, checks typed display text against the actual signature font, and
+verifies image MIME, canonical base64, magic bytes, and decoder compatibility.
+Creation, listing, loading, and application all use that validator. In
+particular, `apply_signature` rejects an unusable or identity-confused record
+before loading the target PDF, writing output, or changing active-document
+state.
+
 The executable source of truth is `server/output-schemas.js`. The MCP contract
 tests assert this complete 31/6 matrix, compile every schema through the pinned
 SDK validator, reject newer unsupported JSON Schema keywords, exercise live
