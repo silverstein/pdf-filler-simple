@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "report_sha256": "5a53570d2ba0065fa5bc259574a2a35cb535bc97210697e54ec481ccd02f2030",
+  "report_sha256": "37553c078e040afb4bcb8ab779277423ba7b9f3fd401f17a1f9131342bca6da2",
   "allowed_directory_evidence_sha256": "e6231b5524f4aae89ddb08c36abe59340ec979d9db57bb03cd1e9c172511700a",
   "controller": {
     "producer": "eval-run-comparison-baselines.mjs",

@@ -14,11 +14,11 @@ First version the generic render observation and add read-only metadata, annotat
 - Current metadata: 2 FN; actual Info/XMP values are not exposed.
 - Current annotations: 1 FN; annotation enumeration is absent.
 - Current form fields: 0 FN; values lack widget page/geometry evidence.
-- Agent pass rate and variance remain null until three predeclared measured trials cross the generic observation trust boundary.
+- Agent comparison repetitions: 3/3 product trials passed, with variance 0 and 0 harness failures. These shared-fixture headless repetitions are descriptive, unsigned, and not independent benchmark or native-host evidence.
 
 ## Evidence boundary
 
-The source tree was clean at revision `3233236b377f5dbd0ca0fcba94fdbef3205fb628` except generated evidence and the shared dependency symlink. Evidence files are hash-bound, but the controller registry is unsigned. Truth, shell, and network isolation were not OS-enforced, so the reports are descriptive and cannot support a benchmark claim.
+The source tree was clean at revision `029b33935d3a7b97b284abb4ffc83bb3309a7d86` except generated evidence and the shared dependency symlink. Evidence files are hash-bound, but the raw Codex evidence is retained privately and the controller registry is unsigned. Truth, shell, and network isolation were not OS-enforced, so the reports are descriptive and cannot support a benchmark claim.
 
 ## Release boundary
 

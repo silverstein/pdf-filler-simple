@@ -3,8 +3,8 @@
   "decision_id": "pdf-tools.comparison-decision.v1",
   "benchmark_id": "pdf-tools.comparison.v1",
   "benchmark_version": "v0.1.0",
-  "generated_at": "2026-07-21T14:07:08.351Z",
-  "source_revision": "3233236b377f5dbd0ca0fcba94fdbef3205fb628",
+  "generated_at": "2026-07-21T17:54:17.214Z",
+  "source_revision": "029b33935d3a7b97b284abb4ffc83bb3309a7d86",
   "source_state": {
     "clean_except_generated_evidence": true,
     "excluded_paths": [
@@ -15,7 +15,7 @@
   },
   "status": "measurement_blocked",
   "benchmark_claim_ready": false,
-  "claim_boundary": "Provisional measurements on seven public synthetic pairs on Linux. Neither lane enforced truth, shell, or network isolation, and the controller registry is unsigned. The shared-library result is not independent confirmation; the product lane is not the packed MCPB or native Claude Desktop; Poppler is an unscored external sensor; measured agent trials remain pending. No product architecture or release is approved by this artifact.",
+  "claim_boundary": "Provisional measurements on seven public synthetic pairs on Linux plus three unsigned descriptive headless Codex repetitions of one compare-and-explain fixture. Neither baseline lane enforced truth, shell, or network isolation, and the controller registry is unsigned. The shared-library result is not independent confirmation; the product and agent lanes are not the packed MCPB or native Claude Desktop; Poppler is an unscored external sensor; the three agent repetitions share one fixture and are not independent benchmark evidence. No product architecture or release is approved by this artifact.",
   "frozen_release_candidate": {
     "mcpb_sha256": "b586221595cc3095d43f73daf3b66c6cc9695bddcd98365f46c445a597d9a1b4",
     "bytes": 72456666,
@@ -24,8 +24,13 @@
   "source_bindings": [
     {
       "path": "docs/COMPARISON_EVALUATION.md",
-      "sha256": "a842d1feeb92fdd66fdfad15b8818e852f086584fdd993bd0846257a40ed2eb4",
-      "bytes": 25006
+      "sha256": "8a1545a54144058854fa9b0b9759a1ee0d5b32b5ef97e0921feb883d122f2cff",
+      "bytes": 25179
+    },
+    {
+      "path": "docs/evidence/comparison-v1/README.md",
+      "sha256": "8dbd093a3f6a62e7122f8c43958bab979bc8afb59b230fa4eadfc9b5a9997520",
+      "bytes": 3220
     },
     {
       "path": "scripts/eval-generate-comparison-fixtures.mjs",
@@ -39,8 +44,33 @@
     },
     {
       "path": "scripts/eval-build-comparison-decision.mjs",
-      "sha256": "fa0c0eacf9d578e35f03c50c0d4a161a2882615c7de112571e7b3131afc6895d",
-      "bytes": 14633
+      "sha256": "92ad2512a09b1f7d39a2ce4f28e720abff6878c9953d05babccdbff58db5726e",
+      "bytes": 19015
+    },
+    {
+      "path": "scripts/eval-comparison-evidence-integrity.mjs",
+      "sha256": "ba1e9f562bd87c9dfb6ab4dd8f7b9b1311ffd431673271062ce24db09caed3c6",
+      "bytes": 1427
+    },
+    {
+      "path": "scripts/eval-summarize-codex-comparison.mjs",
+      "sha256": "c919a31d7d27ec2b68ee236335a8dd13160f88e83d4aef2e48737d8070f546bf",
+      "bytes": 8931
+    },
+    {
+      "path": "scripts/eval-run-codex-comparison.mjs",
+      "sha256": "8c355cfb84e2ac287f176f5bb10065ad0b9c01a7f93a3afe458cebbe7f388b40",
+      "bytes": 80545
+    },
+    {
+      "path": "scripts/eval-ingest-codex-trajectory.mjs",
+      "sha256": "8bd755c97ce075b72ac7649ee65f562b0f99b4745ef0ed7966c21cfa604226a6",
+      "bytes": 38250
+    },
+    {
+      "path": "scripts/eval-run-trajectories.mjs",
+      "sha256": "72c2894cd35d69e1f6ac5fd5b6022807a21a83b6be66fe90157d4bd59e4666f5",
+      "bytes": 2298
     },
     {
       "path": "server/index.js",
@@ -64,8 +94,13 @@
     },
     {
       "path": "test/fixtures/eval/comparison/decision.schema.json",
-      "sha256": "9ddcfb042bd64ff5135db6ed3d539a3ce12fbf02f429c184586b1fdbcd379866",
-      "bytes": 8490
+      "sha256": "698ac90ef787f96dd7c091a0a93c4cc0c0c50b3c13843118edbfe853cdf8ca02",
+      "bytes": 9501
+    },
+    {
+      "path": "test/fixtures/eval/comparison/agent-evidence-summary.schema.json",
+      "sha256": "48c72ad9ac406770e20f31da2833a20091f7ed88291fc743857b2e82458db4b0",
+      "bytes": 8784
     },
     {
       "path": "test/eval/comparison-manifest.js",
@@ -106,37 +141,72 @@
       "path": "test/eval/comparison-poppler-baseline.js",
       "sha256": "c3fb86c723cc007d4040be55cc639f17194f2d45069a058928d059bc998911d3",
       "bytes": 4770
+    },
+    {
+      "path": "test/eval/comparison-agent-evidence.test.js",
+      "sha256": "8d1bababc1f1e4150051b9d8ec71b7a99b5fab261efbbd917cfde544f057b270",
+      "bytes": 4808
+    },
+    {
+      "path": "test/eval/png-evidence.js",
+      "sha256": "f75e7ccbad4b9d1215a23e0dd931082393569683112a16e1b7af2728110ffeb5",
+      "bytes": 5781
+    },
+    {
+      "path": "test/eval/render-visual-oracle.js",
+      "sha256": "f7c1cbe5c27a1070f3cb0c74d7c352f55c583be3aabedc070ae56d8a29afa37d",
+      "bytes": 6470
+    },
+    {
+      "path": "test/eval/trajectory-grader.js",
+      "sha256": "81d010a58b58ab87cf39bd262aabbf4e4f84b9cfa2339cb7cfbf6db34436e449",
+      "bytes": 109435
+    },
+    {
+      "path": "test/fixtures/eval/trajectories/jobs.v1.json",
+      "sha256": "ef370c78581017adbcf94eedf994123b4c9d394de54c1d5965dec58905133f57",
+      "bytes": 18544
+    },
+    {
+      "path": "test/fixtures/eval/trajectories/tool-contracts.v1.json",
+      "sha256": "4b4ab8aa0c307f29b6a2aa077933f99c9ef29d230758df9ea22fea0d93fd63cd",
+      "bytes": 34822
+    },
+    {
+      "path": "test/fixtures/eval/trajectories/trust-registry.v1.json",
+      "sha256": "29db98ae40e6e15edbf180d393663fd075adde5d64b00e0119ada3f8edc8f38a",
+      "bytes": 3730
     }
   ],
   "evidence_bindings": [
     {
       "path": "docs/evidence/comparison-v1/shared-library-report.v1.json",
-      "sha256": "f315d926e6060e3547321d07d3b77d6b9b3883166927b46c5bbaf54debb276f1",
-      "bytes": 44234
+      "sha256": "88e2aa0e1526a6091ddece9e93606351325e6c7eb90748657b9a996dfcf082d4",
+      "bytes": 44252
     },
     {
       "path": "docs/evidence/comparison-v1/shared-library-score.v1.json",
-      "sha256": "a75053ec7b9c936cec27837caaa0817a57a904c0bcbc710493e77aa7bc929fe3",
-      "bytes": 35404
+      "sha256": "d9511e18e36d238c1b475bac2d70ac4ae115bca55e5bf01828a5d45b3d205bf4",
+      "bytes": 35424
     },
     {
       "path": "docs/evidence/comparison-v1/shared-library-observation-registry.v1.json",
-      "sha256": "578f06b282bf084f3e16650cd5d4107c73404c2d8354ced0b2ab99c6f0aa86ca",
+      "sha256": "982ab2e2fa2c0bbaf467d7e8bc6a138aa2b5022012d5a10ce192f6035de76548",
       "bytes": 27956
     },
     {
       "path": "docs/evidence/comparison-v1/current-product-report.v1.json",
-      "sha256": "9cf9a871735acea965a6f8cbe600f329384ad786156f3746bc5ccf2b98ee0f02",
-      "bytes": 38630
+      "sha256": "8baed2d466a0970adbb557ae054b7221c1a5c5b6011b71327386ea5d2c612f85",
+      "bytes": 38622
     },
     {
       "path": "docs/evidence/comparison-v1/current-product-score.v1.json",
-      "sha256": "ed695662ff4f55134a8a55d7a7fe587e245638462cca78738ef4c631f2d19aa4",
-      "bytes": 35276
+      "sha256": "72f77e88e7b9506c6a4e33c5d631ef24a1e45ac609b20750bdc0fbe4298f151f",
+      "bytes": 35272
     },
     {
       "path": "docs/evidence/comparison-v1/current-product-observation-registry.v1.json",
-      "sha256": "5833bcf91148410eeda84e1a9b9978e17e29d95460bb2d3179466edf19cb1b71",
+      "sha256": "1f06d625d3c6cb48695c43fa0a28aeb5eb5ca92e726cd16b14216af5b61457c7",
       "bytes": 22935
     },
     {
@@ -146,8 +216,18 @@
     },
     {
       "path": "docs/evidence/comparison-v1/run-index.v1.json",
-      "sha256": "e2bf85f166ff34ce580980328ac603ef267818fdc30fb637b8c808e48ab7abcb",
+      "sha256": "a19403481bc66ea6fc8bf01f0ba5dadc4b0ec309501b818c1c2f3167a8aa7edf",
       "bytes": 2686
+    },
+    {
+      "path": "docs/evidence/comparison-v1/codex-agent-evidence-summary.v1.json",
+      "sha256": "e198d092ed6931011d2a126c31c64d80a816abef81ff2b9a63cf7c55e5fef176",
+      "bytes": 14061
+    },
+    {
+      "path": "docs/evidence/comparison-v1/codex-trajectory-report.v1.json",
+      "sha256": "0329e49309500e9f281c2b87b1802a8981e8328780b03fd232139a723a9701d6",
+      "bytes": 42733
     }
   ],
   "measured_results": {
@@ -176,10 +256,23 @@
       "bundled": false
     },
     "agent_trials": {
-      "status": "pending_generic_render_observation_and_three_predeclared_runs",
-      "pass_rate": null,
-      "variance": null,
-      "native_host": false
+      "status": "descriptive_three_run_comparison_complete",
+      "job_id": "pdf-tools.trajectory.v1.compare-and-explain",
+      "model": "gpt-5.6-sol",
+      "source_revision": "fbf2ef7e59305b0fe5fd6a3f61ff3eda0a7cb9f5",
+      "attempted_trials": 3,
+      "product_trials": 3,
+      "harness_failures": 0,
+      "passed_trials": 3,
+      "pass_rate": 1,
+      "variance": 0,
+      "native_host": false,
+      "packed_mcpb": false,
+      "trust_ready": false,
+      "independence_ready": false,
+      "full_suite_harness_ready": false,
+      "sample_size_ready": false,
+      "benchmark_claim_ready": false
     }
   },
   "provisional_research_directions": {
@@ -357,8 +450,8 @@
     {
       "priority": 1,
       "action": "measure",
-      "item": "three_predeclared_agent_trials_then_twenty_release_trials",
-      "rationale": "The benchmark cannot claim agent reliability until generic render observations are ingested through the existing trust boundary."
+      "item": "expand_agent_jobs_then_twenty_release_trials",
+      "rationale": "The compare-and-explain job passed three predeclared descriptive repetitions, but the other five jobs, independent fixtures, native hosts, and release-scale trials remain unmeasured."
     },
     {
       "priority": 2,
@@ -376,7 +469,7 @@
   "blockers": [
     "truth, shell, and network isolation are not OS-enforced for either scored lane",
     "the controller observation registry has no independent signature or attestation",
-    "three predeclared agent trials have not crossed the trajectory trust boundary",
+    "only one agent job has three shared-fixture repetitions; the other five jobs and independent samples remain unmeasured",
     "native Claude Desktop and Windows evidence are absent",
     "the corpus is a seven-pair public synthetic slice, not a release corpus"
   ],

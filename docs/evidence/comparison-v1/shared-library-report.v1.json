@@ -67,52 +67,52 @@
       "detected_events": [],
       "presentation_decisions": [],
       "timing_samples_ms": [
-        205.16734099999996,
-        277.231089,
-        102.57461599999988,
-        83.0367040000001,
-        89.42004099999986
+        131.54585300000008,
+        116.38460299999997,
+        126.25939800000003,
+        87.74633600000016,
+        76.96503499999994
       ],
-      "warmup_ms": 308.204014,
+      "warmup_ms": 312.92631900000003,
       "warmup_cost": {
         "tool_calls": 0,
         "logical_input_bytes": 7962,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 246747136
+        "peak_rss_bytes": 245600256
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 300531712
+          "peak_rss_bytes": 298909696
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 348639232
+          "peak_rss_bytes": 353488896
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 387665920
+          "peak_rss_bytes": 384843776
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 387796992
+          "peak_rss_bytes": 384843776
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 387973120
+          "peak_rss_bytes": 384921600
         }
       ],
-      "peak_rss_bytes": 387973120,
+      "peak_rss_bytes": 384921600,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
@@ -484,52 +484,52 @@
         }
       ],
       "timing_samples_ms": [
-        86.16165799999999,
-        87.01985300000001,
-        81.98934899999995,
-        106.84140400000001,
-        93.364912
+        92.85248200000001,
+        110.72232899999995,
+        87.61204599999996,
+        113.68330500000002,
+        98.97948199999996
       ],
-      "warmup_ms": 80.85598500000015,
+      "warmup_ms": 72.37369699999999,
       "warmup_cost": {
         "tool_calls": 0,
         "logical_input_bytes": 7967,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 387973120
+        "peak_rss_bytes": 385376256
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 387973120
+          "peak_rss_bytes": 394727424
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 387973120
+          "peak_rss_bytes": 394727424
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 387973120
+          "peak_rss_bytes": 410533888
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 397873152
+          "peak_rss_bytes": 410533888
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 397873152
+          "peak_rss_bytes": 410533888
         }
       ],
-      "peak_rss_bytes": 397873152,
+      "peak_rss_bytes": 410533888,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
@@ -637,52 +637,52 @@
         }
       ],
       "timing_samples_ms": [
-        114.7340949999998,
-        106.05774800000017,
-        85.98238700000002,
-        97.67745000000014,
-        88.79276600000003
+        83.4333160000001,
+        70.03981699999986,
+        84.56773000000021,
+        96.56731500000024,
+        88.67443100000037
       ],
-      "warmup_ms": 94.28687699999978,
+      "warmup_ms": 90.97910000000002,
       "warmup_cost": {
         "tool_calls": 0,
         "logical_input_bytes": 7964,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 390565888
+        "peak_rss_bytes": 381566976
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 390565888
+          "peak_rss_bytes": 381566976
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 390565888
+          "peak_rss_bytes": 381566976
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 390565888
+          "peak_rss_bytes": 381566976
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 390565888
+          "peak_rss_bytes": 390381568
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 390565888
+          "peak_rss_bytes": 413945856
         }
       ],
-      "peak_rss_bytes": 390565888,
+      "peak_rss_bytes": 413945856,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
@@ -790,52 +790,52 @@
         }
       ],
       "timing_samples_ms": [
-        109.2213429999997,
-        90.56557599999996,
-        97.11455400000023,
-        74.81363500000043,
-        86.51676600000019
+        97.90826900000002,
+        77.77807099999973,
+        90.23113299999977,
+        90.16105500000003,
+        81.49196499999971
       ],
-      "warmup_ms": 105.98119899999983,
+      "warmup_ms": 87.47312599999987,
       "warmup_cost": {
         "tool_calls": 0,
         "logical_input_bytes": 8174,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 370847744
+        "peak_rss_bytes": 414076928
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 370847744
+          "peak_rss_bytes": 414076928
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 371552256
+          "peak_rss_bytes": 414076928
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 402604032
+          "peak_rss_bytes": 414076928
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 402604032
+          "peak_rss_bytes": 414076928
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 410472448
+          "peak_rss_bytes": 414076928
         }
       ],
-      "peak_rss_bytes": 410472448,
+      "peak_rss_bytes": 414076928,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
@@ -1007,52 +1007,52 @@
         }
       ],
       "timing_samples_ms": [
-        123.86664900000005,
-        85.81968000000006,
-        90.94832499999984,
-        90.1162690000001,
-        98.78078499999992
+        75.99441100000013,
+        83.23227700000007,
+        94.52071399999977,
+        106.95626700000003,
+        76.6624969999998
       ],
-      "warmup_ms": 68.7460860000001,
+      "warmup_ms": 94.60278400000016,
       "warmup_cost": {
         "tool_calls": 0,
         "logical_input_bytes": 8006,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 412307456
+        "peak_rss_bytes": 411389952
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 412307456
+          "peak_rss_bytes": 419262464
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 412307456
+          "peak_rss_bytes": 419262464
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 412307456
+          "peak_rss_bytes": 419262464
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 412307456
+          "peak_rss_bytes": 419262464
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 412307456
+          "peak_rss_bytes": 419262464
         }
       ],
-      "peak_rss_bytes": 412307456,
+      "peak_rss_bytes": 419262464,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
@@ -1160,52 +1160,52 @@
         }
       ],
       "timing_samples_ms": [
-        99.10865300000023,
-        91.71667099999922,
-        86.57271500000024,
-        93.30850099999952,
-        101.34656300000006
+        91.88567700000021,
+        66.96686200000022,
+        98.58074600000009,
+        85.4019760000001,
+        79.16766499999994
       ],
-      "warmup_ms": 96.70137599999998,
+      "warmup_ms": 96.98412300000018,
       "warmup_cost": {
         "tool_calls": 0,
         "logical_input_bytes": 7964,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 404205568
+        "peak_rss_bytes": 411406336
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 404205568
+          "peak_rss_bytes": 411406336
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 404205568
+          "peak_rss_bytes": 411406336
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 404205568
+          "peak_rss_bytes": 411406336
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 404205568
+          "peak_rss_bytes": 411406336
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 404205568
+          "peak_rss_bytes": 412172288
         }
       ],
-      "peak_rss_bytes": 404205568,
+      "peak_rss_bytes": 412172288,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
@@ -1405,52 +1405,52 @@
         }
       ],
       "timing_samples_ms": [
-        107.00541299999986,
-        102.69724599999972,
-        84.08370899999954,
-        96.9536449999996,
-        123.64427100000012
+        101.00696499999958,
+        82.0245530000002,
+        84.10028200000033,
+        80.53898899999967,
+        76.26698899999974
       ],
-      "warmup_ms": 135.84030900000016,
+      "warmup_ms": 93.6510989999997,
       "warmup_cost": {
         "tool_calls": 0,
         "logical_input_bytes": 8624,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 373284864
+        "peak_rss_bytes": 435408896
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 373284864
+          "peak_rss_bytes": 435408896
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 373399552
+          "peak_rss_bytes": 435408896
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 373489664
+          "peak_rss_bytes": 435408896
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 389111808
+          "peak_rss_bytes": 435408896
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 419946496
+          "peak_rss_bytes": 435408896
         }
       ],
-      "peak_rss_bytes": 419946496,
+      "peak_rss_bytes": 435408896,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
