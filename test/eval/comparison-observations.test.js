@@ -67,6 +67,7 @@ describe("canonical comparison observations", () => {
     expect(difference.changed_fraction).toBeLessThan(0.02);
     expect(difference.raw_changed_pixels).toBeLessThan(difference.changed_pixels);
     expect(difference.components.length).toBeGreaterThan(1);
+    expect(layout.renders[1].rgba_sha256).toBe(base.renders[1].rgba_sha256);
   });
 
   it("localizes visual-only changes inside the declared status region", () => {
@@ -121,5 +122,7 @@ describe("canonical comparison observations", () => {
     })]);
     expect(metadata.metadata.Title).toBe("Synthetic comparison agreement — reviewed");
     expect(metadata.metadata.ModDate).toBe("2026-07-22T00:00:00.000Z");
+    expect(Object.keys(metadata.metadata).filter(key => metadata.metadata[key] !== base.metadata[key]).sort())
+      .toEqual(["ModDate", "Title"]);
   });
 });

@@ -36,13 +36,9 @@ const VARIANTS = Object.freeze([
 function configureMetadata(pdf, variant) {
   const metadataOnly = variant === "metadata_only";
   pdf.setTitle(metadataOnly ? "Synthetic comparison agreement — reviewed" : "Synthetic comparison agreement");
-  pdf.setAuthor(metadataOnly ? "Open Document Alliance review team" : "Open Document Alliance PDF Tools maintainers");
-  pdf.setSubject(metadataOnly
-    ? "Synthetic metadata-only review; page content is unchanged"
-    : "Synthetic PDF comparison evaluation fixture; contains no personal data");
-  pdf.setKeywords(metadataOnly
-    ? ["synthetic", "comparison", "reviewed"]
-    : ["synthetic", "comparison"]);
+  pdf.setAuthor("Open Document Alliance PDF Tools maintainers");
+  pdf.setSubject("Synthetic PDF comparison evaluation fixture; contains no personal data");
+  pdf.setKeywords(["synthetic", "comparison"]);
   pdf.setCreator("scripts/eval-generate-comparison-fixtures.mjs");
   pdf.setProducer("pdf-lib 1.17.1");
   pdf.setCreationDate(FIXED_DATE);
@@ -168,9 +164,10 @@ function addSyntheticComment(pdf, page) {
 async function buildDocument(variant) {
   const pdf = await PDFDocument.create();
   configureMetadata(pdf, variant);
-  const bodyFont = await pdf.embedFont(
-    variant === "layout_noise" ? StandardFonts.HelveticaOblique : StandardFonts.Helvetica
-  );
+  const baseBodyFont = await pdf.embedFont(StandardFonts.Helvetica);
+  const bodyFont = variant === "layout_noise"
+    ? await pdf.embedFont(StandardFonts.HelveticaOblique)
+    : baseBodyFont;
   const headingFont = await pdf.embedFont(StandardFonts.HelveticaBold);
   const roles = variant === "pages_reordered"
     ? ["appendix", "service"]
@@ -183,7 +180,7 @@ async function buildDocument(variant) {
       servicePage = page;
       drawServicePage(page, { bodyFont, headingFont, variant });
     } else {
-      drawAppendixPage(page, { bodyFont, headingFont, variant });
+      drawAppendixPage(page, { bodyFont: baseBodyFont, headingFont, variant: "base" });
     }
   }
 

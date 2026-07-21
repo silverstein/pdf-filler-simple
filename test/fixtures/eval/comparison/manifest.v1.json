@@ -65,7 +65,7 @@
     {
       "id": "pdf-tools.comparison.document.layout-noise-after",
       "path": "synthetic/comparison-layout-noise-after.pdf",
-      "sha256": "a80595c843c32caf249d295568ad810a76ea33c643e796a5f6466b1fb6ea70aa",
+      "sha256": "22b258147cc852308f3a6663d251601c5ad30c4aa6e923137ba958e46eb67863",
       "media_type": "application/pdf",
       "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools comparison corpus", "generator": "scripts/eval-generate-comparison-fixtures.mjs" },
       "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
@@ -74,7 +74,7 @@
     {
       "id": "pdf-tools.comparison.document.metadata-only-after",
       "path": "synthetic/comparison-metadata-only-after.pdf",
-      "sha256": "631be10c3fbebde1a8135824f6df013b468c6f03be977229e7ea84c157c8b3b6",
+      "sha256": "c5fb3b62c4e6db7e4259ef98b6c1820660b75312240468e8cc97373ac671996b",
       "media_type": "application/pdf",
       "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools comparison corpus", "generator": "scripts/eval-generate-comparison-fixtures.mjs" },
       "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
@@ -190,7 +190,7 @@
           "summary": "Font and sub-point placement change while normalized content remains the same.",
           "presentation": { "default_material": "suppress", "forensic": "report_on_request" },
           "facets": [
-            { "channel": "visual", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "ec213295777d9a08776166b0698bc9bc964dc1acf2d388afb9e845b64527cf81" }, "after": { "document_id": "pdf-tools.comparison.document.layout-noise-after", "document_sha256": "a80595c843c32caf249d295568ad810a76ea33c643e796a5f6466b1fb6ea70aa", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "e7eb42007a1f87d6596e8a0dc13030ef604a9233ac46a0df3aaf92e51b7e9798" } }
+            { "channel": "visual", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "ec213295777d9a08776166b0698bc9bc964dc1acf2d388afb9e845b64527cf81" }, "after": { "document_id": "pdf-tools.comparison.document.layout-noise-after", "document_sha256": "22b258147cc852308f3a6663d251601c5ad30c4aa6e923137ba958e46eb67863", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "e7eb42007a1f87d6596e8a0dc13030ef604a9233ac46a0df3aaf92e51b7e9798" } }
           ]
         }
       ]
@@ -213,7 +213,7 @@
           "summary": "Document title metadata is revised while page content is unchanged.",
           "presentation": { "default_material": "suppress", "forensic": "report" },
           "facets": [
-            { "channel": "metadata", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "99c8512771696129f2dfff668867ebb4e56ee7b499846a41880674416f212195" }, "after": { "document_id": "pdf-tools.comparison.document.metadata-only-after", "document_sha256": "631be10c3fbebde1a8135824f6df013b468c6f03be977229e7ea84c157c8b3b6", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "351e3274a951801e2499bb473a0b219b1f2a53990f010f7a552978a9d3ee1d85" } }
+            { "channel": "metadata", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "99c8512771696129f2dfff668867ebb4e56ee7b499846a41880674416f212195" }, "after": { "document_id": "pdf-tools.comparison.document.metadata-only-after", "document_sha256": "c5fb3b62c4e6db7e4259ef98b6c1820660b75312240468e8cc97373ac671996b", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "351e3274a951801e2499bb473a0b219b1f2a53990f010f7a552978a9d3ee1d85" } }
           ]
         },
         {
@@ -222,7 +222,7 @@
           "summary": "Modification-date metadata changes by one fixed day.",
           "presentation": { "default_material": "suppress", "forensic": "report_on_request" },
           "facets": [
-            { "channel": "metadata", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "bea27b6d06814389c6795bc346d85c6192a5efc1f37af968ca056645dd0d190e" }, "after": { "document_id": "pdf-tools.comparison.document.metadata-only-after", "document_sha256": "631be10c3fbebde1a8135824f6df013b468c6f03be977229e7ea84c157c8b3b6", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "c7276faf6f7ebbf392f2088b176f0252b6a26948549c39606226a67684ead689" } }
+            { "channel": "metadata", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "bea27b6d06814389c6795bc346d85c6192a5efc1f37af968ca056645dd0d190e" }, "after": { "document_id": "pdf-tools.comparison.document.metadata-only-after", "document_sha256": "c5fb3b62c4e6db7e4259ef98b6c1820660b75312240468e8cc97373ac671996b", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "c7276faf6f7ebbf392f2088b176f0252b6a26948549c39606226a67684ead689" } }
           ]
         }
       ]
