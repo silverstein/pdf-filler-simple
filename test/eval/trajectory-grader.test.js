@@ -640,6 +640,34 @@ describe("agent trajectory grader v4 integrity contract", () => {
     expect(validateTrajectoryTrialSet(suite, malformedPlan)).toContain(
       "trial_set.run_plan.entries must be non-empty",
     );
+
+    const base = trialFor(trialSet, "compare-and-explain");
+    const baseJob = jobs.get(base.job_id);
+    const malformedMembers = [
+      ["null run event", candidate => { candidate.run.events[0] = null; }],
+      ["wrong-typed effect collection", candidate => { candidate.effects.created = {}; }],
+      ["wrong-typed observed artifacts", candidate => {
+        candidate.trajectory.find(step => step.tool === "render_pdf_page")
+          .result.observed_artifacts = {};
+      }],
+      ["null artifact", candidate => { candidate.artifacts = [null]; }],
+      ["null evidence", candidate => { candidate.final_answer.evidence = [null]; }],
+      ["wrong-typed correction references", candidate => { candidate.correction_refs = {}; }],
+    ];
+    for (const [label, mutate] of malformedMembers) {
+      const candidate = structuredClone(base);
+      mutate(candidate);
+      expect(() => validateTrajectoryTrial(baseJob, candidate), label).not.toThrow();
+      expect(validateTrajectoryTrial(baseJob, candidate).length, label).toBeGreaterThan(0);
+      expect(() => gradeTrajectoryTrial(baseJob, candidate), label).not.toThrow();
+      expect(check(gradeTrajectoryTrial(baseJob, candidate), "trial_schema").passed, label).toBe(false);
+
+      const candidateSet = structuredClone(trialSet);
+      const index = candidateSet.trials.findIndex(trial => trial.trial_id === candidate.trial_id);
+      candidateSet.trials[index] = candidate;
+      expect(() => validateTrajectoryTrialSet(suite, candidateSet), label).not.toThrow();
+      expect(validateTrajectoryTrialSet(suite, candidateSet).length, label).toBeGreaterThan(0);
+    }
   });
 
   it("rejects duplicate job repeats, run IDs, and host event IDs", async () => {

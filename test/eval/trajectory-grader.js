@@ -8,7 +8,12 @@ import {
   getRegionPixelRect,
   validateSigningIntent,
 } from "../../server/helpers.js";
-import { parsePngEvidence } from "./png-evidence.js";
+import {
+  MAX_PNG_BYTES,
+  MAX_PNG_DIMENSION,
+  MAX_PNG_PIXELS,
+  parsePngEvidence,
+} from "./png-evidence.js";
 
 export const TRAJECTORY_SUITE_VERSION = 1;
 export const TRAJECTORY_GRADER_VERSION = 4;
@@ -282,16 +287,21 @@ function validateSemanticObservations(value, location, errors) {
     if (Number.isInteger(render.image_byte_length) && render.image_byte_length < 57) {
       errors.push(`${itemLocation}.image_byte_length is too small for a complete PNG`);
     }
-    if (Number.isInteger(render.image_byte_length) && render.image_byte_length > 64 * 1024 * 1024) {
-      errors.push(`${itemLocation}.image_byte_length exceeds the 64 MiB ingestion limit`);
+    if (Number.isInteger(render.image_byte_length) && render.image_byte_length > MAX_PNG_BYTES) {
+      errors.push(`${itemLocation}.image_byte_length exceeds the ${MAX_PNG_BYTES / (1024 * 1024)} MiB ingestion limit`);
     }
     for (const key of [
       "server_rendered_width_px", "server_rendered_height_px",
       "observed_image_width_px", "observed_image_height_px", "max_dimension_px",
     ]) {
-      if (Number.isInteger(render[key]) && render[key] > 8192) {
-        errors.push(`${itemLocation}.${key} exceeds the 8192 px ingestion limit`);
+      if (Number.isInteger(render[key]) && render[key] > MAX_PNG_DIMENSION) {
+        errors.push(`${itemLocation}.${key} exceeds the ${MAX_PNG_DIMENSION} px ingestion limit`);
       }
+    }
+    if (Number.isInteger(render.observed_image_width_px)
+      && Number.isInteger(render.observed_image_height_px)
+      && render.observed_image_width_px * render.observed_image_height_px > MAX_PNG_PIXELS) {
+      errors.push(`${itemLocation}.observed image exceeds the ${MAX_PNG_PIXELS} pixel ingestion limit`);
     }
     if (render.image_content_index !== 1) {
       errors.push(`${itemLocation}.image_content_index must equal the runtime image block index 1`);
@@ -380,8 +390,8 @@ function validateSampleEvidence(trial, location, errors) {
     ["input_snapshot_observed", "input_sha256"],
     ["fixture_instance_observed", "fixture_instance_sha256"],
   ]) {
-    const event = events.find(item => item.type === type
-      && item.reference === `sha256:${trial.sample?.[sampleKey]}`);
+    const event = events.find(item => item?.type === type
+      && item?.reference === `sha256:${trial.sample?.[sampleKey]}`);
     if (!event || event.provenance?.authority !== authority || event.provenance?.capture_method === "self_report") {
       errors.push(`${location}.sample.${sampleKey} must bind to a retained ${type} event from ${authority}`);
     }
@@ -1125,8 +1135,8 @@ export function validateTrajectoryTrialSet(suite, trialSet, { allowPartialPlan =
         errors.push(`trial_set.trials[${index}] non-calibration runs may not use a synthetic host`);
       }
       if (trial?.agent === "trajectory-grader-calibration"
-        || (Array.isArray(trial?.run?.events) && trial.run.events.some(event => event.source === "synthetic_calibration_generator"
-          || event.provenance?.authority === "calibration"))) {
+        || (Array.isArray(trial?.run?.events) && trial.run.events.some(event => event?.source === "synthetic_calibration_generator"
+          || event?.provenance?.authority === "calibration"))) {
         errors.push(`trial_set.trials[${index}] non-calibration runs may not reuse calibration provenance`);
       }
     }
@@ -1160,8 +1170,8 @@ export function validateTrajectoryTrialSet(suite, trialSet, { allowPartialPlan =
     }
     const planEventAuthority = trial.run?.host?.platform === "synthetic" ? "calibration" : "agent_host";
     const planEvents = Array.isArray(trial.run?.events) ? trial.run.events : [];
-    const planEvent = planDigest && planEvents.find(event => event.type === "run_plan_committed"
-      && event.reference === `sha256:${planDigest}`);
+    const planEvent = planDigest && planEvents.find(event => event?.type === "run_plan_committed"
+      && event?.reference === `sha256:${planDigest}`);
     if (!planEvent || planEvent.provenance?.authority !== planEventAuthority
       || Date.parse(planEvent.observed_at) > Date.parse(trial.run?.started_at)) {
       errors.push(`trial_set.trials[${index}] must retain the pre-run plan commitment from ${planEventAuthority}`);
@@ -1271,6 +1281,7 @@ function observedArtifact(step, artifact) {
 }
 
 function evidenceBound(reference, successfulResults, artifactsByPath) {
+  if (!isObject(reference)) return false;
   const step = successfulResults.get(reference.result_id);
   if (!step) return false;
   const semantic = step.result.semantic_observations;
@@ -1303,6 +1314,9 @@ function semanticObservationIssues(step, runEvents = []) {
   const semanticSchemaErrors = [];
   validateSemanticObservations(semantic, "semantic_observations", semanticSchemaErrors);
   if (semanticSchemaErrors.length > 0) return semanticSchemaErrors;
+  const observedArtifacts = Array.isArray(step.result?.observed_artifacts)
+    ? step.result.observed_artifacts
+    : [];
   const argumentPaths = new Set(argumentPathValues(step.arguments));
   for (const page of semantic.pages) {
     let bound = false;
@@ -1352,11 +1366,11 @@ function semanticObservationIssues(step, runEvents = []) {
     const expectedRegion = step.tool === "render_pdf_region" ? [
       step.arguments.x, step.arguments.y, step.arguments.width, step.arguments.height,
     ] : render.page_box_points;
-    const snapshot = step.result.observed_artifacts.find(item => item.path === render.source
+    const snapshot = observedArtifacts.find(item => item?.path === render.source
       && item.exists === true && item.sha256 === render.source_sha256
       && item.observer_event_id === render.source_observation_event_id
       && new Set(["filesystem_stat_sha256", "synthetic_calibration"]).has(item.observation_method));
-    const sourceEvent = runEvents.find(event => event.event_id === render.source_observation_event_id);
+    const sourceEvent = runEvents.find(event => event?.event_id === render.source_observation_event_id);
     let retainedRawResultValid = false;
     try {
       const retained = step.result.retained_raw_result;
@@ -1402,7 +1416,7 @@ function semanticObservationIssues(step, runEvents = []) {
       && sourceProvenanceValid
       && Date.parse(sourceEvent.observed_at) <= Date.parse(step.started_at);
     const isCalibrationRender = sourceEvent?.provenance?.authority === "calibration";
-    const renderEvent = runEvents.find(event => event.event_id === render.render_observation_event_id);
+    const renderEvent = runEvents.find(event => event?.event_id === render.render_observation_event_id);
     const renderProvenanceValid = isCalibrationRender
       ? renderEvent?.provenance?.authority === "calibration"
         && renderEvent.provenance.capture_method === "deterministic_generator"
@@ -1454,7 +1468,7 @@ function semanticObservationIssues(step, runEvents = []) {
     }
   }
   for (const file of semantic.files) {
-    const artifactBound = step.result.observed_artifacts.some(item => item.path === file.path);
+    const artifactBound = observedArtifacts.some(item => item?.path === file.path);
     if (!argumentPaths.has(file.path) && !artifactBound) issues.push(`file ${file.path} is not bound to tool arguments or artifact observation`);
   }
   return issues;
@@ -1637,10 +1651,14 @@ export function gradeTrajectoryTrial(job, trial) {
   );
 
   const artifacts = Array.isArray(trial.artifacts) ? trial.artifacts : [];
-  const artifactsByPath = new Map(artifacts.map(artifact => [artifact.path, artifact]));
+  const artifactsByPath = new Map(artifacts.filter(isObject).map(artifact => [artifact.path, artifact]));
   const stepsById = new Map(steps.map(step => [step?.step_id, step]));
-  const changedPaths = new Set([...(effects.created ?? []), ...(effects.modified ?? [])]);
+  const changedPaths = new Set([
+    ...(Array.isArray(effects.created) ? effects.created : []),
+    ...(Array.isArray(effects.modified) ? effects.modified : []),
+  ]);
   const integrityArtifacts = artifacts.filter(artifact => {
+    if (!isObject(artifact)) return false;
     const producer = stepsById.get(artifact.producer_step_id);
     const verifier = stepsById.get(artifact.verification_step_id);
     const observationEvent = runEvents.find(event => event?.event_id === artifact.observation_event_id);
@@ -1691,13 +1709,13 @@ export function gradeTrajectoryTrial(job, trial) {
     `>= ${job.success_evidence.min_verified_artifacts} externally observed, hash-bound artifacts`,
     verifiedArtifacts.map(artifact => artifact.path)
   );
-  const unmatchedArtifacts = artifacts.filter(artifact => !changedPaths.has(artifact.path));
+  const unmatchedArtifacts = artifacts.filter(artifact => !isObject(artifact) || !changedPaths.has(artifact.path));
   gradeCheck(
     checks,
     "artifact_effect_match",
     unmatchedArtifacts.length === 0,
     "every artifact appears in created or modified effects",
-    unmatchedArtifacts.map(artifact => artifact.path)
+    unmatchedArtifacts.map(artifact => artifact?.path ?? null)
   );
 
   const finalAnswer = isObject(trial.final_answer) ? trial.final_answer : {};
@@ -1737,7 +1755,7 @@ export function gradeTrajectoryTrial(job, trial) {
   const duplicateEvidenceIds = duplicates(references.map(reference => reference?.id).filter(nonEmptyString));
   const successfulResults = new Map(successfulSteps.map(step => [step.result.result_id, step]));
   const invalidBindings = references.filter(reference => !evidenceBound(reference, successfulResults, artifactsByPath));
-  const invalidSources = references.filter(reference => !job.success_evidence.allowed_sources.includes(reference.source));
+  const invalidSources = references.filter(reference => !job.success_evidence.allowed_sources.includes(reference?.source));
   const referenceKinds = new Set(references.map(reference => reference?.kind).filter(nonEmptyString));
   const referenceSources = new Set(references.map(reference => reference?.source).filter(nonEmptyString));
   gradeCheck(checks, "evidence/unique_ids", duplicateEvidenceIds.length === 0, [], duplicateEvidenceIds);
@@ -1800,6 +1818,7 @@ export function gradeTrajectoryTrial(job, trial) {
       && step.recovery_of_step_id === failedStep?.step_id
       && recovery.allowed_recovery_tools.includes(step.tool)
       && recovery.allowed_recovery_sources.includes(step.arguments?.[recovery.source_argument])
+      && Array.isArray(step.result.observed_sources)
       && step.result.observed_sources.includes(step.arguments[recovery.source_argument]));
     gradeCheck(
       checks,
@@ -1813,7 +1832,8 @@ export function gradeTrajectoryTrial(job, trial) {
   const preLinkFailure = checks.some(item => item.severity === "hard" && !item.passed);
   if (preLinkFailure) {
     const failedCheckIds = checks.filter(item => item.severity === "hard" && !item.passed).map(item => item.id);
-    const failureRefs = (trial.correction_refs ?? []).filter(reference => reference.relationship === "failure"
+    const failureRefs = (Array.isArray(trial.correction_refs) ? trial.correction_refs : [])
+      .filter(reference => reference?.relationship === "failure"
       && approvedCorrectionRef(reference, trial.job_id));
     const uncoveredChecks = failedCheckIds.filter(checkId =>
       !failureRefs.some(reference => approvedCorrectionRef(reference, trial.job_id, checkId)));
@@ -1837,7 +1857,7 @@ export function gradeTrajectoryTrial(job, trial) {
     passed,
     score: checks.length === 0 ? 0 : checks.filter(item => item.passed).length / checks.length,
     checks,
-    correction_refs: trial.correction_refs ?? [],
+    correction_refs: Array.isArray(trial.correction_refs) ? trial.correction_refs : [],
   };
 }
 
