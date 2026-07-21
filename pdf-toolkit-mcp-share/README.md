@@ -45,6 +45,10 @@ packaged source files to SHA-256 digests. The SBOM is structurally and
 lock-coverage validated during packaging; this is not a claim of validation by
 an external CycloneDX schema validator.
 
+The smart and double-click installers update Cursor's configuration with a JSON
+parser/serializer. Paths are passed as process arguments, so spaces, quotes,
+apostrophes, and backslashes are encoded as data rather than executable code.
+
 ### Windows
 
 The bundled click/terminal helpers are Bash scripts. In PowerShell, open this
@@ -106,6 +110,7 @@ Once installed, ask Claude in Cursor:
 - **Tools not appearing?** Try restarting Cursor completely
 - **Permission denied?** Run `chmod +x *.sh` in the folder
 - **Path issues?** The install scripts auto-detect the correct path
+- **Existing Cursor settings?** Automatic setup preserves other JSON keys and creates a backup before updating
 - **Broke after cleaning Downloads?** The installer prevents this!
 
 ## What This Does

@@ -5,6 +5,7 @@ import {
   chmodSync,
   cpSync,
   copyFileSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -165,6 +166,95 @@ exec ${JSON.stringify(realMv)} "$@"
     "Swap failure did not restore the working installation",
   );
   assertNoInstallerTemps(rollbackHome, ".pdf-tools-mcp");
+
+  const termHome = path.join(tempRoot, "installer-term-home");
+  const termTarget = path.join(termHome, ".pdf-tools-mcp");
+  const termBin = path.join(termHome, "bin");
+  const termMvState = path.join(termHome, "mv-state");
+  mkdirSync(termTarget, { recursive: true });
+  mkdirSync(termBin, { recursive: true });
+  writeFileSync(path.join(termTarget, "working-install.txt"), "known-good-before-term\n");
+  writeExecutable(path.join(termBin, "npm"), "#!/bin/bash\nexit 0\n");
+  writeExecutable(path.join(termBin, "mv"), `#!/bin/bash
+count=0
+if [ -f "$MV_TEST_STATE" ]; then count=$(<"$MV_TEST_STATE"); fi
+count=$((count + 1))
+echo "$count" > "$MV_TEST_STATE"
+if [ "$count" -eq 1 ]; then
+  ${JSON.stringify(realMv)} "$@"
+  status=$?
+  if [ "$status" -eq 0 ]; then kill -TERM "$PPID"; fi
+  exit "$status"
+fi
+exec ${JSON.stringify(realMv)} "$@"
+`);
+  expectFailure("bash", [installer, sourcePackageRoot, termTarget], tempRoot, /Restoring the previous installation/, {
+    env: {
+      ...process.env,
+      HOME: termHome,
+      PATH: `${termBin}:${process.env.PATH}`,
+      MV_TEST_STATE: termMvState,
+    },
+  });
+  assertEqual(readFileSync(termMvState, "utf8").trim(), "2", "TERM proof did not execute rollback move");
+  assertEqual(
+    readFileSync(path.join(termTarget, "working-install.txt"), "utf8"),
+    "known-good-before-term\n",
+    "TERM after backup did not restore the working installation",
+  );
+  assertNoInstallerTemps(termHome, ".pdf-tools-mcp");
+}
+
+function assertConfiguredServer(configPath, expectedServerPath, expectedSentinel) {
+  const config = JSON.parse(readFileSync(configPath, "utf8"));
+  assertEqual(config.mcpServers?.["pdf-tools"]?.command, "node", "Cursor command was not JSON encoded");
+  assertEqual(
+    config.mcpServers?.["pdf-tools"]?.args?.[0],
+    expectedServerPath,
+    "Cursor server path did not round-trip exactly through JSON",
+  );
+  if (expectedSentinel !== undefined) {
+    assertEqual(config.sentinel, expectedSentinel, "Existing Cursor config data was not preserved");
+  }
+}
+
+function testSuccessfulWrapperConfigs(sourcePackageRoot, tempRoot) {
+  if (process.platform === "win32") return;
+  const hostileHome = path.join(tempRoot, "home space'apostrophe\"double\\backslash");
+  const hostileBin = path.join(hostileHome, "bin");
+  const hostileConfig = path.join(hostileHome, ".cursor", "mcp.json");
+  mkdirSync(path.dirname(hostileConfig), { recursive: true });
+  mkdirSync(hostileBin, { recursive: true });
+  writeExecutable(path.join(hostileBin, "npm"), "#!/bin/bash\nexit 0\n");
+  writeFileSync(hostileConfig, `${JSON.stringify({ sentinel: "preserve-me", mcpServers: { existing: { command: "ok" } } }, null, 2)}\n`);
+  const hostileEnvironment = {
+    ...process.env,
+    HOME: hostileHome,
+    PATH: `${hostileBin}:${process.env.PATH}`,
+  };
+  run("bash", [path.join(sourcePackageRoot, "smart-install.sh")], tempRoot, {
+    env: hostileEnvironment,
+    input: "y\n",
+  });
+  assertConfiguredServer(
+    hostileConfig,
+    path.join(hostileHome, ".pdf-tools-mcp", "server", "index.js"),
+    "preserve-me",
+  );
+  if (!existsSync(`${hostileConfig}.backup`)) throw new Error("Existing Cursor config backup was not created");
+
+  const newHome = path.join(tempRoot, "new home 'apostrophe \"double\" \\backslash");
+  const newBin = path.join(newHome, "bin");
+  mkdirSync(newBin, { recursive: true });
+  writeExecutable(path.join(newBin, "npm"), "#!/bin/bash\nexit 0\n");
+  run("bash", [path.join(sourcePackageRoot, "install.command")], tempRoot, {
+    env: { ...process.env, HOME: newHome, PATH: `${newBin}:${process.env.PATH}` },
+    input: "\n",
+  });
+  assertConfiguredServer(
+    path.join(newHome, ".cursor", "mcp.json"),
+    path.join(newHome, ".pdf-tools-mcp", "server", "index.js"),
+  );
 }
 
 async function expectMcpError(operation, code) {
@@ -227,7 +317,7 @@ async function main() {
       process.execPath,
       ["package-for-friend.js"],
       buildRoot,
-      /node_modules\/@napi-rs\/canvas\.version/,
+      /record drifted.*node_modules\/@napi-rs\/canvas/,
     );
     assertEqual(sha256(readFileSync(archivePath)), archiveSha256, "Direct lock drift overwrote the good ZIP");
 
@@ -238,9 +328,31 @@ async function main() {
       process.execPath,
       ["package-for-friend.js"],
       buildRoot,
-      /node_modules\/accepts\.integrity/,
+      /record drifted.*node_modules\/accepts/,
     );
     assertEqual(sha256(readFileSync(archivePath)), archiveSha256, "Transitive lock drift overwrote the good ZIP");
+
+    const dependencyEdgeTamper = JSON.parse(originalShareLockText);
+    dependencyEdgeTamper.packages["node_modules/accepts"].dependencies.negotiator = "9.9.9";
+    writeFileSync(disposableShareLockPath, `${JSON.stringify(dependencyEdgeTamper, null, 2)}\n`);
+    expectFailure(
+      process.execPath,
+      ["package-for-friend.js"],
+      buildRoot,
+      /record drifted.*node_modules\/accepts/,
+    );
+    assertEqual(sha256(readFileSync(archivePath)), archiveSha256, "Dependency-edge drift overwrote the good ZIP");
+
+    const platformMetadataTamper = JSON.parse(originalShareLockText);
+    platformMetadataTamper.packages["node_modules/@napi-rs/canvas-win32-x64-msvc"].os = ["darwin"];
+    writeFileSync(disposableShareLockPath, `${JSON.stringify(platformMetadataTamper, null, 2)}\n`);
+    expectFailure(
+      process.execPath,
+      ["package-for-friend.js"],
+      buildRoot,
+      /record drifted.*canvas-win32-x64-msvc/,
+    );
+    assertEqual(sha256(readFileSync(archivePath)), archiveSha256, "Platform-metadata drift overwrote the good ZIP");
 
     const optionalOmission = JSON.parse(originalShareLockText);
     delete optionalOmission.packages["node_modules/@napi-rs/canvas-win32-x64-msvc"];
@@ -269,7 +381,13 @@ async function main() {
       assertEqual(digest, provenance.files[relativePath], `Provenance mismatch for ${relativePath}`);
     }
     if (process.platform !== "win32") {
-      for (const installer of ["install-transactional.sh", "install.command", "install.sh", "smart-install.sh"]) {
+      for (const installer of [
+        "configure-cursor.sh",
+        "install-transactional.sh",
+        "install.command",
+        "install.sh",
+        "smart-install.sh",
+      ]) {
         if ((statSync(path.join(sourcePackageRoot, installer)).mode & 0o111) === 0) {
           throw new Error(`Archive lost executable mode for ${installer}`);
         }
@@ -281,15 +399,23 @@ async function main() {
     const shareLock = JSON.parse(lockBytesBeforeInstall.toString("utf8"));
     const rootLock = JSON.parse(readFileSync(path.join(buildRoot, "package-lock.json"), "utf8"));
     assertEqual(sha256(lockBytesBeforeInstall), provenance.dependency_lock.sha256, "Provenance does not bind the lock");
+    const sharePackagePaths = Object.keys(shareLock.packages).filter(Boolean).sort();
+    const rootProductionPackagePaths = Object.entries(rootLock.packages)
+      .filter(([packagePath, lockedPackage]) => packagePath && lockedPackage.dev !== true)
+      .map(([packagePath]) => packagePath)
+      .sort();
+    assertEqual(
+      JSON.stringify(sharePackagePaths),
+      JSON.stringify(rootProductionPackagePaths),
+      "Full lock package-path coverage differs",
+    );
     for (const [packagePath, lockedPackage] of Object.entries(shareLock.packages)) {
       if (packagePath === "") continue;
-      for (const field of ["version", "resolved", "integrity"]) {
-        assertEqual(
-          lockedPackage[field],
-          rootLock.packages[packagePath]?.[field],
-          `Full lock parity failed for ${packagePath}.${field}`,
-        );
-      }
+      assertEqual(
+        JSON.stringify(lockedPackage),
+        JSON.stringify(rootLock.packages[packagePath]),
+        `Complete lock-record parity failed for ${packagePath}`,
+      );
     }
 
     const sbomBytes = readFileSync(path.join(sourcePackageRoot, "SBOM.cdx.json"));
@@ -342,6 +468,7 @@ async function main() {
     }
 
     testTransactionalFailurePaths(sourcePackageRoot, tempRoot);
+    testSuccessfulWrapperConfigs(sourcePackageRoot, tempRoot);
     if (process.platform === "win32") {
       run(npmCommand, [
         "ci", "--omit=dev", "--engine-strict", "--no-audit", "--no-fund",

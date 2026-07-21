@@ -28,11 +28,13 @@ SHA-256. Do not substitute a host-local global `mcpb pack` for release builds.
 The share-package test builds the ZIP twice, requires byte-identical hashes,
 verifies full root/share lock parity, provenance and CycloneDX 1.6 SBOM
 coverage, proves failed artifact builds preserve the prior ZIP, and exercises
-transactional install failure and rollback paths. It then performs a clean
-staged install with `npm ci --omit=dev --engine-strict` and exercises MCP
-discovery, resource reads, and native page rendering. Repeat the share install
-on each claimed release OS; one platform's native optional dependency does not
-prove another platform.
+transactional install failure, activation rollback, and signal rollback paths.
+It also writes existing and new Cursor configs beneath an adversarial path and
+requires exact JSON round-trip behavior. It then performs a clean staged install
+with `npm ci --omit=dev --engine-strict` and exercises MCP discovery, resource
+reads, and native page rendering. Repeat the share install on each claimed
+release OS; one platform's native optional dependency does not prove another
+platform.
 
 ## 3) Manual verification
 

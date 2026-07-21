@@ -55,6 +55,7 @@ cleanup_backup_root() {
 
 rollback_if_needed() {
     if [ -n "${BACKUP_ROOT:-}" ] && [ -e "$BACKUP_ROOT/previous" ] && [ ! -e "$TARGET_DIR" ]; then
+        echo "⚠️  Restoring the previous installation before exit." >&2
         if ! mv -- "$BACKUP_ROOT/previous" "$TARGET_DIR"; then
             echo "❌ CRITICAL: automatic rollback failed. Previous installation remains at $BACKUP_ROOT/previous" >&2
             return 1
@@ -64,7 +65,7 @@ rollback_if_needed() {
 
 cleanup_on_exit() {
     local status=$?
-    trap - EXIT
+    trap - EXIT HUP INT TERM
     rollback_if_needed || status=2
     cleanup_stage
     if [ -n "${BACKUP_ROOT:-}" ] && [ ! -e "$BACKUP_ROOT/previous" ]; then
@@ -80,6 +81,7 @@ REQUIRED_ITEMS=(
     "README.md"
     "SHARE-PROVENANCE.json"
     "SBOM.cdx.json"
+    "configure-cursor.sh"
     "dist-ui"
     "install-transactional.sh"
     "install.command"

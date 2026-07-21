@@ -125,15 +125,18 @@ bundled server, lists its tools, and requires native `render_pdf_page` output.
   1.6 JSON SBOM covering every locked production component and dependency
   edge. Packaging performs structural and exact lock-coverage validation; it
   does not claim external CycloneDX schema validation.
-- Requires exact `version`, `resolved`, and `integrity` parity with the root
-  lock for every production package, including transitive and platform-specific
-  optional packages.
+- Requires exact canonical record parity with the root lock for every
+  production package, including dependency edges, engine/platform metadata,
+  transitives, and platform-specific optional packages.
 - Uses a fixed timestamp, sorted file order, and stripped ZIP extras. The ZIP
   is built to a unique same-directory candidate, CRC/entry validated, and only
   then atomically renamed over the prior artifact.
 - The smart and double-click installers run `npm ci` in a sibling staging
   directory, move the working installation to a backup only after install
   success, atomically activate the stage, and roll back if activation fails.
+  Cursor config paths are passed to a single-quoted Python heredoc as arguments;
+  both existing and new configs are emitted with `json.dump`, never shell-built
+  or interpolated Python/JSON source.
 - Generate with:
 
 ```
@@ -150,8 +153,8 @@ cp package-lock.json pdf-toolkit-mcp-share/package-lock.json
 (cd pdf-toolkit-mcp-share && npm install --package-lock-only --ignore-scripts)
 ```
 
-The packager rejects any production package whose exact version, registry URL,
-or integrity differs from the root lock. Never change the exact
+The packager rejects any production package whose complete canonical lock
+record differs from the root lock. Never change the exact
 `pdfjs-dist@5.4.624` pin without completing the Claude Desktop viewer
 compatibility gates in `CLAUDE.md`.
 

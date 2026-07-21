@@ -5,14 +5,7 @@ function show_manual_method() {
     echo "📋 MANUAL METHOD:"
     echo "Copy this to ~/.cursor/mcp.json:"
     echo ""
-    echo "{"
-    echo '  "mcpServers": {'
-    echo '    "pdf-tools": {'
-    echo '      "command": "node",'
-    echo "      \"args\": [\"$FULL_PATH\"]"
-    echo '    }'
-    echo '  }'
-    echo "}"
+    "$SOURCE_DIR/configure-cursor.sh" print "$FULL_PATH"
     echo ""
 }
 
@@ -58,34 +51,8 @@ if [ -f "$MCP_CONFIG" ]; then
             echo "🔄 Updating existing pdf-tools configuration..."
         fi
         
-        # Use python to safely update JSON
-        python3 -c "
-import json
-import sys
-
-try:
-    with open('$MCP_CONFIG', 'r') as f:
-        config = json.load(f)
-    
-    if 'mcpServers' not in config:
-        config['mcpServers'] = {}
-    
-    # Update or add pdf-tools config
-    config['mcpServers']['pdf-tools'] = {
-        'command': 'node',
-        'args': ['$FULL_PATH']
-    }
-    
-    with open('$MCP_CONFIG', 'w') as f:
-        json.dump(config, f, indent=2)
-    
-    print('✅ Successfully updated pdf-tools in MCP config!')
-except Exception as e:
-    print(f'❌ Error: {e}')
-    sys.exit(1)
-" 2>/dev/null
-        
-        if [ $? -eq 0 ]; then
+        if "$SOURCE_DIR/configure-cursor.sh" update "$MCP_CONFIG" "$FULL_PATH"; then
+            echo "✅ Successfully updated pdf-tools in MCP config!"
             echo ""
             echo "🎉 SUCCESS! PDF Tools has been installed!"
             echo ""
@@ -105,20 +72,11 @@ except Exception as e:
     fi
 else
     echo "📂 Creating new MCP config..."
-    mkdir -p "$(dirname "$MCP_CONFIG")"
-    
-    cat > "$MCP_CONFIG" << EOF
-{
-  "mcpServers": {
-    "pdf-tools": {
-      "command": "node",
-      "args": ["$FULL_PATH"]
-    }
-  }
-}
-EOF
-    
-    echo "✅ Created MCP config with PDF Filler!"
+    if ! "$SOURCE_DIR/configure-cursor.sh" update "$MCP_CONFIG" "$FULL_PATH"; then
+        show_manual_method
+        exit 1
+    fi
+    echo "✅ Created MCP config with PDF Tools!"
     echo ""
     echo "📍 Permanent location: $FULL_PATH" 
     echo ""

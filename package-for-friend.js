@@ -17,6 +17,7 @@ const SBOM_FILENAME = "SBOM.cdx.json";
 const PROVENANCE_FILENAME = "SHARE-PROVENANCE.json";
 const SHARE_FILES = [
   "README.md",
+  "configure-cursor.sh",
   "dist-ui/index.html",
   "install-transactional.sh",
   "install.command",
@@ -34,8 +35,22 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
+function compareCodePoints(left, right) {
+  return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function canonicalize(value) {
+  if (Array.isArray(value)) return value.map(canonicalize);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.keys(value).sort(compareCodePoints).map(key => [key, canonicalize(value[key])]),
+    );
+  }
+  return value;
+}
+
 function sameJson(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return JSON.stringify(canonicalize(left)) === JSON.stringify(canonicalize(right));
 }
 
 function packageNameFromLockPath(packagePath) {
@@ -94,7 +109,7 @@ function dependencyPathsForPackage(lock, packagePath) {
     ...Object.keys(lockedPackage.peerDependencies || {}),
   ]);
   const paths = [];
-  for (const dependencyName of [...names].sort()) {
+  for (const dependencyName of [...names].sort(compareCodePoints)) {
     const resolvedPath = resolveDependencyPath(lock.packages, packagePath, dependencyName);
     if (resolvedPath) {
       paths.push(resolvedPath);
@@ -106,14 +121,14 @@ function dependencyPathsForPackage(lock, packagePath) {
       throw new Error(`Locked dependency ${dependencyName} required by ${packagePath || "root"} is missing.`);
     }
   }
-  return [...new Set(paths)].sort();
+  return [...new Set(paths)].sort(compareCodePoints);
 }
 
 export function generateCycloneDxSbom(lock, sharePackage) {
   const rootRef = `pkg:npm/${encodeURIComponent(sharePackage.name)}@${encodeURIComponent(sharePackage.version)}`;
   const packageEntries = Object.entries(lock.packages)
     .filter(([packagePath]) => packagePath !== "")
-    .sort(([left], [right]) => left.localeCompare(right));
+    .sort(([left], [right]) => compareCodePoints(left, right));
   const components = packageEntries.map(([packagePath, lockedPackage]) => {
     const name = packageNameFromLockPath(packagePath);
     const component = {
@@ -185,7 +200,9 @@ export function validateCycloneDxSbom(sbom, lock, sharePackage) {
     throw new Error("SBOM metadata component does not match the share package.");
   }
 
-  const packagePaths = Object.keys(lock.packages).filter(packagePath => packagePath !== "").sort();
+  const packagePaths = Object.keys(lock.packages)
+    .filter(packagePath => packagePath !== "")
+    .sort(compareCodePoints);
   if (sbom.components?.length !== packagePaths.length) {
     throw new Error(`SBOM component coverage mismatch: ${sbom.components?.length} != ${packagePaths.length}.`);
   }
@@ -212,7 +229,10 @@ export function validateCycloneDxSbom(sbom, lock, sharePackage) {
   for (const [packagePath, ref] of [["", rootRef], ...packagePaths.map(value => [value, packageBomRef(value)])]) {
     const actual = dependencyEntries.get(ref);
     const expected = dependencyPathsForPackage(lock, packagePath).map(packageBomRef);
-    if (!actual || !sameJson([...actual].sort(), [...expected].sort())) {
+    if (!actual || !sameJson(
+      [...actual].sort(compareCodePoints),
+      [...expected].sort(compareCodePoints),
+    )) {
       throw new Error(`SBOM dependency edges do not exactly cover ${packagePath || "root"}.`);
     }
     for (const dependencyRef of actual) {
@@ -249,11 +269,13 @@ export async function verifyShareLock(sharePackage, rootLock, sourceDir = SOURCE
     }
   }
 
-  const sharePackagePaths = Object.keys(lock.packages).filter(packagePath => packagePath !== "").sort();
+  const sharePackagePaths = Object.keys(lock.packages)
+    .filter(packagePath => packagePath !== "")
+    .sort(compareCodePoints);
   const rootProductionPackagePaths = Object.entries(rootLock.packages || {})
     .filter(([packagePath, lockedPackage]) => packagePath !== "" && lockedPackage.dev !== true)
     .map(([packagePath]) => packagePath)
-    .sort();
+    .sort(compareCodePoints);
   if (!sameJson(sharePackagePaths, rootProductionPackagePaths)) {
     const shareSet = new Set(sharePackagePaths);
     const rootSet = new Set(rootProductionPackagePaths);
@@ -275,13 +297,12 @@ export async function verifyShareLock(sharePackage, rootLock, sourceDir = SOURCE
     }
     const rootLockedPackage = rootLock.packages?.[packagePath];
     if (!rootLockedPackage) throw new Error(`Share lock package is absent from the reviewed root lock: ${packagePath}.`);
-    for (const field of ["version", "resolved", "integrity"]) {
-      if (lockedPackage[field] !== rootLockedPackage[field]) {
-        throw new Error(
-          `Share lock drifted from the reviewed root lock for ${packagePath}.${field}: ` +
-            `${lockedPackage[field]} != ${rootLockedPackage[field]}.`,
-        );
-      }
+    if (!sameJson(lockedPackage, rootLockedPackage)) {
+      throw new Error(
+        `Share lock record drifted from the reviewed root lock for ${packagePath}; ` +
+          `share=${JSON.stringify(canonicalize(lockedPackage))}, ` +
+          `root=${JSON.stringify(canonicalize(rootLockedPackage))}.`,
+      );
     }
   }
 
@@ -382,7 +403,7 @@ async function stageSharePackage(stageRoot, sharePackage, shareLock) {
 
   const archiveFiles = [...SHARE_FILES, SBOM_FILENAME, PROVENANCE_FILENAME]
     .map(relativePath => `${SOURCE_DIRNAME}/${relativePath}`)
-    .sort();
+    .sort(compareCodePoints);
   for (const archivePath of archiveFiles) {
     await fs.utimes(path.join(stageRoot, archivePath), ARCHIVE_EPOCH, ARCHIVE_EPOCH);
   }
@@ -394,8 +415,8 @@ function validateArchive(candidatePath, archiveFiles, unzipCommand) {
   const entries = execFileSync(unzipCommand, ["-Z1", candidatePath], { encoding: "utf8" })
     .split(/\r?\n/)
     .filter(Boolean)
-    .sort();
-  if (!sameJson(entries, [...archiveFiles].sort())) {
+    .sort(compareCodePoints);
+  if (!sameJson(entries, [...archiveFiles].sort(compareCodePoints))) {
     throw new Error(`ZIP entry validation failed: ${JSON.stringify(entries)}.`);
   }
 }
