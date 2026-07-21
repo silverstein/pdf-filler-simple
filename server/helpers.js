@@ -1011,6 +1011,257 @@ export function getPageDisplayMetrics({ width, height, rotation = 0 }) {
   };
 }
 
+export const PAGE_ANALYSIS_RETRY_GUIDANCE =
+  "Do not treat unknown pages as blank or delete/reorder them from this result. " +
+  "Retry get_page_analysis; if a page remains unknown, inspect it with render_pdf_page before any page mutation.";
+
+export const PAGE_ANALYSIS_MUTATION_GUIDANCE =
+  "likely_blank is a conservative heuristic, not authorization to delete or reorder a page. " +
+  "Visually inspect every blank candidate with render_pdf_page before mutation.";
+
+function initialPageAnalysis(page, index) {
+  const { width, height } = page.getSize();
+  const metrics = getPageDisplayMetrics({
+    width,
+    height,
+    rotation: page.getRotation().angle,
+  });
+  return {
+    page: index + 1,
+    ...metrics,
+    text_length: null,
+    text_snippet: null,
+    has_images: null,
+    has_graphics: null,
+    content_analysis_status: "not_analyzed",
+    text_extraction_status: "not_analyzed",
+    image_detection_status: "not_analyzed",
+    graphics_detection_status: "not_analyzed",
+    blank_status: "unknown",
+    analysis_error_codes: [],
+    analysis_provenance: {
+      dimensions: "pdf-lib",
+      text: null,
+      images: null,
+      graphics: null,
+    },
+  };
+}
+
+function markPageUnavailable(page, errorCode) {
+  page.content_analysis_status = "unavailable";
+  page.text_extraction_status = "failed";
+  page.image_detection_status = "failed";
+  page.graphics_detection_status = "failed";
+  page.blank_status = "unknown";
+  page.analysis_error_codes.push(errorCode);
+}
+
+function finalizePageAnalysis(page) {
+  const textComplete = page.text_extraction_status === "complete";
+  const operatorsComplete =
+    page.image_detection_status === "complete" &&
+    page.graphics_detection_status === "complete";
+
+  if (textComplete && operatorsComplete) {
+    page.content_analysis_status = "complete";
+  } else if (textComplete || operatorsComplete) {
+    page.content_analysis_status = "degraded";
+  } else if (page.content_analysis_status !== "unavailable") {
+    page.content_analysis_status = "degraded";
+  }
+
+  if (
+    (textComplete && page.text_length > 0) ||
+    (operatorsComplete && (page.has_images === true || page.has_graphics === true))
+  ) {
+    page.blank_status = "not_blank";
+  } else if (
+    textComplete &&
+    operatorsComplete &&
+    page.text_length === 0 &&
+    page.has_images === false &&
+    page.has_graphics === false
+  ) {
+    page.blank_status = "likely_blank";
+  } else {
+    page.blank_status = "unknown";
+  }
+}
+
+/**
+ * Analyze page content without allowing failed PDF.js measurements to look
+ * like real zero/false observations. Geometry always comes from pdf-lib;
+ * text, image, and blankness provenance is explicit for agent safety.
+ */
+export async function analyzePdfPages({
+  pdfLibPages,
+  pdfBytes,
+  pdfjsLib,
+  password,
+  maxPages = 200,
+  unavailableCode = "PDFJS_UNAVAILABLE",
+}) {
+  if (!Array.isArray(pdfLibPages)) {
+    throw new Error("pdfLibPages must be an array.");
+  }
+  if (!Number.isInteger(maxPages) || maxPages < 1) {
+    throw new Error("maxPages must be an integer >= 1.");
+  }
+
+  const pages = pdfLibPages.map(initialPageAnalysis);
+  const pagesToAnalyze = Math.min(pages.length, maxPages);
+  const analysisErrors = [];
+
+  if (!pdfjsLib) {
+    analysisErrors.push({ scope: "document", code: unavailableCode });
+    for (let i = 0; i < pagesToAnalyze; i++) {
+      markPageUnavailable(pages[i], unavailableCode);
+    }
+  } else {
+    let pdfjsDoc = null;
+    try {
+      pdfjsDoc = await pdfjsLib.getDocument({
+        data: new Uint8Array(pdfBytes),
+        password: password || undefined,
+        useSystemFonts: true,
+        disableFontFace: true,
+        verbosity: 0,
+      }).promise;
+    } catch {
+      analysisErrors.push({ scope: "document", code: "PDFJS_DOCUMENT_LOAD_FAILED" });
+      for (let i = 0; i < pagesToAnalyze; i++) {
+        markPageUnavailable(pages[i], "PDFJS_DOCUMENT_LOAD_FAILED");
+      }
+    }
+
+    if (pdfjsDoc) {
+      const imageOps = [
+        pdfjsLib.OPS?.paintImageXObject,
+        pdfjsLib.OPS?.paintJpegXObject,
+        pdfjsLib.OPS?.paintImageMaskXObject,
+        pdfjsLib.OPS?.paintImageMaskXObjectGroup,
+        pdfjsLib.OPS?.paintInlineImageXObject,
+        pdfjsLib.OPS?.paintInlineImageXObjectGroup,
+        pdfjsLib.OPS?.paintImageXObjectRepeat,
+        pdfjsLib.OPS?.paintImageMaskXObjectRepeat,
+        pdfjsLib.OPS?.paintSolidColorImageMask,
+      ].filter(value => value !== undefined && value !== null);
+      const graphicsOps = [
+        pdfjsLib.OPS?.stroke,
+        pdfjsLib.OPS?.closeStroke,
+        pdfjsLib.OPS?.fill,
+        pdfjsLib.OPS?.eoFill,
+        pdfjsLib.OPS?.fillStroke,
+        pdfjsLib.OPS?.eoFillStroke,
+        pdfjsLib.OPS?.closeFillStroke,
+        pdfjsLib.OPS?.closeEOFillStroke,
+        pdfjsLib.OPS?.shadingFill,
+        pdfjsLib.OPS?.paintXObject,
+        pdfjsLib.OPS?.paintFormXObjectBegin,
+        pdfjsLib.OPS?.beginAnnotation,
+        pdfjsLib.OPS?.constructPath,
+        pdfjsLib.OPS?.rawFillPath,
+      ].filter(value => value !== undefined && value !== null);
+
+      try {
+        for (let i = 0; i < pagesToAnalyze; i++) {
+          const pageResult = pages[i];
+          let pdfjsPage;
+          try {
+            pdfjsPage = await pdfjsDoc.getPage(i + 1);
+          } catch {
+            markPageUnavailable(pageResult, "PDFJS_PAGE_LOAD_FAILED");
+            analysisErrors.push({
+              scope: "page",
+              page: i + 1,
+              code: "PDFJS_PAGE_LOAD_FAILED",
+            });
+            continue;
+          }
+
+          try {
+            const content = await pdfjsPage.getTextContent();
+            const fullText = content.items.map(item => item.str).join("");
+            pageResult.text_length = fullText.length;
+            pageResult.text_snippet = fullText.slice(0, 100);
+            pageResult.text_extraction_status = "complete";
+            pageResult.analysis_provenance.text = "pdfjs";
+          } catch {
+            pageResult.text_extraction_status = "failed";
+            pageResult.analysis_error_codes.push("PDFJS_TEXT_EXTRACTION_FAILED");
+            analysisErrors.push({
+              scope: "page",
+              page: i + 1,
+              code: "PDFJS_TEXT_EXTRACTION_FAILED",
+            });
+          }
+
+          try {
+            if (imageOps.length === 0 || graphicsOps.length === 0) {
+              throw new Error("PDF.js content operators unavailable");
+            }
+            const ops = await pdfjsPage.getOperatorList();
+            pageResult.has_images = ops.fnArray.some(fn => imageOps.includes(fn));
+            pageResult.has_graphics = ops.fnArray.some(fn => graphicsOps.includes(fn));
+            pageResult.image_detection_status = "complete";
+            pageResult.graphics_detection_status = "complete";
+            pageResult.analysis_provenance.images = "pdfjs";
+            pageResult.analysis_provenance.graphics = "pdfjs";
+          } catch {
+            pageResult.image_detection_status = "failed";
+            pageResult.graphics_detection_status = "failed";
+            pageResult.analysis_error_codes.push("PDFJS_OPERATOR_ANALYSIS_FAILED");
+            analysisErrors.push({
+              scope: "page",
+              page: i + 1,
+              code: "PDFJS_OPERATOR_ANALYSIS_FAILED",
+            });
+          }
+
+          finalizePageAnalysis(pageResult);
+        }
+      } finally {
+        try {
+          await pdfjsDoc.destroy();
+        } catch {}
+      }
+    }
+  }
+
+  const likelyBlankPages = pages
+    .filter(page => page.blank_status === "likely_blank")
+    .map(page => page.page);
+  const nonblankPages = pages
+    .filter(page => page.blank_status === "not_blank")
+    .map(page => page.page);
+  const unknownPages = pages
+    .filter(page => page.blank_status === "unknown")
+    .map(page => page.page);
+  const hasFailures = analysisErrors.length > 0;
+  const intentionallyPartial = pages.length > pagesToAnalyze;
+  const contentAnalysisStatus = hasFailures
+    ? "degraded"
+    : intentionallyPartial
+      ? "partial"
+      : "complete";
+
+  return {
+    total_pages: pages.length,
+    content_analysis_status: contentAnalysisStatus,
+    content_analysis_complete: contentAnalysisStatus === "complete",
+    content_pages_requested: pagesToAnalyze,
+    content_pages_complete: pages.filter(page => page.content_analysis_status === "complete").length,
+    likely_blank_pages: likelyBlankPages,
+    nonblank_pages: nonblankPages,
+    unknown_pages: unknownPages,
+    analysis_errors: analysisErrors,
+    retry_guidance: unknownPages.length > 0 ? PAGE_ANALYSIS_RETRY_GUIDANCE : null,
+    mutation_guidance: PAGE_ANALYSIS_MUTATION_GUIDANCE,
+    pages,
+  };
+}
+
 export function getPageRenderScale({
   width,
   height,

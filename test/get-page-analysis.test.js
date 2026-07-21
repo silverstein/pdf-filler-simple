@@ -3,7 +3,12 @@ import { PDFDocument, degrees } from "pdf-lib";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
-import { getPageDisplayMetrics } from "../server/helpers.js";
+import {
+  PAGE_ANALYSIS_RETRY_GUIDANCE,
+  PAGE_ANALYSIS_MUTATION_GUIDANCE,
+  analyzePdfPages,
+  getPageDisplayMetrics,
+} from "../server/helpers.js";
 import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -102,5 +107,176 @@ describe("get_page_analysis", () => {
     expect(rotatedResult.pages[1].rotation).toBe(90);
     expect(rotatedResult.pages[1].orientation).toBe("landscape");
     expect(rotatedResult.pages[1].display_width).toBeGreaterThan(rotatedResult.pages[1].display_height);
+  });
+});
+
+function fakePdfLibPages(count) {
+  return Array.from({ length: count }, () => ({
+    getSize: () => ({ width: 612, height: 792 }),
+    getRotation: () => ({ angle: 0 }),
+  }));
+}
+
+function fakePdfjs(pageBehaviors, { documentFailure = false } = {}) {
+  const OPS = {
+    paintImageXObject: 1,
+    paintJpegXObject: 2,
+    paintImageMaskXObject: 3,
+    fill: 4,
+  };
+  const document = {
+    async getPage(pageNumber) {
+      const behavior = pageBehaviors[pageNumber - 1] ?? {};
+      if (behavior.pageFailure) throw new Error("forced page load failure");
+      return {
+        async getTextContent() {
+          if (behavior.textFailure) throw new Error("forced text failure");
+          return { items: [{ str: behavior.text ?? "" }] };
+        },
+        async getOperatorList() {
+          if (behavior.imageFailure) throw new Error("forced image failure");
+          return {
+            fnArray: [
+              ...(behavior.hasImages ? [OPS.paintImageXObject] : []),
+              ...(behavior.hasGraphics ? [OPS.fill] : []),
+            ],
+          };
+        },
+      };
+    },
+    async destroy() {},
+  };
+  return {
+    OPS,
+    getDocument() {
+      return {
+        promise: documentFailure
+          ? Promise.reject(new Error("forced document load failure"))
+          : Promise.resolve(document),
+      };
+    },
+  };
+}
+
+describe("get_page_analysis content provenance", () => {
+  it("makes a whole-document PDF.js failure explicitly unavailable, never blank", async () => {
+    const result = await analyzePdfPages({
+      pdfLibPages: fakePdfLibPages(2),
+      pdfBytes: new Uint8Array([1]),
+      pdfjsLib: fakePdfjs([], { documentFailure: true }),
+    });
+
+    expect(result).toMatchObject({
+      content_analysis_status: "degraded",
+      content_analysis_complete: false,
+      likely_blank_pages: [],
+      unknown_pages: [1, 2],
+      retry_guidance: PAGE_ANALYSIS_RETRY_GUIDANCE,
+      mutation_guidance: PAGE_ANALYSIS_MUTATION_GUIDANCE,
+      analysis_errors: [{ scope: "document", code: "PDFJS_DOCUMENT_LOAD_FAILED" }],
+    });
+    for (const page of result.pages) {
+      expect(page).toMatchObject({
+        text_length: null,
+        text_snippet: null,
+        has_images: null,
+        has_graphics: null,
+        content_analysis_status: "unavailable",
+        blank_status: "unknown",
+      });
+      expect(page.analysis_error_codes).toEqual(["PDFJS_DOCUMENT_LOAD_FAILED"]);
+    }
+  });
+
+  it("keeps successful and positive partial evidence while isolating unknown pages", async () => {
+    const result = await analyzePdfPages({
+      pdfLibPages: fakePdfLibPages(6),
+      pdfBytes: new Uint8Array([1]),
+      pdfjsLib: fakePdfjs([
+        { text: "", hasImages: false },
+        { text: "Revenue", imageFailure: true },
+        { textFailure: true, hasImages: false },
+        { textFailure: true, hasImages: true },
+        { textFailure: true, hasGraphics: true },
+        { pageFailure: true },
+      ]),
+    });
+
+    expect(result).toMatchObject({
+      content_analysis_status: "degraded",
+      content_analysis_complete: false,
+      likely_blank_pages: [1],
+      nonblank_pages: [2, 4, 5],
+      unknown_pages: [3, 6],
+      retry_guidance: PAGE_ANALYSIS_RETRY_GUIDANCE,
+    });
+    expect(result.pages[0]).toMatchObject({
+      content_analysis_status: "complete",
+      text_length: 0,
+      has_images: false,
+      has_graphics: false,
+      blank_status: "likely_blank",
+    });
+    expect(result.pages[1]).toMatchObject({
+      content_analysis_status: "degraded",
+      text_length: 7,
+      has_images: null,
+      has_graphics: null,
+      blank_status: "not_blank",
+      analysis_error_codes: ["PDFJS_OPERATOR_ANALYSIS_FAILED"],
+    });
+    expect(result.pages[2]).toMatchObject({
+      content_analysis_status: "degraded",
+      text_length: null,
+      has_images: false,
+      has_graphics: false,
+      blank_status: "unknown",
+      analysis_error_codes: ["PDFJS_TEXT_EXTRACTION_FAILED"],
+    });
+    expect(result.pages[3]).toMatchObject({
+      content_analysis_status: "degraded",
+      text_length: null,
+      has_images: true,
+      has_graphics: false,
+      blank_status: "not_blank",
+    });
+    expect(result.pages[4]).toMatchObject({
+      content_analysis_status: "degraded",
+      text_length: null,
+      has_images: false,
+      has_graphics: true,
+      blank_status: "not_blank",
+    });
+    expect(result.pages[5]).toMatchObject({
+      content_analysis_status: "unavailable",
+      text_length: null,
+      has_images: null,
+      has_graphics: null,
+      blank_status: "unknown",
+      analysis_error_codes: ["PDFJS_PAGE_LOAD_FAILED"],
+    });
+  });
+
+  it("marks pages beyond the analysis cap unknown instead of blank", async () => {
+    const result = await analyzePdfPages({
+      pdfLibPages: fakePdfLibPages(2),
+      pdfBytes: new Uint8Array([1]),
+      pdfjsLib: fakePdfjs([{ text: "", hasImages: false }]),
+      maxPages: 1,
+    });
+
+    expect(result).toMatchObject({
+      content_analysis_status: "partial",
+      likely_blank_pages: [1],
+      unknown_pages: [2],
+      retry_guidance: PAGE_ANALYSIS_RETRY_GUIDANCE,
+    });
+    expect(result.pages[1]).toMatchObject({
+      content_analysis_status: "not_analyzed",
+      text_length: null,
+      has_images: null,
+      has_graphics: null,
+      blank_status: "unknown",
+    });
   });
 });

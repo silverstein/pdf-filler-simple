@@ -67,7 +67,7 @@
     },
     {
       "name": "read_pdf_content",
-      "description": "Read and analyze the full content of a PDF file - extract text, summarize, convert to other formats, or answer questions about the document"
+      "description": "Read PDF content with explicit complete, partial, or failed extraction status"
     },
     {
       "name": "read_pdf_pages",
@@ -115,7 +115,7 @@
     },
     {
       "name": "get_page_analysis",
-      "description": "Analyze PDF pages for blank detection, orientation, text content, and image presence"
+      "description": "Analyze PDF pages with provenance-safe blank, unknown, orientation, text, and image status"
     },
     {
       "name": "fetch_pdf_from_url",

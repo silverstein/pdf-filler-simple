@@ -652,7 +652,6 @@ async function loadPdf(inputPath, password = null) {
 
 // Import helpers extracted for testability
 import {
-  getPageDisplayMetrics,
   parsePageRanges,
   downloadPdfFromUrl,
   findUniquePath,
@@ -675,6 +674,7 @@ import {
   searchPageTexts,
   validatePdfRegionBox,
   parseAllowedDirectoryArgs,
+  analyzePdfPages,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
@@ -1556,7 +1556,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "read_pdf_content",
-        description: "Read PDF text for broad understanding of the document. Best for full-document summarization, question answering, and exploratory analysis when you want a single text-oriented view of the file. If you need page-bounded excerpts or keyword search results, prefer read_pdf_pages or search_pdf_text. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Read PDF text for broad understanding of the document. Returns an explicit extraction_status (complete, partial, or failed); a failed result must not be interpreted as an empty PDF. Best for full-document summarization, question answering, and exploratory analysis when you want a single text-oriented view of the file. If you need page-bounded excerpts or keyword search results, prefer read_pdf_pages or search_pdf_text. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           properties: {
@@ -2136,7 +2136,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "get_page_analysis",
-        description: "Analyze a PDF and return per-page metadata: text length, text snippet, image presence, dimensions, and orientation. Use this to identify blank pages, sideways pages, and potential duplicates. All paths must be absolute.",
+        description: "Analyze a PDF and return per-page metadata with explicit content-analysis provenance: text length, text snippet, image/vector-graphics presence, dimensions, orientation, and blank_status. Only likely_blank pages with complete content measurements are blank candidates, and every candidate still requires visual inspection before mutation; unknown pages must never be deleted or reordered from this result. All paths must be absolute.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2997,22 +2997,49 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                   text_length: 0,
                   text_truncated: false,
                   text_found: false,
-                  page_previews: [],
-                  preview_truncated: false,
+                  content_available: true,
+                  extraction_status: "partial",
+                  page_previews: pagePreview.pages,
+                  preview_truncated: pagePreview.truncated,
                   extraction_mode: "image-fallback",
                   image_renderer: renderedImage.renderer,
+                  error_codes: [],
+                  retry_guidance:
+                    "Only page 1 was returned as an image. Use render_pdf_page for any additional pages that require inspection.",
                 },
               };
             } catch (imageError) {
-              // If image extraction also fails, return error message
-              response += `\n\nNote: No text could be extracted from this PDF, and image extraction also failed.\n`;
-              response += `Error: ${imageError.message}\n`;
-              response += `This might be because:\n`;
-              response += `- The PDF is encrypted or has restrictions\n`;
-              response += `- The PDF is corrupted\n`;
-              response += `- Memory limitations\n`;
+              console.error("[read_pdf_content] Image fallback failed:", imageError.message);
+              response = `Error: PDF content extraction failed: no text was found and the page-image fallback was unavailable.\n`;
+              response += `Do not assume this PDF is empty or complete. Check PDF access/password, retry, and use render_pdf_page to diagnose page 1 before relying on the document contents.\n`;
+              return {
+                isError: true,
+                content: [{
+                  type: "text",
+                  text: response,
+                }],
+                structuredContent: {
+                  pdf_path: resolvedPath,
+                  file_name: fileName,
+                  total_pages: pageCount,
+                  pages_read: pagesRead,
+                  text_length: result.text.length,
+                  text_truncated: false,
+                  text_found: false,
+                  content_available: false,
+                  extraction_status: "failed",
+                  page_previews: pagePreview.pages,
+                  preview_truncated: pagePreview.truncated,
+                  extraction_mode: "none",
+                  error_codes: ["NO_EXTRACTABLE_TEXT", "IMAGE_FALLBACK_FAILED"],
+                  retry_guidance:
+                    "Do not treat this PDF as empty. Check PDF access/password and renderer availability, then retry read_pdf_content or render_pdf_page.",
+                },
+              };
             }
           }
+
+          const extractionPartial = truncated || pagesRead < pageCount;
           
           return {
             content: [{
@@ -3027,9 +3054,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               text_length: result.text.length,
               text_truncated: truncated,
               text_found: extractedText.trim().length > 0,
+              content_available: extractedText.trim().length > 0,
+              extraction_status: extractionPartial ? "partial" : "complete",
               page_previews: pagePreview.pages,
               preview_truncated: pagePreview.truncated,
               extraction_mode: "text",
+              error_codes: [],
+              retry_guidance: extractionPartial
+                ? "Use max_pages or page-bounded tools to retrieve content outside this partial result."
+                : null,
             },
           };
         } catch (error) {
@@ -3927,84 +3960,50 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         const pdfLibPages = pdfDoc.getPages();
         const totalPages = pdfLibPages.length;
 
-        // Pre-extract dimensions from pdf-lib (instant)
-        const pageMeta = pdfLibPages.map((page, i) => {
-          const { width, height } = page.getSize();
-          const metrics = getPageDisplayMetrics({ width, height, rotation: page.getRotation().angle });
-          return {
-            page: i + 1,
-            width: metrics.width,
-            height: metrics.height,
-            display_width: metrics.display_width,
-            display_height: metrics.display_height,
-            rotation: metrics.rotation,
-            orientation: metrics.orientation,
-            text_length: 0,
-            text_snippet: "",
-            has_images: false,
-          };
-        });
-
-        // Use pdfjs-dist for text extraction (slower — only first 100 chars per page)
+        let analysisPdfjs = null;
+        let unavailableCode = "PDFJS_UNAVAILABLE";
         try {
           await loadPdfjs();
-          const pdfjsDoc = await pdfjsLib.getDocument({
-            data: new Uint8Array(pdfBytes),
-            password: password || undefined,
-            useSystemFonts: true,
-            disableFontFace: true,
-            verbosity: 0
-          }).promise;
-
-          const maxPages = Math.min(totalPages, 200);
-          for (let i = 0; i < maxPages; i++) {
-            try {
-              const page = await pdfjsDoc.getPage(i + 1);
-              const content = await page.getTextContent();
-              const fullText = content.items.map(item => item.str).join("");
-              pageMeta[i].text_length = fullText.length;
-              pageMeta[i].text_snippet = fullText.slice(0, 100);
-
-              // Check for images via operatorList
-              const ops = await page.getOperatorList();
-              const imageOps = [
-                pdfjsLib.OPS?.paintImageXObject,
-                pdfjsLib.OPS?.paintJpegXObject,
-                pdfjsLib.OPS?.paintImageMaskXObject,
-              ].filter(Boolean);
-              pageMeta[i].has_images = ops.fnArray.some(fn => imageOps.includes(fn));
-            } catch {
-              // Per-page error — leave defaults for this page
-            }
-          }
-
-          await pdfjsDoc.destroy();
+          analysisPdfjs = pdfjsLib;
         } catch (textErr) {
-          // pdfjs-dist failed entirely — return dimension-only data
+          unavailableCode = "PDFJS_LOAD_FAILED";
           console.error("[get_page_analysis] Text extraction failed:", textErr.message);
         }
+
+        const analysis = await analyzePdfPages({
+          pdfLibPages,
+          pdfBytes,
+          pdfjsLib: analysisPdfjs,
+          password,
+          maxPages: 200,
+          unavailableCode,
+        });
+        const pageMeta = analysis.pages;
 
         // Compute majority orientation for detecting sideways pages
         const orientationCounts = { portrait: 0, landscape: 0 };
         for (const p of pageMeta) orientationCounts[p.orientation]++;
         const majorityOrientation = orientationCounts.portrait >= orientationCounts.landscape ? "portrait" : "landscape";
 
-        // Only flag blank pages that were actually analyzed (not beyond the 200-page cap)
-        const analyzedCount = Math.min(totalPages, 200);
-        let summary = `Analyzed ${totalPages} pages`;
-        if (totalPages > 200) summary += ` (text extracted from first 200 only)`;
+        let summary = `Analyzed geometry for ${totalPages} pages`;
+        if (totalPages > 200) summary += ` (content analysis limited to the first 200)`;
         summary += ".";
-        const blankPages = pageMeta.filter(p => p.page <= analyzedCount && p.text_length === 0 && !p.has_images);
         const sidewaysPages = pageMeta.filter(p => p.orientation !== majorityOrientation);
-        if (blankPages.length > 0) summary += ` ${blankPages.length} likely blank page(s): ${blankPages.map(p => p.page).join(", ")}.`;
+        if (analysis.likely_blank_pages.length > 0) {
+          summary += ` ${analysis.likely_blank_pages.length} likely blank page(s): ${analysis.likely_blank_pages.join(", ")}.`;
+          summary += ` ${analysis.mutation_guidance}`;
+        }
+        if (analysis.unknown_pages.length > 0) {
+          summary += ` ${analysis.unknown_pages.length} page(s) have unknown content status and are not blank candidates: ${analysis.unknown_pages.join(", ")}.`;
+        }
         if (sidewaysPages.length > 0) summary += ` ${sidewaysPages.length} page(s) in ${sidewaysPages[0].orientation} orientation (majority is ${majorityOrientation}): ${sidewaysPages.map(p => p.page).join(", ")}.`;
+        if (analysis.retry_guidance) summary += ` ${analysis.retry_guidance}`;
 
         return {
           content: [{ type: "text", text: summary }],
           structuredContent: {
-            total_pages: totalPages,
+            ...analysis,
             majority_orientation: majorityOrientation,
-            pages: pageMeta,
           },
         };
       }

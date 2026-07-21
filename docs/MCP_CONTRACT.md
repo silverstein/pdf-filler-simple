@@ -51,6 +51,34 @@ without one, while any future output schema would make conformance mandatory.
 Add output schemas only as a separately reviewed, versioned contract change
 with success and error-path fixtures for every affected tool.
 
+#### Extraction and page-analysis truthfulness
+
+`read_pdf_content` exposes `extraction_status` as `complete`, `partial`, or
+`failed`. A text result is partial when it is page-limited or response-
+truncated. A successful first-page image fallback is also partial because it
+does not establish the contents of every page. If text extraction finds no
+content and image fallback fails, the tool returns `isError: true` while
+preserving safe document metadata and page-preview measurements in
+`structuredContent`. That result uses `extraction_mode: "none"`,
+`content_available: false`, stable public `error_codes`, and retry guidance;
+it must never be interpreted as proof that the PDF is empty. Internal renderer
+error text is logged to stderr rather than exposed in the structured contract.
+
+`get_page_analysis` reports geometry from `pdf-lib` separately from content
+measurements obtained through PDF.js. Every page has explicit text/image/vector-graphics
+measurement status, provenance, and `blank_status` (`likely_blank`,
+`not_blank`, or `unknown`). A page is `likely_blank` only when text and
+operator-list measurements completed successfully and found no text, image, or
+painted vector graphics. Positive partial
+evidence can still establish `not_blank`; missing or failed evidence produces
+`unknown`, with `null` rather than fabricated zero/false values. Whole-document,
+per-page, and 200-page-cap gaps are therefore never deletion or reorder advice.
+When any pages are unknown, the response tells agents to retry and then inspect
+those pages with `render_pdf_page` before a page mutation. Even a
+`likely_blank` result is a conservative heuristic rather than deletion
+authorization; `mutation_guidance` requires visual inspection of every
+candidate before deletion or reordering.
+
 ### Prompts
 
 The 14 manifest prompt templates are first-class MCP prompts. Runtime

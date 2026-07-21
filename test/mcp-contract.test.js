@@ -13,7 +13,7 @@ const REPO_ROOT = path.join(__dirname, "..");
 const SOURCE_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.json"), "utf8"));
 const MCPB_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.mcpb.json"), "utf8"));
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TOOL_CONTRACT_SHA256 = "acd61c61d59876f89b8e9dd6698a5e3466defee69c2975129a6aadd3847c947c";
+const TOOL_CONTRACT_SHA256 = "a42db722b5aaade5d4ba13b95b4eafab3c40fa61752306507713bf918cca5938";
 
 const RUNTIMES = [
   { name: "source checkout", root: REPO_ROOT },
