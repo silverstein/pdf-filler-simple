@@ -64,6 +64,48 @@ Public fixtures belong in the repository only when redistribution is clearly
 allowed. Confidential or user-supplied documents stay outside Git; derived
 synthetic fixtures should reproduce the failure without retaining private data.
 
+### Executable corpus v0
+
+The first executable slice lives at `test/fixtures/eval/manifest.v1.json` and is
+defined by `manifest.schema.json`. Stable fixture IDs begin with
+`pdf-tools.eval.v1.`. Every entry records its exact SHA-256, manifest-relative
+path, provenance, redistribution terms, privacy class, partition, category, and
+expected deterministic properties.
+
+The ordinary run selects only `development`:
+
+```bash
+node scripts/eval-run.mjs
+```
+
+The release partition is deliberately separate and must be named explicitly:
+
+```bash
+node scripts/eval-run.mjs --partition held_out_release
+```
+
+This split prevents ordinary development runs from continually exercising every
+release example. The committed release fixture is public for auditability, so
+this is an operational holdout rather than a secret benchmark. Future private
+release fixtures must remain outside Git and use a separately controlled
+manifest; they must never be copied into this public corpus.
+
+Synthetic PDFs are tiny and reproducible with
+`node scripts/eval-generate-fixtures.mjs`. The manifest also references the
+existing blank 2014 IRS W-9 golden fixture in place. Its upstream source is the
+[IRS prior-year form](https://www.irs.gov/pub/irs-prior/fw9--2014.pdf), and its
+redistribution basis is recorded as a United States government work under
+[17 U.S.C. section 105](https://www.copyright.gov/title17/92chap1.html#105).
+
+The v0 scorers cover parseability, exact page and form-field counts,
+tolerance-bounded media/crop boxes, rotation, basic per-page text extraction
+through an independent parser, exact created/modified/deleted file sets, and
+source-file immutability. The development corpus includes a
+visibly reversed two-page PDF: it remains non-empty, parseable, and has the
+correct page count, but the geometry scorer rejects the swapped page order.
+This is the minimum adversarial guard against tests that only prove a PDF was
+written.
+
 ## Scoring contracts
 
 ### Deterministic graders

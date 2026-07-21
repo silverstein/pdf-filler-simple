@@ -1,0 +1,180 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/manifest.schema.json",
+  "title": "PDF Tools evaluation fixture manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_version", "corpus_version", "fixtures"],
+  "properties": {
+    "manifest_version": { "const": 1 },
+    "corpus_version": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "fixtures": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/fixture" }
+    }
+  },
+  "$defs": {
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "path",
+        "sha256",
+        "media_type",
+        "partition",
+        "category",
+        "expected_outcome",
+        "description",
+        "provenance",
+        "license",
+        "privacy",
+        "expected"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^pdf-tools\\.eval\\.v1\\.[a-z0-9]+(?:[.-][a-z0-9]+)*$"
+        },
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "media_type": { "const": "application/pdf" },
+        "partition": { "enum": ["development", "held_out_release"] },
+        "category": {
+          "enum": ["public_golden_form", "page_order_regression", "page_geometry"]
+        },
+        "expected_outcome": { "enum": ["pass", "fail"] },
+        "failure_class": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "license": { "$ref": "#/$defs/license" },
+        "privacy": { "$ref": "#/$defs/privacy" },
+        "expected": { "$ref": "#/$defs/expected" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "origin", "source_url", "generator", "reused_from"],
+      "properties": {
+        "kind": { "enum": ["public", "synthetic"] },
+        "origin": { "type": "string", "minLength": 1 },
+        "source_url": { "type": ["string", "null"], "format": "uri" },
+        "generator": { "type": ["string", "null"] },
+        "reused_from": { "type": ["string", "null"] }
+      }
+    },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "spdx_id", "url", "redistribution"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "spdx_id": { "type": "string", "minLength": 1 },
+        "url": { "type": "string", "format": "uri" },
+        "redistribution": { "const": "allowed" }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "contains_personal_data", "notes"],
+      "properties": {
+        "class": { "enum": ["public", "synthetic"] },
+        "contains_personal_data": { "const": false },
+        "notes": { "type": "string", "minLength": 1 }
+      }
+    },
+    "expected": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "document": { "$ref": "#/$defs/document" },
+        "geometry": { "$ref": "#/$defs/geometry" },
+        "extraction": { "$ref": "#/$defs/extraction" },
+        "file_side_effects": { "$ref": "#/$defs/fileSideEffects" }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page_count"],
+      "properties": {
+        "page_count": { "type": "integer", "minimum": 1 },
+        "form_field_count": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "geometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tolerance_points", "pages"],
+      "properties": {
+        "tolerance_points": { "type": "number", "minimum": 0, "maximum": 1 },
+        "pages": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/pageGeometry" }
+        }
+      }
+    },
+    "pageGeometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "rotation", "media_box", "crop_box"],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1 },
+        "rotation": { "enum": [0, 90, 180, 270] },
+        "media_box": { "$ref": "#/$defs/box" },
+        "crop_box": { "$ref": "#/$defs/box" }
+      }
+    },
+    "box": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "extraction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pages"],
+      "properties": {
+        "pages": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["page", "required_text"],
+            "properties": {
+              "page": { "type": "integer", "minimum": 1 },
+              "required_text": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "fileSideEffects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created", "modified", "deleted", "unchanged"],
+      "properties": {
+        "created": { "type": "array", "items": { "type": "string" } },
+        "modified": { "type": "array", "items": { "type": "string" } },
+        "deleted": { "type": "array", "items": { "type": "string" } },
+        "unchanged": { "type": "array", "items": { "type": "string" } }
+      }
+    }
+  }
+}

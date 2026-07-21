@@ -1,0 +1,213 @@
+{
+  "manifest_version": 1,
+  "corpus_version": "v0.1.0",
+  "fixtures": [
+    {
+      "id": "pdf-tools.eval.v1.irs-w9-2014",
+      "path": "../../../example-fw9.pdf",
+      "sha256": "dbae1d3279aa5c7a1c6365c2155c71758f1e9d417ce7f1ad1bb25287f7893978",
+      "media_type": "application/pdf",
+      "partition": "development",
+      "category": "public_golden_form",
+      "expected_outcome": "pass",
+      "description": "Existing public W-9 golden fixture; referenced in place rather than duplicated.",
+      "provenance": {
+        "kind": "public",
+        "origin": "Repository copy derived from Internal Revenue Service Form W-9, revision December 2014; PDF metadata records a pdf-lib modification on 2025-06-26",
+        "source_url": "https://www.irs.gov/pub/irs-prior/fw9--2014.pdf",
+        "generator": "Existing repository fixture; no reproducible generator is available for its 2025 pdf-lib modification",
+        "reused_from": "test/fixtures/golden-forms/expected.json#example-fw9"
+      },
+      "license": {
+        "name": "United States government work",
+        "spdx_id": "LicenseRef-US-Government-Work",
+        "url": "https://www.copyright.gov/title17/92chap1.html#105",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "public",
+        "contains_personal_data": false,
+        "notes": "Blank public tax form; no completed taxpayer fields or user data."
+      },
+      "expected": {
+        "document": {
+          "page_count": 4,
+          "form_field_count": 22
+        },
+        "geometry": {
+          "tolerance_points": 0.01,
+          "pages": [
+            {
+              "page": 1,
+              "rotation": 0,
+              "media_box": { "x": 0, "y": 0, "width": 611.976, "height": 791.968 },
+              "crop_box": { "x": 0, "y": 0, "width": 611.976, "height": 791.968 }
+            }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pdf-tools.eval.v1.dev-page-order-source",
+      "path": "synthetic/dev-page-order-source.pdf",
+      "sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+      "media_type": "application/pdf",
+      "partition": "development",
+      "category": "page_order_regression",
+      "expected_outcome": "pass",
+      "description": "Two visibly labeled pages with distinct boxes and rotations defining the correct page order.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Created for the PDF Tools evaluation corpus",
+        "source_url": null,
+        "generator": "scripts/eval-generate-fixtures.mjs",
+        "reused_from": null
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false,
+        "notes": "Programmatically generated shapes and fixed labels only."
+      },
+      "expected": {
+        "document": { "page_count": 2, "form_field_count": 0 },
+        "geometry": {
+          "tolerance_points": 0.01,
+          "pages": [
+            {
+              "page": 1,
+              "rotation": 0,
+              "media_box": { "x": 0, "y": 0, "width": 360, "height": 480 },
+              "crop_box": { "x": 12, "y": 18, "width": 330, "height": 444 }
+            },
+            {
+              "page": 2,
+              "rotation": 90,
+              "media_box": { "x": 0, "y": 0, "width": 480, "height": 360 },
+              "crop_box": { "x": 20, "y": 24, "width": 430, "height": 300 }
+            }
+          ]
+        },
+        "extraction": {
+          "pages": [
+            { "page": 1, "required_text": ["PAGE ONE - PORTRAIT"] },
+            { "page": 2, "required_text": ["PAGE TWO - ROTATED"] }
+          ]
+        },
+        "file_side_effects": {
+          "created": ["output/page-plan.pdf"],
+          "modified": [],
+          "deleted": [],
+          "unchanged": ["input/source.pdf"]
+        }
+      }
+    },
+    {
+      "id": "pdf-tools.eval.v1.dev-page-order-visibly-wrong",
+      "path": "synthetic/dev-page-order-visibly-wrong.pdf",
+      "sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+      "media_type": "application/pdf",
+      "partition": "development",
+      "category": "page_order_regression",
+      "expected_outcome": "fail",
+      "failure_class": "visibly_swapped_page_order",
+      "description": "Non-empty, parseable two-page output with the visibly labeled pages reversed; superficial page-count checks pass.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Derived from pdf-tools.eval.v1.dev-page-order-source by reversing both pages",
+        "source_url": null,
+        "generator": "scripts/eval-generate-fixtures.mjs",
+        "reused_from": "pdf-tools.eval.v1.dev-page-order-source"
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false,
+        "notes": "Programmatically generated shapes and fixed labels only."
+      },
+      "expected": {
+        "document": { "page_count": 2, "form_field_count": 0 },
+        "geometry": {
+          "tolerance_points": 0.01,
+          "pages": [
+            {
+              "page": 1,
+              "rotation": 0,
+              "media_box": { "x": 0, "y": 0, "width": 360, "height": 480 },
+              "crop_box": { "x": 12, "y": 18, "width": 330, "height": 444 }
+            },
+            {
+              "page": 2,
+              "rotation": 90,
+              "media_box": { "x": 0, "y": 0, "width": 480, "height": 360 },
+              "crop_box": { "x": 20, "y": 24, "width": 430, "height": 300 }
+            }
+          ]
+        },
+        "extraction": {
+          "pages": [
+            { "page": 1, "required_text": ["PAGE ONE - PORTRAIT"] },
+            { "page": 2, "required_text": ["PAGE TWO - ROTATED"] }
+          ]
+        }
+      }
+    },
+    {
+      "id": "pdf-tools.eval.v1.release-geometry",
+      "path": "synthetic/release-geometry-source.pdf",
+      "sha256": "ea8ae057604c4f1f3d0a723f559108fa22d64e5424095cf0c73daafb0f36399b",
+      "media_type": "application/pdf",
+      "partition": "held_out_release",
+      "category": "page_geometry",
+      "expected_outcome": "pass",
+      "description": "Explicit release-only fixture with a non-default crop box and 270-degree rotation.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Created for the PDF Tools held-out release partition",
+        "source_url": null,
+        "generator": "scripts/eval-generate-fixtures.mjs",
+        "reused_from": null
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false,
+        "notes": "Programmatically generated shapes and fixed labels only."
+      },
+      "expected": {
+        "document": { "page_count": 1, "form_field_count": 0 },
+        "geometry": {
+          "tolerance_points": 0.01,
+          "pages": [
+            {
+              "page": 1,
+              "rotation": 270,
+              "media_box": { "x": 0, "y": 0, "width": 420, "height": 594 },
+              "crop_box": { "x": 18, "y": 24, "width": 384, "height": 546 }
+            }
+          ]
+        },
+        "extraction": {
+          "pages": [
+            { "page": 1, "required_text": ["HELD-OUT RELEASE GEOMETRY"] }
+          ]
+        }
+      }
+    }
+  ]
+}
