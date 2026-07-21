@@ -91,6 +91,13 @@ an OS-level network namespace. Remote model inference is predeclared and
 accounted separately. The PDF server's external-request record is derived from
 the retained tool trajectory; it is not presented as packet capture.
 
+The campaign directory is mode `0700`, and runtime/workspace fingerprints are
+checked repeatedly before launch and again at finalization. This detects
+persistent drift but cannot defeat a malicious process running as the same VM
+account that swaps a checked path only inside the validation-to-use race. The
+same-account VM boundary is therefore explicit in the descriptive claim; a
+stronger claim needs an immutable snapshot or OS isolation.
+
 The controller writes stdout bytes unchanged to `codex.jsonl`, stderr bytes to
 `codex.stderr`, and an incremental `jsonl-arrivals.jsonl` sidecar. Each arrival
 record binds the line number, host receipt timestamp, raw-line SHA-256, parsed
@@ -106,9 +113,12 @@ page or render geometry are present.
 Codex may resize or otherwise transform an MCP image before exposing it in
 public JSONL. The trajectory contract therefore records the host-visible PNG
 hash/dimensions separately from the server-declared renderer, scale, and pixel
-geometry. It does not claim that JSONL contains the byte-identical original MCP
-image. Proving original MCP transport bytes would require a separately reviewed
-transparent stdio observer.
+geometry. A transformation-tolerant visual oracle also normalizes that PNG and
+compares it with an independently rendered, SHA-256-pinned corpus fixture. Page
+aspect ratio, normalized pixel error, and foreground overlap must all pass;
+valid-but-blank or unrelated images are rejected. It does not claim that JSONL
+contains the byte-identical original MCP image. Proving original MCP transport
+bytes would require a separately reviewed transparent stdio observer.
 
 ## Product versus harness outcomes
 
@@ -183,4 +193,5 @@ product/harness classification, deterministic evidence binding, filesystem
 effects, observer construction, and complete batch manifests. An offline fake
 Codex executable also exercises plan-to-finalize success, a completed no-tool
 product failure, exclusive concurrent claims, prompt and descendant-symlink
-tampering, altered arrival evidence, and timeout accounting.
+tampering, altered arrival evidence, output-symlink safety, timeout accounting,
+and a fully passing four-call read/render trajectory through final grading.

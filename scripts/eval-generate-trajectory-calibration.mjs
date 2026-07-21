@@ -8,6 +8,10 @@ import {
   loadTrajectorySuite,
   renderObservationReference,
 } from "../test/eval/trajectory-grader.js";
+import {
+  buildTrustedVisualOracle,
+  renderTrustedFixturePng,
+} from "../test/eval/render-visual-oracle.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
@@ -19,8 +23,6 @@ const DEFAULT_OUTPUT = path.join(
   "trajectories",
   "calibration-trials.v1.json"
 );
-const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
-const TINY_PNG_BYTES = Buffer.from(TINY_PNG_BASE64, "base64");
 
 function slug(jobId) {
   return jobId.replace("pdf-tools.trajectory.v1.", "");
@@ -244,7 +246,7 @@ function artifactRecord(observation, producer, verifier) {
   };
 }
 
-function buildProductPayload(job, context) {
+async function buildProductPayload(job, context) {
   const jobId = job.id;
   const answer = (evidenceItems, claims, limitations = []) => ({
     answer_schema_version: 1,
@@ -310,6 +312,18 @@ function buildProductPayload(job, context) {
     const afterSha256 = "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0";
     const beforeSource = sourceObservation(context, "input/before.pdf", beforeSha256, "before");
     const afterSource = sourceObservation(context, "input/after.pdf", afterSha256, "after");
+    const beforeImage = await renderTrustedFixturePng({
+      sourceSha256: beforeSha256, page: 1, scale: 2.5,
+    });
+    const afterImage = await renderTrustedFixturePng({
+      sourceSha256: afterSha256, page: 1, scale: 2.5,
+    });
+    const beforeOracle = await buildTrustedVisualOracle({
+      imageBytes: beforeImage.png, sourceSha256: beforeSha256, page: 1, scale: 2.5,
+    });
+    const afterOracle = await buildTrustedVisualOracle({
+      imageBytes: afterImage.png, sourceSha256: afterSha256, page: 1, scale: 2.5,
+    });
     const before = successStep(context, 1, "read_pdf_pages", {
       pdf_path: "input/before.pdf", start_page: 1, end_page: 1,
     }, {
@@ -334,7 +348,7 @@ function buildProductPayload(job, context) {
       retainedRawResult: {
         content: [
           { type: "text", text: "Synthetic calibration render" },
-          { type: "image", mimeType: "image/png", data: TINY_PNG_BASE64 },
+          { type: "image", mimeType: "image/png", data: beforeImage.png.toString("base64") },
         ],
         structured_content: {
           page: 1, width_points: 360, height_points: 480,
@@ -351,8 +365,8 @@ function buildProductPayload(job, context) {
         rotation: null,
         region: [0, 0, 360, 480],
         coordinate_space: "top_left_pdf_points",
-        image_sha256: digest(TINY_PNG_BYTES),
-        image_byte_length: TINY_PNG_BYTES.length,
+        image_sha256: digest(beforeImage.png),
+        image_byte_length: beforeImage.png.length,
         image_content_index: 1,
         render_observation_event_id: `${context.runId}.event.render.3`,
         image_transport: "synthetic_calibration",
@@ -361,9 +375,10 @@ function buildProductPayload(job, context) {
         server_rendered_width_px: 900,
         server_rendered_height_px: 1200,
         server_scale: 2.5,
-        observed_image_width_px: 1,
-        observed_image_height_px: 1,
+        observed_image_width_px: beforeImage.width,
+        observed_image_height_px: beforeImage.height,
         max_dimension_px: 1200,
+        visual_oracle: beforeOracle,
       }] }),
     });
     const afterRender = successStep(context, 4, "render_pdf_page", {
@@ -374,7 +389,7 @@ function buildProductPayload(job, context) {
       retainedRawResult: {
         content: [
           { type: "text", text: "Synthetic calibration render" },
-          { type: "image", mimeType: "image/png", data: TINY_PNG_BASE64 },
+          { type: "image", mimeType: "image/png", data: afterImage.png.toString("base64") },
         ],
         structured_content: {
           page: 1, width_points: 480, height_points: 360,
@@ -391,8 +406,8 @@ function buildProductPayload(job, context) {
         rotation: null,
         region: [0, 0, 480, 360],
         coordinate_space: "top_left_pdf_points",
-        image_sha256: digest(TINY_PNG_BYTES),
-        image_byte_length: TINY_PNG_BYTES.length,
+        image_sha256: digest(afterImage.png),
+        image_byte_length: afterImage.png.length,
         image_content_index: 1,
         render_observation_event_id: `${context.runId}.event.render.4`,
         image_transport: "synthetic_calibration",
@@ -401,9 +416,10 @@ function buildProductPayload(job, context) {
         server_rendered_width_px: 1200,
         server_rendered_height_px: 900,
         server_scale: 2.5,
-        observed_image_width_px: 1,
-        observed_image_height_px: 1,
+        observed_image_width_px: afterImage.width,
+        observed_image_height_px: afterImage.height,
         max_dimension_px: 1200,
+        visual_oracle: afterOracle,
       }] }),
     });
     const beforePage = evidence("before-page", "page", "input/before.pdf", before.result.result_id, { page: 1 });
@@ -513,7 +529,7 @@ function buildProductPayload(job, context) {
   throw new Error(`No calibration template for ${jobId}`);
 }
 
-function productTrial(job, jobIndex, repeatIndex) {
+async function productTrial(job, jobIndex, repeatIndex) {
   const jobId = job.id;
   const { context, run } = completedRun(jobId, jobIndex, repeatIndex);
   const trial = {
@@ -534,7 +550,7 @@ function productTrial(job, jobIndex, repeatIndex) {
       transcript_sha256: digest(`synthetic-transcript:${context.runId}`),
     },
     run,
-    ...buildProductPayload(job, context),
+    ...await buildProductPayload(job, context),
   };
   return syncTrialEvents(trial);
 }
@@ -593,9 +609,9 @@ function failureRef(jobId, failureClass) {
   };
 }
 
-function failingTrial(job, jobIndex) {
+async function failingTrial(job, jobIndex) {
   const jobId = job.id;
-  const trial = productTrial(job, jobIndex, 3);
+  const trial = await productTrial(job, jobIndex, 3);
   if (jobId.endsWith("inspect-and-answer")) {
     trial.final_answer.claims[0].evidence_ids = [];
     trial.correction_refs = [failureRef(jobId, "unsupported-claim")];
@@ -752,12 +768,13 @@ export async function generateTrajectoryCalibration({ suitePath = DEFAULT_SUITE,
   const suite = await loadTrajectorySuite(suitePath);
   const trialSetId = "pdf-tools.trajectory.calibration.v1";
   const claimBoundary = "Synthetic grader calibration only; records and observations are generated fixtures, not observed agent or host benchmark results.";
-  const trials = suite.jobs.flatMap((job, jobIndex) => [
-    productTrial(job, jobIndex, 1),
-    productTrial(job, jobIndex, 2),
-    failingTrial(job, jobIndex),
+  const trialGroups = await Promise.all(suite.jobs.map(async (job, jobIndex) => [
+    await productTrial(job, jobIndex, 1),
+    await productTrial(job, jobIndex, 2),
+    await failingTrial(job, jobIndex),
     harnessFailure(job, jobIndex),
-  ]);
+  ]));
+  const trials = trialGroups.flat();
   const runPlan = {
     run_plan_schema_version: 1,
     run_plan_id: "pdf-tools.trajectory.calibration.run-plan.v1",

@@ -21,7 +21,8 @@ const DEFAULT_TIMEOUT_MS = 15 * 60 * 1000;
 const CAMPAIGN_SCHEMA_VERSION = 1;
 const HOST_LIMITATION = "Codex JSONL retains a host-visible image that may be transformed from the original MCP image payload; server-declared geometry and host-visible PNG identity are recorded separately.";
 const TRANSPORT_LIMITATION = "Remote model inference transport was predeclared and accounted separately; PDF Tools server network denial and model-visible tool isolation were configuration controls, not an OS-level network namespace.";
-const CLAIM_BOUNDARY = `Unsigned descriptive repeated headless Codex CLI trials on public synthetic fixtures. ${HOST_LIMITATION} ${TRANSPORT_LIMITATION} Repeats share one fixture instance and are not independent benchmark evidence; no native Claude Desktop or packed MCPB was tested.`;
+const LOCAL_TRUST_LIMITATION = "The 0700 campaign and repeated fingerprints detect persistent drift but do not defeat a malicious same-account process that swaps checked runtime paths only during the launch race; the VM account is inside the measurement trust boundary.";
+const CLAIM_BOUNDARY = `Unsigned descriptive repeated headless Codex CLI trials on public synthetic fixtures. ${HOST_LIMITATION} ${TRANSPORT_LIMITATION} ${LOCAL_TRUST_LIMITATION} Repeats share one fixture instance and are not independent benchmark evidence; no native Claude Desktop or packed MCPB was tested.`;
 
 const LAUNCH_ENVIRONMENT_KEYS = Object.freeze([
   "CODEX_CI", "HOME", "LANG", "LC_ALL", "LC_CTYPE", "LOGNAME", "NODE_EXTRA_CA_CERTS", "PATH",
@@ -81,6 +82,8 @@ const SOURCE_FINGERPRINT_PATHS = Object.freeze([
   "scripts/eval-ingest-codex-trajectory.mjs",
   "scripts/eval-run-trajectories.mjs",
   "test/eval/png-evidence.js",
+  "test/eval/render-visual-oracle.js",
+  "test/eval/comparison-observations.js",
   "test/eval/trajectory-grader.js",
   "test/fixtures/eval/manifest.v1.json",
   "test/fixtures/eval/trajectories/jobs.v1.json",
@@ -757,7 +760,7 @@ export function buildFinalAnswerAnnotations(job, arrivals) {
       important: true,
       evidence_ids: evidence.map(item => item.id),
     }] : [],
-    limitations: [HOST_LIMITATION, TRANSPORT_LIMITATION],
+    limitations: [HOST_LIMITATION, TRANSPORT_LIMITATION, LOCAL_TRUST_LIMITATION],
   };
 }
 
@@ -1229,7 +1232,9 @@ async function verifyCompletedRunEvidence({ campaignRoot, campaign, plan, job, r
     || launcher.completed_pdf_call_count !== completedPdfCalls(arrivals).length
     || launcher.classified_outcome !== classifyRunOutcome(arrivals, launcher.exit)
     || canonicalJson(launcher.host_diagnostics) !== canonicalJson(hostDiagnostics(arrivals))
-    || canonicalJson(launcher.limitations) !== canonicalJson([HOST_LIMITATION, TRANSPORT_LIMITATION])) {
+    || canonicalJson(launcher.limitations) !== canonicalJson([
+      HOST_LIMITATION, TRANSPORT_LIMITATION, LOCAL_TRUST_LIMITATION,
+    ])) {
     throw new Error(`${run.directory} launcher summary does not replay from retained arrivals`);
   }
   const observer = JSON.parse(observerText);
@@ -1645,7 +1650,7 @@ export async function runCampaignEntry({ campaignPath, repeatIndex, documentsRoo
     completed_pdf_call_count: completedPdfCalls(processResult.arrivals).length,
     classified_outcome: classifyRunOutcome(processResult.arrivals, processResult.exit),
     host_diagnostics: diagnostics,
-    limitations: [HOST_LIMITATION, TRANSPORT_LIMITATION],
+    limitations: [HOST_LIMITATION, TRANSPORT_LIMITATION, LOCAL_TRUST_LIMITATION],
   };
   const launcherText = await writeJson(path.join(runRoot, "launcher-record.json"), launcherRecord, { exclusive: true });
   const arrivalsText = await fs.readFile(path.join(runRoot, "jsonl-arrivals.jsonl"), "utf8");

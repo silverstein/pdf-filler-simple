@@ -12,6 +12,7 @@ import {
 } from "../test/eval/trajectory-grader.js";
 import { getPageRenderScale, getRegionPixelRect } from "../server/helpers.js";
 import { parsePngEvidence } from "../test/eval/png-evidence.js";
+import { buildTrustedVisualOracle } from "../test/eval/render-visual-oracle.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
@@ -313,6 +314,13 @@ async function renderRegionObservation(item, structured, observation, runEvents,
     || !new Set(["native-canvas", "macos-sips"]).has(structured.renderer)) {
     throw new Error(`${item.tool} server render metadata is inconsistent with its arguments and PDF geometry`);
   }
+  const visualOracle = await buildTrustedVisualOracle({
+    imageBytes: image.bytes,
+    sourceSha256: sourceSnapshots[0].sha256,
+    page,
+    scale,
+    region: item.tool === "render_pdf_region" ? region : null,
+  });
   return [{
     source: args.pdf_path,
     source_sha256: sourceSnapshots[0].sha256,
@@ -335,6 +343,7 @@ async function renderRegionObservation(item, structured, observation, runEvents,
     observed_image_width_px: image.width,
     observed_image_height_px: image.height,
     max_dimension_px: maxDimension,
+    visual_oracle: visualOracle,
   }];
 }
 

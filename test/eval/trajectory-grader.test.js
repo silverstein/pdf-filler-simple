@@ -5,6 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { PDFDocument } from "pdf-lib";
+import { createCanvas } from "@napi-rs/canvas";
 import { generateTrajectoryCalibration } from "../../scripts/eval-generate-trajectory-calibration.mjs";
 import { captureTrajectoryToolContracts } from "../../scripts/eval-capture-tool-contracts.mjs";
 import {
@@ -23,6 +24,7 @@ import {
   validateTrajectoryTrial,
   validateTrajectoryTrialSet,
 } from "./trajectory-grader.js";
+import { renderTrustedFixturePng } from "./render-visual-oracle.js";
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -267,9 +269,10 @@ describe("agent trajectory grader v4 integrity contract", () => {
   });
 
   it("derives render evidence from retained PNG bytes and an external source snapshot", async () => {
-    const png = TINY_PNG_BASE64;
+    const sourceSha256 = "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168";
+    const rendered = await renderTrustedFixturePng({ sourceSha256, page: 1, scale: 2.5 });
+    const png = rendered.png.toString("base64");
     const startedAt = "2026-07-21T07:00:01.000Z";
-    const sourceSha256 = "d".repeat(64);
     const sourceEvent = {
       event_id: "event.source.before",
       type: "filesystem_source_observed",
@@ -290,11 +293,11 @@ describe("agent trajectory grader v4 integrity contract", () => {
         ],
         structuredContent: {
           page: 1,
-          width_points: 612,
-          height_points: 792,
-          rendered_width_px: 930,
-          rendered_height_px: 1204,
-          scale: 1.52,
+          width_points: 360,
+          height_points: 480,
+          rendered_width_px: 900,
+          rendered_height_px: 1200,
+          scale: 2.5,
           renderer: "native-canvas",
           mime_type: "image/png",
         },
@@ -317,16 +320,17 @@ describe("agent trajectory grader v4 integrity contract", () => {
       source_sha256: sourceSha256,
       source_observation_event_id: sourceEvent.event_id,
       page: 1,
-      page_box_points: [0, 0, 612, 792],
-      region: [0, 0, 612, 792],
+      page_box_points: [0, 0, 360, 480],
+      region: [0, 0, 360, 480],
       image_byte_length: Buffer.from(png, "base64").length,
       image_content_index: 1,
       render_observation_event_id: "event.render.page",
-      server_rendered_width_px: 930,
-      server_rendered_height_px: 1204,
-      observed_image_width_px: 1,
-      observed_image_height_px: 1,
+      server_rendered_width_px: 900,
+      server_rendered_height_px: 1200,
+      observed_image_width_px: rendered.width,
+      observed_image_height_px: rendered.height,
       max_dimension_px: 1200,
+      visual_oracle: expect.objectContaining({ passed: true, foreground_iou: 1 }),
     })]);
     expect(semantic.render_regions[0].image_sha256).toBe(digest(Buffer.from(png, "base64")));
 
@@ -336,6 +340,10 @@ describe("agent trajectory grader v4 integrity contract", () => {
       pdf_path: "input/before.pdf", page: 2, x: 72, y: 144, width: 180, height: 40,
       max_dimension_px: 1400,
     };
+    const regionRendered = await renderTrustedFixturePng({
+      sourceSha256, page: 2, scale: 4, region: [72, 144, 180, 40],
+    });
+    regionItem.result.content[1].data = regionRendered.png.toString("base64");
     regionItem.result.structuredContent = {
       page: 2,
       region_points: { x: 72, y: 144, width: 180, height: 40 },
@@ -365,6 +373,14 @@ describe("agent trajectory grader v4 integrity contract", () => {
     await expect(semanticObservations(
       wrongDimensions, observation, [sourceEvent], "event.render.page",
     )).rejects.toThrow(/server render metadata is inconsistent/);
+    const blank = structuredClone(item);
+    const blankCanvas = createCanvas(rendered.width, rendered.height);
+    const blankContext = blankCanvas.getContext("2d");
+    blankContext.fillStyle = "white";
+    blankContext.fillRect(0, 0, rendered.width, rendered.height);
+    blank.result.content[1].data = blankCanvas.toBuffer("image/png").toString("base64");
+    await expect(semanticObservations(blank, observation, [sourceEvent], "event.render.page"))
+      .rejects.toThrow(/failed the trusted visual oracle/);
     const malformed = structuredClone(item);
     malformed.result.content[1].data = "not-base64";
     await expect(semanticObservations(malformed, observation, [sourceEvent], "event.render.page"))
@@ -577,6 +593,20 @@ describe("agent trajectory grader v4 integrity contract", () => {
       gradeTrajectoryTrial(jobs.get(forgedHash.job_id), forgedHash),
       "verified_artifacts"
     ).passed).toBe(false);
+  });
+
+  it("rejects render evidence that does not pass the trusted visual oracle", async () => {
+    const { trialSet, jobs } = await loadFixtures();
+    const trial = trialFor(trialSet, "compare-and-explain");
+    const render = trial.trajectory.find(step => step.tool === "render_pdf_page")
+      .result.semantic_observations.render_regions[0];
+    render.visual_oracle.foreground_iou = 0;
+    render.visual_oracle.passed = false;
+    const grade = gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
+    expect(grade.passed).toBe(false);
+    expect(check(grade, "trial_schema").actual).toEqual(expect.arrayContaining([
+      expect.stringContaining("trusted perceptual thresholds"),
+    ]));
   });
 
   it("rejects success mislabeled as an expected error and undeclared effect keys", async () => {

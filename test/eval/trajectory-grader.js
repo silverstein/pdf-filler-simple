@@ -14,6 +14,11 @@ import {
   MAX_PNG_PIXELS,
   parsePngEvidence,
 } from "./png-evidence.js";
+import {
+  VISUAL_ORACLE_MAX_ASPECT_ERROR,
+  VISUAL_ORACLE_MAX_MAE,
+  VISUAL_ORACLE_MIN_FOREGROUND_IOU,
+} from "./render-visual-oracle.js";
 
 export const TRAJECTORY_SUITE_VERSION = 1;
 export const TRAJECTORY_GRADER_VERSION = 4;
@@ -255,7 +260,7 @@ function validateSemanticObservations(value, location, errors) {
       "rotation", "region", "coordinate_space", "image_sha256", "image_byte_length",
       "image_content_index", "render_observation_event_id", "image_transport", "mime_type",
       "server_renderer", "server_rendered_width_px", "server_rendered_height_px", "server_scale",
-      "observed_image_width_px", "observed_image_height_px", "max_dimension_px",
+      "observed_image_width_px", "observed_image_height_px", "max_dimension_px", "visual_oracle",
     ])) continue;
     if (!validRelativePath(render.source)) errors.push(`${itemLocation}.source must be relative`);
     for (const key of ["source_sha256", "image_sha256"]) {
@@ -315,6 +320,45 @@ function validateSemanticObservations(value, location, errors) {
     }
     if (!Number.isFinite(render.server_scale) || render.server_scale <= 0) {
       errors.push(`${itemLocation}.server_scale must be positive`);
+    }
+    if (addExactKeyError(errors, `${itemLocation}.visual_oracle`, render.visual_oracle, [
+      "oracle_schema_version", "fixture_id", "reference_source_sha256", "reference_rgba_sha256",
+      "normalized_width_px", "normalized_height_px", "host_normalized_rgba_sha256",
+      "reference_normalized_rgba_sha256", "mean_absolute_error", "foreground_iou",
+      "aspect_ratio_error", "passed",
+    ])) {
+      const oracle = render.visual_oracle;
+      if (oracle.oracle_schema_version !== 1) {
+        errors.push(`${itemLocation}.visual_oracle.oracle_schema_version must equal 1`);
+      }
+      if (!nonEmptyString(oracle.fixture_id)) errors.push(`${itemLocation}.visual_oracle.fixture_id must be non-empty`);
+      for (const key of [
+        "reference_source_sha256", "reference_rgba_sha256", "host_normalized_rgba_sha256",
+        "reference_normalized_rgba_sha256",
+      ]) {
+        if (!SHA256_PATTERN.test(oracle[key] ?? "")) errors.push(`${itemLocation}.visual_oracle.${key} must be SHA-256`);
+      }
+      for (const key of ["normalized_width_px", "normalized_height_px"]) {
+        if (!Number.isInteger(oracle[key]) || oracle[key] < 1) errors.push(`${itemLocation}.visual_oracle.${key} must be positive`);
+      }
+      for (const key of ["mean_absolute_error", "foreground_iou", "aspect_ratio_error"]) {
+        if (!Number.isFinite(oracle[key]) || oracle[key] < 0 || oracle[key] > 1) {
+          errors.push(`${itemLocation}.visual_oracle.${key} must be in [0, 1]`);
+        }
+      }
+      if (oracle.reference_source_sha256 !== render.source_sha256) {
+        errors.push(`${itemLocation}.visual_oracle must bind the observed source digest`);
+      }
+      const expectedFixture = CORPUS_MANIFEST.fixtures.find(item => item.sha256 === render.source_sha256);
+      if (!expectedFixture || oracle.fixture_id !== expectedFixture.id) {
+        errors.push(`${itemLocation}.visual_oracle.fixture_id must match the pinned corpus source`);
+      }
+      if (oracle.passed !== true
+        || oracle.mean_absolute_error > VISUAL_ORACLE_MAX_MAE
+        || oracle.foreground_iou < VISUAL_ORACLE_MIN_FOREGROUND_IOU
+        || oracle.aspect_ratio_error > VISUAL_ORACLE_MAX_ASPECT_ERROR) {
+        errors.push(`${itemLocation}.visual_oracle must pass the trusted perceptual thresholds`);
+      }
     }
   }
   for (const [index, file] of (Array.isArray(value.files) ? value.files : []).entries()) {
@@ -1465,12 +1509,17 @@ function semanticObservationIssues(step, runEvents = []) {
         && render.image_transport === "synthetic_calibration"
       : new Set(["native-canvas", "macos-sips"]).has(render.server_renderer)
         && render.image_transport === "codex_jsonl_host_visible";
+    const visualOracleValid = render.visual_oracle?.passed === true
+      && render.visual_oracle.reference_source_sha256 === render.source_sha256
+      && render.visual_oracle.mean_absolute_error <= VISUAL_ORACLE_MAX_MAE
+      && render.visual_oracle.foreground_iou >= VISUAL_ORACLE_MIN_FOREGROUND_IOU
+      && render.visual_oracle.aspect_ratio_error <= VISUAL_ORACLE_MAX_ASPECT_ERROR;
     if (step.arguments.pdf_path !== render.source || expectedPage !== render.page
       || expectedMaxDimension !== render.max_dimension_px
       || canonicalJson(expectedRegion) !== canonicalJson(render.region)
       || render.image_content_index !== 1 || !geometryValid || !rendererValid
-      || !retainedRawResultValid || !snapshot || !sourceEventValid || !renderEventValid) {
-      issues.push(`render region ${render.source}#${render.page} is not bound to ${step.tool} arguments, geometry, retained result, and source observation`);
+      || !visualOracleValid || !retainedRawResultValid || !snapshot || !sourceEventValid || !renderEventValid) {
+      issues.push(`render region ${render.source}#${render.page} is not bound to ${step.tool} arguments, geometry, trusted visual oracle, retained result, and source observation`);
     }
   }
   for (const file of semantic.files) {

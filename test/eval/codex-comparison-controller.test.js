@@ -26,6 +26,7 @@ import {
   validateCampaign,
 } from "../../scripts/eval-run-codex-comparison.mjs";
 import { createTestTempDirectory, removeTestTempDirectory } from "../helpers/temp-directory.js";
+import { renderTrustedFixturePng } from "./render-visual-oracle.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SUITE_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
@@ -107,19 +108,97 @@ function workspaceManifest(extraEntries = []) {
   };
 }
 
-async function writeFakeCodex(filename, { timeout = false, completeThenTimeout = false } = {}) {
+async function writeFakeCodex(filename, {
+  timeout = false, completeThenTimeout = false, successfulCalls = false,
+} = {}) {
   const answer = JSON.stringify({
     before_page_1: "PAGE ONE - PORTRAIT",
     after_page_1: "PAGE TWO - ROTATED",
     changed: true,
   });
-  const events = [
+  let events = [
     { type: "thread.started", thread_id: "fake-thread" },
     { type: "turn.started" },
     { type: "item.started", item: { id: "answer-1", type: "agent_message", status: "in_progress" } },
     { type: "item.completed", item: { id: "answer-1", type: "agent_message", status: "completed", text: answer } },
     { type: "turn.completed", usage: {} },
   ];
+  if (successfulCalls) {
+    const beforeSha256 = "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168";
+    const afterSha256 = "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0";
+    const [beforeImage, afterImage] = await Promise.all([
+      renderTrustedFixturePng({ sourceSha256: beforeSha256, page: 1, scale: 2.5 }),
+      renderTrustedFixturePng({ sourceSha256: afterSha256, page: 1, scale: 2.5 }),
+    ]);
+    const calls = [{
+      id: "read-before",
+      tool: "read_pdf_pages",
+      arguments: { pdf_path: "input/before.pdf", start_page: 1, end_page: 1 },
+      result: {
+        content: [{ type: "text", text: "PAGE ONE - PORTRAIT" }],
+        structured_content: { pages: [{ page: 1, text: "PAGE ONE - PORTRAIT" }] },
+      },
+    }, {
+      id: "read-after",
+      tool: "read_pdf_pages",
+      arguments: { pdf_path: "input/after.pdf", start_page: 1, end_page: 1 },
+      result: {
+        content: [{ type: "text", text: "PAGE TWO - ROTATED" }],
+        structured_content: { pages: [{ page: 1, text: "PAGE TWO - ROTATED" }] },
+      },
+    }, {
+      id: "render-before",
+      tool: "render_pdf_page",
+      arguments: { pdf_path: "input/before.pdf", page: 1, max_dimension_px: 1200 },
+      result: {
+        content: [
+          { type: "text", text: "Rendered before" },
+          { type: "image", mimeType: "image/png", data: beforeImage.png.toString("base64") },
+        ],
+        structured_content: {
+          page: 1, width_points: 360, height_points: 480,
+          rendered_width_px: 900, rendered_height_px: 1200, scale: 2.5,
+          renderer: "native-canvas", mime_type: "image/png",
+        },
+      },
+    }, {
+      id: "render-after",
+      tool: "render_pdf_page",
+      arguments: { pdf_path: "input/after.pdf", page: 1, max_dimension_px: 1200 },
+      result: {
+        content: [
+          { type: "text", text: "Rendered after" },
+          { type: "image", mimeType: "image/png", data: afterImage.png.toString("base64") },
+        ],
+        structured_content: {
+          page: 1, width_points: 480, height_points: 360,
+          rendered_width_px: 1200, rendered_height_px: 900, scale: 2.5,
+          renderer: "native-canvas", mime_type: "image/png",
+        },
+      },
+    }];
+    events = [{ type: "thread.started", thread_id: "fake-thread" }, { type: "turn.started" }];
+    for (const call of calls) {
+      events.push({
+        type: "item.started",
+        item: {
+          id: call.id, type: "mcp_tool_call", server: "pdf_tools", tool: call.tool,
+          arguments: call.arguments, status: "in_progress",
+        },
+      }, {
+        type: "item.completed",
+        item: {
+          id: call.id, type: "mcp_tool_call", server: "pdf_tools", tool: call.tool,
+          arguments: call.arguments, status: "completed", error: null, result: call.result,
+        },
+      });
+    }
+    events.push(
+      { type: "item.started", item: { id: "answer-1", type: "agent_message", status: "in_progress" } },
+      { type: "item.completed", item: { id: "answer-1", type: "agent_message", status: "completed", text: answer } },
+      { type: "turn.completed", usage: {} },
+    );
+  }
   const body = timeout
     ? `#!/usr/bin/env node
 if (process.argv.includes("--version")) {
@@ -506,6 +585,22 @@ describe("headless Codex comparison controller integration", () => {
     expect(after.tree_sha256).not.toBe(before.tree_sha256);
     expect(after.file_count).toBe(before.file_count);
   });
+
+  it("passes a complete four-call read/render trajectory through final grading", async () => {
+    const successfulCodex = path.join(testRoot, "fake-codex-success.mjs");
+    await writeFakeCodex(successfulCodex, { successfulCalls: true });
+    const { campaignRoot } = await planOne("complete-four-call", successfulCodex);
+    const completed = await runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot });
+    expect(completed.observer.outcome).toBe("completed");
+    expect(completed.launcherRecord.completed_pdf_call_count).toBe(4);
+    const finalized = await finalizeCampaign(campaignRoot, { documentsRoot });
+    expect(finalized.report).toMatchObject({
+      attempted_trials: 1,
+      product_trials: 1,
+      passed_trials: 1,
+      harness_failures: 0,
+    });
+  }, 30_000);
 
   it("builds only the frozen allowlisted launch environment", () => {
     const source = {
