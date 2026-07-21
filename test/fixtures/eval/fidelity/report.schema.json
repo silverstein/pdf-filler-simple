@@ -54,6 +54,10 @@
       "type": "string",
       "pattern": "^(input|output|profiles)/(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
     },
+    "workspaceEntryPath": {
+      "type": "string",
+      "pattern": "^(input|output|profiles)(?:/(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+)?$"
+    },
     "relativeArtifactPath": {
       "type": "string",
       "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
@@ -634,7 +638,7 @@
       "additionalProperties": false,
       "required": ["path", "type", "mode", "size", "sha256"],
       "properties": {
-        "path": { "$ref": "#/$defs/logicalPath" },
+        "path": { "$ref": "#/$defs/workspaceEntryPath" },
         "type": { "const": "file" },
         "mode": { "type": "integer", "minimum": 0, "maximum": 511 },
         "size": { "type": "integer", "minimum": 0 },
@@ -646,7 +650,7 @@
       "additionalProperties": false,
       "required": ["path", "type", "mode"],
       "properties": {
-        "path": { "$ref": "#/$defs/logicalPath" },
+        "path": { "$ref": "#/$defs/workspaceEntryPath" },
         "type": { "const": "directory" },
         "mode": { "type": "integer", "minimum": 0, "maximum": 511 }
       }
@@ -656,7 +660,7 @@
       "additionalProperties": false,
       "required": ["path", "type", "mode", "link_target"],
       "properties": {
-        "path": { "$ref": "#/$defs/logicalPath" },
+        "path": { "$ref": "#/$defs/workspaceEntryPath" },
         "type": { "const": "symlink" },
         "mode": { "type": "integer", "minimum": 0, "maximum": 511 },
         "link_target": { "type": "string", "minLength": 1 }
@@ -667,7 +671,7 @@
       "additionalProperties": false,
       "required": ["path", "type", "mode"],
       "properties": {
-        "path": { "$ref": "#/$defs/logicalPath" },
+        "path": { "$ref": "#/$defs/workspaceEntryPath" },
         "type": { "enum": ["socket", "fifo", "character", "block", "unknown"] },
         "mode": { "type": "integer", "minimum": 0, "maximum": 511 }
       }
