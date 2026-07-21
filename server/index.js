@@ -26,6 +26,10 @@ import {
   pathToPdfResourceUri,
   pdfResourceUriToPath,
 } from "./resource-uri.js";
+import {
+  validateStructuredToolResult,
+  withToolOutputSchema,
+} from "./output-schemas.js";
 
 const _require = createRequire(import.meta.url);
 
@@ -688,6 +692,29 @@ function validateProfileName(name) {
     throw new Error("Profile name may only contain letters, numbers, hyphens, underscores, spaces, and dots.");
   }
   return name;
+}
+
+function normalizeStoredSignatureSummary(record) {
+  if (!record || typeof record !== "object") {
+    throw new Error("Stored signature record must be an object.");
+  }
+  if (typeof record.name !== "string" || !record.name.trim()) {
+    throw new Error("Stored signature record is missing a valid name.");
+  }
+  if (!["typed", "image"].includes(record.style)) {
+    throw new Error("Stored signature record has an unsupported style.");
+  }
+  return {
+    name: record.name,
+    style: record.style,
+    display_name: typeof record.display_name === "string" && record.display_name
+      ? record.display_name
+      : null,
+    // Signatures saved before created_at was introduced remain usable.
+    created_at: typeof record.created_at === "string" && record.created_at
+      ? record.created_at
+      : null,
+  };
 }
 
 const PROMPT_TEMPLATES = [
@@ -2492,12 +2519,12 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           openWorldHint: false
         }
       }
-    ],
+    ].map(withToolOutputSchema),
   };
 });
 
 // Handle tool calls
-server.setRequestHandler(CallToolRequestSchema, async (request) => {
+async function handleToolCall(request) {
   const { name, arguments: args } = request.params;
 
   try {
@@ -4120,7 +4147,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           files = await fs.readdir(SIGNATURES_DIR);
         } catch (err) {
           if (err.code === "ENOENT") {
-            return { content: [{ type: "text", text: "No signatures yet. Use create_signature to save one." }] };
+            return {
+              content: [{ type: "text", text: "No signatures yet. Use create_signature to save one." }],
+              structuredContent: { signatures: [] },
+            };
           }
           throw err;
         }
@@ -4130,25 +4160,25 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           try {
             const raw = await fs.readFile(path.join(SIGNATURES_DIR, file), "utf8");
             const rec = JSON.parse(raw);
-            if (typeof rec.name === "string" && rec.name.startsWith("__pdf-tools-quick-")) {
+            const summary = normalizeStoredSignatureSummary(rec);
+            if (summary.name.startsWith("__pdf-tools-quick-")) {
               continue;
             }
-            entries.push({
-              name: rec.name,
-              style: rec.style,
-              display_name: rec.display_name || null,
-              created_at: rec.created_at,
-            });
+            entries.push(summary);
           } catch {
             // Skip malformed files
           }
         }
         entries.sort((a, b) => (b.created_at || "").localeCompare(a.created_at || ""));
         if (entries.length === 0) {
-          return { content: [{ type: "text", text: "No signatures yet. Use create_signature to save one." }] };
+          return {
+            content: [{ type: "text", text: "No signatures yet. Use create_signature to save one." }],
+            structuredContent: { signatures: [] },
+          };
         }
         const lines = entries.map(e =>
-          `  • ${e.name} (${e.style}${e.display_name ? ` — "${e.display_name}"` : ""}) — ${e.created_at}`
+          `  • ${e.name} (${e.style}${e.display_name ? ` — "${e.display_name}"` : ""})` +
+          (e.created_at ? ` — ${e.created_at}` : "")
         );
         return {
           content: [{
@@ -4173,6 +4203,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           }
           throw err;
         }
+        const summary = normalizeStoredSignatureSummary(rec);
         const previewDataUrl = rec.style === "image" && rec.image_data_b64 && rec.image_mime
           ? `data:${rec.image_mime};base64,${rec.image_data_b64}`
           : null;
@@ -4182,11 +4213,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             text: `Loaded signature "${cleanSigName}" (${rec.style}).`
           }],
           structuredContent: {
-            name: rec.name,
-            style: rec.style,
-            display_name: rec.display_name || null,
+            name: summary.name,
+            style: summary.style,
+            display_name: summary.display_name,
             preview_data_url: previewDataUrl,
-            created_at: rec.created_at,
+            created_at: summary.created_at,
           },
         };
       }
@@ -4652,7 +4683,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
       isError: true,
     };
   }
-});
+}
+
+server.setRequestHandler(CallToolRequestSchema, async (request) =>
+  validateStructuredToolResult(request.params.name, await handleToolCall(request))
+);
 
 // Resource handlers for PDFs
 server.setRequestHandler(ListResourcesRequestSchema, async (request) => {

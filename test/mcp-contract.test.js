@@ -13,7 +13,7 @@ const REPO_ROOT = path.join(__dirname, "..");
 const SOURCE_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.json"), "utf8"));
 const MCPB_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.mcpb.json"), "utf8"));
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TOOL_CONTRACT_SHA256 = "065fd7e06116045efa594047125ed6d04574ed5cdefcc37a25057dc877c71116";
+const TOOL_CONTRACT_SHA256 = "6ba7b256ae9fad3f91de949d847668543de559d2e14efea151226c95ee66a6ea";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -191,7 +191,13 @@ describe("MCPB static declarations", () => {
   });
 
   it("keeps every committed share runtime file byte-identical to its source", async () => {
-    for (const filename of ["index.js", "helpers.js", "resource-uri.js", "stderr-suppression.js"]) {
+    for (const filename of [
+      "index.js",
+      "helpers.js",
+      "output-schemas.js",
+      "resource-uri.js",
+      "stderr-suppression.js",
+    ]) {
       const source = await fs.readFile(path.join(REPO_ROOT, "server", filename));
       const share = await fs.readFile(path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "server", filename));
       expect(share, filename).toEqual(source);

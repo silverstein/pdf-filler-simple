@@ -1,0 +1,515 @@
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+
+const string = { type: "string" };
+const number = { type: "number" };
+const integer = { type: "integer" };
+const boolean = { type: "boolean" };
+const stringArray = { type: "array", items: string };
+const integerArray = { type: "array", items: integer };
+const nullable = schema => ({ anyOf: [schema, { type: "null" }] });
+const object = (properties, required = Object.keys(properties), additionalProperties = false) => ({
+  type: "object",
+  properties,
+  required,
+  additionalProperties,
+});
+const arrayOf = items => ({ type: "array", items });
+const enumString = values => ({ type: "string", enum: values });
+
+const fieldValue = {
+  anyOf: [string, boolean, stringArray],
+};
+const formField = object({
+  name: string,
+  type: enumString(["text", "checkbox", "radio", "dropdown", "unknown"]),
+  options: stringArray,
+  currentValue: fieldValue,
+});
+const activeDocumentProperties = {
+  pdfPath: string,
+  totalBytes: integer,
+  initialPage: integer,
+  fields: arrayOf(formField),
+  fieldCount: integer,
+  hasFormFields: boolean,
+  active_path: string,
+  backup_path: nullable(string),
+  last_mutation_tool: nullable(string),
+  last_mutation_at: nullable(string),
+};
+const activeDocument = (extra = {}) => object({
+  ...activeDocumentProperties,
+  ...extra,
+});
+
+const pageTextPreview = object({
+  page: integer,
+  char_count: integer,
+  returned_chars: integer,
+  truncated: boolean,
+  text: string,
+});
+const regionPoints = object({
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+});
+const placement = object({
+  label: string,
+  page: integer,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+});
+const fillError = object({ field: string, error: string });
+const signatureZone = object({
+  type: enumString(["signature", "initials", "date"]),
+  label: string,
+  page: integer,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  confidence: number,
+  source: enumString(["text-heuristic", "acroform-signature", "acroform-named-field"]),
+});
+
+const standardError = object({
+  status: { const: "failed" },
+  error: object({
+    error_schema_version: { const: 1 },
+    code: enumString(["path_policy_denied", "tool_execution_failed"]),
+  }),
+});
+
+const validationField = object({
+  name: string,
+  type: string,
+  kind: enumString(["text", "checkbox", "radio", "dropdown", "option_list", "signature", "button", "unknown"]),
+  required: nullable(boolean),
+  required_name_hint: boolean,
+  value_status: enumString(["observed", "empty", "unchecked", "unknown", "read_error", "not_applicable"]),
+  required_status: enumString(["not_required", "unknown", "satisfied", "missing"]),
+  error_code: nullable(string),
+});
+const validationProperties = {
+  schema_version: { const: "1.0" },
+  pdf_path: nullable(string),
+  file_name: nullable(string),
+  validation_status: enumString(["complete", "partial", "incomplete", "indeterminate", "no_fields", "no_value_fields"]),
+  required_field_validation_status: enumString(["complete", "incomplete", "indeterminate", "no_fields", "no_required_flags"]),
+  validation_conclusive: boolean,
+  has_form_fields: boolean,
+  required_fields_complete: nullable(boolean),
+  all_value_fields_filled: nullable(boolean),
+  can_claim_required_fields_complete: boolean,
+  can_claim_form_ready: { const: false },
+  total_field_count: integer,
+  value_field_count: integer,
+  observed_count: integer,
+  filled_count: integer,
+  empty_count: integer,
+  unchecked_count: integer,
+  unknown_count: integer,
+  read_error_count: integer,
+  not_applicable_count: integer,
+  required_field_count: integer,
+  missing_required_count: integer,
+  indeterminate_required_count: integer,
+  requiredness_unknown_count: integer,
+  fields: arrayOf(validationField),
+  observed_fields: stringArray,
+  empty_fields: stringArray,
+  unchecked_fields: stringArray,
+  unknown_fields: stringArray,
+  read_error_fields: stringArray,
+  missing_required_fields: stringArray,
+  indeterminate_required_fields: stringArray,
+  requiredness_unknown_fields: stringArray,
+  heuristic_required_candidates: stringArray,
+  error_codes: stringArray,
+  warning_codes: stringArray,
+  retry_guidance: nullable(string),
+  limitations: stringArray,
+};
+const validationSuccess = object({
+  ...validationProperties,
+  pdf_path: string,
+  file_name: string,
+});
+const validationFailure = object({
+  ...validationProperties,
+  validation_status: { const: "failed" },
+  required_field_validation_status: { const: "failed" },
+  has_form_fields: { type: "null" },
+  total_field_count: { type: "null" },
+  value_field_count: { type: "null" },
+  observed_count: { type: "null" },
+  filled_count: { type: "null" },
+  empty_count: { type: "null" },
+  unchecked_count: { type: "null" },
+  unknown_count: { type: "null" },
+  read_error_count: { type: "null" },
+  not_applicable_count: { type: "null" },
+  required_field_count: { type: "null" },
+  missing_required_count: { type: "null" },
+  indeterminate_required_count: { type: "null" },
+  requiredness_unknown_count: { type: "null" },
+});
+const contentProperties = {
+  pdf_path: string,
+  file_name: string,
+  total_pages: integer,
+  pages_read: integer,
+  text_length: integer,
+  text_truncated: boolean,
+  text_found: boolean,
+  content_available: boolean,
+  extraction_status: enumString(["complete", "partial"]),
+  page_previews: arrayOf(pageTextPreview),
+  preview_truncated: boolean,
+  extraction_mode: enumString(["text", "image-fallback"]),
+  error_codes: stringArray,
+  retry_guidance: nullable(string),
+};
+const contentTextSuccess = object({
+  ...contentProperties,
+  text_found: { const: true },
+  content_available: { const: true },
+  extraction_mode: { const: "text" },
+});
+const contentImageSuccess = object({
+  ...contentProperties,
+  text_length: { const: 0 },
+  text_truncated: { const: false },
+  text_found: { const: false },
+  content_available: { const: true },
+  extraction_status: { const: "partial" },
+  extraction_mode: { const: "image-fallback" },
+  image_renderer: enumString(["native-canvas", "macos-sips"]),
+});
+const contentFailure = object({
+  ...contentProperties,
+  text_truncated: { const: false },
+  text_found: { const: false },
+  content_available: { const: false },
+  extraction_status: { const: "failed" },
+  extraction_mode: { const: "none" },
+});
+const pageAnalysis = object({
+  page: integer,
+  width: integer,
+  height: integer,
+  rotation: integer,
+  display_width: integer,
+  display_height: integer,
+  orientation: enumString(["portrait", "landscape"]),
+  text_length: nullable(integer),
+  text_snippet: nullable(string),
+  has_images: nullable(boolean),
+  has_graphics: nullable(boolean),
+  content_analysis_status: enumString(["complete", "degraded", "unavailable", "not_analyzed"]),
+  text_extraction_status: enumString(["complete", "failed", "not_analyzed"]),
+  image_detection_status: enumString(["complete", "failed", "not_analyzed"]),
+  graphics_detection_status: enumString(["complete", "failed", "not_analyzed"]),
+  blank_status: enumString(["likely_blank", "not_blank", "unknown"]),
+  analysis_error_codes: stringArray,
+  analysis_provenance: object({
+    dimensions: { const: "pdf-lib" },
+    text: nullable(enumString(["pdfjs"])),
+    images: nullable(enumString(["pdfjs"])),
+    graphics: nullable(enumString(["pdfjs"])),
+  }),
+});
+const analysisError = object({
+  scope: enumString(["document", "page"]),
+  page: integer,
+  code: string,
+}, ["scope", "code"]);
+
+export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
+  read_pdf_fields: activeDocument(),
+  fill_pdf: activeDocument({ filled_fields: stringArray, fill_errors: stringArray }),
+  bulk_fill_from_csv: object({
+    row_count: integer,
+    results: arrayOf(object({
+      filename: string,
+      output_path: string,
+      fields_filled: integer,
+      errors: stringArray,
+      status: enumString(["ok", "warning", "error"]),
+    })),
+    preview_records: arrayOf({ type: "object", additionalProperties: string }),
+  }),
+  fill_with_profile: activeDocument({
+    profile_name: string,
+    filled_fields: stringArray,
+    fill_errors: stringArray,
+  }),
+  extract_to_csv: object({
+    output_csv: string,
+    source_pdf_count: integer,
+    field_count: integer,
+    row_count: integer,
+    preview_row_count: integer,
+    headers: stringArray,
+    preview_rows: arrayOf({ type: "object", additionalProperties: string }),
+  }),
+  validate_pdf: validationSuccess,
+  read_pdf_content: { type: "object", anyOf: [contentTextSuccess, contentImageSuccess] },
+  read_pdf_pages: object({
+    pdf_path: string,
+    file_name: string,
+    total_pages: integer,
+    start_page: integer,
+    end_page: integer,
+    pages: arrayOf(pageTextPreview),
+    text_found: boolean,
+    truncated: boolean,
+  }),
+  render_pdf_page: object({
+    pdf_path: string,
+    file_name: string,
+    page: integer,
+    total_pages: integer,
+    width_points: integer,
+    height_points: integer,
+    rendered_width_px: integer,
+    rendered_height_px: integer,
+    scale: number,
+    renderer: enumString(["native-canvas", "macos-sips"]),
+    mime_type: { const: "image/png" },
+  }),
+  render_pdf_region: object({
+    pdf_path: string,
+    file_name: string,
+    page: integer,
+    total_pages: integer,
+    region_points: regionPoints,
+    rendered_width_px: integer,
+    rendered_height_px: integer,
+    scale: number,
+    renderer: enumString(["native-canvas", "macos-sips"]),
+    mime_type: { const: "image/png" },
+  }),
+  search_pdf_text: object({
+    pdf_path: string,
+    file_name: string,
+    total_pages: integer,
+    query: string,
+    match_count: integer,
+    truncated: boolean,
+    matches: arrayOf(object({
+      page: integer,
+      char_index: integer,
+      match_text: string,
+      snippet: string,
+    })),
+  }),
+  get_pdf_resource_uri: object({
+    uri: string,
+    pdf_path: string,
+    file_name: string,
+    size_bytes: integer,
+  }),
+  display_pdf: activeDocument(),
+  get_active_document: {
+    type: "object",
+    anyOf: [
+      object({
+        active_path: { type: "null" },
+        backup_path: { type: "null" },
+        last_mutation_tool: { type: "null" },
+        last_mutation_at: { type: "null" },
+      }),
+      activeDocument(),
+    ],
+  },
+  set_active_document: activeDocument(),
+  read_pdf_bytes: object({
+    pdfPath: string,
+    bytes: string,
+    offset: integer,
+    byteCount: integer,
+    totalBytes: integer,
+    hasMore: boolean,
+  }),
+  merge_pdfs: activeDocument({ total_pages: integer }),
+  rotate_pdf_pages: activeDocument({
+    rotated_pages: integer,
+    degrees: { type: "number", enum: [90, 180, 270] },
+  }),
+  reorder_pdf_pages: activeDocument({ page_order: integerArray }),
+  apply_page_plan: activeDocument({
+    deleted_pages: integer,
+    rotated_pages: integer,
+    page_order: integerArray,
+    rotations: { type: "object", additionalProperties: { type: "number", enum: [0, 90, 180, 270] } },
+  }),
+  get_page_analysis: object({
+    total_pages: integer,
+    content_analysis_status: enumString(["complete", "partial", "degraded"]),
+    content_analysis_complete: boolean,
+    content_pages_requested: integer,
+    content_pages_complete: integer,
+    likely_blank_pages: integerArray,
+    nonblank_pages: integerArray,
+    unknown_pages: integerArray,
+    analysis_errors: arrayOf(analysisError),
+    retry_guidance: nullable(string),
+    mutation_guidance: string,
+    pages: arrayOf(pageAnalysis),
+    majority_orientation: enumString(["portrait", "landscape"]),
+  }),
+  create_signature: object({
+    name: string,
+    style: enumString(["typed", "image"]),
+    path: string,
+    bytes: integer,
+  }),
+  list_signatures: object({
+    signatures: arrayOf(object({
+      name: string,
+      style: enumString(["typed", "image"]),
+      display_name: nullable(string),
+      created_at: nullable(string),
+    })),
+  }),
+  load_signature: object({
+    name: string,
+    style: enumString(["typed", "image"]),
+    display_name: nullable(string),
+    preview_data_url: nullable(string),
+    created_at: nullable(string),
+  }),
+  add_signature_field: activeDocument({
+    pdf_path: string,
+    page: integer,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    label: string,
+  }),
+  apply_signature: activeDocument({
+    pdf_path: string,
+    signature_name: string,
+    page: integer,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    signer: string,
+    confirmed_at: string,
+    intent_statement: string,
+    signing_mode: enumString(["signature", "initials"]),
+    tier: { const: "basic-local-stamp" },
+  }),
+  prepare_signing_packet: activeDocument({
+    pdf_path: string,
+    pending_signatures: arrayOf(placement),
+    filled_count: integer,
+    fill_errors: arrayOf(fillError),
+  }),
+  apply_text: activeDocument({
+    pdf_path: string,
+    page: integer,
+    x: number,
+    y: number,
+    width: number,
+    height: number,
+    text: string,
+  }),
+  detect_signature_zones: object({ zones: arrayOf(signatureZone) }),
+  fetch_pdf_from_url: activeDocument({
+    pdf_path: string,
+    bytes: integer,
+    content_type: string,
+    source_url: string,
+  }),
+  reveal_in_finder: object({
+    path: string,
+    platform: enumString(["darwin", "win32", "linux", "aix", "freebsd", "openbsd", "sunos", "android"]),
+  }),
+});
+
+const specialErrorSchemas = {
+  validate_pdf: [validationFailure],
+  read_pdf_content: [contentFailure],
+};
+
+export const TOOL_ERROR_OUTPUT_SCHEMAS = Object.freeze(Object.fromEntries(
+  Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).map(name => [
+    name,
+    {
+      type: "object",
+      anyOf: [standardError, ...(specialErrorSchemas[name] || [])],
+    },
+  ]),
+));
+
+// The pinned SDK validates structuredContent whenever it is present, including
+// isError results. Keep every advertised error branch exact while the live
+// success validator below deliberately excludes all error shapes.
+export const TOOL_OUTPUT_SCHEMAS = Object.freeze(Object.fromEntries(
+  Object.entries(TOOL_SUCCESS_OUTPUT_SCHEMAS).map(([name, successSchema]) => [
+    name,
+    {
+      type: "object",
+      anyOf: [successSchema, standardError, ...(specialErrorSchemas[name] || [])],
+    },
+  ]),
+));
+
+const validatorProvider = new AjvJsonSchemaValidator();
+const successValidators = new Map(Object.entries(TOOL_SUCCESS_OUTPUT_SCHEMAS).map(
+  ([name, schema]) => [name, validatorProvider.getValidator(schema)],
+));
+const errorValidators = new Map(Object.entries(TOOL_ERROR_OUTPUT_SCHEMAS).map(
+  ([name, schema]) => [name, validatorProvider.getValidator(schema)],
+));
+const standardErrorValidator = validatorProvider.getValidator(standardError);
+
+export function withToolOutputSchema(tool) {
+  const outputSchema = TOOL_OUTPUT_SCHEMAS[tool.name];
+  return outputSchema ? { ...tool, outputSchema } : tool;
+}
+
+export function validateStructuredToolResult(toolName, result) {
+  if (result?.isError === true) {
+    if (result.structuredContent === undefined) return result;
+    const validation = (errorValidators.get(toolName) || standardErrorValidator)(result.structuredContent);
+    if (!validation.valid) {
+      return internalValidationError(toolName, `invalid structured error: ${validation.errorMessage}`);
+    }
+    return result;
+  }
+
+  const validator = successValidators.get(toolName);
+  if (!validator) {
+    if (result?.structuredContent === undefined) return result;
+    return internalValidationError(toolName, "structured content was returned without an advertised output schema");
+  }
+  if (result?.structuredContent === undefined) {
+    return internalValidationError(toolName, "the successful result omitted required structured content");
+  }
+
+  const validation = validator(result.structuredContent);
+  if (!validation.valid) {
+    return internalValidationError(toolName, validation.errorMessage);
+  }
+  return result;
+}
+
+function internalValidationError(toolName, detail) {
+  console.error(`[PDF Tools] Output validation failed for ${toolName}: ${detail}`);
+  return {
+    content: [{
+      type: "text",
+      text: `Internal output validation failed for ${toolName}. No unvalidated structured result was returned.`,
+    }],
+    isError: true,
+  };
+}

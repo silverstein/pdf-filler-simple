@@ -55,6 +55,10 @@ describe.each(RUNTIMES)("$name analysis truthfulness", ({ root }) => {
       PDF_TOOLS_FORCE_SYSTEM_RENDERER: "1",
       PDF_TOOLS_DISABLE_SYSTEM_RENDERER: "1",
     });
+    // Cache advertised output validators before exercising both success and
+    // structured isError branches, matching current MCP client behavior.
+    await normal.client.listTools();
+    await forcedRenderFailure.client.listTools();
   }, 30_000);
 
   afterAll(async () => {
