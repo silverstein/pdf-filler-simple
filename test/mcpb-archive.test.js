@@ -14,8 +14,10 @@ import { tmpdir } from "os";
 import path from "path";
 import { pathToFileURL } from "url";
 import { spawnSync } from "child_process";
+import { randomUUID } from "crypto";
 import {
   activateCanonicalCandidateAtomic,
+  McpbPostActivationDurabilityError,
   assertSafeArchivePath,
   buildExpectedFileManifest,
   canonicalZipMtime,
@@ -219,6 +221,8 @@ describe("canonical MCPB archive", () => {
     expect(() => activateCanonicalCandidateAtomic({
       candidatePath: unsupportedCandidate,
       outputPath: output,
+      expectedSha256: sha256Bytes(bytes),
+      expectedBytes: bytes.length,
       operations: {
         directoryFsync() { const error = new Error("unsupported"); error.code = "ENOTSUP"; throw error; },
       },
@@ -231,12 +235,85 @@ describe("canonical MCPB archive", () => {
     expect(() => activateCanonicalCandidateAtomic({
       candidatePath: failedCandidate,
       outputPath: output,
+      expectedSha256: sha256Bytes(bytes),
+      expectedBytes: bytes.length,
       operations: {
         rename() { const error = new Error("rename failed"); error.code = "EACCES"; throw error; },
       },
     })).toThrow(/rename failed/);
     expect(readFileSync(output, "utf8")).toBe("known-good");
     expect(() => statSync(failedCandidate)).toThrow();
+  });
+
+  it("binds activation and detects deterministic TOCTOU-style last-boundary mutation", () => {
+    const stage = fixtureStage();
+    const expected = buildExpectedFileManifest(stage);
+    const bytes = Buffer.from(createCanonicalZip(expected));
+    const outputRoot = temporaryRoot();
+    const output = path.join(outputRoot, "pdf-toolkit-mcp.mcpb");
+    const expectedSha256 = sha256Bytes(bytes);
+
+    for (const mutate of [
+      candidate => writeFileSync(candidate, Buffer.from("short tamper")),
+      candidate => {
+        const replacement = Buffer.from(bytes);
+        replacement[Math.floor(replacement.length / 2)] ^= 1;
+        writeFileSync(candidate, replacement);
+      },
+    ]) {
+      const candidate = path.join(outputRoot, `mutation-${randomUUID()}.mcpb`);
+      writeFileSync(candidate, bytes);
+      writeFileSync(output, "known-good");
+      expect(() => activateCanonicalCandidateAtomic({
+        candidatePath: candidate,
+        outputPath: output,
+        expectedSha256,
+        expectedBytes: bytes.length,
+        operations: { beforeRename: mutate },
+      })).toThrow(/changed before atomic activation/);
+      expect(readFileSync(output, "utf8")).toBe("known-good");
+      expect(() => statSync(candidate)).toThrow();
+    }
+  });
+
+  it("reports post-rename directory fsync failure as activated but not durability-confirmed", () => {
+    const stage = fixtureStage();
+    const expected = buildExpectedFileManifest(stage);
+    const bytes = Buffer.from(createCanonicalZip(expected));
+    const outputRoot = temporaryRoot();
+    const output = path.join(outputRoot, "pdf-toolkit-mcp.mcpb");
+    const candidate = path.join(outputRoot, "post-rename-fsync.mcpb");
+    writeFileSync(output, "old artifact");
+    writeFileSync(candidate, bytes);
+    let directoryFsyncCalls = 0;
+    let thrown;
+    try {
+      activateCanonicalCandidateAtomic({
+        candidatePath: candidate,
+        outputPath: output,
+        expectedSha256: sha256Bytes(bytes),
+        expectedBytes: bytes.length,
+        operations: {
+          directoryFsync() {
+            directoryFsyncCalls += 1;
+            if (directoryFsyncCalls === 2) {
+              const error = new Error("post-rename directory fsync failed");
+              error.code = "EIO";
+              throw error;
+            }
+          },
+        },
+      });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(McpbPostActivationDurabilityError);
+    expect(thrown.activated).toBe(true);
+    expect(thrown.sha256).toBe(sha256Bytes(bytes));
+    expect(thrown.bytes).toBe(bytes.length);
+    expect(directoryFsyncCalls).toBe(2);
+    expect(readFileSync(output).equals(bytes)).toBe(true);
+    expect(() => statSync(candidate)).toThrow();
   });
 
   it("fails closed when the installed canonical tooling drifts from the lock", () => {

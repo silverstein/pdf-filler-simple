@@ -113,6 +113,15 @@ UTF-8-byte-sorted forward-slash inventory, the fixed representable ZIP timestamp
 file mode `0100644`, deterministic level-9 compression,
 and no ZIP extras or comments. The two archives must be byte-identical before a
 fully verified same-directory candidate atomically replaces the prior output.
+Immediately before rename, activation re-checks the candidate's regular-file
+type, exact byte length, and SHA-256 against the second clean build. A mismatch
+fails before rename and preserves the prior output. Pre-rename file or directory
+`fsync` and rename failures likewise preserve it. If rename succeeds but the
+following directory `fsync` fails with a genuine I/O error, rollback is no
+longer possible: the command throws an `activated: true` durability error that
+carries the new output path, size, and hash. This means the new file is present,
+but crash durability has not been confirmed; maintainers must inspect that
+specific result rather than assuming the old artifact survived.
 Each clean stage and exact canonical re-encoding runs in a separate child
 process, so two full installed graphs and archives never coexist in one process;
 the command reports the larger child-process peak RSS as the reproducibility

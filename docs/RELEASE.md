@@ -32,6 +32,13 @@ the prior artifact. External `unzip -t` is an additional check when available,
 not a Windows portability claim. The build reports its measured peak child RSS. Do not
 substitute a host-local global `mcpb pack` for release builds.
 
+Activation re-hashes and re-stats the second candidate immediately before
+rename. Any mismatch or pre-rename durability failure leaves the prior artifact
+untouched. A post-rename directory-fsync I/O failure is different: the new file
+has already replaced the old one, so the build reports an `activated: true`
+durability error with its path, size, and SHA-256. Treat that as “new artifact
+present; crash durability unconfirmed,” not as a rollback.
+
 The share-package test builds the ZIP twice, requires byte-identical hashes,
 verifies full root/share lock parity, provenance and CycloneDX 1.6 SBOM
 coverage, proves failed artifact builds preserve the prior ZIP, and exercises

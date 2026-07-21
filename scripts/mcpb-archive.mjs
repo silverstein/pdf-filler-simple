@@ -20,6 +20,17 @@ const FILE_MODE = 0o644;
 const REGULAR_FILE_MODE = 0o100000 | FILE_MODE;
 const UNSUPPORTED_DIRECTORY_FSYNC_ERRORS = new Set(["EINVAL", "ENOTSUP", "EOPNOTSUPP", "EISDIR"]);
 
+export class McpbPostActivationDurabilityError extends Error {
+  constructor(message, { cause, outputPath, sha256, bytes }) {
+    super(message, { cause });
+    this.name = "McpbPostActivationDurabilityError";
+    this.activated = true;
+    this.outputPath = outputPath;
+    this.sha256 = sha256;
+    this.bytes = bytes;
+  }
+}
+
 export function sha256Bytes(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
@@ -258,10 +269,7 @@ export function writeCanonicalBytesAtomic({
     `.${path.basename(outputPath)}.candidate-${process.pid}-${randomUUID()}`,
   );
   let descriptor;
-  const outputDirectory = path.dirname(outputPath);
   const fileFsync = operations.fileFsync || fsyncSync;
-  const directoryFsync = operations.directoryFsync || defaultDirectoryFsync;
-  const rename = operations.rename || renameSync;
   const remove = operations.remove || (filename => rmSync(filename, { force: true }));
   try {
     descriptor = openSync(candidate, "wx", 0o600);
@@ -279,18 +287,22 @@ export function writeCanonicalBytesAtomic({
       verifyCanonicalZip(readFileSync(candidate), expectedFiles);
     }
     if (beforeRename) beforeRename(candidate);
-    syncDirectory(outputDirectory, directoryFsync);
-    rename(candidate, outputPath);
-    syncDirectory(outputDirectory, directoryFsync);
   } catch (error) {
     if (descriptor !== undefined) closeSync(descriptor);
     remove(candidate);
     throw error;
   }
+  const activated = activateCanonicalCandidateAtomic({
+    candidatePath: candidate,
+    outputPath,
+    expectedSha256: sha256Bytes(bytes),
+    expectedBytes: bytes.length,
+    operations,
+  });
   return {
-    bytes: statSync(outputPath).size,
+    bytes: activated.bytes,
     files: expectedFiles.length,
-    sha256: sha256File(outputPath),
+    sha256: activated.sha256,
   };
 }
 
@@ -314,6 +326,8 @@ export function writeCanonicalMcpbAtomic({
 export function activateCanonicalCandidateAtomic({
   candidatePath,
   outputPath,
+  expectedSha256,
+  expectedBytes,
   operations = {},
 }) {
   const outputDirectory = path.dirname(outputPath);
@@ -324,7 +338,11 @@ export function activateCanonicalCandidateAtomic({
   const directoryFsync = operations.directoryFsync || defaultDirectoryFsync;
   const rename = operations.rename || renameSync;
   const remove = operations.remove || (filename => rmSync(filename, { force: true }));
+  if (!/^[a-f0-9]{64}$/.test(expectedSha256 || "") || !Number.isSafeInteger(expectedBytes) || expectedBytes < 0) {
+    throw new Error("Canonical activation requires an expected SHA-256 and byte length");
+  }
   let descriptor;
+  let renamed = false;
   try {
     descriptor = openSync(candidatePath, "r");
     fileFsync(descriptor);
@@ -332,17 +350,55 @@ export function activateCanonicalCandidateAtomic({
     descriptor = undefined;
     closeSync(completedDescriptor);
     syncDirectory(outputDirectory, directoryFsync);
+    if (operations.beforeRename) operations.beforeRename(candidatePath);
+    const candidateMetadata = lstatSync(candidatePath);
+    if (
+      !candidateMetadata.isFile() ||
+      candidateMetadata.isSymbolicLink() ||
+      candidateMetadata.size !== expectedBytes ||
+      sha256File(candidatePath) !== expectedSha256
+    ) {
+      throw new Error("Canonical candidate changed before atomic activation");
+    }
     rename(candidatePath, outputPath);
+    renamed = true;
     syncDirectory(outputDirectory, directoryFsync);
   } catch (error) {
     if (descriptor !== undefined) closeSync(descriptor);
-    remove(candidatePath);
-    throw error;
+    if (!renamed) {
+      remove(candidatePath);
+      throw error;
+    }
+    let bytes = expectedBytes;
+    let sha256 = expectedSha256;
+    try {
+      bytes = statSync(outputPath).size;
+      sha256 = sha256File(outputPath);
+    } catch {
+      // Preserve the expected identity when post-rename evidence cannot be read.
+    }
+    throw new McpbPostActivationDurabilityError(
+      "MCPB candidate was activated, but post-rename directory fsync failed; the new output is present but crash durability is not confirmed",
+      { cause: error, outputPath, sha256, bytes },
+    );
   }
-  return {
+  const result = {
     bytes: statSync(outputPath).size,
     sha256: sha256File(outputPath),
+    activated: true,
   };
+  if (result.bytes !== expectedBytes || result.sha256 !== expectedSha256) {
+    throw new McpbPostActivationDurabilityError(
+      "MCPB was activated, but its post-rename identity does not match the verified candidate",
+      {
+        cause: new Error(`Expected ${expectedBytes} bytes/${expectedSha256}; found ${result.bytes} bytes/${result.sha256}`),
+        outputPath,
+        sha256: result.sha256,
+        bytes: result.bytes,
+      },
+    );
+  }
+  return result;
 }
 
 export const CANONICAL_FILE_MODE = FILE_MODE;

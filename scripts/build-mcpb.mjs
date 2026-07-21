@@ -25,6 +25,7 @@ import {
   buildExpectedFileManifest,
   activateCanonicalCandidateAtomic,
   createCanonicalZip,
+  McpbPostActivationDurabilityError,
   verifyCanonicalZip,
   writeCanonicalBytesAtomic,
 } from "./mcpb-archive.mjs";
@@ -462,7 +463,23 @@ async function main() {
       throw new Error(`Clean MCPB builds were not byte-identical: ${first.sha256} != ${second.sha256}`);
     }
     verifyCandidateWithPinnedMcpb(candidatePaths[1]);
-    const result = activateCanonicalCandidateAtomic({ candidatePath: candidatePaths[1], outputPath });
+    const result = activateCanonicalCandidateAtomic({
+      candidatePath: candidatePaths[1],
+      outputPath,
+      expectedSha256: second.sha256,
+      expectedBytes: second.bytes,
+    });
+    if (!result.activated || result.sha256 !== second.sha256 || result.bytes !== second.bytes) {
+      throw new McpbPostActivationDurabilityError(
+        "Activated MCPB result does not match the verified second build",
+        {
+          cause: new Error(`Expected ${second.bytes} bytes/${second.sha256}; found ${result.bytes} bytes/${result.sha256}`),
+          outputPath,
+          sha256: result.sha256,
+          bytes: result.bytes,
+        },
+      );
+    }
     activated = true;
     console.log("\nVerified native bindings:");
     for (const nativePath of second.nativePaths) console.log(`- ${nativePath}`);
@@ -481,7 +498,14 @@ async function main() {
 
 if (path.resolve(process.argv[1] || "") === fileURLToPath(import.meta.url)) {
   main().catch(error => {
-    console.error(`MCPB build failed: ${error.message}`);
+    if (error?.activated === true) {
+      console.error(
+        `MCPB activation durability failure: activated=true output=${error.outputPath} ` +
+        `bytes=${error.bytes} sha256=${error.sha256}: ${error.message}`,
+      );
+    } else {
+      console.error(`MCPB build failed: ${error.message}`);
+    }
     process.exitCode = 1;
   });
 }
