@@ -6,6 +6,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import {
   JsonlArrivalCollector,
   buildBatchManifest,
+  buildCallObservations,
   buildCodexArgs,
   buildFinalAnswerAnnotations,
   buildObserver,
@@ -211,12 +212,41 @@ describe("headless Codex comparison controller", () => {
     expect(collector.arrivals[2].parse_error).toMatch(/JSON/);
   });
 
+  it("preserves UTF-8 characters split across stdout buffer chunks", () => {
+    const collector = new JsonlArrivalCollector();
+    const line = JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "café ✅" } });
+    const bytes = Buffer.from(`${line}\n`, "utf8");
+    const splitAt = bytes.indexOf(Buffer.from("✅")) + 1;
+    expect(collector.push(bytes.subarray(0, splitAt), "2026-07-21T10:00:00.000Z")).toHaveLength(0);
+    expect(collector.push(bytes.subarray(splitAt), "2026-07-21T10:00:01.000Z")).toHaveLength(1);
+    expect(collector.finish()).toHaveLength(0);
+    expect(collector.arrivals[0]).toMatchObject({
+      line_sha256: sha256(line),
+      event: { item: { text: "café ✅" } },
+      parse_error: null,
+    });
+  });
+
   it("classifies any completed PDF call as a product trial even after a bad process exit", () => {
     const arrivals = successfulArrivals();
     expect(classifyRunOutcome(arrivals)).toBe("completed");
     expect(classifyRunOutcome([arrival(1, "2026-07-21T10:00:00.000Z", {
       type: "item.completed", item: { id: "warning", type: "error", message: "warning" },
     })])).toBe("harness_failure");
+  });
+
+  it("requires started and completed call identities to agree before recording observations", () => {
+    const arrivals = successfulArrivals();
+    const started = arrivals.find(item => item.event?.type === "item.started"
+      && item.event.item.id === "read-before");
+    started.event.item.arguments = { ...started.event.item.arguments, end_page: 2 };
+    const sourceObservations = new Map([
+      ["input/before.pdf", { snapshot: { path: "input/before.pdf" } }],
+      ["input/after.pdf", { snapshot: { path: "input/after.pdf" } }],
+    ]);
+    const observations = buildCallObservations(arrivals, sourceObservations);
+    expect(observations).not.toHaveProperty("read-before");
+    expect(observations).toHaveProperty("read-after");
   });
 
   it("binds four evidence records and one claim to exact successful result item IDs", () => {

@@ -6,6 +6,7 @@ import fsSync from "node:fs";
 import fs from "node:fs/promises";
 import { homedir, hostname, platform, arch } from "node:os";
 import path from "node:path";
+import { StringDecoder } from "node:string_decoder";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -365,16 +366,18 @@ export class JsonlArrivalCollector {
     this.pending = "";
     this.arrivals = [];
     this.lineNumber = 0;
+    this.decoder = new StringDecoder("utf8");
   }
 
   push(chunk, observedAt = isoNow()) {
-    this.pending += Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk);
+    this.pending += Buffer.isBuffer(chunk) ? this.decoder.write(chunk) : String(chunk);
     const lines = this.pending.split("\n");
     this.pending = lines.pop();
     return lines.map(line => this.#record(line.replace(/\r$/, ""), observedAt));
   }
 
   finish(observedAt = isoNow()) {
+    this.pending += this.decoder.end();
     if (!this.pending) return [];
     const line = this.pending.replace(/\r$/, "");
     this.pending = "";
@@ -552,14 +555,18 @@ function sourceObservationMap({ runId, preObservedAt, preManifest }) {
   }));
 }
 
-function buildCallObservations(arrivals, sourceObservations) {
+export function buildCallObservations(arrivals, sourceObservations) {
   const starts = new Map(arrivals.map(arrival => [startedItem(arrival)?.id, arrival]).filter(([id]) => typeof id === "string"));
   const observations = {};
   for (const arrival of arrivals) {
     const item = completedItem(arrival);
     if (item?.type !== "mcp_tool_call" || item.server !== "pdf_tools" || typeof item.id !== "string") continue;
     const started = starts.get(item.id);
-    if (!started) continue;
+    const startedCall = startedItem(started);
+    if (startedCall?.type !== "mcp_tool_call"
+      || startedCall.server !== item.server
+      || startedCall.tool !== item.tool
+      || canonicalJson(startedCall.arguments ?? {}) !== canonicalJson(item.arguments ?? {})) continue;
     const source = typeof item.arguments?.pdf_path === "string" ? item.arguments.pdf_path : null;
     const sourceObservation = source ? sourceObservations.get(source) : null;
     observations[item.id] = {
