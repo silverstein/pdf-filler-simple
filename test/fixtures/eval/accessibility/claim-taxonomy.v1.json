@@ -1,0 +1,62 @@
+{
+  "taxonomy_version": 1,
+  "effective_date": "2026-07-21",
+  "claim_states": {
+    "structural_failures_detected": {
+      "rank": 0,
+      "allowed_statement": "Automated structural screening detected the listed machine-checkable failures.",
+      "proves": ["the listed checks failed in this scorer run"],
+      "does_not_prove": ["the complete set of accessibility defects", "PDF/UA non-conformance", "WCAG non-conformance"]
+    },
+    "no_structural_failures_detected": {
+      "rank": 1,
+      "allowed_statement": "Automated structural screening found no failures among the checks it performed.",
+      "proves": ["the narrow catalog-level checks in structural_screen_v1 passed"],
+      "does_not_prove": ["accessibility", "PDF/UA conformance", "WCAG conformance", "usability with assistive technology"]
+    },
+    "machine_validation_passed": {
+      "rank": 2,
+      "allowed_statement": "A named, versioned validator passed its declared machine-verifiable profile.",
+      "proves": ["only the machine-verifiable rules in the exact recorded validator profile"],
+      "does_not_prove": ["human-verifiable requirements", "PDF/UA conformance", "WCAG conformance", "certification"]
+    },
+    "human_review_completed": {
+      "rank": 3,
+      "allowed_statement": "A traceable human review completed the declared checklist and scope.",
+      "proves": ["only the reviewed items, document hash, standard edition, and scope in that record"],
+      "does_not_prove": ["unreviewed requirements", "legal compliance", "certification"]
+    },
+    "conformance_validated": {
+      "rank": 4,
+      "allowed_statement": "Conformance was validated against the named standard edition using the recorded machine and human evidence.",
+      "proves": ["the bounded validation conclusion supported by the retained evidence"],
+      "does_not_prove": ["certification by an external authority", "conformance to another standard", "future conformance after modification"]
+    },
+    "certified_conformance": {
+      "rank": 5,
+      "allowed_statement": "A named external authority issued the retained certificate for this exact document hash and scope.",
+      "proves": ["only what the authentic certificate states"],
+      "does_not_prove": ["claims outside the certificate scope", "continued validity after modification"]
+    }
+  },
+  "automated_lane_capability": {
+    "maximum_emittable_state": "no_structural_failures_detected",
+    "trusted_validator_adapters": [],
+    "trusted_human_review_schemas": [],
+    "trusted_certification_authorities": [],
+    "reason": "Version 1 deliberately has no authenticated ingestion path for validator, human-review, or certification evidence. Supplied claims are retained only as rejected input and cannot promote an assessment."
+  },
+  "never_infer": [
+    { "from": "pdfua_identification_metadata", "to": "PDF/UA conformance" },
+    { "from": "no_structural_failures_detected", "to": "accessibility" },
+    { "from": "machine_validation_passed", "to": "PDF/UA conformance" },
+    { "from": "PDF/UA conformance", "to": "WCAG conformance" },
+    { "from": "conformance_validated", "to": "certified_conformance" }
+  ],
+  "prohibited_unqualified_terms": [
+    "accessible PDF",
+    "PDF/UA compliant",
+    "WCAG compliant",
+    "certified accessible"
+  ]
+}

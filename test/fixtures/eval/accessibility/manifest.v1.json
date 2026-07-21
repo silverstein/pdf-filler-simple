@@ -1,0 +1,101 @@
+{
+  "manifest_version": 1,
+  "corpus_version": "v0.1.0",
+  "taxonomy_path": "claim-taxonomy.v1.json",
+  "taxonomy_sha256": "7c313ec19f96047199e85dda32f0ac5fbcdf663758a091ae2c62634d27a5375c",
+  "fixtures": [
+    {
+      "id": "pdf-tools.accessibility.v1.untagged",
+      "path": "synthetic/untagged.pdf",
+      "sha256": "c85e052288616c883c0ab8778f70419eb1268f2583bfad9d8aa301110ad982ff",
+      "media_type": "application/pdf",
+      "partition": "development",
+      "description": "Born-digital text with none of the catalog-level tagging signals checked by the structural screen.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Created for the PDF Tools accessibility evaluation corpus",
+        "source_url": null,
+        "generator": "scripts/eval-generate-accessibility-fixtures.mjs"
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false,
+        "notes": "Programmatically generated fixed labels only."
+      },
+      "expected": {
+        "screen_status": "fail",
+        "required_failure_ids": ["catalog_marked", "document_language", "structure_tree_root", "display_document_title"],
+        "declared_pdfua_part": null,
+        "maximum_claim_state": "structural_failures_detected"
+      }
+    },
+    {
+      "id": "pdf-tools.accessibility.v1.claim-only",
+      "path": "synthetic/claim-only.pdf",
+      "sha256": "4b1b09974d5210f8caf53ab6dc92e58d2692028dc37bf50c1cccaa9d419adc38",
+      "media_type": "application/pdf",
+      "partition": "adversarial",
+      "description": "Adversarial file with PDF/UA identification metadata and superficial tagging signals but an incomplete structure-tree shape.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Created to prove that a self-declared PDF/UA identifier cannot establish conformance",
+        "source_url": null,
+        "generator": "scripts/eval-generate-accessibility-fixtures.mjs"
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false,
+        "notes": "Programmatically generated fixed labels and metadata only."
+      },
+      "expected": {
+        "screen_status": "fail",
+        "required_failure_ids": ["structure_parent_tree"],
+        "declared_pdfua_part": 1,
+        "maximum_claim_state": "structural_failures_detected"
+      }
+    },
+    {
+      "id": "pdf-tools.accessibility.v1.screen-pass-not-conformance",
+      "path": "synthetic/screen-pass-not-conformance.pdf",
+      "sha256": "408897f4bf132a85e1a8c3adb33a297e56553c4f57f8fe5a3230bbbd9cfbe18c",
+      "media_type": "application/pdf",
+      "partition": "adversarial",
+      "description": "Adversarial file satisfying every deliberately shallow structural check; visible content is not semantically tagged and no conformance claim is permitted.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Created to prove that passing structural heuristics cannot establish accessibility or conformance",
+        "source_url": null,
+        "generator": "scripts/eval-generate-accessibility-fixtures.mjs"
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false,
+        "notes": "Programmatically generated fixed labels and metadata only."
+      },
+      "expected": {
+        "screen_status": "pass",
+        "required_failure_ids": [],
+        "declared_pdfua_part": 1,
+        "maximum_claim_state": "no_structural_failures_detected"
+      }
+    }
+  ]
+}

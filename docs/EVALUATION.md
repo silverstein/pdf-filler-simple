@@ -108,6 +108,12 @@ written.
 
 ## Scoring contracts
 
+Accessibility claims have an additional fail-closed evidence ladder. The
+executable catalog-level screen, adversarial false-certification fixtures,
+claim taxonomy, provenance rules, human-review boundary, and standards sources
+are defined in [Accessibility Evaluation and Claim Safety](ACCESSIBILITY_EVALUATION.md).
+Passing that screen is explicitly not evidence of PDF/UA or WCAG conformance.
+
 ### Deterministic graders
 
 - protocol negotiation, tool-list stability, JSON Schema validity, and result shape;
