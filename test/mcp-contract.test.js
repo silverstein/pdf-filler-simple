@@ -160,6 +160,21 @@ async function startRuntime(runtime) {
 }
 
 describe("MCPB static declarations", () => {
+  it("keeps the runtime brand short enough for Claude-generated tool identifiers", () => {
+    expect(SOURCE_MANIFEST.display_name).toBe("PDF Tools");
+    expect(MCPB_MANIFEST.display_name).toBe(SOURCE_MANIFEST.display_name);
+
+    const normalizedDisplayName = SOURCE_MANIFEST.display_name
+      .replaceAll(" ", "_")
+      .replace(/[^a-zA-Z0-9_-]/g, "");
+    const generatedToolIds = names(SOURCE_MANIFEST.tools).map(
+      toolName => `mcp__${normalizedDisplayName}__${toolName}`,
+    );
+    expect(
+      Math.max(...generatedToolIds.map(identifier => identifier.length)),
+    ).toBeLessThanOrEqual(64);
+  });
+
   it("keeps source and packed prompt declarations identical", () => {
     expect(MCPB_MANIFEST.prompts).toEqual(SOURCE_MANIFEST.prompts);
     expect(MCPB_MANIFEST.prompts_generated).toBeUndefined();
