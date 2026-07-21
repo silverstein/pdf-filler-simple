@@ -9,14 +9,17 @@ import {
   buildCallObservations,
   buildCodexArgs,
   buildFinalAnswerAnnotations,
+  buildLaunchEnvironment,
   buildObserver,
   buildRunPlan,
   campaignCommitmentSha256,
   canonicalJson,
   classifyRunOutcome,
+  captureLaunchEnvironment,
   diffManifests,
   fixtureInstanceRecord,
   finalizeCampaign,
+  fingerprintRuntimeTree,
   planCampaign,
   runCampaignEntry,
   sha256,
@@ -122,6 +125,7 @@ async function writeFakeCodex(filename, { timeout = false, completeThenTimeout =
 if (process.argv.includes("--version")) {
   process.stdout.write("codex-cli fake-timeout-1.0\\n");
 } else {
+  if (process.env.PDF_TOOLS_FORCE_SYSTEM_RENDERER) process.exit(91);
   const events = ${JSON.stringify(events)};
   if (${completeThenTimeout}) for (const event of events) process.stdout.write(JSON.stringify(event) + "\\n");
   setTimeout(() => {}, 60_000);
@@ -131,6 +135,7 @@ if (process.argv.includes("--version")) {
 if (process.argv.includes("--version")) {
   process.stdout.write("codex-cli fake-1.0\\n");
 } else {
+  if (process.env.PDF_TOOLS_FORCE_SYSTEM_RENDERER) process.exit(91);
   const events = ${JSON.stringify(events)};
   for (const event of events) process.stdout.write(JSON.stringify(event) + "\\n");
 }
@@ -191,6 +196,7 @@ describe("headless Codex comparison controller", () => {
       codex_version: "codex-cli 0.144.6",
       node_runtime: { version: "v22.22.3", modules: "127", napi: "10", v8: "12" },
       runtime_fingerprints: {},
+      environment_contract: captureLaunchEnvironment(),
       git_commit: "a".repeat(40),
       suite_sha256: plan.suite_sha256,
       plan_sha256: sha256(canonicalJson(plan)),
@@ -351,6 +357,9 @@ describe("headless Codex comparison controller", () => {
       stdoutSha256: "4".repeat(64),
       stderrSha256: "5".repeat(64),
       launcherRecordSha256: "6".repeat(64),
+      launchClaimRawSha256: "7".repeat(64),
+      launcherStartRawSha256: "8".repeat(64),
+      arrivalsRawSha256: "9".repeat(64),
       startedAt: "2026-07-21T10:00:00.000Z",
       preObservedAt: "2026-07-21T10:00:01.000Z",
       effectsObservedAt: "2026-07-21T10:00:20.000Z",
@@ -394,6 +403,9 @@ describe("headless Codex comparison controller", () => {
       stdoutSha256: "4".repeat(64),
       stderrSha256: "5".repeat(64),
       launcherRecordSha256: "6".repeat(64),
+      launchClaimRawSha256: "7".repeat(64),
+      launcherStartRawSha256: "8".repeat(64),
+      arrivalsRawSha256: "9".repeat(64),
       startedAt: "2026-07-21T10:00:00.000Z",
       preObservedAt: "2026-07-21T10:00:01.000Z",
       effectsObservedAt: "2026-07-21T10:00:20.000Z",
@@ -452,10 +464,19 @@ describe("headless Codex comparison controller integration", () => {
 
   it("replays plan through claim, fake process, observer, and final grading", async () => {
     const { campaignRoot } = await planOne("complete-no-tool-turn");
-    const completed = await runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot });
+    process.env.PDF_TOOLS_FORCE_SYSTEM_RENDERER = "1";
+    let completed;
+    try {
+      completed = await runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot });
+    } finally {
+      delete process.env.PDF_TOOLS_FORCE_SYSTEM_RENDERER;
+    }
     expect(completed.observer.outcome).toBe("completed");
     expect(completed.launcherRecord.completed_pdf_call_count).toBe(0);
 
+    const sentinel = path.join(testRoot, "output-symlink-sentinel.txt");
+    await fs.writeFile(sentinel, "preserve-me\n");
+    await fs.symlink(sentinel, path.join(campaignRoot, "measured-trials.json"));
     const finalized = await finalizeCampaign(campaignRoot, { documentsRoot });
     expect(finalized.report).toMatchObject({
       attempted_trials: 1,
@@ -463,12 +484,43 @@ describe("headless Codex comparison controller integration", () => {
       harness_failures: 0,
       passed_trials: 0,
     });
+    expect(await fs.readFile(sentinel, "utf8")).toBe("preserve-me\n");
+    const measuredStat = await fs.lstat(path.join(campaignRoot, "measured-trials.json"));
+    expect(measuredStat.isFile()).toBe(true);
+    expect(measuredStat.isSymbolicLink()).toBe(false);
 
     await fs.appendFile(path.join(campaignRoot, "runs", "repeat-01", "jsonl-arrivals.jsonl"), "{}\n");
     await expect(finalizeCampaign(campaignRoot, { documentsRoot })).rejects.toThrow(
       /arrival ledger does not cover the raw transcript denominator/,
     );
   }, 30_000);
+
+  it("changes a deterministic runtime-tree commitment after transitive file mutation", async () => {
+    const tree = path.join(testRoot, "runtime-tree");
+    await fs.mkdir(path.join(tree, "nested"), { recursive: true });
+    await fs.writeFile(path.join(tree, "entry.js"), "export const value = 1;\n");
+    await fs.writeFile(path.join(tree, "nested", "runtime.js"), "export const nested = 1;\n");
+    const before = await fingerprintRuntimeTree(tree);
+    await fs.writeFile(path.join(tree, "nested", "runtime.js"), "export const nested = 2;\n");
+    const after = await fingerprintRuntimeTree(tree);
+    expect(after.tree_sha256).not.toBe(before.tree_sha256);
+    expect(after.file_count).toBe(before.file_count);
+  });
+
+  it("builds only the frozen allowlisted launch environment", () => {
+    const source = {
+      HOME: "/home/test", PATH: "/bin", LANG: "C.UTF-8", OPENAI_API_KEY: "secret-value",
+      PDF_TOOLS_FORCE_SYSTEM_RENDERER: "1", HTTP_PROXY: "http://untrusted.invalid",
+    };
+    const contract = captureLaunchEnvironment(source, "a".repeat(64));
+    const launch = buildLaunchEnvironment(contract, source);
+    expect(launch).toMatchObject({
+      HOME: "/home/test", PATH: "/bin", LANG: "C.UTF-8", OPENAI_API_KEY: "secret-value",
+    });
+    expect(launch).not.toHaveProperty("PDF_TOOLS_FORCE_SYSTEM_RENDERER");
+    expect(launch).not.toHaveProperty("HTTP_PROXY");
+    expect(contract.secret_commitments.OPENAI_API_KEY).toMatch(/^[a-f0-9]{64}$/);
+  });
 
   it("rejects prompt tampering before acquiring a launch claim", async () => {
     const { campaignRoot } = await planOne("prompt-tamper");

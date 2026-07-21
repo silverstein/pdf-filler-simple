@@ -16,6 +16,16 @@ import { parsePngEvidence } from "../test/eval/png-evidence.js";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
 
+async function writeOutput(filename, text) {
+  const temporary = `${filename}.tmp-${process.pid}-${Date.now()}`;
+  try {
+    await fs.writeFile(temporary, text, { flag: "wx", mode: 0o600 });
+    await fs.rename(temporary, filename);
+  } finally {
+    await fs.unlink(temporary).catch(() => {});
+  }
+}
+
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -730,7 +740,7 @@ export async function ingestCodexTrajectory({
   if (validation.length > 0) {
     throw new Error(`Ingested trial is invalid:\n- ${validation.join("\n- ")}`);
   }
-  if (outputPath) await fs.writeFile(outputPath, `${JSON.stringify(trialSet, null, 2)}\n`);
+  if (outputPath) await writeOutput(outputPath, `${JSON.stringify(trialSet, null, 2)}\n`);
   return trialSet;
 }
 
@@ -775,7 +785,7 @@ export async function ingestCodexTrajectoryBatch({
   };
   const validation = validateTrajectoryTrialSet(suite, trialSet);
   if (validation.length > 0) throw new Error(`Ingested batch is invalid:\n- ${validation.join("\n- ")}`);
-  if (outputPath) await fs.writeFile(outputPath, `${JSON.stringify(trialSet, null, 2)}\n`);
+  if (outputPath) await writeOutput(outputPath, `${JSON.stringify(trialSet, null, 2)}\n`);
   return trialSet;
 }
 

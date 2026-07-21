@@ -55,8 +55,11 @@ corpus manifest, suite, trust registry, and tool contracts. A self-checking
 launch-contract digest covers the campaign fields. It also fingerprints the
 resolved Codex and Node executables, MCP SDK, `pdf-lib`, `pdfjs-dist`, JavaScript
 canvas package, platform-native canvas binary, and the lexical and real
-`node_modules` roots. A `run` refuses to launch if any of those inputs, fields,
-installed runtimes, retained planning files, or its planned workspace changed.
+`node_modules` roots. Deterministic package-tree commitments cover the actual
+ESM SDK, PDF libraries, canvas bindings, Codex launcher, and current-platform
+native Codex package, rather than only their entry files. A `run` refuses to
+launch if any of those inputs, fields, installed runtimes, retained planning
+files, or its planned workspace changed.
 
 Planner and result signatures remain null. These are unsigned descriptive
 measurements on one repeated fixture instance, not independent benchmark
@@ -75,6 +78,13 @@ Every attempt runs in its own `runs/repeat-NN/workspace`. The controller:
 - restricts PDF Tools paths, profiles, downloads, and temporary files to the
   isolated workspace; and
 - never copies or records authentication material.
+
+Codex receives an explicit allowlisted parent environment frozen at planning
+time. Non-secret values are recorded exactly; the optional API-key value is
+represented by a salted commitment and passed only when present. Proxy,
+`CODEX_HOME`, ambient `PDF_TOOLS_*`, and all other undeclared variables are
+stripped, preventing VM session state from silently selecting another renderer
+or endpoint.
 
 These are model-visible tool and process configuration controls. They are not
 an OS-level network namespace. Remote model inference is predeclared and
