@@ -6,6 +6,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
+import { assertEvidenceOnlyDescendant, assertPrivacySafeProjection } from "./eval-comparison-evidence-integrity.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EVIDENCE_DIRECTORY = path.resolve(
@@ -13,6 +14,9 @@ const EVIDENCE_DIRECTORY = path.resolve(
 );
 const DECISION_SCHEMA_PATH = path.join(
   REPO_ROOT, "test", "fixtures", "eval", "comparison", "decision.schema.json",
+);
+const AGENT_EVIDENCE_SCHEMA_PATH = path.join(
+  REPO_ROOT, "test", "fixtures", "eval", "comparison", "agent-evidence-summary.schema.json",
 );
 const GENERATED_EVIDENCE_PREFIX = `${path.relative(REPO_ROOT, EVIDENCE_DIRECTORY).replaceAll("\\", "/")}/`;
 
@@ -49,7 +53,7 @@ function dirtySourcePaths() {
     .sort();
 }
 
-const sourceRevision = git(["rev-parse", "HEAD"]);
+const headRevision = git(["rev-parse", "HEAD"]);
 const sourceDirtyPaths = dirtySourcePaths();
 if (sourceDirtyPaths.length > 0) {
   throw new Error(`Refusing to build a decision from dirty source paths:\n${sourceDirtyPaths.join("\n")}`);
@@ -59,8 +63,44 @@ const runIndex = await readEvidenceJson("run-index.v1.json");
 const shared = await readEvidenceJson("shared-library-score.v1.json");
 const product = await readEvidenceJson("current-product-score.v1.json");
 const poppler = await readEvidenceJson("poppler-sensor.v1.json");
-if (runIndex.source_revision !== sourceRevision) {
-  throw new Error(`Evidence revision ${runIndex.source_revision} does not match HEAD ${sourceRevision}`);
+const agentSummary = await readEvidenceJson("codex-agent-evidence-summary.v1.json");
+const agentReport = await readEvidenceJson("codex-trajectory-report.v1.json");
+git(["merge-base", "--is-ancestor", runIndex.source_revision, headRevision]);
+const descendantPaths = git(["diff", "--name-only", `${runIndex.source_revision}..${headRevision}`])
+  .split("\n").filter(Boolean);
+assertEvidenceOnlyDescendant({
+  sourceRevision: runIndex.source_revision,
+  headRevision,
+  changedPaths: descendantPaths,
+  evidenceDirectory: path.relative(REPO_ROOT, EVIDENCE_DIRECTORY),
+});
+git(["merge-base", "--is-ancestor", agentSummary.source_revision, runIndex.source_revision]);
+
+const agentEvidenceSchema = JSON.parse(await fs.readFile(AGENT_EVIDENCE_SCHEMA_PATH, "utf8"));
+const agentAjv = new Ajv2020({ allErrors: true, strict: true, allowUnionTypes: true });
+agentAjv.addFormat("date-time", value => Number.isFinite(Date.parse(value)));
+const validateAgentEvidence = agentAjv.compile(agentEvidenceSchema);
+if (!validateAgentEvidence(agentSummary)) {
+  throw new Error(`Agent evidence summary JSON Schema validation failed: ${JSON.stringify(validateAgentEvidence.errors)}`);
+}
+assertPrivacySafeProjection(agentSummary);
+const agentReportBytes = await fs.readFile(path.join(EVIDENCE_DIRECTORY, "codex-trajectory-report.v1.json"));
+if (agentSummary.source_digests.trajectory_report_sha256 !== digest(agentReportBytes)
+  || agentSummary.trial_set_id !== agentReport.trial_set_id) {
+  throw new Error("Codex evidence projection is not bound to the retained trajectory report");
+}
+if (agentReport.attempted_trials !== 3
+  || agentReport.product_trials !== 3
+  || agentReport.harness_failures !== 0
+  || agentReport.passed_trials !== 3
+  || agentReport.product_statistics?.pass_rate !== 1
+  || agentReport.product_statistics?.sample_variance !== 0
+  || agentReport.trust_ready !== false
+  || agentReport.independence_ready !== false
+  || agentReport.harness_ready !== false
+  || agentReport.sample_size_ready !== false
+  || agentReport.benchmark_claim_ready !== false) {
+  throw new Error("Codex trajectory report exceeds or contradicts its descriptive three-run claim boundary");
 }
 
 const evidenceBindings = [];
@@ -72,17 +112,30 @@ for (const artifact of runIndex.artifacts) {
   evidenceBindings.push(actual);
 }
 evidenceBindings.push(await bindingForFile(path.join(EVIDENCE_DIRECTORY, "run-index.v1.json")));
+for (const name of [
+  "codex-agent-evidence-summary.v1.json",
+  "codex-trajectory-report.v1.json",
+]) {
+  evidenceBindings.push(await bindingForFile(path.join(EVIDENCE_DIRECTORY, name)));
+}
 
 const sourceBindingPaths = [
   "docs/COMPARISON_EVALUATION.md",
+  "docs/evidence/comparison-v1/README.md",
   "scripts/eval-generate-comparison-fixtures.mjs",
   "scripts/eval-run-comparison-baselines.mjs",
   "scripts/eval-build-comparison-decision.mjs",
+  "scripts/eval-comparison-evidence-integrity.mjs",
+  "scripts/eval-summarize-codex-comparison.mjs",
+  "scripts/eval-run-codex-comparison.mjs",
+  "scripts/eval-ingest-codex-trajectory.mjs",
+  "scripts/eval-run-trajectories.mjs",
   "server/index.js",
   "test/fixtures/eval/comparison/manifest.v1.json",
   "test/fixtures/eval/comparison/manifest.schema.json",
   "test/fixtures/eval/comparison/report.schema.json",
   "test/fixtures/eval/comparison/decision.schema.json",
+  "test/fixtures/eval/comparison/agent-evidence-summary.schema.json",
   "test/eval/comparison-manifest.js",
   "test/eval/comparison-observations.js",
   "test/eval/comparison-schema-ajv.js",
@@ -91,6 +144,13 @@ const sourceBindingPaths = [
   "test/eval/comparison-reference-baseline.js",
   "test/eval/comparison-product-baseline.js",
   "test/eval/comparison-poppler-baseline.js",
+  "test/eval/comparison-agent-evidence.test.js",
+  "test/eval/png-evidence.js",
+  "test/eval/render-visual-oracle.js",
+  "test/eval/trajectory-grader.js",
+  "test/fixtures/eval/trajectories/jobs.v1.json",
+  "test/fixtures/eval/trajectories/tool-contracts.v1.json",
+  "test/fixtures/eval/trajectories/trust-registry.v1.json",
 ];
 
 const channelDecision = channel => ({
@@ -113,8 +173,8 @@ const decision = {
   decision_id: "pdf-tools.comparison-decision.v1",
   benchmark_id: shared.benchmark_id,
   benchmark_version: shared.benchmark_version,
-  generated_at: new Date().toISOString(),
-  source_revision: sourceRevision,
+  generated_at: runIndex.generated_at,
+  source_revision: runIndex.source_revision,
   source_state: {
     clean_except_generated_evidence: true,
     excluded_paths: [path.relative(REPO_ROOT, EVIDENCE_DIRECTORY), "node_modules"],
@@ -122,7 +182,7 @@ const decision = {
   },
   status: "measurement_blocked",
   benchmark_claim_ready: false,
-  claim_boundary: "Provisional measurements on seven public synthetic pairs on Linux. Neither lane enforced truth, shell, or network isolation, and the controller registry is unsigned. The shared-library result is not independent confirmation; the product lane is not the packed MCPB or native Claude Desktop; Poppler is an unscored external sensor; measured agent trials remain pending. No product architecture or release is approved by this artifact.",
+  claim_boundary: "Provisional measurements on seven public synthetic pairs on Linux plus three unsigned descriptive headless Codex repetitions of one compare-and-explain fixture. Neither baseline lane enforced truth, shell, or network isolation, and the controller registry is unsigned. The shared-library result is not independent confirmation; the product and agent lanes are not the packed MCPB or native Claude Desktop; Poppler is an unscored external sensor; the three agent repetitions share one fixture and are not independent benchmark evidence. No product architecture or release is approved by this artifact.",
   frozen_release_candidate: {
     mcpb_sha256: "b586221595cc3095d43f73daf3b66c6cc9695bddcd98365f46c445a597d9a1b4",
     bytes: 72456666,
@@ -156,10 +216,23 @@ const decision = {
       bundled: poppler.engine?.bundled ?? false,
     },
     agent_trials: {
-      status: "pending_generic_render_observation_and_three_predeclared_runs",
-      pass_rate: null,
-      variance: null,
+      status: "descriptive_three_run_comparison_complete",
+      job_id: "pdf-tools.trajectory.v1.compare-and-explain",
+      model: agentSummary.model,
+      source_revision: agentSummary.source_revision,
+      attempted_trials: agentReport.attempted_trials,
+      product_trials: agentReport.product_trials,
+      harness_failures: agentReport.harness_failures,
+      passed_trials: agentReport.passed_trials,
+      pass_rate: agentReport.product_statistics.pass_rate,
+      variance: agentReport.product_statistics.sample_variance,
       native_host: false,
+      packed_mcpb: false,
+      trust_ready: agentReport.trust_ready,
+      independence_ready: agentReport.independence_ready,
+      full_suite_harness_ready: agentReport.harness_ready,
+      sample_size_ready: agentReport.sample_size_ready,
+      benchmark_claim_ready: agentReport.benchmark_claim_ready,
     },
   },
   provisional_research_directions: {
@@ -198,8 +271,8 @@ const decision = {
     {
       priority: 1,
       action: "measure",
-      item: "three_predeclared_agent_trials_then_twenty_release_trials",
-      rationale: "The benchmark cannot claim agent reliability until generic render observations are ingested through the existing trust boundary.",
+      item: "expand_agent_jobs_then_twenty_release_trials",
+      rationale: "The compare-and-explain job passed three predeclared descriptive repetitions, but the other five jobs, independent fixtures, native hosts, and release-scale trials remain unmeasured.",
     },
     {
       priority: 2,
@@ -217,7 +290,7 @@ const decision = {
   blockers: [
     "truth, shell, and network isolation are not OS-enforced for either scored lane",
     "the controller observation registry has no independent signature or attestation",
-    "three predeclared agent trials have not crossed the trajectory trust boundary",
+    "only one agent job has three shared-fixture repetitions; the other five jobs and independent samples remain unmeasured",
     "native Claude Desktop and Windows evidence are absent",
     "the corpus is a seven-pair public synthetic slice, not a release corpus",
   ],
@@ -256,9 +329,9 @@ const markdown = `# PDF comparison v1 measurement decision\n\n` +
   `- Current metadata: ${product.aggregate.channel_metrics.metadata.fn} FN; actual Info/XMP values are not exposed.\n` +
   `- Current annotations: ${product.aggregate.channel_metrics.annotation.fn} FN; annotation enumeration is absent.\n` +
   `- Current form fields: ${product.aggregate.channel_metrics.form_field.fn} FN; values lack widget page/geometry evidence.\n` +
-  `- Agent pass rate and variance remain null until three predeclared measured trials cross the generic observation trust boundary.\n\n` +
+  `- Agent comparison repetitions: ${agentReport.passed_trials}/${agentReport.product_trials} product trials passed, with variance ${agentReport.product_statistics.sample_variance} and ${agentReport.harness_failures} harness failures. These shared-fixture headless repetitions are descriptive, unsigned, and not independent benchmark or native-host evidence.\n\n` +
   `## Evidence boundary\n\n` +
-  `The source tree was clean at revision \`${sourceRevision}\` except generated evidence and the shared dependency symlink. Evidence files are hash-bound, but the controller registry is unsigned. Truth, shell, and network isolation were not OS-enforced, so the reports are descriptive and cannot support a benchmark claim.\n\n` +
+  `The source tree was clean at revision \`${runIndex.source_revision}\` except generated evidence and the shared dependency symlink. Evidence files are hash-bound, but the raw Codex evidence is retained privately and the controller registry is unsigned. Truth, shell, and network isolation were not OS-enforced, so the reports are descriptive and cannot support a benchmark claim.\n\n` +
   `## Release boundary\n\n` +
   `This benchmark changed no runtime, package, manifest, UI, or MCPB bytes. The frozen candidate remains \`${decision.frozen_release_candidate.mcpb_sha256}\`. Native Claude Desktop, Windows, and human approval remain release gates.\n`;
 await fs.writeFile(path.join(EVIDENCE_DIRECTORY, "comparison-decision.v1.md"), markdown);

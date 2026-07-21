@@ -104,12 +104,31 @@
         "agent_trials": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["status", "pass_rate", "variance", "native_host"],
+          "required": [
+            "status", "job_id", "model", "source_revision", "attempted_trials",
+            "product_trials", "harness_failures", "passed_trials", "pass_rate",
+            "variance", "native_host", "packed_mcpb", "trust_ready",
+            "independence_ready", "full_suite_harness_ready", "sample_size_ready",
+            "benchmark_claim_ready"
+          ],
           "properties": {
-            "status": { "const": "pending_generic_render_observation_and_three_predeclared_runs" },
-            "pass_rate": { "type": "null" },
-            "variance": { "type": "null" },
-            "native_host": { "const": false }
+            "status": { "const": "descriptive_three_run_comparison_complete" },
+            "job_id": { "const": "pdf-tools.trajectory.v1.compare-and-explain" },
+            "model": { "type": "string", "minLength": 1 },
+            "source_revision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+            "attempted_trials": { "const": 3 },
+            "product_trials": { "const": 3 },
+            "harness_failures": { "const": 0 },
+            "passed_trials": { "const": 3 },
+            "pass_rate": { "const": 1 },
+            "variance": { "const": 0 },
+            "native_host": { "const": false },
+            "packed_mcpb": { "const": false },
+            "trust_ready": { "const": false },
+            "independence_ready": { "const": false },
+            "full_suite_harness_ready": { "const": false },
+            "sample_size_ready": { "const": false },
+            "benchmark_claim_ready": { "const": false }
           }
         }
       }

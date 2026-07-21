@@ -1,0 +1,1327 @@
+{
+  "trial_set_id": "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294",
+  "trial_set_schema_version": 1,
+  "calibration": false,
+  "claim_boundary": "Unsigned descriptive repeated headless Codex CLI trials on public synthetic fixtures. Codex JSONL retains a host-visible image that may be transformed from the original MCP image payload; server-declared geometry and host-visible PNG identity are recorded separately. Remote model inference transport was predeclared and accounted separately; PDF Tools server network denial and model-visible tool isolation were configuration controls, not an OS-level network namespace. The 0700 campaign and repeated fingerprints detect persistent drift but do not defeat a malicious same-account process that swaps checked runtime paths only during the launch race; the VM account is inside the measurement trust boundary. Repeats share one fixture instance and are not independent benchmark evidence; no native Claude Desktop or packed MCPB was tested.",
+  "suite_id": "pdf-tools.trajectory.v1",
+  "grader_version": 4,
+  "attempted_trials": 3,
+  "product_trials": 3,
+  "harness_failures": 0,
+  "harness_failure_rate": 0,
+  "passed_trials": 3,
+  "product_statistics": {
+    "pass_rate": 1,
+    "sample_variance": 0,
+    "standard_error": 0,
+    "confidence_interval": null
+  },
+  "macro_pass_rate": 1,
+  "suite_ready": true,
+  "trust_ready": false,
+  "independence_ready": false,
+  "harness_ready": false,
+  "sample_size_ready": false,
+  "by_job": [
+    {
+      "job_id": "pdf-tools.trajectory.v1.inspect-and-answer",
+      "attempted_trials": 0,
+      "product_trials": 0,
+      "passed_trials": 0,
+      "failed_trials": 0,
+      "harness_failures": 0,
+      "harness_failure_rate": null,
+      "pass_rate": null,
+      "sample_variance": null,
+      "standard_error": null,
+      "confidence_interval": null,
+      "independence_ready": false,
+      "sample_size_ready": false,
+      "harness_ready": false
+    },
+    {
+      "job_id": "pdf-tools.trajectory.v1.fill-and-validate",
+      "attempted_trials": 0,
+      "product_trials": 0,
+      "passed_trials": 0,
+      "failed_trials": 0,
+      "harness_failures": 0,
+      "harness_failure_rate": null,
+      "pass_rate": null,
+      "sample_variance": null,
+      "standard_error": null,
+      "confidence_interval": null,
+      "independence_ready": false,
+      "sample_size_ready": false,
+      "harness_ready": false
+    },
+    {
+      "job_id": "pdf-tools.trajectory.v1.compare-and-explain",
+      "attempted_trials": 3,
+      "product_trials": 3,
+      "passed_trials": 3,
+      "failed_trials": 0,
+      "harness_failures": 0,
+      "harness_failure_rate": 0,
+      "pass_rate": 1,
+      "sample_variance": 0,
+      "standard_error": 0,
+      "confidence_interval": null,
+      "independence_ready": false,
+      "sample_size_ready": false,
+      "harness_ready": true
+    },
+    {
+      "job_id": "pdf-tools.trajectory.v1.safe-page-mutation",
+      "attempted_trials": 0,
+      "product_trials": 0,
+      "passed_trials": 0,
+      "failed_trials": 0,
+      "harness_failures": 0,
+      "harness_failure_rate": null,
+      "pass_rate": null,
+      "sample_variance": null,
+      "standard_error": null,
+      "confidence_interval": null,
+      "independence_ready": false,
+      "sample_size_ready": false,
+      "harness_ready": false
+    },
+    {
+      "job_id": "pdf-tools.trajectory.v1.prepare-for-signature",
+      "attempted_trials": 0,
+      "product_trials": 0,
+      "passed_trials": 0,
+      "failed_trials": 0,
+      "harness_failures": 0,
+      "harness_failure_rate": null,
+      "pass_rate": null,
+      "sample_variance": null,
+      "standard_error": null,
+      "confidence_interval": null,
+      "independence_ready": false,
+      "sample_size_ready": false,
+      "harness_ready": false
+    },
+    {
+      "job_id": "pdf-tools.trajectory.v1.error-recovery",
+      "attempted_trials": 0,
+      "product_trials": 0,
+      "passed_trials": 0,
+      "failed_trials": 0,
+      "harness_failures": 0,
+      "harness_failure_rate": null,
+      "pass_rate": null,
+      "sample_variance": null,
+      "standard_error": null,
+      "confidence_interval": null,
+      "independence_ready": false,
+      "sample_size_ready": false,
+      "harness_ready": false
+    }
+  ],
+  "failure_counts": {},
+  "results": [
+    {
+      "trial_id": "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.trial.1",
+      "job_id": "pdf-tools.trajectory.v1.compare-and-explain",
+      "repeat_index": 1,
+      "run_id": "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1",
+      "classification": "product_trial",
+      "passed": true,
+      "score": 1,
+      "checks": [
+        {
+          "id": "trial_schema",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "job_id",
+          "passed": true,
+          "severity": "hard",
+          "expected": "pdf-tools.trajectory.v1.compare-and-explain",
+          "actual": "pdf-tools.trajectory.v1.compare-and-explain"
+        },
+        {
+          "id": "trajectory_non_empty",
+          "passed": true,
+          "severity": "hard",
+          "expected": "> 0 steps",
+          "actual": 4
+        },
+        {
+          "id": "semantic_result_bindings",
+          "passed": true,
+          "severity": "hard",
+          "expected": "all semantic observations are bound to the real tool and its arguments",
+          "actual": []
+        },
+        {
+          "id": "forbidden_tools",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "irrelevant_tools",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "required_tools/inspect_both",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 2 successful calls with arguments and results",
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.step.1",
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.step.2"
+          ]
+        },
+        {
+          "id": "required_tools/render_both",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 2 successful calls with arguments and results",
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.step.3",
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.step.4"
+          ]
+        },
+        {
+          "id": "expected_semantics/inspect-before-page-one",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "tool": "read_pdf_pages",
+            "arguments": {
+              "pdf_path": "input/before.pdf",
+              "start_page": 1,
+              "end_page": 1
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.step.1"
+          ]
+        },
+        {
+          "id": "expected_semantics/inspect-after-page-one",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "tool": "read_pdf_pages",
+            "arguments": {
+              "pdf_path": "input/after.pdf",
+              "start_page": 1,
+              "end_page": 1
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.step.2"
+          ]
+        },
+        {
+          "id": "expected_semantics/render-before-page-one",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "tool": "render_pdf_page",
+            "arguments": {
+              "pdf_path": "input/before.pdf",
+              "page": 1,
+              "max_dimension_px": 1200
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.step.3"
+          ]
+        },
+        {
+          "id": "expected_semantics/render-after-page-one",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "tool": "render_pdf_page",
+            "arguments": {
+              "pdf_path": "input/after.pdf",
+              "page": 1,
+              "max_dimension_px": 1200
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.step.4"
+          ]
+        },
+        {
+          "id": "expected_observation/before-page-one-marker",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "id": "before-page-one-marker",
+            "tool": "read_pdf_pages",
+            "collection": "pages",
+            "value": {
+              "source": "input/before.pdf",
+              "page": 1,
+              "text_sha256": "75b5a8dc53149e5f66c65e702458c24efca750b35667dcd8d1f548c078410c38"
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.step.1"
+          ]
+        },
+        {
+          "id": "expected_observation/after-page-one-marker",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "id": "after-page-one-marker",
+            "tool": "read_pdf_pages",
+            "collection": "pages",
+            "value": {
+              "source": "input/after.pdf",
+              "page": 1,
+              "text_sha256": "f050dbb2cb63126bf0a83edbf2d640ae70e00e7112cbff7fff563eee7021f1ad"
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.step.2"
+          ]
+        },
+        {
+          "id": "expected_observation/before-page-one-render",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "id": "before-page-one-render",
+            "tool": "render_pdf_page",
+            "collection": "render_regions",
+            "value": {
+              "source": "input/before.pdf",
+              "source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+              "page": 1,
+              "region": [
+                0,
+                0,
+                360,
+                480
+              ],
+              "coordinate_space": "top_left_pdf_points",
+              "mime_type": "image/png",
+              "server_rendered_width_px": 900,
+              "server_rendered_height_px": 1200,
+              "server_scale": 2.5,
+              "max_dimension_px": 1200
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.step.3"
+          ]
+        },
+        {
+          "id": "expected_observation/after-page-one-render",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "id": "after-page-one-render",
+            "tool": "render_pdf_page",
+            "collection": "render_regions",
+            "value": {
+              "source": "input/after.pdf",
+              "source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+              "page": 1,
+              "region": [
+                0,
+                0,
+                480,
+                360
+              ],
+              "coordinate_space": "top_left_pdf_points",
+              "mime_type": "image/png",
+              "server_rendered_width_px": 1200,
+              "server_rendered_height_px": 900,
+              "server_scale": 2.5,
+              "max_dimension_px": 1200
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.step.4"
+          ]
+        },
+        {
+          "id": "unexpected_tool_errors",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/created",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/modified",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/deleted",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/external_requests",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/signature_applied",
+          "passed": true,
+          "severity": "hard",
+          "expected": "signature_applied may not exceed false",
+          "actual": false
+        },
+        {
+          "id": "effects/provenance",
+          "passed": true,
+          "severity": "hard",
+          "expected": "effects_observed event from a filesystem observer (or explicit calibration fixture)",
+          "actual": {
+            "event_schema_version": 1,
+            "event_id": "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.1.event.effects",
+            "type": "effects_observed",
+            "source": "filesystem_capture",
+            "observed_at": "2026-07-21T17:19:08.032Z",
+            "reference": "sha256:aeb81aadf604c04724548e74d8e70b963dbb4d65da9d1afc41fa3332687c2218",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "filesystem_observer",
+              "capture_method": "filesystem_diff",
+              "raw_sha256": "ac6daafafbb2d893b173f864085290699011db241551bd72a67db216b3e02c1c"
+            }
+          }
+        },
+        {
+          "id": "artifact_integrity",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 0 produced artifacts with observed path/existence/hash",
+          "actual": []
+        },
+        {
+          "id": "verified_artifacts",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 0 externally observed, hash-bound artifacts",
+          "actual": []
+        },
+        {
+          "id": "artifact_effect_match",
+          "passed": true,
+          "severity": "hard",
+          "expected": "every artifact appears in created or modified effects",
+          "actual": []
+        },
+        {
+          "id": "terminal_answer",
+          "passed": true,
+          "severity": "hard",
+          "expected": "retained terminal agent answer after the final tool call and before a completed turn",
+          "actual": {
+            "present": true,
+            "raw_message_sha256": "5ea5d861e6f573d499b36074b28aac6196c06e3f48a3662dff77b662cf44d658"
+          }
+        },
+        {
+          "id": "answer_correctness",
+          "passed": true,
+          "severity": "hard",
+          "expected": "8f636ff257e0083d6e51c87fc0c60c50c928a342bc5f53b0ef28003ae54fa223",
+          "actual": "8f636ff257e0083d6e51c87fc0c60c50c928a342bc5f53b0ef28003ae54fa223"
+        },
+        {
+          "id": "evidence/unique_ids",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "evidence/result_bindings",
+          "passed": true,
+          "severity": "hard",
+          "expected": "each reference binds to a successful retained result that observed its source",
+          "actual": []
+        },
+        {
+          "id": "evidence/allowed_sources",
+          "passed": true,
+          "severity": "hard",
+          "expected": [
+            "input/before.pdf",
+            "input/after.pdf"
+          ],
+          "actual": []
+        },
+        {
+          "id": "evidence/min_references",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 4",
+          "actual": 4
+        },
+        {
+          "id": "evidence/source/input/before.pdf",
+          "passed": true,
+          "severity": "hard",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "id": "evidence/source/input/after.pdf",
+          "passed": true,
+          "severity": "hard",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "id": "evidence/kind/page",
+          "passed": true,
+          "severity": "hard",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "id": "evidence/kind/region",
+          "passed": true,
+          "severity": "hard",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "id": "supported_claims",
+          "passed": true,
+          "severity": "hard",
+          "expected": "all important claims cite result-bound retained evidence",
+          "actual": []
+        }
+      ],
+      "correction_refs": []
+    },
+    {
+      "trial_id": "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.trial.2",
+      "job_id": "pdf-tools.trajectory.v1.compare-and-explain",
+      "repeat_index": 2,
+      "run_id": "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2",
+      "classification": "product_trial",
+      "passed": true,
+      "score": 1,
+      "checks": [
+        {
+          "id": "trial_schema",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "job_id",
+          "passed": true,
+          "severity": "hard",
+          "expected": "pdf-tools.trajectory.v1.compare-and-explain",
+          "actual": "pdf-tools.trajectory.v1.compare-and-explain"
+        },
+        {
+          "id": "trajectory_non_empty",
+          "passed": true,
+          "severity": "hard",
+          "expected": "> 0 steps",
+          "actual": 4
+        },
+        {
+          "id": "semantic_result_bindings",
+          "passed": true,
+          "severity": "hard",
+          "expected": "all semantic observations are bound to the real tool and its arguments",
+          "actual": []
+        },
+        {
+          "id": "forbidden_tools",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "irrelevant_tools",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "required_tools/inspect_both",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 2 successful calls with arguments and results",
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.step.1",
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.step.2"
+          ]
+        },
+        {
+          "id": "required_tools/render_both",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 2 successful calls with arguments and results",
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.step.3",
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.step.4"
+          ]
+        },
+        {
+          "id": "expected_semantics/inspect-before-page-one",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "tool": "read_pdf_pages",
+            "arguments": {
+              "pdf_path": "input/before.pdf",
+              "start_page": 1,
+              "end_page": 1
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.step.1"
+          ]
+        },
+        {
+          "id": "expected_semantics/inspect-after-page-one",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "tool": "read_pdf_pages",
+            "arguments": {
+              "pdf_path": "input/after.pdf",
+              "start_page": 1,
+              "end_page": 1
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.step.2"
+          ]
+        },
+        {
+          "id": "expected_semantics/render-before-page-one",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "tool": "render_pdf_page",
+            "arguments": {
+              "pdf_path": "input/before.pdf",
+              "page": 1,
+              "max_dimension_px": 1200
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.step.3"
+          ]
+        },
+        {
+          "id": "expected_semantics/render-after-page-one",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "tool": "render_pdf_page",
+            "arguments": {
+              "pdf_path": "input/after.pdf",
+              "page": 1,
+              "max_dimension_px": 1200
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.step.4"
+          ]
+        },
+        {
+          "id": "expected_observation/before-page-one-marker",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "id": "before-page-one-marker",
+            "tool": "read_pdf_pages",
+            "collection": "pages",
+            "value": {
+              "source": "input/before.pdf",
+              "page": 1,
+              "text_sha256": "75b5a8dc53149e5f66c65e702458c24efca750b35667dcd8d1f548c078410c38"
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.step.1"
+          ]
+        },
+        {
+          "id": "expected_observation/after-page-one-marker",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "id": "after-page-one-marker",
+            "tool": "read_pdf_pages",
+            "collection": "pages",
+            "value": {
+              "source": "input/after.pdf",
+              "page": 1,
+              "text_sha256": "f050dbb2cb63126bf0a83edbf2d640ae70e00e7112cbff7fff563eee7021f1ad"
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.step.2"
+          ]
+        },
+        {
+          "id": "expected_observation/before-page-one-render",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "id": "before-page-one-render",
+            "tool": "render_pdf_page",
+            "collection": "render_regions",
+            "value": {
+              "source": "input/before.pdf",
+              "source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+              "page": 1,
+              "region": [
+                0,
+                0,
+                360,
+                480
+              ],
+              "coordinate_space": "top_left_pdf_points",
+              "mime_type": "image/png",
+              "server_rendered_width_px": 900,
+              "server_rendered_height_px": 1200,
+              "server_scale": 2.5,
+              "max_dimension_px": 1200
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.step.3"
+          ]
+        },
+        {
+          "id": "expected_observation/after-page-one-render",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "id": "after-page-one-render",
+            "tool": "render_pdf_page",
+            "collection": "render_regions",
+            "value": {
+              "source": "input/after.pdf",
+              "source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+              "page": 1,
+              "region": [
+                0,
+                0,
+                480,
+                360
+              ],
+              "coordinate_space": "top_left_pdf_points",
+              "mime_type": "image/png",
+              "server_rendered_width_px": 1200,
+              "server_rendered_height_px": 900,
+              "server_scale": 2.5,
+              "max_dimension_px": 1200
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.step.4"
+          ]
+        },
+        {
+          "id": "unexpected_tool_errors",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/created",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/modified",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/deleted",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/external_requests",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/signature_applied",
+          "passed": true,
+          "severity": "hard",
+          "expected": "signature_applied may not exceed false",
+          "actual": false
+        },
+        {
+          "id": "effects/provenance",
+          "passed": true,
+          "severity": "hard",
+          "expected": "effects_observed event from a filesystem observer (or explicit calibration fixture)",
+          "actual": {
+            "event_schema_version": 1,
+            "event_id": "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.2.event.effects",
+            "type": "effects_observed",
+            "source": "filesystem_capture",
+            "observed_at": "2026-07-21T17:19:28.005Z",
+            "reference": "sha256:f161044185cd055342c1c1cdab9aad1e6e5d598025b12498bf071cc18a226d2b",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "filesystem_observer",
+              "capture_method": "filesystem_diff",
+              "raw_sha256": "ac6daafafbb2d893b173f864085290699011db241551bd72a67db216b3e02c1c"
+            }
+          }
+        },
+        {
+          "id": "artifact_integrity",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 0 produced artifacts with observed path/existence/hash",
+          "actual": []
+        },
+        {
+          "id": "verified_artifacts",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 0 externally observed, hash-bound artifacts",
+          "actual": []
+        },
+        {
+          "id": "artifact_effect_match",
+          "passed": true,
+          "severity": "hard",
+          "expected": "every artifact appears in created or modified effects",
+          "actual": []
+        },
+        {
+          "id": "terminal_answer",
+          "passed": true,
+          "severity": "hard",
+          "expected": "retained terminal agent answer after the final tool call and before a completed turn",
+          "actual": {
+            "present": true,
+            "raw_message_sha256": "5ea5d861e6f573d499b36074b28aac6196c06e3f48a3662dff77b662cf44d658"
+          }
+        },
+        {
+          "id": "answer_correctness",
+          "passed": true,
+          "severity": "hard",
+          "expected": "8f636ff257e0083d6e51c87fc0c60c50c928a342bc5f53b0ef28003ae54fa223",
+          "actual": "8f636ff257e0083d6e51c87fc0c60c50c928a342bc5f53b0ef28003ae54fa223"
+        },
+        {
+          "id": "evidence/unique_ids",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "evidence/result_bindings",
+          "passed": true,
+          "severity": "hard",
+          "expected": "each reference binds to a successful retained result that observed its source",
+          "actual": []
+        },
+        {
+          "id": "evidence/allowed_sources",
+          "passed": true,
+          "severity": "hard",
+          "expected": [
+            "input/before.pdf",
+            "input/after.pdf"
+          ],
+          "actual": []
+        },
+        {
+          "id": "evidence/min_references",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 4",
+          "actual": 4
+        },
+        {
+          "id": "evidence/source/input/before.pdf",
+          "passed": true,
+          "severity": "hard",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "id": "evidence/source/input/after.pdf",
+          "passed": true,
+          "severity": "hard",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "id": "evidence/kind/page",
+          "passed": true,
+          "severity": "hard",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "id": "evidence/kind/region",
+          "passed": true,
+          "severity": "hard",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "id": "supported_claims",
+          "passed": true,
+          "severity": "hard",
+          "expected": "all important claims cite result-bound retained evidence",
+          "actual": []
+        }
+      ],
+      "correction_refs": []
+    },
+    {
+      "trial_id": "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.trial.3",
+      "job_id": "pdf-tools.trajectory.v1.compare-and-explain",
+      "repeat_index": 3,
+      "run_id": "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3",
+      "classification": "product_trial",
+      "passed": true,
+      "score": 1,
+      "checks": [
+        {
+          "id": "trial_schema",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "job_id",
+          "passed": true,
+          "severity": "hard",
+          "expected": "pdf-tools.trajectory.v1.compare-and-explain",
+          "actual": "pdf-tools.trajectory.v1.compare-and-explain"
+        },
+        {
+          "id": "trajectory_non_empty",
+          "passed": true,
+          "severity": "hard",
+          "expected": "> 0 steps",
+          "actual": 4
+        },
+        {
+          "id": "semantic_result_bindings",
+          "passed": true,
+          "severity": "hard",
+          "expected": "all semantic observations are bound to the real tool and its arguments",
+          "actual": []
+        },
+        {
+          "id": "forbidden_tools",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "irrelevant_tools",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "required_tools/inspect_both",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 2 successful calls with arguments and results",
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.step.1",
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.step.2"
+          ]
+        },
+        {
+          "id": "required_tools/render_both",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 2 successful calls with arguments and results",
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.step.3",
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.step.4"
+          ]
+        },
+        {
+          "id": "expected_semantics/inspect-before-page-one",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "tool": "read_pdf_pages",
+            "arguments": {
+              "pdf_path": "input/before.pdf",
+              "start_page": 1,
+              "end_page": 1
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.step.1"
+          ]
+        },
+        {
+          "id": "expected_semantics/inspect-after-page-one",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "tool": "read_pdf_pages",
+            "arguments": {
+              "pdf_path": "input/after.pdf",
+              "start_page": 1,
+              "end_page": 1
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.step.2"
+          ]
+        },
+        {
+          "id": "expected_semantics/render-before-page-one",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "tool": "render_pdf_page",
+            "arguments": {
+              "pdf_path": "input/before.pdf",
+              "page": 1,
+              "max_dimension_px": 1200
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.step.3"
+          ]
+        },
+        {
+          "id": "expected_semantics/render-after-page-one",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "tool": "render_pdf_page",
+            "arguments": {
+              "pdf_path": "input/after.pdf",
+              "page": 1,
+              "max_dimension_px": 1200
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.step.4"
+          ]
+        },
+        {
+          "id": "expected_observation/before-page-one-marker",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "id": "before-page-one-marker",
+            "tool": "read_pdf_pages",
+            "collection": "pages",
+            "value": {
+              "source": "input/before.pdf",
+              "page": 1,
+              "text_sha256": "75b5a8dc53149e5f66c65e702458c24efca750b35667dcd8d1f548c078410c38"
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.step.1"
+          ]
+        },
+        {
+          "id": "expected_observation/after-page-one-marker",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "id": "after-page-one-marker",
+            "tool": "read_pdf_pages",
+            "collection": "pages",
+            "value": {
+              "source": "input/after.pdf",
+              "page": 1,
+              "text_sha256": "f050dbb2cb63126bf0a83edbf2d640ae70e00e7112cbff7fff563eee7021f1ad"
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.step.2"
+          ]
+        },
+        {
+          "id": "expected_observation/before-page-one-render",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "id": "before-page-one-render",
+            "tool": "render_pdf_page",
+            "collection": "render_regions",
+            "value": {
+              "source": "input/before.pdf",
+              "source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+              "page": 1,
+              "region": [
+                0,
+                0,
+                360,
+                480
+              ],
+              "coordinate_space": "top_left_pdf_points",
+              "mime_type": "image/png",
+              "server_rendered_width_px": 900,
+              "server_rendered_height_px": 1200,
+              "server_scale": 2.5,
+              "max_dimension_px": 1200
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.step.3"
+          ]
+        },
+        {
+          "id": "expected_observation/after-page-one-render",
+          "passed": true,
+          "severity": "hard",
+          "expected": {
+            "id": "after-page-one-render",
+            "tool": "render_pdf_page",
+            "collection": "render_regions",
+            "value": {
+              "source": "input/after.pdf",
+              "source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+              "page": 1,
+              "region": [
+                0,
+                0,
+                480,
+                360
+              ],
+              "coordinate_space": "top_left_pdf_points",
+              "mime_type": "image/png",
+              "server_rendered_width_px": 1200,
+              "server_rendered_height_px": 900,
+              "server_scale": 2.5,
+              "max_dimension_px": 1200
+            }
+          },
+          "actual": [
+            "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.step.4"
+          ]
+        },
+        {
+          "id": "unexpected_tool_errors",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/created",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/modified",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/deleted",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/external_requests",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "effects/signature_applied",
+          "passed": true,
+          "severity": "hard",
+          "expected": "signature_applied may not exceed false",
+          "actual": false
+        },
+        {
+          "id": "effects/provenance",
+          "passed": true,
+          "severity": "hard",
+          "expected": "effects_observed event from a filesystem observer (or explicit calibration fixture)",
+          "actual": {
+            "event_schema_version": 1,
+            "event_id": "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294.run.3.event.effects",
+            "type": "effects_observed",
+            "source": "filesystem_capture",
+            "observed_at": "2026-07-21T17:19:54.963Z",
+            "reference": "sha256:48344a650f24cdfddcbbdb3c9e2888f31e15ce9e2fd6802d7a94bf5a9de00e7a",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "filesystem_observer",
+              "capture_method": "filesystem_diff",
+              "raw_sha256": "ac6daafafbb2d893b173f864085290699011db241551bd72a67db216b3e02c1c"
+            }
+          }
+        },
+        {
+          "id": "artifact_integrity",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 0 produced artifacts with observed path/existence/hash",
+          "actual": []
+        },
+        {
+          "id": "verified_artifacts",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 0 externally observed, hash-bound artifacts",
+          "actual": []
+        },
+        {
+          "id": "artifact_effect_match",
+          "passed": true,
+          "severity": "hard",
+          "expected": "every artifact appears in created or modified effects",
+          "actual": []
+        },
+        {
+          "id": "terminal_answer",
+          "passed": true,
+          "severity": "hard",
+          "expected": "retained terminal agent answer after the final tool call and before a completed turn",
+          "actual": {
+            "present": true,
+            "raw_message_sha256": "5ea5d861e6f573d499b36074b28aac6196c06e3f48a3662dff77b662cf44d658"
+          }
+        },
+        {
+          "id": "answer_correctness",
+          "passed": true,
+          "severity": "hard",
+          "expected": "8f636ff257e0083d6e51c87fc0c60c50c928a342bc5f53b0ef28003ae54fa223",
+          "actual": "8f636ff257e0083d6e51c87fc0c60c50c928a342bc5f53b0ef28003ae54fa223"
+        },
+        {
+          "id": "evidence/unique_ids",
+          "passed": true,
+          "severity": "hard",
+          "expected": [],
+          "actual": []
+        },
+        {
+          "id": "evidence/result_bindings",
+          "passed": true,
+          "severity": "hard",
+          "expected": "each reference binds to a successful retained result that observed its source",
+          "actual": []
+        },
+        {
+          "id": "evidence/allowed_sources",
+          "passed": true,
+          "severity": "hard",
+          "expected": [
+            "input/before.pdf",
+            "input/after.pdf"
+          ],
+          "actual": []
+        },
+        {
+          "id": "evidence/min_references",
+          "passed": true,
+          "severity": "hard",
+          "expected": ">= 4",
+          "actual": 4
+        },
+        {
+          "id": "evidence/source/input/before.pdf",
+          "passed": true,
+          "severity": "hard",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "id": "evidence/source/input/after.pdf",
+          "passed": true,
+          "severity": "hard",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "id": "evidence/kind/page",
+          "passed": true,
+          "severity": "hard",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "id": "evidence/kind/region",
+          "passed": true,
+          "severity": "hard",
+          "expected": true,
+          "actual": true
+        },
+        {
+          "id": "supported_claims",
+          "passed": true,
+          "severity": "hard",
+          "expected": "all important claims cite result-bound retained evidence",
+          "actual": []
+        }
+      ],
+      "correction_refs": []
+    }
+  ],
+  "benchmark_claim_ready": false
+}

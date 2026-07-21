@@ -282,7 +282,7 @@ describe("headless Codex comparison controller", () => {
       plan_sha256: sha256(canonicalJson(plan)),
       plan_raw_sha256: "b".repeat(64),
       fixture_instance_sha256: plan.entries[0].fixture_instance_sha256,
-      source_fingerprints: {},
+      source_fingerprints: { "package.json": "9".repeat(64) },
       runs: plan.entries.map(entry => ({
         repeat_index: entry.repeat_index,
         invocation_id: entry.invocation_id,
@@ -305,6 +305,18 @@ describe("headless Codex comparison controller", () => {
       mutate(candidate);
       expect(() => validateCampaign(candidate, plan)).toThrow();
     }
+
+    const emptyFingerprints = structuredClone(campaign);
+    emptyFingerprints.source_fingerprints = {};
+    emptyFingerprints.launch_contract_sha256 = campaignCommitmentSha256(emptyFingerprints);
+    expect(() => validateCampaign(emptyFingerprints, plan))
+      .toThrow("Campaign source fingerprints must be a non-empty safe SHA-256 map");
+
+    const unsafeFingerprint = structuredClone(campaign);
+    unsafeFingerprint.source_fingerprints = { "../outside": "9".repeat(64) };
+    unsafeFingerprint.launch_contract_sha256 = campaignCommitmentSha256(unsafeFingerprint);
+    expect(() => validateCampaign(unsafeFingerprint, plan))
+      .toThrow("Campaign source fingerprints must be a non-empty safe SHA-256 map");
   });
 
   it("constructs a fail-closed Codex command with only the PDF MCP tools enabled", () => {

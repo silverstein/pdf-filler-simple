@@ -1,0 +1,352 @@
+{
+  "schema_version": 1,
+  "summary_id": "pdf-tools.comparison-agent-evidence.v1",
+  "generated_at": "2026-07-21T17:18:40.082Z",
+  "trial_set_id": "pdf-tools.trajectory.codex-comparison.20260721171840082.a64165181a200294",
+  "job_id": "pdf-tools.trajectory.v1.compare-and-explain",
+  "model": "gpt-5.6-sol",
+  "source_revision": "fbf2ef7e59305b0fe5fd6a3f61ff3eda0a7cb9f5",
+  "source_digests": {
+    "campaign_sha256": "fe1ef1acc45be09e0fd1620e950bf7a0d037b07f129d57a6ae24ae57b8ad700a",
+    "pre_run_plan_sha256": "7fe573bab9d69999d67e7dcda876e2c2449a59093661ff5c649c35fdcefcfc4b",
+    "measured_trials_sha256": "864d77cb09ba162b3ab78c34b57a31f92897369cff9286d71f84c13a3371d388",
+    "trajectory_report_sha256": "0329e49309500e9f281c2b87b1802a8981e8328780b03fd232139a723a9701d6",
+    "run_plan_sha256": "b38ff3bc7db2f082d7c4640cfc5b0b0dd74bbe4ad0b735fd64c2b5e4108503b2"
+  },
+  "privacy_boundary": {
+    "projection": true,
+    "raw_evidence_published": false,
+    "raw_evidence_retention": "maintainer_private",
+    "external_replay_ready": false,
+    "excluded_categories": [
+      "absolute_paths",
+      "hostnames",
+      "usernames",
+      "environment",
+      "raw_transcripts",
+      "retained_image_bytes"
+    ]
+  },
+  "denominator": {
+    "planned": 3,
+    "attempted": 3,
+    "product_trials": 3,
+    "harness_failures": 0
+  },
+  "result": {
+    "passed_trials": 3,
+    "pass_rate": 1,
+    "sample_variance": 0
+  },
+  "claim_gates": {
+    "trust_ready": false,
+    "independence_ready": false,
+    "full_suite_harness_ready": false,
+    "sample_size_ready": false,
+    "native_host": false,
+    "packed_mcpb": false,
+    "benchmark_claim_ready": false
+  },
+  "runs": [
+    {
+      "repeat_index": 1,
+      "classification": "product_trial",
+      "passed": true,
+      "transcript_sha256": "dffd6a787b42ed632e09c3784d1b404e01d6ea78dc6c807b77292de00ea9dd23",
+      "answer_value_sha256": "8f636ff257e0083d6e51c87fc0c60c50c928a342bc5f53b0ef28003ae54fa223",
+      "tool_calls": [
+        {
+          "tool": "read_pdf_pages",
+          "arguments": {
+            "pdf_path": "input/before.pdf",
+            "start_page": 1,
+            "end_page": 1
+          },
+          "raw_result_sha256": "1be09d18e06c4cf7a902a7404fbf8d6b410cc834ea7065cca58a8833f9324032"
+        },
+        {
+          "tool": "read_pdf_pages",
+          "arguments": {
+            "pdf_path": "input/after.pdf",
+            "start_page": 1,
+            "end_page": 1
+          },
+          "raw_result_sha256": "2d05b713e5a1b92a3f1a5d15e63c47d9ded3fad79ba34d7435c2e13f5629101c"
+        },
+        {
+          "tool": "render_pdf_page",
+          "arguments": {
+            "pdf_path": "input/before.pdf",
+            "page": 1,
+            "max_dimension_px": 1200
+          },
+          "raw_result_sha256": "03ebd7d5b720291131d0ce076388e28373c5ed486da85e00d85509bb2e3b48b4"
+        },
+        {
+          "tool": "render_pdf_page",
+          "arguments": {
+            "pdf_path": "input/after.pdf",
+            "page": 1,
+            "max_dimension_px": 1200
+          },
+          "raw_result_sha256": "f2e1974e1b3282d069d2c506b193ef6aa99c93cab03514df3a14bc973bd19d4a"
+        }
+      ],
+      "render_evidence": [
+        {
+          "source": "input/before.pdf",
+          "source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+          "page": 1,
+          "image_sha256": "c61f88b42ef30d975ba7f1f776272c05582938f23ba5f34f88665bca8374c056",
+          "image_byte_length": 15296,
+          "observed_image_width_px": 825,
+          "observed_image_height_px": 1110,
+          "visual_oracle": {
+            "oracle_schema_version": 1,
+            "fixture_id": "pdf-tools.eval.v1.dev-page-order-source",
+            "reference_source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+            "reference_rgba_sha256": "5a62e51fd76e4906314c4e2c1e322614fd8b75e2f3e93ea204af5aed4266e929",
+            "normalized_width_px": 71,
+            "normalized_height_px": 96,
+            "host_normalized_rgba_sha256": "2c363933a5ed189ce7af74b62cb103d04b9d375868377de57db8fbb79229419a",
+            "reference_normalized_rgba_sha256": "8cddcc50d531d869949e17b5153d4bb1ff541b86012fd33fdd2721ede140941d",
+            "mean_absolute_error": 0.00178,
+            "foreground_iou": 0.831776,
+            "aspect_ratio_error": 0,
+            "passed": true
+          }
+        },
+        {
+          "source": "input/after.pdf",
+          "source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+          "page": 1,
+          "image_sha256": "9cf50210eff36c8d6fb21f5a992f886afcd8dad9e54756b8c9d545c50ac92f87",
+          "image_byte_length": 18984,
+          "observed_image_width_px": 750,
+          "observed_image_height_px": 1075,
+          "visual_oracle": {
+            "oracle_schema_version": 1,
+            "fixture_id": "pdf-tools.eval.v1.dev-page-order-visibly-wrong",
+            "reference_source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+            "reference_rgba_sha256": "11c344d0857e467f88811fe16a008cb53e19d784ab05e3ec5316111c4d27d858",
+            "normalized_width_px": 67,
+            "normalized_height_px": 96,
+            "host_normalized_rgba_sha256": "13d92bca110af3a64de31d241b39bfffe5c3f66fb26dfb5fcf0b3c5a83b27b66",
+            "reference_normalized_rgba_sha256": "b7e49f9983a473ff4c19f9bb29437ce6db199cc8101ba4f4b56bd4376a04873d",
+            "mean_absolute_error": 0.008035,
+            "foreground_iou": 0.753247,
+            "aspect_ratio_error": 0,
+            "passed": true
+          }
+        }
+      ],
+      "effects": {
+        "created": 0,
+        "modified": 0,
+        "deleted": 0,
+        "external_requests": 0,
+        "signature_applied": false
+      }
+    },
+    {
+      "repeat_index": 2,
+      "classification": "product_trial",
+      "passed": true,
+      "transcript_sha256": "d75113fbdfdceeb51aed8a7df1db015848b7706b07f2d8032d53b4ec661d7488",
+      "answer_value_sha256": "8f636ff257e0083d6e51c87fc0c60c50c928a342bc5f53b0ef28003ae54fa223",
+      "tool_calls": [
+        {
+          "tool": "read_pdf_pages",
+          "arguments": {
+            "pdf_path": "input/before.pdf",
+            "start_page": 1,
+            "end_page": 1
+          },
+          "raw_result_sha256": "3d9ba8dcc14c47f857e9f860dbaeee98576ef6370fbfeb0b79dd69427cb53572"
+        },
+        {
+          "tool": "read_pdf_pages",
+          "arguments": {
+            "pdf_path": "input/after.pdf",
+            "start_page": 1,
+            "end_page": 1
+          },
+          "raw_result_sha256": "8e8f9a9eab569141766567ad31ffe7ccc8cb7bf02a1b335bb6a2dd1d028ce1ab"
+        },
+        {
+          "tool": "render_pdf_page",
+          "arguments": {
+            "pdf_path": "input/before.pdf",
+            "page": 1,
+            "max_dimension_px": 1200
+          },
+          "raw_result_sha256": "c60b6bff48572af2ff02b42d684190aae139677abeb5fe83fc40f2f333b10545"
+        },
+        {
+          "tool": "render_pdf_page",
+          "arguments": {
+            "pdf_path": "input/after.pdf",
+            "page": 1,
+            "max_dimension_px": 1200
+          },
+          "raw_result_sha256": "21de98cf1ce6b1b5c4cb7f5eeda1db150f1f71ed683c1deef30fa11576c30481"
+        }
+      ],
+      "render_evidence": [
+        {
+          "source": "input/before.pdf",
+          "source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+          "page": 1,
+          "image_sha256": "c61f88b42ef30d975ba7f1f776272c05582938f23ba5f34f88665bca8374c056",
+          "image_byte_length": 15296,
+          "observed_image_width_px": 825,
+          "observed_image_height_px": 1110,
+          "visual_oracle": {
+            "oracle_schema_version": 1,
+            "fixture_id": "pdf-tools.eval.v1.dev-page-order-source",
+            "reference_source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+            "reference_rgba_sha256": "5a62e51fd76e4906314c4e2c1e322614fd8b75e2f3e93ea204af5aed4266e929",
+            "normalized_width_px": 71,
+            "normalized_height_px": 96,
+            "host_normalized_rgba_sha256": "2c363933a5ed189ce7af74b62cb103d04b9d375868377de57db8fbb79229419a",
+            "reference_normalized_rgba_sha256": "8cddcc50d531d869949e17b5153d4bb1ff541b86012fd33fdd2721ede140941d",
+            "mean_absolute_error": 0.00178,
+            "foreground_iou": 0.831776,
+            "aspect_ratio_error": 0,
+            "passed": true
+          }
+        },
+        {
+          "source": "input/after.pdf",
+          "source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+          "page": 1,
+          "image_sha256": "9cf50210eff36c8d6fb21f5a992f886afcd8dad9e54756b8c9d545c50ac92f87",
+          "image_byte_length": 18984,
+          "observed_image_width_px": 750,
+          "observed_image_height_px": 1075,
+          "visual_oracle": {
+            "oracle_schema_version": 1,
+            "fixture_id": "pdf-tools.eval.v1.dev-page-order-visibly-wrong",
+            "reference_source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+            "reference_rgba_sha256": "11c344d0857e467f88811fe16a008cb53e19d784ab05e3ec5316111c4d27d858",
+            "normalized_width_px": 67,
+            "normalized_height_px": 96,
+            "host_normalized_rgba_sha256": "13d92bca110af3a64de31d241b39bfffe5c3f66fb26dfb5fcf0b3c5a83b27b66",
+            "reference_normalized_rgba_sha256": "b7e49f9983a473ff4c19f9bb29437ce6db199cc8101ba4f4b56bd4376a04873d",
+            "mean_absolute_error": 0.008035,
+            "foreground_iou": 0.753247,
+            "aspect_ratio_error": 0,
+            "passed": true
+          }
+        }
+      ],
+      "effects": {
+        "created": 0,
+        "modified": 0,
+        "deleted": 0,
+        "external_requests": 0,
+        "signature_applied": false
+      }
+    },
+    {
+      "repeat_index": 3,
+      "classification": "product_trial",
+      "passed": true,
+      "transcript_sha256": "c65ae7ec7653992765848b0ce6575191844912a13ec7e946d37f28ab4a919e20",
+      "answer_value_sha256": "8f636ff257e0083d6e51c87fc0c60c50c928a342bc5f53b0ef28003ae54fa223",
+      "tool_calls": [
+        {
+          "tool": "read_pdf_pages",
+          "arguments": {
+            "pdf_path": "input/before.pdf",
+            "start_page": 1,
+            "end_page": 1
+          },
+          "raw_result_sha256": "d2e2db44bb14548af1bd8341a383db6f848fe38e58dac627688deaf077a3a72a"
+        },
+        {
+          "tool": "read_pdf_pages",
+          "arguments": {
+            "pdf_path": "input/after.pdf",
+            "start_page": 1,
+            "end_page": 1
+          },
+          "raw_result_sha256": "c73c1e5dadd86697489030d089dacea99a215d31ded2c51c9374c07e96f9bdba"
+        },
+        {
+          "tool": "render_pdf_page",
+          "arguments": {
+            "pdf_path": "input/before.pdf",
+            "page": 1,
+            "max_dimension_px": 1200
+          },
+          "raw_result_sha256": "54950b1120a6deb2a93369dbcb63ef03dc4d03baaba96f3ae990fa022ceac1f3"
+        },
+        {
+          "tool": "render_pdf_page",
+          "arguments": {
+            "pdf_path": "input/after.pdf",
+            "page": 1,
+            "max_dimension_px": 1200
+          },
+          "raw_result_sha256": "80c6b8823494348be040682c5f9d0de5c73607a5f49af0a054342c7e2e6b483e"
+        }
+      ],
+      "render_evidence": [
+        {
+          "source": "input/before.pdf",
+          "source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+          "page": 1,
+          "image_sha256": "c61f88b42ef30d975ba7f1f776272c05582938f23ba5f34f88665bca8374c056",
+          "image_byte_length": 15296,
+          "observed_image_width_px": 825,
+          "observed_image_height_px": 1110,
+          "visual_oracle": {
+            "oracle_schema_version": 1,
+            "fixture_id": "pdf-tools.eval.v1.dev-page-order-source",
+            "reference_source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+            "reference_rgba_sha256": "5a62e51fd76e4906314c4e2c1e322614fd8b75e2f3e93ea204af5aed4266e929",
+            "normalized_width_px": 71,
+            "normalized_height_px": 96,
+            "host_normalized_rgba_sha256": "2c363933a5ed189ce7af74b62cb103d04b9d375868377de57db8fbb79229419a",
+            "reference_normalized_rgba_sha256": "8cddcc50d531d869949e17b5153d4bb1ff541b86012fd33fdd2721ede140941d",
+            "mean_absolute_error": 0.00178,
+            "foreground_iou": 0.831776,
+            "aspect_ratio_error": 0,
+            "passed": true
+          }
+        },
+        {
+          "source": "input/after.pdf",
+          "source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+          "page": 1,
+          "image_sha256": "9cf50210eff36c8d6fb21f5a992f886afcd8dad9e54756b8c9d545c50ac92f87",
+          "image_byte_length": 18984,
+          "observed_image_width_px": 750,
+          "observed_image_height_px": 1075,
+          "visual_oracle": {
+            "oracle_schema_version": 1,
+            "fixture_id": "pdf-tools.eval.v1.dev-page-order-visibly-wrong",
+            "reference_source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+            "reference_rgba_sha256": "11c344d0857e467f88811fe16a008cb53e19d784ab05e3ec5316111c4d27d858",
+            "normalized_width_px": 67,
+            "normalized_height_px": 96,
+            "host_normalized_rgba_sha256": "13d92bca110af3a64de31d241b39bfffe5c3f66fb26dfb5fcf0b3c5a83b27b66",
+            "reference_normalized_rgba_sha256": "b7e49f9983a473ff4c19f9bb29437ce6db199cc8101ba4f4b56bd4376a04873d",
+            "mean_absolute_error": 0.008035,
+            "foreground_iou": 0.753247,
+            "aspect_ratio_error": 0,
+            "passed": true
+          }
+        }
+      ],
+      "effects": {
+        "created": 0,
+        "modified": 0,
+        "deleted": 0,
+        "external_requests": 0,
+        "signature_applied": false
+      }
+    }
+  ]
+}

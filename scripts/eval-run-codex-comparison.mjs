@@ -1577,6 +1577,12 @@ export function validateCampaign(campaign, plan) {
     throw new Error("Campaign denominator does not match the frozen plan");
   }
   if (typeof campaign.model !== "string" || campaign.model.length === 0) throw new Error("Campaign model must be non-empty");
+  const sourceFingerprintEntries = Object.entries(campaign.source_fingerprints ?? {});
+  if (sourceFingerprintEntries.length === 0
+    || sourceFingerprintEntries.some(([relativePath, value]) => path.isAbsolute(relativePath)
+      || relativePath.includes("..") || !/^[a-f0-9]{64}$/.test(value))) {
+    throw new Error("Campaign source fingerprints must be a non-empty safe SHA-256 map");
+  }
   if (!path.isAbsolute(campaign.codex_executable) || !isObjectRecord(campaign.runtime_fingerprints)
     || !isObjectRecord(campaign.environment_contract)) {
     throw new Error("Campaign runtime fingerprints and Codex executable are invalid");

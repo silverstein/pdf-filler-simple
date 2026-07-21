@@ -395,8 +395,10 @@ declared and evaluated separately.
    shipped runtime dependency; treat Poppler as an optional named external
    baseline whose absence is `engine_unavailable`, never a pass.
 4. Record the current deterministic baseline on development fixtures.
-5. Extend the existing `compare-and-explain` trajectory job and run measured
-   attempts through the existing trust/ingestion boundary.
+5. Extend the existing `compare-and-explain` trajectory job beyond the accepted
+   three-run descriptive headless campaign: add independent fixture instances,
+   the other five suite jobs, native Claude Desktop and packed-MCPB trials, and
+   release-scale repetition before making an agent-reliability claim.
 6. Produce a versioned `comparison-decision.v1.json` and readable report bound
    to exact corpus, schema, scorer, baseline, renderer, and raw-report hashes.
 7. Adversarially review the full slice, then run focused, shuffled, concurrent,
