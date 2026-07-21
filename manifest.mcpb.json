@@ -63,7 +63,7 @@
     },
     {
       "name": "validate_pdf",
-      "description": "Validate if all required fields in a PDF are filled"
+      "description": "Inspect AcroForm value coverage and actual PDF Required flags without claiming the form is ready to submit"
     },
     {
       "name": "read_pdf_content",

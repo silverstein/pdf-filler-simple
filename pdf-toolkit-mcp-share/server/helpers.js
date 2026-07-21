@@ -5,6 +5,293 @@ import path from "path";
 import { homedir } from "os";
 import { PDFDocument, StandardFonts, rgb, degrees as pdfDegrees } from "pdf-lib";
 
+const PDF_FIELD_VALIDATION_SCHEMA_VERSION = "1.0";
+
+function classifyPdfField(field) {
+  const type = field?.constructor?.name || "UnknownField";
+  if (type.includes("TextField")) return { type, kind: "text" };
+  if (type.includes("CheckBox")) return { type, kind: "checkbox" };
+  if (type.includes("RadioGroup")) return { type, kind: "radio" };
+  if (type.includes("Dropdown")) return { type, kind: "dropdown" };
+  if (type.includes("OptionList")) return { type, kind: "option_list" };
+  if (type.includes("Signature")) return { type, kind: "signature" };
+  if (type.includes("Button")) return { type, kind: "button" };
+  return { type, kind: "unknown" };
+}
+
+function hasObservedSelection(value) {
+  if (Array.isArray(value)) {
+    return value.some(item => String(item ?? "").trim().length > 0);
+  }
+  return String(value ?? "").trim().length > 0;
+}
+
+function hasRequiredNameHint(name) {
+  return /(^|[^a-z])(required|must)([^a-z]|$)/i.test(name) || name.includes("*");
+}
+
+function inspectPdfField(field, index) {
+  let name = `<field-${index + 1}>`;
+  let nameReadError = false;
+  try {
+    name = String(field.getName());
+  } catch {
+    nameReadError = true;
+  }
+
+  const { type, kind } = classifyPdfField(field);
+  let required = null;
+  let requiredReadError = false;
+  try {
+    if (typeof field?.isRequired !== "function") {
+      throw new Error("Required flag reader unavailable");
+    }
+    required = field.isRequired();
+    if (typeof required !== "boolean") {
+      throw new Error("Required flag reader returned a non-boolean value");
+    }
+  } catch {
+    required = null;
+    requiredReadError = true;
+  }
+
+  let valueStatus = "unknown";
+  let readError = nameReadError;
+  try {
+    if (kind === "text") {
+      valueStatus = String(field.getText() ?? "").trim() ? "observed" : "empty";
+    } else if (kind === "checkbox") {
+      valueStatus = field.isChecked() ? "observed" : "unchecked";
+    } else if (kind === "radio" || kind === "dropdown" || kind === "option_list") {
+      valueStatus = hasObservedSelection(field.getSelected()) ? "observed" : "empty";
+    } else if (kind === "button") {
+      valueStatus = "not_applicable";
+    } else {
+      // pdf-lib deliberately does not expose a signature value reader, and an
+      // unknown field type has no trustworthy generic value API. Do not guess.
+      valueStatus = "unknown";
+    }
+  } catch {
+    valueStatus = "read_error";
+    readError = true;
+  }
+
+  if (nameReadError) {
+    valueStatus = "read_error";
+  }
+
+  let requiredStatus = "not_required";
+  if (required === null) {
+    requiredStatus = "unknown";
+  } else if (required) {
+    if (valueStatus === "observed") requiredStatus = "satisfied";
+    else if (valueStatus === "empty" || valueStatus === "unchecked") requiredStatus = "missing";
+    else requiredStatus = "unknown";
+  }
+
+  let errorCode = null;
+  if (readError) errorCode = "FIELD_READ_FAILED";
+  else if (requiredReadError) errorCode = "REQUIRED_FLAG_READ_FAILED";
+  else if (valueStatus === "unknown") errorCode = "VALUE_STATUS_UNAVAILABLE";
+
+  return {
+    name,
+    type,
+    kind,
+    required,
+    required_name_hint: hasRequiredNameHint(name),
+    value_status: valueStatus,
+    required_status: requiredStatus,
+    error_code: errorCode,
+  };
+}
+
+/**
+ * Inspect AcroForm fields without treating field-name conventions as PDF
+ * required flags. The returned object is intentionally value-free: it reports
+ * whether a value was observed, not the potentially sensitive value itself.
+ */
+export function validatePdfFormFields(fields, { pdfPath = null, fileName = null } = {}) {
+  if (!Array.isArray(fields)) throw new Error("fields must be an array.");
+
+  const fieldResults = fields.map(inspectPdfField);
+  const count = status => fieldResults.filter(field => field.value_status === status).length;
+  const observedCount = count("observed");
+  const emptyCount = count("empty");
+  const uncheckedCount = count("unchecked");
+  const unknownCount = count("unknown");
+  const readErrorCount = count("read_error");
+  const notApplicableCount = count("not_applicable");
+  const requiredFields = fieldResults.filter(field => field.required === true);
+  const missingRequiredFields = fieldResults.filter(field => field.required_status === "missing");
+  const indeterminateRequiredFields = fieldResults.filter(
+    field => field.required === true && field.required_status === "unknown",
+  );
+  const requirednessUnknownFields = fieldResults.filter(field => field.required === null);
+  const heuristicRequiredCandidates = fieldResults.filter(field => field.required_name_hint);
+  const validationIndeterminate =
+    unknownCount > 0 ||
+    readErrorCount > 0 ||
+    requirednessUnknownFields.length > 0 ||
+    indeterminateRequiredFields.length > 0;
+
+  let requiredFieldsComplete;
+  if (fields.length === 0 || requiredFields.length === 0) requiredFieldsComplete = null;
+  else if (missingRequiredFields.length > 0) requiredFieldsComplete = false;
+  else if (indeterminateRequiredFields.length > 0 || requirednessUnknownFields.length > 0) {
+    requiredFieldsComplete = null;
+  } else requiredFieldsComplete = true;
+
+  let allValueFieldsFilled;
+  const valueFieldCount = fields.length - notApplicableCount;
+  if (valueFieldCount === 0 || unknownCount > 0 || readErrorCount > 0) {
+    allValueFieldsFilled = null;
+  } else {
+    allValueFieldsFilled = emptyCount === 0 && uncheckedCount === 0;
+  }
+
+  const requiredFieldValidationStatus = fields.length === 0
+    ? "no_fields"
+    : requiredFields.length === 0 && requirednessUnknownFields.length > 0
+      ? "indeterminate"
+      : requiredFields.length === 0
+        ? "no_required_flags"
+        : missingRequiredFields.length > 0
+          ? "incomplete"
+          : indeterminateRequiredFields.length > 0 || requirednessUnknownFields.length > 0
+            ? "indeterminate"
+            : "complete";
+  const validationStatus = fields.length === 0
+    ? "no_fields"
+    : valueFieldCount === 0
+      ? "no_value_fields"
+      : missingRequiredFields.length > 0
+        ? "incomplete"
+        : validationIndeterminate
+          ? "indeterminate"
+          : emptyCount > 0 || uncheckedCount > 0
+            ? "partial"
+            : "complete";
+  const canClaimRequiredFieldsComplete =
+    fields.length > 0 &&
+    requiredFields.length > 0 &&
+    !validationIndeterminate &&
+    requiredFieldsComplete === true;
+
+  const limitations = [
+    "This result checks AcroForm field presence only; it does not prove legal validity, business-rule validity, signature validity, or readiness to submit.",
+    "Only the PDF Required flag is authoritative for required-field counts. Name-based hints are advisory and never affect completeness.",
+  ];
+  if (fields.length === 0) {
+    limitations.push("No AcroForm fields were found, so no fill-and-validate completion claim is available.");
+  }
+  if (requiredFields.length === 0 && requirednessUnknownFields.length === 0 && fields.length > 0) {
+    limitations.push("The PDF marks no fields Required. Empty values remain observable, but required-field completeness cannot establish form readiness.");
+  }
+  if (validationIndeterminate) {
+    limitations.push("At least one field value or required flag could not be determined; retry or inspect the named fields manually.");
+  }
+
+  const errorCodes = [...new Set(fieldResults.map(field => field.error_code).filter(Boolean))];
+  const warningCodes = [];
+  if (fields.length === 0) warningCodes.push("NO_FORM_FIELDS");
+  if (fields.length > 0 && valueFieldCount === 0) warningCodes.push("NO_VALUE_FIELDS");
+  if (fields.length > 0 && requiredFields.length === 0 && requirednessUnknownFields.length === 0) {
+    warningCodes.push("NO_REQUIRED_FLAGS");
+  }
+  if (emptyCount > 0 || uncheckedCount > 0) warningCodes.push("PARTIAL_FIELD_COVERAGE");
+  if (heuristicRequiredCandidates.length > 0) warningCodes.push("ADVISORY_REQUIRED_NAME_HINTS");
+
+  return {
+    schema_version: PDF_FIELD_VALIDATION_SCHEMA_VERSION,
+    pdf_path: pdfPath,
+    file_name: fileName,
+    validation_status: validationStatus,
+    required_field_validation_status: requiredFieldValidationStatus,
+    validation_conclusive: fields.length > 0 && !validationIndeterminate,
+    has_form_fields: fields.length > 0,
+    required_fields_complete: requiredFieldsComplete,
+    all_value_fields_filled: allValueFieldsFilled,
+    can_claim_required_fields_complete: canClaimRequiredFieldsComplete,
+    can_claim_form_ready: false,
+    total_field_count: fields.length,
+    value_field_count: valueFieldCount,
+    observed_count: observedCount,
+    filled_count: observedCount,
+    empty_count: emptyCount,
+    unchecked_count: uncheckedCount,
+    unknown_count: unknownCount,
+    read_error_count: readErrorCount,
+    not_applicable_count: notApplicableCount,
+    required_field_count: requiredFields.length,
+    missing_required_count: missingRequiredFields.length,
+    indeterminate_required_count: indeterminateRequiredFields.length,
+    requiredness_unknown_count: requirednessUnknownFields.length,
+    fields: fieldResults,
+    observed_fields: fieldResults.filter(field => field.value_status === "observed").map(field => field.name),
+    empty_fields: fieldResults.filter(field => field.value_status === "empty").map(field => field.name),
+    unchecked_fields: fieldResults.filter(field => field.value_status === "unchecked").map(field => field.name),
+    unknown_fields: fieldResults.filter(field => field.value_status === "unknown").map(field => field.name),
+    read_error_fields: fieldResults.filter(field => field.value_status === "read_error").map(field => field.name),
+    missing_required_fields: missingRequiredFields.map(field => field.name),
+    indeterminate_required_fields: indeterminateRequiredFields.map(field => field.name),
+    requiredness_unknown_fields: requirednessUnknownFields.map(field => field.name),
+    heuristic_required_candidates: heuristicRequiredCandidates.map(field => field.name),
+    error_codes: errorCodes,
+    warning_codes: warningCodes,
+    retry_guidance: validationIndeterminate
+      ? "Inspect unknown/read-error fields manually or retry with a repaired PDF before making a completeness claim."
+      : null,
+    limitations,
+  };
+}
+
+export function failedPdfFormValidation({ pdfPath = null, fileName = null } = {}) {
+  return {
+    schema_version: PDF_FIELD_VALIDATION_SCHEMA_VERSION,
+    pdf_path: pdfPath,
+    file_name: fileName,
+    validation_status: "failed",
+    required_field_validation_status: "failed",
+    validation_conclusive: false,
+    has_form_fields: null,
+    required_fields_complete: null,
+    all_value_fields_filled: null,
+    can_claim_required_fields_complete: false,
+    can_claim_form_ready: false,
+    total_field_count: null,
+    value_field_count: null,
+    observed_count: null,
+    filled_count: null,
+    empty_count: null,
+    unchecked_count: null,
+    unknown_count: null,
+    read_error_count: null,
+    not_applicable_count: null,
+    required_field_count: null,
+    missing_required_count: null,
+    indeterminate_required_count: null,
+    requiredness_unknown_count: null,
+    fields: [],
+    observed_fields: [],
+    empty_fields: [],
+    unchecked_fields: [],
+    unknown_fields: [],
+    read_error_fields: [],
+    missing_required_fields: [],
+    indeterminate_required_fields: [],
+    requiredness_unknown_fields: [],
+    heuristic_required_candidates: [],
+    warning_codes: [],
+    retry_guidance: "Verify the local path and password, repair the PDF if necessary, then retry validation.",
+    limitations: [
+      "The PDF or its form fields could not be read. Do not interpret this result as an empty or complete form.",
+      "This result does not prove legal validity, business-rule validity, signature validity, or readiness to submit.",
+    ],
+    error_codes: ["PDF_VALIDATION_FAILED"],
+  };
+}
+
 // MCPB expands a `multiple: true` user configuration placeholder into
 // separate command arguments. Keep the marker explicit so ordinary MCP hosts
 // can continue using environment variables without treating unrelated CLI

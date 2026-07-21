@@ -675,6 +675,8 @@ import {
   validatePdfRegionBox,
   parseAllowedDirectoryArgs,
   analyzePdfPages,
+  validatePdfFormFields,
+  failedPdfFormValidation,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
@@ -1531,7 +1533,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "validate_pdf",
-        description: "Validate a fillable PDF and report whether required fields are complete. Use this before submission or signing to catch empty required fields without mutating the original document.",
+        description: "Inspect AcroForm value coverage and the PDF's actual Required flags without mutating the document. Returns explicit complete, partial, no-fields, and indeterminate states plus a narrow required-field claim boundary; it does not determine legal validity, business-rule validity, signature validity, or readiness to submit.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2825,78 +2827,92 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
       case "validate_pdf": {
         const { pdf_path, password } = args;
-        const { pdfDoc } = await loadPdf(pdf_path, password);
+        let resolvedPath = null;
+        try {
+          const loaded = await loadPdf(pdf_path, password);
+          resolvedPath = loaded.resolvedPath;
+          const fields = loaded.pdfDoc.getForm().getFields();
+          const validation = validatePdfFormFields(fields, {
+            pdfPath: resolvedPath,
+            fileName: path.basename(resolvedPath),
+          });
 
-        const form = pdfDoc.getForm();
-        const fields = form.getFields();
-        
-        const validation = {
-          total: fields.length,
-          filled: 0,
-          empty: 0,
-          required: [],
-          emptyFields: []
-        };
-        
-        for (const field of fields) {
-          const fieldName = field.getName();
-          let isEmpty = true;
-          
-          try {
-            if (field.constructor.name.includes('TextField')) {
-              isEmpty = !field.getText() || field.getText().trim() === "";
-            } else if (field.constructor.name.includes('CheckBox')) {
-              isEmpty = false; // Checkboxes are either checked or not
-            } else if (field.constructor.name.includes('RadioGroup') || 
-                       field.constructor.name.includes('Dropdown')) {
-              isEmpty = !field.getSelected();
+          const requiredSummary = validation.required_fields_complete === null
+            ? "UNKNOWN"
+            : validation.required_fields_complete
+              ? "YES"
+              : "NO";
+          const allFieldsSummary = validation.all_value_fields_filled === null
+            ? "UNKNOWN"
+            : validation.all_value_fields_filled
+              ? "YES"
+              : "NO";
+          const message = [
+            `PDF Field Validation Report for: ${validation.file_name}`,
+            `Field coverage status: ${validation.validation_status.toUpperCase()}`,
+            `Required-field status: ${validation.required_field_validation_status.toUpperCase()}`,
+            `Required fields complete: ${requiredSummary}`,
+            `All value fields filled: ${allFieldsSummary}`,
+            `Total fields: ${validation.total_field_count}`,
+            `Observed values: ${validation.observed_count}`,
+            `Empty values: ${validation.empty_count}`,
+            `Unchecked boxes: ${validation.unchecked_count}`,
+            `Unknown/read errors: ${validation.unknown_count + validation.read_error_count}`,
+            `PDF-required fields: ${validation.required_field_count}`,
+            `Missing PDF-required fields: ${validation.missing_required_count}`,
+            "",
+            validation.can_claim_required_fields_complete
+              ? "Safe claim: all fields marked Required by the PDF are complete."
+              : "Safe claim unavailable: do not claim that required fields are complete.",
+            "This does not prove the form is valid or ready to submit.",
+          ];
+          if (validation.missing_required_fields.length > 0) {
+            message.push("", "Missing PDF-required fields:", ...validation.missing_required_fields.slice(0, 10));
+            if (validation.missing_required_fields.length > 10) {
+              message.push(`... and ${validation.missing_required_fields.length - 10} more`);
             }
-            
-            // Check if field is required (common patterns)
-            const isRequired = fieldName.toLowerCase().includes('required') ||
-                             fieldName.includes('*') ||
-                             fieldName.toLowerCase().includes('must');
-            
-            if (isEmpty) {
-              validation.empty++;
-              validation.emptyFields.push(fieldName);
-              if (isRequired) {
-                validation.required.push(fieldName);
-              }
-            } else {
-              validation.filled++;
-            }
-          } catch (e) {
-            validation.empty++;
-            validation.emptyFields.push(`${fieldName} (error reading)`);
           }
+          const unresolvedFields = validation.fields.filter(
+            field => ["empty", "unchecked", "unknown", "read_error"].includes(field.value_status),
+          );
+          if (unresolvedFields.length > 0) {
+            message.push(
+              "",
+              "Unresolved field coverage:",
+              ...unresolvedFields.slice(0, 10).map(field => `${field.name} [${field.value_status}]`),
+            );
+            if (unresolvedFields.length > 10) {
+              message.push(`... and ${unresolvedFields.length - 10} more`);
+            }
+          }
+          if (validation.heuristic_required_candidates.length > 0) {
+            message.push(
+              "",
+              `Advisory name-based required hints (not counted as Required): ${validation.heuristic_required_candidates.length}`,
+            );
+          }
+          message.push("", `Limitations: ${validation.limitations.join(" ")}`);
+
+          return {
+            content: [{ type: "text", text: message.join("\n") }],
+            structuredContent: validation,
+          };
+        } catch {
+          const validation = failedPdfFormValidation({
+            pdfPath: resolvedPath,
+            fileName: path.basename(String(pdf_path || "unknown.pdf")),
+          });
+          return {
+            content: [{
+              type: "text",
+              text:
+                `Error: PDF field validation failed for ${validation.file_name}. ` +
+                "Do not interpret this as an empty or complete form. Verify the path/password and retry.",
+            }],
+            structuredContent: validation,
+            isError: true,
+          };
         }
-        
-        let message = `PDF Validation Report for: ${path.basename(pdf_path)}\n`;
-        message += `Total fields: ${validation.total}\n`;
-        message += `Filled: ${validation.filled}\n`;
-        message += `Empty: ${validation.empty}\n`;
-        
-        if (validation.required.length > 0) {
-          message += `\n⚠️  Required fields that are empty:\n`;
-          message += validation.required.join('\n');
-        }
-        
-        if (validation.emptyFields.length > 0 && validation.emptyFields.length <= 10) {
-          message += `\n\nEmpty fields:\n`;
-          message += validation.emptyFields.join('\n');
-        } else if (validation.emptyFields.length > 10) {
-          message += `\n\nFirst 10 empty fields:\n`;
-          message += validation.emptyFields.slice(0, 10).join('\n');
-          message += `\n... and ${validation.emptyFields.length - 10} more`;
-        }
-        
-        return {
-          content: [{
-            type: "text",
-            text: message
-          }],
-        };
       }
 
       case "read_pdf_content": {

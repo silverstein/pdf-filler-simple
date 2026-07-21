@@ -67,7 +67,7 @@ Once installed, ask Claude in Cursor:
 - **save_profile** / **load_profile** - Save/load common form data
 - **fill_with_profile** - Fill PDFs using saved profiles
 - **extract_to_csv** - Export PDF data to spreadsheets
-- **validate_pdf** - Check for missing required fields
+- **validate_pdf** - Inspect value coverage and actual PDF Required flags without claiming submission readiness
 - **read_pdf_content** - Read and analyze full PDF content (with OCR support for scanned PDFs)
 - **read_pdf_pages** - Read a bounded page range with page-numbered structured output
 - **render_pdf_page** - Render a page to PNG for visual inspection of scanned/image-heavy PDFs

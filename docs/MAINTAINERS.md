@@ -170,6 +170,23 @@ Run these after any tool or packaging change:
 - `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb` passes on macOS ARM64 and Windows x64
 - Inspect the reported SHA-256 and retain it with the release evidence
 
+### `validate_pdf` claim boundary
+
+Treat `validate_pdf` as an AcroForm field-observation tool, not a form-validity
+oracle. Its structured result separates `validation_status` (overall value
+coverage) from `required_field_validation_status` (the PDF's actual Required
+flags). A `partial` result can therefore have all PDF-required fields satisfied
+while optional values remain empty or checkboxes remain unchecked.
+
+Only `can_claim_required_fields_complete: true` permits the narrow statement
+that fields marked Required by the PDF are populated. It never permits a claim
+that the form is legally valid, satisfies external business rules, has valid
+signatures, or is ready to submit; `can_claim_form_ready` is always false.
+Name patterns such as `required`, `must`, and `*` are returned only as advisory
+`heuristic_required_candidates`. They never affect the authoritative counts.
+`no_fields`, `no_value_fields`, `indeterminate`, and `failed` results must not be
+treated as empty or complete forms.
+
 The complete evidence contract is in `docs/EVALUATION.md`. In particular,
 repacking an artifact creates a new release candidate and invalidates prior
 artifact-install evidence for the old hash.
