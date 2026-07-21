@@ -1,0 +1,1463 @@
+{
+  "report_schema_version": 1,
+  "benchmark_id": "pdf-tools.comparison.v1",
+  "benchmark_version": "v0.1.0",
+  "mode": "default_material",
+  "claim_boundary": "Shared pdf-lib/PDF.js/canvas dependencies on the seven public synthetic v1 pairs; not independent confirmation or general product evidence.",
+  "benchmark_claim_ready": false,
+  "engine": {
+    "id": "pdf-tools-shared-library-reference",
+    "kind": "shared_library",
+    "version": "1",
+    "license": "MIT and Apache-2.0 dependency licenses",
+    "provenance": "pdf-lib 1.17.1; pdfjs-dist 5.4.624; @napi-rs/canvas 0.1.99",
+    "bundle_increment_bytes": 0,
+    "native_targets": [
+      "linux-x64"
+    ],
+    "network_requests": 0,
+    "external_processes": 0,
+    "renderer_fingerprint_sha256": "c2dd1a1d44aac6b47b58a18b9b578e2e863bb0b75cfd8dbf95346e841b4eace8"
+  },
+  "platform": {
+    "os": "linux",
+    "arch": "x64",
+    "node": "v22.22.3",
+    "host": "silvercloud-vm",
+    "model": "none",
+    "model_cost_usd": 0
+  },
+  "isolation": {
+    "truth_manifest_visible": true,
+    "shell_access": true,
+    "sut_network": "not_enforced",
+    "model_endpoint": null,
+    "allowed_directory_evidence_sha256": "e6231b5524f4aae89ddb08c36abe59340ec979d9db57bb03cd1e9c172511700a"
+  },
+  "pairs": [
+    {
+      "pair_id": "pdf-tools.comparison.pair.identical",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "supported",
+        "metadata": "supported",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 1,
+          "relation": "same",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 2,
+          "relation": "same",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [],
+      "detected_events": [],
+      "presentation_decisions": [],
+      "timing_samples_ms": [
+        153.44747799999993,
+        125.24978899999996,
+        112.588704,
+        82.19232699999998,
+        88.966723
+      ],
+      "warmup_ms": 331.314624,
+      "warmup_cost": {
+        "tool_calls": 0,
+        "bytes_read": 7962,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": 244740096
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 0,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 299503616
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 346673152
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 387653632
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 387915776
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 387915776
+        }
+      ],
+      "peak_rss_bytes": 387915776,
+      "resource_measurement_status": "in_process",
+      "rendered_pixels": 46531584,
+      "tool_calls": 0,
+      "bytes_read": 47772,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.material-text",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "supported",
+        "metadata": "supported",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 1,
+          "relation": "same",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 2,
+          "relation": "same",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [
+        {
+          "id": "evidence.reference.1",
+          "channel": "text",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            131.5,
+            156.408,
+            14
+          ],
+          "value_sha256": "f005019dc391b02c329a224f4d62be4e116cad1e26c3d44936d1b033faa534d6",
+          "raw_result_sha256": "d58ab8e0d12d05f40253708cf1be73ac757455d146bd786a0ff2365ae326fe69",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.2",
+          "channel": "text",
+          "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            131.5,
+            156.408,
+            14
+          ],
+          "value_sha256": "4f399cb9824690836996645c1ea8af71d934705464d61d6c01ec0839841a33d4",
+          "raw_result_sha256": "fed72089c23d8d3dcf8275499663ca50117dd19da62fd0ab872b9d731230cfab",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.3",
+          "channel": "semantic",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            131.5,
+            156.408,
+            14
+          ],
+          "value_sha256": "f005019dc391b02c329a224f4d62be4e116cad1e26c3d44936d1b033faa534d6",
+          "raw_result_sha256": "d58ab8e0d12d05f40253708cf1be73ac757455d146bd786a0ff2365ae326fe69",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.4",
+          "channel": "semantic",
+          "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            131.5,
+            156.408,
+            14
+          ],
+          "value_sha256": "4f399cb9824690836996645c1ea8af71d934705464d61d6c01ec0839841a33d4",
+          "raw_result_sha256": "fed72089c23d8d3dcf8275499663ca50117dd19da62fd0ab872b9d731230cfab",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.5",
+          "channel": "visual",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            131.5,
+            156.408,
+            14
+          ],
+          "value_sha256": "0ff3b83abe6351db6b958a1dbdb337d7f5cbf7c3838ebe4b9f6c17c25c4046af",
+          "raw_result_sha256": "0ff3b83abe6351db6b958a1dbdb337d7f5cbf7c3838ebe4b9f6c17c25c4046af",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.6",
+          "channel": "visual",
+          "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            131.5,
+            156.408,
+            14
+          ],
+          "value_sha256": "b206807eb21aceb03d52554434d7eab239ec0f04d82743d1dbb04151e68df397",
+          "raw_result_sha256": "b206807eb21aceb03d52554434d7eab239ec0f04d82743d1dbb04151e68df397",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.7",
+          "channel": "text",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            161.5,
+            171.962,
+            14
+          ],
+          "value_sha256": "ffd7280513ce285e6d9dc8d0b7078c4f39c8fe0e69b0d0a87d8af2965e445d7a",
+          "raw_result_sha256": "19feda9bab2f4151440a1d79094c1231427214509336ddb511d10408921c3ea8",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.8",
+          "channel": "text",
+          "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            161.5,
+            171.962,
+            14
+          ],
+          "value_sha256": "c801ee548dac5879e088b766b06af103cff00dcd1450789bdfe13972855cf5a3",
+          "raw_result_sha256": "0d2ecac2926ca6714e776c6a5ffc7125fac72df595f504c55eab66e71ddbe8e0",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.9",
+          "channel": "semantic",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            161.5,
+            171.962,
+            14
+          ],
+          "value_sha256": "ffd7280513ce285e6d9dc8d0b7078c4f39c8fe0e69b0d0a87d8af2965e445d7a",
+          "raw_result_sha256": "19feda9bab2f4151440a1d79094c1231427214509336ddb511d10408921c3ea8",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.10",
+          "channel": "semantic",
+          "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            161.5,
+            171.962,
+            14
+          ],
+          "value_sha256": "c801ee548dac5879e088b766b06af103cff00dcd1450789bdfe13972855cf5a3",
+          "raw_result_sha256": "0d2ecac2926ca6714e776c6a5ffc7125fac72df595f504c55eab66e71ddbe8e0",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.11",
+          "channel": "visual",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            161.5,
+            171.962,
+            14
+          ],
+          "value_sha256": "7af392df8bbea3ec69091bcfb12826d9124d90b8dea33d681c66c75598b76866",
+          "raw_result_sha256": "7af392df8bbea3ec69091bcfb12826d9124d90b8dea33d681c66c75598b76866",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.12",
+          "channel": "visual",
+          "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            161.5,
+            171.962,
+            14
+          ],
+          "value_sha256": "38127bc778eaf52b99bbb75028874ee3a659fe9ff449ed6de0df8f20a94d75a1",
+          "raw_result_sha256": "38127bc778eaf52b99bbb75028874ee3a659fe9ff449ed6de0df8f20a94d75a1",
+          "capture": "deterministic_baseline"
+        }
+      ],
+      "detected_events": [
+        {
+          "id": "candidate.reference.1",
+          "salience": "material",
+          "confidence": 1,
+          "summary": "Text changes from \"Monthly fee: USD 10,000\" to \"Monthly fee: USD 12,500\".",
+          "facets": [
+            {
+              "channel": "semantic",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.3",
+              "after_evidence_id": "evidence.reference.4"
+            },
+            {
+              "channel": "text",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.1",
+              "after_evidence_id": "evidence.reference.2"
+            },
+            {
+              "channel": "visual",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.5",
+              "after_evidence_id": "evidence.reference.6"
+            }
+          ]
+        },
+        {
+          "id": "candidate.reference.2",
+          "salience": "material",
+          "confidence": 1,
+          "summary": "Text changes from \"Termination notice: 30 days\" to \"Termination notice: 15 days\".",
+          "facets": [
+            {
+              "channel": "semantic",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.9",
+              "after_evidence_id": "evidence.reference.10"
+            },
+            {
+              "channel": "text",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.7",
+              "after_evidence_id": "evidence.reference.8"
+            },
+            {
+              "channel": "visual",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.11",
+              "after_evidence_id": "evidence.reference.12"
+            }
+          ]
+        }
+      ],
+      "presentation_decisions": [
+        {
+          "event_id": "candidate.reference.1",
+          "mode": "default_material",
+          "disposition": "report",
+          "rationale": "Deterministic material policy for the shared-library reference baseline."
+        },
+        {
+          "event_id": "candidate.reference.2",
+          "mode": "default_material",
+          "disposition": "report",
+          "rationale": "Deterministic material policy for the shared-library reference baseline."
+        }
+      ],
+      "timing_samples_ms": [
+        101.09196099999986,
+        106.66382299999987,
+        114.0565959999999,
+        92.94018299999993,
+        77.97192799999993
+      ],
+      "warmup_ms": 126.295255,
+      "warmup_cost": {
+        "tool_calls": 0,
+        "bytes_read": 7967,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": 387915776
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 0,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 387915776
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 387915776
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 388636672
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 388677632
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 388677632
+        }
+      ],
+      "peak_rss_bytes": 388677632,
+      "resource_measurement_status": "in_process",
+      "rendered_pixels": 46531584,
+      "tool_calls": 0,
+      "bytes_read": 47802,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.visual-status",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "a74469341ee92cf83dfd292e887fb7bce77ba5c14eaeac9750873e14a06d8717",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "supported",
+        "metadata": "supported",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 1,
+          "relation": "same",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 2,
+          "relation": "same",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [
+        {
+          "id": "evidence.reference.1",
+          "channel": "visual",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            236,
+            140,
+            36
+          ],
+          "value_sha256": "dafab5600d0a8b06e633f3a21a3d8ef21dd92ba0d5dab3e23effe0a2d5c6bbc2",
+          "raw_result_sha256": "dafab5600d0a8b06e633f3a21a3d8ef21dd92ba0d5dab3e23effe0a2d5c6bbc2",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.2",
+          "channel": "visual",
+          "document_sha256": "a74469341ee92cf83dfd292e887fb7bce77ba5c14eaeac9750873e14a06d8717",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            236,
+            140,
+            36
+          ],
+          "value_sha256": "3cadeb5969c59a9da3522e25944a114ab6949a7a1a6276d5bce8108343f256f7",
+          "raw_result_sha256": "3cadeb5969c59a9da3522e25944a114ab6949a7a1a6276d5bce8108343f256f7",
+          "capture": "deterministic_baseline"
+        }
+      ],
+      "detected_events": [
+        {
+          "id": "candidate.reference.1",
+          "salience": "minor",
+          "confidence": 1,
+          "summary": "Rendered appearance changes while extracted text remains equal.",
+          "facets": [
+            {
+              "channel": "visual",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.1",
+              "after_evidence_id": "evidence.reference.2"
+            }
+          ]
+        }
+      ],
+      "presentation_decisions": [
+        {
+          "event_id": "candidate.reference.1",
+          "mode": "default_material",
+          "disposition": "report",
+          "rationale": "Deterministic minor policy for the shared-library reference baseline."
+        }
+      ],
+      "timing_samples_ms": [
+        106.55975399999988,
+        92.39819499999976,
+        102.95840199999975,
+        130.44229399999995,
+        91.73090700000012
+      ],
+      "warmup_ms": 107.51242000000002,
+      "warmup_cost": {
+        "tool_calls": 0,
+        "bytes_read": 7964,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": 388497408
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 0,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 388497408
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 388497408
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 388497408
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 388497408
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 388497408
+        }
+      ],
+      "peak_rss_bytes": 388497408,
+      "resource_measurement_status": "in_process",
+      "rendered_pixels": 46531584,
+      "tool_calls": 0,
+      "bytes_read": 47784,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.layout-noise",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "22b258147cc852308f3a6663d251601c5ad30c4aa6e923137ba958e46eb67863",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "supported",
+        "metadata": "supported",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 1,
+          "relation": "same",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 2,
+          "relation": "same",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [
+        {
+          "id": "evidence.reference.1",
+          "channel": "visual",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "ec213295777d9a08776166b0698bc9bc964dc1acf2d388afb9e845b64527cf81",
+          "raw_result_sha256": "ec213295777d9a08776166b0698bc9bc964dc1acf2d388afb9e845b64527cf81",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.2",
+          "channel": "visual",
+          "document_sha256": "22b258147cc852308f3a6663d251601c5ad30c4aa6e923137ba958e46eb67863",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "e7eb42007a1f87d6596e8a0dc13030ef604a9233ac46a0df3aaf92e51b7e9798",
+          "raw_result_sha256": "e7eb42007a1f87d6596e8a0dc13030ef604a9233ac46a0df3aaf92e51b7e9798",
+          "capture": "deterministic_baseline"
+        }
+      ],
+      "detected_events": [
+        {
+          "id": "candidate.reference.1",
+          "salience": "noise",
+          "confidence": 1,
+          "summary": "Layout changes while normalized text remains equal.",
+          "facets": [
+            {
+              "channel": "visual",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.1",
+              "after_evidence_id": "evidence.reference.2"
+            }
+          ]
+        }
+      ],
+      "presentation_decisions": [
+        {
+          "event_id": "candidate.reference.1",
+          "mode": "default_material",
+          "disposition": "suppress",
+          "rationale": "Deterministic noise policy for the shared-library reference baseline."
+        }
+      ],
+      "timing_samples_ms": [
+        104.29549499999985,
+        95.37329900000032,
+        115.15083099999993,
+        80.63770400000021,
+        99.90442699999994
+      ],
+      "warmup_ms": 105.12222100000008,
+      "warmup_cost": {
+        "tool_calls": 0,
+        "bytes_read": 8174,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": 416002048
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 0,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 416002048
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 416002048
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 416002048
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 416002048
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 416002048
+        }
+      ],
+      "peak_rss_bytes": 416002048,
+      "resource_measurement_status": "in_process",
+      "rendered_pixels": 46531584,
+      "tool_calls": 0,
+      "bytes_read": 49044,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.metadata-only",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "c5fb3b62c4e6db7e4259ef98b6c1820660b75312240468e8cc97373ac671996b",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "supported",
+        "metadata": "supported",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 1,
+          "relation": "same",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 2,
+          "relation": "same",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [
+        {
+          "id": "evidence.reference.1",
+          "channel": "metadata",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "bea27b6d06814389c6795bc346d85c6192a5efc1f37af968ca056645dd0d190e",
+          "raw_result_sha256": "fbecc0041ca70bc136ce442efd9a270da27d01757d65316b4be127a5c629d7f7",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.2",
+          "channel": "metadata",
+          "document_sha256": "c5fb3b62c4e6db7e4259ef98b6c1820660b75312240468e8cc97373ac671996b",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "c7276faf6f7ebbf392f2088b176f0252b6a26948549c39606226a67684ead689",
+          "raw_result_sha256": "e9de7df6897f0d7244c800376918caf391eef4651e2b29036ad2760e901324cc",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.3",
+          "channel": "metadata",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "99c8512771696129f2dfff668867ebb4e56ee7b499846a41880674416f212195",
+          "raw_result_sha256": "aa4884784a526da4f49a3614b3961d212bc1b72b2279e2e2b1cf2b714d3976e7",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.4",
+          "channel": "metadata",
+          "document_sha256": "c5fb3b62c4e6db7e4259ef98b6c1820660b75312240468e8cc97373ac671996b",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "351e3274a951801e2499bb473a0b219b1f2a53990f010f7a552978a9d3ee1d85",
+          "raw_result_sha256": "ca24c7afd43037bf7fd11b40b8d8e831d352d4fd7a3dd66d4695d05df9726b13",
+          "capture": "deterministic_baseline"
+        }
+      ],
+      "detected_events": [
+        {
+          "id": "candidate.reference.1",
+          "salience": "noise",
+          "confidence": 1,
+          "summary": "ModDate metadata changes.",
+          "facets": [
+            {
+              "channel": "metadata",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.1",
+              "after_evidence_id": "evidence.reference.2"
+            }
+          ]
+        },
+        {
+          "id": "candidate.reference.2",
+          "salience": "minor",
+          "confidence": 1,
+          "summary": "Title metadata changes.",
+          "facets": [
+            {
+              "channel": "metadata",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.3",
+              "after_evidence_id": "evidence.reference.4"
+            }
+          ]
+        }
+      ],
+      "presentation_decisions": [
+        {
+          "event_id": "candidate.reference.1",
+          "mode": "default_material",
+          "disposition": "suppress",
+          "rationale": "Deterministic noise policy for the shared-library reference baseline."
+        },
+        {
+          "event_id": "candidate.reference.2",
+          "mode": "default_material",
+          "disposition": "suppress",
+          "rationale": "Deterministic minor policy for the shared-library reference baseline."
+        }
+      ],
+      "timing_samples_ms": [
+        111.4021600000001,
+        82.86157299999968,
+        108.085376,
+        100.22783499999969,
+        103.3164399999996
+      ],
+      "warmup_ms": 104.85444300000017,
+      "warmup_cost": {
+        "tool_calls": 0,
+        "bytes_read": 8006,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": 393302016
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 0,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 393302016
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 393302016
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 393875456
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 393912320
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 393920512
+        }
+      ],
+      "peak_rss_bytes": 393920512,
+      "resource_measurement_status": "in_process",
+      "rendered_pixels": 46531584,
+      "tool_calls": 0,
+      "bytes_read": 48036,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.pages-reordered",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "4eb4f4052ffdf8a376faec575f5dcac846fe23ef180c6b1c23a0434425b8b138",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "supported",
+        "metadata": "supported",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 2,
+          "relation": "moved",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 1,
+          "relation": "moved",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [
+        {
+          "id": "evidence.reference.1",
+          "channel": "structure",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "713bb07056fcb2151d3942b679cc51afdb4f005ae9baf7456ff5a2731c6b55f0",
+          "raw_result_sha256": "713bb07056fcb2151d3942b679cc51afdb4f005ae9baf7456ff5a2731c6b55f0",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.2",
+          "channel": "structure",
+          "document_sha256": "4eb4f4052ffdf8a376faec575f5dcac846fe23ef180c6b1c23a0434425b8b138",
+          "page": 2,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "73bba3c090e2a3bd3c289a14590a42df6d4f0df7c605c0f1a87805566a8080c4",
+          "raw_result_sha256": "73bba3c090e2a3bd3c289a14590a42df6d4f0df7c605c0f1a87805566a8080c4",
+          "capture": "deterministic_baseline"
+        }
+      ],
+      "detected_events": [
+        {
+          "id": "candidate.reference.1",
+          "salience": "material",
+          "confidence": 1,
+          "summary": "Page order changes between the two documents",
+          "facets": [
+            {
+              "channel": "structure",
+              "operation": "moved",
+              "before_evidence_id": "evidence.reference.1",
+              "after_evidence_id": "evidence.reference.2"
+            }
+          ]
+        }
+      ],
+      "presentation_decisions": [
+        {
+          "event_id": "candidate.reference.1",
+          "mode": "default_material",
+          "disposition": "report",
+          "rationale": "Deterministic material policy for the shared-library reference baseline."
+        }
+      ],
+      "timing_samples_ms": [
+        91.19754100000046,
+        85.37833099999989,
+        106.47345399999995,
+        75.38166099999944,
+        98.77193299999999
+      ],
+      "warmup_ms": 93.94720700000016,
+      "warmup_cost": {
+        "tool_calls": 0,
+        "bytes_read": 7964,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": 393920512
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 0,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 393920512
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 393920512
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 394067968
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 394067968
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 394117120
+        }
+      ],
+      "peak_rss_bytes": 394117120,
+      "resource_measurement_status": "in_process",
+      "rendered_pixels": 46531584,
+      "tool_calls": 0,
+      "bytes_read": 47784,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.form-annotation",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "b22a4cdc515cbc392a1dba81123c00728d5c607a3c7024e14378b734d98ddce0",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "supported",
+        "metadata": "supported",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 1,
+          "relation": "same",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 2,
+          "relation": "same",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [
+        {
+          "id": "evidence.reference.1",
+          "channel": "form_field",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            71.5,
+            331.5,
+            221,
+            31
+          ],
+          "value_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "raw_result_sha256": "2d19cd620c1a7bd05c1a914486b6f8d2d78b3e7e38c8ad6f1ea589bc365b1a25",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.2",
+          "channel": "form_field",
+          "document_sha256": "b22a4cdc515cbc392a1dba81123c00728d5c607a3c7024e14378b734d98ddce0",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            71.5,
+            331.5,
+            221,
+            31
+          ],
+          "value_sha256": "87b42e40c2a290e01d87b721bf381c3c5e259d1eb0a4660e41fdbf8bc73f7ddd",
+          "raw_result_sha256": "5a4fbab11760f4efe7e1d7b133c77b56f69a298e62eb6962fd3845989949ac84",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.3",
+          "channel": "visual",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            71.5,
+            331.5,
+            221,
+            31
+          ],
+          "value_sha256": "f4555b64fe16e47b429e9d342dd94312010513c88c4cec661d23d931f9d24226",
+          "raw_result_sha256": "f4555b64fe16e47b429e9d342dd94312010513c88c4cec661d23d931f9d24226",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.4",
+          "channel": "visual",
+          "document_sha256": "b22a4cdc515cbc392a1dba81123c00728d5c607a3c7024e14378b734d98ddce0",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            71.5,
+            331.5,
+            221,
+            31
+          ],
+          "value_sha256": "0654484f783b0087fff8a9f27b1a2475e046867aa446e72ccd18461b07c4320a",
+          "raw_result_sha256": "0654484f783b0087fff8a9f27b1a2475e046867aa446e72ccd18461b07c4320a",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "id": "evidence.reference.5",
+          "channel": "annotation",
+          "document_sha256": "b22a4cdc515cbc392a1dba81123c00728d5c607a3c7024e14378b734d98ddce0",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            360,
+            332,
+            30,
+            30
+          ],
+          "value_sha256": "fa424ce9b8636437b0e15b532100d607b0de93988a672094ad1a345bbd67b293",
+          "raw_result_sha256": "05bbba78ca0a93aaa9f0847b5df2f5178af0f22237f8fa8c8d3204b845910e39",
+          "capture": "deterministic_baseline"
+        }
+      ],
+      "detected_events": [
+        {
+          "id": "candidate.reference.1",
+          "salience": "material",
+          "confidence": 1,
+          "summary": "ReviewStatus changes from \"\" to \"Approved\".",
+          "facets": [
+            {
+              "channel": "form_field",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.1",
+              "after_evidence_id": "evidence.reference.2"
+            },
+            {
+              "channel": "visual",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.3",
+              "after_evidence_id": "evidence.reference.4"
+            }
+          ]
+        },
+        {
+          "id": "candidate.reference.2",
+          "salience": "minor",
+          "confidence": 1,
+          "summary": "Annotation added: Synthetic reviewer note: verify status..",
+          "facets": [
+            {
+              "channel": "annotation",
+              "operation": "added",
+              "before_evidence_id": null,
+              "after_evidence_id": "evidence.reference.5"
+            }
+          ]
+        }
+      ],
+      "presentation_decisions": [
+        {
+          "event_id": "candidate.reference.1",
+          "mode": "default_material",
+          "disposition": "report",
+          "rationale": "Deterministic material policy for the shared-library reference baseline."
+        },
+        {
+          "event_id": "candidate.reference.2",
+          "mode": "default_material",
+          "disposition": "report",
+          "rationale": "Deterministic minor policy for the shared-library reference baseline."
+        }
+      ],
+      "timing_samples_ms": [
+        89.49803900000006,
+        106.66954299999998,
+        102.33303399999932,
+        110.51449299999967,
+        101.11595100000068
+      ],
+      "warmup_ms": 90.78708300000017,
+      "warmup_cost": {
+        "tool_calls": 0,
+        "bytes_read": 8624,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": 394117120
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 0,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 394117120
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 394117120
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 394211328
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 394338304
+        },
+        {
+          "tool_calls": 0,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": 395563008
+        }
+      ],
+      "peak_rss_bytes": 395563008,
+      "resource_measurement_status": "in_process",
+      "rendered_pixels": 46531584,
+      "tool_calls": 0,
+      "bytes_read": 51744,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    }
+  ]
+}

@@ -1,0 +1,1345 @@
+{
+  "valid": true,
+  "passed": false,
+  "benchmark_id": "pdf-tools.comparison.v1",
+  "benchmark_version": "v0.1.0",
+  "report_sha256": "52c40600dcc5cf6467e3b195b00871d3f64635c297cf3227ed1cae68333aec08",
+  "benchmark_claim_ready": false,
+  "claim_boundary": "Deterministic inspection through the current published PDF Tools MCP read/field/render primitives on Linux; no model, metadata-value tool, annotation-enumeration tool, or native Claude Desktop host.",
+  "aggregate": {
+    "event_metrics": {
+      "tp": 1,
+      "fp": 5,
+      "fn": 8,
+      "precision": 0.16666666666666666,
+      "recall": 0.1111111111111111,
+      "f1": 0.13333333333333333
+    },
+    "channel_metrics": {
+      "semantic": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "text": {
+        "tp": 2,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "structure": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "form_field": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "annotation": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 1,
+        "precision": null,
+        "recall": 0,
+        "f1": 0
+      },
+      "metadata": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 2,
+        "precision": null,
+        "recall": 0,
+        "f1": 0
+      },
+      "visual": {
+        "tp": 0,
+        "fp": 5,
+        "fn": 5,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      }
+    },
+    "material_event_recall": 0.3333333333333333,
+    "evidence_metrics": {
+      "expected_anchors": 27,
+      "matched_anchors": 2,
+      "completeness": 0.07407407407407407,
+      "two_sided_facets": 13,
+      "two_sided_complete": 1,
+      "two_sided_citation_rate": 0.07692307692307693,
+      "unsupported_candidate_facets": 5,
+      "unsupported_evidence_references": 10,
+      "orphan_observations": 0
+    },
+    "pairs_passed": 1,
+    "pairs_total": 7,
+    "model_cost_usd": 0,
+    "bundle_increment_bytes": 0,
+    "network_requests": 0,
+    "external_processes": 1,
+    "renderer_fingerprint_sha256": "c2dd1a1d44aac6b47b58a18b9b578e2e863bb0b75cfd8dbf95346e841b4eace8",
+    "isolation_passed": false
+  },
+  "pairs": [
+    {
+      "pair_id": "pdf-tools.comparison.pair.identical",
+      "role": "identical",
+      "passed": false,
+      "hard_gates": {
+        "completed": true,
+        "alignment_correct": true,
+        "source_immutable": true,
+        "no_undeclared_requests": true,
+        "required_channels_supported": false,
+        "event_detection_complete": true,
+        "no_unsupported_candidate_facets": true,
+        "no_channel_false_positives": true,
+        "material_event_recall": true,
+        "mandatory_material_facet_recall": true,
+        "evidence_complete": true,
+        "presentation_correct": true,
+        "salience_correct": true,
+        "identical_specificity": true,
+        "visual_only_detected": true,
+        "layout_noise_suppressed": true
+      },
+      "event_metrics": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 0,
+        "precision": null,
+        "recall": null,
+        "f1": null
+      },
+      "channel_metrics": {
+        "semantic": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "text": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "structure": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "form_field": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "annotation": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "unavailable"
+        },
+        "metadata": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "unavailable"
+        },
+        "visual": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        }
+      },
+      "alignment_accuracy": 1,
+      "material_event_recall": null,
+      "mandatory_material_facet_recall": null,
+      "presentation_accuracy": null,
+      "salience_accuracy": null,
+      "evidence_metrics": {
+        "expected_anchors": 0,
+        "matched_anchors": 0,
+        "completeness": null,
+        "two_sided_facets": 0,
+        "two_sided_complete": 0,
+        "two_sided_citation_rate": null,
+        "mean_region_iou": null,
+        "unsupported_candidate_facets": 0,
+        "unsupported_evidence_references": 0,
+        "orphan_observations": 0
+      },
+      "event_results": [],
+      "performance": {
+        "samples_ms": [
+          325.51628299999993,
+          373.676641,
+          312.2070189999995,
+          274.47803999999996,
+          340.3304680000001
+        ],
+        "mean_ms": 325.2416901999999,
+        "p50_ms": 325.51628299999993,
+        "p95_ms": 373.676641,
+        "sample_variance": 1330.135477655524
+      },
+      "warmup_ms": 2241.405095,
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "cost": {
+        "peak_rss_bytes": null,
+        "resource_measurement_status": "unavailable",
+        "rendered_pixels": 46531584,
+        "tool_calls": 48,
+        "bytes_read": 47772,
+        "model_transport_requests": 0
+      }
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.material-text",
+      "role": "material_text",
+      "passed": false,
+      "hard_gates": {
+        "completed": true,
+        "alignment_correct": true,
+        "source_immutable": true,
+        "no_undeclared_requests": true,
+        "required_channels_supported": true,
+        "event_detection_complete": false,
+        "no_unsupported_candidate_facets": false,
+        "no_channel_false_positives": false,
+        "material_event_recall": false,
+        "mandatory_material_facet_recall": false,
+        "evidence_complete": false,
+        "presentation_correct": true,
+        "salience_correct": true,
+        "identical_specificity": true,
+        "visual_only_detected": true,
+        "layout_noise_suppressed": true
+      },
+      "event_metrics": {
+        "tp": 0,
+        "fp": 2,
+        "fn": 2,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      "channel_metrics": {
+        "semantic": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1,
+          "status": "supported"
+        },
+        "text": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1,
+          "status": "supported"
+        },
+        "structure": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "form_field": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "annotation": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "unavailable"
+        },
+        "metadata": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "unavailable"
+        },
+        "visual": {
+          "tp": 0,
+          "fp": 2,
+          "fn": 2,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0,
+          "status": "supported"
+        }
+      },
+      "alignment_accuracy": 1,
+      "material_event_recall": 0,
+      "mandatory_material_facet_recall": 0.6666666666666666,
+      "presentation_accuracy": 1,
+      "salience_accuracy": 1,
+      "evidence_metrics": {
+        "expected_anchors": 12,
+        "matched_anchors": 0,
+        "completeness": 0,
+        "two_sided_facets": 6,
+        "two_sided_complete": 0,
+        "two_sided_citation_rate": 0,
+        "mean_region_iou": 0.004742255067009969,
+        "unsupported_candidate_facets": 2,
+        "unsupported_evidence_references": 4,
+        "orphan_observations": 0
+      },
+      "event_results": [
+        {
+          "truth_id": "truth.monthly-fee",
+          "candidate_id": "candidate.reference.1",
+          "status": "matched_incomplete",
+          "matched_channels": [
+            "semantic",
+            "text"
+          ]
+        },
+        {
+          "truth_id": "truth.termination-notice",
+          "candidate_id": "candidate.reference.2",
+          "status": "matched_incomplete",
+          "matched_channels": [
+            "semantic",
+            "text"
+          ]
+        }
+      ],
+      "performance": {
+        "samples_ms": [
+          277.4153150000002,
+          307.31878399999914,
+          321.42707399999927,
+          291.5248539999993,
+          286.7214780000013
+        ],
+        "mean_ms": 296.88150099999984,
+        "p50_ms": 291.5248539999993,
+        "p95_ms": 321.42707399999927,
+        "sample_variance": 305.56854053751783
+      },
+      "warmup_ms": 318.03631900000073,
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "cost": {
+        "peak_rss_bytes": null,
+        "resource_measurement_status": "unavailable",
+        "rendered_pixels": 46531584,
+        "tool_calls": 48,
+        "bytes_read": 47802,
+        "model_transport_requests": 0
+      }
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.visual-status",
+      "role": "visual_only",
+      "passed": false,
+      "hard_gates": {
+        "completed": true,
+        "alignment_correct": true,
+        "source_immutable": true,
+        "no_undeclared_requests": true,
+        "required_channels_supported": true,
+        "event_detection_complete": false,
+        "no_unsupported_candidate_facets": false,
+        "no_channel_false_positives": false,
+        "material_event_recall": true,
+        "mandatory_material_facet_recall": true,
+        "evidence_complete": false,
+        "presentation_correct": false,
+        "salience_correct": false,
+        "identical_specificity": true,
+        "visual_only_detected": false,
+        "layout_noise_suppressed": true
+      },
+      "event_metrics": {
+        "tp": 0,
+        "fp": 1,
+        "fn": 1,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      "channel_metrics": {
+        "semantic": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "text": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "structure": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "form_field": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "annotation": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "unavailable"
+        },
+        "metadata": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "unavailable"
+        },
+        "visual": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0,
+          "status": "supported"
+        }
+      },
+      "alignment_accuracy": 1,
+      "material_event_recall": null,
+      "mandatory_material_facet_recall": null,
+      "presentation_accuracy": null,
+      "salience_accuracy": null,
+      "evidence_metrics": {
+        "expected_anchors": 2,
+        "matched_anchors": 0,
+        "completeness": 0,
+        "two_sided_facets": 1,
+        "two_sided_complete": 0,
+        "two_sided_citation_rate": 0,
+        "mean_region_iou": null,
+        "unsupported_candidate_facets": 1,
+        "unsupported_evidence_references": 2,
+        "orphan_observations": 0
+      },
+      "event_results": [
+        {
+          "truth_id": "truth.status-color",
+          "candidate_id": null,
+          "status": "missed",
+          "matched_channels": []
+        }
+      ],
+      "performance": {
+        "samples_ms": [
+          290.6454789999989,
+          315.9422799999993,
+          312.6771179999996,
+          270.76349800000025,
+          318.58797799999957
+        ],
+        "mean_ms": 301.7232705999995,
+        "p50_ms": 312.6771179999996,
+        "p95_ms": 318.58797799999957,
+        "sample_variance": 421.9525857610243
+      },
+      "warmup_ms": 309.3678540000001,
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "cost": {
+        "peak_rss_bytes": null,
+        "resource_measurement_status": "unavailable",
+        "rendered_pixels": 46531584,
+        "tool_calls": 48,
+        "bytes_read": 47784,
+        "model_transport_requests": 0
+      }
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.layout-noise",
+      "role": "layout_noise",
+      "passed": false,
+      "hard_gates": {
+        "completed": true,
+        "alignment_correct": true,
+        "source_immutable": true,
+        "no_undeclared_requests": true,
+        "required_channels_supported": true,
+        "event_detection_complete": false,
+        "no_unsupported_candidate_facets": false,
+        "no_channel_false_positives": false,
+        "material_event_recall": true,
+        "mandatory_material_facet_recall": true,
+        "evidence_complete": false,
+        "presentation_correct": false,
+        "salience_correct": false,
+        "identical_specificity": true,
+        "visual_only_detected": true,
+        "layout_noise_suppressed": false
+      },
+      "event_metrics": {
+        "tp": 0,
+        "fp": 1,
+        "fn": 1,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      "channel_metrics": {
+        "semantic": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "text": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "structure": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "form_field": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "annotation": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "unavailable"
+        },
+        "metadata": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "unavailable"
+        },
+        "visual": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0,
+          "status": "supported"
+        }
+      },
+      "alignment_accuracy": 1,
+      "material_event_recall": null,
+      "mandatory_material_facet_recall": null,
+      "presentation_accuracy": null,
+      "salience_accuracy": null,
+      "evidence_metrics": {
+        "expected_anchors": 2,
+        "matched_anchors": 0,
+        "completeness": 0,
+        "two_sided_facets": 1,
+        "two_sided_complete": 0,
+        "two_sided_citation_rate": 0,
+        "mean_region_iou": null,
+        "unsupported_candidate_facets": 1,
+        "unsupported_evidence_references": 2,
+        "orphan_observations": 0
+      },
+      "event_results": [
+        {
+          "truth_id": "truth.layout-noise",
+          "candidate_id": null,
+          "status": "missed",
+          "matched_channels": []
+        }
+      ],
+      "performance": {
+        "samples_ms": [
+          328.11611900000025,
+          320.3121080000001,
+          289.84584299999915,
+          289.778092999999,
+          312.28172900000027
+        ],
+        "mean_ms": 308.06677839999975,
+        "p50_ms": 312.28172900000027,
+        "p95_ms": 328.11611900000025,
+        "sample_variance": 309.04211614477845
+      },
+      "warmup_ms": 332.0839500000002,
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "cost": {
+        "peak_rss_bytes": null,
+        "resource_measurement_status": "unavailable",
+        "rendered_pixels": 46531584,
+        "tool_calls": 48,
+        "bytes_read": 49044,
+        "model_transport_requests": 0
+      }
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.metadata-only",
+      "role": "metadata_only",
+      "passed": false,
+      "hard_gates": {
+        "completed": true,
+        "alignment_correct": true,
+        "source_immutable": true,
+        "no_undeclared_requests": true,
+        "required_channels_supported": false,
+        "event_detection_complete": false,
+        "no_unsupported_candidate_facets": true,
+        "no_channel_false_positives": true,
+        "material_event_recall": true,
+        "mandatory_material_facet_recall": true,
+        "evidence_complete": false,
+        "presentation_correct": false,
+        "salience_correct": false,
+        "identical_specificity": true,
+        "visual_only_detected": true,
+        "layout_noise_suppressed": true
+      },
+      "event_metrics": {
+        "tp": 0,
+        "fp": 0,
+        "fn": 2,
+        "precision": null,
+        "recall": 0,
+        "f1": 0
+      },
+      "channel_metrics": {
+        "semantic": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "text": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "structure": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "form_field": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "annotation": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "unavailable"
+        },
+        "metadata": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2,
+          "precision": null,
+          "recall": 0,
+          "f1": 0,
+          "status": "unavailable"
+        },
+        "visual": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        }
+      },
+      "alignment_accuracy": 1,
+      "material_event_recall": null,
+      "mandatory_material_facet_recall": null,
+      "presentation_accuracy": null,
+      "salience_accuracy": null,
+      "evidence_metrics": {
+        "expected_anchors": 4,
+        "matched_anchors": 0,
+        "completeness": 0,
+        "two_sided_facets": 2,
+        "two_sided_complete": 0,
+        "two_sided_citation_rate": 0,
+        "mean_region_iou": null,
+        "unsupported_candidate_facets": 0,
+        "unsupported_evidence_references": 0,
+        "orphan_observations": 0
+      },
+      "event_results": [
+        {
+          "truth_id": "truth.metadata-title",
+          "candidate_id": null,
+          "status": "missed",
+          "matched_channels": []
+        },
+        {
+          "truth_id": "truth.metadata-modification-date",
+          "candidate_id": null,
+          "status": "missed",
+          "matched_channels": []
+        }
+      ],
+      "performance": {
+        "samples_ms": [
+          303.9925920000005,
+          332.39573799999926,
+          275.3528049999986,
+          277.47971400000097,
+          272.10953999999765
+        ],
+        "mean_ms": 292.2660777999994,
+        "p50_ms": 277.47971400000097,
+        "p95_ms": 332.39573799999926,
+        "sample_variance": 664.7205325915825
+      },
+      "warmup_ms": 303.5232930000002,
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "cost": {
+        "peak_rss_bytes": null,
+        "resource_measurement_status": "unavailable",
+        "rendered_pixels": 46531584,
+        "tool_calls": 48,
+        "bytes_read": 48036,
+        "model_transport_requests": 0
+      }
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.pages-reordered",
+      "role": "pages_reordered",
+      "passed": true,
+      "hard_gates": {
+        "completed": true,
+        "alignment_correct": true,
+        "source_immutable": true,
+        "no_undeclared_requests": true,
+        "required_channels_supported": true,
+        "event_detection_complete": true,
+        "no_unsupported_candidate_facets": true,
+        "no_channel_false_positives": true,
+        "material_event_recall": true,
+        "mandatory_material_facet_recall": true,
+        "evidence_complete": true,
+        "presentation_correct": true,
+        "salience_correct": true,
+        "identical_specificity": true,
+        "visual_only_detected": true,
+        "layout_noise_suppressed": true
+      },
+      "event_metrics": {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1,
+        "recall": 1,
+        "f1": 1
+      },
+      "channel_metrics": {
+        "semantic": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "text": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "structure": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1,
+          "status": "supported"
+        },
+        "form_field": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "annotation": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "unavailable"
+        },
+        "metadata": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "unavailable"
+        },
+        "visual": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        }
+      },
+      "alignment_accuracy": 1,
+      "material_event_recall": 1,
+      "mandatory_material_facet_recall": 1,
+      "presentation_accuracy": 1,
+      "salience_accuracy": 1,
+      "evidence_metrics": {
+        "expected_anchors": 2,
+        "matched_anchors": 2,
+        "completeness": 1,
+        "two_sided_facets": 1,
+        "two_sided_complete": 1,
+        "two_sided_citation_rate": 1,
+        "mean_region_iou": 1,
+        "unsupported_candidate_facets": 0,
+        "unsupported_evidence_references": 0,
+        "orphan_observations": 0
+      },
+      "event_results": [
+        {
+          "truth_id": "truth.page-order",
+          "candidate_id": "candidate.reference.1",
+          "status": "matched",
+          "matched_channels": [
+            "structure"
+          ]
+        }
+      ],
+      "performance": {
+        "samples_ms": [
+          308.5919380000014,
+          334.1490190000004,
+          341.490812,
+          296.19100999999864,
+          273.6002129999979
+        ],
+        "mean_ms": 310.8045983999997,
+        "p50_ms": 308.5919380000014,
+        "p95_ms": 341.490812,
+        "sample_variance": 772.3062008042036
+      },
+      "warmup_ms": 312.02210000000196,
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "cost": {
+        "peak_rss_bytes": null,
+        "resource_measurement_status": "unavailable",
+        "rendered_pixels": 46531584,
+        "tool_calls": 48,
+        "bytes_read": 47784,
+        "model_transport_requests": 0
+      }
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.form-annotation",
+      "role": "form_annotation",
+      "passed": false,
+      "hard_gates": {
+        "completed": true,
+        "alignment_correct": true,
+        "source_immutable": true,
+        "no_undeclared_requests": true,
+        "required_channels_supported": false,
+        "event_detection_complete": false,
+        "no_unsupported_candidate_facets": false,
+        "no_channel_false_positives": false,
+        "material_event_recall": false,
+        "mandatory_material_facet_recall": false,
+        "evidence_complete": false,
+        "presentation_correct": false,
+        "salience_correct": false,
+        "identical_specificity": true,
+        "visual_only_detected": true,
+        "layout_noise_suppressed": true
+      },
+      "event_metrics": {
+        "tp": 0,
+        "fp": 1,
+        "fn": 2,
+        "precision": 0,
+        "recall": 0,
+        "f1": 0
+      },
+      "channel_metrics": {
+        "semantic": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "text": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "structure": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "supported"
+        },
+        "form_field": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1,
+          "status": "supported"
+        },
+        "annotation": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "precision": null,
+          "recall": 0,
+          "f1": 0,
+          "status": "unavailable"
+        },
+        "metadata": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 0,
+          "precision": null,
+          "recall": null,
+          "f1": null,
+          "status": "unavailable"
+        },
+        "visual": {
+          "tp": 0,
+          "fp": 1,
+          "fn": 1,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0,
+          "status": "supported"
+        }
+      },
+      "alignment_accuracy": 1,
+      "material_event_recall": 0,
+      "mandatory_material_facet_recall": 0.5,
+      "presentation_accuracy": 1,
+      "salience_accuracy": 1,
+      "evidence_metrics": {
+        "expected_anchors": 5,
+        "matched_anchors": 0,
+        "completeness": 0,
+        "two_sided_facets": 2,
+        "two_sided_complete": 0,
+        "two_sided_citation_rate": 0,
+        "mean_region_iou": 0.014134399551066218,
+        "unsupported_candidate_facets": 1,
+        "unsupported_evidence_references": 2,
+        "orphan_observations": 0
+      },
+      "event_results": [
+        {
+          "truth_id": "truth.review-status-field",
+          "candidate_id": "candidate.reference.1",
+          "status": "matched_incomplete",
+          "matched_channels": [
+            "form_field"
+          ]
+        },
+        {
+          "truth_id": "truth.reviewer-annotation",
+          "candidate_id": null,
+          "status": "missed",
+          "matched_channels": []
+        }
+      ],
+      "performance": {
+        "samples_ms": [
+          328.7975159999987,
+          299.2073759999985,
+          309.3422439999995,
+          293.5387630000005,
+          293.96884200000204
+        ],
+        "mean_ms": 304.97094819999984,
+        "p50_ms": 299.2073759999985,
+        "p95_ms": 328.7975159999987,
+        "sample_variance": 217.94338097169532
+      },
+      "warmup_ms": 348.2888090000015,
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "cost": {
+        "peak_rss_bytes": null,
+        "resource_measurement_status": "unavailable",
+        "rendered_pixels": 46531584,
+        "tool_calls": 48,
+        "bytes_read": 51744,
+        "model_transport_requests": 0
+      }
+    }
+  ]
+}

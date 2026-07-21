@@ -1,0 +1,72 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "pdf-tools.comparison.v1",
+  "benchmark_version": "v0.1.0",
+  "claim_boundary": "Descriptive shared-library and current-product source-server measurements. Truth, repository/shell, and network isolation were not OS-enforced; controller registries are unsigned; neither global score passes; no packed MCPB or native host was tested.",
+  "benchmark_claim_ready": false,
+  "generated_at": "2026-07-21T13:52:49.429Z",
+  "source_revision": "16d46ab649fcd39e5980189602e98064c14570cc",
+  "corpus_manifest": {
+    "path": "test/fixtures/eval/comparison/manifest.v1.json",
+    "sha256": "d37ef12e1e760a16a92a009514d9e90ea68dbe00ea89610319273d3d669c0ac2"
+  },
+  "renderer_fingerprint_sha256": "c2dd1a1d44aac6b47b58a18b9b578e2e863bb0b75cfd8dbf95346e841b4eace8",
+  "artifacts": [
+    {
+      "path": "docs/evidence/comparison-v1/shared-library-report.v1.json",
+      "sha256": "60aff691da35801372dab85c75edf25468b5503154f549c6e1b20b3d8bcf32ec",
+      "bytes": 43790
+    },
+    {
+      "path": "docs/evidence/comparison-v1/shared-library-score.v1.json",
+      "sha256": "24e03c19a69f13e30878db2eddedba452b6bec6f2f6db6aeeccd45e9077937d8",
+      "bytes": 35028
+    },
+    {
+      "path": "docs/evidence/comparison-v1/shared-library-observation-registry.v1.json",
+      "sha256": "fdb73baba5f0f0faaa730747c82c1657d0fc730885ecbdea97cd6e09f34a0b36",
+      "bytes": 20015
+    },
+    {
+      "path": "docs/evidence/comparison-v1/current-product-report.v1.json",
+      "sha256": "c902b2a22c764b1a38d2f37e43110477a518954f4ade116f68aece422d48dc1a",
+      "bytes": 38168
+    },
+    {
+      "path": "docs/evidence/comparison-v1/current-product-score.v1.json",
+      "sha256": "6116c958977a547f6c377da67c1d4e60cd1c27b48e93baeab81b0fdde03c1e7e",
+      "bytes": 34865
+    },
+    {
+      "path": "docs/evidence/comparison-v1/current-product-observation-registry.v1.json",
+      "sha256": "c2754ad2ecd7ef2e4a51b8358f5da30dfde5c0bb4eb6387be29f0f632f8bf51b",
+      "bytes": 16456
+    },
+    {
+      "path": "docs/evidence/comparison-v1/poppler-sensor.v1.json",
+      "sha256": "d21e67e5ff30968e413bc5a2a6ad65b234df1f28ac68ed49d353579824609fe3",
+      "bytes": 19956
+    }
+  ],
+  "result": {
+    "shared_library": {
+      "passed": false,
+      "pairs_passed": 7,
+      "pairs_total": 7,
+      "event_f1": 1,
+      "evidence_completeness": 1
+    },
+    "current_product": {
+      "passed": false,
+      "pairs_passed": 1,
+      "pairs_total": 7,
+      "event_f1": 0.13333333333333333,
+      "evidence_completeness": 0.07407407407407407
+    },
+    "poppler_sensor": {
+      "engine_status": "completed",
+      "pairs_observed": 7,
+      "event_level_scored": false
+    }
+  }
+}

@@ -1,0 +1,463 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "pdf-tools.comparison.v1",
+  "benchmark_version": "v0.1.0",
+  "engine_status": "completed",
+  "benchmark_claim_ready": false,
+  "claim_boundary": "Independent Poppler CLI sensor output only; no event-level semantic oracle, region alignment, form-field extraction, or annotation enumeration.",
+  "engine": {
+    "id": "poppler-cli-system-baseline",
+    "kind": "external_cli",
+    "versions": {
+      "pdftotext": "pdftotext version 24.02.0 Copyright",
+      "pdfinfo": "pdfinfo version 24.02.0 Copyright",
+      "pdftoppm": "pdftoppm version 24.02.0 Copyright"
+    },
+    "license": "system package license not audited by this run",
+    "bundled": false,
+    "network_requests": 0
+  },
+  "pairs": [
+    {
+      "pair_id": "pdf-tools.comparison.pair.identical",
+      "before": {
+        "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+        "bytes": 3981,
+        "normalized_text_sha256": "64bfbce4ad7e566c152b38b3a9dcf1dd30cacb6898e3520c01b58fec098e8311",
+        "page_text_sha256": [
+          "9d36758ea6b31f4fa7a622a6d476e3244252542cf01fd642694d54df83cdad5b",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "d7a7f61ccc779a6cfcec7e24586b826697ae3c38645d286a7b557f4c690546b0",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "after": {
+        "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+        "bytes": 3981,
+        "normalized_text_sha256": "64bfbce4ad7e566c152b38b3a9dcf1dd30cacb6898e3520c01b58fec098e8311",
+        "page_text_sha256": [
+          "9d36758ea6b31f4fa7a622a6d476e3244252542cf01fd642694d54df83cdad5b",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "d7a7f61ccc779a6cfcec7e24586b826697ae3c38645d286a7b557f4c690546b0",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "observations": {
+        "normalized_text_equal": true,
+        "page_marker_order_equal": true,
+        "metadata_equal": true,
+        "same_position_raster_equal": true
+      }
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.material-text",
+      "before": {
+        "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+        "bytes": 3981,
+        "normalized_text_sha256": "64bfbce4ad7e566c152b38b3a9dcf1dd30cacb6898e3520c01b58fec098e8311",
+        "page_text_sha256": [
+          "9d36758ea6b31f4fa7a622a6d476e3244252542cf01fd642694d54df83cdad5b",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "d7a7f61ccc779a6cfcec7e24586b826697ae3c38645d286a7b557f4c690546b0",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "after": {
+        "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+        "bytes": 3986,
+        "normalized_text_sha256": "6e230de8281a776c045c02a82b683f03f5b5109dac16f5e0b190967e399b6905",
+        "page_text_sha256": [
+          "9f56ddc067f5fb06a3b171dec9d696a11d69d12141fc16ec18be31a75c287a1c",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "6a4d54cd467dfec13b09c340d5881f80c4c212f17ce4b8e3d135fbe7a4a3d5b9",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "observations": {
+        "normalized_text_equal": false,
+        "page_marker_order_equal": true,
+        "metadata_equal": true,
+        "same_position_raster_equal": false
+      }
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.visual-status",
+      "before": {
+        "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+        "bytes": 3981,
+        "normalized_text_sha256": "64bfbce4ad7e566c152b38b3a9dcf1dd30cacb6898e3520c01b58fec098e8311",
+        "page_text_sha256": [
+          "9d36758ea6b31f4fa7a622a6d476e3244252542cf01fd642694d54df83cdad5b",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "d7a7f61ccc779a6cfcec7e24586b826697ae3c38645d286a7b557f4c690546b0",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "after": {
+        "document_sha256": "a74469341ee92cf83dfd292e887fb7bce77ba5c14eaeac9750873e14a06d8717",
+        "bytes": 3983,
+        "normalized_text_sha256": "64bfbce4ad7e566c152b38b3a9dcf1dd30cacb6898e3520c01b58fec098e8311",
+        "page_text_sha256": [
+          "9d36758ea6b31f4fa7a622a6d476e3244252542cf01fd642694d54df83cdad5b",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "323a02330725b823f33be49a7c1e2cc8132ba56515530adfe95165e06ef72b12",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "observations": {
+        "normalized_text_equal": true,
+        "page_marker_order_equal": true,
+        "metadata_equal": true,
+        "same_position_raster_equal": false
+      }
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.layout-noise",
+      "before": {
+        "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+        "bytes": 3981,
+        "normalized_text_sha256": "64bfbce4ad7e566c152b38b3a9dcf1dd30cacb6898e3520c01b58fec098e8311",
+        "page_text_sha256": [
+          "9d36758ea6b31f4fa7a622a6d476e3244252542cf01fd642694d54df83cdad5b",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "d7a7f61ccc779a6cfcec7e24586b826697ae3c38645d286a7b557f4c690546b0",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "after": {
+        "document_sha256": "22b258147cc852308f3a6663d251601c5ad30c4aa6e923137ba958e46eb67863",
+        "bytes": 4193,
+        "normalized_text_sha256": "64bfbce4ad7e566c152b38b3a9dcf1dd30cacb6898e3520c01b58fec098e8311",
+        "page_text_sha256": [
+          "9d36758ea6b31f4fa7a622a6d476e3244252542cf01fd642694d54df83cdad5b",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "9363b02815b62524e95f0ff6de7d95507578452206e6d4f60d283f7007efcded",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "observations": {
+        "normalized_text_equal": true,
+        "page_marker_order_equal": true,
+        "metadata_equal": true,
+        "same_position_raster_equal": false
+      }
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.metadata-only",
+      "before": {
+        "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+        "bytes": 3981,
+        "normalized_text_sha256": "64bfbce4ad7e566c152b38b3a9dcf1dd30cacb6898e3520c01b58fec098e8311",
+        "page_text_sha256": [
+          "9d36758ea6b31f4fa7a622a6d476e3244252542cf01fd642694d54df83cdad5b",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "d7a7f61ccc779a6cfcec7e24586b826697ae3c38645d286a7b557f4c690546b0",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "after": {
+        "document_sha256": "c5fb3b62c4e6db7e4259ef98b6c1820660b75312240468e8cc97373ac671996b",
+        "bytes": 4025,
+        "normalized_text_sha256": "64bfbce4ad7e566c152b38b3a9dcf1dd30cacb6898e3520c01b58fec098e8311",
+        "page_text_sha256": [
+          "9d36758ea6b31f4fa7a622a6d476e3244252542cf01fd642694d54df83cdad5b",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement — reviewed",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Wed Jul 22 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "d7a7f61ccc779a6cfcec7e24586b826697ae3c38645d286a7b557f4c690546b0",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "observations": {
+        "normalized_text_equal": true,
+        "page_marker_order_equal": true,
+        "metadata_equal": false,
+        "same_position_raster_equal": true
+      }
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.pages-reordered",
+      "before": {
+        "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+        "bytes": 3981,
+        "normalized_text_sha256": "64bfbce4ad7e566c152b38b3a9dcf1dd30cacb6898e3520c01b58fec098e8311",
+        "page_text_sha256": [
+          "9d36758ea6b31f4fa7a622a6d476e3244252542cf01fd642694d54df83cdad5b",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "d7a7f61ccc779a6cfcec7e24586b826697ae3c38645d286a7b557f4c690546b0",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "after": {
+        "document_sha256": "4eb4f4052ffdf8a376faec575f5dcac846fe23ef180c6b1c23a0434425b8b138",
+        "bytes": 3983,
+        "normalized_text_sha256": "3c6bbb401d8e6095ac34c0993abcb2d518c211cba79c8e3c955d126fa6736f43",
+        "page_text_sha256": [
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4",
+          "9d36758ea6b31f4fa7a622a6d476e3244252542cf01fd642694d54df83cdad5b"
+        ],
+        "page_markers": [
+          "APPENDIX",
+          "SERVICE"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc",
+          "d7a7f61ccc779a6cfcec7e24586b826697ae3c38645d286a7b557f4c690546b0"
+        ]
+      },
+      "observations": {
+        "normalized_text_equal": false,
+        "page_marker_order_equal": false,
+        "metadata_equal": true,
+        "same_position_raster_equal": false
+      }
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.form-annotation",
+      "before": {
+        "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+        "bytes": 3981,
+        "normalized_text_sha256": "64bfbce4ad7e566c152b38b3a9dcf1dd30cacb6898e3520c01b58fec098e8311",
+        "page_text_sha256": [
+          "9d36758ea6b31f4fa7a622a6d476e3244252542cf01fd642694d54df83cdad5b",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "d7a7f61ccc779a6cfcec7e24586b826697ae3c38645d286a7b557f4c690546b0",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "after": {
+        "document_sha256": "b22a4cdc515cbc392a1dba81123c00728d5c607a3c7024e14378b734d98ddce0",
+        "bytes": 4643,
+        "normalized_text_sha256": "26ecd04bd4f87cc4555c8403cfb237f8e22d8553fadcc110e62b179398bda048",
+        "page_text_sha256": [
+          "193c5b9d9e02400eacede51c32fc5230a8b99e732b2454e180172bb392a301ec",
+          "2caa7a1707f6c4e72b3d60ea884720ae1f1de373dea122470316e32ce07f85f4"
+        ],
+        "page_markers": [
+          "SERVICE",
+          "APPENDIX"
+        ],
+        "metadata": {
+          "Title": "Synthetic comparison agreement",
+          "Author": "Open Document Alliance PDF Tools maintainers",
+          "Subject": "Synthetic PDF comparison evaluation fixture; contains no personal data",
+          "Keywords": "synthetic comparison",
+          "Creator": "scripts/eval-generate-comparison-fixtures.mjs",
+          "Producer": "pdf-lib 1.17.1",
+          "CreationDate": "Tue Jul 21 00:00:00 2026 UTC",
+          "ModDate": "Tue Jul 21 00:00:00 2026 UTC"
+        },
+        "raster_ppm_sha256_144_dpi": [
+          "38c9d822e14e7ed2175a82c52ae9e3f06c52ca1ef0f4b85d7d30bdc8b09dbc7e",
+          "099a983e7c14b8773af69075450165e4854967c613d373b3cb28595bc92f68dc"
+        ]
+      },
+      "observations": {
+        "normalized_text_equal": false,
+        "page_marker_order_equal": true,
+        "metadata_equal": true,
+        "same_position_raster_equal": false
+      }
+    }
+  ]
+}

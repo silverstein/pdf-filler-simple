@@ -1,0 +1,1290 @@
+{
+  "report_schema_version": 1,
+  "benchmark_id": "pdf-tools.comparison.v1",
+  "benchmark_version": "v0.1.0",
+  "mode": "default_material",
+  "claim_boundary": "Deterministic inspection through the current published PDF Tools MCP read/field/render primitives on Linux; no model, metadata-value tool, annotation-enumeration tool, or native Claude Desktop host.",
+  "benchmark_claim_ready": false,
+  "engine": {
+    "id": "pdf-tools-current-published-primitives",
+    "kind": "pdf_tools_mcp",
+    "version": "0.8.6",
+    "license": "MIT",
+    "provenance": "repository server/index.js; candidate MCPB SHA-256 b586221595cc3095d43f73daf3b66c6cc9695bddcd98365f46c445a597d9a1b4 not executed in this Linux lane",
+    "bundle_increment_bytes": 0,
+    "native_targets": [
+      "linux-x64"
+    ],
+    "network_requests": 0,
+    "external_processes": 1,
+    "renderer_fingerprint_sha256": "c2dd1a1d44aac6b47b58a18b9b578e2e863bb0b75cfd8dbf95346e841b4eace8"
+  },
+  "platform": {
+    "os": "linux",
+    "arch": "x64",
+    "node": "v22.22.3",
+    "host": "silvercloud-vm-stdio",
+    "model": "none",
+    "model_cost_usd": 0
+  },
+  "isolation": {
+    "truth_manifest_visible": true,
+    "shell_access": true,
+    "sut_network": "not_enforced",
+    "model_endpoint": null,
+    "allowed_directory_evidence_sha256": "1224de9a98e4790709c7db58c96b181f8a5292dee484b065848db27e05b22ba9"
+  },
+  "pairs": [
+    {
+      "pair_id": "pdf-tools.comparison.pair.identical",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "unavailable",
+        "metadata": "unavailable",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 1,
+          "relation": "same",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 2,
+          "relation": "same",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [],
+      "detected_events": [],
+      "presentation_decisions": [],
+      "timing_samples_ms": [
+        325.51628299999993,
+        373.676641,
+        312.2070189999995,
+        274.47803999999996,
+        340.3304680000001
+      ],
+      "warmup_ms": 2241.405095,
+      "warmup_cost": {
+        "tool_calls": 8,
+        "bytes_read": 7962,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": null
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7962,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "peak_rss_bytes": null,
+      "resource_measurement_status": "unavailable",
+      "rendered_pixels": 46531584,
+      "tool_calls": 48,
+      "bytes_read": 47772,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.material-text",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "unavailable",
+        "metadata": "unavailable",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 1,
+          "relation": "same",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 2,
+          "relation": "same",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [
+        {
+          "id": "evidence.reference.1",
+          "channel": "text",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "f005019dc391b02c329a224f4d62be4e116cad1e26c3d44936d1b033faa534d6",
+          "raw_result_sha256": "05bf9dd94e0175c31f27b3af02b629a88ac0d20b0de719543b8a1ab696a062da",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.2",
+          "channel": "text",
+          "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "4f399cb9824690836996645c1ea8af71d934705464d61d6c01ec0839841a33d4",
+          "raw_result_sha256": "9832bb3ab106b869ab0352eabd646f19fd8d968b3ddf51266001487eb9ab6eb0",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.3",
+          "channel": "semantic",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "f005019dc391b02c329a224f4d62be4e116cad1e26c3d44936d1b033faa534d6",
+          "raw_result_sha256": "05bf9dd94e0175c31f27b3af02b629a88ac0d20b0de719543b8a1ab696a062da",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.4",
+          "channel": "semantic",
+          "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "4f399cb9824690836996645c1ea8af71d934705464d61d6c01ec0839841a33d4",
+          "raw_result_sha256": "9832bb3ab106b869ab0352eabd646f19fd8d968b3ddf51266001487eb9ab6eb0",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.5",
+          "channel": "visual",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "31c84cf389deaf8e20d986074dc0b0edec284cb7334bd34d5ebbc048283c7c37",
+          "raw_result_sha256": "31c84cf389deaf8e20d986074dc0b0edec284cb7334bd34d5ebbc048283c7c37",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.6",
+          "channel": "visual",
+          "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "933a46a708d256ca4b6218b7dfa9b3ebb24a5a16912ba86884fa3006ea0c6860",
+          "raw_result_sha256": "933a46a708d256ca4b6218b7dfa9b3ebb24a5a16912ba86884fa3006ea0c6860",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.7",
+          "channel": "text",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "ffd7280513ce285e6d9dc8d0b7078c4f39c8fe0e69b0d0a87d8af2965e445d7a",
+          "raw_result_sha256": "1fb37099faf53d0a706033e5b818b82eab8281884486ef5e72a2e5a072f4c172",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.8",
+          "channel": "text",
+          "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "c801ee548dac5879e088b766b06af103cff00dcd1450789bdfe13972855cf5a3",
+          "raw_result_sha256": "17a2e33bbb2a07c9399e5dc22a76e34cebc7f0bfce6e68e9afbf4a6062ca0677",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.9",
+          "channel": "semantic",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "ffd7280513ce285e6d9dc8d0b7078c4f39c8fe0e69b0d0a87d8af2965e445d7a",
+          "raw_result_sha256": "1fb37099faf53d0a706033e5b818b82eab8281884486ef5e72a2e5a072f4c172",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.10",
+          "channel": "semantic",
+          "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "c801ee548dac5879e088b766b06af103cff00dcd1450789bdfe13972855cf5a3",
+          "raw_result_sha256": "17a2e33bbb2a07c9399e5dc22a76e34cebc7f0bfce6e68e9afbf4a6062ca0677",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.11",
+          "channel": "visual",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "31c84cf389deaf8e20d986074dc0b0edec284cb7334bd34d5ebbc048283c7c37",
+          "raw_result_sha256": "31c84cf389deaf8e20d986074dc0b0edec284cb7334bd34d5ebbc048283c7c37",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.12",
+          "channel": "visual",
+          "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "933a46a708d256ca4b6218b7dfa9b3ebb24a5a16912ba86884fa3006ea0c6860",
+          "raw_result_sha256": "933a46a708d256ca4b6218b7dfa9b3ebb24a5a16912ba86884fa3006ea0c6860",
+          "capture": "retained_tool_result"
+        }
+      ],
+      "detected_events": [
+        {
+          "id": "candidate.reference.1",
+          "salience": "material",
+          "confidence": 1,
+          "summary": "Text changes from \"Monthly fee: USD 10,000\" to \"Monthly fee: USD 12,500\".",
+          "facets": [
+            {
+              "channel": "semantic",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.3",
+              "after_evidence_id": "evidence.reference.4"
+            },
+            {
+              "channel": "text",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.1",
+              "after_evidence_id": "evidence.reference.2"
+            },
+            {
+              "channel": "visual",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.5",
+              "after_evidence_id": "evidence.reference.6"
+            }
+          ]
+        },
+        {
+          "id": "candidate.reference.2",
+          "salience": "material",
+          "confidence": 1,
+          "summary": "Text changes from \"Termination notice: 30 days\" to \"Termination notice: 15 days\".",
+          "facets": [
+            {
+              "channel": "semantic",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.9",
+              "after_evidence_id": "evidence.reference.10"
+            },
+            {
+              "channel": "text",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.7",
+              "after_evidence_id": "evidence.reference.8"
+            },
+            {
+              "channel": "visual",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.11",
+              "after_evidence_id": "evidence.reference.12"
+            }
+          ]
+        }
+      ],
+      "presentation_decisions": [
+        {
+          "event_id": "candidate.reference.1",
+          "mode": "default_material",
+          "disposition": "report",
+          "rationale": "Deterministic material policy for the shared-library reference baseline."
+        },
+        {
+          "event_id": "candidate.reference.2",
+          "mode": "default_material",
+          "disposition": "report",
+          "rationale": "Deterministic material policy for the shared-library reference baseline."
+        }
+      ],
+      "timing_samples_ms": [
+        277.4153150000002,
+        307.31878399999914,
+        321.42707399999927,
+        291.5248539999993,
+        286.7214780000013
+      ],
+      "warmup_ms": 318.03631900000073,
+      "warmup_cost": {
+        "tool_calls": 8,
+        "bytes_read": 7967,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": null
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7967,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "peak_rss_bytes": null,
+      "resource_measurement_status": "unavailable",
+      "rendered_pixels": 46531584,
+      "tool_calls": 48,
+      "bytes_read": 47802,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.visual-status",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "a74469341ee92cf83dfd292e887fb7bce77ba5c14eaeac9750873e14a06d8717",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "unavailable",
+        "metadata": "unavailable",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 1,
+          "relation": "same",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 2,
+          "relation": "same",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [
+        {
+          "id": "evidence.reference.1",
+          "channel": "visual",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            236,
+            140,
+            36
+          ],
+          "value_sha256": "cb4f9f2f5e37ae1cca243e700484abcc48fc2403f5b41758bce6d0c72aaa8214",
+          "raw_result_sha256": "cb4f9f2f5e37ae1cca243e700484abcc48fc2403f5b41758bce6d0c72aaa8214",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.2",
+          "channel": "visual",
+          "document_sha256": "a74469341ee92cf83dfd292e887fb7bce77ba5c14eaeac9750873e14a06d8717",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            72,
+            236,
+            140,
+            36
+          ],
+          "value_sha256": "36c622385d5f0b41cb7b44e656c67f94c5417ebf1ecea5f0a71352a07aa4ab80",
+          "raw_result_sha256": "36c622385d5f0b41cb7b44e656c67f94c5417ebf1ecea5f0a71352a07aa4ab80",
+          "capture": "retained_tool_result"
+        }
+      ],
+      "detected_events": [
+        {
+          "id": "candidate.reference.1",
+          "salience": "minor",
+          "confidence": 1,
+          "summary": "Rendered appearance changes while extracted text remains equal.",
+          "facets": [
+            {
+              "channel": "visual",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.1",
+              "after_evidence_id": "evidence.reference.2"
+            }
+          ]
+        }
+      ],
+      "presentation_decisions": [
+        {
+          "event_id": "candidate.reference.1",
+          "mode": "default_material",
+          "disposition": "report",
+          "rationale": "Deterministic minor policy for the shared-library reference baseline."
+        }
+      ],
+      "timing_samples_ms": [
+        290.6454789999989,
+        315.9422799999993,
+        312.6771179999996,
+        270.76349800000025,
+        318.58797799999957
+      ],
+      "warmup_ms": 309.3678540000001,
+      "warmup_cost": {
+        "tool_calls": 8,
+        "bytes_read": 7964,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": null
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "peak_rss_bytes": null,
+      "resource_measurement_status": "unavailable",
+      "rendered_pixels": 46531584,
+      "tool_calls": 48,
+      "bytes_read": 47784,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.layout-noise",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "22b258147cc852308f3a6663d251601c5ad30c4aa6e923137ba958e46eb67863",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "unavailable",
+        "metadata": "unavailable",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 1,
+          "relation": "same",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 2,
+          "relation": "same",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [
+        {
+          "id": "evidence.reference.1",
+          "channel": "visual",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "31c84cf389deaf8e20d986074dc0b0edec284cb7334bd34d5ebbc048283c7c37",
+          "raw_result_sha256": "31c84cf389deaf8e20d986074dc0b0edec284cb7334bd34d5ebbc048283c7c37",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.2",
+          "channel": "visual",
+          "document_sha256": "22b258147cc852308f3a6663d251601c5ad30c4aa6e923137ba958e46eb67863",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "a589e2cde26aa13ea885ece1464a4ba903e19eef4e5690120fbc7ad7e6f21f58",
+          "raw_result_sha256": "a589e2cde26aa13ea885ece1464a4ba903e19eef4e5690120fbc7ad7e6f21f58",
+          "capture": "retained_tool_result"
+        }
+      ],
+      "detected_events": [
+        {
+          "id": "candidate.reference.1",
+          "salience": "noise",
+          "confidence": 1,
+          "summary": "Layout changes while normalized text remains equal.",
+          "facets": [
+            {
+              "channel": "visual",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.1",
+              "after_evidence_id": "evidence.reference.2"
+            }
+          ]
+        }
+      ],
+      "presentation_decisions": [
+        {
+          "event_id": "candidate.reference.1",
+          "mode": "default_material",
+          "disposition": "suppress",
+          "rationale": "Deterministic noise policy for the shared-library reference baseline."
+        }
+      ],
+      "timing_samples_ms": [
+        328.11611900000025,
+        320.3121080000001,
+        289.84584299999915,
+        289.778092999999,
+        312.28172900000027
+      ],
+      "warmup_ms": 332.0839500000002,
+      "warmup_cost": {
+        "tool_calls": 8,
+        "bytes_read": 8174,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": null
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8174,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "peak_rss_bytes": null,
+      "resource_measurement_status": "unavailable",
+      "rendered_pixels": 46531584,
+      "tool_calls": 48,
+      "bytes_read": 49044,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.metadata-only",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "c5fb3b62c4e6db7e4259ef98b6c1820660b75312240468e8cc97373ac671996b",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "unavailable",
+        "metadata": "unavailable",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 1,
+          "relation": "same",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 2,
+          "relation": "same",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [],
+      "detected_events": [],
+      "presentation_decisions": [],
+      "timing_samples_ms": [
+        303.9925920000005,
+        332.39573799999926,
+        275.3528049999986,
+        277.47971400000097,
+        272.10953999999765
+      ],
+      "warmup_ms": 303.5232930000002,
+      "warmup_cost": {
+        "tool_calls": 8,
+        "bytes_read": 8006,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": null
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8006,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "peak_rss_bytes": null,
+      "resource_measurement_status": "unavailable",
+      "rendered_pixels": 46531584,
+      "tool_calls": 48,
+      "bytes_read": 48036,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.pages-reordered",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "4eb4f4052ffdf8a376faec575f5dcac846fe23ef180c6b1c23a0434425b8b138",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "unavailable",
+        "metadata": "unavailable",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 2,
+          "relation": "moved",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 1,
+          "relation": "moved",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [
+        {
+          "id": "evidence.reference.1",
+          "channel": "structure",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "713bb07056fcb2151d3942b679cc51afdb4f005ae9baf7456ff5a2731c6b55f0",
+          "raw_result_sha256": "713bb07056fcb2151d3942b679cc51afdb4f005ae9baf7456ff5a2731c6b55f0",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.2",
+          "channel": "structure",
+          "document_sha256": "4eb4f4052ffdf8a376faec575f5dcac846fe23ef180c6b1c23a0434425b8b138",
+          "page": 2,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "73bba3c090e2a3bd3c289a14590a42df6d4f0df7c605c0f1a87805566a8080c4",
+          "raw_result_sha256": "73bba3c090e2a3bd3c289a14590a42df6d4f0df7c605c0f1a87805566a8080c4",
+          "capture": "retained_tool_result"
+        }
+      ],
+      "detected_events": [
+        {
+          "id": "candidate.reference.1",
+          "salience": "material",
+          "confidence": 1,
+          "summary": "Page order changes between the two documents",
+          "facets": [
+            {
+              "channel": "structure",
+              "operation": "moved",
+              "before_evidence_id": "evidence.reference.1",
+              "after_evidence_id": "evidence.reference.2"
+            }
+          ]
+        }
+      ],
+      "presentation_decisions": [
+        {
+          "event_id": "candidate.reference.1",
+          "mode": "default_material",
+          "disposition": "report",
+          "rationale": "Deterministic material policy for the shared-library reference baseline."
+        }
+      ],
+      "timing_samples_ms": [
+        308.5919380000014,
+        334.1490190000004,
+        341.490812,
+        296.19100999999864,
+        273.6002129999979
+      ],
+      "warmup_ms": 312.02210000000196,
+      "warmup_cost": {
+        "tool_calls": 8,
+        "bytes_read": 7964,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": null
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 7964,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "peak_rss_bytes": null,
+      "resource_measurement_status": "unavailable",
+      "rendered_pixels": 46531584,
+      "tool_calls": 48,
+      "bytes_read": 47784,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    },
+    {
+      "pair_id": "pdf-tools.comparison.pair.form-annotation",
+      "before_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "after_sha256": "b22a4cdc515cbc392a1dba81123c00728d5c607a3c7024e14378b734d98ddce0",
+      "status": "completed",
+      "channel_status": {
+        "semantic": "supported",
+        "text": "supported",
+        "structure": "supported",
+        "form_field": "supported",
+        "annotation": "unavailable",
+        "metadata": "unavailable",
+        "visual": "supported"
+      },
+      "alignments": [
+        {
+          "before_page": 1,
+          "after_page": 1,
+          "relation": "same",
+          "anchor": "PAGE-ID: SERVICE"
+        },
+        {
+          "before_page": 2,
+          "after_page": 2,
+          "relation": "same",
+          "anchor": "PAGE-ID: APPENDIX"
+        }
+      ],
+      "observations": [
+        {
+          "id": "evidence.reference.1",
+          "channel": "form_field",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+          "raw_result_sha256": "ce78f0d8046a7cc74408e6122d90b1baaac65d2829b04e75fd3dc12be1e67f0a",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.2",
+          "channel": "form_field",
+          "document_sha256": "b22a4cdc515cbc392a1dba81123c00728d5c607a3c7024e14378b734d98ddce0",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "87b42e40c2a290e01d87b721bf381c3c5e259d1eb0a4660e41fdbf8bc73f7ddd",
+          "raw_result_sha256": "65e94ad0207e0190b6b74ce3d36a451a58c9e2a2c80d02f80d4f5f89f9c4ba30",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.3",
+          "channel": "visual",
+          "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "31c84cf389deaf8e20d986074dc0b0edec284cb7334bd34d5ebbc048283c7c37",
+          "raw_result_sha256": "31c84cf389deaf8e20d986074dc0b0edec284cb7334bd34d5ebbc048283c7c37",
+          "capture": "retained_tool_result"
+        },
+        {
+          "id": "evidence.reference.4",
+          "channel": "visual",
+          "document_sha256": "b22a4cdc515cbc392a1dba81123c00728d5c607a3c7024e14378b734d98ddce0",
+          "page": 1,
+          "page_box": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "rotation": 0,
+          "region": [
+            0,
+            0,
+            612,
+            792
+          ],
+          "value_sha256": "73d340845dc93baafe625bbfc2087b85c45cd86a2b4113e3d174fddd0630da9d",
+          "raw_result_sha256": "73d340845dc93baafe625bbfc2087b85c45cd86a2b4113e3d174fddd0630da9d",
+          "capture": "retained_tool_result"
+        }
+      ],
+      "detected_events": [
+        {
+          "id": "candidate.reference.1",
+          "salience": "material",
+          "confidence": 1,
+          "summary": "ReviewStatus changes from \"\" to \"Approved\".",
+          "facets": [
+            {
+              "channel": "form_field",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.1",
+              "after_evidence_id": "evidence.reference.2"
+            },
+            {
+              "channel": "visual",
+              "operation": "modified",
+              "before_evidence_id": "evidence.reference.3",
+              "after_evidence_id": "evidence.reference.4"
+            }
+          ]
+        }
+      ],
+      "presentation_decisions": [
+        {
+          "event_id": "candidate.reference.1",
+          "mode": "default_material",
+          "disposition": "report",
+          "rationale": "Deterministic material policy for the shared-library reference baseline."
+        }
+      ],
+      "timing_samples_ms": [
+        328.7975159999987,
+        299.2073759999985,
+        309.3422439999995,
+        293.5387630000005,
+        293.96884200000204
+      ],
+      "warmup_ms": 348.2888090000015,
+      "warmup_cost": {
+        "tool_calls": 8,
+        "bytes_read": 8624,
+        "rendered_pixels": 7755264,
+        "peak_rss_bytes": null
+      },
+      "iteration_costs": [
+        {
+          "tool_calls": 8,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        },
+        {
+          "tool_calls": 8,
+          "bytes_read": 8624,
+          "rendered_pixels": 7755264,
+          "peak_rss_bytes": null
+        }
+      ],
+      "peak_rss_bytes": null,
+      "resource_measurement_status": "unavailable",
+      "rendered_pixels": 46531584,
+      "tool_calls": 48,
+      "bytes_read": 51744,
+      "source_immutable": true,
+      "undeclared_requests": [],
+      "model_transport_requests": 0
+    }
+  ]
+}

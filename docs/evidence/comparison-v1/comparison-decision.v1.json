@@ -1,0 +1,385 @@
+{
+  "schema_version": 1,
+  "decision_id": "pdf-tools.comparison-decision.v1",
+  "benchmark_id": "pdf-tools.comparison.v1",
+  "benchmark_version": "v0.1.0",
+  "generated_at": "2026-07-21T13:52:49.594Z",
+  "source_revision": "16d46ab649fcd39e5980189602e98064c14570cc",
+  "source_state": {
+    "clean_except_generated_evidence": true,
+    "excluded_paths": [
+      "docs/evidence/comparison-v1",
+      "node_modules"
+    ],
+    "dirty_source_paths": []
+  },
+  "status": "measurement_blocked",
+  "benchmark_claim_ready": false,
+  "claim_boundary": "Provisional measurements on seven public synthetic pairs on Linux. Neither lane enforced truth, shell, or network isolation, and the controller registry is unsigned. The shared-library result is not independent confirmation; the product lane is not the packed MCPB or native Claude Desktop; Poppler is an unscored external sensor; measured agent trials remain pending. No product architecture or release is approved by this artifact.",
+  "frozen_release_candidate": {
+    "mcpb_sha256": "b586221595cc3095d43f73daf3b66c6cc9695bddcd98365f46c445a597d9a1b4",
+    "bytes": 72456666,
+    "modified_by_this_benchmark": false
+  },
+  "source_bindings": [
+    {
+      "path": "docs/COMPARISON_EVALUATION.md",
+      "sha256": "b82edfd963a4bf1c0bc96de40c21419e9059048d7b679dad59b9856f0c7d6d17",
+      "bytes": 24559
+    },
+    {
+      "path": "scripts/eval-generate-comparison-fixtures.mjs",
+      "sha256": "76ab90cb85cd0e4fa89429b7e6a7a0017d9324e12f9bfbb5f7e947a60891f6f6",
+      "bytes": 6675
+    },
+    {
+      "path": "scripts/eval-run-comparison-baselines.mjs",
+      "sha256": "3804f599218dab323bc54b44395e4f7e1a2cc9edc21f81a1ded5985f4e7b9beb",
+      "bytes": 9356
+    },
+    {
+      "path": "scripts/eval-build-comparison-decision.mjs",
+      "sha256": "a2c3118ccdee0a2085323136758fd2df5c0e5aad5476f4baccc576e690d3ddf9",
+      "bytes": 14528
+    },
+    {
+      "path": "server/index.js",
+      "sha256": "5d9cecebb4a992c7c3a48b86878cae12ad749bd825a2c83d92daacb893e9db3c",
+      "bytes": 198541
+    },
+    {
+      "path": "test/fixtures/eval/comparison/manifest.v1.json",
+      "sha256": "d37ef12e1e760a16a92a009514d9e90ea68dbe00ea89610319273d3d669c0ac2",
+      "bytes": 23084
+    },
+    {
+      "path": "test/fixtures/eval/comparison/manifest.schema.json",
+      "sha256": "00b5e6361a00f132a259ce896fb7592e0b2812f573a597893c8f8c2aa8687156",
+      "bytes": 9052
+    },
+    {
+      "path": "test/fixtures/eval/comparison/report.schema.json",
+      "sha256": "2537a6d03ad63f03fd51be7bb712e4efa7f871cd1c287f82e57d0a9b68159904",
+      "bytes": 10026
+    },
+    {
+      "path": "test/fixtures/eval/comparison/decision.schema.json",
+      "sha256": "9ddcfb042bd64ff5135db6ed3d539a3ce12fbf02f429c184586b1fdbcd379866",
+      "bytes": 8490
+    },
+    {
+      "path": "test/eval/comparison-manifest.js",
+      "sha256": "ae17807dff4d4ac2ffc2488a9a0a3e3424a478c9f4dc25cdde96bc223c5ff0cd",
+      "bytes": 19248
+    },
+    {
+      "path": "test/eval/comparison-observations.js",
+      "sha256": "f589a7c1fec6566ca8930e5fb84e76668a4f61c8f75bf50291fb6485d9196be4",
+      "bytes": 13741
+    },
+    {
+      "path": "test/eval/comparison-observation-registry.js",
+      "sha256": "22796b05ef7da9e472b9b022fa7a5fd38a0362a695d48790721d064be228ca1e",
+      "bytes": 4232
+    },
+    {
+      "path": "test/eval/comparison-scorer.js",
+      "sha256": "93629757daa4e703bb7a80087c8e35081dafea26743fbcc9deb11116bec1ce0f",
+      "bytes": 41821
+    },
+    {
+      "path": "test/eval/comparison-reference-baseline.js",
+      "sha256": "9e8f2ead5e6868755c18a4e594160fd11ba50032b328d9b789214ef516fbebf7",
+      "bytes": 15418
+    },
+    {
+      "path": "test/eval/comparison-product-baseline.js",
+      "sha256": "94774e35caeb927beaf36ed7186d898de9b7c9b6e0b4cb6bad47434b6a529424",
+      "bytes": 8648
+    },
+    {
+      "path": "test/eval/comparison-poppler-baseline.js",
+      "sha256": "c3fb86c723cc007d4040be55cc639f17194f2d45069a058928d059bc998911d3",
+      "bytes": 4770
+    }
+  ],
+  "evidence_bindings": [
+    {
+      "path": "docs/evidence/comparison-v1/shared-library-report.v1.json",
+      "sha256": "60aff691da35801372dab85c75edf25468b5503154f549c6e1b20b3d8bcf32ec",
+      "bytes": 43790
+    },
+    {
+      "path": "docs/evidence/comparison-v1/shared-library-score.v1.json",
+      "sha256": "24e03c19a69f13e30878db2eddedba452b6bec6f2f6db6aeeccd45e9077937d8",
+      "bytes": 35028
+    },
+    {
+      "path": "docs/evidence/comparison-v1/shared-library-observation-registry.v1.json",
+      "sha256": "fdb73baba5f0f0faaa730747c82c1657d0fc730885ecbdea97cd6e09f34a0b36",
+      "bytes": 20015
+    },
+    {
+      "path": "docs/evidence/comparison-v1/current-product-report.v1.json",
+      "sha256": "c902b2a22c764b1a38d2f37e43110477a518954f4ade116f68aece422d48dc1a",
+      "bytes": 38168
+    },
+    {
+      "path": "docs/evidence/comparison-v1/current-product-score.v1.json",
+      "sha256": "6116c958977a547f6c377da67c1d4e60cd1c27b48e93baeab81b0fdde03c1e7e",
+      "bytes": 34865
+    },
+    {
+      "path": "docs/evidence/comparison-v1/current-product-observation-registry.v1.json",
+      "sha256": "c2754ad2ecd7ef2e4a51b8358f5da30dfde5c0bb4eb6387be29f0f632f8bf51b",
+      "bytes": 16456
+    },
+    {
+      "path": "docs/evidence/comparison-v1/poppler-sensor.v1.json",
+      "sha256": "d21e67e5ff30968e413bc5a2a6ad65b234df1f28ac68ed49d353579824609fe3",
+      "bytes": 19956
+    },
+    {
+      "path": "docs/evidence/comparison-v1/run-index.v1.json",
+      "sha256": "33a8ecd90bb3eff9c0f683a026ae1f2a08c7c84bb4c85e0990378bddedb195d0",
+      "bytes": 2686
+    }
+  ],
+  "measured_results": {
+    "shared_library_reference": {
+      "passed": false,
+      "isolation_passed": false,
+      "pairs": "7/7",
+      "event_f1": 1,
+      "evidence_completeness": 1,
+      "independence": false
+    },
+    "current_published_primitives": {
+      "passed": false,
+      "isolation_passed": false,
+      "pairs": "1/7",
+      "event_f1": 0.13333333333333333,
+      "evidence_completeness": 0.07407407407407407,
+      "material_event_recall": 0.3333333333333333,
+      "model_cost_usd": 0,
+      "network_requests": 0
+    },
+    "poppler_external_sensor": {
+      "engine_status": "completed",
+      "pairs_observed": 7,
+      "event_level_scored": false,
+      "bundled": false
+    },
+    "agent_trials": {
+      "status": "pending_generic_render_observation_and_three_predeclared_runs",
+      "pass_rate": null,
+      "variance": null,
+      "native_host": false
+    }
+  },
+  "provisional_research_directions": {
+    "channels": [
+      {
+        "channel": "semantic",
+        "shared_library": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "current_product": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "recommendation": "Research deterministic typed change atoms first; evaluate a calibrated model only for relation, materiality, and explanation."
+      },
+      {
+        "channel": "text",
+        "shared_library": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "current_product": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "recommendation": "Prototype localized text spans with bidirectional source regions; page-level text alone is insufficient evidence."
+      },
+      {
+        "channel": "structure",
+        "shared_library": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "current_product": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "recommendation": "Evaluate the current page-marker/order primitive against ambiguous, inserted, deleted, and duplicate pages."
+      },
+      {
+        "channel": "form_field",
+        "shared_library": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "current_product": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "recommendation": "Prototype field widget page, rectangle, flags, options, and appearance/value disagreement as a read-only observation."
+      },
+      {
+        "channel": "annotation",
+        "shared_library": {
+          "tp": 1,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "current_product": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 1,
+          "precision": null,
+          "recall": 0,
+          "f1": 0
+        },
+        "recommendation": "Prototype read-only annotation enumeration with subtype, content/action, flags, page, rectangle/quadpoints, and stable raw digest."
+      },
+      {
+        "channel": "metadata",
+        "shared_library": {
+          "tp": 2,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "current_product": {
+          "tp": 0,
+          "fp": 0,
+          "fn": 2,
+          "precision": null,
+          "recall": 0,
+          "f1": 0
+        },
+        "recommendation": "Prototype actual Info/XMP values and disagreement reporting; the current summary is not metadata evidence."
+      },
+      {
+        "channel": "visual",
+        "shared_library": {
+          "tp": 5,
+          "fp": 0,
+          "fn": 0,
+          "precision": 1,
+          "recall": 1,
+          "f1": 1
+        },
+        "current_product": {
+          "tp": 0,
+          "fp": 5,
+          "fn": 5,
+          "precision": 0,
+          "recall": 0,
+          "f1": 0
+        },
+        "recommendation": "Version generic retained render observations with exact image/result digest, source hash, page, box, rotation, region, renderer, dimensions, and scale."
+      }
+    ],
+    "tool_primitives": "Evaluate a local deterministic compare_pdfs prototype over versioned observation interfaces. It should return raw typed changes, coverage, uncertainty, detector versions, reversible suppression, and evidence on both documents. Do not put a model inside the MCPB without separate evidence.",
+    "agent_explanation": "Evaluate whether the host agent can rank and explain deterministic change atoms while preserving uncertainty and unavailable channels and citing evidence IDs. Model prose cannot repair deterministic misses.",
+    "viewer_ux": "Research a side-by-side review surface with synchronized pages, overlays, filters, raw-versus-normalized views, and evidence navigation before claiming end-user comparison quality."
+  },
+  "prioritized_actions": [
+    {
+      "priority": 0,
+      "action": "build_and_measure",
+      "item": "generic_render_observation",
+      "rationale": "The current product detected raster differences but scored 0 TP / 5 FN because encoded PNG outputs are not retained canonical region evidence."
+    },
+    {
+      "priority": 0,
+      "action": "build_and_measure",
+      "item": "metadata_annotation_and_field_geometry_observations",
+      "rationale": "Current product misses are structurally unavoidable without these read-only interfaces."
+    },
+    {
+      "priority": 1,
+      "action": "prototype_and_benchmark",
+      "item": "deterministic_compare_pdfs",
+      "rationale": "The provisional shared-library composition detected 9 events while published primitives detected 1; this small unisolated slice motivates measurement, not a shipping decision."
+    },
+    {
+      "priority": 1,
+      "action": "research_and_test",
+      "item": "side_by_side_evidence_viewer",
+      "rationale": "Human verification requires source-linked before/after overlays and reversible noise filters."
+    },
+    {
+      "priority": 1,
+      "action": "measure",
+      "item": "three_predeclared_agent_trials_then_twenty_release_trials",
+      "rationale": "The benchmark cannot claim agent reliability until generic render observations are ingested through the existing trust boundary."
+    },
+    {
+      "priority": 2,
+      "action": "research",
+      "item": "PDFBox_qpdf_and_64_pair_expansion",
+      "rationale": "Poppler confirms independent sensor availability but is not an event oracle; broader independent and adversarial coverage is required."
+    },
+    {
+      "priority": 3,
+      "action": "defer",
+      "item": "pdfjs_upgrade_or_bundled_external_engine",
+      "rationale": "The protected PDF.js 5.4.624 pin remains necessary for Claude Desktop, and Poppler must not enter the MIT MCPB without separate compatibility and license review."
+    }
+  ],
+  "blockers": [
+    "truth, shell, and network isolation are not OS-enforced for either scored lane",
+    "the controller observation registry has no independent signature or attestation",
+    "three predeclared agent trials have not crossed the trajectory trust boundary",
+    "native Claude Desktop and Windows evidence are absent",
+    "the corpus is a seven-pair public synthetic slice, not a release corpus"
+  ],
+  "release_gates": {
+    "product_code_changed": false,
+    "rebuild_required": false,
+    "native_claude_desktop_required_before_release": true,
+    "windows_required_before_release": true,
+    "human_approval_required": true
+  }
+}
