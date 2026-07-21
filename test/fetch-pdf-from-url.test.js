@@ -8,10 +8,20 @@ import {
   findUniquePath,
   isPrivateHost,
 } from "../server/helpers.js";
+import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const EXAMPLE_PDF = path.join(__dirname, "..", "example-fw9.pdf");
-const TMP_DIR = path.join(__dirname, "..", ".test-tmp-fetch");
+const REPO_ROOT = path.join(__dirname, "..");
+const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
+let TMP_DIR;
+
+beforeAll(async () => {
+  TMP_DIR = await createTestTempDirectory(REPO_ROOT, "fetch");
+});
+
+afterAll(async () => {
+  await removeTestTempDirectory(TMP_DIR);
+});
 
 // Build a fake fetch that returns a given body + headers + status.
 function makeFakeFetch({ body, contentType = "application/pdf", status = 200, statusText = "OK" }) {
@@ -85,13 +95,6 @@ describe("isPrivateHost", () => {
 });
 
 describe("findUniquePath", () => {
-  beforeAll(async () => {
-    await fs.mkdir(TMP_DIR, { recursive: true });
-  });
-  afterAll(async () => {
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
-  });
-
   it("returns target unchanged when file doesn't exist", async () => {
     const target = path.join(TMP_DIR, "brand-new.pdf");
     expect(await findUniquePath(target)).toBe(target);
@@ -115,11 +118,7 @@ describe("downloadPdfFromUrl", () => {
   let examplePdfBuffer;
 
   beforeAll(async () => {
-    await fs.mkdir(TMP_DIR, { recursive: true });
     examplePdfBuffer = await fs.readFile(EXAMPLE_PDF);
-  });
-  afterAll(async () => {
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
   });
 
   it("downloads a valid PDF and returns metadata", async () => {
@@ -312,11 +311,7 @@ describe("downloadPdfFromUrl — redirect SSRF protection", () => {
   let examplePdfBuffer;
 
   beforeAll(async () => {
-    await fs.mkdir(TMP_DIR, { recursive: true });
     examplePdfBuffer = await fs.readFile(EXAMPLE_PDF);
-  });
-  afterAll(async () => {
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
   });
 
   it("rejects redirect to AWS metadata endpoint (169.254.169.254)", async () => {

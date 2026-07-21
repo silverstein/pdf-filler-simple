@@ -5,13 +5,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { parseAllowedDirectoryArgs } from "../server/helpers.js";
+import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TMP_DIR = path.join(REPO_ROOT, ".test-tmp-allowed-directories");
-const ALLOWED_DIR = path.join(TMP_DIR, "allowed");
-const PROFILE_DIR = path.join(TMP_DIR, "profiles");
+let TMP_DIR;
+let ALLOWED_DIR;
+let PROFILE_DIR;
 
 describe("parseAllowedDirectoryArgs", () => {
   it("returns all MCPB-expanded directories after the explicit marker", () => {
@@ -44,6 +45,9 @@ describe("allowed_directories sandbox", () => {
   let allowedPdfPath;
 
   beforeAll(async () => {
+    TMP_DIR = await createTestTempDirectory(REPO_ROOT, "allowed-directories");
+    ALLOWED_DIR = path.join(TMP_DIR, "allowed");
+    PROFILE_DIR = path.join(TMP_DIR, "profiles");
     await fs.mkdir(ALLOWED_DIR, { recursive: true });
     await fs.mkdir(PROFILE_DIR, { recursive: true });
     allowedPdfPath = path.join(ALLOWED_DIR, "example-fw9.pdf");
@@ -64,8 +68,11 @@ describe("allowed_directories sandbox", () => {
   }, 30_000);
 
   afterAll(async () => {
-    await transport?.close();
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
+    try {
+      await transport?.close();
+    } finally {
+      await removeTestTempDirectory(TMP_DIR);
+    }
   });
 
   it("rejects a user path outside the configured allowlist", async () => {
@@ -120,15 +127,19 @@ describe("allowed_directories sandbox", () => {
 describe("allowed_directories MCPB argument expansion", () => {
   let client;
   let transport;
-  const ARG_TMP_DIR = path.join(REPO_ROOT, ".test-tmp-allowed-directory-args");
-  const FIRST_ALLOWED_DIR = path.join(ARG_TMP_DIR, "first-allowed");
-  const SECOND_ALLOWED_DIR = path.join(ARG_TMP_DIR, "second-allowed");
-  const ARG_PROFILE_DIR = path.join(ARG_TMP_DIR, "profiles");
+  let argTempDirectory;
+  let firstAllowedDirectory;
+  let secondAllowedDirectory;
+  let argumentProfileDirectory;
 
   beforeAll(async () => {
-    await fs.mkdir(FIRST_ALLOWED_DIR, { recursive: true });
-    await fs.mkdir(SECOND_ALLOWED_DIR, { recursive: true });
-    await fs.copyFile(EXAMPLE_PDF, path.join(SECOND_ALLOWED_DIR, "argument-example.pdf"));
+    argTempDirectory = await createTestTempDirectory(REPO_ROOT, "allowed-directory-args");
+    firstAllowedDirectory = path.join(argTempDirectory, "first-allowed");
+    secondAllowedDirectory = path.join(argTempDirectory, "second-allowed");
+    argumentProfileDirectory = path.join(argTempDirectory, "profiles");
+    await fs.mkdir(firstAllowedDirectory, { recursive: true });
+    await fs.mkdir(secondAllowedDirectory, { recursive: true });
+    await fs.copyFile(EXAMPLE_PDF, path.join(secondAllowedDirectory, "argument-example.pdf"));
 
     client = new Client({ name: "pdf-tools-argument-allowlist-test-client", version: "1.0.0" });
     transport = new StdioClientTransport({
@@ -136,13 +147,13 @@ describe("allowed_directories MCPB argument expansion", () => {
       args: [
         path.join(REPO_ROOT, "server", "index.js"),
         "--allowed-directories",
-        FIRST_ALLOWED_DIR,
-        SECOND_ALLOWED_DIR,
+        firstAllowedDirectory,
+        secondAllowedDirectory,
       ],
       cwd: REPO_ROOT,
       env: {
         ALLOWED_DIRECTORIES: "${user_config.allowed_directories}",
-        DEFAULT_PROFILES_DIR: ARG_PROFILE_DIR,
+        DEFAULT_PROFILES_DIR: argumentProfileDirectory,
       },
       stderr: "pipe",
     });
@@ -150,15 +161,18 @@ describe("allowed_directories MCPB argument expansion", () => {
   }, 30_000);
 
   afterAll(async () => {
-    await transport?.close();
-    await fs.rm(ARG_TMP_DIR, { recursive: true, force: true });
+    try {
+      await transport?.close();
+    } finally {
+      await removeTestTempDirectory(argTempDirectory);
+    }
   });
 
   it("prefers expanded arguments over an unresolved environment template", async () => {
     const result = await client.callTool({
       name: "list_pdfs",
       arguments: {
-        directory: SECOND_ALLOWED_DIR,
+        directory: secondAllowedDirectory,
       },
     });
 

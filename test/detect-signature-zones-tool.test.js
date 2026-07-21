@@ -4,11 +4,12 @@ import { fileURLToPath } from "url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TMP_DIR = path.join(REPO_ROOT, ".test-tmp-detect-zones-tool");
+let TMP_DIR;
 
 function textFromToolResult(result) {
   return result.content
@@ -22,8 +23,7 @@ describe("detect_signature_zones tool result", () => {
   let transport;
 
   beforeAll(async () => {
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
-    await fs.mkdir(TMP_DIR, { recursive: true });
+    TMP_DIR = await createTestTempDirectory(REPO_ROOT, "detect-zones-tool");
 
     client = new Client({ name: "pdf-tools-detect-zones-tool-test-client", version: "1.0.0" });
     transport = new StdioClientTransport({
@@ -40,8 +40,11 @@ describe("detect_signature_zones tool result", () => {
   }, 30_000);
 
   afterAll(async () => {
-    await transport?.close();
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
+    try {
+      await transport?.close();
+    } finally {
+      await removeTestTempDirectory(TMP_DIR);
+    }
   });
 
   it("includes exact model-readable coordinates in the visible text response", async () => {

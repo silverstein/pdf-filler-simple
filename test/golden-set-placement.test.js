@@ -15,7 +15,7 @@
  * Run with OFFLINE=1 to skip URL-based fixtures.
  */
 
-import { describe, it, expect, beforeAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { createHash } from "crypto";
 import fs from "fs/promises";
@@ -26,10 +26,12 @@ import {
   downloadPdfFromUrl,
   computeIoU,
 } from "../server/helpers.js";
+import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = path.join(__dirname, "..");
 const FIXTURES_DIR = path.join(__dirname, "fixtures", "golden-forms");
-const CACHE_DIR = path.join(__dirname, "..", ".test-tmp-golden");
+let CACHE_DIR;
 const OFFLINE = process.env.OFFLINE === "1";
 const RELEASE_GATES = process.env.RELEASE_GATES === "1";
 
@@ -139,10 +141,15 @@ describe("Golden-set signature-zone placement", () => {
   let expected;
 
   beforeAll(async () => {
+    CACHE_DIR = await createTestTempDirectory(REPO_ROOT, "golden");
     const raw = await fs.readFile(path.join(FIXTURES_DIR, "expected.json"), "utf8");
     expected = JSON.parse(raw);
     await loadPdfjs();
   }, 30_000);
+
+  afterAll(async () => {
+    await removeTestTempDirectory(CACHE_DIR);
+  });
 
   it("expected.json is well-formed", () => {
     expect(expected.fixtures).toBeDefined();

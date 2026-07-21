@@ -3,10 +3,12 @@ import { PDFDocument, degrees as pdfDegrees } from "pdf-lib";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
+import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const EXAMPLE_PDF = path.join(__dirname, "..", "example-fw9.pdf");
-const TMP_DIR = path.join(__dirname, "..", ".test-tmp");
+const REPO_ROOT = path.join(__dirname, "..");
+const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
+let TMP_DIR;
 
 // Dynamically import the tool handler by loading the full module isn't practical
 // since server/index.js starts the MCP server. Instead, we test the logic directly
@@ -69,14 +71,14 @@ describe("apply_page_plan", () => {
   let originalPageCount;
 
   beforeAll(async () => {
-    await fs.mkdir(TMP_DIR, { recursive: true });
+    TMP_DIR = await createTestTempDirectory(REPO_ROOT, "page-plan");
     const pdfBytes = await fs.readFile(EXAMPLE_PDF);
     const doc = await PDFDocument.load(pdfBytes, { ignoreEncryption: true });
     originalPageCount = doc.getPageCount();
   });
 
   afterAll(async () => {
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
+    await removeTestTempDirectory(TMP_DIR);
   });
 
   it("reorders pages correctly", async () => {

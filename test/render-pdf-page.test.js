@@ -11,11 +11,11 @@ import {
   getRegionPixelRect,
   validatePdfRegionBox,
 } from "../server/helpers.js";
+import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TMP_DIR = path.join(REPO_ROOT, ".test-tmp-render");
 
 describe("getPageRenderScale", () => {
   it("bounds the scale to the requested dominant dimension", () => {
@@ -78,9 +78,10 @@ describe("PDF region helpers", () => {
 describe("render_pdf_page MCP tool", () => {
   let client;
   let transport;
+  let tempDirectory;
 
   beforeAll(async () => {
-    await fs.mkdir(TMP_DIR, { recursive: true });
+    tempDirectory = await createTestTempDirectory(REPO_ROOT, "render");
     client = new Client({ name: "pdf-tools-test-client", version: "1.0.0" });
     transport = new StdioClientTransport({
       command: process.execPath,
@@ -95,8 +96,11 @@ describe("render_pdf_page MCP tool", () => {
   }, 30_000);
 
   afterAll(async () => {
-    await transport?.close();
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
+    try {
+      await transport?.close();
+    } finally {
+      await removeTestTempDirectory(tempDirectory);
+    }
   });
 
   it("is listed and returns a rendered PNG plus structured metadata", async () => {
@@ -158,7 +162,7 @@ describe("render_pdf_page MCP tool", () => {
   }, 30_000);
 
   it("keeps region coordinates aligned on rotated pages by rendering in native page space", async () => {
-    const rotatedPdfPath = path.join(TMP_DIR, "rotated-region.pdf");
+    const rotatedPdfPath = path.join(tempDirectory, "rotated-region.pdf");
     const doc = await PDFDocument.create();
     const page = doc.addPage([300, 300]);
     page.drawRectangle({
@@ -204,10 +208,10 @@ describe("Claude Desktop Electron utility rendering", () => {
   let client;
   let transport;
   let imageOnlyPdfPath;
-  const ELECTRON_TMP_DIR = path.join(REPO_ROOT, ".test-tmp-electron-render");
+  let electronTempDirectory;
 
   beforeAll(async () => {
-    await fs.mkdir(ELECTRON_TMP_DIR, { recursive: true });
+    electronTempDirectory = await createTestTempDirectory(REPO_ROOT, "electron-render");
     const sourceCanvas = createCanvas(200, 100);
     const sourceContext = sourceCanvas.getContext("2d");
     sourceContext.fillStyle = "#ffffff";
@@ -219,7 +223,7 @@ describe("Claude Desktop Electron utility rendering", () => {
     const imageOnlyPage = imageOnlyDoc.addPage([200, 100]);
     const image = await imageOnlyDoc.embedPng(sourceCanvas.toBuffer("image/png"));
     imageOnlyPage.drawImage(image, { x: 0, y: 0, width: 200, height: 100 });
-    imageOnlyPdfPath = path.join(ELECTRON_TMP_DIR, "image-only.pdf");
+    imageOnlyPdfPath = path.join(electronTempDirectory, "image-only.pdf");
     await fs.writeFile(imageOnlyPdfPath, await imageOnlyDoc.save());
 
     const serverUrl = pathToFileURL(path.join(REPO_ROOT, "server", "index.js")).href;
@@ -244,8 +248,11 @@ describe("Claude Desktop Electron utility rendering", () => {
   }, 30_000);
 
   afterAll(async () => {
-    await transport?.close();
-    await fs.rm(ELECTRON_TMP_DIR, { recursive: true, force: true });
+    try {
+      await transport?.close();
+    } finally {
+      await removeTestTempDirectory(electronTempDirectory);
+    }
   });
 
   it("renders without selecting pdf.js DOM canvas factories", async () => {

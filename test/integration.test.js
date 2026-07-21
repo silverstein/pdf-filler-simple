@@ -16,20 +16,22 @@ import {
   formatSigningAuditLine,
   validateSigningIntent,
 } from "../server/helpers.js";
+import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const TMP_DIR = path.join(__dirname, "..", ".test-tmp-integration");
+const REPO_ROOT = path.join(__dirname, "..");
+let TMP_DIR;
 
 const OFFLINE = process.env.OFFLINE === "1";
 const IRS_W9_URL = "https://www.irs.gov/pub/irs-pdf/fw9.pdf";
 
 describe.skipIf(OFFLINE)("v0.8.0 end-to-end: fetch → fill → sign → verify", () => {
   beforeAll(async () => {
-    await fs.mkdir(TMP_DIR, { recursive: true });
+    TMP_DIR = await createTestTempDirectory(REPO_ROOT, "integration");
   }, 30_000);
 
   afterAll(async () => {
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
+    await removeTestTempDirectory(TMP_DIR);
   });
 
   it("completes the full chain on a real IRS W-9", async () => {

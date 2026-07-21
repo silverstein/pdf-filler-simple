@@ -14,10 +14,11 @@ import {
   detectExistingSignatures,
   detectXfaForm,
 } from "../server/helpers.js";
+import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const EXAMPLE_PDF = path.join(__dirname, "..", "example-fw9.pdf");
-const TMP_DIR = path.join(__dirname, "..", ".test-tmp-sig");
+const REPO_ROOT = path.join(__dirname, "..");
+const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 
 // A tiny 2×2 transparent PNG — enough to exercise the embed path
 const TINY_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAIAAAACCAYAAABytg0kAAAAEUlEQVQIW2NgYGD4z8DAwMAAAAwAAwH1oUt1AAAAAElFTkSuQmCC";
@@ -166,13 +167,14 @@ describe("formatSigningAuditLine", () => {
 
 describe("stampSignatureOnPage + drawSignatureFieldOnPage", () => {
   let pdfBytes;
+  let tempDirectory;
 
   beforeAll(async () => {
-    await fs.mkdir(TMP_DIR, { recursive: true });
+    tempDirectory = await createTestTempDirectory(REPO_ROOT, "signatures");
     pdfBytes = await fs.readFile(EXAMPLE_PDF);
   });
   afterAll(async () => {
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
+    await removeTestTempDirectory(tempDirectory);
   });
 
   it("stamps a typed signature and preserves original page count", async () => {

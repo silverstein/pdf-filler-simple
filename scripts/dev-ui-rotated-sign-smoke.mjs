@@ -6,7 +6,7 @@ import { createAgentBrowserSessionRunner, evalJson, withDevUiServer } from "./de
 const port = Number(process.env.PDF_TOOLS_DEV_UI_PORT || 4176);
 const origin = `http://127.0.0.1:${port}`;
 const repoRoot = process.cwd();
-const tmpDir = path.join(repoRoot, ".test-tmp-rotated-ui");
+let tmpDir;
 const session = `pdf-tools-rotated-sign-smoke-${Date.now()}`;
 const runAgentBrowser = createAgentBrowserSessionRunner(session);
 
@@ -26,7 +26,6 @@ const cases = [
 ];
 
 async function createRotatedFixture(rotationDegrees) {
-  await fs.mkdir(tmpDir, { recursive: true });
   const rotatedPdfPath = path.join(tmpDir, `rotated-w9-ui-smoke-${rotationDegrees}.pdf`);
   const sourceBytes = await fs.readFile(path.join(repoRoot, "example-fw9.pdf"));
   const doc = await PDFDocument.load(sourceBytes, { ignoreEncryption: true });
@@ -44,6 +43,7 @@ async function closeBrowserSession() {
 }
 
 async function main() {
+  tmpDir = await fs.mkdtemp(path.join(repoRoot, ".test-tmp-rotated-ui-"));
   await withDevUiServer(port, async () => {
     for (const testCase of cases) {
       const rotatedPdfPath = await createRotatedFixture(testCase.degrees);
@@ -100,4 +100,7 @@ main()
   })
   .finally(async () => {
     await closeBrowserSession();
+    if (tmpDir) {
+      await fs.rm(tmpDir, { recursive: true, force: true });
+    }
   });

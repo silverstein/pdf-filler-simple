@@ -4,10 +4,12 @@ import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 import { getPageDisplayMetrics } from "../server/helpers.js";
+import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const EXAMPLE_PDF = path.join(__dirname, "..", "example-fw9.pdf");
-const TMP_DIR = path.join(__dirname, "..", ".test-tmp-analysis");
+const REPO_ROOT = path.join(__dirname, "..");
+const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
+let TMP_DIR;
 
 // Reproduce the get_page_analysis logic for testing
 // Uses pdf-lib for dimensions (fast) — pdfjs-dist text extraction tested separately
@@ -41,12 +43,12 @@ describe("get_page_analysis", () => {
   let result;
 
   beforeAll(async () => {
-    await fs.mkdir(TMP_DIR, { recursive: true });
+    TMP_DIR = await createTestTempDirectory(REPO_ROOT, "analysis");
     result = await getPageAnalysis(EXAMPLE_PDF);
   });
 
   afterAll(async () => {
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
+    await removeTestTempDirectory(TMP_DIR);
   });
 
   it("returns correct total page count", () => {

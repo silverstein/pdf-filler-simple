@@ -4,12 +4,13 @@ import { fileURLToPath } from "url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 const CSV_FIXTURE = path.join(REPO_ROOT, "test", "fixtures", "claude-batch3-bulk.csv");
-const TMP_DIR = path.join(REPO_ROOT, ".test-tmp-csv-roundtrip");
+let TMP_DIR;
 const STREET_FIELD = "topmostSubform[0].Page1[0].Address[0].f1_7[0]";
 const CITY_FIELD = "topmostSubform[0].Page1[0].Address[0].f1_8[0]";
 
@@ -19,7 +20,7 @@ describe("CSV form workflows", () => {
   let pdfPath;
 
   beforeAll(async () => {
-    await fs.mkdir(TMP_DIR, { recursive: true });
+    TMP_DIR = await createTestTempDirectory(REPO_ROOT, "csv-roundtrip");
     pdfPath = path.join(TMP_DIR, "w9-form-source.pdf");
     await fs.copyFile(EXAMPLE_PDF, pdfPath);
 
@@ -37,8 +38,11 @@ describe("CSV form workflows", () => {
   }, 30_000);
 
   afterAll(async () => {
-    await transport?.close();
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
+    try {
+      await transport?.close();
+    } finally {
+      await removeTestTempDirectory(TMP_DIR);
+    }
   });
 
   it("preserves quoted commas through bulk_fill_from_csv and extract_to_csv", async () => {

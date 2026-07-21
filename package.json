@@ -22,7 +22,8 @@
     "test:contract:share": "node scripts/test-share-contract.mjs",
     "build:ui": "vite build",
     "build:mcpb": "node scripts/build-mcpb.mjs",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:concurrent": "node scripts/test-concurrent-suites.mjs"
   },
   "repository": {
     "type": "git",

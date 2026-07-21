@@ -4,11 +4,12 @@ import { fileURLToPath } from "url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TMP_DIR = path.join(REPO_ROOT, ".test-tmp-xfa");
+let TMP_DIR;
 
 function insertFakeXfaMarker(pdfBuffer) {
   const header = "%PDF-";
@@ -35,7 +36,7 @@ describe("XFA guards for mutating tools", () => {
   let csvPath;
 
   beforeAll(async () => {
-    await fs.mkdir(TMP_DIR, { recursive: true });
+    TMP_DIR = await createTestTempDirectory(REPO_ROOT, "xfa");
     const source = await fs.readFile(EXAMPLE_PDF);
     xfaPdfPath = path.join(TMP_DIR, "xfa-flagged.pdf");
     await fs.writeFile(xfaPdfPath, insertFakeXfaMarker(source));
@@ -60,8 +61,11 @@ describe("XFA guards for mutating tools", () => {
   }, 30_000);
 
   afterAll(async () => {
-    await transport?.close();
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
+    try {
+      await transport?.close();
+    } finally {
+      await removeTestTempDirectory(TMP_DIR);
+    }
   });
 
   it("fill_pdf rejects XFA PDFs unless force_xfa=true", async () => {
