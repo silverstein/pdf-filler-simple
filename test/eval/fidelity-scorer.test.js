@@ -85,7 +85,11 @@ function cleanCell(item, repetition) {
       .map(itemRegion => ({ region_index: itemRegion.regionIndex, region: itemRegion.region.region, metrics: { inside_counts: { 8: 1 } } })),
   })));
   const created = [...item.filesystem.created, ...item.filesystem.created_directories];
-  for (const pattern of item.filesystem.dynamic_created_patterns) created.push(pattern.includes("backups") ? "profiles/backups/working__original.pdf" : "output/dynamic");
+  for (const pattern of item.filesystem.dynamic_created_patterns) {
+    if (pattern.includes("\\.original-")) created.push(`profiles/backups/.original-${"a".repeat(64)}.v1.json`);
+    else if (pattern.includes("backups")) created.push("profiles/backups/working__original.pdf");
+    else created.push("output/dynamic");
+  }
   const active = { active_path: item.lifecycle.active_path, last_mutation_tool: item.lifecycle.last_mutation_tool, last_mutation_at: "2026-07-21T00:00:00.000Z", backup_path: null };
   const backup = item.lifecycle.backup_policy === "immutable-original"
     ? { original_sha256: "a".repeat(64), first_path: "profiles/backups/working__original.pdf", final_path: "profiles/backups/working__original.pdf", first_sha256: "a".repeat(64), final_sha256: "a".repeat(64), created_paths: ["profiles/backups/working__original.pdf"] }

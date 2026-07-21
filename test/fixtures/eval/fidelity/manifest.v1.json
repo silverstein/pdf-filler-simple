@@ -204,7 +204,7 @@
         "annotations": [],
         "metadata": { "preserve_from": "input/working.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
       }],
-      "filesystem": { "created": [], "created_directories": [], "modified": ["input/working.pdf"], "deleted": [], "dynamic_created_patterns": ["^profiles/backups/working__[A-Za-z0-9.-]+\\.pdf$"] },
+      "filesystem": { "created": [], "created_directories": [], "modified": ["input/working.pdf"], "deleted": [], "dynamic_created_patterns": ["^profiles/backups/working__[A-Za-z0-9.-]+\\.pdf$", "^profiles/backups/\\.original-[a-f0-9]{64}\\.v1\\.json$"] },
       "lifecycle": { "active_path": "input/working.pdf", "last_mutation_tool": "fill_pdf", "backup_policy": "immutable-original" },
       "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "target_evidence", "intended_visual", "forbidden_visual", "filesystem", "lifecycle", "backup"]
     },
@@ -229,7 +229,7 @@
         "annotations": [],
         "metadata": { "preserve_from": "input/working.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
       }],
-      "filesystem": { "created": [], "created_directories": [], "modified": ["input/working.pdf"], "deleted": [], "dynamic_created_patterns": [] },
+      "filesystem": { "created": [], "created_directories": [], "modified": ["input/working.pdf"], "deleted": [], "dynamic_created_patterns": ["^profiles/backups/\\.original-[a-f0-9]{64}\\.v1\\.json$"] },
       "lifecycle": { "active_path": "input/working.pdf", "last_mutation_tool": "fill_pdf", "backup_policy": "missing-original-fail-closed" },
       "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "target_evidence", "intended_visual", "forbidden_visual", "filesystem", "lifecycle", "backup"]
     }
