@@ -10,20 +10,27 @@ Update these files together:
 - `manifest.json`
 - `manifest.mcpb.json`
 
-## 2) Build artifacts (locally)
+## 2) Build artifacts
 
 ```
-npm install
-npm run build:ui
-npm test              # Catches Chromium-incompatible APIs in the viewer
-npm install -g @anthropic-ai/mcpb
-mcpb pack
+npm ci
+npm test
+npm run build:mcpb
+npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb
 node package-for-friend.js
 ```
+
+`build:mcpb` uses the repository-pinned MCPB CLI, creates a clean production
+stage, installs the locked native targets, inspects the archive, and reports its
+SHA-256. Do not substitute a host-local global `mcpb pack` for release builds.
 
 ## 3) Manual verification
 
 Run the manual test checklist in `docs/MAINTAINERS.md`.
+
+Build and retain the evidence bundle described in `docs/EVALUATION.md`. Record
+the final artifact hash, host and OS versions, tool-discovery evidence, core-job
+transcript, screenshots, and relevant logs for every required host lane.
 
 **Viewer smoke test (required):** Install the `.mcpb` in Claude Desktop and run `display_pdf` on at least one PDF. Confirm pages render without "Failed to render page" errors. Check `~/Library/Logs/Claude/claude.ai-web.log` for `[viewer] Render error` if anything looks wrong.
 

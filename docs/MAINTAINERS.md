@@ -24,6 +24,11 @@ node package-for-friend.js
 Use a local MCP host (Claude Desktop or Cursor) to validate tools. Run the
 manual checklist before publishing (see below).
 
+Use `docs/EVALUATION.md` for the evidence layers, corpus contract, agent-task
+scoring, native-host matrix, and release evidence bundle. A direct stdio pass is
+useful evidence, but it does not replace validation of the final artifact in the
+host and operating system being claimed.
+
 ## Architecture (high level)
 
 - `server/index.js` is the MCP server entry point.
@@ -155,6 +160,10 @@ Run these after any tool or packaging change:
 - `npm run build:mcpb` builds successfully and reports all five native canvas bindings
 - `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb` passes on macOS ARM64 and Windows x64
 - Inspect the reported SHA-256 and retain it with the release evidence
+
+The complete evidence contract is in `docs/EVALUATION.md`. In particular,
+repacking an artifact creates a new release candidate and invalidates prior
+artifact-install evidence for the old hash.
 
 ## Upstream tracking (MCP + MCPB)
 
