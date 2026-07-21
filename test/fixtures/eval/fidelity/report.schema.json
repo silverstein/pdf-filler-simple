@@ -1,0 +1,738 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-document-alliance.github.io/PDF-Tools/eval/fidelity/report.schema.json",
+  "title": "PDF Tools mutation fidelity report v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "report_schema_version", "benchmark_id", "benchmark_version",
+    "claim_boundary", "generated_at", "digests", "provenance", "fixture_bindings",
+    "engine_fingerprints", "failure_evidence_integrity", "artifacts", "cell_bindings", "cells"
+  ],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "report_schema_version": { "const": 2 },
+    "benchmark_id": { "const": "pdf-tools.mutation-fidelity.v1" },
+    "benchmark_version": { "const": 1 },
+    "claim_boundary": { "type": "string", "minLength": 1 },
+    "generated_at": { "$ref": "#/$defs/timestamp" },
+    "digests": { "$ref": "#/$defs/reportDigests" },
+    "provenance": { "$ref": "#/$defs/runProvenance" },
+    "fixture_bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/fixtureBinding" }
+    },
+    "engine_fingerprints": { "$ref": "#/$defs/engineFingerprints" },
+    "failure_evidence_integrity": { "type": "boolean" },
+    "artifacts": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/artifact" },
+      "uniqueItems": true
+    },
+    "cell_bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/cellBinding" },
+      "uniqueItems": true
+    },
+    "cells": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/cell" },
+      "uniqueItems": true
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "gitRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{3})?Z$"
+    },
+    "logicalPath": {
+      "type": "string",
+      "pattern": "^(input|output|profiles)/(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "relativeArtifactPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "caseId": {
+      "type": "string",
+      "pattern": "^pdf-tools\\.fidelity\\.case\\.[a-z0-9-]+$"
+    },
+    "cellId": {
+      "type": "string",
+      "pattern": "^pdf-tools\\.fidelity\\.cell\\.[a-z0-9.-]+$"
+    },
+    "reportDigests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["manifest_sha256", "runner_sha256", "source_revision"],
+      "properties": {
+        "manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "runner_sha256": { "$ref": "#/$defs/sha256" },
+        "source_revision": { "$ref": "#/$defs/gitRevision" },
+        "source_tree_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "arch", "node_version"],
+      "properties": {
+        "platform": { "enum": ["darwin", "linux", "win32"] },
+        "arch": { "type": "string", "minLength": 1 },
+        "node_version": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "hostname_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "runProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "provenance_schema_version", "producer", "capture_mode", "started_at", "finished_at", "host"
+      ],
+      "properties": {
+        "provenance_schema_version": { "const": 1 },
+        "producer": { "type": "string", "minLength": 1 },
+        "capture_mode": { "enum": ["source_server", "packed_mcpb", "native_host"] },
+        "started_at": { "$ref": "#/$defs/timestamp" },
+        "finished_at": { "$ref": "#/$defs/timestamp" },
+        "host": { "$ref": "#/$defs/host" }
+      }
+    },
+    "cellProvenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provenance_schema_version", "invocation_id", "started_at", "finished_at"],
+      "properties": {
+        "provenance_schema_version": { "const": 1 },
+        "invocation_id": { "type": "string", "minLength": 1 },
+        "started_at": { "$ref": "#/$defs/timestamp" },
+        "finished_at": { "$ref": "#/$defs/timestamp" }
+      }
+    },
+    "fixtureBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "expected_sha256", "observed_sha256", "passed"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^pdf-tools\\.fidelity\\.document\\.[a-z0-9-]+$" },
+        "path": { "type": "string", "pattern": "^\\.\\./[A-Za-z0-9._/-]+\\.pdf$" },
+        "expected_sha256": { "$ref": "#/$defs/sha256" },
+        "observed_sha256": { "$ref": "#/$defs/sha256" },
+        "passed": { "type": "boolean" }
+      }
+    },
+    "engineFingerprints": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pdfjs_canvas_runtime_sha256", "poppler"],
+      "properties": {
+        "pdfjs_canvas_runtime_sha256": { "$ref": "#/$defs/sha256" },
+        "poppler": { "$ref": "#/$defs/popplerFingerprint" }
+      }
+    },
+    "popplerFingerprint": {
+      "oneOf": [
+        { "$ref": "#/$defs/availablePoppler" },
+        { "$ref": "#/$defs/unavailablePoppler" }
+      ]
+    },
+    "availablePoppler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "available", "version", "binary_sha256"],
+      "properties": {
+        "family": { "const": "poppler" },
+        "available": { "const": true },
+        "version": { "type": "string", "minLength": 1 },
+        "binary_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "unavailablePoppler": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["family", "available", "error"],
+      "properties": {
+        "family": { "const": "poppler" },
+        "available": { "const": false },
+        "error": { "type": "string", "minLength": 1 }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "role", "path", "media_type", "sha256", "byte_length", "cell_id"],
+      "properties": {
+        "artifact_id": { "type": "string", "pattern": "^artifact\\.[a-z0-9.-]+$" },
+        "role": {
+          "enum": [
+            "failure_before", "failure_after", "failure_delta", "harness_log",
+            "report", "score", "manifest", "runner", "other"
+          ]
+        },
+        "path": { "$ref": "#/$defs/relativeArtifactPath" },
+        "media_type": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byte_length": { "type": "integer", "minimum": 1 },
+        "cell_id": {
+          "oneOf": [
+            { "$ref": "#/$defs/cellId" },
+            { "type": "null" }
+          ]
+        }
+      }
+    },
+    "cellBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cell_id", "case_id", "repetition", "outcome", "cell_sha256", "artifact_ids"],
+      "properties": {
+        "cell_id": { "$ref": "#/$defs/cellId" },
+        "case_id": { "$ref": "#/$defs/caseId" },
+        "repetition": { "type": "integer", "minimum": 1 },
+        "outcome": { "enum": ["completed", "harness_failure"] },
+        "cell_sha256": { "$ref": "#/$defs/sha256" },
+        "artifact_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^artifact\\.[a-z0-9.-]+$" },
+          "uniqueItems": true
+        }
+      }
+    },
+    "cell": {
+      "oneOf": [
+        { "$ref": "#/$defs/completedCell" },
+        { "$ref": "#/$defs/harnessFailureCell" }
+      ]
+    },
+    "completedCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cell_schema_version", "cell_id", "case_id", "repetition", "outcome", "provenance",
+        "artifact_ids", "tool_calls", "engines", "sources", "outputs", "visual_comparisons",
+        "filesystem", "lifecycle", "backup", "failure_evidence", "harness_failure"
+      ],
+      "properties": {
+        "cell_schema_version": { "const": 2 },
+        "cell_id": { "$ref": "#/$defs/cellId" },
+        "case_id": { "$ref": "#/$defs/caseId" },
+        "repetition": { "type": "integer", "minimum": 1 },
+        "outcome": { "const": "completed" },
+        "provenance": { "$ref": "#/$defs/cellProvenance" },
+        "artifact_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^artifact\\.[a-z0-9.-]+$" },
+          "uniqueItems": true
+        },
+        "tool_calls": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/toolCall" } },
+        "engines": { "$ref": "#/$defs/cellEngines" },
+        "sources": { "$ref": "#/$defs/inspectionMap" },
+        "outputs": { "$ref": "#/$defs/outputMap" },
+        "visual_comparisons": { "type": "array", "items": { "$ref": "#/$defs/visualComparison" } },
+        "filesystem": { "$ref": "#/$defs/filesystem" },
+        "lifecycle": { "$ref": "#/$defs/lifecycle" },
+        "backup": { "$ref": "#/$defs/backup" },
+        "failure_evidence": { "type": "array", "items": { "$ref": "#/$defs/failureEvidence" } },
+        "harness_failure": { "type": "null" }
+      }
+    },
+    "harnessFailureCell": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "cell_schema_version", "cell_id", "case_id", "repetition", "outcome", "provenance",
+        "artifact_ids", "harness_failure"
+      ],
+      "properties": {
+        "cell_schema_version": { "const": 2 },
+        "cell_id": { "$ref": "#/$defs/cellId" },
+        "case_id": { "$ref": "#/$defs/caseId" },
+        "repetition": { "type": "integer", "minimum": 1 },
+        "outcome": { "const": "harness_failure" },
+        "provenance": { "$ref": "#/$defs/cellProvenance" },
+        "artifact_ids": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "pattern": "^artifact\\.[a-z0-9.-]+$" },
+          "uniqueItems": true
+        },
+        "harness_failure": { "$ref": "#/$defs/harnessFailure" }
+      }
+    },
+    "harnessFailure": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["harness_schema_version", "code", "phase", "detail", "artifact_id"],
+      "properties": {
+        "harness_schema_version": { "const": 1 },
+        "code": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "phase": { "type": "string", "pattern": "^[a-z0-9_]+$" },
+        "detail": { "type": "string", "minLength": 1 },
+        "artifact_id": { "type": "string", "pattern": "^artifact\\.[a-z0-9.-]+$" }
+      }
+    },
+    "toolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "arguments_sha256", "is_error", "error_text"],
+      "properties": {
+        "name": { "type": "string", "pattern": "^[a-z][a-z0-9_]*$" },
+        "arguments_sha256": { "$ref": "#/$defs/sha256" },
+        "is_error": { "type": "boolean" },
+        "error_text": { "type": ["string", "null"] }
+      }
+    },
+    "cellEngines": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["poppler"],
+      "properties": {
+        "poppler": { "$ref": "#/$defs/availablePoppler" }
+      }
+    },
+    "inspectionMap": {
+      "type": "object",
+      "patternProperties": {
+        "^(input|output|profiles)/(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$": { "$ref": "#/$defs/inspection" }
+      },
+      "additionalProperties": false
+    },
+    "outputMap": {
+      "type": "object",
+      "patternProperties": {
+        "^(input|output|profiles)/(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$": { "$ref": "#/$defs/outputObservation" }
+      },
+      "additionalProperties": false
+    },
+    "box": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "number" }, { "type": "number" }, { "type": "number" }, { "type": "number" }
+      ],
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "region": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "number", "minimum": 0 }, { "type": "number", "minimum": 0 },
+        { "type": "number", "exclusiveMinimum": 0 }, { "type": "number", "exclusiveMinimum": 0 }
+      ],
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "page": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "media_box", "crop_box", "rotation", "marker", "text", "text_sha256"],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1 },
+        "media_box": { "$ref": "#/$defs/box" },
+        "crop_box": { "$ref": "#/$defs/box" },
+        "rotation": { "enum": [0, 90, 180, 270] },
+        "marker": { "type": ["string", "null"] },
+        "text": { "type": "string" },
+        "text_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "widget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "pages", "region", "appearance_state", "has_normal_appearance"],
+      "properties": {
+        "ref": { "type": ["string", "null"] },
+        "pages": { "type": "array", "items": { "type": "integer", "minimum": 1 }, "uniqueItems": true },
+        "region": { "oneOf": [{ "$ref": "#/$defs/region" }, { "type": "null" }] },
+        "appearance_state": { "type": ["string", "null"] },
+        "has_normal_appearance": { "type": "boolean" }
+      }
+    },
+    "fieldValue": {
+      "oneOf": [
+        { "type": "string" },
+        { "type": "boolean" },
+        { "type": "null" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "value", "flags", "widgets"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "value": { "$ref": "#/$defs/fieldValue" },
+        "flags": { "type": ["integer", "null"], "minimum": 0 },
+        "widgets": { "type": "array", "items": { "$ref": "#/$defs/widget" } }
+      }
+    },
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["ref", "page", "subtype", "region", "flags", "contents", "has_appearance", "action", "destination"],
+      "properties": {
+        "ref": { "type": ["string", "null"] },
+        "page": { "type": "integer", "minimum": 1 },
+        "subtype": { "type": ["string", "null"] },
+        "region": { "oneOf": [{ "$ref": "#/$defs/region" }, { "type": "null" }] },
+        "flags": { "type": ["number", "null"] },
+        "contents": { "type": ["string", "null"] },
+        "has_appearance": { "type": "boolean" },
+        "action": { "type": ["string", "null"] },
+        "destination": { "type": ["string", "null"] }
+      }
+    },
+    "widgetConsistency": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "passed", "orphan_raw_widget_refs", "missing_field_widget_refs",
+        "multiply_placed_field_widget_refs", "duplicate_page_widget_refs"
+      ],
+      "properties": {
+        "passed": { "type": "boolean" },
+        "orphan_raw_widget_refs": { "$ref": "#/$defs/stringArray" },
+        "missing_field_widget_refs": { "$ref": "#/$defs/stringArray" },
+        "multiply_placed_field_widget_refs": { "$ref": "#/$defs/stringArray" },
+        "duplicate_page_widget_refs": { "$ref": "#/$defs/stringArray" }
+      }
+    },
+    "stringArray": {
+      "type": "array",
+      "items": { "type": ["string", "null"] },
+      "uniqueItems": true
+    },
+    "metadata": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["Title", "Author", "Subject", "Keywords", "Creator", "Producer", "CreationDate", "ModDate"],
+      "properties": {
+        "Title": { "type": ["string", "null"] },
+        "Author": { "type": ["string", "null"] },
+        "Subject": { "type": ["string", "null"] },
+        "Keywords": { "type": ["string", "null"] },
+        "Creator": { "type": ["string", "null"] },
+        "Producer": { "type": ["string", "null"] },
+        "CreationDate": { "type": ["string", "null"] },
+        "ModDate": { "type": ["string", "null"] }
+      }
+    },
+    "catalog": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["AcroForm", "Metadata", "Names", "Outlines", "StructTreeRoot", "MarkInfo", "PageLabels", "ViewerPreferences", "OpenAction"],
+      "properties": {
+        "AcroForm": { "type": "boolean" },
+        "Metadata": { "type": "boolean" },
+        "Names": { "type": "boolean" },
+        "Outlines": { "type": "boolean" },
+        "StructTreeRoot": { "type": "boolean" },
+        "MarkInfo": { "type": "boolean" },
+        "PageLabels": { "type": "boolean" },
+        "ViewerPreferences": { "type": "boolean" },
+        "OpenAction": { "type": "boolean" }
+      }
+    },
+    "pdfjsRender": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "width", "height", "scale", "rgba_sha256"],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1 },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "scale": { "type": "number", "exclusiveMinimum": 0 },
+        "rgba_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "inspection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path", "sha256", "size", "page_count", "pages", "fields", "annotations",
+        "raw_annotations", "widget_consistency", "metadata", "catalog", "renders"
+      ],
+      "properties": {
+        "path": { "type": "null" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "size": { "type": "integer", "minimum": 1 },
+        "page_count": { "type": "integer", "minimum": 1 },
+        "pages": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/page" } },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/field" } },
+        "annotations": { "type": "array", "items": { "$ref": "#/$defs/annotation" } },
+        "raw_annotations": { "type": "array", "items": { "$ref": "#/$defs/annotation" } },
+        "widget_consistency": { "$ref": "#/$defs/widgetConsistency" },
+        "metadata": { "$ref": "#/$defs/metadata" },
+        "catalog": { "$ref": "#/$defs/catalog" },
+        "renders": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/pdfjsRender" } }
+      }
+    },
+    "popplerObservation": {
+      "oneOf": [
+        { "$ref": "#/$defs/openedPopplerObservation" },
+        { "$ref": "#/$defs/closedPopplerObservation" }
+      ]
+    },
+    "openedPopplerObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opened", "page_count", "render_count"],
+      "properties": {
+        "opened": { "const": true },
+        "page_count": { "type": "integer", "minimum": 1 },
+        "render_count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "closedPopplerObservation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["opened", "page_count", "render_count"],
+      "properties": {
+        "opened": { "const": false },
+        "page_count": { "type": "null" },
+        "render_count": { "const": 0 },
+        "error": { "type": "string", "minLength": 1 }
+      }
+    },
+    "outputObservation": {
+      "oneOf": [
+        { "$ref": "#/$defs/presentOutput" },
+        { "$ref": "#/$defs/missingOutput" }
+      ]
+    },
+    "presentOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exists", "inspection", "poppler"],
+      "properties": {
+        "exists": { "const": true },
+        "inspection": { "$ref": "#/$defs/inspection" },
+        "poppler": { "$ref": "#/$defs/popplerObservation" }
+      }
+    },
+    "missingOutput": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["exists", "error", "inspection", "poppler"],
+      "properties": {
+        "exists": { "const": false },
+        "error": { "type": "string", "minLength": 1 },
+        "inspection": { "type": "null" },
+        "poppler": { "$ref": "#/$defs/closedPopplerObservation" }
+      }
+    },
+    "thresholdCounts": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["0", "2", "8"],
+      "properties": {
+        "0": { "type": "integer", "minimum": 0 },
+        "2": { "type": "integer", "minimum": 0 },
+        "8": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "visualMetrics": {
+      "oneOf": [
+        { "$ref": "#/$defs/comparableMetrics" },
+        { "$ref": "#/$defs/dimensionMismatchMetrics" }
+      ]
+    },
+    "comparableMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimension_mismatch", "thresholds", "raw_counts", "inside_counts", "outside_counts", "intended_pixels", "total_pixels"],
+      "properties": {
+        "dimension_mismatch": { "const": false },
+        "thresholds": { "const": [0, 2, 8] },
+        "raw_counts": { "$ref": "#/$defs/thresholdCounts" },
+        "inside_counts": { "$ref": "#/$defs/thresholdCounts" },
+        "outside_counts": { "$ref": "#/$defs/thresholdCounts" },
+        "intended_pixels": { "type": "integer", "minimum": 0 },
+        "total_pixels": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "dimensionMismatchMetrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dimension_mismatch", "thresholds", "raw_counts", "inside_counts", "outside_counts", "intended_pixels"],
+      "properties": {
+        "dimension_mismatch": { "const": true },
+        "thresholds": { "const": [0, 2, 8] },
+        "raw_counts": { "type": "null" },
+        "inside_counts": { "type": "null" },
+        "outside_counts": { "type": "null" },
+        "intended_pixels": { "type": "null" }
+      }
+    },
+    "visualComparison": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["engine", "output_path", "output_page", "source_path", "source_page", "rotation_delta", "metrics"],
+      "properties": {
+        "engine": { "enum": ["pdfjs", "poppler"] },
+        "output_path": { "$ref": "#/$defs/logicalPath" },
+        "output_page": { "type": "integer", "minimum": 1 },
+        "source_path": {
+          "oneOf": [{ "$ref": "#/$defs/logicalPath" }, { "type": "null" }]
+        },
+        "source_page": { "type": ["integer", "null"], "minimum": 1 },
+        "rotation_delta": { "enum": [0, 90, 180, 270, null] },
+        "metrics": {
+          "oneOf": [{ "$ref": "#/$defs/visualMetrics" }, { "type": "null" }]
+        }
+      }
+    },
+    "filesystemEntry": {
+      "oneOf": [
+        { "$ref": "#/$defs/fileEntry" },
+        { "$ref": "#/$defs/directoryEntry" },
+        { "$ref": "#/$defs/symlinkEntry" },
+        { "$ref": "#/$defs/specialEntry" }
+      ]
+    },
+    "fileEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "type", "mode", "size", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/logicalPath" },
+        "type": { "const": "file" },
+        "mode": { "type": "integer", "minimum": 0, "maximum": 511 },
+        "size": { "type": "integer", "minimum": 0 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "directoryEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "type", "mode"],
+      "properties": {
+        "path": { "$ref": "#/$defs/logicalPath" },
+        "type": { "const": "directory" },
+        "mode": { "type": "integer", "minimum": 0, "maximum": 511 }
+      }
+    },
+    "symlinkEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "type", "mode", "link_target"],
+      "properties": {
+        "path": { "$ref": "#/$defs/logicalPath" },
+        "type": { "const": "symlink" },
+        "mode": { "type": "integer", "minimum": 0, "maximum": 511 },
+        "link_target": { "type": "string", "minLength": 1 }
+      }
+    },
+    "specialEntry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "type", "mode"],
+      "properties": {
+        "path": { "$ref": "#/$defs/logicalPath" },
+        "type": { "enum": ["socket", "fifo", "character", "block", "unknown"] },
+        "mode": { "type": "integer", "minimum": 0, "maximum": 511 }
+      }
+    },
+    "pathDiff": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created", "modified", "deleted"],
+      "properties": {
+        "created": { "type": "array", "items": { "$ref": "#/$defs/logicalPath" }, "uniqueItems": true },
+        "modified": { "type": "array", "items": { "$ref": "#/$defs/logicalPath" }, "uniqueItems": true },
+        "deleted": { "type": "array", "items": { "$ref": "#/$defs/logicalPath" }, "uniqueItems": true }
+      }
+    },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before", "after", "diff"],
+      "properties": {
+        "before": { "type": "array", "items": { "$ref": "#/$defs/filesystemEntry" } },
+        "after": { "type": "array", "items": { "$ref": "#/$defs/filesystemEntry" } },
+        "diff": { "$ref": "#/$defs/pathDiff" }
+      }
+    },
+    "activeDocument": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active_path", "backup_path", "last_mutation_tool"],
+      "properties": {
+        "active_path": { "oneOf": [{ "$ref": "#/$defs/logicalPath" }, { "type": "null" }] },
+        "backup_path": { "oneOf": [{ "$ref": "#/$defs/logicalPath" }, { "type": "null" }] },
+        "last_mutation_tool": { "type": ["string", "null"] }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active"],
+      "properties": { "active": { "$ref": "#/$defs/activeDocument" } }
+    },
+    "nullableSha256": {
+      "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+    },
+    "nullableLogicalPath": {
+      "oneOf": [{ "$ref": "#/$defs/logicalPath" }, { "type": "null" }]
+    },
+    "backup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "original_sha256", "first_path", "first_sha256", "final_path", "final_sha256",
+        "created_paths", "second_call_error", "hash_before_second", "hash_after_second",
+        "created_paths_after_fault"
+      ],
+      "properties": {
+        "original_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "first_path": { "$ref": "#/$defs/nullableLogicalPath" },
+        "first_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "final_path": { "$ref": "#/$defs/nullableLogicalPath" },
+        "final_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "created_paths": { "type": "array", "items": { "$ref": "#/$defs/logicalPath" }, "uniqueItems": true },
+        "second_call_error": { "type": ["boolean", "null"] },
+        "hash_before_second": { "$ref": "#/$defs/nullableSha256" },
+        "hash_after_second": { "$ref": "#/$defs/nullableSha256" },
+        "created_paths_after_fault": { "type": "array", "items": { "$ref": "#/$defs/logicalPath" }, "uniqueItems": true }
+      }
+    },
+    "imageArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "width", "height"],
+      "properties": {
+        "path": { "$ref": "#/$defs/relativeArtifactPath" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "failureEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "engine", "output_path", "output_page", "source_path", "source_page", "rotation_delta",
+        "source_pdf_sha256", "output_pdf_sha256", "before", "after", "unexpected_delta_gt8"
+      ],
+      "properties": {
+        "engine": { "enum": ["pdfjs", "poppler"] },
+        "output_path": { "$ref": "#/$defs/logicalPath" },
+        "output_page": { "type": "integer", "minimum": 1 },
+        "source_path": { "$ref": "#/$defs/logicalPath" },
+        "source_page": { "type": "integer", "minimum": 1 },
+        "rotation_delta": { "enum": [0, 90, 180, 270] },
+        "source_pdf_sha256": { "$ref": "#/$defs/sha256" },
+        "output_pdf_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "before": { "$ref": "#/$defs/imageArtifact" },
+        "after": { "$ref": "#/$defs/imageArtifact" },
+        "unexpected_delta_gt8": { "$ref": "#/$defs/imageArtifact" }
+      }
+    }
+  }
+}

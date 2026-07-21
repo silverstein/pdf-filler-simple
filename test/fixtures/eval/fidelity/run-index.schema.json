@@ -1,0 +1,185 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-document-alliance.github.io/PDF-Tools/eval/fidelity/run-index.schema.json",
+  "title": "PDF Tools mutation fidelity run index v2",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "run_index_schema_version", "benchmark_id", "benchmark_version",
+    "generated_at", "benchmark_claim_ready", "claim_boundary", "digests", "provenance",
+    "denominator", "result", "artifacts", "cell_bindings", "run_sha256"
+  ],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "run_index_schema_version": { "const": 2 },
+    "benchmark_id": { "const": "pdf-tools.mutation-fidelity.v1" },
+    "benchmark_version": { "const": 1 },
+    "generated_at": { "$ref": "#/$defs/timestamp" },
+    "benchmark_claim_ready": { "type": "boolean" },
+    "claim_boundary": { "type": "string", "minLength": 1 },
+    "digests": { "$ref": "#/$defs/digests" },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "denominator": { "$ref": "#/$defs/denominator" },
+    "result": { "$ref": "#/$defs/result" },
+    "artifacts": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "$ref": "#/$defs/artifact" },
+      "uniqueItems": true,
+      "allOf": [
+        { "contains": { "$ref": "#/$defs/reportArtifact" }, "minContains": 1 },
+        { "contains": { "$ref": "#/$defs/scoreArtifact" }, "minContains": 1 }
+      ]
+    },
+    "cell_bindings": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/cellBinding" },
+      "uniqueItems": true
+    },
+    "run_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "gitRevision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "timestamp": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{3})?Z$"
+    },
+    "relativeArtifactPath": {
+      "type": "string",
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))[A-Za-z0-9._/-]+$"
+    },
+    "caseId": { "type": "string", "pattern": "^pdf-tools\\.fidelity\\.case\\.[a-z0-9-]+$" },
+    "cellId": { "type": "string", "pattern": "^pdf-tools\\.fidelity\\.cell\\.[a-z0-9.-]+$" },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["platform", "arch", "node_version"],
+      "properties": {
+        "platform": { "enum": ["darwin", "linux", "win32"] },
+        "arch": { "type": "string", "minLength": 1 },
+        "node_version": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+        "hostname_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["provenance_schema_version", "producer", "capture_mode", "started_at", "finished_at", "host"],
+      "properties": {
+        "provenance_schema_version": { "const": 1 },
+        "producer": { "type": "string", "minLength": 1 },
+        "capture_mode": { "enum": ["source_server", "packed_mcpb", "native_host"] },
+        "started_at": { "$ref": "#/$defs/timestamp" },
+        "finished_at": { "$ref": "#/$defs/timestamp" },
+        "host": { "$ref": "#/$defs/host" }
+      }
+    },
+    "digests": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "manifest_sha256", "runner_sha256", "source_revision", "report_sha256",
+        "score_sha256", "cell_set_sha256"
+      ],
+      "properties": {
+        "manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "runner_sha256": { "$ref": "#/$defs/sha256" },
+        "source_revision": { "$ref": "#/$defs/gitRevision" },
+        "report_sha256": { "$ref": "#/$defs/sha256" },
+        "score_sha256": { "$ref": "#/$defs/sha256" },
+        "cell_set_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "denominator": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["planned", "observed", "unique", "completed", "harness_failures"],
+      "properties": {
+        "planned": { "type": "integer", "minimum": 1 },
+        "observed": { "type": "integer", "minimum": 0 },
+        "unique": { "type": "integer", "minimum": 0 },
+        "completed": { "type": "integer", "minimum": 0 },
+        "harness_failures": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["valid", "passed", "product_failures", "harness_failures"],
+      "properties": {
+        "valid": { "type": "boolean" },
+        "passed": { "type": "boolean" },
+        "product_failures": { "type": "integer", "minimum": 0 },
+        "harness_failures": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "role", "path", "media_type", "sha256", "byte_length", "cell_id"],
+      "properties": {
+        "artifact_id": { "type": "string", "pattern": "^artifact\\.[a-z0-9.-]+$" },
+        "role": {
+          "enum": [
+            "failure_before", "failure_after", "failure_delta", "harness_log",
+            "report", "score", "manifest", "runner", "other"
+          ]
+        },
+        "path": { "$ref": "#/$defs/relativeArtifactPath" },
+        "media_type": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byte_length": { "type": "integer", "minimum": 1 },
+        "cell_id": {
+          "oneOf": [{ "$ref": "#/$defs/cellId" }, { "type": "null" }]
+        }
+      }
+    },
+    "reportArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "role", "path", "media_type", "sha256", "byte_length", "cell_id"],
+      "properties": {
+        "artifact_id": { "type": "string", "pattern": "^artifact\\.[a-z0-9.-]+$" },
+        "role": { "const": "report" },
+        "path": { "$ref": "#/$defs/relativeArtifactPath" },
+        "media_type": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byte_length": { "type": "integer", "minimum": 1 },
+        "cell_id": { "type": "null" }
+      }
+    },
+    "scoreArtifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["artifact_id", "role", "path", "media_type", "sha256", "byte_length", "cell_id"],
+      "properties": {
+        "artifact_id": { "type": "string", "pattern": "^artifact\\.[a-z0-9.-]+$" },
+        "role": { "const": "score" },
+        "path": { "$ref": "#/$defs/relativeArtifactPath" },
+        "media_type": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "byte_length": { "type": "integer", "minimum": 1 },
+        "cell_id": { "type": "null" }
+      }
+    },
+    "cellBinding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cell_id", "case_id", "repetition", "outcome", "cell_sha256", "artifact_ids"],
+      "properties": {
+        "cell_id": { "$ref": "#/$defs/cellId" },
+        "case_id": { "$ref": "#/$defs/caseId" },
+        "repetition": { "type": "integer", "minimum": 1 },
+        "outcome": { "enum": ["completed", "harness_failure"] },
+        "cell_sha256": { "$ref": "#/$defs/sha256" },
+        "artifact_ids": {
+          "type": "array",
+          "items": { "type": "string", "pattern": "^artifact\\.[a-z0-9.-]+$" },
+          "uniqueItems": true
+        }
+      }
+    }
+  }
+}
