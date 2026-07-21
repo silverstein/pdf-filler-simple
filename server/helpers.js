@@ -5,6 +5,21 @@ import path from "path";
 import { homedir } from "os";
 import { PDFDocument, StandardFonts, rgb, degrees as pdfDegrees } from "pdf-lib";
 
+// MCPB expands a `multiple: true` user configuration placeholder into
+// separate command arguments. Keep the marker explicit so ordinary MCP hosts
+// can continue using environment variables without treating unrelated CLI
+// arguments as filesystem permissions.
+export function parseAllowedDirectoryArgs(argv = []) {
+  const markerIndex = argv.indexOf("--allowed-directories");
+  if (markerIndex === -1) return null;
+
+  return argv
+    .slice(markerIndex + 1)
+    .filter(argument => typeof argument === "string")
+    .map(argument => argument.trim())
+    .filter(argument => argument && !argument.includes("${"));
+}
+
 // Validate a signature name to prevent path traversal or weird filenames.
 // Mirrors validateProfileName's contract.
 export function validateSignatureName(name) {

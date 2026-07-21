@@ -282,7 +282,11 @@
     "entry_point": "server/index.js",
     "mcp_config": {
       "command": "node",
-      "args": ["${__dirname}/server/index.js"],
+      "args": [
+        "${__dirname}/server/index.js",
+        "--allowed-directories",
+        "${user_config.allowed_directories}"
+      ],
       "env": {
         "DEFAULT_PDF_DIR": "${user_config.default_pdf_directory}",
         "DEFAULT_PROFILES_DIR": "${HOME}/.pdf-toolkit-files",

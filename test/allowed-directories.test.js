@@ -4,6 +4,7 @@ import { fileURLToPath } from "url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { parseAllowedDirectoryArgs } from "../server/helpers.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
@@ -11,6 +12,27 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 const TMP_DIR = path.join(REPO_ROOT, ".test-tmp-allowed-directories");
 const ALLOWED_DIR = path.join(TMP_DIR, "allowed");
 const PROFILE_DIR = path.join(TMP_DIR, "profiles");
+
+describe("parseAllowedDirectoryArgs", () => {
+  it("returns all MCPB-expanded directories after the explicit marker", () => {
+    expect(parseAllowedDirectoryArgs([
+      "--allowed-directories",
+      "C:\\Users\\Example\\Documents",
+      "G:\\Shared PDFs",
+    ])).toEqual([
+      "C:\\Users\\Example\\Documents",
+      "G:\\Shared PDFs",
+    ]);
+  });
+
+  it("rejects unresolved templates and ignores unrelated host arguments", () => {
+    expect(parseAllowedDirectoryArgs([
+      "--allowed-directories",
+      "${user_config.allowed_directories}",
+    ])).toEqual([]);
+    expect(parseAllowedDirectoryArgs(["--inspect", "9229"])).toBeNull();
+  });
+});
 
 function textFromToolResult(result) {
   return result.content?.map(item => item.type === "text" ? item.text : "").join(" ") || "";
@@ -92,5 +114,56 @@ describe("allowed_directories sandbox", () => {
       },
     });
     expect(textFromToolResult(loaded)).toContain("Sandbox Smoke");
+  }, 30_000);
+});
+
+describe("allowed_directories MCPB argument expansion", () => {
+  let client;
+  let transport;
+  const ARG_TMP_DIR = path.join(REPO_ROOT, ".test-tmp-allowed-directory-args");
+  const FIRST_ALLOWED_DIR = path.join(ARG_TMP_DIR, "first-allowed");
+  const SECOND_ALLOWED_DIR = path.join(ARG_TMP_DIR, "second-allowed");
+  const ARG_PROFILE_DIR = path.join(ARG_TMP_DIR, "profiles");
+
+  beforeAll(async () => {
+    await fs.mkdir(FIRST_ALLOWED_DIR, { recursive: true });
+    await fs.mkdir(SECOND_ALLOWED_DIR, { recursive: true });
+    await fs.copyFile(EXAMPLE_PDF, path.join(SECOND_ALLOWED_DIR, "argument-example.pdf"));
+
+    client = new Client({ name: "pdf-tools-argument-allowlist-test-client", version: "1.0.0" });
+    transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [
+        path.join(REPO_ROOT, "server", "index.js"),
+        "--allowed-directories",
+        FIRST_ALLOWED_DIR,
+        SECOND_ALLOWED_DIR,
+      ],
+      cwd: REPO_ROOT,
+      env: {
+        ALLOWED_DIRECTORIES: "${user_config.allowed_directories}",
+        DEFAULT_PROFILES_DIR: ARG_PROFILE_DIR,
+      },
+      stderr: "pipe",
+    });
+    await client.connect(transport);
+  }, 30_000);
+
+  afterAll(async () => {
+    await transport?.close();
+    await fs.rm(ARG_TMP_DIR, { recursive: true, force: true });
+  });
+
+  it("prefers expanded arguments over an unresolved environment template", async () => {
+    const result = await client.callTool({
+      name: "list_pdfs",
+      arguments: {
+        directory: SECOND_ALLOWED_DIR,
+      },
+    });
+
+    const text = textFromToolResult(result);
+    expect(text).toContain("Found 1 PDF files");
+    expect(text).toContain("argument-example.pdf");
   }, 30_000);
 });

@@ -607,6 +607,7 @@ import {
   getRegionPixelRect,
   searchPageTexts,
   validatePdfRegionBox,
+  parseAllowedDirectoryArgs,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
@@ -686,7 +687,10 @@ function envPathListOrDefault(name, fallbackPaths) {
 }
 
 function buildAllowedDirectories() {
-  const configuredDirectories = envPathListOrDefault("ALLOWED_DIRECTORIES", DEFAULT_ALLOWED_DIRECTORIES);
+  const argumentDirectories = parseAllowedDirectoryArgs(process.argv.slice(2));
+  const configuredDirectories = argumentDirectories?.length
+    ? argumentDirectories
+    : envPathListOrDefault("ALLOWED_DIRECTORIES", DEFAULT_ALLOWED_DIRECTORIES);
   const directories = [
     ...configuredDirectories,
     PROFILES_DIR,
