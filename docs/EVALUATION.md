@@ -140,8 +140,12 @@ not a missing automation feature.
 
 Each task specifies the user job, starting files and permissions, allowed side
 effects, expected evidence, success rubric, and failure conditions. Run multiple
-trials when agent choice or generation is involved and report both pass rate and
-variance.
+unique trials when agent choice or generation is involved. Report attempted and
+product trial counts, harness-failure rate, pass rate, sample variance, standard
+error, and—only after independence gates pass—a 95% Wilson interval. A perfect
+observed rate still has uncertainty; do not present zero observed variance as
+proof of perfect reliability, and do not compute inferential bounds over cloned
+fixtures or trajectories.
 
 Score the complete trajectory:
 
@@ -156,6 +160,171 @@ Score the complete trajectory:
 Representative jobs include inspect-and-answer, form fill and validation,
 structured extraction, compare-and-explain, page-plan transformation,
 accessibility assessment, prepare-for-signature, and multi-document packet work.
+
+### Executable trajectory contracts v0
+
+The first executable L5 contract lives in
+`test/fixtures/eval/trajectories/jobs.v1.json`. It versions six public-safe jobs:
+inspect-and-answer, fill-and-validate, compare-and-explain, safe page mutation,
+prepare-for-signature, and path-policy error recovery. Each job declares:
+
+- allowed, forbidden, inspection, mutation, and required tool groups;
+- exact required semantic calls, including nested argument values rather than
+  only the presence of argument names;
+- whether inspection must precede mutation;
+- allowed created, modified, deleted, external-request, and signature effects;
+- declared input/output evidence sources plus required page, field, region, and
+  file evidence;
+- verified-output and limitation requirements.
+
+The v3 grader uses strict, independently versioned suite, trial-set, trial, run,
+host-event, step, result, effects, artifact, evidence, claim, and harness-failure
+records. Unknown fields and ambiguous success/error records are rejected. A
+required tool counts only after a successful call with its required arguments
+and a non-null, hashed retained MCP result. An observed source must also appear
+in that call's path arguments. Every trajectory call is validated against the
+actual schemas returned by the version-pinned server, captured in
+`tool-contracts.v1.json`; the suite pins the runtime version and contract digest.
+Regenerate and verify that contract directly from the running MCP server with:
+
+```bash
+node scripts/eval-capture-tool-contracts.mjs
+```
+
+Evidence binds to a successful result ID, its source, and a typed semantic
+observation such as the exact page, field/value digest, region, page plan,
+signature location, or file. A retained result hash by itself is not semantic
+evidence, and a claim's own `supported` boolean is not evidence. Fixed public
+jobs also pin expected result observations (including page-text and field-value
+digests) and require a schema-shaped JSON terminal answer whose canonical digest
+matches the expected value; merely mentioning the expected words is insufficient.
+Output artifacts require a separately retained filesystem-observer event whose
+SHA-256 agrees with the producer result, artifact record, and a distinct,
+successful, path-bound post-mutation verifier result. The filesystem observation
+must occur after both production and verification, so a pre-mutation snapshot or
+an unrelated output cannot satisfy the gate. The fill job specifically
+requires field inspection before mutation, validation, and an exact field
+read-back afterward; an observed output hash is artifact-integrity evidence, not
+proof that the agent completed the full job or preserved every non-target field.
+
+`test/eval/trajectory-grader.js` treats forbidden tools, uninspected mutation,
+fabricated or stale signature intent, escaped or unproven effects, unsupported
+important claims, missing terminal answers, unverified outputs, and failed
+recovery as hard failures. Signing intent is checked with the same production
+validator as `apply_signature`, must match the exact tool arguments, and is
+revalidated at every signature-call timestamp—not only the first. It must bind
+to a retained user-confirmation host event. Recovery requires a retained raw
+`ok:false` error with the declared denial code and denied argument, followed by
+an allowed successful call explicitly bound to that failure. A terminal answer
+must follow the final tool call and precede a retained completed-turn event.
+Harness failures are classified separately only when a strict phase/error record
+binds to trusted host provenance; a bare `harness_failure` label is invalid, and
+a benchmark stays blocked when the configured maximum harness-failure rate is
+exceeded.
+
+The trust registry pins the canonical digest of the entire suite, including
+prompts, thresholds, policies, and forbidden tools. Correction lineage is
+approved per job, so a failure from one workflow cannot be relabeled with a
+different workflow's regression. Changing any suite content requires an
+intentional registry update and review.
+
+Run the deterministic grader calibration with:
+
+```bash
+node scripts/eval-run-trajectories.mjs
+```
+
+The committed calibration set contains two passing product trials, one
+deliberately failing product trial, and one harness failure for every job. The
+runner reports descriptive sample statistics, harness-failure rates, and
+failure-class counts. It deliberately withholds Wilson bounds because repeated
+calibration payloads are not independent samples. Repeat indices, run IDs, and
+host-event IDs must be unique, but uniqueness of labels alone is insufficient.
+Independence is based on distinct fixture instances and the job's pinned
+semantic operation as well as inputs, seeds, invocation provenance, transcript
+digests, and runs; changing an irrelevant optional argument cannot turn cloned
+work into independent evidence. Input and fixture-instance hashes must bind to
+retained filesystem-observer events rather than observer labels alone. Each deliberate calibration
+failure carries a Bead and regression reference approved by the versioned trust
+registry. The generator reproduces the calibration file exactly:
+
+```bash
+node scripts/eval-generate-trajectory-calibration.mjs
+```
+
+These generated records exercise the grader; they are **not observed agent or
+native-host benchmark results**. The report therefore keeps
+`benchmark_claim_ready: false` even when the synthetic sample count reaches the
+configured minimum.
+
+The runner also accepts measured non-calibration trial sets. Every set must keep
+an explicit claim boundary, and meeting the minimum sample count does not widen
+that boundary. Claim readiness is the conjunction of approved suite/corpus,
+cryptographically trusted ingestion, sample independence, per-job sample size,
+and harness-health gates. The repository intentionally authorizes no planner or
+result-attestation public keys and contains no private signing keys; unsigned ad
+hoc runs are useful product evidence but cannot become benchmark claims. The versioned trust registry is
+`test/fixtures/eval/trajectories/trust-registry.v1.json`.
+
+Each trial set includes an invocation run plan that defines the denominator
+before execution. The plan binds the trial-set ID, suite ID and digest, claim
+boundary, semantic operation, fixture instance, and seed. Its signature uses a
+separately authorized planner key, and every run retains the full plan digest in
+an agent-host event captured no later than run start. Every planned invocation
+must resolve to exactly one product
+trial or one harness-failure record; a launch that never produces a transcript
+cannot silently disappear. The attestation binds the run-plan digest as well as
+the suite and trial payload digests. Its signed payload also binds the claim
+boundary, attestation kind, producer, and key ID, preventing those trust fields
+from being rewritten after signing.
+
+Raw `codex exec --json` streams can be normalized with an external observer
+sidecar:
+
+```bash
+node scripts/eval-ingest-codex-trajectory.mjs \
+  --plan pre-run-plan.json \
+  --raw codex-events.jsonl \
+  --observer filesystem-observer.json \
+  --output measured-trial.json
+node scripts/eval-run-trajectories.mjs --trials measured-trial.json
+```
+
+Multi-invocation plans must be ingested as a complete batch, so a partial first
+result cannot redefine the denominator. A batch manifest contains
+`{"runs":[{"raw":"run-1.jsonl","observer":"run-1-observer.json"}, ...]}`;
+paths are relative to the manifest:
+
+```bash
+node scripts/eval-ingest-codex-trajectory.mjs \
+  --plan pre-run-plan.json \
+  --batch batch-manifest.json \
+  --output measured-trials.json
+```
+
+The ingester is fail-closed over the Codex event stream. It accepts only the
+declared thread/turn lifecycle events and completed agent messages or PDF MCP
+calls; command execution, file-change, web-search, unknown item types, unknown
+terminal statuses, unfinished calls, and calls to undeclared servers are
+rejected rather than dropped. It rejects null successful results, hashes
+retained raw tool results and failures, derives error codes only from those raw
+failures, and requires the terminal agent message to occur after the final PDF
+tool call and before `turn.completed`. A planned launch failure is normalized
+explicitly as a harness failure and remains in the run-plan denominator. Once a
+PDF tool call completes, the run is a product trial and cannot be relabeled as a
+harness failure merely because the answer or product result was bad.
+Tool arguments and completion/error state come from Codex JSONL; observed input
+sources, filesystem effects, artifact existence/hashes, and evidence annotations
+come only from the strictly validated separate observer record. Agent prose is
+never accepted as an effects or artifact oracle. The attestation binds the raw
+transcript, observer sidecar, suite, run plan, normalized trial payload, and
+claim/trust fields, preventing a later JSON edit from inheriting trust. If the
+agent emits no terminal answer,
+the record is still a valid product trial with `present: false` and must fail
+rather than being discarded as malformed or relabeled as a harness failure.
+Real L5 claims must retain run/host metadata and references without committing
+private document content. A host timeout remains a harness failure even when
+the same task later passes.
 
 ## Native host matrix
 

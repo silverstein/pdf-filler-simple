@@ -1,0 +1,1158 @@
+{
+  "contract_schema_version": 1,
+  "contract_id": "pdf-tools.trajectory.tool-contracts.v1",
+  "runtime": {
+    "name": "pdf-tools",
+    "version": "0.8.6"
+  },
+  "tools_sha256": "6951f817cb9dac2d6ed8463165ee6169196f92abfb9d1fa063db1ab3da1c90d0",
+  "tools": [
+    {
+      "name": "add_signature_field",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Path to the input PDF"
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Path to save the output PDF. May be the same as pdf_path for in-place editing; the original will be backed up on the first mutation."
+          },
+          "page": {
+            "type": "integer",
+            "description": "Page number (1-indexed)"
+          },
+          "x": {
+            "type": "number",
+            "description": "Left edge of the signature box, in points from the left of the page"
+          },
+          "y": {
+            "type": "number",
+            "description": "Top edge of the signature box, in points from the TOP of the page"
+          },
+          "width": {
+            "type": "number",
+            "description": "Width of the signature box, in points (e.g. 150 for a typical signature line)"
+          },
+          "height": {
+            "type": "number",
+            "description": "Height of the signature box, in points (e.g. 36 for a typical signature line)"
+          },
+          "label": {
+            "type": "string",
+            "description": "Text shown inside the box (default: 'Sign here')"
+          },
+          "allow_resign": {
+            "type": "boolean",
+            "description": "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures."
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          },
+          "force_xfa": {
+            "type": "boolean",
+            "description": "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA data will be stripped by pdf-lib."
+          }
+        },
+        "required": [
+          "pdf_path",
+          "output_path",
+          "page",
+          "x",
+          "y",
+          "width",
+          "height"
+        ]
+      }
+    },
+    {
+      "name": "apply_page_plan",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "input_path": {
+            "type": "string",
+            "description": "Path to the source PDF file"
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Path where the new PDF will be saved (must differ from input_path)"
+          },
+          "plan": {
+            "type": "object",
+            "description": "Page plan object",
+            "properties": {
+              "page_order": {
+                "type": "array",
+                "items": {
+                  "type": "integer"
+                },
+                "description": "1-indexed page numbers in desired order. Pages not listed are excluded (deleted)."
+              },
+              "rotations": {
+                "type": "object",
+                "description": "Map of original page number (string) to rotation degrees (90, 180, or 270). Entries for excluded pages are silently ignored.",
+                "additionalProperties": {
+                  "type": "number"
+                }
+              }
+            },
+            "required": [
+              "page_order"
+            ]
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          },
+          "force_xfa": {
+            "type": "boolean",
+            "description": "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped by pdf-lib."
+          }
+        },
+        "required": [
+          "input_path",
+          "output_path",
+          "plan"
+        ]
+      }
+    },
+    {
+      "name": "apply_signature",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Path to the input PDF"
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Path to save the signed PDF. May be the same as pdf_path for in-place signing; the original will be backed up on the first mutation."
+          },
+          "signature_name": {
+            "type": "string",
+            "description": "Name of a previously-saved signature (see create_signature / list_signatures)"
+          },
+          "page": {
+            "type": "integer",
+            "description": "Page number (1-indexed)"
+          },
+          "x": {
+            "type": "number",
+            "description": "Left edge in points, TOP-LEFT origin"
+          },
+          "y": {
+            "type": "number",
+            "description": "Top edge in points, TOP-LEFT origin"
+          },
+          "width": {
+            "type": "number",
+            "description": "Width in points"
+          },
+          "height": {
+            "type": "number",
+            "description": "Height in points"
+          },
+          "user_intent_statement": {
+            "type": "string",
+            "description": "REQUIRED. The user's own sentence confirming intent to sign — e.g. \"I, Mat Silverstein, sign this W-9 application on 2026-04-16.\" Ask the user for this verbatim; do not invent it."
+          },
+          "user_confirmed_at": {
+            "type": "string",
+            "description": "REQUIRED. ISO-8601 timestamp of when the user confirmed signing, e.g. \"2026-04-16T19:32:00Z\". Must be within the last 24 hours. Ask the user; do not fabricate."
+          },
+          "draw_audit_line": {
+            "type": "boolean",
+            "description": "Also draw a small visible timestamp/signer line below the signature (default: false). Useful for printable audit trails."
+          },
+          "signing_mode": {
+            "type": "string",
+            "enum": [
+              "signature",
+              "initials"
+            ],
+            "description": "Optional semantic label for the visible mark. Use 'initials' when applying a mark to an initials zone so results and audit metadata say 'initialed' instead of 'signed'."
+          },
+          "allow_resign": {
+            "type": "boolean",
+            "description": "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures. Only enable if the user explicitly wants to re-sign a previously-signed document."
+          },
+          "force_xfa": {
+            "type": "boolean",
+            "description": "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped by pdf-lib."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Legacy no-op. Same-path in-place signing is allowed and creates a backup on the first mutation."
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          }
+        },
+        "required": [
+          "pdf_path",
+          "output_path",
+          "signature_name",
+          "page",
+          "x",
+          "y",
+          "width",
+          "height",
+          "user_intent_statement",
+          "user_confirmed_at"
+        ]
+      }
+    },
+    {
+      "name": "apply_text",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Path to the input PDF"
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Path to save the stamped PDF. May be the same as pdf_path for in-place editing; the original will be backed up on the first mutation."
+          },
+          "page": {
+            "type": "integer",
+            "description": "Page number (1-indexed)"
+          },
+          "x": {
+            "type": "number",
+            "description": "Left edge in points, TOP-LEFT origin"
+          },
+          "y": {
+            "type": "number",
+            "description": "Top edge in points, TOP-LEFT origin"
+          },
+          "width": {
+            "type": "number",
+            "description": "Width in points"
+          },
+          "height": {
+            "type": "number",
+            "description": "Height in points"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text to stamp (max 200 chars)"
+          },
+          "font_style": {
+            "type": "string",
+            "enum": [
+              "normal",
+              "italic"
+            ],
+            "description": "Font style (default: normal)"
+          },
+          "allow_resign": {
+            "type": "boolean",
+            "description": "Proceed even if the PDF has existing cryptographic signatures (default: false — saving would invalidate them)"
+          },
+          "force_xfa": {
+            "type": "boolean",
+            "description": "Proceed even if the PDF uses XFA forms (default: false — the XFA layer will be stripped)"
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Legacy no-op. Same-path in-place stamping is allowed and creates a backup on the first mutation."
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          }
+        },
+        "required": [
+          "pdf_path",
+          "output_path",
+          "page",
+          "x",
+          "y",
+          "width",
+          "height",
+          "text"
+        ]
+      }
+    },
+    {
+      "name": "bulk_fill_from_csv",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Path to the template PDF file"
+          },
+          "csv_path": {
+            "type": "string",
+            "description": "Path to CSV file with data (first row should be field names)"
+          },
+          "output_directory": {
+            "type": "string",
+            "description": "Directory where filled PDFs will be saved"
+          },
+          "filename_column": {
+            "type": "string",
+            "description": "CSV column to use for output filenames (optional)"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          },
+          "force_xfa": {
+            "type": "boolean",
+            "description": "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped by pdf-lib."
+          }
+        },
+        "required": [
+          "pdf_path",
+          "csv_path",
+          "output_directory"
+        ]
+      }
+    },
+    {
+      "name": "create_signature",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Short identifier for this signature (letters, numbers, hyphens, underscores, spaces, dots). Used to look it up later — e.g. 'mat-default', 'business'."
+          },
+          "display_name": {
+            "type": "string",
+            "description": "The user's name as it should appear in attestations, e.g. 'Mat Silverstein'. If provided without an image source, creates a typed signature. If provided with image_path or image_data_url, it is stored as metadata alongside the image signature."
+          },
+          "image_path": {
+            "type": "string",
+            "description": "[Image style] Local path to a PNG or JPEG image of the signature (a scan/photo of a handwritten signature). Must be an absolute path on the user's machine."
+          },
+          "image_data_url": {
+            "type": "string",
+            "description": "[Image style] Base64 data URL of the signature image, e.g. 'data:image/png;base64,iVBOR...'. Use when the signature was drawn in the viewer or captured from another source."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "If a signature with this name already exists, overwrite it (default: false)."
+          }
+        },
+        "required": [
+          "name"
+        ]
+      }
+    },
+    {
+      "name": "detect_signature_zones",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Path to the PDF file"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          }
+        },
+        "required": [
+          "pdf_path"
+        ]
+      }
+    },
+    {
+      "name": "display_pdf",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Absolute path to the PDF file."
+          },
+          "page": {
+            "type": "number",
+            "description": "Initial page number to display (default: 1)."
+          }
+        },
+        "required": [
+          "pdf_path"
+        ],
+        "examples": [
+          {
+            "pdf_path": "/Users/alice/Documents/w9.pdf",
+            "page": 2
+          }
+        ]
+      }
+    },
+    {
+      "name": "extract_to_csv",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Array of PDF file paths to extract data from"
+          },
+          "output_csv": {
+            "type": "string",
+            "description": "Path where the CSV file will be saved"
+          }
+        },
+        "required": [
+          "pdf_paths",
+          "output_csv"
+        ]
+      }
+    },
+    {
+      "name": "fetch_pdf_from_url",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "url": {
+            "type": "string",
+            "description": "HTTP or HTTPS URL of a PDF to download"
+          },
+          "filename": {
+            "type": "string",
+            "description": "Optional filename for the saved PDF (default: derived from the URL and sanitized; '.pdf' appended if missing)"
+          },
+          "destination_dir": {
+            "type": "string",
+            "description": "Optional local directory to save into (default: ~/Downloads/). Must be a local path on the user's machine — NOT a Claude container path like /mnt/..."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Overwrite if a file with the same name exists (default: false — appends ' (2)', ' (3)', etc.)"
+          },
+          "max_size_mb": {
+            "type": "number",
+            "description": "Maximum download size in MB (default: 100). Raise for larger PDFs."
+          },
+          "headers": {
+            "type": "object",
+            "description": "Optional HTTP headers, e.g. { \"Authorization\": \"Bearer ...\" } for authenticated URLs.",
+            "additionalProperties": {
+              "type": "string"
+            }
+          },
+          "allow_private_hosts": {
+            "type": "boolean",
+            "description": "Allow downloads from localhost / private IP ranges. Default false for safety. Only enable for trusted intranet PDFs."
+          }
+        },
+        "required": [
+          "url"
+        ]
+      }
+    },
+    {
+      "name": "fill_pdf",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Path to the source PDF file"
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Path where the filled PDF will be saved"
+          },
+          "field_data": {
+            "type": "object",
+            "description": "Object with field names as keys and values to fill"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          },
+          "force_xfa": {
+            "type": "boolean",
+            "description": "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped by pdf-lib."
+          }
+        },
+        "required": [
+          "pdf_path",
+          "output_path",
+          "field_data"
+        ]
+      }
+    },
+    {
+      "name": "fill_with_profile",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Path to the PDF file"
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Path where the filled PDF will be saved"
+          },
+          "profile_name": {
+            "type": "string",
+            "description": "Name of the profile to use"
+          },
+          "additional_data": {
+            "type": "object",
+            "description": "Additional fields to fill/override (optional)"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          }
+        },
+        "required": [
+          "pdf_path",
+          "output_path",
+          "profile_name"
+        ]
+      }
+    },
+    {
+      "name": "get_active_document",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "get_page_analysis",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Path to the PDF file"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          }
+        },
+        "required": [
+          "pdf_path"
+        ]
+      }
+    },
+    {
+      "name": "get_pdf_info",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Path to the PDF file"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          }
+        },
+        "required": [
+          "pdf_path"
+        ]
+      }
+    },
+    {
+      "name": "get_pdf_resource_uri",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Absolute path to the PDF file."
+          }
+        },
+        "required": [
+          "pdf_path"
+        ],
+        "examples": [
+          {
+            "pdf_path": "/Users/alice/Documents/report.pdf"
+          }
+        ]
+      }
+    },
+    {
+      "name": "list_pdfs",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "directory": {
+            "type": "string",
+            "description": "Directory path to search for PDFs (default: ~/Documents). Must be a local filesystem path."
+          }
+        }
+      }
+    },
+    {
+      "name": "list_profiles",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "list_signatures",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "load_profile",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "profile_name": {
+            "type": "string",
+            "description": "Name of the profile to load"
+          }
+        },
+        "required": [
+          "profile_name"
+        ]
+      }
+    },
+    {
+      "name": "load_signature",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "signature_name": {
+            "type": "string",
+            "description": "Name of a previously-saved signature."
+          }
+        },
+        "required": [
+          "signature_name"
+        ]
+      }
+    },
+    {
+      "name": "merge_pdfs",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "input_paths": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Array of PDF file paths to merge (in order)"
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Path where the merged PDF will be saved"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional, applied to all inputs)"
+          }
+        },
+        "required": [
+          "input_paths",
+          "output_path"
+        ]
+      }
+    },
+    {
+      "name": "prepare_signing_packet",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Path to the input PDF"
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Path to save the prepared PDF. May be the same as pdf_path for in-place editing; the original will be backed up on the first mutation."
+          },
+          "field_values": {
+            "type": "object",
+            "description": "Optional map of AcroForm field name → value. Same shape as fill_pdf's 'fields' argument.",
+            "additionalProperties": true
+          },
+          "signature_locations": {
+            "type": "array",
+            "description": "Sign-here boxes to add. Coordinates use TOP-LEFT origin in points.",
+            "items": {
+              "type": "object",
+              "properties": {
+                "label": {
+                  "type": "string",
+                  "description": "Label shown in the box, e.g. 'Signature (Applicant)'"
+                },
+                "page": {
+                  "type": "integer"
+                },
+                "x": {
+                  "type": "number"
+                },
+                "y": {
+                  "type": "number"
+                },
+                "width": {
+                  "type": "number"
+                },
+                "height": {
+                  "type": "number"
+                }
+              },
+              "required": [
+                "page",
+                "x",
+                "y",
+                "width",
+                "height"
+              ]
+            }
+          },
+          "allow_resign": {
+            "type": "boolean",
+            "description": "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures."
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          },
+          "force_xfa": {
+            "type": "boolean",
+            "description": "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped."
+          }
+        },
+        "required": [
+          "pdf_path",
+          "output_path"
+        ]
+      }
+    },
+    {
+      "name": "read_pdf_bytes",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Path to the PDF file"
+          },
+          "offset": {
+            "type": "number",
+            "description": "Byte offset to start reading from"
+          },
+          "byteCount": {
+            "type": "number",
+            "description": "Number of bytes to read (max 524288)"
+          }
+        },
+        "required": [
+          "pdf_path",
+          "offset",
+          "byteCount"
+        ]
+      }
+    },
+    {
+      "name": "read_pdf_content",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Absolute path to the PDF file."
+          },
+          "max_pages": {
+            "type": "number",
+            "description": "Maximum number of pages to extract. Useful for very large PDFs when you only need the opening section."
+          }
+        },
+        "required": [
+          "pdf_path"
+        ],
+        "examples": [
+          {
+            "pdf_path": "/Users/alice/Documents/contract.pdf",
+            "max_pages": 12
+          }
+        ]
+      }
+    },
+    {
+      "name": "read_pdf_fields",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Path to the PDF file"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          }
+        },
+        "required": [
+          "pdf_path"
+        ]
+      }
+    },
+    {
+      "name": "read_pdf_pages",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Absolute path to the PDF file."
+          },
+          "start_page": {
+            "type": "number",
+            "description": "First page to read (1-indexed, default: 1)."
+          },
+          "end_page": {
+            "type": "number",
+            "description": "Last page to read (1-indexed, inclusive, default: start_page)."
+          },
+          "max_chars_per_page": {
+            "type": "number",
+            "description": "Maximum characters to return per page in the structured output (default: 4000)."
+          }
+        },
+        "required": [
+          "pdf_path"
+        ],
+        "examples": [
+          {
+            "pdf_path": "/Users/alice/Documents/nda.pdf",
+            "start_page": 4,
+            "end_page": 6
+          }
+        ]
+      }
+    },
+    {
+      "name": "render_pdf_page",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Absolute path to the PDF file."
+          },
+          "page": {
+            "type": "number",
+            "description": "Page number to render (1-indexed, default: 1)."
+          },
+          "max_dimension_px": {
+            "type": "number",
+            "description": "Maximum width or height in rendered pixels (default: 1800). Use smaller values for lighter previews."
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)."
+          }
+        },
+        "required": [
+          "pdf_path"
+        ],
+        "examples": [
+          {
+            "pdf_path": "/Users/alice/Documents/scanned-invoice.pdf",
+            "page": 1,
+            "max_dimension_px": 1600
+          }
+        ]
+      }
+    },
+    {
+      "name": "render_pdf_region",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Absolute path to the PDF file."
+          },
+          "page": {
+            "type": "number",
+            "description": "Page number to render (1-indexed)."
+          },
+          "x": {
+            "type": "number",
+            "description": "Left edge of the region, in points from the left side of the page."
+          },
+          "y": {
+            "type": "number",
+            "description": "Top edge of the region, in points from the TOP of the page."
+          },
+          "width": {
+            "type": "number",
+            "description": "Width of the region in points."
+          },
+          "height": {
+            "type": "number",
+            "description": "Height of the region in points."
+          },
+          "max_dimension_px": {
+            "type": "number",
+            "description": "Maximum width or height in rendered pixels for the cropped region (default: 1400)."
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)."
+          }
+        },
+        "required": [
+          "pdf_path",
+          "page",
+          "x",
+          "y",
+          "width",
+          "height"
+        ],
+        "examples": [
+          {
+            "pdf_path": "/Users/alice/Documents/contract.pdf",
+            "page": 8,
+            "x": 72,
+            "y": 620,
+            "width": 220,
+            "height": 80,
+            "max_dimension_px": 1200
+          }
+        ]
+      }
+    },
+    {
+      "name": "reorder_pdf_pages",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "input_path": {
+            "type": "string",
+            "description": "Path to the source PDF file"
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Path where the reordered PDF will be saved"
+          },
+          "page_order": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "Array of 1-based page numbers in desired order, e.g. [3, 1, 2, 4]"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          }
+        },
+        "required": [
+          "input_path",
+          "output_path",
+          "page_order"
+        ]
+      }
+    },
+    {
+      "name": "reveal_in_finder",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "path": {
+            "type": "string",
+            "description": "Absolute path to the file to reveal."
+          }
+        },
+        "required": [
+          "path"
+        ]
+      }
+    },
+    {
+      "name": "rotate_pdf_pages",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "input_path": {
+            "type": "string",
+            "description": "Path to the source PDF file"
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Path where the rotated PDF will be saved"
+          },
+          "pages": {
+            "type": "array",
+            "items": {
+              "type": "number"
+            },
+            "description": "Array of 1-based page numbers to rotate (omit or empty array for all pages)"
+          },
+          "degrees": {
+            "type": "number",
+            "description": "Rotation angle: 90, 180, or 270"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          }
+        },
+        "required": [
+          "input_path",
+          "output_path",
+          "degrees"
+        ]
+      }
+    },
+    {
+      "name": "save_profile",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "profile_name": {
+            "type": "string",
+            "description": "Name for the profile (e.g., 'work', 'personal')"
+          },
+          "field_data": {
+            "type": "object",
+            "description": "Object with field names and values to save"
+          }
+        },
+        "required": [
+          "profile_name",
+          "field_data"
+        ]
+      }
+    },
+    {
+      "name": "search_pdf_text",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Absolute path to the PDF file."
+          },
+          "query": {
+            "type": "string",
+            "description": "Literal text to search for, such as \"indemnification\" or \"governing law\"."
+          },
+          "max_results": {
+            "type": "number",
+            "description": "Maximum number of matching snippets to return (default: 10)."
+          },
+          "context_chars": {
+            "type": "number",
+            "description": "Approximate number of surrounding characters to include around each match (default: 160)."
+          }
+        },
+        "required": [
+          "pdf_path",
+          "query"
+        ],
+        "examples": [
+          {
+            "pdf_path": "/Users/alice/Documents/master-services-agreement.pdf",
+            "query": "indemnification",
+            "max_results": 5
+          }
+        ]
+      }
+    },
+    {
+      "name": "set_active_document",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Canonical active PDF path currently shown in the viewer."
+          },
+          "backup_path": {
+            "type": "string",
+            "description": "Optional backup path previously created for this document."
+          },
+          "last_mutation_tool": {
+            "type": "string",
+            "description": "Optional last mutation tool name to preserve across rehydration."
+          },
+          "last_mutation_at": {
+            "type": "string",
+            "description": "Optional ISO-8601 timestamp of the last mutation."
+          }
+        },
+        "required": [
+          "pdf_path"
+        ]
+      }
+    },
+    {
+      "name": "split_pdf",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "input_path": {
+            "type": "string",
+            "description": "Path to the PDF file to split"
+          },
+          "page_ranges": {
+            "type": "string",
+            "description": "Page ranges: '1-5,6-10,11-15' or 'every 5' for uniform splits"
+          },
+          "output_directory": {
+            "type": "string",
+            "description": "Directory where split PDFs will be saved"
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          }
+        },
+        "required": [
+          "input_path",
+          "page_ranges",
+          "output_directory"
+        ]
+      }
+    },
+    {
+      "name": "validate_pdf",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Absolute path to the fillable PDF on the user's machine."
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for encrypted PDFs (optional)"
+          }
+        },
+        "required": [
+          "pdf_path"
+        ]
+      }
+    }
+  ]
+}

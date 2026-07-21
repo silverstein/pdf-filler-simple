@@ -1,0 +1,92 @@
+{
+  "registry_version": 1,
+  "registry_id": "pdf-tools.trajectory.trust.v1",
+  "corpus_manifest": {
+    "path": "test/fixtures/eval/manifest.v1.json",
+    "sha256": "0dba689b274c183033b1f852b1d704d40b4b68d8dffab474b57b3fde35fe52a5"
+  },
+  "approved_suites": {
+    "pdf-tools.trajectory.v1": {
+      "suite_sha256": "a9aa02fbd0eac313aea20f65887c8665cb55a093d4b8426da3c012d7d5ec5bba",
+      "categories": [
+        "inspect_and_answer",
+        "fill_and_validate",
+        "compare_and_explain",
+        "safe_page_mutation",
+        "prepare_for_signature",
+        "error_recovery"
+      ],
+      "fixture_ids": [
+        "pdf-tools.eval.v1.irs-w9-2014",
+        "pdf-tools.eval.v1.dev-page-order-source",
+        "pdf-tools.eval.v1.dev-page-order-visibly-wrong"
+      ]
+    }
+  },
+  "approved_lineage": {
+    "pdf-tools.trajectory.v1.inspect-and-answer": {
+      "bead_id": "pdf-toolkit-mcp-igr.2",
+      "regressions": {
+        "pdf-tools.regression.trajectory.v1.inspect-and-answer.unsupported-claim": {
+          "relationships": ["failure"],
+          "failure_checks": ["supported_claims"]
+        },
+        "pdf-tools.regression.trajectory.v1.inspect-and-answer.accepted-fix": {
+          "relationships": ["accepted_fix"],
+          "failure_checks": []
+        }
+      }
+    },
+    "pdf-tools.trajectory.v1.fill-and-validate": {
+      "bead_id": "pdf-toolkit-mcp-igr.2",
+      "regressions": {
+        "pdf-tools.regression.trajectory.v1.fill-and-validate.failed-required-call": {
+          "relationships": ["failure"],
+          "failure_checks": ["required_tools/inspect_and_read_back_fields", "unexpected_tool_errors", "inspection_before_mutation"]
+        },
+        "pdf-tools.regression.trajectory.v1.fill-and-validate.missing-inspection-and-answer": {
+          "relationships": ["failure"],
+          "failure_checks": ["required_tools/inspect_and_read_back_fields", "terminal_answer", "inspection_before_mutation", "verified_artifacts", "evidence/min_references", "evidence/source/output/filled-form.pdf", "evidence/kind/field", "evidence/kind/file", "supported_claims"]
+        }
+      }
+    },
+    "pdf-tools.trajectory.v1.compare-and-explain": {
+      "bead_id": "pdf-toolkit-mcp-igr.2",
+      "regressions": {
+        "pdf-tools.regression.trajectory.v1.compare-and-explain.forbidden-tool": {
+          "relationships": ["failure"],
+          "failure_checks": ["forbidden_tools", "irrelevant_tools"]
+        }
+      }
+    },
+    "pdf-tools.trajectory.v1.safe-page-mutation": {
+      "bead_id": "pdf-toolkit-mcp-igr.2",
+      "regressions": {
+        "pdf-tools.regression.trajectory.v1.safe-page-mutation.self-verification": {
+          "relationships": ["failure"],
+          "failure_checks": ["artifact_integrity", "verified_artifacts"]
+        }
+      }
+    },
+    "pdf-tools.trajectory.v1.prepare-for-signature": {
+      "bead_id": "pdf-toolkit-mcp-igr.2",
+      "regressions": {
+        "pdf-tools.regression.trajectory.v1.prepare-for-signature.fabricated-intent": {
+          "relationships": ["failure"],
+          "failure_checks": ["forbidden_tools", "irrelevant_tools", "human_intent", "effects/signature_applied"]
+        }
+      }
+    },
+    "pdf-tools.trajectory.v1.error-recovery": {
+      "bead_id": "pdf-toolkit-mcp-igr.2",
+      "regressions": {
+        "pdf-tools.regression.trajectory.v1.error-recovery.missing-recovery": {
+          "relationships": ["failure"],
+          "failure_checks": ["required_tools/attempt_and_continue", "expected_semantics/recover-with-allowed-source", "evidence/result_bindings", "supported_claims", "error_recovery"]
+        }
+      }
+    }
+  },
+  "trusted_plan_keys": [],
+  "trusted_attestation_keys": []
+}
