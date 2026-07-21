@@ -45,7 +45,7 @@ not idempotent.
 | `list_pdfs` | T | F | T | F | Reads one allowlisted directory. |
 | `read_pdf_fields` | F | F | F | F | Reads a PDF but also replaces active-document state and timestamps the viewer session. |
 | `fill_pdf` | F | T | T | F | Deterministically writes `output_path`; accepted same-path and existing-destination writes can replace content. |
-| `bulk_fill_from_csv` | F | T | T | F | Deterministically writes derived filenames; existing files and duplicate CSV-derived names can be replaced. |
+| `bulk_fill_from_csv` | F | T | T | F | Deterministically writes derived filenames; duplicate names are rejected, and existing files are replaced only by a complete batch commit. |
 | `save_profile` | F | T | T | F | Writes a deterministic JSON record and can replace an existing named profile. |
 | `load_profile` | T | F | T | F | Reads one local profile. |
 | `list_profiles` | T | F | T | F | Reads the local profile directory. |
@@ -63,7 +63,7 @@ not idempotent.
 | `set_active_document` | F | F | F | F | Replaces ephemeral active-document state and refreshes `lastOpenedAt`; it does not alter user files. |
 | `read_pdf_bytes` | T | F | T | F | Reads a bounded chunk from one local PDF. |
 | `merge_pdfs` | F | T | T | F | Deterministically writes a merged PDF and can replace an existing destination. |
-| `split_pdf` | F | T | T | F | Deterministically writes derived split files and can replace existing files. |
+| `split_pdf` | F | T | T | F | Deterministically writes derived split files; existing files are replaced only by a complete split-set commit. |
 | `rotate_pdf_pages` | F | T | T | F | Deterministically writes rotated output and can replace an existing destination. |
 | `reorder_pdf_pages` | F | T | T | F | Deterministically writes reordered output and can replace an existing destination. |
 | `get_pdf_info` | T | F | T | F | Reads local file and PDF metadata. |

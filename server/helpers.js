@@ -3,6 +3,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { homedir } from "os";
+import { randomUUID } from "crypto";
 import {
   PDFArray,
   PDFDict,
@@ -16,6 +17,12 @@ import {
 } from "pdf-lib";
 
 const PDF_FIELD_VALIDATION_SCHEMA_VERSION = "1.0";
+const UNSUPPORTED_DIRECTORY_FSYNC_ERRORS = new Set([
+  "EINVAL",
+  "ENOTSUP",
+  "EOPNOTSUPP",
+  "EISDIR",
+]);
 
 const PRODUCER = PDFName.of("Producer");
 const MOD_DATE = PDFName.of("ModDate");
@@ -1189,6 +1196,254 @@ export function sanitizePdfFilename(name) {
   return safe;
 }
 
+function atomicOutputToken() {
+  return `${process.pid}-${randomUUID()}`;
+}
+
+function atomicSiblingPath(targetPath, token, kind, index = 0) {
+  return path.join(
+    path.dirname(targetPath),
+    `.${path.basename(targetPath)}.pdf-tools-${token}-${kind}-${index}`,
+  );
+}
+
+async function removeAtomicArtifact(fsOps, artifactPath, cleanupErrors) {
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    try {
+      await fsOps.unlink(artifactPath);
+      return;
+    } catch (error) {
+      if (error?.code === "ENOENT") return;
+      if (attempt === 2) cleanupErrors.push({ path: artifactPath, error });
+    }
+  }
+}
+
+async function syncAtomicOutputDirectory(fsOps, directoryPath) {
+  if (process.platform === "win32") return;
+  let handle = null;
+  try {
+    handle = await fsOps.open(directoryPath, "r");
+    await handle.sync();
+  } catch (error) {
+    if (!UNSUPPORTED_DIRECTORY_FSYNC_ERRORS.has(error?.code)) throw error;
+  } finally {
+    await handle?.close();
+  }
+}
+
+async function stageAtomicOutput(fsOps, targetPath, bytes, token, index) {
+  const stagePath = atomicSiblingPath(targetPath, token, "stage", index);
+  let handle = null;
+  let created = false;
+  try {
+    handle = await fsOps.open(stagePath, "wx", 0o600);
+    created = true;
+    await handle.writeFile(bytes);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    return stagePath;
+  } catch (error) {
+    try { await handle?.close(); } catch {}
+    const cleanupErrors = [];
+    if (created) {
+      await removeAtomicArtifact(fsOps, stagePath, cleanupErrors);
+    }
+    if (cleanupErrors.length > 0) {
+      throw atomicOutputError(
+        "ATOMIC_OUTPUT_CLEANUP_FAILED",
+        `Failed to clean the staged PDF output for ${targetPath}`,
+        error,
+        cleanupErrors,
+      );
+    }
+    throw error;
+  }
+}
+
+function outputIdentity(stat) {
+  if (!stat) return null;
+  return [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeMs, stat.ctimeMs].join(":");
+}
+
+async function lstatIfPresent(fsOps, targetPath) {
+  try {
+    return await fsOps.lstat(targetPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return null;
+    throw error;
+  }
+}
+
+function assertAtomicOutputTarget(targetPath, stat) {
+  if (stat?.isDirectory()) {
+    const error = new Error(`Atomic PDF output target is a directory: ${targetPath}`);
+    error.code = "ATOMIC_OUTPUT_TARGET_IS_DIRECTORY";
+    throw error;
+  }
+  if (stat && !stat.isFile()) {
+    const error = new Error(`Atomic PDF output target must be a regular file: ${targetPath}`);
+    error.code = "ATOMIC_OUTPUT_TARGET_NOT_REGULAR";
+    throw error;
+  }
+}
+
+function atomicOutputError(code, message, cause, cleanupErrors = []) {
+  const error = new Error(`${code}: ${message}`);
+  error.code = code;
+  if (cause) error.cause = cause;
+  if (cleanupErrors.length > 0) {
+    error.cleanup_errors = cleanupErrors.map(item => ({
+      path: item.path,
+      code: item.error?.code ?? null,
+      message: item.error?.message ?? String(item.error),
+    }));
+  }
+  return error;
+}
+
+/**
+ * Replace one output only after its complete bytes have been flushed to a
+ * same-directory staging file. A failed write or rename leaves an existing
+ * target untouched.
+ */
+export async function writePdfOutputAtomic(targetPath, bytes, {
+  fsOps = fs,
+  token = atomicOutputToken(),
+} = {}) {
+  await writePdfOutputsAtomic([{ targetPath, bytes }], { fsOps, token });
+}
+
+/**
+ * Commit a set of PDF outputs as one in-process transaction. All bytes are
+ * staged before any target changes. If a commit step fails, activated outputs
+ * are removed and pre-existing targets are restored before the error returns.
+ */
+export async function writePdfOutputsAtomic(entries, {
+  fsOps = fs,
+  token = atomicOutputToken(),
+} = {}) {
+  if (!Array.isArray(entries) || entries.length === 0) {
+    throw new TypeError("Atomic PDF output entries must be a non-empty array.");
+  }
+
+  const targets = entries.map((entry, index) => {
+    if (!entry || typeof entry.targetPath !== "string" || !entry.targetPath.trim()) {
+      throw new TypeError(`Atomic PDF output entry ${index + 1} requires targetPath.`);
+    }
+    const targetPath = path.resolve(entry.targetPath);
+    return {
+      targetPath,
+      bytes: entry.bytes,
+      produceBytes: entry.produceBytes,
+      index,
+      initial: null,
+      stagePath: null,
+      rollbackPath: atomicSiblingPath(targetPath, token, "rollback", index),
+      originalMoved: false,
+      activated: false,
+    };
+  });
+  const uniqueTargets = new Set(targets.map(entry => entry.targetPath));
+  if (uniqueTargets.size !== targets.length) {
+    const error = new Error("Atomic PDF output transaction contains duplicate target paths.");
+    error.code = "ATOMIC_OUTPUT_DUPLICATE_TARGET";
+    throw error;
+  }
+
+  const cleanupErrors = [];
+  try {
+    for (const entry of targets) {
+      entry.initial = await lstatIfPresent(fsOps, entry.targetPath);
+      assertAtomicOutputTarget(entry.targetPath, entry.initial);
+      if (await lstatIfPresent(fsOps, entry.rollbackPath)) {
+        throw atomicOutputError(
+          "ATOMIC_OUTPUT_ARTIFACT_COLLISION",
+          `Rollback path already exists: ${entry.rollbackPath}`,
+        );
+      }
+    }
+    for (const entry of targets) {
+      const bytes = typeof entry.produceBytes === "function"
+        ? await entry.produceBytes()
+        : entry.bytes;
+      entry.stagePath = await stageAtomicOutput(
+        fsOps,
+        entry.targetPath,
+        bytes,
+        token,
+        entry.index,
+      );
+      entry.bytes = null;
+      entry.produceBytes = null;
+    }
+
+    for (const entry of targets) {
+      const current = await lstatIfPresent(fsOps, entry.targetPath);
+      if (outputIdentity(current) !== outputIdentity(entry.initial)) {
+        throw atomicOutputError(
+          "ATOMIC_OUTPUT_CONFLICT",
+          `Output changed while the transaction was being staged: ${entry.targetPath}`,
+        );
+      }
+      if (current) {
+        await fsOps.rename(entry.targetPath, entry.rollbackPath);
+        entry.originalMoved = true;
+      }
+      await fsOps.rename(entry.stagePath, entry.targetPath);
+      entry.stagePath = null;
+      entry.activated = true;
+    }
+
+    for (const directory of new Set(targets.map(entry => path.dirname(entry.targetPath)))) {
+      await syncAtomicOutputDirectory(fsOps, directory);
+    }
+  } catch (cause) {
+    for (const entry of [...targets].reverse()) {
+      if (entry.activated) {
+        await removeAtomicArtifact(fsOps, entry.targetPath, cleanupErrors);
+        entry.activated = false;
+      }
+      if (entry.originalMoved) {
+        try {
+          await fsOps.rename(entry.rollbackPath, entry.targetPath);
+          entry.originalMoved = false;
+        } catch (error) {
+          cleanupErrors.push({ path: entry.rollbackPath, error });
+        }
+      }
+    }
+    for (const entry of targets) {
+      if (entry.stagePath) await removeAtomicArtifact(fsOps, entry.stagePath, cleanupErrors);
+    }
+    if (cleanupErrors.length > 0) {
+      throw atomicOutputError(
+        "ATOMIC_OUTPUT_ROLLBACK_FAILED",
+        "The PDF output transaction failed and could not be fully rolled back.",
+        cause,
+        cleanupErrors,
+      );
+    }
+    throw cause;
+  }
+
+  for (const entry of targets) {
+    if (entry.originalMoved) {
+      await removeAtomicArtifact(fsOps, entry.rollbackPath, cleanupErrors);
+      entry.originalMoved = false;
+    }
+  }
+  if (cleanupErrors.length > 0) {
+    throw atomicOutputError(
+      "ATOMIC_OUTPUT_CLEANUP_FAILED",
+      "The PDF outputs committed, but rollback artifacts could not be removed.",
+      null,
+      cleanupErrors,
+    );
+  }
+}
+
 // Find an unused filesystem path by appending " (2)", " (3)", etc.
 export async function findUniquePath(target) {
   try {
@@ -1343,7 +1598,7 @@ export async function downloadPdfFromUrl(url, {
   let target = path.join(destDir, finalName);
   if (!overwrite) target = await findUniquePath(target);
 
-  await fs.writeFile(target, buffer);
+  await writePdfOutputAtomic(target, buffer);
   return {
     path: target,
     bytes: buffer.length,

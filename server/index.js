@@ -687,6 +687,8 @@ import {
   failedPdfFormValidation,
   copyPdfPagesPreservingForms,
   copyPdfDocumentMetadata,
+  writePdfOutputAtomic,
+  writePdfOutputsAtomic,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
@@ -1257,33 +1259,6 @@ function buildAllowedDirectories() {
 }
 
 const ALLOWED_DIRECTORIES = buildAllowedDirectories();
-
-function tempOutputPath(targetPath) {
-  const dir = path.dirname(targetPath);
-  const base = path.basename(targetPath);
-  return path.join(dir, `.${base}.tmp-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
-}
-
-async function writePdfOutputAtomic(targetPath, bytes) {
-  const tmpPath = tempOutputPath(targetPath);
-  let handle;
-  try {
-    handle = await fs.open(tmpPath, "wx", 0o600);
-    await handle.writeFile(bytes);
-    await handle.sync();
-    await handle.close();
-    handle = null;
-    await fs.rename(tmpPath, targetPath);
-    try {
-      const directory = await fs.open(path.dirname(targetPath), "r");
-      try { await directory.sync(); } finally { await directory.close(); }
-    } catch {}
-  } catch (error) {
-    try { await handle?.close(); } catch {}
-    try { await fs.unlink(tmpPath); } catch {}
-    throw error;
-  }
-}
 
 const backupPathByCanonical = new Map();
 const backupOperationByCanonical = new Map();
@@ -1995,7 +1970,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "bulk_fill_from_csv",
-        description: "Fill multiple PDFs using data from a CSV file",
+        description: "Fill multiple PDFs using data from a CSV file. Output filenames must be unique. Existing outputs are replaced only if the complete batch commits; any failure rolls the whole batch back.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2540,7 +2515,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "merge_pdfs",
-        description: "Merge multiple PDF files into a single PDF. All paths must be absolute paths on the user's local machine.",
+        description: "Merge multiple PDF files into a single PDF. A complete staged PDF atomically replaces any existing output. All paths must be absolute paths on the user's local machine.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2575,7 +2550,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "split_pdf",
-        description: "Split a PDF into multiple files by page ranges (e.g. '1-5,6-10') or at regular intervals (e.g. 'every 5'). All paths must be absolute paths on the user's local machine.",
+        description: "Split a PDF into multiple files by page ranges (e.g. '1-5,6-10') or at regular intervals (e.g. 'every 5'). Existing outputs are replaced only if the complete split set commits; any failure rolls the whole set back. All paths must be absolute paths on the user's local machine.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2608,7 +2583,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "rotate_pdf_pages",
-        description: "Rotate pages in a PDF by 90, 180, or 270 degrees. All paths must be absolute paths on the user's local machine.",
+        description: "Rotate pages in a PDF by 90, 180, or 270 degrees. A complete staged PDF atomically replaces any existing output. All paths must be absolute paths on the user's local machine.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2651,7 +2626,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "reorder_pdf_pages",
-        description: "Rearrange the pages of a PDF in a new order. All pages must be included exactly once (strict permutation). All paths must be absolute paths on the user's local machine.",
+        description: "Rearrange the pages of a PDF in a new order. All pages must be included exactly once (strict permutation). A complete staged PDF atomically replaces any existing output. All paths must be absolute paths on the user's local machine.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2715,7 +2690,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "apply_page_plan",
-        description: "Apply a page plan to a PDF: reorder, rotate, and delete pages in one pass. Pages not listed in page_order are excluded (deleted). Writes a new file — original is never modified. All paths must be absolute.",
+        description: "Apply a page plan to a PDF: reorder, rotate, and delete pages in one pass. Pages not listed in page_order are excluded (deleted). A complete staged PDF atomically replaces any existing output; the source is never modified. All paths must be absolute.",
         inputSchema: {
           type: "object",
           properties: {
@@ -3157,7 +3132,7 @@ async function handleToolCall(request) {
           let type = "unknown";
           let options = [];
           let currentValue = "";
-          
+
           try {
             if (field.constructor.name.includes('TextField')) {
               type = "text";
@@ -3254,6 +3229,8 @@ async function handleToolCall(request) {
         await fs.mkdir(resolvedOutputDir, { recursive: true });
         
         const results = [];
+        const pendingOutputs = [];
+        const outputPaths = new Set();
         for (let i = 0; i < records.length; i++) {
           const record = records[i];
           let rawName = filename_column && record[filename_column]
@@ -3263,27 +3240,34 @@ async function handleToolCall(request) {
           rawName = path.basename(rawName).replace(/[/\\]/g, "_");
           const filename = `${rawName}.pdf`;
           const outputPath = path.join(resolvedOutputDir, filename);
-          
-          try {
-            const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, record, password);
-            const filledPdfBytes = await pdfDoc.save();
-            await fs.writeFile(outputPath, filledPdfBytes);
-            results.push({
-              filename,
-              output_path: outputPath,
-              fields_filled: filledFields.length,
-              errors,
-              status: errors.length > 0 ? "warning" : "ok",
-            });
-          } catch (e) {
-            results.push({
-              filename,
-              output_path: outputPath,
-              fields_filled: 0,
-              errors: [e.message],
-              status: "error",
-            });
+          if (outputPaths.has(outputPath)) {
+            throw new Error(`Bulk fill produced duplicate filename "${filename}". Use unique values in filename_column.`);
           }
+          outputPaths.add(outputPath);
+
+          pendingOutputs.push({
+            targetPath: outputPath,
+            async produceBytes() {
+              try {
+                const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, record, password);
+                const filledPdfBytes = await pdfDoc.save();
+                results.push({
+                  filename,
+                  output_path: outputPath,
+                  fields_filled: filledFields.length,
+                  errors,
+                  status: errors.length > 0 ? "warning" : "ok",
+                });
+                return filledPdfBytes;
+              } catch (e) {
+                throw new Error(`Bulk fill aborted at row ${i + 1} (${filename}): ${e.message}. No PDF outputs were committed.`);
+              }
+            },
+          });
+        }
+
+        if (pendingOutputs.length > 0) {
+          await writePdfOutputsAtomic(pendingOutputs);
         }
 
         const resultLines = results.map(result => {
@@ -4324,7 +4308,7 @@ async function handleToolCall(request) {
         }
 
         const mergedBytes = await mergedDoc.save();
-        await fs.writeFile(resolvedOutputPath, mergedBytes);
+        await writePdfOutputAtomic(resolvedOutputPath, mergedBytes);
         const outputStats = await fs.stat(resolvedOutputPath);
         const payload = await buildNewOutputDocumentPayload(resolvedOutputPath, "merge_pdfs", 1, {
           total_pages: totalPageCount,
@@ -4354,23 +4338,27 @@ async function handleToolCall(request) {
         const baseName = path.basename(resolvedInputPath, ".pdf");
 
         const results = [];
+        const pendingOutputs = [];
         for (let ri = 0; ri < ranges.length; ri++) {
           const [start, end] = ranges[ri];
-          const newDoc = await PDFDocument.create();
-          const pageIndices = [];
-          for (let i = start - 1; i <= end - 1; i++) {
-            pageIndices.push(i);
-          }
-          copyPdfDocumentMetadata(newDoc, pdfDoc);
-          await copyPdfPagesPreservingForms(newDoc, pdfDoc, pageIndices);
-
           const suffix = ranges.length > 1 ? `_${ri + 1}` : "";
           const filename = `${baseName}_pages_${start}-${end}${suffix}.pdf`;
           const outputPath = path.join(resolvedOutputDir, filename);
-          const savedBytes = await newDoc.save();
-          await fs.writeFile(outputPath, savedBytes);
+          pendingOutputs.push({
+            targetPath: outputPath,
+            async produceBytes() {
+              const newDoc = await PDFDocument.create();
+              const pageIndices = [];
+              for (let i = start - 1; i <= end - 1; i++) pageIndices.push(i);
+              copyPdfDocumentMetadata(newDoc, pdfDoc);
+              await copyPdfPagesPreservingForms(newDoc, pdfDoc, pageIndices);
+              return await newDoc.save();
+            },
+          });
           results.push(`${filename} (${end - start + 1} pages)`);
         }
+
+        await writePdfOutputsAtomic(pendingOutputs);
 
         return {
           content: [{
@@ -4409,7 +4397,7 @@ async function handleToolCall(request) {
         }
 
         const rotatedBytes = await pdfDoc.save();
-        await fs.writeFile(resolvedOutputPath, rotatedBytes);
+        await writePdfOutputAtomic(resolvedOutputPath, rotatedBytes);
         const outputStats = await fs.stat(resolvedOutputPath);
         const payload = await buildNewOutputDocumentPayload(resolvedOutputPath, "rotate_pdf_pages", 1, {
           rotated_pages: targetPages.length,
@@ -4456,7 +4444,7 @@ async function handleToolCall(request) {
         await copyPdfPagesPreservingForms(newDoc, pdfDoc, pageIndices);
 
         const reorderedBytes = await newDoc.save();
-        await fs.writeFile(resolvedOutputPath, reorderedBytes);
+        await writePdfOutputAtomic(resolvedOutputPath, reorderedBytes);
         const outputStats = await fs.stat(resolvedOutputPath);
         const payload = await buildNewOutputDocumentPayload(resolvedOutputPath, "reorder_pdf_pages", 1, {
           page_order,
@@ -4588,11 +4576,9 @@ async function handleToolCall(request) {
         const newBytes = await newDoc.save();
         let outputStats;
         try {
-          await fs.writeFile(resolvedOutputPath, newBytes);
+          await writePdfOutputAtomic(resolvedOutputPath, newBytes);
           outputStats = await fs.stat(resolvedOutputPath);
         } catch (writeErr) {
-          // Clean up partial file if it exists
-          try { await fs.unlink(resolvedOutputPath); } catch {}
           throw new Error(`Failed to save PDF: ${writeErr.message}. Check that the output directory exists and is writable.`);
         }
 
