@@ -3,7 +3,7 @@
   "passed": false,
   "benchmark_id": "pdf-tools.comparison.v1",
   "benchmark_version": "v0.1.0",
-  "report_sha256": "37553c078e040afb4bcb8ab779277423ba7b9f3fd401f17a1f9131342bca6da2",
+  "report_sha256": "eea0b0a1252aacbd8ea639531b6f51605079096dcc3a1df5339a60bcbdf4c808",
   "benchmark_claim_ready": false,
   "claim_boundary": "Shared pdf-lib/PDF.js/canvas dependencies on the seven public synthetic v1 pairs; not independent confirmation or general product evidence.",
   "aggregate": {
@@ -210,52 +210,52 @@
       "event_results": [],
       "performance": {
         "samples_ms": [
-          131.54585300000008,
-          116.38460299999997,
-          126.25939800000003,
-          87.74633600000016,
-          76.96503499999994
+          140.163863,
+          124.00074700000005,
+          97.27409499999999,
+          81.39323800000011,
+          83.39996300000007
         ],
-        "mean_ms": 107.78024500000004,
-        "p50_ms": 116.38460299999997,
-        "p95_ms": 131.54585300000008,
-        "sample_variance": 582.8132182409049
+        "mean_ms": 105.24638120000004,
+        "p50_ms": 97.27409499999999,
+        "p95_ms": 140.163863,
+        "sample_variance": 670.1881369393105
       },
-      "warmup_ms": 312.92631900000003,
+      "warmup_ms": 342.49584799999997,
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 298909696
+          "peak_rss_bytes": 298659840
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 353488896
+          "peak_rss_bytes": 353095680
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 384843776
+          "peak_rss_bytes": 385351680
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 384843776
+          "peak_rss_bytes": 385744896
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 384921600
+          "peak_rss_bytes": 385806336
         }
       ],
       "cost": {
-        "peak_rss_bytes": 384921600,
+        "peak_rss_bytes": 385806336,
         "resource_measurement_status": "in_process",
         "rendered_pixels": 46531584,
         "tool_calls": 0,
@@ -399,52 +399,52 @@
       ],
       "performance": {
         "samples_ms": [
-          92.85248200000001,
-          110.72232899999995,
-          87.61204599999996,
-          113.68330500000002,
-          98.97948199999996
+          79.97658699999988,
+          83.14913500000011,
+          85.72247799999991,
+          77.5372440000001,
+          102.81027599999993
         ],
-        "mean_ms": 100.76992879999997,
-        "p50_ms": 98.97948199999996,
-        "p95_ms": 113.68330500000002,
-        "sample_variance": 126.20677449417077
+        "mean_ms": 85.83914399999999,
+        "p50_ms": 83.14913500000011,
+        "p95_ms": 102.81027599999993,
+        "sample_variance": 99.6400497313267
       },
-      "warmup_ms": 72.37369699999999,
+      "warmup_ms": 97.25533599999994,
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 394727424
+          "peak_rss_bytes": 385966080
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 394727424
+          "peak_rss_bytes": 385966080
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 410533888
+          "peak_rss_bytes": 386109440
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 410533888
+          "peak_rss_bytes": 386371584
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 410533888
+          "peak_rss_bytes": 386457600
         }
       ],
       "cost": {
-        "peak_rss_bytes": 410533888,
+        "peak_rss_bytes": 386457600,
         "resource_measurement_status": "in_process",
         "rendered_pixels": 46531584,
         "tool_calls": 0,
@@ -576,52 +576,52 @@
       ],
       "performance": {
         "samples_ms": [
-          83.4333160000001,
-          70.03981699999986,
-          84.56773000000021,
-          96.56731500000024,
-          88.67443100000037
+          92.09772199999998,
+          147.45610299999998,
+          95.85409699999991,
+          102.0185319999996,
+          105.12660000000005
         ],
-        "mean_ms": 84.65652180000015,
-        "p50_ms": 84.56773000000021,
-        "p95_ms": 96.56731500000024,
-        "sample_variance": 93.29069115396682
+        "mean_ms": 108.51061079999991,
+        "p50_ms": 102.0185319999996,
+        "p95_ms": 147.45610299999998,
+        "sample_variance": 499.9800598177374
       },
-      "warmup_ms": 90.97910000000002,
+      "warmup_ms": 96.56117999999992,
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 381566976
+          "peak_rss_bytes": 386457600
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 381566976
+          "peak_rss_bytes": 386457600
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 381566976
+          "peak_rss_bytes": 386457600
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 390381568
+          "peak_rss_bytes": 387092480
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 413945856
+          "peak_rss_bytes": 418025472
         }
       ],
       "cost": {
-        "peak_rss_bytes": 413945856,
+        "peak_rss_bytes": 418025472,
         "resource_measurement_status": "in_process",
         "rendered_pixels": 46531584,
         "tool_calls": 0,
@@ -753,52 +753,52 @@
       ],
       "performance": {
         "samples_ms": [
-          97.90826900000002,
-          77.77807099999973,
-          90.23113299999977,
-          90.16105500000003,
-          81.49196499999971
+          87.68083400000023,
+          92.10361199999988,
+          116.08863400000018,
+          81.80798400000003,
+          102.20562199999995
         ],
-        "mean_ms": 87.51409859999985,
-        "p50_ms": 90.16105500000003,
-        "p95_ms": 97.90826900000002,
-        "sample_variance": 63.37093973568484
+        "mean_ms": 95.97733720000005,
+        "p50_ms": 92.10361199999988,
+        "p95_ms": 116.08863400000018,
+        "sample_variance": 181.96601822666992
       },
-      "warmup_ms": 87.47312599999987,
+      "warmup_ms": 96.27680299999975,
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 414076928
+          "peak_rss_bytes": 418156544
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 414076928
+          "peak_rss_bytes": 418156544
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 414076928
+          "peak_rss_bytes": 424304640
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 414076928
+          "peak_rss_bytes": 424304640
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 414076928
+          "peak_rss_bytes": 424304640
         }
       ],
       "cost": {
-        "peak_rss_bytes": 414076928,
+        "peak_rss_bytes": 424304640,
         "resource_measurement_status": "in_process",
         "rendered_pixels": 46531584,
         "tool_calls": 0,
@@ -938,52 +938,52 @@
       ],
       "performance": {
         "samples_ms": [
-          75.99441100000013,
-          83.23227700000007,
-          94.52071399999977,
-          106.95626700000003,
-          76.6624969999998
+          87.82444200000009,
+          97.29937500000005,
+          94.70667399999957,
+          86.80246899999975,
+          101.86535400000002
         ],
-        "mean_ms": 87.47323319999995,
-        "p50_ms": 83.23227700000007,
-        "p95_ms": 106.95626700000003,
-        "sample_variance": 173.9691693634578
+        "mean_ms": 93.6996627999999,
+        "p50_ms": 94.70667399999957,
+        "p95_ms": 101.86535400000002,
+        "sample_variance": 40.685003504256294
       },
-      "warmup_ms": 94.60278400000016,
+      "warmup_ms": 98.1286500000001,
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 419262464
+          "peak_rss_bytes": 393453568
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 419262464
+          "peak_rss_bytes": 393453568
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 419262464
+          "peak_rss_bytes": 401211392
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 419262464
+          "peak_rss_bytes": 401211392
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 419262464
+          "peak_rss_bytes": 401211392
         }
       ],
       "cost": {
-        "peak_rss_bytes": 419262464,
+        "peak_rss_bytes": 401211392,
         "resource_measurement_status": "in_process",
         "rendered_pixels": 46531584,
         "tool_calls": 0,
@@ -1115,52 +1115,52 @@
       ],
       "performance": {
         "samples_ms": [
-          91.88567700000021,
-          66.96686200000022,
-          98.58074600000009,
-          85.4019760000001,
-          79.16766499999994
+          90.6258829999997,
+          96.35361299999977,
+          127.10128600000007,
+          108.23219900000004,
+          93.1609040000003
         ],
-        "mean_ms": 84.40058520000011,
-        "p50_ms": 85.4019760000001,
-        "p95_ms": 98.58074600000009,
-        "sample_variance": 147.35612538409845
+        "mean_ms": 103.09477699999998,
+        "p50_ms": 96.35361299999977,
+        "p95_ms": 127.10128600000007,
+        "sample_variance": 225.5760054028586
       },
-      "warmup_ms": 96.98412300000018,
+      "warmup_ms": 93.62020200000006,
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 411406336
+          "peak_rss_bytes": 385830912
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 411406336
+          "peak_rss_bytes": 385830912
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 411406336
+          "peak_rss_bytes": 385830912
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 411406336
+          "peak_rss_bytes": 401489920
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 412172288
+          "peak_rss_bytes": 424689664
         }
       ],
       "cost": {
-        "peak_rss_bytes": 412172288,
+        "peak_rss_bytes": 424689664,
         "resource_measurement_status": "in_process",
         "rendered_pixels": 46531584,
         "tool_calls": 0,
@@ -1301,52 +1301,52 @@
       ],
       "performance": {
         "samples_ms": [
-          101.00696499999958,
-          82.0245530000002,
-          84.10028200000033,
-          80.53898899999967,
-          76.26698899999974
+          81.42094799999995,
+          117.61101300000064,
+          83.84219100000064,
+          99.87441799999942,
+          83.28909399999975
         ],
-        "mean_ms": 84.7875555999999,
-        "p50_ms": 82.0245530000002,
-        "p95_ms": 101.00696499999958,
-        "sample_variance": 90.45653574833383
+        "mean_ms": 93.20753280000008,
+        "p50_ms": 83.84219100000064,
+        "p95_ms": 117.61101300000064,
+        "sample_variance": 241.2464601623881
       },
-      "warmup_ms": 93.6510989999997,
+      "warmup_ms": 73.71533199999976,
       "iteration_costs": [
         {
           "tool_calls": 0,
           "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 435408896
+          "peak_rss_bytes": 424689664
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 435408896
+          "peak_rss_bytes": 424689664
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 435408896
+          "peak_rss_bytes": 424689664
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 435408896
+          "peak_rss_bytes": 425185280
         },
         {
           "tool_calls": 0,
           "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 435408896
+          "peak_rss_bytes": 425185280
         }
       ],
       "cost": {
-        "peak_rss_bytes": 435408896,
+        "peak_rss_bytes": 425185280,
         "resource_measurement_status": "in_process",
         "rendered_pixels": 46531584,
         "tool_calls": 0,

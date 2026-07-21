@@ -3,8 +3,8 @@
   "decision_id": "pdf-tools.comparison-decision.v1",
   "benchmark_id": "pdf-tools.comparison.v1",
   "benchmark_version": "v0.1.0",
-  "generated_at": "2026-07-21T17:54:17.214Z",
-  "source_revision": "029b33935d3a7b97b284abb4ffc83bb3309a7d86",
+  "generated_at": "2026-07-21T18:08:12.184Z",
+  "source_revision": "fca097509b3ad353deef5cd416829d933cb6b452",
   "source_state": {
     "clean_except_generated_evidence": true,
     "excluded_paths": [
@@ -181,32 +181,32 @@
   "evidence_bindings": [
     {
       "path": "docs/evidence/comparison-v1/shared-library-report.v1.json",
-      "sha256": "88e2aa0e1526a6091ddece9e93606351325e6c7eb90748657b9a996dfcf082d4",
-      "bytes": 44252
+      "sha256": "655288319c21a2d87f24ec2296b73f87f5cea35828079d70d0741a2d2d136e49",
+      "bytes": 44249
     },
     {
       "path": "docs/evidence/comparison-v1/shared-library-score.v1.json",
-      "sha256": "d9511e18e36d238c1b475bac2d70ac4ae115bca55e5bf01828a5d45b3d205bf4",
-      "bytes": 35424
+      "sha256": "f685f3d70be82a6b0dfe777d688b9f170b199d2661b154720a6cc9dca4f1b781",
+      "bytes": 35417
     },
     {
       "path": "docs/evidence/comparison-v1/shared-library-observation-registry.v1.json",
-      "sha256": "982ab2e2fa2c0bbaf467d7e8bc6a138aa2b5022012d5a10ce192f6035de76548",
+      "sha256": "7db9c6554ea34434e05086d3c4952d51c7527d71d24fc0cf8eefa541e06f5d0f",
       "bytes": 27956
     },
     {
       "path": "docs/evidence/comparison-v1/current-product-report.v1.json",
-      "sha256": "8baed2d466a0970adbb557ae054b7221c1a5c5b6011b71327386ea5d2c612f85",
-      "bytes": 38622
+      "sha256": "fb9a3de7358e2d95f8152c7616bbf2ebfa8094d91b9609234fe8b8f40b334691",
+      "bytes": 38627
     },
     {
       "path": "docs/evidence/comparison-v1/current-product-score.v1.json",
-      "sha256": "72f77e88e7b9506c6a4e33c5d631ef24a1e45ac609b20750bdc0fbe4298f151f",
+      "sha256": "56111e949198bf95b87467e754983e0ba3835c3806aba051c2c21be2f444068d",
       "bytes": 35272
     },
     {
       "path": "docs/evidence/comparison-v1/current-product-observation-registry.v1.json",
-      "sha256": "1f06d625d3c6cb48695c43fa0a28aeb5eb5ca92e726cd16b14216af5b61457c7",
+      "sha256": "4442d8714b028aea614975532a665737420f95ccc50781f2ec5341c8260bed2c",
       "bytes": 22935
     },
     {
@@ -216,7 +216,7 @@
     },
     {
       "path": "docs/evidence/comparison-v1/run-index.v1.json",
-      "sha256": "a19403481bc66ea6fc8bf01f0ba5dadc4b0ec309501b818c1c2f3167a8aa7edf",
+      "sha256": "6bf63b0a67c7f1390843ef6607f49e7bb92dc458f4fda38e41f658c6b56839aa",
       "bytes": 2686
     },
     {
