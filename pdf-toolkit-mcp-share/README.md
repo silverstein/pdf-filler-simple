@@ -13,7 +13,7 @@ Just **double-click `install.command`** - that's it!
 - **Safe to delete Downloads** after install
 - No Terminal knowledge needed
 
-### 🚀 **Option 2: Smart Terminal Install** (All platforms)
+### 🚀 **Option 2: Smart Terminal Install** (macOS/Linux)
 ```bash
 ./smart-install.sh
 ```
@@ -31,8 +31,25 @@ Just **double-click `install.command`** - that's it!
 - For when auto-install doesn't work
 
 ## What You Need
-- **Node.js** installed (v18 or higher) - Get it at [nodejs.org](https://nodejs.org)
+- **Node.js** installed (`^20.19.0` or `>=22.12.0`) - Get it at [nodejs.org](https://nodejs.org)
 - **Cursor** with MCP support
+
+The package includes the maintainer-reviewed `package-lock.json`. Every bundled
+installer uses `npm ci --omit=dev --engine-strict`, so an install fails instead
+of silently resolving a newer dependency graph.
+
+### Windows
+
+The bundled click/terminal helpers are Bash scripts. In PowerShell, open this
+directory and run:
+
+```powershell
+npm ci --omit=dev --engine-strict --no-audit --no-fund
+```
+
+Then add the absolute `server/index.js` path to Cursor's `mcp.json` using the
+same JSON shown by `install.sh`. Native Windows installation remains a release
+host gate; a Linux-only smoke run does not establish Windows compatibility.
 
 ## 🗂️ **Installation Location**
 - **If run from Downloads**: Auto-moves to `~/.pdf-tools-mcp` (permanent)

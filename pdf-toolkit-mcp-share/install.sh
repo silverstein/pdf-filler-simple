@@ -1,12 +1,16 @@
 #!/bin/bash
 
+set -e
+cd "$(dirname "${BASH_SOURCE[0]}")"
+
 echo "🚀 Installing PDF Tools MCP Server..."
-npm install
-echo "✅ Dependencies installed!"
+echo "📦 Installing the reviewed production dependency graph..."
+npm ci --omit=dev --engine-strict --no-audit --no-fund
+echo "✅ Locked dependencies installed!"
 echo ""
 
 # Get the absolute path automatically
-FULL_PATH="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/server/index.js"
+FULL_PATH="$(pwd)/server/index.js"
 
 echo "🎯 COPY THIS EXACT TEXT to your ~/.cursor/mcp.json:"
 echo ""

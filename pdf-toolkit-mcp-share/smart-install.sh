@@ -53,8 +53,12 @@ if [[ "$CURRENT_DIR" == *"/Downloads/"* ]]; then
     chmod +x *.sh *.command
 fi
 
-npm install
-echo "✅ Dependencies installed!"
+echo "📦 Installing the reviewed production dependency graph..."
+if ! npm ci --omit=dev --engine-strict --no-audit --no-fund; then
+    echo "❌ Failed to install locked dependencies. Node.js ^20.19.0 or >=22.12.0 is required."
+    exit 1
+fi
+echo "✅ Locked dependencies installed!"
 echo ""
 
 # Get the absolute path automatically

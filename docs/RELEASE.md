@@ -18,11 +18,19 @@ npm test
 npm run build:mcpb
 npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb
 node package-for-friend.js
+npm run test:contract:share
 ```
 
 `build:mcpb` uses the repository-pinned MCPB CLI, creates a clean production
 stage, installs the locked native targets, inspects the archive, and reports its
 SHA-256. Do not substitute a host-local global `mcpb pack` for release builds.
+
+The share-package test builds the ZIP twice, requires byte-identical hashes,
+verifies its provenance manifest and shipped npm lock, installs from the
+extracted archive with `npm ci --omit=dev --engine-strict`, and exercises MCP
+discovery, resource reads, and native page rendering. Repeat the share install
+on each claimed release OS; one platform's native optional dependency does not
+prove another platform.
 
 ## 3) Manual verification
 
