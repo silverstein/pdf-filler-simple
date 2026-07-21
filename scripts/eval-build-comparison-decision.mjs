@@ -38,7 +38,10 @@ function git(args) {
 }
 
 function dirtySourcePaths() {
-  return git(["status", "--porcelain=v1", "--untracked-files=all"])
+  return execFileSync("git", ["status", "--porcelain=v1", "--untracked-files=all"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  })
     .split("\n")
     .filter(Boolean)
     .map(line => line.slice(3).split(" -> ").at(-1).replaceAll("\\", "/"))
