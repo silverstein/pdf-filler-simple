@@ -637,11 +637,13 @@ describe("agent trajectory grader v3 integrity contract", () => {
       call_observations: {
         "fill-call": {
           started_at: "2026-07-21T07:00:10.000Z",
+          finished_at: "2026-07-21T07:00:20.000Z",
           observed_sources: ["input/form.pdf"],
           observed_artifacts: [observedArtifact],
         },
         "validate-call": {
           started_at: "2026-07-21T07:00:30.000Z",
+          finished_at: "2026-07-21T07:00:40.000Z",
           observed_sources: [],
           observed_artifacts: [observedArtifact],
         },
@@ -810,6 +812,21 @@ describe("agent trajectory grader v3 integrity contract", () => {
     await fs.writeFile(rawPath, `${rawEvents.map(event => JSON.stringify(event)).join("\n")}\n`);
     const rawErrorTrial = await ingestCodexTrajectory({ rawPath, observerPath, planPath });
     expect(rawErrorTrial.trials[0].trajectory[0].error).toMatchObject({ code: "ECONNRESET" });
+
+    fillEvent.item.status = "completed";
+    fillEvent.item.error = null;
+    fillEvent.item.result = {
+      content: [{ type: "text", text: "Error: path is outside the allowed directories" }],
+      structured_content: {
+        status: "failed",
+        error: { error_schema_version: 1, code: "path_policy_denied" },
+      },
+      isError: true,
+    };
+    await fs.writeFile(rawPath, `${rawEvents.map(event => JSON.stringify(event)).join("\n")}\n`);
+    const toolErrorTrial = await ingestCodexTrajectory({ rawPath, observerPath, planPath });
+    expect(toolErrorTrial.trials[0].trajectory[0].error).toMatchObject({ code: "path_policy_denied" });
+
     fillEvent.item.status = "completed";
     fillEvent.item.error = null;
     fillEvent.item.result = successfulFillResult;
@@ -1046,6 +1063,17 @@ describe("agent trajectory grader v3 integrity contract", () => {
     addFailureRef(earlyObservation, "artifact-observed-before-mutation");
     expect(check(
       gradeTrajectoryTrial(jobs.get(earlyObservation.job_id), earlyObservation), "artifact_integrity"
+    ).passed).toBe(false);
+
+    const inFlightObservation = trialFor(trialSet, "fill-and-validate");
+    const verifier = inFlightObservation.trajectory.find(step =>
+      step.step_id === inFlightObservation.artifacts[0].verification_step_id);
+    const inFlightEvent = inFlightObservation.run.events.find(event =>
+      event.event_id === inFlightObservation.artifacts[0].observation_event_id);
+    inFlightEvent.observed_at = new Date(Date.parse(verifier.started_at) + 500).toISOString();
+    expect(Date.parse(inFlightEvent.observed_at)).toBeLessThan(Date.parse(verifier.finished_at));
+    expect(check(
+      gradeTrajectoryTrial(jobs.get(inFlightObservation.job_id), inFlightObservation), "artifact_integrity"
     ).passed).toBe(false);
   });
 

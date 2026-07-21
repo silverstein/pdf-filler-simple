@@ -9,7 +9,7 @@ export const TRAJECTORY_SUITE_VERSION = 1;
 export const TRAJECTORY_GRADER_VERSION = 3;
 export const TRAJECTORY_TRIAL_SET_SCHEMA_VERSION = 1;
 export const TRAJECTORY_TRIAL_SCHEMA_VERSION = 1;
-export const TRAJECTORY_STEP_SCHEMA_VERSION = 1;
+export const TRAJECTORY_STEP_SCHEMA_VERSION = 2;
 
 const TRIAL_OUTCOMES = new Set(["completed", "harness_failure"]);
 const EVIDENCE_KINDS = new Set(["page", "field", "region", "file"]);
@@ -309,7 +309,7 @@ function validateSampleEvidence(trial, location, errors) {
 
 function validateStep(step, location, errors) {
   if (!addExactKeyError(errors, location, step, [
-    "step_schema_version", "step_id", "tool", "started_at", "arguments", "ok",
+    "step_schema_version", "step_id", "tool", "started_at", "finished_at", "arguments", "ok",
   ], ["result", "error", "recovery_of_step_id"])) return;
   if (step.step_schema_version !== TRAJECTORY_STEP_SCHEMA_VERSION) {
     errors.push(`${location}.step_schema_version must equal ${TRAJECTORY_STEP_SCHEMA_VERSION}`);
@@ -317,6 +317,11 @@ function validateStep(step, location, errors) {
   if (!nonEmptyString(step.step_id)) errors.push(`${location}.step_id must be a non-empty string`);
   if (!nonEmptyString(step.tool)) errors.push(`${location}.tool must be a non-empty string`);
   if (!isoTimestamp(step.started_at)) errors.push(`${location}.started_at must be ISO-8601`);
+  if (!isoTimestamp(step.finished_at)) errors.push(`${location}.finished_at must be ISO-8601`);
+  if (isoTimestamp(step.started_at) && isoTimestamp(step.finished_at)
+    && Date.parse(step.finished_at) < Date.parse(step.started_at)) {
+    errors.push(`${location}.finished_at must not precede started_at`);
+  }
   if (!isObject(step.arguments)) errors.push(`${location}.arguments must be an object`);
   if (typeof step.ok !== "boolean") errors.push(`${location}.ok must be boolean`);
   if (Object.hasOwn(step, "recovery_of_step_id") && !nonEmptyString(step.recovery_of_step_id)) {
@@ -587,11 +592,12 @@ function validateCompletedTrial(job, trial, location, errors) {
   const runStart = Date.parse(trial.run?.started_at);
   const runEnd = Date.parse(trial.run?.finished_at);
   for (const [index, step] of (trial.trajectory ?? []).entries()) {
-    const timestamp = Date.parse(step?.started_at);
-    if (Number.isFinite(timestamp) && Number.isFinite(runStart) && timestamp < runStart) {
+    const startedAt = Date.parse(step?.started_at);
+    const finishedAt = Date.parse(step?.finished_at);
+    if (Number.isFinite(startedAt) && Number.isFinite(runStart) && startedAt < runStart) {
       errors.push(`${location}.trajectory[${index}] precedes the run`);
     }
-    if (Number.isFinite(timestamp) && Number.isFinite(runEnd) && timestamp > runEnd) {
+    if (Number.isFinite(finishedAt) && Number.isFinite(runEnd) && finishedAt > runEnd) {
       errors.push(`${location}.trajectory[${index}] follows the run`);
     }
   }
@@ -1420,8 +1426,8 @@ export function gradeTrajectoryTrial(job, trial) {
     const verifier = stepsById.get(artifact.verification_step_id);
     const observationEvent = trial.run?.events?.find(event => event.event_id === artifact.observation_event_id);
     const observedAt = Date.parse(observationEvent?.observed_at);
-    const producerAt = Date.parse(producer?.started_at);
-    const verifierAt = Date.parse(verifier?.started_at);
+    const producerFinishedAt = Date.parse(producer?.finished_at);
+    const verifierFinishedAt = Date.parse(verifier?.finished_at);
     const producerOutputs = new Set(Object.entries(producer?.arguments ?? {})
       .filter(([key, value]) => key.startsWith("output_") && typeof value === "string")
       .map(([, value]) => value));
@@ -1437,7 +1443,9 @@ export function gradeTrajectoryTrial(job, trial) {
       && observationEvent?.type === "filesystem_artifact_observed"
       && new Set(["filesystem_observer", "calibration"]).has(observationEvent?.provenance?.authority)
       && observationEvent?.reference === `sha256:${artifact.sha256}`
-      && Number.isFinite(observedAt) && observedAt >= producerAt && observedAt >= verifierAt;
+      && Number.isFinite(observedAt)
+      && observedAt >= producerFinishedAt
+      && observedAt >= verifierFinishedAt;
   });
   gradeCheck(
     checks,

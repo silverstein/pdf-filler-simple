@@ -327,11 +327,13 @@ function assertPathAllowed(resolvedPath) {
 
   if (!isAllowed) {
     const allowed = ALLOWED_DIRECTORIES.map((directory) => directory.display).join(", ");
-    throw new Error(
+    const error = new Error(
       `This extension is only allowed to access: ${allowed}. ` +
       `Tried to access: ${resolvedPath}. ` +
       "Update allowed_directories in the Claude Desktop extension settings to include this folder."
     );
+    error.code = "path_policy_denied";
+    throw error;
   }
 
   return resolvedPath;
@@ -4630,6 +4632,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
+    const errorCode = error?.code === "path_policy_denied"
+      ? "path_policy_denied"
+      : "tool_execution_failed";
     return {
       content: [
         {
@@ -4637,6 +4642,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
           text: `Error: ${error.message}`
         }
       ],
+      structuredContent: {
+        status: "failed",
+        error: {
+          error_schema_version: 1,
+          code: errorCode,
+        },
+      },
       isError: true,
     };
   }

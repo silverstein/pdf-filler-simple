@@ -178,7 +178,7 @@ prepare-for-signature, and path-policy error recovery. Each job declares:
 - verified-output and limitation requirements.
 
 The v3 grader uses strict, independently versioned suite, trial-set, trial, run,
-host-event, step, result, effects, artifact, evidence, claim, and harness-failure
+host-event, step (currently v2), result, effects, artifact, evidence, claim, and harness-failure
 records. Unknown fields and ambiguous success/error records are rejected. A
 required tool counts only after a successful call with its required arguments
 and a non-null, hashed retained MCP result. An observed source must also appear
@@ -201,8 +201,9 @@ matches the expected value; merely mentioning the expected words is insufficient
 Output artifacts require a separately retained filesystem-observer event whose
 SHA-256 agrees with the producer result, artifact record, and a distinct,
 successful, path-bound post-mutation verifier result. The filesystem observation
-must occur after both production and verification, so a pre-mutation snapshot or
-an unrelated output cannot satisfy the gate. The fill job specifically
+must occur after the recorded completion time of both production and verification,
+so a pre-mutation snapshot, in-flight output, or unrelated output cannot satisfy
+the gate. The fill job specifically
 requires field inspection before mutation, validation, and an exact field
 read-back afterward; an observed output hash is artifact-integrity evidence, not
 proof that the agent completed the full job or preserved every non-target field.
@@ -265,6 +266,12 @@ and harness-health gates. The repository intentionally authorizes no planner or
 result-attestation public keys and contains no private signing keys; unsigned ad
 hoc runs are useful product evidence but cannot become benchmark claims. The versioned trust registry is
 `test/fixtures/eval/trajectories/trust-registry.v1.json`.
+
+Before authorizing any measured-claim keys, the measured runner must preserve
+live tool failures as `isError: true` with stable structured error codes, capture
+start and completion timestamps independently for every call, and execute the
+native-host matrix below. Synthetic calibration records cannot satisfy any of
+those prerequisites.
 
 Each trial set includes an invocation run plan that defines the denominator
 before execution. The plan binds the trial-set ID, suite ID and digest, claim

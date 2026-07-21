@@ -224,7 +224,7 @@
     "suite_sha256": "a9aa02fbd0eac313aea20f65887c8665cb55a093d4b8426da3c012d7d5ec5bba",
     "raw_transcript_sha256": "a43c2cfcde297dc8ff39120198085610badf2bf3dd20b3ab1ab485e1f8a3cc10",
     "observer_sha256": "1008ee251be9cbb24fa77c512778fd3398d57fb9a7cf63afe6b4a5dd4b5aeac9",
-    "trial_payload_sha256": "32764c3ace2ca55122d192e271604fcc2aaaeb7fd8bf5c216c361f5857df4cfc",
+    "trial_payload_sha256": "c28d2afc256a1d5153f8575dbf02b030bf52704f69c8c8067c9101d957965fe9",
     "run_plan_sha256": "ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
     "key_id": null,
     "signature": null
@@ -374,10 +374,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.inspect-and-answer.run.1.step.1",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T00:05:05.000Z",
+          "finished_at": "2026-07-21T00:05:06.000Z",
           "arguments": {
             "pdf_path": "input/source.pdf",
             "start_page": 2,
@@ -594,10 +595,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.inspect-and-answer.run.2.step.1",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T00:10:05.000Z",
+          "finished_at": "2026-07-21T00:10:06.000Z",
           "arguments": {
             "pdf_path": "input/source.pdf",
             "start_page": 2,
@@ -814,10 +816,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.inspect-and-answer.run.3.step.1",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T00:15:05.000Z",
+          "finished_at": "2026-07-21T00:15:06.000Z",
           "arguments": {
             "pdf_path": "input/source.pdf",
             "start_page": 2,
@@ -1132,10 +1135,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.fill-and-validate.run.1.step.1",
           "tool": "read_pdf_fields",
           "started_at": "2026-07-21T01:05:05.000Z",
+          "finished_at": "2026-07-21T01:05:06.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf"
           },
@@ -1159,10 +1163,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.fill-and-validate.run.1.step.2",
           "tool": "fill_pdf",
           "started_at": "2026-07-21T01:05:10.000Z",
+          "finished_at": "2026-07-21T01:05:11.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf",
             "output_path": "output/filled-form.pdf",
@@ -1202,10 +1207,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.fill-and-validate.run.1.step.3",
           "tool": "validate_pdf",
           "started_at": "2026-07-21T01:05:15.000Z",
+          "finished_at": "2026-07-21T01:05:16.000Z",
           "arguments": {
             "pdf_path": "output/filled-form.pdf"
           },
@@ -1239,10 +1245,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.fill-and-validate.run.1.step.4",
           "tool": "read_pdf_fields",
           "started_at": "2026-07-21T01:05:20.000Z",
+          "finished_at": "2026-07-21T01:05:21.000Z",
           "arguments": {
             "pdf_path": "output/filled-form.pdf"
           },
@@ -1488,10 +1495,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.fill-and-validate.run.2.step.1",
           "tool": "read_pdf_fields",
           "started_at": "2026-07-21T01:10:05.000Z",
+          "finished_at": "2026-07-21T01:10:06.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf"
           },
@@ -1515,10 +1523,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.fill-and-validate.run.2.step.2",
           "tool": "fill_pdf",
           "started_at": "2026-07-21T01:10:10.000Z",
+          "finished_at": "2026-07-21T01:10:11.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf",
             "output_path": "output/filled-form.pdf",
@@ -1558,10 +1567,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.fill-and-validate.run.2.step.3",
           "tool": "validate_pdf",
           "started_at": "2026-07-21T01:10:15.000Z",
+          "finished_at": "2026-07-21T01:10:16.000Z",
           "arguments": {
             "pdf_path": "output/filled-form.pdf"
           },
@@ -1595,10 +1605,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.fill-and-validate.run.2.step.4",
           "tool": "read_pdf_fields",
           "started_at": "2026-07-21T01:10:20.000Z",
+          "finished_at": "2026-07-21T01:10:21.000Z",
           "arguments": {
             "pdf_path": "output/filled-form.pdf"
           },
@@ -1844,10 +1855,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.fill-and-validate.run.3.step.1",
           "tool": "read_pdf_fields",
           "started_at": "2026-07-21T01:15:05.000Z",
+          "finished_at": "2026-07-21T01:15:06.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf"
           },
@@ -1861,10 +1873,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.fill-and-validate.run.3.step.2",
           "tool": "fill_pdf",
           "started_at": "2026-07-21T01:15:10.000Z",
+          "finished_at": "2026-07-21T01:15:11.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf",
             "output_path": "output/filled-form.pdf",
@@ -1904,10 +1917,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.fill-and-validate.run.3.step.3",
           "tool": "validate_pdf",
           "started_at": "2026-07-21T01:15:15.000Z",
+          "finished_at": "2026-07-21T01:15:16.000Z",
           "arguments": {
             "pdf_path": "output/filled-form.pdf"
           },
@@ -1941,10 +1955,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.fill-and-validate.run.3.step.4",
           "tool": "read_pdf_fields",
           "started_at": "2026-07-21T01:15:20.000Z",
+          "finished_at": "2026-07-21T01:15:21.000Z",
           "arguments": {
             "pdf_path": "output/filled-form.pdf"
           },
@@ -2290,10 +2305,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.compare-and-explain.run.1.step.1",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T02:05:05.000Z",
+          "finished_at": "2026-07-21T02:05:06.000Z",
           "arguments": {
             "pdf_path": "input/before.pdf",
             "start_page": 1,
@@ -2325,10 +2341,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.compare-and-explain.run.1.step.2",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T02:05:10.000Z",
+          "finished_at": "2026-07-21T02:05:11.000Z",
           "arguments": {
             "pdf_path": "input/after.pdf",
             "start_page": 1,
@@ -2554,10 +2571,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.compare-and-explain.run.2.step.1",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T02:10:05.000Z",
+          "finished_at": "2026-07-21T02:10:06.000Z",
           "arguments": {
             "pdf_path": "input/before.pdf",
             "start_page": 1,
@@ -2589,10 +2607,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.compare-and-explain.run.2.step.2",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T02:10:10.000Z",
+          "finished_at": "2026-07-21T02:10:11.000Z",
           "arguments": {
             "pdf_path": "input/after.pdf",
             "start_page": 1,
@@ -2818,10 +2837,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.compare-and-explain.run.3.step.1",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T02:15:05.000Z",
+          "finished_at": "2026-07-21T02:15:06.000Z",
           "arguments": {
             "pdf_path": "input/before.pdf",
             "start_page": 1,
@@ -2853,10 +2873,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.compare-and-explain.run.3.step.2",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T02:15:10.000Z",
+          "finished_at": "2026-07-21T02:15:11.000Z",
           "arguments": {
             "pdf_path": "input/after.pdf",
             "start_page": 1,
@@ -2888,10 +2909,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.compare-and-explain.run.3.step.3",
           "tool": "reveal_in_finder",
           "started_at": "2026-07-21T02:15:15.000Z",
+          "finished_at": "2026-07-21T02:15:16.000Z",
           "arguments": {
             "path": "input/after.pdf"
           },
@@ -3207,10 +3229,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.safe-page-mutation.run.1.step.1",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T03:05:05.000Z",
+          "finished_at": "2026-07-21T03:05:06.000Z",
           "arguments": {
             "pdf_path": "input/source.pdf",
             "start_page": 1,
@@ -3242,10 +3265,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.safe-page-mutation.run.1.step.2",
           "tool": "apply_page_plan",
           "started_at": "2026-07-21T03:05:10.000Z",
+          "finished_at": "2026-07-21T03:05:11.000Z",
           "arguments": {
             "input_path": "input/source.pdf",
             "output_path": "output/reordered.pdf",
@@ -3298,10 +3322,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.safe-page-mutation.run.1.step.3",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T03:05:15.000Z",
+          "finished_at": "2026-07-21T03:05:16.000Z",
           "arguments": {
             "pdf_path": "output/reordered.pdf",
             "start_page": 1,
@@ -3548,10 +3573,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.safe-page-mutation.run.2.step.1",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T03:10:05.000Z",
+          "finished_at": "2026-07-21T03:10:06.000Z",
           "arguments": {
             "pdf_path": "input/source.pdf",
             "start_page": 1,
@@ -3583,10 +3609,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.safe-page-mutation.run.2.step.2",
           "tool": "apply_page_plan",
           "started_at": "2026-07-21T03:10:10.000Z",
+          "finished_at": "2026-07-21T03:10:11.000Z",
           "arguments": {
             "input_path": "input/source.pdf",
             "output_path": "output/reordered.pdf",
@@ -3639,10 +3666,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.safe-page-mutation.run.2.step.3",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T03:10:15.000Z",
+          "finished_at": "2026-07-21T03:10:16.000Z",
           "arguments": {
             "pdf_path": "output/reordered.pdf",
             "start_page": 1,
@@ -3889,10 +3917,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.safe-page-mutation.run.3.step.1",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T03:15:05.000Z",
+          "finished_at": "2026-07-21T03:15:06.000Z",
           "arguments": {
             "pdf_path": "input/source.pdf",
             "start_page": 1,
@@ -3924,10 +3953,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.safe-page-mutation.run.3.step.2",
           "tool": "apply_page_plan",
           "started_at": "2026-07-21T03:15:10.000Z",
+          "finished_at": "2026-07-21T03:15:11.000Z",
           "arguments": {
             "input_path": "input/source.pdf",
             "output_path": "output/reordered.pdf",
@@ -3980,10 +4010,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.safe-page-mutation.run.3.step.3",
           "tool": "read_pdf_pages",
           "started_at": "2026-07-21T03:15:15.000Z",
+          "finished_at": "2026-07-21T03:15:16.000Z",
           "arguments": {
             "pdf_path": "output/reordered.pdf",
             "start_page": 1,
@@ -4330,10 +4361,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.1.step.1",
           "tool": "read_pdf_fields",
           "started_at": "2026-07-21T04:05:05.000Z",
+          "finished_at": "2026-07-21T04:05:06.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf"
           },
@@ -4363,10 +4395,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.1.step.2",
           "tool": "detect_signature_zones",
           "started_at": "2026-07-21T04:05:10.000Z",
+          "finished_at": "2026-07-21T04:05:11.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf"
           },
@@ -4400,10 +4433,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.1.step.3",
           "tool": "prepare_signing_packet",
           "started_at": "2026-07-21T04:05:15.000Z",
+          "finished_at": "2026-07-21T04:05:16.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf",
             "output_path": "output/signing-packet.pdf",
@@ -4459,10 +4493,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.1.step.4",
           "tool": "get_pdf_info",
           "started_at": "2026-07-21T04:05:20.000Z",
+          "finished_at": "2026-07-21T04:05:21.000Z",
           "arguments": {
             "pdf_path": "output/signing-packet.pdf"
           },
@@ -4720,10 +4755,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.2.step.1",
           "tool": "read_pdf_fields",
           "started_at": "2026-07-21T04:10:05.000Z",
+          "finished_at": "2026-07-21T04:10:06.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf"
           },
@@ -4753,10 +4789,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.2.step.2",
           "tool": "detect_signature_zones",
           "started_at": "2026-07-21T04:10:10.000Z",
+          "finished_at": "2026-07-21T04:10:11.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf"
           },
@@ -4790,10 +4827,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.2.step.3",
           "tool": "prepare_signing_packet",
           "started_at": "2026-07-21T04:10:15.000Z",
+          "finished_at": "2026-07-21T04:10:16.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf",
             "output_path": "output/signing-packet.pdf",
@@ -4849,10 +4887,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.2.step.4",
           "tool": "get_pdf_info",
           "started_at": "2026-07-21T04:10:20.000Z",
+          "finished_at": "2026-07-21T04:10:21.000Z",
           "arguments": {
             "pdf_path": "output/signing-packet.pdf"
           },
@@ -5124,10 +5163,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.3.step.1",
           "tool": "read_pdf_fields",
           "started_at": "2026-07-21T04:15:05.000Z",
+          "finished_at": "2026-07-21T04:15:06.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf"
           },
@@ -5157,10 +5197,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.3.step.2",
           "tool": "detect_signature_zones",
           "started_at": "2026-07-21T04:15:10.000Z",
+          "finished_at": "2026-07-21T04:15:11.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf"
           },
@@ -5194,10 +5235,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.3.step.3",
           "tool": "prepare_signing_packet",
           "started_at": "2026-07-21T04:15:15.000Z",
+          "finished_at": "2026-07-21T04:15:16.000Z",
           "arguments": {
             "pdf_path": "input/form.pdf",
             "output_path": "output/signing-packet.pdf",
@@ -5253,10 +5295,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.3.step.4",
           "tool": "get_pdf_info",
           "started_at": "2026-07-21T04:15:20.000Z",
+          "finished_at": "2026-07-21T04:15:21.000Z",
           "arguments": {
             "pdf_path": "output/signing-packet.pdf"
           },
@@ -5290,10 +5333,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.prepare-for-signature.run.3.step.5",
           "tool": "apply_signature",
           "started_at": "2026-07-21T04:15:25.000Z",
+          "finished_at": "2026-07-21T04:15:26.000Z",
           "arguments": {
             "pdf_path": "output/signing-packet.pdf",
             "output_path": "output/signed.pdf",
@@ -5655,10 +5699,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.error-recovery.run.1.step.1",
           "tool": "get_pdf_info",
           "started_at": "2026-07-21T05:05:05.000Z",
+          "finished_at": "2026-07-21T05:05:06.000Z",
           "arguments": {
             "pdf_path": "../outside.pdf"
           },
@@ -5672,10 +5717,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.error-recovery.run.1.step.2",
           "tool": "get_pdf_info",
           "started_at": "2026-07-21T05:05:10.000Z",
+          "finished_at": "2026-07-21T05:05:11.000Z",
           "arguments": {
             "pdf_path": "input/source.pdf"
           },
@@ -5890,10 +5936,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.error-recovery.run.2.step.1",
           "tool": "get_pdf_info",
           "started_at": "2026-07-21T05:10:05.000Z",
+          "finished_at": "2026-07-21T05:10:06.000Z",
           "arguments": {
             "pdf_path": "../outside.pdf"
           },
@@ -5907,10 +5954,11 @@
           }
         },
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.error-recovery.run.2.step.2",
           "tool": "get_pdf_info",
           "started_at": "2026-07-21T05:10:10.000Z",
+          "finished_at": "2026-07-21T05:10:11.000Z",
           "arguments": {
             "pdf_path": "input/source.pdf"
           },
@@ -6125,10 +6173,11 @@
       },
       "trajectory": [
         {
-          "step_schema_version": 1,
+          "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.error-recovery.run.3.step.1",
           "tool": "get_pdf_info",
           "started_at": "2026-07-21T05:15:05.000Z",
+          "finished_at": "2026-07-21T05:15:06.000Z",
           "arguments": {
             "pdf_path": "../outside.pdf"
           },

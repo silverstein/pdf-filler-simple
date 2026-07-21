@@ -387,6 +387,28 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
       arguments: { pdf_path: path.join(path.parse(REPO_ROOT).root, "not-allowed.pdf") },
     });
     expect(disallowed.isError).toBe(true);
+    expect(disallowed.structuredContent).toEqual({
+      status: "failed",
+      error: {
+        error_schema_version: 1,
+        code: "path_policy_denied",
+      },
+    });
+
+    const deniedInfo = await client.callTool({
+      name: "get_pdf_info",
+      arguments: { pdf_path: path.join(path.parse(REPO_ROOT).root, "outside.pdf") },
+    });
+    expect(deniedInfo).toMatchObject({
+      isError: true,
+      structuredContent: {
+        status: "failed",
+        error: {
+          error_schema_version: 1,
+          code: "path_policy_denied",
+        },
+      },
+    });
   });
 
   it("rejects cursors because these finite lists never issue one", async () => {

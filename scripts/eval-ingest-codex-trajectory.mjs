@@ -105,10 +105,14 @@ function validateObserver(observer) {
     if (typeof observer.sample[key] !== "string" || !observer.sample[key]) throw new Error(`sample.${key} must be non-empty`);
   }
   for (const [id, observation] of Object.entries(observer.call_observations)) {
-    exact(observation, `call_observations.${id}`, ["started_at", "observed_sources", "observed_artifacts"], [
+    exact(observation, `call_observations.${id}`, ["started_at", "finished_at", "observed_sources", "observed_artifacts"], [
       "expected_error", "recovery_of_item_id",
     ]);
     if (!Number.isFinite(Date.parse(observation.started_at))) throw new Error(`call_observations.${id}.started_at must be ISO-8601`);
+    if (!Number.isFinite(Date.parse(observation.finished_at))) throw new Error(`call_observations.${id}.finished_at must be ISO-8601`);
+    if (Date.parse(observation.finished_at) < Date.parse(observation.started_at)) {
+      throw new Error(`call_observations.${id}.finished_at must not precede started_at`);
+    }
     if (!Array.isArray(observation.observed_sources) || !observation.observed_sources.every(value => typeof value === "string" && value)) {
       throw new Error(`call_observations.${id}.observed_sources must be strings`);
     }
@@ -161,9 +165,25 @@ function validateObserver(observer) {
 
 function normalizeRawError(rawError) {
   if (rawError && typeof rawError === "object") {
+    const structured = rawError.structured_content ?? rawError.structuredContent;
+    const structuredError = structured?.error;
+    const contentMessage = Array.isArray(rawError.content)
+      ? rawError.content.find(item => item?.type === "text" && typeof item.text === "string")?.text
+      : null;
     return {
-      code: String(rawError.code ?? "tool_error"),
-      message: String(rawError.message ?? JSON.stringify(rawError)),
+      code: String(
+        rawError.code
+        ?? rawError.error_code
+        ?? structuredError?.code
+        ?? structured?.error_code
+        ?? "tool_error"
+      ),
+      message: String(
+        rawError.message
+        ?? structuredError?.message
+        ?? contentMessage
+        ?? JSON.stringify(rawError)
+      ),
     };
   }
   return { code: "tool_error", message: String(rawError ?? "Unspecified MCP tool error") };
@@ -339,10 +359,11 @@ export async function ingestCodexTrajectory({
       throw new Error(`Successful MCP call ${id} must retain a non-null MCP result object with content or structured_content`);
     }
     const base = {
-      step_schema_version: 1,
+      step_schema_version: 2,
       step_id: `${observer.run.run_id}.step.${index + 1}`,
       tool: item.tool,
       started_at: observation.started_at,
+      finished_at: observation.finished_at,
       arguments: item.arguments ?? {},
       ok,
     };

@@ -62,10 +62,11 @@ function successStep(context, ordinal, tool, args, {
   sources = [], artifacts = [], semantics = emptySemantics(), recoveryOf = null,
 } = {}) {
   return {
-    step_schema_version: 1,
+    step_schema_version: 2,
     step_id: `${context.runId}.step.${ordinal}`,
     tool,
     started_at: timestamp(context, ordinal * 5),
+    finished_at: timestamp(context, ordinal * 5 + 1),
     arguments: args,
     ok: true,
     result: {
@@ -83,10 +84,11 @@ function successStep(context, ordinal, tool, args, {
 function failedStep(context, ordinal, tool, args, code, expected = true) {
   const rawError = { code, message: `Synthetic calibration error: ${code}` };
   return {
-    step_schema_version: 1,
+    step_schema_version: 2,
     step_id: `${context.runId}.step.${ordinal}`,
     tool,
     started_at: timestamp(context, ordinal * 5),
+    finished_at: timestamp(context, ordinal * 5 + 1),
     arguments: args,
     ok: false,
     error: {
