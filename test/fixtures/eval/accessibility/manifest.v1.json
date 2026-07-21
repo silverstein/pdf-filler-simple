@@ -1,8 +1,11 @@
 {
   "manifest_version": 1,
   "corpus_version": "v0.1.0",
+  "scorer_id": "pdf_accessibility_structural_screen",
+  "scorer_version": 1,
+  "claim_gate_version": 1,
   "taxonomy_path": "claim-taxonomy.v1.json",
-  "taxonomy_sha256": "7c313ec19f96047199e85dda32f0ac5fbcdf663758a091ae2c62634d27a5375c",
+  "taxonomy_sha256": "d45f27f883d76c41ccfe41ab09357e834dfa035fcb3ed5a8688f520f433474ff",
   "fixtures": [
     {
       "id": "pdf-tools.accessibility.v1.untagged",
@@ -30,7 +33,8 @@
       },
       "expected": {
         "screen_status": "fail",
-        "required_failure_ids": ["catalog_marked", "document_language", "structure_tree_root", "display_document_title"],
+        "expected_failure_ids": ["catalog_marked", "document_language", "display_document_title", "structure_tree_root", "structure_root_children", "structure_parent_tree"],
+        "expected_rule_families": ["document_metadata", "tagged_pdf_structure"],
         "declared_pdfua_part": null,
         "maximum_claim_state": "structural_failures_detected"
       }
@@ -61,7 +65,8 @@
       },
       "expected": {
         "screen_status": "fail",
-        "required_failure_ids": ["structure_parent_tree"],
+        "expected_failure_ids": ["structure_parent_tree"],
+        "expected_rule_families": ["tagged_pdf_structure"],
         "declared_pdfua_part": 1,
         "maximum_claim_state": "structural_failures_detected"
       }
@@ -92,7 +97,8 @@
       },
       "expected": {
         "screen_status": "pass",
-        "required_failure_ids": [],
+        "expected_failure_ids": [],
+        "expected_rule_families": [],
         "declared_pdfua_part": 1,
         "maximum_claim_state": "no_structural_failures_detected"
       }

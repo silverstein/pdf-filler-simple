@@ -40,7 +40,24 @@
     }
   },
   "automated_lane_capability": {
+    "scorer_id": "pdf_accessibility_structural_screen",
+    "scorer_version": 1,
+    "claim_gate_version": 1,
     "maximum_emittable_state": "no_structural_failures_detected",
+    "executable_claim_states": [
+      "structural_failures_detected",
+      "no_structural_failures_detected"
+    ],
+    "structural_rules": [
+      { "id": "parseable_pdf", "family": "file_integrity" },
+      { "id": "catalog_marked", "family": "tagged_pdf_structure" },
+      { "id": "document_language", "family": "document_metadata" },
+      { "id": "document_title", "family": "document_metadata" },
+      { "id": "display_document_title", "family": "document_metadata" },
+      { "id": "structure_tree_root", "family": "tagged_pdf_structure" },
+      { "id": "structure_root_children", "family": "tagged_pdf_structure" },
+      { "id": "structure_parent_tree", "family": "tagged_pdf_structure" }
+    ],
     "trusted_validator_adapters": [],
     "trusted_human_review_schemas": [],
     "trusted_certification_authorities": [],

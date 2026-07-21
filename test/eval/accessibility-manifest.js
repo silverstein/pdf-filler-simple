@@ -1,114 +1,153 @@
-import fs from "node:fs/promises";
 import { createHash } from "node:crypto";
+import fsSync from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import Ajv2020 from "ajv/dist/2020.js";
+import addFormats from "ajv-formats";
+import {
+  ACCESSIBILITY_CLAIM_GATE_VERSION,
+  ACCESSIBILITY_RULES,
+  ACCESSIBILITY_SCORER_ID,
+  ACCESSIBILITY_SCORER_VERSION,
+  validateAccessibilityTaxonomyContract,
+} from "./accessibility-scorer.js";
 
-const SHA256 = /^[a-f0-9]{64}$/;
-const VERSION = /^v\d+\.\d+\.\d+$/;
-const ID = /^pdf-tools\.accessibility\.v1\.[a-z0-9-]+$/;
-const PARTITIONS = ["development", "adversarial"];
-const CLAIM_STATES = ["structural_failures_detected", "no_structural_failures_detected"];
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const SCHEMA_PATH = path.resolve(
+  __dirname,
+  "..",
+  "fixtures",
+  "eval",
+  "accessibility",
+  "manifest.schema.json"
+);
+const schema = JSON.parse(fsSync.readFileSync(SCHEMA_PATH, "utf8"));
+const ajv = new Ajv2020({ allErrors: true, strict: true });
+addFormats(ajv);
+const validateSchema = ajv.compile(schema);
+const RULE_FAMILY_BY_ID = new Map(ACCESSIBILITY_RULES.map(rule => [rule.id, rule.family]));
 
-function object(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
+function schemaErrors() {
+  return (validateSchema.errors ?? []).map(error => {
+    const location = error.instancePath ? `manifest${error.instancePath}` : "manifest";
+    return `${location} ${error.message}`;
+  });
 }
 
-function nonEmptyString(value) {
-  return typeof value === "string" && value.length > 0;
+function sorted(values) {
+  return [...values].sort((left, right) => left.localeCompare(right));
+}
+
+function sameValues(left, right) {
+  return JSON.stringify(sorted(left)) === JSON.stringify(sorted(right));
+}
+
+function pathEscapes(relativePath) {
+  if (typeof relativePath !== "string" || path.isAbsolute(relativePath)) return true;
+  const normalized = path.normalize(relativePath);
+  return normalized === ".." || normalized.startsWith(`..${path.sep}`);
 }
 
 export function validateAccessibilityManifest(manifest) {
+  if (!validateSchema(manifest)) return schemaErrors();
   const errors = [];
-  if (!object(manifest)) return ["manifest must be an object"];
-  if (manifest.manifest_version !== 1) errors.push("manifest.manifest_version must equal 1");
-  if (!VERSION.test(manifest.corpus_version ?? "")) {
-    errors.push("manifest.corpus_version must use vMAJOR.MINOR.PATCH format");
-  }
-  if (manifest.taxonomy_path !== "claim-taxonomy.v1.json") {
-    errors.push("manifest.taxonomy_path must equal claim-taxonomy.v1.json");
-  }
-  if (!SHA256.test(manifest.taxonomy_sha256 ?? "")) {
-    errors.push("manifest.taxonomy_sha256 must be a lowercase SHA-256 digest");
-  }
-  if (!Array.isArray(manifest.fixtures) || manifest.fixtures.length === 0) {
-    return [...errors, "manifest.fixtures must be a non-empty array"];
-  }
-
   const ids = new Set();
   for (const [index, fixture] of manifest.fixtures.entries()) {
     const at = `manifest.fixtures[${index}]`;
-    if (!object(fixture)) {
-      errors.push(`${at} must be an object`);
-      continue;
-    }
-    if (!ID.test(fixture.id ?? "")) errors.push(`${at}.id must be a stable v1 ID`);
     if (ids.has(fixture.id)) errors.push(`${at}.id duplicates ${fixture.id}`);
     ids.add(fixture.id);
-    const normalizedPath = nonEmptyString(fixture.path) ? path.normalize(fixture.path) : "";
-    if (!nonEmptyString(fixture.path) || path.isAbsolute(fixture.path)
-      || normalizedPath === ".." || normalizedPath.startsWith(`..${path.sep}`)) {
-      errors.push(`${at}.path must be a non-empty manifest-relative path`);
+    if (pathEscapes(fixture.path)) errors.push(`${at}.path must stay within the manifest directory`);
+    if (fixture.provenance.kind === "synthetic" && fixture.provenance.generator === null) {
+      errors.push(`${at}.provenance.generator is required for synthetic fixtures`);
     }
-    if (!SHA256.test(fixture.sha256 ?? "")) errors.push(`${at}.sha256 must be a lowercase SHA-256 digest`);
-    if (fixture.media_type !== "application/pdf") errors.push(`${at}.media_type must be application/pdf`);
-    if (!PARTITIONS.includes(fixture.partition)) errors.push(`${at}.partition is not recognized`);
-    if (!nonEmptyString(fixture.description)) errors.push(`${at}.description must be non-empty`);
 
-    if (!object(fixture.provenance)) {
-      errors.push(`${at}.provenance must be an object`);
-    } else {
-      if (!["public", "synthetic"].includes(fixture.provenance.kind)) errors.push(`${at}.provenance.kind is not recognized`);
-      if (!nonEmptyString(fixture.provenance.origin)) errors.push(`${at}.provenance.origin must be non-empty`);
-      if (!Object.hasOwn(fixture.provenance, "source_url")) errors.push(`${at}.provenance.source_url must be explicit`);
-      if (!Object.hasOwn(fixture.provenance, "generator")) errors.push(`${at}.provenance.generator must be explicit`);
-      if (fixture.provenance.kind === "synthetic" && !nonEmptyString(fixture.provenance.generator)) {
-        errors.push(`${at}.provenance.generator is required for synthetic fixtures`);
-      }
+    const unknownFailures = fixture.expected.expected_failure_ids.filter(id => !RULE_FAMILY_BY_ID.has(id));
+    if (unknownFailures.length > 0) {
+      errors.push(`${at}.expected.expected_failure_ids contain unknown rules: ${unknownFailures.join(", ")}`);
     }
-    if (!object(fixture.license) || fixture.license.redistribution !== "allowed"
-      || !nonEmptyString(fixture.license.name) || !nonEmptyString(fixture.license.spdx_id)
-      || !nonEmptyString(fixture.license.url)) {
-      errors.push(`${at}.license must explicitly permit redistribution`);
+    const derivedFamilies = [...new Set(fixture.expected.expected_failure_ids
+      .map(id => RULE_FAMILY_BY_ID.get(id))
+      .filter(Boolean))];
+    if (!sameValues(derivedFamilies, fixture.expected.expected_rule_families)) {
+      errors.push(`${at}.expected.expected_rule_families must exactly match expected_failure_ids`);
     }
-    if (!object(fixture.privacy) || fixture.privacy.contains_personal_data !== false
-      || !["public", "synthetic"].includes(fixture.privacy.class)
-      || !nonEmptyString(fixture.privacy.notes)) {
-      errors.push(`${at}.privacy must explicitly exclude personal data`);
+    if (fixture.expected.screen_status === "pass" && fixture.expected.expected_failure_ids.length !== 0) {
+      errors.push(`${at}.expected pass status cannot declare failures`);
     }
-    if (!object(fixture.expected)) {
-      errors.push(`${at}.expected must be an object`);
-    } else {
-      if (!["pass", "fail"].includes(fixture.expected.screen_status)) errors.push(`${at}.expected.screen_status is invalid`);
-      if (!Array.isArray(fixture.expected.required_failure_ids)
-        || fixture.expected.required_failure_ids.some(id => !nonEmptyString(id))) {
-        errors.push(`${at}.expected.required_failure_ids must be an array of IDs`);
-      }
-      if (fixture.expected.declared_pdfua_part !== null
-        && (!Number.isInteger(fixture.expected.declared_pdfua_part) || fixture.expected.declared_pdfua_part < 1)) {
-        errors.push(`${at}.expected.declared_pdfua_part must be a positive integer or null`);
-      }
-      if (!CLAIM_STATES.includes(fixture.expected.maximum_claim_state)) {
-        errors.push(`${at}.expected.maximum_claim_state exceeds this lane's capability`);
-      }
+    if (fixture.expected.screen_status === "fail" && fixture.expected.expected_failure_ids.length === 0) {
+      errors.push(`${at}.expected fail status must declare at least one failure`);
+    }
+    const expectedClaim = fixture.expected.screen_status === "pass"
+      ? "no_structural_failures_detected"
+      : "structural_failures_detected";
+    if (fixture.expected.maximum_claim_state !== expectedClaim) {
+      errors.push(`${at}.expected.maximum_claim_state conflicts with screen_status`);
     }
   }
-  if (!manifest.fixtures.some(item => item.partition === "development")) errors.push("manifest needs a development fixture");
-  if (!manifest.fixtures.some(item => item.partition === "adversarial")) errors.push("manifest needs an adversarial fixture");
+  if (!manifest.fixtures.some(item => item.partition === "development")) {
+    errors.push("manifest needs a development fixture");
+  }
+  if (!manifest.fixtures.some(item => item.partition === "adversarial")) {
+    errors.push("manifest needs an adversarial fixture");
+  }
   return errors;
 }
 
+async function resolveContainedRegularFile(rootPath, relativePath, label) {
+  if (pathEscapes(relativePath)) throw new Error(`${label} path escapes its declared root`);
+  const root = await fs.realpath(rootPath);
+  const segments = path.normalize(relativePath).split(path.sep).filter(Boolean);
+  let candidate = root;
+  for (const segment of segments) {
+    candidate = path.join(candidate, segment);
+    const entry = await fs.lstat(candidate);
+    if (entry.isSymbolicLink()) throw new Error(`${label} must not contain symbolic links`);
+  }
+  const resolved = await fs.realpath(candidate);
+  const relative = path.relative(root, resolved);
+  if (relative === "" || relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
+    throw new Error(`${label} resolves outside its declared root`);
+  }
+  const stat = await fs.stat(resolved);
+  if (!stat.isFile()) throw new Error(`${label} must be a regular file`);
+  return resolved;
+}
+
 export async function loadAccessibilityManifest(manifestPath) {
-  const manifest = JSON.parse(await fs.readFile(manifestPath, "utf8"));
+  const resolvedManifest = await fs.realpath(manifestPath);
+  const manifest = JSON.parse(await fs.readFile(resolvedManifest, "utf8"));
   const errors = validateAccessibilityManifest(manifest);
   if (errors.length > 0) throw new Error(`Invalid accessibility manifest:\n- ${errors.join("\n- ")}`);
-  const taxonomyPath = path.resolve(path.dirname(manifestPath), manifest.taxonomy_path);
+  if (manifest.scorer_id !== ACCESSIBILITY_SCORER_ID
+    || manifest.scorer_version !== ACCESSIBILITY_SCORER_VERSION
+    || manifest.claim_gate_version !== ACCESSIBILITY_CLAIM_GATE_VERSION) {
+    throw new Error("Accessibility manifest scorer/gate versions do not match executable versions");
+  }
+
+  const manifestDirectory = path.dirname(resolvedManifest);
+  const taxonomyPath = await resolveContainedRegularFile(
+    manifestDirectory,
+    manifest.taxonomy_path,
+    "Accessibility taxonomy"
+  );
   const taxonomyBytes = await fs.readFile(taxonomyPath);
   const taxonomyDigest = createHash("sha256").update(taxonomyBytes).digest("hex");
   if (taxonomyDigest !== manifest.taxonomy_sha256) {
     throw new Error(`Accessibility taxonomy SHA-256 mismatch: expected ${manifest.taxonomy_sha256}, received ${taxonomyDigest}`);
   }
-  return manifest;
+  const taxonomy = JSON.parse(taxonomyBytes.toString("utf8"));
+  const taxonomyErrors = validateAccessibilityTaxonomyContract(taxonomy);
+  if (taxonomyErrors.length > 0) {
+    throw new Error(`Accessibility taxonomy/executable mismatch:\n- ${taxonomyErrors.join("\n- ")}`);
+  }
+  return { manifest, taxonomy, manifest_path: resolvedManifest };
 }
 
-export function resolveAccessibilityFixturePath(manifestPath, fixture) {
-  return path.resolve(path.dirname(manifestPath), fixture.path);
+export async function resolveAccessibilityFixturePath(manifestPath, fixture) {
+  return resolveContainedRegularFile(
+    path.dirname(await fs.realpath(manifestPath)),
+    fixture.path,
+    `Accessibility fixture ${fixture.id}`
+  );
 }

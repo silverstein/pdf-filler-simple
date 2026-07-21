@@ -1,0 +1,87 @@
+{
+  "contract_version": 1,
+  "corpus_version": "v0.1.0",
+  "evidence_runner_version": 1,
+  "validator": {
+    "name": "veraPDF Greenfield CLI",
+    "version": "1.30.2",
+    "profile": "ua1",
+    "profile_name": "PDF/UA-1 validation profile",
+    "release_date": "2026-06-03",
+    "release_page": "https://software.verapdf.org/releases/1.30",
+    "installer_url": "https://software.verapdf.org/releases/1.30/verapdf-greenfield-1.30.2-installer.zip",
+    "installer_sha256": "6cc6341cb1af644044054b81f00a6590a7918abb18f762243de115258bcad838",
+    "signature_url": "https://software.verapdf.org/releases/1.30/verapdf-greenfield-1.30.2-installer.zip.asc",
+    "signature_sha256": "f33175e402f28c42e80866aa62aa337c5d7d7a16a4ea1ae4ff50b0f13343ff26",
+    "signature_fingerprint": "13DD102B4DD69354D12DE5A83184863278B17FE7",
+    "signature_verification": "not_verified_no_trusted_key",
+    "installed_wrapper_sha256": "ea4d7949a4c9e5939e3419d03f9610920f1d7b761bc5599a38facbddea28ae09",
+    "installed_cli_jar_sha256": "889075253fb9df4db5482efb8f8208fb3b4f2e00f5f7e1b1e31edf6fb4b69bb6",
+    "expected_exit_codes": {
+      "compliant": 0,
+      "non_compliant": 1
+    }
+  },
+  "runtime": {
+    "name": "Eclipse Temurin JRE",
+    "version": "21.0.11+10",
+    "source_url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.11%2B10/OpenJDK21U-jre_x64_linux_hotspot_21.0.11_10.tar.gz",
+    "archive_sha256": "e5038aae3ca9ff670bc696496b0728dbd23d280026bad30291cb919221ecfdcb",
+    "java_binary_sha256": "fd85538801d8ca61d3558c87a57a600e1868d8ac9e918d0860dd64281b548643"
+  },
+  "corpus": {
+    "name": "veraPDF PDF/UA-1 atomic test corpus",
+    "repository": "https://github.com/veraPDF/veraPDF-corpus",
+    "commit": "49de56cd987929932c9e4fbbbe67d052bf44ef83",
+    "commit_url": "https://github.com/veraPDF/veraPDF-corpus/commit/49de56cd987929932c9e4fbbbe67d052bf44ef83",
+    "license_name": "Creative Commons Attribution 4.0 International",
+    "license_spdx_id": "CC-BY-4.0",
+    "license_url": "https://github.com/veraPDF/veraPDF-corpus/blob/49de56cd987929932c9e4fbbbe67d052bf44ef83/README.md",
+    "redistribution": "allowed",
+    "privacy": "public_test_fixture_no_personal_data"
+  },
+  "fixtures": [
+    {
+      "id": "verapdf.ua1.5-t01-pass-a",
+      "filename": "5-t01-pass-a.pdf",
+      "source_path": "PDF_UA-1/5 Version identification/5-t01-pass-a.pdf",
+      "source_url": "https://raw.githubusercontent.com/veraPDF/veraPDF-corpus/49de56cd987929932c9e4fbbbe67d052bf44ef83/PDF_UA-1/5%20Version%20identification/5-t01-pass-a.pdf",
+      "sha256": "853fc52f5dca32dd257cac1da4ca9c1702623e357b48a361f835c4f271bd2c68",
+      "size": 42497,
+      "expected_machine_compliant": true,
+      "expected_failed_rule_keys": [],
+      "rule_family": "version_identification"
+    },
+    {
+      "id": "verapdf.ua1.5-t01-fail-a",
+      "filename": "5-t01-fail-a.pdf",
+      "source_path": "PDF_UA-1/5 Version identification/5-t01-fail-a.pdf",
+      "source_url": "https://raw.githubusercontent.com/veraPDF/veraPDF-corpus/49de56cd987929932c9e4fbbbe67d052bf44ef83/PDF_UA-1/5%20Version%20identification/5-t01-fail-a.pdf",
+      "sha256": "33d9008d84746cb8cf7cf11f50d8e67a97b3640978d845050e18ee47bfb95310",
+      "size": 38394,
+      "expected_machine_compliant": false,
+      "expected_failed_rule_keys": ["ISO 14289-1:2014#5#1"],
+      "rule_family": "version_identification"
+    }
+  ],
+  "repair_guidance_assessment": {
+    "rule_family": "version_identification",
+    "status": "bounded_diagnostic_only",
+    "safe_guidance": "Inspect whether the document metadata contains the PDF/UA identification schema required for the intended PDF/UA edition, correct it with a standards-aware workflow, then rerun complete machine and human review on the new document hash.",
+    "limitations": [
+      "Adding identification metadata alone does not make a document conformant or accessible.",
+      "The pilot does not attempt repair and does not copy normative standards text.",
+      "Evidence for the original document hash cannot transfer to a repaired file."
+    ]
+  },
+  "recorded_local_trial": {
+    "executed_at": "2026-07-21T10:16:00Z",
+    "platform": "linux-x64",
+    "pass_exit_code": 0,
+    "pass_raw_report_sha256": "ea92696e84d63b10cbb3efc35dfcc76e33f6fe590f0dfd85ca98f6cb39067eea",
+    "fail_exit_code": 1,
+    "fail_raw_report_sha256": "e8a840c6614cfdba4d929cd42580d942c6e8f39e35fbdbe60fe8216a84b7b979",
+    "raw_reports_committed": false,
+    "reason": "Raw reports include environment-specific paths and validator-rendered standards descriptions. The runner retains raw reports in its caller-selected external evidence directory and emits their hashes; this repository records only non-normative derived fields."
+  }
+}

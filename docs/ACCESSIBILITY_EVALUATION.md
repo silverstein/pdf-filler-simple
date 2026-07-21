@@ -1,9 +1,9 @@
-# Accessibility Evaluation and Claim Safety
+# Accessibility Evaluation Phase 0 and Claim Safety
 
 Accessibility is not a boolean that PDF Tools can infer from a tag flag, an XMP
 identifier, successful text extraction, or one automated checker. This document
-defines the bounded first evaluation lane and the evidence required before a
-stronger claim may be made.
+defines a phase-0 structural screen, a bounded external machine-validation
+pilot, and the evidence still required before a stronger claim may be made.
 
 The implementation is intentionally an evaluation harness, not a user-facing
 accessibility checker. It does not change runtime tools or claim that PDF Tools
@@ -33,8 +33,9 @@ standards-maintainer resources, and official validator documentation:
   states that its PDF/UA profiles cover machine-verifiable checks. The official
   [CLI profiles](https://docs.verapdf.org/cli/validation/) expose `ua1` and
   `ua2`, while the project is available under
-  [GPLv3+ or MPLv2+](https://docs.verapdf.org/develop/). No veraPDF binary or
-  report adapter is bundled in v1 of this lane.
+  [GPLv3+ or MPLv2+](https://docs.verapdf.org/develop/). The pilot runner can
+  invoke a separately installed, hash-pinned veraPDF CLI; no validator binary
+  is bundled.
 - The official [PAC check guidance](https://pac.pdf-accessibility.org/en/check)
   says machine checking is useful for technical aspects but cannot replace the
   final human check. PAC is not bundled or automated here.
@@ -60,7 +61,7 @@ It keeps six concepts separate:
 |---|---|---|
 | Structural failures detected | A deterministic check failed | Yes |
 | No structural failures detected | Every check in `structural_screen_v1` passed | Yes |
-| Machine validation passed | Hash-bound output from an approved, pinned validator/profile adapter | No adapter exists yet |
+| Machine validation passed | Hash-bound output from an approved, pinned validator/profile adapter | External pilot only; not accepted by the phase-0 claim gate |
 | Human review completed | Hash-bound review record covering a versioned checklist, scope, reviewer, and date | No schema exists yet |
 | Conformance validated | Complete standard-specific machine and human evidence for the exact document hash | No |
 | Certified conformance | Authentic certificate from a named trusted external authority for the exact hash and scope | Never issued by this repository |
@@ -107,15 +108,32 @@ The claim gate rejects caller-supplied validator, reviewer, and certificate
 objects because v1 has no trusted ingestion adapters. This is fail-closed by
 design: unverified JSON cannot manufacture conformance.
 
+The runner reports a confusion matrix for each structural rule family. Its
+three-document corpus is synthetic calibration only. Those counts are not
+PDF/UA false-positive or false-negative rates and must not be generalized to
+real documents, other producers, other rule families, or human-verifiable
+requirements.
+
 ## Fixture and provenance contract
 
-The corpus manifest and JSON Schema live under
-`test/fixtures/eval/accessibility/`. Every committed PDF must have:
+The phase-0 corpus manifest and JSON Schema live under
+`test/fixtures/eval/accessibility/`. The loader compiles the published JSON
+Schema with Ajv 2020 and `ajv-formats`, then applies semantic invariants the
+schema cannot express. These packages are intentionally not new direct
+dependencies: they are locked transitives of `@modelcontextprotocol/sdk`, and a
+test mechanically checks that exact package-lock relationship and versions.
+If the SDK graph stops providing them, evaluation fails until maintainers make
+an explicit dependency decision. Every committed PDF must have:
 
 - a stable ID, exact SHA-256, partition, and expected bounded outcome;
 - public or synthetic provenance and a reproducible generator when synthetic;
 - explicit redistribution permission;
 - an explicit privacy record confirming that no personal data is present.
+
+The loader requires exact expected failure sets and exact derived rule-family
+sets. An unexpected failure is a false positive and fails the evaluation. Paths
+are checked with `lstat` and `realpath`; escapes, symlinked files or path
+components, and non-regular files are rejected before scoring.
 
 The three v1 fixtures are deterministic, MIT-licensed synthetic documents:
 
@@ -142,15 +160,73 @@ upstream version, expected validator profile, and source hashes, then add known
 non-conforming counterexamples instead of treating conforming examples as a
 complete validator test.
 
+## External veraPDF machine-validation pilot
+
+`formal-corpus.v1.json` pins the official veraPDF Greenfield 1.30.2 installer,
+its detached signature file and signer fingerprint, a Temurin 21.0.11+10
+runtime, the installed wrapper and CLI JAR, the `ua1` profile, and commit
+`49de56cd987929932c9e4fbbbe67d052bf44ef83` of the official
+[veraPDF corpus](https://github.com/veraPDF/veraPDF-corpus). That corpus records
+CC BY 4.0 licensing and supplies atomic known-good and known-defect files.
+
+The two pilot fixtures exercise only PDF/UA-1 version identification. Fetch
+them to an external cache; they are not copied into this repository:
+
+```bash
+node scripts/eval-fetch-accessibility-formal-corpus.mjs \
+  --output-dir /external/cache/pdfua-corpus
+```
+
+After separately obtaining and installing the pinned artifacts, run:
+
+```bash
+node scripts/eval-run-accessibility-formal.mjs \
+  --corpus-dir /external/cache/pdfua-corpus \
+  --validator /external/verapdf/verapdf \
+  --validator-artifact /external/cache/verapdf-greenfield-1.30.2-installer.zip \
+  --runtime-archive /external/cache/OpenJDK21U-jre_x64_linux_hotspot_21.0.11_10.tar.gz \
+  --java-home /external/temurin-jre \
+  --report-dir /external/evidence/raw
+```
+
+The runner checks all artifact and fixture hashes, the reported validator
+version and profile, exactly one normally completed job, batch parsing and
+exception counters, veraPDF's observed exit semantics (`0` compliant, `1`
+non-compliant), and exact failed rule keys. It retains raw reports only in the
+caller-selected evidence directory and records their SHA-256. Repository
+evidence stores non-normative derived fields rather than copying validator
+renderings of standards requirements.
+
+The child process does not inherit the caller's environment. It receives the
+exact Java home, a minimal path, fixed `C.UTF-8` locale and UTC timezone, and a
+disposable home/config/cache/temp tree that is also the child working directory.
+`JAVA_TOOL_OPTIONS`, `JDK_JAVA_OPTIONS`,
+`_JAVA_OPTIONS`, `CLASSPATH`, user veraPDF configuration, and other ambient
+variables are absent. Tests inject hostile parent values and require them not
+to reach the validator.
+
+The recorded 2026-07-21 pilot produced one true positive, one true negative,
+zero false positives, zero false negatives, and zero harness failures for the
+single `version_identification` family. This is a two-file integration proof,
+not an estimate of veraPDF accuracy or PDF/UA coverage. The safe repair guidance
+is diagnostic only: correcting identification metadata cannot make an otherwise
+inaccessible document conformant.
+
+Artifact authenticity is not complete. The official detached signature and
+fingerprint are pinned, but the signature was not verified because no trusted
+signing key was established in the disposable environment. HTTPS plus recorded
+hashes prevents unnoticed drift after this observation but does not replace a
+trusted signature chain.
+
 ## Required next evidence layers
 
 A future conformance lane should be added only as separately reviewed,
 versioned evidence adapters:
 
-1. Pin the validator artifact, license, version, rules/profile, command line,
-   exit semantics, raw report, report hash, target document hash, and execution
-   environment. Treat validator crashes, skipped rules, unknown profiles, and
-   incomplete reports as unavailable evidence, not passes.
+1. Establish and document a trusted veraPDF signing key, verify the pinned
+   release signature, expand known-good/known-defect coverage across rule
+   families, and calibrate repair guidance. Treat validator crashes, skipped
+   rules, unknown profiles, and incomplete reports as unavailable evidence.
 2. Build standard-edition-specific human checklists derived from licensed
    normative requirements and appropriate supporting protocols. Retain the
    exact document hash, reviewer identity, competence/role, date, scope,
@@ -165,5 +241,6 @@ versioned evidence adapters:
 5. Re-run the entire assessment after any PDF modification; evidence for one
    hash cannot transfer to another.
 
-Until those adapters and review records exist, `not_established` is the only
-truthful conformance and certification state.
+Until those adapters and review records exist, the overall work remains phase
+0. `not_established` is the only truthful conformance and certification state,
+even when the external pilot reports a machine-profile pass.

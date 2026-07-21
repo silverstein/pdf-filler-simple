@@ -1,13 +1,16 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://open-document-alliance.github.io/PDF-Tools/eval/accessibility/manifest.schema.json",
-  "title": "PDF Tools accessibility evaluation fixture manifest",
+  "title": "PDF Tools phase-0 accessibility structural-screen fixture manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["manifest_version", "corpus_version", "taxonomy_path", "taxonomy_sha256", "fixtures"],
+  "required": ["manifest_version", "corpus_version", "scorer_id", "scorer_version", "claim_gate_version", "taxonomy_path", "taxonomy_sha256", "fixtures"],
   "properties": {
     "manifest_version": { "const": 1 },
     "corpus_version": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "scorer_id": { "const": "pdf_accessibility_structural_screen" },
+    "scorer_version": { "const": 1 },
+    "claim_gate_version": { "const": 1 },
     "taxonomy_path": { "type": "string", "const": "claim-taxonomy.v1.json" },
     "taxonomy_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "fixtures": {
@@ -23,7 +26,7 @@
       "required": ["id", "path", "sha256", "media_type", "partition", "description", "provenance", "license", "privacy", "expected"],
       "properties": {
         "id": { "type": "string", "pattern": "^pdf-tools\\.accessibility\\.v1\\.[a-z0-9-]+$" },
-        "path": { "type": "string" },
+        "path": { "type": "string", "minLength": 1 },
         "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
         "media_type": { "const": "application/pdf" },
         "partition": { "enum": ["development", "adversarial"] },
@@ -35,8 +38,18 @@
           "properties": {
             "kind": { "enum": ["public", "synthetic"] },
             "origin": { "type": "string", "minLength": 1 },
-            "source_url": { "type": ["string", "null"] },
-            "generator": { "type": ["string", "null"] }
+            "source_url": {
+              "oneOf": [
+                { "type": "string", "format": "uri" },
+                { "type": "null" }
+              ]
+            },
+            "generator": {
+              "oneOf": [
+                { "type": "string", "minLength": 1 },
+                { "type": "null" }
+              ]
+            }
           }
         },
         "license": {
@@ -63,10 +76,15 @@
         "expected": {
           "type": "object",
           "additionalProperties": false,
-          "required": ["screen_status", "required_failure_ids", "declared_pdfua_part", "maximum_claim_state"],
+          "required": ["screen_status", "expected_failure_ids", "expected_rule_families", "declared_pdfua_part", "maximum_claim_state"],
           "properties": {
             "screen_status": { "enum": ["pass", "fail"] },
-            "required_failure_ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+            "expected_failure_ids": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+            "expected_rule_families": {
+              "type": "array",
+              "items": { "enum": ["file_integrity", "document_metadata", "tagged_pdf_structure"] },
+              "uniqueItems": true
+            },
             "declared_pdfua_part": { "type": ["integer", "null"], "minimum": 1 },
             "maximum_claim_state": { "enum": ["structural_failures_detected", "no_structural_failures_detected"] }
           }
