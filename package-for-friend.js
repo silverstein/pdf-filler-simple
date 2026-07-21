@@ -25,6 +25,7 @@ async function syncSharePackage() {
   await Promise.all([
     fs.copyFile(path.join("server", "index.js"), path.join(shareServerDir, "index.js")),
     fs.copyFile(path.join("server", "helpers.js"), path.join(shareServerDir, "helpers.js")),
+    fs.copyFile(path.join("server", "resource-uri.js"), path.join(shareServerDir, "resource-uri.js")),
     fs.copyFile(path.join("server", "stderr-suppression.js"), path.join(shareServerDir, "stderr-suppression.js")),
     fs.copyFile(path.join("dist-ui", "index.html"), path.join(shareUiDir, "index.html")),
   ]);

@@ -14,6 +14,7 @@
     "smoke:ui-preview-zone": "node scripts/dev-ui-preview-zone-smoke.mjs",
     "smoke:ui-draw": "node scripts/dev-ui-draw-smoke.mjs",
     "smoke:mcpb": "node scripts/smoke-mcpb.mjs",
+    "test:contract:share": "node scripts/test-share-contract.mjs",
     "build:ui": "vite build",
     "build:mcpb": "node scripts/build-mcpb.mjs",
     "test": "vitest run"

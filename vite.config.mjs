@@ -7,12 +7,12 @@ import { createMcpBridgePlugin } from "./ui/dev/bridge-plugin.mjs";
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
-export default defineConfig(({ command }) => ({
-  plugins: command === "serve"
+export default defineConfig(({ command, mode }) => ({
+  plugins: command === "serve" && mode !== "test" && process.env.VITEST !== "true"
     ? [createMcpBridgePlugin()]
     : [viteSingleFile()],
   resolve: {
-    alias: command === "serve"
+    alias: command === "serve" && mode !== "test" && process.env.VITEST !== "true"
       ? {
           "@modelcontextprotocol/ext-apps": path.resolve(__dirname, "ui/dev/mock-ext-apps.ts"),
         }
