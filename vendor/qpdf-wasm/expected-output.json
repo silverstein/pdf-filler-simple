@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "inputs": "sources.lock.json",
+  "artifacts": {
+    "qpdf.mjs": {
+      "bytes": 34382,
+      "sha256": "0c087b0d6ed0b57dd24a8b82e081207809dd97edff618d753c39a5639dcdc7c3"
+    },
+    "qpdf.wasm": {
+      "bytes": 2450542,
+      "sha256": "36830fb93e3f8a8a9bf4e8352b8b9b5f9ef1a25702b2eeaae0b52ab0b6746e6f"
+    }
+  }
+}

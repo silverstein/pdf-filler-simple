@@ -1,0 +1,66 @@
+{
+  "schema_version": 1,
+  "toolchain": "emscripten/emsdk:6.0.3 linux/amd64@sha256:2a7a41cd7e2065b30ba389c8db0fbeaebd7ec06bb4e20f23cab8ba92180f25c7",
+  "files": [
+    {
+      "component": "qpdf 12.3.2",
+      "spdx": "Apache-2.0",
+      "file": "QPDF-LICENSE.txt",
+      "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+    },
+    {
+      "component": "qpdf 12.3.2",
+      "spdx": "LicenseRef-QPDF-Notice",
+      "file": "QPDF-NOTICE.md",
+      "sha256": "b207f65a9e5491195ded63b2941199b19a4d30148871f2742c88eae7bfc513a6"
+    },
+    {
+      "component": "zlib 1.3.2",
+      "spdx": "Zlib",
+      "file": "ZLIB-LICENSE.txt",
+      "sha256": "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2"
+    },
+    {
+      "component": "libjpeg-turbo 3.2.0",
+      "spdx": "BSD-3-Clause AND IJG AND Zlib",
+      "file": "LIBJPEG-TURBO-LICENSE.md",
+      "sha256": "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579"
+    },
+    {
+      "component": "Emscripten 6.0.3 generated runtime",
+      "spdx": "MIT OR NCSA",
+      "file": "EMSCRIPTEN-LICENSE.txt",
+      "sha256": "620a78084fc7ca97c0b5dea9abf891f3ffcadfdbf305276f099c9c4e12fc1d86"
+    },
+    {
+      "component": "musl bundled by Emscripten 6.0.3",
+      "spdx": "MIT AND BSD-2-Clause AND BSD-3-Clause",
+      "file": "MUSL-COPYRIGHT.txt",
+      "sha256": "b870108ec5e7790e9f9919064f1b9421d62d5f9b0e6c230c6adf7ea2da62e97b"
+    },
+    {
+      "component": "compiler-rt bundled by Emscripten 6.0.3",
+      "spdx": "Apache-2.0 WITH LLVM-exception",
+      "file": "COMPILER-RT-LICENSE.txt",
+      "sha256": "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d"
+    },
+    {
+      "component": "libc++ bundled by Emscripten 6.0.3",
+      "spdx": "Apache-2.0 WITH LLVM-exception",
+      "file": "LIBCXX-LICENSE.txt",
+      "sha256": "539dd7aed86e8a4f12cbdd0e6c50c189c7d74847e4fecc64ce2c6ee3a01da38b"
+    },
+    {
+      "component": "libc++abi bundled by Emscripten 6.0.3",
+      "spdx": "Apache-2.0 WITH LLVM-exception",
+      "file": "LIBCXXABI-LICENSE.txt",
+      "sha256": "e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c"
+    },
+    {
+      "component": "libunwind bundled by Emscripten 6.0.3",
+      "spdx": "Apache-2.0 WITH LLVM-exception",
+      "file": "LIBUNWIND-LICENSE.txt",
+      "sha256": "b5efebcaca80879234098e52d1725e6d9eb8fb96a19fce625d39184b705f7b6d"
+    }
+  ]
+}
