@@ -83,6 +83,10 @@ async function main() {
     assert(!cacheState.status.includes("simulated detector outage"), "Successful retry did not clear the prior detection error.");
 
     await runAgentBrowser(["focus", ".sign-panel-item"]);
+    await evalJson(runAgentBrowser, `(() => {
+      window.__signPolishOpenedZoneKey = document.activeElement?.dataset?.zoneKey || null;
+      return JSON.stringify({ zoneKey: window.__signPolishOpenedZoneKey });
+    })()`);
     await runAgentBrowser(["press", "Enter"]);
     await runAgentBrowser(["wait", "300"]);
     let modalState = await evalJson(runAgentBrowser, `(() => JSON.stringify({
@@ -96,7 +100,71 @@ async function main() {
     await runAgentBrowser(["press", "Tab"]);
     const confirmFocus = await evalJson(runAgentBrowser, `(() => JSON.stringify({ activeId: document.activeElement?.id }))()`);
     assert(confirmFocus.activeId === "sign-modal-close", `Confirm modal focus did not wrap, active element was ${confirmFocus.activeId}.`);
+
+    await evalJson(runAgentBrowser, `(() => {
+      const sourceRow = Array.from(document.querySelectorAll(".sign-panel-item"))
+        .find(item => item.dataset.zoneKey === window.__signPolishOpenedZoneKey);
+      sourceRow?.remove();
+      return JSON.stringify({ removed: !sourceRow?.isConnected });
+    })()`);
     await runAgentBrowser(["press", "Escape"]);
+    const fallbackFocus = await evalJson(runAgentBrowser, `(() => JSON.stringify({
+      modalOpen: getComputedStyle(document.querySelector("#sign-modal")).display !== "none",
+      viewerInert: document.querySelector("#viewer")?.hasAttribute("inert"),
+      activeId: document.activeElement?.id
+    }))()`);
+    assert(!fallbackFocus.modalOpen, "Escape did not close the confirm modal after its source row disappeared.");
+    assert(!fallbackFocus.viewerInert, "Viewer remained inert after the confirm modal closed.");
+    assert(fallbackFocus.activeId === "sign-panel-draw-btn", `Missing replacement row did not use the safe sign-mode fallback, active element was ${fallbackFocus.activeId}.`);
+
+    await runAgentBrowser(["click", "#mode-view-btn"]);
+    await runAgentBrowser(["click", "#mode-sign-btn"]);
+    await runAgentBrowser(["wait", "300"]);
+    await runAgentBrowser(["focus", ".sign-panel-item"]);
+    const successfulZone = await evalJson(runAgentBrowser, `(() => JSON.stringify({
+      zoneKey: document.activeElement?.dataset?.zoneKey || null
+    }))()`);
+    await runAgentBrowser(["press", "Enter"]);
+    await runAgentBrowser(["wait", "300"]);
+    await runAgentBrowser(["fill", "#sign-modal-name", "Keyboard Test User"]);
+    await evalJson(runAgentBrowser, `(() => {
+      const passthroughFetch = window.fetch;
+      window.fetch = async (...args) => {
+        const options = args[1] || {};
+        let payload = null;
+        try { payload = JSON.parse(options.body || "null"); } catch {}
+        if (payload?.name === "create_signature") {
+          return new Response(JSON.stringify({
+            isError: false,
+            content: [{ type: "text", text: "mock signature created" }],
+            structuredContent: { name: "__pdf-tools-quick-typed__" }
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        if (payload?.name === "apply_signature") {
+          return new Response(JSON.stringify({
+            isError: false,
+            content: [{ type: "text", text: "mock signature applied" }],
+            structuredContent: { pdf_path: ${JSON.stringify(examplePdfPath)}, backup_path: null }
+          }), { status: 200, headers: { "content-type": "application/json" } });
+        }
+        return passthroughFetch(...args);
+      };
+      return JSON.stringify({ mockedApply: true });
+    })()`);
+    await runAgentBrowser(["click", "#sign-modal-confirm"]);
+    await runAgentBrowser(["wait", "1200"]);
+    const restoredZoneFocus = await evalJson(runAgentBrowser, `(() => JSON.stringify({
+      modalOpen: getComputedStyle(document.querySelector("#sign-modal")).display !== "none",
+      viewerInert: document.querySelector("#viewer")?.hasAttribute("inert"),
+      activeClass: document.activeElement?.className || "",
+      activeZoneKey: document.activeElement?.dataset?.zoneKey || null,
+      applied: document.activeElement?.textContent?.includes("Signed") || false
+    }))()`);
+    assert(!restoredZoneFocus.modalOpen, "Successful mocked apply did not close the confirm modal.");
+    assert(!restoredZoneFocus.viewerInert, "Viewer remained inert after successful mocked apply.");
+    assert(restoredZoneFocus.activeClass.includes("sign-panel-item"), `Focus did not move to the replacement zone row, active class was ${restoredZoneFocus.activeClass}.`);
+    assert(restoredZoneFocus.activeZoneKey === successfulZone.zoneKey, "Replacement focus used a different zone descriptor.");
+    assert(restoredZoneFocus.applied, "Replacement focused row did not retain the applied state.");
 
     await evalJson(runAgentBrowser, `(() => {
       Object.defineProperty(window, "devicePixelRatio", { value: 2, configurable: true });

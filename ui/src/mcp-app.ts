@@ -17,7 +17,13 @@ import * as pdfjsLib from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist";
 import "./mcp-app.css";
 import { buildManagedPdfPath, getHostBaseName } from "./path-utils";
-import { getCanvasBufferSize, getSignPanelStatus, getWrappedFocusIndex } from "./sign-mode-utils";
+import {
+  LatestPathRequestState,
+  getCanvasBufferSize,
+  getSignPanelStatus,
+  getWrappedFocusIndex,
+  getZoneDescriptorKey,
+} from "./sign-mode-utils";
 import { getPdfToolLoadData } from "./tool-result";
 
 // PDF.js worker — inline as blob URL for single-file build
@@ -67,15 +73,13 @@ interface SignatureZone {
   appliedValue?: string;
 }
 let signatureZones: SignatureZone[] = [];
-let zonesLoadingForPath = "";
 let activeBackupPath: string | null = null;
 // Remember which zones we've stamped so page navigation / mode toggles don't
 // lose the ✓ Signed indicator. Key: `${pdfPath}|${type}|${page}|${x}|${y}`.
 const appliedZoneKeys = new Set<string>();
 // Cache last-fetched zones per pdfPath so re-entering sign mode doesn't
 // re-run detection unnecessarily.
-const zoneCacheByPath = new Map<string, SignatureZone[]>();
-const zoneDetectionErrorByPath = new Map<string, string>();
+const zoneRequests = new LatestPathRequestState<SignatureZone[]>();
 
 interface SavedSignatureSummary {
   name: string;
@@ -112,7 +116,7 @@ let inspectPreviewInFlight = false;
 let activeZoneOriginalType: SignatureZone["type"] | null = null;
 
 function zoneKey(pdfPath: string, z: { type: string; page: number; x: number; y: number }): string {
-  return `${pdfPath}|${z.type}|${z.page}|${z.x.toFixed(1)}|${z.y.toFixed(1)}`;
+  return getZoneDescriptorKey(pdfPath, z);
 }
 
 function localDateString(date = new Date()) {
@@ -946,7 +950,11 @@ const manageResetBtn = $("manage-reset") as HTMLButtonElement;
 const manageApplyBtn = $("manage-apply") as HTMLButtonElement;
 
 const modalElements = [signModalEl, drawModalEl, regionPreviewModalEl];
-const modalPreviousFocus = new WeakMap<HTMLElement, HTMLElement>();
+interface ModalFocusReturn {
+  element: HTMLElement;
+  zoneKey: string | null;
+}
+const modalPreviousFocus = new WeakMap<HTMLElement, ModalFocusReturn>();
 const MODAL_FOCUSABLE_SELECTOR = [
   "button:not([disabled])",
   "input:not([disabled])",
@@ -965,10 +973,31 @@ function setViewerModalInert() {
   viewerEl.toggleAttribute("inert", modalElements.some(modal => modal.style.display === "flex"));
 }
 
+function isVisibleFocusTarget(element: HTMLElement | null): element is HTMLElement {
+  return !!element?.isConnected &&
+    element.matches(MODAL_FOCUSABLE_SELECTOR) &&
+    element.getClientRects().length > 0 &&
+    getComputedStyle(element).visibility !== "hidden" &&
+    !(element instanceof HTMLButtonElement && element.disabled);
+}
+
+function findZoneRowByKey(key: string) {
+  return Array.from(signPanelListEl.querySelectorAll<HTMLElement>(".sign-panel-item"))
+    .find(item => item.dataset.zoneKey === key) ?? null;
+}
+
+function findVisibleSignModeFallback() {
+  return [signPanelDrawBtn, signPanelInspectBtn, modeSignBtn]
+    .find(isVisibleFocusTarget) ?? null;
+}
+
 function openModal(modal: HTMLElement, initialFocus: HTMLElement) {
   const active = document.activeElement;
   if (active instanceof HTMLElement && !modal.contains(active)) {
-    modalPreviousFocus.set(modal, active);
+    modalPreviousFocus.set(modal, {
+      element: active,
+      zoneKey: active.dataset.zoneKey ?? null,
+    });
   }
   modal.style.display = "flex";
   setViewerModalInert();
@@ -980,9 +1009,19 @@ function openModal(modal: HTMLElement, initialFocus: HTMLElement) {
 function closeModal(modal: HTMLElement) {
   modal.style.display = "none";
   setViewerModalInert();
-  const previousFocus = modalPreviousFocus.get(modal);
+  const previousFocus = modalPreviousFocus.get(modal) ?? null;
   modalPreviousFocus.delete(modal);
-  if (previousFocus?.isConnected) previousFocus.focus();
+  const replacementZone = previousFocus?.zoneKey
+    ? findZoneRowByKey(previousFocus.zoneKey)
+    : null;
+  const focusTarget = isVisibleFocusTarget(previousFocus?.element ?? null)
+    ? previousFocus!.element
+    : isVisibleFocusTarget(replacementZone)
+      ? replacementZone
+      : modal === signModalEl
+        ? findVisibleSignModeFallback()
+        : null;
+  focusTarget?.focus();
 }
 
 function trapModalFocus(modal: HTMLElement, event: KeyboardEvent) {
@@ -1017,24 +1056,27 @@ function initPageStates() {
 // ─── Signature zones (Sign mode) ─────────────────────────────────────────────
 
 async function fetchSignatureZones(force = false) {
-  if (!pdfPath) return;
+  const requestedPath = pdfPath;
+  if (!requestedPath) return;
   // If we already have zones cached for this exact file, reuse them — don't
   // throw away the user's ✓ Signed flags on every mode toggle.
-  if (!force && zoneCacheByPath.has(pdfPath)) {
-    signatureZones = zoneCacheByPath.get(pdfPath)!;
-    renderSignPanel();
-    renderZoneOverlay();
+  if (!force && zoneRequests.hasValue(requestedPath)) {
+    if (pdfPath === requestedPath) {
+      signatureZones = zoneRequests.getValue(requestedPath)!;
+      renderSignPanel();
+      renderZoneOverlay();
+    }
     return;
   }
   // Guard against multiple concurrent fetches for the same file
-  if (zonesLoadingForPath === pdfPath) return;
-  zonesLoadingForPath = pdfPath;
-  renderSignPanel();
+  if (zoneRequests.isLoading(requestedPath)) return;
+  const request = zoneRequests.begin(requestedPath);
+  if (pdfPath === requestedPath) renderSignPanel();
 
   try {
     const result = await app.callServerTool({
       name: "detect_signature_zones",
-      arguments: { pdf_path: pdfPath },
+      arguments: { pdf_path: requestedPath },
     });
     if (result.isError) {
       const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Unknown error";
@@ -1045,22 +1087,23 @@ async function fetchSignatureZones(force = false) {
       ...z,
       id: `zone-${i}`,
       // Carry forward the applied flag if we've stamped this same zone before.
-      // Key is stable across re-fetches: pdfPath + type + page + rounded coords.
-      applied: appliedZoneKeys.has(zoneKey(pdfPath, z)),
+      // Key is stable across re-fetches: requested path + type + page + rounded coords.
+      applied: appliedZoneKeys.has(zoneKey(requestedPath, z)),
     }));
-    signatureZones = zones;
-    zoneCacheByPath.set(pdfPath, zones);
-    zoneDetectionErrorByPath.delete(pdfPath);
+    if (zoneRequests.succeedForCurrent(request, pdfPath, zones)) {
+      signatureZones = zones;
+    }
   } catch (err: any) {
     console.error("[viewer] detect_signature_zones failed:", err);
-    signatureZones = [];
-    zoneDetectionErrorByPath.set(pdfPath, err?.message ?? String(err));
+    if (zoneRequests.failForCurrent(request, pdfPath, err?.message ?? String(err))) {
+      signatureZones = [];
+    }
   } finally {
-    zonesLoadingForPath = "";
+    if (zoneRequests.finishForCurrent(request, pdfPath)) {
+      renderSignPanel();
+      renderZoneOverlay();
+    }
   }
-
-  renderSignPanel();
-  renderZoneOverlay();
 }
 
 function clearZoneOverlay() {
@@ -2419,8 +2462,8 @@ function renderSignPanel() {
 
   const status = getSignPanelStatus({
     count,
-    loading: zonesLoadingForPath === pdfPath,
-    detectionError: zoneDetectionErrorByPath.get(pdfPath) ?? null,
+    loading: zoneRequests.isLoading(pdfPath),
+    detectionError: zoneRequests.getError(pdfPath),
     inspectArmed: inspectRegionArmed,
   });
   signPanelStatusEl.textContent = status.message;
@@ -2437,6 +2480,7 @@ function renderSignPanel() {
     item.setAttribute("role", "button");
     item.tabIndex = 0;
     item.dataset.zoneId = z.id || "";
+    item.dataset.zoneKey = zoneKey(pdfPath, z);
 
     const header = document.createElement("div");
     header.className = "sign-panel-item-header";
@@ -3199,8 +3243,7 @@ async function loadPdfFromToolResult(result: CallToolResult) {
     // Reset signing state — a fresh document starts a new stamp chain.
     appliedZoneKeys.clear();
     signatureZones = [];
-    zoneCacheByPath.delete(pdfPath);
-    zoneDetectionErrorByPath.delete(pdfPath);
+    zoneRequests.deletePath(pdfPath);
     updateWorkingCopyBanner();
 
     showViewer();

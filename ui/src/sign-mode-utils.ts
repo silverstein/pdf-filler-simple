@@ -7,6 +7,81 @@ export interface SignPanelStatusInput {
   inspectArmed: boolean;
 }
 
+export interface PathRequestTicket {
+  path: string;
+  token: number;
+}
+
+export class LatestPathRequestState<T> {
+  #nextToken = 0;
+  #activeTokens = new Map<string, number>();
+  #values = new Map<string, T>();
+  #errors = new Map<string, string>();
+
+  begin(path: string): PathRequestTicket {
+    const ticket = { path, token: ++this.#nextToken };
+    this.#activeTokens.set(path, ticket.token);
+    return ticket;
+  }
+
+  isLatest(ticket: PathRequestTicket) {
+    return this.#activeTokens.get(ticket.path) === ticket.token;
+  }
+
+  isLoading(path: string) {
+    return this.#activeTokens.has(path);
+  }
+
+  hasValue(path: string) {
+    return this.#values.has(path);
+  }
+
+  getValue(path: string) {
+    return this.#values.get(path);
+  }
+
+  getError(path: string) {
+    return this.#errors.get(path) ?? null;
+  }
+
+  succeed(ticket: PathRequestTicket, value: T) {
+    if (!this.isLatest(ticket)) return false;
+    this.#values.set(ticket.path, value);
+    this.#errors.delete(ticket.path);
+    return true;
+  }
+
+  succeedForCurrent(ticket: PathRequestTicket, currentPath: string, value: T) {
+    return this.succeed(ticket, value) && currentPath === ticket.path;
+  }
+
+  fail(ticket: PathRequestTicket, error: string) {
+    if (!this.isLatest(ticket)) return false;
+    this.#errors.set(ticket.path, error);
+    return true;
+  }
+
+  failForCurrent(ticket: PathRequestTicket, currentPath: string, error: string) {
+    return this.fail(ticket, error) && currentPath === ticket.path;
+  }
+
+  finish(ticket: PathRequestTicket) {
+    if (!this.isLatest(ticket)) return false;
+    this.#activeTokens.delete(ticket.path);
+    return true;
+  }
+
+  finishForCurrent(ticket: PathRequestTicket, currentPath: string) {
+    return this.finish(ticket) && currentPath === ticket.path;
+  }
+
+  deletePath(path: string) {
+    this.#activeTokens.delete(path);
+    this.#values.delete(path);
+    this.#errors.delete(path);
+  }
+}
+
 export function getSignPanelStatus({
   count,
   loading,
@@ -52,4 +127,11 @@ export function getWrappedFocusIndex(currentIndex: number, itemCount: number, ba
   if (backwards && currentIndex === 0) return itemCount - 1;
   if (!backwards && currentIndex === itemCount - 1) return 0;
   return currentIndex + (backwards ? -1 : 1);
+}
+
+export function getZoneDescriptorKey(
+  pdfPath: string,
+  zone: { type: string; page: number; x: number; y: number },
+) {
+  return `${pdfPath}|${zone.type}|${zone.page}|${zone.x.toFixed(1)}|${zone.y.toFixed(1)}`;
 }
