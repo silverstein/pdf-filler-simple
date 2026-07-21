@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "pdf-tools.mutation-fidelity.v1",
+  "generated_at": "2026-07-21T19:07:20.282Z",
+  "source_revision": "b724d9278a7e8c255b1cb211062beaab3515d9d1",
+  "claim_boundary": "Linux source-server evidence with PDF.js 5.4.624 and installed Poppler at 144 DPI; not packed MCPB or native Claude Desktop evidence.",
+  "valid": true,
+  "passed": false,
+  "denominator": {
+    "planned": 21,
+    "observed": 21,
+    "unique": 21
+  },
+  "cases": [
+    { "id": "pdf-tools.fidelity.case.fill-new-output", "passed_repetitions": 3, "planned_repetitions": 3, "failed_gates": [] },
+    { "id": "pdf-tools.fidelity.case.apply-text", "passed_repetitions": 3, "planned_repetitions": 3, "failed_gates": [] },
+    { "id": "pdf-tools.fidelity.case.prepare-signing-packet", "passed_repetitions": 3, "planned_repetitions": 3, "failed_gates": [] },
+    { "id": "pdf-tools.fidelity.case.page-plan-reorder-rotate", "passed_repetitions": 0, "planned_repetitions": 3, "failed_gates": ["semantics"] },
+    { "id": "pdf-tools.fidelity.case.merge-split-roundtrip", "passed_repetitions": 0, "planned_repetitions": 3, "failed_gates": ["semantics"] },
+    { "id": "pdf-tools.fidelity.case.same-path-backup", "passed_repetitions": 3, "planned_repetitions": 3, "failed_gates": [] },
+    { "id": "pdf-tools.fidelity.case.missing-backup-fail-closed", "passed_repetitions": 0, "planned_repetitions": 3, "failed_gates": ["tool_execution", "semantics", "forbidden_visual", "filesystem", "lifecycle", "backup"] }
+  ],
+  "engine_fingerprints": {
+    "pdfjs_canvas_runtime_sha256": "a70b559155089c6247153669fcead3353b5b671bc275fe62d1f685af08d09193",
+    "poppler_version": "pdftoppm version 24.02.0",
+    "poppler_binary_sha256": "207dcabcaeea0ce572aefc498d07d44d56a9ca06a85b3ae1fecd050476a34bf8"
+  },
+  "failure_evidence": {
+    "integrity_verified": true,
+    "items": 72
+  },
+  "artifacts": {
+    "raw_report_sha256": "ce179eb4e539a8598bc916285e01e12f510a2ad9bf58859cd69a9a95dd957662",
+    "score_sha256": "94630720255b18a7820da6f8d9b2db581f10355046f774258eaa101a8086266b",
+    "run_index_sha256": "1691902562ff45102782b8385cc4472b8b3f29282b482b4e7b22951dc5413cf9",
+    "manifest_sha256": "2af8fd64b0a85c9f2406d925a99b63aad8eeba4d53ef5e33a0e095195a498995",
+    "runner_sha256": "47546f430bec2ddcbc07fcf54d817c46644583f1ef897931220c464da08ebd37"
+  }
+}

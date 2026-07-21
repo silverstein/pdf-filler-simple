@@ -1,0 +1,212 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-document-alliance.github.io/PDF-Tools/eval/fidelity/manifest.schema.json",
+  "title": "PDF Tools mutation fidelity manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "benchmark_id", "benchmark_version", "documents", "measurement_policy", "cases"],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "benchmark_id": { "const": "pdf-tools.mutation-fidelity.v1" },
+    "benchmark_version": { "const": 1 },
+    "documents": {
+      "type": "array",
+      "minItems": 2,
+      "items": { "$ref": "#/$defs/document" }
+    },
+    "measurement_policy": { "$ref": "#/$defs/measurementPolicy" },
+    "cases": {
+      "type": "array",
+      "minItems": 7,
+      "items": { "$ref": "#/$defs/case" }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "logicalPath": { "type": "string", "pattern": "^(input|output|profiles)/[A-Za-z0-9._/-]+$" },
+    "region": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "number", "minimum": 0 },
+        { "type": "number", "minimum": 0 },
+        { "type": "number", "exclusiveMinimum": 0 },
+        { "type": "number", "exclusiveMinimum": 0 }
+      ],
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "sha256"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^pdf-tools\\.fidelity\\.document\\.[a-z0-9-]+$" },
+        "path": { "type": "string", "pattern": "^\\.\\./[A-Za-z0-9._/-]+\\.pdf$" },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "renderer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dpi", "scale", "pixel_delta_thresholds", "unexpected_delta_threshold", "intended_region_halo_pixels", "connected_components"],
+      "properties": {
+        "dpi": { "const": 144 },
+        "scale": { "const": 2 },
+        "pixel_delta_thresholds": {
+          "type": "array",
+          "prefixItems": [{ "const": 0 }, { "const": 2 }, { "const": 8 }],
+          "minItems": 3,
+          "maxItems": 3
+        },
+        "unexpected_delta_threshold": { "const": 8 },
+        "intended_region_halo_pixels": { "const": 2 },
+        "connected_components": { "const": 8 }
+      }
+    },
+    "measurementPolicy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["repetitions", "required_engine_families", "renderer", "no_gate_averaging", "retain_failure_evidence"],
+      "properties": {
+        "repetitions": { "const": 3 },
+        "required_engine_families": {
+          "type": "array",
+          "prefixItems": [{ "const": "pdfjs" }, { "const": "poppler" }],
+          "minItems": 2,
+          "maxItems": 2
+        },
+        "renderer": { "$ref": "#/$defs/renderer" },
+        "no_gate_averaging": { "const": true },
+        "retain_failure_evidence": { "const": true }
+      }
+    },
+    "input": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["logical_path", "document_id"],
+      "properties": {
+        "logical_path": { "$ref": "#/$defs/logicalPath" },
+        "document_id": { "type": "string" }
+      }
+    },
+    "toolCall": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "arguments"],
+      "properties": {
+        "name": { "enum": ["fill_pdf", "apply_text", "prepare_signing_packet", "apply_page_plan", "merge_pdfs", "split_pdf"] },
+        "arguments": { "type": "object" },
+        "expect_error": { "type": "boolean" }
+      }
+    },
+    "faultAction": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["after_call", "action"],
+      "properties": {
+        "after_call": { "type": "integer", "minimum": 1 },
+        "action": { "const": "delete_reported_backup" }
+      }
+    },
+    "lineage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["output_path", "output_page", "source_path", "source_page", "anchor", "rotation_delta"],
+      "properties": {
+        "output_path": { "$ref": "#/$defs/logicalPath" },
+        "output_page": { "type": "integer", "minimum": 1 },
+        "source_path": { "$ref": "#/$defs/logicalPath" },
+        "source_page": { "type": "integer", "minimum": 1 },
+        "anchor": { "type": "string", "minLength": 4 },
+        "rotation_delta": { "enum": [0, 90, 180, 270] }
+      }
+    },
+    "intendedRegion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["output_path", "page", "region", "reason", "required_visible_delta"],
+      "properties": {
+        "output_path": { "$ref": "#/$defs/logicalPath" },
+        "page": { "type": "integer", "minimum": 1 },
+        "region": { "$ref": "#/$defs/region" },
+        "reason": { "type": "string", "minLength": 4 },
+        "required_visible_delta": { "type": "boolean" }
+      }
+    },
+    "field": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "type", "flags", "value", "page", "region"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": { "type": "string" },
+        "flags": { "type": "integer", "minimum": 0 },
+        "value": { "type": ["string", "boolean", "array", "null"] },
+        "page": { "type": ["integer", "null"], "minimum": 1 },
+        "region": { "oneOf": [{ "$ref": "#/$defs/region" }, { "type": "null" }] }
+      }
+    },
+    "semanticExpectation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["output_path", "fields", "annotations", "metadata"],
+      "properties": {
+        "output_path": { "$ref": "#/$defs/logicalPath" },
+        "fields": { "type": "array", "items": { "$ref": "#/$defs/field" } },
+        "annotations": { "type": "array" },
+        "metadata": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["preserve_from", "preserve_keys", "allowed_change_keys", "required_patterns"],
+          "properties": {
+            "preserve_from": { "$ref": "#/$defs/logicalPath" },
+            "preserve_keys": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+            "allowed_change_keys": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+            "required_patterns": { "type": "object", "additionalProperties": { "type": "string" } }
+          }
+        }
+      }
+    },
+    "filesystem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["created", "created_directories", "modified", "deleted", "dynamic_created_patterns"],
+      "properties": {
+        "created": { "type": "array", "items": { "$ref": "#/$defs/logicalPath" }, "uniqueItems": true },
+        "created_directories": { "type": "array", "items": { "$ref": "#/$defs/logicalPath" }, "uniqueItems": true },
+        "modified": { "type": "array", "items": { "$ref": "#/$defs/logicalPath" }, "uniqueItems": true },
+        "deleted": { "type": "array", "items": { "$ref": "#/$defs/logicalPath" }, "uniqueItems": true },
+        "dynamic_created_patterns": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+      }
+    },
+    "lifecycle": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["active_path", "last_mutation_tool", "backup_policy"],
+      "properties": {
+        "active_path": { "$ref": "#/$defs/logicalPath" },
+        "last_mutation_tool": { "type": "string" },
+        "backup_policy": { "enum": ["none", "immutable-original", "missing-original-fail-closed"] }
+      }
+    },
+    "case": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "family", "inputs", "tool_calls", "expected_outputs", "page_lineage", "intended_regions", "semantics", "filesystem", "lifecycle", "required_gates"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^pdf-tools\\.fidelity\\.case\\.[a-z0-9-]+$" },
+        "family": { "enum": ["fill", "text", "signing_preparation", "page_plan", "merge_split", "same_path"] },
+        "inputs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/input" } },
+        "tool_calls": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/toolCall" } },
+        "fault_actions": { "type": "array", "items": { "$ref": "#/$defs/faultAction" } },
+        "expected_outputs": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/logicalPath" }, "uniqueItems": true },
+        "page_lineage": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/lineage" } },
+        "intended_regions": { "type": "array", "items": { "$ref": "#/$defs/intendedRegion" } },
+        "semantics": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/semanticExpectation" } },
+        "filesystem": { "$ref": "#/$defs/filesystem" },
+        "lifecycle": { "$ref": "#/$defs/lifecycle" },
+        "required_gates": { "type": "array", "minItems": 9, "items": { "type": "string" }, "uniqueItems": true }
+      }
+    }
+  }
+}

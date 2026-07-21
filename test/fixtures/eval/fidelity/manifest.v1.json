@@ -1,0 +1,216 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "pdf-tools.mutation-fidelity.v1",
+  "benchmark_version": 1,
+  "documents": [
+    {
+      "id": "pdf-tools.fidelity.document.comparison-base",
+      "path": "../comparison/synthetic/comparison-base.pdf",
+      "sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc"
+    },
+    {
+      "id": "pdf-tools.fidelity.document.page-order-source",
+      "path": "../synthetic/dev-page-order-source.pdf",
+      "sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168"
+    }
+  ],
+  "measurement_policy": {
+    "repetitions": 3,
+    "required_engine_families": ["pdfjs", "poppler"],
+    "renderer": {
+      "dpi": 144,
+      "scale": 2,
+      "pixel_delta_thresholds": [0, 2, 8],
+      "unexpected_delta_threshold": 8,
+      "intended_region_halo_pixels": 2,
+      "connected_components": 8
+    },
+    "no_gate_averaging": true,
+    "retain_failure_evidence": true
+  },
+  "cases": [
+    {
+      "id": "pdf-tools.fidelity.case.fill-new-output",
+      "family": "fill",
+      "inputs": [{ "logical_path": "input/source.pdf", "document_id": "pdf-tools.fidelity.document.comparison-base" }],
+      "tool_calls": [{ "name": "fill_pdf", "arguments": { "pdf_path": "input/source.pdf", "output_path": "output/filled.pdf", "field_data": { "ReviewStatus": "Approved" } } }],
+      "expected_outputs": ["output/filled.pdf"],
+      "page_lineage": [
+        { "output_path": "output/filled.pdf", "output_page": 1, "source_path": "input/source.pdf", "source_page": 1, "anchor": "PAGE-ID: SERVICE", "rotation_delta": 0 },
+        { "output_path": "output/filled.pdf", "output_page": 2, "source_path": "input/source.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 0 }
+      ],
+      "intended_regions": [{ "output_path": "output/filled.pdf", "page": 1, "region": [71.5, 331.5, 221, 31], "reason": "ReviewStatus widget appearance", "required_visible_delta": true }],
+      "semantics": [{
+        "output_path": "output/filled.pdf",
+        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "Approved", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+        "annotations": [],
+        "metadata": { "preserve_from": "input/source.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
+      }],
+      "filesystem": { "created": ["output/filled.pdf"], "created_directories": [], "modified": [], "deleted": [], "dynamic_created_patterns": [] },
+      "lifecycle": { "active_path": "output/filled.pdf", "last_mutation_tool": "fill_pdf", "backup_policy": "none" },
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "intended_visual", "forbidden_visual", "filesystem", "lifecycle"]
+    },
+    {
+      "id": "pdf-tools.fidelity.case.apply-text",
+      "family": "text",
+      "inputs": [{ "logical_path": "input/source.pdf", "document_id": "pdf-tools.fidelity.document.comparison-base" }],
+      "tool_calls": [{ "name": "apply_text", "arguments": { "pdf_path": "input/source.pdf", "output_path": "output/stamped.pdf", "page": 2, "x": 330, "y": 120, "width": 160, "height": 28, "text": "Reviewed 2026-07-21" } }],
+      "expected_outputs": ["output/stamped.pdf"],
+      "page_lineage": [
+        { "output_path": "output/stamped.pdf", "output_page": 1, "source_path": "input/source.pdf", "source_page": 1, "anchor": "PAGE-ID: SERVICE", "rotation_delta": 0 },
+        { "output_path": "output/stamped.pdf", "output_page": 2, "source_path": "input/source.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 0 }
+      ],
+      "intended_regions": [{ "output_path": "output/stamped.pdf", "page": 2, "region": [330, 120, 160, 28], "reason": "requested text stamp", "required_visible_delta": true }],
+      "semantics": [{
+        "output_path": "output/stamped.pdf",
+        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+        "annotations": [],
+        "metadata": { "preserve_from": "input/source.pdf", "preserve_keys": ["Title", "Author", "Subject", "Creator", "CreationDate"], "allowed_change_keys": ["Keywords", "Producer", "ModDate"], "required_patterns": { "Keywords": "stamped text via pdf-toolkit; text=\\\"Reviewed 2026-07-21\\\";.*page=2" } }
+      }],
+      "filesystem": { "created": ["output/stamped.pdf"], "created_directories": [], "modified": [], "deleted": [], "dynamic_created_patterns": [] },
+      "lifecycle": { "active_path": "output/stamped.pdf", "last_mutation_tool": "apply_text", "backup_policy": "none" },
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "intended_visual", "forbidden_visual", "filesystem", "lifecycle"]
+    },
+    {
+      "id": "pdf-tools.fidelity.case.prepare-signing-packet",
+      "family": "signing_preparation",
+      "inputs": [{ "logical_path": "input/source.pdf", "document_id": "pdf-tools.fidelity.document.comparison-base" }],
+      "tool_calls": [{ "name": "prepare_signing_packet", "arguments": { "pdf_path": "input/source.pdf", "output_path": "output/packet.pdf", "field_values": { "ReviewStatus": "Pending signature" }, "signature_locations": [{ "page": 2, "x": 330, "y": 650, "width": 180, "height": 36, "label": "Applicant signature" }] } }],
+      "expected_outputs": ["output/packet.pdf"],
+      "page_lineage": [
+        { "output_path": "output/packet.pdf", "output_page": 1, "source_path": "input/source.pdf", "source_page": 1, "anchor": "PAGE-ID: SERVICE", "rotation_delta": 0 },
+        { "output_path": "output/packet.pdf", "output_page": 2, "source_path": "input/source.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 0 }
+      ],
+      "intended_regions": [
+        { "output_path": "output/packet.pdf", "page": 1, "region": [71.5, 331.5, 221, 31], "reason": "ReviewStatus widget appearance", "required_visible_delta": true },
+        { "output_path": "output/packet.pdf", "page": 2, "region": [330, 650, 180, 36], "reason": "visible sign-here placeholder", "required_visible_delta": true }
+      ],
+      "semantics": [{
+        "output_path": "output/packet.pdf",
+        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "Pending signature", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+        "annotations": [],
+        "metadata": { "preserve_from": "input/source.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
+      }],
+      "filesystem": { "created": ["output/packet.pdf"], "created_directories": [], "modified": [], "deleted": [], "dynamic_created_patterns": [] },
+      "lifecycle": { "active_path": "output/packet.pdf", "last_mutation_tool": "prepare_signing_packet", "backup_policy": "none" },
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "intended_visual", "forbidden_visual", "filesystem", "lifecycle"]
+    },
+    {
+      "id": "pdf-tools.fidelity.case.page-plan-reorder-rotate",
+      "family": "page_plan",
+      "inputs": [{ "logical_path": "input/source.pdf", "document_id": "pdf-tools.fidelity.document.comparison-base" }],
+      "tool_calls": [{ "name": "apply_page_plan", "arguments": { "input_path": "input/source.pdf", "output_path": "output/planned.pdf", "plan": { "page_order": [2, 1], "rotations": { "2": 90 } } } }],
+      "expected_outputs": ["output/planned.pdf"],
+      "page_lineage": [
+        { "output_path": "output/planned.pdf", "output_page": 1, "source_path": "input/source.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 90 },
+        { "output_path": "output/planned.pdf", "output_page": 2, "source_path": "input/source.pdf", "source_page": 1, "anchor": "PAGE-ID: SERVICE", "rotation_delta": 0 }
+      ],
+      "intended_regions": [],
+      "semantics": [{
+        "output_path": "output/planned.pdf",
+        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "", "page": 2, "region": [71.5, 331.5, 221, 31] }],
+        "annotations": [],
+        "metadata": { "preserve_from": "input/source.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
+      }],
+      "filesystem": { "created": ["output/planned.pdf"], "created_directories": [], "modified": [], "deleted": [], "dynamic_created_patterns": [] },
+      "lifecycle": { "active_path": "output/planned.pdf", "last_mutation_tool": "apply_page_plan", "backup_policy": "none" },
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "forbidden_visual", "filesystem", "lifecycle"]
+    },
+    {
+      "id": "pdf-tools.fidelity.case.merge-split-roundtrip",
+      "family": "merge_split",
+      "inputs": [
+        { "logical_path": "input/base.pdf", "document_id": "pdf-tools.fidelity.document.comparison-base" },
+        { "logical_path": "input/page-order.pdf", "document_id": "pdf-tools.fidelity.document.page-order-source" }
+      ],
+      "tool_calls": [
+        { "name": "merge_pdfs", "arguments": { "input_paths": ["input/base.pdf", "input/page-order.pdf"], "output_path": "output/merged.pdf" } },
+        { "name": "split_pdf", "arguments": { "input_path": "output/merged.pdf", "page_ranges": "1-2,3-4", "output_directory": "output/split" } }
+      ],
+      "expected_outputs": ["output/merged.pdf", "output/split/merged_pages_1-2_1.pdf", "output/split/merged_pages_3-4_2.pdf"],
+      "page_lineage": [
+        { "output_path": "output/merged.pdf", "output_page": 1, "source_path": "input/base.pdf", "source_page": 1, "anchor": "PAGE-ID: SERVICE", "rotation_delta": 0 },
+        { "output_path": "output/merged.pdf", "output_page": 2, "source_path": "input/base.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 0 },
+        { "output_path": "output/merged.pdf", "output_page": 3, "source_path": "input/page-order.pdf", "source_page": 1, "anchor": "PAGE ONE - PORTRAIT", "rotation_delta": 0 },
+        { "output_path": "output/merged.pdf", "output_page": 4, "source_path": "input/page-order.pdf", "source_page": 2, "anchor": "PAGE TWO - ROTATED", "rotation_delta": 0 },
+        { "output_path": "output/split/merged_pages_1-2_1.pdf", "output_page": 1, "source_path": "input/base.pdf", "source_page": 1, "anchor": "PAGE-ID: SERVICE", "rotation_delta": 0 },
+        { "output_path": "output/split/merged_pages_1-2_1.pdf", "output_page": 2, "source_path": "input/base.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 0 },
+        { "output_path": "output/split/merged_pages_3-4_2.pdf", "output_page": 1, "source_path": "input/page-order.pdf", "source_page": 1, "anchor": "PAGE ONE - PORTRAIT", "rotation_delta": 0 },
+        { "output_path": "output/split/merged_pages_3-4_2.pdf", "output_page": 2, "source_path": "input/page-order.pdf", "source_page": 2, "anchor": "PAGE TWO - ROTATED", "rotation_delta": 0 }
+      ],
+      "intended_regions": [],
+      "semantics": [
+        {
+          "output_path": "output/merged.pdf",
+          "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+          "annotations": [],
+          "metadata": { "preserve_from": "input/base.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
+        },
+        {
+          "output_path": "output/split/merged_pages_1-2_1.pdf",
+          "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+          "annotations": [],
+          "metadata": { "preserve_from": "input/base.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
+        },
+        {
+          "output_path": "output/split/merged_pages_3-4_2.pdf",
+          "fields": [],
+          "annotations": [],
+          "metadata": { "preserve_from": "input/page-order.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
+        }
+      ],
+      "filesystem": { "created": ["output/merged.pdf", "output/split/merged_pages_1-2_1.pdf", "output/split/merged_pages_3-4_2.pdf"], "created_directories": ["output/split"], "modified": [], "deleted": [], "dynamic_created_patterns": [] },
+      "lifecycle": { "active_path": "output/merged.pdf", "last_mutation_tool": "merge_pdfs", "backup_policy": "none" },
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "forbidden_visual", "filesystem", "lifecycle"]
+    },
+    {
+      "id": "pdf-tools.fidelity.case.same-path-backup",
+      "family": "same_path",
+      "inputs": [{ "logical_path": "input/working.pdf", "document_id": "pdf-tools.fidelity.document.comparison-base" }],
+      "tool_calls": [
+        { "name": "fill_pdf", "arguments": { "pdf_path": "input/working.pdf", "output_path": "input/working.pdf", "field_data": { "ReviewStatus": "First" } } },
+        { "name": "fill_pdf", "arguments": { "pdf_path": "input/working.pdf", "output_path": "input/working.pdf", "field_data": { "ReviewStatus": "Second" } } }
+      ],
+      "expected_outputs": ["input/working.pdf"],
+      "page_lineage": [
+        { "output_path": "input/working.pdf", "output_page": 1, "source_path": "input/working.pdf", "source_page": 1, "anchor": "PAGE-ID: SERVICE", "rotation_delta": 0 },
+        { "output_path": "input/working.pdf", "output_page": 2, "source_path": "input/working.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 0 }
+      ],
+      "intended_regions": [{ "output_path": "input/working.pdf", "page": 1, "region": [71.5, 331.5, 221, 31], "reason": "ReviewStatus widget appearance after two fills", "required_visible_delta": true }],
+      "semantics": [{
+        "output_path": "input/working.pdf",
+        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "Second", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+        "annotations": [],
+        "metadata": { "preserve_from": "input/working.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
+      }],
+      "filesystem": { "created": [], "created_directories": [], "modified": ["input/working.pdf"], "deleted": [], "dynamic_created_patterns": ["^profiles/backups/working__[A-Za-z0-9.-]+\\.pdf$"] },
+      "lifecycle": { "active_path": "input/working.pdf", "last_mutation_tool": "fill_pdf", "backup_policy": "immutable-original" },
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "intended_visual", "forbidden_visual", "filesystem", "lifecycle", "backup"]
+    },
+    {
+      "id": "pdf-tools.fidelity.case.missing-backup-fail-closed",
+      "family": "same_path",
+      "inputs": [{ "logical_path": "input/working.pdf", "document_id": "pdf-tools.fidelity.document.comparison-base" }],
+      "tool_calls": [
+        { "name": "fill_pdf", "arguments": { "pdf_path": "input/working.pdf", "output_path": "input/working.pdf", "field_data": { "ReviewStatus": "First" } } },
+        { "name": "apply_text", "expect_error": true, "arguments": { "pdf_path": "input/working.pdf", "output_path": "input/working.pdf", "page": 2, "x": 330, "y": 120, "width": 160, "height": 28, "text": "MUST NOT APPEAR" } }
+      ],
+      "fault_actions": [{ "after_call": 1, "action": "delete_reported_backup" }],
+      "expected_outputs": ["input/working.pdf"],
+      "page_lineage": [
+        { "output_path": "input/working.pdf", "output_page": 1, "source_path": "input/working.pdf", "source_page": 1, "anchor": "PAGE-ID: SERVICE", "rotation_delta": 0 },
+        { "output_path": "input/working.pdf", "output_page": 2, "source_path": "input/working.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 0 }
+      ],
+      "intended_regions": [{ "output_path": "input/working.pdf", "page": 1, "region": [71.5, 331.5, 221, 31], "reason": "first ReviewStatus fill before injected backup deletion", "required_visible_delta": true }],
+      "semantics": [{
+        "output_path": "input/working.pdf",
+        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "First", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+        "annotations": [],
+        "metadata": { "preserve_from": "input/working.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
+      }],
+      "filesystem": { "created": [], "created_directories": [], "modified": ["input/working.pdf"], "deleted": [], "dynamic_created_patterns": [] },
+      "lifecycle": { "active_path": "input/working.pdf", "last_mutation_tool": "fill_pdf", "backup_policy": "missing-original-fail-closed" },
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "intended_visual", "forbidden_visual", "filesystem", "lifecycle", "backup"]
+    }
+  ]
+}
