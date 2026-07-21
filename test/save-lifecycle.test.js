@@ -1,17 +1,19 @@
 import fs from "fs/promises";
 import path from "path";
 import { createHash } from "crypto";
+import { tmpdir } from "os";
 import { fileURLToPath } from "url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TMP_DIR = path.join(REPO_ROOT, ".test-tmp-save-lifecycle");
-const PROFILE_DIR = path.join(TMP_DIR, "profiles");
 const NAME_FIELD = "topmostSubform[0].Page1[0].f1_1[0]";
+
+let TMP_DIR;
+let PROFILE_DIR;
 
 async function sha1(filePath) {
   const bytes = await fs.readFile(filePath);
@@ -27,9 +29,9 @@ describe("canonical save lifecycle", () => {
   let client;
   let transport;
 
-  beforeAll(async () => {
-    await fs.rm(TMP_DIR, { recursive: true, force: true });
-    await fs.mkdir(TMP_DIR, { recursive: true });
+  beforeEach(async () => {
+    TMP_DIR = await fs.mkdtemp(path.join(tmpdir(), "pdf-tools-save-lifecycle-"));
+    PROFILE_DIR = path.join(TMP_DIR, "profiles");
     await fs.copyFile(EXAMPLE_PDF, path.join(TMP_DIR, "w9-working.pdf"));
     await fs.copyFile(EXAMPLE_PDF, path.join(TMP_DIR, "w9-managed-source.pdf"));
 
@@ -47,9 +49,11 @@ describe("canonical save lifecycle", () => {
     await client.connect(transport);
   }, 30_000);
 
-  afterAll(async () => {
+  afterEach(async () => {
     await transport?.close();
     await fs.rm(TMP_DIR, { recursive: true, force: true });
+    client = undefined;
+    transport = undefined;
   });
 
   it("fills and signs the current PDF in place with one reusable backup", async () => {
