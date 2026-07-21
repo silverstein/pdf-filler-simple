@@ -177,7 +177,7 @@
           "output_path": "output/split/merged_pages_3-4_2.pdf",
           "fields": [],
           "annotations": [],
-          "metadata": { "preserve_from": "input/page-order.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
+          "metadata": { "preserve_from": "input/base.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
         }
       ],
       "filesystem": { "created": ["output/merged.pdf", "output/split/merged_pages_1-2_1.pdf", "output/split/merged_pages_3-4_2.pdf"], "created_directories": ["output/split"], "modified": [], "deleted": [], "dynamic_created_patterns": [] },
