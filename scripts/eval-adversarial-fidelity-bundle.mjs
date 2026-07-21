@@ -36,7 +36,21 @@ async function expectRejected(label, root, expectedError) {
 const baseline = await verifyFidelityRunBundle(sourceRoot, { repoRoot: REPO_ROOT });
 if (!baseline.valid) throw new Error(`Source bundle is not valid: ${baseline.errors.join("; ")}`);
 const evidenceArtifact = baseline.index.artifacts.find(artifact => artifact.cell_id !== null);
-if (!evidenceArtifact) throw new Error("Adversarial artifact tests require a bundle containing cell evidence artifacts.");
+
+async function prepareAttackArtifact(root) {
+  if (evidenceArtifact) return evidenceArtifact;
+  const index = await readJson(root, "run-index.v2.json");
+  const scoreArtifact = index.artifacts.find(artifact => artifact.role === "score");
+  const nestedPath = "bound-artifacts/fidelity-score.v2.json";
+  await fs.mkdir(path.join(root, path.dirname(nestedPath)), { recursive: true });
+  await fs.copyFile(path.join(root, scoreArtifact.path), path.join(root, nestedPath));
+  scoreArtifact.path = nestedPath;
+  index.run_sha256 = digestRunIndex(index);
+  await writeJson(root, "run-index.v2.json", index);
+  const prepared = await verifyFidelityRunBundle(root, { repoRoot: REPO_ROOT });
+  if (!prepared.valid) throw new Error(`Nested score binding preparation failed: ${prepared.errors.join("; ")}`);
+  return scoreArtifact;
+}
 
 const scratchRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-fidelity-adversarial-"));
 const results = [];
@@ -44,13 +58,15 @@ try {
   {
     const root = path.join(scratchRoot, "artifact-bytes");
     await fs.cp(sourceRoot, root, { recursive: true });
-    await fs.appendFile(path.join(root, evidenceArtifact.path), Buffer.from([0]));
-    results.push(await expectRejected("artifact byte mutation", root, `artifact ${evidenceArtifact.artifact_id}:`));
+    const artifact = await prepareAttackArtifact(root);
+    await fs.appendFile(path.join(root, artifact.path), Buffer.from([0]));
+    results.push(await expectRejected("artifact byte mutation", root, `artifact ${artifact.artifact_id}:`));
   }
   {
     const root = path.join(scratchRoot, "symlink-parent");
     await fs.cp(sourceRoot, root, { recursive: true });
-    const artifactParent = path.dirname(path.join(root, evidenceArtifact.path));
+    const artifact = await prepareAttackArtifact(root);
+    const artifactParent = path.dirname(path.join(root, artifact.path));
     const movedParent = path.join(scratchRoot, "outside-artifact-parent");
     await fs.rename(artifactParent, movedParent);
     await fs.symlink(movedParent, artifactParent, "dir");
