@@ -191,8 +191,10 @@ node scripts/eval-run-accessibility-formal.mjs \
 
 The runner checks all artifact and fixture hashes, the reported validator
 version and profile, exactly one normally completed job, batch parsing and
-exception counters, veraPDF's observed exit semantics (`0` compliant, `1`
-non-compliant), and exact failed rule keys. It retains raw reports only in the
+exception counters, typed non-negative rule/check counters with non-zero
+evaluated coverage, veraPDF's observed exit semantics (`0` compliant, `1`
+non-compliant), and exact failed rule keys. Missing counters cannot be treated
+as a passing result. It retains raw reports only in the
 caller-selected evidence directory and records their SHA-256. Repository
 evidence stores non-normative derived fields rather than copying validator
 renderings of standards requirements.

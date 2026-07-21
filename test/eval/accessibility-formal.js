@@ -4,7 +4,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
-export const FORMAL_EVIDENCE_RUNNER_VERSION = 1;
+export const FORMAL_EVIDENCE_RUNNER_VERSION = 2;
 const SHA256 = /^[a-f0-9]{64}$/;
 
 function sha256(bytes) {
@@ -207,10 +207,15 @@ export function parseVeraPdfEvidence(rawReport, exitCode, fixture, contract) {
   if (unhealthy) throw new Error("veraPDF report contains a processing or harness failure");
   if (typeof validation.compliant !== "boolean") throw new Error("veraPDF compliance result is not boolean");
   const summaries = validation.details?.ruleSummaries ?? [];
+  const passedRules = validation.details?.passedRules;
   const failedRules = validation.details?.failedRules;
+  const passedChecks = validation.details?.passedChecks;
   const failedChecks = validation.details?.failedChecks;
-  if (!Number.isInteger(failedRules) || !Number.isInteger(failedChecks)
-    || failedRules < 0 || failedChecks < 0 || failedRules !== summaries.length
+  if (!Number.isInteger(passedRules) || !Number.isInteger(failedRules)
+    || !Number.isInteger(passedChecks) || !Number.isInteger(failedChecks)
+    || passedRules < 0 || failedRules < 0 || passedChecks < 0 || failedChecks < 0
+    || passedRules + failedRules === 0 || passedChecks + failedChecks === 0
+    || failedRules !== summaries.length
     || (validation.compliant && (failedRules !== 0 || failedChecks !== 0))
     || (!validation.compliant && (failedRules === 0 || failedChecks === 0))) {
     throw new Error("veraPDF compliance boolean conflicts with failure counters");
@@ -231,10 +236,10 @@ export function parseVeraPdfEvidence(rawReport, exitCode, fixture, contract) {
     job_end_status: validation.jobEndStatus,
     exit_code: exitCode,
     machine_compliant: validation.compliant,
-    passed_rules: validation.details?.passedRules,
-    failed_rules: validation.details?.failedRules,
-    passed_checks: validation.details?.passedChecks,
-    failed_checks: validation.details?.failedChecks,
+    passed_rules: passedRules,
+    failed_rules: failedRules,
+    passed_checks: passedChecks,
+    failed_checks: failedChecks,
     failed_rule_keys: failedRuleKeys,
     exact_failed_rules_match: exactRulesMatch,
     expectation_met: validation.compliant === fixture.expected_machine_compliant && exactRulesMatch,

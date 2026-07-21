@@ -1,7 +1,7 @@
 {
   "contract_version": 1,
   "corpus_version": "v0.1.0",
-  "evidence_runner_version": 1,
+  "evidence_runner_version": 2,
   "validator": {
     "name": "veraPDF Greenfield CLI",
     "version": "1.30.2",
