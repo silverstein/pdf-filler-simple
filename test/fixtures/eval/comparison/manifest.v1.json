@@ -1,0 +1,287 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "pdf-tools.comparison.v1",
+  "benchmark_version": "v0.1.0",
+  "generator": "scripts/eval-generate-comparison-fixtures.mjs",
+  "normalization_profile": {
+    "version": 1,
+    "unicode": "NFC",
+    "whitespace": "collapse-trim",
+    "case_sensitive": true,
+    "dates": "preserve-lexeme",
+    "currency": "preserve-code-symbol-and-digits",
+    "volatile_metadata_keys": ["CreationDate", "ModDate", "Producer", "Creator"]
+  },
+  "canonical_renderer": {
+    "version": 1,
+    "pdfjs_dist": "5.4.624",
+    "canvas": "0.1.99",
+    "scale": 2,
+    "dpi": 144,
+    "page_box": "CropBox-or-MediaBox",
+    "rotation": "intrinsic-before-scale",
+    "canvas_rounding": "ceil",
+    "background_rgba": [255, 255, 255, 255],
+    "color_space": "sRGB",
+    "region_rounding": "floor-min-ceil-max-after-rotation-and-scale",
+    "is_eval_supported": false,
+    "use_worker_fetch": false,
+    "use_system_fonts": false,
+    "use_wasm": false,
+    "system_renderer_fallback": false,
+    "pixel_delta_threshold": 8,
+    "mask_dilation_pixels": 1,
+    "connected_components": 8,
+    "minimum_component_area_pixels": 4
+  },
+  "documents": [
+    {
+      "id": "pdf-tools.comparison.document.base",
+      "path": "synthetic/comparison-base.pdf",
+      "sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc",
+      "media_type": "application/pdf",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools comparison corpus", "generator": "scripts/eval-generate-comparison-fixtures.mjs" },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Fixed fictional terms and shapes; no personal data." }
+    },
+    {
+      "id": "pdf-tools.comparison.document.material-text-after",
+      "path": "synthetic/comparison-material-text-after.pdf",
+      "sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990",
+      "media_type": "application/pdf",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools comparison corpus", "generator": "scripts/eval-generate-comparison-fixtures.mjs" },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Fixed fictional terms and shapes; no personal data." }
+    },
+    {
+      "id": "pdf-tools.comparison.document.visual-status-after",
+      "path": "synthetic/comparison-visual-status-after.pdf",
+      "sha256": "a74469341ee92cf83dfd292e887fb7bce77ba5c14eaeac9750873e14a06d8717",
+      "media_type": "application/pdf",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools comparison corpus", "generator": "scripts/eval-generate-comparison-fixtures.mjs" },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Fixed fictional terms and shapes; no personal data." }
+    },
+    {
+      "id": "pdf-tools.comparison.document.layout-noise-after",
+      "path": "synthetic/comparison-layout-noise-after.pdf",
+      "sha256": "a80595c843c32caf249d295568ad810a76ea33c643e796a5f6466b1fb6ea70aa",
+      "media_type": "application/pdf",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools comparison corpus", "generator": "scripts/eval-generate-comparison-fixtures.mjs" },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Fixed fictional terms and shapes; no personal data." }
+    },
+    {
+      "id": "pdf-tools.comparison.document.metadata-only-after",
+      "path": "synthetic/comparison-metadata-only-after.pdf",
+      "sha256": "631be10c3fbebde1a8135824f6df013b468c6f03be977229e7ea84c157c8b3b6",
+      "media_type": "application/pdf",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools comparison corpus", "generator": "scripts/eval-generate-comparison-fixtures.mjs" },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Fixed fictional terms and shapes; no personal data." }
+    },
+    {
+      "id": "pdf-tools.comparison.document.pages-reordered-after",
+      "path": "synthetic/comparison-pages-reordered-after.pdf",
+      "sha256": "4eb4f4052ffdf8a376faec575f5dcac846fe23ef180c6b1c23a0434425b8b138",
+      "media_type": "application/pdf",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools comparison corpus", "generator": "scripts/eval-generate-comparison-fixtures.mjs" },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Fixed fictional terms and shapes; no personal data." }
+    },
+    {
+      "id": "pdf-tools.comparison.document.form-annotation-after",
+      "path": "synthetic/comparison-form-annotation-after.pdf",
+      "sha256": "b22a4cdc515cbc392a1dba81123c00728d5c607a3c7024e14378b734d98ddce0",
+      "media_type": "application/pdf",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools comparison corpus", "generator": "scripts/eval-generate-comparison-fixtures.mjs" },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Fixed fictional terms and shapes; no personal data." }
+    }
+  ],
+  "pairs": [
+    {
+      "id": "pdf-tools.comparison.pair.identical",
+      "role": "identical",
+      "partition": "development",
+      "before_document_id": "pdf-tools.comparison.document.base",
+      "after_document_id": "pdf-tools.comparison.document.base",
+      "required_channels": ["semantic", "text", "structure", "form_field", "annotation", "metadata", "visual"],
+      "alignments": [
+        { "before_page": 1, "after_page": 1, "relation": "same", "anchor": "PAGE-ID: SERVICE" },
+        { "before_page": 2, "after_page": 2, "relation": "same", "anchor": "PAGE-ID: APPENDIX" }
+      ],
+      "events": []
+    },
+    {
+      "id": "pdf-tools.comparison.pair.material-text",
+      "role": "material_text",
+      "partition": "development",
+      "before_document_id": "pdf-tools.comparison.document.base",
+      "after_document_id": "pdf-tools.comparison.document.material-text-after",
+      "required_channels": ["semantic", "text", "visual"],
+      "alignments": [
+        { "before_page": 1, "after_page": 1, "relation": "same", "anchor": "PAGE-ID: SERVICE" },
+        { "before_page": 2, "after_page": 2, "relation": "same", "anchor": "PAGE-ID: APPENDIX" }
+      ],
+      "events": [
+        {
+          "id": "truth.monthly-fee",
+          "salience": "material",
+          "summary": "Monthly fee changes from USD 10,000 to USD 12,500.",
+          "presentation": { "default_material": "report", "forensic": "report" },
+          "facets": [
+            { "channel": "semantic", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 131.5, 156.408, 14], "value_sha256": "f005019dc391b02c329a224f4d62be4e116cad1e26c3d44936d1b033faa534d6" }, "after": { "document_id": "pdf-tools.comparison.document.material-text-after", "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 131.5, 156.408, 14], "value_sha256": "4f399cb9824690836996645c1ea8af71d934705464d61d6c01ec0839841a33d4" } },
+            { "channel": "text", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 131.5, 156.408, 14], "value_sha256": "f005019dc391b02c329a224f4d62be4e116cad1e26c3d44936d1b033faa534d6" }, "after": { "document_id": "pdf-tools.comparison.document.material-text-after", "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 131.5, 156.408, 14], "value_sha256": "4f399cb9824690836996645c1ea8af71d934705464d61d6c01ec0839841a33d4" } },
+            { "channel": "visual", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 131.5, 156.408, 14], "value_sha256": "0ff3b83abe6351db6b958a1dbdb337d7f5cbf7c3838ebe4b9f6c17c25c4046af" }, "after": { "document_id": "pdf-tools.comparison.document.material-text-after", "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 131.5, 156.408, 14], "value_sha256": "b206807eb21aceb03d52554434d7eab239ec0f04d82743d1dbb04151e68df397" } }
+          ]
+        },
+        {
+          "id": "truth.termination-notice",
+          "salience": "material",
+          "summary": "Termination notice changes from 30 days to 15 days.",
+          "presentation": { "default_material": "report", "forensic": "report" },
+          "facets": [
+            { "channel": "semantic", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 161.5, 171.962, 14], "value_sha256": "ffd7280513ce285e6d9dc8d0b7078c4f39c8fe0e69b0d0a87d8af2965e445d7a" }, "after": { "document_id": "pdf-tools.comparison.document.material-text-after", "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 161.5, 171.962, 14], "value_sha256": "c801ee548dac5879e088b766b06af103cff00dcd1450789bdfe13972855cf5a3" } },
+            { "channel": "text", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 161.5, 171.962, 14], "value_sha256": "ffd7280513ce285e6d9dc8d0b7078c4f39c8fe0e69b0d0a87d8af2965e445d7a" }, "after": { "document_id": "pdf-tools.comparison.document.material-text-after", "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 161.5, 171.962, 14], "value_sha256": "c801ee548dac5879e088b766b06af103cff00dcd1450789bdfe13972855cf5a3" } },
+            { "channel": "visual", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 161.5, 171.962, 14], "value_sha256": "7af392df8bbea3ec69091bcfb12826d9124d90b8dea33d681c66c75598b76866" }, "after": { "document_id": "pdf-tools.comparison.document.material-text-after", "document_sha256": "ddf4105dc11900cb8165ac42318f14d8480c87b6e97ef5a58b7201beea044990", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 161.5, 171.962, 14], "value_sha256": "38127bc778eaf52b99bbb75028874ee3a659fe9ff449ed6de0df8f20a94d75a1" } }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pdf-tools.comparison.pair.visual-status",
+      "role": "visual_only",
+      "partition": "development",
+      "before_document_id": "pdf-tools.comparison.document.base",
+      "after_document_id": "pdf-tools.comparison.document.visual-status-after",
+      "required_channels": ["text", "visual"],
+      "alignments": [
+        { "before_page": 1, "after_page": 1, "relation": "same", "anchor": "PAGE-ID: SERVICE" },
+        { "before_page": 2, "after_page": 2, "relation": "same", "anchor": "PAGE-ID: APPENDIX" }
+      ],
+      "events": [
+        {
+          "id": "truth.status-color",
+          "salience": "minor",
+          "summary": "Status indicator changes from green to red without changing extracted text.",
+          "presentation": { "default_material": "report", "forensic": "report" },
+          "facets": [
+            { "channel": "visual", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 236, 140, 36], "value_sha256": "dafab5600d0a8b06e633f3a21a3d8ef21dd92ba0d5dab3e23effe0a2d5c6bbc2" }, "after": { "document_id": "pdf-tools.comparison.document.visual-status-after", "document_sha256": "a74469341ee92cf83dfd292e887fb7bce77ba5c14eaeac9750873e14a06d8717", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [72, 236, 140, 36], "value_sha256": "3cadeb5969c59a9da3522e25944a114ab6949a7a1a6276d5bce8108343f256f7" } }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pdf-tools.comparison.pair.layout-noise",
+      "role": "layout_noise",
+      "partition": "development",
+      "before_document_id": "pdf-tools.comparison.document.base",
+      "after_document_id": "pdf-tools.comparison.document.layout-noise-after",
+      "required_channels": ["semantic", "text", "visual"],
+      "alignments": [
+        { "before_page": 1, "after_page": 1, "relation": "same", "anchor": "PAGE-ID: SERVICE" },
+        { "before_page": 2, "after_page": 2, "relation": "same", "anchor": "PAGE-ID: APPENDIX" }
+      ],
+      "events": [
+        {
+          "id": "truth.layout-noise",
+          "salience": "noise",
+          "summary": "Font and sub-point placement change while normalized content remains the same.",
+          "presentation": { "default_material": "suppress", "forensic": "report_on_request" },
+          "facets": [
+            { "channel": "visual", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "ec213295777d9a08776166b0698bc9bc964dc1acf2d388afb9e845b64527cf81" }, "after": { "document_id": "pdf-tools.comparison.document.layout-noise-after", "document_sha256": "a80595c843c32caf249d295568ad810a76ea33c643e796a5f6466b1fb6ea70aa", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "e7eb42007a1f87d6596e8a0dc13030ef604a9233ac46a0df3aaf92e51b7e9798" } }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pdf-tools.comparison.pair.metadata-only",
+      "role": "metadata_only",
+      "partition": "development",
+      "before_document_id": "pdf-tools.comparison.document.base",
+      "after_document_id": "pdf-tools.comparison.document.metadata-only-after",
+      "required_channels": ["metadata"],
+      "alignments": [
+        { "before_page": 1, "after_page": 1, "relation": "same", "anchor": "PAGE-ID: SERVICE" },
+        { "before_page": 2, "after_page": 2, "relation": "same", "anchor": "PAGE-ID: APPENDIX" }
+      ],
+      "events": [
+        {
+          "id": "truth.metadata-title",
+          "salience": "minor",
+          "summary": "Document title metadata is revised while page content is unchanged.",
+          "presentation": { "default_material": "suppress", "forensic": "report" },
+          "facets": [
+            { "channel": "metadata", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "99c8512771696129f2dfff668867ebb4e56ee7b499846a41880674416f212195" }, "after": { "document_id": "pdf-tools.comparison.document.metadata-only-after", "document_sha256": "631be10c3fbebde1a8135824f6df013b468c6f03be977229e7ea84c157c8b3b6", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "351e3274a951801e2499bb473a0b219b1f2a53990f010f7a552978a9d3ee1d85" } }
+          ]
+        },
+        {
+          "id": "truth.metadata-modification-date",
+          "salience": "noise",
+          "summary": "Modification-date metadata changes by one fixed day.",
+          "presentation": { "default_material": "suppress", "forensic": "report_on_request" },
+          "facets": [
+            { "channel": "metadata", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "bea27b6d06814389c6795bc346d85c6192a5efc1f37af968ca056645dd0d190e" }, "after": { "document_id": "pdf-tools.comparison.document.metadata-only-after", "document_sha256": "631be10c3fbebde1a8135824f6df013b468c6f03be977229e7ea84c157c8b3b6", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "c7276faf6f7ebbf392f2088b176f0252b6a26948549c39606226a67684ead689" } }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pdf-tools.comparison.pair.pages-reordered",
+      "role": "pages_reordered",
+      "partition": "development",
+      "before_document_id": "pdf-tools.comparison.document.base",
+      "after_document_id": "pdf-tools.comparison.document.pages-reordered-after",
+      "required_channels": ["structure", "text"],
+      "alignments": [
+        { "before_page": 1, "after_page": 2, "relation": "moved", "anchor": "PAGE-ID: SERVICE" },
+        { "before_page": 2, "after_page": 1, "relation": "moved", "anchor": "PAGE-ID: APPENDIX" }
+      ],
+      "events": [
+        {
+          "id": "truth.page-order",
+          "salience": "material",
+          "summary": "The service and appendix pages exchange positions.",
+          "presentation": { "default_material": "report", "forensic": "report" },
+          "facets": [
+            { "channel": "structure", "mandatory": true, "operation": "moved", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "713bb07056fcb2151d3942b679cc51afdb4f005ae9baf7456ff5a2731c6b55f0" }, "after": { "document_id": "pdf-tools.comparison.document.pages-reordered-after", "document_sha256": "4eb4f4052ffdf8a376faec575f5dcac846fe23ef180c6b1c23a0434425b8b138", "page": 2, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [0, 0, 612, 792], "value_sha256": "73bba3c090e2a3bd3c289a14590a42df6d4f0df7c605c0f1a87805566a8080c4" } }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "pdf-tools.comparison.pair.form-annotation",
+      "role": "form_annotation",
+      "partition": "held_out_release",
+      "before_document_id": "pdf-tools.comparison.document.base",
+      "after_document_id": "pdf-tools.comparison.document.form-annotation-after",
+      "required_channels": ["form_field", "annotation", "visual"],
+      "alignments": [
+        { "before_page": 1, "after_page": 1, "relation": "same", "anchor": "PAGE-ID: SERVICE" },
+        { "before_page": 2, "after_page": 2, "relation": "same", "anchor": "PAGE-ID: APPENDIX" }
+      ],
+      "events": [
+        {
+          "id": "truth.review-status-field",
+          "salience": "material",
+          "summary": "ReviewStatus changes from empty to Approved.",
+          "presentation": { "default_material": "report", "forensic": "report" },
+          "facets": [
+            { "channel": "form_field", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [71.5, 331.5, 221, 31], "value_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" }, "after": { "document_id": "pdf-tools.comparison.document.form-annotation-after", "document_sha256": "b22a4cdc515cbc392a1dba81123c00728d5c607a3c7024e14378b734d98ddce0", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [71.5, 331.5, 221, 31], "value_sha256": "87b42e40c2a290e01d87b721bf381c3c5e259d1eb0a4660e41fdbf8bc73f7ddd" } },
+            { "channel": "visual", "mandatory": true, "operation": "modified", "before": { "document_id": "pdf-tools.comparison.document.base", "document_sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [71.5, 331.5, 221, 31], "value_sha256": "f4555b64fe16e47b429e9d342dd94312010513c88c4cec661d23d931f9d24226" }, "after": { "document_id": "pdf-tools.comparison.document.form-annotation-after", "document_sha256": "b22a4cdc515cbc392a1dba81123c00728d5c607a3c7024e14378b734d98ddce0", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [71.5, 331.5, 221, 31], "value_sha256": "0654484f783b0087fff8a9f27b1a2475e046867aa446e72ccd18461b07c4320a" } }
+          ]
+        },
+        {
+          "id": "truth.reviewer-annotation",
+          "salience": "minor",
+          "summary": "A synthetic reviewer note annotation is added.",
+          "presentation": { "default_material": "report", "forensic": "report" },
+          "facets": [
+            { "channel": "annotation", "mandatory": true, "operation": "added", "before": null, "after": { "document_id": "pdf-tools.comparison.document.form-annotation-after", "document_sha256": "b22a4cdc515cbc392a1dba81123c00728d5c607a3c7024e14378b734d98ddce0", "page": 1, "page_box": [0, 0, 612, 792], "rotation": 0, "region": [360, 332, 30, 30], "value_sha256": "fa424ce9b8636437b0e15b532100d607b0de93988a672094ad1a345bbd67b293" } }
+          ]
+        }
+      ]
+    }
+  ]
+}

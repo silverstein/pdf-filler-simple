@@ -1,0 +1,226 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/comparison/manifest.schema.json",
+  "title": "PDF Tools comparison benchmark manifest v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "benchmark_id",
+    "benchmark_version",
+    "generator",
+    "normalization_profile",
+    "canonical_renderer",
+    "documents",
+    "pairs"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "benchmark_id": { "const": "pdf-tools.comparison.v1" },
+    "benchmark_version": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "generator": { "const": "scripts/eval-generate-comparison-fixtures.mjs" },
+    "normalization_profile": { "$ref": "#/$defs/normalization" },
+    "canonical_renderer": { "$ref": "#/$defs/renderer" },
+    "documents": {
+      "type": "array",
+      "minItems": 7,
+      "items": { "$ref": "#/$defs/document" }
+    },
+    "pairs": {
+      "type": "array",
+      "minItems": 7,
+      "items": { "$ref": "#/$defs/pair" }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "normalization": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["version", "unicode", "whitespace", "case_sensitive", "dates", "currency", "volatile_metadata_keys"],
+      "properties": {
+        "version": { "const": 1 },
+        "unicode": { "const": "NFC" },
+        "whitespace": { "const": "collapse-trim" },
+        "case_sensitive": { "const": true },
+        "dates": { "const": "preserve-lexeme" },
+        "currency": { "const": "preserve-code-symbol-and-digits" },
+        "volatile_metadata_keys": {
+          "type": "array",
+          "items": { "enum": ["CreationDate", "ModDate", "Producer", "Creator"] },
+          "uniqueItems": true
+        }
+      }
+    },
+    "renderer": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "version", "pdfjs_dist", "canvas", "scale", "dpi", "page_box", "rotation",
+        "canvas_rounding", "background_rgba", "color_space", "region_rounding",
+        "is_eval_supported", "use_worker_fetch", "use_system_fonts", "use_wasm",
+        "system_renderer_fallback", "pixel_delta_threshold", "mask_dilation_pixels",
+        "connected_components", "minimum_component_area_pixels"
+      ],
+      "properties": {
+        "version": { "const": 1 },
+        "pdfjs_dist": { "const": "5.4.624" },
+        "canvas": { "const": "0.1.99" },
+        "scale": { "const": 2 },
+        "dpi": { "const": 144 },
+        "page_box": { "const": "CropBox-or-MediaBox" },
+        "rotation": { "const": "intrinsic-before-scale" },
+        "canvas_rounding": { "const": "ceil" },
+        "background_rgba": { "const": [255, 255, 255, 255] },
+        "color_space": { "const": "sRGB" },
+        "region_rounding": { "const": "floor-min-ceil-max-after-rotation-and-scale" },
+        "is_eval_supported": { "const": false },
+        "use_worker_fetch": { "const": false },
+        "use_system_fonts": { "const": false },
+        "use_wasm": { "const": false },
+        "system_renderer_fallback": { "const": false },
+        "pixel_delta_threshold": { "const": 8 },
+        "mask_dilation_pixels": { "const": 1 },
+        "connected_components": { "const": 8 },
+        "minimum_component_area_pixels": { "const": 4 }
+      }
+    },
+    "provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "origin", "generator"],
+      "properties": {
+        "kind": { "const": "synthetic" },
+        "origin": { "const": "Open Document Alliance PDF Tools comparison corpus" },
+        "generator": { "const": "scripts/eval-generate-comparison-fixtures.mjs" }
+      }
+    },
+    "license": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "spdx_id", "url", "redistribution"],
+      "properties": {
+        "name": { "const": "MIT License" },
+        "spdx_id": { "const": "MIT" },
+        "url": { "const": "https://opensource.org/license/mit" },
+        "redistribution": { "const": "allowed" }
+      }
+    },
+    "privacy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["class", "contains_personal_data", "notes"],
+      "properties": {
+        "class": { "const": "synthetic" },
+        "contains_personal_data": { "const": false },
+        "notes": { "type": "string", "minLength": 1 }
+      }
+    },
+    "document": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "path", "sha256", "media_type", "provenance", "license", "privacy"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^pdf-tools\\.comparison\\.document\\.[a-z0-9-]+$" },
+        "path": { "type": "string", "pattern": "^synthetic/[a-z0-9-]+\\.pdf$" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "media_type": { "const": "application/pdf" },
+        "provenance": { "$ref": "#/$defs/provenance" },
+        "license": { "$ref": "#/$defs/license" },
+        "privacy": { "$ref": "#/$defs/privacy" }
+      }
+    },
+    "region": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "number", "minimum": 0 },
+        { "type": "number", "minimum": 0 },
+        { "type": "number", "exclusiveMinimum": 0 },
+        { "type": "number", "exclusiveMinimum": 0 }
+      ],
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "anchor": {
+      "oneOf": [
+        { "type": "null" },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["document_id", "document_sha256", "page", "page_box", "rotation", "region", "value_sha256"],
+          "properties": {
+            "document_id": { "type": "string" },
+            "document_sha256": { "$ref": "#/$defs/sha256" },
+            "page": { "type": "integer", "minimum": 1 },
+            "page_box": { "const": [0, 0, 612, 792] },
+            "rotation": { "enum": [0, 90, 180, 270] },
+            "region": { "$ref": "#/$defs/region" },
+            "value_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
+      ]
+    },
+    "facet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "mandatory", "operation", "before", "after"],
+      "properties": {
+        "channel": { "enum": ["semantic", "text", "structure", "form_field", "annotation", "metadata", "visual"] },
+        "mandatory": { "type": "boolean" },
+        "operation": { "enum": ["added", "removed", "modified", "moved"] },
+        "before": { "$ref": "#/$defs/anchor" },
+        "after": { "$ref": "#/$defs/anchor" }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "salience", "summary", "facets", "presentation"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^truth\\.[a-z0-9-]+$" },
+        "salience": { "enum": ["material", "minor", "noise"] },
+        "summary": { "type": "string", "minLength": 1 },
+        "facets": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/facet" } },
+        "presentation": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["default_material", "forensic"],
+          "properties": {
+            "default_material": { "enum": ["report", "suppress", "report_on_request"] },
+            "forensic": { "enum": ["report", "suppress", "report_on_request"] }
+          }
+        }
+      }
+    },
+    "alignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before_page", "after_page", "relation", "anchor"],
+      "properties": {
+        "before_page": { "type": ["integer", "null"], "minimum": 1 },
+        "after_page": { "type": ["integer", "null"], "minimum": 1 },
+        "relation": { "enum": ["same", "moved", "inserted", "deleted"] },
+        "anchor": { "type": "string", "minLength": 1 }
+      }
+    },
+    "pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "role", "partition", "before_document_id", "after_document_id", "required_channels", "alignments", "events"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^pdf-tools\\.comparison\\.pair\\.[a-z0-9-]+$" },
+        "role": { "enum": ["identical", "material_text", "visual_only", "layout_noise", "metadata_only", "pages_reordered", "form_annotation"] },
+        "partition": { "enum": ["development", "held_out_release"] },
+        "before_document_id": { "type": "string" },
+        "after_document_id": { "type": "string" },
+        "required_channels": {
+          "type": "array",
+          "items": { "enum": ["semantic", "text", "structure", "form_field", "annotation", "metadata", "visual"] },
+          "uniqueItems": true
+        },
+        "alignments": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/alignment" } },
+        "events": { "type": "array", "items": { "$ref": "#/$defs/event" } }
+      }
+    }
+  }
+}

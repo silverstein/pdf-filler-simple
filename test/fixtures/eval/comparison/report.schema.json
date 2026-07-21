@@ -1,0 +1,190 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/comparison/report.schema.json",
+  "title": "PDF Tools comparison candidate report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "report_schema_version", "benchmark_id", "benchmark_version", "mode",
+    "claim_boundary", "benchmark_claim_ready", "engine", "platform", "isolation", "pairs"
+  ],
+  "properties": {
+    "report_schema_version": { "const": 1 },
+    "benchmark_id": { "const": "pdf-tools.comparison.v1" },
+    "benchmark_version": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "mode": { "enum": ["default_material", "forensic"] },
+    "claim_boundary": { "type": "string", "minLength": 1 },
+    "benchmark_claim_ready": { "const": false },
+    "engine": { "$ref": "#/$defs/engine" },
+    "platform": { "$ref": "#/$defs/platform" },
+    "isolation": { "$ref": "#/$defs/isolation" },
+    "pairs": { "type": "array", "minItems": 7, "items": { "$ref": "#/$defs/pair" } }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "engine": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "kind", "version", "license", "provenance", "bundle_increment_bytes",
+        "native_targets", "network_requests", "external_processes"
+      ],
+      "properties": {
+        "id": { "type": "string", "minLength": 1 },
+        "kind": { "enum": ["pdf_tools_mcp", "shared_library", "external_cli", "oracle_calibration"] },
+        "version": { "type": "string", "minLength": 1 },
+        "license": { "type": "string", "minLength": 1 },
+        "provenance": { "type": "string", "minLength": 1 },
+        "bundle_increment_bytes": { "type": "integer", "minimum": 0 },
+        "native_targets": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+        "network_requests": { "type": "integer", "minimum": 0 },
+        "external_processes": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "platform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["os", "arch", "node", "host", "model", "model_cost_usd"],
+      "properties": {
+        "os": { "type": "string", "minLength": 1 },
+        "arch": { "type": "string", "minLength": 1 },
+        "node": { "type": "string", "minLength": 1 },
+        "host": { "type": "string", "minLength": 1 },
+        "model": { "type": "string", "minLength": 1 },
+        "model_cost_usd": { "type": "number", "minimum": 0 }
+      }
+    },
+    "isolation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["truth_manifest_visible", "shell_access", "sut_network", "model_endpoint", "allowed_directory_evidence_sha256"],
+      "properties": {
+        "truth_manifest_visible": { "const": false },
+        "shell_access": { "const": false },
+        "sut_network": { "const": "denied" },
+        "model_endpoint": { "type": ["string", "null"] },
+        "allowed_directory_evidence_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "channelStatus": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["semantic", "text", "structure", "form_field", "annotation", "metadata", "visual"],
+      "properties": {
+        "semantic": { "$ref": "#/$defs/channelState" },
+        "text": { "$ref": "#/$defs/channelState" },
+        "structure": { "$ref": "#/$defs/channelState" },
+        "form_field": { "$ref": "#/$defs/channelState" },
+        "annotation": { "$ref": "#/$defs/channelState" },
+        "metadata": { "$ref": "#/$defs/channelState" },
+        "visual": { "$ref": "#/$defs/channelState" }
+      }
+    },
+    "channelState": { "enum": ["supported", "unavailable", "harness_failure"] },
+    "alignment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["before_page", "after_page", "relation", "anchor"],
+      "properties": {
+        "before_page": { "type": ["integer", "null"], "minimum": 1 },
+        "after_page": { "type": ["integer", "null"], "minimum": 1 },
+        "relation": { "enum": ["same", "moved", "inserted", "deleted"] },
+        "anchor": { "type": "string", "minLength": 1 },
+        "ambiguity_group": { "type": ["string", "null"], "minLength": 1 }
+      }
+    },
+    "region": {
+      "type": "array",
+      "prefixItems": [
+        { "type": "number", "minimum": 0 }, { "type": "number", "minimum": 0 },
+        { "type": "number", "exclusiveMinimum": 0 }, { "type": "number", "exclusiveMinimum": 0 }
+      ],
+      "minItems": 4,
+      "maxItems": 4
+    },
+    "observation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "channel", "document_sha256", "page", "page_box", "rotation", "region",
+        "value_sha256", "raw_result_sha256", "capture"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^evidence\\.[a-z0-9.-]+$" },
+        "channel": { "$ref": "#/$defs/channel" },
+        "document_sha256": { "$ref": "#/$defs/sha256" },
+        "page": { "type": "integer", "minimum": 1 },
+        "page_box": { "const": [0, 0, 612, 792] },
+        "rotation": { "enum": [0, 90, 180, 270] },
+        "region": { "$ref": "#/$defs/region" },
+        "value_sha256": { "$ref": "#/$defs/sha256" },
+        "raw_result_sha256": { "$ref": "#/$defs/sha256" },
+        "capture": { "enum": ["retained_tool_result", "deterministic_baseline", "oracle_calibration"] }
+      }
+    },
+    "channel": { "enum": ["semantic", "text", "structure", "form_field", "annotation", "metadata", "visual"] },
+    "facet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "operation", "before_evidence_id", "after_evidence_id"],
+      "properties": {
+        "channel": { "$ref": "#/$defs/channel" },
+        "operation": { "enum": ["added", "removed", "modified", "moved"] },
+        "before_evidence_id": { "type": ["string", "null"], "pattern": "^evidence\\.[a-z0-9.-]+$" },
+        "after_evidence_id": { "type": ["string", "null"], "pattern": "^evidence\\.[a-z0-9.-]+$" }
+      }
+    },
+    "event": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "salience", "confidence", "summary", "facets"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^candidate\\.[a-z0-9.-]+$" },
+        "salience": { "enum": ["material", "minor", "noise", "unknown"] },
+        "confidence": { "type": "number", "minimum": 0, "maximum": 1 },
+        "summary": { "type": "string", "minLength": 1 },
+        "facets": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/facet" } }
+      }
+    },
+    "decision": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["event_id", "mode", "disposition", "rationale"],
+      "properties": {
+        "event_id": { "type": "string", "pattern": "^candidate\\.[a-z0-9.-]+$" },
+        "mode": { "enum": ["default_material", "forensic"] },
+        "disposition": { "enum": ["report", "suppress", "report_on_request"] },
+        "rationale": { "type": "string", "minLength": 1 }
+      }
+    },
+    "pair": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "pair_id", "before_sha256", "after_sha256", "status", "channel_status", "alignments",
+        "observations", "detected_events", "presentation_decisions", "timing_samples_ms",
+        "peak_rss_bytes", "rendered_pixels", "tool_calls", "bytes_read", "source_immutable",
+        "undeclared_requests", "model_transport_requests"
+      ],
+      "properties": {
+        "pair_id": { "type": "string", "pattern": "^pdf-tools\\.comparison\\.pair\\.[a-z0-9-]+$" },
+        "before_sha256": { "$ref": "#/$defs/sha256" },
+        "after_sha256": { "$ref": "#/$defs/sha256" },
+        "status": { "enum": ["completed", "engine_unavailable", "harness_failure"] },
+        "channel_status": { "$ref": "#/$defs/channelStatus" },
+        "alignments": { "type": "array", "items": { "$ref": "#/$defs/alignment" } },
+        "observations": { "type": "array", "items": { "$ref": "#/$defs/observation" } },
+        "detected_events": { "type": "array", "items": { "$ref": "#/$defs/event" } },
+        "presentation_decisions": { "type": "array", "items": { "$ref": "#/$defs/decision" } },
+        "timing_samples_ms": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "type": "number", "minimum": 0 } },
+        "peak_rss_bytes": { "type": "integer", "minimum": 0 },
+        "rendered_pixels": { "type": "integer", "minimum": 0 },
+        "tool_calls": { "type": "integer", "minimum": 0 },
+        "bytes_read": { "type": "integer", "minimum": 0 },
+        "source_immutable": { "type": "boolean" },
+        "undeclared_requests": { "type": "array", "items": { "type": "string", "minLength": 1 } },
+        "model_transport_requests": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}
