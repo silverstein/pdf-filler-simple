@@ -20,7 +20,7 @@ import fs from "fs/promises";
 import path from "path";
 import { homedir, platform as osPlatform, tmpdir } from "os";
 import { spawn } from "child_process";
-import { createHash } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import { createScopedStderrSuppressor } from "./stderr-suppression.js";
 import {
   isUnavailableResourceError,
@@ -643,9 +643,26 @@ async function extractPdfText(pdfBuffer, maxPages) {
 }
 
 // Helper: load a PDF from disk with password support and clear error messages
-async function loadPdf(inputPath, password = null) {
+async function readPdfInputWithRecovery(inputPath) {
   const resolvedPath = resolvePath(inputPath);
+  const canonicalDirectory = await fs.realpath(path.dirname(resolvedPath));
+  for (let attempt = 0; attempt < 4; attempt += 1) {
+    try {
+      await recoverPdfOutputTransactions(canonicalDirectory);
+      break;
+    } catch (error) {
+      if (error?.code !== "ATOMIC_OUTPUT_CONCURRENT") throw error;
+      if (attempt === 3) {
+        throw backupIdentityError("CONCURRENT_MODIFICATION", "Another process is committing PDF output in this directory. Retry after that mutation finishes.", error);
+      }
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+  }
   const pdfBytes = await fs.readFile(resolvedPath);
+  return { resolvedPath, pdfBytes };
+}
+
+async function loadPdfBytes(pdfBytes, password = null) {
   let pdfDoc;
   try {
     pdfDoc = await PDFDocument.load(pdfBytes, password ? { password } : {});
@@ -655,6 +672,12 @@ async function loadPdf(inputPath, password = null) {
     }
     throw new Error(`Failed to load PDF: ${error.message}`);
   }
+  return pdfDoc;
+}
+
+async function loadPdf(inputPath, password = null) {
+  const { resolvedPath, pdfBytes } = await readPdfInputWithRecovery(inputPath);
+  const pdfDoc = await loadPdfBytes(pdfBytes, password);
   return { pdfDoc, resolvedPath, pdfBytes };
 }
 
@@ -687,6 +710,7 @@ import {
   failedPdfFormValidation,
   copyPdfPagesPreservingForms,
   copyPdfDocumentMetadata,
+  recoverPdfOutputTransactions,
   writePdfOutputAtomic,
   writePdfOutputsAtomic,
 } from "./helpers.js";
@@ -1312,24 +1336,171 @@ async function ensureManagedBackupDirectory() {
   }
 }
 
+function mutationArtifactIdentity(stat) {
+  if (!stat) return null;
+  return [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeMs].join(":");
+}
+
+function mutationProcessAppearsAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    return error?.code !== "ESRCH";
+  }
+}
+
+function assertPrivateMutationArtifact(artifactPath, stat) {
+  if (!stat?.isFile() || stat.isSymbolicLink()) {
+    throw backupIdentityError("MUTATION_LOCK_INVALID", `The document mutation artifact is not a regular file: ${artifactPath}`);
+  }
+  if (
+    process.platform !== "win32" && typeof process.getuid === "function" &&
+    (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0)
+  ) {
+    throw backupIdentityError("MUTATION_LOCK_INVALID", `The document mutation artifact is not private and owned: ${artifactPath}`);
+  }
+}
+
+async function removeMutationArtifact(artifactPath, expectedIdentity = null) {
+  let stat;
+  try {
+    stat = await fs.lstat(artifactPath);
+  } catch (error) {
+    if (error?.code === "ENOENT") return;
+    throw error;
+  }
+  assertPrivateMutationArtifact(artifactPath, stat);
+  if (expectedIdentity && mutationArtifactIdentity(stat) !== expectedIdentity) {
+    throw backupIdentityError("MUTATION_LOCK_CHANGED", `The document mutation artifact changed unexpectedly: ${artifactPath}`);
+  }
+  await fs.unlink(artifactPath);
+}
+
+async function readMutationLock(lockPath, canonicalPath) {
+  const stat = await fs.lstat(lockPath);
+  assertPrivateMutationArtifact(lockPath, stat);
+  const identity = mutationArtifactIdentity(stat);
+  const lockHandle = await fs.open(lockPath, fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0));
+  let raw;
+  try {
+    const opened = await lockHandle.stat();
+    if (!opened.isFile() || opened.size > 64 * 1024) throw new Error("invalid lock file");
+    raw = await lockHandle.readFile("utf8");
+  } finally {
+    await lockHandle.close();
+  }
+  if (mutationArtifactIdentity(await fs.lstat(lockPath)) !== identity) {
+    throw backupIdentityError("MUTATION_LOCK_CHANGED", "The document mutation lock changed while it was read.");
+  }
+  const lock = JSON.parse(raw);
+  if (
+    lock?.schema_version !== 1 || lock.canonical_path !== canonicalPath ||
+    !Number.isSafeInteger(lock.pid) || lock.pid <= 0 ||
+    typeof lock.token !== "string" || !lock.token ||
+    typeof lock.created_at !== "string" ||
+    Object.keys(lock).sort().join(",") !== "canonical_path,created_at,pid,schema_version,token"
+  ) {
+    throw new Error("invalid lock record");
+  }
+  return { lock, identity };
+}
+
+async function cleanupStaleMutationCandidates(canonicalPath) {
+  const identityId = backupIdentityId(canonicalPath);
+  const candidatePattern = new RegExp(`^\\.mutation-${identityId}\\.candidate-(\\d+)-[0-9a-f-]{36}$`);
+  for (const name of await fs.readdir(BACKUPS_DIR)) {
+    const match = candidatePattern.exec(name);
+    if (!match || mutationProcessAppearsAlive(Number(match[1]))) continue;
+    const candidatePath = path.join(BACKUPS_DIR, name);
+    const stat = await fs.lstat(candidatePath).catch(error => {
+      if (error?.code === "ENOENT") return null;
+      throw error;
+    });
+    if (!stat) continue;
+    assertPrivateMutationArtifact(candidatePath, stat);
+    await removeMutationArtifact(candidatePath, mutationArtifactIdentity(stat));
+  }
+}
+
 async function acquireMutationLock(canonicalPath) {
   await ensureManagedBackupDirectory();
-  const lockPath = path.join(BACKUPS_DIR, `.mutation-${backupIdentityId(canonicalPath)}.lock`);
-  let handle;
-  try {
-    handle = await fs.open(lockPath, "wx", 0o600);
-    await handle.writeFile(`${JSON.stringify({ schema_version: 1, canonical_path: canonicalPath, pid: process.pid, created_at: new Date().toISOString() })}\n`);
-    await handle.sync();
-  } catch (error) {
-    try { await handle?.close(); } catch {}
-    if (error.code === "EEXIST") {
-      throw backupIdentityError("CONCURRENT_MODIFICATION", "Another process is already committing a mutation for this document.", error);
+  await cleanupStaleMutationCandidates(canonicalPath);
+  const identityId = backupIdentityId(canonicalPath);
+  const lockPath = path.join(BACKUPS_DIR, `.mutation-${identityId}.lock`);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const token = randomUUID();
+    const candidatePath = path.join(BACKUPS_DIR, `.mutation-${identityId}.candidate-${process.pid}-${token}`);
+    let handle;
+    let candidateIdentity = null;
+    let published = false;
+    try {
+      handle = await fs.open(candidatePath, "wx", 0o600);
+      await handle.writeFile(`${JSON.stringify({
+        schema_version: 1,
+        canonical_path: canonicalPath,
+        pid: process.pid,
+        token,
+        created_at: new Date().toISOString(),
+      })}\n`);
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      const candidateStat = await fs.lstat(candidatePath);
+      assertPrivateMutationArtifact(candidatePath, candidateStat);
+      candidateIdentity = mutationArtifactIdentity(candidateStat);
+      await fs.link(candidatePath, lockPath);
+      published = true;
+      if (mutationArtifactIdentity(await fs.lstat(lockPath)) !== candidateIdentity) {
+        throw backupIdentityError("MUTATION_LOCK_CHANGED", "The published document mutation lock has the wrong identity.");
+      }
+      await removeMutationArtifact(candidatePath, candidateIdentity);
+      return async () => {
+        const current = await fs.lstat(lockPath).catch(error => {
+          if (error?.code === "ENOENT") return null;
+          throw error;
+        });
+        if (mutationArtifactIdentity(current) !== candidateIdentity) {
+          throw backupIdentityError("MUTATION_LOCK_CHANGED", "The document mutation lock changed unexpectedly.");
+        }
+        await removeMutationArtifact(lockPath, candidateIdentity);
+      };
+    } catch (error) {
+      try { await handle?.close(); } catch {}
+      try { await removeMutationArtifact(candidatePath, candidateIdentity); } catch (cleanupError) {
+        throw backupIdentityError("MUTATION_LOCK_FAILED", "The document mutation lock candidate could not be cleaned.", cleanupError);
+      }
+      if (published) {
+        try { await removeMutationArtifact(lockPath, candidateIdentity); } catch (cleanupError) {
+          throw backupIdentityError("MUTATION_LOCK_FAILED", "The incomplete document mutation lock could not be cleaned.", cleanupError);
+        }
+      }
+      if (error.code !== "EEXIST") {
+        throw backupIdentityError("MUTATION_LOCK_FAILED", "The document mutation lock could not be established.", error);
+      }
+      let existing;
+      try {
+        existing = await readMutationLock(lockPath, canonicalPath);
+      } catch (readError) {
+        if (readError?.code === "ENOENT") continue;
+        if (readError?.code?.startsWith("MUTATION_LOCK_")) throw readError;
+        throw backupIdentityError("MUTATION_LOCK_INVALID", "The document mutation lock record is invalid.", readError);
+      }
+      if (mutationProcessAppearsAlive(existing.lock.pid)) {
+        throw backupIdentityError("CONCURRENT_MODIFICATION", "Another process is already committing a mutation for this document.");
+      }
+      const stalePath = `${lockPath}.stale-${randomUUID()}`;
+      try {
+        await fs.rename(lockPath, stalePath);
+      } catch (renameError) {
+        if (renameError?.code === "ENOENT") continue;
+        throw backupIdentityError("MUTATION_LOCK_FAILED", "The stale document mutation lock could not be isolated.", renameError);
+      }
+      await removeMutationArtifact(stalePath, existing.identity);
     }
-    throw backupIdentityError("MUTATION_LOCK_FAILED", "The document mutation lock could not be established.", error);
   }
-  return async () => {
-    try { await handle.close(); } finally { await fs.unlink(lockPath); }
-  };
+  throw backupIdentityError("MUTATION_LOCK_FAILED", "The document mutation lock could not be established after stale-lock recovery.");
 }
 
 async function readBackupRecord(canonicalPath) {
@@ -1638,8 +1809,17 @@ async function persistPdfMutation({
   const sameDocument = inputCanonical === outputCanonical;
 
   const commit = async () => {
+    await recoverPdfOutputTransactions(path.dirname(inputCanonical));
+    const recoveredInputSha256 = sha256Bytes(await fs.readFile(inputCanonical));
+    if (
+      /^[a-f0-9]{64}$/.test(expectedInputSha256 ?? "") &&
+      recoveredInputSha256 !== expectedInputSha256
+    ) {
+      throw backupIdentityError("CONCURRENT_MODIFICATION", "The PDF changed while an interrupted output transaction was recovered. Reload the current document and retry.");
+    }
     let backupPath = backupPathByCanonical.get(inputCanonical) || null;
     let record = null;
+    let commitInputSha256 = null;
     const bytes = Buffer.from(await pdfDoc.save());
     const pendingSha256 = sha256Bytes(bytes);
     if (sameDocument) {
@@ -1648,6 +1828,7 @@ async function persistPdfMutation({
       }
       const currentBytes = await fs.readFile(inputCanonical);
       const currentSha256 = sha256Bytes(currentBytes);
+      commitInputSha256 = currentSha256;
       if (currentSha256 !== expectedInputSha256) {
         throw backupIdentityError("CONCURRENT_MODIFICATION", "The PDF changed after this mutation loaded its input. Reload the current document and retry.");
       }
@@ -1679,7 +1860,15 @@ async function persistPdfMutation({
       }
     }
 
-    await writePdfOutputAtomic(sameDocument ? inputCanonical : resolvedOutputPath, bytes);
+    await writePdfOutputAtomic(sameDocument ? inputCanonical : resolvedOutputPath, bytes, {
+      beforeTransaction: sameDocument
+        ? async () => {
+            if (sha256Bytes(await fs.readFile(inputCanonical)) !== commitInputSha256) {
+              throw backupIdentityError("CONCURRENT_MODIFICATION", "The PDF changed while this mutation was preparing to activate. Reload the current document and retry.");
+            }
+          }
+        : undefined,
+    });
     if (record) {
       record.last_committed_sha256 = pendingSha256;
       record.pending_sha256 = null;
@@ -1839,9 +2028,7 @@ function formatCSVValue(value) {
 }
 
 // Helper function to fill PDF fields
-async function fillPdfFields(pdfPath, fieldData, password = null) {
-  const { pdfDoc } = await loadPdf(pdfPath, password);
-
+async function fillPdfDocumentFields(pdfDoc, fieldData) {
   const form = pdfDoc.getForm();
   const filledFields = [];
   const errors = [];
@@ -1874,6 +2061,15 @@ async function fillPdfFields(pdfPath, fieldData, password = null) {
   }
   
   return { pdfDoc, filledFields, errors };
+}
+
+async function fillPdfFields(pdfPath, fieldData, password = null) {
+  const { pdfDoc } = await loadPdf(pdfPath, password);
+  return await fillPdfDocumentFields(pdfDoc, fieldData);
+}
+
+async function fillPdfBytes(pdfBytes, fieldData, password = null) {
+  return await fillPdfDocumentFields(await loadPdfBytes(pdfBytes, password), fieldData);
 }
 
 // List available tools
@@ -3180,7 +3376,7 @@ async function handleToolCall(request) {
         const { pdf_path, output_path, field_data, password, force_xfa = false } = args;
         const resolvedPdfPath = resolvePath(pdf_path);
         const resolvedOutputPath = resolvePath(output_path);
-        const rawPdfBytes = await fs.readFile(resolvedPdfPath);
+        const { pdfBytes: rawPdfBytes } = await readPdfInputWithRecovery(resolvedPdfPath);
         assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
         const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, field_data, password);
         const { payload, backupPath } = await persistPdfMutation({
@@ -3218,7 +3414,7 @@ async function handleToolCall(request) {
         const resolvedPdfPath = resolvePath(pdf_path);
         const resolvedCsvPath = resolvePath(csv_path);
         const resolvedOutputDir = resolvePath(output_directory);
-        const rawPdfBytes = await fs.readFile(resolvedPdfPath);
+        const { pdfBytes: rawPdfBytes } = await readPdfInputWithRecovery(resolvedPdfPath);
         assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
         
         // Read CSV
@@ -3249,7 +3445,7 @@ async function handleToolCall(request) {
             targetPath: outputPath,
             async produceBytes() {
               try {
-                const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, record, password);
+                const { pdfDoc, filledFields, errors } = await fillPdfBytes(rawPdfBytes, record, password);
                 const filledPdfBytes = await pdfDoc.save();
                 results.push({
                   filename,
@@ -3347,7 +3543,7 @@ async function handleToolCall(request) {
         
         // Merge profile data with additional data
         const mergedData = { ...profileData, ...additional_data };
-        const rawPdfBytes = await fs.readFile(resolvedPdfPath);
+        const { pdfBytes: rawPdfBytes } = await readPdfInputWithRecovery(resolvedPdfPath);
         const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, mergedData, password);
         const { payload, backupPath } = await persistPdfMutation({
           pdfDoc,
@@ -4533,7 +4729,7 @@ async function handleToolCall(request) {
           throw new Error("output_path must be different from input_path to prevent file corruption.");
         }
 
-        const rawPdfBytes = await fs.readFile(resolvedInputPath);
+        const { pdfBytes: rawPdfBytes } = await readPdfInputWithRecovery(resolvedInputPath);
         assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
         const { pdfDoc } = await loadPdf(input_path, password);
         const totalPages = pdfDoc.getPageCount();

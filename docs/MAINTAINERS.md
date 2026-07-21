@@ -96,10 +96,11 @@ Every user-visible PDF output follows an explicit commit policy:
   semantics without claiming the unavailable crash-durability signal.
 - `split_pdf` and `bulk_fill_from_csv` generate and stage the entire declared
   output set before changing any destination. Batch producers generate, fsync,
-  and release one PDF at a time to keep peak memory bounded. Existing outputs are held in
-  private same-directory rollback entries during commit. A failure restores the
-  full prior set and removes any newly activated outputs. Bulk-derived output
-  filenames must be unique; duplicate names fail before commit.
+  and release one PDF at a time to keep peak memory bounded. Existing outputs
+  are held in private same-directory rollback entries during commit. A failure
+  restores the full prior set and removes any newly activated outputs.
+  Bulk-derived output filenames must be unique; duplicate names fail before
+  commit. One transaction cannot span multiple directories.
 - `fetch_pdf_from_url` uses the same single-output staged commit. Its default
   `overwrite=false` policy selects a unique filename. With `overwrite=true`, it
   atomically replaces the selected existing target.
@@ -112,9 +113,35 @@ disk-full, sync, rename, collision, and concurrent-replacement failures. The
 tool-level matrix in `test/atomic-tool-output.test.js` verifies split and bulk
 all-or-nothing behavior plus active-state gating.
 
-Multi-output rollback covers failures observed by the running handler. Recovery
-after abrupt process or host termination during the short activation window is
-a separate durability boundary and must use a persisted transaction journal.
+Every staged commit also uses a versioned, SHA-256-bound journal and a
+same-directory interprocess lock. Journals contain basenames only; stage and
+rollback names are recomputed from the journal token before use. Journals,
+stages, rollback entries, and owner records must be owned regular files. The
+output lock is a private owned directory published only after its owner record
+is complete. POSIX ownership and mode are enforced where the platform exposes
+them; Windows relies on the current account and parent-directory ACL. Recovery
+never follows a symlink or accepts an escaped, reserved, case-aliased, or
+Unicode-normalization-aliased path.
+
+The durable states are `staging`, `prepared`, `activating`, and `committed`.
+Recovery rolls the first three states back to the exact prior set. A durably
+committed state keeps the complete new set and finishes artifact cleanup. A
+dead output or same-document mutation lock is reclaimed before recovery; a live
+lock rejects a competing writer. Existing outputs carry both a stable file
+identity and a streamed SHA-256 digest in the journal. The recovery pass is
+idempotent and runs before the first PDF read as well as before the next commit
+in that directory, including when the target is temporarily absent during
+activation.
+
+`test/atomic-output-recovery.test.js` terminates child processes after each
+named lock, staging, activation, commit-marker, and cleanup transition. It
+proves exact old/new bytes, mixed and all-new sets, hostile journal and symlink
+handling, stale-lock reclamation, and a no-op second recovery pass. These named
+transitions are post-syscall boundaries. Publication of the canonical output
+lock is separately protected by preparing a private candidate directory and
+atomically renaming it into place. A non-cooperating external program can still
+race the final identity check and filesystem rename; detected replacements fail
+closed and preserve the recovery journal for explicit resolution.
 
 ## Local dev
 

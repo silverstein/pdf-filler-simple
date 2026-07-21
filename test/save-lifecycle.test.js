@@ -1,6 +1,7 @@
 import fs from "fs/promises";
 import path from "path";
 import { createHash } from "crypto";
+import { spawn } from "child_process";
 import { tmpdir } from "os";
 import { fileURLToPath } from "url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -11,6 +12,7 @@ import { PDFDocument } from "pdf-lib";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
+const SINGLE_CRASH_CHILD = path.join(REPO_ROOT, "test", "helpers", "atomic-output-single-crash-child.mjs");
 const NAME_FIELD = "topmostSubform[0].Page1[0].f1_1[0]";
 
 let TMP_DIR;
@@ -48,6 +50,45 @@ async function sha256(filePath) {
 async function topLevelPdfs() {
   const entries = await fs.readdir(TMP_DIR);
   return entries.filter(entry => entry.endsWith(".pdf")).sort();
+}
+
+async function runSingleOutputCrash(targetPath, replacementPath, transition) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [SINGLE_CRASH_CHILD, targetPath, replacementPath, transition], {
+      cwd: REPO_ROOT,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stderr = [];
+    child.stderr.on("data", chunk => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code, signal) => resolve({
+      code,
+      signal,
+      stderr: Buffer.concat(stderr).toString("utf8"),
+    }));
+  });
+}
+
+async function exitedProcessId() {
+  const child = spawn(process.execPath, ["-e", ""], { stdio: "ignore" });
+  const pid = child.pid;
+  await new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", resolve);
+  });
+  return pid;
+}
+
+async function mutationLockPaths(pdfPath) {
+  const canonicalPath = await fs.realpath(pdfPath);
+  const identity = createHash("sha256").update(Buffer.from(canonicalPath)).digest("hex");
+  const backupsDirectory = path.join(PROFILE_DIR, "backups");
+  return {
+    canonicalPath,
+    backupsDirectory,
+    lockPath: path.join(backupsDirectory, `.mutation-${identity}.lock`),
+    candidatePrefix: `.mutation-${identity}.candidate-`,
+  };
 }
 
 describe("canonical save lifecycle", () => {
@@ -452,6 +493,101 @@ describe("canonical save lifecycle", () => {
     expect(result.isError).toBe(true);
     expect(result.content?.[0]?.text).toContain("CONCURRENT_MODIFICATION");
     expect(await sha256(pdfPath)).toBe(replacementHash);
+  }, 30_000);
+
+  for (const transition of ["rollback_0", "activate_0"]) {
+  it(`recovers at ${transition} before loading and mutates only the restored committed PDF`, async () => {
+    const pdfPath = path.join(TMP_DIR, "w9-working.pdf");
+    const originalHash = await sha256(pdfPath);
+    const replacementPath = path.join(TMP_DIR, "interrupted-replacement.bin");
+    const replacement = await PDFDocument.load(await fs.readFile(pdfPath));
+    replacement.setTitle("Interrupted uncommitted generation");
+    await fs.writeFile(replacementPath, await replacement.save());
+
+    const crashed = await runSingleOutputCrash(pdfPath, replacementPath, transition);
+    expect(crashed).toMatchObject({ code: 86, signal: null, stderr: "" });
+    if (transition === "rollback_0") {
+      await expect(fs.stat(pdfPath)).rejects.toMatchObject({ code: "ENOENT" });
+    } else {
+      expect(await sha256(pdfPath)).not.toBe(originalHash);
+    }
+
+    const result = await client.callTool({
+      name: "fill_pdf",
+      arguments: {
+        pdf_path: pdfPath,
+        output_path: pdfPath,
+        force_xfa: true,
+        field_data: { [NAME_FIELD]: "Must not derive from uncommitted bytes" },
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent.backup_path).toBeTruthy();
+    expect(await sha256(result.structuredContent.backup_path)).toBe(originalHash);
+    expect(await sha256(pdfPath)).not.toBe(originalHash);
+    expect((await fs.readdir(TMP_DIR)).filter(name => name.startsWith(".pdf-tools-"))).toEqual([]);
+  }, 30_000);
+  }
+
+  it("reclaims a valid dead mutation lock and an incomplete dead candidate", async () => {
+    const pdfPath = path.join(TMP_DIR, "w9-working.pdf");
+    const { canonicalPath, backupsDirectory, lockPath, candidatePrefix } = await mutationLockPaths(pdfPath);
+    const deadPid = await exitedProcessId();
+    await fs.mkdir(backupsDirectory, { recursive: true, mode: 0o700 });
+    await fs.writeFile(lockPath, `${JSON.stringify({
+      schema_version: 1,
+      canonical_path: canonicalPath,
+      pid: deadPid,
+      token: "00000000-0000-4000-8000-000000000000",
+      created_at: new Date().toISOString(),
+    })}\n`, { mode: 0o600 });
+    await fs.writeFile(
+      path.join(backupsDirectory, `${candidatePrefix}${deadPid}-11111111-1111-4111-8111-111111111111`),
+      "{",
+      { mode: 0o600 },
+    );
+
+    const result = await client.callTool({
+      name: "fill_pdf",
+      arguments: {
+        pdf_path: pdfPath,
+        output_path: pdfPath,
+        force_xfa: true,
+        field_data: { [NAME_FIELD]: "Recovered stale mutation lock" },
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect((await fs.readdir(backupsDirectory)).filter(name => name.includes(".mutation-"))).toEqual([]);
+  }, 30_000);
+
+  it("preserves and rejects a live mutation lock", async () => {
+    const pdfPath = path.join(TMP_DIR, "w9-working.pdf");
+    const { canonicalPath, backupsDirectory, lockPath } = await mutationLockPaths(pdfPath);
+    await fs.mkdir(backupsDirectory, { recursive: true, mode: 0o700 });
+    await fs.writeFile(lockPath, `${JSON.stringify({
+      schema_version: 1,
+      canonical_path: canonicalPath,
+      pid: process.pid,
+      token: "22222222-2222-4222-8222-222222222222",
+      created_at: new Date().toISOString(),
+    })}\n`, { mode: 0o600 });
+
+    const result = await client.callTool({
+      name: "fill_pdf",
+      arguments: {
+        pdf_path: pdfPath,
+        output_path: pdfPath,
+        force_xfa: true,
+        field_data: { [NAME_FIELD]: "Must not write through live lock" },
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toContain("CONCURRENT_MODIFICATION");
+    await expect(fs.stat(lockPath)).resolves.toBeTruthy();
+    await fs.unlink(lockPath);
   }, 30_000);
 
   it("creates only one H0 backup under concurrent first mutations", async () => {

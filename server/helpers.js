@@ -1,9 +1,10 @@
 // Shared helpers for PDF Tools — extracted for testability
 
 import fs from "fs/promises";
+import { constants as fsConstants } from "fs";
 import path from "path";
 import { homedir } from "os";
-import { randomUUID } from "crypto";
+import { createHash, randomUUID } from "crypto";
 import {
   PDFArray,
   PDFDict,
@@ -1195,16 +1196,29 @@ export function sanitizePdfFilename(name) {
   if (!safe.toLowerCase().endsWith(".pdf")) safe += ".pdf";
   return safe;
 }
+const PDF_OUTPUT_TRANSACTION_VERSION = 1;
+const PDF_OUTPUT_JOURNAL_PATTERN = /^\.pdf-tools-([a-f0-9]{64})-transaction\.json$/;
+const PDF_OUTPUT_JOURNAL_CANDIDATE_PATTERN = /^\.pdf-tools-[a-f0-9]{64}-transaction\.json\.candidate-[a-f0-9-]+$/;
+const PDF_OUTPUT_LOCK_NAME = ".pdf-tools-output-transaction.lock";
+const PDF_OUTPUT_LOCK_CANDIDATE_PATTERN = /^\.pdf-tools-output-transaction\.lock\.candidate-(\d+)-[a-f0-9-]+$/;
+const PDF_OUTPUT_STALE_LOCK_PATTERN = /^\.pdf-tools-output-transaction\.lock\.stale-[a-f0-9-]+$/;
+const PDF_OUTPUT_LOCK_OWNER_NAME = "owner.json";
+const NOFOLLOW_READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+function sha256Value(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 function atomicOutputToken() {
   return `${process.pid}-${randomUUID()}`;
 }
-
-function atomicSiblingPath(targetPath, token, kind, index = 0) {
-  return path.join(
-    path.dirname(targetPath),
-    `.${path.basename(targetPath)}.pdf-tools-${token}-${kind}-${index}`,
-  );
+function atomicOutputTokenId(token) {
+  return sha256Value(Buffer.from(String(token)));
+}
+function atomicSiblingPath(targetPath, tokenId, kind, index = 0) {
+  return path.join(path.dirname(targetPath), `.pdf-tools-${tokenId}-${index}-${kind}`);
+}
+function atomicJournalPath(directoryPath, tokenId) {
+  return path.join(directoryPath, `.pdf-tools-${tokenId}-transaction.json`);
 }
 
 async function removeAtomicArtifact(fsOps, artifactPath, cleanupErrors) {
@@ -1231,9 +1245,347 @@ async function syncAtomicOutputDirectory(fsOps, directoryPath) {
     await handle?.close();
   }
 }
-
-async function stageAtomicOutput(fsOps, targetPath, bytes, token, index) {
-  const stagePath = atomicSiblingPath(targetPath, token, "stage", index);
+function recoveryIdentity(stat) {
+  if (!stat) return null;
+  return [stat.dev, stat.ino, stat.mode, stat.size, stat.mtimeMs].join(":");
+}
+function portableOutputNameKey(name) {
+  return name.normalize("NFC").toLowerCase();
+}
+function assertOwnedRegularArtifact(artifactPath, stat, { privateMode = false, requireOwner = privateMode } = {}) {
+  if (!stat?.isFile() || stat.isSymbolicLink()) {
+    throw atomicOutputError(
+      "ATOMIC_OUTPUT_ARTIFACT_INVALID",
+      `Transaction artifact must be a regular file: ${artifactPath}`,
+    );
+  }
+  if (requireOwner && typeof process.getuid === "function" && stat.uid !== process.getuid()) {
+    throw atomicOutputError(
+      "ATOMIC_OUTPUT_ARTIFACT_OWNER_INVALID",
+      `Transaction artifact is not owned by the current user: ${artifactPath}`,
+    );
+  }
+  if (process.platform !== "win32" && privateMode && (stat.mode & 0o077) !== 0) {
+    throw atomicOutputError(
+      "ATOMIC_OUTPUT_ARTIFACT_MODE_INVALID",
+      `Transaction artifact permissions are too broad: ${artifactPath}`,
+    );
+  }
+}
+async function sha256RegularFile(fsOps, filePath) {
+  const before = await lstatIfPresent(fsOps, filePath);
+  assertOwnedRegularArtifact(filePath, before);
+  const handle = await fsOps.open(filePath, NOFOLLOW_READ_FLAGS);
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  let position = 0;
+  try {
+    while (true) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
+      if (bytesRead === 0) break;
+      hash.update(buffer.subarray(0, bytesRead));
+      position += bytesRead;
+    }
+  } finally {
+    await handle.close();
+  }
+  const after = await lstatIfPresent(fsOps, filePath);
+  if (outputIdentity(after) !== outputIdentity(before)) {
+    throw atomicOutputError(
+      "ATOMIC_OUTPUT_ARTIFACT_CHANGED",
+      `Transaction artifact changed while it was read: ${filePath}`,
+    );
+  }
+  return hash.digest("hex");
+}
+function journalEnvelope(payload) {
+  const serializedPayload = JSON.stringify(payload);
+  return {
+    payload,
+    payload_sha256: sha256Value(Buffer.from(serializedPayload)),
+  };
+}
+async function writeAtomicJournal(fsOps, journalPath, payload) {
+  const candidatePath = `${journalPath}.candidate-${randomUUID()}`;
+  let handle = null;
+  let created = false;
+  try {
+    handle = await fsOps.open(candidatePath, "wx", 0o600);
+    created = true;
+    await handle.writeFile(`${JSON.stringify(journalEnvelope(payload))}\n`);
+    await handle.sync();
+    await handle.close();
+    handle = null;
+    await fsOps.rename(candidatePath, journalPath);
+    await syncAtomicOutputDirectory(fsOps, path.dirname(journalPath));
+  } catch (error) {
+    try { await handle?.close(); } catch {}
+    if (created) {
+      const cleanupErrors = [];
+      await removeAtomicArtifact(fsOps, candidatePath, cleanupErrors);
+      if (cleanupErrors.length > 0) {
+        throw atomicOutputError(
+          "ATOMIC_OUTPUT_JOURNAL_CLEANUP_FAILED",
+          `Failed to clean the transaction journal candidate: ${candidatePath}`,
+          error,
+          cleanupErrors,
+        );
+      }
+    }
+    throw error;
+  }
+}
+function validateJournalPayload(payload, directoryPath, tokenId) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+    throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", "Transaction journal payload is invalid.");
+  }
+  if (Object.keys(payload).sort().join(",") !== "entries,schema_version,state,token_id") {
+    throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", "Transaction journal payload has unexpected properties.");
+  }
+  if (payload.schema_version !== PDF_OUTPUT_TRANSACTION_VERSION || payload.token_id !== tokenId) {
+    throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", "Transaction journal version or token is invalid.");
+  }
+  if (!["staging", "prepared", "activating", "committed"].includes(payload.state)) {
+    throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", "Transaction journal state is invalid.");
+  }
+  if (!Array.isArray(payload.entries) || payload.entries.length === 0) {
+    throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", "Transaction journal entries are invalid.");
+  }
+  const targets = new Set();
+  payload.entries.forEach((entry, index) => {
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) {
+      throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", `Transaction journal entry ${index + 1} is invalid.`);
+    }
+    if (
+      Object.keys(entry).sort().join(",") !==
+      "initial_identity,initial_sha256,new_sha256,rollback,stage,target"
+    ) {
+      throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", `Transaction journal entry ${index + 1} has unexpected properties.`);
+    }
+    if (
+      typeof entry.target !== "string" || !entry.target || entry.target !== path.basename(entry.target) ||
+      entry.target === "." || entry.target === ".." ||
+      portableOutputNameKey(entry.target).startsWith(".pdf-tools-") ||
+      targets.has(portableOutputNameKey(entry.target))
+    ) {
+      throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_PATH_INVALID", `Transaction target ${index + 1} is invalid.`);
+    }
+    targets.add(portableOutputNameKey(entry.target));
+    const targetPath = path.join(directoryPath, entry.target);
+    if (
+      entry.stage !== path.basename(atomicSiblingPath(targetPath, tokenId, "stage", index)) ||
+      entry.rollback !== path.basename(atomicSiblingPath(targetPath, tokenId, "rollback", index))
+    ) {
+      throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_PATH_INVALID", `Transaction artifacts for entry ${index + 1} are invalid.`);
+    }
+    if (entry.initial_identity !== null && typeof entry.initial_identity !== "string") {
+      throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", `Initial identity for entry ${index + 1} is invalid.`);
+    }
+    if (
+      (entry.initial_identity === null && entry.initial_sha256 !== null) ||
+      (entry.initial_identity !== null && !/^[a-f0-9]{64}$/.test(entry.initial_sha256 ?? ""))
+    ) {
+      throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", `Initial digest for entry ${index + 1} is invalid.`);
+    }
+    if (entry.new_sha256 !== null && !/^[a-f0-9]{64}$/.test(entry.new_sha256)) {
+      throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", `Output digest for entry ${index + 1} is invalid.`);
+    }
+    if (payload.state !== "staging" && entry.new_sha256 === null) {
+      throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", `Prepared entry ${index + 1} has no output digest.`);
+    }
+  });
+  return payload;
+}
+async function readAtomicJournal(fsOps, journalPath) {
+  const match = path.basename(journalPath).match(PDF_OUTPUT_JOURNAL_PATTERN);
+  if (!match) {
+    throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_PATH_INVALID", `Transaction journal name is invalid: ${journalPath}`);
+  }
+  const before = await lstatIfPresent(fsOps, journalPath);
+  assertOwnedRegularArtifact(journalPath, before, { privateMode: true });
+  const handle = await fsOps.open(journalPath, NOFOLLOW_READ_FLAGS);
+  let raw;
+  try {
+    raw = await handle.readFile("utf8");
+  } finally {
+    await handle.close();
+  }
+  const after = await lstatIfPresent(fsOps, journalPath);
+  if (outputIdentity(after) !== outputIdentity(before)) {
+    throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_CHANGED", `Transaction journal changed while it was read: ${journalPath}`);
+  }
+  let envelope;
+  try {
+    envelope = JSON.parse(raw);
+  } catch (error) {
+    throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", `Transaction journal is not valid JSON: ${journalPath}`, error);
+  }
+  if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+    throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", `Transaction journal envelope is invalid: ${journalPath}`);
+  }
+  if (Object.keys(envelope).sort().join(",") !== "payload,payload_sha256") {
+    throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_INVALID", `Transaction journal envelope has unexpected properties: ${journalPath}`);
+  }
+  const serializedPayload = JSON.stringify(envelope.payload);
+  if (envelope.payload_sha256 !== sha256Value(Buffer.from(serializedPayload))) {
+    throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_DIGEST_INVALID", `Transaction journal digest is invalid: ${journalPath}`);
+  }
+  return validateJournalPayload(envelope.payload, path.dirname(journalPath), match[1]);
+}
+async function assertExpectedArtifact(fsOps, artifactPath, { sha256 = null, identity = null, privateMode = false } = {}) {
+  const stat = await lstatIfPresent(fsOps, artifactPath);
+  if (!stat) return null;
+  assertOwnedRegularArtifact(artifactPath, stat, { privateMode });
+  if (identity !== null && recoveryIdentity(stat) !== identity) {
+    throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Transaction artifact identity is ambiguous: ${artifactPath}`);
+  }
+  if (sha256 !== null && await sha256RegularFile(fsOps, artifactPath) !== sha256) {
+    throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Transaction artifact digest is ambiguous: ${artifactPath}`);
+  }
+  return stat;
+}
+async function removeExpectedArtifact(fsOps, artifactPath, expectations = {}) {
+  if (!await assertExpectedArtifact(fsOps, artifactPath, expectations)) return;
+  const cleanupErrors = [];
+  await removeAtomicArtifact(fsOps, artifactPath, cleanupErrors);
+  if (cleanupErrors.length > 0) {
+    throw atomicOutputError(
+      "ATOMIC_OUTPUT_RECOVERY_CLEANUP_FAILED",
+      `Failed to remove transaction artifact: ${artifactPath}`,
+      null,
+      cleanupErrors,
+    );
+  }
+}
+async function recoverAtomicJournal(fsOps, journalPath) {
+  const payload = await readAtomicJournal(fsOps, journalPath);
+  const directoryPath = path.dirname(journalPath);
+  const entries = payload.entries.map(entry => ({
+    ...entry,
+    targetPath: path.join(directoryPath, entry.target),
+    stagePath: path.join(directoryPath, entry.stage),
+    rollbackPath: path.join(directoryPath, entry.rollback),
+  }));
+  if (payload.state === "staging" || payload.state === "prepared") {
+    for (const entry of entries) {
+      if (await lstatIfPresent(fsOps, entry.rollbackPath)) {
+        throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Rollback exists before activation: ${entry.rollbackPath}`);
+      }
+      await removeExpectedArtifact(fsOps, entry.stagePath, {
+        sha256: entry.new_sha256,
+        privateMode: true,
+      });
+    }
+  } else if (payload.state === "activating") {
+    for (const entry of [...entries].reverse()) {
+      const rollback = await assertExpectedArtifact(fsOps, entry.rollbackPath, {
+        identity: entry.initial_identity,
+        sha256: entry.initial_sha256,
+      });
+      const target = await lstatIfPresent(fsOps, entry.targetPath);
+      if (target) assertAtomicOutputTarget(entry.targetPath, target);
+      if (entry.initial_identity !== null) {
+        if (rollback) {
+          if (target) {
+            if (await sha256RegularFile(fsOps, entry.targetPath) !== entry.new_sha256) {
+              throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Activated output is ambiguous: ${entry.targetPath}`);
+            }
+            await removeExpectedArtifact(fsOps, entry.targetPath, { sha256: entry.new_sha256 });
+          }
+          await fsOps.rename(entry.rollbackPath, entry.targetPath);
+        } else {
+          if (!target || recoveryIdentity(target) !== entry.initial_identity) {
+            throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Original output cannot be restored unambiguously: ${entry.targetPath}`);
+          }
+          if (await sha256RegularFile(fsOps, entry.targetPath) !== entry.initial_sha256) {
+            throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Original output digest is ambiguous: ${entry.targetPath}`);
+          }
+        }
+      } else {
+        if (rollback) {
+          throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Unexpected rollback exists for a new output: ${entry.rollbackPath}`);
+        }
+        if (target) await removeExpectedArtifact(fsOps, entry.targetPath, { sha256: entry.new_sha256 });
+      }
+      await removeExpectedArtifact(fsOps, entry.stagePath, {
+        sha256: entry.new_sha256,
+        privateMode: true,
+      });
+    }
+  } else {
+    for (const entry of entries) {
+      if (!await assertExpectedArtifact(fsOps, entry.targetPath, { sha256: entry.new_sha256 })) {
+        throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Committed output is missing: ${entry.targetPath}`);
+      }
+      await removeExpectedArtifact(fsOps, entry.stagePath, {
+        sha256: entry.new_sha256,
+        privateMode: true,
+      });
+      if (entry.initial_identity === null) {
+        if (await lstatIfPresent(fsOps, entry.rollbackPath)) {
+          throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Unexpected rollback exists for a committed new output: ${entry.rollbackPath}`);
+        }
+      } else {
+        await removeExpectedArtifact(fsOps, entry.rollbackPath, {
+          identity: entry.initial_identity,
+          sha256: entry.initial_sha256,
+        });
+      }
+    }
+  }
+  await syncAtomicOutputDirectory(fsOps, directoryPath);
+  await removeExpectedArtifact(fsOps, journalPath, { privateMode: true });
+  await syncAtomicOutputDirectory(fsOps, directoryPath);
+  return { journal_path: journalPath, recovered_state: payload.state };
+}
+async function recoverPdfOutputTransactionsUnlocked(directoryPath, { fsOps = fs } = {}) {
+  const resolvedDirectory = path.resolve(directoryPath);
+  const directoryStat = await fsOps.lstat(resolvedDirectory);
+  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
+    throw atomicOutputError("ATOMIC_OUTPUT_DIRECTORY_INVALID", `Output transaction directory is invalid: ${resolvedDirectory}`);
+  }
+  const names = await fsOps.readdir(resolvedDirectory);
+  const journals = names.filter(name => PDF_OUTPUT_JOURNAL_PATTERN.test(name)).sort();
+  const recovered = [];
+  for (const name of journals) {
+    recovered.push(await recoverAtomicJournal(fsOps, path.join(resolvedDirectory, name)));
+  }
+  for (const name of names.filter(name => PDF_OUTPUT_JOURNAL_CANDIDATE_PATTERN.test(name)).sort()) {
+    await removeExpectedArtifact(fsOps, path.join(resolvedDirectory, name), { privateMode: true });
+  }
+  for (const name of names.filter(name => PDF_OUTPUT_STALE_LOCK_PATTERN.test(name)).sort()) {
+    await removeOutputLockDirectory(fsOps, path.join(resolvedDirectory, name), { allowPartial: true });
+  }
+  for (const name of names.filter(name => PDF_OUTPUT_LOCK_CANDIDATE_PATTERN.test(name)).sort()) {
+    const pid = Number(name.match(PDF_OUTPUT_LOCK_CANDIDATE_PATTERN)[1]);
+    if (!processAppearsAlive(pid)) {
+      await removeOutputLockDirectory(fsOps, path.join(resolvedDirectory, name), { allowPartial: true });
+    }
+  }
+  return recovered;
+}
+export async function recoverPdfOutputTransactions(directoryPath, { fsOps = fs } = {}) {
+  const resolvedDirectory = path.resolve(directoryPath);
+  const directoryStat = await fsOps.lstat(resolvedDirectory);
+  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
+    throw atomicOutputError("ATOMIC_OUTPUT_DIRECTORY_INVALID", `Output transaction directory is invalid: ${resolvedDirectory}`);
+  }
+  const names = await fsOps.readdir(resolvedDirectory);
+  const needsRecovery = names.some(name => (
+    name === PDF_OUTPUT_LOCK_NAME || PDF_OUTPUT_JOURNAL_PATTERN.test(name) ||
+    PDF_OUTPUT_JOURNAL_CANDIDATE_PATTERN.test(name) ||
+    PDF_OUTPUT_LOCK_CANDIDATE_PATTERN.test(name) || PDF_OUTPUT_STALE_LOCK_PATTERN.test(name)
+  ));
+  if (!needsRecovery) return [];
+  const release = await acquireAtomicOutputDirectoryLock(fsOps, resolvedDirectory);
+  try {
+    return await recoverPdfOutputTransactionsUnlocked(resolvedDirectory, { fsOps });
+  } finally {
+    await release();
+  }
+}
+async function stageAtomicOutput(fsOps, targetPath, bytes, tokenId, index) {
+  const stagePath = atomicSiblingPath(targetPath, tokenId, "stage", index);
   let handle = null;
   let created = false;
   try {
@@ -1275,6 +1627,203 @@ async function lstatIfPresent(fsOps, targetPath) {
     throw error;
   }
 }
+function processAppearsAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    return true;
+  }
+}
+async function readPrivateJsonArtifact(fsOps, artifactPath) {
+  const before = await lstatIfPresent(fsOps, artifactPath);
+  if (!before) {
+    const error = new Error(`Private transaction artifact disappeared: ${artifactPath}`);
+    error.code = "ENOENT";
+    throw error;
+  }
+  assertOwnedRegularArtifact(artifactPath, before, { privateMode: true });
+  const handle = await fsOps.open(artifactPath, NOFOLLOW_READ_FLAGS);
+  let raw;
+  try {
+    raw = await handle.readFile("utf8");
+  } finally {
+    await handle.close();
+  }
+  const after = await lstatIfPresent(fsOps, artifactPath);
+  if (!after) {
+    const error = new Error(`Private transaction artifact disappeared: ${artifactPath}`);
+    error.code = "ENOENT";
+    throw error;
+  }
+  if (outputIdentity(after) !== outputIdentity(before)) {
+    throw atomicOutputError("ATOMIC_OUTPUT_ARTIFACT_CHANGED", `Private transaction artifact changed while it was read: ${artifactPath}`);
+  }
+  try {
+    return { value: JSON.parse(raw), identity: recoveryIdentity(before) };
+  } catch (error) {
+    throw atomicOutputError("ATOMIC_OUTPUT_ARTIFACT_INVALID", `Private transaction artifact is not valid JSON: ${artifactPath}`, error);
+  }
+}
+function assertOwnedPrivateDirectory(directoryPath, stat) {
+  if (!stat?.isDirectory() || stat.isSymbolicLink()) {
+    throw atomicOutputError("ATOMIC_OUTPUT_LOCK_INVALID", `Output transaction lock is not a directory: ${directoryPath}`);
+  }
+  if (
+    process.platform !== "win32" && typeof process.getuid === "function" &&
+    (stat.uid !== process.getuid() || (stat.mode & 0o077) !== 0)
+  ) {
+    throw atomicOutputError("ATOMIC_OUTPUT_LOCK_INVALID", `Output transaction lock directory is not private and owned: ${directoryPath}`);
+  }
+}
+async function readOutputLockDirectory(fsOps, lockPath) {
+  const before = await lstatIfPresent(fsOps, lockPath);
+  if (!before) {
+    const error = new Error(`Output transaction lock disappeared: ${lockPath}`);
+    error.code = "ENOENT";
+    throw error;
+  }
+  assertOwnedPrivateDirectory(lockPath, before);
+  const names = await fsOps.readdir(lockPath);
+  if (names.length === 0) {
+    const error = new Error(`Output transaction lock is being released: ${lockPath}`);
+    error.code = "ENOENT";
+    throw error;
+  }
+  if (names.length !== 1 || names[0] !== PDF_OUTPUT_LOCK_OWNER_NAME) {
+    throw atomicOutputError("ATOMIC_OUTPUT_LOCK_INVALID", `Output transaction lock directory has unexpected contents: ${lockPath}`);
+  }
+  const ownerPath = path.join(lockPath, PDF_OUTPUT_LOCK_OWNER_NAME);
+  const ownerArtifact = await readPrivateJsonArtifact(fsOps, ownerPath);
+  const after = await lstatIfPresent(fsOps, lockPath);
+  if (recoveryIdentity(after) !== recoveryIdentity(before)) {
+    throw atomicOutputError("ATOMIC_OUTPUT_LOCK_CHANGED", `Output transaction lock changed while it was read: ${lockPath}`);
+  }
+  return {
+    value: ownerArtifact.value,
+    identity: recoveryIdentity(before),
+    ownerIdentity: ownerArtifact.identity,
+  };
+}
+async function removeOutputLockDirectory(fsOps, lockPath, {
+  identity = null,
+  ownerIdentity = null,
+  allowPartial = false,
+} = {}) {
+  const stat = await lstatIfPresent(fsOps, lockPath);
+  if (!stat) return;
+  assertOwnedPrivateDirectory(lockPath, stat);
+  if (identity !== null && recoveryIdentity(stat) !== identity) {
+    throw atomicOutputError("ATOMIC_OUTPUT_LOCK_CHANGED", `Output transaction lock changed unexpectedly: ${lockPath}`);
+  }
+  const names = await fsOps.readdir(lockPath);
+  if (names.some(name => name !== PDF_OUTPUT_LOCK_OWNER_NAME) || (!allowPartial && names.length !== 1)) {
+    throw atomicOutputError("ATOMIC_OUTPUT_LOCK_INVALID", `Output transaction lock directory has unexpected contents: ${lockPath}`);
+  }
+  if (names.includes(PDF_OUTPUT_LOCK_OWNER_NAME)) {
+    await removeExpectedArtifact(fsOps, path.join(lockPath, PDF_OUTPUT_LOCK_OWNER_NAME), {
+      identity: ownerIdentity,
+      privateMode: true,
+    });
+  }
+  await fsOps.rmdir(lockPath);
+}
+async function acquireAtomicOutputDirectoryLock(fsOps, directoryPath) {
+  const lockPath = path.join(directoryPath, PDF_OUTPUT_LOCK_NAME);
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const token = randomUUID();
+    const candidatePath = `${lockPath}.candidate-${process.pid}-${token}`;
+    const candidateOwnerPath = path.join(candidatePath, PDF_OUTPUT_LOCK_OWNER_NAME);
+    let handle = null;
+    let candidateCreated = false;
+    let published = false;
+    try {
+      await fsOps.mkdir(candidatePath, { mode: 0o700 });
+      candidateCreated = true;
+      handle = await fsOps.open(candidateOwnerPath, "wx", 0o600);
+      await handle.writeFile(`${JSON.stringify({
+        schema_version: 1,
+        pid: process.pid,
+        token,
+        created_at: new Date().toISOString(),
+      })}\n`);
+      await handle.sync();
+      await handle.close();
+      handle = null;
+      await syncAtomicOutputDirectory(fsOps, candidatePath);
+      await fsOps.rename(candidatePath, lockPath);
+      published = true;
+      const lockArtifact = await readOutputLockDirectory(fsOps, lockPath);
+      await syncAtomicOutputDirectory(fsOps, directoryPath);
+      return async () => {
+        await removeOutputLockDirectory(fsOps, lockPath, {
+          identity: lockArtifact.identity,
+          ownerIdentity: lockArtifact.ownerIdentity,
+        });
+        await syncAtomicOutputDirectory(fsOps, directoryPath);
+      };
+    } catch (error) {
+      try { await handle?.close(); } catch {}
+      if (candidateCreated) {
+        try {
+          await removeOutputLockDirectory(fsOps, candidatePath, { allowPartial: true });
+        } catch (cleanupError) {
+          throw atomicOutputError(
+            "ATOMIC_OUTPUT_LOCK_CLEANUP_FAILED",
+            `Failed to clean an output transaction lock candidate: ${candidatePath}`,
+            error,
+            [{ path: candidatePath, error: cleanupError }],
+          );
+        }
+      }
+      if (published) {
+        await removeOutputLockDirectory(fsOps, lockPath, { allowPartial: true });
+      }
+      if (!new Set(["EEXIST", "ENOTEMPTY"]).has(error?.code)) throw error;
+      let lockArtifact;
+      try {
+        lockArtifact = await readOutputLockDirectory(fsOps, lockPath);
+      } catch (readError) {
+        if (readError?.code === "ENOENT") {
+          await new Promise(resolve => setTimeout(resolve, 1));
+          continue;
+        }
+        if (new Set(["ATOMIC_OUTPUT_ARTIFACT_CHANGED", "ATOMIC_OUTPUT_LOCK_CHANGED"]).has(readError?.code)) {
+          await new Promise(resolve => setTimeout(resolve, 1));
+          continue;
+        }
+        throw readError;
+      }
+      const { value: lock } = lockArtifact;
+      if (
+        !lock || lock.schema_version !== 1 || !Number.isSafeInteger(lock.pid) ||
+        lock.pid <= 0 || typeof lock.token !== "string" || !lock.token ||
+        typeof lock.created_at !== "string" ||
+        Object.keys(lock).sort().join(",") !== "created_at,pid,schema_version,token"
+      ) {
+        throw atomicOutputError("ATOMIC_OUTPUT_LOCK_INVALID", `Output transaction lock is invalid: ${lockPath}`);
+      }
+      if (processAppearsAlive(lock.pid)) {
+        throw atomicOutputError("ATOMIC_OUTPUT_CONCURRENT", `Another process is committing PDF outputs in: ${directoryPath}`);
+      }
+      const stalePath = `${lockPath}.stale-${randomUUID()}`;
+      try {
+        await fsOps.rename(lockPath, stalePath);
+      } catch (renameError) {
+        if (renameError?.code === "ENOENT") continue;
+        throw renameError;
+      }
+      await removeOutputLockDirectory(fsOps, stalePath, {
+        identity: lockArtifact.identity,
+        ownerIdentity: lockArtifact.ownerIdentity,
+      });
+      await syncAtomicOutputDirectory(fsOps, directoryPath);
+    }
+  }
+  throw atomicOutputError("ATOMIC_OUTPUT_LOCK_FAILED", `Could not establish output transaction lock: ${directoryPath}`);
+}
 
 function assertAtomicOutputTarget(targetPath, stat) {
   if (stat?.isDirectory()) {
@@ -1311,136 +1860,231 @@ function atomicOutputError(code, message, cause, cleanupErrors = []) {
 export async function writePdfOutputAtomic(targetPath, bytes, {
   fsOps = fs,
   token = atomicOutputToken(),
+  onTransition,
+  beforeTransaction,
 } = {}) {
-  await writePdfOutputsAtomic([{ targetPath, bytes }], { fsOps, token });
+  await writePdfOutputsAtomic([{ targetPath, bytes }], {
+    fsOps,
+    token,
+    onTransition,
+    beforeTransaction,
+  });
 }
 
 /**
- * Commit a set of PDF outputs as one in-process transaction. All bytes are
- * staged before any target changes. If a commit step fails, activated outputs
- * are removed and pre-existing targets are restored before the error returns.
+ * Commit a same-directory set of PDF outputs as one durable transaction. All
+ * bytes are staged before any target changes. A versioned journal restores an
+ * interrupted pre-commit set or finishes cleanup for a durably committed set.
  */
 export async function writePdfOutputsAtomic(entries, {
   fsOps = fs,
   token = atomicOutputToken(),
+  onTransition = async () => {},
+  beforeTransaction = async () => {},
 } = {}) {
   if (!Array.isArray(entries) || entries.length === 0) {
     throw new TypeError("Atomic PDF output entries must be a non-empty array.");
   }
-
+  const tokenId = atomicOutputTokenId(token);
   const targets = entries.map((entry, index) => {
     if (!entry || typeof entry.targetPath !== "string" || !entry.targetPath.trim()) {
       throw new TypeError(`Atomic PDF output entry ${index + 1} requires targetPath.`);
     }
     const targetPath = path.resolve(entry.targetPath);
+    if (portableOutputNameKey(path.basename(targetPath)).startsWith(".pdf-tools-")) {
+      throw atomicOutputError(
+        "ATOMIC_OUTPUT_RESERVED_TARGET",
+        `PDF output target uses a reserved transaction name: ${targetPath}`,
+      );
+    }
     return {
       targetPath,
       bytes: entry.bytes,
       produceBytes: entry.produceBytes,
       index,
       initial: null,
-      stagePath: null,
-      rollbackPath: atomicSiblingPath(targetPath, token, "rollback", index),
+      stagePath: atomicSiblingPath(targetPath, tokenId, "stage", index),
+      rollbackPath: atomicSiblingPath(targetPath, tokenId, "rollback", index),
       originalMoved: false,
       activated: false,
     };
   });
-  const uniqueTargets = new Set(targets.map(entry => entry.targetPath));
+  const uniqueTargets = new Set(targets.map(entry => (
+    path.join(path.dirname(entry.targetPath), portableOutputNameKey(path.basename(entry.targetPath)))
+  )));
   if (uniqueTargets.size !== targets.length) {
     const error = new Error("Atomic PDF output transaction contains duplicate target paths.");
     error.code = "ATOMIC_OUTPUT_DUPLICATE_TARGET";
     throw error;
   }
-
-  const cleanupErrors = [];
+  const directories = new Set(targets.map(entry => path.dirname(entry.targetPath)));
+  if (directories.size !== 1) {
+    throw atomicOutputError(
+      "ATOMIC_OUTPUT_MULTIPLE_DIRECTORIES",
+      "One PDF output transaction cannot span multiple directories.",
+    );
+  }
+  const [directoryPath] = directories;
+  const releaseDirectoryLock = await acquireAtomicOutputDirectoryLock(fsOps, directoryPath);
   try {
-    for (const entry of targets) {
-      entry.initial = await lstatIfPresent(fsOps, entry.targetPath);
-      assertAtomicOutputTarget(entry.targetPath, entry.initial);
-      if (await lstatIfPresent(fsOps, entry.rollbackPath)) {
-        throw atomicOutputError(
-          "ATOMIC_OUTPUT_ARTIFACT_COLLISION",
-          `Rollback path already exists: ${entry.rollbackPath}`,
-        );
-      }
+    await onTransition("lock_acquired");
+    await recoverPdfOutputTransactionsUnlocked(directoryPath, { fsOps });
+    await beforeTransaction();
+    const journalPath = atomicJournalPath(directoryPath, tokenId);
+    if (await lstatIfPresent(fsOps, journalPath)) {
+      throw atomicOutputError("ATOMIC_OUTPUT_ARTIFACT_COLLISION", `Transaction journal already exists: ${journalPath}`);
     }
-    for (const entry of targets) {
-      const bytes = typeof entry.produceBytes === "function"
-        ? await entry.produceBytes()
-        : entry.bytes;
-      entry.stagePath = await stageAtomicOutput(
-        fsOps,
-        entry.targetPath,
-        bytes,
-        token,
-        entry.index,
-      );
-      entry.bytes = null;
-      entry.produceBytes = null;
-    }
-
-    for (const entry of targets) {
-      const current = await lstatIfPresent(fsOps, entry.targetPath);
-      if (outputIdentity(current) !== outputIdentity(entry.initial)) {
-        throw atomicOutputError(
-          "ATOMIC_OUTPUT_CONFLICT",
-          `Output changed while the transaction was being staged: ${entry.targetPath}`,
-        );
-      }
-      if (current) {
-        await fsOps.rename(entry.targetPath, entry.rollbackPath);
-        entry.originalMoved = true;
-      }
-      await fsOps.rename(entry.stagePath, entry.targetPath);
-      entry.stagePath = null;
-      entry.activated = true;
-    }
-
-    for (const directory of new Set(targets.map(entry => path.dirname(entry.targetPath)))) {
-      await syncAtomicOutputDirectory(fsOps, directory);
-    }
-  } catch (cause) {
-    for (const entry of [...targets].reverse()) {
-      if (entry.activated) {
-        await removeAtomicArtifact(fsOps, entry.targetPath, cleanupErrors);
-        entry.activated = false;
-      }
-      if (entry.originalMoved) {
-        try {
-          await fsOps.rename(entry.rollbackPath, entry.targetPath);
-          entry.originalMoved = false;
-        } catch (error) {
-          cleanupErrors.push({ path: entry.rollbackPath, error });
+    const cleanupErrors = [];
+    let journalCreated = false;
+    let committed = false;
+    const payload = {
+      schema_version: PDF_OUTPUT_TRANSACTION_VERSION,
+      token_id: tokenId,
+      state: "staging",
+      entries: [],
+    };
+    try {
+      for (const entry of targets) {
+        entry.initial = await lstatIfPresent(fsOps, entry.targetPath);
+        assertAtomicOutputTarget(entry.targetPath, entry.initial);
+        entry.initialSha256 = entry.initial
+          ? await sha256RegularFile(fsOps, entry.targetPath)
+          : null;
+        if (outputIdentity(await lstatIfPresent(fsOps, entry.targetPath)) !== outputIdentity(entry.initial)) {
+          throw atomicOutputError(
+            "ATOMIC_OUTPUT_CONFLICT",
+            `Output changed while its initial digest was captured: ${entry.targetPath}`,
+          );
+        }
+        if (await lstatIfPresent(fsOps, entry.rollbackPath)) {
+          throw atomicOutputError(
+            "ATOMIC_OUTPUT_ARTIFACT_COLLISION",
+            `Rollback path already exists: ${entry.rollbackPath}`,
+          );
+        }
+        if (await lstatIfPresent(fsOps, entry.stagePath)) {
+          throw atomicOutputError(
+            "ATOMIC_OUTPUT_ARTIFACT_COLLISION",
+            `Stage path already exists: ${entry.stagePath}`,
+          );
         }
       }
+      payload.entries = targets.map(entry => ({
+        target: path.basename(entry.targetPath),
+        stage: path.basename(entry.stagePath),
+        rollback: path.basename(entry.rollbackPath),
+        initial_identity: recoveryIdentity(entry.initial),
+        initial_sha256: entry.initialSha256,
+        new_sha256: null,
+      }));
+      await writeAtomicJournal(fsOps, journalPath, payload);
+      journalCreated = true;
+      await onTransition("journal_staging");
+      for (const entry of targets) {
+        const bytes = typeof entry.produceBytes === "function"
+          ? await entry.produceBytes()
+          : entry.bytes;
+        payload.entries[entry.index].new_sha256 = sha256Value(bytes);
+        entry.stagePath = await stageAtomicOutput(
+          fsOps,
+          entry.targetPath,
+          bytes,
+          tokenId,
+          entry.index,
+        );
+        entry.bytes = null;
+        entry.produceBytes = null;
+        await onTransition(`stage_${entry.index}`);
+      }
+      payload.state = "prepared";
+      await writeAtomicJournal(fsOps, journalPath, payload);
+      await onTransition("journal_prepared");
+      for (const entry of targets) {
+        const current = await lstatIfPresent(fsOps, entry.targetPath);
+        if (outputIdentity(current) !== outputIdentity(entry.initial)) {
+          throw atomicOutputError(
+            "ATOMIC_OUTPUT_CONFLICT",
+            `Output changed while the transaction was being staged: ${entry.targetPath}`,
+          );
+        }
+      }
+      payload.state = "activating";
+      await writeAtomicJournal(fsOps, journalPath, payload);
+      await onTransition("journal_activating");
+      for (const entry of targets) {
+        const current = await lstatIfPresent(fsOps, entry.targetPath);
+        if (outputIdentity(current) !== outputIdentity(entry.initial)) {
+          throw atomicOutputError(
+            "ATOMIC_OUTPUT_CONFLICT",
+            `Output changed immediately before activation: ${entry.targetPath}`,
+          );
+        }
+        if (current) {
+          await fsOps.rename(entry.targetPath, entry.rollbackPath);
+          entry.originalMoved = true;
+          await onTransition(`rollback_${entry.index}`);
+        }
+        await fsOps.rename(entry.stagePath, entry.targetPath);
+        entry.stagePath = null;
+        entry.activated = true;
+        await onTransition(`activate_${entry.index}`);
+      }
+      await syncAtomicOutputDirectory(fsOps, directoryPath);
+      await onTransition("activation_synced");
+      payload.state = "committed";
+      await writeAtomicJournal(fsOps, journalPath, payload);
+      committed = true;
+      await onTransition("journal_committed");
+    } catch (cause) {
+      try {
+        if (journalCreated || await lstatIfPresent(fsOps, journalPath)) {
+          await recoverAtomicJournal(fsOps, journalPath);
+        }
+      } catch (recoveryError) {
+        cleanupErrors.push({ path: journalPath, error: recoveryError });
+      }
+      if (cleanupErrors.length > 0) {
+        throw atomicOutputError(
+          "ATOMIC_OUTPUT_ROLLBACK_FAILED",
+          committed
+            ? "The PDF outputs committed, but transaction cleanup could not be completed."
+            : "The PDF output transaction failed and could not be fully recovered.",
+          cause,
+          cleanupErrors,
+        );
+      }
+      if (committed) return;
+      throw cause;
     }
-    for (const entry of targets) {
-      if (entry.stagePath) await removeAtomicArtifact(fsOps, entry.stagePath, cleanupErrors);
+    try {
+      for (const entry of targets) {
+        if (entry.originalMoved) {
+          await removeExpectedArtifact(fsOps, entry.rollbackPath, {
+            identity: recoveryIdentity(entry.initial),
+            sha256: entry.initialSha256,
+          });
+          entry.originalMoved = false;
+          await onTransition(`rollback_removed_${entry.index}`);
+        }
+      }
+      await syncAtomicOutputDirectory(fsOps, directoryPath);
+      await removeExpectedArtifact(fsOps, journalPath, { privateMode: true });
+      await syncAtomicOutputDirectory(fsOps, directoryPath);
+      await onTransition("journal_removed");
+    } catch (cause) {
+      try {
+        if (await lstatIfPresent(fsOps, journalPath)) await recoverAtomicJournal(fsOps, journalPath);
+      } catch (recoveryError) {
+        throw atomicOutputError(
+          "ATOMIC_OUTPUT_COMMITTED_CLEANUP_FAILED",
+          "The PDF outputs committed, but durable transaction cleanup could not be completed.",
+          cause,
+          [{ path: journalPath, error: recoveryError }],
+        );
+      }
     }
-    if (cleanupErrors.length > 0) {
-      throw atomicOutputError(
-        "ATOMIC_OUTPUT_ROLLBACK_FAILED",
-        "The PDF output transaction failed and could not be fully rolled back.",
-        cause,
-        cleanupErrors,
-      );
-    }
-    throw cause;
-  }
-
-  for (const entry of targets) {
-    if (entry.originalMoved) {
-      await removeAtomicArtifact(fsOps, entry.rollbackPath, cleanupErrors);
-      entry.originalMoved = false;
-    }
-  }
-  if (cleanupErrors.length > 0) {
-    throw atomicOutputError(
-      "ATOMIC_OUTPUT_CLEANUP_FAILED",
-      "The PDF outputs committed, but rollback artifacts could not be removed.",
-      null,
-      cleanupErrors,
-    );
+  } finally {
+    await releaseDirectoryLock();
   }
 }
 
