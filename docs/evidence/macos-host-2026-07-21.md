@@ -1,5 +1,10 @@
 # macOS Claude Desktop host evidence — 2026-07-21
 
+> Historical artifact record: this document remains immutable for candidate
+> `9278d89b…`. The later deterministic `b5862215…` release candidate and its
+> direct native-runtime rerun are recorded in
+> [`release-candidate-2026-07-21.md`](release-candidate-2026-07-21.md).
+
 ## Outcome and claim boundary
 
 The exact candidate MCPB was installed by Claude Desktop's registered MCPB file
