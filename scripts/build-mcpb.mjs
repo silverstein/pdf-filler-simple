@@ -22,6 +22,12 @@ const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
 const DEFAULT_OUTPUT = path.join(REPO_ROOT, "pdf-toolkit-mcp.mcpb");
 
+const BUILD_TOOLCHAIN_PACKAGES = [
+  "@anthropic-ai/mcpb",
+  "vite",
+  "vite-plugin-singlefile",
+];
+
 const NATIVE_TARGETS = [
   { packageName: "@napi-rs/canvas-darwin-arm64", binary: "skia.darwin-arm64.node" },
   { packageName: "@napi-rs/canvas-darwin-x64", binary: "skia.darwin-x64.node" },
@@ -43,6 +49,33 @@ function run(command, args, { cwd = REPO_ROOT, capture = false } = {}) {
     throw new Error(`${command} exited with status ${result.status}${detail}`);
   }
   return result.stdout;
+}
+
+function verifyInstalledBuildToolchain() {
+  const packageJson = JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"));
+  const lock = JSON.parse(readFileSync(path.join(REPO_ROOT, "package-lock.json"), "utf8"));
+  const lockedRoot = lock.packages?.[""];
+
+  for (const packageName of BUILD_TOOLCHAIN_PACKAGES) {
+    const declared = packageJson.devDependencies?.[packageName];
+    const lockedDeclaration = lockedRoot?.devDependencies?.[packageName];
+    const locked = lock.packages?.[`node_modules/${packageName}`]?.version;
+    const installedPath = path.join(REPO_ROOT, "node_modules", ...packageName.split("/"), "package.json");
+
+    if (!declared || declared !== lockedDeclaration || !locked) {
+      throw new Error(`Build toolchain lock is incomplete or stale for ${packageName}`);
+    }
+    if (!existsSync(installedPath)) {
+      throw new Error(`Build toolchain package is not installed: ${packageName}. Run npm ci.`);
+    }
+
+    const installed = JSON.parse(readFileSync(installedPath, "utf8")).version;
+    if (installed !== locked) {
+      throw new Error(
+        `Installed ${packageName}@${installed} does not match package-lock.json ${locked}. Run npm ci before building.`,
+      );
+    }
+  }
 }
 
 function copyRuntimeSource(stagingDir) {
@@ -171,6 +204,7 @@ async function main() {
   );
 
   try {
+    verifyInstalledBuildToolchain();
     run(npmCommand, ["run", "build:ui"]);
     copyRuntimeSource(stagingDir);
     run(
