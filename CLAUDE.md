@@ -64,8 +64,8 @@ npm install
 # Run MCP server locally (for testing with Claude Desktop or Cursor)
 node server/index.js
 
-# Build MCPB for Claude Desktop
-mcpb pack
+# Build and inspect a platform-complete MCPB for Claude Desktop
+npm run build:mcpb
 
 # Create shareable package for Cursor
 node package-for-friend.js
@@ -162,7 +162,7 @@ Ensure ESM syntax is used throughout (`import`/`export`). Check that `package.js
 Pass the `password` parameter to relevant tools. The error message should indicate if a password is required.
 
 ### MCPB not loading in Claude Desktop
-1. Ensure `mcpb pack` completed successfully
+1. Ensure `npm run build:mcpb` and the platform's `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb` completed successfully
 2. Check Claude Desktop logs for errors
 3. Verify `manifest.mcpb.json` is valid JSON
 
@@ -195,7 +195,7 @@ The interactive PDF viewer (`display_pdf`) runs inside Claude Desktop's Electron
 **If upgrading pdfjs-dist:**
 1. Grep the new version for ES2025+ APIs: `grep -r "getOrInsertComputed\|sumPrecise" node_modules/pdfjs-dist/build/`
 2. Rebuild the UI: `npm run build:ui`
-3. Run `mcpb pack` and install in Claude Desktop
+3. Run `npm run build:mcpb` and install the artifact in Claude Desktop
 4. Test `display_pdf` on at least one PDF — confirm pages render without errors
 5. Check Claude Desktop logs: `~/Library/Logs/Claude/claude.ai-web.log` for `[viewer] Render error`
 

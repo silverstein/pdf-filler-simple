@@ -83,9 +83,22 @@ Use a local MCP host (Claude Desktop or Cursor) and point it at
 - Build with:
 
 ```
-npm install -g @anthropic-ai/mcpb
-mcpb pack
+npm ci
+npm run build:mcpb
 ```
+
+`build:mcpb` creates a clean production-only staging directory, replaces npm's
+host-selected native optional dependency with a fixed set of five locked
+`@napi-rs/canvas` binaries: macOS and Windows ARM64/x64 for Claude Desktop,
+plus Linux x64 GNU for CI and compatible local hosts. It packs
+`manifest.mcpb.json` as `manifest.json`, then inspects the archive before
+printing its SHA-256. Do not release an
+artifact produced by a plain host-local `mcpb pack`: npm normally installs
+only the native optional dependency for the build machine.
+
+Run `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb` on each release host. It
+extracts the finished artifact to a temporary clean directory, starts the
+bundled server, lists its tools, and requires native `render_pdf_page` output.
 
 ### Cursor share package
 
@@ -139,7 +152,9 @@ Run these after any tool or packaging change:
 - `get_pdf_info` on a non-form PDF — returns "none" for form fields
 - `npm test` — all parsePageRanges tests pass
 - `npm run build:ui` produces single-file HTML in `dist-ui/`
-- `mcpb pack` builds successfully
+- `npm run build:mcpb` builds successfully and reports all five native canvas bindings
+- `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb` passes on macOS ARM64 and Windows x64
+- Inspect the reported SHA-256 and retain it with the release evidence
 
 ## Upstream tracking (MCP + MCPB)
 

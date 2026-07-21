@@ -13,7 +13,8 @@
 - `npm install`: install runtime dependencies (Node.js 18+).
 - `node server/index.js`: run the MCP server over stdio for local hosts (Cursor, Claude) and watch stderr for diagnostics.
 - `node package-for-friend.js`: regenerate `pdf-toolkit-mcp.zip`; requires the `zip` CLI and ensures shareable installers stay current.
-- `mcpb pack`: rebuild the `.mcpb` extension after code or asset updates; install via Claude Desktop to validate.
+- `npm run build:mcpb`: build the UI, create a clean production bundle with the locked macOS/Windows native canvas packages, and verify the `.mcpb` contents.
+- `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb`: start the extracted artifact and require tool discovery plus native page rendering on each release platform.
 
 ## Coding Style & Naming Conventions
 - Use 2-space indentation, `const`/`let` semantics, and double-quoted strings to match `server/index.js` and shipped bundles.

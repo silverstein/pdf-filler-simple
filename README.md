@@ -207,10 +207,8 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 ```bash
 git clone https://github.com/Open-Document-Alliance/PDF-Tools
 cd PDF-Tools
-npm install
-npm run build:ui
-npm install -g @anthropic-ai/mcpb
-mcpb pack
+npm ci
+npm run build:mcpb
 ```
 
 ## Development
@@ -243,10 +241,11 @@ npm run smoke:ui-sign
 npm run smoke:ui-inspect
 npm run smoke:ui-preview-zone
 npm run smoke:ui-draw
+npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb
 npm run build:ui
+npm run build:mcpb
 npm test
 node server/index.js
-mcpb pack
 node package-for-friend.js
 ```
 
