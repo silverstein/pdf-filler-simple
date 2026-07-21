@@ -3,11 +3,11 @@
   "registry_id": "pdf-tools.trajectory.trust.v1",
   "corpus_manifest": {
     "path": "test/fixtures/eval/manifest.v1.json",
-    "sha256": "0dba689b274c183033b1f852b1d704d40b4b68d8dffab474b57b3fde35fe52a5"
+    "sha256": "f1313dc562d3466cbb0237adac6c053fafc62029d84d39ee2cb6aae317c9097b"
   },
   "approved_suites": {
     "pdf-tools.trajectory.v1": {
-      "suite_sha256": "e0452ae12688ed5f0e2fd14ec1321871ecb4e3c2942dd0fc45eb64f97ada4e18",
+      "suite_sha256": "e30d99e7650f8ec5f8b4c6d9a8a08ff2515d2d3595944ba5e2811de046017d5c",
       "categories": [
         "inspect_and_answer",
         "fill_and_validate",
@@ -82,7 +82,7 @@
       "regressions": {
         "pdf-tools.regression.trajectory.v1.error-recovery.missing-recovery": {
           "relationships": ["failure"],
-          "failure_checks": ["required_tools/attempt_and_continue", "expected_semantics/recover-with-allowed-source", "evidence/result_bindings", "supported_claims", "error_recovery"]
+          "failure_checks": ["required_tools/attempt_and_continue", "expected_semantics/recover-with-allowed-source", "expected_observation/allowed-source-file", "evidence/result_bindings", "supported_claims", "error_recovery"]
         }
       }
     }

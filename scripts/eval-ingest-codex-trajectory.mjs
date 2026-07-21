@@ -5,133 +5,19 @@ import { loadImage } from "@napi-rs/canvas";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { inflateSync } from "node:zlib";
 import {
   loadTrajectorySuite,
   renderObservationReference,
   validateTrajectoryTrialSet,
 } from "../test/eval/trajectory-grader.js";
 import { getPageRenderScale, getRegionPixelRect } from "../server/helpers.js";
+import { parsePngEvidence } from "../test/eval/png-evidence.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
-const MAX_PNG_BYTES = 64 * 1024 * 1024;
-const MAX_PNG_DIMENSION = 8192;
-const MAX_PNG_INFLATED_BYTES = 256 * 1024 * 1024;
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-const PNG_CRC_TABLE = Array.from({ length: 256 }, (_, byte) => {
-  let value = byte;
-  for (let bit = 0; bit < 8; bit += 1) {
-    value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
-  }
-  return value >>> 0;
-});
-
-function pngCrc32(bytes) {
-  let crc = 0xffffffff;
-  for (const byte of bytes) crc = PNG_CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
-  return (crc ^ 0xffffffff) >>> 0;
-}
-
-function pngScanlineLengths(width, height, bitsPerPixel, interlace) {
-  const passes = interlace === 0
-    ? [[0, 0, 1, 1]]
-    : [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4],
-      [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]];
-  const lengths = [];
-  for (const [startX, startY, stepX, stepY] of passes) {
-    if (width <= startX || height <= startY) continue;
-    const passWidth = Math.ceil((width - startX) / stepX);
-    const passHeight = Math.ceil((height - startY) / stepY);
-    const rowLength = Math.ceil((passWidth * bitsPerPixel) / 8);
-    for (let row = 0; row < passHeight; row += 1) lengths.push(rowLength);
-  }
-  return lengths;
-}
-
-function validatePngChunks(bytes, tool) {
-  let offset = 8;
-  let chunkIndex = 0;
-  let foundIdat = false;
-  let foundIend = false;
-  let idatEnded = false;
-  const idatChunks = [];
-  while (offset < bytes.length) {
-    if (offset + 12 > bytes.length) throw new Error(`${tool} PNG has a truncated chunk header`);
-    const length = bytes.readUInt32BE(offset);
-    const type = bytes.subarray(offset + 4, offset + 8).toString("ascii");
-    const chunkEnd = offset + 12 + length;
-    if (chunkEnd > bytes.length) throw new Error(`${tool} PNG has a truncated ${type || "unknown"} chunk`);
-    const crcExpected = bytes.readUInt32BE(offset + 8 + length);
-    const crcActual = pngCrc32(bytes.subarray(offset + 4, offset + 8 + length));
-    if (crcActual !== crcExpected) throw new Error(`${tool} PNG ${type || "unknown"} chunk failed CRC validation`);
-    if (chunkIndex === 0 && (type !== "IHDR" || length !== 13)) {
-      throw new Error(`${tool} PNG must begin with a 13-byte IHDR chunk`);
-    }
-    if (chunkIndex > 0 && type === "IHDR") throw new Error(`${tool} PNG contains a duplicate IHDR chunk`);
-    if (type === "IDAT") {
-      if (idatEnded) throw new Error(`${tool} PNG IDAT chunks must be consecutive`);
-      foundIdat = true;
-      idatChunks.push(bytes.subarray(offset + 8, offset + 8 + length));
-    } else if (foundIdat && type !== "IEND") {
-      idatEnded = true;
-    }
-    if (type === "IEND") {
-      if (length !== 0 || chunkEnd !== bytes.length) throw new Error(`${tool} PNG has an invalid terminal IEND chunk`);
-      foundIend = true;
-    }
-    if (foundIend) break;
-    offset = chunkEnd;
-    chunkIndex += 1;
-  }
-  if (!foundIdat || !foundIend) throw new Error(`${tool} PNG must contain IDAT data and a terminal IEND chunk`);
-  const width = bytes.readUInt32BE(16);
-  const height = bytes.readUInt32BE(20);
-  const bitDepth = bytes[24];
-  const colorType = bytes[25];
-  const compression = bytes[26];
-  const filter = bytes[27];
-  const interlace = bytes[28];
-  const allowedDepths = new Map([
-    [0, new Set([1, 2, 4, 8, 16])],
-    [2, new Set([8, 16])],
-    [3, new Set([1, 2, 4, 8])],
-    [4, new Set([8, 16])],
-    [6, new Set([8, 16])],
-  ]);
-  if (width < 1 || height < 1 || width > MAX_PNG_DIMENSION || height > MAX_PNG_DIMENSION
-    || width * height > MAX_PNG_DIMENSION * MAX_PNG_DIMENSION) {
-    throw new Error(`${tool} PNG dimensions exceed the bounded ingestion contract`);
-  }
-  if (!allowedDepths.get(colorType)?.has(bitDepth) || compression !== 0 || filter !== 0
-    || !new Set([0, 1]).has(interlace)) {
-    throw new Error(`${tool} PNG has an unsupported or invalid IHDR encoding`);
-  }
-  const samplesPerPixel = new Map([[0, 1], [2, 3], [3, 1], [4, 2], [6, 4]]).get(colorType);
-  const scanlineLengths = pngScanlineLengths(width, height, samplesPerPixel * bitDepth, interlace);
-  const expectedInflatedLength = scanlineLengths.reduce((sum, length) => sum + length + 1, 0);
-  if (expectedInflatedLength > MAX_PNG_INFLATED_BYTES) {
-    throw new Error(`${tool} PNG inflated data exceeds the bounded ingestion contract`);
-  }
-  let inflated;
-  try {
-    inflated = inflateSync(Buffer.concat(idatChunks), { maxOutputLength: expectedInflatedLength + 1 });
-  } catch {
-    throw new Error(`${tool} PNG IDAT stream cannot be inflated`);
-  }
-  if (inflated.length !== expectedInflatedLength) {
-    throw new Error(`${tool} PNG inflated data does not match its IHDR geometry`);
-  }
-  let scanlineOffset = 0;
-  for (const length of scanlineLengths) {
-    if (inflated[scanlineOffset] > 4) throw new Error(`${tool} PNG contains an invalid scanline filter`);
-    scanlineOffset += length + 1;
-  }
-  return { width, height };
 }
 
 function parseJsonLines(text) {
@@ -168,9 +54,9 @@ function retainedHostDiagnostic(item) {
   if (!item || item.type !== "error" || typeof item.id !== "string"
     || typeof item.message !== "string") return false;
   if (Object.keys(item).some(key => !new Set(["id", "type", "message"]).has(key))) return false;
-  return item.message.startsWith(
-    "Skill descriptions were shortened to fit the 2% skills context budget.",
-  );
+  return item.message === "Skill descriptions were shortened to fit the 2% skills context budget. "
+    + "Codex can still see every skill, but some descriptions are shorter. "
+    + "Disable unused skills or plugins to leave more room for the rest.";
 }
 
 function validMcpResult(value) {
@@ -329,34 +215,21 @@ async function strictPngImage(item) {
     .filter(({ block }) => block?.type === "image");
   if (imageBlocks.length !== 1) throw new Error(`${item.tool} must retain exactly one image content block`);
   const { block, index } = imageBlocks[0];
-  if (block.mimeType !== "image/png" || typeof block.data !== "string" || block.data.length === 0) {
-    throw new Error(`${item.tool} must retain one non-empty image/png block`);
-  }
-  if (block.data.length > Math.ceil(MAX_PNG_BYTES * 4 / 3) + 4) {
-    throw new Error(`${item.tool} PNG exceeds the 64 MiB ingestion limit`);
-  }
-  const bytes = Buffer.from(block.data, "base64");
-  if (bytes.length < 57 || bytes.length > MAX_PNG_BYTES
-    || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a"
-    || bytes.subarray(12, 16).toString("ascii") !== "IHDR"
-    || bytes.toString("base64") !== block.data) {
-    throw new Error(`${item.tool} image block is not canonical PNG base64`);
-  }
-  const header = validatePngChunks(bytes, item.tool);
+  const parsed = parsePngEvidence(block.data, block.mimeType, item.tool);
   let decoded;
   try {
-    decoded = await loadImage(bytes);
+    decoded = await loadImage(parsed.bytes);
   } catch {
     throw new Error(`${item.tool} image block cannot be decoded as PNG`);
   }
-  if (decoded.width !== header.width || decoded.height !== header.height) {
+  if (decoded.width !== parsed.width || decoded.height !== parsed.height) {
     throw new Error(`${item.tool} decoded PNG dimensions do not match its IHDR`);
   }
   return {
-    bytes,
+    bytes: parsed.bytes,
     index,
-    width: header.width,
-    height: header.height,
+    width: parsed.width,
+    height: parsed.height,
   };
 }
 
@@ -665,6 +538,9 @@ export async function ingestCodexTrajectory({
         raw_result_sha256: digest(JSON.stringify(item.result ?? null)),
         observed_sources: observation.observed_sources ?? [],
         observed_artifacts: observation.observed_artifacts ?? [],
+        ...(new Set(["render_pdf_page", "render_pdf_region"]).has(item.tool)
+          ? { retained_raw_result: item.result }
+          : {}),
         semantic_observations: await semanticObservations(
           item,
           observation,

@@ -7,7 +7,7 @@
     "confidence_level": 0.95,
     "max_harness_failure_rate": 0.1,
     "trust_registry_id": "pdf-tools.trajectory.trust.v1",
-    "corpus_manifest_sha256": "0dba689b274c183033b1f852b1d704d40b4b68d8dffab474b57b3fde35fe52a5",
+    "corpus_manifest_sha256": "f1313dc562d3466cbb0237adac6c053fafc62029d84d39ee2cb6aae317c9097b",
     "tool_contract_id": "pdf-tools.trajectory.tool-contracts.v1",
     "tool_contract_sha256": "6951f817cb9dac2d6ed8463165ee6169196f92abfb9d1fa063db1ab3da1c90d0",
     "runtime_version": "0.8.6"

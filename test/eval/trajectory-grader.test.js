@@ -16,6 +16,7 @@ import { runTrajectoryEvaluation } from "../../scripts/eval-run-trajectories.mjs
 import {
   gradeTrajectoryTrial,
   loadTrajectorySuite,
+  renderObservationReference,
   summarizeTrajectoryTrials,
   trajectoryAttestationPayload,
   validateTrajectorySuite,
@@ -139,6 +140,7 @@ const TRIALS_PATH = path.join(
   "trajectories",
   "calibration-trials.v1.json"
 );
+const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const temporaryDirectories = [];
 
 afterEach(async () => {
@@ -181,7 +183,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
       confidence_level: 0.95,
       max_harness_failure_rate: 0.1,
       trust_registry_id: "pdf-tools.trajectory.trust.v1",
-      corpus_manifest_sha256: "0dba689b274c183033b1f852b1d704d40b4b68d8dffab474b57b3fde35fe52a5",
+      corpus_manifest_sha256: "f1313dc562d3466cbb0237adac6c053fafc62029d84d39ee2cb6aae317c9097b",
       tool_contract_id: "pdf-tools.trajectory.tool-contracts.v1",
       tool_contract_sha256: "6951f817cb9dac2d6ed8463165ee6169196f92abfb9d1fa063db1ab3da1c90d0",
       runtime_version: "0.8.6",
@@ -265,7 +267,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
   });
 
   it("derives render evidence from retained PNG bytes and an external source snapshot", async () => {
-    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const png = TINY_PNG_BASE64;
     const startedAt = "2026-07-21T07:00:01.000Z";
     const sourceSha256 = "d".repeat(64);
     const sourceEvent = {
@@ -530,9 +532,17 @@ describe("agent trajectory grader v4 integrity contract", () => {
     expect(check(forgedGrade, "semantic_result_bindings").passed).toBe(false);
 
     const imageDigestDrift = structuredClone(base);
-    imageDigestDrift.trajectory.find(step => step.tool === "render_pdf_page")
-      .result.semantic_observations.render_regions[0].image_sha256 = "0".repeat(64);
+    const driftStep = imageDigestDrift.trajectory.find(step => step.tool === "render_pdf_page");
+    const driftRender = driftStep.result.semantic_observations.render_regions[0];
+    driftRender.image_sha256 = "0".repeat(64);
+    imageDigestDrift.run.events.find(event => event.event_id === driftRender.render_observation_event_id)
+      .reference = renderObservationReference(driftRender);
     expect(check(gradeTrajectoryTrial(job, imageDigestDrift), "semantic_result_bindings").passed).toBe(false);
+
+    const retainedRawDrift = structuredClone(base);
+    retainedRawDrift.trajectory.find(step => step.tool === "render_pdf_page")
+      .result.retained_raw_result.content[1].data = TINY_PNG_BASE64.replace(/.$/, "A");
+    expect(check(gradeTrajectoryTrial(job, retainedRawDrift), "semantic_result_bindings").passed).toBe(false);
 
     const untrustedEvent = structuredClone(base);
     const render = untrustedEvent.trajectory.find(step => step.tool === "render_pdf_page")
@@ -597,6 +607,39 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const invalidSet = structuredClone(trialSet);
     invalidSet.trials = [trial];
     expect(validateTrajectoryTrialSet(suite, invalidSet).length).toBeGreaterThan(0);
+  });
+
+  it("fails closed instead of throwing on malformed nested arrays", async () => {
+    const { suite, trialSet, jobs } = await loadFixtures();
+
+    const malformedSemantics = trialFor(trialSet, "compare-and-explain");
+    malformedSemantics.trajectory[0].result.semantic_observations.pages = {};
+    const semanticsJob = jobs.get(malformedSemantics.job_id);
+    expect(() => validateTrajectoryTrial(semanticsJob, malformedSemantics)).not.toThrow();
+    expect(validateTrajectoryTrial(semanticsJob, malformedSemantics)).toContain(
+      "trial.trajectory[0].result.semantic_observations.pages must be an array",
+    );
+    expect(() => gradeTrajectoryTrial(semanticsJob, malformedSemantics)).not.toThrow();
+    expect(check(gradeTrajectoryTrial(semanticsJob, malformedSemantics), "trial_schema").passed)
+      .toBe(false);
+
+    const malformedEvents = trialFor(trialSet, "compare-and-explain");
+    malformedEvents.run.events = {};
+    const eventsJob = jobs.get(malformedEvents.job_id);
+    expect(() => validateTrajectoryTrial(eventsJob, malformedEvents)).not.toThrow();
+    expect(validateTrajectoryTrial(eventsJob, malformedEvents)).toContain(
+      "trial.run.events must contain observed host events",
+    );
+    expect(() => gradeTrajectoryTrial(eventsJob, malformedEvents)).not.toThrow();
+    expect(check(gradeTrajectoryTrial(eventsJob, malformedEvents), "trial_schema").passed)
+      .toBe(false);
+
+    const malformedPlan = structuredClone(trialSet);
+    malformedPlan.run_plan.entries = {};
+    expect(() => validateTrajectoryTrialSet(suite, malformedPlan)).not.toThrow();
+    expect(validateTrajectoryTrialSet(suite, malformedPlan)).toContain(
+      "trial_set.run_plan.entries must be non-empty",
+    );
   });
 
   it("rejects duplicate job repeats, run IDs, and host event IDs", async () => {
@@ -753,7 +796,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
         item: {
           id: "item-host-warning",
           type: "error",
-          message: "Skill descriptions were shortened to fit the 2% skills context budget. Disable unused skills.",
+          message: "Skill descriptions were shortened to fit the 2% skills context budget. Codex can still see every skill, but some descriptions are shorter. Disable unused skills or plugins to leave more room for the rest.",
         },
       },
       {

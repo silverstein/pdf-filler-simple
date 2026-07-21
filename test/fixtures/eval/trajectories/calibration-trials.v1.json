@@ -9,7 +9,7 @@
     "run_plan_id": "pdf-tools.trajectory.calibration.run-plan.v1",
     "trial_set_id": "pdf-tools.trajectory.calibration.v1",
     "suite_id": "pdf-tools.trajectory.v1",
-    "suite_sha256": "e0452ae12688ed5f0e2fd14ec1321871ecb4e3c2942dd0fc45eb64f97ada4e18",
+    "suite_sha256": "e30d99e7650f8ec5f8b4c6d9a8a08ff2515d2d3595944ba5e2811de046017d5c",
     "claim_boundary": "Synthetic grader calibration only; records and observations are generated fixtures, not observed agent or host benchmark results.",
     "planned_at": "2026-07-20T23:59:00.000Z",
     "planner": "scripts/eval-generate-trajectory-calibration.mjs",
@@ -221,11 +221,11 @@
     "kind": "synthetic_calibration",
     "producer": "scripts/eval-generate-trajectory-calibration.mjs",
     "produced_at": "2026-07-21T00:00:00.000Z",
-    "suite_sha256": "e0452ae12688ed5f0e2fd14ec1321871ecb4e3c2942dd0fc45eb64f97ada4e18",
+    "suite_sha256": "e30d99e7650f8ec5f8b4c6d9a8a08ff2515d2d3595944ba5e2811de046017d5c",
     "raw_transcript_sha256": "a43c2cfcde297dc8ff39120198085610badf2bf3dd20b3ab1ab485e1f8a3cc10",
     "observer_sha256": "1008ee251be9cbb24fa77c512778fd3398d57fb9a7cf63afe6b4a5dd4b5aeac9",
-    "trial_payload_sha256": "a1259588d01a723598287d6f89ec01897c3f0ee13aeb3e6cbd600494e0ec2654",
-    "run_plan_sha256": "140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+    "trial_payload_sha256": "08730a0c2ee55dbc0f40f1cef9f0cb503fcf2dbf1adc625b1a6901488b222e2d",
+    "run_plan_sha256": "370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
     "key_id": null,
     "signature": null
   },
@@ -264,12 +264,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:05:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "760ceaeccf46dd81f07bbe7f456e2b60f18359bbfc02bc6b36b294665020037b"
+              "raw_sha256": "ceee01f0bf714f39ad56ebfe9d0c76c081fa876347ab97901c388ad1be675244"
             }
           },
           {
@@ -486,12 +486,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:10:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "d819bd3b4557f2cd7ade8ef72dfb5c35d9ac6e7b76e300732e6d9b08e7bb95e0"
+              "raw_sha256": "89434a3db76999203a38fa0abf6049afb40ca59224b5d374c609b435dd488ac1"
             }
           },
           {
@@ -708,12 +708,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:15:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "34da1a65d0fe156145e136b9dde88f2cf8f3b42a5df0f97abf92ccdf87bd336f"
+              "raw_sha256": "7a6fa2b603e6453d67253bb6e45a60eec147df18518da2751881121d5d85f548"
             }
           },
           {
@@ -934,12 +934,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:20:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "6368317ecd023b8b3e4739c212f349485ff6c1ea41b771cffa8e44a8a2cb363d"
+              "raw_sha256": "53f8d03400a5deafec3198d19fc554d27dec808c51f0c11a350a0a4022a8baf5"
             }
           },
           {
@@ -1028,12 +1028,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:05:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "93aa4029e4850dfcc578a704bb6fd6c840cbbe743a5a499c7185e2dc29f022d8"
+              "raw_sha256": "15069e431204343ef5ff75ccfabbd02b198110da5d0dd32966ff83e7893a50ab"
             }
           },
           {
@@ -1392,12 +1392,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:10:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "f12c5532d119297208d3fec71943a5b44bc998514e92c56c4514807d00010849"
+              "raw_sha256": "5a7746feb3b402380e00323e6017ff84d3d080a7e94f1fec71662585229a3a8e"
             }
           },
           {
@@ -1756,12 +1756,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:15:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "864cc5f0484c03639e1e6b91f5f8a062e92af77117018548803adf4ace348046"
+              "raw_sha256": "de8637c1e8cd90f434a6bae9b6289666280cdf8b8cbf1a16f05939b01998695c"
             }
           },
           {
@@ -2115,12 +2115,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:20:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "ca9046f45de5c8a785f034a175eb36c81051ead1f665f33dd23a553002b50be8"
+              "raw_sha256": "00539696ef4c0b6e55a4e570c3ab72a0163fe49d52c2a02364d773808a15a1a7"
             }
           },
           {
@@ -2209,12 +2209,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:05:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "46c8cf136107c6ddb73f875d7689fbaa03d274f4822eb270974439dec024e8a4"
+              "raw_sha256": "97af265705cf486454d99420c22b3af4af93b1587d7bb7b0246fc991717a4475"
             }
           },
           {
@@ -2335,12 +2335,12 @@
             "type": "render_result_observed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:05:16.000Z",
-            "reference": "sha256:49b4e0101eed9909557a8ce1ab461259d98a2a8ff91399f642b487a324d79551",
+            "reference": "sha256:9126049f5385973a914674d6140fbb0484864a478a8eabfdfaa34023d4166b1d",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "94f962177df0b131add99b63863a9ecd16c9b0619f74fda954baa6fd1b2765e9"
+              "raw_sha256": "bb2b0dd7adc2e69eb882ddcaa00af9de77cf2e8c2ebfdca846da43ae78e8a045"
             }
           },
           {
@@ -2363,12 +2363,12 @@
             "type": "render_result_observed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:05:21.000Z",
-            "reference": "sha256:ce0f4c7c2508bc2a54c30d639e9b46dbfb2ed51dea769ba12b579bd3e4c74c7c",
+            "reference": "sha256:2bdb075c31feb1f03abb4112950a9b9ea32916111288447098b2ef48797c9c6f",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "ce658890447851ab0e38b66b28dba94824648ae58591f60903077c2ff12d261c"
+              "raw_sha256": "a2ec808e4e2477a7df9e314790c69a15bc96bbf8eabc2fe2bb7a670f72e1cfc2"
             }
           }
         ]
@@ -2463,7 +2463,7 @@
           "result": {
             "result_schema_version": 1,
             "result_id": "pdf-tools.synthetic.compare-and-explain.run.1.result.3",
-            "raw_result_sha256": "94f962177df0b131add99b63863a9ecd16c9b0619f74fda954baa6fd1b2765e9",
+            "raw_result_sha256": "bb2b0dd7adc2e69eb882ddcaa00af9de77cf2e8c2ebfdca846da43ae78e8a045",
             "observed_sources": [
               "input/before.pdf"
             ],
@@ -2476,6 +2476,29 @@
                 "observation_method": "synthetic_calibration"
               }
             ],
+            "retained_raw_result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Synthetic calibration render"
+                },
+                {
+                  "type": "image",
+                  "mimeType": "image/png",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                }
+              ],
+              "structured_content": {
+                "page": 1,
+                "width_points": 360,
+                "height_points": 480,
+                "rendered_width_px": 900,
+                "rendered_height_px": 1200,
+                "scale": 2.5,
+                "renderer": "synthetic-calibration",
+                "mime_type": "image/png"
+              }
+            },
             "semantic_observations": {
               "semantic_schema_version": 2,
               "pages": [],
@@ -2502,8 +2525,8 @@
                     480
                   ],
                   "coordinate_space": "top_left_pdf_points",
-                  "image_sha256": "e4f8080fc3418cc86533744143158796de2bffae7ab23689c609f06e2b83f43c",
-                  "image_byte_length": 4096,
+                  "image_sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                  "image_byte_length": 68,
                   "image_content_index": 1,
                   "render_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.render.3",
                   "image_transport": "synthetic_calibration",
@@ -2512,8 +2535,8 @@
                   "server_rendered_width_px": 900,
                   "server_rendered_height_px": 1200,
                   "server_scale": 2.5,
-                  "observed_image_width_px": 900,
-                  "observed_image_height_px": 1200,
+                  "observed_image_width_px": 1,
+                  "observed_image_height_px": 1,
                   "max_dimension_px": 1200
                 }
               ],
@@ -2536,7 +2559,7 @@
           "result": {
             "result_schema_version": 1,
             "result_id": "pdf-tools.synthetic.compare-and-explain.run.1.result.4",
-            "raw_result_sha256": "ce658890447851ab0e38b66b28dba94824648ae58591f60903077c2ff12d261c",
+            "raw_result_sha256": "a2ec808e4e2477a7df9e314790c69a15bc96bbf8eabc2fe2bb7a670f72e1cfc2",
             "observed_sources": [
               "input/after.pdf"
             ],
@@ -2549,6 +2572,29 @@
                 "observation_method": "synthetic_calibration"
               }
             ],
+            "retained_raw_result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Synthetic calibration render"
+                },
+                {
+                  "type": "image",
+                  "mimeType": "image/png",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                }
+              ],
+              "structured_content": {
+                "page": 1,
+                "width_points": 480,
+                "height_points": 360,
+                "rendered_width_px": 1200,
+                "rendered_height_px": 900,
+                "scale": 2.5,
+                "renderer": "synthetic-calibration",
+                "mime_type": "image/png"
+              }
+            },
             "semantic_observations": {
               "semantic_schema_version": 2,
               "pages": [],
@@ -2575,8 +2621,8 @@
                     360
                   ],
                   "coordinate_space": "top_left_pdf_points",
-                  "image_sha256": "134ccf3da114823f27f6b1a1af2eb8e5f0acdd67a9316aa21fb5864a04f356d8",
-                  "image_byte_length": 4096,
+                  "image_sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                  "image_byte_length": 68,
                   "image_content_index": 1,
                   "render_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.render.4",
                   "image_transport": "synthetic_calibration",
@@ -2585,8 +2631,8 @@
                   "server_rendered_width_px": 1200,
                   "server_rendered_height_px": 900,
                   "server_scale": 2.5,
-                  "observed_image_width_px": 1200,
-                  "observed_image_height_px": 900,
+                  "observed_image_width_px": 1,
+                  "observed_image_height_px": 1,
                   "max_dimension_px": 1200
                 }
               ],
@@ -2709,12 +2755,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:10:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "dc4b35ba3c3af1d1260dd104d36fe64f8450d6be3dd882700f0f505ee630a7b2"
+              "raw_sha256": "ada33ac4c9aa383ce9a60e99f03ad90278f06a5becee61f92785ed0999b524c7"
             }
           },
           {
@@ -2835,12 +2881,12 @@
             "type": "render_result_observed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:10:16.000Z",
-            "reference": "sha256:7d40c10b58c4e60f3ff787c65a3453377a1869236c70801d656358544bcd56e9",
+            "reference": "sha256:da437a18f28bc16776094b5cd8b0b142853d128f56d74e7e533fe926ba6e4d65",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "5771875ee6f2aa1157fe64f2b044623f8ce3d5a211172f7aeba6566ed9183f57"
+              "raw_sha256": "bb2b0dd7adc2e69eb882ddcaa00af9de77cf2e8c2ebfdca846da43ae78e8a045"
             }
           },
           {
@@ -2863,12 +2909,12 @@
             "type": "render_result_observed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:10:21.000Z",
-            "reference": "sha256:f182c13395238f50df26873ffb2e4054d063bea4348dbfc2d0b3bae9ce8f1d50",
+            "reference": "sha256:da0aff734d8fe5bb15b165b32bc896346f8db33c8f3735060f161c5021dbf18a",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "fedfd03a9297aec62bdaa9e81a3920af598b28037cca6e807c27b755d231399d"
+              "raw_sha256": "a2ec808e4e2477a7df9e314790c69a15bc96bbf8eabc2fe2bb7a670f72e1cfc2"
             }
           }
         ]
@@ -2963,7 +3009,7 @@
           "result": {
             "result_schema_version": 1,
             "result_id": "pdf-tools.synthetic.compare-and-explain.run.2.result.3",
-            "raw_result_sha256": "5771875ee6f2aa1157fe64f2b044623f8ce3d5a211172f7aeba6566ed9183f57",
+            "raw_result_sha256": "bb2b0dd7adc2e69eb882ddcaa00af9de77cf2e8c2ebfdca846da43ae78e8a045",
             "observed_sources": [
               "input/before.pdf"
             ],
@@ -2976,6 +3022,29 @@
                 "observation_method": "synthetic_calibration"
               }
             ],
+            "retained_raw_result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Synthetic calibration render"
+                },
+                {
+                  "type": "image",
+                  "mimeType": "image/png",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                }
+              ],
+              "structured_content": {
+                "page": 1,
+                "width_points": 360,
+                "height_points": 480,
+                "rendered_width_px": 900,
+                "rendered_height_px": 1200,
+                "scale": 2.5,
+                "renderer": "synthetic-calibration",
+                "mime_type": "image/png"
+              }
+            },
             "semantic_observations": {
               "semantic_schema_version": 2,
               "pages": [],
@@ -3002,8 +3071,8 @@
                     480
                   ],
                   "coordinate_space": "top_left_pdf_points",
-                  "image_sha256": "e4f8080fc3418cc86533744143158796de2bffae7ab23689c609f06e2b83f43c",
-                  "image_byte_length": 4096,
+                  "image_sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                  "image_byte_length": 68,
                   "image_content_index": 1,
                   "render_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.render.3",
                   "image_transport": "synthetic_calibration",
@@ -3012,8 +3081,8 @@
                   "server_rendered_width_px": 900,
                   "server_rendered_height_px": 1200,
                   "server_scale": 2.5,
-                  "observed_image_width_px": 900,
-                  "observed_image_height_px": 1200,
+                  "observed_image_width_px": 1,
+                  "observed_image_height_px": 1,
                   "max_dimension_px": 1200
                 }
               ],
@@ -3036,7 +3105,7 @@
           "result": {
             "result_schema_version": 1,
             "result_id": "pdf-tools.synthetic.compare-and-explain.run.2.result.4",
-            "raw_result_sha256": "fedfd03a9297aec62bdaa9e81a3920af598b28037cca6e807c27b755d231399d",
+            "raw_result_sha256": "a2ec808e4e2477a7df9e314790c69a15bc96bbf8eabc2fe2bb7a670f72e1cfc2",
             "observed_sources": [
               "input/after.pdf"
             ],
@@ -3049,6 +3118,29 @@
                 "observation_method": "synthetic_calibration"
               }
             ],
+            "retained_raw_result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Synthetic calibration render"
+                },
+                {
+                  "type": "image",
+                  "mimeType": "image/png",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                }
+              ],
+              "structured_content": {
+                "page": 1,
+                "width_points": 480,
+                "height_points": 360,
+                "rendered_width_px": 1200,
+                "rendered_height_px": 900,
+                "scale": 2.5,
+                "renderer": "synthetic-calibration",
+                "mime_type": "image/png"
+              }
+            },
             "semantic_observations": {
               "semantic_schema_version": 2,
               "pages": [],
@@ -3075,8 +3167,8 @@
                     360
                   ],
                   "coordinate_space": "top_left_pdf_points",
-                  "image_sha256": "134ccf3da114823f27f6b1a1af2eb8e5f0acdd67a9316aa21fb5864a04f356d8",
-                  "image_byte_length": 4096,
+                  "image_sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                  "image_byte_length": 68,
                   "image_content_index": 1,
                   "render_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.render.4",
                   "image_transport": "synthetic_calibration",
@@ -3085,8 +3177,8 @@
                   "server_rendered_width_px": 1200,
                   "server_rendered_height_px": 900,
                   "server_scale": 2.5,
-                  "observed_image_width_px": 1200,
-                  "observed_image_height_px": 900,
+                  "observed_image_width_px": 1,
+                  "observed_image_height_px": 1,
                   "max_dimension_px": 1200
                 }
               ],
@@ -3209,12 +3301,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:15:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "90ce2373acd2889bfbed7af77bb26cc767b08b6ee357615bb3b54e3c3d5ace58"
+              "raw_sha256": "4cfd6a6fb19ca519f73f6d167a7dae9c64fec01ce64ff94ae79d105de0bab391"
             }
           },
           {
@@ -3335,12 +3427,12 @@
             "type": "render_result_observed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:15:16.000Z",
-            "reference": "sha256:455f9cbacd4b36f54c23ca44f19ccc1404cb03f63f2bccf5ae1f85954e7f72f9",
+            "reference": "sha256:50dc77e217bac4b59e2c4684c32cec32266235afacba729d12489ce642a20b31",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "4fa87a3d325af57797787cfe3c3dd4178de46234a4ab9fc77b9750b53a61c3fa"
+              "raw_sha256": "bb2b0dd7adc2e69eb882ddcaa00af9de77cf2e8c2ebfdca846da43ae78e8a045"
             }
           },
           {
@@ -3363,12 +3455,12 @@
             "type": "render_result_observed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:15:21.000Z",
-            "reference": "sha256:bf7307170205a4ab79ccb46c2e5a3e224c891530895b5d531dad5f101f6778bf",
+            "reference": "sha256:a16236028ca017bc4915580f27011fb2f2732b72726b9d78cf9731d708684c6f",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "ba5170cae518bc5e557c2f64c9e154ed1094171ad241c3a3634531718cf9f1d2"
+              "raw_sha256": "a2ec808e4e2477a7df9e314790c69a15bc96bbf8eabc2fe2bb7a670f72e1cfc2"
             }
           }
         ]
@@ -3463,7 +3555,7 @@
           "result": {
             "result_schema_version": 1,
             "result_id": "pdf-tools.synthetic.compare-and-explain.run.3.result.3",
-            "raw_result_sha256": "4fa87a3d325af57797787cfe3c3dd4178de46234a4ab9fc77b9750b53a61c3fa",
+            "raw_result_sha256": "bb2b0dd7adc2e69eb882ddcaa00af9de77cf2e8c2ebfdca846da43ae78e8a045",
             "observed_sources": [
               "input/before.pdf"
             ],
@@ -3476,6 +3568,29 @@
                 "observation_method": "synthetic_calibration"
               }
             ],
+            "retained_raw_result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Synthetic calibration render"
+                },
+                {
+                  "type": "image",
+                  "mimeType": "image/png",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                }
+              ],
+              "structured_content": {
+                "page": 1,
+                "width_points": 360,
+                "height_points": 480,
+                "rendered_width_px": 900,
+                "rendered_height_px": 1200,
+                "scale": 2.5,
+                "renderer": "synthetic-calibration",
+                "mime_type": "image/png"
+              }
+            },
             "semantic_observations": {
               "semantic_schema_version": 2,
               "pages": [],
@@ -3502,8 +3617,8 @@
                     480
                   ],
                   "coordinate_space": "top_left_pdf_points",
-                  "image_sha256": "e4f8080fc3418cc86533744143158796de2bffae7ab23689c609f06e2b83f43c",
-                  "image_byte_length": 4096,
+                  "image_sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                  "image_byte_length": 68,
                   "image_content_index": 1,
                   "render_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.render.3",
                   "image_transport": "synthetic_calibration",
@@ -3512,8 +3627,8 @@
                   "server_rendered_width_px": 900,
                   "server_rendered_height_px": 1200,
                   "server_scale": 2.5,
-                  "observed_image_width_px": 900,
-                  "observed_image_height_px": 1200,
+                  "observed_image_width_px": 1,
+                  "observed_image_height_px": 1,
                   "max_dimension_px": 1200
                 }
               ],
@@ -3536,7 +3651,7 @@
           "result": {
             "result_schema_version": 1,
             "result_id": "pdf-tools.synthetic.compare-and-explain.run.3.result.4",
-            "raw_result_sha256": "ba5170cae518bc5e557c2f64c9e154ed1094171ad241c3a3634531718cf9f1d2",
+            "raw_result_sha256": "a2ec808e4e2477a7df9e314790c69a15bc96bbf8eabc2fe2bb7a670f72e1cfc2",
             "observed_sources": [
               "input/after.pdf"
             ],
@@ -3549,6 +3664,29 @@
                 "observation_method": "synthetic_calibration"
               }
             ],
+            "retained_raw_result": {
+              "content": [
+                {
+                  "type": "text",
+                  "text": "Synthetic calibration render"
+                },
+                {
+                  "type": "image",
+                  "mimeType": "image/png",
+                  "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+                }
+              ],
+              "structured_content": {
+                "page": 1,
+                "width_points": 480,
+                "height_points": 360,
+                "rendered_width_px": 1200,
+                "rendered_height_px": 900,
+                "scale": 2.5,
+                "renderer": "synthetic-calibration",
+                "mime_type": "image/png"
+              }
+            },
             "semantic_observations": {
               "semantic_schema_version": 2,
               "pages": [],
@@ -3575,8 +3713,8 @@
                     360
                   ],
                   "coordinate_space": "top_left_pdf_points",
-                  "image_sha256": "134ccf3da114823f27f6b1a1af2eb8e5f0acdd67a9316aa21fb5864a04f356d8",
-                  "image_byte_length": 4096,
+                  "image_sha256": "431ced6916a2a21a156e38701afe55bbd7f88969fbbfc56d7fe099d47f265460",
+                  "image_byte_length": 68,
                   "image_content_index": 1,
                   "render_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.render.4",
                   "image_transport": "synthetic_calibration",
@@ -3585,8 +3723,8 @@
                   "server_rendered_width_px": 1200,
                   "server_rendered_height_px": 900,
                   "server_scale": 2.5,
-                  "observed_image_width_px": 1200,
-                  "observed_image_height_px": 900,
+                  "observed_image_width_px": 1,
+                  "observed_image_height_px": 1,
                   "max_dimension_px": 1200
                 }
               ],
@@ -3742,12 +3880,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:20:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "20038a92de08874aa42ee671adfe5f0905c10ca7ea00cf5c6a0bdf371ad526e5"
+              "raw_sha256": "3ecbf1834218b7e0501414836b05a7d977dc0d0efd91f743a98a592ba69899cc"
             }
           },
           {
@@ -3836,12 +3974,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:05:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "63b89da7d8d787fb6e69762cede4b16c16492dc5acbfce82747c571d6d13b1d8"
+              "raw_sha256": "2467ff9d74f6fe3e01f1e3f7b5440d5aa2609c9a2cad429b131ffb969d7eb41e"
             }
           },
           {
@@ -4183,12 +4321,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:10:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "181d9c2fadaad9d0276b3c1d1a8c7dcd95481415c872615ca7a648666d1fd188"
+              "raw_sha256": "a2648062c045f72ff890950fc82f70cc7caf10cf146b70b42b31397c34b2257c"
             }
           },
           {
@@ -4530,12 +4668,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:15:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "4350610e43746bbc2a9c56ad5ccd893f978df287f46a3c6edec2068e90009227"
+              "raw_sha256": "cb672a02b74eecd36f9b56ed2fb93ff99dea14b58501676be8469b375562d3c7"
             }
           },
           {
@@ -4883,12 +5021,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:20:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "a94f0d1a4a6a636e0a18805e4203bb9fdd37b9aa2dad1ccce1a49a1e51714159"
+              "raw_sha256": "26c5f6fa5170589b5fbef69b341052c37c15ee4859b80f0e27f9c8304b5d1c8b"
             }
           },
           {
@@ -4977,12 +5115,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:05:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "571982c1f3963f08e859a3764e0c0f55273e3d2b3d0ffcf72a9e86bf11b6b384"
+              "raw_sha256": "e9320705618d8ee04a3b3ab0118535dff9002dc8b47713d548eee8e5f362e4a9"
             }
           },
           {
@@ -5375,12 +5513,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:10:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "b7d1ad996545c0e9dcd0b67f8c2c448d4c67dec3cda2cde5484ca187a2c9a7f0"
+              "raw_sha256": "63fd285175f0b98c5c396bda69835c421942a58121cb224e4fd79ffd0ad2613a"
             }
           },
           {
@@ -5773,12 +5911,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:15:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "c10d608d559f8715f0c42a25d85a9d40f6934debff175a3c013ece3a1f376127"
+              "raw_sha256": "28c598153e0b87c73aa7f10e2f56abb46d3896cbacff79553a6518a9d5d3e06a"
             }
           },
           {
@@ -6234,12 +6372,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:20:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "0640f66cb00c67b7d270ae7cd54543292a99b853cb2ae6a34cac7d478573da16"
+              "raw_sha256": "88f67ae62c4db1fabae375454e81f09306902c34d4cad0c9058102cccdcdbb13"
             }
           },
           {
@@ -6328,12 +6466,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:05:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "1a58d13e09309842e4d19bc6692e6872f29003112583b0469f9237a576a87573"
+              "raw_sha256": "6fe0856eb53836849cd6fc613da4fb1566deef7b4888880bc33d5286f86f2f98"
             }
           },
           {
@@ -6566,12 +6704,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:10:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "262f456c53fc1e0bdef2c1c20328d087a31d0d6beb3f89e8b8e93f11d2062d1a"
+              "raw_sha256": "5f666c0e74f7c1c3f5a373ef6bd3553798a2b861acd910fc3191604568aadd22"
             }
           },
           {
@@ -6804,12 +6942,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:15:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "e5df98bcd35c672b6c44b7161e4a4660f6c77d18752751225f31e73b2790da01"
+              "raw_sha256": "284cfcbe99711d59eae77cfa4e6c83df28ea494d962b6a10cb9f7d839939a63d"
             }
           },
           {
@@ -7014,12 +7152,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:20:00.000Z",
-            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
+            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "c95b85c577437974fd45262333807f90d77440434ebedabe7ebe4c081f49ec74"
+              "raw_sha256": "0f0a224de45903c631580490efd79f0f016042df287a292b94f322b9b9c3c779"
             }
           },
           {

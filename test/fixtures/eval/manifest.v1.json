@@ -116,7 +116,7 @@
       "category": "page_order_regression",
       "expected_outcome": "fail",
       "failure_class": "visibly_swapped_page_order",
-      "description": "Non-empty, parseable two-page output with the visibly labeled pages reversed; superficial page-count checks pass.",
+      "description": "Non-empty, parseable two-page output with the visibly labeled pages reversed; superficial page-count checks pass. The expected geometry and text below intentionally retain the correct-order oracle so this negative fixture must fail.",
       "provenance": {
         "kind": "synthetic",
         "origin": "Derived from pdf-tools.eval.v1.dev-page-order-source by reversing both pages",

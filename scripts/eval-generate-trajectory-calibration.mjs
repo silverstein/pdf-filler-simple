@@ -19,6 +19,8 @@ const DEFAULT_OUTPUT = path.join(
   "trajectories",
   "calibration-trials.v1.json"
 );
+const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+const TINY_PNG_BYTES = Buffer.from(TINY_PNG_BASE64, "base64");
 
 function slug(jobId) {
   return jobId.replace("pdf-tools.trajectory.v1.", "");
@@ -74,6 +76,7 @@ function emptySemantics(values = {}) {
 
 function successStep(context, ordinal, tool, args, {
   sources = [], artifacts = [], semantics = emptySemantics(), recoveryOf = null,
+  retainedRawResult = null,
 } = {}) {
   return {
     step_schema_version: 2,
@@ -86,9 +89,12 @@ function successStep(context, ordinal, tool, args, {
     result: {
       result_schema_version: 1,
       result_id: `${context.runId}.result.${ordinal}`,
-      raw_result_sha256: digest(JSON.stringify({ tool, args, sources, artifacts })),
+      raw_result_sha256: digest(JSON.stringify(
+        retainedRawResult ?? { tool, args, sources, artifacts },
+      )),
       observed_sources: sources,
       observed_artifacts: artifacts,
+      ...(retainedRawResult ? { retained_raw_result: retainedRawResult } : {}),
       semantic_observations: semantics,
     },
     ...(recoveryOf ? { recovery_of_step_id: recoveryOf } : {}),
@@ -325,6 +331,17 @@ function buildProductPayload(job, context) {
     }, {
       sources: ["input/before.pdf"],
       artifacts: [beforeSource],
+      retainedRawResult: {
+        content: [
+          { type: "text", text: "Synthetic calibration render" },
+          { type: "image", mimeType: "image/png", data: TINY_PNG_BASE64 },
+        ],
+        structured_content: {
+          page: 1, width_points: 360, height_points: 480,
+          rendered_width_px: 900, rendered_height_px: 1200, scale: 2.5,
+          renderer: "synthetic-calibration", mime_type: "image/png",
+        },
+      },
       semantics: emptySemantics({ render_regions: [{
         source: "input/before.pdf",
         source_sha256: beforeSha256,
@@ -334,8 +351,8 @@ function buildProductPayload(job, context) {
         rotation: null,
         region: [0, 0, 360, 480],
         coordinate_space: "top_left_pdf_points",
-        image_sha256: digest("synthetic-before-render"),
-        image_byte_length: 4096,
+        image_sha256: digest(TINY_PNG_BYTES),
+        image_byte_length: TINY_PNG_BYTES.length,
         image_content_index: 1,
         render_observation_event_id: `${context.runId}.event.render.3`,
         image_transport: "synthetic_calibration",
@@ -344,8 +361,8 @@ function buildProductPayload(job, context) {
         server_rendered_width_px: 900,
         server_rendered_height_px: 1200,
         server_scale: 2.5,
-        observed_image_width_px: 900,
-        observed_image_height_px: 1200,
+        observed_image_width_px: 1,
+        observed_image_height_px: 1,
         max_dimension_px: 1200,
       }] }),
     });
@@ -354,6 +371,17 @@ function buildProductPayload(job, context) {
     }, {
       sources: ["input/after.pdf"],
       artifacts: [afterSource],
+      retainedRawResult: {
+        content: [
+          { type: "text", text: "Synthetic calibration render" },
+          { type: "image", mimeType: "image/png", data: TINY_PNG_BASE64 },
+        ],
+        structured_content: {
+          page: 1, width_points: 480, height_points: 360,
+          rendered_width_px: 1200, rendered_height_px: 900, scale: 2.5,
+          renderer: "synthetic-calibration", mime_type: "image/png",
+        },
+      },
       semantics: emptySemantics({ render_regions: [{
         source: "input/after.pdf",
         source_sha256: afterSha256,
@@ -363,8 +391,8 @@ function buildProductPayload(job, context) {
         rotation: null,
         region: [0, 0, 480, 360],
         coordinate_space: "top_left_pdf_points",
-        image_sha256: digest("synthetic-after-render"),
-        image_byte_length: 4096,
+        image_sha256: digest(TINY_PNG_BYTES),
+        image_byte_length: TINY_PNG_BYTES.length,
         image_content_index: 1,
         render_observation_event_id: `${context.runId}.event.render.4`,
         image_transport: "synthetic_calibration",
@@ -373,8 +401,8 @@ function buildProductPayload(job, context) {
         server_rendered_width_px: 1200,
         server_rendered_height_px: 900,
         server_scale: 2.5,
-        observed_image_width_px: 1200,
-        observed_image_height_px: 900,
+        observed_image_width_px: 1,
+        observed_image_height_px: 1,
         max_dimension_px: 1200,
       }] }),
     });
@@ -520,35 +548,38 @@ function syncTrialEvents(trial) {
   }
   for (const step of trial.trajectory ?? []) {
     for (const render of step.result?.semantic_observations?.render_regions ?? []) {
-      if (trial.run.events.some(event => event.event_id === render.source_observation_event_id)) continue;
-      trial.run.events.push({
-        event_schema_version: 1,
-        event_id: render.source_observation_event_id,
-        type: "filesystem_source_observed",
-        source: "synthetic_calibration_generator",
-        observed_at: new Date(Date.parse(step.started_at) - 1).toISOString(),
-        reference: `sha256:${render.source_sha256}`,
-        provenance: {
-          provenance_schema_version: 1,
-          authority: "calibration",
-          capture_method: "deterministic_generator",
-          raw_sha256: digest(`${step.step_id}:${render.source_sha256}`),
-        },
-      });
-      trial.run.events.push({
-        event_schema_version: 1,
-        event_id: render.render_observation_event_id,
-        type: "render_result_observed",
-        source: "synthetic_calibration_generator",
-        observed_at: step.finished_at,
-        reference: renderObservationReference(render),
-        provenance: {
-          provenance_schema_version: 1,
-          authority: "calibration",
-          capture_method: "deterministic_generator",
-          raw_sha256: step.result.raw_result_sha256,
-        },
-      });
+      if (!trial.run.events.some(event => event.event_id === render.source_observation_event_id)) {
+        trial.run.events.push({
+          event_schema_version: 1,
+          event_id: render.source_observation_event_id,
+          type: "filesystem_source_observed",
+          source: "synthetic_calibration_generator",
+          observed_at: new Date(Date.parse(step.started_at) - 1).toISOString(),
+          reference: `sha256:${render.source_sha256}`,
+          provenance: {
+            provenance_schema_version: 1,
+            authority: "calibration",
+            capture_method: "deterministic_generator",
+            raw_sha256: digest(`${step.step_id}:${render.source_sha256}`),
+          },
+        });
+      }
+      if (!trial.run.events.some(event => event.event_id === render.render_observation_event_id)) {
+        trial.run.events.push({
+          event_schema_version: 1,
+          event_id: render.render_observation_event_id,
+          type: "render_result_observed",
+          source: "synthetic_calibration_generator",
+          observed_at: step.finished_at,
+          reference: renderObservationReference(render),
+          provenance: {
+            provenance_schema_version: 1,
+            authority: "calibration",
+            capture_method: "deterministic_generator",
+            raw_sha256: step.result.raw_result_sha256,
+          },
+        });
+      }
     }
   }
   return trial;

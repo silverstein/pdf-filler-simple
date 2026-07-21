@@ -8,6 +8,7 @@ import {
   getRegionPixelRect,
   validateSigningIntent,
 } from "../../server/helpers.js";
+import { parsePngEvidence } from "./png-evidence.js";
 
 export const TRAJECTORY_SUITE_VERSION = 1;
 export const TRAJECTORY_GRADER_VERSION = 4;
@@ -65,6 +66,10 @@ function stringArray(value, { nonEmpty = false } = {}) {
   return Array.isArray(value)
     && (!nonEmpty || value.length > 0)
     && value.every(nonEmptyString);
+}
+
+function retainedRunEvents(trial) {
+  return Array.isArray(trial?.run?.events) ? trial.run.events : [];
 }
 
 function unique(values) {
@@ -205,28 +210,28 @@ function validateSemanticObservations(value, location, errors) {
   for (const key of ["pages", "fields", "page_plans", "signature_locations", "render_regions", "files"]) {
     if (!Array.isArray(value[key])) errors.push(`${location}.${key} must be an array`);
   }
-  for (const [index, page] of (value.pages ?? []).entries()) {
+  for (const [index, page] of (Array.isArray(value.pages) ? value.pages : []).entries()) {
     const itemLocation = `${location}.pages[${index}]`;
     if (!addExactKeyError(errors, itemLocation, page, ["source", "page", "text_sha256"])) continue;
     if (!validRelativePath(page.source)) errors.push(`${itemLocation}.source must be a relative path`);
     if (!Number.isInteger(page.page) || page.page < 1) errors.push(`${itemLocation}.page must be positive`);
     if (!SHA256_PATTERN.test(page.text_sha256 ?? "")) errors.push(`${itemLocation}.text_sha256 must be SHA-256`);
   }
-  for (const [index, field] of (value.fields ?? []).entries()) {
+  for (const [index, field] of (Array.isArray(value.fields) ? value.fields : []).entries()) {
     const itemLocation = `${location}.fields[${index}]`;
     if (!addExactKeyError(errors, itemLocation, field, ["source", "field", "value_sha256"])) continue;
     if (!validRelativePath(field.source)) errors.push(`${itemLocation}.source must be a relative path`);
     if (!nonEmptyString(field.field)) errors.push(`${itemLocation}.field must be non-empty`);
     if (!SHA256_PATTERN.test(field.value_sha256 ?? "")) errors.push(`${itemLocation}.value_sha256 must be SHA-256`);
   }
-  for (const [index, plan] of (value.page_plans ?? []).entries()) {
+  for (const [index, plan] of (Array.isArray(value.page_plans) ? value.page_plans : []).entries()) {
     const itemLocation = `${location}.page_plans[${index}]`;
     if (!addExactKeyError(errors, itemLocation, plan, ["source", "output", "page_order", "rotations"])) continue;
     if (!validRelativePath(plan.source) || !validRelativePath(plan.output)) errors.push(`${itemLocation} paths must be relative`);
     if (!Array.isArray(plan.page_order) || !plan.page_order.every(Number.isInteger)) errors.push(`${itemLocation}.page_order must be integers`);
     if (!isObject(plan.rotations)) errors.push(`${itemLocation}.rotations must be an object`);
   }
-  for (const [index, region] of (value.signature_locations ?? []).entries()) {
+  for (const [index, region] of (Array.isArray(value.signature_locations) ? value.signature_locations : []).entries()) {
     const itemLocation = `${location}.signature_locations[${index}]`;
     if (!addExactKeyError(errors, itemLocation, region, [
       "source", "page", "x", "y", "width", "height", "label",
@@ -238,7 +243,7 @@ function validateSemanticObservations(value, location, errors) {
     }
     if (region.label !== null && !nonEmptyString(region.label)) errors.push(`${itemLocation}.label must be null or non-empty`);
   }
-  for (const [index, render] of (value.render_regions ?? []).entries()) {
+  for (const [index, render] of (Array.isArray(value.render_regions) ? value.render_regions : []).entries()) {
     const itemLocation = `${location}.render_regions[${index}]`;
     if (!addExactKeyError(errors, itemLocation, render, [
       "source", "source_sha256", "source_observation_event_id", "page", "page_box_points",
@@ -302,7 +307,7 @@ function validateSemanticObservations(value, location, errors) {
       errors.push(`${itemLocation}.server_scale must be positive`);
     }
   }
-  for (const [index, file] of (value.files ?? []).entries()) {
+  for (const [index, file] of (Array.isArray(value.files) ? value.files : []).entries()) {
     const itemLocation = `${location}.files[${index}]`;
     if (!addExactKeyError(errors, itemLocation, file, ["path"])) continue;
     if (!validRelativePath(file.path)) errors.push(`${itemLocation}.path must be relative`);
@@ -370,11 +375,12 @@ function validateRun(value, location, errors) {
 
 function validateSampleEvidence(trial, location, errors) {
   const authority = trial.run?.host?.platform === "synthetic" ? "calibration" : "filesystem_observer";
+  const events = Array.isArray(trial.run?.events) ? trial.run.events : [];
   for (const [type, sampleKey] of [
     ["input_snapshot_observed", "input_sha256"],
     ["fixture_instance_observed", "fixture_instance_sha256"],
   ]) {
-    const event = trial.run?.events?.find(item => item.type === type
+    const event = events.find(item => item.type === type
       && item.reference === `sha256:${trial.sample?.[sampleKey]}`);
     if (!event || event.provenance?.authority !== authority || event.provenance?.capture_method === "self_report") {
       errors.push(`${location}.sample.${sampleKey} must bind to a retained ${type} event from ${authority}`);
@@ -408,7 +414,7 @@ function validateStep(step, location, errors) {
     if (!addExactKeyError(errors, `${location}.result`, step.result, [
       "result_schema_version", "result_id", "raw_result_sha256", "observed_sources", "observed_artifacts",
       "semantic_observations",
-    ])) return;
+    ], ["retained_raw_result"])) return;
     if (step.result.result_schema_version !== 1) errors.push(`${location}.result.result_schema_version must equal 1`);
     if (!nonEmptyString(step.result.result_id)) errors.push(`${location}.result.result_id must be a non-empty string`);
     if (!nonEmptyString(step.result.raw_result_sha256) || !SHA256_PATTERN.test(step.result.raw_result_sha256)) {
@@ -429,6 +435,13 @@ function validateStep(step, location, errors) {
         validateObservedArtifact(artifact, `${location}.result.observed_artifacts[${index}]`, errors));
     }
     validateSemanticObservations(step.result.semantic_observations, `${location}.result.semantic_observations`, errors);
+    const isRenderTool = new Set(["render_pdf_page", "render_pdf_region"]).has(step.tool);
+    if (isRenderTool && !isObject(step.result.retained_raw_result)) {
+      errors.push(`${location}.result.retained_raw_result is required for render tools`);
+    }
+    if (!isRenderTool && Object.hasOwn(step.result, "retained_raw_result")) {
+      errors.push(`${location}.result.retained_raw_result is allowed only for render tools`);
+    }
   } else if (step.ok === false) {
     if (Object.hasOwn(step, "result")) errors.push(`${location}.result is forbidden when ok is false`);
     if (Object.hasOwn(step, "recovery_of_step_id")) {
@@ -655,18 +668,19 @@ function validateCompletedTrial(job, trial, location, errors) {
     }
   }
 
-  const eventIds = new Set(trial.run?.events?.map(event => event.event_id) ?? []);
+  const runEvents = retainedRunEvents(trial);
+  const eventIds = new Set(runEvents.map(event => event?.event_id));
   if (isObject(trial.effects) && !eventIds.has(trial.effects.observer_event_id)) {
     errors.push(`${location}.effects.observer_event_id must reference a retained run event`);
   }
-  for (const [index, artifact] of (trial.artifacts ?? []).entries()) {
+  for (const [index, artifact] of (Array.isArray(trial.artifacts) ? trial.artifacts : []).entries()) {
     if (!eventIds.has(artifact?.observation_event_id)) {
       errors.push(`${location}.artifacts[${index}].observation_event_id must reference a retained run event`);
     }
   }
   const runStart = Date.parse(trial.run?.started_at);
   const runEnd = Date.parse(trial.run?.finished_at);
-  for (const [index, step] of (trial.trajectory ?? []).entries()) {
+  for (const [index, step] of (Array.isArray(trial.trajectory) ? trial.trajectory : []).entries()) {
     const startedAt = Date.parse(step?.started_at);
     const finishedAt = Date.parse(step?.finished_at);
     if (Number.isFinite(startedAt) && Number.isFinite(runStart) && startedAt < runStart) {
@@ -731,7 +745,7 @@ export function validateTrajectoryTrial(job, trial, location = "trial") {
           errors.push(`${location}.harness_failure.${key} must be a non-empty string`);
         }
       }
-      const event = trial.run?.events?.find(item => item.event_id === trial.harness_failure.event_id);
+      const event = retainedRunEvents(trial).find(item => item?.event_id === trial.harness_failure.event_id);
       if (!event || event.type !== "harness_failure") {
         errors.push(`${location}.harness_failure.event_id must bind to a harness_failure run event`);
       }
@@ -1100,7 +1114,9 @@ export function validateTrajectoryTrialSet(suite, trialSet, { allowPartialPlan =
     ids.push(trial?.trial_id);
     runIds.push(trial?.run?.run_id);
     repeatKeys.push(`${trial?.job_id}#${trial?.repeat_index}`);
-    eventIds.push(...(trial?.run?.events?.map(event => event.event_id) ?? []));
+    eventIds.push(...(Array.isArray(trial?.run?.events)
+      ? trial.run.events.map(event => event?.event_id)
+      : []));
     if (job && trial?.sample?.semantic_operation_sha256 !== sha256(canonicalJson(job.expected_semantics))) {
       errors.push(`trial_set.trials[${index}].sample.semantic_operation_sha256 does not bind the job semantics`);
     }
@@ -1109,8 +1125,8 @@ export function validateTrajectoryTrialSet(suite, trialSet, { allowPartialPlan =
         errors.push(`trial_set.trials[${index}] non-calibration runs may not use a synthetic host`);
       }
       if (trial?.agent === "trajectory-grader-calibration"
-        || trial?.run?.events?.some(event => event.source === "synthetic_calibration_generator"
-          || event.provenance?.authority === "calibration")) {
+        || (Array.isArray(trial?.run?.events) && trial.run.events.some(event => event.source === "synthetic_calibration_generator"
+          || event.provenance?.authority === "calibration"))) {
         errors.push(`trial_set.trials[${index}] non-calibration runs may not reuse calibration provenance`);
       }
     }
@@ -1124,7 +1140,7 @@ export function validateTrajectoryTrialSet(suite, trialSet, { allowPartialPlan =
   for (const duplicate of duplicates(runIds.filter(nonEmptyString))) errors.push(`duplicate run id ${duplicate}`);
   for (const duplicate of duplicates(repeatKeys)) errors.push(`duplicate job repeat ${duplicate}`);
   for (const duplicate of duplicates(eventIds.filter(nonEmptyString))) errors.push(`duplicate host event id ${duplicate}`);
-  const planEntries = trialSet.run_plan?.entries ?? [];
+  const planEntries = Array.isArray(trialSet.run_plan?.entries) ? trialSet.run_plan.entries : [];
   for (const duplicate of duplicates(planEntries.map(entry => entry?.invocation_id).filter(nonEmptyString))) {
     errors.push(`duplicate run-plan invocation id ${duplicate}`);
   }
@@ -1143,7 +1159,8 @@ export function validateTrajectoryTrialSet(suite, trialSet, { allowPartialPlan =
       if (trial.sample?.[key] !== entry[key]) errors.push(`trial_set.trials[${index}].sample.${key} does not match run plan`);
     }
     const planEventAuthority = trial.run?.host?.platform === "synthetic" ? "calibration" : "agent_host";
-    const planEvent = planDigest && trial.run?.events?.find(event => event.type === "run_plan_committed"
+    const planEvents = Array.isArray(trial.run?.events) ? trial.run.events : [];
+    const planEvent = planDigest && planEvents.find(event => event.type === "run_plan_committed"
       && event.reference === `sha256:${planDigest}`);
     if (!planEvent || planEvent.provenance?.authority !== planEventAuthority
       || Date.parse(planEvent.observed_at) > Date.parse(trial.run?.started_at)) {
@@ -1246,7 +1263,8 @@ function successfulStep(step) {
 }
 
 function observedArtifact(step, artifact) {
-  return step?.result?.observed_artifacts?.some(observed => observed.path === artifact.path
+  return Array.isArray(step?.result?.observed_artifacts)
+    && step.result.observed_artifacts.some(observed => observed.path === artifact.path
     && observed.exists === artifact.exists && observed.sha256 === artifact.sha256
     && observed.observer_event_id === artifact.observation_event_id
     && new Set(["filesystem_stat_sha256", "synthetic_calibration"]).has(observed.observation_method));
@@ -1257,20 +1275,21 @@ function evidenceBound(reference, successfulResults, artifactsByPath) {
   if (!step) return false;
   const semantic = step.result.semantic_observations;
   if (reference.kind === "page") {
-    return semantic.pages.some(item => item.source === reference.source && item.page === reference.page);
+    return Array.isArray(semantic?.pages)
+      && semantic.pages.some(item => item.source === reference.source && item.page === reference.page);
   }
   if (reference.kind === "field") {
-    return semantic.fields.some(item => item.source === reference.source
+    return Array.isArray(semantic?.fields) && semantic.fields.some(item => item.source === reference.source
       && item.field === reference.field && item.value_sha256 === reference.value_sha256);
   }
   if (reference.kind === "region") {
-    return semantic.signature_locations.some(item => item.source === reference.source
+    return (Array.isArray(semantic?.signature_locations) && semantic.signature_locations.some(item => item.source === reference.source
       && item.page === reference.page && canonicalJson([item.x, item.y, item.width, item.height]) === canonicalJson(reference.region))
-      || semantic.render_regions.some(item => item.source === reference.source
-        && item.page === reference.page && canonicalJson(item.region) === canonicalJson(reference.region));
+      || (Array.isArray(semantic?.render_regions) && semantic.render_regions.some(item => item.source === reference.source
+        && item.page === reference.page && canonicalJson(item.region) === canonicalJson(reference.region))));
   }
   if (reference.kind === "file") {
-    if (semantic.files.some(item => item.path === reference.source)) return true;
+    if (Array.isArray(semantic?.files) && semantic.files.some(item => item.path === reference.source)) return true;
     const artifact = artifactsByPath.get(reference.source);
     return Boolean(artifact) && observedArtifact(step, artifact);
   }
@@ -1281,6 +1300,9 @@ function semanticObservationIssues(step, runEvents = []) {
   const issues = [];
   const semantic = step.result?.semantic_observations;
   if (!semantic) return ["missing semantic observations"];
+  const semanticSchemaErrors = [];
+  validateSemanticObservations(semantic, "semantic_observations", semanticSchemaErrors);
+  if (semanticSchemaErrors.length > 0) return semanticSchemaErrors;
   const argumentPaths = new Set(argumentPathValues(step.arguments));
   for (const page of semantic.pages) {
     let bound = false;
@@ -1335,6 +1357,40 @@ function semanticObservationIssues(step, runEvents = []) {
       && item.observer_event_id === render.source_observation_event_id
       && new Set(["filesystem_stat_sha256", "synthetic_calibration"]).has(item.observation_method));
     const sourceEvent = runEvents.find(event => event.event_id === render.source_observation_event_id);
+    let retainedRawResultValid = false;
+    try {
+      const retained = step.result.retained_raw_result;
+      const images = retained.content.map((block, index) => ({ block, index }))
+        .filter(({ block }) => block?.type === "image");
+      const image = images.length === 1 ? images[0] : null;
+      const parsedImage = parsePngEvidence(
+        image?.block?.data,
+        image?.block?.mimeType,
+        `${step.tool} retained raw result`,
+      );
+      const structured = retained.structured_content ?? retained.structuredContent;
+      const retainedRegion = step.tool === "render_pdf_page"
+        ? [0, 0, Number(structured.width_points), Number(structured.height_points)]
+        : [
+          Number(structured.region_points?.x), Number(structured.region_points?.y),
+          Number(structured.region_points?.width), Number(structured.region_points?.height),
+        ];
+      retainedRawResultValid = sha256(JSON.stringify(retained)) === step.result.raw_result_sha256
+        && image.index === render.image_content_index
+        && parsedImage.sha256 === render.image_sha256
+        && parsedImage.bytes.length === render.image_byte_length
+        && parsedImage.width === render.observed_image_width_px
+        && parsedImage.height === render.observed_image_height_px
+        && Number(structured.page) === render.page
+        && canonicalJson(retainedRegion) === canonicalJson(render.region)
+        && structured.mime_type === render.mime_type
+        && structured.renderer === render.server_renderer
+        && Number(structured.rendered_width_px) === render.server_rendered_width_px
+        && Number(structured.rendered_height_px) === render.server_rendered_height_px
+        && Number(structured.scale) === render.server_scale;
+    } catch {
+      retainedRawResultValid = false;
+    }
     const sourceProvenanceValid = sourceEvent?.provenance?.authority === "filesystem_observer"
       ? sourceEvent.provenance.capture_method === "filesystem_stat_sha256"
         && snapshot?.observation_method === "filesystem_stat_sha256"
@@ -1393,7 +1449,7 @@ function semanticObservationIssues(step, runEvents = []) {
       || expectedMaxDimension !== render.max_dimension_px
       || canonicalJson(expectedRegion) !== canonicalJson(render.region)
       || render.image_content_index !== 1 || !geometryValid || !rendererValid
-      || !snapshot || !sourceEventValid || !renderEventValid) {
+      || !retainedRawResultValid || !snapshot || !sourceEventValid || !renderEventValid) {
       issues.push(`render region ${render.source}#${render.page} is not bound to ${step.tool} arguments, geometry, retained result, and source observation`);
     }
   }
@@ -1408,7 +1464,7 @@ function validateHumanIntent(trial, steps) {
   const applySteps = steps.filter(step => step?.tool === "apply_signature");
   if (applySteps.length === 0) return { passed: true, actual: null };
   const intent = trial.intent;
-  const event = trial.run?.events?.find(item => item.event_id === intent?.host_event_id);
+  const event = retainedRunEvents(trial).find(item => item?.event_id === intent?.host_event_id);
   const expectedAuthority = trial.run?.host?.platform === "synthetic" ? "calibration" : "agent_host";
   const provenanceValid = intent?.source === "user"
     && event?.type === "user_intent_confirmed"
@@ -1442,7 +1498,8 @@ export function gradeTrajectoryTrial(job, trial) {
   if (trial.outcome === "harness_failure") {
     const errors = validateTrajectoryTrial(job, trial);
     if (errors.length > 0) throw new Error(`Invalid harness failure:\n- ${errors.join("\n- ")}`);
-    const harnessEvent = trial.run.events.find(event => event.event_id === trial.harness_failure.event_id);
+    const harnessEvent = retainedRunEvents(trial)
+      .find(event => event?.event_id === trial.harness_failure.event_id);
     return {
       trial_id: trial.trial_id,
       job_id: trial.job_id,
@@ -1461,6 +1518,7 @@ export function gradeTrajectoryTrial(job, trial) {
   gradeCheck(checks, "trial_schema", schemaErrors.length === 0, [], schemaErrors);
 
   const steps = Array.isArray(trial.trajectory) ? trial.trajectory : [];
+  const runEvents = retainedRunEvents(trial);
   const successfulSteps = steps.filter(successfulStep);
   const toolNames = steps.map(step => step?.tool).filter(nonEmptyString);
   const allowed = new Set(job.policy.allowed_tools);
@@ -1468,7 +1526,7 @@ export function gradeTrajectoryTrial(job, trial) {
   gradeCheck(checks, "job_id", trial.job_id === job.id, job.id, trial.job_id);
   gradeCheck(checks, "trajectory_non_empty", steps.length > 0, "> 0 steps", steps.length);
   const semanticIssues = successfulSteps.flatMap(step =>
-    semanticObservationIssues(step, trial.run?.events ?? []).map(issue => ({ step_id: step.step_id, issue })));
+    semanticObservationIssues(step, runEvents).map(issue => ({ step_id: step.step_id, issue })));
   gradeCheck(
     checks,
     "semantic_result_bindings",
@@ -1506,9 +1564,12 @@ export function gradeTrajectoryTrial(job, trial) {
     );
   }
   for (const requiredObservation of job.expected_semantics.required_observations) {
-    const matches = successfulSteps.filter(step => step.tool === requiredObservation.tool
-      && step.result.semantic_observations?.[requiredObservation.collection]?.some(value =>
-        containsSubset(value, requiredObservation.value)));
+    const matches = successfulSteps.filter(step => {
+      const collection = step.result.semantic_observations?.[requiredObservation.collection];
+      return step.tool === requiredObservation.tool
+        && Array.isArray(collection)
+        && collection.some(value => containsSubset(value, requiredObservation.value));
+    });
     gradeCheck(
       checks,
       `expected_observation/${requiredObservation.id}`,
@@ -1565,7 +1626,7 @@ export function gradeTrajectoryTrial(job, trial) {
     `signature_applied may not exceed ${job.policy.allowed_effects.signature_applied}`,
     effects.signature_applied
   );
-  const effectsEvent = trial.run?.events?.find(event => event.event_id === effects.observer_event_id);
+  const effectsEvent = runEvents.find(event => event?.event_id === effects.observer_event_id);
   gradeCheck(
     checks,
     "effects/provenance",
@@ -1582,7 +1643,7 @@ export function gradeTrajectoryTrial(job, trial) {
   const integrityArtifacts = artifacts.filter(artifact => {
     const producer = stepsById.get(artifact.producer_step_id);
     const verifier = stepsById.get(artifact.verification_step_id);
-    const observationEvent = trial.run?.events?.find(event => event.event_id === artifact.observation_event_id);
+    const observationEvent = runEvents.find(event => event?.event_id === artifact.observation_event_id);
     const observedAt = Date.parse(observationEvent?.observed_at);
     const producerFinishedAt = Date.parse(producer?.finished_at);
     const verifierFinishedAt = Date.parse(verifier?.finished_at);
@@ -1640,8 +1701,8 @@ export function gradeTrajectoryTrial(job, trial) {
   );
 
   const finalAnswer = isObject(trial.final_answer) ? trial.final_answer : {};
-  const messageEvent = trial.run?.events?.find(event => event.event_id === finalAnswer.message_event_id);
-  const turnEvent = trial.run?.events?.find(event => event.event_id === finalAnswer.turn_completed_event_id);
+  const messageEvent = runEvents.find(event => event?.event_id === finalAnswer.message_event_id);
+  const turnEvent = runEvents.find(event => event?.event_id === finalAnswer.turn_completed_event_id);
   const lastStepFinishedAt = Math.max(
     ...steps.map(step => Date.parse(step?.finished_at)).filter(Number.isFinite),
     -Infinity
