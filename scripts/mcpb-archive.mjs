@@ -6,6 +6,7 @@ import {
   chmodSync,
   fsyncSync,
   readFileSync,
+  readSync,
   readdirSync,
   renameSync,
   rmSync,
@@ -13,15 +14,30 @@ import {
   writeFileSync,
 } from "fs";
 import path from "path";
-import { unzipSync, zipSync } from "fflate";
+import { zipSync } from "fflate";
 
-const ZIP_EPOCH_MS = Date.UTC(1980, 0, 1, 0, 0, 0);
-const ZIP_LAST_YEAR = 2099; // fflate 0.8.3's explicit DOS-date upper bound.
 const FILE_MODE = 0o644;
 const REGULAR_FILE_MODE = 0o100000 | FILE_MODE;
+const UNSUPPORTED_DIRECTORY_FSYNC_ERRORS = new Set(["EINVAL", "ENOTSUP", "EOPNOTSUPP", "EISDIR"]);
 
 export function sha256Bytes(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+export function sha256File(filename) {
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(1024 * 1024);
+  const descriptor = openSync(filename, "r");
+  try {
+    let bytesRead;
+    do {
+      bytesRead = readSync(descriptor, buffer, 0, buffer.length, null);
+      if (bytesRead > 0) hash.update(buffer.subarray(0, bytesRead));
+    } while (bytesRead > 0);
+  } finally {
+    closeSync(descriptor);
+  }
+  return hash.digest("hex");
 }
 
 function compareArchivePaths(left, right) {
@@ -50,35 +66,11 @@ export function assertSafeArchivePath(relativePath) {
   return relativePath;
 }
 
-export function canonicalZipMtime(sourceDateEpoch = process.env.SOURCE_DATE_EPOCH) {
-  let epochMs = ZIP_EPOCH_MS;
-  if (sourceDateEpoch !== undefined && sourceDateEpoch !== "") {
-    if (!/^[0-9]+$/.test(String(sourceDateEpoch))) {
-      throw new Error("SOURCE_DATE_EPOCH must be a non-negative integer number of seconds");
-    }
-    const seconds = Number(sourceDateEpoch);
-    if (!Number.isSafeInteger(seconds)) {
-      throw new Error("SOURCE_DATE_EPOCH is outside JavaScript's safe integer range");
-    }
-    epochMs = Math.max(seconds * 1000, ZIP_EPOCH_MS);
-  }
-
-  const utc = new Date(epochMs);
-  if (Number.isNaN(utc.getTime()) || utc.getUTCFullYear() > ZIP_LAST_YEAR) {
-    throw new Error(`SOURCE_DATE_EPOCH must resolve to a date no later than ${ZIP_LAST_YEAR}`);
-  }
-
-  // fflate serializes local Date fields. Constructing a local Date from the
-  // desired UTC fields makes the DOS timestamp byte-identical in every TZ.
-  return new Date(
-    utc.getUTCFullYear(),
-    utc.getUTCMonth(),
-    utc.getUTCDate(),
-    utc.getUTCHours(),
-    utc.getUTCMinutes(),
-    utc.getUTCSeconds() - (utc.getUTCSeconds() % 2),
-    0,
-  );
+export function canonicalZipMtime() {
+  // fflate writes local Date fields into the DOS header. This local constructor
+  // therefore encodes the same literal 1980-01-01 00:00 fields in every TZ,
+  // including DST-transition zones. SOURCE_DATE_EPOCH is intentionally ignored.
+  return new Date(1980, 0, 1, 0, 0, 0, 0);
 }
 
 export function collectRegularFiles(rootDir) {
@@ -124,10 +116,10 @@ export function buildExpectedFileManifest(rootDir) {
   });
 }
 
-export function createCanonicalZip(expectedFiles, sourceDateEpoch = process.env.SOURCE_DATE_EPOCH) {
+export function createCanonicalZip(expectedFiles) {
   const sorted = [...expectedFiles].sort((a, b) => compareArchivePaths(a.path, b.path));
   const unique = new Set();
-  const mtime = canonicalZipMtime(sourceDateEpoch);
+  const mtime = canonicalZipMtime();
   const inputs = {};
   for (const file of sorted) {
     assertSafeArchivePath(file.path);
@@ -149,6 +141,9 @@ function findEndOfCentralDirectory(bytes) {
 export function readCentralDirectory(bytes) {
   const buffer = Buffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength);
   const eocd = findEndOfCentralDirectory(buffer);
+  if (buffer.readUInt16LE(eocd + 20) !== 0 || eocd + 22 !== buffer.length) {
+    throw new Error("ZIP must have no EOCD comment or trailing bytes");
+  }
   const entryCount = buffer.readUInt16LE(eocd + 10);
   const centralSize = buffer.readUInt32LE(eocd + 12);
   const centralOffset = buffer.readUInt32LE(eocd + 16);
@@ -196,13 +191,17 @@ function dosFields(date) {
   };
 }
 
-export function verifyCanonicalZip(bytes, expectedFiles, sourceDateEpoch = process.env.SOURCE_DATE_EPOCH) {
+export function verifyCanonicalZip(bytes, expectedFiles) {
   const expected = [...expectedFiles].sort((a, b) => compareArchivePaths(a.path, b.path));
+  const canonical = createCanonicalZip(expected);
+  if (!Buffer.from(bytes).equals(Buffer.from(canonical))) {
+    throw new Error("Archive bytes do not exactly match the canonical encoding");
+  }
   const entries = readCentralDirectory(bytes);
   if (entries.length !== expected.length) {
     throw new Error(`Archive file count mismatch: ${entries.length} != ${expected.length}`);
   }
-  const expectedTimestamp = dosFields(canonicalZipMtime(sourceDateEpoch));
+  const expectedTimestamp = dosFields(canonicalZipMtime());
   const seen = new Set();
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
@@ -226,26 +225,33 @@ export function verifyCanonicalZip(bytes, expectedFiles, sourceDateEpoch = proce
     if (entry.size !== wanted.size) throw new Error(`Archive size mismatch for ${entry.path}`);
   }
 
-  const unpacked = unzipSync(bytes);
-  const unpackedPaths = Object.keys(unpacked).sort(compareArchivePaths);
-  if (unpackedPaths.length !== expected.length) throw new Error("Unpacked archive path count mismatch");
-  for (let index = 0; index < expected.length; index += 1) {
-    const wanted = expected[index];
-    if (unpackedPaths[index] !== wanted.path) throw new Error(`Unpacked archive parity mismatch: ${wanted.path}`);
-    const actual = unpacked[wanted.path];
-    if (actual.length !== wanted.size || sha256Bytes(actual) !== wanted.sha256) {
-      throw new Error(`Unpacked archive content mismatch: ${wanted.path}`);
-    }
-  }
   return entries;
+}
+
+function defaultDirectoryFsync(directory) {
+  const descriptor = openSync(directory, "r");
+  try {
+    fsyncSync(descriptor);
+  } finally {
+    closeSync(descriptor);
+  }
+}
+
+function syncDirectory(directory, directoryFsync) {
+  try {
+    directoryFsync(directory);
+  } catch (error) {
+    if (!UNSUPPORTED_DIRECTORY_FSYNC_ERRORS.has(error?.code)) throw error;
+  }
 }
 
 export function writeCanonicalBytesAtomic({
   bytes,
   expectedFiles,
   outputPath,
-  sourceDateEpoch = process.env.SOURCE_DATE_EPOCH,
+  canonicalVerified = false,
   beforeRename,
+  operations = {},
 }) {
   const candidate = path.join(
     path.dirname(outputPath),
@@ -253,58 +259,90 @@ export function writeCanonicalBytesAtomic({
   );
   let descriptor;
   const outputDirectory = path.dirname(outputPath);
-  const syncDirectory = () => {
-    let directoryDescriptor;
-    try {
-      directoryDescriptor = openSync(outputDirectory, "r");
-      fsyncSync(directoryDescriptor);
-    } catch {
-      // Directory fsync is unsupported on some filesystems/platforms. The
-      // candidate file itself is always fsynced before activation.
-    } finally {
-      if (directoryDescriptor !== undefined) closeSync(directoryDescriptor);
-    }
-  };
+  const fileFsync = operations.fileFsync || fsyncSync;
+  const directoryFsync = operations.directoryFsync || defaultDirectoryFsync;
+  const rename = operations.rename || renameSync;
+  const remove = operations.remove || (filename => rmSync(filename, { force: true }));
   try {
     descriptor = openSync(candidate, "wx", 0o600);
     writeFileSync(descriptor, bytes);
     chmodSync(candidate, 0o644);
-    fsyncSync(descriptor);
-    closeSync(descriptor);
+    fileFsync(descriptor);
+    const completedDescriptor = descriptor;
     descriptor = undefined;
-    verifyCanonicalZip(readFileSync(candidate), expectedFiles, sourceDateEpoch);
+    closeSync(completedDescriptor);
+    if (canonicalVerified) {
+      if (statSync(candidate).size !== bytes.length || sha256File(candidate) !== sha256Bytes(bytes)) {
+        throw new Error("Candidate bytes changed while being written");
+      }
+    } else {
+      verifyCanonicalZip(readFileSync(candidate), expectedFiles);
+    }
     if (beforeRename) beforeRename(candidate);
-    syncDirectory();
-    renameSync(candidate, outputPath);
-    syncDirectory();
+    syncDirectory(outputDirectory, directoryFsync);
+    rename(candidate, outputPath);
+    syncDirectory(outputDirectory, directoryFsync);
   } catch (error) {
     if (descriptor !== undefined) closeSync(descriptor);
-    rmSync(candidate, { force: true });
+    remove(candidate);
     throw error;
   }
   return {
     bytes: statSync(outputPath).size,
     files: expectedFiles.length,
-    sha256: sha256Bytes(readFileSync(outputPath)),
-    expectedFiles,
+    sha256: sha256File(outputPath),
   };
 }
 
 export function writeCanonicalMcpbAtomic({
   stagingDir,
   outputPath,
-  sourceDateEpoch = process.env.SOURCE_DATE_EPOCH,
   beforeRename,
+  operations,
 }) {
   const expectedFiles = buildExpectedFileManifest(stagingDir);
-  const bytes = createCanonicalZip(expectedFiles, sourceDateEpoch);
+  const bytes = createCanonicalZip(expectedFiles);
   return writeCanonicalBytesAtomic({
     bytes,
     expectedFiles,
     outputPath,
-    sourceDateEpoch,
     beforeRename,
+    operations,
   });
+}
+
+export function activateCanonicalCandidateAtomic({
+  candidatePath,
+  outputPath,
+  operations = {},
+}) {
+  const outputDirectory = path.dirname(outputPath);
+  if (path.dirname(candidatePath) !== outputDirectory) {
+    throw new Error("Canonical candidate must be a sibling of the output for atomic activation");
+  }
+  const fileFsync = operations.fileFsync || fsyncSync;
+  const directoryFsync = operations.directoryFsync || defaultDirectoryFsync;
+  const rename = operations.rename || renameSync;
+  const remove = operations.remove || (filename => rmSync(filename, { force: true }));
+  let descriptor;
+  try {
+    descriptor = openSync(candidatePath, "r");
+    fileFsync(descriptor);
+    const completedDescriptor = descriptor;
+    descriptor = undefined;
+    closeSync(completedDescriptor);
+    syncDirectory(outputDirectory, directoryFsync);
+    rename(candidatePath, outputPath);
+    syncDirectory(outputDirectory, directoryFsync);
+  } catch (error) {
+    if (descriptor !== undefined) closeSync(descriptor);
+    remove(candidatePath);
+    throw error;
+  }
+  return {
+    bytes: statSync(outputPath).size,
+    sha256: sha256File(outputPath),
+  };
 }
 
 export const CANONICAL_FILE_MODE = FILE_MODE;

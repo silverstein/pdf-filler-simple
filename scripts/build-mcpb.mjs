@@ -1,16 +1,21 @@
 #!/usr/bin/env node
 
 import {
+  closeSync,
   copyFileSync,
   existsSync,
   lstatSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   readFileSync,
+  readSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync,
 } from "fs";
+import { randomUUID } from "crypto";
 import { tmpdir } from "os";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -18,8 +23,8 @@ import { spawnSync } from "child_process";
 import { verifyInstalledBuildToolchain } from "./build-toolchain.mjs";
 import {
   buildExpectedFileManifest,
+  activateCanonicalCandidateAtomic,
   createCanonicalZip,
-  sha256Bytes,
   verifyCanonicalZip,
   writeCanonicalBytesAtomic,
 } from "./mcpb-archive.mjs";
@@ -159,10 +164,10 @@ function copyRuntimeSource(stagingDir) {
   copyRegularFile("manifest.mcpb.json", "manifest.json", stagingDir);
 }
 
-function verifyLockedTooling() {
-  const lock = JSON.parse(readFileSync(path.join(REPO_ROOT, "package-lock.json"), "utf8"));
-  const installedMcpb = JSON.parse(readFileSync(path.join(REPO_ROOT, "node_modules/@anthropic-ai/mcpb/package.json"), "utf8"));
-  const installedFflate = JSON.parse(readFileSync(path.join(REPO_ROOT, "node_modules/fflate/package.json"), "utf8"));
+export function verifyLockedTooling(repoRoot = REPO_ROOT) {
+  const lock = JSON.parse(readFileSync(path.join(repoRoot, "package-lock.json"), "utf8"));
+  const installedMcpb = JSON.parse(readFileSync(path.join(repoRoot, "node_modules/@anthropic-ai/mcpb/package.json"), "utf8"));
+  const installedFflate = JSON.parse(readFileSync(path.join(repoRoot, "node_modules/fflate/package.json"), "utf8"));
   if (lock.packages?.["node_modules/@anthropic-ai/mcpb"]?.version !== MCPB_VERSION || installedMcpb.version !== MCPB_VERSION) {
     throw new Error(`Canonical build requires locked and installed @anthropic-ai/mcpb@${MCPB_VERSION}`);
   }
@@ -335,42 +340,142 @@ function prepareCleanStage() {
   }
 }
 
-async function main() {
-  const outputPath = path.resolve(process.argv[2] || DEFAULT_OUTPUT);
-  mkdirSync(path.dirname(outputPath), { recursive: true });
+function filesAreByteIdentical(firstPath, secondPath) {
+  if (statSync(firstPath).size !== statSync(secondPath).size) return false;
+  const first = openSync(firstPath, "r");
+  const second = openSync(secondPath, "r");
+  const firstBuffer = Buffer.allocUnsafe(1024 * 1024);
+  const secondBuffer = Buffer.allocUnsafe(1024 * 1024);
+  try {
+    while (true) {
+      const firstRead = readSync(first, firstBuffer, 0, firstBuffer.length, null);
+      const secondRead = readSync(second, secondBuffer, 0, secondBuffer.length, null);
+      if (firstRead !== secondRead) return false;
+      if (firstRead === 0) return true;
+      if (!firstBuffer.subarray(0, firstRead).equals(secondBuffer.subarray(0, secondRead))) return false;
+    }
+  } finally {
+    closeSync(first);
+    closeSync(second);
+  }
+}
+
+function runSingleBuild(candidatePath) {
   verifyInstalledBuildToolchain(REPO_ROOT);
   verifyLockedTooling();
-  const builds = [];
+  let build;
   try {
-    for (let buildNumber = 1; buildNumber <= 2; buildNumber += 1) {
-      console.log(`\nPreparing clean MCPB build ${buildNumber}/2...`);
-      const build = prepareCleanStage();
-      build.archive = createCanonicalZip(build.expected);
-      verifyCanonicalZip(build.archive, build.expected);
-      build.sha256 = sha256Bytes(build.archive);
-      console.log(`Canonical build ${buildNumber}: ${build.sha256}`);
-      builds.push(build);
-    }
-    if (builds[0].sha256 !== builds[1].sha256 || !Buffer.from(builds[0].archive).equals(Buffer.from(builds[1].archive))) {
-      throw new Error(`Clean MCPB builds were not byte-identical: ${builds[0].sha256} != ${builds[1].sha256}`);
-    }
+    build = prepareCleanStage();
+    const archive = createCanonicalZip(build.expected);
+    verifyCanonicalZip(archive, build.expected);
+    const fileCount = build.expected.length;
+    for (const file of build.expected) file.bytes = undefined;
     const result = writeCanonicalBytesAtomic({
-      bytes: builds[1].archive,
-      expectedFiles: builds[1].expected,
-      outputPath,
-      beforeRename(candidatePath) {
-        run("unzip", ["-tqq", candidatePath], { capture: true });
-      },
+      bytes: archive,
+      expectedFiles: build.expected,
+      outputPath: candidatePath,
+      canonicalVerified: true,
     });
+    const evidence = {
+      ...result,
+      files: fileCount,
+      nativePaths: build.nativePaths,
+      peakRssKiB: process.resourceUsage().maxRSS,
+    };
+    console.log(`MCPB_BUILD_RESULT ${JSON.stringify(evidence)}`);
+  } finally {
+    if (build) rmSync(build.stagingDir, { recursive: true, force: true });
+  }
+}
+
+function runBuildChild(candidatePath, buildNumber) {
+  console.log(`\nPreparing clean MCPB build ${buildNumber}/2 in an isolated process...`);
+  const result = spawnSync(process.execPath, [fileURLToPath(import.meta.url), "--build-once", candidatePath], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+    maxBuffer: 20 * 1024 * 1024,
+  });
+  if (result.stdout) process.stdout.write(result.stdout);
+  if (result.stderr) process.stderr.write(result.stderr);
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`Isolated MCPB build ${buildNumber} exited with status ${result.status}`);
+  const match = result.stdout.match(/^MCPB_BUILD_RESULT (.+)$/m);
+  if (!match) throw new Error(`Isolated MCPB build ${buildNumber} did not report evidence`);
+  return JSON.parse(match[1]);
+}
+
+function verifyCandidateWithPinnedMcpb(candidatePath) {
+  const mcpbCommand = path.join(REPO_ROOT, "node_modules", ".bin", process.platform === "win32" ? "mcpb.cmd" : "mcpb");
+  run(mcpbCommand, ["info", candidatePath], { capture: true });
+  const unpackRoot = mkdtempSync(path.join(tmpdir(), "pdf-tools-mcpb-unpack-"));
+  const unpacked = path.join(unpackRoot, "extension");
+  try {
+    run(mcpbCommand, ["unpack", candidatePath, unpacked], { capture: true });
+    for (const required of [
+      "manifest.json",
+      "server/index.js",
+      "dist-ui/index.html",
+      ...NATIVE_TARGETS.map(target => `node_modules/${target.packageName}/${target.binary}`),
+    ]) {
+      const filename = path.join(unpacked, ...required.split("/"));
+      if (!existsSync(filename) || !lstatSync(filename).isFile()) {
+        throw new Error(`Pinned MCPB unpack is missing required file: ${required}`);
+      }
+    }
+  } finally {
+    rmSync(unpackRoot, { recursive: true, force: true });
+  }
+
+  const externalUnzip = spawnSync("unzip", ["-tqq", candidatePath], { encoding: "utf8" });
+  if (externalUnzip.error?.code === "ENOENT") {
+    console.warn("Additional external unzip integrity check skipped: unzip is not installed");
+  } else if (externalUnzip.error) {
+    throw externalUnzip.error;
+  } else if (externalUnzip.status !== 0) {
+    throw new Error(`Additional external unzip integrity check failed: ${externalUnzip.stderr || externalUnzip.stdout}`);
+  }
+}
+
+async function main() {
+  if (process.argv[2] === "--build-once") {
+    runSingleBuild(path.resolve(process.argv[3]));
+    return;
+  }
+  const outputPath = path.resolve(process.argv[2] || DEFAULT_OUTPUT);
+  const outputDirectory = path.dirname(outputPath);
+  mkdirSync(outputDirectory, { recursive: true });
+  verifyInstalledBuildToolchain(REPO_ROOT);
+  verifyLockedTooling();
+  const candidatePaths = [1, 2].map(number =>
+    path.join(outputDirectory, `.${path.basename(outputPath)}.repro-${number}-${process.pid}-${randomUUID()}`),
+  );
+  let activated = false;
+  try {
+    const first = runBuildChild(candidatePaths[0], 1);
+    const second = runBuildChild(candidatePaths[1], 2);
+    if (
+      first.sha256 !== second.sha256 ||
+      first.bytes !== second.bytes ||
+      first.files !== second.files ||
+      !filesAreByteIdentical(candidatePaths[0], candidatePaths[1])
+    ) {
+      throw new Error(`Clean MCPB builds were not byte-identical: ${first.sha256} != ${second.sha256}`);
+    }
+    verifyCandidateWithPinnedMcpb(candidatePaths[1]);
+    const result = activateCanonicalCandidateAtomic({ candidatePath: candidatePaths[1], outputPath });
+    activated = true;
     console.log("\nVerified native bindings:");
-    for (const nativePath of builds[1].nativePaths) console.log(`- ${nativePath}`);
+    for (const nativePath of second.nativePaths) console.log(`- ${nativePath}`);
     console.log(`\nArtifact: ${outputPath}`);
-    console.log(`Files: ${result.files}`);
+    console.log(`Files: ${second.files}`);
     console.log(`Bytes: ${result.bytes}`);
     console.log(`SHA-256: ${result.sha256}`);
-    console.log("Reproducibility: two clean builds were byte-identical");
+    console.log(`Peak isolated-build RSS: ${Math.max(first.peakRssKiB, second.peakRssKiB)} KiB`);
+    console.log("Reproducibility: two clean isolated builds were byte-identical");
+    console.log("Consumer verification: pinned MCPB info and unpack passed");
   } finally {
-    for (const build of builds) rmSync(build.stagingDir, { recursive: true, force: true });
+    rmSync(candidatePaths[0], { force: true });
+    if (!activated) rmSync(candidatePaths[1], { force: true });
   }
 }
 

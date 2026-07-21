@@ -24,9 +24,12 @@ npm run test:contract:share
 `build:mcpb` uses repository-pinned MCPB 2.1.2 to validate two clean production
 stages, installs the five locked native targets into each, and produces both
 archives with the lock-resolved `fflate@0.8.3` canonical writer. It requires
-byte-identical output, exact stage/archive content parity, normalized ZIP
+byte-identical output from isolated build processes, exact stage/archive content parity and
+canonical re-encoding, normalized ZIP
 metadata, safe unique paths, the protected `pdfjs-dist@5.4.624` legacy runtime,
-and `unzip -t` integrity before atomically replacing the prior artifact. Do not
+and pinned MCPB 2.1.2 `info`/`unpack` consumption before atomically replacing
+the prior artifact. External `unzip -t` is an additional check when available,
+not a Windows portability claim. The build reports its measured peak child RSS. Do not
 substitute a host-local global `mcpb pack` for release builds.
 
 The share-package test builds the ZIP twice, requires byte-identical hashes,

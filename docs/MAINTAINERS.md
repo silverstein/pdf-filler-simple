@@ -108,10 +108,15 @@ plus Linux x64 GNU for CI and compatible local hosts. It packs
 `manifest.mcpb.json` as `manifest.json`, validates each stage with the
 repository-pinned MCPB 2.1.2 CLI, and uses MCPB's lock-resolved `fflate@0.8.3`
 to produce a repository-owned canonical archive. The canonical writer uses a
-code-point-sorted forward-slash inventory, one fixed ZIP timestamp (or a
-normalized `SOURCE_DATE_EPOCH`), mode `0644`, deterministic level-9 compression,
+UTF-8-byte-sorted forward-slash inventory, the fixed representable ZIP timestamp
+`1980-01-01 00:00:00` (independent of timezone and `SOURCE_DATE_EPOCH`), regular
+file mode `0100644`, deterministic level-9 compression,
 and no ZIP extras or comments. The two archives must be byte-identical before a
 fully verified same-directory candidate atomically replaces the prior output.
+Each clean stage and exact canonical re-encoding runs in a separate child
+process, so two full installed graphs and archives never coexist in one process;
+the command reports the larger child-process peak RSS as the reproducibility
+build's measured memory bound.
 
 Only the five reviewed `server/*.js` runtime files and `dist-ui/index.html` are
 copied from those source directories. Symlink or special-file inputs fail the
@@ -120,7 +125,10 @@ unused top-level PDF.js browser/type/resource trees, while
 `pdfjs-dist/legacy/build/` is required to remain present. Archive verification
 requires exact stage/archive path and byte parity, all five native bindings,
 safe unique paths, normalized metadata, required runtime files, absence of
-development/trimmed entries, and a successful `unzip -t` integrity check. A
+development/trimmed entries, exact canonical-byte re-encoding, and successful
+`info` plus `unpack` consumption by pinned MCPB 2.1.2. If the host has an
+`unzip` executable, `unzip -t` runs as an additional integrity check, but it is
+not the portable canonical gate. A
 high-confidence secret scan is limited to first-party inputs so dependency
 source examples do not create noisy false positives. The command prints the
 reproducible SHA-256. Do not release an
