@@ -37,7 +37,8 @@ family:
 - product-engine open and render;
 - independent Poppler open and render;
 - page lineage and page geometry;
-- exact expected form and annotation inventory;
+- declared V1 field and non-widget annotation inventory, plus bidirectional
+  widget reachability;
 - operation-specific metadata preservation;
 - intended visual change and forbidden visual drift;
 - exact recursive filesystem effects;

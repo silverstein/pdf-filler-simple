@@ -55,6 +55,7 @@ function cleanCell(item, repetition) {
   }
   const visual = item.page_lineage.flatMap(lineage => ["pdfjs", "poppler"].map(engine => ({
     engine, output_path: lineage.output_path, output_page: lineage.output_page,
+    source_path: lineage.source_path, source_page: lineage.source_page, rotation_delta: lineage.rotation_delta,
     metrics: { dimension_mismatch: false, inside_counts: { 8: item.intended_regions.some(region => region.output_path === lineage.output_path && region.page === lineage.output_page) ? 1 : 0 }, outside_counts: { 8: 0 } },
   })));
   const created = [...item.filesystem.created, ...item.filesystem.created_directories];
@@ -107,6 +108,27 @@ describe("fidelity conjunction scorer", () => {
     expect(scoreFidelityReport(manifest, report).valid).toBe(false);
     report.cells.push(structuredClone(report.cells[0]));
     expect(scoreFidelityReport(manifest, report).validation_errors.some(error => error.includes("duplicate"))).toBe(true);
+  });
+
+  it("rejects omitted, duplicate, and unplanned visual lineage cells", async () => {
+    const { manifest, report } = await cleanReport();
+    const cell = report.cells.find(item => item.case_id.endsWith("page-plan-reorder-rotate"));
+    cell.visual_comparisons.pop();
+    let score = scoreFidelityReport(manifest, report);
+    expect(score.required_failures.some(item => item.case_id === cell.case_id && item.gate === "forbidden_visual"
+      && item.reasons.some(reason => reason.includes("is missing")))).toBe(true);
+
+    Object.assign(cell, cleanCell(manifest.cases.find(item => item.id === cell.case_id), cell.repetition));
+    cell.visual_comparisons.push(structuredClone(cell.visual_comparisons[0]));
+    score = scoreFidelityReport(manifest, report);
+    expect(score.required_failures.some(item => item.gate === "forbidden_visual"
+      && item.reasons.some(reason => reason.includes("duplicates")))).toBe(true);
+
+    cell.visual_comparisons.pop();
+    cell.visual_comparisons[0].source_page = 999;
+    score = scoreFidelityReport(manifest, report);
+    expect(score.required_failures.some(item => item.gate === "forbidden_visual"
+      && item.reasons.some(reason => reason.includes("unplanned")))).toBe(true);
   });
 
   it("catches orphan widgets, outside drift, engine substitution, temp files, and H1 backup recreation", async () => {

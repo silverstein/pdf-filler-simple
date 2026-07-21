@@ -158,8 +158,16 @@ function evaluateSemantics(caseDefinition, cell) {
 function evaluateVisual(caseDefinition, cell, kind) {
   const reasons = [];
   const requiredRegions = caseDefinition.intended_regions.filter(region => region.required_visible_delta);
-  if (!Array.isArray(cell.visual_comparisons) || cell.visual_comparisons.length === 0) {
-    reasons.push("visual comparison denominator is empty");
+  const expectedKeys = caseDefinition.page_lineage.flatMap(lineage => ["pdfjs", "poppler"].map(engine =>
+    `${engine}|${lineage.output_path}|${lineage.output_page}|${lineage.source_path}|${lineage.source_page}|${lineage.rotation_delta}`));
+  const observedKeys = (cell.visual_comparisons ?? []).map(comparison =>
+    `${comparison.engine}|${comparison.output_path}|${comparison.output_page}|${comparison.source_path}|${comparison.source_page}|${comparison.rotation_delta}`);
+  if (new Set(observedKeys).size !== observedKeys.length) reasons.push("visual comparison denominator contains duplicates");
+  for (const key of expectedKeys) {
+    if (!observedKeys.includes(key)) reasons.push(`visual comparison denominator is missing ${key}`);
+  }
+  for (const key of observedKeys) {
+    if (!expectedKeys.includes(key)) reasons.push(`visual comparison denominator contains unplanned ${key}`);
   }
   for (const comparison of cell.visual_comparisons ?? []) {
     if (!comparison.metrics) reasons.push(`${comparison.engine} ${comparison.output_path} page ${comparison.output_page} lacks visual evidence`);

@@ -355,6 +355,14 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
 }
 
 await fs.mkdir(OUTPUT_ROOT, { recursive: true });
+for (const reserved of ["runs", "fidelity-report.v1.json", "fidelity-score.v1.json", "run-index.v1.json"]) {
+  try {
+    await fs.lstat(path.join(OUTPUT_ROOT, reserved));
+    throw new Error(`Output root is not fresh; reserved path already exists: ${reserved}`);
+  } catch (error) {
+    if (error.code !== "ENOENT") throw error;
+  }
+}
 const manifest = await loadFidelityManifest(MANIFEST_PATH);
 const fixtureBindings = await verifyFidelityDocuments(MANIFEST_PATH, manifest);
 if (!fixtureBindings.every(binding => binding.passed)) throw new Error("Fidelity fixture SHA-256 verification failed");
