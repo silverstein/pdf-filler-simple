@@ -7,8 +7,9 @@ Work with PDFs locally in Cursor: view, fill, merge, split, rotate, reorder, and
 ### 🖱️ **Option 1: Double-Click Install** (Easiest - Mac only)
 Just **double-click `install.command`** - that's it!
 - Opens Terminal automatically
-- **Auto-moves files** from Downloads to permanent location (`~/.pdf-tools-mcp`)
-- Installs everything 
+- Stages and installs everything at `~/.pdf-tools-mcp`
+- Keeps the current working installation if dependency installation fails
+- Rolls back the current installation if activation fails
 - Can auto-update your Cursor config
 - **Safe to delete Downloads** after install
 - No Terminal knowledge needed
@@ -38,6 +39,12 @@ The package includes the maintainer-reviewed `package-lock.json`. Every bundled
 installer uses `npm ci --omit=dev --engine-strict`, so an install fails instead
 of silently resolving a newer dependency graph.
 
+`SBOM.cdx.json` is a deterministic CycloneDX 1.6 inventory of the complete
+locked production graph. `SHARE-PROVENANCE.json` binds the lockfile, SBOM, and
+packaged source files to SHA-256 digests. The SBOM is structurally and
+lock-coverage validated during packaging; this is not a claim of validation by
+an external CycloneDX schema validator.
+
 ### Windows
 
 The bundled click/terminal helpers are Bash scripts. In PowerShell, open this
@@ -52,8 +59,8 @@ same JSON shown by `install.sh`. Native Windows installation remains a release
 host gate; a Linux-only smoke run does not establish Windows compatibility.
 
 ## 🗂️ **Installation Location**
-- **If run from Downloads**: Auto-moves to `~/.pdf-tools-mcp` (permanent)
-- **If run elsewhere**: Installs in current location
+- **Double-click/smart installers**: Always stage and atomically activate at `~/.pdf-tools-mcp`
+- **Manual installer**: Installs in the extracted package directory
 - **Safe cleanup**: Can delete original files after install
 
 ## After Installation

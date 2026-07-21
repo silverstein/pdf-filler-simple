@@ -20,49 +20,18 @@ function show_manual_instructions() {
 
 echo "🚀 Installing PDF Tools MCP Server..."
 
-# Navigate to the script's directory
-cd "$(dirname "$0")"
+SOURCE_DIR="$(cd "$(dirname "$0")" && pwd -P)"
+PERMANENT_DIR="$HOME/.pdf-tools-mcp"
+cd "$HOME" || exit 1
 
-# Check if we're in Downloads folder
-CURRENT_DIR="$(pwd)"
-if [[ "$CURRENT_DIR" == *"/Downloads/"* ]]; then
-    echo "⚠️  Installing from Downloads folder"
-    echo "📂 Moving to permanent location for safety..."
-    echo ""
-    
-    # Create permanent location
-    PERMANENT_DIR="$HOME/.pdf-tools-mcp"
-    
-    if [ -d "$PERMANENT_DIR" ]; then
-        echo "🔄 Updating existing installation at $PERMANENT_DIR"
-        rm -rf "$PERMANENT_DIR"
-    else
-        echo "📁 Creating permanent installation at $PERMANENT_DIR"
-    fi
-    
-    # Create directory and copy files
-    mkdir -p "$PERMANENT_DIR"
-    cp -r * "$PERMANENT_DIR/"
-    
-    echo "✅ Files moved to permanent location"
-    echo "💡 You can now safely delete the Downloads folder contents"
-    echo ""
-    
-    # Switch to the permanent directory
-    cd "$PERMANENT_DIR"
-    chmod +x *.sh *.command
-fi
-
-echo "📦 Installing the reviewed production dependency graph..."
-if ! npm ci --omit=dev --engine-strict --no-audit --no-fund; then
-    echo "❌ Failed to install locked dependencies. Node.js ^20.19.0 or >=22.12.0 is required."
+if ! "$SOURCE_DIR/install-transactional.sh" "$SOURCE_DIR" "$PERMANENT_DIR"; then
+    echo "❌ Installation failed. Node.js ^20.19.0 or >=22.12.0 is required."
     exit 1
 fi
-echo "✅ Locked dependencies installed!"
 echo ""
 
 # Get the absolute path automatically
-FULL_PATH="$(pwd)/server/index.js"
+FULL_PATH="$PERMANENT_DIR/server/index.js"
 MCP_CONFIG="$HOME/.cursor/mcp.json"
 
 echo "✨ Server installed at: $FULL_PATH"
