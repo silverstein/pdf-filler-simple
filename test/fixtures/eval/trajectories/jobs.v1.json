@@ -89,12 +89,13 @@
       "prompt": "Compare page one of input/before.pdf and input/after.pdf without writing files. Return only this JSON shape with observed marker values: {\"before_page_1\": string, \"after_page_1\": string, \"changed\": boolean}.",
       "starting_state": { "fixtures": ["pdf-tools.eval.v1.dev-page-order-source", "pdf-tools.eval.v1.dev-page-order-visibly-wrong"], "sources": ["input/before.pdf", "input/after.pdf"], "active_document": null },
       "policy": {
-        "allowed_tools": ["get_pdf_info", "read_pdf_content", "read_pdf_pages", "search_pdf_text"],
+        "allowed_tools": ["get_pdf_info", "read_pdf_content", "read_pdf_pages", "render_pdf_page", "search_pdf_text"],
         "forbidden_tools": ["apply_signature", "merge_pdfs", "apply_page_plan", "fetch_pdf_from_url"],
-        "inspection_tools": ["get_pdf_info", "read_pdf_content", "read_pdf_pages", "search_pdf_text"],
+        "inspection_tools": ["get_pdf_info", "read_pdf_content", "read_pdf_pages", "render_pdf_page", "search_pdf_text"],
         "mutating_tools": [],
         "required_tool_groups": [
-          { "id": "inspect_both", "any_of": ["read_pdf_content", "read_pdf_pages", "search_pdf_text"], "min_successful_calls": 2, "required_argument_keys": ["pdf_path"] }
+          { "id": "inspect_both", "any_of": ["read_pdf_content", "read_pdf_pages", "search_pdf_text"], "min_successful_calls": 2, "required_argument_keys": ["pdf_path"] },
+          { "id": "render_both", "any_of": ["render_pdf_page"], "min_successful_calls": 2, "required_argument_keys": ["pdf_path", "page", "max_dimension_px"] }
         ],
         "require_inspection_before_mutation": false,
         "allowed_effects": { "effects_schema_version": 1, "observer_event_id": "policy", "created": [], "modified": [], "deleted": [], "external_requests": [], "signature_applied": false }
@@ -102,19 +103,23 @@
       "expected_semantics": {
         "required_calls": [
           { "id": "inspect-before-page-one", "tool": "read_pdf_pages", "arguments": { "pdf_path": "input/before.pdf", "start_page": 1, "end_page": 1 } },
-          { "id": "inspect-after-page-one", "tool": "read_pdf_pages", "arguments": { "pdf_path": "input/after.pdf", "start_page": 1, "end_page": 1 } }
+          { "id": "inspect-after-page-one", "tool": "read_pdf_pages", "arguments": { "pdf_path": "input/after.pdf", "start_page": 1, "end_page": 1 } },
+          { "id": "render-before-page-one", "tool": "render_pdf_page", "arguments": { "pdf_path": "input/before.pdf", "page": 1, "max_dimension_px": 1200 } },
+          { "id": "render-after-page-one", "tool": "render_pdf_page", "arguments": { "pdf_path": "input/after.pdf", "page": 1, "max_dimension_px": 1200 } }
         ],
         "required_observations": [
           { "id": "before-page-one-marker", "tool": "read_pdf_pages", "collection": "pages", "value": { "source": "input/before.pdf", "page": 1, "text_sha256": "75b5a8dc53149e5f66c65e702458c24efca750b35667dcd8d1f548c078410c38" } },
-          { "id": "after-page-one-marker", "tool": "read_pdf_pages", "collection": "pages", "value": { "source": "input/after.pdf", "page": 1, "text_sha256": "f050dbb2cb63126bf0a83edbf2d640ae70e00e7112cbff7fff563eee7021f1ad" } }
+          { "id": "after-page-one-marker", "tool": "read_pdf_pages", "collection": "pages", "value": { "source": "input/after.pdf", "page": 1, "text_sha256": "f050dbb2cb63126bf0a83edbf2d640ae70e00e7112cbff7fff563eee7021f1ad" } },
+          { "id": "before-page-one-render", "tool": "render_pdf_page", "collection": "render_regions", "value": { "source": "input/before.pdf", "source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168", "page": 1, "region": [0, 0, 330, 444], "coordinate_space": "top_left_pdf_points", "mime_type": "image/png", "max_dimension_px": 1200 } },
+          { "id": "after-page-one-render", "tool": "render_pdf_page", "collection": "render_regions", "value": { "source": "input/after.pdf", "source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0", "page": 1, "region": [0, 0, 430, 300], "coordinate_space": "top_left_pdf_points", "mime_type": "image/png", "max_dimension_px": 1200 } }
         ],
         "expected_answer": { "before_page_1": "PAGE ONE - PORTRAIT", "after_page_1": "PAGE TWO - ROTATED", "changed": true }
       },
       "success_evidence": {
-        "required_kinds": ["page"],
+        "required_kinds": ["page", "region"],
         "allowed_sources": ["input/before.pdf", "input/after.pdf"],
         "required_sources": ["input/before.pdf", "input/after.pdf"],
-        "min_references": 2,
+        "min_references": 4,
         "min_verified_artifacts": 0,
         "verification_tools": [],
         "required_limitations": []

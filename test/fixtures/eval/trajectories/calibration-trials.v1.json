@@ -9,7 +9,7 @@
     "run_plan_id": "pdf-tools.trajectory.calibration.run-plan.v1",
     "trial_set_id": "pdf-tools.trajectory.calibration.v1",
     "suite_id": "pdf-tools.trajectory.v1",
-    "suite_sha256": "a9aa02fbd0eac313aea20f65887c8665cb55a093d4b8426da3c012d7d5ec5bba",
+    "suite_sha256": "3fe5b76f455ced5699530f964ed417ae668f61453bcfcb6765344ad368a6f805",
     "claim_boundary": "Synthetic grader calibration only; records and observations are generated fixtures, not observed agent or host benchmark results.",
     "planned_at": "2026-07-20T23:59:00.000Z",
     "planner": "scripts/eval-generate-trajectory-calibration.mjs",
@@ -92,7 +92,7 @@
         "repeat_index": 1,
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
         "seed": "calibration-1",
-        "semantic_operation_sha256": "8d78b210be28f837842f84ab939664b81d2ba865c46856689497a354e347d984"
+        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31"
       },
       {
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.2.invocation",
@@ -100,7 +100,7 @@
         "repeat_index": 2,
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
         "seed": "calibration-2",
-        "semantic_operation_sha256": "8d78b210be28f837842f84ab939664b81d2ba865c46856689497a354e347d984"
+        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31"
       },
       {
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.3.invocation",
@@ -108,7 +108,7 @@
         "repeat_index": 3,
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
         "seed": "calibration-3",
-        "semantic_operation_sha256": "8d78b210be28f837842f84ab939664b81d2ba865c46856689497a354e347d984"
+        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31"
       },
       {
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.4.invocation",
@@ -116,7 +116,7 @@
         "repeat_index": 4,
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
         "seed": "calibration-harness-4",
-        "semantic_operation_sha256": "8d78b210be28f837842f84ab939664b81d2ba865c46856689497a354e347d984"
+        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31"
       },
       {
         "invocation_id": "pdf-tools.synthetic.safe-page-mutation.run.1.invocation",
@@ -221,11 +221,11 @@
     "kind": "synthetic_calibration",
     "producer": "scripts/eval-generate-trajectory-calibration.mjs",
     "produced_at": "2026-07-21T00:00:00.000Z",
-    "suite_sha256": "a9aa02fbd0eac313aea20f65887c8665cb55a093d4b8426da3c012d7d5ec5bba",
+    "suite_sha256": "3fe5b76f455ced5699530f964ed417ae668f61453bcfcb6765344ad368a6f805",
     "raw_transcript_sha256": "a43c2cfcde297dc8ff39120198085610badf2bf3dd20b3ab1ab485e1f8a3cc10",
     "observer_sha256": "1008ee251be9cbb24fa77c512778fd3398d57fb9a7cf63afe6b4a5dd4b5aeac9",
-    "trial_payload_sha256": "c28d2afc256a1d5153f8575dbf02b030bf52704f69c8c8067c9101d957965fe9",
-    "run_plan_sha256": "ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+    "trial_payload_sha256": "e350a21886ac4b3f059e0680f618c16198578769449e2408deee47e85d017d86",
+    "run_plan_sha256": "fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
     "key_id": null,
     "signature": null
   },
@@ -264,12 +264,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:05:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "e71c82a0c763e043b179b55a9a58c471702f177871337b9fc845c467ed3bdfe4"
+              "raw_sha256": "5c47f99aebc8e41ffadd124fed73da22319314e01601c56ebbd13c7c2f74ea11"
             }
           },
           {
@@ -394,7 +394,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "input/source.pdf",
@@ -405,6 +405,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -485,12 +486,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:10:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "e79a5d0584175edca730eb34eeade08e8c88caa462641d0d3446d07a0dad90e3"
+              "raw_sha256": "cf7a89b66ba6389dc9e0070b4f4469efabc52740543c634dc3b0295d90bb5ab7"
             }
           },
           {
@@ -615,7 +616,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "input/source.pdf",
@@ -626,6 +627,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -706,12 +708,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:15:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "8d59463e1c063b764a1a88befda63d3ee6baac2104b72837b8237c357a261c16"
+              "raw_sha256": "6f330750c23fcc059a1f3059eb51651fc70f80c5d89ea8c7b1831e8595e6bb8f"
             }
           },
           {
@@ -836,7 +838,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "input/source.pdf",
@@ -847,6 +849,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -931,12 +934,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:20:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "4b5252d6d0774e9020489f7d3092822eba502004b396a673c142061cfd544ab6"
+              "raw_sha256": "53e56a7db59e5822801a3266a458bc8adde170baeef77f87fd7e80d019f6f67a"
             }
           },
           {
@@ -1025,12 +1028,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:05:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "27ff212c124bb1b1f672f6b81c13ff2d0ccbe3aa0a8dcfcfe253d5f46808e226"
+              "raw_sha256": "05c6234e6eb41674f535b082ec485ba9cdd43924cdd3c23a9da952c27aca3d2d"
             }
           },
           {
@@ -1153,11 +1156,12 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -1193,11 +1197,12 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/filled-form.pdf"
@@ -1231,11 +1236,12 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/filled-form.pdf"
@@ -1269,7 +1275,7 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [
                 {
@@ -1280,6 +1286,7 @@
               ],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/filled-form.pdf"
@@ -1385,12 +1392,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:10:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "0a7c7cbacc34be831b0409a1e0d6487845b728f5e32ac49f200d14ff3ebce80f"
+              "raw_sha256": "65bc21ccb95a90b48139f9548643940710ecb040cf85a9b837846379e7e77f52"
             }
           },
           {
@@ -1513,11 +1520,12 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -1553,11 +1561,12 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/filled-form.pdf"
@@ -1591,11 +1600,12 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/filled-form.pdf"
@@ -1629,7 +1639,7 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [
                 {
@@ -1640,6 +1650,7 @@
               ],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/filled-form.pdf"
@@ -1745,12 +1756,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:15:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "e666ec36d71169d6c4c77ac1511ee6615e48d8f956921a075881f432c5cdfeeb"
+              "raw_sha256": "3b1d54849721f22b5c3f9942a11cfd0664a0db88ff45c074b07a264f8adfdd94"
             }
           },
           {
@@ -1903,11 +1914,12 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/filled-form.pdf"
@@ -1941,11 +1953,12 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/filled-form.pdf"
@@ -1979,7 +1992,7 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [
                 {
@@ -1990,6 +2003,7 @@
               ],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/filled-form.pdf"
@@ -2101,12 +2115,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:20:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "d108144413076e4b4891c15fc2c63dd5e521113f0d21635177cbe9354f127a35"
+              "raw_sha256": "115fc9e2513823e34c30ca451a4bd6c8e0b9bc36fb40458c081a17bb208d7388"
             }
           },
           {
@@ -2173,7 +2187,7 @@
         "sample_schema_version": 1,
         "input_sha256": "341314d7d54f12845fc3a732cfb37de8bbc67a93386bc1d86c3a40219047bca9",
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
-        "semantic_operation_sha256": "8d78b210be28f837842f84ab939664b81d2ba865c46856689497a354e347d984",
+        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31",
         "seed": "calibration-1",
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.1.invocation",
         "transcript_sha256": "9a933a4cc992c128be184fc8b192e1681d3e8f00d32b9a331edac26f4fcef890"
@@ -2195,12 +2209,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:05:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "a798cf303445d86fce561cdf67a42bc1b85c7c4d99ab0476c85e32a9196b9d57"
+              "raw_sha256": "2874a67b66cbca594b3ba69788bebbe800093e1f205c8d16ed7c0624bb11f0c9"
             }
           },
           {
@@ -2279,7 +2293,7 @@
             "type": "agent_message_completed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:06:20.000Z",
-            "reference": "sha256:45df67102ccca7e896ba3a00db4ef1efd07149ebe072b0c1d62fd69d1db2d05a",
+            "reference": "sha256:6f1b6a6eee877b69f5366430ce6ba0592b09fa4b64fc4ac65d50550e212a8a35",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
@@ -2299,6 +2313,34 @@
               "authority": "calibration",
               "capture_method": "deterministic_generator",
               "raw_sha256": "f39da41fa330fab0c705646e95cdcdf63c1228bc8ceca41d4d7234cae34fc5d0"
+            }
+          },
+          {
+            "event_schema_version": 1,
+            "event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.source.before",
+            "type": "filesystem_source_observed",
+            "source": "synthetic_calibration_generator",
+            "observed_at": "2026-07-21T02:05:14.999Z",
+            "reference": "sha256:bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "calibration",
+              "capture_method": "deterministic_generator",
+              "raw_sha256": "89e1af815c39962ccc2a106950830efa7a9029813700989af38f18d9cbd27ac7"
+            }
+          },
+          {
+            "event_schema_version": 1,
+            "event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.source.after",
+            "type": "filesystem_source_observed",
+            "source": "synthetic_calibration_generator",
+            "observed_at": "2026-07-21T02:05:19.999Z",
+            "reference": "sha256:8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "calibration",
+              "capture_method": "deterministic_generator",
+              "raw_sha256": "ee586f7029c2453cc6cbb933b2f1f892a9cfd1a617e584d1eef0b61c7c3baebb"
             }
           }
         ]
@@ -2325,7 +2367,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "input/before.pdf",
@@ -2336,6 +2378,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -2361,7 +2404,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "input/after.pdf",
@@ -2372,6 +2415,145 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
+              "files": []
+            }
+          }
+        },
+        {
+          "step_schema_version": 2,
+          "step_id": "pdf-tools.synthetic.compare-and-explain.run.1.step.3",
+          "tool": "render_pdf_page",
+          "started_at": "2026-07-21T02:05:15.000Z",
+          "finished_at": "2026-07-21T02:05:16.000Z",
+          "arguments": {
+            "pdf_path": "input/before.pdf",
+            "page": 1,
+            "max_dimension_px": 1200
+          },
+          "ok": true,
+          "result": {
+            "result_schema_version": 1,
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.1.result.3",
+            "raw_result_sha256": "94f962177df0b131add99b63863a9ecd16c9b0619f74fda954baa6fd1b2765e9",
+            "observed_sources": [
+              "input/before.pdf"
+            ],
+            "observed_artifacts": [
+              {
+                "path": "input/before.pdf",
+                "exists": true,
+                "sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+                "observer_event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.source.before",
+                "observation_method": "synthetic_calibration"
+              }
+            ],
+            "semantic_observations": {
+              "semantic_schema_version": 2,
+              "pages": [],
+              "fields": [],
+              "page_plans": [],
+              "signature_locations": [],
+              "render_regions": [
+                {
+                  "source": "input/before.pdf",
+                  "source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+                  "source_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.source.before",
+                  "page": 1,
+                  "page_box_points": [
+                    0,
+                    0,
+                    330,
+                    444
+                  ],
+                  "rotation": null,
+                  "region": [
+                    0,
+                    0,
+                    330,
+                    444
+                  ],
+                  "coordinate_space": "top_left_pdf_points",
+                  "image_sha256": "e4f8080fc3418cc86533744143158796de2bffae7ab23689c609f06e2b83f43c",
+                  "image_byte_length": 1,
+                  "image_content_index": 1,
+                  "mime_type": "image/png",
+                  "renderer": "synthetic-calibration",
+                  "rendered_width_px": 892,
+                  "rendered_height_px": 1200,
+                  "scale": 2.7027027027027026,
+                  "max_dimension_px": 1200
+                }
+              ],
+              "files": []
+            }
+          }
+        },
+        {
+          "step_schema_version": 2,
+          "step_id": "pdf-tools.synthetic.compare-and-explain.run.1.step.4",
+          "tool": "render_pdf_page",
+          "started_at": "2026-07-21T02:05:20.000Z",
+          "finished_at": "2026-07-21T02:05:21.000Z",
+          "arguments": {
+            "pdf_path": "input/after.pdf",
+            "page": 1,
+            "max_dimension_px": 1200
+          },
+          "ok": true,
+          "result": {
+            "result_schema_version": 1,
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.1.result.4",
+            "raw_result_sha256": "ce658890447851ab0e38b66b28dba94824648ae58591f60903077c2ff12d261c",
+            "observed_sources": [
+              "input/after.pdf"
+            ],
+            "observed_artifacts": [
+              {
+                "path": "input/after.pdf",
+                "exists": true,
+                "sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+                "observer_event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.source.after",
+                "observation_method": "synthetic_calibration"
+              }
+            ],
+            "semantic_observations": {
+              "semantic_schema_version": 2,
+              "pages": [],
+              "fields": [],
+              "page_plans": [],
+              "signature_locations": [],
+              "render_regions": [
+                {
+                  "source": "input/after.pdf",
+                  "source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+                  "source_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.source.after",
+                  "page": 1,
+                  "page_box_points": [
+                    0,
+                    0,
+                    430,
+                    300
+                  ],
+                  "rotation": null,
+                  "region": [
+                    0,
+                    0,
+                    430,
+                    300
+                  ],
+                  "coordinate_space": "top_left_pdf_points",
+                  "image_sha256": "134ccf3da114823f27f6b1a1af2eb8e5f0acdd67a9316aa21fb5864a04f356d8",
+                  "image_byte_length": 1,
+                  "image_content_index": 1,
+                  "mime_type": "image/png",
+                  "renderer": "synthetic-calibration",
+                  "rendered_width_px": 1200,
+                  "rendered_height_px": 837,
+                  "scale": 2.7906976744186047,
+                  "max_dimension_px": 1200
+                }
+              ],
               "files": []
             }
           }
@@ -2390,7 +2572,7 @@
       "final_answer": {
         "answer_schema_version": 1,
         "present": true,
-        "raw_message_sha256": "45df67102ccca7e896ba3a00db4ef1efd07149ebe072b0c1d62fd69d1db2d05a",
+        "raw_message_sha256": "6f1b6a6eee877b69f5366430ce6ba0592b09fa4b64fc4ac65d50550e212a8a35",
         "message_event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.agent-message",
         "turn_completed_event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.turn-completed",
         "evidence": [
@@ -2409,6 +2591,34 @@
             "source": "input/after.pdf",
             "result_id": "pdf-tools.synthetic.compare-and-explain.run.1.result.2",
             "page": 1
+          },
+          {
+            "evidence_schema_version": 1,
+            "id": "before-region",
+            "kind": "region",
+            "source": "input/before.pdf",
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.1.result.3",
+            "page": 1,
+            "region": [
+              0,
+              0,
+              330,
+              444
+            ]
+          },
+          {
+            "evidence_schema_version": 1,
+            "id": "after-region",
+            "kind": "region",
+            "source": "input/after.pdf",
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.1.result.4",
+            "page": 1,
+            "region": [
+              0,
+              0,
+              430,
+              300
+            ]
           }
         ],
         "claims": [
@@ -2418,7 +2628,9 @@
             "important": true,
             "evidence_ids": [
               "before-page",
-              "after-page"
+              "after-page",
+              "before-region",
+              "after-region"
             ]
           }
         ],
@@ -2439,7 +2651,7 @@
         "sample_schema_version": 1,
         "input_sha256": "341314d7d54f12845fc3a732cfb37de8bbc67a93386bc1d86c3a40219047bca9",
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
-        "semantic_operation_sha256": "8d78b210be28f837842f84ab939664b81d2ba865c46856689497a354e347d984",
+        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31",
         "seed": "calibration-2",
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.2.invocation",
         "transcript_sha256": "283265b80d15b2e88f897906269455b2a6f706e0a1b7c5745098388ce0555788"
@@ -2461,12 +2673,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:10:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "0d612be7e485be908e3c57f6020d2a0458988ebf3cafd0535c623b7c6ee1349a"
+              "raw_sha256": "2cbdec08cf15563e81e9a3ce0650e733f3e95e7902690d7cb753ec47442d6431"
             }
           },
           {
@@ -2545,7 +2757,7 @@
             "type": "agent_message_completed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:11:20.000Z",
-            "reference": "sha256:4e7fcd309555b6c53a8726b65496feb8e1f390197355dec37e2c7a300c4dfa1b",
+            "reference": "sha256:31eea58d1db356594517ba337d746fd4772dd61c7b5111228fb1fa93730dc4ef",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
@@ -2565,6 +2777,34 @@
               "authority": "calibration",
               "capture_method": "deterministic_generator",
               "raw_sha256": "7695aea88686e9b92c343be72010f8cd9adc9cc691c543b2e33e4583413a769d"
+            }
+          },
+          {
+            "event_schema_version": 1,
+            "event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.source.before",
+            "type": "filesystem_source_observed",
+            "source": "synthetic_calibration_generator",
+            "observed_at": "2026-07-21T02:10:14.999Z",
+            "reference": "sha256:bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "calibration",
+              "capture_method": "deterministic_generator",
+              "raw_sha256": "52115f4d40d14adc781965fc2e0e307b6eb68865f19591eaaae139e34529ce29"
+            }
+          },
+          {
+            "event_schema_version": 1,
+            "event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.source.after",
+            "type": "filesystem_source_observed",
+            "source": "synthetic_calibration_generator",
+            "observed_at": "2026-07-21T02:10:19.999Z",
+            "reference": "sha256:8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "calibration",
+              "capture_method": "deterministic_generator",
+              "raw_sha256": "9f18f2efc64b2dd283f61018727716ee70c0e3e66aa63175530cf0b180a20626"
             }
           }
         ]
@@ -2591,7 +2831,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "input/before.pdf",
@@ -2602,6 +2842,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -2627,7 +2868,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "input/after.pdf",
@@ -2638,6 +2879,145 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
+              "files": []
+            }
+          }
+        },
+        {
+          "step_schema_version": 2,
+          "step_id": "pdf-tools.synthetic.compare-and-explain.run.2.step.3",
+          "tool": "render_pdf_page",
+          "started_at": "2026-07-21T02:10:15.000Z",
+          "finished_at": "2026-07-21T02:10:16.000Z",
+          "arguments": {
+            "pdf_path": "input/before.pdf",
+            "page": 1,
+            "max_dimension_px": 1200
+          },
+          "ok": true,
+          "result": {
+            "result_schema_version": 1,
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.2.result.3",
+            "raw_result_sha256": "5771875ee6f2aa1157fe64f2b044623f8ce3d5a211172f7aeba6566ed9183f57",
+            "observed_sources": [
+              "input/before.pdf"
+            ],
+            "observed_artifacts": [
+              {
+                "path": "input/before.pdf",
+                "exists": true,
+                "sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+                "observer_event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.source.before",
+                "observation_method": "synthetic_calibration"
+              }
+            ],
+            "semantic_observations": {
+              "semantic_schema_version": 2,
+              "pages": [],
+              "fields": [],
+              "page_plans": [],
+              "signature_locations": [],
+              "render_regions": [
+                {
+                  "source": "input/before.pdf",
+                  "source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+                  "source_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.source.before",
+                  "page": 1,
+                  "page_box_points": [
+                    0,
+                    0,
+                    330,
+                    444
+                  ],
+                  "rotation": null,
+                  "region": [
+                    0,
+                    0,
+                    330,
+                    444
+                  ],
+                  "coordinate_space": "top_left_pdf_points",
+                  "image_sha256": "e4f8080fc3418cc86533744143158796de2bffae7ab23689c609f06e2b83f43c",
+                  "image_byte_length": 1,
+                  "image_content_index": 1,
+                  "mime_type": "image/png",
+                  "renderer": "synthetic-calibration",
+                  "rendered_width_px": 892,
+                  "rendered_height_px": 1200,
+                  "scale": 2.7027027027027026,
+                  "max_dimension_px": 1200
+                }
+              ],
+              "files": []
+            }
+          }
+        },
+        {
+          "step_schema_version": 2,
+          "step_id": "pdf-tools.synthetic.compare-and-explain.run.2.step.4",
+          "tool": "render_pdf_page",
+          "started_at": "2026-07-21T02:10:20.000Z",
+          "finished_at": "2026-07-21T02:10:21.000Z",
+          "arguments": {
+            "pdf_path": "input/after.pdf",
+            "page": 1,
+            "max_dimension_px": 1200
+          },
+          "ok": true,
+          "result": {
+            "result_schema_version": 1,
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.2.result.4",
+            "raw_result_sha256": "fedfd03a9297aec62bdaa9e81a3920af598b28037cca6e807c27b755d231399d",
+            "observed_sources": [
+              "input/after.pdf"
+            ],
+            "observed_artifacts": [
+              {
+                "path": "input/after.pdf",
+                "exists": true,
+                "sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+                "observer_event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.source.after",
+                "observation_method": "synthetic_calibration"
+              }
+            ],
+            "semantic_observations": {
+              "semantic_schema_version": 2,
+              "pages": [],
+              "fields": [],
+              "page_plans": [],
+              "signature_locations": [],
+              "render_regions": [
+                {
+                  "source": "input/after.pdf",
+                  "source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+                  "source_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.source.after",
+                  "page": 1,
+                  "page_box_points": [
+                    0,
+                    0,
+                    430,
+                    300
+                  ],
+                  "rotation": null,
+                  "region": [
+                    0,
+                    0,
+                    430,
+                    300
+                  ],
+                  "coordinate_space": "top_left_pdf_points",
+                  "image_sha256": "134ccf3da114823f27f6b1a1af2eb8e5f0acdd67a9316aa21fb5864a04f356d8",
+                  "image_byte_length": 1,
+                  "image_content_index": 1,
+                  "mime_type": "image/png",
+                  "renderer": "synthetic-calibration",
+                  "rendered_width_px": 1200,
+                  "rendered_height_px": 837,
+                  "scale": 2.7906976744186047,
+                  "max_dimension_px": 1200
+                }
+              ],
               "files": []
             }
           }
@@ -2656,7 +3036,7 @@
       "final_answer": {
         "answer_schema_version": 1,
         "present": true,
-        "raw_message_sha256": "4e7fcd309555b6c53a8726b65496feb8e1f390197355dec37e2c7a300c4dfa1b",
+        "raw_message_sha256": "31eea58d1db356594517ba337d746fd4772dd61c7b5111228fb1fa93730dc4ef",
         "message_event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.agent-message",
         "turn_completed_event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.turn-completed",
         "evidence": [
@@ -2675,6 +3055,34 @@
             "source": "input/after.pdf",
             "result_id": "pdf-tools.synthetic.compare-and-explain.run.2.result.2",
             "page": 1
+          },
+          {
+            "evidence_schema_version": 1,
+            "id": "before-region",
+            "kind": "region",
+            "source": "input/before.pdf",
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.2.result.3",
+            "page": 1,
+            "region": [
+              0,
+              0,
+              330,
+              444
+            ]
+          },
+          {
+            "evidence_schema_version": 1,
+            "id": "after-region",
+            "kind": "region",
+            "source": "input/after.pdf",
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.2.result.4",
+            "page": 1,
+            "region": [
+              0,
+              0,
+              430,
+              300
+            ]
           }
         ],
         "claims": [
@@ -2684,7 +3092,9 @@
             "important": true,
             "evidence_ids": [
               "before-page",
-              "after-page"
+              "after-page",
+              "before-region",
+              "after-region"
             ]
           }
         ],
@@ -2705,7 +3115,7 @@
         "sample_schema_version": 1,
         "input_sha256": "341314d7d54f12845fc3a732cfb37de8bbc67a93386bc1d86c3a40219047bca9",
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
-        "semantic_operation_sha256": "8d78b210be28f837842f84ab939664b81d2ba865c46856689497a354e347d984",
+        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31",
         "seed": "calibration-3",
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.3.invocation",
         "transcript_sha256": "7d82b901c209c9942257cb3c2901ab8dff78cee92774e11d85f23da43fabf179"
@@ -2727,12 +3137,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:15:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "03e3fe9b3e251c4a5eea4658ec59b6643c577da74bb8c14acb871672822a0e95"
+              "raw_sha256": "9f68defe7f95014928578c5b799678d1b1404dbfe2bc61231c59464092fbca95"
             }
           },
           {
@@ -2811,7 +3221,7 @@
             "type": "agent_message_completed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:16:20.000Z",
-            "reference": "sha256:5e68f45d317cbe2ef83b279681b40ddd9b0eb663ef4b0ffe80ed4f98c9b6f4d2",
+            "reference": "sha256:214bcfbcbf13c40767ca3ee6f08d3ed6cd61f0c6c51fd958dd468ec79c5a58fc",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
@@ -2831,6 +3241,34 @@
               "authority": "calibration",
               "capture_method": "deterministic_generator",
               "raw_sha256": "ac63db4462988bd524efa06985e63fc0339199c1e46f8d764a790b1b5f79960c"
+            }
+          },
+          {
+            "event_schema_version": 1,
+            "event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.source.before",
+            "type": "filesystem_source_observed",
+            "source": "synthetic_calibration_generator",
+            "observed_at": "2026-07-21T02:15:14.999Z",
+            "reference": "sha256:bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "calibration",
+              "capture_method": "deterministic_generator",
+              "raw_sha256": "1cdfb09fff18051721c57ae3303a6a018f7488f3ceb4195a1ad00cbf893db50a"
+            }
+          },
+          {
+            "event_schema_version": 1,
+            "event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.source.after",
+            "type": "filesystem_source_observed",
+            "source": "synthetic_calibration_generator",
+            "observed_at": "2026-07-21T02:15:19.999Z",
+            "reference": "sha256:8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "calibration",
+              "capture_method": "deterministic_generator",
+              "raw_sha256": "45bdc511570298d16045bc9f0623874df0d7047a831459b6b9e4912a8ae9b5f4"
             }
           }
         ]
@@ -2857,7 +3295,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "input/before.pdf",
@@ -2868,6 +3306,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -2893,7 +3332,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "input/after.pdf",
@@ -2904,6 +3343,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -2911,25 +3351,164 @@
         {
           "step_schema_version": 2,
           "step_id": "pdf-tools.synthetic.compare-and-explain.run.3.step.3",
-          "tool": "reveal_in_finder",
+          "tool": "render_pdf_page",
           "started_at": "2026-07-21T02:15:15.000Z",
           "finished_at": "2026-07-21T02:15:16.000Z",
+          "arguments": {
+            "pdf_path": "input/before.pdf",
+            "page": 1,
+            "max_dimension_px": 1200
+          },
+          "ok": true,
+          "result": {
+            "result_schema_version": 1,
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.3.result.3",
+            "raw_result_sha256": "4fa87a3d325af57797787cfe3c3dd4178de46234a4ab9fc77b9750b53a61c3fa",
+            "observed_sources": [
+              "input/before.pdf"
+            ],
+            "observed_artifacts": [
+              {
+                "path": "input/before.pdf",
+                "exists": true,
+                "sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+                "observer_event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.source.before",
+                "observation_method": "synthetic_calibration"
+              }
+            ],
+            "semantic_observations": {
+              "semantic_schema_version": 2,
+              "pages": [],
+              "fields": [],
+              "page_plans": [],
+              "signature_locations": [],
+              "render_regions": [
+                {
+                  "source": "input/before.pdf",
+                  "source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+                  "source_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.source.before",
+                  "page": 1,
+                  "page_box_points": [
+                    0,
+                    0,
+                    330,
+                    444
+                  ],
+                  "rotation": null,
+                  "region": [
+                    0,
+                    0,
+                    330,
+                    444
+                  ],
+                  "coordinate_space": "top_left_pdf_points",
+                  "image_sha256": "e4f8080fc3418cc86533744143158796de2bffae7ab23689c609f06e2b83f43c",
+                  "image_byte_length": 1,
+                  "image_content_index": 1,
+                  "mime_type": "image/png",
+                  "renderer": "synthetic-calibration",
+                  "rendered_width_px": 892,
+                  "rendered_height_px": 1200,
+                  "scale": 2.7027027027027026,
+                  "max_dimension_px": 1200
+                }
+              ],
+              "files": []
+            }
+          }
+        },
+        {
+          "step_schema_version": 2,
+          "step_id": "pdf-tools.synthetic.compare-and-explain.run.3.step.4",
+          "tool": "render_pdf_page",
+          "started_at": "2026-07-21T02:15:20.000Z",
+          "finished_at": "2026-07-21T02:15:21.000Z",
+          "arguments": {
+            "pdf_path": "input/after.pdf",
+            "page": 1,
+            "max_dimension_px": 1200
+          },
+          "ok": true,
+          "result": {
+            "result_schema_version": 1,
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.3.result.4",
+            "raw_result_sha256": "ba5170cae518bc5e557c2f64c9e154ed1094171ad241c3a3634531718cf9f1d2",
+            "observed_sources": [
+              "input/after.pdf"
+            ],
+            "observed_artifacts": [
+              {
+                "path": "input/after.pdf",
+                "exists": true,
+                "sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+                "observer_event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.source.after",
+                "observation_method": "synthetic_calibration"
+              }
+            ],
+            "semantic_observations": {
+              "semantic_schema_version": 2,
+              "pages": [],
+              "fields": [],
+              "page_plans": [],
+              "signature_locations": [],
+              "render_regions": [
+                {
+                  "source": "input/after.pdf",
+                  "source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+                  "source_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.source.after",
+                  "page": 1,
+                  "page_box_points": [
+                    0,
+                    0,
+                    430,
+                    300
+                  ],
+                  "rotation": null,
+                  "region": [
+                    0,
+                    0,
+                    430,
+                    300
+                  ],
+                  "coordinate_space": "top_left_pdf_points",
+                  "image_sha256": "134ccf3da114823f27f6b1a1af2eb8e5f0acdd67a9316aa21fb5864a04f356d8",
+                  "image_byte_length": 1,
+                  "image_content_index": 1,
+                  "mime_type": "image/png",
+                  "renderer": "synthetic-calibration",
+                  "rendered_width_px": 1200,
+                  "rendered_height_px": 837,
+                  "scale": 2.7906976744186047,
+                  "max_dimension_px": 1200
+                }
+              ],
+              "files": []
+            }
+          }
+        },
+        {
+          "step_schema_version": 2,
+          "step_id": "pdf-tools.synthetic.compare-and-explain.run.3.step.5",
+          "tool": "reveal_in_finder",
+          "started_at": "2026-07-21T02:15:25.000Z",
+          "finished_at": "2026-07-21T02:15:26.000Z",
           "arguments": {
             "path": "input/after.pdf"
           },
           "ok": true,
           "result": {
             "result_schema_version": 1,
-            "result_id": "pdf-tools.synthetic.compare-and-explain.run.3.result.3",
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.3.result.5",
             "raw_result_sha256": "a1767e62bc7e42b4a77bf0767cd94a2317040cfb0cf6287d40b280d8370527f0",
             "observed_sources": [],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -2948,7 +3527,7 @@
       "final_answer": {
         "answer_schema_version": 1,
         "present": true,
-        "raw_message_sha256": "5e68f45d317cbe2ef83b279681b40ddd9b0eb663ef4b0ffe80ed4f98c9b6f4d2",
+        "raw_message_sha256": "214bcfbcbf13c40767ca3ee6f08d3ed6cd61f0c6c51fd958dd468ec79c5a58fc",
         "message_event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.agent-message",
         "turn_completed_event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.turn-completed",
         "evidence": [
@@ -2967,6 +3546,34 @@
             "source": "input/after.pdf",
             "result_id": "pdf-tools.synthetic.compare-and-explain.run.3.result.2",
             "page": 1
+          },
+          {
+            "evidence_schema_version": 1,
+            "id": "before-region",
+            "kind": "region",
+            "source": "input/before.pdf",
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.3.result.3",
+            "page": 1,
+            "region": [
+              0,
+              0,
+              330,
+              444
+            ]
+          },
+          {
+            "evidence_schema_version": 1,
+            "id": "after-region",
+            "kind": "region",
+            "source": "input/after.pdf",
+            "result_id": "pdf-tools.synthetic.compare-and-explain.run.3.result.4",
+            "page": 1,
+            "region": [
+              0,
+              0,
+              430,
+              300
+            ]
           }
         ],
         "claims": [
@@ -2976,7 +3583,9 @@
             "important": true,
             "evidence_ids": [
               "before-page",
-              "after-page"
+              "after-page",
+              "before-region",
+              "after-region"
             ]
           }
         ],
@@ -3003,7 +3612,7 @@
         "sample_schema_version": 1,
         "input_sha256": "341314d7d54f12845fc3a732cfb37de8bbc67a93386bc1d86c3a40219047bca9",
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
-        "semantic_operation_sha256": "8d78b210be28f837842f84ab939664b81d2ba865c46856689497a354e347d984",
+        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31",
         "seed": "calibration-harness-4",
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.4.invocation",
         "transcript_sha256": "0d5177700e47a818b236a98532a98ac0ea73bcacffd7e461a8d2d8c7abb8a337"
@@ -3025,12 +3634,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:20:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "af54790c7b4bab1671c624ed13761a186b22d62c69e925e0c7df84e33df55288"
+              "raw_sha256": "3695f05eb4b175b5a0b09e3f8ca9a07f25c2ae740cfb730fd6fcade0d22ef7b2"
             }
           },
           {
@@ -3119,12 +3728,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:05:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "4efbf9a2a244c460fa39b5372566fddb6b02285744eabd2265c0bc9026b864bf"
+              "raw_sha256": "1e208767dc36708a1824eb7dcc85319df58fd79ca2e53099ae677105195c21bd"
             }
           },
           {
@@ -3249,7 +3858,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "input/source.pdf",
@@ -3260,6 +3869,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -3298,7 +3908,7 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [
@@ -3313,6 +3923,7 @@
                 }
               ],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/reordered.pdf"
@@ -3348,7 +3959,7 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "output/reordered.pdf",
@@ -3359,6 +3970,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/reordered.pdf"
@@ -3463,12 +4075,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:10:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "da56170d9201e649757fe8cd3b7be347c729576cfea23731f4bf26464125780b"
+              "raw_sha256": "9d25f5a4ce44b115a93b9ea331e39e739cc9dc5b6baed78642ae04bec621e7f2"
             }
           },
           {
@@ -3593,7 +4205,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "input/source.pdf",
@@ -3604,6 +4216,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -3642,7 +4255,7 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [
@@ -3657,6 +4270,7 @@
                 }
               ],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/reordered.pdf"
@@ -3692,7 +4306,7 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "output/reordered.pdf",
@@ -3703,6 +4317,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/reordered.pdf"
@@ -3807,12 +4422,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:15:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "733786fd17e480a49d6eee9ea703c3f54540a0ea82f2238d78aad3e7de7b2a64"
+              "raw_sha256": "43696c319db9e463e9471229a69f2f7ec3931072a59c0a7c11d1929d615c943c"
             }
           },
           {
@@ -3937,7 +4552,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "input/source.pdf",
@@ -3948,6 +4563,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -3986,7 +4602,7 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [
@@ -4001,6 +4617,7 @@
                 }
               ],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/reordered.pdf"
@@ -4036,7 +4653,7 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [
                 {
                   "source": "output/reordered.pdf",
@@ -4047,6 +4664,7 @@
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/reordered.pdf"
@@ -4157,12 +4775,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:20:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "06dfba465081027b5d660693db2680ad6ba501517b1a0635eabb7ffb699e9b32"
+              "raw_sha256": "a5b818d071592b890ef04156a6241ecdadb775c78592eb9333aaa47c024e978c"
             }
           },
           {
@@ -4251,12 +4869,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:05:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "7866ed6b3ecaaa5f766e1464bbf56610654871c342816a76071eef34410ccac0"
+              "raw_sha256": "dce902b1e1c3c560512217f1157471a90fcc577737025fc0956c6dbdd4ee2d0e"
             }
           },
           {
@@ -4379,7 +4997,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [
                 {
@@ -4390,6 +5008,7 @@
               ],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -4413,7 +5032,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
@@ -4428,6 +5047,7 @@
                   "label": "Sign here"
                 }
               ],
+              "render_regions": [],
               "files": []
             }
           }
@@ -4469,7 +5089,7 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
@@ -4484,6 +5104,7 @@
                   "label": "Sign here"
                 }
               ],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/signing-packet.pdf"
@@ -4517,11 +5138,12 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/signing-packet.pdf"
@@ -4645,12 +5267,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:10:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "1c63998311230243e3a293a9ccf87f96ee9631e018130bb98b2a5a2089c57fd9"
+              "raw_sha256": "1f7650efd8dd90e2bb8abb5c3520a0591310e149bdfecc0ca84a89beea3c5f55"
             }
           },
           {
@@ -4773,7 +5395,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [
                 {
@@ -4784,6 +5406,7 @@
               ],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -4807,7 +5430,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
@@ -4822,6 +5445,7 @@
                   "label": "Sign here"
                 }
               ],
+              "render_regions": [],
               "files": []
             }
           }
@@ -4863,7 +5487,7 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
@@ -4878,6 +5502,7 @@
                   "label": "Sign here"
                 }
               ],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/signing-packet.pdf"
@@ -4911,11 +5536,12 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/signing-packet.pdf"
@@ -5039,12 +5665,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:15:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "3d6a9da58c677a1510eade90d13bb2a5cf67bc07397af6eb1b4e9e0ddec61a77"
+              "raw_sha256": "0f80493f6b619c30e818a20fa09750325084a7a721f28566220a8b82c163d71a"
             }
           },
           {
@@ -5181,7 +5807,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [
                 {
@@ -5192,6 +5818,7 @@
               ],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -5215,7 +5842,7 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
@@ -5230,6 +5857,7 @@
                   "label": "Sign here"
                 }
               ],
+              "render_regions": [],
               "files": []
             }
           }
@@ -5271,7 +5899,7 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
@@ -5286,6 +5914,7 @@
                   "label": "Sign here"
                 }
               ],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/signing-packet.pdf"
@@ -5319,11 +5948,12 @@
               }
             ],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "output/signing-packet.pdf"
@@ -5358,11 +5988,12 @@
             "observed_sources": [],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": []
             }
           }
@@ -5495,12 +6126,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:20:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "47f30a07ab68204b6673d006ea1b724673572ea7c5cfcd853c50f085f2ef1f51"
+              "raw_sha256": "0f1656b3dbeb6b65c7c730dc61c3b04f13ac480881a1c6da773f86afb433f61a"
             }
           },
           {
@@ -5589,12 +6220,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:05:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "dc510864a38de353e470ea30dd67dfaca09fc9d904b858cb3387ae6942638391"
+              "raw_sha256": "98239ecd8db649811e81b9fd8d9123b24d0c6ce91a48a69405c03ab6ff119fdf"
             }
           },
           {
@@ -5735,11 +6366,12 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "input/source.pdf"
@@ -5826,12 +6458,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:10:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "f2df17197e113bb35d273551670473f89f9dedc6b20074635149e340fdfa4542"
+              "raw_sha256": "23d957b2889e2624ed00e4885905b8e537a13e0cdfc2cbf8931d6ef37446191d"
             }
           },
           {
@@ -5972,11 +6604,12 @@
             ],
             "observed_artifacts": [],
             "semantic_observations": {
-              "semantic_schema_version": 1,
+              "semantic_schema_version": 2,
               "pages": [],
               "fields": [],
               "page_plans": [],
               "signature_locations": [],
+              "render_regions": [],
               "files": [
                 {
                   "path": "input/source.pdf"
@@ -6063,12 +6696,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:15:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "c6b45c547bd704d58f6182a87fabece3e8bbd29300eb028fc258acc957c3eaf5"
+              "raw_sha256": "0898bf059d072cdb7dae46305ab31fd9b43860a6be1aaf08a7f8f445fd7449a9"
             }
           },
           {
@@ -6273,12 +6906,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:20:00.000Z",
-            "reference": "sha256:ff12d88d25d44130bed3bb4a0d10c83fa6e6d52cc906c705efc2b02ff98c3051",
+            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "4864bbdb4b4dd819313da1e220249407608a64785db059d79a716989bac0e3d0"
+              "raw_sha256": "ee10e02ca5e9f915645de7f32e411460f0cc041f95ecbc242537f6beeaa9aba1"
             }
           },
           {

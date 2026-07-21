@@ -43,17 +43,28 @@ function artifactObservation(context, outputPath, fixtureIdentity) {
   };
 }
 
+function sourceObservation(context, sourcePath, sourceSha256, label) {
+  return {
+    path: sourcePath,
+    exists: true,
+    sha256: sourceSha256,
+    observer_event_id: `${context.runId}.event.source.${label}`,
+    observation_method: "synthetic_calibration",
+  };
+}
+
 function timestamp(context, seconds) {
   return new Date(context.startedAt + seconds * 1000).toISOString();
 }
 
 function emptySemantics(values = {}) {
   return {
-    semantic_schema_version: 1,
+    semantic_schema_version: 2,
     pages: values.pages ?? [],
     fields: values.fields ?? [],
     page_plans: values.page_plans ?? [],
     signature_locations: values.signature_locations ?? [],
+    render_regions: values.render_regions ?? [],
     files: values.files ?? [],
   };
 }
@@ -286,6 +297,10 @@ function buildProductPayload(job, context) {
   }
 
   if (jobId.endsWith("compare-and-explain")) {
+    const beforeSha256 = "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168";
+    const afterSha256 = "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0";
+    const beforeSource = sourceObservation(context, "input/before.pdf", beforeSha256, "before");
+    const afterSource = sourceObservation(context, "input/after.pdf", afterSha256, "after");
     const before = successStep(context, 1, "read_pdf_pages", {
       pdf_path: "input/before.pdf", start_page: 1, end_page: 1,
     }, {
@@ -302,11 +317,70 @@ function buildProductPayload(job, context) {
         source: "input/after.pdf", page: 1, text_sha256: digest("PAGE TWO - ROTATED"),
       }] }),
     });
+    const beforeRender = successStep(context, 3, "render_pdf_page", {
+      pdf_path: "input/before.pdf", page: 1, max_dimension_px: 1200,
+    }, {
+      sources: ["input/before.pdf"],
+      artifacts: [beforeSource],
+      semantics: emptySemantics({ render_regions: [{
+        source: "input/before.pdf",
+        source_sha256: beforeSha256,
+        source_observation_event_id: beforeSource.observer_event_id,
+        page: 1,
+        page_box_points: [0, 0, 330, 444],
+        rotation: null,
+        region: [0, 0, 330, 444],
+        coordinate_space: "top_left_pdf_points",
+        image_sha256: digest("synthetic-before-render"),
+        image_byte_length: 1,
+        image_content_index: 1,
+        mime_type: "image/png",
+        renderer: "synthetic-calibration",
+        rendered_width_px: 892,
+        rendered_height_px: 1200,
+        scale: 1200 / 444,
+        max_dimension_px: 1200,
+      }] }),
+    });
+    const afterRender = successStep(context, 4, "render_pdf_page", {
+      pdf_path: "input/after.pdf", page: 1, max_dimension_px: 1200,
+    }, {
+      sources: ["input/after.pdf"],
+      artifacts: [afterSource],
+      semantics: emptySemantics({ render_regions: [{
+        source: "input/after.pdf",
+        source_sha256: afterSha256,
+        source_observation_event_id: afterSource.observer_event_id,
+        page: 1,
+        page_box_points: [0, 0, 430, 300],
+        rotation: null,
+        region: [0, 0, 430, 300],
+        coordinate_space: "top_left_pdf_points",
+        image_sha256: digest("synthetic-after-render"),
+        image_byte_length: 1,
+        image_content_index: 1,
+        mime_type: "image/png",
+        renderer: "synthetic-calibration",
+        rendered_width_px: 1200,
+        rendered_height_px: 837,
+        scale: 1200 / 430,
+        max_dimension_px: 1200,
+      }] }),
+    });
     const beforePage = evidence("before-page", "page", "input/before.pdf", before.result.result_id, { page: 1 });
     const afterPage = evidence("after-page", "page", "input/after.pdf", after.result.result_id, { page: 1 });
+    const beforeRegion = evidence("before-region", "region", "input/before.pdf", beforeRender.result.result_id, {
+      page: 1, region: [0, 0, 330, 444],
+    });
+    const afterRegion = evidence("after-region", "region", "input/after.pdf", afterRender.result.result_id, {
+      page: 1, region: [0, 0, 430, 300],
+    });
     return {
-      trajectory: [before, after], effects: effects(context), artifacts: [],
-      final_answer: answer([beforePage, afterPage], [claim("page-order", [beforePage.id, afterPage.id])]),
+      trajectory: [before, after, beforeRender, afterRender], effects: effects(context), artifacts: [],
+      final_answer: answer(
+        [beforePage, afterPage, beforeRegion, afterRegion],
+        [claim("page-order", [beforePage.id, afterPage.id, beforeRegion.id, afterRegion.id])],
+      ),
       correction_refs: [],
     };
   }
@@ -433,6 +507,25 @@ function syncTrialEvents(trial) {
     const artifactEvent = trial.run.events.find(event => event.event_id === artifact.observation_event_id);
     if (artifactEvent) artifactEvent.reference = `sha256:${artifact.sha256}`;
   }
+  for (const step of trial.trajectory ?? []) {
+    for (const render of step.result?.semantic_observations?.render_regions ?? []) {
+      if (trial.run.events.some(event => event.event_id === render.source_observation_event_id)) continue;
+      trial.run.events.push({
+        event_schema_version: 1,
+        event_id: render.source_observation_event_id,
+        type: "filesystem_source_observed",
+        source: "synthetic_calibration_generator",
+        observed_at: new Date(Date.parse(step.started_at) - 1).toISOString(),
+        reference: `sha256:${render.source_sha256}`,
+        provenance: {
+          provenance_schema_version: 1,
+          authority: "calibration",
+          capture_method: "deterministic_generator",
+          raw_sha256: digest(`${step.step_id}:${render.source_sha256}`),
+        },
+      });
+    }
+  }
   return trial;
 }
 
@@ -465,7 +558,7 @@ function failingTrial(job, jobIndex) {
   } else if (jobId.endsWith("compare-and-explain")) {
     trial.trajectory.push(successStep({
       runId: trial.run.run_id, startedAt: Date.parse(trial.run.started_at), effectsEventId: trial.effects.observer_event_id,
-    }, 3, "reveal_in_finder", { path: "input/after.pdf" }));
+    }, 5, "reveal_in_finder", { path: "input/after.pdf" }));
     trial.correction_refs = [failureRef(jobId, "forbidden-tool")];
   } else if (jobId.endsWith("safe-page-mutation")) {
     trial.artifacts[0].verification_step_id = trial.artifacts[0].producer_step_id;

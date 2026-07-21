@@ -141,7 +141,7 @@ function check(grade, id) {
   return grade.checks.find(item => item.id === id);
 }
 
-describe("agent trajectory grader v3 integrity contract", () => {
+describe("agent trajectory grader v4 integrity contract", () => {
   it("publishes six strict representative jobs and rejects undeclared suite fields", async () => {
     const suite = await loadTrajectorySuite(SUITE_PATH);
     expect(validateTrajectorySuite(suite)).toEqual([]);
@@ -189,8 +189,8 @@ describe("agent trajectory grader v3 integrity contract", () => {
     expect(await fs.readFile(outputPath, "utf8")).toBe(await fs.readFile(committed, "utf8"));
   });
 
-  it("hashes the real read_pdf_fields currentValue shape for semantic field evidence", () => {
-    const semantic = semanticObservations({
+  it("hashes the real read_pdf_fields currentValue shape for semantic field evidence", async () => {
+    const semantic = await semanticObservations({
       tool: "read_pdf_fields",
       arguments: { pdf_path: "output/filled-form.pdf" },
       result: {
@@ -204,16 +204,128 @@ describe("agent trajectory grader v3 integrity contract", () => {
       field: "Name",
       value_sha256: digest("Synthetic Example"),
     }]);
-    expect(semanticObservations({
+    expect((await semanticObservations({
       tool: "read_pdf_fields",
       arguments: { pdf_path: "output/filled-form.pdf" },
       result: { structuredContent: { fields: [{ name: "Name" }] } },
-    }).fields).toEqual([]);
-    expect(semanticObservations({
+    })).fields).toEqual([]);
+    expect((await semanticObservations({
       tool: "get_pdf_info",
       arguments: { pdf_path: "input/source.pdf" },
       result: { content: [{ type: "text", text: "Pages: 2" }] },
-    }).files).toEqual([{ path: "input/source.pdf" }]);
+    })).files).toEqual([{ path: "input/source.pdf" }]);
+  });
+
+  it("derives render evidence from retained PNG bytes and an external source snapshot", async () => {
+    const png = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
+    const startedAt = "2026-07-21T07:00:01.000Z";
+    const sourceSha256 = "d".repeat(64);
+    const sourceEvent = {
+      event_id: "event.source.before",
+      type: "filesystem_source_observed",
+      observed_at: "2026-07-21T07:00:00.000Z",
+      reference: `sha256:${sourceSha256}`,
+      provenance: {
+        authority: "filesystem_observer",
+        capture_method: "filesystem_stat_sha256",
+      },
+    };
+    const item = {
+      tool: "render_pdf_page",
+      arguments: { pdf_path: "input/before.pdf", page: 1, max_dimension_px: 1200 },
+      result: {
+        content: [{ type: "image", mimeType: "image/png", data: png }],
+        structuredContent: {
+          page: 1,
+          width_points: 612,
+          height_points: 792,
+          rendered_width_px: 1,
+          rendered_height_px: 1,
+          scale: 1,
+          renderer: "synthetic-test-renderer",
+          mime_type: "image/png",
+        },
+      },
+    };
+    const observation = {
+      started_at: startedAt,
+      observed_artifacts: [{
+        path: "input/before.pdf",
+        exists: true,
+        sha256: sourceSha256,
+        observer_event_id: sourceEvent.event_id,
+        observation_method: "filesystem_stat_sha256",
+      }],
+    };
+    const semantic = await semanticObservations(item, observation, [sourceEvent]);
+    expect(semantic.semantic_schema_version).toBe(2);
+    expect(semantic.render_regions).toEqual([expect.objectContaining({
+      source: "input/before.pdf",
+      source_sha256: sourceSha256,
+      source_observation_event_id: sourceEvent.event_id,
+      page: 1,
+      page_box_points: [0, 0, 612, 792],
+      region: [0, 0, 612, 792],
+      image_byte_length: Buffer.from(png, "base64").length,
+      image_content_index: 0,
+      rendered_width_px: 1,
+      rendered_height_px: 1,
+      max_dimension_px: 1200,
+    })]);
+    expect(semantic.render_regions[0].image_sha256).toBe(digest(Buffer.from(png, "base64")));
+
+    const regionItem = structuredClone(item);
+    regionItem.tool = "render_pdf_region";
+    regionItem.arguments = {
+      pdf_path: "input/before.pdf", page: 2, x: 72, y: 144, width: 180, height: 40,
+      max_dimension_px: 1400,
+    };
+    regionItem.result.structuredContent = {
+      page: 2,
+      region_points: { x: 72, y: 144, width: 180, height: 40 },
+      rendered_width_px: 1,
+      rendered_height_px: 1,
+      scale: 1,
+      renderer: "synthetic-test-renderer",
+      mime_type: "image/png",
+    };
+    const regionSemantic = await semanticObservations(regionItem, observation, [sourceEvent]);
+    expect(regionSemantic.render_regions).toEqual([expect.objectContaining({
+      source: "input/before.pdf",
+      page: 2,
+      page_box_points: null,
+      region: [72, 144, 180, 40],
+      max_dimension_px: 1400,
+    })]);
+
+    await expect(semanticObservations(item, { ...observation, observed_artifacts: [] }, [sourceEvent]))
+      .rejects.toThrow(/filesystem-observed source snapshot/);
+    const wrongDimensions = structuredClone(item);
+    wrongDimensions.result.structuredContent.rendered_width_px = 2;
+    await expect(semanticObservations(wrongDimensions, observation, [sourceEvent]))
+      .rejects.toThrow(/does not match structured render metadata/);
+    const malformed = structuredClone(item);
+    malformed.result.content[0].data = "not-base64";
+    await expect(semanticObservations(malformed, observation, [sourceEvent]))
+      .rejects.toThrow(/canonical PNG base64/);
+    const corrupt = structuredClone(item);
+    const corruptBytes = Buffer.from(png, "base64");
+    corruptBytes[45] ^= 0xff;
+    corrupt.result.content[0].data = corruptBytes.toString("base64");
+    await expect(semanticObservations(corrupt, observation, [sourceEvent]))
+      .rejects.toThrow(/chunk failed CRC validation/);
+    const duplicateImage = structuredClone(item);
+    duplicateImage.result.content.push(structuredClone(duplicateImage.result.content[0]));
+    await expect(semanticObservations(duplicateImage, observation, [sourceEvent]))
+      .rejects.toThrow(/exactly one image content block/);
+    const lateEvent = structuredClone(sourceEvent);
+    lateEvent.observed_at = "2026-07-21T07:00:02.000Z";
+    await expect(semanticObservations(item, observation, [lateEvent]))
+      .rejects.toThrow(/pre-call filesystem event/);
+    const invalidTimeEvent = structuredClone(sourceEvent);
+    invalidTimeEvent.observed_at = "not-a-time";
+    await expect(semanticObservations(item, observation, [invalidTimeEvent]))
+      .rejects.toThrow(/pre-call filesystem event/);
   });
 
   it("reports unique sample statistics, Wilson uncertainty, and harness rate without a benchmark claim", async () => {
@@ -293,6 +405,7 @@ describe("agent trajectory grader v3 integrity contract", () => {
     const { trialSet, jobs } = await loadFixtures();
     const trial = trialFor(trialSet, "compare-and-explain");
     trial.final_answer.evidence[1].source = "input/before.pdf";
+    trial.final_answer.evidence[3].source = "input/before.pdf";
     addFailureRef(trial, "fake-comparison-source");
     const grade = gradeTrajectoryTrial(jobs.get(trial.job_id), trial);
     expect(grade.passed).toBe(false);
@@ -306,6 +419,45 @@ describe("agent trajectory grader v3 integrity contract", () => {
       gradeTrajectoryTrial(jobs.get(invented.job_id), invented),
       "evidence/result_bindings"
     ).passed).toBe(false);
+  });
+
+  it("fails closed when render semantics or their filesystem provenance drift", async () => {
+    const { trialSet, jobs } = await loadFixtures();
+    const base = trialFor(trialSet, "compare-and-explain");
+    const job = jobs.get(base.job_id);
+
+    const missing = structuredClone(base);
+    missing.trajectory.find(step => step.tool === "render_pdf_page")
+      .result.semantic_observations.render_regions = [];
+    const missingGrade = gradeTrajectoryTrial(job, missing);
+    expect(check(missingGrade, "semantic_result_bindings").passed).toBe(false);
+    expect(check(missingGrade, "expected_observation/before-page-one-render").passed).toBe(false);
+    expect(check(missingGrade, "evidence/result_bindings").passed).toBe(false);
+
+    const wrongRegion = structuredClone(base);
+    wrongRegion.trajectory.find(step => step.tool === "render_pdf_page")
+      .result.semantic_observations.render_regions[0].region = [0, 0, 329, 444];
+    expect(check(gradeTrajectoryTrial(job, wrongRegion), "semantic_result_bindings").passed).toBe(false);
+
+    const wrongMaxDimension = structuredClone(base);
+    wrongMaxDimension.trajectory.find(step => step.tool === "render_pdf_page")
+      .result.semantic_observations.render_regions[0].max_dimension_px = 1199;
+    expect(check(gradeTrajectoryTrial(job, wrongMaxDimension), "semantic_result_bindings").passed).toBe(false);
+
+    const untrustedEvent = structuredClone(base);
+    const render = untrustedEvent.trajectory.find(step => step.tool === "render_pdf_page")
+      .result.semantic_observations.render_regions[0];
+    untrustedEvent.run.events.find(event => event.event_id === render.source_observation_event_id)
+      .provenance.authority = "ingester";
+    expect(check(gradeTrajectoryTrial(job, untrustedEvent), "semantic_result_bindings").passed).toBe(false);
+
+    const fabricated = structuredClone(base);
+    const textStep = fabricated.trajectory.find(step => step.tool === "read_pdf_pages");
+    textStep.result.semantic_observations.render_regions = structuredClone(
+      fabricated.trajectory.find(step => step.tool === "render_pdf_page")
+        .result.semantic_observations.render_regions,
+    );
+    expect(check(gradeTrajectoryTrial(job, fabricated), "semantic_result_bindings").passed).toBe(false);
   });
 
   it("rejects self-verification and requires path/hash agreement in producer and later verifier results", async () => {

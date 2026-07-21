@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
+import { loadImage } from "@napi-rs/canvas";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -14,6 +15,49 @@ const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajecto
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+const PNG_CRC_TABLE = Array.from({ length: 256 }, (_, byte) => {
+  let value = byte;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+  }
+  return value >>> 0;
+});
+
+function pngCrc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = PNG_CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function validatePngChunks(bytes, tool) {
+  let offset = 8;
+  let chunkIndex = 0;
+  let foundIdat = false;
+  let foundIend = false;
+  while (offset < bytes.length) {
+    if (offset + 12 > bytes.length) throw new Error(`${tool} PNG has a truncated chunk header`);
+    const length = bytes.readUInt32BE(offset);
+    const type = bytes.subarray(offset + 4, offset + 8).toString("ascii");
+    const chunkEnd = offset + 12 + length;
+    if (chunkEnd > bytes.length) throw new Error(`${tool} PNG has a truncated ${type || "unknown"} chunk`);
+    const crcExpected = bytes.readUInt32BE(offset + 8 + length);
+    const crcActual = pngCrc32(bytes.subarray(offset + 4, offset + 8 + length));
+    if (crcActual !== crcExpected) throw new Error(`${tool} PNG ${type || "unknown"} chunk failed CRC validation`);
+    if (chunkIndex === 0 && (type !== "IHDR" || length !== 13)) {
+      throw new Error(`${tool} PNG must begin with a 13-byte IHDR chunk`);
+    }
+    if (type === "IDAT") foundIdat = true;
+    if (type === "IEND") {
+      if (length !== 0 || chunkEnd !== bytes.length) throw new Error(`${tool} PNG has an invalid terminal IEND chunk`);
+      foundIend = true;
+    }
+    if (foundIend) break;
+    offset = chunkEnd;
+    chunkIndex += 1;
+  }
+  if (!foundIdat || !foundIend) throw new Error(`${tool} PNG must contain IDAT data and a terminal IEND chunk`);
 }
 
 function parseJsonLines(text) {
@@ -197,7 +241,113 @@ function rawItemId(item, index) {
   return value;
 }
 
-export function semanticObservations(item) {
+async function strictPngImage(item) {
+  const imageBlocks = (item.result?.content ?? []).map((block, index) => ({ block, index }))
+    .filter(({ block }) => block?.type === "image");
+  if (imageBlocks.length !== 1) throw new Error(`${item.tool} must retain exactly one image content block`);
+  const { block, index } = imageBlocks[0];
+  if (block.mimeType !== "image/png" || typeof block.data !== "string" || block.data.length === 0) {
+    throw new Error(`${item.tool} must retain one non-empty image/png block`);
+  }
+  const bytes = Buffer.from(block.data, "base64");
+  if (bytes.length < 24 || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a"
+    || bytes.subarray(12, 16).toString("ascii") !== "IHDR"
+    || bytes.toString("base64") !== block.data) {
+    throw new Error(`${item.tool} image block is not canonical PNG base64`);
+  }
+  validatePngChunks(bytes, item.tool);
+  let decoded;
+  try {
+    decoded = await loadImage(bytes);
+  } catch {
+    throw new Error(`${item.tool} image block cannot be decoded as PNG`);
+  }
+  const headerWidth = bytes.readUInt32BE(16);
+  const headerHeight = bytes.readUInt32BE(20);
+  if (headerWidth < 1 || headerHeight < 1 || decoded.width !== headerWidth || decoded.height !== headerHeight) {
+    throw new Error(`${item.tool} decoded PNG dimensions do not match its IHDR`);
+  }
+  return {
+    bytes,
+    index,
+    width: decoded.width,
+    height: decoded.height,
+  };
+}
+
+async function renderRegionObservation(item, structured, observation, runEvents) {
+  if (!new Set(["render_pdf_page", "render_pdf_region"]).has(item.tool)) return [];
+  const args = item.arguments ?? {};
+  const sourceSnapshots = (observation?.observed_artifacts ?? []).filter(artifact =>
+    artifact.path === args.pdf_path && artifact.exists === true
+    && artifact.observation_method === "filesystem_stat_sha256");
+  if (sourceSnapshots.length !== 1) {
+    throw new Error(`${item.tool} requires exactly one filesystem-observed source snapshot`);
+  }
+  const sourceEvent = (runEvents ?? []).find(event =>
+    event.event_id === sourceSnapshots[0].observer_event_id);
+  const sourceObservedAt = Date.parse(sourceEvent?.observed_at);
+  const callStartedAt = Date.parse(observation.started_at);
+  if (sourceEvent?.type !== "filesystem_source_observed"
+    || sourceEvent.reference !== `sha256:${sourceSnapshots[0].sha256}`
+    || sourceEvent.provenance?.authority !== "filesystem_observer"
+    || sourceEvent.provenance?.capture_method !== "filesystem_stat_sha256"
+    || !Number.isFinite(sourceObservedAt) || !Number.isFinite(callStartedAt)
+    || sourceObservedAt > callStartedAt) {
+    throw new Error(`${item.tool} source snapshot is not bound to a retained pre-call filesystem event`);
+  }
+  const image = await strictPngImage(item);
+  const page = Number(structured.page);
+  const width = Number(structured.rendered_width_px);
+  const height = Number(structured.rendered_height_px);
+  const scale = Number(structured.scale);
+  if (!Number.isInteger(page) || page < 1 || !Number.isInteger(width) || width < 1
+    || !Number.isInteger(height) || height < 1 || !Number.isFinite(scale) || scale <= 0
+    || image.width !== width || image.height !== height || typeof structured.renderer !== "string"
+    || !structured.renderer || structured.mime_type !== "image/png") {
+    throw new Error(`${item.tool} retained PNG does not match structured render metadata`);
+  }
+  let region;
+  let pageBox;
+  if (item.tool === "render_pdf_page") {
+    const widthPoints = Number(structured.width_points);
+    const heightPoints = Number(structured.height_points);
+    if (!Number.isFinite(widthPoints) || widthPoints <= 0 || !Number.isFinite(heightPoints) || heightPoints <= 0) {
+      throw new Error("render_pdf_page must retain positive page dimensions");
+    }
+    region = [0, 0, widthPoints, heightPoints];
+    pageBox = [0, 0, widthPoints, heightPoints];
+  } else {
+    const box = structured.region_points;
+    region = [box?.x, box?.y, box?.width, box?.height].map(Number);
+    if (region.some(value => !Number.isFinite(value)) || region[0] < 0 || region[1] < 0
+      || region[2] <= 0 || region[3] <= 0) {
+      throw new Error("render_pdf_region must retain a valid top-left point region");
+    }
+    pageBox = null;
+  }
+  return [{
+    source: args.pdf_path,
+    source_sha256: sourceSnapshots[0].sha256,
+    source_observation_event_id: sourceSnapshots[0].observer_event_id,
+    page,
+    page_box_points: pageBox,
+    rotation: null,
+    region,
+    coordinate_space: "top_left_pdf_points",
+    image_sha256: digest(image.bytes),
+    image_byte_length: image.bytes.length,
+    image_content_index: image.index,
+    mime_type: "image/png",
+    renderer: structured.renderer,
+    rendered_width_px: width,
+    rendered_height_px: height,
+    scale,
+    max_dimension_px: Number(args.max_dimension_px ?? (item.tool === "render_pdf_page" ? 1800 : 1400)),
+  }];
+}
+
+export async function semanticObservations(item, observation = {}, runEvents = []) {
   const structured = item.result?.structured_content ?? item.result?.structuredContent ?? {};
   const args = item.arguments ?? {};
   const pages = Array.isArray(structured.pages) ? structured.pages
@@ -246,11 +396,12 @@ export function semanticObservations(item) {
   const files = typeof outputPath === "string" ? [{ path: outputPath }]
     : item.tool === "get_pdf_info" && typeof args.pdf_path === "string" ? [{ path: args.pdf_path }] : [];
   return {
-    semantic_schema_version: 1,
+    semantic_schema_version: 2,
     pages,
     fields,
     page_plans: pagePlans,
     signature_locations: signatureLocations,
+    render_regions: await renderRegionObservation(item, structured, observation, runEvents),
     files,
   };
 }
@@ -345,7 +496,7 @@ export async function ingestCodexTrajectory({
   }
 
   const resultIds = new Map();
-  const steps = calls.map((item, index) => {
+  const steps = await Promise.all(calls.map(async (item, index) => {
     const id = rawItemId(item, index);
     if (!new Set(["completed", "failed"]).has(item.status)) {
       throw new Error(`MCP call ${id} has unsupported terminal status ${item.status}`);
@@ -383,7 +534,7 @@ export async function ingestCodexTrajectory({
         raw_result_sha256: digest(JSON.stringify(item.result ?? null)),
         observed_sources: observation.observed_sources ?? [],
         observed_artifacts: observation.observed_artifacts ?? [],
-        semantic_observations: semanticObservations(item),
+        semantic_observations: await semanticObservations(item, observation, observer.run.events),
       };
     } else {
       const rawErrorValue = item.error ?? (toolReportedError ? item.result : null);
@@ -397,7 +548,7 @@ export async function ingestCodexTrajectory({
       };
     }
     return base;
-  });
+  }));
 
   const stepIds = new Map(callIds.map((id, index) => [id, steps[index].step_id]));
   const artifacts = observer.artifacts.map(artifact => {
