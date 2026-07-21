@@ -381,6 +381,26 @@ describe("formal accessibility machine-evidence pilot", () => {
       )).toThrow("failure counters");
     }
 
+    for (const [counter, invalidValue] of [
+      ["passedRules", -1],
+      ["failedRules", "0"],
+      ["passedChecks", 1.5],
+      ["failedChecks", -1],
+    ]) {
+      const report = JSON.parse(rawReport({
+        compliant: true,
+        filename: passingFixture.filename,
+        size: passingFixture.size,
+      }));
+      report.report.jobs[0].validationResult[0].details[counter] = invalidValue;
+      expect(() => parseVeraPdfEvidence(
+        Buffer.from(JSON.stringify(report)),
+        0,
+        passingFixture,
+        contract,
+      )).toThrow("failure counters");
+    }
+
     const zeroCoverage = JSON.parse(rawReport({
       compliant: true,
       filename: passingFixture.filename,
