@@ -1,6 +1,6 @@
 import path from "path";
 import fs from "fs/promises";
-import { fileURLToPath } from "url";
+import { fileURLToPath, pathToFileURL } from "url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -197,5 +197,113 @@ describe("render_pdf_page MCP tool", () => {
     expect(center[0]).toBeGreaterThan(200);
     expect(center[1]).toBeLessThan(80);
     expect(center[2]).toBeLessThan(80);
+  }, 30_000);
+});
+
+describe("Claude Desktop Electron utility rendering", () => {
+  let client;
+  let transport;
+  let imageOnlyPdfPath;
+  const ELECTRON_TMP_DIR = path.join(REPO_ROOT, ".test-tmp-electron-render");
+
+  beforeAll(async () => {
+    await fs.mkdir(ELECTRON_TMP_DIR, { recursive: true });
+    const sourceCanvas = createCanvas(200, 100);
+    const sourceContext = sourceCanvas.getContext("2d");
+    sourceContext.fillStyle = "#ffffff";
+    sourceContext.fillRect(0, 0, 200, 100);
+    sourceContext.fillStyle = "#d02020";
+    sourceContext.fillRect(40, 20, 120, 60);
+
+    const imageOnlyDoc = await PDFDocument.create();
+    const imageOnlyPage = imageOnlyDoc.addPage([200, 100]);
+    const image = await imageOnlyDoc.embedPng(sourceCanvas.toBuffer("image/png"));
+    imageOnlyPage.drawImage(image, { x: 0, y: 0, width: 200, height: 100 });
+    imageOnlyPdfPath = path.join(ELECTRON_TMP_DIR, "image-only.pdf");
+    await fs.writeFile(imageOnlyPdfPath, await imageOnlyDoc.save());
+
+    const serverUrl = pathToFileURL(path.join(REPO_ROOT, "server", "index.js")).href;
+    const bootstrap = [
+      'process.type = "utility";',
+      'Object.defineProperty(process.versions, "electron", { value: "test", configurable: true });',
+      `await import(${JSON.stringify(serverUrl)});`,
+    ].join(" ");
+
+    client = new Client({ name: "pdf-tools-electron-utility-test-client", version: "1.0.0" });
+    transport = new StdioClientTransport({
+      command: process.execPath,
+      args: ["--input-type=module", "--eval", bootstrap],
+      cwd: REPO_ROOT,
+      env: {
+        ALLOWED_DIRECTORIES: REPO_ROOT,
+        PDF_TOOLS_DISABLE_SYSTEM_RENDERER: "1",
+      },
+      stderr: "pipe",
+    });
+    await client.connect(transport);
+  }, 30_000);
+
+  afterAll(async () => {
+    await transport?.close();
+    await fs.rm(ELECTRON_TMP_DIR, { recursive: true, force: true });
+  });
+
+  it("renders without selecting pdf.js DOM canvas factories", async () => {
+    const result = await client.callTool({
+      name: "render_pdf_page",
+      arguments: {
+        pdf_path: EXAMPLE_PDF,
+        page: 1,
+        max_dimension_px: 1200,
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content.some(item => item.type === "image" && item.mimeType === "image/png")).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      page: 1,
+      renderer: "native-canvas",
+    });
+  }, 30_000);
+
+  it("renders bounded regions in an Electron utility process", async () => {
+    const result = await client.callTool({
+      name: "render_pdf_region",
+      arguments: {
+        pdf_path: EXAMPLE_PDF,
+        page: 1,
+        x: 72,
+        y: 120,
+        width: 180,
+        height: 60,
+        max_dimension_px: 1000,
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content.some(item => item.type === "image" && item.mimeType === "image/png")).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      page: 1,
+      renderer: "native-canvas",
+    });
+  }, 30_000);
+
+  it("uses image fallback for scanned PDFs in an Electron utility process", async () => {
+    const result = await client.callTool({
+      name: "read_pdf_content",
+      arguments: {
+        pdf_path: imageOnlyPdfPath,
+        max_pages: 1,
+      },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.content.some(item => item.type === "image" && item.mimeType === "image/png")).toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      pdf_path: imageOnlyPdfPath,
+      text_found: false,
+      extraction_mode: "image-fallback",
+      image_renderer: "native-canvas",
+    });
   }, 30_000);
 });

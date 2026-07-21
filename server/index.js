@@ -214,6 +214,62 @@ async function loadImageDependencies() {
   }
 }
 
+// pdf.js classifies Electron utility processes as browser contexts. Claude
+// Desktop runs MCPB servers in that shape on Windows, where the default DOM
+// factories then call document.createElement despite there being no document.
+// Supply the small Node factory contracts explicitly for every raster load.
+class PdfToolsCanvasFactory {
+  create(width, height) {
+    if (width <= 0 || height <= 0) {
+      throw new Error("Invalid canvas size");
+    }
+    const canvas = createCanvas(width, height);
+    return {
+      canvas,
+      context: canvas.getContext("2d", { willReadFrequently: true }),
+    };
+  }
+
+  reset(canvasAndContext, width, height) {
+    if (!canvasAndContext.canvas) {
+      throw new Error("Canvas is not specified");
+    }
+    if (width <= 0 || height <= 0) {
+      throw new Error("Invalid canvas size");
+    }
+    canvasAndContext.canvas.width = width;
+    canvasAndContext.canvas.height = height;
+  }
+
+  destroy(canvasAndContext) {
+    if (!canvasAndContext.canvas) {
+      throw new Error("Canvas is not specified");
+    }
+    canvasAndContext.canvas.width = 0;
+    canvasAndContext.canvas.height = 0;
+    canvasAndContext.canvas = null;
+    canvasAndContext.context = null;
+  }
+}
+
+class PdfToolsFilterFactory {
+  addFilter() { return "none"; }
+  addHCMFilter() { return "none"; }
+  addAlphaFilter() { return "none"; }
+  addLuminosityFilter() { return "none"; }
+  addHighlightHCMFilter() { return "none"; }
+  destroy() {}
+}
+
+function pdfJsNodeRenderingOptions() {
+  return {
+    CanvasFactory: PdfToolsCanvasFactory,
+    FilterFactory: PdfToolsFilterFactory,
+    isOffscreenCanvasSupported: false,
+    isImageDecoderSupported: false,
+  };
+}
+
 function expandUserPath(inputPath) {
   if (!inputPath) return inputPath;
   if (inputPath === "~") return homedir();
@@ -393,6 +449,7 @@ async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0, pas
       const loadingTask = pdfjsLib.getDocument({
         data: new Uint8Array(pdfBuffer),
         password: password || undefined,
+        ...pdfJsNodeRenderingOptions(),
         useSystemFonts: true,
         disableFontFace: true,
         disableAutoFetch: true,
@@ -476,6 +533,7 @@ async function convertPdfRegionToImage(pdfBuffer, {
       const loadingTask = pdfjsLib.getDocument({
         data: new Uint8Array(pdfBuffer),
         password: password || undefined,
+        ...pdfJsNodeRenderingOptions(),
         useSystemFonts: true,
         disableFontFace: true,
         disableAutoFetch: true,
