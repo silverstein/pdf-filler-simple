@@ -166,6 +166,71 @@ async function main() {
     assert(restoredZoneFocus.activeZoneKey === successfulZone.zoneKey, "Replacement focus used a different zone descriptor.");
     assert(restoredZoneFocus.applied, "Replacement focused row did not retain the applied state.");
 
+    await runAgentBrowser(["focus", ".sign-panel-item-preview"]);
+    const previewSource = await evalJson(runAgentBrowser, `(() => JSON.stringify({
+      zoneKey: document.activeElement?.closest("[data-zone-key]")?.dataset?.zoneKey || null,
+      control: document.activeElement?.dataset?.zoneControl || null
+    }))()`);
+    assert(previewSource.zoneKey, "Focused Preview control did not expose its parent zone descriptor.");
+    assert(previewSource.control === "preview", "Focused Preview control did not expose its control descriptor.");
+    await runAgentBrowser(["press", "Enter"]);
+    await runAgentBrowser(["wait", "1200"]);
+    const previewModalState = await evalJson(runAgentBrowser, `(() => JSON.stringify({
+      open: getComputedStyle(document.querySelector("#region-preview-modal")).display !== "none",
+      viewerInert: document.querySelector("#viewer")?.hasAttribute("inert")
+    }))()`);
+    assert(previewModalState.open, "Keyboard activation of Preview did not open the region-preview modal.");
+    assert(previewModalState.viewerInert, "Viewer was not inert while the region-preview modal was open.");
+    await runAgentBrowser(["press", "Escape"]);
+    const restoredPreviewFocus = await evalJson(runAgentBrowser, `(() => JSON.stringify({
+      modalOpen: getComputedStyle(document.querySelector("#region-preview-modal")).display !== "none",
+      viewerInert: document.querySelector("#viewer")?.hasAttribute("inert"),
+      activeClass: document.activeElement?.className || "",
+      activeZoneKey: document.activeElement?.closest("[data-zone-key]")?.dataset?.zoneKey || null,
+      activeControl: document.activeElement?.dataset?.zoneControl || null
+    }))()`);
+    assert(!restoredPreviewFocus.modalOpen, "Escape did not close the region-preview modal.");
+    assert(!restoredPreviewFocus.viewerInert, "Viewer remained inert after closing the region-preview modal.");
+    assert(restoredPreviewFocus.activeClass.includes("sign-panel-item-preview"), `Focus did not return to the replacement Preview control, active class was ${restoredPreviewFocus.activeClass}.`);
+    assert(restoredPreviewFocus.activeControl === "preview", "Replacement focus lost the Preview control descriptor.");
+    assert(restoredPreviewFocus.activeZoneKey === previewSource.zoneKey, "Replacement Preview focus used a different zone descriptor.");
+
+    await runAgentBrowser(["click", "#sign-panel-inspect-btn"]);
+    const dragState = await evalJson(runAgentBrowser, `(() => {
+      document.querySelectorAll(".sign-panel-item").forEach(item => item.remove());
+      document.activeElement?.blur?.();
+      const rect = document.querySelector("#zone-layer").getBoundingClientRect();
+      return JSON.stringify({
+        inspectArmed: document.querySelector("#sign-panel-inspect-btn")?.classList.contains("active"),
+        rows: document.querySelectorAll(".sign-panel-item").length,
+        activeTag: document.activeElement?.tagName || "",
+        start: { x: Math.round(rect.left + rect.width * 0.2), y: Math.round(rect.top + rect.height * 0.2) },
+        end: { x: Math.round(rect.left + rect.width * 0.4), y: Math.round(rect.top + rect.height * 0.35) }
+      });
+    })()`);
+    assert(dragState.inspectArmed, "Inspect-region mode was not armed before the no-row drag.");
+    assert(dragState.rows === 0, "No-row drag setup still had a sign-panel row.");
+    await runAgentBrowser(["mouse", "move", String(dragState.start.x), String(dragState.start.y)]);
+    await runAgentBrowser(["mouse", "down"]);
+    await runAgentBrowser(["mouse", "move", String(dragState.end.x), String(dragState.end.y)]);
+    await runAgentBrowser(["mouse", "up"]);
+    await runAgentBrowser(["wait", "1200"]);
+    const dragPreviewState = await evalJson(runAgentBrowser, `(() => JSON.stringify({
+      modalOpen: getComputedStyle(document.querySelector("#region-preview-modal")).display !== "none",
+      viewerInert: document.querySelector("#viewer")?.hasAttribute("inert")
+    }))()`);
+    assert(dragPreviewState.modalOpen, "No-row inspect drag did not open the region-preview modal.");
+    assert(dragPreviewState.viewerInert, "Viewer was not inert during the no-row region preview.");
+    await runAgentBrowser(["press", "Escape"]);
+    const dragFallbackFocus = await evalJson(runAgentBrowser, `(() => JSON.stringify({
+      modalOpen: getComputedStyle(document.querySelector("#region-preview-modal")).display !== "none",
+      viewerInert: document.querySelector("#viewer")?.hasAttribute("inert"),
+      activeId: document.activeElement?.id || ""
+    }))()`);
+    assert(!dragFallbackFocus.modalOpen, "Escape did not close the no-row region preview.");
+    assert(!dragFallbackFocus.viewerInert, "Viewer remained inert after the no-row region preview closed.");
+    assert(dragFallbackFocus.activeId === "sign-panel-inspect-btn", `No-row region preview did not use the Inspect fallback, active element was ${dragFallbackFocus.activeId}.`);
+
     await evalJson(runAgentBrowser, `(() => {
       Object.defineProperty(window, "devicePixelRatio", { value: 2, configurable: true });
       return JSON.stringify({ dpr: window.devicePixelRatio });

@@ -953,6 +953,7 @@ const modalElements = [signModalEl, drawModalEl, regionPreviewModalEl];
 interface ModalFocusReturn {
   element: HTMLElement;
   zoneKey: string | null;
+  zoneControl: string | null;
 }
 const modalPreviousFocus = new WeakMap<HTMLElement, ModalFocusReturn>();
 const MODAL_FOCUSABLE_SELECTOR = [
@@ -986,17 +987,30 @@ function findZoneRowByKey(key: string) {
     .find(item => item.dataset.zoneKey === key) ?? null;
 }
 
-function findVisibleSignModeFallback() {
-  return [signPanelDrawBtn, signPanelInspectBtn, modeSignBtn]
+function findZoneControl(row: HTMLElement | null, control: string | null) {
+  if (!row || !control) return null;
+  return Array.from(row.querySelectorAll<HTMLElement>("[data-zone-control]"))
+    .find(element => element.dataset.zoneControl === control) ?? null;
+}
+
+function findVisibleModalFallback(modal: HTMLElement) {
+  const candidates = modal === regionPreviewModalEl
+    ? [signPanelInspectBtn, signPanelDrawBtn, modeSignBtn]
+    : modal === signModalEl
+      ? [signPanelDrawBtn, signPanelInspectBtn, modeSignBtn]
+      : [];
+  return candidates
     .find(isVisibleFocusTarget) ?? null;
 }
 
 function openModal(modal: HTMLElement, initialFocus: HTMLElement) {
   const active = document.activeElement;
   if (active instanceof HTMLElement && !modal.contains(active)) {
+    const zoneRow = active.closest<HTMLElement>("[data-zone-key]");
     modalPreviousFocus.set(modal, {
       element: active,
-      zoneKey: active.dataset.zoneKey ?? null,
+      zoneKey: zoneRow?.dataset.zoneKey ?? null,
+      zoneControl: active.dataset.zoneControl ?? null,
     });
   }
   modal.style.display = "flex";
@@ -1014,13 +1028,14 @@ function closeModal(modal: HTMLElement) {
   const replacementZone = previousFocus?.zoneKey
     ? findZoneRowByKey(previousFocus.zoneKey)
     : null;
+  const replacementControl = findZoneControl(replacementZone, previousFocus?.zoneControl ?? null);
   const focusTarget = isVisibleFocusTarget(previousFocus?.element ?? null)
     ? previousFocus!.element
-    : isVisibleFocusTarget(replacementZone)
-      ? replacementZone
-      : modal === signModalEl
-        ? findVisibleSignModeFallback()
-        : null;
+    : isVisibleFocusTarget(replacementControl)
+      ? replacementControl
+      : isVisibleFocusTarget(replacementZone)
+        ? replacementZone
+        : findVisibleModalFallback(modal);
   focusTarget?.focus();
 }
 
@@ -2499,6 +2514,7 @@ function renderSignPanel() {
     const previewBtn = document.createElement("button");
     previewBtn.className = "sign-panel-item-preview";
     previewBtn.type = "button";
+    previewBtn.dataset.zoneControl = "preview";
     previewBtn.textContent = "Preview";
     previewBtn.title = "Preview this zone";
     previewBtn.addEventListener("click", async (e) => {
@@ -2535,6 +2551,7 @@ function renderSignPanel() {
     };
     item.addEventListener("click", activate);
     item.addEventListener("keydown", (e) => {
+      if (e.target !== item) return;
       if (e.key === "Enter" || e.key === " ") {
         e.preventDefault();
         activate();
