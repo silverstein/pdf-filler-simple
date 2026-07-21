@@ -127,6 +127,9 @@ export async function renderComparisonPage(bytes, pageNumber, renderer) {
       width,
       height,
       scale: renderer.scale,
+      rotation: viewport.rotation,
+      view_box: [...viewport.viewBox],
+      viewport_transform: [...viewport.transform],
       rgba,
       rgba_sha256: sha256(rgba),
     };

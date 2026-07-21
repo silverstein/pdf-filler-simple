@@ -39,16 +39,16 @@
         { "output_path": "output/filled.pdf", "output_page": 1, "source_path": "input/source.pdf", "source_page": 1, "anchor": "PAGE-ID: SERVICE", "rotation_delta": 0 },
         { "output_path": "output/filled.pdf", "output_page": 2, "source_path": "input/source.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 0 }
       ],
-      "intended_regions": [{ "output_path": "output/filled.pdf", "page": 1, "region": [71.5, 331.5, 221, 31], "reason": "ReviewStatus widget appearance", "required_visible_delta": true }],
+      "intended_regions": [{ "output_path": "output/filled.pdf", "page": 1, "region": [71.5, 331.5, 221, 31], "reason": "ReviewStatus widget appearance", "required_visible_delta": true, "target_evidence": { "kind": "field_appearance", "field_name": "ReviewStatus", "expected_value": "Approved" } }],
       "semantics": [{
         "output_path": "output/filled.pdf",
-        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "Approved", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "Approved", "widgets": [{ "page": 1, "region": [71.5, 331.5, 221, 31], "appearance_state": null, "has_normal_appearance": true }] }],
         "annotations": [],
         "metadata": { "preserve_from": "input/source.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
       }],
       "filesystem": { "created": ["output/filled.pdf"], "created_directories": [], "modified": [], "deleted": [], "dynamic_created_patterns": [] },
       "lifecycle": { "active_path": "output/filled.pdf", "last_mutation_tool": "fill_pdf", "backup_policy": "none" },
-      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "intended_visual", "forbidden_visual", "filesystem", "lifecycle"]
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "target_evidence", "intended_visual", "forbidden_visual", "filesystem", "lifecycle"]
     },
     {
       "id": "pdf-tools.fidelity.case.apply-text",
@@ -60,16 +60,16 @@
         { "output_path": "output/stamped.pdf", "output_page": 1, "source_path": "input/source.pdf", "source_page": 1, "anchor": "PAGE-ID: SERVICE", "rotation_delta": 0 },
         { "output_path": "output/stamped.pdf", "output_page": 2, "source_path": "input/source.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 0 }
       ],
-      "intended_regions": [{ "output_path": "output/stamped.pdf", "page": 2, "region": [330, 120, 160, 28], "reason": "requested text stamp", "required_visible_delta": true }],
+      "intended_regions": [{ "output_path": "output/stamped.pdf", "page": 2, "region": [330, 120, 160, 28], "reason": "requested text stamp", "required_visible_delta": true, "target_evidence": { "kind": "text_run", "expected_text": "Reviewed 2026-07-21" } }],
       "semantics": [{
         "output_path": "output/stamped.pdf",
-        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "", "widgets": [{ "page": 1, "region": [71.5, 331.5, 221, 31], "appearance_state": null, "has_normal_appearance": true }] }],
         "annotations": [],
         "metadata": { "preserve_from": "input/source.pdf", "preserve_keys": ["Title", "Author", "Subject", "Creator", "CreationDate"], "allowed_change_keys": ["Keywords", "Producer", "ModDate"], "required_patterns": { "Keywords": "stamped text via pdf-toolkit; text=\\\"Reviewed 2026-07-21\\\";.*page=2" } }
       }],
       "filesystem": { "created": ["output/stamped.pdf"], "created_directories": [], "modified": [], "deleted": [], "dynamic_created_patterns": [] },
       "lifecycle": { "active_path": "output/stamped.pdf", "last_mutation_tool": "apply_text", "backup_policy": "none" },
-      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "intended_visual", "forbidden_visual", "filesystem", "lifecycle"]
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "target_evidence", "intended_visual", "forbidden_visual", "filesystem", "lifecycle"]
     },
     {
       "id": "pdf-tools.fidelity.case.prepare-signing-packet",
@@ -82,18 +82,18 @@
         { "output_path": "output/packet.pdf", "output_page": 2, "source_path": "input/source.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 0 }
       ],
       "intended_regions": [
-        { "output_path": "output/packet.pdf", "page": 1, "region": [71.5, 331.5, 221, 31], "reason": "ReviewStatus widget appearance", "required_visible_delta": true },
-        { "output_path": "output/packet.pdf", "page": 2, "region": [330, 650, 180, 36], "reason": "visible sign-here placeholder", "required_visible_delta": true }
+        { "output_path": "output/packet.pdf", "page": 1, "region": [71.5, 331.5, 221, 31], "reason": "ReviewStatus widget appearance", "required_visible_delta": true, "target_evidence": { "kind": "field_appearance", "field_name": "ReviewStatus", "expected_value": "Pending signature" } },
+        { "output_path": "output/packet.pdf", "page": 2, "region": [330, 650, 180, 36], "reason": "visible sign-here placeholder", "required_visible_delta": true, "target_evidence": { "kind": "text_run", "expected_text": "Applicant signature" } }
       ],
       "semantics": [{
         "output_path": "output/packet.pdf",
-        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "Pending signature", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "Pending signature", "widgets": [{ "page": 1, "region": [71.5, 331.5, 221, 31], "appearance_state": null, "has_normal_appearance": true }] }],
         "annotations": [],
         "metadata": { "preserve_from": "input/source.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
       }],
       "filesystem": { "created": ["output/packet.pdf"], "created_directories": [], "modified": [], "deleted": [], "dynamic_created_patterns": [] },
       "lifecycle": { "active_path": "output/packet.pdf", "last_mutation_tool": "prepare_signing_packet", "backup_policy": "none" },
-      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "intended_visual", "forbidden_visual", "filesystem", "lifecycle"]
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "target_evidence", "intended_visual", "forbidden_visual", "filesystem", "lifecycle"]
     },
     {
       "id": "pdf-tools.fidelity.case.page-plan-reorder-rotate",
@@ -108,7 +108,7 @@
       "intended_regions": [],
       "semantics": [{
         "output_path": "output/planned.pdf",
-        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "", "page": 2, "region": [71.5, 331.5, 221, 31] }],
+        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "", "widgets": [{ "page": 2, "region": [71.5, 331.5, 221, 31], "appearance_state": null, "has_normal_appearance": true }] }],
         "annotations": [],
         "metadata": { "preserve_from": "input/source.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
       }],
@@ -142,13 +142,13 @@
       "semantics": [
         {
           "output_path": "output/merged.pdf",
-          "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+          "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "", "widgets": [{ "page": 1, "region": [71.5, 331.5, 221, 31], "appearance_state": null, "has_normal_appearance": true }] }],
           "annotations": [],
           "metadata": { "preserve_from": "input/base.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
         },
         {
           "output_path": "output/split/merged_pages_1-2_1.pdf",
-          "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+          "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "", "widgets": [{ "page": 1, "region": [71.5, 331.5, 221, 31], "appearance_state": null, "has_normal_appearance": true }] }],
           "annotations": [],
           "metadata": { "preserve_from": "input/base.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
         },
@@ -176,16 +176,16 @@
         { "output_path": "input/working.pdf", "output_page": 1, "source_path": "input/working.pdf", "source_page": 1, "anchor": "PAGE-ID: SERVICE", "rotation_delta": 0 },
         { "output_path": "input/working.pdf", "output_page": 2, "source_path": "input/working.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 0 }
       ],
-      "intended_regions": [{ "output_path": "input/working.pdf", "page": 1, "region": [71.5, 331.5, 221, 31], "reason": "ReviewStatus widget appearance after two fills", "required_visible_delta": true }],
+      "intended_regions": [{ "output_path": "input/working.pdf", "page": 1, "region": [71.5, 331.5, 221, 31], "reason": "ReviewStatus widget appearance after two fills", "required_visible_delta": true, "target_evidence": { "kind": "field_appearance", "field_name": "ReviewStatus", "expected_value": "Second" } }],
       "semantics": [{
         "output_path": "input/working.pdf",
-        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "Second", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "Second", "widgets": [{ "page": 1, "region": [71.5, 331.5, 221, 31], "appearance_state": null, "has_normal_appearance": true }] }],
         "annotations": [],
         "metadata": { "preserve_from": "input/working.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
       }],
       "filesystem": { "created": [], "created_directories": [], "modified": ["input/working.pdf"], "deleted": [], "dynamic_created_patterns": ["^profiles/backups/working__[A-Za-z0-9.-]+\\.pdf$"] },
       "lifecycle": { "active_path": "input/working.pdf", "last_mutation_tool": "fill_pdf", "backup_policy": "immutable-original" },
-      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "intended_visual", "forbidden_visual", "filesystem", "lifecycle", "backup"]
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "target_evidence", "intended_visual", "forbidden_visual", "filesystem", "lifecycle", "backup"]
     },
     {
       "id": "pdf-tools.fidelity.case.missing-backup-fail-closed",
@@ -201,16 +201,16 @@
         { "output_path": "input/working.pdf", "output_page": 1, "source_path": "input/working.pdf", "source_page": 1, "anchor": "PAGE-ID: SERVICE", "rotation_delta": 0 },
         { "output_path": "input/working.pdf", "output_page": 2, "source_path": "input/working.pdf", "source_page": 2, "anchor": "PAGE-ID: APPENDIX", "rotation_delta": 0 }
       ],
-      "intended_regions": [{ "output_path": "input/working.pdf", "page": 1, "region": [71.5, 331.5, 221, 31], "reason": "first ReviewStatus fill before injected backup deletion", "required_visible_delta": true }],
+      "intended_regions": [{ "output_path": "input/working.pdf", "page": 1, "region": [71.5, 331.5, 221, 31], "reason": "first ReviewStatus fill before injected backup deletion", "required_visible_delta": true, "target_evidence": { "kind": "field_appearance", "field_name": "ReviewStatus", "expected_value": "First" } }],
       "semantics": [{
         "output_path": "input/working.pdf",
-        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "First", "page": 1, "region": [71.5, 331.5, 221, 31] }],
+        "fields": [{ "name": "ReviewStatus", "type": "PDFTextField", "flags": 0, "value": "First", "widgets": [{ "page": 1, "region": [71.5, 331.5, 221, 31], "appearance_state": null, "has_normal_appearance": true }] }],
         "annotations": [],
         "metadata": { "preserve_from": "input/working.pdf", "preserve_keys": ["Title", "Author", "Subject", "Keywords", "Creator", "CreationDate"], "allowed_change_keys": ["Producer", "ModDate"], "required_patterns": {} }
       }],
       "filesystem": { "created": [], "created_directories": [], "modified": ["input/working.pdf"], "deleted": [], "dynamic_created_patterns": [] },
       "lifecycle": { "active_path": "input/working.pdf", "last_mutation_tool": "fill_pdf", "backup_policy": "missing-original-fail-closed" },
-      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "intended_visual", "forbidden_visual", "filesystem", "lifecycle", "backup"]
+      "required_gates": ["tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry", "semantics", "target_evidence", "intended_visual", "forbidden_visual", "filesystem", "lifecycle", "backup"]
     }
   ]
 }

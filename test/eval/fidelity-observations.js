@@ -159,9 +159,11 @@ export async function inspectFidelityDocument(filePath, renderer = { scale: 2 })
       media_box: Object.values(page.getMediaBox()),
       crop_box: Object.values(page.getCropBox()),
       rotation: page.getRotation().angle,
+      user_unit: number(pdf.context, page.node.get(PDFName.of("UserUnit"))) ?? 1,
       marker: textPages[index]?.marker ?? null,
       text: textPages[index]?.text ?? "",
       text_sha256: textPages[index]?.text_sha256 ?? sha256(""),
+      text_items: textPages[index]?.items ?? [],
     })),
     fields,
     annotations: rawAnnotations.filter(annotation => annotation.subtype !== "/Widget"),
@@ -249,21 +251,50 @@ export function rotateRgba(render, degrees) {
   return { ...render, width, height, rgba, rgba_sha256: sha256(rgba) };
 }
 
+function transformPoint(transform, x, y) {
+  return [
+    transform[0] * x + transform[2] * y + transform[4],
+    transform[1] * x + transform[3] * y + transform[5],
+  ];
+}
+
+export function rasterizeFidelityRegions(width, height, regions, policy, geometry) {
+  const mask = new Uint8Array(width * height);
+  const media = geometry?.media_box;
+  const transform = geometry?.viewport_transform;
+  if (!Array.isArray(media) || media.length !== 4 || !Array.isArray(transform) || transform.length !== 6) {
+    throw new Error("Fidelity mask geometry requires a four-number MediaBox and six-number viewport transform");
+  }
+  for (const region of regions) {
+    const [x, y, regionWidth, regionHeight] = region;
+    const pdfLeft = media[0] + x;
+    const pdfRight = pdfLeft + regionWidth;
+    const pdfTop = media[1] + media[3] - y;
+    const pdfBottom = pdfTop - regionHeight;
+    const corners = [
+      transformPoint(transform, pdfLeft, pdfTop),
+      transformPoint(transform, pdfRight, pdfTop),
+      transformPoint(transform, pdfRight, pdfBottom),
+      transformPoint(transform, pdfLeft, pdfBottom),
+    ];
+    const halo = policy.intended_region_halo_pixels;
+    const x0 = Math.max(0, Math.floor(Math.min(...corners.map(point => point[0]))) - halo);
+    const y0 = Math.max(0, Math.floor(Math.min(...corners.map(point => point[1]))) - halo);
+    const x1 = Math.min(width, Math.ceil(Math.max(...corners.map(point => point[0]))) + halo);
+    const y1 = Math.min(height, Math.ceil(Math.max(...corners.map(point => point[1]))) + halo);
+    for (let rasterY = y0; rasterY < y1; rasterY += 1) {
+      mask.fill(1, rasterY * width + x0, rasterY * width + x1);
+    }
+  }
+  return mask;
+}
+
 export function diffFidelityRgba(before, after, regions, policy) {
   const thresholds = policy.pixel_delta_thresholds;
   if (before.width !== after.width || before.height !== after.height) {
     return { dimension_mismatch: true, thresholds, raw_counts: null, inside_counts: null, outside_counts: null, intended_pixels: null };
   }
-  const scale = before.width / (before.page_width_points ?? (before.width / (before.scale ?? 2)));
-  const mask = new Uint8Array(before.width * before.height);
-  for (const region of regions) {
-    const halo = policy.intended_region_halo_pixels;
-    const x0 = Math.max(0, Math.floor(region[0] * scale) - halo);
-    const y0 = Math.max(0, Math.floor(region[1] * scale) - halo);
-    const x1 = Math.min(before.width, Math.ceil((region[0] + region[2]) * scale) + halo);
-    const y1 = Math.min(before.height, Math.ceil((region[1] + region[3]) * scale) + halo);
-    for (let y = y0; y < y1; y += 1) mask.fill(1, y * before.width + x0, y * before.width + x1);
-  }
+  const mask = rasterizeFidelityRegions(before.width, before.height, regions, policy, after.mask_geometry);
   const rawCounts = Object.fromEntries(thresholds.map(threshold => [threshold, 0]));
   const insideCounts = Object.fromEntries(thresholds.map(threshold => [threshold, 0]));
   const outsideCounts = Object.fromEntries(thresholds.map(threshold => [threshold, 0]));

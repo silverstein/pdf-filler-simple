@@ -17,7 +17,7 @@ export const FIDELITY_METADATA_KEYS = Object.freeze([
 ]);
 export const FIDELITY_GATES = Object.freeze([
   "tool_execution", "artifact", "pdfjs_engine", "poppler_engine", "lineage", "geometry",
-  "semantics", "intended_visual", "forbidden_visual", "filesystem", "lifecycle", "backup",
+  "semantics", "target_evidence", "intended_visual", "forbidden_visual", "filesystem", "lifecycle", "backup",
 ]);
 
 const SHA256 = /^[a-f0-9]{64}$/;
@@ -57,8 +57,27 @@ function expectedGates(caseDefinition) {
     "semantics", "forbidden_visual", "filesystem", "lifecycle",
   ];
   if (caseDefinition.intended_regions.length > 0) gates.push("intended_visual");
+  if (caseDefinition.intended_regions.length > 0) gates.push("target_evidence");
   if (caseDefinition.lifecycle.backup_policy !== "none") gates.push("backup");
   return gates;
+}
+
+export function producerCallIndex(caseDefinition, outputPath) {
+  let producer = null;
+  for (const [index, call] of (caseDefinition.tool_calls ?? []).entries()) {
+    if (call.expect_error === true) continue;
+    if (call.arguments?.output_path === outputPath
+      || (typeof call.arguments?.output_directory === "string" && outputPath.startsWith(`${call.arguments.output_directory}/`))) {
+      producer = index + 1;
+    }
+  }
+  return producer;
+}
+
+function consumedPaths(call) {
+  if (call.name === "merge_pdfs") return call.arguments?.input_paths ?? [];
+  const pathValue = call.arguments?.pdf_path ?? call.arguments?.input_path;
+  return pathValue ? [pathValue] : [];
 }
 
 export function validateFidelityManifest(manifest) {
@@ -111,6 +130,18 @@ export function validateFidelityManifest(manifest) {
       errors.push(`${location}.expected_outputs must contain unique safe logical paths`);
     }
     const outputSet = new Set(outputs);
+    const availablePaths = new Set(inputPaths);
+    for (const [callIndex, call] of (item.tool_calls ?? []).entries()) {
+      for (const consumed of consumedPaths(call)) {
+        if (!availablePaths.has(consumed)) errors.push(`${location}.tool_calls[${callIndex}] consumes unavailable path ${consumed}`);
+      }
+      for (const output of outputs.filter(outputPath => producerCallIndex({ tool_calls: [call] }, outputPath) === 1)) {
+        if (call.expect_error !== true) availablePaths.add(output);
+      }
+    }
+    for (const output of outputs) {
+      if (producerCallIndex(item, output) === null) errors.push(`${location}.expected_outputs has no successful producer for ${output}`);
+    }
     const lineageKeys = new Set();
     for (const [lineageIndex, lineage] of (item.page_lineage ?? []).entries()) {
       const key = `${lineage.output_path}#${lineage.output_page}`;
@@ -131,6 +162,18 @@ export function validateFidelityManifest(manifest) {
         errors.push(`${location}.intended_regions[${regionIndex}] must remain inside the bound 612x792 page`);
       } else if (region[2] * region[3] >= 612 * 792 * 0.5) {
         errors.push(`${location}.intended_regions[${regionIndex}] is an overbroad mask`);
+      }
+      const evidence = intended.target_evidence;
+      if (evidence?.kind === "field_appearance") {
+        if (typeof evidence.field_name !== "string" || !Object.hasOwn(evidence, "expected_value")) {
+          errors.push(`${location}.intended_regions[${regionIndex}] has incomplete field appearance evidence`);
+        }
+      } else if (evidence?.kind === "text_run") {
+        if (typeof evidence.expected_text !== "string" || evidence.expected_text.length === 0) {
+          errors.push(`${location}.intended_regions[${regionIndex}] has incomplete text evidence`);
+        }
+      } else {
+        errors.push(`${location}.intended_regions[${regionIndex}] must bind supported target evidence`);
       }
     }
     for (const [semanticIndex, semantic] of (item.semantics ?? []).entries()) {

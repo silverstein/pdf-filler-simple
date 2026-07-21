@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { FIDELITY_GATES } from "./fidelity-manifest.js";
+import { FIDELITY_GATES, producerCallIndex } from "./fidelity-manifest.js";
 
 function canonical(value) {
   if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
@@ -15,6 +15,14 @@ function equal(left, right) {
 
 function normalizeRegion(region) {
   return region?.map(value => Math.round(value * 100) / 100) ?? null;
+}
+
+function regionContains(outer, inner, tolerance = 1) {
+  if (!Array.isArray(outer) || !Array.isArray(inner)) return false;
+  return inner[0] >= outer[0] - tolerance
+    && inner[1] >= outer[1] - tolerance
+    && inner[0] + inner[2] <= outer[0] + outer[2] + tolerance
+    && inner[1] + inner[3] <= outer[1] + outer[3] + tolerance;
 }
 
 function result(passed, reasons = [], evidence = {}) {
@@ -53,6 +61,9 @@ function evaluateArtifacts(manifest, caseDefinition, cell) {
     const output = cell.outputs?.[outputPath];
     if (!output?.exists) reasons.push(`${outputPath} is missing`);
     else if (!output.inspection?.sha256 || !(output.inspection.size > 0)) reasons.push(`${outputPath} is empty or unbound`);
+    if (output?.producer_call_index !== producerCallIndex(caseDefinition, outputPath)) {
+      reasons.push(`${outputPath} is not bound to its successful producing call`);
+    }
   }
   return result(reasons.length === 0, reasons, { expected_outputs: caseDefinition.expected_outputs.length });
 }
@@ -103,30 +114,36 @@ function evaluateGeometry(caseDefinition, cell) {
     if (!equal(source.media_box, output.media_box)) reasons.push(`${lineage.output_path} page ${lineage.output_page} MediaBox drifted`);
     if (!equal(source.crop_box, output.crop_box)) reasons.push(`${lineage.output_path} page ${lineage.output_page} CropBox drifted`);
     if (output.rotation !== expectedRotation) reasons.push(`${lineage.output_path} page ${lineage.output_page} rotation is ${output.rotation}, expected ${expectedRotation}`);
+    if ((output.user_unit ?? 1) !== (source.user_unit ?? 1)) reasons.push(`${lineage.output_path} page ${lineage.output_page} UserUnit drifted`);
   }
   return result(reasons.length === 0, reasons);
 }
 
 function observedFields(inspection) {
-  return (inspection?.fields ?? []).map(field => {
-    const widget = field.widgets?.[0] ?? {};
-    return {
-      name: field.name,
-      type: field.type,
-      flags: field.flags,
-      value: field.value,
+  return (inspection?.fields ?? []).map(field => ({
+    name: field.name,
+    type: field.type,
+    flags: field.flags,
+    value: field.value,
+    widgets: (field.widgets ?? []).map(widget => ({
       page: widget.pages?.length === 1 ? widget.pages[0] : null,
       region: normalizeRegion(widget.region),
-    };
-  }).sort((left, right) => left.name.localeCompare(right.name));
+      appearance_state: widget.appearance_state ?? null,
+      has_normal_appearance: widget.has_normal_appearance === true,
+    })).sort((left, right) => canonical(left).localeCompare(canonical(right))),
+  })).sort((left, right) => left.name.localeCompare(right.name));
 }
 
 function observedAnnotations(inspection) {
   return (inspection?.annotations ?? []).map(annotation => ({
     page: annotation.page,
     subtype: annotation.subtype,
-    contents: annotation.contents,
     region: normalizeRegion(annotation.region),
+    flags: annotation.flags,
+    contents: annotation.contents,
+    has_appearance: annotation.has_appearance === true,
+    action: annotation.action,
+    destination: annotation.destination,
   })).sort((left, right) => canonical(left).localeCompare(canonical(right)));
 }
 
@@ -136,7 +153,11 @@ function evaluateSemantics(caseDefinition, cell) {
     const inspection = cell.outputs?.[expected.output_path]?.inspection;
     if (!inspection) continue;
     const fields = observedFields(inspection);
-    const expectedFields = expected.fields.map(field => ({ ...field, region: normalizeRegion(field.region) }))
+    const expectedFields = expected.fields.map(field => ({
+      ...field,
+      widgets: field.widgets.map(widget => ({ ...widget, region: normalizeRegion(widget.region) }))
+        .sort((left, right) => canonical(left).localeCompare(canonical(right))),
+    }))
       .sort((left, right) => left.name.localeCompare(right.name));
     if (!equal(fields, expectedFields)) reasons.push(`${expected.output_path} field inventory differs from contract`);
     if (!equal(observedAnnotations(inspection), expected.annotations)) reasons.push(`${expected.output_path} non-widget annotation inventory differs from contract`);
@@ -155,9 +176,39 @@ function evaluateSemantics(caseDefinition, cell) {
   return result(reasons.length === 0, reasons);
 }
 
+function evaluateTargetEvidence(caseDefinition, cell) {
+  const reasons = [];
+  for (const intended of caseDefinition.intended_regions) {
+    const inspection = cell.outputs?.[intended.output_path]?.inspection;
+    if (!inspection) continue;
+    const evidence = intended.target_evidence;
+    if (evidence.kind === "field_appearance") {
+      const field = (inspection.fields ?? []).find(item => item.name === evidence.field_name);
+      if (!field || !equal(field.value, evidence.expected_value)) {
+        reasons.push(`${intended.output_path} field ${evidence.field_name} does not contain the intended value`);
+        continue;
+      }
+      const widgets = (field.widgets ?? []).filter(widget => widget.pages?.length === 1
+        && widget.pages[0] === intended.page && equal(normalizeRegion(widget.region), normalizeRegion(intended.region))
+        && widget.has_normal_appearance === true);
+      if (widgets.length !== 1) reasons.push(`${intended.output_path} field ${evidence.field_name} lacks exactly one bound normal appearance in its intended region`);
+    } else if (evidence.kind === "text_run") {
+      const page = inspection.pages?.[intended.page - 1];
+      const matching = (page?.text_items ?? []).filter(item => item.text === evidence.expected_text
+        && regionContains(intended.region, item.region));
+      if (matching.length !== 1) reasons.push(`${intended.output_path} page ${intended.page} lacks exactly one intended text run ${evidence.expected_text}`);
+    } else {
+      reasons.push(`${intended.output_path} page ${intended.page} has unsupported target evidence`);
+    }
+  }
+  return result(reasons.length === 0, reasons);
+}
+
 function evaluateVisual(caseDefinition, cell, kind) {
   const reasons = [];
-  const requiredRegions = caseDefinition.intended_regions.filter(region => region.required_visible_delta);
+  const requiredRegions = caseDefinition.intended_regions
+    .map((region, regionIndex) => ({ ...region, region_index: regionIndex }))
+    .filter(region => region.required_visible_delta);
   const expectedKeys = caseDefinition.page_lineage.flatMap(lineage => ["pdfjs", "poppler"].map(engine =>
     `${engine}|${lineage.output_path}|${lineage.output_page}|${lineage.source_path}|${lineage.source_page}|${lineage.rotation_delta}`));
   const observedKeys = (cell.visual_comparisons ?? []).map(comparison =>
@@ -182,7 +233,11 @@ function evaluateVisual(caseDefinition, cell, kind) {
         const comparisons = (cell.visual_comparisons ?? []).filter(item => item.engine === engine
           && item.output_path === region.output_path && item.output_page === region.page);
         if (comparisons.length !== 1) reasons.push(`${engine} intended region ${region.output_path} page ${region.page} has incomplete evidence`);
-        else if (!(comparisons[0].metrics?.inside_counts?.[8] > 0)) reasons.push(`${engine} intended region ${region.output_path} page ${region.page} has no visible delta above 8`);
+        else {
+          const metric = comparisons[0].region_metrics?.find(item => item.region_index === region.region_index);
+          if (!metric) reasons.push(`${engine} intended region ${region.output_path} page ${region.page} lacks isolated region evidence`);
+          else if (!(metric.metrics?.inside_counts?.[8] > 0)) reasons.push(`${engine} intended region ${region.output_path} page ${region.page} has no visible delta above 8`);
+        }
       }
     }
   }
@@ -211,6 +266,10 @@ function evaluateLifecycle(caseDefinition, cell) {
   const reasons = [];
   if (!active || active.active_path !== caseDefinition.lifecycle.active_path) reasons.push("active document path differs from contract");
   if (!active || active.last_mutation_tool !== caseDefinition.lifecycle.last_mutation_tool) reasons.push("last mutation tool differs from contract");
+  if (caseDefinition.lifecycle.backup_policy === "missing-original-fail-closed"
+    && !equal(cell.lifecycle?.before_expected_failure, active)) {
+    reasons.push("active document state changed after the expected failed mutation");
+  }
   return result(reasons.length === 0, reasons);
 }
 
@@ -239,6 +298,7 @@ export function evaluateFidelityCell(manifest, caseDefinition, cell) {
     lineage: evaluateLineage(caseDefinition, cell),
     geometry: evaluateGeometry(caseDefinition, cell),
     semantics: evaluateSemantics(caseDefinition, cell),
+    target_evidence: evaluateTargetEvidence(caseDefinition, cell),
     intended_visual: evaluateVisual(caseDefinition, cell, "intended"),
     forbidden_visual: evaluateVisual(caseDefinition, cell, "forbidden"),
     filesystem: evaluateFilesystem(caseDefinition, cell),
@@ -246,7 +306,7 @@ export function evaluateFidelityCell(manifest, caseDefinition, cell) {
     backup: evaluateBackup(caseDefinition, cell),
   };
   const passed = caseDefinition.required_gates.every(gate => gates[gate]?.status === "pass");
-  return { case_id: caseDefinition.id, repetition: cell.repetition, passed, gates };
+  return { case_id: caseDefinition.id, repetition: cell.repetition, passed: passed && !cell.harness_failure, harness_failure: cell.harness_failure ?? null, gates };
 }
 
 export function scoreFidelityReport(manifest, report) {
@@ -266,6 +326,14 @@ export function scoreFidelityReport(manifest, report) {
   const requiredFailures = results.flatMap(item => Object.entries(item.gates)
     .filter(([gate, gateResult]) => caseById.get(item.case_id).required_gates.includes(gate) && gateResult.status !== "pass")
     .map(([gate, gateResult]) => ({ case_id: item.case_id, repetition: item.repetition, gate, reasons: gateResult.reasons })));
+  for (const item of results.filter(resultItem => resultItem.harness_failure)) {
+    requiredFailures.push({
+      case_id: item.case_id,
+      repetition: item.repetition,
+      gate: "harness",
+      reasons: [`${item.harness_failure.phase}: ${item.harness_failure.message}`],
+    });
+  }
   return {
     schema_version: 1,
     benchmark_id: manifest.benchmark_id,

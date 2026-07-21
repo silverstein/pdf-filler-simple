@@ -23,6 +23,7 @@ import {
 } from "../test/eval/fidelity-observations.js";
 import {
   loadFidelityManifest,
+  producerCallIndex,
   resolveFidelityDocumentPath,
   verifyFidelityDocuments,
 } from "../test/eval/fidelity-manifest.js";
@@ -203,6 +204,7 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
   let hashBeforeSecond = null;
   let hashAfterSecond = null;
   let secondCallError = null;
+  let activeBeforeExpectedFailure = null;
   let runtime;
   let active = null;
   try {
@@ -226,6 +228,13 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
         await fs.rm(firstBackupPath);
         snapshotAfterFault = await snapshotFilesystem(workspace);
         hashBeforeSecond = await readHash(resolveLogical(workspace, caseDefinition.inputs[0].logical_path));
+        const beforeFailure = await runtime.client.callTool({ name: "get_active_document", arguments: {} });
+        activeBeforeExpectedFailure = {
+          active_path: toLogical(workspace, beforeFailure.structuredContent?.active_path),
+          backup_path: toLogical(workspace, beforeFailure.structuredContent?.backup_path),
+          last_mutation_tool: beforeFailure.structuredContent?.last_mutation_tool ?? null,
+          last_mutation_at: beforeFailure.structuredContent?.last_mutation_at ?? null,
+        };
       }
       if (index === 1 && caseDefinition.lifecycle.backup_policy === "missing-original-fail-closed") {
         secondCallError = result.isError === true;
@@ -237,6 +246,7 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
       active_path: toLogical(workspace, activeResult.structuredContent?.active_path),
       backup_path: toLogical(workspace, activeResult.structuredContent?.backup_path),
       last_mutation_tool: activeResult.structuredContent?.last_mutation_tool ?? null,
+      last_mutation_at: activeResult.structuredContent?.last_mutation_at ?? null,
     };
   } finally {
     await runtime?.transport.close();
@@ -257,20 +267,22 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
       outputRenders.poppler[outputPath] = popplerRenders;
       outputInspections[outputPath] = {
         exists: true,
+        producer_call_index: producerCallIndex(caseDefinition, outputPath),
         inspection: serializableInspection(inspection),
         poppler: { ...poppler, render_count: popplerRenders.length },
       };
     } catch (error) {
-      outputInspections[outputPath] = { exists: false, error: error.message, inspection: null, poppler: { opened: false, page_count: null, render_count: 0 } };
+      outputInspections[outputPath] = { exists: false, producer_call_index: producerCallIndex(caseDefinition, outputPath), error: error.message, inspection: null, poppler: { opened: false, page_count: null, render_count: 0 } };
     }
   }
 
   const visualComparisons = [];
   const visualPairs = [];
   for (const lineage of caseDefinition.page_lineage) {
-    const regions = caseDefinition.intended_regions
-      .filter(region => region.output_path === lineage.output_path && region.page === lineage.output_page)
-      .map(region => region.region);
+    const intendedRegions = caseDefinition.intended_regions
+      .map((region, regionIndex) => ({ ...region, region_index: regionIndex }))
+      .filter(region => region.output_path === lineage.output_path && region.page === lineage.output_page);
+    const regions = intendedRegions.map(region => region.region);
     const transformed = await renderExpectedSourcePage(
       workspace,
       lineage,
@@ -284,9 +296,18 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
         visualComparisons.push({ engine, output_path: lineage.output_path, output_page: lineage.output_page, metrics: null });
         continue;
       }
-      const pageWidthPoints = outputInspections[lineage.output_path]?.inspection?.pages?.[lineage.output_page - 1]?.crop_box?.[2] ?? 612;
-      source.page_width_points = pageWidthPoints;
-      output.page_width_points = pageWidthPoints;
+      const outputInspection = outputInspections[lineage.output_path]?.inspection;
+      const pageGeometry = outputInspection?.pages?.[lineage.output_page - 1];
+      const pdfjsRender = outputRenders.pdfjs[lineage.output_path]?.[lineage.output_page - 1];
+      if (pageGeometry && pdfjsRender?.viewport_transform) {
+        const ratioX = output.width / pdfjsRender.width;
+        const ratioY = output.height / pdfjsRender.height;
+        const [a, b, c, d, e, f] = pdfjsRender.viewport_transform;
+        output.mask_geometry = {
+          media_box: pageGeometry.media_box,
+          viewport_transform: [a * ratioX, b * ratioY, c * ratioX, d * ratioY, e * ratioX, f * ratioY],
+        };
+      }
       visualComparisons.push({
         engine,
         output_path: lineage.output_path,
@@ -295,6 +316,11 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
         source_page: lineage.source_page,
         rotation_delta: lineage.rotation_delta,
         metrics: diffFidelityRgba(source, output, regions, manifest.measurement_policy.renderer),
+        region_metrics: intendedRegions.map(region => ({
+          region_index: region.region_index,
+          region: region.region,
+          metrics: diffFidelityRgba(source, output, [region.region], manifest.measurement_policy.renderer),
+        })),
       });
       visualPairs.push({ engine, lineage, before: source, after: output });
     }
@@ -312,7 +338,7 @@ async function runCell(manifest, caseDefinition, repetition, engineFingerprint) 
     outputs: outputInspections,
     visual_comparisons: visualComparisons,
     filesystem: { before: initialSnapshot, after: finalSnapshot, diff: filesystemDiff },
-    lifecycle: { active },
+    lifecycle: { active, before_expected_failure: activeBeforeExpectedFailure },
     backup: {
       original_sha256: originalSamePathHash,
       first_path: firstLogical,
@@ -373,7 +399,19 @@ const cells = [];
 for (const caseDefinition of manifest.cases) {
   for (let repetition = 1; repetition <= manifest.measurement_policy.repetitions; repetition += 1) {
     process.stderr.write(`fidelity ${caseDefinition.id} repeat ${repetition}\n`);
-    cells.push(await runCell(manifest, caseDefinition, repetition, engineFingerprint));
+    try {
+      cells.push(await runCell(manifest, caseDefinition, repetition, engineFingerprint));
+    } catch (error) {
+      cells.push({
+        case_id: caseDefinition.id,
+        repetition,
+        harness_failure: {
+          phase: "run_cell",
+          name: error instanceof Error ? error.name : "Error",
+          message: error instanceof Error ? error.message : String(error),
+        },
+      });
+    }
   }
 }
 const report = {

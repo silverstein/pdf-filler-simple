@@ -124,26 +124,75 @@
     "intendedRegion": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["output_path", "page", "region", "reason", "required_visible_delta"],
+      "required": ["output_path", "page", "region", "reason", "required_visible_delta", "target_evidence"],
       "properties": {
         "output_path": { "$ref": "#/$defs/logicalPath" },
         "page": { "type": "integer", "minimum": 1 },
         "region": { "$ref": "#/$defs/region" },
         "reason": { "type": "string", "minLength": 4 },
-        "required_visible_delta": { "type": "boolean" }
+        "required_visible_delta": { "type": "boolean" },
+        "target_evidence": { "$ref": "#/$defs/targetEvidence" }
+      }
+    },
+    "targetEvidence": {
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "field_name", "expected_value"],
+          "properties": {
+            "kind": { "const": "field_appearance" },
+            "field_name": { "type": "string", "minLength": 1 },
+            "expected_value": { "type": ["string", "boolean", "array", "null"] }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "expected_text"],
+          "properties": {
+            "kind": { "const": "text_run" },
+            "expected_text": { "type": "string", "minLength": 1 }
+          }
+        }
+      ]
+    },
+    "widget": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "region", "appearance_state", "has_normal_appearance"],
+      "properties": {
+        "page": { "type": ["integer", "null"], "minimum": 1 },
+        "region": { "oneOf": [{ "$ref": "#/$defs/region" }, { "type": "null" }] },
+        "appearance_state": { "type": ["string", "null"] },
+        "has_normal_appearance": { "type": "boolean" }
       }
     },
     "field": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name", "type", "flags", "value", "page", "region"],
+      "required": ["name", "type", "flags", "value", "widgets"],
       "properties": {
         "name": { "type": "string" },
         "type": { "type": "string" },
         "flags": { "type": "integer", "minimum": 0 },
         "value": { "type": ["string", "boolean", "array", "null"] },
-        "page": { "type": ["integer", "null"], "minimum": 1 },
-        "region": { "oneOf": [{ "$ref": "#/$defs/region" }, { "type": "null" }] }
+        "widgets": { "type": "array", "items": { "$ref": "#/$defs/widget" } }
+      }
+    },
+    "annotation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "subtype", "region", "flags", "contents", "has_appearance", "action", "destination"],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1 },
+        "subtype": { "type": ["string", "null"] },
+        "region": { "oneOf": [{ "$ref": "#/$defs/region" }, { "type": "null" }] },
+        "flags": { "type": ["integer", "null"], "minimum": 0 },
+        "contents": { "type": ["string", "null"] },
+        "has_appearance": { "type": "boolean" },
+        "action": { "type": ["string", "null"] },
+        "destination": { "type": ["string", "null"] }
       }
     },
     "semanticExpectation": {
@@ -153,7 +202,7 @@
       "properties": {
         "output_path": { "$ref": "#/$defs/logicalPath" },
         "fields": { "type": "array", "items": { "$ref": "#/$defs/field" } },
-        "annotations": { "type": "array" },
+        "annotations": { "type": "array", "items": { "$ref": "#/$defs/annotation" } },
         "metadata": {
           "type": "object",
           "additionalProperties": false,
