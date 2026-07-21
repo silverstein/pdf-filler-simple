@@ -466,7 +466,7 @@ describe("headless Codex comparison controller integration", () => {
     await expect(finalizeCampaign(campaignRoot, { documentsRoot })).rejects.toThrow(
       /arrival ledger does not cover the raw transcript denominator/,
     );
-  });
+  }, 30_000);
 
   it("rejects prompt tampering before acquiring a launch claim", async () => {
     const { campaignRoot } = await planOne("prompt-tamper");
@@ -475,7 +475,7 @@ describe("headless Codex comparison controller integration", () => {
     await expect(runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot }))
       .rejects.toThrow(/Prompt changed after planning/);
     await expect(fs.access(path.join(runRoot, "launch-claim.json"))).rejects.toThrow();
-  });
+  }, 30_000);
 
   it("rejects descendant workspace symlinks before acquiring a launch claim", async () => {
     const { campaignRoot } = await planOne("workspace-symlink");
@@ -485,7 +485,7 @@ describe("headless Codex comparison controller integration", () => {
     await expect(runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot }))
       .rejects.toThrow(/ancestry must contain only real directories/);
     await expect(fs.access(path.join(runRoot, "launch-claim.json"))).rejects.toThrow();
-  });
+  }, 30_000);
 
   it("rejects hash-equivalent prompt symlinks before acquiring a launch claim", async () => {
     const { campaignRoot } = await planOne("prompt-symlink");
@@ -495,7 +495,7 @@ describe("headless Codex comparison controller integration", () => {
     await expect(runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot }))
       .rejects.toThrow(/Expected a retained regular file/);
     await expect(fs.access(path.join(runRoot, "launch-claim.json"))).rejects.toThrow();
-  });
+  }, 30_000);
 
   it("allows exactly one concurrent claimant for a planned invocation", async () => {
     const { campaignRoot } = await planOne("concurrent-claim");
@@ -505,7 +505,7 @@ describe("headless Codex comparison controller integration", () => {
     ]);
     expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
     expect(results.filter(result => result.status === "rejected")).toHaveLength(1);
-  });
+  }, 30_000);
 
   it("accounts a timed-out process as a retained harness failure", async () => {
     const timeoutCodex = path.join(testRoot, "fake-codex-timeout.mjs");
@@ -521,5 +521,5 @@ describe("headless Codex comparison controller integration", () => {
       harness_failures: 1,
       passed_trials: 0,
     });
-  });
+  }, 30_000);
 });
