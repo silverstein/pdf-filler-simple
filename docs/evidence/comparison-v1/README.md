@@ -26,3 +26,9 @@ the published `read_pdf_pages`, `read_pdf_fields`, and `render_pdf_page` tools.
 It deliberately preserves missing metadata, annotation, and canonical
 region-observation capabilities as false negatives. It does not execute the
 candidate MCPB or claim native Claude Desktop coverage.
+
+`poppler-sensor.v1.json` is a separately named external-process sensor using
+the VM's installed Poppler commands. It records independent text, metadata,
+page-marker, and 144-DPI PPM hashes without pretending that Poppler supplies a
+semantic/event oracle. If Poppler is absent, the runner records
+`engine_unavailable` and never substitutes the shared renderer.

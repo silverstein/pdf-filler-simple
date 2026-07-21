@@ -11,6 +11,7 @@ import {
 } from "../test/eval/comparison-manifest.js";
 import { buildSharedLibraryReferenceReport } from "../test/eval/comparison-reference-baseline.js";
 import { buildProductPrimitiveReport } from "../test/eval/comparison-product-baseline.js";
+import { buildPopplerComparisonSensor } from "../test/eval/comparison-poppler-baseline.js";
 import { scoreComparisonReport, validateComparisonReport } from "../test/eval/comparison-scorer.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -88,6 +89,11 @@ try {
   }
   const productScore = scoreComparisonReport(manifest, productReport);
   if (!productScore.valid) throw new Error("Generated product report did not pass scorer validation");
+  const popplerSensor = await buildPopplerComparisonSensor({
+    benchmarkId: manifest.benchmark_id,
+    benchmarkVersion: manifest.benchmark_version,
+    pairs,
+  });
 
   await fs.mkdir(OUTPUT_DIRECTORY, { recursive: true });
   const rawArtifact = await writeJson(
@@ -106,6 +112,10 @@ try {
     path.join(OUTPUT_DIRECTORY, "current-product-score.v1.json"),
     productScore,
   );
+  const popplerArtifact = await writeJson(
+    path.join(OUTPUT_DIRECTORY, "poppler-sensor.v1.json"),
+    popplerSensor,
+  );
   const runIndex = {
     schema_version: 1,
     benchmark_id: manifest.benchmark_id,
@@ -119,7 +129,7 @@ try {
       sha256: digest(await fs.readFile(MANIFEST_PATH)),
     },
     renderer_fingerprint_sha256: digest(JSON.stringify(manifest.canonical_renderer)),
-    artifacts: [rawArtifact, scoredArtifact, productArtifact, productScoreArtifact],
+    artifacts: [rawArtifact, scoredArtifact, productArtifact, productScoreArtifact, popplerArtifact],
     result: {
       shared_library: {
         passed: scoredReport.passed,
@@ -134,6 +144,11 @@ try {
         pairs_total: productScore.aggregate.pairs_total,
         event_f1: productScore.aggregate.event_metrics.f1,
         evidence_completeness: productScore.aggregate.evidence_metrics.completeness,
+      },
+      poppler_sensor: {
+        engine_status: popplerSensor.engine_status,
+        pairs_observed: popplerSensor.pairs.length,
+        event_level_scored: false,
       },
     },
   };
