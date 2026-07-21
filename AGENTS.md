@@ -45,6 +45,33 @@
 - Never hard-code personal paths; rely on `resolvePath` and default directories (`~/Documents`, `~/.pdf-toolkit-files`).
 - Scrub PDFs or CSVs before committing, and point contributors to local-only credentials files when testing protected documents.
 
+## Autonomous Maintainer Run Contract
+
+When the maintainer has authorized an autonomous tranche or epic, do not stop
+after planning, a single Bead, or a small progress report. Follow
+`docs/ORCHESTRATION.md` and continue through ready work until the tranche's exit
+criteria are met or a genuine human gate is reached.
+
+- Use Beads as the durable scheduler; claim one bounded task per execution lane.
+- Use Agent Mail for identity, inboxes, handoffs, and file reservations when it
+  is healthy. Use isolated worktrees even when reservations are available.
+- Code-changing parallel lanes use dedicated worktrees under
+  `/home/mat/Sites/pdf-tools-worktrees/`; do not edit the shared checkout.
+- Commit locally at coherent checkpoints. The control tower batches merges and
+  Git pushes at milestones to limit downstream build-minute costs.
+- Every implementation lane must verify, adversarially review, record evidence,
+  hand off, release reservations, and either take the next ready task or stop at
+  an explicit gate.
+- Progress updates are informational and do not require the maintainer to say
+  “continue.” Ask only when authority, credentials, money, irreversible state,
+  legal/commercial judgment, or a materially ambiguous product choice is needed.
+- Never autonomously publish a release, execute a signature, disclose an
+  unpatched vulnerability, post contractual/legal claims, spend money, or alter
+  production/external data. Those remain human gates.
+- If context is compacted or a session restarts, recover from Git, Beads,
+  `docs/ORCHESTRATION.md`, Agent Mail, and the evidence ledger rather than
+  relying on chat history.
+
 <!-- BEGIN BEADS INTEGRATION v:1 profile:full hash:d4f96305 -->
 ## Issue Tracking with bd (beads)
 
