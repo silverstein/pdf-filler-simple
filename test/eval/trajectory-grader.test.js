@@ -1146,6 +1146,19 @@ describe("agent trajectory grader v3 integrity contract", () => {
     turn.observed_at = new Date(Date.parse(message.observed_at) - 1).toISOString();
     addFailureRef(trial, "answer-before-final-call");
     expect(check(gradeTrajectoryTrial(jobs.get(trial.job_id), trial), "terminal_answer").passed).toBe(false);
+
+    const inFlight = trialFor(trialSet, "inspect-and-answer");
+    const inFlightStep = inFlight.trajectory[0];
+    const inFlightMessage = inFlight.run.events.find(event =>
+      event.event_id === inFlight.final_answer.message_event_id);
+    const inFlightTurn = inFlight.run.events.find(event =>
+      event.event_id === inFlight.final_answer.turn_completed_event_id);
+    inFlightMessage.observed_at = new Date(Date.parse(inFlightStep.started_at) + 500).toISOString();
+    inFlightTurn.observed_at = new Date(Date.parse(inFlightMessage.observed_at) + 1).toISOString();
+    expect(Date.parse(inFlightMessage.observed_at)).toBeLessThan(Date.parse(inFlightStep.finished_at));
+    expect(check(
+      gradeTrajectoryTrial(jobs.get(inFlight.job_id), inFlight), "terminal_answer"
+    ).passed).toBe(false);
   });
 
   it("requires raw denied-call semantics and the declared denied argument before recovery", async () => {

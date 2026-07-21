@@ -1484,7 +1484,10 @@ export function gradeTrajectoryTrial(job, trial) {
   const finalAnswer = isObject(trial.final_answer) ? trial.final_answer : {};
   const messageEvent = trial.run?.events?.find(event => event.event_id === finalAnswer.message_event_id);
   const turnEvent = trial.run?.events?.find(event => event.event_id === finalAnswer.turn_completed_event_id);
-  const lastStepAt = Math.max(...steps.map(step => Date.parse(step?.started_at)).filter(Number.isFinite), -Infinity);
+  const lastStepFinishedAt = Math.max(
+    ...steps.map(step => Date.parse(step?.finished_at)).filter(Number.isFinite),
+    -Infinity
+  );
   const messageAt = Date.parse(messageEvent?.observed_at);
   const turnAt = Date.parse(turnEvent?.observed_at);
   gradeCheck(
@@ -1497,7 +1500,7 @@ export function gradeTrajectoryTrial(job, trial) {
       && new Set(["ingester", "calibration"]).has(messageEvent?.provenance?.authority)
       && turnEvent?.type === "turn_completed"
       && new Set(["ingester", "calibration"]).has(turnEvent?.provenance?.authority)
-      && Number.isFinite(messageAt) && messageAt >= lastStepAt
+      && Number.isFinite(messageAt) && messageAt >= lastStepFinishedAt
       && Number.isFinite(turnAt) && turnAt >= messageAt,
     "retained terminal agent answer after the final tool call and before a completed turn",
     { present: finalAnswer.present ?? null, raw_message_sha256: finalAnswer.raw_message_sha256 ?? null }
