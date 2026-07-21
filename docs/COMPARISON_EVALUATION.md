@@ -139,13 +139,22 @@ suppresses.
 
 ## Prediction contract
 
-A system under test runs in a fresh allowlisted directory containing only the
-two PDFs, the comparison mode, and the public prediction schema. It has no
-repository path, truth manifest, unrelated MCP server, or shell access. The
-scorer process alone loads the truth manifest, and only after the prediction has
-been schema-validated, hashed, and frozen. The harness records pre/post input
-hashes, allowed-directory access evidence, PDF Tools egress policy, host/model
-transport policy, and optional external-baseline processes separately.
+A claim-eligible system under test must run in a fresh allowlisted directory
+containing only the two PDFs, the comparison mode, and the public prediction
+schema. It has no repository path, truth manifest, unrelated MCP server, or
+shell access. The scorer process alone loads the truth manifest, and only after
+the prediction has been schema-validated, hashed, and frozen. The harness
+records pre/post input hashes, allowed-directory access evidence, PDF Tools
+egress policy, host/model transport policy, and optional external-baseline
+processes separately.
+
+The v1 shared-library and current-product descriptive lanes do **not** yet meet
+that isolation contract. Their controller can see the repository and truth,
+their shell boundary is not OS-enforced, and network denial is not enforced.
+They therefore report those states honestly and cannot pass the global scorer,
+even when individual pair-level capability metrics are useful. Their separate
+controller observation registries freeze report and observation digests, but
+are unsigned and are not independent attestations.
 
 All system-under-test and tool network access is denied during a scored run.
 When a remote model is used, only its predeclared inference endpoint is
@@ -223,17 +232,26 @@ scores. Harness failures, unsupported channels, product failures, and policy
 violations are reported separately. A weighted average cannot override any hard
 gate.
 
+V1 deterministically scores predeclared salience labels. Explanation factuality
+remains pending a separately versioned model or human rubric; fluent summaries
+are not treated as factual merely because the underlying event matched.
+
 ### V1 hard gates
 
 - both input hashes match and remain unchanged;
 - all required channels return a terminal supported or explicit unavailable
   state;
+- every required channel is supported for a passing pair; `unavailable` is an
+  honest diagnostic state but cannot prove absence of a change;
 - material-change recall is 1.0 for the small public slice;
 - every mandatory material facet has recall 1.0; an explicit unavailable state
   remains a false negative for detection;
-- no fabricated change and no evidence reference that fails binding;
+- no fabricated event, unsupported candidate facet, channel false positive, or
+  evidence reference that fails binding;
 - no undeclared external request;
 - every material claim has evidence from both versions when both regions exist;
+- every candidate event has exactly one mode-matched presentation decision,
+  and every matched event has the correct predeclared salience;
 - the deliberately byte-different/visually-equivalent pair produces no default
   user-visible change; and
 - the deliberately visual-only change is not declared unchanged.
@@ -241,11 +259,13 @@ gate.
 Thresholds for non-hard metrics live in the manifest and may change only with a
 corpus-version bump and review.
 
-Performance runs use one unmeasured warm-up followed by five isolated measured
-iterations for each engine/pair. Reports retain every timing sample, distinguish
-cold start from warm work, and normalize operating-system-specific peak-RSS
-units. Tests assert report validity and calibrated budgets, not exact wall-clock
-values.
+Performance runs use one separately reported warm-up followed by five measured
+iterations for each engine/pair. Reports retain the warm-up latency and cost,
+every measured timing and cost sample, and totals equal to all six executions.
+Peak RSS names the process actually measured; if child-process RSS is not
+available it is null and explicitly marked unavailable rather than substituted
+with parent RSS. Tests assert report validity and calibrated budgets, not exact
+wall-clock values.
 
 Raster scoring compares raw RGBA, never encoded PNG bytes. The canonical v1
 lane is literal and fail-closed:

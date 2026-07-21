@@ -119,8 +119,10 @@ function validateAnchor(anchor, location, documentById, pair, role, errors) {
   }
   if (![0, 90, 180, 270].includes(anchor.rotation)) errors.push(`${location}.rotation is invalid`);
   if (!Array.isArray(anchor.region) || anchor.region.length !== 4
-    || !anchor.region.every(Number.isFinite) || anchor.region[2] <= 0 || anchor.region[3] <= 0) {
-    errors.push(`${location}.region must be [x, y, positive width, positive height]`);
+    || !anchor.region.every(Number.isFinite) || anchor.region[0] < 0 || anchor.region[1] < 0
+    || anchor.region[2] <= 0 || anchor.region[3] <= 0
+    || anchor.region[0] + anchor.region[2] > 612 || anchor.region[1] + anchor.region[3] > 792) {
+    errors.push(`${location}.region must be nonnegative and remain within the 612x792 page box`);
   }
 }
 

@@ -6,6 +6,7 @@ import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { COMPARISON_CHANNELS } from "./comparison-manifest.js";
+import { rendererFingerprint } from "./comparison-observations.js";
 import { buildComparisonPairFromInspections } from "./comparison-reference-baseline.js";
 
 function digest(value) {
@@ -146,14 +147,28 @@ export async function buildProductPrimitiveReport({
     for (const pair of pairs) {
       let inspected;
       const timingSamples = [];
-      let peakRss = process.memoryUsage().rss;
+      const iterationCosts = [];
+      let warmupMs = 0;
+      let warmupCost;
       for (let iteration = 0; iteration < 6; iteration += 1) {
         const started = performance.now();
         const candidate = await inspectProductPair(client, pair.beforePath, pair.afterPath);
         const elapsed = performance.now() - started;
-        peakRss = Math.max(peakRss, process.memoryUsage().rss);
-        if (iteration === 0) inspected = candidate;
-        else timingSamples.push(elapsed);
+        const candidateCost = {
+          tool_calls: 8,
+          bytes_read: candidate.before.size + candidate.after.size,
+          rendered_pixels: [...candidate.before.renders, ...candidate.after.renders]
+            .reduce((sum, render) => sum + render.width * render.height, 0),
+          peak_rss_bytes: null,
+        };
+        if (iteration === 0) {
+          inspected = candidate;
+          warmupMs = elapsed;
+          warmupCost = candidateCost;
+        } else {
+          timingSamples.push(elapsed);
+          iterationCosts.push(candidateCost);
+        }
       }
       const sourceHashes = await Promise.all([
         fs.readFile(pair.beforePath).then(digest),
@@ -164,8 +179,11 @@ export async function buildProductPrimitiveReport({
         ...inspected,
         renderer,
         timingSamples,
-        peakRss,
-        toolCalls: 8,
+        warmupMs,
+        warmupCost,
+        iterationCosts,
+        peakRss: null,
+        resourceMeasurementStatus: "unavailable",
         capture: "retained_tool_result",
         channelStatus: Object.fromEntries(COMPARISON_CHANNELS.map(channel => [
           channel,
@@ -197,6 +215,7 @@ export async function buildProductPrimitiveReport({
       native_targets: [`${process.platform}-${process.arch}`],
       network_requests: 0,
       external_processes: 1,
+      renderer_fingerprint_sha256: rendererFingerprint(renderer),
     },
     platform: {
       os: process.platform,
@@ -207,9 +226,9 @@ export async function buildProductPrimitiveReport({
       model_cost_usd: 0,
     },
     isolation: {
-      truth_manifest_visible: false,
-      shell_access: false,
-      sut_network: "denied",
+      truth_manifest_visible: true,
+      shell_access: true,
+      sut_network: "not_enforced",
       model_endpoint: null,
       allowed_directory_evidence_sha256: digest(pairs.flatMap(pair => [pair.beforeSha256, pair.afterSha256]).sort().join("|")),
     },

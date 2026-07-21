@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import { COMPARISON_CHANNELS } from "./comparison-manifest.js";
+import { validateControllerObservationRegistry } from "./comparison-observation-registry.js";
+import { rendererFingerprint } from "./comparison-observations.js";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const CHANNELS = new Set(COMPARISON_CHANNELS);
@@ -35,8 +37,9 @@ function exactKeys(value, required, optional, location, errors) {
 
 function validateRegion(value, location, errors) {
   if (!Array.isArray(value) || value.length !== 4 || !value.every(Number.isFinite)
-    || value[2] <= 0 || value[3] <= 0) {
-    errors.push(`${location} must be [x, y, positive width, positive height]`);
+    || value[0] < 0 || value[1] < 0 || value[2] <= 0 || value[3] <= 0
+    || value[0] + value[2] > 612 || value[1] + value[3] > 792) {
+    errors.push(`${location} must be a nonnegative [x, y, positive width, positive height] within the page box`);
   }
 }
 
@@ -108,11 +111,12 @@ function validateDetectedEvent(value, location, truthIds, observationIds, eventI
   }
 }
 
-function validatePairReport(pairReport, truthPair, truthIds, errors, location) {
+function validatePairReport(pairReport, truthPair, truthIds, reportMode, errors, location) {
   if (!exactKeys(pairReport, [
     "pair_id", "before_sha256", "after_sha256", "status", "channel_status",
     "alignments", "observations", "detected_events", "presentation_decisions",
-    "timing_samples_ms", "peak_rss_bytes", "rendered_pixels", "tool_calls", "bytes_read",
+    "timing_samples_ms", "warmup_ms", "warmup_cost", "iteration_costs", "peak_rss_bytes",
+    "resource_measurement_status", "rendered_pixels", "tool_calls", "bytes_read",
     "source_immutable", "undeclared_requests", "model_transport_requests",
   ], [], location, errors)) return;
   if (!truthPair) {
@@ -147,16 +151,51 @@ function validatePairReport(pairReport, truthPair, truthIds, errors, location) {
       if (decided.has(decision.event_id)) errors.push(`${decisionLocation}.event_id is duplicated`);
       decided.add(decision.event_id);
       if (!new Set(["default_material", "forensic"]).has(decision.mode)) errors.push(`${decisionLocation}.mode is invalid`);
+      if (decision.mode !== reportMode) errors.push(`${decisionLocation}.mode must equal report.mode`);
       if (!DISPOSITIONS.has(decision.disposition)) errors.push(`${decisionLocation}.disposition is invalid`);
       if (typeof decision.rationale !== "string" || !decision.rationale) errors.push(`${decisionLocation}.rationale must be non-empty`);
     }
+    if (decided.size !== eventIds.size) errors.push(`${location}.presentation_decisions must cover every candidate event exactly once`);
   }
   if (!Array.isArray(pairReport.timing_samples_ms) || pairReport.timing_samples_ms.length !== 5
     || pairReport.timing_samples_ms.some(value => !Number.isFinite(value) || value < 0)) {
     errors.push(`${location}.timing_samples_ms must contain five nonnegative measurements`);
   }
-  for (const key of ["peak_rss_bytes", "rendered_pixels", "tool_calls", "bytes_read", "model_transport_requests"]) {
+  if (!Number.isFinite(pairReport.warmup_ms) || pairReport.warmup_ms < 0) {
+    errors.push(`${location}.warmup_ms must be nonnegative`);
+  }
+  const validateCost = (cost, costLocation) => {
+    if (!exactKeys(cost, ["tool_calls", "bytes_read", "rendered_pixels", "peak_rss_bytes"], [], costLocation, errors)) return;
+    for (const key of ["tool_calls", "bytes_read", "rendered_pixels"]) {
+      if (!Number.isInteger(cost[key]) || cost[key] < 0) errors.push(`${costLocation}.${key} must be a nonnegative integer`);
+    }
+    if (cost.peak_rss_bytes !== null && (!Number.isInteger(cost.peak_rss_bytes) || cost.peak_rss_bytes < 0)) {
+      errors.push(`${costLocation}.peak_rss_bytes must be null or a nonnegative integer`);
+    }
+  };
+  validateCost(pairReport.warmup_cost, `${location}.warmup_cost`);
+  if (!Array.isArray(pairReport.iteration_costs) || pairReport.iteration_costs.length !== 5) {
+    errors.push(`${location}.iteration_costs must contain five measurements`);
+  } else pairReport.iteration_costs.forEach((cost, index) => validateCost(cost, `${location}.iteration_costs[${index}]`));
+  if (!new Set(["in_process", "child_process", "unavailable"]).has(pairReport.resource_measurement_status)) {
+    errors.push(`${location}.resource_measurement_status is invalid`);
+  }
+  if (pairReport.resource_measurement_status === "unavailable" && pairReport.peak_rss_bytes !== null) {
+    errors.push(`${location}.peak_rss_bytes must be null when resource measurement is unavailable`);
+  }
+  if (pairReport.resource_measurement_status !== "unavailable"
+    && (!Number.isInteger(pairReport.peak_rss_bytes) || pairReport.peak_rss_bytes < 0)) {
+    errors.push(`${location}.peak_rss_bytes must be measured when resource measurement is available`);
+  }
+  for (const key of ["rendered_pixels", "tool_calls", "bytes_read", "model_transport_requests"]) {
     if (!Number.isInteger(pairReport[key]) || pairReport[key] < 0) errors.push(`${location}.${key} must be a nonnegative integer`);
+  }
+  if (pairReport.warmup_cost && Array.isArray(pairReport.iteration_costs)) {
+    for (const key of ["rendered_pixels", "tool_calls", "bytes_read"]) {
+      const measuredTotal = pairReport.warmup_cost[key]
+        + pairReport.iteration_costs.reduce((sum, cost) => sum + (cost?.[key] ?? 0), 0);
+      if (pairReport[key] !== measuredTotal) errors.push(`${location}.${key} does not equal warm-up plus measured iterations`);
+    }
   }
   if (typeof pairReport.source_immutable !== "boolean") errors.push(`${location}.source_immutable must be boolean`);
   if (!Array.isArray(pairReport.undeclared_requests)
@@ -179,9 +218,12 @@ export function validateComparisonReport(manifest, report) {
   if (report.benchmark_claim_ready !== false) errors.push("report.benchmark_claim_ready must remain false");
   if (exactKeys(report.engine, [
     "id", "kind", "version", "license", "provenance", "bundle_increment_bytes",
-    "native_targets", "network_requests", "external_processes",
+    "native_targets", "network_requests", "external_processes", "renderer_fingerprint_sha256",
   ], [], "report.engine", errors)) {
     if (!new Set(["pdf_tools_mcp", "shared_library", "external_cli", "oracle_calibration"]).has(report.engine.kind)) errors.push("report.engine.kind is unsupported");
+    if (report.engine.renderer_fingerprint_sha256 !== rendererFingerprint(manifest.canonical_renderer)) {
+      errors.push("report.engine.renderer_fingerprint_sha256 does not bind the installed canonical renderer");
+    }
     for (const key of ["id", "version", "license", "provenance"]) {
       if (typeof report.engine[key] !== "string" || !report.engine[key]) errors.push(`report.engine.${key} must be non-empty`);
     }
@@ -206,9 +248,13 @@ export function validateComparisonReport(manifest, report) {
   if (exactKeys(report.isolation, [
     "truth_manifest_visible", "shell_access", "sut_network", "model_endpoint", "allowed_directory_evidence_sha256",
   ], [], "report.isolation", errors)) {
-    if (report.isolation.truth_manifest_visible !== false) errors.push("report.isolation.truth_manifest_visible must be false");
-    if (report.isolation.shell_access !== false) errors.push("report.isolation.shell_access must be false");
-    if (report.isolation.sut_network !== "denied") errors.push("report.isolation.sut_network must be denied");
+    if (typeof report.isolation.truth_manifest_visible !== "boolean") {
+      errors.push("report.isolation.truth_manifest_visible must be boolean");
+    }
+    if (typeof report.isolation.shell_access !== "boolean") errors.push("report.isolation.shell_access must be boolean");
+    if (!new Set(["denied", "not_enforced"]).has(report.isolation.sut_network)) {
+      errors.push("report.isolation.sut_network is invalid");
+    }
     if (report.isolation.model_endpoint !== null
       && (typeof report.isolation.model_endpoint !== "string" || !report.isolation.model_endpoint)) {
       errors.push("report.isolation.model_endpoint must be null or non-empty");
@@ -230,7 +276,7 @@ export function validateComparisonReport(manifest, report) {
   for (const [index, pairReport] of report.pairs.entries()) {
     if (pairIds.has(pairReport?.pair_id)) errors.push(`report.pairs[${index}].pair_id is duplicated`);
     pairIds.add(pairReport?.pair_id);
-    validatePairReport(pairReport, truthPairById.get(pairReport?.pair_id), truthIds, errors, `report.pairs[${index}]`);
+    validatePairReport(pairReport, truthPairById.get(pairReport?.pair_id), truthIds, report.mode, errors, `report.pairs[${index}]`);
   }
   const expectedPairIds = manifest.pairs.map(pair => pair.id).sort();
   if (canonical([...pairIds].sort()) !== canonical(expectedPairIds)) errors.push("report.pairs must cover every manifest pair exactly once");
@@ -248,8 +294,13 @@ function intersectionOverUnion(left, right) {
 }
 
 function assessAnchor(expected, evidenceId, observations) {
-  if (expected === null) return { matched: evidenceId === null, expected: false, iou: null };
-  if (evidenceId === null) return { matched: false, expected: true, iou: null };
+  if (expected === null) return {
+    content_matched: evidenceId === null,
+    evidence_matched: evidenceId === null,
+    expected: false,
+    iou: null,
+  };
+  if (evidenceId === null) return { content_matched: false, evidence_matched: false, expected: true, iou: null };
   const actual = observations.get(evidenceId);
   const sourceBound = Boolean(actual
     && actual.document_sha256 === expected.document_sha256
@@ -258,7 +309,8 @@ function assessAnchor(expected, evidenceId, observations) {
     && actual.rotation === expected.rotation);
   const iou = sourceBound ? intersectionOverUnion(actual.region, expected.region) : null;
   return {
-    matched: Boolean(sourceBound && actual.value_sha256 === expected.value_sha256 && iou >= 0.5),
+    content_matched: Boolean(sourceBound && actual.value_sha256 === expected.value_sha256),
+    evidence_matched: Boolean(sourceBound && actual.value_sha256 === expected.value_sha256 && iou >= 0.5),
     expected: true,
     iou,
   };
@@ -270,11 +322,16 @@ function assessFacet(expected, actual, observations) {
   return {
     before,
     after,
-    matched: Boolean(actual
+    content_matched: Boolean(actual
     && actual.channel === expected.channel
     && actual.operation === expected.operation
-    && before.matched
-    && after.matched),
+    && before.content_matched
+    && after.content_matched),
+    evidence_matched: Boolean(actual
+      && actual.channel === expected.channel
+      && actual.operation === expected.operation
+      && before.evidence_matched
+      && after.evidence_matched),
   };
 }
 
@@ -282,7 +339,7 @@ function eventCompatibility(truth, candidate, observations, alignmentCorrect) {
   const matchedChannels = [];
   for (const facet of truth.facets) {
     const actual = candidate.facets.find(item => item.channel === facet.channel);
-    if (assessFacet(facet, actual, observations).matched) matchedChannels.push(facet.channel);
+    if (assessFacet(facet, actual, observations).content_matched) matchedChannels.push(facet.channel);
   }
   const mandatory = truth.facets.filter(facet => facet.mandatory).map(facet => facet.channel);
   const complete = alignmentCorrect && mandatory.every(channel => matchedChannels.includes(channel));
@@ -357,6 +414,8 @@ function scorePair(truthPair, pairReport, mode) {
   let eventFp = pairReport.detected_events.length - assignedCandidateIndexes.size;
   let presentationCorrect = 0;
   let presentationTotal = 0;
+  let salienceCorrect = 0;
+  let salienceTotal = 0;
   let expectedAnchors = 0;
   let matchedAnchors = 0;
   let twoSidedTotal = 0;
@@ -382,21 +441,21 @@ function scorePair(truthPair, pairReport, mode) {
     for (const facet of truth.facets) {
       const candidateFacetIndex = candidate.facets.findIndex(item => item.channel === facet.channel);
       const assessment = assessFacet(facet, candidate.facets[candidateFacetIndex], observations);
-      if (assessment.matched) {
+      if (assessment.content_matched) {
         channelCounts[facet.channel].tp += 1;
         supportedCandidateFacets.add(`${assignment.candidateIndex}:${candidateFacetIndex}`);
       } else channelCounts[facet.channel].fn += 1;
       for (const anchor of [assessment.before, assessment.after]) {
         if (!anchor.expected) continue;
         expectedAnchors += 1;
-        if (anchor.matched) {
+        if (anchor.evidence_matched) {
           matchedAnchors += 1;
-          matchedAnchorIous.push(anchor.iou);
         }
+        if (anchor.iou !== null) matchedAnchorIous.push(anchor.iou);
       }
       if (["modified", "moved"].includes(facet.operation)) {
         twoSidedTotal += 1;
-        if (assessment.before.matched && assessment.after.matched) twoSidedComplete += 1;
+        if (assessment.before.evidence_matched && assessment.after.evidence_matched) twoSidedComplete += 1;
       }
     }
     for (const facet of candidate.facets) {
@@ -405,6 +464,8 @@ function scorePair(truthPair, pairReport, mode) {
     const decision = pairReport.presentation_decisions.find(item => item.event_id === candidate.id && item.mode === mode);
     presentationTotal += 1;
     if (decision?.disposition === truth.presentation[mode]) presentationCorrect += 1;
+    salienceTotal += 1;
+    if (candidate.salience === truth.salience) salienceCorrect += 1;
     eventResults.push({
       truth_id: truth.id,
       candidate_id: candidate.id,
@@ -462,10 +523,16 @@ function scorePair(truthPair, pairReport, mode) {
     alignment_correct: alignmentCorrect,
     source_immutable: pairReport.source_immutable,
     no_undeclared_requests: pairReport.undeclared_requests.length === 0,
+    required_channels_supported: truthPair.required_channels.every(channel => pairReport.channel_status[channel] === "supported"),
     event_detection_complete: eventFn === 0 && eventFp === 0,
+    no_unsupported_candidate_facets: unsupportedCandidateFacets === 0,
+    no_channel_false_positives: Object.values(channelCounts).every(counts => counts.fp === 0),
     material_event_recall: materialRecall === null || materialRecall === 1,
     mandatory_material_facet_recall: materialFacetRecall === null || materialFacetRecall === 1,
     evidence_complete: expectedAnchors === matchedAnchors,
+    presentation_correct: presentationTotal === truthPair.events.length
+      && presentationCorrect === presentationTotal,
+    salience_correct: salienceTotal === truthPair.events.length && salienceCorrect === salienceTotal,
     identical_specificity: identicalSpecific,
     visual_only_detected: visualOnlyFound,
     layout_noise_suppressed: truthPair.role !== "layout_noise" || mode !== "default_material"
@@ -482,6 +549,7 @@ function scorePair(truthPair, pairReport, mode) {
     material_event_recall: materialRecall,
     mandatory_material_facet_recall: materialFacetRecall,
     presentation_accuracy: presentationTotal === 0 ? null : presentationCorrect / presentationTotal,
+    salience_accuracy: salienceTotal === 0 ? null : salienceCorrect / salienceTotal,
     evidence_metrics: {
       expected_anchors: expectedAnchors,
       matched_anchors: matchedAnchors,
@@ -497,8 +565,11 @@ function scorePair(truthPair, pairReport, mode) {
     },
     event_results: eventResults,
     performance: sampleStats(pairReport.timing_samples_ms),
+    warmup_ms: pairReport.warmup_ms,
+    iteration_costs: pairReport.iteration_costs,
     cost: {
       peak_rss_bytes: pairReport.peak_rss_bytes,
+      resource_measurement_status: pairReport.resource_measurement_status,
       rendered_pixels: pairReport.rendered_pixels,
       tool_calls: pairReport.tool_calls,
       bytes_read: pairReport.bytes_read,
@@ -516,8 +587,9 @@ function aggregateCounts(pairScores, section) {
   }, { tp: 0, fp: 0, fn: 0 });
 }
 
-export function scoreComparisonReport(manifest, report) {
+export function scoreComparisonReport(manifest, report, registry) {
   const validationErrors = validateComparisonReport(manifest, report);
+  validationErrors.push(...validateControllerObservationRegistry(report, registry));
   if (validationErrors.length) {
     return { valid: false, passed: false, validation_errors: validationErrors, benchmark_claim_ready: false };
   }
@@ -548,7 +620,12 @@ export function scoreComparisonReport(manifest, report) {
   }, { expected: 0, matched: 0, twoSided: 0, twoSidedComplete: 0, unsupportedFacets: 0, unsupportedEvidence: 0, orphans: 0 });
   const result = {
     valid: true,
-    passed: pairScores.every(score => score.passed),
+    passed: pairScores.every(score => score.passed)
+      && report.isolation.truth_manifest_visible === false
+      && report.isolation.shell_access === false
+      && report.isolation.sut_network === "denied"
+      && registry.controller.truth_loaded_after_report_freeze === true
+      && registry.controller.network_enforcement === "denied",
     benchmark_id: manifest.benchmark_id,
     benchmark_version: manifest.benchmark_version,
     report_sha256: digest(report),
@@ -576,6 +653,12 @@ export function scoreComparisonReport(manifest, report) {
       bundle_increment_bytes: report.engine.bundle_increment_bytes,
       network_requests: report.engine.network_requests,
       external_processes: report.engine.external_processes,
+      renderer_fingerprint_sha256: report.engine.renderer_fingerprint_sha256,
+      isolation_passed: report.isolation.truth_manifest_visible === false
+        && report.isolation.shell_access === false
+        && report.isolation.sut_network === "denied"
+        && registry.controller.truth_loaded_after_report_freeze === true
+        && registry.controller.network_enforcement === "denied",
     },
     pairs: pairScores,
   };
@@ -617,6 +700,7 @@ export function buildOracleCalibrationReport(manifest, mode = "default_material"
       native_targets: [],
       network_requests: 0,
       external_processes: 0,
+      renderer_fingerprint_sha256: rendererFingerprint(manifest.canonical_renderer),
     },
     platform: {
       os: process.platform,
@@ -670,7 +754,13 @@ export function buildOracleCalibrationReport(manifest, mode = "default_material"
           rationale: "Oracle calibration mirrors the predeclared presentation contract.",
         })),
         timing_samples_ms: [0, 0, 0, 0, 0],
+        warmup_ms: 0,
+        warmup_cost: { tool_calls: 0, bytes_read: 0, rendered_pixels: 0, peak_rss_bytes: 0 },
+        iteration_costs: Array.from({ length: 5 }, () => ({
+          tool_calls: 0, bytes_read: 0, rendered_pixels: 0, peak_rss_bytes: 0,
+        })),
         peak_rss_bytes: 0,
+        resource_measurement_status: "in_process",
         rendered_pixels: 0,
         tool_calls: 0,
         bytes_read: 0,

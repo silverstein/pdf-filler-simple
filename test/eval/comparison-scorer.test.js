@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import Ajv2020 from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import { loadComparisonManifest } from "./comparison-manifest.js";
+import { buildControllerObservationRegistry } from "./comparison-observation-registry.js";
 import {
   buildOracleCalibrationReport,
   scoreComparisonReport,
@@ -24,6 +25,15 @@ function reportPair(report, role) {
   return report.pairs.find(pair => pair.pair_id.endsWith(role.replaceAll("_", "-")));
 }
 
+function scoreReport(manifest, report, registrySource = report) {
+  const registry = buildControllerObservationRegistry(registrySource, {
+    truth_loaded_after_report_freeze: true,
+    network_enforcement: "denied",
+    claim_boundary: "Idealized controller attestation used only for scorer unit calibration.",
+  });
+  return scoreComparisonReport(manifest, report, registry);
+}
+
 describe("comparison scorer calibration", () => {
   it("accepts the explicitly non-evidentiary oracle calibration and scores every facet", async () => {
     const manifest = await loadComparisonManifest(MANIFEST_PATH);
@@ -33,7 +43,7 @@ describe("comparison scorer calibration", () => {
     const validateSchema = ajv.compile(schema);
     expect(validateSchema(report), JSON.stringify(validateSchema.errors)).toBe(true);
     expect(validateComparisonReport(manifest, report)).toEqual([]);
-    const scored = scoreComparisonReport(manifest, report);
+    const scored = scoreReport(manifest, report);
     expect(scored.valid).toBe(true);
     expect(scored.passed).toBe(true);
     expect(scored.benchmark_claim_ready).toBe(false);
@@ -54,7 +64,7 @@ describe("comparison scorer calibration", () => {
 
   it("keeps undefined metric denominators null instead of inventing perfect scores", async () => {
     const manifest = await loadComparisonManifest(MANIFEST_PATH);
-    const scored = scoreComparisonReport(manifest, buildOracleCalibrationReport(manifest));
+    const scored = scoreReport(manifest, buildOracleCalibrationReport(manifest));
     const identical = scored.pairs.find(pair => pair.role === "identical");
     expect(identical.event_metrics).toMatchObject({ tp: 0, fp: 0, fn: 0, precision: null, recall: null, f1: null });
     expect(identical.material_event_recall).toBeNull();
@@ -86,7 +96,7 @@ describe("comparison scorer hostile reports", () => {
       target.channel_status.semantic = "unavailable";
     });
     expect(validateComparisonReport(manifest, report)).toEqual([]);
-    const scored = scoreComparisonReport(manifest, report);
+    const scored = scoreReport(manifest, report);
     const target = scored.pairs.find(pair => pair.role === "material_text");
     expect(scored.passed).toBe(false);
     expect(target.event_results[0].status).toBe("matched_incomplete");
@@ -106,7 +116,7 @@ describe("comparison scorer hostile reports", () => {
         { before_page: 2, after_page: 2, relation: "same", anchor: "PAGE-ID: APPENDIX" },
       ];
     });
-    const scored = scoreComparisonReport(manifest, report);
+    const scored = scoreReport(manifest, report);
     const target = scored.pairs.find(pair => pair.role === "pages_reordered");
     expect(target.alignment_accuracy).toBe(0);
     expect(target.event_results[0].status).toBe("matched_incomplete");
@@ -119,7 +129,7 @@ describe("comparison scorer hostile reports", () => {
     const report = mutate(buildOracleCalibrationReport(manifest), copy => {
       reportPair(copy, "layout_noise").presentation_decisions[0].disposition = "report";
     });
-    const scored = scoreComparisonReport(manifest, report);
+    const scored = scoreReport(manifest, report);
     const target = scored.pairs.find(pair => pair.role === "layout_noise");
     expect(target.event_metrics).toMatchObject({ tp: 1, fp: 0, fn: 0 });
     expect(target.presentation_accuracy).toBe(0);
@@ -136,7 +146,7 @@ describe("comparison scorer hostile reports", () => {
       target.presentation_decisions = target.presentation_decisions.filter(decision => decision.event_id !== annotation.id);
       target.channel_status.annotation = "unavailable";
     });
-    const scored = scoreComparisonReport(manifest, report);
+    const scored = scoreReport(manifest, report);
     const target = scored.pairs.find(pair => pair.role === "form_annotation");
     expect(target.channel_metrics.annotation).toMatchObject({ tp: 0, fn: 1, recall: 0, status: "unavailable" });
     expect(target.hard_gates.event_detection_complete).toBe(false);
@@ -157,7 +167,7 @@ describe("comparison scorer hostile reports", () => {
         rationale: "Deliberate duplicate for scorer calibration.",
       });
     });
-    const scored = scoreComparisonReport(manifest, report);
+    const scored = scoreReport(manifest, report);
     const target = scored.pairs.find(pair => pair.role === "visual_only");
     expect(target.event_metrics).toMatchObject({ tp: 1, fp: 1, fn: 0, precision: 0.5 });
     expect(target.hard_gates.event_detection_complete).toBe(false);
@@ -170,7 +180,7 @@ describe("comparison scorer hostile reports", () => {
       target.undeclared_requests.push("https://github.com/Open-Document-Alliance/PDF-Tools/raw/master/truth.json");
       target.source_immutable = false;
     });
-    const scored = scoreComparisonReport(manifest, compromised);
+    const scored = scoreReport(manifest, compromised);
     const target = scored.pairs.find(pair => pair.role === "metadata_only");
     expect(target.hard_gates.no_undeclared_requests).toBe(false);
     expect(target.hard_gates.source_immutable).toBe(false);
@@ -178,7 +188,7 @@ describe("comparison scorer hostile reports", () => {
     const malformed = mutate(buildOracleCalibrationReport(manifest), copy => {
       reportPair(copy, "identical").timing_samples_ms = [1];
     });
-    const invalid = scoreComparisonReport(manifest, malformed);
+    const invalid = scoreReport(manifest, malformed);
     expect(invalid.valid).toBe(false);
     expect(invalid.validation_errors.some(error => error.includes("five nonnegative"))).toBe(true);
   });
@@ -202,13 +212,13 @@ describe("comparison scorer hostile reports", () => {
         rationale: "Hostile duplicate with unsupported evidence.",
       });
     });
-    const scored = scoreComparisonReport(manifest, report);
+    const scored = scoreReport(manifest, report);
     const target = scored.pairs.find(pair => pair.role === "material_text");
     expect(target.evidence_metrics).toMatchObject({
       expected_anchors: 12,
       matched_anchors: 11,
       completeness: 11 / 12,
-      unsupported_candidate_facets: 4,
+      unsupported_candidate_facets: 3,
       unsupported_evidence_references: 6,
       orphan_observations: 1,
     });
@@ -224,5 +234,105 @@ describe("comparison scorer hostile reports", () => {
     const errors = validateComparisonReport(manifest, malformed);
     expect(errors).toContain("report.platform.model_cost_usd must be a nonnegative finite number");
     expect(errors).toContain("report.engine.native_targets must contain unique non-empty strings");
+  });
+
+  it("does not pass a no-change pair when required channels are unavailable", async () => {
+    const manifest = await loadComparisonManifest(MANIFEST_PATH);
+    const report = mutate(buildOracleCalibrationReport(manifest), copy => {
+      const target = reportPair(copy, "identical");
+      for (const channel of Object.keys(target.channel_status)) target.channel_status[channel] = "unavailable";
+    });
+    const scored = scoreReport(manifest, report);
+    const target = scored.pairs.find(pair => pair.role === "identical");
+    expect(target.event_metrics).toMatchObject({ tp: 0, fp: 0, fn: 0 });
+    expect(target.hard_gates.required_channels_supported).toBe(false);
+    expect(target.passed).toBe(false);
+    expect(scored.passed).toBe(false);
+  });
+
+  it("hard-fails fabricated extra facets and wrong salience", async () => {
+    const manifest = await loadComparisonManifest(MANIFEST_PATH);
+    const report = mutate(buildOracleCalibrationReport(manifest), copy => {
+      const target = reportPair(copy, "visual_status");
+      const event = target.detected_events[0];
+      event.salience = "unknown";
+      event.facets.push({
+        channel: "semantic",
+        operation: "modified",
+        before_evidence_id: event.facets[0].before_evidence_id,
+        after_evidence_id: event.facets[0].after_evidence_id,
+      });
+    });
+    const scored = scoreReport(manifest, report);
+    const target = scored.pairs.find(pair => pair.role === "visual_only");
+    expect(target.channel_metrics.semantic.fp).toBe(1);
+    expect(target.hard_gates.no_unsupported_candidate_facets).toBe(false);
+    expect(target.hard_gates.no_channel_false_positives).toBe(false);
+    expect(target.hard_gates.salience_correct).toBe(false);
+    expect(scored.passed).toBe(false);
+  });
+
+  it("requires one mode-matched presentation decision per candidate event", async () => {
+    const manifest = await loadComparisonManifest(MANIFEST_PATH);
+    const report = mutate(buildOracleCalibrationReport(manifest), copy => {
+      reportPair(copy, "material_text").presentation_decisions.pop();
+    });
+    expect(validateComparisonReport(manifest, report))
+      .toContain("report.pairs[1].presentation_decisions must cover every candidate event exactly once");
+  });
+
+  it("separates correct value detection from imprecise localization", async () => {
+    const manifest = await loadComparisonManifest(MANIFEST_PATH);
+    const report = mutate(buildOracleCalibrationReport(manifest), copy => {
+      reportPair(copy, "material_text").observations[0].region = [0, 0, 612, 792];
+    });
+    const scored = scoreReport(manifest, report);
+    const target = scored.pairs.find(pair => pair.role === "material_text");
+    expect(target.channel_metrics.semantic).toMatchObject({ tp: 2, fp: 0, fn: 0 });
+    expect(target.event_metrics).toMatchObject({ tp: 2, fp: 0, fn: 0 });
+    expect(target.evidence_metrics.completeness).toBeLessThan(1);
+    expect(target.evidence_metrics.mean_region_iou).toBeLessThan(1);
+    expect(target.hard_gates.evidence_complete).toBe(false);
+  });
+
+  it("rejects regions outside the fixed page box in the semantic validator", async () => {
+    const manifest = await loadComparisonManifest(MANIFEST_PATH);
+    const report = mutate(buildOracleCalibrationReport(manifest), copy => {
+      reportPair(copy, "material_text").observations[0].region[0] = -1;
+    });
+    expect(validateComparisonReport(manifest, report).some(error => error.includes("within the page box"))).toBe(true);
+  });
+
+  it("rejects candidate evidence and isolation digests that drift after controller freeze", async () => {
+    const manifest = await loadComparisonManifest(MANIFEST_PATH);
+    const report = buildOracleCalibrationReport(manifest);
+    const registry = buildControllerObservationRegistry(report, {
+      truth_loaded_after_report_freeze: true,
+      network_enforcement: "denied",
+    });
+    const evidenceDrift = mutate(report, copy => {
+      copy.pairs[1].observations[0].raw_result_sha256 = "0".repeat(64);
+    });
+    const evidenceScore = scoreComparisonReport(manifest, evidenceDrift, registry);
+    expect(evidenceScore.valid).toBe(false);
+    expect(evidenceScore.validation_errors).toContain("registry.report_sha256 does not bind the frozen report");
+    expect(evidenceScore.validation_errors.some(error => error.includes("observations do not match"))).toBe(true);
+
+    const isolationDrift = mutate(report, copy => {
+      copy.isolation.allowed_directory_evidence_sha256 = "0".repeat(64);
+    });
+    const isolationScore = scoreComparisonReport(manifest, isolationDrift, registry);
+    expect(isolationScore.valid).toBe(false);
+    expect(isolationScore.validation_errors)
+      .toContain("registry.allowed_directory_evidence_sha256 does not bind report isolation evidence");
+  });
+
+  it("fails closed when the report's observed renderer identity drifts", async () => {
+    const manifest = await loadComparisonManifest(MANIFEST_PATH);
+    const report = mutate(buildOracleCalibrationReport(manifest), copy => {
+      copy.engine.renderer_fingerprint_sha256 = "0".repeat(64);
+    });
+    expect(validateComparisonReport(manifest, report))
+      .toContain("report.engine.renderer_fingerprint_sha256 does not bind the installed canonical renderer");
   });
 });

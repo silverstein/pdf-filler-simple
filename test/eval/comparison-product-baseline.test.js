@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadComparisonManifest, resolveComparisonDocumentPath } from "./comparison-manifest.js";
 import { buildProductPrimitiveReport } from "./comparison-product-baseline.js";
+import { buildControllerObservationRegistry } from "./comparison-observation-registry.js";
 import { scoreComparisonReport, validateComparisonReport } from "./comparison-scorer.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -26,16 +27,20 @@ describe("current published PDF Tools primitive baseline", () => {
       })),
     });
     expect(validateComparisonReport(manifest, report)).toEqual([]);
-    const scored = scoreComparisonReport(manifest, report);
+    const scored = scoreComparisonReport(manifest, report, buildControllerObservationRegistry(report));
     expect(scored.valid).toBe(true);
     expect(scored.passed).toBe(false);
-    expect(scored.aggregate.pairs_passed).toBe(2);
+    expect(scored.aggregate.pairs_passed).toBe(1);
     expect(scored.aggregate.event_metrics).toMatchObject({ tp: 1, fp: 5, fn: 8 });
     expect(scored.aggregate.channel_metrics.visual).toMatchObject({ tp: 0, fp: 5, fn: 5 });
     expect(scored.aggregate.channel_metrics.annotation.fn).toBe(1);
     expect(scored.aggregate.channel_metrics.metadata.fn).toBe(2);
     expect(report.pairs.every(pair => pair.channel_status.annotation === "unavailable")).toBe(true);
     expect(report.pairs.every(pair => pair.channel_status.metadata === "unavailable")).toBe(true);
+    expect(report.pairs.every(pair => pair.tool_calls === 48)).toBe(true);
+    expect(report.pairs.every(pair => pair.iteration_costs.length === 5)).toBe(true);
+    expect(report.pairs.every(pair => pair.peak_rss_bytes === null
+      && pair.resource_measurement_status === "unavailable")).toBe(true);
     expect(report.engine.provenance).toContain("not executed");
   }, 120_000);
 });

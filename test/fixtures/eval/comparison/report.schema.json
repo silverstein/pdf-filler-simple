@@ -27,7 +27,7 @@
       "additionalProperties": false,
       "required": [
         "id", "kind", "version", "license", "provenance", "bundle_increment_bytes",
-        "native_targets", "network_requests", "external_processes"
+        "native_targets", "network_requests", "external_processes", "renderer_fingerprint_sha256"
       ],
       "properties": {
         "id": { "type": "string", "minLength": 1 },
@@ -38,7 +38,8 @@
         "bundle_increment_bytes": { "type": "integer", "minimum": 0 },
         "native_targets": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
         "network_requests": { "type": "integer", "minimum": 0 },
-        "external_processes": { "type": "integer", "minimum": 0 }
+        "external_processes": { "type": "integer", "minimum": 0 },
+        "renderer_fingerprint_sha256": { "$ref": "#/$defs/sha256" }
       }
     },
     "platform": {
@@ -59,9 +60,9 @@
       "additionalProperties": false,
       "required": ["truth_manifest_visible", "shell_access", "sut_network", "model_endpoint", "allowed_directory_evidence_sha256"],
       "properties": {
-        "truth_manifest_visible": { "const": false },
-        "shell_access": { "const": false },
-        "sut_network": { "const": "denied" },
+        "truth_manifest_visible": { "type": "boolean" },
+        "shell_access": { "type": "boolean" },
+        "sut_network": { "enum": ["denied", "not_enforced"] },
         "model_endpoint": { "type": ["string", "null"] },
         "allowed_directory_evidence_sha256": { "$ref": "#/$defs/sha256" }
       }
@@ -163,7 +164,8 @@
       "required": [
         "pair_id", "before_sha256", "after_sha256", "status", "channel_status", "alignments",
         "observations", "detected_events", "presentation_decisions", "timing_samples_ms",
-        "peak_rss_bytes", "rendered_pixels", "tool_calls", "bytes_read", "source_immutable",
+        "warmup_ms", "warmup_cost", "iteration_costs", "peak_rss_bytes", "resource_measurement_status",
+        "rendered_pixels", "tool_calls", "bytes_read", "source_immutable",
         "undeclared_requests", "model_transport_requests"
       ],
       "properties": {
@@ -177,13 +179,28 @@
         "detected_events": { "type": "array", "items": { "$ref": "#/$defs/event" } },
         "presentation_decisions": { "type": "array", "items": { "$ref": "#/$defs/decision" } },
         "timing_samples_ms": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "type": "number", "minimum": 0 } },
-        "peak_rss_bytes": { "type": "integer", "minimum": 0 },
+        "warmup_ms": { "type": "number", "minimum": 0 },
+        "warmup_cost": { "$ref": "#/$defs/iterationCost" },
+        "iteration_costs": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/$defs/iterationCost" } },
+        "peak_rss_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "resource_measurement_status": { "enum": ["in_process", "child_process", "unavailable"] },
         "rendered_pixels": { "type": "integer", "minimum": 0 },
         "tool_calls": { "type": "integer", "minimum": 0 },
         "bytes_read": { "type": "integer", "minimum": 0 },
         "source_immutable": { "type": "boolean" },
         "undeclared_requests": { "type": "array", "items": { "type": "string", "minLength": 1 } },
         "model_transport_requests": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "iterationCost": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tool_calls", "bytes_read", "rendered_pixels", "peak_rss_bytes"],
+      "properties": {
+        "tool_calls": { "type": "integer", "minimum": 0 },
+        "bytes_read": { "type": "integer", "minimum": 0 },
+        "rendered_pixels": { "type": "integer", "minimum": 0 },
+        "peak_rss_bytes": { "type": ["integer", "null"], "minimum": 0 }
       }
     }
   }

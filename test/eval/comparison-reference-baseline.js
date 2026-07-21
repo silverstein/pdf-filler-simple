@@ -4,6 +4,7 @@ import {
   cropComparisonRgba,
   diffComparisonRgba,
   inspectComparisonDocument,
+  rendererFingerprint,
 } from "./comparison-observations.js";
 import { COMPARISON_CHANNELS } from "./comparison-manifest.js";
 
@@ -256,6 +257,9 @@ async function inspectPair(beforePath, afterPath, renderer) {
 
 export async function buildSharedLibraryPairReport({ pairId, beforePath, afterPath, renderer }) {
   const timingSamples = [];
+  const iterationCosts = [];
+  let warmupMs = 0;
+  let warmupCost;
   let inspected;
   let peakRss = process.memoryUsage().rss;
   for (let iteration = 0; iteration < 6; iteration += 1) {
@@ -263,8 +267,21 @@ export async function buildSharedLibraryPairReport({ pairId, beforePath, afterPa
     const candidate = await inspectPair(beforePath, afterPath, renderer);
     const elapsed = performance.now() - started;
     peakRss = Math.max(peakRss, process.memoryUsage().rss);
-    if (iteration === 0) inspected = candidate;
-    else timingSamples.push(elapsed);
+    const candidateCost = {
+      tool_calls: 0,
+      bytes_read: candidate.before.size + candidate.after.size,
+      rendered_pixels: [...candidate.before.renders, ...candidate.after.renders]
+        .reduce((sum, render) => sum + render.width * render.height, 0),
+      peak_rss_bytes: peakRss,
+    };
+    if (iteration === 0) {
+      inspected = candidate;
+      warmupMs = elapsed;
+      warmupCost = candidateCost;
+    } else {
+      timingSamples.push(elapsed);
+      iterationCosts.push(candidateCost);
+    }
   }
   const { before, after } = inspected;
   return buildComparisonPairFromInspections({
@@ -273,8 +290,11 @@ export async function buildSharedLibraryPairReport({ pairId, beforePath, afterPa
     after,
     renderer,
     timingSamples,
+    warmupMs,
+    warmupCost,
+    iterationCosts,
     peakRss,
-    toolCalls: 0,
+    resourceMeasurementStatus: "in_process",
     capture: "deterministic_baseline",
     channelStatus: Object.fromEntries(COMPARISON_CHANNELS.map(channel => [channel, "supported"])),
   });
@@ -286,8 +306,11 @@ export function buildComparisonPairFromInspections({
   after,
   renderer,
   timingSamples,
+  warmupMs,
+  warmupCost,
+  iterationCosts,
   peakRss,
-  toolCalls,
+  resourceMeasurementStatus,
   capture,
   channelStatus,
 }) {
@@ -325,11 +348,15 @@ export function buildComparisonPairFromInspections({
     detected_events: state.detectedEvents,
     presentation_decisions: state.presentationDecisions,
     timing_samples_ms: timingSamples,
+    warmup_ms: warmupMs,
+    warmup_cost: warmupCost,
+    iteration_costs: iterationCosts,
     peak_rss_bytes: peakRss,
-    rendered_pixels: [...before.renders, ...after.renders]
-      .reduce((sum, render) => sum + render.width * render.height, 0),
-    tool_calls: toolCalls,
-    bytes_read: before.size + after.size,
+    resource_measurement_status: resourceMeasurementStatus,
+    rendered_pixels: warmupCost.rendered_pixels
+      + iterationCosts.reduce((sum, cost) => sum + cost.rendered_pixels, 0),
+    tool_calls: warmupCost.tool_calls + iterationCosts.reduce((sum, cost) => sum + cost.tool_calls, 0),
+    bytes_read: warmupCost.bytes_read + iterationCosts.reduce((sum, cost) => sum + cost.bytes_read, 0),
     source_immutable: true,
     undeclared_requests: [],
     model_transport_requests: 0,
@@ -361,6 +388,7 @@ export async function buildSharedLibraryReferenceReport({
       native_targets: [`${process.platform}-${process.arch}`],
       network_requests: 0,
       external_processes: 0,
+      renderer_fingerprint_sha256: rendererFingerprint(renderer),
     },
     platform: {
       os: process.platform,
@@ -371,9 +399,9 @@ export async function buildSharedLibraryReferenceReport({
       model_cost_usd: 0,
     },
     isolation: {
-      truth_manifest_visible: false,
-      shell_access: false,
-      sut_network: "denied",
+      truth_manifest_visible: true,
+      shell_access: true,
+      sut_network: "not_enforced",
       model_endpoint: null,
       allowed_directory_evidence_sha256: digest(pairs.flatMap(pair => [pair.beforeSha256, pair.afterSha256]).sort()),
     },

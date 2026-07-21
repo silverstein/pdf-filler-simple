@@ -385,5 +385,17 @@ export async function inspectComparisonDocument(filePath, renderer) {
 }
 
 export function rendererFingerprint(renderer) {
-  return sha256(JSON.stringify(renderer));
+  return sha256(JSON.stringify({
+    declared: renderer,
+    installed: {
+      pdfjs_dist: require("pdfjs-dist/package.json").version,
+      canvas: require("@napi-rs/canvas/package.json").version,
+    },
+    runtime: {
+      platform: process.platform,
+      arch: process.arch,
+      node: process.version,
+      napi: process.versions.napi ?? null,
+    },
+  }));
 }

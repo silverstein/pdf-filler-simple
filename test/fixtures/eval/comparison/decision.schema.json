@@ -1,0 +1,206 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-document-alliance.github.io/pdf-tools/eval/comparison-decision.v1.schema.json",
+  "title": "PDF Tools comparison measurement decision v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version", "decision_id", "benchmark_id", "benchmark_version", "generated_at",
+    "source_revision", "source_state", "status", "benchmark_claim_ready", "claim_boundary",
+    "frozen_release_candidate", "source_bindings", "evidence_bindings", "measured_results",
+    "provisional_research_directions", "prioritized_actions", "blockers", "release_gates"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "decision_id": { "const": "pdf-tools.comparison-decision.v1" },
+    "benchmark_id": { "const": "pdf-tools.comparison.v1" },
+    "benchmark_version": { "type": "string", "minLength": 1 },
+    "generated_at": { "type": "string", "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T.*Z$" },
+    "source_revision": { "type": "string", "pattern": "^[a-f0-9]{40}$" },
+    "source_state": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["clean_except_generated_evidence", "excluded_paths", "dirty_source_paths"],
+      "properties": {
+        "clean_except_generated_evidence": { "const": true },
+        "excluded_paths": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "dirty_source_paths": { "type": "array", "maxItems": 0 }
+      }
+    },
+    "status": { "const": "measurement_blocked" },
+    "benchmark_claim_ready": { "const": false },
+    "claim_boundary": { "type": "string", "minLength": 100 },
+    "frozen_release_candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mcpb_sha256", "bytes", "modified_by_this_benchmark"],
+      "properties": {
+        "mcpb_sha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "const": 72456666 },
+        "modified_by_this_benchmark": { "const": false }
+      }
+    },
+    "source_bindings": {
+      "type": "array",
+      "minItems": 16,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/binding" }
+    },
+    "evidence_bindings": {
+      "type": "array",
+      "minItems": 8,
+      "uniqueItems": true,
+      "items": { "$ref": "#/$defs/binding" }
+    },
+    "measured_results": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["shared_library_reference", "current_published_primitives", "poppler_external_sensor", "agent_trials"],
+      "properties": {
+        "shared_library_reference": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["passed", "isolation_passed", "pairs", "event_f1", "evidence_completeness", "independence"],
+          "properties": {
+            "passed": { "const": false },
+            "isolation_passed": { "const": false },
+            "pairs": { "$ref": "#/$defs/pairFraction" },
+            "event_f1": { "$ref": "#/$defs/unitNumber" },
+            "evidence_completeness": { "$ref": "#/$defs/unitNumber" },
+            "independence": { "const": false }
+          }
+        },
+        "current_published_primitives": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["passed", "isolation_passed", "pairs", "event_f1", "evidence_completeness", "material_event_recall", "model_cost_usd", "network_requests"],
+          "properties": {
+            "passed": { "const": false },
+            "isolation_passed": { "const": false },
+            "pairs": { "$ref": "#/$defs/pairFraction" },
+            "event_f1": { "$ref": "#/$defs/unitNumber" },
+            "evidence_completeness": { "$ref": "#/$defs/unitNumber" },
+            "material_event_recall": { "anyOf": [{ "$ref": "#/$defs/unitNumber" }, { "type": "null" }] },
+            "model_cost_usd": { "type": "number", "minimum": 0 },
+            "network_requests": { "type": "integer", "minimum": 0 }
+          }
+        },
+        "poppler_external_sensor": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["engine_status", "pairs_observed", "event_level_scored", "bundled"],
+          "properties": {
+            "engine_status": { "type": "string", "minLength": 1 },
+            "pairs_observed": { "type": "integer", "minimum": 0 },
+            "event_level_scored": { "const": false },
+            "bundled": { "const": false }
+          }
+        },
+        "agent_trials": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["status", "pass_rate", "variance", "native_host"],
+          "properties": {
+            "status": { "const": "pending_generic_render_observation_and_three_predeclared_runs" },
+            "pass_rate": { "type": "null" },
+            "variance": { "type": "null" },
+            "native_host": { "const": false }
+          }
+        }
+      }
+    },
+    "provisional_research_directions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channels", "tool_primitives", "agent_explanation", "viewer_ux"],
+      "properties": {
+        "channels": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": { "$ref": "#/$defs/channelDirection" }
+        },
+        "tool_primitives": { "type": "string", "minLength": 1 },
+        "agent_explanation": { "type": "string", "minLength": 1 },
+        "viewer_ux": { "type": "string", "minLength": 1 }
+      }
+    },
+    "prioritized_actions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["priority", "action", "item", "rationale"],
+        "properties": {
+          "priority": { "type": "integer", "minimum": 0 },
+          "action": { "type": "string", "minLength": 1 },
+          "item": { "type": "string", "minLength": 1 },
+          "rationale": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "blockers": {
+      "type": "array",
+      "minItems": 5,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "release_gates": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["product_code_changed", "rebuild_required", "native_claude_desktop_required_before_release", "windows_required_before_release", "human_approval_required"],
+      "properties": {
+        "product_code_changed": { "const": false },
+        "rebuild_required": { "const": false },
+        "native_claude_desktop_required_before_release": { "const": true },
+        "windows_required_before_release": { "const": true },
+        "human_approval_required": { "const": true }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "unitNumber": { "type": "number", "minimum": 0, "maximum": 1 },
+    "pairFraction": { "type": "string", "pattern": "^[0-9]+/[1-9][0-9]*$" },
+    "binding": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "sha256", "bytes"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "bytes": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "metric": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["tp", "fp", "fn", "precision", "recall", "f1"],
+      "properties": {
+        "tp": { "type": "integer", "minimum": 0 },
+        "fp": { "type": "integer", "minimum": 0 },
+        "fn": { "type": "integer", "minimum": 0 },
+        "precision": { "anyOf": [{ "$ref": "#/$defs/unitNumber" }, { "type": "null" }] },
+        "recall": { "anyOf": [{ "$ref": "#/$defs/unitNumber" }, { "type": "null" }] },
+        "f1": { "anyOf": [{ "$ref": "#/$defs/unitNumber" }, { "type": "null" }] }
+      }
+    },
+    "channelDirection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["channel", "shared_library", "current_product", "recommendation"],
+      "properties": {
+        "channel": { "enum": ["semantic", "text", "structure", "form_field", "annotation", "metadata", "visual"] },
+        "shared_library": { "$ref": "#/$defs/metric" },
+        "current_product": { "$ref": "#/$defs/metric" },
+        "recommendation": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

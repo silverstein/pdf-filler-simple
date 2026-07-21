@@ -3,6 +3,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { loadComparisonManifest, resolveComparisonDocumentPath } from "./comparison-manifest.js";
 import { buildSharedLibraryReferenceReport } from "./comparison-reference-baseline.js";
+import { buildControllerObservationRegistry } from "./comparison-observation-registry.js";
 import { scoreComparisonReport, validateComparisonReport } from "./comparison-scorer.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
@@ -25,9 +26,11 @@ describe("truth-blind shared-library comparison reference", () => {
       })),
     });
     expect(validateComparisonReport(manifest, report)).toEqual([]);
-    const scored = scoreComparisonReport(manifest, report);
+    const registry = buildControllerObservationRegistry(report);
+    const scored = scoreComparisonReport(manifest, report, registry);
     expect(scored.valid).toBe(true);
-    expect(scored.passed).toBe(true);
+    expect(scored.passed).toBe(false);
+    expect(scored.aggregate.isolation_passed).toBe(false);
     expect(scored.aggregate).toMatchObject({
       event_metrics: { tp: 9, fp: 0, fn: 0, precision: 1, recall: 1, f1: 1 },
       evidence_metrics: { completeness: 1, two_sided_citation_rate: 1 },
@@ -36,5 +39,8 @@ describe("truth-blind shared-library comparison reference", () => {
     });
     expect(report.benchmark_claim_ready).toBe(false);
     expect(report.claim_boundary).toContain("not independent confirmation");
+    expect(report.pairs.every(pair => pair.tool_calls === 0
+      && pair.bytes_read === pair.warmup_cost.bytes_read * 6
+      && pair.rendered_pixels === pair.warmup_cost.rendered_pixels * 6)).toBe(true);
   }, 60_000);
 });

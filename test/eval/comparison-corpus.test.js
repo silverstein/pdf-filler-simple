@@ -148,4 +148,16 @@ describe("comparison manifest hostile mutations", () => {
     expect(validateComparisonManifest(collapsed))
       .toContain("form_annotation must contain separate field and annotation truth events");
   });
+
+  it("keeps the semantic validator aligned with schema region bounds", async () => {
+    const manifest = await loadComparisonManifest(MANIFEST_PATH);
+    const negative = mutate(manifest, copy => {
+      pair(copy, "material_text").events[0].facets[0].before.region[0] = -1;
+    });
+    expect(validateComparisonManifest(negative).some(error => error.includes("within the 612x792 page box"))).toBe(true);
+    const overflow = mutate(manifest, copy => {
+      pair(copy, "material_text").events[0].facets[0].before.region = [600, 780, 20, 20];
+    });
+    expect(validateComparisonManifest(overflow).some(error => error.includes("within the 612x792 page box"))).toBe(true);
+  });
 });
