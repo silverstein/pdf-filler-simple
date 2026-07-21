@@ -34,6 +34,7 @@ function decodeString(value) {
 }
 
 function number(context, value) {
+  if (value === undefined || value === null) return null;
   return context.lookup(value, PDFNumber)?.asNumber() ?? null;
 }
 
