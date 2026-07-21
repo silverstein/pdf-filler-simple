@@ -3,9 +3,131 @@
 import fs from "fs/promises";
 import path from "path";
 import { homedir } from "os";
-import { PDFDocument, StandardFonts, rgb, degrees as pdfDegrees } from "pdf-lib";
+import {
+  PDFArray,
+  PDFDict,
+  PDFDocument,
+  PDFName,
+  PDFObjectCopier,
+  PDFRef,
+  StandardFonts,
+  rgb,
+  degrees as pdfDegrees,
+} from "pdf-lib";
 
 const PDF_FIELD_VALIDATION_SCHEMA_VERSION = "1.0";
+
+const PRODUCER = PDFName.of("Producer");
+const MOD_DATE = PDFName.of("ModDate");
+const ACROFORM_DEFAULT_KEYS = ["DA", "DR", "Q", "NeedAppearances", "SigFlags"]
+  .map(PDFName.of);
+
+function indirectRef(context, object) {
+  if (object instanceof PDFRef) return object;
+  const resolved = context.lookup(object);
+  return context.getObjectRef(resolved) ?? context.register(resolved);
+}
+
+function repairCopiedFormFields(targetDoc, copiedPages, sourceDoc) {
+  const fieldNodes = new Map();
+  const fieldChildren = new Map();
+  const rootRefs = new Map();
+
+  function noteFieldChild(fieldRef, fieldDict, childRef) {
+    const key = fieldRef.toString();
+    fieldNodes.set(key, { ref: fieldRef, dict: fieldDict });
+    if (!fieldChildren.has(key)) fieldChildren.set(key, new Map());
+    fieldChildren.get(key).set(childRef.toString(), childRef);
+  }
+
+  for (const page of copiedPages) {
+    const annotations = page.node.lookupMaybe(PDFName.of("Annots"), PDFArray);
+    if (!annotations) continue;
+    for (let index = 0; index < annotations.size(); index += 1) {
+      const rawWidget = annotations.get(index);
+      const widget = targetDoc.context.lookupMaybe(rawWidget, PDFDict);
+      if (!widget || widget.get(PDFName.of("Subtype")) !== PDFName.of("Widget")) continue;
+      const widgetRef = indirectRef(targetDoc.context, rawWidget);
+      widget.set(PDFName.of("P"), page.ref);
+
+      let childRef = widgetRef;
+      let parentRaw = widget.get(PDFName.of("Parent"));
+      const visited = new Set();
+      if (!parentRaw) {
+        if (widget.has(PDFName.of("FT")) || widget.has(PDFName.of("T"))) {
+          rootRefs.set(widgetRef.toString(), widgetRef);
+        }
+        continue;
+      }
+      while (parentRaw) {
+        const parent = targetDoc.context.lookupMaybe(parentRaw, PDFDict);
+        if (!parent) break;
+        const parentRef = indirectRef(targetDoc.context, parentRaw);
+        const parentKey = parentRef.toString();
+        if (visited.has(parentKey)) throw new Error("Copied AcroForm field hierarchy contains a cycle.");
+        visited.add(parentKey);
+        noteFieldChild(parentRef, parent, childRef);
+        childRef = parentRef;
+        parentRaw = parent.get(PDFName.of("Parent"));
+      }
+      rootRefs.set(childRef.toString(), childRef);
+    }
+  }
+
+  if (rootRefs.size === 0) return;
+  for (const [key, node] of fieldNodes) {
+    node.dict.set(PDFName.of("Kids"), targetDoc.context.obj([...fieldChildren.get(key).values()]));
+  }
+
+  const targetAcroForm = targetDoc.catalog.getOrCreateAcroForm();
+  const existing = new Set(targetAcroForm.Fields().asArray().map(ref => ref.toString()));
+  for (const rootRef of rootRefs.values()) {
+    if (!existing.has(rootRef.toString())) {
+      targetAcroForm.addField(rootRef);
+      existing.add(rootRef.toString());
+    }
+  }
+
+  const sourceAcroForm = sourceDoc.catalog.getAcroForm();
+  if (!sourceAcroForm) return;
+  const copier = PDFObjectCopier.for(sourceDoc.context, targetDoc.context);
+  for (const key of ACROFORM_DEFAULT_KEYS) {
+    const value = sourceAcroForm.dict.get(key);
+    if (value && !targetAcroForm.dict.has(key)) targetAcroForm.dict.set(key, copier.copy(value));
+  }
+}
+
+/**
+ * Copy pages while rebuilding the AcroForm roots that pdf-lib's copyPages
+ * intentionally leaves outside the destination catalog. Widget page pointers
+ * and field Kids arrays are rebound only to pages actually present in the
+ * destination document.
+ */
+export async function copyPdfPagesPreservingForms(targetDoc, sourceDoc, pageIndices, { mutatePage } = {}) {
+  const copiedPages = await targetDoc.copyPages(sourceDoc, pageIndices);
+  for (const [index, page] of copiedPages.entries()) {
+    await mutatePage?.(page, index);
+    targetDoc.addPage(page);
+  }
+  repairCopiedFormFields(targetDoc, copiedPages, sourceDoc);
+  return copiedPages;
+}
+
+/** Preserve source Info entries except producer and modification timestamp. */
+export function copyPdfDocumentMetadata(targetDoc, sourceDoc) {
+  const sourceInfo = sourceDoc.context.lookupMaybe(sourceDoc.context.trailerInfo.Info, PDFDict);
+  const targetInfo = targetDoc.context.lookupMaybe(targetDoc.context.trailerInfo.Info, PDFDict);
+  if (!sourceInfo || !targetInfo) return;
+  const copier = PDFObjectCopier.for(sourceDoc.context, targetDoc.context);
+  const sourceKeys = new Set(sourceInfo.keys().map(key => key.toString()));
+  for (const key of targetInfo.keys()) {
+    if (key !== PRODUCER && key !== MOD_DATE && !sourceKeys.has(key.toString())) targetInfo.delete(key);
+  }
+  for (const key of sourceInfo.keys()) {
+    if (key === PRODUCER || key === MOD_DATE) continue;
+    targetInfo.set(key, copier.copy(sourceInfo.get(key)));
+  }
+}
 
 function classifyPdfField(field) {
   const type = field?.constructor?.name || "UnknownField";

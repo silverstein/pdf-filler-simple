@@ -685,6 +685,8 @@ import {
   analyzePdfPages,
   validatePdfFormFields,
   failedPdfFormValidation,
+  copyPdfPagesPreservingForms,
+  copyPdfDocumentMetadata,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
@@ -4316,10 +4318,8 @@ async function handleToolCall(request) {
             throw new Error(`File ${fi + 1} (${path.basename(rp)}): ${err.message}`);
           }
           const pageIndices = srcDoc.getPageIndices();
-          const copiedPages = await mergedDoc.copyPages(srcDoc, pageIndices);
-          for (const page of copiedPages) {
-            mergedDoc.addPage(page);
-          }
+          if (fi === 0) copyPdfDocumentMetadata(mergedDoc, srcDoc);
+          await copyPdfPagesPreservingForms(mergedDoc, srcDoc, pageIndices);
           totalPageCount += pageIndices.length;
         }
 
@@ -4361,10 +4361,8 @@ async function handleToolCall(request) {
           for (let i = start - 1; i <= end - 1; i++) {
             pageIndices.push(i);
           }
-          const copiedPages = await newDoc.copyPages(pdfDoc, pageIndices);
-          for (const page of copiedPages) {
-            newDoc.addPage(page);
-          }
+          copyPdfDocumentMetadata(newDoc, pdfDoc);
+          await copyPdfPagesPreservingForms(newDoc, pdfDoc, pageIndices);
 
           const suffix = ranges.length > 1 ? `_${ri + 1}` : "";
           const filename = `${baseName}_pages_${start}-${end}${suffix}.pdf`;
@@ -4454,10 +4452,8 @@ async function handleToolCall(request) {
 
         const newDoc = await PDFDocument.create();
         const pageIndices = page_order.map(p => p - 1);
-        const copiedPages = await newDoc.copyPages(pdfDoc, pageIndices);
-        for (const page of copiedPages) {
-          newDoc.addPage(page);
-        }
+        copyPdfDocumentMetadata(newDoc, pdfDoc);
+        await copyPdfPagesPreservingForms(newDoc, pdfDoc, pageIndices);
 
         const reorderedBytes = await newDoc.save();
         await fs.writeFile(resolvedOutputPath, reorderedBytes);
@@ -4577,20 +4573,17 @@ async function handleToolCall(request) {
         // Build the new PDF
         const newDoc = await PDFDocument.create();
         const pageIndices = page_order.map(p => p - 1);
-        const copiedPages = await newDoc.copyPages(pdfDoc, pageIndices);
-
-        for (let i = 0; i < copiedPages.length; i++) {
-          const page = copiedPages[i];
-          const originalPageNum = page_order[i];
-          const rotationDeg = rotations[String(originalPageNum)];
-
-          if (rotationDeg) {
-            const currentRotation = page.getRotation().angle;
-            page.setRotation(pdfDegrees((currentRotation + rotationDeg) % 360));
-          }
-
-          newDoc.addPage(page);
-        }
+        copyPdfDocumentMetadata(newDoc, pdfDoc);
+        await copyPdfPagesPreservingForms(newDoc, pdfDoc, pageIndices, {
+          mutatePage(page, index) {
+            const originalPageNum = page_order[index];
+            const rotationDeg = rotations[String(originalPageNum)];
+            if (rotationDeg) {
+              const currentRotation = page.getRotation().angle;
+              page.setRotation(pdfDegrees((currentRotation + rotationDeg) % 360));
+            }
+          },
+        });
 
         const newBytes = await newDoc.save();
         let outputStats;
