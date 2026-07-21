@@ -18,7 +18,7 @@ First version the generic render observation and add read-only metadata, annotat
 
 ## Evidence boundary
 
-The source tree was clean at revision `16d46ab649fcd39e5980189602e98064c14570cc` except generated evidence and the shared dependency symlink. Evidence files are hash-bound, but the controller registry is unsigned. Truth, shell, and network isolation were not OS-enforced, so the reports are descriptive and cannot support a benchmark claim.
+The source tree was clean at revision `3233236b377f5dbd0ca0fcba94fdbef3205fb628` except generated evidence and the shared dependency symlink. Evidence files are hash-bound, but the controller registry is unsigned. Truth, shell, and network isolation were not OS-enforced, so the reports are descriptive and cannot support a benchmark claim.
 
 ## Release boundary
 

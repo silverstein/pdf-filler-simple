@@ -4,8 +4,8 @@
   "benchmark_version": "v0.1.0",
   "claim_boundary": "Descriptive shared-library and current-product source-server measurements. Truth, repository/shell, and network isolation were not OS-enforced; controller registries are unsigned; neither global score passes; no packed MCPB or native host was tested.",
   "benchmark_claim_ready": false,
-  "generated_at": "2026-07-21T13:52:49.429Z",
-  "source_revision": "16d46ab649fcd39e5980189602e98064c14570cc",
+  "generated_at": "2026-07-21T14:07:08.228Z",
+  "source_revision": "3233236b377f5dbd0ca0fcba94fdbef3205fb628",
   "corpus_manifest": {
     "path": "test/fixtures/eval/comparison/manifest.v1.json",
     "sha256": "d37ef12e1e760a16a92a009514d9e90ea68dbe00ea89610319273d3d669c0ac2"
@@ -14,33 +14,33 @@
   "artifacts": [
     {
       "path": "docs/evidence/comparison-v1/shared-library-report.v1.json",
-      "sha256": "60aff691da35801372dab85c75edf25468b5503154f549c6e1b20b3d8bcf32ec",
-      "bytes": 43790
+      "sha256": "f315d926e6060e3547321d07d3b77d6b9b3883166927b46c5bbaf54debb276f1",
+      "bytes": 44234
     },
     {
       "path": "docs/evidence/comparison-v1/shared-library-score.v1.json",
-      "sha256": "24e03c19a69f13e30878db2eddedba452b6bec6f2f6db6aeeccd45e9077937d8",
-      "bytes": 35028
+      "sha256": "a75053ec7b9c936cec27837caaa0817a57a904c0bcbc710493e77aa7bc929fe3",
+      "bytes": 35404
     },
     {
       "path": "docs/evidence/comparison-v1/shared-library-observation-registry.v1.json",
-      "sha256": "fdb73baba5f0f0faaa730747c82c1657d0fc730885ecbdea97cd6e09f34a0b36",
-      "bytes": 20015
+      "sha256": "578f06b282bf084f3e16650cd5d4107c73404c2d8354ced0b2ab99c6f0aa86ca",
+      "bytes": 27956
     },
     {
       "path": "docs/evidence/comparison-v1/current-product-report.v1.json",
-      "sha256": "c902b2a22c764b1a38d2f37e43110477a518954f4ade116f68aece422d48dc1a",
-      "bytes": 38168
+      "sha256": "9cf9a871735acea965a6f8cbe600f329384ad786156f3746bc5ccf2b98ee0f02",
+      "bytes": 38630
     },
     {
       "path": "docs/evidence/comparison-v1/current-product-score.v1.json",
-      "sha256": "6116c958977a547f6c377da67c1d4e60cd1c27b48e93baeab81b0fdde03c1e7e",
-      "bytes": 34865
+      "sha256": "ed695662ff4f55134a8a55d7a7fe587e245638462cca78738ef4c631f2d19aa4",
+      "bytes": 35276
     },
     {
       "path": "docs/evidence/comparison-v1/current-product-observation-registry.v1.json",
-      "sha256": "c2754ad2ecd7ef2e4a51b8358f5da30dfde5c0bb4eb6387be29f0f632f8bf51b",
-      "bytes": 16456
+      "sha256": "5833bcf91148410eeda84e1a9b9978e17e29d95460bb2d3179466edf19cb1b71",
+      "bytes": 22935
     },
     {
       "path": "docs/evidence/comparison-v1/poppler-sensor.v1.json",

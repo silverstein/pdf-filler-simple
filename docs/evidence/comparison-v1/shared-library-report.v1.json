@@ -67,56 +67,56 @@
       "detected_events": [],
       "presentation_decisions": [],
       "timing_samples_ms": [
-        153.44747799999993,
-        125.24978899999996,
-        112.588704,
-        82.19232699999998,
-        88.966723
+        205.16734099999996,
+        277.231089,
+        102.57461599999988,
+        83.0367040000001,
+        89.42004099999986
       ],
-      "warmup_ms": 331.314624,
+      "warmup_ms": 308.204014,
       "warmup_cost": {
         "tool_calls": 0,
-        "bytes_read": 7962,
+        "logical_input_bytes": 7962,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 244740096
+        "peak_rss_bytes": 246747136
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
-          "bytes_read": 7962,
+          "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 299503616
+          "peak_rss_bytes": 300531712
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7962,
+          "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 346673152
+          "peak_rss_bytes": 348639232
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7962,
+          "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 387653632
+          "peak_rss_bytes": 387665920
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7962,
+          "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 387915776
+          "peak_rss_bytes": 387796992
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7962,
+          "logical_input_bytes": 7962,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 387915776
+          "peak_rss_bytes": 387973120
         }
       ],
-      "peak_rss_bytes": 387915776,
+      "peak_rss_bytes": 387973120,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
-      "bytes_read": 47772,
+      "logical_input_bytes": 47772,
       "source_immutable": true,
       "undeclared_requests": [],
       "model_transport_requests": 0
@@ -484,56 +484,56 @@
         }
       ],
       "timing_samples_ms": [
-        101.09196099999986,
-        106.66382299999987,
-        114.0565959999999,
-        92.94018299999993,
-        77.97192799999993
+        86.16165799999999,
+        87.01985300000001,
+        81.98934899999995,
+        106.84140400000001,
+        93.364912
       ],
-      "warmup_ms": 126.295255,
+      "warmup_ms": 80.85598500000015,
       "warmup_cost": {
         "tool_calls": 0,
-        "bytes_read": 7967,
+        "logical_input_bytes": 7967,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 387915776
+        "peak_rss_bytes": 387973120
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
-          "bytes_read": 7967,
+          "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 387915776
+          "peak_rss_bytes": 387973120
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7967,
+          "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 387915776
+          "peak_rss_bytes": 387973120
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7967,
+          "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 388636672
+          "peak_rss_bytes": 387973120
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7967,
+          "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 388677632
+          "peak_rss_bytes": 397873152
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7967,
+          "logical_input_bytes": 7967,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 388677632
+          "peak_rss_bytes": 397873152
         }
       ],
-      "peak_rss_bytes": 388677632,
+      "peak_rss_bytes": 397873152,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
-      "bytes_read": 47802,
+      "logical_input_bytes": 47802,
       "source_immutable": true,
       "undeclared_requests": [],
       "model_transport_requests": 0
@@ -637,56 +637,56 @@
         }
       ],
       "timing_samples_ms": [
-        106.55975399999988,
-        92.39819499999976,
-        102.95840199999975,
-        130.44229399999995,
-        91.73090700000012
+        114.7340949999998,
+        106.05774800000017,
+        85.98238700000002,
+        97.67745000000014,
+        88.79276600000003
       ],
-      "warmup_ms": 107.51242000000002,
+      "warmup_ms": 94.28687699999978,
       "warmup_cost": {
         "tool_calls": 0,
-        "bytes_read": 7964,
+        "logical_input_bytes": 7964,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 388497408
+        "peak_rss_bytes": 390565888
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
-          "bytes_read": 7964,
+          "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 388497408
+          "peak_rss_bytes": 390565888
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7964,
+          "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 388497408
+          "peak_rss_bytes": 390565888
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7964,
+          "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 388497408
+          "peak_rss_bytes": 390565888
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7964,
+          "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 388497408
+          "peak_rss_bytes": 390565888
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7964,
+          "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 388497408
+          "peak_rss_bytes": 390565888
         }
       ],
-      "peak_rss_bytes": 388497408,
+      "peak_rss_bytes": 390565888,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
-      "bytes_read": 47784,
+      "logical_input_bytes": 47784,
       "source_immutable": true,
       "undeclared_requests": [],
       "model_transport_requests": 0
@@ -790,56 +790,56 @@
         }
       ],
       "timing_samples_ms": [
-        104.29549499999985,
-        95.37329900000032,
-        115.15083099999993,
-        80.63770400000021,
-        99.90442699999994
+        109.2213429999997,
+        90.56557599999996,
+        97.11455400000023,
+        74.81363500000043,
+        86.51676600000019
       ],
-      "warmup_ms": 105.12222100000008,
+      "warmup_ms": 105.98119899999983,
       "warmup_cost": {
         "tool_calls": 0,
-        "bytes_read": 8174,
+        "logical_input_bytes": 8174,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 416002048
+        "peak_rss_bytes": 370847744
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
-          "bytes_read": 8174,
+          "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 416002048
+          "peak_rss_bytes": 370847744
         },
         {
           "tool_calls": 0,
-          "bytes_read": 8174,
+          "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 416002048
+          "peak_rss_bytes": 371552256
         },
         {
           "tool_calls": 0,
-          "bytes_read": 8174,
+          "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 416002048
+          "peak_rss_bytes": 402604032
         },
         {
           "tool_calls": 0,
-          "bytes_read": 8174,
+          "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 416002048
+          "peak_rss_bytes": 402604032
         },
         {
           "tool_calls": 0,
-          "bytes_read": 8174,
+          "logical_input_bytes": 8174,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 416002048
+          "peak_rss_bytes": 410472448
         }
       ],
-      "peak_rss_bytes": 416002048,
+      "peak_rss_bytes": 410472448,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
-      "bytes_read": 49044,
+      "logical_input_bytes": 49044,
       "source_immutable": true,
       "undeclared_requests": [],
       "model_transport_requests": 0
@@ -1007,56 +1007,56 @@
         }
       ],
       "timing_samples_ms": [
-        111.4021600000001,
-        82.86157299999968,
-        108.085376,
-        100.22783499999969,
-        103.3164399999996
+        123.86664900000005,
+        85.81968000000006,
+        90.94832499999984,
+        90.1162690000001,
+        98.78078499999992
       ],
-      "warmup_ms": 104.85444300000017,
+      "warmup_ms": 68.7460860000001,
       "warmup_cost": {
         "tool_calls": 0,
-        "bytes_read": 8006,
+        "logical_input_bytes": 8006,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 393302016
+        "peak_rss_bytes": 412307456
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
-          "bytes_read": 8006,
+          "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 393302016
+          "peak_rss_bytes": 412307456
         },
         {
           "tool_calls": 0,
-          "bytes_read": 8006,
+          "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 393302016
+          "peak_rss_bytes": 412307456
         },
         {
           "tool_calls": 0,
-          "bytes_read": 8006,
+          "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 393875456
+          "peak_rss_bytes": 412307456
         },
         {
           "tool_calls": 0,
-          "bytes_read": 8006,
+          "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 393912320
+          "peak_rss_bytes": 412307456
         },
         {
           "tool_calls": 0,
-          "bytes_read": 8006,
+          "logical_input_bytes": 8006,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 393920512
+          "peak_rss_bytes": 412307456
         }
       ],
-      "peak_rss_bytes": 393920512,
+      "peak_rss_bytes": 412307456,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
-      "bytes_read": 48036,
+      "logical_input_bytes": 48036,
       "source_immutable": true,
       "undeclared_requests": [],
       "model_transport_requests": 0
@@ -1160,56 +1160,56 @@
         }
       ],
       "timing_samples_ms": [
-        91.19754100000046,
-        85.37833099999989,
-        106.47345399999995,
-        75.38166099999944,
-        98.77193299999999
+        99.10865300000023,
+        91.71667099999922,
+        86.57271500000024,
+        93.30850099999952,
+        101.34656300000006
       ],
-      "warmup_ms": 93.94720700000016,
+      "warmup_ms": 96.70137599999998,
       "warmup_cost": {
         "tool_calls": 0,
-        "bytes_read": 7964,
+        "logical_input_bytes": 7964,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 393920512
+        "peak_rss_bytes": 404205568
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
-          "bytes_read": 7964,
+          "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 393920512
+          "peak_rss_bytes": 404205568
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7964,
+          "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 393920512
+          "peak_rss_bytes": 404205568
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7964,
+          "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 394067968
+          "peak_rss_bytes": 404205568
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7964,
+          "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 394067968
+          "peak_rss_bytes": 404205568
         },
         {
           "tool_calls": 0,
-          "bytes_read": 7964,
+          "logical_input_bytes": 7964,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 394117120
+          "peak_rss_bytes": 404205568
         }
       ],
-      "peak_rss_bytes": 394117120,
+      "peak_rss_bytes": 404205568,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
-      "bytes_read": 47784,
+      "logical_input_bytes": 47784,
       "source_immutable": true,
       "undeclared_requests": [],
       "model_transport_requests": 0
@@ -1405,56 +1405,56 @@
         }
       ],
       "timing_samples_ms": [
-        89.49803900000006,
-        106.66954299999998,
-        102.33303399999932,
-        110.51449299999967,
-        101.11595100000068
+        107.00541299999986,
+        102.69724599999972,
+        84.08370899999954,
+        96.9536449999996,
+        123.64427100000012
       ],
-      "warmup_ms": 90.78708300000017,
+      "warmup_ms": 135.84030900000016,
       "warmup_cost": {
         "tool_calls": 0,
-        "bytes_read": 8624,
+        "logical_input_bytes": 8624,
         "rendered_pixels": 7755264,
-        "peak_rss_bytes": 394117120
+        "peak_rss_bytes": 373284864
       },
       "iteration_costs": [
         {
           "tool_calls": 0,
-          "bytes_read": 8624,
+          "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 394117120
+          "peak_rss_bytes": 373284864
         },
         {
           "tool_calls": 0,
-          "bytes_read": 8624,
+          "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 394117120
+          "peak_rss_bytes": 373399552
         },
         {
           "tool_calls": 0,
-          "bytes_read": 8624,
+          "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 394211328
+          "peak_rss_bytes": 373489664
         },
         {
           "tool_calls": 0,
-          "bytes_read": 8624,
+          "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 394338304
+          "peak_rss_bytes": 389111808
         },
         {
           "tool_calls": 0,
-          "bytes_read": 8624,
+          "logical_input_bytes": 8624,
           "rendered_pixels": 7755264,
-          "peak_rss_bytes": 395563008
+          "peak_rss_bytes": 419946496
         }
       ],
-      "peak_rss_bytes": 395563008,
+      "peak_rss_bytes": 419946496,
       "resource_measurement_status": "in_process",
       "rendered_pixels": 46531584,
       "tool_calls": 0,
-      "bytes_read": 51744,
+      "logical_input_bytes": 51744,
       "source_immutable": true,
       "undeclared_requests": [],
       "model_transport_requests": 0

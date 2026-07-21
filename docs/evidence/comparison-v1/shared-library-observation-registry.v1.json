@@ -1,11 +1,12 @@
 {
   "schema_version": 1,
-  "report_sha256": "3ee4b8347a6a87141375a9f6633a2324f3303702393593e6dd8c4afa5a60201a",
+  "report_sha256": "5a53570d2ba0065fa5bc259574a2a35cb535bc97210697e54ec481ccd02f2030",
   "allowed_directory_evidence_sha256": "e6231b5524f4aae89ddb08c36abe59340ec979d9db57bb03cd1e9c172511700a",
   "controller": {
     "producer": "eval-run-comparison-baselines.mjs",
     "truth_loaded_after_report_freeze": false,
     "network_enforcement": "not_enforced",
+    "attestation_status": "unsigned",
     "claim_boundary": "In-process shared-library reference; truth and repository were controller-visible and network was not OS-denied."
   },
   "pairs": [
@@ -13,7 +14,8 @@
       "pair_id": "pdf-tools.comparison.pair.identical",
       "source_immutable": true,
       "undeclared_requests": [],
-      "observations": []
+      "observations": [],
+      "retained_raw_results": []
     },
     {
       "pair_id": "pdf-tools.comparison.pair.material-text",
@@ -284,6 +286,80 @@
           "raw_result_sha256": "38127bc778eaf52b99bbb75028874ee3a659fe9ff449ed6de0df8f20a94d75a1",
           "capture": "deterministic_baseline"
         }
+      ],
+      "retained_raw_results": [
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.1",
+          "raw_result_sha256": "d58ab8e0d12d05f40253708cf1be73ac757455d146bd786a0ff2365ae326fe69",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.2",
+          "raw_result_sha256": "fed72089c23d8d3dcf8275499663ca50117dd19da62fd0ab872b9d731230cfab",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.3",
+          "raw_result_sha256": "d58ab8e0d12d05f40253708cf1be73ac757455d146bd786a0ff2365ae326fe69",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.4",
+          "raw_result_sha256": "fed72089c23d8d3dcf8275499663ca50117dd19da62fd0ab872b9d731230cfab",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.5",
+          "raw_result_sha256": "0ff3b83abe6351db6b958a1dbdb337d7f5cbf7c3838ebe4b9f6c17c25c4046af",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.6",
+          "raw_result_sha256": "b206807eb21aceb03d52554434d7eab239ec0f04d82743d1dbb04151e68df397",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.7",
+          "raw_result_sha256": "19feda9bab2f4151440a1d79094c1231427214509336ddb511d10408921c3ea8",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.8",
+          "raw_result_sha256": "0d2ecac2926ca6714e776c6a5ffc7125fac72df595f504c55eab66e71ddbe8e0",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.9",
+          "raw_result_sha256": "19feda9bab2f4151440a1d79094c1231427214509336ddb511d10408921c3ea8",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.10",
+          "raw_result_sha256": "0d2ecac2926ca6714e776c6a5ffc7125fac72df595f504c55eab66e71ddbe8e0",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.11",
+          "raw_result_sha256": "7af392df8bbea3ec69091bcfb12826d9124d90b8dea33d681c66c75598b76866",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.12",
+          "raw_result_sha256": "38127bc778eaf52b99bbb75028874ee3a659fe9ff449ed6de0df8f20a94d75a1",
+          "capture": "deterministic_baseline"
+        }
       ]
     },
     {
@@ -335,6 +411,20 @@
           "raw_result_sha256": "3cadeb5969c59a9da3522e25944a114ab6949a7a1a6276d5bce8108343f256f7",
           "capture": "deterministic_baseline"
         }
+      ],
+      "retained_raw_results": [
+        {
+          "pair_id": "pdf-tools.comparison.pair.visual-status",
+          "observation_id": "evidence.reference.1",
+          "raw_result_sha256": "dafab5600d0a8b06e633f3a21a3d8ef21dd92ba0d5dab3e23effe0a2d5c6bbc2",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.visual-status",
+          "observation_id": "evidence.reference.2",
+          "raw_result_sha256": "3cadeb5969c59a9da3522e25944a114ab6949a7a1a6276d5bce8108343f256f7",
+          "capture": "deterministic_baseline"
+        }
       ]
     },
     {
@@ -383,6 +473,20 @@
             792
           ],
           "value_sha256": "e7eb42007a1f87d6596e8a0dc13030ef604a9233ac46a0df3aaf92e51b7e9798",
+          "raw_result_sha256": "e7eb42007a1f87d6596e8a0dc13030ef604a9233ac46a0df3aaf92e51b7e9798",
+          "capture": "deterministic_baseline"
+        }
+      ],
+      "retained_raw_results": [
+        {
+          "pair_id": "pdf-tools.comparison.pair.layout-noise",
+          "observation_id": "evidence.reference.1",
+          "raw_result_sha256": "ec213295777d9a08776166b0698bc9bc964dc1acf2d388afb9e845b64527cf81",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.layout-noise",
+          "observation_id": "evidence.reference.2",
           "raw_result_sha256": "e7eb42007a1f87d6596e8a0dc13030ef604a9233ac46a0df3aaf92e51b7e9798",
           "capture": "deterministic_baseline"
         }
@@ -481,6 +585,32 @@
           "raw_result_sha256": "ca24c7afd43037bf7fd11b40b8d8e831d352d4fd7a3dd66d4695d05df9726b13",
           "capture": "deterministic_baseline"
         }
+      ],
+      "retained_raw_results": [
+        {
+          "pair_id": "pdf-tools.comparison.pair.metadata-only",
+          "observation_id": "evidence.reference.1",
+          "raw_result_sha256": "fbecc0041ca70bc136ce442efd9a270da27d01757d65316b4be127a5c629d7f7",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.metadata-only",
+          "observation_id": "evidence.reference.2",
+          "raw_result_sha256": "e9de7df6897f0d7244c800376918caf391eef4651e2b29036ad2760e901324cc",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.metadata-only",
+          "observation_id": "evidence.reference.3",
+          "raw_result_sha256": "aa4884784a526da4f49a3614b3961d212bc1b72b2279e2e2b1cf2b714d3976e7",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.metadata-only",
+          "observation_id": "evidence.reference.4",
+          "raw_result_sha256": "ca24c7afd43037bf7fd11b40b8d8e831d352d4fd7a3dd66d4695d05df9726b13",
+          "capture": "deterministic_baseline"
+        }
       ]
     },
     {
@@ -529,6 +659,20 @@
             792
           ],
           "value_sha256": "73bba3c090e2a3bd3c289a14590a42df6d4f0df7c605c0f1a87805566a8080c4",
+          "raw_result_sha256": "73bba3c090e2a3bd3c289a14590a42df6d4f0df7c605c0f1a87805566a8080c4",
+          "capture": "deterministic_baseline"
+        }
+      ],
+      "retained_raw_results": [
+        {
+          "pair_id": "pdf-tools.comparison.pair.pages-reordered",
+          "observation_id": "evidence.reference.1",
+          "raw_result_sha256": "713bb07056fcb2151d3942b679cc51afdb4f005ae9baf7456ff5a2731c6b55f0",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.pages-reordered",
+          "observation_id": "evidence.reference.2",
           "raw_result_sha256": "73bba3c090e2a3bd3c289a14590a42df6d4f0df7c605c0f1a87805566a8080c4",
           "capture": "deterministic_baseline"
         }
@@ -646,6 +790,38 @@
             30
           ],
           "value_sha256": "fa424ce9b8636437b0e15b532100d607b0de93988a672094ad1a345bbd67b293",
+          "raw_result_sha256": "05bbba78ca0a93aaa9f0847b5df2f5178af0f22237f8fa8c8d3204b845910e39",
+          "capture": "deterministic_baseline"
+        }
+      ],
+      "retained_raw_results": [
+        {
+          "pair_id": "pdf-tools.comparison.pair.form-annotation",
+          "observation_id": "evidence.reference.1",
+          "raw_result_sha256": "2d19cd620c1a7bd05c1a914486b6f8d2d78b3e7e38c8ad6f1ea589bc365b1a25",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.form-annotation",
+          "observation_id": "evidence.reference.2",
+          "raw_result_sha256": "5a4fbab11760f4efe7e1d7b133c77b56f69a298e62eb6962fd3845989949ac84",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.form-annotation",
+          "observation_id": "evidence.reference.3",
+          "raw_result_sha256": "f4555b64fe16e47b429e9d342dd94312010513c88c4cec661d23d931f9d24226",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.form-annotation",
+          "observation_id": "evidence.reference.4",
+          "raw_result_sha256": "0654484f783b0087fff8a9f27b1a2475e046867aa446e72ccd18461b07c4320a",
+          "capture": "deterministic_baseline"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.form-annotation",
+          "observation_id": "evidence.reference.5",
           "raw_result_sha256": "05bbba78ca0a93aaa9f0847b5df2f5178af0f22237f8fa8c8d3204b845910e39",
           "capture": "deterministic_baseline"
         }

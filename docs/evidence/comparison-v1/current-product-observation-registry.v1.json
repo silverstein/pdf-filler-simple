@@ -1,11 +1,12 @@
 {
   "schema_version": 1,
-  "report_sha256": "52c40600dcc5cf6467e3b195b00871d3f64635c297cf3227ed1cae68333aec08",
+  "report_sha256": "a97bc067068408ce4cacb1e04c6398370d8fcc7efc409db77465f2f2fab611d9",
   "allowed_directory_evidence_sha256": "1224de9a98e4790709c7db58c96b181f8a5292dee484b065848db27e05b22ba9",
   "controller": {
     "producer": "eval-run-comparison-baselines.mjs",
     "truth_loaded_after_report_freeze": false,
     "network_enforcement": "not_enforced",
+    "attestation_status": "unsigned",
     "claim_boundary": "MCP subprocess used opaque PDFs but repository/environment/network isolation was not OS-enforced."
   },
   "pairs": [
@@ -13,7 +14,8 @@
       "pair_id": "pdf-tools.comparison.pair.identical",
       "source_immutable": true,
       "undeclared_requests": [],
-      "observations": []
+      "observations": [],
+      "retained_raw_results": []
     },
     {
       "pair_id": "pdf-tools.comparison.pair.material-text",
@@ -284,6 +286,80 @@
           "raw_result_sha256": "933a46a708d256ca4b6218b7dfa9b3ebb24a5a16912ba86884fa3006ea0c6860",
           "capture": "retained_tool_result"
         }
+      ],
+      "retained_raw_results": [
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.1",
+          "raw_result_sha256": "05bf9dd94e0175c31f27b3af02b629a88ac0d20b0de719543b8a1ab696a062da",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.2",
+          "raw_result_sha256": "9832bb3ab106b869ab0352eabd646f19fd8d968b3ddf51266001487eb9ab6eb0",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.3",
+          "raw_result_sha256": "05bf9dd94e0175c31f27b3af02b629a88ac0d20b0de719543b8a1ab696a062da",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.4",
+          "raw_result_sha256": "9832bb3ab106b869ab0352eabd646f19fd8d968b3ddf51266001487eb9ab6eb0",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.5",
+          "raw_result_sha256": "31c84cf389deaf8e20d986074dc0b0edec284cb7334bd34d5ebbc048283c7c37",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.6",
+          "raw_result_sha256": "933a46a708d256ca4b6218b7dfa9b3ebb24a5a16912ba86884fa3006ea0c6860",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.7",
+          "raw_result_sha256": "1fb37099faf53d0a706033e5b818b82eab8281884486ef5e72a2e5a072f4c172",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.8",
+          "raw_result_sha256": "17a2e33bbb2a07c9399e5dc22a76e34cebc7f0bfce6e68e9afbf4a6062ca0677",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.9",
+          "raw_result_sha256": "1fb37099faf53d0a706033e5b818b82eab8281884486ef5e72a2e5a072f4c172",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.10",
+          "raw_result_sha256": "17a2e33bbb2a07c9399e5dc22a76e34cebc7f0bfce6e68e9afbf4a6062ca0677",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.11",
+          "raw_result_sha256": "31c84cf389deaf8e20d986074dc0b0edec284cb7334bd34d5ebbc048283c7c37",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.material-text",
+          "observation_id": "evidence.reference.12",
+          "raw_result_sha256": "933a46a708d256ca4b6218b7dfa9b3ebb24a5a16912ba86884fa3006ea0c6860",
+          "capture": "retained_tool_result"
+        }
       ]
     },
     {
@@ -332,6 +408,20 @@
             36
           ],
           "value_sha256": "36c622385d5f0b41cb7b44e656c67f94c5417ebf1ecea5f0a71352a07aa4ab80",
+          "raw_result_sha256": "36c622385d5f0b41cb7b44e656c67f94c5417ebf1ecea5f0a71352a07aa4ab80",
+          "capture": "retained_tool_result"
+        }
+      ],
+      "retained_raw_results": [
+        {
+          "pair_id": "pdf-tools.comparison.pair.visual-status",
+          "observation_id": "evidence.reference.1",
+          "raw_result_sha256": "cb4f9f2f5e37ae1cca243e700484abcc48fc2403f5b41758bce6d0c72aaa8214",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.visual-status",
+          "observation_id": "evidence.reference.2",
           "raw_result_sha256": "36c622385d5f0b41cb7b44e656c67f94c5417ebf1ecea5f0a71352a07aa4ab80",
           "capture": "retained_tool_result"
         }
@@ -386,13 +476,28 @@
           "raw_result_sha256": "a589e2cde26aa13ea885ece1464a4ba903e19eef4e5690120fbc7ad7e6f21f58",
           "capture": "retained_tool_result"
         }
+      ],
+      "retained_raw_results": [
+        {
+          "pair_id": "pdf-tools.comparison.pair.layout-noise",
+          "observation_id": "evidence.reference.1",
+          "raw_result_sha256": "31c84cf389deaf8e20d986074dc0b0edec284cb7334bd34d5ebbc048283c7c37",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.layout-noise",
+          "observation_id": "evidence.reference.2",
+          "raw_result_sha256": "a589e2cde26aa13ea885ece1464a4ba903e19eef4e5690120fbc7ad7e6f21f58",
+          "capture": "retained_tool_result"
+        }
       ]
     },
     {
       "pair_id": "pdf-tools.comparison.pair.metadata-only",
       "source_immutable": true,
       "undeclared_requests": [],
-      "observations": []
+      "observations": [],
+      "retained_raw_results": []
     },
     {
       "pair_id": "pdf-tools.comparison.pair.pages-reordered",
@@ -443,6 +548,20 @@
           "raw_result_sha256": "73bba3c090e2a3bd3c289a14590a42df6d4f0df7c605c0f1a87805566a8080c4",
           "capture": "retained_tool_result"
         }
+      ],
+      "retained_raw_results": [
+        {
+          "pair_id": "pdf-tools.comparison.pair.pages-reordered",
+          "observation_id": "evidence.reference.1",
+          "raw_result_sha256": "713bb07056fcb2151d3942b679cc51afdb4f005ae9baf7456ff5a2731c6b55f0",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.pages-reordered",
+          "observation_id": "evidence.reference.2",
+          "raw_result_sha256": "73bba3c090e2a3bd3c289a14590a42df6d4f0df7c605c0f1a87805566a8080c4",
+          "capture": "retained_tool_result"
+        }
       ]
     },
     {
@@ -469,7 +588,7 @@
             792
           ],
           "value_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-          "raw_result_sha256": "ce78f0d8046a7cc74408e6122d90b1baaac65d2829b04e75fd3dc12be1e67f0a",
+          "raw_result_sha256": "6e88b9abb680957f138b68e3db7a1bca691f5ed6ec992441dd66a7d29bb7c165",
           "capture": "retained_tool_result"
         },
         {
@@ -491,7 +610,7 @@
             792
           ],
           "value_sha256": "87b42e40c2a290e01d87b721bf381c3c5e259d1eb0a4660e41fdbf8bc73f7ddd",
-          "raw_result_sha256": "65e94ad0207e0190b6b74ce3d36a451a58c9e2a2c80d02f80d4f5f89f9c4ba30",
+          "raw_result_sha256": "38b472b6af06520286c4a3b57635fb6c5dace0f0e2913335cd35026ec9aa8db6",
           "capture": "retained_tool_result"
         },
         {
@@ -535,6 +654,32 @@
             792
           ],
           "value_sha256": "73d340845dc93baafe625bbfc2087b85c45cd86a2b4113e3d174fddd0630da9d",
+          "raw_result_sha256": "73d340845dc93baafe625bbfc2087b85c45cd86a2b4113e3d174fddd0630da9d",
+          "capture": "retained_tool_result"
+        }
+      ],
+      "retained_raw_results": [
+        {
+          "pair_id": "pdf-tools.comparison.pair.form-annotation",
+          "observation_id": "evidence.reference.1",
+          "raw_result_sha256": "6e88b9abb680957f138b68e3db7a1bca691f5ed6ec992441dd66a7d29bb7c165",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.form-annotation",
+          "observation_id": "evidence.reference.2",
+          "raw_result_sha256": "38b472b6af06520286c4a3b57635fb6c5dace0f0e2913335cd35026ec9aa8db6",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.form-annotation",
+          "observation_id": "evidence.reference.3",
+          "raw_result_sha256": "31c84cf389deaf8e20d986074dc0b0edec284cb7334bd34d5ebbc048283c7c37",
+          "capture": "retained_tool_result"
+        },
+        {
+          "pair_id": "pdf-tools.comparison.pair.form-annotation",
+          "observation_id": "evidence.reference.4",
           "raw_result_sha256": "73d340845dc93baafe625bbfc2087b85c45cd86a2b4113e3d174fddd0630da9d",
           "capture": "retained_tool_result"
         }
