@@ -1154,10 +1154,11 @@ export function validateTrajectoryTrialSet(suite, trialSet, { allowPartialPlan =
   for (const duplicate of duplicates(planEntries.map(entry => entry?.invocation_id).filter(nonEmptyString))) {
     errors.push(`duplicate run-plan invocation id ${duplicate}`);
   }
-  const entriesByInvocation = new Map(planEntries.map(entry => [entry.invocation_id, entry]));
+  const validPlanEntries = planEntries.filter(isObject);
+  const entriesByInvocation = new Map(validPlanEntries.map(entry => [entry.invocation_id, entry]));
   const planDigest = isObject(trialSet.run_plan) ? sha256(canonicalJson(trialSet.run_plan)) : null;
   for (const [index, trial] of trialSet.trials.entries()) {
-    const entry = entriesByInvocation.get(trial.sample?.invocation_id);
+    const entry = entriesByInvocation.get(trial?.sample?.invocation_id);
     if (!entry) {
       errors.push(`trial_set.trials[${index}] is absent from the signed run plan`);
       continue;
@@ -1177,8 +1178,8 @@ export function validateTrajectoryTrialSet(suite, trialSet, { allowPartialPlan =
       errors.push(`trial_set.trials[${index}] must retain the pre-run plan commitment from ${planEventAuthority}`);
     }
   }
-  const trialInvocations = new Set(trialSet.trials.map(trial => trial.sample?.invocation_id));
-  for (const entry of planEntries) {
+  const trialInvocations = new Set(trialSet.trials.map(trial => trial?.sample?.invocation_id));
+  for (const entry of validPlanEntries) {
     if (!allowPartialPlan && !trialInvocations.has(entry.invocation_id)) {
       errors.push(`run-plan invocation ${entry.invocation_id} has no product or harness-failure record`);
     }
@@ -1274,7 +1275,7 @@ function successfulStep(step) {
 
 function observedArtifact(step, artifact) {
   return Array.isArray(step?.result?.observed_artifacts)
-    && step.result.observed_artifacts.some(observed => observed.path === artifact.path
+    && step.result.observed_artifacts.some(observed => isObject(observed) && observed.path === artifact.path
     && observed.exists === artifact.exists && observed.sha256 === artifact.sha256
     && observed.observer_event_id === artifact.observation_event_id
     && new Set(["filesystem_stat_sha256", "synthetic_calibration"]).has(observed.observation_method));
@@ -1287,20 +1288,25 @@ function evidenceBound(reference, successfulResults, artifactsByPath) {
   const semantic = step.result.semantic_observations;
   if (reference.kind === "page") {
     return Array.isArray(semantic?.pages)
-      && semantic.pages.some(item => item.source === reference.source && item.page === reference.page);
+      && semantic.pages.some(item => isObject(item)
+        && item.source === reference.source && item.page === reference.page);
   }
   if (reference.kind === "field") {
-    return Array.isArray(semantic?.fields) && semantic.fields.some(item => item.source === reference.source
+    return Array.isArray(semantic?.fields) && semantic.fields.some(item => isObject(item)
+      && item.source === reference.source
       && item.field === reference.field && item.value_sha256 === reference.value_sha256);
   }
   if (reference.kind === "region") {
-    return (Array.isArray(semantic?.signature_locations) && semantic.signature_locations.some(item => item.source === reference.source
+    return (Array.isArray(semantic?.signature_locations) && semantic.signature_locations.some(item => isObject(item)
+      && item.source === reference.source
       && item.page === reference.page && canonicalJson([item.x, item.y, item.width, item.height]) === canonicalJson(reference.region))
-      || (Array.isArray(semantic?.render_regions) && semantic.render_regions.some(item => item.source === reference.source
+      || (Array.isArray(semantic?.render_regions) && semantic.render_regions.some(item => isObject(item)
+        && item.source === reference.source
         && item.page === reference.page && canonicalJson(item.region) === canonicalJson(reference.region))));
   }
   if (reference.kind === "file") {
-    if (Array.isArray(semantic?.files) && semantic.files.some(item => item.path === reference.source)) return true;
+    if (Array.isArray(semantic?.files)
+      && semantic.files.some(item => isObject(item) && item.path === reference.source)) return true;
     const artifact = artifactsByPath.get(reference.source);
     return Boolean(artifact) && observedArtifact(step, artifact);
   }
@@ -1789,7 +1795,7 @@ export function gradeTrajectoryTrial(job, trial) {
 
   const claims = Array.isArray(finalAnswer.claims) ? finalAnswer.claims : [];
   const unsupportedClaims = claims.filter(claim => claim?.important !== false && (
-    !Array.isArray(claim.evidence_ids)
+    !Array.isArray(claim?.evidence_ids)
       || claim.evidence_ids.length === 0
       || claim.evidence_ids.some(id => !evidenceIds.has(id))
   ));

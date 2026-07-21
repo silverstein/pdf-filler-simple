@@ -449,6 +449,10 @@ export async function ingestCodexTrajectory({
       && (completed.item.server !== started.item.server || completed.item.tool !== started.item.tool)) {
       throw new Error(`Raw MCP item ${started.id} changed server or tool before completion`);
     }
+    if (started.item.type === "mcp_tool_call"
+      && canonicalJson(started.item.arguments ?? {}) !== canonicalJson(completed.item.arguments ?? {})) {
+      throw new Error(`Raw MCP item ${started.id} changed arguments before completion`);
+    }
   }
   const startedCalls = events.map(startedItem).filter(item => item?.type === "mcp_tool_call");
   const calls = rawToolCalls(events);
@@ -460,6 +464,9 @@ export async function ingestCodexTrajectory({
   if (unstarted.length > 0) throw new Error(`Raw transcript contains completed MCP calls without item.started: ${unstarted.join(", ")}`);
   if (observer.outcome === "harness_failure" && calls.length > 0) {
     throw new Error("A run with completed PDF tool calls is a product trial and cannot be relabeled as a harness failure");
+  }
+  if (observer.outcome === "harness_failure" && events.some(event => event?.type === "turn.completed")) {
+    throw new Error("A completed no-tool turn is a product trial and cannot be relabeled as a harness failure");
   }
   const messages = terminalMessages(events);
   const hostDiagnosticEvents = events.flatMap((event, index) => {

@@ -542,10 +542,8 @@ function completedPdfCalls(arrivals) {
 
 export function classifyRunOutcome(arrivals, exit = {}) {
   if (completedPdfCalls(arrivals).length > 0) return "completed";
-  if (exit.spawn_error || exit.timed_out) return "harness_failure";
-  return arrivals.some(arrival => arrival.event?.type === "turn.completed")
-    ? "completed"
-    : "harness_failure";
+  if (arrivals.some(arrival => arrival.event?.type === "turn.completed")) return "completed";
+  return "harness_failure";
 }
 
 function successfulCall(item) {

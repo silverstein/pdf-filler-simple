@@ -104,7 +104,7 @@ function workspaceManifest(extraEntries = []) {
   };
 }
 
-async function writeFakeCodex(filename, { timeout = false } = {}) {
+async function writeFakeCodex(filename, { timeout = false, completeThenTimeout = false } = {}) {
   const answer = JSON.stringify({
     before_page_1: "PAGE ONE - PORTRAIT",
     after_page_1: "PAGE TWO - ROTATED",
@@ -122,6 +122,8 @@ async function writeFakeCodex(filename, { timeout = false } = {}) {
 if (process.argv.includes("--version")) {
   process.stdout.write("codex-cli fake-timeout-1.0\\n");
 } else {
+  const events = ${JSON.stringify(events)};
+  if (${completeThenTimeout}) for (const event of events) process.stdout.write(JSON.stringify(event) + "\\n");
   setTimeout(() => {}, 60_000);
 }
 `
@@ -279,7 +281,7 @@ describe("headless Codex comparison controller", () => {
     })];
     expect(classifyRunOutcome(completedNoToolTurn, { exit_code: 0 })).toBe("completed");
     expect(classifyRunOutcome(completedNoToolTurn, { exit_code: null, timed_out: true }))
-      .toBe("harness_failure");
+      .toBe("completed");
   });
 
   it("requires started and completed call identities to agree before recording observations", () => {
@@ -519,6 +521,22 @@ describe("headless Codex comparison controller integration", () => {
       attempted_trials: 1,
       product_trials: 0,
       harness_failures: 1,
+      passed_trials: 0,
+    });
+  }, 30_000);
+
+  it("keeps a completed no-tool turn in the product denominator after a later timeout", async () => {
+    const timeoutCodex = path.join(testRoot, "fake-codex-complete-then-timeout.mjs");
+    await writeFakeCodex(timeoutCodex, { timeout: true, completeThenTimeout: true });
+    const { campaignRoot } = await planOne("complete-then-timeout", timeoutCodex, 1_000);
+    const completed = await runCampaignEntry({ campaignPath: campaignRoot, repeatIndex: 1, documentsRoot });
+    expect(completed.launcherRecord.exit.timed_out).toBe(true);
+    expect(completed.observer.outcome).toBe("completed");
+    const finalized = await finalizeCampaign(campaignRoot, { documentsRoot });
+    expect(finalized.report).toMatchObject({
+      attempted_trials: 1,
+      product_trials: 1,
+      harness_failures: 0,
       passed_trials: 0,
     });
   }, 30_000);

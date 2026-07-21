@@ -652,6 +652,18 @@ describe("agent trajectory grader v4 integrity contract", () => {
       }],
       ["null artifact", candidate => { candidate.artifacts = [null]; }],
       ["null evidence", candidate => { candidate.final_answer.evidence = [null]; }],
+      ["null semantic page", candidate => {
+        candidate.trajectory[0].result.semantic_observations.pages = [null];
+      }],
+      ["null render region", candidate => {
+        candidate.trajectory.find(step => step.tool === "render_pdf_page")
+          .result.semantic_observations.render_regions = [null];
+      }],
+      ["null observed artifact", candidate => {
+        candidate.trajectory.find(step => step.tool === "render_pdf_page")
+          .result.observed_artifacts = [null];
+      }],
+      ["null claim", candidate => { candidate.final_answer.claims = [null]; }],
       ["wrong-typed correction references", candidate => { candidate.correction_refs = {}; }],
     ];
     for (const [label, mutate] of malformedMembers) {
@@ -667,6 +679,24 @@ describe("agent trajectory grader v4 integrity contract", () => {
       candidateSet.trials[index] = candidate;
       expect(() => validateTrajectoryTrialSet(suite, candidateSet), label).not.toThrow();
       expect(validateTrajectoryTrialSet(suite, candidateSet).length, label).toBeGreaterThan(0);
+    }
+
+    const malformedField = trialFor(trialSet, "fill-and-validate");
+    const fieldJob = jobs.get(malformedField.job_id);
+    malformedField.trajectory.at(-1).result.semantic_observations.fields = [null];
+    expect(() => validateTrajectoryTrial(fieldJob, malformedField)).not.toThrow();
+    expect(validateTrajectoryTrial(fieldJob, malformedField).length).toBeGreaterThan(0);
+    expect(() => gradeTrajectoryTrial(fieldJob, malformedField)).not.toThrow();
+    expect(check(gradeTrajectoryTrial(fieldJob, malformedField), "trial_schema").passed).toBe(false);
+
+    for (const [label, mutate] of [
+      ["null run-plan entry", candidate => { candidate.run_plan.entries[0] = null; }],
+      ["null trial member", candidate => { candidate.trials[0] = null; }],
+    ]) {
+      const candidate = structuredClone(trialSet);
+      mutate(candidate);
+      expect(() => validateTrajectoryTrialSet(suite, candidate), label).not.toThrow();
+      expect(validateTrajectoryTrialSet(suite, candidate).length, label).toBeGreaterThan(0);
     }
   });
 
@@ -829,7 +859,13 @@ describe("agent trajectory grader v4 integrity contract", () => {
       },
       {
         type: "item.started",
-        item: { id: "fill-call", type: "mcp_tool_call", server: "pdf_tools", tool: "fill_pdf" },
+        item: {
+          id: "fill-call", type: "mcp_tool_call", server: "pdf_tools", tool: "fill_pdf",
+          arguments: {
+            pdf_path: "input/form.pdf", output_path: artifact.path,
+            field_data: { Name: "Synthetic Example" }, flatten: false, overwrite: false,
+          },
+        },
       },
       {
         type: "item.completed",
@@ -852,7 +888,10 @@ describe("agent trajectory grader v4 integrity contract", () => {
       },
       {
         type: "item.started",
-        item: { id: "validate-call", type: "mcp_tool_call", server: "pdf_tools", tool: "validate_pdf" },
+        item: {
+          id: "validate-call", type: "mcp_tool_call", server: "pdf_tools", tool: "validate_pdf",
+          arguments: { pdf_path: artifact.path },
+        },
       },
       {
         type: "item.completed",
@@ -1104,6 +1143,15 @@ describe("agent trajectory grader v4 integrity contract", () => {
     );
     rawEvents[terminalStatusIndex].item.status = originalTerminalStatus;
 
+    const fillStarted = rawEvents.find(event => event.type === "item.started" && event.item.id === "fill-call");
+    const originalStartedArguments = structuredClone(fillStarted.item.arguments);
+    fillStarted.item.arguments = { ...fillStarted.item.arguments, output_path: "output/other.pdf" };
+    await fs.writeFile(rawPath, `${rawEvents.map(event => JSON.stringify(event)).join("\n")}\n`);
+    await expect(ingestCodexTrajectory({ rawPath, observerPath, planPath })).rejects.toThrow(
+      /changed arguments before completion/,
+    );
+    fillStarted.item.arguments = originalStartedArguments;
+
     const invalidObserver = structuredClone(observer);
     invalidObserver.call_observations["fill-call"].observed_artifacts[0].observation_method = "tool_self_report";
     await fs.writeFile(observerPath, `${JSON.stringify(invalidObserver, null, 2)}\n`);
@@ -1178,11 +1226,12 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const rawPath = path.join(directory, "codex.jsonl");
     const observerPath = path.join(directory, "observer.json");
     const planPath = path.join(directory, "run-plan.json");
-    const raw = [
+    const completedRaw = [
       { type: "thread.started", thread_id: "thread-1" },
       { type: "turn.started" },
       { type: "turn.completed", usage: {} },
     ];
+    const raw = completedRaw.slice(0, 2);
     await fs.writeFile(rawPath, `${raw.map(event => JSON.stringify(event)).join("\n")}\n`);
     const runId = "pdf-tools.measured.harness.run.1";
     const eventId = `${runId}.event.harness-failure`;
@@ -1288,6 +1337,11 @@ describe("agent trajectory grader v4 integrity contract", () => {
     });
     await fs.writeFile(planPath, `${JSON.stringify(runPlan, null, 2)}\n`);
     await fs.writeFile(observerPath, `${JSON.stringify(observer, null, 2)}\n`);
+    await fs.writeFile(rawPath, `${completedRaw.map(event => JSON.stringify(event)).join("\n")}\n`);
+    await expect(ingestCodexTrajectory({ rawPath, observerPath, planPath })).rejects.toThrow(
+      /completed no-tool turn is a product trial/,
+    );
+    await fs.writeFile(rawPath, `${raw.map(event => JSON.stringify(event)).join("\n")}\n`);
     const trialSet = await ingestCodexTrajectory({ rawPath, observerPath, planPath });
     expect(trialSet.run_plan.entries).toHaveLength(1);
     expect(trialSet.trials[0]).toMatchObject({ outcome: "harness_failure" });
