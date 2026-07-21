@@ -101,12 +101,29 @@ npm ci
 npm run build:mcpb
 ```
 
-`build:mcpb` creates a clean production-only staging directory, replaces npm's
-host-selected native optional dependency with a fixed set of five locked
+`build:mcpb` creates two independent clean production-only staging directories,
+replaces npm's host-selected native optional dependency with a fixed set of five locked
 `@napi-rs/canvas` binaries: macOS and Windows ARM64/x64 for Claude Desktop,
 plus Linux x64 GNU for CI and compatible local hosts. It packs
-`manifest.mcpb.json` as `manifest.json`, then inspects the archive before
-printing its SHA-256. Do not release an
+`manifest.mcpb.json` as `manifest.json`, validates each stage with the
+repository-pinned MCPB 2.1.2 CLI, and uses MCPB's lock-resolved `fflate@0.8.3`
+to produce a repository-owned canonical archive. The canonical writer uses a
+code-point-sorted forward-slash inventory, one fixed ZIP timestamp (or a
+normalized `SOURCE_DATE_EPOCH`), mode `0644`, deterministic level-9 compression,
+and no ZIP extras or comments. The two archives must be byte-identical before a
+fully verified same-directory candidate atomically replaces the prior output.
+
+Only the five reviewed `server/*.js` runtime files and `dist-ui/index.html` are
+copied from those source directories. Symlink or special-file inputs fail the
+build. The production graph is trimmed directly before packing, including the
+unused top-level PDF.js browser/type/resource trees, while
+`pdfjs-dist/legacy/build/` is required to remain present. Archive verification
+requires exact stage/archive path and byte parity, all five native bindings,
+safe unique paths, normalized metadata, required runtime files, absence of
+development/trimmed entries, and a successful `unzip -t` integrity check. A
+high-confidence secret scan is limited to first-party inputs so dependency
+source examples do not create noisy false positives. The command prints the
+reproducible SHA-256. Do not release an
 artifact produced by a plain host-local `mcpb pack`: npm normally installs
 only the native optional dependency for the build machine.
 
