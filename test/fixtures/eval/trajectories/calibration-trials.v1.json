@@ -9,7 +9,7 @@
     "run_plan_id": "pdf-tools.trajectory.calibration.run-plan.v1",
     "trial_set_id": "pdf-tools.trajectory.calibration.v1",
     "suite_id": "pdf-tools.trajectory.v1",
-    "suite_sha256": "3fe5b76f455ced5699530f964ed417ae668f61453bcfcb6765344ad368a6f805",
+    "suite_sha256": "e0452ae12688ed5f0e2fd14ec1321871ecb4e3c2942dd0fc45eb64f97ada4e18",
     "claim_boundary": "Synthetic grader calibration only; records and observations are generated fixtures, not observed agent or host benchmark results.",
     "planned_at": "2026-07-20T23:59:00.000Z",
     "planner": "scripts/eval-generate-trajectory-calibration.mjs",
@@ -92,7 +92,7 @@
         "repeat_index": 1,
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
         "seed": "calibration-1",
-        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31"
+        "semantic_operation_sha256": "0443ef331bd12ed748fe4ab20d86eb27d8b5890efb90b1d42ec6b157c7983cb2"
       },
       {
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.2.invocation",
@@ -100,7 +100,7 @@
         "repeat_index": 2,
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
         "seed": "calibration-2",
-        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31"
+        "semantic_operation_sha256": "0443ef331bd12ed748fe4ab20d86eb27d8b5890efb90b1d42ec6b157c7983cb2"
       },
       {
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.3.invocation",
@@ -108,7 +108,7 @@
         "repeat_index": 3,
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
         "seed": "calibration-3",
-        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31"
+        "semantic_operation_sha256": "0443ef331bd12ed748fe4ab20d86eb27d8b5890efb90b1d42ec6b157c7983cb2"
       },
       {
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.4.invocation",
@@ -116,7 +116,7 @@
         "repeat_index": 4,
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
         "seed": "calibration-harness-4",
-        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31"
+        "semantic_operation_sha256": "0443ef331bd12ed748fe4ab20d86eb27d8b5890efb90b1d42ec6b157c7983cb2"
       },
       {
         "invocation_id": "pdf-tools.synthetic.safe-page-mutation.run.1.invocation",
@@ -221,11 +221,11 @@
     "kind": "synthetic_calibration",
     "producer": "scripts/eval-generate-trajectory-calibration.mjs",
     "produced_at": "2026-07-21T00:00:00.000Z",
-    "suite_sha256": "3fe5b76f455ced5699530f964ed417ae668f61453bcfcb6765344ad368a6f805",
+    "suite_sha256": "e0452ae12688ed5f0e2fd14ec1321871ecb4e3c2942dd0fc45eb64f97ada4e18",
     "raw_transcript_sha256": "a43c2cfcde297dc8ff39120198085610badf2bf3dd20b3ab1ab485e1f8a3cc10",
     "observer_sha256": "1008ee251be9cbb24fa77c512778fd3398d57fb9a7cf63afe6b4a5dd4b5aeac9",
-    "trial_payload_sha256": "e350a21886ac4b3f059e0680f618c16198578769449e2408deee47e85d017d86",
-    "run_plan_sha256": "fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+    "trial_payload_sha256": "a1259588d01a723598287d6f89ec01897c3f0ee13aeb3e6cbd600494e0ec2654",
+    "run_plan_sha256": "140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
     "key_id": null,
     "signature": null
   },
@@ -264,12 +264,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:05:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "5c47f99aebc8e41ffadd124fed73da22319314e01601c56ebbd13c7c2f74ea11"
+              "raw_sha256": "760ceaeccf46dd81f07bbe7f456e2b60f18359bbfc02bc6b36b294665020037b"
             }
           },
           {
@@ -486,12 +486,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:10:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "cf7a89b66ba6389dc9e0070b4f4469efabc52740543c634dc3b0295d90bb5ab7"
+              "raw_sha256": "d819bd3b4557f2cd7ade8ef72dfb5c35d9ac6e7b76e300732e6d9b08e7bb95e0"
             }
           },
           {
@@ -708,12 +708,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:15:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "6f330750c23fcc059a1f3059eb51651fc70f80c5d89ea8c7b1831e8595e6bb8f"
+              "raw_sha256": "34da1a65d0fe156145e136b9dde88f2cf8f3b42a5df0f97abf92ccdf87bd336f"
             }
           },
           {
@@ -934,12 +934,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:20:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "53e56a7db59e5822801a3266a458bc8adde170baeef77f87fd7e80d019f6f67a"
+              "raw_sha256": "6368317ecd023b8b3e4739c212f349485ff6c1ea41b771cffa8e44a8a2cb363d"
             }
           },
           {
@@ -1028,12 +1028,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:05:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "05c6234e6eb41674f535b082ec485ba9cdd43924cdd3c23a9da952c27aca3d2d"
+              "raw_sha256": "93aa4029e4850dfcc578a704bb6fd6c840cbbe743a5a499c7185e2dc29f022d8"
             }
           },
           {
@@ -1392,12 +1392,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:10:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "65bc21ccb95a90b48139f9548643940710ecb040cf85a9b837846379e7e77f52"
+              "raw_sha256": "f12c5532d119297208d3fec71943a5b44bc998514e92c56c4514807d00010849"
             }
           },
           {
@@ -1756,12 +1756,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:15:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "3b1d54849721f22b5c3f9942a11cfd0664a0db88ff45c074b07a264f8adfdd94"
+              "raw_sha256": "864cc5f0484c03639e1e6b91f5f8a062e92af77117018548803adf4ace348046"
             }
           },
           {
@@ -2115,12 +2115,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:20:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "115fc9e2513823e34c30ca451a4bd6c8e0b9bc36fb40458c081a17bb208d7388"
+              "raw_sha256": "ca9046f45de5c8a785f034a175eb36c81051ead1f665f33dd23a553002b50be8"
             }
           },
           {
@@ -2187,7 +2187,7 @@
         "sample_schema_version": 1,
         "input_sha256": "341314d7d54f12845fc3a732cfb37de8bbc67a93386bc1d86c3a40219047bca9",
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
-        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31",
+        "semantic_operation_sha256": "0443ef331bd12ed748fe4ab20d86eb27d8b5890efb90b1d42ec6b157c7983cb2",
         "seed": "calibration-1",
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.1.invocation",
         "transcript_sha256": "9a933a4cc992c128be184fc8b192e1681d3e8f00d32b9a331edac26f4fcef890"
@@ -2209,12 +2209,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:05:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "2874a67b66cbca594b3ba69788bebbe800093e1f205c8d16ed7c0624bb11f0c9"
+              "raw_sha256": "46c8cf136107c6ddb73f875d7689fbaa03d274f4822eb270974439dec024e8a4"
             }
           },
           {
@@ -2293,7 +2293,7 @@
             "type": "agent_message_completed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:06:20.000Z",
-            "reference": "sha256:6f1b6a6eee877b69f5366430ce6ba0592b09fa4b64fc4ac65d50550e212a8a35",
+            "reference": "sha256:730efeb75712d597fc167c87bf505cf321d69681ebd3927e897eb9a62af6cff9",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
@@ -2331,6 +2331,20 @@
           },
           {
             "event_schema_version": 1,
+            "event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.render.3",
+            "type": "render_result_observed",
+            "source": "synthetic_calibration_generator",
+            "observed_at": "2026-07-21T02:05:16.000Z",
+            "reference": "sha256:49b4e0101eed9909557a8ce1ab461259d98a2a8ff91399f642b487a324d79551",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "calibration",
+              "capture_method": "deterministic_generator",
+              "raw_sha256": "94f962177df0b131add99b63863a9ecd16c9b0619f74fda954baa6fd1b2765e9"
+            }
+          },
+          {
+            "event_schema_version": 1,
             "event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.source.after",
             "type": "filesystem_source_observed",
             "source": "synthetic_calibration_generator",
@@ -2341,6 +2355,20 @@
               "authority": "calibration",
               "capture_method": "deterministic_generator",
               "raw_sha256": "ee586f7029c2453cc6cbb933b2f1f892a9cfd1a617e584d1eef0b61c7c3baebb"
+            }
+          },
+          {
+            "event_schema_version": 1,
+            "event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.render.4",
+            "type": "render_result_observed",
+            "source": "synthetic_calibration_generator",
+            "observed_at": "2026-07-21T02:05:21.000Z",
+            "reference": "sha256:ce0f4c7c2508bc2a54c30d639e9b46dbfb2ed51dea769ba12b579bd3e4c74c7c",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "calibration",
+              "capture_method": "deterministic_generator",
+              "raw_sha256": "ce658890447851ab0e38b66b28dba94824648ae58591f60903077c2ff12d261c"
             }
           }
         ]
@@ -2463,25 +2491,29 @@
                   "page_box_points": [
                     0,
                     0,
-                    330,
-                    444
+                    360,
+                    480
                   ],
                   "rotation": null,
                   "region": [
                     0,
                     0,
-                    330,
-                    444
+                    360,
+                    480
                   ],
                   "coordinate_space": "top_left_pdf_points",
                   "image_sha256": "e4f8080fc3418cc86533744143158796de2bffae7ab23689c609f06e2b83f43c",
-                  "image_byte_length": 1,
+                  "image_byte_length": 4096,
                   "image_content_index": 1,
+                  "render_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.render.3",
+                  "image_transport": "synthetic_calibration",
                   "mime_type": "image/png",
-                  "renderer": "synthetic-calibration",
-                  "rendered_width_px": 892,
-                  "rendered_height_px": 1200,
-                  "scale": 2.7027027027027026,
+                  "server_renderer": "synthetic-calibration",
+                  "server_rendered_width_px": 900,
+                  "server_rendered_height_px": 1200,
+                  "server_scale": 2.5,
+                  "observed_image_width_px": 900,
+                  "observed_image_height_px": 1200,
                   "max_dimension_px": 1200
                 }
               ],
@@ -2532,25 +2564,29 @@
                   "page_box_points": [
                     0,
                     0,
-                    430,
-                    300
+                    480,
+                    360
                   ],
                   "rotation": null,
                   "region": [
                     0,
                     0,
-                    430,
-                    300
+                    480,
+                    360
                   ],
                   "coordinate_space": "top_left_pdf_points",
                   "image_sha256": "134ccf3da114823f27f6b1a1af2eb8e5f0acdd67a9316aa21fb5864a04f356d8",
-                  "image_byte_length": 1,
+                  "image_byte_length": 4096,
                   "image_content_index": 1,
+                  "render_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.render.4",
+                  "image_transport": "synthetic_calibration",
                   "mime_type": "image/png",
-                  "renderer": "synthetic-calibration",
-                  "rendered_width_px": 1200,
-                  "rendered_height_px": 837,
-                  "scale": 2.7906976744186047,
+                  "server_renderer": "synthetic-calibration",
+                  "server_rendered_width_px": 1200,
+                  "server_rendered_height_px": 900,
+                  "server_scale": 2.5,
+                  "observed_image_width_px": 1200,
+                  "observed_image_height_px": 900,
                   "max_dimension_px": 1200
                 }
               ],
@@ -2572,7 +2608,7 @@
       "final_answer": {
         "answer_schema_version": 1,
         "present": true,
-        "raw_message_sha256": "6f1b6a6eee877b69f5366430ce6ba0592b09fa4b64fc4ac65d50550e212a8a35",
+        "raw_message_sha256": "730efeb75712d597fc167c87bf505cf321d69681ebd3927e897eb9a62af6cff9",
         "message_event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.agent-message",
         "turn_completed_event_id": "pdf-tools.synthetic.compare-and-explain.run.1.event.turn-completed",
         "evidence": [
@@ -2602,8 +2638,8 @@
             "region": [
               0,
               0,
-              330,
-              444
+              360,
+              480
             ]
           },
           {
@@ -2616,8 +2652,8 @@
             "region": [
               0,
               0,
-              430,
-              300
+              480,
+              360
             ]
           }
         ],
@@ -2651,7 +2687,7 @@
         "sample_schema_version": 1,
         "input_sha256": "341314d7d54f12845fc3a732cfb37de8bbc67a93386bc1d86c3a40219047bca9",
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
-        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31",
+        "semantic_operation_sha256": "0443ef331bd12ed748fe4ab20d86eb27d8b5890efb90b1d42ec6b157c7983cb2",
         "seed": "calibration-2",
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.2.invocation",
         "transcript_sha256": "283265b80d15b2e88f897906269455b2a6f706e0a1b7c5745098388ce0555788"
@@ -2673,12 +2709,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:10:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "2cbdec08cf15563e81e9a3ce0650e733f3e95e7902690d7cb753ec47442d6431"
+              "raw_sha256": "dc4b35ba3c3af1d1260dd104d36fe64f8450d6be3dd882700f0f505ee630a7b2"
             }
           },
           {
@@ -2757,7 +2793,7 @@
             "type": "agent_message_completed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:11:20.000Z",
-            "reference": "sha256:31eea58d1db356594517ba337d746fd4772dd61c7b5111228fb1fa93730dc4ef",
+            "reference": "sha256:3a30561b72ce8968b35bfe8882746178040843584700807915c320d955d9447b",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
@@ -2795,6 +2831,20 @@
           },
           {
             "event_schema_version": 1,
+            "event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.render.3",
+            "type": "render_result_observed",
+            "source": "synthetic_calibration_generator",
+            "observed_at": "2026-07-21T02:10:16.000Z",
+            "reference": "sha256:7d40c10b58c4e60f3ff787c65a3453377a1869236c70801d656358544bcd56e9",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "calibration",
+              "capture_method": "deterministic_generator",
+              "raw_sha256": "5771875ee6f2aa1157fe64f2b044623f8ce3d5a211172f7aeba6566ed9183f57"
+            }
+          },
+          {
+            "event_schema_version": 1,
             "event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.source.after",
             "type": "filesystem_source_observed",
             "source": "synthetic_calibration_generator",
@@ -2805,6 +2855,20 @@
               "authority": "calibration",
               "capture_method": "deterministic_generator",
               "raw_sha256": "9f18f2efc64b2dd283f61018727716ee70c0e3e66aa63175530cf0b180a20626"
+            }
+          },
+          {
+            "event_schema_version": 1,
+            "event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.render.4",
+            "type": "render_result_observed",
+            "source": "synthetic_calibration_generator",
+            "observed_at": "2026-07-21T02:10:21.000Z",
+            "reference": "sha256:f182c13395238f50df26873ffb2e4054d063bea4348dbfc2d0b3bae9ce8f1d50",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "calibration",
+              "capture_method": "deterministic_generator",
+              "raw_sha256": "fedfd03a9297aec62bdaa9e81a3920af598b28037cca6e807c27b755d231399d"
             }
           }
         ]
@@ -2927,25 +2991,29 @@
                   "page_box_points": [
                     0,
                     0,
-                    330,
-                    444
+                    360,
+                    480
                   ],
                   "rotation": null,
                   "region": [
                     0,
                     0,
-                    330,
-                    444
+                    360,
+                    480
                   ],
                   "coordinate_space": "top_left_pdf_points",
                   "image_sha256": "e4f8080fc3418cc86533744143158796de2bffae7ab23689c609f06e2b83f43c",
-                  "image_byte_length": 1,
+                  "image_byte_length": 4096,
                   "image_content_index": 1,
+                  "render_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.render.3",
+                  "image_transport": "synthetic_calibration",
                   "mime_type": "image/png",
-                  "renderer": "synthetic-calibration",
-                  "rendered_width_px": 892,
-                  "rendered_height_px": 1200,
-                  "scale": 2.7027027027027026,
+                  "server_renderer": "synthetic-calibration",
+                  "server_rendered_width_px": 900,
+                  "server_rendered_height_px": 1200,
+                  "server_scale": 2.5,
+                  "observed_image_width_px": 900,
+                  "observed_image_height_px": 1200,
                   "max_dimension_px": 1200
                 }
               ],
@@ -2996,25 +3064,29 @@
                   "page_box_points": [
                     0,
                     0,
-                    430,
-                    300
+                    480,
+                    360
                   ],
                   "rotation": null,
                   "region": [
                     0,
                     0,
-                    430,
-                    300
+                    480,
+                    360
                   ],
                   "coordinate_space": "top_left_pdf_points",
                   "image_sha256": "134ccf3da114823f27f6b1a1af2eb8e5f0acdd67a9316aa21fb5864a04f356d8",
-                  "image_byte_length": 1,
+                  "image_byte_length": 4096,
                   "image_content_index": 1,
+                  "render_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.render.4",
+                  "image_transport": "synthetic_calibration",
                   "mime_type": "image/png",
-                  "renderer": "synthetic-calibration",
-                  "rendered_width_px": 1200,
-                  "rendered_height_px": 837,
-                  "scale": 2.7906976744186047,
+                  "server_renderer": "synthetic-calibration",
+                  "server_rendered_width_px": 1200,
+                  "server_rendered_height_px": 900,
+                  "server_scale": 2.5,
+                  "observed_image_width_px": 1200,
+                  "observed_image_height_px": 900,
                   "max_dimension_px": 1200
                 }
               ],
@@ -3036,7 +3108,7 @@
       "final_answer": {
         "answer_schema_version": 1,
         "present": true,
-        "raw_message_sha256": "31eea58d1db356594517ba337d746fd4772dd61c7b5111228fb1fa93730dc4ef",
+        "raw_message_sha256": "3a30561b72ce8968b35bfe8882746178040843584700807915c320d955d9447b",
         "message_event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.agent-message",
         "turn_completed_event_id": "pdf-tools.synthetic.compare-and-explain.run.2.event.turn-completed",
         "evidence": [
@@ -3066,8 +3138,8 @@
             "region": [
               0,
               0,
-              330,
-              444
+              360,
+              480
             ]
           },
           {
@@ -3080,8 +3152,8 @@
             "region": [
               0,
               0,
-              430,
-              300
+              480,
+              360
             ]
           }
         ],
@@ -3115,7 +3187,7 @@
         "sample_schema_version": 1,
         "input_sha256": "341314d7d54f12845fc3a732cfb37de8bbc67a93386bc1d86c3a40219047bca9",
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
-        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31",
+        "semantic_operation_sha256": "0443ef331bd12ed748fe4ab20d86eb27d8b5890efb90b1d42ec6b157c7983cb2",
         "seed": "calibration-3",
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.3.invocation",
         "transcript_sha256": "7d82b901c209c9942257cb3c2901ab8dff78cee92774e11d85f23da43fabf179"
@@ -3137,12 +3209,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:15:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "9f68defe7f95014928578c5b799678d1b1404dbfe2bc61231c59464092fbca95"
+              "raw_sha256": "90ce2373acd2889bfbed7af77bb26cc767b08b6ee357615bb3b54e3c3d5ace58"
             }
           },
           {
@@ -3221,7 +3293,7 @@
             "type": "agent_message_completed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:16:20.000Z",
-            "reference": "sha256:214bcfbcbf13c40767ca3ee6f08d3ed6cd61f0c6c51fd958dd468ec79c5a58fc",
+            "reference": "sha256:a2ca28088248f7990cdb45af879fb9724076ee03f8b3be91bc361d33d4dc272b",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
@@ -3259,6 +3331,20 @@
           },
           {
             "event_schema_version": 1,
+            "event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.render.3",
+            "type": "render_result_observed",
+            "source": "synthetic_calibration_generator",
+            "observed_at": "2026-07-21T02:15:16.000Z",
+            "reference": "sha256:455f9cbacd4b36f54c23ca44f19ccc1404cb03f63f2bccf5ae1f85954e7f72f9",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "calibration",
+              "capture_method": "deterministic_generator",
+              "raw_sha256": "4fa87a3d325af57797787cfe3c3dd4178de46234a4ab9fc77b9750b53a61c3fa"
+            }
+          },
+          {
+            "event_schema_version": 1,
             "event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.source.after",
             "type": "filesystem_source_observed",
             "source": "synthetic_calibration_generator",
@@ -3269,6 +3355,20 @@
               "authority": "calibration",
               "capture_method": "deterministic_generator",
               "raw_sha256": "45bdc511570298d16045bc9f0623874df0d7047a831459b6b9e4912a8ae9b5f4"
+            }
+          },
+          {
+            "event_schema_version": 1,
+            "event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.render.4",
+            "type": "render_result_observed",
+            "source": "synthetic_calibration_generator",
+            "observed_at": "2026-07-21T02:15:21.000Z",
+            "reference": "sha256:bf7307170205a4ab79ccb46c2e5a3e224c891530895b5d531dad5f101f6778bf",
+            "provenance": {
+              "provenance_schema_version": 1,
+              "authority": "calibration",
+              "capture_method": "deterministic_generator",
+              "raw_sha256": "ba5170cae518bc5e557c2f64c9e154ed1094171ad241c3a3634531718cf9f1d2"
             }
           }
         ]
@@ -3391,25 +3491,29 @@
                   "page_box_points": [
                     0,
                     0,
-                    330,
-                    444
+                    360,
+                    480
                   ],
                   "rotation": null,
                   "region": [
                     0,
                     0,
-                    330,
-                    444
+                    360,
+                    480
                   ],
                   "coordinate_space": "top_left_pdf_points",
                   "image_sha256": "e4f8080fc3418cc86533744143158796de2bffae7ab23689c609f06e2b83f43c",
-                  "image_byte_length": 1,
+                  "image_byte_length": 4096,
                   "image_content_index": 1,
+                  "render_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.render.3",
+                  "image_transport": "synthetic_calibration",
                   "mime_type": "image/png",
-                  "renderer": "synthetic-calibration",
-                  "rendered_width_px": 892,
-                  "rendered_height_px": 1200,
-                  "scale": 2.7027027027027026,
+                  "server_renderer": "synthetic-calibration",
+                  "server_rendered_width_px": 900,
+                  "server_rendered_height_px": 1200,
+                  "server_scale": 2.5,
+                  "observed_image_width_px": 900,
+                  "observed_image_height_px": 1200,
                   "max_dimension_px": 1200
                 }
               ],
@@ -3460,25 +3564,29 @@
                   "page_box_points": [
                     0,
                     0,
-                    430,
-                    300
+                    480,
+                    360
                   ],
                   "rotation": null,
                   "region": [
                     0,
                     0,
-                    430,
-                    300
+                    480,
+                    360
                   ],
                   "coordinate_space": "top_left_pdf_points",
                   "image_sha256": "134ccf3da114823f27f6b1a1af2eb8e5f0acdd67a9316aa21fb5864a04f356d8",
-                  "image_byte_length": 1,
+                  "image_byte_length": 4096,
                   "image_content_index": 1,
+                  "render_observation_event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.render.4",
+                  "image_transport": "synthetic_calibration",
                   "mime_type": "image/png",
-                  "renderer": "synthetic-calibration",
-                  "rendered_width_px": 1200,
-                  "rendered_height_px": 837,
-                  "scale": 2.7906976744186047,
+                  "server_renderer": "synthetic-calibration",
+                  "server_rendered_width_px": 1200,
+                  "server_rendered_height_px": 900,
+                  "server_scale": 2.5,
+                  "observed_image_width_px": 1200,
+                  "observed_image_height_px": 900,
                   "max_dimension_px": 1200
                 }
               ],
@@ -3527,7 +3635,7 @@
       "final_answer": {
         "answer_schema_version": 1,
         "present": true,
-        "raw_message_sha256": "214bcfbcbf13c40767ca3ee6f08d3ed6cd61f0c6c51fd958dd468ec79c5a58fc",
+        "raw_message_sha256": "a2ca28088248f7990cdb45af879fb9724076ee03f8b3be91bc361d33d4dc272b",
         "message_event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.agent-message",
         "turn_completed_event_id": "pdf-tools.synthetic.compare-and-explain.run.3.event.turn-completed",
         "evidence": [
@@ -3557,8 +3665,8 @@
             "region": [
               0,
               0,
-              330,
-              444
+              360,
+              480
             ]
           },
           {
@@ -3571,8 +3679,8 @@
             "region": [
               0,
               0,
-              430,
-              300
+              480,
+              360
             ]
           }
         ],
@@ -3612,7 +3720,7 @@
         "sample_schema_version": 1,
         "input_sha256": "341314d7d54f12845fc3a732cfb37de8bbc67a93386bc1d86c3a40219047bca9",
         "fixture_instance_sha256": "0f5fc018686731f2591c52ab1110afc6e9cd04aab07fba6845a14a5807716fee",
-        "semantic_operation_sha256": "2a88a1a443aeab7feeff29a34f8c80cdf3400e20164eb7ccf37e848ae0401c31",
+        "semantic_operation_sha256": "0443ef331bd12ed748fe4ab20d86eb27d8b5890efb90b1d42ec6b157c7983cb2",
         "seed": "calibration-harness-4",
         "invocation_id": "pdf-tools.synthetic.compare-and-explain.run.4.invocation",
         "transcript_sha256": "0d5177700e47a818b236a98532a98ac0ea73bcacffd7e461a8d2d8c7abb8a337"
@@ -3634,12 +3742,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:20:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "3695f05eb4b175b5a0b09e3f8ca9a07f25c2ae740cfb730fd6fcade0d22ef7b2"
+              "raw_sha256": "20038a92de08874aa42ee671adfe5f0905c10ca7ea00cf5c6a0bdf371ad526e5"
             }
           },
           {
@@ -3728,12 +3836,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:05:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "1e208767dc36708a1824eb7dcc85319df58fd79ca2e53099ae677105195c21bd"
+              "raw_sha256": "63b89da7d8d787fb6e69762cede4b16c16492dc5acbfce82747c571d6d13b1d8"
             }
           },
           {
@@ -4075,12 +4183,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:10:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "9d25f5a4ce44b115a93b9ea331e39e739cc9dc5b6baed78642ae04bec621e7f2"
+              "raw_sha256": "181d9c2fadaad9d0276b3c1d1a8c7dcd95481415c872615ca7a648666d1fd188"
             }
           },
           {
@@ -4422,12 +4530,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:15:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "43696c319db9e463e9471229a69f2f7ec3931072a59c0a7c11d1929d615c943c"
+              "raw_sha256": "4350610e43746bbc2a9c56ad5ccd893f978df287f46a3c6edec2068e90009227"
             }
           },
           {
@@ -4775,12 +4883,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:20:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "a5b818d071592b890ef04156a6241ecdadb775c78592eb9333aaa47c024e978c"
+              "raw_sha256": "a94f0d1a4a6a636e0a18805e4203bb9fdd37b9aa2dad1ccce1a49a1e51714159"
             }
           },
           {
@@ -4869,12 +4977,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:05:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "dce902b1e1c3c560512217f1157471a90fcc577737025fc0956c6dbdd4ee2d0e"
+              "raw_sha256": "571982c1f3963f08e859a3764e0c0f55273e3d2b3d0ffcf72a9e86bf11b6b384"
             }
           },
           {
@@ -5267,12 +5375,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:10:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "1f7650efd8dd90e2bb8abb5c3520a0591310e149bdfecc0ca84a89beea3c5f55"
+              "raw_sha256": "b7d1ad996545c0e9dcd0b67f8c2c448d4c67dec3cda2cde5484ca187a2c9a7f0"
             }
           },
           {
@@ -5665,12 +5773,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:15:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "0f80493f6b619c30e818a20fa09750325084a7a721f28566220a8b82c163d71a"
+              "raw_sha256": "c10d608d559f8715f0c42a25d85a9d40f6934debff175a3c013ece3a1f376127"
             }
           },
           {
@@ -6126,12 +6234,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:20:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "0f1656b3dbeb6b65c7c730dc61c3b04f13ac480881a1c6da773f86afb433f61a"
+              "raw_sha256": "0640f66cb00c67b7d270ae7cd54543292a99b853cb2ae6a34cac7d478573da16"
             }
           },
           {
@@ -6220,12 +6328,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:05:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "98239ecd8db649811e81b9fd8d9123b24d0c6ce91a48a69405c03ab6ff119fdf"
+              "raw_sha256": "1a58d13e09309842e4d19bc6692e6872f29003112583b0469f9237a576a87573"
             }
           },
           {
@@ -6458,12 +6566,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:10:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "23d957b2889e2624ed00e4885905b8e537a13e0cdfc2cbf8931d6ef37446191d"
+              "raw_sha256": "262f456c53fc1e0bdef2c1c20328d087a31d0d6beb3f89e8b8e93f11d2062d1a"
             }
           },
           {
@@ -6696,12 +6804,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:15:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "0898bf059d072cdb7dae46305ab31fd9b43860a6be1aaf08a7f8f445fd7449a9"
+              "raw_sha256": "e5df98bcd35c672b6c44b7161e4a4660f6c77d18752751225f31e73b2790da01"
             }
           },
           {
@@ -6906,12 +7014,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:20:00.000Z",
-            "reference": "sha256:fe03a0a0e463bfb00df4fc3f66fad8c187ba2b76f9471dedfa1ec803eef83633",
+            "reference": "sha256:140f79fe26c10779d76ac65357a82af2034ec74753c429853246390f4bac0d6c",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "ee10e02ca5e9f915645de7f32e411460f0cc041f95ecbc242537f6beeaa9aba1"
+              "raw_sha256": "c95b85c577437974fd45262333807f90d77440434ebedabe7ebe4c081f49ec74"
             }
           },
           {

@@ -3,7 +3,11 @@ import fsSync from "node:fs";
 import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateSigningIntent } from "../../server/helpers.js";
+import {
+  getPageRenderScale,
+  getRegionPixelRect,
+  validateSigningIntent,
+} from "../../server/helpers.js";
 
 export const TRAJECTORY_SUITE_VERSION = 1;
 export const TRAJECTORY_GRADER_VERSION = 4;
@@ -41,6 +45,12 @@ function canonicalJson(value) {
     return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
   }
   return JSON.stringify(value);
+}
+
+export function renderObservationReference(render) {
+  const payload = Object.fromEntries(Object.entries(render)
+    .filter(([key]) => key !== "render_observation_event_id"));
+  return `sha256:${sha256(canonicalJson(payload))}`;
 }
 
 function isObject(value) {
@@ -233,8 +243,9 @@ function validateSemanticObservations(value, location, errors) {
     if (!addExactKeyError(errors, itemLocation, render, [
       "source", "source_sha256", "source_observation_event_id", "page", "page_box_points",
       "rotation", "region", "coordinate_space", "image_sha256", "image_byte_length",
-      "image_content_index", "mime_type", "renderer", "rendered_width_px",
-      "rendered_height_px", "scale", "max_dimension_px",
+      "image_content_index", "render_observation_event_id", "image_transport", "mime_type",
+      "server_renderer", "server_rendered_width_px", "server_rendered_height_px", "server_scale",
+      "observed_image_width_px", "observed_image_height_px", "max_dimension_px",
     ])) continue;
     if (!validRelativePath(render.source)) errors.push(`${itemLocation}.source must be relative`);
     for (const key of ["source_sha256", "image_sha256"]) {
@@ -242,6 +253,9 @@ function validateSemanticObservations(value, location, errors) {
     }
     if (!nonEmptyString(render.source_observation_event_id)) {
       errors.push(`${itemLocation}.source_observation_event_id must be non-empty`);
+    }
+    if (!nonEmptyString(render.render_observation_event_id)) {
+      errors.push(`${itemLocation}.render_observation_event_id must be non-empty`);
     }
     if (!Number.isInteger(render.page) || render.page < 1) errors.push(`${itemLocation}.page must be positive`);
     const validateBox = (box, boxLocation) => {
@@ -252,19 +266,41 @@ function validateSemanticObservations(value, location, errors) {
     };
     validateBox(render.region, `${itemLocation}.region`);
     if (render.page_box_points !== null) validateBox(render.page_box_points, `${itemLocation}.page_box_points`);
-    if (render.rotation !== null && !new Set([0, 90, 180, 270]).has(render.rotation)) {
-      errors.push(`${itemLocation}.rotation must be null or a right-angle rotation`);
-    }
+    if (render.rotation !== null) errors.push(`${itemLocation}.rotation must be null`);
     if (render.coordinate_space !== "top_left_pdf_points") errors.push(`${itemLocation}.coordinate_space is invalid`);
-    for (const key of ["image_byte_length", "rendered_width_px", "rendered_height_px", "max_dimension_px"]) {
+    for (const key of [
+      "image_byte_length", "server_rendered_width_px", "server_rendered_height_px",
+      "observed_image_width_px", "observed_image_height_px", "max_dimension_px",
+    ]) {
       if (!Number.isInteger(render[key]) || render[key] < 1) errors.push(`${itemLocation}.${key} must be positive`);
     }
-    if (!Number.isInteger(render.image_content_index) || render.image_content_index < 0) {
-      errors.push(`${itemLocation}.image_content_index must be nonnegative`);
+    if (Number.isInteger(render.image_byte_length) && render.image_byte_length < 57) {
+      errors.push(`${itemLocation}.image_byte_length is too small for a complete PNG`);
+    }
+    if (Number.isInteger(render.image_byte_length) && render.image_byte_length > 64 * 1024 * 1024) {
+      errors.push(`${itemLocation}.image_byte_length exceeds the 64 MiB ingestion limit`);
+    }
+    for (const key of [
+      "server_rendered_width_px", "server_rendered_height_px",
+      "observed_image_width_px", "observed_image_height_px", "max_dimension_px",
+    ]) {
+      if (Number.isInteger(render[key]) && render[key] > 8192) {
+        errors.push(`${itemLocation}.${key} exceeds the 8192 px ingestion limit`);
+      }
+    }
+    if (render.image_content_index !== 1) {
+      errors.push(`${itemLocation}.image_content_index must equal the runtime image block index 1`);
+    }
+    if (!new Set(["codex_jsonl_host_visible", "synthetic_calibration"]).has(render.image_transport)) {
+      errors.push(`${itemLocation}.image_transport is unsupported`);
     }
     if (render.mime_type !== "image/png") errors.push(`${itemLocation}.mime_type must equal image/png`);
-    if (!nonEmptyString(render.renderer)) errors.push(`${itemLocation}.renderer must be non-empty`);
-    if (!Number.isFinite(render.scale) || render.scale <= 0) errors.push(`${itemLocation}.scale must be positive`);
+    if (!new Set(["native-canvas", "macos-sips", "synthetic-calibration"]).has(render.server_renderer)) {
+      errors.push(`${itemLocation}.server_renderer is not an approved pinned runtime or calibration renderer`);
+    }
+    if (!Number.isFinite(render.server_scale) || render.server_scale <= 0) {
+      errors.push(`${itemLocation}.server_scale must be positive`);
+    }
   }
   for (const [index, file] of (value.files ?? []).entries()) {
     const itemLocation = `${location}.files[${index}]`;
@@ -1309,11 +1345,56 @@ function semanticObservationIssues(step, runEvents = []) {
       && sourceEvent.reference === `sha256:${render.source_sha256}`
       && sourceProvenanceValid
       && Date.parse(sourceEvent.observed_at) <= Date.parse(step.started_at);
+    const isCalibrationRender = sourceEvent?.provenance?.authority === "calibration";
+    const renderEvent = runEvents.find(event => event.event_id === render.render_observation_event_id);
+    const renderProvenanceValid = isCalibrationRender
+      ? renderEvent?.provenance?.authority === "calibration"
+        && renderEvent.provenance.capture_method === "deterministic_generator"
+      : renderEvent?.provenance?.authority === "ingester"
+        && renderEvent.provenance.capture_method === "codex_exec_jsonl_render_result";
+    const renderEventValid = renderEvent?.type === "render_result_observed"
+      && renderEvent.reference === renderObservationReference(render)
+      && renderEvent.provenance?.raw_sha256 === step.result.raw_result_sha256
+      && renderProvenanceValid
+      && renderEvent.observed_at === step.finished_at;
+    let geometryValid = false;
+    try {
+      const expectedScale = step.tool === "render_pdf_page"
+        ? getPageRenderScale({
+          width: render.region[2], height: render.region[3], maxDimensionPx: expectedMaxDimension,
+        })
+        : getPageRenderScale({
+          width: render.region[2], height: render.region[3], maxDimensionPx: expectedMaxDimension,
+          minScale: 0.1, maxScale: 4,
+        });
+      const expectedPixels = step.tool === "render_pdf_page" ? {
+        width: Math.round(render.region[2] * expectedScale),
+        height: Math.round(render.region[3] * expectedScale),
+      } : getRegionPixelRect({
+        x: render.region[0], y: render.region[1], width: render.region[2], height: render.region[3],
+        scale: expectedScale,
+      });
+      geometryValid = render.rotation === null
+        && (step.tool === "render_pdf_page"
+          ? canonicalJson(render.page_box_points) === canonicalJson(render.region)
+          : render.page_box_points === null)
+        && render.server_scale === expectedScale
+        && render.server_rendered_width_px === expectedPixels.width
+        && render.server_rendered_height_px === expectedPixels.height;
+    } catch {
+      geometryValid = false;
+    }
+    const rendererValid = isCalibrationRender
+      ? render.server_renderer === "synthetic-calibration"
+        && render.image_transport === "synthetic_calibration"
+      : new Set(["native-canvas", "macos-sips"]).has(render.server_renderer)
+        && render.image_transport === "codex_jsonl_host_visible";
     if (step.arguments.pdf_path !== render.source || expectedPage !== render.page
       || expectedMaxDimension !== render.max_dimension_px
       || canonicalJson(expectedRegion) !== canonicalJson(render.region)
-      || !snapshot || !sourceEventValid) {
-      issues.push(`render region ${render.source}#${render.page} is not bound to ${step.tool} arguments and source observation`);
+      || render.image_content_index !== 1 || !geometryValid || !rendererValid
+      || !snapshot || !sourceEventValid || !renderEventValid) {
+      issues.push(`render region ${render.source}#${render.page} is not bound to ${step.tool} arguments, geometry, retained result, and source observation`);
     }
   }
   for (const file of semantic.files) {

@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { PDFDocument } from "pdf-lib";
 import { generateTrajectoryCalibration } from "../../scripts/eval-generate-trajectory-calibration.mjs";
 import { captureTrajectoryToolContracts } from "../../scripts/eval-capture-tool-contracts.mjs";
 import {
@@ -32,6 +33,35 @@ function canonicalJson(value) {
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+const PNG_CRC_TABLE = Array.from({ length: 256 }, (_, byte) => {
+  let value = byte;
+  for (let bit = 0; bit < 8; bit += 1) {
+    value = (value & 1) ? (0xedb88320 ^ (value >>> 1)) : (value >>> 1);
+  }
+  return value >>> 0;
+});
+
+function pngCrc32(bytes) {
+  let crc = 0xffffffff;
+  for (const byte of bytes) crc = PNG_CRC_TABLE[(crc ^ byte) & 0xff] ^ (crc >>> 8);
+  return (crc ^ 0xffffffff) >>> 0;
+}
+
+function forgeCrcValidInvalidIdat(encoded) {
+  const bytes = Buffer.from(encoded, "base64");
+  let offset = 8;
+  while (offset < bytes.length) {
+    const length = bytes.readUInt32BE(offset);
+    const type = bytes.subarray(offset + 4, offset + 8).toString("ascii");
+    if (type === "IDAT") {
+      bytes.fill(0, offset + 8, offset + 8 + length);
+      bytes.writeUInt32BE(pngCrc32(bytes.subarray(offset + 4, offset + 8 + length)), offset + 8 + length);
+    }
+    offset += length + 12;
+  }
+  return bytes.toString("base64");
 }
 
 function runPlanFor(id, trials, suite, claimBoundary) {
@@ -178,6 +208,24 @@ describe("agent trajectory grader v4 integrity contract", () => {
     expect(await fs.readFile(outputPath, "utf8")).toBe(await fs.readFile(TRIALS_PATH, "utf8"));
   });
 
+  it("binds comparison render expectations to the pinned fixture bytes and page boxes", async () => {
+    const suite = await loadTrajectorySuite(SUITE_PATH);
+    const job = suite.jobs.find(item => item.id.endsWith("compare-and-explain"));
+    const cases = [
+      ["before-page-one-render", "dev-page-order-source.pdf"],
+      ["after-page-one-render", "dev-page-order-visibly-wrong.pdf"],
+    ];
+    for (const [observationId, fixtureName] of cases) {
+      const expected = job.expected_semantics.required_observations
+        .find(item => item.id === observationId).value;
+      const bytes = await fs.readFile(path.join(REPO_ROOT, "test", "fixtures", "eval", "synthetic", fixtureName));
+      const document = await PDFDocument.load(bytes);
+      const { width, height } = document.getPages()[0].getSize();
+      expect(expected.source_sha256).toBe(digest(bytes));
+      expect(expected.region).toEqual([0, 0, Math.round(width), Math.round(height)]);
+    }
+  });
+
   it("regenerates the version-pinned tool contract from real MCP discovery byte-for-byte", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-tool-contract-"));
     temporaryDirectories.push(directory);
@@ -234,15 +282,18 @@ describe("agent trajectory grader v4 integrity contract", () => {
       tool: "render_pdf_page",
       arguments: { pdf_path: "input/before.pdf", page: 1, max_dimension_px: 1200 },
       result: {
-        content: [{ type: "image", mimeType: "image/png", data: png }],
+        content: [
+          { type: "text", text: "Rendered page" },
+          { type: "image", mimeType: "image/png", data: png },
+        ],
         structuredContent: {
           page: 1,
           width_points: 612,
           height_points: 792,
-          rendered_width_px: 1,
-          rendered_height_px: 1,
-          scale: 1,
-          renderer: "synthetic-test-renderer",
+          rendered_width_px: 930,
+          rendered_height_px: 1204,
+          scale: 1.52,
+          renderer: "native-canvas",
           mime_type: "image/png",
         },
       },
@@ -257,7 +308,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
         observation_method: "filesystem_stat_sha256",
       }],
     };
-    const semantic = await semanticObservations(item, observation, [sourceEvent]);
+    const semantic = await semanticObservations(item, observation, [sourceEvent], "event.render.page");
     expect(semantic.semantic_schema_version).toBe(2);
     expect(semantic.render_regions).toEqual([expect.objectContaining({
       source: "input/before.pdf",
@@ -267,9 +318,12 @@ describe("agent trajectory grader v4 integrity contract", () => {
       page_box_points: [0, 0, 612, 792],
       region: [0, 0, 612, 792],
       image_byte_length: Buffer.from(png, "base64").length,
-      image_content_index: 0,
-      rendered_width_px: 1,
-      rendered_height_px: 1,
+      image_content_index: 1,
+      render_observation_event_id: "event.render.page",
+      server_rendered_width_px: 930,
+      server_rendered_height_px: 1204,
+      observed_image_width_px: 1,
+      observed_image_height_px: 1,
       max_dimension_px: 1200,
     })]);
     expect(semantic.render_regions[0].image_sha256).toBe(digest(Buffer.from(png, "base64")));
@@ -283,13 +337,15 @@ describe("agent trajectory grader v4 integrity contract", () => {
     regionItem.result.structuredContent = {
       page: 2,
       region_points: { x: 72, y: 144, width: 180, height: 40 },
-      rendered_width_px: 1,
-      rendered_height_px: 1,
-      scale: 1,
-      renderer: "synthetic-test-renderer",
+      rendered_width_px: 720,
+      rendered_height_px: 160,
+      scale: 4,
+      renderer: "native-canvas",
       mime_type: "image/png",
     };
-    const regionSemantic = await semanticObservations(regionItem, observation, [sourceEvent]);
+    const regionSemantic = await semanticObservations(
+      regionItem, observation, [sourceEvent], "event.render.region",
+    );
     expect(regionSemantic.render_regions).toEqual([expect.objectContaining({
       source: "input/before.pdf",
       page: 2,
@@ -298,33 +354,43 @@ describe("agent trajectory grader v4 integrity contract", () => {
       max_dimension_px: 1400,
     })]);
 
-    await expect(semanticObservations(item, { ...observation, observed_artifacts: [] }, [sourceEvent]))
+    await expect(semanticObservations(
+      item, { ...observation, observed_artifacts: [] }, [sourceEvent], "event.render.page",
+    ))
       .rejects.toThrow(/filesystem-observed source snapshot/);
     const wrongDimensions = structuredClone(item);
-    wrongDimensions.result.structuredContent.rendered_width_px = 2;
-    await expect(semanticObservations(wrongDimensions, observation, [sourceEvent]))
-      .rejects.toThrow(/does not match structured render metadata/);
+    wrongDimensions.result.structuredContent.rendered_width_px = 929;
+    await expect(semanticObservations(
+      wrongDimensions, observation, [sourceEvent], "event.render.page",
+    )).rejects.toThrow(/server render metadata is inconsistent/);
     const malformed = structuredClone(item);
-    malformed.result.content[0].data = "not-base64";
-    await expect(semanticObservations(malformed, observation, [sourceEvent]))
+    malformed.result.content[1].data = "not-base64";
+    await expect(semanticObservations(malformed, observation, [sourceEvent], "event.render.page"))
       .rejects.toThrow(/canonical PNG base64/);
     const corrupt = structuredClone(item);
     const corruptBytes = Buffer.from(png, "base64");
     corruptBytes[45] ^= 0xff;
-    corrupt.result.content[0].data = corruptBytes.toString("base64");
-    await expect(semanticObservations(corrupt, observation, [sourceEvent]))
+    corrupt.result.content[1].data = corruptBytes.toString("base64");
+    await expect(semanticObservations(corrupt, observation, [sourceEvent], "event.render.page"))
       .rejects.toThrow(/chunk failed CRC validation/);
+    const invalidDeflate = structuredClone(item);
+    invalidDeflate.result.content[1].data = forgeCrcValidInvalidIdat(png);
+    await expect(semanticObservations(
+      invalidDeflate, observation, [sourceEvent], "event.render.page",
+    )).rejects.toThrow(/IDAT stream cannot be inflated/);
     const duplicateImage = structuredClone(item);
-    duplicateImage.result.content.push(structuredClone(duplicateImage.result.content[0]));
-    await expect(semanticObservations(duplicateImage, observation, [sourceEvent]))
+    duplicateImage.result.content.push(structuredClone(duplicateImage.result.content[1]));
+    await expect(semanticObservations(
+      duplicateImage, observation, [sourceEvent], "event.render.page",
+    ))
       .rejects.toThrow(/exactly one image content block/);
     const lateEvent = structuredClone(sourceEvent);
     lateEvent.observed_at = "2026-07-21T07:00:02.000Z";
-    await expect(semanticObservations(item, observation, [lateEvent]))
+    await expect(semanticObservations(item, observation, [lateEvent], "event.render.page"))
       .rejects.toThrow(/pre-call filesystem event/);
     const invalidTimeEvent = structuredClone(sourceEvent);
     invalidTimeEvent.observed_at = "not-a-time";
-    await expect(semanticObservations(item, observation, [invalidTimeEvent]))
+    await expect(semanticObservations(item, observation, [invalidTimeEvent], "event.render.page"))
       .rejects.toThrow(/pre-call filesystem event/);
   });
 
@@ -436,13 +502,37 @@ describe("agent trajectory grader v4 integrity contract", () => {
 
     const wrongRegion = structuredClone(base);
     wrongRegion.trajectory.find(step => step.tool === "render_pdf_page")
-      .result.semantic_observations.render_regions[0].region = [0, 0, 329, 444];
+      .result.semantic_observations.render_regions[0].region = [0, 0, 359, 480];
     expect(check(gradeTrajectoryTrial(job, wrongRegion), "semantic_result_bindings").passed).toBe(false);
 
     const wrongMaxDimension = structuredClone(base);
     wrongMaxDimension.trajectory.find(step => step.tool === "render_pdf_page")
       .result.semantic_observations.render_regions[0].max_dimension_px = 1199;
     expect(check(gradeTrajectoryTrial(job, wrongMaxDimension), "semantic_result_bindings").passed).toBe(false);
+
+    const forgedRender = structuredClone(base);
+    for (const step of forgedRender.trajectory.filter(item => item.tool === "render_pdf_page")) {
+      Object.assign(step.result.semantic_observations.render_regions[0], {
+        image_sha256: "0".repeat(64),
+        image_byte_length: 57,
+        image_content_index: 999,
+        server_renderer: "forged-renderer",
+        server_rendered_width_px: 1,
+        server_rendered_height_px: 1,
+        server_scale: 999,
+        observed_image_width_px: 1,
+        observed_image_height_px: 1,
+      });
+    }
+    const forgedGrade = gradeTrajectoryTrial(job, forgedRender);
+    expect(forgedGrade.passed).toBe(false);
+    expect(check(forgedGrade, "trial_schema").passed).toBe(false);
+    expect(check(forgedGrade, "semantic_result_bindings").passed).toBe(false);
+
+    const imageDigestDrift = structuredClone(base);
+    imageDigestDrift.trajectory.find(step => step.tool === "render_pdf_page")
+      .result.semantic_observations.render_regions[0].image_sha256 = "0".repeat(64);
+    expect(check(gradeTrajectoryTrial(job, imageDigestDrift), "semantic_result_bindings").passed).toBe(false);
 
     const untrustedEvent = structuredClone(base);
     const render = untrustedEvent.trajectory.find(step => step.tool === "render_pdf_page")
@@ -659,6 +749,14 @@ describe("agent trajectory grader v4 integrity contract", () => {
     };
     const rawEvents = [
       {
+        type: "item.completed",
+        item: {
+          id: "item-host-warning",
+          type: "error",
+          message: "Skill descriptions were shortened to fit the 2% skills context budget. Disable unused skills.",
+        },
+      },
+      {
         type: "item.started",
         item: { id: "fill-call", type: "mcp_tool_call", server: "pdf_tools", tool: "fill_pdf" },
       },
@@ -851,6 +949,12 @@ describe("agent trajectory grader v4 integrity contract", () => {
     await fs.writeFile(observerPath, `${JSON.stringify(observer, null, 2)}\n`);
     const trialSet = await ingestCodexTrajectory({ rawPath, observerPath, planPath, outputPath });
     expect(trialSet.calibration).toBe(false);
+    expect(trialSet.trials[0].run.events).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        type: "agent_host_diagnostic",
+        provenance: expect.objectContaining({ capture_method: "codex_exec_jsonl_host_diagnostic" }),
+      }),
+    ]));
     expect(trialSet.trials[0].final_answer).toMatchObject({ present: false, raw_message_sha256: null });
     const report = await runTrajectoryEvaluation({ trialsPath: outputPath });
     expect(report).toMatchObject({ product_trials: 1, passed_trials: 0, benchmark_claim_ready: false });
@@ -909,7 +1013,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     await expect(ingestCodexTrajectory({ rawPath, observerPath, planPath })).rejects.toThrow(/unfinished items/);
     rawEvents.pop();
 
-    for (const itemType of ["command_execution", "file_change", "web_search"]) {
+    for (const itemType of ["command_execution", "file_change", "web_search", "error"]) {
       rawEvents.push({ type: "item.completed", item: { id: `hidden-${itemType}`, type: itemType } });
       await fs.writeFile(rawPath, `${rawEvents.map(event => JSON.stringify(event)).join("\n")}\n`);
       await expect(ingestCodexTrajectory({ rawPath, observerPath, planPath })).rejects.toThrow(

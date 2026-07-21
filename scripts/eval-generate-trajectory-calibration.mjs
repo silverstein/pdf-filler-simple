@@ -4,7 +4,10 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { loadTrajectorySuite } from "../test/eval/trajectory-grader.js";
+import {
+  loadTrajectorySuite,
+  renderObservationReference,
+} from "../test/eval/trajectory-grader.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
@@ -327,18 +330,22 @@ function buildProductPayload(job, context) {
         source_sha256: beforeSha256,
         source_observation_event_id: beforeSource.observer_event_id,
         page: 1,
-        page_box_points: [0, 0, 330, 444],
+        page_box_points: [0, 0, 360, 480],
         rotation: null,
-        region: [0, 0, 330, 444],
+        region: [0, 0, 360, 480],
         coordinate_space: "top_left_pdf_points",
         image_sha256: digest("synthetic-before-render"),
-        image_byte_length: 1,
+        image_byte_length: 4096,
         image_content_index: 1,
+        render_observation_event_id: `${context.runId}.event.render.3`,
+        image_transport: "synthetic_calibration",
         mime_type: "image/png",
-        renderer: "synthetic-calibration",
-        rendered_width_px: 892,
-        rendered_height_px: 1200,
-        scale: 1200 / 444,
+        server_renderer: "synthetic-calibration",
+        server_rendered_width_px: 900,
+        server_rendered_height_px: 1200,
+        server_scale: 2.5,
+        observed_image_width_px: 900,
+        observed_image_height_px: 1200,
         max_dimension_px: 1200,
       }] }),
     });
@@ -352,28 +359,32 @@ function buildProductPayload(job, context) {
         source_sha256: afterSha256,
         source_observation_event_id: afterSource.observer_event_id,
         page: 1,
-        page_box_points: [0, 0, 430, 300],
+        page_box_points: [0, 0, 480, 360],
         rotation: null,
-        region: [0, 0, 430, 300],
+        region: [0, 0, 480, 360],
         coordinate_space: "top_left_pdf_points",
         image_sha256: digest("synthetic-after-render"),
-        image_byte_length: 1,
+        image_byte_length: 4096,
         image_content_index: 1,
+        render_observation_event_id: `${context.runId}.event.render.4`,
+        image_transport: "synthetic_calibration",
         mime_type: "image/png",
-        renderer: "synthetic-calibration",
-        rendered_width_px: 1200,
-        rendered_height_px: 837,
-        scale: 1200 / 430,
+        server_renderer: "synthetic-calibration",
+        server_rendered_width_px: 1200,
+        server_rendered_height_px: 900,
+        server_scale: 2.5,
+        observed_image_width_px: 1200,
+        observed_image_height_px: 900,
         max_dimension_px: 1200,
       }] }),
     });
     const beforePage = evidence("before-page", "page", "input/before.pdf", before.result.result_id, { page: 1 });
     const afterPage = evidence("after-page", "page", "input/after.pdf", after.result.result_id, { page: 1 });
     const beforeRegion = evidence("before-region", "region", "input/before.pdf", beforeRender.result.result_id, {
-      page: 1, region: [0, 0, 330, 444],
+      page: 1, region: [0, 0, 360, 480],
     });
     const afterRegion = evidence("after-region", "region", "input/after.pdf", afterRender.result.result_id, {
-      page: 1, region: [0, 0, 430, 300],
+      page: 1, region: [0, 0, 480, 360],
     });
     return {
       trajectory: [before, after, beforeRender, afterRender], effects: effects(context), artifacts: [],
@@ -522,6 +533,20 @@ function syncTrialEvents(trial) {
           authority: "calibration",
           capture_method: "deterministic_generator",
           raw_sha256: digest(`${step.step_id}:${render.source_sha256}`),
+        },
+      });
+      trial.run.events.push({
+        event_schema_version: 1,
+        event_id: render.render_observation_event_id,
+        type: "render_result_observed",
+        source: "synthetic_calibration_generator",
+        observed_at: step.finished_at,
+        reference: renderObservationReference(render),
+        provenance: {
+          provenance_schema_version: 1,
+          authority: "calibration",
+          capture_method: "deterministic_generator",
+          raw_sha256: step.result.raw_result_sha256,
         },
       });
     }

@@ -5,13 +5,19 @@ import { loadImage } from "@napi-rs/canvas";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { inflateSync } from "node:zlib";
 import {
   loadTrajectorySuite,
+  renderObservationReference,
   validateTrajectoryTrialSet,
 } from "../test/eval/trajectory-grader.js";
+import { getPageRenderScale, getRegionPixelRect } from "../server/helpers.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
+const MAX_PNG_BYTES = 64 * 1024 * 1024;
+const MAX_PNG_DIMENSION = 8192;
+const MAX_PNG_INFLATED_BYTES = 256 * 1024 * 1024;
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -31,11 +37,29 @@ function pngCrc32(bytes) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
+function pngScanlineLengths(width, height, bitsPerPixel, interlace) {
+  const passes = interlace === 0
+    ? [[0, 0, 1, 1]]
+    : [[0, 0, 8, 8], [4, 0, 8, 8], [0, 4, 4, 8], [2, 0, 4, 4],
+      [0, 2, 2, 4], [1, 0, 2, 2], [0, 1, 1, 2]];
+  const lengths = [];
+  for (const [startX, startY, stepX, stepY] of passes) {
+    if (width <= startX || height <= startY) continue;
+    const passWidth = Math.ceil((width - startX) / stepX);
+    const passHeight = Math.ceil((height - startY) / stepY);
+    const rowLength = Math.ceil((passWidth * bitsPerPixel) / 8);
+    for (let row = 0; row < passHeight; row += 1) lengths.push(rowLength);
+  }
+  return lengths;
+}
+
 function validatePngChunks(bytes, tool) {
   let offset = 8;
   let chunkIndex = 0;
   let foundIdat = false;
   let foundIend = false;
+  let idatEnded = false;
+  const idatChunks = [];
   while (offset < bytes.length) {
     if (offset + 12 > bytes.length) throw new Error(`${tool} PNG has a truncated chunk header`);
     const length = bytes.readUInt32BE(offset);
@@ -48,7 +72,14 @@ function validatePngChunks(bytes, tool) {
     if (chunkIndex === 0 && (type !== "IHDR" || length !== 13)) {
       throw new Error(`${tool} PNG must begin with a 13-byte IHDR chunk`);
     }
-    if (type === "IDAT") foundIdat = true;
+    if (chunkIndex > 0 && type === "IHDR") throw new Error(`${tool} PNG contains a duplicate IHDR chunk`);
+    if (type === "IDAT") {
+      if (idatEnded) throw new Error(`${tool} PNG IDAT chunks must be consecutive`);
+      foundIdat = true;
+      idatChunks.push(bytes.subarray(offset + 8, offset + 8 + length));
+    } else if (foundIdat && type !== "IEND") {
+      idatEnded = true;
+    }
     if (type === "IEND") {
       if (length !== 0 || chunkEnd !== bytes.length) throw new Error(`${tool} PNG has an invalid terminal IEND chunk`);
       foundIend = true;
@@ -58,6 +89,49 @@ function validatePngChunks(bytes, tool) {
     chunkIndex += 1;
   }
   if (!foundIdat || !foundIend) throw new Error(`${tool} PNG must contain IDAT data and a terminal IEND chunk`);
+  const width = bytes.readUInt32BE(16);
+  const height = bytes.readUInt32BE(20);
+  const bitDepth = bytes[24];
+  const colorType = bytes[25];
+  const compression = bytes[26];
+  const filter = bytes[27];
+  const interlace = bytes[28];
+  const allowedDepths = new Map([
+    [0, new Set([1, 2, 4, 8, 16])],
+    [2, new Set([8, 16])],
+    [3, new Set([1, 2, 4, 8])],
+    [4, new Set([8, 16])],
+    [6, new Set([8, 16])],
+  ]);
+  if (width < 1 || height < 1 || width > MAX_PNG_DIMENSION || height > MAX_PNG_DIMENSION
+    || width * height > MAX_PNG_DIMENSION * MAX_PNG_DIMENSION) {
+    throw new Error(`${tool} PNG dimensions exceed the bounded ingestion contract`);
+  }
+  if (!allowedDepths.get(colorType)?.has(bitDepth) || compression !== 0 || filter !== 0
+    || !new Set([0, 1]).has(interlace)) {
+    throw new Error(`${tool} PNG has an unsupported or invalid IHDR encoding`);
+  }
+  const samplesPerPixel = new Map([[0, 1], [2, 3], [3, 1], [4, 2], [6, 4]]).get(colorType);
+  const scanlineLengths = pngScanlineLengths(width, height, samplesPerPixel * bitDepth, interlace);
+  const expectedInflatedLength = scanlineLengths.reduce((sum, length) => sum + length + 1, 0);
+  if (expectedInflatedLength > MAX_PNG_INFLATED_BYTES) {
+    throw new Error(`${tool} PNG inflated data exceeds the bounded ingestion contract`);
+  }
+  let inflated;
+  try {
+    inflated = inflateSync(Buffer.concat(idatChunks), { maxOutputLength: expectedInflatedLength + 1 });
+  } catch {
+    throw new Error(`${tool} PNG IDAT stream cannot be inflated`);
+  }
+  if (inflated.length !== expectedInflatedLength) {
+    throw new Error(`${tool} PNG inflated data does not match its IHDR geometry`);
+  }
+  let scanlineOffset = 0;
+  for (const length of scanlineLengths) {
+    if (inflated[scanlineOffset] > 4) throw new Error(`${tool} PNG contains an invalid scanline filter`);
+    scanlineOffset += length + 1;
+  }
+  return { width, height };
 }
 
 function parseJsonLines(text) {
@@ -88,6 +162,15 @@ function rawToolCalls(events) {
 
 function terminalMessages(events) {
   return events.map(completedItem).filter(item => item?.type === "agent_message");
+}
+
+function retainedHostDiagnostic(item) {
+  if (!item || item.type !== "error" || typeof item.id !== "string"
+    || typeof item.message !== "string") return false;
+  if (Object.keys(item).some(key => !new Set(["id", "type", "message"]).has(key))) return false;
+  return item.message.startsWith(
+    "Skill descriptions were shortened to fit the 2% skills context budget.",
+  );
 }
 
 function validMcpResult(value) {
@@ -249,34 +332,39 @@ async function strictPngImage(item) {
   if (block.mimeType !== "image/png" || typeof block.data !== "string" || block.data.length === 0) {
     throw new Error(`${item.tool} must retain one non-empty image/png block`);
   }
+  if (block.data.length > Math.ceil(MAX_PNG_BYTES * 4 / 3) + 4) {
+    throw new Error(`${item.tool} PNG exceeds the 64 MiB ingestion limit`);
+  }
   const bytes = Buffer.from(block.data, "base64");
-  if (bytes.length < 24 || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a"
+  if (bytes.length < 57 || bytes.length > MAX_PNG_BYTES
+    || bytes.subarray(0, 8).toString("hex") !== "89504e470d0a1a0a"
     || bytes.subarray(12, 16).toString("ascii") !== "IHDR"
     || bytes.toString("base64") !== block.data) {
     throw new Error(`${item.tool} image block is not canonical PNG base64`);
   }
-  validatePngChunks(bytes, item.tool);
+  const header = validatePngChunks(bytes, item.tool);
   let decoded;
   try {
     decoded = await loadImage(bytes);
   } catch {
     throw new Error(`${item.tool} image block cannot be decoded as PNG`);
   }
-  const headerWidth = bytes.readUInt32BE(16);
-  const headerHeight = bytes.readUInt32BE(20);
-  if (headerWidth < 1 || headerHeight < 1 || decoded.width !== headerWidth || decoded.height !== headerHeight) {
+  if (decoded.width !== header.width || decoded.height !== header.height) {
     throw new Error(`${item.tool} decoded PNG dimensions do not match its IHDR`);
   }
   return {
     bytes,
     index,
-    width: decoded.width,
-    height: decoded.height,
+    width: header.width,
+    height: header.height,
   };
 }
 
-async function renderRegionObservation(item, structured, observation, runEvents) {
+async function renderRegionObservation(item, structured, observation, runEvents, renderObservationEventId) {
   if (!new Set(["render_pdf_page", "render_pdf_region"]).has(item.tool)) return [];
+  if (typeof renderObservationEventId !== "string" || renderObservationEventId.length === 0) {
+    throw new Error(`${item.tool} requires a stable render observation event id`);
+  }
   const args = item.arguments ?? {};
   const sourceSnapshots = (observation?.observed_artifacts ?? []).filter(artifact =>
     artifact.path === args.pdf_path && artifact.exists === true
@@ -303,9 +391,9 @@ async function renderRegionObservation(item, structured, observation, runEvents)
   const scale = Number(structured.scale);
   if (!Number.isInteger(page) || page < 1 || !Number.isInteger(width) || width < 1
     || !Number.isInteger(height) || height < 1 || !Number.isFinite(scale) || scale <= 0
-    || image.width !== width || image.height !== height || typeof structured.renderer !== "string"
-    || !structured.renderer || structured.mime_type !== "image/png") {
-    throw new Error(`${item.tool} retained PNG does not match structured render metadata`);
+    || typeof structured.renderer !== "string" || !structured.renderer
+    || structured.mime_type !== "image/png") {
+    throw new Error(`${item.tool} must retain valid server render metadata beside the host-visible PNG`);
   }
   let region;
   let pageBox;
@@ -326,6 +414,22 @@ async function renderRegionObservation(item, structured, observation, runEvents)
     }
     pageBox = null;
   }
+  const maxDimension = Number(args.max_dimension_px ?? (item.tool === "render_pdf_page" ? 1800 : 1400));
+  const expectedScale = item.tool === "render_pdf_page"
+    ? getPageRenderScale({ width: region[2], height: region[3], maxDimensionPx: maxDimension })
+    : getPageRenderScale({
+      width: region[2], height: region[3], maxDimensionPx: maxDimension, minScale: 0.1, maxScale: 4,
+    });
+  const expectedPixels = item.tool === "render_pdf_page" ? {
+    width: Math.round(region[2] * expectedScale),
+    height: Math.round(region[3] * expectedScale),
+  } : getRegionPixelRect({
+    x: region[0], y: region[1], width: region[2], height: region[3], scale: expectedScale,
+  });
+  if (scale !== expectedScale || width !== expectedPixels.width || height !== expectedPixels.height
+    || !new Set(["native-canvas", "macos-sips"]).has(structured.renderer)) {
+    throw new Error(`${item.tool} server render metadata is inconsistent with its arguments and PDF geometry`);
+  }
   return [{
     source: args.pdf_path,
     source_sha256: sourceSnapshots[0].sha256,
@@ -338,16 +442,20 @@ async function renderRegionObservation(item, structured, observation, runEvents)
     image_sha256: digest(image.bytes),
     image_byte_length: image.bytes.length,
     image_content_index: image.index,
+    render_observation_event_id: renderObservationEventId,
+    image_transport: "codex_jsonl_host_visible",
     mime_type: "image/png",
-    renderer: structured.renderer,
-    rendered_width_px: width,
-    rendered_height_px: height,
-    scale,
-    max_dimension_px: Number(args.max_dimension_px ?? (item.tool === "render_pdf_page" ? 1800 : 1400)),
+    server_renderer: structured.renderer,
+    server_rendered_width_px: width,
+    server_rendered_height_px: height,
+    server_scale: scale,
+    observed_image_width_px: image.width,
+    observed_image_height_px: image.height,
+    max_dimension_px: maxDimension,
   }];
 }
 
-export async function semanticObservations(item, observation = {}, runEvents = []) {
+export async function semanticObservations(item, observation = {}, runEvents = [], renderObservationEventId = null) {
   const structured = item.result?.structured_content ?? item.result?.structuredContent ?? {};
   const args = item.arguments ?? {};
   const pages = Array.isArray(structured.pages) ? structured.pages
@@ -401,7 +509,9 @@ export async function semanticObservations(item, observation = {}, runEvents = [
     fields,
     page_plans: pagePlans,
     signature_locations: signatureLocations,
-    render_regions: await renderRegionObservation(item, structured, observation, runEvents),
+    render_regions: await renderRegionObservation(
+      item, structured, observation, runEvents, renderObservationEventId,
+    ),
     files,
   };
 }
@@ -437,7 +547,8 @@ export async function ingestCodexTrajectory({
     && (!event.item || typeof event.item !== "object" || Array.isArray(event.item)));
   if (malformedItemEvent) throw new Error(`${malformedItemEvent.type} must retain its raw item object`);
   const rawItems = events.flatMap(event => [startedItem(event), completedItem(event)]).filter(Boolean);
-  const unsupportedItem = rawItems.find(item => !new Set(["mcp_tool_call", "agent_message"]).has(item?.type));
+  const unsupportedItem = rawItems.find(item =>
+    !new Set(["mcp_tool_call", "agent_message"]).has(item?.type) && !retainedHostDiagnostic(item));
   if (unsupportedItem) throw new Error(`Raw transcript contains unnormalized item type ${unsupportedItem?.type}`);
   const nonPdfMcpCalls = rawItems.filter(item => item?.type === "mcp_tool_call" && item?.server !== "pdf_tools");
   if (nonPdfMcpCalls.length > 0) throw new Error("Raw transcript contains MCP calls outside the pdf_tools server");
@@ -479,6 +590,25 @@ export async function ingestCodexTrajectory({
     throw new Error("A run with completed PDF tool calls is a product trial and cannot be relabeled as a harness failure");
   }
   const messages = terminalMessages(events);
+  const hostDiagnosticEvents = events.flatMap((event, index) => {
+    const item = completedItem(event);
+    if (!retainedHostDiagnostic(item)) return [];
+    const rawSha256 = digest(JSON.stringify(event));
+    return [{
+      event_schema_version: 1,
+      event_id: `${observer.run.run_id}.event.host-diagnostic.${index + 1}`,
+      type: "agent_host_diagnostic",
+      source: "codex_exec_jsonl",
+      observed_at: observer.run.started_at,
+      reference: `sha256:${rawSha256}`,
+      provenance: {
+        provenance_schema_version: 1,
+        authority: "ingester",
+        capture_method: "codex_exec_jsonl_host_diagnostic",
+        raw_sha256: rawSha256,
+      },
+    }];
+  });
   const lastCallEventIndex = events.reduce((last, event, index) => completedItem(event)?.type === "mcp_tool_call" ? index : last, -1);
   const lastMessageEventIndex = events.reduce((last, event, index) => completedItem(event)?.type === "agent_message" ? index : last, -1);
   const turnCompletedIndex = events.findIndex((event, index) => index > lastMessageEventIndex && event?.type === "turn.completed");
@@ -496,7 +626,8 @@ export async function ingestCodexTrajectory({
   }
 
   const resultIds = new Map();
-  const steps = await Promise.all(calls.map(async (item, index) => {
+  const steps = [];
+  for (const [index, item] of calls.entries()) {
     const id = rawItemId(item, index);
     if (!new Set(["completed", "failed"]).has(item.status)) {
       throw new Error(`MCP call ${id} has unsupported terminal status ${item.status}`);
@@ -534,7 +665,12 @@ export async function ingestCodexTrajectory({
         raw_result_sha256: digest(JSON.stringify(item.result ?? null)),
         observed_sources: observation.observed_sources ?? [],
         observed_artifacts: observation.observed_artifacts ?? [],
-        semantic_observations: await semanticObservations(item, observation, observer.run.events),
+        semantic_observations: await semanticObservations(
+          item,
+          observation,
+          observer.run.events,
+          `${observer.run.run_id}.event.render.${index + 1}`,
+        ),
       };
     } else {
       const rawErrorValue = item.error ?? (toolReportedError ? item.result : null);
@@ -547,10 +683,25 @@ export async function ingestCodexTrajectory({
         raw_error_sha256: digest(JSON.stringify({ status: item.status, error: rawErrorValue })),
       };
     }
-    return base;
-  }));
+    steps.push(base);
+  }
 
   const stepIds = new Map(callIds.map((id, index) => [id, steps[index].step_id]));
+  const renderEvents = steps.flatMap(step =>
+    (step.result?.semantic_observations?.render_regions ?? []).map(render => ({
+      event_schema_version: 1,
+      event_id: render.render_observation_event_id,
+      type: "render_result_observed",
+      source: "codex_exec_jsonl",
+      observed_at: step.finished_at,
+      reference: renderObservationReference(render),
+      provenance: {
+        provenance_schema_version: 1,
+        authority: "ingester",
+        capture_method: "codex_exec_jsonl_render_result",
+        raw_sha256: step.result.raw_result_sha256,
+      },
+    })));
   const artifacts = observer.artifacts.map(artifact => {
     const producer = stepIds.get(artifact.producer_item_id);
     const verifier = stepIds.get(artifact.verification_item_id);
@@ -646,7 +797,16 @@ export async function ingestCodexTrajectory({
       invocation_id: observer.sample.invocation_id,
       transcript_sha256: digest(rawText),
     },
-    run: { ...observer.run, events: [...observer.run.events, transcriptEvent, ...terminalEvents] },
+    run: {
+      ...observer.run,
+      events: [
+        ...observer.run.events,
+        ...hostDiagnosticEvents,
+        ...renderEvents,
+        transcriptEvent,
+        ...terminalEvents,
+      ],
+    },
   };
   const trial = observer.outcome === "harness_failure" ? {
     ...trialBase,
