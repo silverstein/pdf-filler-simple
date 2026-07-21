@@ -29,6 +29,9 @@ const textFixture = path.join(fixtureDirectory, "synthetic-text-two-page.pdf");
 const rasterFixture = path.join(fixtureDirectory, "synthetic-raster-only.pdf");
 const mutationDirectory = path.join(fixtureDirectory, "mutation-output");
 const toolNames = [];
+const EXPECTED_TOOL_CONTRACT_SHA256 = "6ba7b256ae9fad3f91de949d847668543de559d2e14efea151226c95ee66a6ea";
+let toolContractSha256;
+let structuredToolCount;
 
 function textContent(result) {
   return (result.content || [])
@@ -66,6 +69,15 @@ try {
   toolNames.push(...tools.tools.map(tool => tool.name).sort());
   assert(toolNames.length === 37, `Expected 37 tools, received ${toolNames.length}`);
   assert(new Set(toolNames).size === 37, "Tool names were not unique");
+  toolContractSha256 = createHash("sha256")
+    .update(JSON.stringify(tools.tools))
+    .digest("hex");
+  assert(
+    toolContractSha256 === EXPECTED_TOOL_CONTRACT_SHA256,
+    `Tool contract digest drifted: ${toolContractSha256}`,
+  );
+  structuredToolCount = tools.tools.filter(tool => tool.outputSchema).length;
+  assert(structuredToolCount === 31, `Expected 31 structured tools, received ${structuredToolCount}`);
 
   const listed = await first.client.callTool({
     name: "list_pdfs",
@@ -147,6 +159,9 @@ try {
 process.stdout.write(`${JSON.stringify({
   tool_count: toolNames.length,
   tool_names: toolNames,
+  tool_contract_sha256: toolContractSha256,
+  structured_tool_count: structuredToolCount,
+  text_only_tool_count: toolNames.length - structuredToolCount,
   same_session_calls: 6,
   fresh_session_calls: 1,
   configured_directory_allowed: true,
