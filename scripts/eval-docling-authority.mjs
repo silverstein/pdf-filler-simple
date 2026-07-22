@@ -138,19 +138,29 @@ function identityDigest(identity) {
 
 async function verifyRootPolicy(receipt, protectedRoots) {
   for (const protectedRoot of protectedRoots) await assertNoLinkAncestors(protectedRoot, { allowMissingLeaf: true });
-  const rootNames = ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp"];
+  const rootNames = ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp", "hf_cache"];
   for (const name of rootNames) {
     const root = receipt.roots[name];
     if (typeof root !== "string" || path.resolve(root) !== root) throw new Error(`Receipt root is not canonical: ${name}`);
     if (protectedRoots.some(protectedRoot => within(protectedRoot, root))) throw new Error(`Receipt root is inside protected storage: ${name}`);
     await assertDirectory(root, { allowMissingLeaf: name === "models" });
   }
-  if (!within(receipt.roots.runs, receipt.roots.authority_home) || !within(receipt.roots.runs, receipt.roots.authority_tmp)) {
-    throw new Error("Authority HOME/TMPDIR must remain under the run root");
+  if (!within(receipt.roots.runs, receipt.roots.authority_home) || !within(receipt.roots.runs, receipt.roots.authority_tmp)
+    || !within(receipt.roots.runs, receipt.roots.hf_cache)) {
+    throw new Error("Authority HOME/TMPDIR/HF_HOME must remain under the run root");
+  }
+  const isolated = [receipt.roots.authority_home, receipt.roots.authority_tmp, receipt.roots.hf_cache];
+  for (let first = 0; first < isolated.length; first += 1) {
+    for (let second = first + 1; second < isolated.length; second += 1) {
+      if (within(isolated[first], isolated[second]) || within(isolated[second], isolated[first])) {
+        throw new Error("Authority HOME, TMPDIR, and HF_HOME must be disjoint roots");
+      }
+    }
   }
   await Promise.all([
     assertEmptyDirectory(receipt.roots.authority_home, "Authority HOME"),
     assertEmptyDirectory(receipt.roots.authority_tmp, "Authority TMPDIR"),
+    assertEmptyDirectory(receipt.roots.hf_cache, "Authority HF_HOME"),
   ]);
 }
 
@@ -215,14 +225,14 @@ function assertRealizedRecipe(receipt, receiptPath) {
     || authorityCommand[21] !== receipt.roots.authority_tmp) throw new Error("Receipt bootstrap metadata is invalid");
   const baseEnvironment = {
     HOME: receipt.roots.authority_home, TMPDIR: receipt.roots.authority_tmp, PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
-    UV_CACHE_DIR: receipt.roots.uv, UV_PYTHON_INSTALL_DIR: receipt.roots.uv_python_install, PYTHONDONTWRITEBYTECODE: "1",
+    HF_HOME: receipt.roots.hf_cache, UV_CACHE_DIR: receipt.roots.uv, UV_PYTHON_INSTALL_DIR: receipt.roots.uv_python_install, PYTHONDONTWRITEBYTECODE: "1",
   };
   const expectedSetupCommands = [
     [receipt.toolchain.uv.path, "python", "install", "--no-bin", "3.12.13"],
     [receipt.toolchain.uv.path, "venv", "--python", "3.12.13", venv],
     [receipt.toolchain.uv.path, "pip", "compile", rolePath("direct_requirements"), "--python", python, "--generate-hashes", "--output-file", lock],
     [receipt.toolchain.uv.path, "pip", "sync", lock, "--python", python, "--require-hashes"],
-    [python, "-I", "-B", rolePath("model_setup_helper"), "--config", rolePath("candidate_config"), "--expected-config-sha256", recordByRole(receipt, "candidate_config").sha256, "--models-path", receipt.roots.models],
+    [python, "-I", "-B", rolePath("model_setup_helper"), "--config", rolePath("candidate_config"), "--expected-config-sha256", recordByRole(receipt, "candidate_config").sha256, "--models-path", receipt.roots.models, "--hf-cache-path", receipt.roots.hf_cache],
   ];
   const expectedAdapterCommand = [
     python, "-I", "-B", rolePath("adapter_entrypoint"), "--config", rolePath("candidate_config"), "--artifacts-path", receipt.roots.models,
@@ -249,7 +259,7 @@ function assertRealizedRecipe(receipt, receiptPath) {
       network_required: true,
       environment: {
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
-        UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
+        HF_HOME: "$HF_CACHE_ROOT", UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
       authority_command: ["/bin/sh", "-c", bootstrapScript, "pdf-tools-docling-bootstrap.v1", "$NODE", "$NODE_SHA256", "$NODE_BYTES", "$NODE_MODE", "$NODE_LINKS", "$LAUNCHER", "$LAUNCHER_SHA256", "$LAUNCHER_BYTES", "$LAUNCHER_MODE", "$LAUNCHER_LINKS", "$VERIFIER", "$VERIFIER_SHA256", "$VERIFIER_BYTES", "$VERIFIER_MODE", "$VERIFIER_LINKS", "$RUN_ROOT", "$AUTHORITY_HOME", "$AUTHORITY_TMP", "--action", "setup", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder, "--protected-roots-json", protectedRootsPlaceholder],
       commands: [
@@ -257,7 +267,7 @@ function assertRealizedRecipe(receipt, receiptPath) {
         ["$UV", "venv", "--python", "3.12.13", "$VENV_ROOT"],
         ["$UV", "pip", "compile", "$DIRECT_REQUIREMENTS", "--python", "$PYTHON", "--generate-hashes", "--output-file", "$LOCK"],
         ["$UV", "pip", "sync", "$LOCK", "--python", "$PYTHON", "--require-hashes"],
-        ["$PYTHON", "-I", "-B", "$MODEL_SETUP_HELPER", "--config", "$CONFIG", "--expected-config-sha256", "$CONFIG_SHA256", "--models-path", "$MODELS_ROOT"],
+        ["$PYTHON", "-I", "-B", "$MODEL_SETUP_HELPER", "--config", "$CONFIG", "--expected-config-sha256", "$CONFIG_SHA256", "--models-path", "$MODELS_ROOT", "--hf-cache-path", "$HF_CACHE_ROOT"],
       ],
       finalization: { protocol: "pdf-tools.docling-finalization.v1", out_of_band_sha256_required: true },
     },
@@ -266,7 +276,7 @@ function assertRealizedRecipe(receipt, receiptPath) {
       environment: {
         HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1",
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
-        UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
+        HF_HOME: "$HF_CACHE_ROOT", UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
       authority_command: ["/bin/sh", "-c", bootstrapScript, "pdf-tools-docling-bootstrap.v1", "$NODE", "$NODE_SHA256", "$NODE_BYTES", "$NODE_MODE", "$NODE_LINKS", "$LAUNCHER", "$LAUNCHER_SHA256", "$LAUNCHER_BYTES", "$LAUNCHER_MODE", "$LAUNCHER_LINKS", "$VERIFIER", "$VERIFIER_SHA256", "$VERIFIER_BYTES", "$VERIFIER_MODE", "$VERIFIER_LINKS", "$RUN_ROOT", "$AUTHORITY_HOME", "$AUTHORITY_TMP", "--action", "execute", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder, "--protected-roots-json", protectedRootsPlaceholder, "--finalization", "$FINALIZATION", "--expected-finalization-sha256", finalizationDigestPlaceholder],
       adapter_command: ["$PYTHON", "-I", "-B", "$ADAPTER", "--config", "$CONFIG", "--artifacts-path", "$MODELS_ROOT", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder],
@@ -379,7 +389,7 @@ export async function verifyHandoffAuthority({ receiptPath, expectedReceiptSha25
 }
 
 function exactEnvironment(environment) {
-  const required = ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"];
+  const required = ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "HF_HOME", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"];
   const offline = ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE"];
   const expected = environment?.HF_HUB_OFFLINE === "1" ? [...required, ...offline] : required;
   if (!environment || canonicalJson(Object.keys(environment).sort()) !== canonicalJson(expected.sort())
@@ -477,7 +487,7 @@ async function writeExclusive(filename, bytes) {
 async function finalizeSetup(context, receiptPath, receiptSha) {
   const { receipt } = context;
   const snapshot = receipt.roots.sidecar_snapshot;
-  const isolationRoots = [receipt.roots.authority_home, receipt.roots.authority_tmp];
+  const isolationRoots = [receipt.roots.authority_home, receipt.roots.authority_tmp, receipt.roots.hf_cache];
   const python = path.join(snapshot, "venv", "bin", "python");
   const pythonReal = await fs.realpath(python);
   if (!within(receipt.roots.uv_python_install, pythonReal)) throw new Error("Managed Python executable escapes its receipt-bound root");
@@ -573,7 +583,7 @@ export function validateFinalizationSchemaMirror(value) {
     }
   };
   for (const tree of [value.model_files, value.managed_python_files, value.venv_files]) validateTree(tree);
-  const rootNames = ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp"];
+  const rootNames = ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp", "hf_cache"];
   if (!exactKeys(value.root_policy, rootNames)) throw new Error("Finalization root policy violates its retained schema mirror");
   for (const root of Object.values(value.root_policy)) {
     if (!exactKeys(root, ["path", "real_path", "mode", "links"]) || !absolutePath(root.path) || !absolutePath(root.real_path)
@@ -606,7 +616,7 @@ async function verifyFinalization(context, finalizationPath, expectedFinalizatio
     throw new Error("Finalization shape or retained identity is invalid");
   }
   const snapshot = context.receipt.roots.sidecar_snapshot;
-  const isolationRoots = [context.receipt.roots.authority_home, context.receipt.roots.authority_tmp];
+  const isolationRoots = [context.receipt.roots.authority_home, context.receipt.roots.authority_tmp, context.receipt.roots.hf_cache];
   const lockBytes = await readStable(path.join(snapshot, "requirements.lock"), 16 * 1024 * 1024, null, true);
   if (canonicalJson(value.lock) !== canonicalJson({ bytes: lockBytes.length, sha256: sha256(lockBytes) })) throw new Error("Finalized lock has drifted");
   const python = path.join(snapshot, "venv", "bin", "python");
@@ -661,7 +671,7 @@ async function main() {
   if (action === "setup") {
     for (const command of context.receipt.setup.commands) {
       context = await verifyHandoffAuthority({ receiptPath, expectedReceiptSha256, protectedRootsJson });
-      const result = await spawnBound(command, { environment: context.receipt.setup.environment, cwd: context.receipt.roots.authority_tmp, isolationRoots: [context.receipt.roots.authority_home, context.receipt.roots.authority_tmp] });
+      const result = await spawnBound(command, { environment: context.receipt.setup.environment, cwd: context.receipt.roots.authority_tmp, isolationRoots: [context.receipt.roots.authority_home, context.receipt.roots.authority_tmp, context.receipt.roots.hf_cache] });
       if (result.code !== 0) throw new Error(`Setup command failed (${path.basename(command[0])}): ${result.stderr.toString().slice(0, 500)}`);
       context = await verifyHandoffAuthority({ receiptPath, expectedReceiptSha256, protectedRootsJson });
     }
@@ -681,7 +691,7 @@ async function main() {
     });
     const command = context.receipt.execution.adapter_command.map(value => value === "$OUT_OF_BAND_RECEIPT_SHA256" ? expectedReceiptSha256
       : value === "$OUT_OF_BAND_FINALIZATION_SHA256" ? expectedFinalizationSha256 : value);
-    const result = await spawnBound(command, { environment: context.receipt.execution.environment, cwd: context.receipt.roots.authority_tmp, isolationRoots: [context.receipt.roots.authority_home, context.receipt.roots.authority_tmp], stdin: request });
+    const result = await spawnBound(command, { environment: context.receipt.execution.environment, cwd: context.receipt.roots.authority_tmp, isolationRoots: [context.receipt.roots.authority_home, context.receipt.roots.authority_tmp, context.receipt.roots.hf_cache], stdin: request });
     context = await verifyHandoffAuthority({ receiptPath, expectedReceiptSha256, protectedRootsJson });
     await verifyFinalization(context, finalizationPath, expectedFinalizationSha256);
     if (result.code !== 0) throw new Error(`Adapter command failed: ${result.stderr.toString().slice(0, 500)}`);

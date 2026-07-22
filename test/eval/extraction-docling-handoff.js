@@ -293,7 +293,7 @@ async function prepareDoclingMacHandoffCore({
       network_required: true,
       environment: {
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
-        UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
+        HF_HOME: "$HF_CACHE_ROOT", UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
       authority_command: [...normalizedBootstrapPrefix, "--action", "setup", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256", "--protected-roots-json", "$OUT_OF_BAND_PROTECTED_ROOTS_JSON"],
       commands: [
@@ -301,7 +301,7 @@ async function prepareDoclingMacHandoffCore({
         ["$UV", "venv", "--python", "3.12.13", "$VENV_ROOT"],
         ["$UV", "pip", "compile", "$DIRECT_REQUIREMENTS", "--python", "$PYTHON", "--generate-hashes", "--output-file", "$LOCK"],
         ["$UV", "pip", "sync", "$LOCK", "--python", "$PYTHON", "--require-hashes"],
-        ["$PYTHON", "-I", "-B", "$MODEL_SETUP_HELPER", "--config", "$CONFIG", "--expected-config-sha256", "$CONFIG_SHA256", "--models-path", "$MODELS_ROOT"],
+        ["$PYTHON", "-I", "-B", "$MODEL_SETUP_HELPER", "--config", "$CONFIG", "--expected-config-sha256", "$CONFIG_SHA256", "--models-path", "$MODELS_ROOT", "--hf-cache-path", "$HF_CACHE_ROOT"],
       ],
       finalization: { protocol: "pdf-tools.docling-finalization.v1", out_of_band_sha256_required: true },
     },
@@ -311,7 +311,7 @@ async function prepareDoclingMacHandoffCore({
       environment: {
         HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1",
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
-        UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
+        HF_HOME: "$HF_CACHE_ROOT", UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
       authority_command: [...normalizedBootstrapPrefix, "--action", "execute", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256", "--protected-roots-json", "$OUT_OF_BAND_PROTECTED_ROOTS_JSON", "--finalization", "$FINALIZATION", "--expected-finalization-sha256", "$OUT_OF_BAND_FINALIZATION_SHA256"],
       adapter_command: ["$PYTHON", "-I", "-B", "$ADAPTER", "--config", "$CONFIG", "--artifacts-path", "$MODELS_ROOT", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256"],
@@ -369,6 +369,7 @@ async function prepareDoclingMacHandoffCore({
   const fixtureRoot = await secureDirectory(path.join(runRoot, "fixtures"));
   const authorityHome = await secureDirectory(path.join(runRoot, "home"));
   const authorityTmp = await secureDirectory(path.join(runRoot, "tmp"));
+  const hfCacheRoot = await secureDirectory(path.join(runRoot, "hf-cache"));
 
   const retainedInputs = [];
   for (const input of sourceInputs) {
@@ -411,7 +412,7 @@ async function prepareDoclingMacHandoffCore({
   const pythonPath = path.join(venvRoot, "bin", "python");
   const baseEnvironment = {
     HOME: authorityHome, TMPDIR: authorityTmp, PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
-    UV_CACHE_DIR: uvRoot, UV_PYTHON_INSTALL_DIR: uvPythonInstallRoot, PYTHONDONTWRITEBYTECODE: "1",
+    HF_HOME: hfCacheRoot, UV_CACHE_DIR: uvRoot, UV_PYTHON_INSTALL_DIR: uvPythonInstallRoot, PYTHONDONTWRITEBYTECODE: "1",
   };
   const receipt = {
     protocol: "pdf-tools.docling-macos-handoff.v1",
@@ -438,6 +439,7 @@ async function prepareDoclingMacHandoffCore({
       sidecar_snapshot: snapshotRoot,
       authority_home: authorityHome,
       authority_tmp: authorityTmp,
+      hf_cache: hfCacheRoot,
       protected_roots_sha256: protectedRootDigest(protectedRoots),
     },
     inputs: retainedInputs,
@@ -451,7 +453,7 @@ async function prepareDoclingMacHandoffCore({
         [uv.path, "venv", "--python", "3.12.13", venvRoot],
         [uv.path, "pip", "compile", inputPath, "--python", pythonPath, "--generate-hashes", "--output-file", lockPath],
         [uv.path, "pip", "sync", lockPath, "--python", pythonPath, "--require-hashes"],
-        [pythonPath, "-I", "-B", setupHelperPath, "--config", configPath, "--expected-config-sha256", configSha256, "--models-path", modelsRoot],
+        [pythonPath, "-I", "-B", setupHelperPath, "--config", configPath, "--expected-config-sha256", configSha256, "--models-path", modelsRoot, "--hf-cache-path", hfCacheRoot],
       ],
       finalization: { protocol: "pdf-tools.docling-finalization.v1", path: finalizationPath, out_of_band_sha256_required: true },
     },

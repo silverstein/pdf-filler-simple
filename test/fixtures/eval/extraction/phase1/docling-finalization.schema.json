@@ -29,12 +29,12 @@
     "venv_files": { "$ref": "#/$defs/tree_inventory" },
     "root_policy": {
       "type": "object", "additionalProperties": false,
-      "required": ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp"],
+      "required": ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp", "hf_cache"],
       "properties": {
         "uv": { "$ref": "#/$defs/root_record" }, "uv_python_install": { "$ref": "#/$defs/root_record" },
         "models": { "$ref": "#/$defs/root_record" }, "runs": { "$ref": "#/$defs/root_record" },
         "sidecar_snapshot": { "$ref": "#/$defs/root_record" }, "authority_home": { "$ref": "#/$defs/root_record" },
-        "authority_tmp": { "$ref": "#/$defs/root_record" }
+        "authority_tmp": { "$ref": "#/$defs/root_record" }, "hf_cache": { "$ref": "#/$defs/root_record" }
       }
     },
     "network_isolation_enforced": { "const": false },

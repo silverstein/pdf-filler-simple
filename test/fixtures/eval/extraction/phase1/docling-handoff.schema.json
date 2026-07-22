@@ -77,7 +77,7 @@
     },
     "roots": {
       "type": "object", "additionalProperties": false,
-      "required": ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp", "protected_roots_sha256"],
+      "required": ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp", "hf_cache", "protected_roots_sha256"],
       "properties": {
         "uv": { "$ref": "#/$defs/absolute_path" },
         "uv_python_install": { "$ref": "#/$defs/absolute_path" },
@@ -86,6 +86,7 @@
         "sidecar_snapshot": { "$ref": "#/$defs/absolute_path" },
         "authority_home": { "$ref": "#/$defs/absolute_path" },
         "authority_tmp": { "$ref": "#/$defs/absolute_path" },
+        "hf_cache": { "$ref": "#/$defs/absolute_path" },
         "protected_roots_sha256": { "$ref": "#/$defs/sha256" }
       }
     },
@@ -168,29 +169,31 @@
     "fixture_inventory": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/fixture_record" } },
     "setup_environment": {
       "type": "object", "additionalProperties": false,
-      "required": ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
-      "properties": { "HOME": { "$ref": "#/$defs/absolute_path" }, "TMPDIR": { "$ref": "#/$defs/absolute_path" }, "PATH": { "const": "/usr/bin:/bin" }, "LANG": { "const": "C" }, "LC_ALL": { "const": "C" }, "UV_CACHE_DIR": { "$ref": "#/$defs/absolute_path" }, "UV_PYTHON_INSTALL_DIR": { "$ref": "#/$defs/absolute_path" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" } }
+      "required": ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "HF_HOME", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
+      "properties": { "HOME": { "$ref": "#/$defs/absolute_path" }, "TMPDIR": { "$ref": "#/$defs/absolute_path" }, "PATH": { "const": "/usr/bin:/bin" }, "LANG": { "const": "C" }, "LC_ALL": { "const": "C" }, "HF_HOME": { "$ref": "#/$defs/absolute_path" }, "UV_CACHE_DIR": { "$ref": "#/$defs/absolute_path" }, "UV_PYTHON_INSTALL_DIR": { "$ref": "#/$defs/absolute_path" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" } }
     },
     "execution_environment": {
       "type": "object", "additionalProperties": false,
-      "required": ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
+      "required": ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "HF_HOME", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
       "properties": {
         "HF_HUB_OFFLINE": { "const": "1" }, "TRANSFORMERS_OFFLINE": { "const": "1" }, "HF_DATASETS_OFFLINE": { "const": "1" },
         "HOME": { "$ref": "#/$defs/absolute_path" }, "TMPDIR": { "$ref": "#/$defs/absolute_path" }, "PATH": { "const": "/usr/bin:/bin" }, "LANG": { "const": "C" }, "LC_ALL": { "const": "C" },
+        "HF_HOME": { "$ref": "#/$defs/absolute_path" },
         "UV_CACHE_DIR": { "$ref": "#/$defs/absolute_path" }, "UV_PYTHON_INSTALL_DIR": { "$ref": "#/$defs/absolute_path" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" }
       }
     },
     "normalized_setup_environment": {
       "type": "object", "additionalProperties": false,
-      "required": ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
-      "properties": { "HOME": { "const": "$AUTHORITY_HOME" }, "TMPDIR": { "const": "$AUTHORITY_TMP" }, "PATH": { "const": "/usr/bin:/bin" }, "LANG": { "const": "C" }, "LC_ALL": { "const": "C" }, "UV_CACHE_DIR": { "const": "$UV_CACHE_ROOT" }, "UV_PYTHON_INSTALL_DIR": { "const": "$UV_PYTHON_INSTALL_ROOT" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" } }
+      "required": ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "HF_HOME", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
+      "properties": { "HOME": { "const": "$AUTHORITY_HOME" }, "TMPDIR": { "const": "$AUTHORITY_TMP" }, "PATH": { "const": "/usr/bin:/bin" }, "LANG": { "const": "C" }, "LC_ALL": { "const": "C" }, "HF_HOME": { "const": "$HF_CACHE_ROOT" }, "UV_CACHE_DIR": { "const": "$UV_CACHE_ROOT" }, "UV_PYTHON_INSTALL_DIR": { "const": "$UV_PYTHON_INSTALL_ROOT" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" } }
     },
     "normalized_execution_environment": {
       "type": "object", "additionalProperties": false,
-      "required": ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
+      "required": ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "HF_HOME", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
       "properties": {
         "HF_HUB_OFFLINE": { "const": "1" }, "TRANSFORMERS_OFFLINE": { "const": "1" }, "HF_DATASETS_OFFLINE": { "const": "1" },
         "HOME": { "const": "$AUTHORITY_HOME" }, "TMPDIR": { "const": "$AUTHORITY_TMP" }, "PATH": { "const": "/usr/bin:/bin" }, "LANG": { "const": "C" }, "LC_ALL": { "const": "C" },
+        "HF_HOME": { "const": "$HF_CACHE_ROOT" },
         "UV_CACHE_DIR": { "const": "$UV_CACHE_ROOT" }, "UV_PYTHON_INSTALL_DIR": { "const": "$UV_PYTHON_INSTALL_ROOT" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" }
       }
     }

@@ -134,7 +134,7 @@ describe("Docling macOS handoff", () => {
       toolchain: { uv: uvTool, node: nodeTool }, lock: { bytes: 0, sha256: sha },
       python: { path: "/private/python", bytes: 1, sha256: sha, version: "Python 3.12.13" },
       installed_distributions: [["docling-slim", "2.114.0"]], model_files: tree, managed_python_files: tree, venv_files: tree,
-      root_policy: Object.fromEntries(["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp"].map(name => [name, rootRecord])),
+      root_policy: Object.fromEntries(["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp", "hf_cache"].map(name => [name, rootRecord])),
       network_isolation_enforced: false, execution_state: "setup_complete_not_executed", finalization_id: sha,
     };
     const schema = JSON.parse(await fs.readFile(path.resolve("test/fixtures/eval/extraction/phase1/docling-finalization.schema.json"), "utf8"));
@@ -211,6 +211,10 @@ describe("Docling macOS handoff", () => {
     expect(result.bootstrap_sha256).toBe("9921055c8883627b062c4edfa8996c49ec37e6a7262374cdff27fc3ec7067b6f");
     expect(result.receipt.identity.recipe.setup.commands[0]).toEqual(["$UV", "python", "install", "--no-bin", "3.12.13"]);
     expect(result.receipt.setup.commands[0]).toEqual([result.receipt.toolchain.uv.path, "python", "install", "--no-bin", "3.12.13"]);
+    expect(result.receipt.setup.environment.HF_HOME).toBe(result.receipt.roots.hf_cache);
+    expect(result.receipt.execution.environment.HF_HOME).toBe(result.receipt.roots.hf_cache);
+    expect(result.receipt.identity.recipe.setup.environment.HF_HOME).toBe("$HF_CACHE_ROOT");
+    expect(result.receipt.setup.commands.at(-1).slice(-2)).toEqual(["--hf-cache-path", result.receipt.roots.hf_cache]);
     const unsafeHome = path.join(root, "unsafe-home-control");
     await fs.mkdir(unsafeHome, { mode: 0o700 });
     const unsafeCommand = result.receipt.setup.commands[0].filter(argument => argument !== "--no-bin");
@@ -226,6 +230,8 @@ describe("Docling macOS handoff", () => {
     });
     expect(fakeInstall.status, fakeInstall.stderr).toBe(0);
     expect(await fs.readdir(result.receipt.roots.authority_home)).toEqual([]);
+    expect(await fs.readdir(result.receipt.roots.authority_tmp)).toEqual([]);
+    expect(await fs.readdir(result.receipt.roots.hf_cache)).toEqual([]);
     expect(result.receipt.setup.commands.at(-1).slice(0, 3)).toEqual([path.join(result.receipt.roots.sidecar_snapshot, "venv/bin/python"), "-I", "-B"]);
     expect(result.receipt.execution.adapter_command.slice(0, 3)).toEqual([path.join(result.receipt.roots.sidecar_snapshot, "venv/bin/python"), "-I", "-B"]);
     expect(result.receipt.handoff_id).toMatch(/^[a-f0-9]{64}$/);
@@ -401,12 +407,32 @@ describe("Docling macOS handoff", () => {
     expect(isolationVerification.stderr).toMatch(/must remain empty/i);
   });
 
+  it("rejects a nonempty receipt-bound HF cache", async () => {
+    const cacheCase = await mutationCase("hf-cache-isolation-root");
+    await fs.writeFile(path.join(cacheCase.result.receipt.roots.hf_cache, "xet.log"), "transient\n", { mode: 0o600 });
+    const cacheVerification = runCleanVerify(cacheCase.result);
+    expect(cacheVerification.status).not.toBe(0);
+    expect(cacheVerification.stderr).toMatch(/must remain empty/i);
+  }, 10000);
+
   it("rejects post-handoff root substitution into protected storage", async () => {
     const root = await temporaryRoot("pdf-tools-docling-root-substitution-");
     const result = await prepareDoclingMacHandoffForTest(await options(root, [await fixture(root)]));
     const protectedTarget = path.join(root, "Dropbox/model-target");
     await fs.mkdir(protectedTarget, { recursive: true, mode: 0o700 });
     await fs.symlink(protectedTarget, result.receipt.roots.models);
+    const verification = runCleanVerify(result);
+    expect(verification.status).not.toBe(0);
+    expect(verification.stderr).toMatch(/symbolic link|real path|protected storage/i);
+  });
+
+  it("rejects post-handoff HF cache substitution", async () => {
+    const root = await temporaryRoot("pdf-tools-docling-hf-cache-substitution-");
+    const result = await prepareDoclingMacHandoffForTest(await options(root, [await fixture(root)]));
+    const protectedTarget = path.join(root, "Dropbox/hf-cache-target");
+    await fs.mkdir(protectedTarget, { recursive: true, mode: 0o700 });
+    await fs.rm(result.receipt.roots.hf_cache, { recursive: true });
+    await fs.symlink(protectedTarget, result.receipt.roots.hf_cache);
     const verification = runCleanVerify(result);
     expect(verification.status).not.toBe(0);
     expect(verification.stderr).toMatch(/symbolic link|real path|protected storage/i);

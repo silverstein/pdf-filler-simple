@@ -21,6 +21,8 @@ MAX_CONFIG_BYTES = 1024 * 1024
 MAX_INVENTORY_BYTES = 16 * 1024 * 1024
 MAX_FILE_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+MAX_CACHE_ENTRIES = 100000
+MAX_CACHE_DEPTH = 128
 
 
 def publish_fresh(staging: Path, target: Path) -> None:
@@ -53,6 +55,123 @@ def fsync_directory(directory: Path) -> None:
         os.fsync(descriptor)
     finally:
         os.close(descriptor)
+
+
+def within(parent: Path, child: Path) -> bool:
+    try:
+        child.relative_to(parent)
+        return True
+    except ValueError:
+        return False
+
+
+def validate_private_empty_cache(cache_path: Path) -> tuple[int, int]:
+    if not cache_path.is_absolute() or Path(os.path.abspath(cache_path)) != cache_path:
+        raise RuntimeError("HF cache path must be canonical absolute")
+    metadata = cache_path.lstat()
+    if (not stat.S_ISDIR(metadata.st_mode) or stat.S_IMODE(metadata.st_mode) != 0o700
+            or cache_path.is_symlink() or cache_path.resolve(strict=True) != cache_path):
+        raise RuntimeError("HF cache path must be a real mode-0700 directory")
+    configured = os.environ.get("HF_HOME")
+    if configured != str(cache_path):
+        raise RuntimeError("HF_HOME does not match the receipt-bound cache path")
+    isolation_paths = []
+    for name in ("HOME", "TMPDIR"):
+        value = os.environ.get(name)
+        if value is None:
+            raise RuntimeError(f"{name} is required for cache isolation")
+        candidate = Path(value)
+        if not candidate.is_absolute() or Path(os.path.abspath(candidate)) != candidate:
+            raise RuntimeError(f"{name} must be canonical absolute")
+        candidate_metadata = candidate.lstat()
+        if (not stat.S_ISDIR(candidate_metadata.st_mode) or stat.S_IMODE(candidate_metadata.st_mode) != 0o700
+                or candidate.is_symlink() or candidate.resolve(strict=True) != candidate):
+            raise RuntimeError(f"{name} must be a real mode-0700 directory")
+        isolation_paths.append(candidate)
+    for other in isolation_paths:
+        if within(other, cache_path) or within(cache_path, other):
+            raise RuntimeError("HF cache path must be disjoint from HOME and TMPDIR")
+    if any(cache_path.iterdir()):
+        raise RuntimeError("HF cache path must be empty before setup")
+    return metadata.st_dev, metadata.st_ino
+
+
+def clear_cache_directory(descriptor: int, budget: list[int], depth: int = 0) -> None:
+    if depth > MAX_CACHE_DEPTH:
+        raise RuntimeError("HF cache cleanup exceeds its depth ceiling")
+    for name in os.listdir(descriptor):
+        budget[0] -= 1
+        if budget[0] < 0:
+            raise RuntimeError("HF cache cleanup exceeds its entry ceiling")
+        before = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+        if stat.S_ISDIR(before.st_mode):
+            child = os.open(name, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0), dir_fd=descriptor)
+            try:
+                opened = os.fstat(child)
+                if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino):
+                    raise RuntimeError("HF cache directory was substituted during cleanup")
+                clear_cache_directory(child, budget, depth + 1)
+                after = os.stat(name, dir_fd=descriptor, follow_symlinks=False)
+                if (after.st_dev, after.st_ino) != (opened.st_dev, opened.st_ino):
+                    raise RuntimeError("HF cache directory was substituted during cleanup")
+            finally:
+                os.close(child)
+            os.rmdir(name, dir_fd=descriptor)
+        else:
+            os.unlink(name, dir_fd=descriptor)
+    os.fsync(descriptor)
+
+
+def clear_private_cache(cache_path: Path, identity: tuple[int, int]) -> None:
+    descriptor = os.open(cache_path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        metadata = os.fstat(descriptor)
+        if (not stat.S_ISDIR(metadata.st_mode) or (metadata.st_dev, metadata.st_ino) != identity):
+            raise RuntimeError("HF cache root was substituted during setup")
+        clear_cache_directory(descriptor, [MAX_CACHE_ENTRIES])
+        if os.listdir(descriptor):
+            raise RuntimeError("HF cache root did not return to its empty private state")
+    finally:
+        os.close(descriptor)
+    after = cache_path.lstat()
+    if (cache_path.is_symlink() or cache_path.resolve(strict=True) != cache_path
+            or stat.S_IMODE(after.st_mode) != 0o700 or (after.st_dev, after.st_ino) != identity):
+        raise RuntimeError("HF cache root was substituted during setup")
+
+
+def remove_local_download_metadata(repository_path: Path) -> None:
+    repository_metadata = repository_path.lstat()
+    if (repository_path.is_symlink() or not stat.S_ISDIR(repository_metadata.st_mode)
+            or repository_path.resolve(strict=True) != repository_path):
+        raise RuntimeError("model repository download path is not a real directory")
+    cache_path = repository_path / ".cache"
+    if not cache_path.exists() and not cache_path.is_symlink():
+        return
+    cache_metadata = cache_path.lstat()
+    if cache_path.is_symlink() or not stat.S_ISDIR(cache_metadata.st_mode):
+        raise RuntimeError("model download .cache is not a real directory")
+    cache_entries = list(cache_path.iterdir())
+    if len(cache_entries) != 1 or cache_entries[0].name != "huggingface":
+        raise RuntimeError("model download .cache contains unexpected entries")
+    huggingface_path = cache_entries[0]
+    huggingface_metadata = huggingface_path.lstat()
+    if huggingface_path.is_symlink() or not stat.S_ISDIR(huggingface_metadata.st_mode):
+        raise RuntimeError("model download Hugging Face metadata is not a real directory")
+    for root, directories, filenames in os.walk(huggingface_path, followlinks=False):
+        root_path = Path(root)
+        for name in directories:
+            directory = root_path / name
+            if directory.is_symlink() or not stat.S_ISDIR(directory.lstat().st_mode):
+                raise RuntimeError("model download metadata contains an unexpected directory")
+        for name in filenames:
+            candidate = root_path / name
+            metadata = candidate.lstat()
+            if (candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+                    or not (name == ".gitignore" or name.endswith((".metadata", ".lock", ".incomplete")))):
+                raise RuntimeError("model download metadata contains an unexpected file")
+    shutil.rmtree(huggingface_path)
+    cache_path.rmdir()
+    fsync_directory(repository_path)
 
 
 def write_exclusive(filename: Path, value: bytes) -> None:
@@ -184,11 +303,11 @@ def arguments():
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--expected-config-sha256", required=True)
     parser.add_argument("--models-path", required=True, type=Path)
+    parser.add_argument("--hf-cache-path", required=True, type=Path)
     return parser.parse_args()
 
 
-def main() -> int:
-    args = arguments()
+def setup(args) -> int:
     if not SHA256.fullmatch(args.expected_config_sha256):
         raise RuntimeError("expected config SHA-256 is invalid")
     config_bytes = read_regular(args.config, MAX_CONFIG_BYTES, 0o600)
@@ -242,6 +361,7 @@ def main() -> int:
         from huggingface_hub import snapshot_download
         repository_path = staging / model["repository"].replace("/", "--")
         snapshot_download(repo_id=model["repository"], revision=model["revision"], local_dir=repository_path)
+        remove_local_download_metadata(repository_path)
         files = scan_files(staging, normalize_modes=True)
         inventory = {
             "inventory_id": "pdf-tools.docling-layout-model-inventory.v1",
@@ -289,6 +409,15 @@ def main() -> int:
             os.unlink(intent_path)
             fsync_directory(parent)
         raise
+
+
+def main() -> int:
+    args = arguments()
+    cache_identity = validate_private_empty_cache(args.hf_cache_path)
+    try:
+        return setup(args)
+    finally:
+        clear_private_cache(args.hf_cache_path, cache_identity)
 
 
 if __name__ == "__main__":
