@@ -1,0 +1,711 @@
+{
+  "oracle_id": "pdf-tools.extraction-phase1-scoring-oracle.v1",
+  "oracle_version": 1,
+  "phase0_manifest_sha256": "76f66a83eb4fba74a058467d15c6bebd17d56961776eba8f0411c7bbbc6b8430",
+  "manifest_bytes_sha256": "9cf89f50aeaeb84aaa4373901d87a27875cc8119814fdd517ca980e208541bb9",
+  "manifest_schema_sha256": "03cc2daff2a33e23201502b98f517a75debc6edb3b6ebc5c098110e78ebad5a0",
+  "manifest_schema_bytes_sha256": "92f07ed4576a9d8851458a084fa17558520bff64da1bd379230c4d470b67bd63",
+  "cases": [
+    {
+      "case_id": "pdf-tools.extraction.phase0.born-digital-flat",
+      "target_schema_sha256": "0ebf6be4c4c796239bf78c0eabbf8f29ba34d28d001570fee3ff5ad410d0d5f9",
+      "expected_pages_sha256": "bf6561d416067633d87be1b228d9e2eaf650b51924340987b69f827be0b58afe",
+      "expected_table_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "contract_leaf_policies": [
+        {
+          "field_path": "/invoice_date",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/invoice_id",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/total/amount",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/total/currency",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/vendor",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        }
+      ],
+      "truth_leaves": [
+        {
+          "field_path": "/invoice_date",
+          "contract_path": "/invoice_date",
+          "value": "2026-07-15",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/invoice_id",
+          "contract_path": "/invoice_id",
+          "value": "INV-1001",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "any",
+            "fact_ids": [
+              "fact.flat.invoice-id"
+            ]
+          }
+        },
+        {
+          "field_path": "/total/amount",
+          "contract_path": "/total/amount",
+          "value": 42.5,
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "any",
+            "fact_ids": [
+              "fact.flat.total"
+            ]
+          }
+        },
+        {
+          "field_path": "/total/currency",
+          "contract_path": "/total/currency",
+          "value": "USD",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "any",
+            "fact_ids": [
+              "fact.flat.total"
+            ]
+          }
+        },
+        {
+          "field_path": "/vendor",
+          "contract_path": "/vendor",
+          "value": "Northwind Paper",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        }
+      ],
+      "fact_ids": [
+        "fact.flat.invoice-id",
+        "fact.flat.total"
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.born-digital-nested",
+      "target_schema_sha256": "21e7a4ecc111fc2aaa128e7308ecb978836f901dfc95e0dbb0e9062c2f5158f1",
+      "expected_pages_sha256": "2d8eba4e35227592f7b38f549c0f1874b8168e8b218a5385f3a6ea08861a9c83",
+      "expected_table_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "contract_leaf_policies": [
+        {
+          "field_path": "/active",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/address/city",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/address/postal_code",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/address/region",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/address/street",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/customer_id",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/organization",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/tags",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        }
+      ],
+      "truth_leaves": [
+        {
+          "field_path": "/active",
+          "contract_path": "/active",
+          "value": true,
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/address/city",
+          "contract_path": "/address/city",
+          "value": "Portland",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/address/postal_code",
+          "contract_path": "/address/postal_code",
+          "value": "97205",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "any",
+            "fact_ids": [
+              "fact.nested.postal"
+            ]
+          }
+        },
+        {
+          "field_path": "/address/region",
+          "contract_path": "/address/region",
+          "value": "OR",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/address/street",
+          "contract_path": "/address/street",
+          "value": "77 Cedar Avenue",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/customer_id",
+          "contract_path": "/customer_id",
+          "value": "C-204",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "any",
+            "fact_ids": [
+              "fact.nested.customer"
+            ]
+          }
+        },
+        {
+          "field_path": "/organization",
+          "contract_path": "/organization",
+          "value": "Alpine Works",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/tags/0",
+          "contract_path": "/tags",
+          "value": "renewal",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/tags/1",
+          "contract_path": "/tags",
+          "value": "priority",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        }
+      ],
+      "fact_ids": [
+        "fact.nested.customer",
+        "fact.nested.postal"
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.two-column-order",
+      "target_schema_sha256": "e7eb00152fd1a39ec74e79e1c9c92085eefd0c120f36b892559ab2359ba94a7e",
+      "expected_pages_sha256": "548d11ba732c0ebcdf893d6a4b3c5744876bec51796b8c7a911873e540e5986a",
+      "expected_table_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "contract_leaf_policies": [
+        {
+          "field_path": "/events",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        }
+      ],
+      "truth_leaves": [
+        {
+          "field_path": "/events/0",
+          "contract_path": "/events",
+          "value": "Coverage begins July 1.",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/events/1",
+          "contract_path": "/events",
+          "value": "Claims close July 31.",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/events/2",
+          "contract_path": "/events",
+          "value": "Review starts August 2.",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "any",
+            "fact_ids": [
+              "fact.columns.review"
+            ]
+          }
+        },
+        {
+          "field_path": "/events/3",
+          "contract_path": "/events",
+          "value": "Decision follows review.",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        }
+      ],
+      "fact_ids": [
+        "fact.columns.review"
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.table-merged-blank",
+      "target_schema_sha256": "6b6597740ff66d8a21155f19aa75dd16c7ec9b1cd1abc3d41953bb23ad1affe9",
+      "expected_pages_sha256": "37dac97af7d25922c12e644631e9b318bf486660deb833c9aff2eda9b460c1b8",
+      "expected_table_sha256": "5b86b82803208e42d5b463cd4b4bbba5f6c95e4f3b0a72c0948a57dd081a7ad3",
+      "contract_leaf_policies": [
+        {
+          "field_path": "/headers",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/rows",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/title",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        }
+      ],
+      "truth_leaves": [
+        {
+          "field_path": "/headers/0",
+          "contract_path": "/headers",
+          "value": "Item",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/headers/1",
+          "contract_path": "/headers",
+          "value": "Qty",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/headers/2",
+          "contract_path": "/headers",
+          "value": "Amount",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/rows/0/amount",
+          "contract_path": "/rows",
+          "value": 20,
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/rows/0/item",
+          "contract_path": "/rows",
+          "value": "Paper",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/rows/0/qty",
+          "contract_path": "/rows",
+          "value": 2,
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/rows/1/amount",
+          "contract_path": "/rows",
+          "value": 5,
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "any",
+            "fact_ids": [
+              "fact.table.delivery"
+            ]
+          }
+        },
+        {
+          "field_path": "/rows/1/item",
+          "contract_path": "/rows",
+          "value": "Delivery",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/rows/1/qty",
+          "contract_path": "/rows",
+          "value": null,
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/title",
+          "contract_path": "/title",
+          "value": "Q3 PURCHASES",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        }
+      ],
+      "fact_ids": [
+        "fact.table.delivery"
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.raster-clean",
+      "target_schema_sha256": "8ac36f6146a9a2fe8655e626b69f8be54b141f95c6d2f7248932dd45d02d3167",
+      "expected_pages_sha256": "ae0059d3fdaefd423bc5c4ccab9908b4dd4a15f2e75dd90929a058fc7924264e",
+      "expected_table_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "contract_leaf_policies": [
+        {
+          "field_path": "/merchant",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/receipt_id",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/total",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        }
+      ],
+      "truth_leaves": [
+        {
+          "field_path": "/merchant",
+          "contract_path": "/merchant",
+          "value": "Cedar Cafe",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/receipt_id",
+          "contract_path": "/receipt_id",
+          "value": "R-550",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/total",
+          "contract_path": "/total",
+          "value": 18.75,
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "any",
+            "fact_ids": [
+              "fact.raster.total"
+            ]
+          }
+        }
+      ],
+      "fact_ids": [
+        "fact.raster.total"
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.raster-degraded",
+      "target_schema_sha256": "8ac36f6146a9a2fe8655e626b69f8be54b141f95c6d2f7248932dd45d02d3167",
+      "expected_pages_sha256": "ae0059d3fdaefd423bc5c4ccab9908b4dd4a15f2e75dd90929a058fc7924264e",
+      "expected_table_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "contract_leaf_policies": [
+        {
+          "field_path": "/merchant",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/receipt_id",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/total",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        }
+      ],
+      "truth_leaves": [
+        {
+          "field_path": "/merchant",
+          "contract_path": "/merchant",
+          "value": "Cedar Cafe",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/receipt_id",
+          "contract_path": "/receipt_id",
+          "value": "R-550",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/total",
+          "contract_path": "/total",
+          "value": 18.75,
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "any",
+            "fact_ids": [
+              "fact.degraded.total"
+            ]
+          }
+        }
+      ],
+      "fact_ids": [
+        "fact.degraded.total"
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.mixed-text-raster",
+      "target_schema_sha256": "a57aa02fe9fe4a488c127b03d64264fbca472b96354837ec6dfbe350e762197a",
+      "expected_pages_sha256": "77f1e101cdc79e06f4515ee05b767c5b7c23d614fc3726c88005e322169d0c5c",
+      "expected_table_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "contract_leaf_policies": [
+        {
+          "field_path": "/packet_id",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/receipt/merchant",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/receipt/receipt_id",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/receipt/total",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        }
+      ],
+      "truth_leaves": [
+        {
+          "field_path": "/packet_id",
+          "contract_path": "/packet_id",
+          "value": "MIX-77",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "any",
+            "fact_ids": [
+              "fact.mixed.packet"
+            ]
+          }
+        },
+        {
+          "field_path": "/receipt/merchant",
+          "contract_path": "/receipt/merchant",
+          "value": "Cedar Cafe",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/receipt/receipt_id",
+          "contract_path": "/receipt/receipt_id",
+          "value": "R-550",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/receipt/total",
+          "contract_path": "/receipt/total",
+          "value": 18.75,
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "any",
+            "fact_ids": [
+              "fact.mixed.total"
+            ]
+          }
+        }
+      ],
+      "fact_ids": [
+        "fact.mixed.packet",
+        "fact.mixed.total"
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.no-answer-contradiction",
+      "target_schema_sha256": "286a40a26dd7c20638bf18751b286ccb259eae2db71295c46bd35298dee3d36b",
+      "expected_pages_sha256": "c7546747e6c781d26413719ef266495200674ba57fb03f4050a9a5e9e15df9bc",
+      "expected_table_sha256": "74234e98afe7498fb5daf1f36ac2d78acc339464f950703b8c019892f982b90b",
+      "contract_leaf_policies": [
+        {
+          "field_path": "/answer_state",
+          "expected_decision": "answer",
+          "allowed_gap_reasons": []
+        },
+        {
+          "field_path": "/final_status",
+          "expected_decision": "abstain",
+          "allowed_gap_reasons": [
+            "contradictory_source",
+            "absent_in_source"
+          ]
+        },
+        {
+          "field_path": "/settlement_amount",
+          "expected_decision": "abstain",
+          "allowed_gap_reasons": [
+            "absent_in_source"
+          ]
+        }
+      ],
+      "truth_leaves": [
+        {
+          "field_path": "/answer_state",
+          "contract_path": "/answer_state",
+          "value": "contradictory_and_absent",
+          "disposition": "answer",
+          "fact_support": {
+            "mode": "all",
+            "fact_ids": [
+              "fact.contradiction.approved",
+              "fact.contradiction.rejected"
+            ]
+          }
+        },
+        {
+          "field_path": "/final_status",
+          "contract_path": "/final_status",
+          "value": null,
+          "disposition": "abstain",
+          "fact_support": {
+            "mode": "none",
+            "fact_ids": []
+          }
+        },
+        {
+          "field_path": "/settlement_amount",
+          "contract_path": "/settlement_amount",
+          "value": null,
+          "disposition": "abstain",
+          "fact_support": {
+            "mode": "any",
+            "fact_ids": [
+              "fact.contradiction.absent"
+            ]
+          }
+        }
+      ],
+      "fact_ids": [
+        "fact.contradiction.approved",
+        "fact.contradiction.rejected",
+        "fact.contradiction.absent"
+      ]
+    }
+  ]
+}

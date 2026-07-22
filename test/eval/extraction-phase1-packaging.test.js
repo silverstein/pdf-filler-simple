@@ -9,6 +9,9 @@ const PHASE1_EVALUATION_ASSETS = [
   "docs/EXTRACTION_CANDIDATE_PROTOCOL.md",
   "docs/evidence/extraction-phase1-sidecars.v1.json.preflight.json",
   "scripts/eval-run-extraction-candidates.mjs",
+  "scripts/eval-score-extraction-candidates.mjs",
+  "test/eval/extraction-phase1-scorer.js",
+  "test/eval/extraction-phase1-scorer.test.js",
   "test/eval/extraction-phase1-protocol.js",
   "test/eval/extraction-phase1.test.js",
   "test/eval/extraction-phase1-packaging.test.js",
@@ -19,6 +22,10 @@ const PHASE1_EVALUATION_ASSETS = [
   "test/fixtures/eval/extraction/phase1/run-plan.schema.json",
   "test/fixtures/eval/extraction/phase1/run-plan.v1.json",
   "test/fixtures/eval/extraction/phase1/report.schema.json",
+  "test/fixtures/eval/extraction/phase1/scoring-oracle.schema.json",
+  "test/fixtures/eval/extraction/phase1/scoring-oracle.v1.json",
+  "test/fixtures/eval/extraction/phase1/score-report.schema.json",
+  "test/fixtures/eval/extraction/phase1/score-index.schema.json",
   "test/fixtures/eval/extraction/phase1/mock-candidate.mjs"
 ];
 

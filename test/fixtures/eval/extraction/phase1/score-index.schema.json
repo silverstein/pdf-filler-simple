@@ -1,0 +1,27 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/score-index.schema.json",
+  "title": "PDF Tools extraction Phase 1 score index v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["index_id", "index_version", "claim_ready", "score_report", "bindings"],
+  "properties": {
+    "index_id": { "const": "pdf-tools.extraction-phase1-score-index.v1" },
+    "index_version": { "const": 1 },
+    "claim_ready": { "const": false },
+    "score_report": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "bytes", "sha256"],
+      "properties": { "path": { "type": "string", "pattern": "^[A-Za-z0-9._/-]+\\.json$" }, "bytes": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "bindings": {
+      "type": "object", "additionalProperties": false,
+      "required": ["execution_report_sha256", "execution_report_bytes_sha256", "phase0_manifest_sha256", "oracle_sha256", "oracle_bytes_sha256", "oracle_schema_sha256", "score_schema_sha256", "preflight_evidence_sha256", "preflight_evidence_bytes_sha256", "scorer_contract_sha256", "scorer_source_set_sha256"],
+      "properties": {
+        "execution_report_sha256": { "$ref": "#/$defs/sha256" }, "execution_report_bytes_sha256": { "$ref": "#/$defs/sha256" }, "phase0_manifest_sha256": { "$ref": "#/$defs/sha256" }, "oracle_sha256": { "$ref": "#/$defs/sha256" }, "oracle_bytes_sha256": { "$ref": "#/$defs/sha256" },
+        "oracle_schema_sha256": { "$ref": "#/$defs/sha256" }, "score_schema_sha256": { "$ref": "#/$defs/sha256" }, "preflight_evidence_sha256": { "$ref": "#/$defs/sha256" }, "preflight_evidence_bytes_sha256": { "$ref": "#/$defs/sha256" }, "scorer_contract_sha256": { "$ref": "#/$defs/sha256" }, "scorer_source_set_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    }
+  },
+  "$defs": { "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+}

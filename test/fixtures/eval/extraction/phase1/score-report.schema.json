@@ -1,0 +1,148 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/score-report.schema.json",
+  "title": "PDF Tools extraction Phase 1 score report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["score_report_id", "score_report_version", "benchmark_claim_ready", "calibration_claim_ready", "canonical_evidence_claim_ready", "scorer_id", "scorer_contract_sha256", "scorer_sources", "scorer_source_set_sha256", "execution_report_sha256", "execution_report_bytes_sha256", "phase0_manifest_sha256", "oracle_sha256", "oracle_bytes_sha256", "oracle_schema_sha256", "preflight_evidence_sha256", "preflight_evidence_bytes_sha256", "attempts", "aggregate", "stability", "canonical_evidence", "unavailable_claims"],
+  "properties": {
+    "score_report_id": { "const": "pdf-tools.extraction-phase1-score-report.v1" },
+    "score_report_version": { "const": 1 },
+    "benchmark_claim_ready": { "const": false },
+    "calibration_claim_ready": { "const": false },
+    "canonical_evidence_claim_ready": { "const": false },
+    "scorer_id": { "const": "pdf-tools.extraction-phase1-scorer.v1" },
+    "scorer_contract_sha256": { "$ref": "#/$defs/sha256" },
+    "scorer_sources": { "type": "array", "minItems": 9, "maxItems": 9, "uniqueItems": true, "items": { "$ref": "#/$defs/sourceBinding" } },
+    "scorer_source_set_sha256": { "$ref": "#/$defs/sha256" },
+    "execution_report_sha256": { "$ref": "#/$defs/sha256" },
+    "execution_report_bytes_sha256": { "$ref": "#/$defs/sha256" },
+    "phase0_manifest_sha256": { "$ref": "#/$defs/sha256" },
+    "oracle_sha256": { "$ref": "#/$defs/sha256" },
+    "oracle_bytes_sha256": { "$ref": "#/$defs/sha256" },
+    "oracle_schema_sha256": { "$ref": "#/$defs/sha256" },
+    "preflight_evidence_sha256": { "$ref": "#/$defs/sha256" },
+    "preflight_evidence_bytes_sha256": { "$ref": "#/$defs/sha256" },
+    "attempts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/attempt" } },
+    "aggregate": { "$ref": "#/$defs/aggregate" },
+    "stability": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/stability" } },
+    "canonical_evidence": { "type": "object", "additionalProperties": false, "required": ["availability", "page", "bbox", "fact", "answer"], "properties": { "availability": { "const": "unavailable" }, "page": { "type": "null" }, "bbox": { "type": "null" }, "fact": { "type": "null" }, "answer": { "type": "null" } } },
+    "unavailable_claims": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "sourceBinding": { "type": "object", "additionalProperties": false, "required": ["role", "path", "bytes", "sha256"], "properties": { "role": { "enum": ["index_schema", "manifest_loader", "oracle_schema", "orchestration_script", "protocol_module", "report_schema", "score_schema", "scorer_module", "scoring_oracle"] }, "path": { "type": "string", "minLength": 1 }, "bytes": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" } } },
+    "countClass": {
+      "type": "object", "additionalProperties": false,
+      "required": ["expected", "correct", "wrong", "missing"],
+      "properties": { "expected": { "type": "integer", "minimum": 0 }, "correct": { "type": "integer", "minimum": 0 }, "wrong": { "type": "integer", "minimum": 0 }, "missing": { "type": "integer", "minimum": 0 } }
+    },
+    "contractLeaves": {
+      "type": "object", "additionalProperties": false,
+      "required": ["total", "expected_answer", "expected_abstain", "answered_expected", "correctly_abstained", "false_answers", "false_abstentions", "typed_gap_correct", "typed_gap_wrong_reason", "false_answer_rate", "selective_abstention_coverage", "selective_abstention_accuracy"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 1 }, "expected_answer": { "type": "integer", "minimum": 0 }, "expected_abstain": { "type": "integer", "minimum": 0 },
+        "answered_expected": { "type": "integer", "minimum": 0 }, "correctly_abstained": { "type": "integer", "minimum": 0 }, "false_answers": { "type": "integer", "minimum": 0 },
+        "false_abstentions": { "type": "integer", "minimum": 0 }, "typed_gap_correct": { "type": "integer", "minimum": 0 }, "typed_gap_wrong_reason": { "type": "integer", "minimum": 0 },
+        "false_answer_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "selective_abstention_coverage": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "selective_abstention_accuracy": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "dataLeaves": {
+      "type": "object", "additionalProperties": false,
+      "required": ["truth", "candidate", "correct", "wrong", "missing", "spurious", "shifted_array", "precision", "recall", "f1"],
+      "properties": {
+        "truth": { "type": "integer", "minimum": 0 }, "candidate": { "type": "integer", "minimum": 0 }, "correct": { "type": "integer", "minimum": 0 },
+        "wrong": { "type": "integer", "minimum": 0 }, "missing": { "type": "integer", "minimum": 0 }, "spurious": { "type": "integer", "minimum": 0 }, "shifted_array": { "type": "integer", "minimum": 0 },
+        "precision": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "recall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "f1": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "structured": {
+      "type": "object", "additionalProperties": false,
+      "required": ["available", "schema_valid", "schema_scope", "contract_leaves", "data_leaves"],
+      "properties": { "available": { "type": "boolean" }, "schema_valid": { "type": ["boolean", "null"] }, "schema_scope": { "enum": ["not_applicable", "answered_projection", "complete_target"] }, "contract_leaves": { "$ref": "#/$defs/contractLeaves" }, "data_leaves": { "$ref": "#/$defs/dataLeaves" } }
+    },
+    "text": {
+      "type": "object", "additionalProperties": false,
+      "required": ["available", "pages", "pages_present", "duplicate_pages", "spurious_pages", "fragments", "fragments_found", "ordered_pages", "ordered_fragments_found", "character_distance", "characters", "word_distance", "words", "fragment_recall", "reading_order_accuracy", "ordered_fragment_recall", "cer", "wer"],
+      "properties": {
+        "available": { "type": "boolean" }, "pages": { "type": "integer", "minimum": 0 }, "pages_present": { "type": "integer", "minimum": 0 }, "duplicate_pages": { "type": "integer", "minimum": 0 }, "spurious_pages": { "type": "integer", "minimum": 0 },
+        "fragments": { "type": "integer", "minimum": 0 }, "fragments_found": { "type": "integer", "minimum": 0 }, "ordered_pages": { "type": "integer", "minimum": 0 }, "ordered_fragments_found": { "type": "integer", "minimum": 0 },
+        "character_distance": { "type": "integer", "minimum": 0 }, "characters": { "type": "integer", "minimum": 0 }, "word_distance": { "type": "integer", "minimum": 0 }, "words": { "type": "integer", "minimum": 0 },
+        "fragment_recall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "reading_order_accuracy": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "ordered_fragment_recall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "cer": { "type": ["number", "null"], "minimum": 0 }, "wer": { "type": ["number", "null"], "minimum": 0 }
+      }
+    },
+    "table": {
+      "type": "object", "additionalProperties": false,
+      "required": ["available", "applicable", "expected_tables", "observed_tables", "missing_tables", "spurious_tables", "detected", "candidate_tables", "topology", "spans", "cells", "blank", "null", "zero"],
+      "properties": {
+        "available": { "type": "boolean" }, "applicable": { "type": "boolean" }, "expected_tables": { "type": "integer", "minimum": 0 }, "observed_tables": { "type": "integer", "minimum": 0 }, "missing_tables": { "type": "integer", "minimum": 0 }, "spurious_tables": { "type": "integer", "minimum": 0 }, "detected": { "type": "boolean" }, "candidate_tables": { "type": "integer", "minimum": 0 },
+        "topology": { "type": "object", "additionalProperties": false, "required": ["correct", "expected", "accuracy"], "properties": { "correct": { "type": "integer", "minimum": 0 }, "expected": { "type": "integer", "minimum": 0 }, "accuracy": { "type": ["number", "null"], "minimum": 0, "maximum": 1 } } },
+        "spans": { "type": "object", "additionalProperties": false, "required": ["correct", "expected", "spurious", "precision", "recall", "f1"], "properties": { "correct": { "type": "integer", "minimum": 0 }, "expected": { "type": "integer", "minimum": 0 }, "spurious": { "type": "integer", "minimum": 0 }, "precision": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "recall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "f1": { "type": ["number", "null"], "minimum": 0, "maximum": 1 } } },
+        "cells": { "type": "object", "additionalProperties": false, "required": ["correct", "expected", "wrong", "missing", "spurious", "precision", "recall", "f1"], "properties": { "correct": { "type": "integer", "minimum": 0 }, "expected": { "type": "integer", "minimum": 0 }, "wrong": { "type": "integer", "minimum": 0 }, "missing": { "type": "integer", "minimum": 0 }, "spurious": { "type": "integer", "minimum": 0 }, "precision": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "recall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "f1": { "type": ["number", "null"], "minimum": 0, "maximum": 1 } } },
+        "blank": { "$ref": "#/$defs/countClass" }, "null": { "$ref": "#/$defs/countClass" }, "zero": { "$ref": "#/$defs/countClass" }
+      }
+    },
+    "resources": {
+      "type": "object", "additionalProperties": false,
+      "required": ["spawned", "elapsed_ms", "stdout_bytes", "stderr_bytes", "source_bytes", "request_bytes", "source_immutable", "timed_out", "stdout_limit_exceeded", "stderr_limit_exceeded", "process_group_termination_attempted", "process_group_empty_after_cleanup", "process_tree_peak_rss_bytes", "network_egress_bytes"],
+      "properties": { "spawned": { "type": "boolean" }, "elapsed_ms": { "type": "number", "minimum": 0 }, "stdout_bytes": { "type": "integer", "minimum": 0 }, "stderr_bytes": { "type": "integer", "minimum": 0 }, "source_bytes": { "type": "integer", "minimum": 1 }, "request_bytes": { "type": ["integer", "null"], "minimum": 1 }, "source_immutable": { "type": "boolean" }, "timed_out": { "type": "boolean" }, "stdout_limit_exceeded": { "type": "boolean" }, "stderr_limit_exceeded": { "type": "boolean" }, "process_group_termination_attempted": { "type": "boolean" }, "process_group_empty_after_cleanup": { "type": ["boolean", "null"] }, "process_tree_peak_rss_bytes": { "type": "null" }, "network_egress_bytes": { "type": "null" } }
+    },
+    "attempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["attempt_key", "candidate_id", "case_id", "repetition", "outcome", "quality_available", "semantic_sha256", "structured", "text", "table", "resources"],
+      "properties": {
+        "attempt_key": { "type": "string", "minLength": 1 }, "candidate_id": { "type": "string", "minLength": 1 }, "case_id": { "type": "string", "minLength": 1 },
+        "repetition": { "type": "integer", "minimum": 1 }, "outcome": { "enum": ["completed", "partial", "abstained", "error", "not_run"] }, "quality_available": { "type": "boolean" },
+        "semantic_sha256": { "$ref": "#/$defs/sha256" }, "structured": { "$ref": "#/$defs/structured" }, "text": { "$ref": "#/$defs/text" }, "table": { "$ref": "#/$defs/table" }, "resources": { "$ref": "#/$defs/resources" }
+      }
+    },
+    "aggregate": {
+      "type": "object", "additionalProperties": false,
+      "required": ["denominator", "structured", "text", "table", "resources", "privacy_and_isolation"],
+      "properties": {
+        "denominator": {
+          "type": "object", "additionalProperties": false,
+          "required": ["planned", "retained", "configured", "spawned", "quality_available", "configured_quality_coverage", "outcomes"],
+          "properties": {
+            "planned": { "type": "integer", "minimum": 1 }, "retained": { "type": "integer", "minimum": 1 }, "configured": { "type": "integer", "minimum": 0 }, "spawned": { "type": "integer", "minimum": 0 }, "quality_available": { "type": "integer", "minimum": 0 }, "configured_quality_coverage": { "type": ["number", "null"], "minimum": 0, "maximum": 1 },
+            "outcomes": {
+              "type": "object", "additionalProperties": false,
+              "required": ["completed", "partial", "abstained", "error", "not_run"],
+              "properties": { "completed": { "type": "integer", "minimum": 0 }, "partial": { "type": "integer", "minimum": 0 }, "abstained": { "type": "integer", "minimum": 0 }, "error": { "type": "integer", "minimum": 0 }, "not_run": { "type": "integer", "minimum": 0 } }
+            }
+          }
+        },
+        "structured": {
+          "type": "object", "additionalProperties": false,
+          "required": ["truth_data_leaves", "candidate_data_leaves", "correct", "wrong", "missing", "spurious", "shifted_array", "false_answers", "false_abstentions", "correctly_abstained", "typed_gap_correct", "typed_gap_wrong_reason", "precision", "recall", "f1", "false_answer_rate", "selective_abstention_coverage", "selective_abstention_accuracy"],
+          "properties": { "truth_data_leaves": { "type": "integer", "minimum": 0 }, "candidate_data_leaves": { "type": "integer", "minimum": 0 }, "correct": { "type": "integer", "minimum": 0 }, "wrong": { "type": "integer", "minimum": 0 }, "missing": { "type": "integer", "minimum": 0 }, "spurious": { "type": "integer", "minimum": 0 }, "shifted_array": { "type": "integer", "minimum": 0 }, "false_answers": { "type": "integer", "minimum": 0 }, "false_abstentions": { "type": "integer", "minimum": 0 }, "correctly_abstained": { "type": "integer", "minimum": 0 }, "typed_gap_correct": { "type": "integer", "minimum": 0 }, "typed_gap_wrong_reason": { "type": "integer", "minimum": 0 }, "precision": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "recall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "f1": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "false_answer_rate": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "selective_abstention_coverage": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "selective_abstention_accuracy": { "type": ["number", "null"], "minimum": 0, "maximum": 1 } }
+        },
+        "text": {
+          "type": "object", "additionalProperties": false,
+          "required": ["pages", "pages_present", "duplicate_pages", "spurious_pages", "fragments", "fragments_found", "ordered_pages", "ordered_fragments_found", "character_distance", "characters", "word_distance", "words", "fragment_recall", "reading_order_accuracy", "ordered_fragment_recall", "cer", "wer"],
+          "properties": { "pages": { "type": "integer", "minimum": 0 }, "pages_present": { "type": "integer", "minimum": 0 }, "duplicate_pages": { "type": "integer", "minimum": 0 }, "spurious_pages": { "type": "integer", "minimum": 0 }, "fragments": { "type": "integer", "minimum": 0 }, "fragments_found": { "type": "integer", "minimum": 0 }, "ordered_pages": { "type": "integer", "minimum": 0 }, "ordered_fragments_found": { "type": "integer", "minimum": 0 }, "character_distance": { "type": "integer", "minimum": 0 }, "characters": { "type": "integer", "minimum": 0 }, "word_distance": { "type": "integer", "minimum": 0 }, "words": { "type": "integer", "minimum": 0 }, "fragment_recall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "reading_order_accuracy": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "ordered_fragment_recall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "cer": { "type": ["number", "null"], "minimum": 0 }, "wer": { "type": ["number", "null"], "minimum": 0 } }
+        },
+        "table": {
+          "type": "object", "additionalProperties": false,
+          "required": ["applicable_attempts", "detected", "expected_tables", "observed_tables", "missing_tables", "spurious_tables", "cells_correct", "cells_expected", "cells_wrong", "cells_missing", "cells_spurious", "spans_correct", "spans_expected", "spans_spurious", "cell_precision", "cell_recall", "cell_f1", "topology_accuracy", "span_precision", "span_recall", "span_f1"],
+          "properties": { "applicable_attempts": { "type": "integer", "minimum": 0 }, "detected": { "type": "integer", "minimum": 0 }, "expected_tables": { "type": "integer", "minimum": 0 }, "observed_tables": { "type": "integer", "minimum": 0 }, "missing_tables": { "type": "integer", "minimum": 0 }, "spurious_tables": { "type": "integer", "minimum": 0 }, "cells_correct": { "type": "integer", "minimum": 0 }, "cells_expected": { "type": "integer", "minimum": 0 }, "cells_wrong": { "type": "integer", "minimum": 0 }, "cells_missing": { "type": "integer", "minimum": 0 }, "cells_spurious": { "type": "integer", "minimum": 0 }, "spans_correct": { "type": "integer", "minimum": 0 }, "spans_expected": { "type": "integer", "minimum": 0 }, "spans_spurious": { "type": "integer", "minimum": 0 }, "cell_precision": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "cell_recall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "cell_f1": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "topology_accuracy": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "span_precision": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "span_recall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "span_f1": { "type": ["number", "null"], "minimum": 0, "maximum": 1 } }
+        },
+        "resources": {
+          "type": "object", "additionalProperties": false,
+          "required": ["elapsed_ms_total", "elapsed_ms_max", "stdout_bytes", "stderr_bytes", "source_bytes", "request_bytes", "source_immutable", "timed_out", "stdout_limit_exceeded", "stderr_limit_exceeded", "process_group_termination_attempted", "process_group_cleanup_failures", "process_tree_peak_rss_bytes", "network_egress_bytes"],
+          "properties": { "elapsed_ms_total": { "type": "number", "minimum": 0 }, "elapsed_ms_max": { "type": "number", "minimum": 0 }, "stdout_bytes": { "type": "integer", "minimum": 0 }, "stderr_bytes": { "type": "integer", "minimum": 0 }, "source_bytes": { "type": "integer", "minimum": 0 }, "request_bytes": { "type": "integer", "minimum": 0 }, "source_immutable": { "type": "integer", "minimum": 0 }, "timed_out": { "type": "integer", "minimum": 0 }, "stdout_limit_exceeded": { "type": "integer", "minimum": 0 }, "stderr_limit_exceeded": { "type": "integer", "minimum": 0 }, "process_group_termination_attempted": { "type": "integer", "minimum": 0 }, "process_group_cleanup_failures": { "type": "integer", "minimum": 0 }, "process_tree_peak_rss_bytes": { "type": "null" }, "network_egress_bytes": { "type": "null" } }
+        },
+        "privacy_and_isolation": {
+          "type": "object", "additionalProperties": false,
+          "required": ["fixture_privacy_class", "contains_personal_data", "filesystem_isolation", "network_isolation", "memory_limit", "process_tree_memory_measurement", "process_group_termination", "egress_measurement"],
+          "properties": { "fixture_privacy_class": { "enum": ["synthetic", "mixed"] }, "contains_personal_data": { "type": "boolean" }, "filesystem_isolation": { "type": "boolean" }, "network_isolation": { "type": "boolean" }, "memory_limit": { "type": "boolean" }, "process_tree_memory_measurement": { "type": "boolean" }, "process_group_termination": { "type": "boolean" }, "egress_measurement": { "const": false } }
+        }
+      }
+    },
+    "stability": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_id", "case_id", "repetitions_expected", "repetitions_observed", "semantic_sha256", "outcome_consistent", "stable", "quality_credit"],
+      "properties": { "candidate_id": { "type": "string" }, "case_id": { "type": "string" }, "repetitions_expected": { "type": "integer", "minimum": 1 }, "repetitions_observed": { "type": "integer", "minimum": 0 }, "semantic_sha256": { "type": "array", "items": { "$ref": "#/$defs/sha256" } }, "outcome_consistent": { "type": "boolean" }, "stable": { "type": ["boolean", "null"] }, "quality_credit": { "type": "boolean" } }
+    }
+  }
+}
