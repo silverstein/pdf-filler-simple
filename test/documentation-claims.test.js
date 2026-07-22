@@ -29,6 +29,7 @@ const POSITIVE_OCR_PATTERNS = [
 ];
 const EXPLICIT_OCR_BOUNDARIES = [
   /\b(?:does not|do not|doesn't|don't|cannot|can't|never)\s+(?:currently\s+)?(?:bundle|include|run|perform|provide|support|use|ship|offer|have)\b[^.!?;\n]{0,80}\bOCR\b/i,
+  /\bdoes not\s+render\s+pages,\s+run\s+OCR(?:\s*,|\s+or\b)/i,
   /\bno\s+(?:(?:built[- ]in|bundled|integrated|local|automatic)\s+)?OCR\s+(?:support|fallback|extraction|engine|capabilit(?:y|ies)|pipeline)\b/i,
   /\bwithout\s+(?:(?:built[- ]in|bundled|integrated|local|automatic)\s+)?OCR\b/i,
   /\b(?:future|planned|proposed|candidate|experimental|optional)\s+(?:(?:local|bundled|integrated)\s+)?OCR\b/i,
@@ -177,6 +178,7 @@ describe("documentation capability claims", () => {
     "The package has no OCR.",
     "OCR does not come built in.",
     "The runtime is not OCR-enabled.",
+    "This tool does not render pages, run OCR, infer tables, or fill an arbitrary schema.",
     "PDF Tools renders scanned PDF pages for host/model visual inspection.",
     "The runtime does not recognize scanned text; it returns raster images for visual inspection.",
     "Scanned PDFs are not recognized as text.",
@@ -213,6 +215,8 @@ describe("documentation capability claims", () => {
     "PDF Tools features OCR.",
     "PDF Tools contains OCR.",
     "This is an OCR-enabled runtime.",
+    "This tool does not render pages, but it runs OCR.",
+    "This tool does not render pages and does run OCR.",
     "Scanned PDFs are recognized as text.",
     "Scanned text is extracted automatically.",
     "Scanned documents are read by the runtime.",
