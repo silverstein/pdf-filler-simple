@@ -8,6 +8,7 @@ import {
   canonicalJson,
   computeCandidateRequestId,
   deriveTargetLeafPointers,
+  loadPreflightEvidenceSidecar,
   loadJsonWithSchema,
   sha256,
   validatePlan,
@@ -78,6 +79,7 @@ async function configuredRun(mode, {
     fs.writeFile(registryPath, `${JSON.stringify(registry, null, 2)}\n`),
     fs.writeFile(planPath, `${JSON.stringify(plan, null, 2)}\n`),
   ]);
+  const verificationEvidence = {};
   const report = await runExtractionCandidates({
     manifestPath: MANIFEST,
     manifestSchemaPath: MANIFEST_SCHEMA,
@@ -89,8 +91,9 @@ async function configuredRun(mode, {
     responseSchemaPath: RESPONSE_SCHEMA,
     reportSchemaPath: REPORT_SCHEMA,
     inputBuilders,
+    verificationEvidence,
   });
-  return returnContext ? { report, registry, plan } : report;
+  return returnContext ? { report, registry, plan, verificationEvidence } : report;
 }
 
 describe("structured extraction Phase 1 external candidate boundary", () => {
@@ -256,7 +259,17 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
   });
 
   it("retains every default candidate, case, and repetition as explicit not_run", async () => {
-    const report = await runExtractionCandidates();
+    const root = await temporaryRoot();
+    const outputPath = path.join(root, "phase1-report.json");
+    const verificationEvidence = {};
+    const report = await runExtractionCandidates({ outputPath, verificationEvidence });
+    const sidecarPath = `${outputPath}.preflight.json`;
+    const loadedEvidence = await loadPreflightEvidenceSidecar(sidecarPath, report);
+    expect(loadedEvidence).toEqual(verificationEvidence.failureEvidenceByAttemptKey);
+    const malformedSidecar = JSON.parse(await fs.readFile(sidecarPath, "utf8"));
+    malformedSidecar.unexpected = true;
+    await fs.writeFile(sidecarPath, `${JSON.stringify(malformedSidecar, null, 2)}\n`);
+    await expect(loadPreflightEvidenceSidecar(sidecarPath, report)).rejects.toThrow();
     expect(report.denominator).toMatchObject({
       planned: 120,
       retained: 120,
@@ -301,7 +314,8 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       requestSchema,
       responseSchema,
       reportSchema,
-      adapterAvailability: DIRECT_ONLY_ADAPTERS,
+      adapterAvailability: verificationEvidence.adapterAvailability,
+      failureEvidenceByAttemptKey: verificationEvidence.failureEvidenceByAttemptKey,
     });
     expect(verify(report)).toBe(true);
     for (const outcome of ["completed", "partial", "abstained", "error"]) {
@@ -375,7 +389,8 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       fs.writeFile(registryPath, `${JSON.stringify(registry, null, 2)}\n`),
       fs.writeFile(planPath, `${JSON.stringify(plan, null, 2)}\n`),
     ]);
-    const report = await runExtractionCandidates({ registryPath, planPath });
+    const verificationEvidence = {};
+    const report = await runExtractionCandidates({ registryPath, planPath, verificationEvidence });
     expect(report.attempts[0]).toMatchObject({
       outcome: "not_run",
       unmet_requirements: ["filesystem_isolation"],
@@ -401,7 +416,8 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       requestSchema,
       responseSchema,
       reportSchema,
-      adapterAvailability: DIRECT_ONLY_ADAPTERS,
+      adapterAvailability: verificationEvidence.adapterAvailability,
+      failureEvidenceByAttemptKey: verificationEvidence.failureEvidenceByAttemptKey,
     });
     const expectRelabelsRejected = (retainedReport, retainedPlan, retainedVerify, label) => {
       expect(retainedVerify(retainedReport)).toBe(true);
@@ -458,9 +474,11 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       fs.writeFile(adapterRegistryPath, `${JSON.stringify(adapterRegistry, null, 2)}\n`),
       fs.writeFile(adapterPlanPath, `${JSON.stringify(adapterPlan, null, 2)}\n`),
     ]);
+    const adapterVerificationEvidence = {};
     const adapterReport = await runExtractionCandidates({
       registryPath: adapterRegistryPath,
       planPath: adapterPlanPath,
+      verificationEvidence: adapterVerificationEvidence,
     });
     expect(adapterReport.attempts[0]).toMatchObject({
       outcome: "not_run",
@@ -482,13 +500,14 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       requestSchema,
       responseSchema,
       reportSchema,
-      adapterAvailability: DIRECT_ONLY_ADAPTERS,
+      adapterAvailability: adapterVerificationEvidence.adapterAvailability,
+      failureEvidenceByAttemptKey: adapterVerificationEvidence.failureEvidenceByAttemptKey,
     });
     expectRelabelsRejected(adapterReport, adapterPlan, verifyAdapter, "adapter-censored");
   });
 
   it("bounds the serialized request including supplemental adapter input", async () => {
-    const { report, registry, plan } = await configuredRun("partial", {
+    const { report, registry, plan, verificationEvidence } = await configuredRun("partial", {
       candidateId: "candidate.layout_ir.v1",
       inputMode: "layout_ir",
       maxRequestBytes: 1024,
@@ -533,13 +552,15 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       requestSchema,
       responseSchema,
       reportSchema,
-      adapterAvailability: { direct_pdf: true, layout_ir: true, raster: false },
+      adapterAvailability: verificationEvidence.adapterAvailability,
+      failureEvidenceByAttemptKey: verificationEvidence.failureEvidenceByAttemptKey,
     });
     expect(verify(report)).toBe(true);
     for (const mutate of [
       value => { value.attempts[0].failure.stage = "adapter_build"; },
       value => { value.attempts[0].failure.runner_code = "HARNESS_ATTEMPT_FAILURE"; },
       value => { value.attempts[0].failure.detail_code = "ERROR"; },
+      value => { value.attempts[0].failure.request_observed_bytes += 1; },
       value => { value.attempts[0].failure.request_observed_bytes = 1024; },
       value => { value.attempts[0].failure.request_limit_bytes = 1025; },
       value => { value.environment.input_adapters.layout_ir = false; },
@@ -589,13 +610,19 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       requestSchema,
       responseSchema,
       reportSchema,
-      adapterAvailability: { direct_pdf: true, layout_ir: true, raster: false },
+      adapterAvailability: harnessContext.verificationEvidence.adapterAvailability,
+      failureEvidenceByAttemptKey: harnessContext.verificationEvidence.failureEvidenceByAttemptKey,
     });
     expect(verifyHarness(harnessContext.report)).toBe(true);
     for (const mutate of [
       value => { value.attempts[0].failure.stage = null; },
+      value => { value.attempts[0].failure.stage = "request_build"; },
       value => { value.attempts[0].failure.runner_code = "REQUEST_LIMIT_EXCEEDED"; },
       value => { value.attempts[0].failure.detail_code = "FORGED_FAILURE"; },
+      value => {
+        value.attempts[0].failure.detail_code = "DIFFERENT_FAILURE";
+        value.attempts[0].outcome_reason = "Runner could not complete the candidate attempt: DIFFERENT_FAILURE";
+      },
       value => { value.attempts[0].failure.request_observed_bytes = 1; },
       value => { value.attempts[0].failure.request_limit_bytes = 1; },
     ]) {
@@ -752,7 +779,8 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
   });
 
   it("independently rejects schema, capture, execution, request, and denominator mutations", async () => {
-    const report = await configuredRun("partial");
+    const configuredContext = await configuredRun("partial", { returnContext: true });
+    const { report } = configuredContext;
     const [registry, registrySchema, plan, planSchema, manifest, requestSchema, responseSchema, reportSchema] = await Promise.all([
       loadJsonWithSchema(REGISTRY, REGISTRY_SCHEMA, "registry"),
       fs.readFile(REGISTRY_SCHEMA, "utf8").then(JSON.parse),
@@ -794,7 +822,8 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       requestSchema,
       responseSchema,
       reportSchema,
-      adapterAvailability: DIRECT_ONLY_ADAPTERS,
+      adapterAvailability: configuredContext.verificationEvidence.adapterAvailability,
+      failureEvidenceByAttemptKey: configuredContext.verificationEvidence.failureEvidenceByAttemptKey,
     });
     expect(verify(report)).toBe(true);
     const rebindRequest = value => {
@@ -807,6 +836,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       value => { value.plan_schema_sha256 = "0".repeat(64); },
       value => { value.request_schema_sha256 = "0".repeat(64); },
       value => { value.response_schema_sha256 = "0".repeat(64); },
+      value => { value.preflight_evidence_sha256 = "0".repeat(64); },
       value => { value.truth_isolation_claim_ready = true; },
       value => { value.claim_boundary = "Benchmark approved and ready"; },
       value => { value.limitations = ["No limitations"]; },
@@ -839,7 +869,8 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       expect(() => verify(mutant)).toThrow();
     }
 
-    const noResponseError = await configuredRun("multiple-json");
+    const failedContext = await configuredRun("multiple-json", { returnContext: true });
+    const noResponseError = failedContext.report;
     const failedRegistry = structuredClone(configuredRegistry);
     failedRegistry.candidates.find(item => item.id === "candidate.direct_pdf.v1").command.args = [MOCK_CANDIDATE, "multiple-json"];
     const verifyFailed = mutant => verifyPhase1Report(mutant, {
@@ -852,7 +883,8 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       requestSchema,
       responseSchema,
       reportSchema,
-      adapterAvailability: DIRECT_ONLY_ADAPTERS,
+      adapterAvailability: failedContext.verificationEvidence.adapterAvailability,
+      failureEvidenceByAttemptKey: failedContext.verificationEvidence.failureEvidenceByAttemptKey,
     });
     expect(verifyFailed(noResponseError)).toBe(true);
     const forgedSuccess = structuredClone(noResponseError);

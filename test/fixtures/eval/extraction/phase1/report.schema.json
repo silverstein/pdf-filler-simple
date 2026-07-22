@@ -4,7 +4,7 @@
   "title": "PDF Tools extraction Phase 1 sidecar report v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["report_id", "report_version", "run_id", "benchmark_claim_ready", "calibration_claim_ready", "truth_isolation_claim_ready", "claim_boundary", "phase0_manifest_sha256", "registry_sha256", "registry_schema_sha256", "plan_sha256", "plan_schema_sha256", "request_schema_sha256", "response_schema_sha256", "environment", "denominator", "attempts", "limitations"],
+  "required": ["report_id", "report_version", "run_id", "benchmark_claim_ready", "calibration_claim_ready", "truth_isolation_claim_ready", "claim_boundary", "phase0_manifest_sha256", "registry_sha256", "registry_schema_sha256", "plan_sha256", "plan_schema_sha256", "request_schema_sha256", "response_schema_sha256", "preflight_evidence_sha256", "environment", "denominator", "attempts", "limitations"],
   "properties": {
     "report_id": { "const": "pdf-tools.extraction-phase1-report.v1" },
     "report_version": { "const": 1 },
@@ -20,6 +20,7 @@
     "plan_schema_sha256": { "$ref": "#/$defs/sha256" },
     "request_schema_sha256": { "$ref": "#/$defs/sha256" },
     "response_schema_sha256": { "$ref": "#/$defs/sha256" },
+    "preflight_evidence_sha256": { "$ref": "#/$defs/sha256" },
     "environment": { "$ref": "#/$defs/environment" },
     "denominator": {
       "type": "object", "additionalProperties": false,

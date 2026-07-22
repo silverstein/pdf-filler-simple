@@ -59,7 +59,17 @@ otherwise returned a valid response.
 
 Every error retains a typed runner stage and stable error code. A serialized
 request limit error also retains the observed request byte count and exact plan
-limit. Null request and process fields alone cannot establish a runner failure.
+limit. The runner captures these facts in a separate per-attempt evidence map,
+binds its canonical SHA-256 into the report, and writes a companion
+`.preflight.json` file when a report is persisted. Verification requires that
+trusted map and exact-compares its outcome, reason, unmet requirements, and
+failure object with the report. It does not infer expected failure facts from
+the mutable report. Null request and process fields alone cannot establish a
+runner failure.
+
+Phase 1 uses a strict exact-key loader for this companion artifact. A formal
+versioned sidecar schema and index belong to the later scorer and evidence-index
+work; no benchmark or calibration claim depends on them in this phase.
 
 ## Typed results and evidence
 

@@ -16,6 +16,7 @@ import {
   canonicalJson,
   detectHarnessCapabilities,
   loadJsonWithSchema,
+  reportAttemptKey,
   sha256,
   unmetRequirements,
   validateCandidateResponseSemantics,
@@ -554,6 +555,7 @@ export async function runExtractionCandidates({
   reportSchemaPath = DEFAULT_PATHS.reportSchema,
   outputPath = null,
   inputBuilders = null,
+  verificationEvidence = null,
 } = {}) {
   const [manifest, registryLoaded, planLoaded, requestSchemaText, responseSchemaText, reportSchemaText] = await Promise.all([
     loadExtractionManifest(manifestPath, manifestSchemaPath),
@@ -584,7 +586,20 @@ export async function runExtractionCandidates({
   const runId = sha256(Buffer.from(randomUUID()));
   const runRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-extraction-phase1-"));
   const attempts = [];
+  const failureEvidenceByAttemptKey = {};
   const verifiedSourceFacts = {};
+  const recordAttempt = attempt => {
+    const key = reportAttemptKey(attempt);
+    if (Object.hasOwn(failureEvidenceByAttemptKey, key)) throw new Error(`Duplicate extraction attempt evidence key: ${key}`);
+    failureEvidenceByAttemptKey[key] = deepFreeze(structuredClone({
+      outcome: attempt.outcome,
+      error_code: attempt.error_code,
+      outcome_reason: attempt.outcome_reason,
+      unmet_requirements: attempt.unmet_requirements,
+      failure: attempt.failure,
+    }));
+    attempts.push(attempt);
+  };
   try {
     const registryById = new Map(registry.candidates.map(candidate => [candidate.id, candidate]));
     for (const selection of plan.candidates) {
@@ -604,21 +619,21 @@ export async function runExtractionCandidates({
             ? candidateUnmetRequirements(candidate, selection, capabilities, inputBuilders)
             : [];
           if (!candidate.configured) {
-            attempts.push(await unconfiguredAttempt({ candidate, selection, fixture, repetition, source }));
+            recordAttempt(await unconfiguredAttempt({ candidate, selection, fixture, repetition, source }));
           } else if (eligibilityUnmet.length > 0) {
             const retained = await unconfiguredAttempt({ candidate, selection, fixture, repetition, source });
             retained.outcome_reason = `Runner cannot truthfully enforce or provide: ${eligibilityUnmet.join(", ")}`;
             retained.unmet_requirements = eligibilityUnmet;
-            attempts.push(retained);
+            recordAttempt(retained);
           } else if (source.size_bytes > plan.limits.max_source_bytes || source.page_count > plan.limits.max_pages) {
             const retained = await unconfiguredAttempt({ candidate, selection, fixture, repetition, source });
             retained.outcome = "error";
             retained.error_code = "SOURCE_LIMIT_EXCEEDED";
             retained.outcome_reason = "Source exceeds the plan's byte or page limit";
             retained.failure = retainedFailure("source_preflight", retained.error_code);
-            attempts.push(retained);
+            recordAttempt(retained);
           } else {
-            attempts.push(await runAttempt({
+            recordAttempt(await runAttempt({
               candidate,
               selection,
               fixture,
@@ -658,6 +673,7 @@ export async function runExtractionCandidates({
     plan_schema_sha256: planLoaded.schema_sha256,
     request_schema_sha256: sha256(Buffer.from(canonicalJson(requestSchema))),
     response_schema_sha256: sha256(Buffer.from(canonicalJson(responseSchema))),
+    preflight_evidence_sha256: sha256(Buffer.from(canonicalJson(failureEvidenceByAttemptKey))),
     environment: { ...capabilities, input_adapters: adapterAvailability },
     denominator: {
       planned: attempts.length,
@@ -680,11 +696,22 @@ export async function runExtractionCandidates({
     responseSchema,
     reportSchema,
     adapterAvailability,
+    failureEvidenceByAttemptKey,
     repositoryRoot: REPO_ROOT,
   });
+  if (verificationEvidence && typeof verificationEvidence === "object") {
+    verificationEvidence.adapterAvailability = structuredClone(adapterAvailability);
+    verificationEvidence.failureEvidenceByAttemptKey = structuredClone(failureEvidenceByAttemptKey);
+  }
   if (outputPath) {
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
     await fs.writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`);
+    await fs.writeFile(`${outputPath}.preflight.json`, `${JSON.stringify({
+      report_id: report.report_id,
+      run_id: report.run_id,
+      preflight_evidence_sha256: report.preflight_evidence_sha256,
+      failure_evidence_by_attempt_key: failureEvidenceByAttemptKey,
+    }, null, 2)}\n`);
   }
   return report;
 }

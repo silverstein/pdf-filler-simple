@@ -59,6 +59,38 @@ export function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+export async function loadPreflightEvidenceSidecar(sidecarPath, report) {
+  const sidecar = JSON.parse(await fs.readFile(sidecarPath, "utf8"));
+  const exactTopLevelKeys = [
+    "failure_evidence_by_attempt_key",
+    "preflight_evidence_sha256",
+    "report_id",
+    "run_id",
+  ];
+  if (!sidecar || typeof sidecar !== "object" || Array.isArray(sidecar)
+    || canonicalJson(Object.keys(sidecar).sort()) !== canonicalJson(exactTopLevelKeys)
+    || sidecar.report_id !== report.report_id
+    || sidecar.run_id !== report.run_id
+    || sidecar.preflight_evidence_sha256 !== report.preflight_evidence_sha256) {
+    throw new Error("Invalid extraction preflight evidence sidecar identity or keys");
+  }
+  const evidence = sidecar.failure_evidence_by_attempt_key;
+  const expectedAttemptKeys = report.attempts.map(reportAttemptKey).sort();
+  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)
+    || canonicalJson(Object.keys(evidence).sort()) !== canonicalJson(expectedAttemptKeys)
+    || sha256(Buffer.from(canonicalJson(evidence))) !== report.preflight_evidence_sha256) {
+    throw new Error("Extraction preflight evidence sidecar does not bind the exact report denominator");
+  }
+  const exactEvidenceKeys = ["error_code", "failure", "outcome", "outcome_reason", "unmet_requirements"];
+  for (const value of Object.values(evidence)) {
+    if (!value || typeof value !== "object" || Array.isArray(value)
+      || canonicalJson(Object.keys(value).sort()) !== canonicalJson(exactEvidenceKeys)) {
+      throw new Error("Extraction preflight evidence sidecar contains an invalid attempt record");
+    }
+  }
+  return evidence;
+}
+
 export async function loadJsonWithSchema(jsonPath, schemaPath, label) {
   const [jsonText, schemaText] = await Promise.all([
     fs.readFile(jsonPath, "utf8"),
@@ -453,6 +485,7 @@ export function verifyPhase1Report(report, {
   responseSchema,
   reportSchema,
   adapterAvailability,
+  failureEvidenceByAttemptKey,
   repositoryRoot = null,
 }) {
   assertSchema(report, reportSchema, "retained extraction Phase 1 report");
@@ -472,6 +505,11 @@ export function verifyPhase1Report(report, {
   const currentCapabilities = detectHarnessCapabilities();
   if (canonicalJson(report.environment.input_adapters) !== canonicalJson(adapterAvailability)) {
     throw new Error("Extraction Phase 1 input-adapter availability is not independently bound");
+  }
+  if (!failureEvidenceByAttemptKey || typeof failureEvidenceByAttemptKey !== "object"
+    || Array.isArray(failureEvidenceByAttemptKey)
+    || report.preflight_evidence_sha256 !== sha256(Buffer.from(canonicalJson(failureEvidenceByAttemptKey)))) {
+    throw new Error("Extraction Phase 1 preflight evidence map is not independently hash-bound");
   }
   const environmentInvariant = report.environment.wall_clock_timeout
     && report.environment.stdout_byte_limit
@@ -520,6 +558,9 @@ export function verifyPhase1Report(report, {
     throw new Error("Extraction Phase 1 report denominator is missing, duplicated, or reordered");
   }
   if (new Set(observedKeys).size !== observedKeys.length) throw new Error("Extraction Phase 1 report contains duplicate attempts");
+  if (canonicalJson(Object.keys(failureEvidenceByAttemptKey).sort()) !== canonicalJson([...expectedKeys].sort())) {
+    throw new Error("Extraction Phase 1 preflight evidence map does not cover the exact denominator");
+  }
   if (report.denominator.planned !== expectedKeys.length || report.denominator.retained !== observedKeys.length) {
     throw new Error("Extraction Phase 1 denominator counts do not match retained attempts");
   }
@@ -531,11 +572,23 @@ export function verifyPhase1Report(report, {
   const selectionById = new Map(plan.candidates.map(selection => [selection.candidate_id, selection]));
   const fixturesById = new Map(manifest.fixtures.map(fixture => [fixture.id, fixture]));
   for (const attempt of report.attempts) {
+    const attemptKey = reportAttemptKey(attempt);
     const candidate = registryById.get(attempt.candidate_id);
     const selection = selectionById.get(attempt.candidate_id);
     const fixture = fixturesById.get(attempt.case_id);
     const verifiedSource = sourceFactsById?.[attempt.case_id];
     if (!candidate || !selection || !fixture) throw new Error(`Report retains an unknown candidate or case: ${reportAttemptKey(attempt)}`);
+    const trustedFailureEvidence = failureEvidenceByAttemptKey[attemptKey];
+    const retainedFailureEvidence = {
+      outcome: attempt.outcome,
+      error_code: attempt.error_code,
+      outcome_reason: attempt.outcome_reason,
+      unmet_requirements: attempt.unmet_requirements,
+      failure: attempt.failure,
+    };
+    if (canonicalJson(retainedFailureEvidence) !== canonicalJson(trustedFailureEvidence)) {
+      throw new Error(`Attempt preflight or failure evidence drifted from the runner-owned record for ${attempt.case_id}`);
+    }
     if (attempt.input_mode !== selection.input_mode) throw new Error(`Report input mode drifted for ${attempt.candidate_id}`);
     const eligibilityUnmet = unmetRequirements(candidate, report.environment);
     if (candidate.configured && candidate.license?.reviewed !== true) eligibilityUnmet.push("reviewed_license");

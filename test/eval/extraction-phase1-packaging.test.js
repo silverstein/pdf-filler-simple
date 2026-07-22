@@ -7,6 +7,7 @@ import { isForbiddenArchivePath } from "../../scripts/build-mcpb.mjs";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PHASE1_EVALUATION_ASSETS = [
   "docs/EXTRACTION_CANDIDATE_PROTOCOL.md",
+  "docs/evidence/extraction-phase1-sidecars.v1.json.preflight.json",
   "scripts/eval-run-extraction-candidates.mjs",
   "test/eval/extraction-phase1-protocol.js",
   "test/eval/extraction-phase1.test.js",
