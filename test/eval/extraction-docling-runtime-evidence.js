@@ -22,6 +22,11 @@ function within(parent, child) {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
 }
 
+function isCanonicalRecordPath(value) {
+  return typeof value === "string" && value.length >= 1 && !value.includes("\\") && !value.startsWith("/") && path.posix.normalize(value) === value
+    && value.split("/").every(component => component && component !== "." && component !== "..");
+}
+
 async function stableFileSnapshot(filename, recordPath, { allowOwnerExecuteOnly = false } = {}) {
   const handle = await fs.open(filename, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   try {
@@ -88,11 +93,12 @@ export function validateDoclingRuntimeInventory(inventory) {
   if (inventory.inventory_sha256 !== sha256(Buffer.from(`pdf-tools.docling-runtime-inventory.v1\0${canonicalJson(core)}`))) throw new Error("Runtime inventory digest is invalid");
   let bytes = 0; const paths = new Set();
   for (const record of inventory.records) {
-    if (!record || typeof record.path !== "string" || paths.has(record.path) || !["file", "directory", "symlink"].includes(record.type)
+    if (!record || !isCanonicalRecordPath(record.path) || paths.has(record.path) || !["file", "directory", "symlink"].includes(record.type)
       || !Number.isInteger(record.mode) || !Number.isInteger(record.links) || record.links < 1) throw new Error("Runtime inventory record is invalid");
     paths.add(record.path);
     if (record.type === "file") {
-      const allowedModes = /^(?:managed_python|venv)\//.test(record.path)
+      const [inventoryRoot, ...relativeParts] = record.path.split("/");
+      const allowedModes = relativeParts.length > 0 && ["managed_python", "venv"].includes(inventoryRoot)
         ? [0o600, 0o644, 0o700, 0o711, 0o755] : [0o600, 0o644, 0o700, 0o755];
       if (canonicalJson(Object.keys(record).sort()) !== canonicalJson(["bytes", "links", "mode", "path", "sha256", "type"])
         || !Number.isInteger(record.bytes) || record.bytes < 0 || !SHA256.test(record.sha256 ?? "") || !allowedModes.includes(record.mode)) throw new Error("Runtime file record is invalid");

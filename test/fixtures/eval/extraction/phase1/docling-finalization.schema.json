@@ -44,6 +44,7 @@
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "absolute_path": { "type": "string", "pattern": "^/", "minLength": 2, "maxLength": 4096 },
+    "canonical_relative_path": { "type": "string", "minLength": 1, "maxLength": 4096, "pattern": "^(?!\\.\\.?($|/))(?!.*\\/\\.\\.?($|/))[^/\\\\]+(?:/[^/\\\\]+)*$" },
     "platform": {
       "type": "object", "additionalProperties": false,
       "required": ["interpreter", "operating_system", "architecture", "os_build", "kernel_release", "node_version"],
@@ -79,18 +80,18 @@
         {
           "type": "object", "additionalProperties": false, "required": ["relative_path", "type", "mode", "links", "bytes", "sha256"],
           "properties": {
-            "relative_path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "type": { "const": "file" },
+            "relative_path": { "$ref": "#/$defs/canonical_relative_path" }, "type": { "const": "file" },
             "mode": { "enum": [384, 420, 448, 493] }, "links": { "type": "integer", "minimum": 1 },
             "bytes": { "type": "integer", "minimum": 0, "maximum": 536870912 }, "sha256": { "$ref": "#/$defs/sha256" }
           }
         },
         {
           "type": "object", "additionalProperties": false, "required": ["relative_path", "type", "mode", "links"],
-          "properties": { "relative_path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "type": { "const": "directory" }, "mode": { "enum": [448, 493] }, "links": { "type": "integer", "minimum": 1 } }
+          "properties": { "relative_path": { "$ref": "#/$defs/canonical_relative_path" }, "type": { "const": "directory" }, "mode": { "enum": [448, 493] }, "links": { "type": "integer", "minimum": 1 } }
         },
         {
           "type": "object", "additionalProperties": false, "required": ["relative_path", "type", "mode", "links", "target"],
-          "properties": { "relative_path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "type": { "const": "symlink" }, "mode": { "const": 511 }, "links": { "const": 1 }, "target": { "type": "string", "minLength": 1, "maxLength": 4096 } }
+          "properties": { "relative_path": { "$ref": "#/$defs/canonical_relative_path" }, "type": { "const": "symlink" }, "mode": { "const": 511 }, "links": { "const": 1 }, "target": { "type": "string", "minLength": 1, "maxLength": 4096 } }
         }
       ]
     },
@@ -99,18 +100,18 @@
         {
           "type": "object", "additionalProperties": false, "required": ["relative_path", "type", "mode", "links", "bytes", "sha256"],
           "properties": {
-            "relative_path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "type": { "const": "file" },
+            "relative_path": { "$ref": "#/$defs/canonical_relative_path" }, "type": { "const": "file" },
             "mode": { "enum": [384, 420, 448, 457, 493] }, "links": { "type": "integer", "minimum": 1 },
             "bytes": { "type": "integer", "minimum": 0, "maximum": 536870912 }, "sha256": { "$ref": "#/$defs/sha256" }
           }
         },
         {
           "type": "object", "additionalProperties": false, "required": ["relative_path", "type", "mode", "links"],
-          "properties": { "relative_path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "type": { "const": "directory" }, "mode": { "enum": [448, 493] }, "links": { "type": "integer", "minimum": 1 } }
+          "properties": { "relative_path": { "$ref": "#/$defs/canonical_relative_path" }, "type": { "const": "directory" }, "mode": { "enum": [448, 493] }, "links": { "type": "integer", "minimum": 1 } }
         },
         {
           "type": "object", "additionalProperties": false, "required": ["relative_path", "type", "mode", "links", "target"],
-          "properties": { "relative_path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "type": { "const": "symlink" }, "mode": { "const": 511 }, "links": { "const": 1 }, "target": { "type": "string", "minLength": 1, "maxLength": 4096 } }
+          "properties": { "relative_path": { "$ref": "#/$defs/canonical_relative_path" }, "type": { "const": "symlink" }, "mode": { "const": 511 }, "links": { "const": 1 }, "target": { "type": "string", "minLength": 1, "maxLength": 4096 } }
         }
       ]
     },

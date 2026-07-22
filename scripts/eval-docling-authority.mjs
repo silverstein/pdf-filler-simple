@@ -53,6 +53,11 @@ function within(parent, child) {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
 }
 
+function isCanonicalSlashRelativePath(value) {
+  return typeof value === "string" && value.length >= 1 && !value.includes("\\") && !value.startsWith("/")
+    && path.posix.normalize(value) === value && value.split("/").every(component => component && component !== "." && component !== "..");
+}
+
 async function readStable(filename, maxBytes, requiredMode = null, allowEmpty = false) {
   if (typeof fsConstants.O_NOFOLLOW !== "number") throw new Error("Docling authority requires O_NOFOLLOW");
   const handle = await fs.open(filename, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
@@ -583,7 +588,7 @@ async function digestTree(root, allowedRoots, { strictPrivate = false } = {}) {
     for (const entry of entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
       const filename = path.join(directory, entry.name);
       const relative_path = path.relative(root, filename).split(path.sep).join("/");
-      if (!relative_path || relative_path.length > 4096 || records.length >= MAX_TREE_ENTRIES) throw new Error("Finalized tree exceeds its schema bounds");
+      if (!isCanonicalSlashRelativePath(relative_path) || relative_path.length > 4096 || records.length >= MAX_TREE_ENTRIES) throw new Error("Finalized tree exceeds its schema bounds");
       const metadata = await fs.lstat(filename);
       const mode = metadata.mode & 0o777;
       if (metadata.isSymbolicLink()) {
@@ -709,7 +714,7 @@ export function validateFinalizationSchemaMirror(value) {
   const validateTree = (tree, { allowOwnerExecuteOnly = false } = {}) => {
     if (!Array.isArray(tree) || tree.length < 1 || tree.length > MAX_TREE_ENTRIES) throw new Error("Finalization tree inventory violates its retained schema mirror");
     for (const entry of tree) {
-      if (!boundedString(entry?.relative_path, 4096) || !integer(entry.links, 1)) throw new Error("Finalization tree record violates its retained schema mirror");
+      if (!isCanonicalSlashRelativePath(entry?.relative_path) || entry.relative_path.length > 4096 || !integer(entry.links, 1)) throw new Error("Finalization tree record violates its retained schema mirror");
       if (entry.type === "file") {
         const allowedModes = allowOwnerExecuteOnly ? [0o600, 0o644, 0o700, 0o711, 0o755] : [0o600, 0o644, 0o700, 0o755];
         if (!exactKeys(entry, ["relative_path", "type", "mode", "links", "bytes", "sha256"]) || !allowedModes.includes(entry.mode)

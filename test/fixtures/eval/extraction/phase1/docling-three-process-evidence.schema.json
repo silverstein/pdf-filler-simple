@@ -13,27 +13,28 @@
   },
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "canonical_record_path": { "type": "string", "minLength": 1, "pattern": "^(?!\\.\\.?($|/))(?!.*\\/\\.\\.?($|/))[^/\\\\]+(?:/[^/\\\\]+)*$" },
     "record": {
       "oneOf": [
         {
           "type": "object", "additionalProperties": false,
           "required": ["path", "type", "mode", "links", "bytes", "sha256"],
-          "properties": { "path": { "type": "string", "pattern": "^(?:managed_python|venv)/" }, "type": { "const": "file" }, "mode": { "enum": [384, 420, 448, 457, 493] }, "links": { "type": "integer", "minimum": 1 }, "bytes": { "type": "integer", "minimum": 0, "maximum": 536870912 }, "sha256": { "$ref": "#/$defs/sha256" } }
+          "properties": { "path": { "allOf": [{ "$ref": "#/$defs/canonical_record_path" }, { "pattern": "^(?:managed_python|venv)/" }] }, "type": { "const": "file" }, "mode": { "enum": [384, 420, 448, 457, 493] }, "links": { "type": "integer", "minimum": 1 }, "bytes": { "type": "integer", "minimum": 0, "maximum": 536870912 }, "sha256": { "$ref": "#/$defs/sha256" } }
         },
         {
           "type": "object", "additionalProperties": false,
           "required": ["path", "type", "mode", "links", "bytes", "sha256"],
-          "properties": { "path": { "type": "string", "pattern": "^(?!(?:managed_python|venv)/).+" }, "type": { "const": "file" }, "mode": { "enum": [384, 420, 448, 493] }, "links": { "type": "integer", "minimum": 1 }, "bytes": { "type": "integer", "minimum": 0, "maximum": 536870912 }, "sha256": { "$ref": "#/$defs/sha256" } }
+          "properties": { "path": { "allOf": [{ "$ref": "#/$defs/canonical_record_path" }, { "pattern": "^(?!(?:managed_python|venv)/).+" }] }, "type": { "const": "file" }, "mode": { "enum": [384, 420, 448, 493] }, "links": { "type": "integer", "minimum": 1 }, "bytes": { "type": "integer", "minimum": 0, "maximum": 536870912 }, "sha256": { "$ref": "#/$defs/sha256" } }
         },
         {
           "type": "object", "additionalProperties": false,
           "required": ["path", "type", "mode", "links"],
-          "properties": { "path": { "type": "string", "minLength": 1 }, "type": { "const": "directory" }, "mode": { "enum": [448, 493] }, "links": { "type": "integer", "minimum": 1 } }
+          "properties": { "path": { "$ref": "#/$defs/canonical_record_path" }, "type": { "const": "directory" }, "mode": { "enum": [448, 493] }, "links": { "type": "integer", "minimum": 1 } }
         },
         {
           "type": "object", "additionalProperties": false,
           "required": ["path", "type", "mode", "links", "target"],
-          "properties": { "path": { "type": "string", "minLength": 1 }, "type": { "const": "symlink" }, "mode": { "const": 511 }, "links": { "const": 1 }, "target": { "type": "string", "minLength": 1 } }
+          "properties": { "path": { "$ref": "#/$defs/canonical_record_path" }, "type": { "const": "symlink" }, "mode": { "const": 511 }, "links": { "const": 1 }, "target": { "type": "string", "minLength": 1 } }
         }
       ]
     },

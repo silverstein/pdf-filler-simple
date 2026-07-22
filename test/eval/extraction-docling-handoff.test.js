@@ -231,6 +231,13 @@ describe("Docling macOS handoff", () => {
     const ownerExecuteOnlyModel = { ...value, model_files: ownerExecuteOnlyTree };
     expect(() => validateFinalizationSchemaMirror(ownerExecuteOnlyModel)).toThrow(/schema mirror/);
     expect(() => assertSchema(ownerExecuteOnlyModel, schema, "Docling finalization")).toThrow();
+    for (const inventoryName of ["managed_python_files", "venv_files"]) {
+      for (const relative_path of ["../models/weight", "bin/../models/weight", "bin/./python", "bin//python", "/bin/python", "bin\\python", "bin/python/"]) {
+        const forgedPathValue = { ...ownerExecuteOnlyValue, [inventoryName]: [{ ...ownerExecuteOnlyTree[0], relative_path }] };
+        expect(() => validateFinalizationSchemaMirror(forgedPathValue)).toThrow(/schema mirror/);
+        expect(() => assertSchema(forgedPathValue, schema, "Docling finalization")).toThrow();
+      }
+    }
     for (const mode of [0o771, 0o733, 0o760]) {
       const unsafeTree = [{ ...tree[0], mode }];
       const unsafeValue = { ...value, managed_python_files: unsafeTree, venv_files: unsafeTree };

@@ -61,6 +61,13 @@ describe("Docling runtime evidence", () => {
     const groupWritableManagedPython = structuredClone(evidence);
     groupWritableManagedPython.before.records.find(record => record.path === "managed_python/bin/python3.12").mode = 0o771;
     expect(() => assertSchema(groupWritableManagedPython, EVIDENCE_SCHEMA, "Docling three-process evidence")).toThrow();
+    for (const forgedPath of ["managed_python/../models/weight.bin", "venv/../models/weight.bin"]) {
+      const traversalAlias = structuredClone(evidence);
+      const aliasedModel = traversalAlias.before.records.find(record => record.path === "models/weight.bin");
+      aliasedModel.path = forgedPath;
+      aliasedModel.mode = 0o711;
+      expect(() => assertSchema(traversalAlias, EVIDENCE_SCHEMA, "Docling three-process evidence")).toThrow();
+    }
     const forged = structuredClone(evidence);
     forged.before.inventory_sha256 = "0".repeat(64);
     expect(() => validateThreeFreshProcessEvidence(forged)).toThrow(/digest/);
@@ -85,6 +92,13 @@ describe("Docling runtime evidence", () => {
     const forgedModel = structuredClone(inventory);
     forgedModel.records.find(record => record.path === "models/weight.bin").mode = 0o711;
     expect(() => validateDoclingRuntimeInventory(resignInventory(forgedModel))).toThrow(/file record/);
+
+    for (const forgedPath of ["managed_python/../models/weight.bin", "venv/../models/weight.bin", "managed_python/./bin/python3.12", "managed_python//bin/python3.12", "/managed_python/bin/python3.12", "managed_python\\bin\\python3.12", "managed_python/bin/python3.12/"]) {
+      const forgedPathInventory = structuredClone(inventory);
+      forgedPathInventory.records.find(record => record.path === "models/weight.bin").path = forgedPath;
+      forgedPathInventory.records.find(record => record.path === forgedPath).mode = 0o711;
+      expect(() => validateDoclingRuntimeInventory(resignInventory(forgedPathInventory))).toThrow(/inventory record/);
+    }
   });
 
   it.each([
