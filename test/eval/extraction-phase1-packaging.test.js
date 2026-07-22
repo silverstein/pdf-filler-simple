@@ -12,6 +12,7 @@ const PHASE1_EVALUATION_ASSETS = [
   "scripts/eval-score-extraction-candidates.mjs",
   "scripts/eval-generate-extraction-layout-oracle.mjs",
   "scripts/eval-prepare-docling-macos-handoff.mjs",
+  "scripts/eval-docling-authority.mjs",
   "scripts/eval-verify-docling-macos-handoff.mjs",
   "test/eval/candidates/docling/adapter.py",
   "test/eval/candidates/docling/fetch_pinned_layout.py",
@@ -69,6 +70,8 @@ const PHASE1_EVALUATION_ASSETS = [
   "test/fixtures/eval/extraction/phase1/docling-export.synthetic.v1.json",
   "test/fixtures/eval/extraction/phase1/docling-export.adapter-projection.schema.json",
   "test/fixtures/eval/extraction/phase1/docling-handoff.schema.json",
+  "test/fixtures/eval/extraction/phase1/docling-finalization.schema.json",
+  "test/fixtures/eval/extraction/phase1/docling-three-process-evidence.schema.json",
   "test/fixtures/eval/extraction/phase1/mock-candidate.mjs"
 ];
 

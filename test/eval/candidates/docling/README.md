@@ -66,9 +66,17 @@ independent review. Runtime evidence must inventory the exact managed Python,
 virtual environment, resolved lock, and model tree before and after three
 distinct fresh processes, with no `.pyc` or `__pycache__` drift.
 
+The synthetic fixture is a scrubbed DoclingDocument 1.10-shaped projection of
+only the fields consumed by the adapter. Its strict local schema is not a claim
+to reproduce the full upstream schema or a byte-for-byte upstream export. The
+pure projection requires every retained `TableCell.text` to be a string; a
+missing table-grid coordinate is represented by no cell record.
+
 The adapter bounds source/request/output sizes and its own translation
-accumulation. Docling conversion and `export_to_dict()` are non-streaming in the
-pinned API, so their peak memory is not bounded by the adapter. Closing this
+accumulation. Its translation ceiling reserves the fixed response envelope from
+the smaller of `max_report_bytes` and `max_stdout_bytes`. Docling conversion and
+`export_to_dict()` are non-streaming in the pinned API, so their peak memory is
+not bounded by the adapter. Closing this
 residual requires a separately designed native supervisor with process-group
 monitoring, termination, and retained resource evidence; the runtime inventory
 gate is not hard memory isolation.

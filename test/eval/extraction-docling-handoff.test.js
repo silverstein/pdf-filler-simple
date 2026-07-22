@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { assertSchema } from "./extraction-phase1-protocol.js";
 import {
   prepareDoclingMacHandoff,
+  prepareDoclingMacHandoffForTest,
 } from "./extraction-docling-handoff.js";
 import { verifyDoclingHandoff } from "./extraction-docling-handoff-verifier.js";
 
@@ -51,7 +52,7 @@ describe("Docling macOS handoff", () => {
   it("creates a truth-free, content-addressed, mode-0700/0600 handoff outside protected roots", async () => {
     const root = await temporaryRoot("pdf-tools-docling-handoff-");
     const source = await fixture(root);
-    const result = await prepareDoclingMacHandoff(await options(root, [source]));
+    const result = await prepareDoclingMacHandoffForTest(await options(root, [source]));
     const schema = JSON.parse(await fs.readFile(path.resolve("test/fixtures/eval/extraction/phase1/docling-handoff.schema.json"), "utf8"));
     expect(() => assertSchema(result.receipt, schema, "Docling handoff receipt")).not.toThrow();
     expect(result.receipt).toMatchObject({
@@ -65,7 +66,7 @@ describe("Docling macOS handoff", () => {
     await expect(verifyDoclingHandoff({
       receiptPath: result.receiptPath,
       expectedReceiptSha256: result.receipt_sha256,
-      trustedSchemaPath: path.resolve("test/fixtures/eval/extraction/phase1/docling-handoff.schema.json"),
+      protectedRootsJson: result.protected_roots_json,
     })).resolves.toMatchObject({ receipt_sha256: result.receipt_sha256 });
     const serialized = JSON.stringify({ inputs: result.receipt.inputs, fixtures: result.receipt.fixtures });
     for (const forbidden of ["ground_truth", "expected", "partition", "category", "fact_ids", "truth_boxes", "answer_state"]) {
@@ -75,7 +76,7 @@ describe("Docling macOS handoff", () => {
       expect.objectContaining({ ordinal: 1, filename: expect.stringMatching(/^source-001-[a-f0-9]{12}\.pdf$/), bytes: expect.any(Number), sha256: expect.stringMatching(/^[a-f0-9]{64}$/) }),
     ]);
     expect(result.receipt.fixtures[0]).not.toHaveProperty("source_path");
-    for (const directory of Object.values(result.receipt.roots).filter(value => typeof value === "string" && value.startsWith(root))) {
+    for (const [name, directory] of Object.entries(result.receipt.roots).filter(([name, value]) => name !== "models" && typeof value === "string" && value.startsWith(root))) {
       expect((await fs.stat(directory)).mode & 0o777).toBe(0o700);
     }
     expect((await fs.stat(result.receiptPath)).mode & 0o777).toBe(0o600);
@@ -91,8 +92,8 @@ describe("Docling macOS handoff", () => {
     const firstFixture = await fixture(firstRoot);
     const secondFixture = await fixture(secondRoot);
     const [first, second] = await Promise.all([
-      prepareDoclingMacHandoff(await options(firstRoot, [firstFixture])),
-      prepareDoclingMacHandoff(await options(secondRoot, [secondFixture])),
+      prepareDoclingMacHandoffForTest(await options(firstRoot, [firstFixture])),
+      prepareDoclingMacHandoffForTest(await options(secondRoot, [secondFixture])),
     ]);
     expect(first.receipt.handoff_id).toBe(second.receipt.handoff_id);
     expect(first.receipt.fixtures).toEqual(second.receipt.fixtures);
@@ -104,7 +105,7 @@ describe("Docling macOS handoff", () => {
     const source = await fixture(root);
     const unsafe = await options(root, [source]);
     unsafe.cacheRoot = path.join(root, "Documents/oda-pdf-tools-extraction");
-    await expect(prepareDoclingMacHandoff(unsafe)).rejects.toThrow(/outside Documents/);
+    await expect(prepareDoclingMacHandoffForTest(unsafe)).rejects.toThrow(/outside Documents/);
   });
 
   it("rejects symbolic-link fixtures and weak existing destination modes", async () => {
@@ -112,56 +113,68 @@ describe("Docling macOS handoff", () => {
     const source = await fixture(root, "source.pdf");
     const linked = path.join(root, "linked.pdf");
     await fs.symlink(source, linked);
-    await expect(prepareDoclingMacHandoff(await options(root, [linked]))).rejects.toThrow(/symbolic link|ELOOP/);
+    await expect(prepareDoclingMacHandoffForTest(await options(root, [linked]))).rejects.toThrow(/symbolic link|ELOOP/);
 
     const weak = await options(root, [source]);
     await fs.mkdir(weak.cacheRoot, { recursive: true, mode: 0o755 });
     await fs.chmod(weak.cacheRoot, 0o755);
-    await expect(prepareDoclingMacHandoff(weak)).rejects.toThrow(/mode-0700/);
+    await expect(prepareDoclingMacHandoffForTest(weak)).rejects.toThrow(/mode-0700/);
   });
 
   it("rejects wrong hosts, non-PDF inputs, hard links, and aggregate fixture overages", async () => {
     const root = await temporaryRoot("pdf-tools-docling-inputs-");
     const source = await fixture(root);
-    await expect(prepareDoclingMacHandoff({ ...(await options(root, [source])), testOnlyHost: { ...DARWIN_ARM64, platform: "linux", architecture: "x64" } })).rejects.toThrow(/darwin\/arm64/);
+    await expect(prepareDoclingMacHandoffForTest({ ...(await options(root, [source])), testOnlyHost: { ...DARWIN_ARM64, platform: "linux", architecture: "x64" } })).rejects.toThrow(/darwin\/arm64/);
+    await expect(prepareDoclingMacHandoff(await options(root, [source]))).rejects.toThrow(/does not accept injected/);
 
     const text = path.join(root, "fixture.txt");
     await fs.writeFile(text, "not a pdf", { mode: 0o600 });
-    await expect(prepareDoclingMacHandoff(await options(root, [text]))).rejects.toThrow(/only PDF/);
+    await expect(prepareDoclingMacHandoffForTest(await options(root, [text]))).rejects.toThrow(/only PDF/);
 
     const hard = path.join(root, "hard.pdf");
     await fs.link(source, hard);
-    await expect(prepareDoclingMacHandoff(await options(root, [hard]))).rejects.toThrow(/single-link/);
+    await expect(prepareDoclingMacHandoffForTest(await options(root, [hard]))).rejects.toThrow(/single-link/);
 
     const large = path.join(root, "large.pdf");
     await fs.writeFile(large, Buffer.alloc((8 * 1024 * 1024) + 1, 0x20), { mode: 0o600 });
-    await expect(prepareDoclingMacHandoff(await options(root, [large]))).rejects.toThrow(/bounded|8 MiB/);
+    await expect(prepareDoclingMacHandoffForTest(await options(root, [large]))).rejects.toThrow(/bounded|8 MiB/);
   });
 
   it("rejects receipt, retained-input, fixture, and uv mutations against the out-of-band receipt digest", async () => {
     const create = async suffix => {
       const root = await temporaryRoot(`pdf-tools-docling-mutation-${suffix}-`);
-      const result = await prepareDoclingMacHandoff(await options(root, [await fixture(root)]));
+      const result = await prepareDoclingMacHandoffForTest(await options(root, [await fixture(root)]));
       return { root, result };
     };
-    const trustedSchemaPath = path.resolve("test/fixtures/eval/extraction/phase1/docling-handoff.schema.json");
-
     const receiptCase = await create("receipt");
     await fs.appendFile(receiptCase.result.receiptPath, " ");
-    await expect(verifyDoclingHandoff({ receiptPath: receiptCase.result.receiptPath, expectedReceiptSha256: receiptCase.result.receipt_sha256, trustedSchemaPath })).rejects.toThrow(/out-of-band/);
+    await expect(verifyDoclingHandoff({ receiptPath: receiptCase.result.receiptPath, expectedReceiptSha256: receiptCase.result.receipt_sha256, protectedRootsJson: receiptCase.result.protected_roots_json })).rejects.toThrow(/out-of-band/);
 
     const inputCase = await create("input");
     const config = inputCase.result.receipt.inputs.find(item => item.role === "candidate_config");
     await fs.appendFile(path.join(inputCase.result.receipt.roots.sidecar_snapshot, config.filename), " ");
-    await expect(verifyDoclingHandoff({ receiptPath: inputCase.result.receiptPath, expectedReceiptSha256: inputCase.result.receipt_sha256, trustedSchemaPath })).rejects.toThrow(/input mismatch/);
+    await expect(verifyDoclingHandoff({ receiptPath: inputCase.result.receiptPath, expectedReceiptSha256: inputCase.result.receipt_sha256, protectedRootsJson: inputCase.result.protected_roots_json })).rejects.toThrow(/input mismatch/i);
 
     const fixtureCase = await create("fixture");
     const retainedFixture = fixtureCase.result.receipt.fixtures[0];
     await fs.appendFile(path.join(path.dirname(fixtureCase.result.receiptPath), "fixtures", retainedFixture.filename), " ");
-    await expect(verifyDoclingHandoff({ receiptPath: fixtureCase.result.receiptPath, expectedReceiptSha256: fixtureCase.result.receipt_sha256, trustedSchemaPath })).rejects.toThrow(/fixture mismatch/);
+    await expect(verifyDoclingHandoff({ receiptPath: fixtureCase.result.receiptPath, expectedReceiptSha256: fixtureCase.result.receipt_sha256, protectedRootsJson: fixtureCase.result.protected_roots_json })).rejects.toThrow(/fixture mismatch/i);
 
     const uvCase = await create("uv");
     await fs.appendFile(uvCase.result.receipt.toolchain.uv.path, "mutated");
-    await expect(verifyDoclingHandoff({ receiptPath: uvCase.result.receiptPath, expectedReceiptSha256: uvCase.result.receipt_sha256, trustedSchemaPath })).rejects.toThrow(/uv binary/);
+    await expect(verifyDoclingHandoff({ receiptPath: uvCase.result.receiptPath, expectedReceiptSha256: uvCase.result.receipt_sha256, protectedRootsJson: uvCase.result.protected_roots_json })).rejects.toThrow(/uv binary/i);
+  });
+
+  it("rejects post-handoff root substitution into protected storage", async () => {
+    const root = await temporaryRoot("pdf-tools-docling-root-substitution-");
+    const result = await prepareDoclingMacHandoffForTest(await options(root, [await fixture(root)]));
+    const protectedTarget = path.join(root, "Dropbox/model-target");
+    await fs.mkdir(protectedTarget, { recursive: true, mode: 0o700 });
+    await fs.symlink(protectedTarget, result.receipt.roots.models);
+    await expect(verifyDoclingHandoff({
+      receiptPath: result.receiptPath,
+      expectedReceiptSha256: result.receipt_sha256,
+      protectedRootsJson: result.protected_roots_json,
+    })).rejects.toThrow(/symbolic link|real path|protected storage/i);
   });
 });

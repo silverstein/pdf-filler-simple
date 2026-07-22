@@ -4,13 +4,16 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import sys
+import tempfile
 
 
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
@@ -18,6 +21,30 @@ MAX_CONFIG_BYTES = 1024 * 1024
 MAX_INVENTORY_BYTES = 16 * 1024 * 1024
 MAX_FILE_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+
+
+def publish_fresh(staging: Path, target: Path) -> None:
+    """Atomically publish a directory while refusing a concurrently-created target."""
+    libc = ctypes.CDLL(None, use_errno=True)
+    source = os.fsencode(staging)
+    destination = os.fsencode(target)
+    if sys.platform == "darwin":
+        operation = libc.renamex_np
+        operation.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        operation.restype = ctypes.c_int
+        result = operation(source, destination, 0x00000004)  # RENAME_EXCL
+    elif sys.platform.startswith("linux"):
+        operation = getattr(libc, "renameat2", None)
+        if operation is None:
+            raise RuntimeError("atomic no-replace publication is unavailable")
+        operation.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        operation.restype = ctypes.c_int
+        result = operation(-100, source, -100, destination, 0x00000001)  # AT_FDCWD, RENAME_NOREPLACE
+    else:
+        raise RuntimeError("atomic no-replace publication is unsupported on this platform")
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number), target)
 
 
 def canonical_json(value):
@@ -147,41 +174,64 @@ def main() -> int:
         raise RuntimeError("config does not match its receipt-bound SHA-256")
     config = json.loads(config_bytes, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("non-finite JSON")))
     model = config["layout_model"]
-    models_path = args.models_path.resolve(strict=True)
-    if (not models_path.is_dir() or models_path.is_symlink() or (models_path.stat().st_mode & 0o777) != 0o700):
-        raise RuntimeError("models path must be a real mode-0700 directory")
-    inventory_path = models_path / "layout-model-inventory.v1.json"
-    if any(models_path.iterdir()):
-        inventory_bytes = read_regular(inventory_path, MAX_INVENTORY_BYTES, 0o600)
-        inventory = json.loads(inventory_bytes, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("non-finite JSON")))
-        if inventory_bytes != (canonical_json(inventory) + "\n").encode():
-            raise RuntimeError("existing model inventory is not canonical")
-        validate_inventory(models_path, model, inventory)
-        print(json.dumps({"inventory_path": str(inventory_path), "file_set_sha256": inventory["file_set_sha256"], "reused": True}, separators=(",", ":")))
-        return 0
+    models_path = args.models_path
+    if not models_path.is_absolute() or Path(os.path.abspath(models_path)) != models_path:
+        raise RuntimeError("models path must be canonical absolute")
+    parent = models_path.parent
+    parent_real = parent.resolve(strict=True)
+    if parent_real != parent or parent.is_symlink() or not parent.is_dir() or stat.S_IMODE(parent.stat().st_mode) != 0o700:
+        raise RuntimeError("models parent must be a real mode-0700 directory")
+    if models_path.exists() or models_path.is_symlink():
+        raise RuntimeError("fresh content-addressed models target must not already exist")
 
-    from huggingface_hub import snapshot_download
-    repository_path = models_path / model["repository"].replace("/", "--")
-    snapshot_download(repo_id=model["repository"], revision=model["revision"], local_dir=repository_path)
-    files = scan_files(models_path, normalize_modes=True)
-    inventory = {
-        "inventory_id": "pdf-tools.docling-layout-model-inventory.v1",
-        "repository": model["repository"],
-        "revision": model["revision"],
-        "files": files,
-        "file_set_sha256": hashlib.sha256(("pdf-tools.docling-layout-model-files.v1\0" + canonical_json(files)).encode()).hexdigest(),
-        "networked_setup": True,
-        "execution_state": "not_run",
-    }
-    validate_inventory(models_path, model, inventory)
-    descriptor = os.open(inventory_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    staging = Path(tempfile.mkdtemp(prefix=f".{models_path.name}.staging-", dir=parent))
+    os.chmod(staging, 0o700)
     try:
-        os.write(descriptor, (canonical_json(inventory) + "\n").encode())
-        os.fsync(descriptor)
-    finally:
-        os.close(descriptor)
-    print(json.dumps({"inventory_path": str(inventory_path), "file_set_sha256": inventory["file_set_sha256"], "reused": False}, separators=(",", ":")))
-    return 0
+        from huggingface_hub import snapshot_download
+        repository_path = staging / model["repository"].replace("/", "--")
+        snapshot_download(repo_id=model["repository"], revision=model["revision"], local_dir=repository_path)
+        files = scan_files(staging, normalize_modes=True)
+        inventory = {
+            "inventory_id": "pdf-tools.docling-layout-model-inventory.v1",
+            "repository": model["repository"],
+            "revision": model["revision"],
+            "files": files,
+            "file_set_sha256": hashlib.sha256(("pdf-tools.docling-layout-model-files.v1\0" + canonical_json(files)).encode()).hexdigest(),
+            "networked_setup": True,
+            "execution_state": "not_run",
+        }
+        validate_inventory(staging, model, inventory)
+        inventory_path = staging / "layout-model-inventory.v1.json"
+        descriptor = os.open(inventory_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            os.write(descriptor, (canonical_json(inventory) + "\n").encode())
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        for directory, _, filenames in os.walk(staging, topdown=False, followlinks=False):
+            for filename in filenames:
+                file_descriptor = os.open(Path(directory) / filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+                try:
+                    os.fsync(file_descriptor)
+                finally:
+                    os.close(file_descriptor)
+            directory_descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+            try:
+                os.fsync(directory_descriptor)
+            finally:
+                os.close(directory_descriptor)
+        publish_fresh(staging, models_path)
+        parent_descriptor = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        try:
+            os.fsync(parent_descriptor)
+        finally:
+            os.close(parent_descriptor)
+        print(json.dumps({"inventory_path": str(models_path / inventory_path.name), "file_set_sha256": inventory["file_set_sha256"], "reused": False}, separators=(",", ":")))
+        return 0
+    except BaseException:
+        if staging.exists():
+            shutil.rmtree(staging)
+        raise
 
 
 if __name__ == "__main__":

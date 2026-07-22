@@ -10,7 +10,7 @@ import {
   canonicalJson,
   validateCandidateResponseSemantics,
 } from "./extraction-phase1-protocol.js";
-import { prepareDoclingMacHandoff } from "./extraction-docling-handoff.js";
+import { prepareDoclingMacHandoffForTest } from "./extraction-docling-handoff.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXPORT_FIXTURE = path.join(REPO_ROOT, "test/fixtures/eval/extraction/phase1/docling-export.synthetic.v1.json");
@@ -70,7 +70,7 @@ async function runAdapter({ request, source, exported = EXPORT_FIXTURE, environm
     fs.writeFile(sourcePath, source, { mode: 0o400 }),
     fs.writeFile(uvPath, "#!/bin/sh\nprintf 'uv 0.8.15\\n'\n", { mode: 0o700 }),
   ]);
-  const handoff = await prepareDoclingMacHandoff({
+  const handoff = await prepareDoclingMacHandoffForTest({
     repoRoot: REPO_ROOT,
     cacheRoot: path.join(root, "Library/Caches/oda-pdf-tools-extraction"),
     sidecarRoot: path.join(root, "Sites/pdf-tools-extraction-sidecars"),
@@ -82,6 +82,7 @@ async function runAdapter({ request, source, exported = EXPORT_FIXTURE, environm
   const snapshot = handoff.receipt.roots.sidecar_snapshot;
   const adapter = path.join(snapshot, handoff.receipt.inputs.find(item => item.role === "adapter_entrypoint").filename);
   const config = path.join(snapshot, handoff.receipt.inputs.find(item => item.role === "candidate_config").filename);
+  await fs.mkdir(handoff.receipt.roots.models, { mode: 0o700 });
   if (mutateSnapshot) await mutateSnapshot({ snapshot, adapter, config, handoff });
   return new Promise((resolve, reject) => {
     const child = spawn("python3", [adapter, "--config", config, "--artifacts-path", handoff.receipt.roots.models,
@@ -106,12 +107,43 @@ afterEach(async () => {
 });
 
 describe("evaluation-only Docling direct-PDF adapter", () => {
-  it("pins the exact DoclingDocument 1.10 adapter projection and string-only table cells", async () => {
+  it("constrains the scrubbed DoclingDocument 1.10-shaped projection to required string table cells", async () => {
     const exported = JSON.parse(await fs.readFile(EXPORT_FIXTURE, "utf8"));
     expect(() => assertSchema(exported, EXPORT_SCHEMA, "Docling export projection")).not.toThrow();
     const withNumericCell = structuredClone(exported);
     withNumericCell.tables[0].data.table_cells[0].text = 0;
     expect(() => assertSchema(withNumericCell, EXPORT_SCHEMA, "Docling export projection")).toThrow(/Docling export projection/);
+    const withMissingText = structuredClone(exported);
+    delete withMissingText.tables[0].data.table_cells[0].text;
+    expect(() => assertSchema(withMissingText, EXPORT_SCHEMA, "Docling export projection")).toThrow(/Docling export projection/);
+  });
+
+  it("purely projects a scrubbed pinned-version export shape without retaining unconsumed fields", async () => {
+    const exported = JSON.parse(await fs.readFile(EXPORT_FIXTURE, "utf8"));
+    const noisy = structuredClone(exported);
+    noisy.unconsumed_root = { ignored: true };
+    noisy.pages["1"].unconsumed_page = true;
+    noisy.texts[0].unconsumed_text = true;
+    noisy.texts[0].prov[0].unconsumed_provenance = true;
+    noisy.texts[0].prov[0].bbox.unconsumed_bbox = true;
+    noisy.tables[0].unconsumed_table = true;
+    noisy.tables[0].data.unconsumed_data = true;
+    noisy.tables[0].data.table_cells[0].unconsumed_cell = true;
+    const program = [
+      "import importlib.util,sys",
+      "spec=importlib.util.spec_from_file_location('adapter',sys.argv[1])",
+      "module=importlib.util.module_from_spec(spec)",
+      "spec.loader.exec_module(module)",
+      "value=module.strict_json_loads(sys.stdin.buffer.read())",
+      "sys.stdout.buffer.write(module.canonical_json(module.project_docling_export(value)))",
+    ].join(";");
+    const result = spawnSync("python3", ["-c", program, path.join(REPO_ROOT, "test/eval/candidates/docling/adapter.py")], {
+      input: JSON.stringify(noisy),
+      env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: "1" },
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(result.stdout).toBe(canonicalJson(exported));
   });
 
   it("matches Phase 1 JavaScript canonical JSON for hostile numeric and UTF-16 key-order cases", () => {
@@ -271,7 +303,7 @@ describe("evaluation-only Docling direct-PDF adapter", () => {
     expect(response.native_evidence).toEqual([]);
   });
 
-  it("converts oversized parser output into a bounded typed error", async () => {
+  it("uses the smaller report/stdout ceiling minus response overhead for its translation budget", async () => {
     const source = Buffer.from("%PDF-1.7\noutput limit\n%%EOF\n");
     const request = requestFor(source, { limits: { max_stdout_bytes: 1024 } });
     const exported = JSON.parse(await fs.readFile(EXPORT_FIXTURE, "utf8"));
@@ -283,7 +315,7 @@ describe("evaluation-only Docling direct-PDF adapter", () => {
     const result = await runAdapter({ request, source, exported: exportPath });
     expect(result.code, result.stderr.toString()).toBe(0);
     expect(result.stdout.length).toBeLessThanOrEqual(1024);
-    expect(JSON.parse(result.stdout)).toMatchObject({ status: "error", diagnostics: { code: "OUTPUT_LIMIT_EXCEEDED" } });
+    expect(JSON.parse(result.stdout)).toMatchObject({ status: "error", diagnostics: { code: "DOCLING_EXPORT_LIMIT_EXCEEDED" } });
   });
 
   it("keeps the synthetic export seam unavailable to real candidate runs", async () => {
@@ -331,5 +363,57 @@ describe("evaluation-only Docling direct-PDF adapter", () => {
     const complex = requestFor(source, { targetSchema: nested });
     const complexResult = await runAdapter({ request: complex, source });
     expect(JSON.parse(complexResult.stdout)).toMatchObject({ status: "error", diagnostics: { code: "TARGET_SCHEMA_TOO_COMPLEX" } });
+  });
+
+  it("returns typed unsupported errors for union, malformed required, and composition shapes without crashing", async () => {
+    const source = Buffer.from("%PDF-1.7\nschema shapes\n%%EOF\n");
+    const schemas = [
+      { type: ["string", "null"] },
+      { type: ["string", null] },
+      { type: { name: "string" } },
+      { type: "object", additionalProperties: false, required: ["x", "x"], properties: { x: { type: "string" } } },
+      { type: "object", additionalProperties: false, required: ["x"], properties: { x: { type: "string" }, y: { type: "string" } } },
+      { anyOf: "not-an-array" },
+      { anyOf: [] },
+      { anyOf: [42] },
+    ];
+    for (const targetSchema of schemas) {
+      const result = await runAdapter({ request: requestFor(source, { targetSchema }), source });
+      expect(result.code, result.stderr.toString()).toBe(0);
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        status: "error",
+        diagnostics: { code: "TARGET_SCHEMA_UNSUPPORTED" },
+      });
+    }
+  });
+
+  it("enforces exact target leaf and depth boundaries", () => {
+    const program = [
+      "import importlib.util,json,sys",
+      "spec=importlib.util.spec_from_file_location('adapter',sys.argv[1])",
+      "module=importlib.util.module_from_spec(spec)",
+      "spec.loader.exec_module(module)",
+      "def flat(count): return {'type':'object','additionalProperties':False,'required':[f'p{i}' for i in range(count)],'properties':{f'p{i}':{'type':'string'} for i in range(count)}}",
+      "def nested(depth):",
+      " value={'type':'string'}",
+      " for _ in range(depth): value={'type':'object','additionalProperties':False,'required':['x'],'properties':{'x':value}}",
+      " return value",
+      "result={'leaves_at_limit':len(module.target_leaf_pointers(flat(module.MAX_SCHEMA_LEAVES))),'depth_at_limit':len(module.target_leaf_pointers(nested(module.MAX_SCHEMA_DEPTH)))}",
+      "for label,value in [('leaves_over',flat(module.MAX_SCHEMA_LEAVES+1)),('depth_over',nested(module.MAX_SCHEMA_DEPTH+1))]:",
+      " try: module.target_leaf_pointers(value); result[label]='accepted'",
+      " except module.AdapterError as error: result[label]=error.code",
+      "sys.stdout.write(json.dumps(result,sort_keys=True,separators=(',',':')))",
+    ].join("\n");
+    const result = spawnSync("python3", ["-c", program, path.join(REPO_ROOT, "test/eval/candidates/docling/adapter.py")], {
+      env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: "1" },
+      encoding: "utf8",
+    });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      depth_at_limit: 1,
+      depth_over: "TARGET_SCHEMA_TOO_COMPLEX",
+      leaves_at_limit: 1024,
+      leaves_over: "TARGET_SCHEMA_TOO_COMPLEX",
+    });
   });
 });

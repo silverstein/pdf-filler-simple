@@ -41,6 +41,7 @@ async function main() {
     handoff_id: result.receipt.handoff_id,
     receipt_path: result.receiptPath,
     receipt_sha256: result.receipt_sha256,
+    protected_roots_json: result.protected_roots_json,
     execution_state: result.receipt.execution_state,
   })}\n`);
 }

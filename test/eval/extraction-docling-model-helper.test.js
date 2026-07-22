@@ -11,79 +11,65 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const HELPER = path.join(REPO_ROOT, "test/eval/candidates/docling/fetch_pinned_layout.py");
 const roots = [];
 
-function sha256(value) {
-  return createHash("sha256").update(value).digest("hex");
-}
+function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
 
-async function setup() {
+async function setup({ failDownload = false } = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-model-helper-"));
   roots.push(root);
-  const models = path.join(root, "models");
-  const repository = "fixture/layout-model";
-  const repositoryRoot = path.join(models, "fixture--layout-model");
-  await fs.mkdir(repositoryRoot, { recursive: true, mode: 0o700 });
-  await fs.chmod(models, 0o700);
-  const fileBytes = {
-    "fixture--layout-model/config.json": Buffer.from("config"),
-    "fixture--layout-model/preprocessor_config.json": Buffer.from("preprocessor"),
-    "fixture--layout-model/weight.bin": Buffer.from("weight"),
-  };
-  for (const [relative, bytes] of Object.entries(fileBytes)) await fs.writeFile(path.join(models, relative), bytes, { mode: 0o600 });
-  const files = Object.entries(fileBytes).sort(([left], [right]) => left.localeCompare(right)).map(([relative_path, bytes]) => ({
-    relative_path, bytes: bytes.length, sha256: sha256(bytes),
-  }));
+  const parent = path.join(root, "models");
+  const models = path.join(parent, "fresh-target");
+  const fakeModuleRoot = path.join(root, "fake-python");
+  await Promise.all([fs.mkdir(parent, { mode: 0o700 }), fs.mkdir(fakeModuleRoot, { mode: 0o700 })]);
+  const fileBytes = { config: Buffer.from("config"), preprocessor: Buffer.from("preprocessor"), weight: Buffer.from("weight") };
   const config = {
     layout_model: {
-      repository,
-      revision: "1".repeat(40),
-      weight_bytes: fileBytes["fixture--layout-model/weight.bin"].length,
-      weight_sha256: sha256(fileBytes["fixture--layout-model/weight.bin"]),
-      config_sha256: sha256(fileBytes["fixture--layout-model/config.json"]),
-      preprocessor_config_sha256: sha256(fileBytes["fixture--layout-model/preprocessor_config.json"]),
+      repository: "fixture/layout-model", revision: "1".repeat(40),
+      weight_bytes: fileBytes.weight.length, weight_sha256: sha256(fileBytes.weight),
+      config_sha256: sha256(fileBytes.config), preprocessor_config_sha256: sha256(fileBytes.preprocessor),
     },
   };
   const configBytes = Buffer.from(`${canonicalJson(config)}\n`);
   const configPath = path.join(root, "config.json");
   await fs.writeFile(configPath, configBytes, { mode: 0o600 });
-  const inventory = {
-    inventory_id: "pdf-tools.docling-layout-model-inventory.v1",
-    repository,
-    revision: config.layout_model.revision,
-    files,
-    file_set_sha256: sha256(Buffer.from(`pdf-tools.docling-layout-model-files.v1\0${canonicalJson(files)}`)),
-    networked_setup: true,
-    execution_state: "not_run",
-  };
-  await fs.writeFile(path.join(models, "layout-model-inventory.v1.json"), `${canonicalJson(inventory)}\n`, { mode: 0o600 });
-  return { models, configPath, configSha: sha256(configBytes) };
+  const moduleSource = failDownload
+    ? "from pathlib import Path\ndef snapshot_download(repo_id,revision,local_dir):\n Path(local_dir).mkdir(parents=True); (Path(local_dir)/'partial').write_bytes(b'partial'); raise RuntimeError('interrupted')\n"
+    : "from pathlib import Path\ndef snapshot_download(repo_id,revision,local_dir):\n p=Path(local_dir); p.mkdir(parents=True); (p/'config.json').write_bytes(b'config'); (p/'preprocessor_config.json').write_bytes(b'preprocessor'); (p/'weight.bin').write_bytes(b'weight')\n";
+  await fs.writeFile(path.join(fakeModuleRoot, "huggingface_hub.py"), moduleSource, { mode: 0o600 });
+  return { root, parent, models, fakeModuleRoot, configPath, configSha: sha256(configBytes) };
 }
 
-function run(args) {
-  return spawnSync("python3", [HELPER, ...args], {
-    env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8",
+function run(fixture, expectedSha = fixture.configSha) {
+  return spawnSync("python3", [HELPER, "--config", fixture.configPath, "--expected-config-sha256", expectedSha, "--models-path", fixture.models], {
+    env: { PATH: process.env.PATH, PYTHONPATH: fixture.fakeModuleRoot, PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8",
   });
 }
 
 afterEach(async () => Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true }))));
 
 describe("Docling pinned model helper", () => {
-  it("reuses only the exact content-addressed mode-0600 inventory without network imports", async () => {
+  it("downloads into a private sibling, verifies it, and atomically publishes a fresh target", async () => {
     const fixture = await setup();
-    const result = run(["--config", fixture.configPath, "--expected-config-sha256", fixture.configSha, "--models-path", fixture.models]);
+    const result = run(fixture);
     expect(result.status, result.stderr).toBe(0);
-    expect(JSON.parse(result.stdout)).toMatchObject({ reused: true });
+    expect(JSON.parse(result.stdout)).toMatchObject({ reused: false, inventory_path: path.join(fixture.models, "layout-model-inventory.v1.json") });
+    expect((await fs.stat(fixture.models)).mode & 0o777).toBe(0o700);
+    expect((await fs.readdir(fixture.parent)).sort()).toEqual(["fresh-target"]);
   });
 
-  it("rejects config, file, and extra-file drift in an existing model root", async () => {
-    const wrongConfig = await setup();
-    expect(run(["--config", wrongConfig.configPath, "--expected-config-sha256", "0".repeat(64), "--models-path", wrongConfig.models]).status).not.toBe(0);
+  it("rejects config mismatch and an already-existing target without self-authorized reuse", async () => {
+    const wrong = await setup();
+    expect(run(wrong, "0".repeat(64)).status).not.toBe(0);
+    expect(await fs.stat(wrong.models).catch(error => error.code)).toBe("ENOENT");
 
-    const changed = await setup();
-    await fs.appendFile(path.join(changed.models, "fixture--layout-model/weight.bin"), "changed");
-    expect(run(["--config", changed.configPath, "--expected-config-sha256", changed.configSha, "--models-path", changed.models]).status).not.toBe(0);
+    const existing = await setup();
+    await fs.mkdir(existing.models, { mode: 0o700 });
+    expect(run(existing).status).not.toBe(0);
+  });
 
-    const extra = await setup();
-    await fs.writeFile(path.join(extra.models, "extra.bin"), "extra", { mode: 0o600 });
-    expect(run(["--config", extra.configPath, "--expected-config-sha256", extra.configSha, "--models-path", extra.models]).status).not.toBe(0);
+  it("does not poison the final target when a staged download is interrupted", async () => {
+    const interrupted = await setup({ failDownload: true });
+    expect(run(interrupted).status).not.toBe(0);
+    expect(await fs.stat(interrupted.models).catch(error => error.code)).toBe("ENOENT");
+    expect((await fs.readdir(interrupted.parent)).some(name => name.includes(".staging-"))).toBe(false);
   });
 });

@@ -32,23 +32,24 @@
           "properties": {
             "setup": {
               "type": "object", "additionalProperties": false,
-              "required": ["network_required", "environment", "preflight", "commands"],
+              "required": ["network_required", "environment", "authority_command", "commands", "finalization"],
               "properties": {
                 "network_required": { "const": true },
                 "environment": { "$ref": "#/$defs/normalized_setup_environment" },
-                "preflight": { "$ref": "#/$defs/command" },
-                "commands": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/$defs/command" } }
+                "authority_command": { "$ref": "#/$defs/command" },
+                "commands": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/$defs/command" } },
+                "finalization": { "type": "object", "additionalProperties": false, "required": ["protocol", "out_of_band_sha256_required"], "properties": { "protocol": { "const": "pdf-tools.docling-finalization.v1" }, "out_of_band_sha256_required": { "const": true } } }
               }
             },
             "execution": {
               "type": "object", "additionalProperties": false,
-              "required": ["offline_intent", "network_isolation_enforced", "environment", "preflight", "command"],
+              "required": ["offline_intent", "network_isolation_enforced", "environment", "authority_command", "adapter_command"],
               "properties": {
                 "offline_intent": { "const": true },
                 "network_isolation_enforced": { "const": false },
                 "environment": { "$ref": "#/$defs/normalized_execution_environment" },
-                "preflight": { "$ref": "#/$defs/command" },
-                "command": { "$ref": "#/$defs/command" }
+                "authority_command": { "$ref": "#/$defs/command" },
+                "adapter_command": { "$ref": "#/$defs/command" }
               }
             }
           }
@@ -68,29 +69,23 @@
       }
     },
     "toolchain": {
-      "type": "object", "additionalProperties": false, "required": ["uv"],
+      "type": "object", "additionalProperties": false, "required": ["uv", "node"],
       "properties": {
-        "uv": {
-          "type": "object", "additionalProperties": false,
-          "required": ["path", "version", "bytes", "sha256"],
-          "properties": {
-            "path": { "$ref": "#/$defs/absolute_path" },
-            "version": { "type": "string", "pattern": "^uv [0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$" },
-            "bytes": { "type": "integer", "minimum": 1, "maximum": 134217728 },
-            "sha256": { "$ref": "#/$defs/sha256" }
-          }
-        }
+        "uv": { "$ref": "#/$defs/tool_identity" },
+        "node": { "$ref": "#/$defs/tool_identity" }
       }
     },
     "roots": {
       "type": "object", "additionalProperties": false,
-      "required": ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "protected_roots_sha256"],
+      "required": ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp", "protected_roots_sha256"],
       "properties": {
         "uv": { "$ref": "#/$defs/absolute_path" },
         "uv_python_install": { "$ref": "#/$defs/absolute_path" },
         "models": { "$ref": "#/$defs/absolute_path" },
         "runs": { "$ref": "#/$defs/absolute_path" },
         "sidecar_snapshot": { "$ref": "#/$defs/absolute_path" },
+        "authority_home": { "$ref": "#/$defs/absolute_path" },
+        "authority_tmp": { "$ref": "#/$defs/absolute_path" },
         "protected_roots_sha256": { "$ref": "#/$defs/sha256" }
       }
     },
@@ -98,27 +93,24 @@
     "fixtures": { "$ref": "#/$defs/fixture_inventory" },
     "setup": {
       "type": "object", "additionalProperties": false,
-      "required": ["network_required", "environment", "preflight_command", "commands", "required_post_setup_evidence"],
+      "required": ["network_required", "environment", "authority_command", "commands", "finalization"],
       "properties": {
         "network_required": { "const": true },
         "environment": { "$ref": "#/$defs/setup_environment" },
-        "preflight_command": { "$ref": "#/$defs/command" },
+        "authority_command": { "$ref": "#/$defs/command" },
         "commands": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/$defs/command" } },
-        "required_post_setup_evidence": {
-          "type": "array", "minItems": 11, "maxItems": 11, "uniqueItems": true,
-          "items": { "enum": ["receipt_sha256", "uv_binary_sha256", "uv_version", "managed_python_inventory", "python_version", "os_build", "resolved_lock_sha256", "installed_distribution_inventory", "model_file_inventory", "model_weight_sha256", "three_process_inventory_stability"] }
-        }
+        "finalization": { "type": "object", "additionalProperties": false, "required": ["protocol", "path", "out_of_band_sha256_required"], "properties": { "protocol": { "const": "pdf-tools.docling-finalization.v1" }, "path": { "$ref": "#/$defs/absolute_path" }, "out_of_band_sha256_required": { "const": true } } }
       }
     },
     "execution": {
       "type": "object", "additionalProperties": false,
-      "required": ["offline_intent", "network_isolation_enforced", "environment", "preflight_command", "command_template", "fixture_presentation"],
+      "required": ["offline_intent", "network_isolation_enforced", "environment", "command_template", "adapter_command", "fixture_presentation"],
       "properties": {
         "offline_intent": { "const": true },
         "network_isolation_enforced": { "const": false },
         "environment": { "$ref": "#/$defs/execution_environment" },
-        "preflight_command": { "$ref": "#/$defs/command" },
         "command_template": { "$ref": "#/$defs/command" },
+        "adapter_command": { "$ref": "#/$defs/command" },
         "fixture_presentation": { "type": "string", "minLength": 1, "maxLength": 512 }
       }
     },
@@ -128,17 +120,27 @@
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
     "absolute_path": { "type": "string", "pattern": "^/", "minLength": 2, "maxLength": 4096 },
     "command": { "type": "array", "minItems": 1, "maxItems": 32, "items": { "type": "string", "minLength": 1, "maxLength": 4096 } },
+    "tool_identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "version", "bytes", "sha256"],
+      "properties": {
+        "path": { "$ref": "#/$defs/absolute_path" },
+        "version": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 134217728 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
     "input_record": {
       "type": "object", "additionalProperties": false,
       "required": ["role", "filename", "bytes", "sha256"],
       "properties": {
-        "role": { "enum": ["adapter_entrypoint", "model_setup_helper", "candidate_config", "candidate_config_schema", "candidate_request_schema", "candidate_response_schema", "handoff_schema", "handoff_generator_source", "handoff_verifier_source", "runtime_evidence_source", "handoff_verifier_cli", "direct_requirements"] },
+        "role": { "enum": ["adapter_entrypoint", "model_setup_helper", "candidate_config", "candidate_config_schema", "candidate_request_schema", "candidate_response_schema", "handoff_schema", "handoff_generator_source", "handoff_verifier_source", "runtime_evidence_source", "handoff_authority", "handoff_verifier_cli", "finalization_schema", "three_process_schema", "direct_requirements"] },
         "filename": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$", "maxLength": 255 },
         "bytes": { "type": "integer", "minimum": 1, "maximum": 16777216 },
         "sha256": { "$ref": "#/$defs/sha256" }
       }
     },
-    "input_inventory": { "type": "array", "minItems": 12, "maxItems": 12, "items": { "$ref": "#/$defs/input_record" } },
+    "input_inventory": { "type": "array", "minItems": 15, "maxItems": 15, "items": { "$ref": "#/$defs/input_record" } },
     "fixture_record": {
       "type": "object", "additionalProperties": false,
       "required": ["ordinal", "filename", "bytes", "sha256"],
@@ -152,27 +154,29 @@
     "fixture_inventory": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/fixture_record" } },
     "setup_environment": {
       "type": "object", "additionalProperties": false,
-      "required": ["UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
-      "properties": { "UV_CACHE_DIR": { "$ref": "#/$defs/absolute_path" }, "UV_PYTHON_INSTALL_DIR": { "$ref": "#/$defs/absolute_path" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" } }
+      "required": ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
+      "properties": { "HOME": { "$ref": "#/$defs/absolute_path" }, "TMPDIR": { "$ref": "#/$defs/absolute_path" }, "PATH": { "const": "/usr/bin:/bin" }, "LANG": { "const": "C" }, "LC_ALL": { "const": "C" }, "UV_CACHE_DIR": { "$ref": "#/$defs/absolute_path" }, "UV_PYTHON_INSTALL_DIR": { "$ref": "#/$defs/absolute_path" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" } }
     },
     "execution_environment": {
       "type": "object", "additionalProperties": false,
-      "required": ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
+      "required": ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
       "properties": {
         "HF_HUB_OFFLINE": { "const": "1" }, "TRANSFORMERS_OFFLINE": { "const": "1" }, "HF_DATASETS_OFFLINE": { "const": "1" },
+        "HOME": { "$ref": "#/$defs/absolute_path" }, "TMPDIR": { "$ref": "#/$defs/absolute_path" }, "PATH": { "const": "/usr/bin:/bin" }, "LANG": { "const": "C" }, "LC_ALL": { "const": "C" },
         "UV_CACHE_DIR": { "$ref": "#/$defs/absolute_path" }, "UV_PYTHON_INSTALL_DIR": { "$ref": "#/$defs/absolute_path" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" }
       }
     },
     "normalized_setup_environment": {
       "type": "object", "additionalProperties": false,
-      "required": ["UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
-      "properties": { "UV_CACHE_DIR": { "const": "$UV_CACHE_ROOT" }, "UV_PYTHON_INSTALL_DIR": { "const": "$UV_PYTHON_INSTALL_ROOT" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" } }
+      "required": ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
+      "properties": { "HOME": { "const": "$AUTHORITY_HOME" }, "TMPDIR": { "const": "$AUTHORITY_TMP" }, "PATH": { "const": "/usr/bin:/bin" }, "LANG": { "const": "C" }, "LC_ALL": { "const": "C" }, "UV_CACHE_DIR": { "const": "$UV_CACHE_ROOT" }, "UV_PYTHON_INSTALL_DIR": { "const": "$UV_PYTHON_INSTALL_ROOT" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" } }
     },
     "normalized_execution_environment": {
       "type": "object", "additionalProperties": false,
-      "required": ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
+      "required": ["HOME", "TMPDIR", "PATH", "LANG", "LC_ALL", "HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE", "UV_CACHE_DIR", "UV_PYTHON_INSTALL_DIR", "PYTHONDONTWRITEBYTECODE"],
       "properties": {
         "HF_HUB_OFFLINE": { "const": "1" }, "TRANSFORMERS_OFFLINE": { "const": "1" }, "HF_DATASETS_OFFLINE": { "const": "1" },
+        "HOME": { "const": "$AUTHORITY_HOME" }, "TMPDIR": { "const": "$AUTHORITY_TMP" }, "PATH": { "const": "/usr/bin:/bin" }, "LANG": { "const": "C" }, "LC_ALL": { "const": "C" },
         "UV_CACHE_DIR": { "const": "$UV_CACHE_ROOT" }, "UV_PYTHON_INSTALL_DIR": { "const": "$UV_PYTHON_INSTALL_ROOT" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" }
       }
     }

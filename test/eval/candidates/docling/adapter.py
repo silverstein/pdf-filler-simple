@@ -37,6 +37,7 @@ MAX_MODEL_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 MAX_SCHEMA_DEPTH = 32
 MAX_SCHEMA_NODES = 2048
 MAX_SCHEMA_LEAVES = 1024
+RESPONSE_ENVELOPE_RESERVE_BYTES = 768
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 SAFE_ID = re.compile(r"[^A-Za-z0-9._:-]+")
 FORBIDDEN_TRUTH_KEYS = {
@@ -61,7 +62,8 @@ HANDOFF_INPUT_ROLES = {
     "adapter_entrypoint", "model_setup_helper", "candidate_config", "candidate_config_schema",
     "candidate_request_schema", "candidate_response_schema", "handoff_schema",
     "handoff_generator_source", "handoff_verifier_source", "runtime_evidence_source",
-    "handoff_verifier_cli", "direct_requirements",
+    "handoff_authority", "handoff_verifier_cli", "finalization_schema",
+    "three_process_schema", "direct_requirements",
 }
 
 
@@ -239,6 +241,30 @@ def digest_stable_regular(filename: Path, max_bytes: int, required_mode: int | N
         os.close(descriptor)
 
 
+def require_canonical_real_path(filename: Path, *, directory: bool, required_mode: int | None = None) -> Path:
+    if not filename.is_absolute() or Path(os.path.abspath(filename)) != filename:
+        raise AdapterError("HANDOFF_PATH_MISMATCH", "Handoff paths must be canonical absolute paths")
+    current = Path(filename.anchor)
+    for component in filename.parts[1:]:
+        current /= component
+        try:
+            metadata = current.lstat()
+        except OSError as error:
+            raise AdapterError("HANDOFF_PATH_MISMATCH", "Handoff path could not be inspected") from error
+        if stat.S_ISLNK(metadata.st_mode):
+            raise AdapterError("HANDOFF_PATH_MISMATCH", "Handoff paths must not contain symbolic links")
+    try:
+        metadata = filename.stat()
+        resolved = filename.resolve(strict=True)
+    except OSError as error:
+        raise AdapterError("HANDOFF_PATH_MISMATCH", "Handoff path could not be resolved") from error
+    if resolved != filename or (directory and not stat.S_ISDIR(metadata.st_mode)) or (not directory and not stat.S_ISREG(metadata.st_mode)):
+        raise AdapterError("HANDOFF_PATH_MISMATCH", "Handoff path type or identity is invalid")
+    if required_mode is not None and stat.S_IMODE(metadata.st_mode) != required_mode:
+        raise AdapterError("HANDOFF_PATH_MISMATCH", "Handoff path mode is invalid")
+    return resolved
+
+
 def verify_receipt_anchor(receipt_path: Path, expected_sha256: str, config_path: Path, artifacts_path: Path) -> dict[str, Any]:
     if not SHA256.fullmatch(expected_sha256):
         raise AdapterError("RECEIPT_TRUST_INVALID", "Expected handoff receipt digest is not SHA-256")
@@ -262,10 +288,9 @@ def verify_receipt_anchor(receipt_path: Path, expected_sha256: str, config_path:
     inputs = receipt.get("inputs")
     if not isinstance(roots, dict) or not isinstance(inputs, list):
         raise AdapterError("RECEIPT_INVALID", "Handoff receipt inventory is missing")
-    snapshot = Path(roots.get("sidecar_snapshot", "")).resolve(strict=True)
-    if snapshot.is_symlink() or stat.S_IMODE(snapshot.stat().st_mode) != 0o700:
-        raise AdapterError("RECEIPT_INVALID", "Handoff snapshot root is not a real mode-0700 directory")
+    snapshot = require_canonical_real_path(Path(roots.get("sidecar_snapshot", "")), directory=True, required_mode=0o700)
     by_role: dict[str, dict[str, Any]] = {}
+    input_bytes_by_role: dict[str, bytes] = {}
     for item in inputs:
         if (not isinstance(item, dict) or set(item) != {"role", "filename", "bytes", "sha256"}
                 or item.get("role") in by_role or not isinstance(item.get("filename"), str)
@@ -277,15 +302,20 @@ def verify_receipt_anchor(receipt_path: Path, expected_sha256: str, config_path:
         data = read_stable_regular(input_path, MAX_STDIN_BYTES, 0o600)
         if len(data) != item["bytes"] or sha256(data) != item["sha256"]:
             raise AdapterError("HANDOFF_INPUT_MISMATCH", "Retained handoff input does not match the anchored receipt")
+        input_bytes_by_role[item["role"]] = data
     if set(by_role) != HANDOFF_INPUT_ROLES or identity.get("inputs") != inputs or identity.get("fixtures") != receipt.get("fixtures"):
         raise AdapterError("RECEIPT_INVALID", "Handoff receipt does not bind the exact retained inventories")
-    expected_config = (snapshot / by_role["candidate_config"]["filename"]).resolve(strict=True)
-    expected_adapter = (snapshot / by_role["adapter_entrypoint"]["filename"]).resolve(strict=True)
-    if config_path.resolve(strict=True) != expected_config or Path(__file__).resolve(strict=True) != expected_adapter:
+    expected_config = require_canonical_real_path(snapshot / by_role["candidate_config"]["filename"], directory=False, required_mode=0o600)
+    expected_adapter = require_canonical_real_path(snapshot / by_role["adapter_entrypoint"]["filename"], directory=False, required_mode=0o600)
+    observed_config = require_canonical_real_path(config_path, directory=False, required_mode=0o600)
+    observed_adapter = require_canonical_real_path(Path(__file__), directory=False, required_mode=0o600)
+    if observed_config != expected_config or observed_adapter != expected_adapter:
         raise AdapterError("HANDOFF_PATH_MISMATCH", "Adapter or configuration path is outside the anchored handoff")
-    if artifacts_path.resolve(strict=True) != Path(roots.get("models", "")).resolve(strict=True):
+    observed_artifacts = require_canonical_real_path(artifacts_path, directory=True, required_mode=0o700)
+    expected_artifacts = require_canonical_real_path(Path(roots.get("models", "")), directory=True, required_mode=0o700)
+    if observed_artifacts != expected_artifacts:
         raise AdapterError("HANDOFF_PATH_MISMATCH", "Model path is outside the anchored handoff")
-    return {"receipt": receipt, "inputs_by_role": by_role}
+    return {"receipt": receipt, "inputs_by_role": by_role, "input_bytes_by_role": input_bytes_by_role}
 
 
 def exact_keys(value: dict[str, Any], expected: set[str], label: str) -> None:
@@ -334,21 +364,37 @@ def target_leaf_pointers(schema: Any, pointer: str = "", depth: int = 0,
     for keyword in ("$ref", "allOf", "oneOf", "not", "if", "then", "else"):
         if keyword in schema:
             raise AdapterError("TARGET_SCHEMA_UNSUPPORTED", f"Unsupported target schema construct: {keyword}")
-    if schema.get("type") == "object" or "properties" in schema:
+    schema_type = schema.get("type")
+    if isinstance(schema_type, list):
+        allowed_types = {"string", "number", "integer", "boolean", "null", "array", "object"}
+        if (not schema_type or any(not isinstance(item, str) or item not in allowed_types for item in schema_type)
+                or len(schema_type) != len(set(schema_type))):
+            raise AdapterError("TARGET_SCHEMA_UNSUPPORTED", "Target schema type union is malformed")
+        raise AdapterError("TARGET_SCHEMA_UNSUPPORTED", "Target schema type unions are outside the Phase 1 subset")
+    if schema_type is not None and not isinstance(schema_type, str):
+        raise AdapterError("TARGET_SCHEMA_UNSUPPORTED", "Target schema type must be a string")
+    if schema_type == "object" or "properties" in schema:
         properties = schema.get("properties")
-        if schema.get("type") != "object" or schema.get("additionalProperties") is not False or not isinstance(properties, dict):
+        if schema_type != "object" or schema.get("additionalProperties") is not False or not isinstance(properties, dict):
             raise AdapterError("TARGET_SCHEMA_UNSUPPORTED", "Object schemas must be closed and declare properties")
         names = sorted(properties, key=utf16_sort_key)
         required = schema.get("required", [])
         if (not isinstance(required, list) or any(not isinstance(name, str) for name in required)
-                or sorted(required, key=utf16_sort_key) != names):
+                or len(required) != len(names) or sorted(required, key=utf16_sort_key) != names):
             raise AdapterError("TARGET_SCHEMA_UNSUPPORTED", "Every object property must be required")
         result: list[str] = []
         for name in names:
             result.extend(target_leaf_pointers(properties[name], f"{pointer}/{pointer_token(name)}", depth + 1, state))
         return result
-    if (schema.get("type") in {"string", "number", "integer", "boolean", "null", "array"}
-            or "const" in schema or isinstance(schema.get("enum"), list) or isinstance(schema.get("anyOf"), list)):
+    enum_value = schema.get("enum")
+    if "enum" in schema and (not isinstance(enum_value, list) or not enum_value):
+        raise AdapterError("TARGET_SCHEMA_UNSUPPORTED", "Target schema enum is malformed")
+    any_of = schema.get("anyOf")
+    if "anyOf" in schema and (not isinstance(any_of, list) or not any_of
+            or any(not isinstance(branch, (dict, bool)) for branch in any_of)):
+        raise AdapterError("TARGET_SCHEMA_UNSUPPORTED", "Target schema anyOf is malformed")
+    if (schema_type in {"string", "number", "integer", "boolean", "null", "array"}
+            or "const" in schema or isinstance(enum_value, list) or isinstance(any_of, list)):
         state["leaves"] += 1
         if state["leaves"] > MAX_SCHEMA_LEAVES:
             raise AdapterError("TARGET_SCHEMA_TOO_COMPLEX", "Target schema exceeds the adapter leaf ceiling")
@@ -467,11 +513,10 @@ def staged_source(request: dict[str, Any]):
         shutil.rmtree(staging_root)
 
 
-def load_config(config_path: Path) -> dict[str, Any]:
+def load_config(raw: bytes) -> dict[str, Any]:
     try:
-        raw = read_stable_regular(config_path, MAX_RECEIPT_BYTES, 0o600)
         config = strict_json_loads(raw)
-    except (OSError, json.JSONDecodeError, ValueError) as error:
+    except (json.JSONDecodeError, ValueError) as error:
         raise AdapterError("CONFIG_INVALID", "Pinned Docling configuration could not be loaded") from error
     if (not isinstance(config, dict) or config.get("config_id") != "pdf-tools.extraction-docling-candidate-config.v1"
             or config.get("candidate_id") != CANDIDATE_ID or config.get("input_mode") != "direct_pdf"
@@ -582,6 +627,108 @@ def verify_layout_artifacts(artifacts_path: Path, config: dict[str, Any]) -> Non
             raise AdapterError("LAYOUT_CONFIG_IDENTITY_MISMATCH", f"Pinned layout {filename} is missing or changed")
 
 
+def project_bbox(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise AdapterError("DOCLING_EXPORT_INVALID", "Docling bbox is not an object")
+    return {name: value.get(name) for name in ("l", "t", "r", "b", "coord_origin")}
+
+
+def project_provenance(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise AdapterError("DOCLING_EXPORT_INVALID", "Docling provenance is not an object")
+    return {
+        "page_no": value.get("page_no"),
+        "bbox": project_bbox(value.get("bbox")),
+        "charspan": value.get("charspan"),
+    }
+
+
+def project_docling_export(document: Any) -> dict[str, Any]:
+    """Return only the scrubbed DoclingDocument fields consumed by this adapter."""
+    if not isinstance(document, dict):
+        raise AdapterError("DOCLING_EXPORT_INVALID", "Docling export must be an object")
+    if document.get("schema_name") != "DoclingDocument" or document.get("version") != "1.10.0":
+        raise AdapterError("DOCLING_EXPORT_VERSION_MISMATCH", "Docling export schema identity does not match the pinned adapter contract")
+    if not isinstance(document.get("name"), str) or not document["name"]:
+        raise AdapterError("DOCLING_EXPORT_INVALID", "Docling export name is invalid")
+    raw_pages = document.get("pages")
+    raw_texts = document.get("texts")
+    raw_tables = document.get("tables")
+    if not isinstance(raw_pages, dict) or not isinstance(raw_texts, list) or not isinstance(raw_tables, list):
+        raise AdapterError("DOCLING_EXPORT_INVALID", "Docling export collections are invalid")
+    pages: dict[str, Any] = {}
+    for key, page in raw_pages.items():
+        if not isinstance(key, str) or not isinstance(page, dict) or not isinstance(page.get("size"), dict):
+            raise AdapterError("DOCLING_EXPORT_INVALID", "Docling page projection is invalid")
+        pages[key] = {
+            "page_no": page.get("page_no"),
+            "size": {"width": page["size"].get("width"), "height": page["size"].get("height")},
+        }
+    texts: list[dict[str, Any]] = []
+    for text_item in raw_texts:
+        if (not isinstance(text_item, dict) or not isinstance(text_item.get("self_ref"), str)
+                or not isinstance(text_item.get("text"), str) or not isinstance(text_item.get("prov"), list)):
+            raise AdapterError("DOCLING_EXPORT_INVALID", "Docling text projection is invalid")
+        projected_text = {
+            "self_ref": text_item["self_ref"],
+            "text": text_item["text"],
+            "prov": [project_provenance(item) for item in text_item["prov"]],
+        }
+        if "content_layer" in text_item:
+            if not isinstance(text_item["content_layer"], str):
+                raise AdapterError("DOCLING_EXPORT_INVALID", "Docling text content layer is invalid")
+            projected_text["content_layer"] = text_item["content_layer"]
+        texts.append(projected_text)
+    tables: list[dict[str, Any]] = []
+    for table_item in raw_tables:
+        if (not isinstance(table_item, dict) or not isinstance(table_item.get("self_ref"), str)
+                or not isinstance(table_item.get("prov"), list) or not isinstance(table_item.get("data"), dict)):
+            raise AdapterError("DOCLING_EXPORT_INVALID", "Docling table projection is invalid")
+        data = table_item["data"]
+        cells = data.get("table_cells")
+        if not isinstance(cells, list):
+            raise AdapterError("DOCLING_EXPORT_INVALID", "Docling table-cell projection is invalid")
+        projected_cells: list[dict[str, Any]] = []
+        for cell in cells:
+            if not isinstance(cell, dict) or not isinstance(cell.get("text"), str):
+                raise AdapterError("DOCLING_EXPORT_INVALID", "Pinned Docling table cell text must be a required string")
+            projected_cell = {
+                "bbox": project_bbox(cell.get("bbox")),
+                "row_span": cell.get("row_span"),
+                "col_span": cell.get("col_span"),
+                "start_row_offset_idx": cell.get("start_row_offset_idx"),
+                "end_row_offset_idx": cell.get("end_row_offset_idx"),
+                "start_col_offset_idx": cell.get("start_col_offset_idx"),
+                "end_col_offset_idx": cell.get("end_col_offset_idx"),
+                "text": cell["text"],
+            }
+            if "page_no" in cell:
+                projected_cell["page_no"] = cell["page_no"]
+            projected_cells.append(projected_cell)
+        tables.append({
+            "self_ref": table_item["self_ref"],
+            "prov": [project_provenance(item) for item in table_item["prov"]],
+            "data": {
+                "num_rows": data.get("num_rows"),
+                "num_cols": data.get("num_cols"),
+                "table_cells": projected_cells,
+            },
+        })
+    projection = {
+        "schema_name": "DoclingDocument",
+        "version": "1.10.0",
+        "name": document["name"],
+        "pages": pages,
+        "texts": texts,
+        "tables": tables,
+    }
+    if "_oda_body_page_texts" in document:
+        projection["_oda_body_page_texts"] = document["_oda_body_page_texts"]
+    return projection
+
+
 def page_map(document: dict[str, Any], expected_count: int) -> dict[int, dict[str, float]]:
     pages = document.get("pages")
     if not isinstance(pages, dict):
@@ -633,8 +780,8 @@ def safe_id(value: str) -> str:
 
 
 class TranslationBudget:
-    def __init__(self, limit: int):
-        self.limit = limit
+    def __init__(self, max_report_bytes: int, max_stdout_bytes: int):
+        self.limit = max(0, min(max_report_bytes, max_stdout_bytes) - RESPONSE_ENVELOPE_RESERVE_BYTES)
         self.used = 0
         self.items = 0
 
@@ -669,11 +816,9 @@ def native_record(item_id: str, page: int, bbox: Any, quote: str, native_ref: An
 
 
 def table_value(cell: dict[str, Any]) -> tuple[bool, Any]:
-    if "text" in cell:
-        if not isinstance(cell["text"], str):
-            raise AdapterError("DOCLING_EXPORT_INVALID", "Pinned Docling table cell text must be a string")
-        return True, cell["text"]
-    return False, None
+    if not isinstance(cell.get("text"), str):
+        raise AdapterError("DOCLING_EXPORT_INVALID", "Pinned Docling table cell text must be a required string")
+    return True, cell["text"]
 
 
 def translate_table(table: dict[str, Any], index: int, pages: dict[int, dict[str, float]],
@@ -765,12 +910,12 @@ def translate_table(table: dict[str, Any], index: int, pages: dict[int, dict[str
 
 
 def translate_export(document: dict[str, Any], request: dict[str, Any], engine_version: str) -> dict[str, Any]:
-    if not isinstance(document, dict):
-        raise AdapterError("DOCLING_EXPORT_INVALID", "Docling export must be an object")
-    if document.get("schema_name") != "DoclingDocument" or document.get("version") != "1.10.0":
-        raise AdapterError("DOCLING_EXPORT_VERSION_MISMATCH", "Docling export schema identity does not match the pinned adapter contract")
+    document = project_docling_export(document)
     pages = page_map(document, request["source"]["page_count"])
-    budget = TranslationBudget(request["limits"]["max_report_bytes"])
+    budget = TranslationBudget(
+        request["limits"]["max_report_bytes"],
+        request["limits"]["max_stdout_bytes"],
+    )
     page_chunks: dict[int, list[str]] = {page: [] for page in pages}
     native: list[dict[str, Any]] = []
     texts = document.get("texts", [])
@@ -942,8 +1087,8 @@ def main() -> int:
         config_path = args.config if args.config.is_absolute() else Path.cwd() / args.config
         artifacts_path = args.artifacts_path if args.artifacts_path.is_absolute() else Path.cwd() / args.artifacts_path
         receipt_path = args.receipt if args.receipt.is_absolute() else Path.cwd() / args.receipt
-        verify_receipt_anchor(receipt_path, args.expected_receipt_sha256, config_path, artifacts_path)
-        config = load_config(config_path)
+        anchor = verify_receipt_anchor(receipt_path, args.expected_receipt_sha256, config_path, artifacts_path)
+        config = load_config(anchor["input_bytes_by_role"]["candidate_config"])
         with staged_source(request) as source_path:
             if args.translate_export is not None:
                 if os.environ.get("PDF_TOOLS_DOCLING_TEST_EXPORT") != "1":

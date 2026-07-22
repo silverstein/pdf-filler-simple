@@ -63,15 +63,6 @@
             "text": "null"
           },
           {
-            "bbox": null,
-            "row_span": 1,
-            "col_span": 1,
-            "start_row_offset_idx": 1,
-            "end_row_offset_idx": 2,
-            "start_col_offset_idx": 1,
-            "end_col_offset_idx": 2
-          },
-          {
             "bbox": { "l": 264, "t": 150, "r": 360, "b": 180, "coord_origin": "TOPLEFT" },
             "row_span": 1,
             "col_span": 1,
