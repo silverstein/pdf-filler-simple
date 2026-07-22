@@ -594,6 +594,8 @@ async function main() {
     });
     const cMapItem = cMapLayout.structuredContent?.pages?.[0]?.raw_items?.[0];
     if (cMapLayout.isError
+      || cMapLayout.structuredContent?.source?.sha256 !== CMAP_ORACLE_PROVENANCE.fixture.sha256
+      || cMapLayout.structuredContent?.source?.size_bytes !== CMAP_ORACLE_PROVENANCE.fixture.size_bytes
       || cMapLayout.structuredContent?.pages?.[0]?.flow_text !== "日本語"
       || cMapItem?.font?.vertical !== true
       || cMapItem?.raw_height !== 72
