@@ -594,7 +594,7 @@ async function digestTree(root, allowedRoots, { strictPrivate = false } = {}) {
       if (metadata.isSymbolicLink()) {
         const target = await fs.readlink(filename);
         const resolved = path.resolve(path.dirname(filename), target);
-        if (strictPrivate || metadata.nlink !== 1 || !allowedRoots.some(allowed => within(allowed, resolved))) {
+        if (strictPrivate || metadata.nlink !== 1 || ![0o700, 0o777].includes(mode) || !allowedRoots.some(allowed => within(allowed, resolved))) {
           throw new Error(`Finalized tree contains an unsafe symbolic link: ${relative_path}`);
         }
         records.push({ relative_path, type: "symlink", mode, links: metadata.nlink, target });
@@ -711,7 +711,7 @@ export function validateFinalizationSchemaMirror(value) {
     || value.installed_distributions.some(item => !Array.isArray(item) || item.length !== 2 || item.some(part => !boundedString(part)))) {
     throw new Error("Finalization distribution inventory violates its retained schema mirror");
   }
-  const validateTree = (tree, { allowOwnerExecuteOnly = false } = {}) => {
+  const validateTree = (tree, { allowOwnerExecuteOnly = false, allowPrivateSymlinkMode = false } = {}) => {
     if (!Array.isArray(tree) || tree.length < 1 || tree.length > MAX_TREE_ENTRIES) throw new Error("Finalization tree inventory violates its retained schema mirror");
     for (const entry of tree) {
       if (!isCanonicalSlashRelativePath(entry?.relative_path) || entry.relative_path.length > 4096 || !integer(entry.links, 1)) throw new Error("Finalization tree record violates its retained schema mirror");
@@ -722,14 +722,15 @@ export function validateFinalizationSchemaMirror(value) {
       } else if (entry.type === "directory") {
         if (!exactKeys(entry, ["relative_path", "type", "mode", "links"]) || ![0o700, 0o755].includes(entry.mode)) throw new Error("Finalization directory record violates its retained schema mirror");
       } else if (entry.type === "symlink") {
-        if (!exactKeys(entry, ["relative_path", "type", "mode", "links", "target"]) || entry.mode !== 0o777 || entry.links !== 1
+        const allowedModes = allowPrivateSymlinkMode ? [0o700, 0o777] : [0o777];
+        if (!exactKeys(entry, ["relative_path", "type", "mode", "links", "target"]) || !allowedModes.includes(entry.mode) || entry.links !== 1
           || !boundedString(entry.target, 4096)) throw new Error("Finalization symlink record violates its retained schema mirror");
       } else throw new Error("Finalization tree record type violates its retained schema mirror");
     }
   };
   validateTree(value.model_files);
-  validateTree(value.managed_python_files, { allowOwnerExecuteOnly: true });
-  validateTree(value.venv_files, { allowOwnerExecuteOnly: true });
+  validateTree(value.managed_python_files, { allowOwnerExecuteOnly: true, allowPrivateSymlinkMode: true });
+  validateTree(value.venv_files, { allowOwnerExecuteOnly: true, allowPrivateSymlinkMode: true });
   const rootNames = ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp", "hf_cache"];
   if (!exactKeys(value.root_policy, rootNames)) throw new Error("Finalization root policy violates its retained schema mirror");
   for (const root of Object.values(value.root_policy)) {

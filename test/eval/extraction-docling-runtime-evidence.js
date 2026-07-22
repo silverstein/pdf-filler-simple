@@ -49,7 +49,7 @@ async function stableFileRecord(filename, recordPath, options) {
   return (await stableFileSnapshot(filename, recordPath, options)).record;
 }
 
-async function walk(label, root, allowedRoots, records, state, relative = "", allowOwnerExecuteOnly = false) {
+async function walk(label, root, allowedRoots, records, state, relative = "", allowPrivateRuntimeModes = false) {
   const directory = relative ? path.join(root, relative) : root;
   const metadata = await fs.lstat(directory);
   const mode = metadata.mode & 0o777;
@@ -67,13 +67,15 @@ async function walk(label, root, allowedRoots, records, state, relative = "", al
     if (childMetadata.isSymbolicLink()) {
       const target = await fs.readlink(child);
       const resolved = path.resolve(path.dirname(child), target);
-      if (childMetadata.nlink !== 1 || (childMetadata.mode & 0o777) !== 0o777 || !allowedRoots.some(rootPath => within(rootPath, resolved))) {
+      const symlinkMode = childMetadata.mode & 0o777;
+      if (!allowPrivateRuntimeModes || childMetadata.nlink !== 1 || ![0o700, 0o777].includes(symlinkMode)
+        || !allowedRoots.some(rootPath => within(rootPath, resolved))) {
         throw new Error(`Runtime symlink violates link/containment policy: ${recordPath}`);
       }
-      records.push({ path: recordPath, type: "symlink", mode: 0o777, links: 1, target });
-    } else if (childMetadata.isDirectory()) await walk(label, root, allowedRoots, records, state, childRelative, allowOwnerExecuteOnly);
+      records.push({ path: recordPath, type: "symlink", mode: symlinkMode, links: 1, target });
+    } else if (childMetadata.isDirectory()) await walk(label, root, allowedRoots, records, state, childRelative, allowPrivateRuntimeModes);
     else if (childMetadata.isFile()) {
-      const record = await stableFileRecord(child, recordPath, { allowOwnerExecuteOnly });
+      const record = await stableFileRecord(child, recordPath, { allowOwnerExecuteOnly: allowPrivateRuntimeModes });
       state.bytes += record.bytes;
       if (state.bytes > MAX_TOTAL_BYTES) throw new Error("Runtime environment exceeds the aggregate byte ceiling");
       records.push(record);
@@ -105,8 +107,12 @@ export function validateDoclingRuntimeInventory(inventory) {
       bytes += record.bytes;
     } else if (record.type === "directory" && (canonicalJson(Object.keys(record).sort()) !== canonicalJson(["links", "mode", "path", "type"])
       || ![0o700, 0o755].includes(record.mode))) throw new Error("Runtime directory record is invalid");
-    else if (record.type === "symlink" && (canonicalJson(Object.keys(record).sort()) !== canonicalJson(["links", "mode", "path", "target", "type"])
-      || record.mode !== 0o777 || record.links !== 1 || typeof record.target !== "string" || !record.target)) throw new Error("Runtime symlink record is invalid");
+    else if (record.type === "symlink") {
+      const [inventoryRoot, ...relativeParts] = record.path.split("/");
+      if (canonicalJson(Object.keys(record).sort()) !== canonicalJson(["links", "mode", "path", "target", "type"])
+        || relativeParts.length < 1 || !["managed_python", "venv"].includes(inventoryRoot) || ![0o700, 0o777].includes(record.mode)
+        || record.links !== 1 || typeof record.target !== "string" || !record.target) throw new Error("Runtime symlink record is invalid");
+    }
   }
   if (bytes !== inventory.total_file_bytes || bytes > MAX_TOTAL_BYTES) throw new Error("Runtime inventory byte total is invalid");
   return inventory;

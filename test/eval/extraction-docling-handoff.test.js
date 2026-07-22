@@ -231,11 +231,29 @@ describe("Docling macOS handoff", () => {
     const ownerExecuteOnlyModel = { ...value, model_files: ownerExecuteOnlyTree };
     expect(() => validateFinalizationSchemaMirror(ownerExecuteOnlyModel)).toThrow(/schema mirror/);
     expect(() => assertSchema(ownerExecuteOnlyModel, schema, "Docling finalization")).toThrow();
+    for (const mode of [0o700, 0o777]) {
+      const symlinkTree = [{ relative_path: "bin/python", type: "symlink", mode, links: 1, target: "/private/managed/python" }];
+      const symlinkValue = { ...value, managed_python_files: symlinkTree, venv_files: symlinkTree };
+      expect(() => validateFinalizationSchemaMirror(symlinkValue)).not.toThrow();
+      expect(() => assertSchema(symlinkValue, schema, "Docling finalization")).not.toThrow();
+    }
+    const privateModelSymlink = { ...value, model_files: [{ relative_path: "model-link", type: "symlink", mode: 0o700, links: 1, target: "/private/model" }] };
+    expect(() => validateFinalizationSchemaMirror(privateModelSymlink)).toThrow(/schema mirror/);
+    expect(() => assertSchema(privateModelSymlink, schema, "Docling finalization")).toThrow();
+    for (const mode of [0o755, 0o711, 0o733]) {
+      const unsafeSymlinkTree = [{ relative_path: "bin/python", type: "symlink", mode, links: 1, target: "/private/managed/python" }];
+      const unsafeSymlinkValue = { ...value, managed_python_files: unsafeSymlinkTree, venv_files: unsafeSymlinkTree };
+      expect(() => validateFinalizationSchemaMirror(unsafeSymlinkValue)).toThrow(/schema mirror/);
+      expect(() => assertSchema(unsafeSymlinkValue, schema, "Docling finalization")).toThrow();
+    }
     for (const inventoryName of ["managed_python_files", "venv_files"]) {
       for (const relative_path of ["../models/weight", "bin/../models/weight", "bin/./python", "bin//python", "/bin/python", "bin\\python", "bin/python/"]) {
         const forgedPathValue = { ...ownerExecuteOnlyValue, [inventoryName]: [{ ...ownerExecuteOnlyTree[0], relative_path }] };
         expect(() => validateFinalizationSchemaMirror(forgedPathValue)).toThrow(/schema mirror/);
         expect(() => assertSchema(forgedPathValue, schema, "Docling finalization")).toThrow();
+        const forgedSymlinkValue = { ...value, [inventoryName]: [{ relative_path, type: "symlink", mode: 0o700, links: 1, target: "/private/managed/python" }] };
+        expect(() => validateFinalizationSchemaMirror(forgedSymlinkValue)).toThrow(/schema mirror/);
+        expect(() => assertSchema(forgedSymlinkValue, schema, "Docling finalization")).toThrow();
       }
     }
     for (const mode of [0o771, 0o733, 0o760]) {

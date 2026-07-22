@@ -34,7 +34,7 @@
         {
           "type": "object", "additionalProperties": false,
           "required": ["path", "type", "mode", "links", "target"],
-          "properties": { "path": { "$ref": "#/$defs/canonical_record_path" }, "type": { "const": "symlink" }, "mode": { "const": 511 }, "links": { "const": 1 }, "target": { "type": "string", "minLength": 1 } }
+          "properties": { "path": { "allOf": [{ "$ref": "#/$defs/canonical_record_path" }, { "pattern": "^(?:managed_python|venv)/" }] }, "type": { "const": "symlink" }, "mode": { "enum": [448, 511] }, "links": { "const": 1 }, "target": { "type": "string", "minLength": 1 } }
         }
       ]
     },

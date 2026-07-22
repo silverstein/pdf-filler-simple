@@ -111,7 +111,7 @@
         },
         {
           "type": "object", "additionalProperties": false, "required": ["relative_path", "type", "mode", "links", "target"],
-          "properties": { "relative_path": { "$ref": "#/$defs/canonical_relative_path" }, "type": { "const": "symlink" }, "mode": { "const": 511 }, "links": { "const": 1 }, "target": { "type": "string", "minLength": 1, "maxLength": 4096 } }
+          "properties": { "relative_path": { "$ref": "#/$defs/canonical_relative_path" }, "type": { "const": "symlink" }, "mode": { "enum": [448, 511] }, "links": { "const": 1 }, "target": { "type": "string", "minLength": 1, "maxLength": 4096 } }
         }
       ]
     },
