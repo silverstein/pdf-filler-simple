@@ -23,6 +23,9 @@ MAX_FILE_BYTES = 512 * 1024 * 1024
 MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
 MAX_CACHE_ENTRIES = 100000
 MAX_CACHE_DEPTH = 128
+MAX_LOCAL_METADATA_FILE_BYTES = 1024 * 1024
+MAX_LOCAL_METADATA_TOTAL_BYTES = 16 * 1024 * 1024
+PINNED_REPOSITORY_FILE_COUNT = 6
 
 
 def publish_fresh(staging: Path, target: Path) -> None:
@@ -139,37 +142,103 @@ def clear_private_cache(cache_path: Path, identity: tuple[int, int]) -> None:
         raise RuntimeError("HF cache root was substituted during setup")
 
 
-def remove_local_download_metadata(repository_path: Path) -> None:
+def repository_relative_files(repository_path: Path) -> list[str]:
+    files = []
+    for root, directories, filenames in os.walk(repository_path, followlinks=False):
+        root_path = Path(root)
+        if root_path == repository_path:
+            if ".cache" not in directories:
+                raise RuntimeError("model download is missing its local metadata directory")
+            directories.remove(".cache")
+        for name in directories:
+            directory = root_path / name
+            metadata = directory.lstat()
+            if directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+                raise RuntimeError("model repository contains an unexpected directory")
+        for name in filenames:
+            candidate = root_path / name
+            metadata = candidate.lstat()
+            if candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
+                raise RuntimeError("model repository contains an unexpected file type")
+            files.append(candidate.relative_to(repository_path).as_posix())
+    if len(files) != PINNED_REPOSITORY_FILE_COUNT or len(set(files)) != len(files):
+        raise RuntimeError("model repository does not contain the pinned six-file set")
+    return sorted(files)
+
+
+def bounded_metadata_file(filename: Path, allow_empty: bool = False) -> int:
+    metadata = filename.lstat()
+    minimum = 0 if allow_empty else 1
+    if (filename.is_symlink() or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
+            or not minimum <= metadata.st_size <= MAX_LOCAL_METADATA_FILE_BYTES):
+        raise RuntimeError("model download metadata is not a bounded single-link regular file")
+    return metadata.st_size
+
+
+def exact_directory_entries(directory: Path, expected: set[str], label: str) -> None:
+    metadata = directory.lstat()
+    if directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+        raise RuntimeError(f"{label} is not a real directory")
+    if {entry.name for entry in directory.iterdir()} != expected:
+        raise RuntimeError(f"{label} has an unexpected shape")
+
+
+def remove_local_download_metadata(repository_path: Path, revision: str) -> None:
     repository_metadata = repository_path.lstat()
     if (repository_path.is_symlink() or not stat.S_ISDIR(repository_metadata.st_mode)
             or repository_path.resolve(strict=True) != repository_path):
         raise RuntimeError("model repository download path is not a real directory")
+    repository_files = repository_relative_files(repository_path)
     cache_path = repository_path / ".cache"
-    if not cache_path.exists() and not cache_path.is_symlink():
-        return
-    cache_metadata = cache_path.lstat()
-    if cache_path.is_symlink() or not stat.S_ISDIR(cache_metadata.st_mode):
-        raise RuntimeError("model download .cache is not a real directory")
-    cache_entries = list(cache_path.iterdir())
-    if len(cache_entries) != 1 or cache_entries[0].name != "huggingface":
-        raise RuntimeError("model download .cache contains unexpected entries")
-    huggingface_path = cache_entries[0]
-    huggingface_metadata = huggingface_path.lstat()
-    if huggingface_path.is_symlink() or not stat.S_ISDIR(huggingface_metadata.st_mode):
-        raise RuntimeError("model download Hugging Face metadata is not a real directory")
-    for root, directories, filenames in os.walk(huggingface_path, followlinks=False):
+    exact_directory_entries(cache_path, {"huggingface"}, "model download .cache")
+    huggingface_path = cache_path / "huggingface"
+    exact_directory_entries(huggingface_path, {".gitignore", "CACHEDIR.TAG", "download", "trees"}, "model download Hugging Face metadata")
+    trees_path = huggingface_path / "trees"
+    tree_name = f"{revision}.json"
+    exact_directory_entries(trees_path, {tree_name}, "model download revision metadata")
+    download_path = huggingface_path / "download"
+    expected_download_files = {f"{name}.metadata" for name in repository_files} | {f"{name}.lock" for name in repository_files}
+    expected_download_directories = {
+        parent.as_posix()
+        for filename in expected_download_files
+        for parent in Path(filename).parents
+        if parent != Path(".")
+    }
+    download_metadata = download_path.lstat()
+    if download_path.is_symlink() or not stat.S_ISDIR(download_metadata.st_mode):
+        raise RuntimeError("model download records are not a real directory")
+    observed_download_files = set()
+    observed_download_directories = set()
+    for root, directories, filenames in os.walk(download_path, followlinks=False):
         root_path = Path(root)
+        root_relative = root_path.relative_to(download_path)
         for name in directories:
             directory = root_path / name
-            if directory.is_symlink() or not stat.S_ISDIR(directory.lstat().st_mode):
-                raise RuntimeError("model download metadata contains an unexpected directory")
+            metadata = directory.lstat()
+            if directory.is_symlink() or not stat.S_ISDIR(metadata.st_mode):
+                raise RuntimeError("model download records contain an unexpected directory")
+            observed_download_directories.add((root_relative / name).as_posix())
         for name in filenames:
-            candidate = root_path / name
-            metadata = candidate.lstat()
-            if (candidate.is_symlink() or not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1
-                    or not (name == ".gitignore" or name.endswith((".metadata", ".lock", ".incomplete")))):
-                raise RuntimeError("model download metadata contains an unexpected file")
-    shutil.rmtree(huggingface_path)
+            observed_download_files.add((root_relative / name).as_posix())
+    if observed_download_directories != expected_download_directories or observed_download_files != expected_download_files:
+        raise RuntimeError("model download records do not match the repository file set")
+    metadata_files = [huggingface_path / ".gitignore", huggingface_path / "CACHEDIR.TAG", trees_path / tree_name]
+    metadata_files.extend(download_path / filename for filename in sorted(expected_download_files))
+    total_bytes = 0
+    for filename in metadata_files:
+        total_bytes += bounded_metadata_file(filename, allow_empty=filename.name.endswith(".lock"))
+        if total_bytes > MAX_LOCAL_METADATA_TOTAL_BYTES:
+            raise RuntimeError("model download metadata exceeds its aggregate-byte ceiling")
+    for filename in sorted(expected_download_files):
+        (download_path / filename).unlink()
+    for directory in sorted(expected_download_directories, key=lambda value: (value.count("/"), value), reverse=True):
+        (download_path / directory).rmdir()
+    download_path.rmdir()
+    (trees_path / tree_name).unlink()
+    trees_path.rmdir()
+    (huggingface_path / ".gitignore").unlink()
+    (huggingface_path / "CACHEDIR.TAG").unlink()
+    huggingface_path.rmdir()
     cache_path.rmdir()
     fsync_directory(repository_path)
 
@@ -361,7 +430,7 @@ def setup(args) -> int:
         from huggingface_hub import snapshot_download
         repository_path = staging / model["repository"].replace("/", "--")
         snapshot_download(repo_id=model["repository"], revision=model["revision"], local_dir=repository_path)
-        remove_local_download_metadata(repository_path)
+        remove_local_download_metadata(repository_path, model["revision"])
         files = scan_files(staging, normalize_modes=True)
         inventory = {
             "inventory_id": "pdf-tools.docling-layout-model-inventory.v1",

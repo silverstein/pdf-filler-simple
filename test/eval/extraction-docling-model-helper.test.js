@@ -10,6 +10,7 @@ import { canonicalJson } from "./extraction-phase1-protocol.js";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const HELPER = path.join(REPO_ROOT, "test/eval/candidates/docling/fetch_pinned_layout.py");
 const roots = [];
+const REPOSITORY_FILES = [".gitattributes", "README.md", "config.json", "docling_heron_400.png", "model.safetensors", "preprocessor_config.json"];
 
 function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
 
@@ -23,7 +24,11 @@ async function setup({ failDownload = false, unexpectedLocalCache = false } = {}
   const tmp = path.join(root, "tmp");
   const hfCache = path.join(root, "hf-cache");
   await Promise.all([parent, fakeModuleRoot, home, tmp, hfCache].map(directory => fs.mkdir(directory, { mode: 0o700 })));
-  const fileBytes = { config: Buffer.from("config"), preprocessor: Buffer.from("preprocessor"), weight: Buffer.from("weight") };
+  const repositoryContents = {
+    ".gitattributes": "attributes", "README.md": "readme", "config.json": "config",
+    "docling_heron_400.png": "png", "model.safetensors": "weight", "preprocessor_config.json": "preprocessor",
+  };
+  const fileBytes = { config: Buffer.from(repositoryContents["config.json"]), preprocessor: Buffer.from(repositoryContents["preprocessor_config.json"]), weight: Buffer.from(repositoryContents["model.safetensors"]) };
   const config = {
     layout_model: {
       repository: "fixture/layout-model", revision: "1".repeat(40),
@@ -42,9 +47,23 @@ def snapshot_download(repo_id,revision,local_dir):
  if escape:
   (cache/'outside-link').symlink_to(escape); os.mkfifo(cache/'transient-fifo')
  p=Path(local_dir); p.mkdir(parents=True)
- metadata=p/'.cache'/'huggingface'/'download'/'config.json.metadata'; metadata.parent.mkdir(parents=True); metadata.write_text('transient')
+ files=${JSON.stringify(repositoryContents)}
+ for name,value in files.items():
+  target=p/name; target.parent.mkdir(parents=True,exist_ok=True); target.write_bytes(value.encode())
+ mutation=os.environ.get('PDF_TOOLS_TEST_LOCAL_METADATA_MUTATION')
+ hf=p/'.cache'/'huggingface'; download=hf/'download'; trees=hf/'trees'; download.mkdir(parents=True); trees.mkdir()
+ (hf/'.gitignore').write_text('*\\n'); (hf/'CACHEDIR.TAG').write_text('Signature: 8a477f597d28d172789f06886806bc55\\n')
+ tree_revision='2'*40 if mutation == 'wrong-revision' else revision
+ (trees/f'{tree_revision}.json').write_text('{}')
+ for name in files:
+  metadata=download/f'{name}.metadata'; lock=download/f'{name}.lock'; metadata.parent.mkdir(parents=True,exist_ok=True)
+  if not (mutation in ('symlink','special') and name == 'config.json'): metadata.write_text('transient')
+  if not (mutation == 'missing' and name == 'README.md'): lock.write_bytes(b'')
+ if mutation == 'symlink': (download/'config.json.metadata').symlink_to(p/'config.json')
+ if mutation == 'special': os.mkfifo(download/'config.json.metadata')
+ if mutation == 'extra': (download/'model.safetensors.incomplete').write_text('unexpected')
 ${unexpectedLocalCache ? " (p/'.cache'/'unexpected.bin').write_bytes(b'unexpected')" : ""}
-${failDownload ? " (p/'partial').write_bytes(b'partial'); raise RuntimeError('interrupted')" : " (p/'config.json').write_bytes(b'config'); (p/'preprocessor_config.json').write_bytes(b'preprocessor'); (p/'weight.bin').write_bytes(b'weight')"}
+${failDownload ? " (p/'partial').write_bytes(b'partial'); raise RuntimeError('interrupted')" : ""}
 `;
   await fs.writeFile(path.join(fakeModuleRoot, "huggingface_hub.py"), moduleSource, { mode: 0o600 });
   return { root, parent, models, fakeModuleRoot, configPath, configSha: sha256(configBytes), home, tmp, hfCache };
@@ -76,6 +95,7 @@ describe("Docling pinned model helper", () => {
     expect((await fs.readdir(fixture.parent)).sort()).toEqual(["fresh-target"]);
     const inventory = JSON.parse(await fs.readFile(path.join(fixture.models, "layout-model-inventory.v1.json"), "utf8"));
     expect(inventory.files.some(file => file.relative_path.includes(".cache"))).toBe(false);
+    expect(inventory.files.map(file => file.relative_path).sort()).toEqual(REPOSITORY_FILES.map(filename => `fixture--layout-model/${filename}`).sort());
     expect((await fs.stat(fixture.hfCache)).mode & 0o777).toBe(0o700);
     await expectIsolationEmpty(fixture);
   });
@@ -103,7 +123,17 @@ describe("Docling pinned model helper", () => {
     const fixture = await setup({ unexpectedLocalCache: true });
     const result = run(fixture);
     expect(result.status).not.toBe(0);
-    expect(result.stderr).toMatch(/\.cache contains unexpected entries/i);
+    expect(result.stderr).toMatch(/\.cache.*unexpected shape/i);
+    expect(await fs.stat(fixture.models).catch(error => error.code)).toBe("ENOENT");
+    expect((await fs.readdir(fixture.parent)).some(name => name.includes(".staging-"))).toBe(false);
+    await expectIsolationEmpty(fixture);
+  });
+
+  it.each(["extra", "missing", "wrong-revision", "symlink", "special"])("rejects %s pinned local metadata without publishing", async mutation => {
+    const fixture = await setup();
+    const result = run(fixture, fixture.configSha, { PDF_TOOLS_TEST_LOCAL_METADATA_MUTATION: mutation });
+    expect(result.status).not.toBe(0);
+    expect(result.stderr).toMatch(/metadata|download records/i);
     expect(await fs.stat(fixture.models).catch(error => error.code)).toBe("ENOENT");
     expect((await fs.readdir(fixture.parent)).some(name => name.includes(".staging-"))).toBe(false);
     await expectIsolationEmpty(fixture);
