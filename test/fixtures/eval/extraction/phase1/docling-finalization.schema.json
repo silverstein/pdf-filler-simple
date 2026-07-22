@@ -24,9 +24,9 @@
       "type": "array", "minItems": 1, "maxItems": 10000,
       "items": { "type": "array", "minItems": 2, "maxItems": 2, "prefixItems": [{ "type": "string", "minLength": 1 }, { "type": "string", "minLength": 1 }] }
     },
-    "model_files": { "$ref": "#/$defs/tree_inventory" },
-    "managed_python_files": { "$ref": "#/$defs/tree_inventory" },
-    "venv_files": { "$ref": "#/$defs/tree_inventory" },
+    "model_files": { "$ref": "#/$defs/private_tree_inventory" },
+    "managed_python_files": { "$ref": "#/$defs/runtime_tree_inventory" },
+    "venv_files": { "$ref": "#/$defs/runtime_tree_inventory" },
     "root_policy": {
       "type": "object", "additionalProperties": false,
       "required": ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp", "hf_cache"],
@@ -74,7 +74,7 @@
       "type": "object", "additionalProperties": false, "required": ["path", "real_path", "mode", "links"],
       "properties": { "path": { "$ref": "#/$defs/absolute_path" }, "real_path": { "$ref": "#/$defs/absolute_path" }, "mode": { "const": 448 }, "links": { "type": "integer", "minimum": 1 } }
     },
-    "tree_entry": {
+    "private_tree_entry": {
       "oneOf": [
         {
           "type": "object", "additionalProperties": false, "required": ["relative_path", "type", "mode", "links", "bytes", "sha256"],
@@ -94,6 +94,27 @@
         }
       ]
     },
-    "tree_inventory": { "type": "array", "minItems": 1, "maxItems": 50000, "items": { "$ref": "#/$defs/tree_entry" } }
+    "runtime_tree_entry": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false, "required": ["relative_path", "type", "mode", "links", "bytes", "sha256"],
+          "properties": {
+            "relative_path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "type": { "const": "file" },
+            "mode": { "enum": [384, 420, 448, 457, 493] }, "links": { "type": "integer", "minimum": 1 },
+            "bytes": { "type": "integer", "minimum": 0, "maximum": 536870912 }, "sha256": { "$ref": "#/$defs/sha256" }
+          }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["relative_path", "type", "mode", "links"],
+          "properties": { "relative_path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "type": { "const": "directory" }, "mode": { "enum": [448, 493] }, "links": { "type": "integer", "minimum": 1 } }
+        },
+        {
+          "type": "object", "additionalProperties": false, "required": ["relative_path", "type", "mode", "links", "target"],
+          "properties": { "relative_path": { "type": "string", "minLength": 1, "maxLength": 4096 }, "type": { "const": "symlink" }, "mode": { "const": 511 }, "links": { "const": 1 }, "target": { "type": "string", "minLength": 1, "maxLength": 4096 } }
+        }
+      ]
+    },
+    "private_tree_inventory": { "type": "array", "minItems": 1, "maxItems": 50000, "items": { "$ref": "#/$defs/private_tree_entry" } },
+    "runtime_tree_inventory": { "type": "array", "minItems": 1, "maxItems": 50000, "items": { "$ref": "#/$defs/runtime_tree_entry" } }
   }
 }

@@ -22,12 +22,13 @@ function within(parent, child) {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
 }
 
-async function stableFileSnapshot(filename, recordPath) {
+async function stableFileSnapshot(filename, recordPath, { allowOwnerExecuteOnly = false } = {}) {
   const handle = await fs.open(filename, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   try {
     const before = await handle.stat({ bigint: true });
     const mode = Number(before.mode & 0o777n);
-    if (!before.isFile() || before.size > BigInt(MAX_FILE_BYTES) || before.nlink < 1n || ![0o600, 0o644, 0o700, 0o755].includes(mode)) {
+    const allowedModes = allowOwnerExecuteOnly ? [0o600, 0o644, 0o700, 0o711, 0o755] : [0o600, 0o644, 0o700, 0o755];
+    if (!before.isFile() || before.size > BigInt(MAX_FILE_BYTES) || before.nlink < 1n || !allowedModes.includes(mode)) {
       throw new Error(`Runtime file violates mode/link/size policy: ${recordPath}`);
     }
     const bytes = await handle.readFile();
@@ -39,11 +40,11 @@ async function stableFileSnapshot(filename, recordPath) {
   } finally { await handle.close(); }
 }
 
-async function stableFileRecord(filename, recordPath) {
-  return (await stableFileSnapshot(filename, recordPath)).record;
+async function stableFileRecord(filename, recordPath, options) {
+  return (await stableFileSnapshot(filename, recordPath, options)).record;
 }
 
-async function walk(label, root, allowedRoots, records, state, relative = "") {
+async function walk(label, root, allowedRoots, records, state, relative = "", allowOwnerExecuteOnly = false) {
   const directory = relative ? path.join(root, relative) : root;
   const metadata = await fs.lstat(directory);
   const mode = metadata.mode & 0o777;
@@ -65,9 +66,9 @@ async function walk(label, root, allowedRoots, records, state, relative = "") {
         throw new Error(`Runtime symlink violates link/containment policy: ${recordPath}`);
       }
       records.push({ path: recordPath, type: "symlink", mode: 0o777, links: 1, target });
-    } else if (childMetadata.isDirectory()) await walk(label, root, allowedRoots, records, state, childRelative);
+    } else if (childMetadata.isDirectory()) await walk(label, root, allowedRoots, records, state, childRelative, allowOwnerExecuteOnly);
     else if (childMetadata.isFile()) {
-      const record = await stableFileRecord(child, recordPath);
+      const record = await stableFileRecord(child, recordPath, { allowOwnerExecuteOnly });
       state.bytes += record.bytes;
       if (state.bytes > MAX_TOTAL_BYTES) throw new Error("Runtime environment exceeds the aggregate byte ceiling");
       records.push(record);
@@ -91,8 +92,10 @@ export function validateDoclingRuntimeInventory(inventory) {
       || !Number.isInteger(record.mode) || !Number.isInteger(record.links) || record.links < 1) throw new Error("Runtime inventory record is invalid");
     paths.add(record.path);
     if (record.type === "file") {
+      const allowedModes = /^(?:managed_python|venv)\//.test(record.path)
+        ? [0o600, 0o644, 0o700, 0o711, 0o755] : [0o600, 0o644, 0o700, 0o755];
       if (canonicalJson(Object.keys(record).sort()) !== canonicalJson(["bytes", "links", "mode", "path", "sha256", "type"])
-        || !Number.isInteger(record.bytes) || record.bytes < 0 || !SHA256.test(record.sha256 ?? "") || ![0o600, 0o644, 0o700, 0o755].includes(record.mode)) throw new Error("Runtime file record is invalid");
+        || !Number.isInteger(record.bytes) || record.bytes < 0 || !SHA256.test(record.sha256 ?? "") || !allowedModes.includes(record.mode)) throw new Error("Runtime file record is invalid");
       bytes += record.bytes;
     } else if (record.type === "directory" && (canonicalJson(Object.keys(record).sort()) !== canonicalJson(["links", "mode", "path", "type"])
       || ![0o700, 0o755].includes(record.mode))) throw new Error("Runtime directory record is invalid");
@@ -108,7 +111,9 @@ export async function captureDoclingRuntimeInventory(receipt) {
   const roots = { managed_python: receipt.roots.uv_python_install, venv: path.join(receipt.roots.sidecar_snapshot, "venv"), models: receipt.roots.models };
   const allowedRoots = Object.values(roots).map(value => path.resolve(value));
   const records = []; const state = { entries: 0, bytes: 0 };
-  for (const [label, root] of Object.entries(roots)) await walk(label, path.resolve(root), allowedRoots, records, state);
+  for (const [label, root] of Object.entries(roots)) {
+    await walk(label, path.resolve(root), allowedRoots, records, state, "", label === "managed_python" || label === "venv");
+  }
   for (const [filename, recordPath] of [[path.join(receipt.roots.sidecar_snapshot, "requirements.lock"), "requirements.lock"], [receipt.toolchain.uv.path, "toolchain/uv"]]) {
     const record = await stableFileRecord(filename, recordPath); records.push(record); state.bytes += record.bytes;
   }

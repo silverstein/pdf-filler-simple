@@ -18,7 +18,12 @@
         {
           "type": "object", "additionalProperties": false,
           "required": ["path", "type", "mode", "links", "bytes", "sha256"],
-          "properties": { "path": { "type": "string", "minLength": 1 }, "type": { "const": "file" }, "mode": { "enum": [384, 420, 448, 493] }, "links": { "type": "integer", "minimum": 1 }, "bytes": { "type": "integer", "minimum": 0, "maximum": 536870912 }, "sha256": { "$ref": "#/$defs/sha256" } }
+          "properties": { "path": { "type": "string", "pattern": "^(?:managed_python|venv)/" }, "type": { "const": "file" }, "mode": { "enum": [384, 420, 448, 457, 493] }, "links": { "type": "integer", "minimum": 1 }, "bytes": { "type": "integer", "minimum": 0, "maximum": 536870912 }, "sha256": { "$ref": "#/$defs/sha256" } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "type", "mode", "links", "bytes", "sha256"],
+          "properties": { "path": { "type": "string", "pattern": "^(?!(?:managed_python|venv)/).+" }, "type": { "const": "file" }, "mode": { "enum": [384, 420, 448, 493] }, "links": { "type": "integer", "minimum": 1 }, "bytes": { "type": "integer", "minimum": 0, "maximum": 536870912 }, "sha256": { "$ref": "#/$defs/sha256" } }
         },
         {
           "type": "object", "additionalProperties": false,

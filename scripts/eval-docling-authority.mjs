@@ -602,7 +602,7 @@ async function digestTree(root, allowedRoots, { strictPrivate = false } = {}) {
       }
       else if (metadata.isFile()) {
         const bytes = await readStable(filename, MAX_TREE_FILE_BYTES, null, true);
-        if (![0o600, 0o644, 0o700, 0o755].includes(mode) || metadata.nlink < 1 || (strictPrivate && (mode !== 0o600 || metadata.nlink !== 1))) {
+        if (![0o600, 0o644, 0o700, 0o711, 0o755].includes(mode) || metadata.nlink < 1 || (strictPrivate && (mode !== 0o600 || metadata.nlink !== 1))) {
           throw new Error(`Finalized tree file violates mode/link policy: ${relative_path}`);
         }
         totalBytes += bytes.length;
@@ -706,12 +706,13 @@ export function validateFinalizationSchemaMirror(value) {
     || value.installed_distributions.some(item => !Array.isArray(item) || item.length !== 2 || item.some(part => !boundedString(part)))) {
     throw new Error("Finalization distribution inventory violates its retained schema mirror");
   }
-  const validateTree = tree => {
+  const validateTree = (tree, { allowOwnerExecuteOnly = false } = {}) => {
     if (!Array.isArray(tree) || tree.length < 1 || tree.length > MAX_TREE_ENTRIES) throw new Error("Finalization tree inventory violates its retained schema mirror");
     for (const entry of tree) {
       if (!boundedString(entry?.relative_path, 4096) || !integer(entry.links, 1)) throw new Error("Finalization tree record violates its retained schema mirror");
       if (entry.type === "file") {
-        if (!exactKeys(entry, ["relative_path", "type", "mode", "links", "bytes", "sha256"]) || ![0o600, 0o644, 0o700, 0o755].includes(entry.mode)
+        const allowedModes = allowOwnerExecuteOnly ? [0o600, 0o644, 0o700, 0o711, 0o755] : [0o600, 0o644, 0o700, 0o755];
+        if (!exactKeys(entry, ["relative_path", "type", "mode", "links", "bytes", "sha256"]) || !allowedModes.includes(entry.mode)
           || !integer(entry.bytes, 0, 536870912) || !SHA256.test(entry.sha256 ?? "")) throw new Error("Finalization file record violates its retained schema mirror");
       } else if (entry.type === "directory") {
         if (!exactKeys(entry, ["relative_path", "type", "mode", "links"]) || ![0o700, 0o755].includes(entry.mode)) throw new Error("Finalization directory record violates its retained schema mirror");
@@ -721,7 +722,9 @@ export function validateFinalizationSchemaMirror(value) {
       } else throw new Error("Finalization tree record type violates its retained schema mirror");
     }
   };
-  for (const tree of [value.model_files, value.managed_python_files, value.venv_files]) validateTree(tree);
+  validateTree(value.model_files);
+  validateTree(value.managed_python_files, { allowOwnerExecuteOnly: true });
+  validateTree(value.venv_files, { allowOwnerExecuteOnly: true });
   const rootNames = ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp", "hf_cache"];
   if (!exactKeys(value.root_policy, rootNames)) throw new Error("Finalization root policy violates its retained schema mirror");
   for (const root of Object.values(value.root_policy)) {

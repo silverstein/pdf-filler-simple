@@ -224,6 +224,19 @@ describe("Docling macOS handoff", () => {
     const schema = JSON.parse(await fs.readFile(path.resolve("test/fixtures/eval/extraction/phase1/docling-finalization.schema.json"), "utf8"));
     expect(() => validateFinalizationSchemaMirror(value)).not.toThrow();
     expect(() => assertSchema(value, schema, "Docling finalization")).not.toThrow();
+    const ownerExecuteOnlyTree = [{ ...tree[0], mode: 0o711 }];
+    const ownerExecuteOnlyValue = { ...value, managed_python_files: ownerExecuteOnlyTree, venv_files: ownerExecuteOnlyTree };
+    expect(() => validateFinalizationSchemaMirror(ownerExecuteOnlyValue)).not.toThrow();
+    expect(() => assertSchema(ownerExecuteOnlyValue, schema, "Docling finalization")).not.toThrow();
+    const ownerExecuteOnlyModel = { ...value, model_files: ownerExecuteOnlyTree };
+    expect(() => validateFinalizationSchemaMirror(ownerExecuteOnlyModel)).toThrow(/schema mirror/);
+    expect(() => assertSchema(ownerExecuteOnlyModel, schema, "Docling finalization")).toThrow();
+    for (const mode of [0o771, 0o733, 0o760]) {
+      const unsafeTree = [{ ...tree[0], mode }];
+      const unsafeValue = { ...value, managed_python_files: unsafeTree, venv_files: unsafeTree };
+      expect(() => validateFinalizationSchemaMirror(unsafeValue)).toThrow(/schema mirror/);
+      expect(() => assertSchema(unsafeValue, schema, "Docling finalization")).toThrow();
+    }
     const leapValue = { ...value, toolchain: { ...value.toolchain, uv: { ...uvTool, version: LEAP_DAY_UV_VERSION } } };
     expect(() => validateFinalizationSchemaMirror(leapValue)).not.toThrow();
     expect(() => assertSchema(leapValue, schema, "Docling finalization")).not.toThrow();
