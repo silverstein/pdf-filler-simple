@@ -2,26 +2,34 @@
   "config_id": "pdf-tools.extraction-docling-candidate-config.v1",
   "config_version": 1,
   "candidate_id": "candidate.direct_pdf.v1",
-  "execution_state": "not_run",
+  "execution_state": "adapter_ready_not_executed",
   "input_mode": "direct_pdf",
   "platform": {
     "interpreter": "cpython-3.12.13-macos-aarch64-none",
     "architecture": "arm64",
     "host_identity_required": true
   },
+  "install_requirement": "docling-slim[convert-core,format-pdf,models-local,feat-ocr-mac]==2.114.0",
   "packages": [
     { "name": "docling-core", "version": "2.86.0", "source_revision": "c3177448b3f21380df7a7b7eb7b9fd40b6de6a8e", "wheel_sha256": "2d9e834a58bd7786e568db94268c2c2db90f9f2f95c65ea084bf1399855be85b" },
+    { "name": "docling-ibm-models", "version": "3.13.3", "source_revision": "wheel-only-provenance", "wheel_sha256": "50fc83d244ce2dc43158e02155d1caa68374d7a169d0f34e67d7eb14f396ffe6" },
     { "name": "docling-parse", "version": "7.7.0", "source_revision": "ba401e0a9aaadaf98bc9a69e10a963a822dc3e6c", "wheel_sha256": "312fed9d5d5f9ce26112956f5981200f8f923a42383f2c2daa151ee1096e7e6f" },
     { "name": "docling-slim", "version": "2.114.0", "source_revision": "30ac7809612ec157792109f40482e14bc2c55001", "wheel_sha256": "e8c936e627dce030d20d3d09949c1e145dd937d5d8a3614e94e5fe84639a4a02" },
     { "name": "ocrmac", "version": "1.0.1", "source_revision": "a38d01c653272b30a6bb2d6f8655956ab678cc38", "wheel_sha256": "1cef25426f7ae6bbd57fe3dc5553b25461ae8ad0d2b428a9bbadbf5907349024" },
     { "name": "pypdfium2", "version": "5.11.0", "source_revision": "0168561b33a3fc32eceb6ae46cc252f6b0e90c19", "wheel_sha256": "73fe55dd258f02332bc0a34128ddc2994fd610e664d1f2f7d78dd9e2570f15ee" },
-    { "name": "torch", "version": "2.11.0", "source_revision": "wheel", "wheel_sha256": "4b5866312ee6e52ea625cd211dcb97d6a2cdc1131a5f15cc0d87eec948f6dd34" }
+    { "name": "torch", "version": "2.11.0", "source_revision": "wheel-only-provenance", "wheel_sha256": "4b5866312ee6e52ea625cd211dcb97d6a2cdc1131a5f15cc0d87eec948f6dd34" },
+    { "name": "torchvision", "version": "0.26.0", "source_revision": "wheel-only-provenance", "wheel_sha256": "c409e1c3fdebec7a3834465086dbda8bf7680eff79abf7fd2f10c6b59520a7a4" },
+    { "name": "accelerate", "version": "1.14.0", "source_revision": "wheel-only-provenance", "wheel_sha256": "e94390c2863b873be18f623f9df48a0d8fe5eff13ea7f1a00092b0a7904888c6" },
+    { "name": "huggingface-hub", "version": "1.22.0", "source_revision": "wheel-only-provenance", "wheel_sha256": "b09e19309ae09ee0a71892701c4fe70af39ab4e00817321dc62f2289a977249b" },
+    { "name": "defusedxml", "version": "0.7.1", "source_revision": "wheel-only-provenance", "wheel_sha256": "a352e7e428770286cc899e2542b6cdaedb2b4953ff269a210103ec58f6198a61" }
   ],
   "layout_model": {
     "repository": "docling-project/docling-layout-heron",
     "revision": "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8",
     "weight_bytes": 171658996,
     "weight_sha256": "00333a43451945aaf89db8ca9c0a17e75d1537c17db60fdb91aa95f4c7929e0c",
+    "config_sha256": "fdea30805ce2f5666b147fca941dcdd27ad468e27d6ed21902207d3da056a97d",
+    "preprocessor_config_sha256": "cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1",
     "license": "Apache-2.0",
     "license_status": "reviewed_license"
   },

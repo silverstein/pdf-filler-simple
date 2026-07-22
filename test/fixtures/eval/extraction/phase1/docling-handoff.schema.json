@@ -1,0 +1,94 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/docling-handoff.schema.json",
+  "title": "PDF Tools Docling macOS handoff receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "handoff_id", "execution_state", "platform", "roots", "inputs", "fixtures", "setup", "execution", "claim_boundary"],
+  "properties": {
+    "protocol": { "const": "pdf-tools.docling-macos-handoff.v1" },
+    "handoff_id": { "$ref": "#/$defs/sha256" },
+    "execution_state": { "const": "not_run" },
+    "platform": {
+      "type": "object", "additionalProperties": false,
+      "required": ["interpreter", "operating_system", "architecture", "os_build"],
+      "properties": {
+        "interpreter": { "const": "cpython-3.12.13-macos-aarch64-none" },
+        "operating_system": { "const": "macos" },
+        "architecture": { "const": "arm64" },
+        "os_build": { "const": "capture_at_setup" }
+      }
+    },
+    "roots": {
+      "type": "object", "additionalProperties": false,
+      "required": ["uv", "models", "runs", "sidecar_snapshot", "protected_roots_sha256"],
+      "properties": {
+        "uv": { "$ref": "#/$defs/absolute_path" },
+        "models": { "$ref": "#/$defs/absolute_path" },
+        "runs": { "$ref": "#/$defs/absolute_path" },
+        "sidecar_snapshot": { "$ref": "#/$defs/absolute_path" },
+        "protected_roots_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "inputs": {
+      "type": "array", "minItems": 8, "maxItems": 8,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["role", "filename", "bytes", "sha256"],
+        "properties": {
+          "role": { "enum": ["adapter_entrypoint", "model_setup_helper", "candidate_config", "candidate_config_schema", "candidate_request_schema", "candidate_response_schema", "handoff_schema", "direct_requirements"] },
+          "filename": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$" },
+          "bytes": { "type": "integer", "minimum": 1, "maximum": 16777216 },
+          "sha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    },
+    "fixtures": {
+      "type": "array", "minItems": 1, "maxItems": 100,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["ordinal", "filename", "bytes", "sha256"],
+        "properties": {
+          "ordinal": { "type": "integer", "minimum": 1, "maximum": 100 },
+          "filename": { "type": "string", "pattern": "^source-[0-9]{3}-[a-f0-9]{12}\\.pdf$" },
+          "bytes": { "type": "integer", "minimum": 1, "maximum": 8388608 },
+          "sha256": { "$ref": "#/$defs/sha256" }
+        }
+      }
+    },
+    "setup": {
+      "type": "object", "additionalProperties": false,
+      "required": ["network_required", "environment", "commands", "required_post_setup_evidence"],
+      "properties": {
+        "network_required": { "const": true },
+        "environment": { "type": "object", "additionalProperties": false, "required": ["UV_CACHE_DIR"], "properties": { "UV_CACHE_DIR": { "$ref": "#/$defs/absolute_path" } } },
+        "commands": { "type": "array", "minItems": 5, "items": { "$ref": "#/$defs/command" } },
+        "required_post_setup_evidence": { "type": "array", "minItems": 7, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["offline_intent", "network_isolation_enforced", "environment", "command_template", "fixture_presentation"],
+      "properties": {
+        "offline_intent": { "const": true },
+        "network_isolation_enforced": { "const": false },
+        "environment": {
+          "type": "object", "additionalProperties": false,
+          "required": ["HF_HUB_OFFLINE", "TRANSFORMERS_OFFLINE", "HF_DATASETS_OFFLINE", "UV_CACHE_DIR"],
+          "properties": {
+            "HF_HUB_OFFLINE": { "const": "1" }, "TRANSFORMERS_OFFLINE": { "const": "1" },
+            "HF_DATASETS_OFFLINE": { "const": "1" }, "UV_CACHE_DIR": { "$ref": "#/$defs/absolute_path" }
+          }
+        },
+        "command_template": { "$ref": "#/$defs/command" },
+        "fixture_presentation": { "type": "string", "minLength": 1 }
+      }
+    },
+    "claim_boundary": { "const": "Unexecuted private evaluation handoff only. No benchmark, package, product, redistribution, or release claim is authorized." }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "absolute_path": { "type": "string", "pattern": "^/" },
+    "command": { "type": "array", "minItems": 1, "items": { "type": "string" } }
+  }
+}
