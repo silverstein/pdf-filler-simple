@@ -81,6 +81,35 @@ function nullBindings() {
   };
 }
 
+function emptyFailure() {
+  return {
+    stage: null,
+    runner_code: null,
+    detail_code: null,
+    request_observed_bytes: null,
+    request_limit_bytes: null,
+  };
+}
+
+function stableFailureDetailCode(value) {
+  const normalized = String(value ?? "UNKNOWN_FAILURE")
+    .toUpperCase()
+    .replace(/[^A-Z0-9_]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 64);
+  return /^[A-Z]/.test(normalized) ? normalized : `ERROR_${normalized || "UNKNOWN"}`.slice(0, 64);
+}
+
+function retainedFailure(stage, runnerCode, detailCode = runnerCode, requestBytes = null, requestLimit = null) {
+  return {
+    stage,
+    runner_code: runnerCode,
+    detail_code: stableFailureDetailCode(detailCode),
+    request_observed_bytes: requestBytes,
+    request_limit_bytes: requestLimit,
+  };
+}
+
 async function sourceFacts(sourcePath) {
   const bytes = await fs.readFile(sourcePath);
   const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
@@ -295,6 +324,15 @@ function outcomeFromExecution(execution, spawnError) {
   return null;
 }
 
+function candidateUnmetRequirements(candidate, selection, capabilities, inputBuilders) {
+  const unmet = unmetRequirements(candidate, capabilities);
+  if (candidate.license?.reviewed !== true) unmet.push("reviewed_license");
+  if (selection.input_mode !== "direct_pdf" && typeof inputBuilders?.[selection.input_mode] !== "function") {
+    unmet.push(`${selection.input_mode}_adapter`);
+  }
+  return unmet;
+}
+
 async function unconfiguredAttempt({ candidate, selection, fixture, repetition, source }) {
   return {
     candidate_id: candidate.id,
@@ -320,6 +358,7 @@ async function unconfiguredAttempt({ candidate, selection, fixture, repetition, 
     captures: { stdout_base64: null, stderr_base64: null },
     unmet_requirements: [],
     execution: emptyExecution(),
+    failure: emptyFailure(),
   };
 }
 
@@ -337,18 +376,14 @@ async function runAttempt({
   responseSchema,
   runRoot,
   inputBuilders,
+  eligibilityUnmet,
 }) {
   if (!candidate.configured) return unconfiguredAttempt({ candidate, selection, fixture, repetition, source });
-  const unmet = unmetRequirements(candidate, capabilities);
-  if (candidate.license?.reviewed !== true) unmet.push("reviewed_license");
   const inputBuilder = selection.input_mode === "direct_pdf" ? null : inputBuilders?.[selection.input_mode];
-  if (selection.input_mode !== "direct_pdf" && typeof inputBuilder !== "function") {
-    unmet.push(`${selection.input_mode}_adapter`);
-  }
-  if (unmet.length > 0) {
+  if (eligibilityUnmet.length > 0) {
     const retained = await unconfiguredAttempt({ candidate, selection, fixture, repetition, source });
-    retained.outcome_reason = `Runner cannot truthfully enforce or provide: ${unmet.join(", ")}`;
-    retained.unmet_requirements = unmet;
+    retained.outcome_reason = `Runner cannot truthfully enforce or provide: ${eligibilityUnmet.join(", ")}`;
+    retained.unmet_requirements = eligibilityUnmet;
     return retained;
   }
 
@@ -363,6 +398,8 @@ async function runAttempt({
   let outcome = "error";
   let errorCode = null;
   let outcomeReason = "Candidate attempt failed before producing a valid response";
+  let currentStage = inputBuilder ? "adapter_build" : "request_build";
+  let failure = emptyFailure();
   try {
     const publicTask = deepFreeze({
       source: {
@@ -377,6 +414,7 @@ async function runAttempt({
       ? await inputBuilder({ attemptRoot, stagedSourcePath, task: publicTask })
       : null;
     const inputPayload = supplementalInput?.payload ?? supplementalInput;
+    currentStage = "request_build";
     request = buildCandidateRequest({
       candidateId: candidate.id,
       inputMode: selection.input_mode,
@@ -392,6 +430,7 @@ async function runAttempt({
       attemptBinding: sha256(Buffer.from(`${runId}\u0000${candidate.id}\u0000${fixture.id}\u0000${repetition}`)),
     });
     assertSchema(request, requestSchema, "extraction candidate request");
+    currentStage = "process_execution";
     processResult = await runCandidateProcess({
       command: candidate.command,
       request,
@@ -403,6 +442,11 @@ async function runAttempt({
     if (executionFailure) {
       errorCode = executionFailure.error_code;
       outcomeReason = executionFailure.reason;
+      failure = retainedFailure(
+        errorCode === "SPAWN_FAILED" ? "process_spawn" : "process_execution",
+        errorCode,
+        processResult.spawnError?.code ?? errorCode,
+      );
     } else {
       const stdoutText = processResult.stdout.toString("utf8");
       try {
@@ -410,6 +454,7 @@ async function runAttempt({
       } catch {
         errorCode = "INVALID_RESPONSE_JSON";
         outcomeReason = "Candidate stdout was not exactly one JSON response";
+        failure = retainedFailure("response_parse", errorCode);
       }
       if (response) {
         try {
@@ -420,18 +465,30 @@ async function runAttempt({
           outcomeReason = response.status === "error"
             ? response.diagnostics.message ?? "Candidate returned an error response"
             : `Candidate returned a schema-valid ${response.status} response`;
+          failure = response.status === "error"
+            ? retainedFailure("candidate_response", errorCode)
+            : emptyFailure();
         } catch (error) {
           response = null;
           runnerFieldBindings = [];
           errorCode = "INVALID_RESPONSE_CONTRACT";
           outcomeReason = error.message;
+          failure = retainedFailure("response_validation", errorCode, error.code ?? error.name);
         }
       }
     }
   } catch (error) {
     outcome = "error";
     errorCode = error.code === "REQUEST_LIMIT_EXCEEDED" ? error.code : "HARNESS_ATTEMPT_FAILURE";
-    outcomeReason = `Runner could not complete the candidate attempt: ${error.code ?? error.name ?? "unknown"}`;
+    const detailCode = stableFailureDetailCode(error.code ?? error.name);
+    outcomeReason = `Runner could not complete the candidate attempt: ${detailCode}`;
+    failure = retainedFailure(
+      currentStage,
+      errorCode,
+      detailCode,
+      errorCode === "REQUEST_LIMIT_EXCEEDED" ? error.observed_bytes : null,
+      errorCode === "REQUEST_LIMIT_EXCEEDED" ? error.limit_bytes : null,
+    );
     response = null;
     runnerFieldBindings = [];
   }
@@ -441,6 +498,7 @@ async function runAttempt({
     outcome = "error";
     errorCode = "SOURCE_MUTATED";
     outcomeReason = "Candidate changed or removed its staged source copy";
+    failure = retainedFailure("source_postcheck", errorCode, after.error ?? errorCode);
     response = null;
     runnerFieldBindings = [];
   }
@@ -478,6 +536,7 @@ async function runAttempt({
     },
     unmet_requirements: [],
     execution: processResult?.execution ?? emptyExecution(),
+    failure,
   };
   await fs.rm(attemptRoot, { recursive: true, force: true });
   return retained;
@@ -517,6 +576,11 @@ export async function runExtractionCandidates({
   if (selectedCaseIds.some(id => !manifestById.has(id))) throw new Error("Extraction Phase 1 plan selects an unknown Phase 0 case");
 
   const capabilities = detectHarnessCapabilities();
+  const adapterAvailability = {
+    direct_pdf: true,
+    layout_ir: typeof inputBuilders?.layout_ir === "function",
+    raster: typeof inputBuilders?.raster === "function",
+  };
   const runId = sha256(Buffer.from(randomUUID()));
   const runRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-extraction-phase1-"));
   const attempts = [];
@@ -536,13 +600,22 @@ export async function runExtractionCandidates({
           page_count: source.page_count,
         };
         for (let repetition = 1; repetition <= plan.repetitions; repetition += 1) {
+          const eligibilityUnmet = candidate.configured
+            ? candidateUnmetRequirements(candidate, selection, capabilities, inputBuilders)
+            : [];
           if (!candidate.configured) {
             attempts.push(await unconfiguredAttempt({ candidate, selection, fixture, repetition, source }));
+          } else if (eligibilityUnmet.length > 0) {
+            const retained = await unconfiguredAttempt({ candidate, selection, fixture, repetition, source });
+            retained.outcome_reason = `Runner cannot truthfully enforce or provide: ${eligibilityUnmet.join(", ")}`;
+            retained.unmet_requirements = eligibilityUnmet;
+            attempts.push(retained);
           } else if (source.size_bytes > plan.limits.max_source_bytes || source.page_count > plan.limits.max_pages) {
             const retained = await unconfiguredAttempt({ candidate, selection, fixture, repetition, source });
             retained.outcome = "error";
             retained.error_code = "SOURCE_LIMIT_EXCEEDED";
             retained.outcome_reason = "Source exceeds the plan's byte or page limit";
+            retained.failure = retainedFailure("source_preflight", retained.error_code);
             attempts.push(retained);
           } else {
             attempts.push(await runAttempt({
@@ -559,6 +632,7 @@ export async function runExtractionCandidates({
               responseSchema,
               runRoot,
               inputBuilders,
+              eligibilityUnmet,
             }));
           }
         }
@@ -584,7 +658,7 @@ export async function runExtractionCandidates({
     plan_schema_sha256: planLoaded.schema_sha256,
     request_schema_sha256: sha256(Buffer.from(canonicalJson(requestSchema))),
     response_schema_sha256: sha256(Buffer.from(canonicalJson(responseSchema))),
-    environment: capabilities,
+    environment: { ...capabilities, input_adapters: adapterAvailability },
     denominator: {
       planned: attempts.length,
       retained: attempts.length,
@@ -605,6 +679,7 @@ export async function runExtractionCandidates({
     requestSchema,
     responseSchema,
     reportSchema,
+    adapterAvailability,
     repositoryRoot: REPO_ROOT,
   });
   if (outputPath) {

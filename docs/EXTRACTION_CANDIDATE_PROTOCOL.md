@@ -30,6 +30,9 @@ candidate must have an exact version, reviewed framework and model license
 metadata, an absolute executable path, and explicit environment requirements.
 If the runner cannot provide a requirement, it records `not_run` rather than
 claiming isolation.
+The report binds input-adapter availability, and retained-report verification
+recomputes capability, license-review, and adapter eligibility before accepting
+any success or error outcome.
 
 ## Truth projection
 
@@ -53,6 +56,10 @@ computes independently verifiable source, request, raw response, and canonical
 response digests. Each attempt uses a new read-only staged source copy, and a
 changed or removed copy becomes `SOURCE_MUTATED` even when the candidate
 otherwise returned a valid response.
+
+Every error retains a typed runner stage and stable error code. A serialized
+request limit error also retains the observed request byte count and exact plan
+limit. Null request and process fields alone cannot establish a runner failure.
 
 ## Typed results and evidence
 

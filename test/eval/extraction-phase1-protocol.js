@@ -26,6 +26,13 @@ export const PREDECLARED_CANDIDATE_IDS = Object.freeze([
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const INPUT_MODES = new Set(["layout_ir", "direct_pdf", "raster"]);
+const EMPTY_FAILURE = Object.freeze({
+  stage: null,
+  runner_code: null,
+  detail_code: null,
+  request_observed_bytes: null,
+  request_limit_bytes: null,
+});
 const FORBIDDEN_REQUEST_KEYS = new Set([
   "ground_truth",
   "expected",
@@ -215,10 +222,13 @@ export function buildCandidateRequest({
     request_id: computeCandidateRequestId({ protocol: PHASE1_PROTOCOL, ...requestBody }, attemptBinding),
     ...requestBody,
   };
+  const observedRequestBytes = Buffer.byteLength(canonicalJson(request));
   if (!Number.isInteger(limits.max_request_bytes)
-    || Buffer.byteLength(canonicalJson(request)) > limits.max_request_bytes) {
+    || observedRequestBytes > limits.max_request_bytes) {
     const error = new Error("Serialized candidate request exceeds the runner request byte limit");
     error.code = "REQUEST_LIMIT_EXCEEDED";
+    error.observed_bytes = observedRequestBytes;
+    error.limit_bytes = limits.max_request_bytes;
     throw error;
   }
   assertTruthProjectedRequest(request, { repositoryRoot });
@@ -442,6 +452,7 @@ export function verifyPhase1Report(report, {
   requestSchema,
   responseSchema,
   reportSchema,
+  adapterAvailability,
   repositoryRoot = null,
 }) {
   assertSchema(report, reportSchema, "retained extraction Phase 1 report");
@@ -459,6 +470,9 @@ export function verifyPhase1Report(report, {
     throw new Error("Extraction Phase 1 claim boundary or limitations contradict the fail-closed protocol");
   }
   const currentCapabilities = detectHarnessCapabilities();
+  if (canonicalJson(report.environment.input_adapters) !== canonicalJson(adapterAvailability)) {
+    throw new Error("Extraction Phase 1 input-adapter availability is not independently bound");
+  }
   const environmentInvariant = report.environment.wall_clock_timeout
     && report.environment.stdout_byte_limit
     && report.environment.stderr_byte_limit
@@ -523,6 +537,11 @@ export function verifyPhase1Report(report, {
     const verifiedSource = sourceFactsById?.[attempt.case_id];
     if (!candidate || !selection || !fixture) throw new Error(`Report retains an unknown candidate or case: ${reportAttemptKey(attempt)}`);
     if (attempt.input_mode !== selection.input_mode) throw new Error(`Report input mode drifted for ${attempt.candidate_id}`);
+    const eligibilityUnmet = unmetRequirements(candidate, report.environment);
+    if (candidate.configured && candidate.license?.reviewed !== true) eligibilityUnmet.push("reviewed_license");
+    if (candidate.configured && selection.input_mode !== "direct_pdf" && adapterAvailability[selection.input_mode] !== true) {
+      eligibilityUnmet.push(`${selection.input_mode}_adapter`);
+    }
     if (!SHA256.test(attempt.source.sha256)
       || (attempt.source.after_sha256 !== null && !SHA256.test(attempt.source.after_sha256))) {
       throw new Error(`Report has an invalid source digest for ${attempt.case_id}`);
@@ -648,12 +667,13 @@ export function verifyPhase1Report(report, {
       if (!candidate.configured || !attempt.request || !attempt.response || !execution.spawned
         || execution.exit_code !== 0 || execution.signal !== null
         || attempt.response.status !== attempt.outcome || attempt.unmet_requirements.length !== 0
-        || !attempt.source.immutable) {
+        || eligibilityUnmet.length !== 0 || !attempt.source.immutable
+        || canonicalJson(attempt.failure) !== canonicalJson(EMPTY_FAILURE)) {
         throw new Error(`Successful attempt lacks a complete configured execution proof for ${attempt.case_id}`);
       }
     } else if (attempt.outcome === "not_run") {
       if (attempt.request || attempt.response || execution.spawned || attempt.error_code !== null
-        || !attempt.source.immutable) {
+        || !attempt.source.immutable || canonicalJson(attempt.failure) !== canonicalJson(EMPTY_FAILURE)) {
         throw new Error(`Not-run attempt retains execution or failure evidence for ${attempt.case_id}`);
       }
       if (!candidate.configured) {
@@ -662,57 +682,73 @@ export function verifyPhase1Report(report, {
           throw new Error(`Unconfigured not-run reason is not bound to the registry for ${attempt.case_id}`);
         }
       } else {
-        const expectedUnmet = unmetRequirements(candidate, report.environment);
-        if (candidate.license?.reviewed !== true) expectedUnmet.push("reviewed_license");
-        const adapterRequirement = `${selection.input_mode}_adapter`;
-        if (selection.input_mode !== "direct_pdf" && attempt.unmet_requirements.includes(adapterRequirement)) {
-          expectedUnmet.push(adapterRequirement);
-        }
-        if (expectedUnmet.length === 0
-          || canonicalJson(attempt.unmet_requirements) !== canonicalJson(expectedUnmet)
-          || attempt.outcome_reason !== `Runner cannot truthfully enforce or provide: ${expectedUnmet.join(", ")}`) {
+        if (eligibilityUnmet.length === 0
+          || canonicalJson(attempt.unmet_requirements) !== canonicalJson(eligibilityUnmet)
+          || attempt.outcome_reason !== `Runner cannot truthfully enforce or provide: ${eligibilityUnmet.join(", ")}`) {
           throw new Error(`Configured not-run attempt lacks verifiable unmet requirements for ${attempt.case_id}`);
         }
       }
     } else if (attempt.outcome === "error") {
-      if (!candidate.configured || attempt.unmet_requirements.length !== 0) {
+      if (!candidate.configured || eligibilityUnmet.length !== 0 || attempt.unmet_requirements.length !== 0
+        || attempt.failure.runner_code !== attempt.error_code || attempt.failure.stage === null
+        || attempt.failure.detail_code === null
+        || (attempt.error_code !== "REQUEST_LIMIT_EXCEEDED"
+          && (attempt.failure.request_observed_bytes !== null || attempt.failure.request_limit_bytes !== null))) {
         throw new Error(`Error attempt is not bound to a configured candidate for ${attempt.case_id}`);
       }
       let failureProven = false;
       if (attempt.response) {
         failureProven = attempt.response.status === "error"
-          && attempt.error_code === attempt.response.diagnostics.code;
+          && attempt.error_code === attempt.response.diagnostics.code
+          && attempt.failure.stage === "candidate_response"
+          && attempt.failure.request_observed_bytes === null
+          && attempt.failure.request_limit_bytes === null;
       } else {
         const cleanSpawnedExit = execution.spawned && execution.exit_code === 0 && execution.signal === null
           && !execution.timed_out && !execution.stdout_limit_exceeded && !execution.stderr_limit_exceeded;
         if (attempt.error_code === "SOURCE_LIMIT_EXCEEDED") {
           failureProven = !attempt.request && !execution.spawned
+            && attempt.failure.stage === "source_preflight"
             && (attempt.source.size_bytes > plan.limits.max_source_bytes
               || attempt.source.page_count > plan.limits.max_pages);
         } else if (attempt.error_code === "REQUEST_LIMIT_EXCEEDED") {
-          failureProven = !attempt.request && !execution.spawned;
+          failureProven = !attempt.request && !execution.spawned
+            && attempt.failure.stage === "request_build"
+            && attempt.failure.detail_code === "REQUEST_LIMIT_EXCEEDED"
+            && attempt.failure.request_limit_bytes === plan.limits.max_request_bytes
+            && attempt.failure.request_observed_bytes > attempt.failure.request_limit_bytes;
         } else if (attempt.error_code === "HARNESS_ATTEMPT_FAILURE") {
-          failureProven = !execution.spawned;
+          failureProven = !execution.spawned
+            && ["adapter_build", "request_build", "process_execution"].includes(attempt.failure.stage)
+            && attempt.failure.request_observed_bytes === null
+            && attempt.failure.request_limit_bytes === null
+            && attempt.outcome_reason === `Runner could not complete the candidate attempt: ${attempt.failure.detail_code}`;
         } else if (attempt.error_code === "SOURCE_MUTATED") {
-          failureProven = !attempt.source.immutable;
+          failureProven = !attempt.source.immutable && attempt.failure.stage === "source_postcheck";
         } else if (attempt.error_code === "SPAWN_FAILED") {
-          failureProven = Boolean(attempt.request) && !execution.spawned;
+          failureProven = Boolean(attempt.request) && !execution.spawned && attempt.failure.stage === "process_spawn";
         } else if (attempt.error_code === "DEADLINE_EXCEEDED") {
-          failureProven = Boolean(attempt.request) && execution.spawned && execution.timed_out;
+          failureProven = Boolean(attempt.request) && execution.spawned && execution.timed_out
+            && attempt.failure.stage === "process_execution";
         } else if (attempt.error_code === "STDOUT_LIMIT_EXCEEDED") {
-          failureProven = Boolean(attempt.request) && execution.spawned && execution.stdout_limit_exceeded;
+          failureProven = Boolean(attempt.request) && execution.spawned && execution.stdout_limit_exceeded
+            && attempt.failure.stage === "process_execution";
         } else if (attempt.error_code === "STDERR_LIMIT_EXCEEDED") {
-          failureProven = Boolean(attempt.request) && execution.spawned && execution.stderr_limit_exceeded;
+          failureProven = Boolean(attempt.request) && execution.spawned && execution.stderr_limit_exceeded
+            && attempt.failure.stage === "process_execution";
         } else if (attempt.error_code === "NONZERO_EXIT") {
           failureProven = Boolean(attempt.request) && execution.spawned
-            && (execution.exit_code !== 0 || execution.signal !== null);
-        } else if (attempt.error_code === "INVALID_RESPONSE_JSON" && cleanSpawnedExit) {
+            && (execution.exit_code !== 0 || execution.signal !== null)
+            && attempt.failure.stage === "process_execution";
+        } else if (attempt.error_code === "INVALID_RESPONSE_JSON" && cleanSpawnedExit
+          && attempt.failure.stage === "response_parse") {
           try {
             JSON.parse(stdoutBytes.toString("utf8"));
           } catch {
             failureProven = true;
           }
-        } else if (attempt.error_code === "INVALID_RESPONSE_CONTRACT" && cleanSpawnedExit) {
+        } else if (attempt.error_code === "INVALID_RESPONSE_CONTRACT" && cleanSpawnedExit
+          && attempt.failure.stage === "response_validation") {
           try {
             const rejectedResponse = JSON.parse(stdoutBytes.toString("utf8"));
             assertSchema(rejectedResponse, responseSchema, "rejected extraction candidate response");

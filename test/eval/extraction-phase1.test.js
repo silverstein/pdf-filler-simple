@@ -30,6 +30,7 @@ const RESPONSE_SCHEMA = path.join(PHASE1_ROOT, "candidate-response.schema.json")
 const REPORT_SCHEMA = path.join(PHASE1_ROOT, "report.schema.json");
 const MANIFEST = path.join(EXTRACTION_ROOT, "manifest.v1.json");
 const MANIFEST_SCHEMA = path.join(EXTRACTION_ROOT, "manifest.schema.json");
+const DIRECT_ONLY_ADAPTERS = Object.freeze({ direct_pdf: true, layout_ir: false, raster: false });
 const temporaryRoots = [];
 
 async function temporaryRoot() {
@@ -52,6 +53,7 @@ async function configuredRun(mode, {
   extraArgs = [],
   inputBuilders = null,
   executable = process.execPath,
+  returnContext = false,
 } = {}) {
   const root = await temporaryRoot();
   const [registry, plan, manifest] = await Promise.all([
@@ -76,7 +78,7 @@ async function configuredRun(mode, {
     fs.writeFile(registryPath, `${JSON.stringify(registry, null, 2)}\n`),
     fs.writeFile(planPath, `${JSON.stringify(plan, null, 2)}\n`),
   ]);
-  return runExtractionCandidates({
+  const report = await runExtractionCandidates({
     manifestPath: MANIFEST,
     manifestSchemaPath: MANIFEST_SCHEMA,
     registryPath,
@@ -88,6 +90,7 @@ async function configuredRun(mode, {
     reportSchemaPath: REPORT_SCHEMA,
     inputBuilders,
   });
+  return returnContext ? { report, registry, plan } : report;
 }
 
 describe("structured extraction Phase 1 external candidate boundary", () => {
@@ -298,6 +301,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       requestSchema,
       responseSchema,
       reportSchema,
+      adapterAvailability: DIRECT_ONLY_ADAPTERS,
     });
     expect(verify(report)).toBe(true);
     for (const outcome of ["completed", "partial", "abstained", "error"]) {
@@ -325,6 +329,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       mutate(mutant);
       expect(() => verify(mutant)).toThrow();
     }
+
   });
 
   it("keeps an unconfigured candidate not_run when source preflight limits are ineligible", async () => {
@@ -343,19 +348,261 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     expect(report.attempts[0]).toMatchObject({ outcome: "not_run", error_code: null, request: null });
   });
 
+  it("cannot relabel an ineligible configured candidate as a success or runner error", async () => {
+    const root = await temporaryRoot();
+    const [registry, registrySchema, plan, planSchema, manifest, requestSchema, responseSchema, reportSchema] = await Promise.all([
+      fs.readFile(REGISTRY, "utf8").then(JSON.parse),
+      fs.readFile(REGISTRY_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(PLAN, "utf8").then(JSON.parse),
+      fs.readFile(PLAN_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(MANIFEST, "utf8").then(JSON.parse),
+      fs.readFile(REQUEST_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(RESPONSE_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(REPORT_SCHEMA, "utf8").then(JSON.parse),
+    ]);
+    const candidate = registry.candidates.find(item => item.id === "candidate.direct_pdf.v1");
+    candidate.configured = true;
+    candidate.version = "test-double-1.0.0";
+    candidate.license = { framework_spdx: "MIT", model_license: null, reviewed: true };
+    candidate.command = { executable: process.execPath, args: [MOCK_CANDIDATE, "partial"] };
+    candidate.requirements.filesystem_isolation = true;
+    plan.case_ids = [manifest.fixtures[0].id];
+    plan.repetitions = 1;
+    plan.candidates = [{ candidate_id: candidate.id, input_mode: "direct_pdf" }];
+    const registryPath = path.join(root, "ineligible-registry.json");
+    const planPath = path.join(root, "ineligible-plan.json");
+    await Promise.all([
+      fs.writeFile(registryPath, `${JSON.stringify(registry, null, 2)}\n`),
+      fs.writeFile(planPath, `${JSON.stringify(plan, null, 2)}\n`),
+    ]);
+    const report = await runExtractionCandidates({ registryPath, planPath });
+    expect(report.attempts[0]).toMatchObject({
+      outcome: "not_run",
+      unmet_requirements: ["filesystem_isolation"],
+      request: null,
+      response: null,
+      execution: { spawned: false },
+    });
+    const fixture = manifest.fixtures[0];
+    const stat = await fs.stat(path.join(EXTRACTION_ROOT, fixture.path));
+    const verify = mutant => verifyPhase1Report(mutant, {
+      registry,
+      registrySchema,
+      plan,
+      planSchema,
+      manifest,
+      sourceFactsById: {
+        [fixture.id]: {
+          sha256: fixture.sha256,
+          size_bytes: stat.size,
+          page_count: fixture.expected.page_geometry.length,
+        },
+      },
+      requestSchema,
+      responseSchema,
+      reportSchema,
+      adapterAvailability: DIRECT_ONLY_ADAPTERS,
+    });
+    const expectRelabelsRejected = (retainedReport, retainedPlan, retainedVerify, label) => {
+      expect(retainedVerify(retainedReport)).toBe(true);
+      for (const outcome of ["completed", "partial", "abstained"]) {
+        const mutant = structuredClone(retainedReport);
+        mutant.attempts[0].outcome = outcome;
+        mutant.attempts[0].unmet_requirements = [];
+        mutant.attempts[0].outcome_reason = "Forged successful attempt";
+        mutant.denominator.outcomes.not_run = 0;
+        mutant.denominator.outcomes[outcome] = 1;
+        expect(() => retainedVerify(mutant), `${label} not_run -> ${outcome}`).toThrow();
+      }
+      for (const errorCode of ["HARNESS_ATTEMPT_FAILURE", "REQUEST_LIMIT_EXCEEDED"]) {
+        const mutant = structuredClone(retainedReport);
+        mutant.attempts[0].outcome = "error";
+        mutant.attempts[0].error_code = errorCode;
+        mutant.attempts[0].unmet_requirements = [];
+        mutant.attempts[0].outcome_reason = "Forged runner failure";
+        mutant.attempts[0].failure = errorCode === "REQUEST_LIMIT_EXCEEDED"
+          ? {
+              stage: "request_build",
+              runner_code: errorCode,
+              detail_code: errorCode,
+              request_observed_bytes: retainedPlan.limits.max_request_bytes + 1,
+              request_limit_bytes: retainedPlan.limits.max_request_bytes,
+            }
+          : {
+              stage: "request_build",
+              runner_code: errorCode,
+              detail_code: "ERROR",
+              request_observed_bytes: null,
+              request_limit_bytes: null,
+            };
+        mutant.denominator.outcomes.not_run = 0;
+        mutant.denominator.outcomes.error = 1;
+        expect(() => retainedVerify(mutant), `${label} not_run -> ${errorCode}`).toThrow();
+      }
+    };
+    expectRelabelsRejected(report, plan, verify, "capability-censored");
+
+    const adapterRegistry = JSON.parse(await fs.readFile(REGISTRY, "utf8"));
+    const adapterPlan = JSON.parse(await fs.readFile(PLAN, "utf8"));
+    const adapterCandidate = adapterRegistry.candidates.find(item => item.id === "candidate.layout_ir.v1");
+    adapterCandidate.configured = true;
+    adapterCandidate.version = "test-double-1.0.0";
+    adapterCandidate.license = { framework_spdx: "MIT", model_license: null, reviewed: true };
+    adapterCandidate.command = { executable: process.execPath, args: [MOCK_CANDIDATE, "partial"] };
+    adapterPlan.case_ids = [fixture.id];
+    adapterPlan.repetitions = 1;
+    adapterPlan.candidates = [{ candidate_id: adapterCandidate.id, input_mode: "layout_ir" }];
+    const adapterRegistryPath = path.join(root, "adapter-ineligible-registry.json");
+    const adapterPlanPath = path.join(root, "adapter-ineligible-plan.json");
+    await Promise.all([
+      fs.writeFile(adapterRegistryPath, `${JSON.stringify(adapterRegistry, null, 2)}\n`),
+      fs.writeFile(adapterPlanPath, `${JSON.stringify(adapterPlan, null, 2)}\n`),
+    ]);
+    const adapterReport = await runExtractionCandidates({
+      registryPath: adapterRegistryPath,
+      planPath: adapterPlanPath,
+    });
+    expect(adapterReport.attempts[0]).toMatchObject({
+      outcome: "not_run",
+      unmet_requirements: ["layout_ir_adapter"],
+    });
+    const verifyAdapter = mutant => verifyPhase1Report(mutant, {
+      registry: adapterRegistry,
+      registrySchema,
+      plan: adapterPlan,
+      planSchema,
+      manifest,
+      sourceFactsById: {
+        [fixture.id]: {
+          sha256: fixture.sha256,
+          size_bytes: stat.size,
+          page_count: fixture.expected.page_geometry.length,
+        },
+      },
+      requestSchema,
+      responseSchema,
+      reportSchema,
+      adapterAvailability: DIRECT_ONLY_ADAPTERS,
+    });
+    expectRelabelsRejected(adapterReport, adapterPlan, verifyAdapter, "adapter-censored");
+  });
+
   it("bounds the serialized request including supplemental adapter input", async () => {
-    const report = await configuredRun("partial", {
+    const { report, registry, plan } = await configuredRun("partial", {
       candidateId: "candidate.layout_ir.v1",
       inputMode: "layout_ir",
       maxRequestBytes: 1024,
       inputBuilders: { layout_ir: async () => ({ payload: { text: "x".repeat(4096) } }) },
+      returnContext: true,
     });
     expect(report.attempts[0]).toMatchObject({
       outcome: "error",
       error_code: "REQUEST_LIMIT_EXCEEDED",
       request: null,
       execution: { spawned: false, process_id: null },
+      failure: {
+        stage: "request_build",
+        runner_code: "REQUEST_LIMIT_EXCEEDED",
+        request_limit_bytes: 1024,
+      },
     });
+    expect(report.attempts[0].failure.request_observed_bytes).toBeGreaterThan(1024);
+    const [registrySchema, planSchema, manifest, requestSchema, responseSchema, reportSchema] = await Promise.all([
+      fs.readFile(REGISTRY_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(PLAN_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(MANIFEST, "utf8").then(JSON.parse),
+      fs.readFile(REQUEST_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(RESPONSE_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(REPORT_SCHEMA, "utf8").then(JSON.parse),
+    ]);
+    const fixture = manifest.fixtures[0];
+    const stat = await fs.stat(path.join(EXTRACTION_ROOT, fixture.path));
+    const verify = mutant => verifyPhase1Report(mutant, {
+      registry,
+      registrySchema,
+      plan,
+      planSchema,
+      manifest,
+      sourceFactsById: {
+        [fixture.id]: {
+          sha256: fixture.sha256,
+          size_bytes: stat.size,
+          page_count: fixture.expected.page_geometry.length,
+        },
+      },
+      requestSchema,
+      responseSchema,
+      reportSchema,
+      adapterAvailability: { direct_pdf: true, layout_ir: true, raster: false },
+    });
+    expect(verify(report)).toBe(true);
+    for (const mutate of [
+      value => { value.attempts[0].failure.stage = "adapter_build"; },
+      value => { value.attempts[0].failure.runner_code = "HARNESS_ATTEMPT_FAILURE"; },
+      value => { value.attempts[0].failure.detail_code = "ERROR"; },
+      value => { value.attempts[0].failure.request_observed_bytes = 1024; },
+      value => { value.attempts[0].failure.request_limit_bytes = 1025; },
+      value => { value.environment.input_adapters.layout_ir = false; },
+    ]) {
+      const mutant = structuredClone(report);
+      mutate(mutant);
+      expect(() => verify(mutant)).toThrow();
+    }
+
+    const harnessContext = await configuredRun("partial", {
+      candidateId: "candidate.layout_ir.v1",
+      inputMode: "layout_ir",
+      inputBuilders: {
+        layout_ir: async () => {
+          const error = new Error("adapter failed");
+          error.code = "ADAPTER_FAILURE";
+          throw error;
+        },
+      },
+      returnContext: true,
+    });
+    expect(harnessContext.report.attempts[0]).toMatchObject({
+      outcome: "error",
+      error_code: "HARNESS_ATTEMPT_FAILURE",
+      outcome_reason: "Runner could not complete the candidate attempt: ADAPTER_FAILURE",
+      failure: {
+        stage: "adapter_build",
+        runner_code: "HARNESS_ATTEMPT_FAILURE",
+        detail_code: "ADAPTER_FAILURE",
+        request_observed_bytes: null,
+        request_limit_bytes: null,
+      },
+    });
+    const verifyHarness = mutant => verifyPhase1Report(mutant, {
+      registry: harnessContext.registry,
+      registrySchema,
+      plan: harnessContext.plan,
+      planSchema,
+      manifest,
+      sourceFactsById: {
+        [fixture.id]: {
+          sha256: fixture.sha256,
+          size_bytes: stat.size,
+          page_count: fixture.expected.page_geometry.length,
+        },
+      },
+      requestSchema,
+      responseSchema,
+      reportSchema,
+      adapterAvailability: { direct_pdf: true, layout_ir: true, raster: false },
+    });
+    expect(verifyHarness(harnessContext.report)).toBe(true);
+    for (const mutate of [
+      value => { value.attempts[0].failure.stage = null; },
+      value => { value.attempts[0].failure.runner_code = "REQUEST_LIMIT_EXCEEDED"; },
+      value => { value.attempts[0].failure.detail_code = "FORGED_FAILURE"; },
+      value => { value.attempts[0].failure.request_observed_bytes = 1; },
+      value => { value.attempts[0].failure.request_limit_bytes = 1; },
+    ]) {
+      const mutant = structuredClone(harnessContext.report);
+      mutate(mutant);
+      expect(() => verifyHarness(mutant)).toThrow();
+    }
   });
 
   it("uses a fresh process for every repetition and accepts typed partial and abstained outcomes", async () => {
@@ -547,6 +794,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       requestSchema,
       responseSchema,
       reportSchema,
+      adapterAvailability: DIRECT_ONLY_ADAPTERS,
     });
     expect(verify(report)).toBe(true);
     const rebindRequest = value => {
@@ -604,6 +852,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       requestSchema,
       responseSchema,
       reportSchema,
+      adapterAvailability: DIRECT_ONLY_ADAPTERS,
     });
     expect(verifyFailed(noResponseError)).toBe(true);
     const forgedSuccess = structuredClone(noResponseError);

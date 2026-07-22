@@ -49,7 +49,7 @@
     "nullableSha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
     "environment": {
       "type": "object", "additionalProperties": false,
-      "required": ["platform", "architecture", "node_version", "wall_clock_timeout", "stdout_byte_limit", "stderr_byte_limit", "clean_environment", "source_mutation_detection", "fresh_process_per_attempt", "process_group_termination", "filesystem_isolation", "network_isolation", "cpu_limit", "memory_limit", "process_count_limit", "process_tree_memory_measurement"],
+      "required": ["platform", "architecture", "node_version", "wall_clock_timeout", "stdout_byte_limit", "stderr_byte_limit", "clean_environment", "source_mutation_detection", "fresh_process_per_attempt", "process_group_termination", "filesystem_isolation", "network_isolation", "cpu_limit", "memory_limit", "process_count_limit", "process_tree_memory_measurement", "input_adapters"],
       "properties": {
         "platform": { "type": "string" }, "architecture": { "type": "string" }, "node_version": { "type": "string" },
         "wall_clock_timeout": { "type": "boolean" }, "stdout_byte_limit": { "type": "boolean" },
@@ -58,7 +58,16 @@
         "process_group_termination": { "type": "boolean" }, "filesystem_isolation": { "type": "boolean" },
         "network_isolation": { "type": "boolean" }, "cpu_limit": { "type": "boolean" },
         "memory_limit": { "type": "boolean" }, "process_count_limit": { "type": "boolean" },
-        "process_tree_memory_measurement": { "type": "boolean" }
+        "process_tree_memory_measurement": { "type": "boolean" },
+        "input_adapters": {
+          "type": "object", "additionalProperties": false,
+          "required": ["direct_pdf", "layout_ir", "raster"],
+          "properties": {
+            "direct_pdf": { "const": true },
+            "layout_ir": { "type": "boolean" },
+            "raster": { "type": "boolean" }
+          }
+        }
       }
     },
     "source": {
@@ -105,9 +114,25 @@
         "stderr_base64": { "type": ["string", "null"] }
       }
     },
+    "failure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["stage", "runner_code", "detail_code", "request_observed_bytes", "request_limit_bytes"],
+      "properties": {
+        "stage": {
+          "anyOf": [
+            { "type": "null" },
+            { "enum": ["source_preflight", "adapter_build", "request_build", "process_spawn", "process_execution", "response_parse", "response_validation", "candidate_response", "source_postcheck"] }
+          ]
+        },
+        "runner_code": { "anyOf": [{ "type": "null" }, { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" }] },
+        "detail_code": { "anyOf": [{ "type": "null" }, { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" }] },
+        "request_observed_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "request_limit_bytes": { "type": ["integer", "null"], "minimum": 1 }
+      }
+    },
     "attempt": {
       "type": "object", "additionalProperties": false,
-      "required": ["candidate_id", "case_id", "repetition", "input_mode", "outcome", "outcome_reason", "error_code", "source", "request", "response", "runner_field_bindings", "bindings", "captures", "unmet_requirements", "execution"],
+      "required": ["candidate_id", "case_id", "repetition", "input_mode", "outcome", "outcome_reason", "error_code", "source", "request", "response", "runner_field_bindings", "bindings", "captures", "unmet_requirements", "execution", "failure"],
       "properties": {
         "candidate_id": { "enum": ["control.current_product.v0", "candidate.layout_ir.v1", "candidate.direct_pdf.v1", "candidate.raster.v1", "candidate.remote_model.v1"] },
         "case_id": { "type": "string", "minLength": 1 }, "repetition": { "type": "integer", "minimum": 1 },
@@ -129,7 +154,8 @@
         },
         "captures": { "$ref": "#/$defs/captures" },
         "unmet_requirements": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
-        "execution": { "$ref": "#/$defs/execution" }
+        "execution": { "$ref": "#/$defs/execution" },
+        "failure": { "$ref": "#/$defs/failure" }
       }
     }
   }
