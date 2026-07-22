@@ -1,0 +1,33 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/generation-privacy.schema.json",
+  "title": "PDF Tools extraction Phase 1 generation privacy attestation v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["attestation_id", "attestation_version", "policy", "publication_authorized", "scope", "directory_mode", "file_mode", "symlink_or_special_files_observed", "ordinary_artifacts", "ordinary_artifact_set_sha256", "prohibited_root_set_sha256", "raw_absolute_paths_retained", "relative_generation_paths_retained", "path_identity_hashes_retained", "path_hash_secrecy_claim"],
+  "properties": {
+    "attestation_id": { "const": "pdf-tools.extraction-phase1-generation-privacy.v1" },
+    "attestation_version": { "const": 1 },
+    "policy": { "enum": ["public_synthetic", "private_local", "private_local_minimized"] },
+    "publication_authorized": { "const": false },
+    "scope": { "const": "ordinary_artifacts_before_privacy_attestation_and_index" },
+    "directory_mode": { "const": 448 },
+    "file_mode": { "const": 384 },
+    "symlink_or_special_files_observed": { "const": false },
+    "ordinary_artifacts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/artifact" } },
+    "ordinary_artifact_set_sha256": { "$ref": "#/$defs/sha256" },
+    "prohibited_root_set_sha256": { "$ref": "#/$defs/sha256" },
+    "raw_absolute_paths_retained": { "type": "null" },
+    "relative_generation_paths_retained": { "const": true },
+    "path_identity_hashes_retained": { "const": true },
+    "path_hash_secrecy_claim": { "const": false }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "bytes", "sha256"],
+      "properties": { "role": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "path": { "type": "string", "minLength": 1 }, "bytes": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
+    }
+  }
+}

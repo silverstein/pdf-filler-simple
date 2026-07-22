@@ -89,6 +89,8 @@ const FORBIDDEN_ARCHIVE_PREFIXES = [
   "docs/",
   ".git/",
   ".beads/",
+  ".pdf-tools-extraction-cache/",
+  "extraction-phase1-generations/",
 ];
 const FORBIDDEN_ARCHIVE_FILES = new Set(["package-lock.json", "node_modules/.package-lock.json"]);
 const DEVELOPMENT_FILE_SUFFIXES = [".map", ".d.ts", ".d.mts", ".d.cts", ".tsbuildinfo"];

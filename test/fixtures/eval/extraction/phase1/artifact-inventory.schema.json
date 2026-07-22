@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/artifact-inventory.schema.json",
+  "title": "PDF Tools extraction Phase 1 artifact inventory v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["inventory_id", "inventory_version", "candidate_id", "state", "role_dispositions", "roots", "components", "licenses", "artifacts", "logical_bytes", "unique_content_bytes", "digests"],
+  "properties": {
+    "inventory_id": { "const": "pdf-tools.extraction-phase1-artifact-inventory.v1" },
+    "inventory_version": { "const": 1 },
+    "candidate_id": { "$ref": "#/$defs/candidateId" },
+    "state": { "enum": ["not_applicable", "captured_incomplete", "captured_review_pending"] },
+    "role_dispositions": { "type": "array", "minItems": 16, "maxItems": 16, "items": { "$ref": "#/$defs/roleDisposition" } },
+    "roots": { "type": "array", "items": { "$ref": "#/$defs/root" } },
+    "components": { "type": "array", "items": { "$ref": "#/$defs/component" } },
+    "licenses": { "type": "array", "items": { "$ref": "#/$defs/license" } },
+    "artifacts": { "type": "array", "items": { "$ref": "#/$defs/artifact" } },
+    "logical_bytes": { "type": "integer", "minimum": 0 },
+    "unique_content_bytes": { "type": "integer", "minimum": 0 },
+    "digests": { "$ref": "#/$defs/digests" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "role": { "enum": ["adapter_entrypoint", "adapter_source", "candidate_config", "environment_lock", "installed_distribution", "interpreter", "license_review", "license_text", "model_config", "model_weights", "native_bridge", "ocr_bridge", "required_data", "runtime_config", "system_component", "tokenizer_preprocessor"] },
+    "rootRole": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" },
+    "candidateId": { "enum": ["control.current_product.v0", "candidate.layout_ir.v1", "candidate.direct_pdf.v1", "candidate.raster.v1", "candidate.remote_model.v1"] },
+    "roleDisposition": {
+      "type": "object", "additionalProperties": false, "required": ["role", "status", "reason"],
+      "properties": { "role": { "$ref": "#/$defs/role" }, "status": { "enum": ["required", "not_applicable", "pending"] }, "reason": { "type": ["string", "null"] } }
+    },
+    "root": {
+      "type": "object", "additionalProperties": false,
+      "required": ["root_role", "artifact_role", "required", "root_path_sha256", "root_realpath_sha256", "mode", "device", "inode"],
+      "properties": {
+        "root_role": { "$ref": "#/$defs/rootRole" }, "artifact_role": { "$ref": "#/$defs/role" }, "required": { "type": "boolean" },
+        "root_path_sha256": { "$ref": "#/$defs/sha256" }, "root_realpath_sha256": { "$ref": "#/$defs/sha256" },
+        "mode": { "type": "integer", "minimum": 0, "maximum": 4095 }, "device": { "type": "string", "pattern": "^[0-9]+$" }, "inode": { "type": "string", "pattern": "^[0-9]+$" }
+      }
+    },
+    "component": {
+      "type": "object", "additionalProperties": false,
+      "required": ["component_id", "version", "source_reference", "source_revision", "content_identity_sha256", "license_ids", "artifact_roles"],
+      "properties": { "component_id": { "type": "string" }, "version": { "type": "string" }, "source_reference": { "type": "string" }, "source_revision": { "type": "string" }, "content_identity_sha256": { "$ref": "#/$defs/sha256" }, "license_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } }, "artifact_roles": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/role" } } }
+    },
+    "license": {
+      "type": "object", "additionalProperties": false,
+      "required": ["component_id", "license_id", "license_name", "license_text_artifact_id", "review_record_artifact_id", "review_record_sha256", "review_scope", "reviewed_at", "status"],
+      "properties": { "component_id": { "type": "string" }, "license_id": { "type": "string" }, "license_name": { "type": "string" }, "license_text_artifact_id": { "type": "string" }, "review_record_artifact_id": { "type": "string" }, "review_record_sha256": { "$ref": "#/$defs/sha256" }, "review_scope": { "type": "string" }, "reviewed_at": { "type": "string" }, "status": { "enum": ["reviewed_license", "pending_review"] } }
+    },
+    "link": {
+      "type": "object", "additionalProperties": false,
+      "required": ["directory_entry_device", "directory_entry_inode", "target_device", "target_inode"],
+      "properties": { "directory_entry_device": { "type": "string" }, "directory_entry_inode": { "type": "string" }, "target_device": { "type": "string" }, "target_inode": { "type": "string" } }
+    },
+    "chain": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "target", "link_text_sha256"],
+      "properties": { "path": { "type": "string" }, "target": { "type": "string" }, "link_text_sha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["artifact_id", "artifact_role", "component_id", "license_ids", "root_role", "relative_path", "file_type", "bytes", "sha256", "mode", "device", "inode", "nlink", "link_identity", "symlink_chain"],
+      "properties": {
+        "artifact_id": { "type": "string", "minLength": 1 }, "artifact_role": { "$ref": "#/$defs/role" }, "component_id": { "type": "string", "minLength": 1 }, "license_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } }, "root_role": { "$ref": "#/$defs/rootRole" }, "relative_path": { "type": "string", "minLength": 1 },
+        "file_type": { "enum": ["regular_file", "allowlisted_symlink"] }, "bytes": { "type": "integer", "minimum": 0 }, "sha256": { "$ref": "#/$defs/sha256" },
+        "mode": { "type": "integer", "minimum": 0, "maximum": 4095 }, "device": { "type": "string" }, "inode": { "type": "string" }, "nlink": { "type": "integer", "minimum": 1 },
+        "link_identity": { "$ref": "#/$defs/link" }, "symlink_chain": { "type": "array", "items": { "$ref": "#/$defs/chain" } }
+      }
+    },
+    "digests": {
+      "type": "object", "additionalProperties": false,
+      "required": ["portable_content_set_sha256", "host_deployment_set_sha256", "content_set_sha256", "inventory_self_sha256"],
+      "properties": { "portable_content_set_sha256": { "$ref": "#/$defs/sha256" }, "host_deployment_set_sha256": { "$ref": "#/$defs/sha256" }, "content_set_sha256": { "$ref": "#/$defs/sha256" }, "inventory_self_sha256": { "$ref": "#/$defs/sha256" } }
+    }
+  }
+}

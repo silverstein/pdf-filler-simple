@@ -1,0 +1,45 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/docling-candidate-config.schema.json",
+  "title": "PDF Tools extraction Docling candidate research configuration v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["config_id", "config_version", "candidate_id", "execution_state", "input_mode", "platform", "packages", "layout_model", "table_model", "ocr", "device", "claim_boundary"],
+  "properties": {
+    "config_id": { "const": "pdf-tools.extraction-docling-candidate-config.v1" },
+    "config_version": { "const": 1 },
+    "candidate_id": { "const": "candidate.direct_pdf.v1" },
+    "execution_state": { "const": "not_run" },
+    "input_mode": { "const": "direct_pdf" },
+    "platform": {
+      "type": "object", "additionalProperties": false,
+      "required": ["interpreter", "architecture", "host_identity_required"],
+      "properties": { "interpreter": { "const": "cpython-3.12.13-macos-aarch64-none" }, "architecture": { "const": "arm64" }, "host_identity_required": { "const": true } }
+    },
+    "packages": {
+      "type": "array", "minItems": 6, "uniqueItems": true,
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["name", "version", "source_revision", "wheel_sha256"],
+        "properties": { "name": { "type": "string" }, "version": { "type": "string" }, "source_revision": { "type": "string" }, "wheel_sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+      }
+    },
+    "layout_model": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repository", "revision", "weight_bytes", "weight_sha256", "license", "license_status"],
+      "properties": { "repository": { "const": "docling-project/docling-layout-heron" }, "revision": { "const": "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8" }, "weight_bytes": { "const": 171658996 }, "weight_sha256": { "const": "00333a43451945aaf89db8ca9c0a17e75d1537c17db60fdb91aa95f4c7929e0c" }, "license": { "const": "Apache-2.0" }, "license_status": { "const": "reviewed_license" } }
+    },
+    "table_model": {
+      "type": "object", "additionalProperties": false,
+      "required": ["enabled", "repository", "revision", "weight_bytes", "weight_sha256", "license", "license_status", "eligibility"],
+      "properties": { "enabled": { "const": false }, "repository": { "const": "docling-project/docling-models" }, "revision": { "const": "fc0f2d45e2218ea24bce5045f58a389aed16dc23" }, "weight_bytes": { "const": 212758388 }, "weight_sha256": { "const": "2a7d6c924b3cd12fb99a09280ca9c33a89c5d60b93253617d2e088c1a40374d9" }, "license": { "const": "CDLA-Permissive-2.0" }, "license_status": { "const": "pending_review" }, "eligibility": { "const": "table_disabled_until_reviewed_license" } }
+    },
+    "ocr": {
+      "type": "object", "additionalProperties": false,
+      "required": ["engine", "version", "automatic_selection", "apple_vision_weight_identity"],
+      "properties": { "engine": { "const": "OCRMac" }, "version": { "const": "1.0.1" }, "automatic_selection": { "const": false }, "apple_vision_weight_identity": { "const": "unavailable" } }
+    },
+    "device": { "const": "cpu" },
+    "claim_boundary": { "const": "Research configuration only. No package, model, benchmark, product, or release claim is authorized." }
+  }
+}

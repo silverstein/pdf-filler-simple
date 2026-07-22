@@ -2,8 +2,9 @@
 
 Phase 1 adds an evaluation-only boundary for comparing optional structured
 extraction sidecars. It does not add an extractor, model, runtime dependency,
-or MCPB capability. The Phase 0 corpus, scorer, baseline runner, and retained
-evidence remain unchanged.
+or MCPB capability. Its runner, independent scorer, artifact attestations,
+privacy evidence, immutable generation publisher, and cross-device receipt
+format remain excluded from production and share-package archives.
 
 ## Process contract
 
@@ -11,7 +12,11 @@ Each candidate attempt starts a fresh process. The runner writes one
 `pdf-tools.extraction-candidate.v1` JSON request to standard input, closes
 standard input, and accepts exactly one JSON response on standard output.
 The runner enforces a wall-clock deadline and byte limits for standard output
-and standard error. On supported POSIX hosts it checks and empties the candidate
+and standard error. It also enforces `max_report_bytes` against incrementally
+retained attempt and failure evidence, then rechecks the exact serialized
+retained evidence before publication. A configuration may use large individual
+capture limits when the actual aggregate remains within the report limit. On
+supported POSIX hosts the runner checks and empties the candidate
 process group after every attempt, including a delayed force-termination pass
 after a successful leader exits. A process that deliberately creates a new
 operating-system session is outside this process-group boundary.
@@ -33,6 +38,27 @@ claiming isolation.
 The report binds input-adapter availability, and retained-report verification
 recomputes capability, license-review, and adapter eligibility before accepting
 any success or error outcome.
+
+## Candidate artifact and command identity
+
+A configured candidate has a private artifact configuration that names every
+retained file, component, license, root, and role. Components own their license
+records in both directions: a component may reference only licenses with the
+same component identity, and every license must have exactly one owning
+component. The inventory builder rejects missing and extra files, unsafe names,
+case and Unicode collisions, symlinks, hard links, special files, invalid
+license evidence, and mutations of bytes, modes, paths, roles, or ownership.
+A structurally valid license with `pending_review` status is retained as
+review-pending evidence; it makes the candidate ineligible for execution until
+the license is reviewed.
+
+The runner captures artifact inventories and command evidence before and after
+execution. Command evidence binds the executable and every literal or artifact
+argument without retaining raw absolute paths or literal values. A failed
+postcheck or a change in either the artifact inventory or command evidence
+converts every affected attempt to `ARTIFACT_DRIFT`. The execution companion
+must describe the same drift result, so command-only drift cannot be hidden by
+an unchanged file inventory.
 
 ## Truth projection
 
@@ -60,16 +86,89 @@ otherwise returned a valid response.
 Every error retains a typed runner stage and stable error code. A serialized
 request limit error also retains the observed request byte count and exact plan
 limit. The runner captures these facts in a separate per-attempt evidence map,
-binds its canonical SHA-256 into the report, and writes a companion
-`.preflight.json` file when a report is persisted. Verification requires that
-trusted map and exact-compares its outcome, reason, unmet requirements, and
-failure object with the report. It does not infer expected failure facts from
-the mutable report. Null request and process fields alone cannot establish a
-runner failure.
+binds the map's canonical SHA-256 into the report, and embeds the exact trusted
+map in the execution companion when an immutable execution generation is
+requested. The runner does not write a standalone report or `.preflight.json`
+sidecar. Generation publication retains the canonical report and execution
+companion as separately indexed artifacts. Verification derives the trusted
+map from that companion and exact-compares its outcome, reason, unmet
+requirements, and failure object with the report. It does not infer expected
+failure facts from the mutable report. Null request and process fields alone
+cannot establish a runner failure.
 
-Phase 1 uses a strict exact-key loader for this companion artifact. A formal
-versioned sidecar schema and index belong to the later scorer and evidence-index
-work; no benchmark or calibration claim depends on them in this phase.
+Phase 1 uses strict exact-key loaders and versioned schemas for the report,
+execution companion, privacy attestation, generation index, transfer receipt,
+score report, and score provenance. An execution generation is not accepted as
+complete merely because those files parse. Every indexed artifact record is
+reopened without following symlinks and checked for exact size, SHA-256, mode,
+filename, and role.
+
+## Immutable generations and recovery
+
+Execution and score outputs are written only to an explicitly supplied,
+out-of-repository generation root. Publication creates a mode-0700 staging
+directory and a mode-0600 transaction claim, writes and fsyncs each artifact,
+reopens each file for exact verification, and writes the canonical index last
+as the commit marker. The index binds its kind, run, transaction, parent
+generation when required, and the complete sorted artifact set.
+
+The publisher reinspects the committed staging directory and runs any required
+semantic verifier before the atomic same-filesystem rename. It repeats exact
+and semantic verification after rename, fsyncs the parent, reinspects again,
+then removes and fsyncs the transaction claim. A generation with a sibling
+claim is `durability_uncertain` to ordinary readers. Only the exact active
+transaction may inspect it internally. Recovery of a privacy-attested
+generation requires and reruns its semantic verifier; verifier failure leaves
+the claim in place.
+
+Generation kinds have a strict ancestry contract. An original `execution`
+index has no source-generation digest. `score`, `received_execution`, and
+`received_score` indexes require one. A received execution must embed an
+original index whose kind is exactly `execution`.
+
+## Privacy and cross-device receipt boundary
+
+Every execution and score generation carries a privacy attestation. It binds
+the ordinary artifact records, directory and file modes, policy, path-hash
+behavior, and the digest of the prohibited-root set. It does not claim that
+path hashes are secret or that the evidence is authorized for publication.
+
+A private cross-device transfer preserves the original source privacy evidence
+verbatim and creates a separate destination privacy attestation from locally
+trusted destination roots. Source and destination root digests are not assumed
+to match. Both sides must cover the repository and package boundary while the
+source and destination generation locations must remain outside the applicable
+prohibited roots.
+
+Before any private candidate attempt, the source runner realpaths the repository
+and every caller-supplied source prohibited root. At least one supplied root must
+contain the repository/package root, and the prospective generation root must
+remain outside every supplied root. The runner repeats the boundary check before
+publication and after creating the generation root. Additional sync or share
+locations are protected only when the caller includes them in the prohibited
+root set.
+
+The transfer receipt binds the exact source index bytes, source generation
+digest, hosts, transport, time, and a code identity derived from the indexed
+execution companion or score provenance. Callers cannot substitute an
+unrelated source hash. Unsigned receipts state that authenticity is unavailable.
+For signed receipts, a trusted verifier must return the synchronous boolean
+value `true`; promises and other truthy values fail closed.
+
+A received generation retains every original source artifact record exactly and
+adds only `source_generation_index`, `transfer_receipt`, and
+`received_privacy_attestation`. The scorer checks that exact mapping rather than
+trusting a self-consistent destination index.
+
+## Independent scoring
+
+The scorer consumes only a complete execution or received-execution generation.
+It revalidates the report, companion, artifact evidence, privacy evidence,
+source ancestry, and receipt before computing metrics. Score provenance binds
+the scorer source set, oracle inputs, schemas, report bytes, and scoring leaves.
+The score is then published as its own immutable generation that names the
+verified execution generation as its source. Scores can be transferred into a
+`received_score` generation under the same receipt and privacy rules.
 
 ## Typed results and evidence
 

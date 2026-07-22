@@ -7,11 +7,18 @@ import { isForbiddenArchivePath } from "../../scripts/build-mcpb.mjs";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const PHASE1_EVALUATION_ASSETS = [
   "docs/EXTRACTION_CANDIDATE_PROTOCOL.md",
-  "docs/evidence/extraction-phase1-sidecars.v1.json.preflight.json",
+  "docs/evidence/extraction-phase1-generations/execution-example/execution-index.v1.json",
   "scripts/eval-run-extraction-candidates.mjs",
   "scripts/eval-score-extraction-candidates.mjs",
   "test/eval/extraction-phase1-scorer.js",
   "test/eval/extraction-phase1-scorer.test.js",
+  "test/eval/extraction-phase1-artifacts.js",
+  "test/eval/extraction-phase1-artifacts.test.js",
+  "test/eval/extraction-phase1-companion.js",
+  "test/eval/extraction-phase1-companion.test.js",
+  "test/eval/extraction-phase1-publisher.js",
+  "test/eval/extraction-phase1-publisher.test.js",
+  "test/eval/extraction-phase1-test-artifacts.js",
   "test/eval/extraction-phase1-protocol.js",
   "test/eval/extraction-phase1.test.js",
   "test/eval/extraction-phase1-packaging.test.js",
@@ -26,6 +33,14 @@ const PHASE1_EVALUATION_ASSETS = [
   "test/fixtures/eval/extraction/phase1/scoring-oracle.v1.json",
   "test/fixtures/eval/extraction/phase1/score-report.schema.json",
   "test/fixtures/eval/extraction/phase1/score-index.schema.json",
+  "test/fixtures/eval/extraction/phase1/artifact-config.schema.json",
+  "test/fixtures/eval/extraction/phase1/artifact-inventory.schema.json",
+  "test/fixtures/eval/extraction/phase1/execution-companion.schema.json",
+  "test/fixtures/eval/extraction/phase1/execution-index.schema.json",
+  "test/fixtures/eval/extraction/phase1/cross-device-receipt.schema.json",
+  "test/fixtures/eval/extraction/phase1/generation-privacy.schema.json",
+  "test/fixtures/eval/extraction/phase1/docling-candidate-config.schema.json",
+  "test/fixtures/eval/extraction/phase1/docling-candidate-config.v1.json",
   "test/fixtures/eval/extraction/phase1/mock-candidate.mjs"
 ];
 
@@ -45,5 +60,19 @@ describe("Phase 1 extraction evaluation packaging boundary", () => {
       expect(relativePath.startsWith("pdf-toolkit-mcp-share/")).toBe(false);
       expect(shareFiles).not.toContain(relativePath);
     }
+  });
+
+  it("forbids run bundles, inventories, models, environments, and caches from production packaging", async () => {
+    const privateAssets = [
+      "docs/evidence/extraction-phase1-generations/execution-run/execution-report.v1.json",
+      "docs/evidence/extraction-phase1-generations/execution-run/artifact-before-candidate.json",
+      ".pdf-tools-extraction-cache/models/model.safetensors",
+      ".pdf-tools-extraction-cache/environments/uv.lock",
+      ".pdf-tools-extraction-cache/corpora/private.pdf",
+      ".pdf-tools-extraction-cache/runs/execution-companion.v1.json",
+    ];
+    for (const relativePath of privateAssets) expect(isForbiddenArchivePath(relativePath), relativePath).toBe(true);
+    const shareSource = await fs.readFile(path.join(REPO_ROOT, "package-for-friend.js"), "utf8");
+    for (const relativePath of privateAssets) expect(shareSource).not.toContain(relativePath);
   });
 });

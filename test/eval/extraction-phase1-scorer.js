@@ -746,13 +746,13 @@ export function scorePhase1Report(report, {
   if (!reportBytes || canonicalJson(JSON.parse(Buffer.from(reportBytes).toString("utf8"))) !== canonicalJson(report)) {
     throw new Error("Extraction Phase 1 report differs from its retained source bytes");
   }
-  if (!preflightEvidenceBytes) throw new Error("Extraction Phase 1 scorer requires retained preflight sidecar bytes");
-  const retainedPreflight = JSON.parse(Buffer.from(preflightEvidenceBytes).toString("utf8"));
-  exactKeys(retainedPreflight, ["failure_evidence_by_attempt_key", "preflight_evidence_sha256", "report_id", "run_id"], "Extraction preflight sidecar");
-  if (retainedPreflight.report_id !== report.report_id || retainedPreflight.run_id !== report.run_id
-    || retainedPreflight.preflight_evidence_sha256 !== report.preflight_evidence_sha256
-    || canonicalJson(retainedPreflight.failure_evidence_by_attempt_key) !== canonicalJson(verification.failureEvidenceByAttemptKey)) {
-    throw new Error("Extraction preflight sidecar bytes differ from trusted verification evidence");
+  if (!preflightEvidenceBytes) throw new Error("Extraction Phase 1 scorer requires retained trusted failure evidence map bytes");
+  const retainedFailureEvidence = JSON.parse(Buffer.from(preflightEvidenceBytes).toString("utf8"));
+  exactKeys(retainedFailureEvidence, ["failure_evidence_by_attempt_key", "preflight_evidence_sha256", "report_id", "run_id"], "Extraction trusted failure evidence map");
+  if (retainedFailureEvidence.report_id !== report.report_id || retainedFailureEvidence.run_id !== report.run_id
+    || retainedFailureEvidence.preflight_evidence_sha256 !== report.preflight_evidence_sha256
+    || canonicalJson(retainedFailureEvidence.failure_evidence_by_attempt_key) !== canonicalJson(verification.failureEvidenceByAttemptKey)) {
+    throw new Error("Extraction trusted failure evidence map bytes differ from trusted verification evidence");
   }
   if (!oracleBytes || canonicalJson(JSON.parse(Buffer.from(oracleBytes).toString("utf8"))) !== canonicalJson(oracle)) {
     throw new Error("Extraction Phase 1 scoring oracle differs from its trusted source bytes");
@@ -822,7 +822,7 @@ export function scorePhase1Report(report, {
       "Filesystem isolation",
       "Network isolation",
       "Candidate cost",
-      "Candidate artifact, model, weight, and native bridge identity",
+      "Candidate command, interpreter, environment, runtime closure, artifact, model, weight, and native bridge identity",
       "Benchmark or calibration readiness",
     ],
   };

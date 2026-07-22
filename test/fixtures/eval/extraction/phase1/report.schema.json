@@ -122,7 +122,7 @@
         "stage": {
           "anyOf": [
             { "type": "null" },
-            { "enum": ["source_preflight", "adapter_build", "request_build", "process_spawn", "process_execution", "response_parse", "response_validation", "candidate_response", "source_postcheck"] }
+            { "enum": ["source_preflight", "adapter_build", "request_build", "process_spawn", "process_execution", "response_parse", "response_validation", "candidate_response", "source_postcheck", "artifact_postcheck"] }
           ]
         },
         "runner_code": { "anyOf": [{ "type": "null" }, { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{0,63}$" }] },
@@ -156,7 +156,20 @@
         "captures": { "$ref": "#/$defs/captures" },
         "unmet_requirements": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
         "execution": { "$ref": "#/$defs/execution" },
-        "failure": { "$ref": "#/$defs/failure" }
+        "failure": { "$ref": "#/$defs/failure" },
+        "artifact_drift": {
+          "type": "object", "additionalProperties": false,
+          "required": ["outcome", "error_code", "outcome_reason", "response_canonical_sha256", "failure", "unmet_requirements", "operational_evidence_sha256"],
+          "properties": {
+            "outcome": { "enum": ["completed", "partial", "abstained", "error", "not_run"] },
+            "error_code": { "type": ["string", "null"] },
+            "outcome_reason": { "type": "string", "minLength": 1 },
+            "response_canonical_sha256": { "$ref": "#/$defs/nullableSha256" }
+            ,"failure": { "$ref": "#/$defs/failure" }
+            ,"unmet_requirements": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+            ,"operational_evidence_sha256": { "$ref": "#/$defs/sha256" }
+          }
+        }
       }
     }
   }

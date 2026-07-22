@@ -12,6 +12,7 @@ import {
   PHASE1_LIMITATIONS,
   PHASE1_REPORT_ID,
   assertSchema,
+  artifactDriftOperationalDigest,
   buildCandidateRequest,
   canonicalJson,
   detectHarnessCapabilities,
@@ -20,6 +21,7 @@ import {
   sha256,
   unmetRequirements,
   validateCandidateResponseSemantics,
+  validatePhase1ReportByteContract,
   validatePlan,
   validateRegistry,
   verifyPhase1Report,
@@ -28,6 +30,25 @@ import {
   loadExtractionManifest,
   resolveExtractionFixture,
 } from "../test/eval/extraction-manifest.js";
+import {
+  PHASE1_ARTIFACT_CONFIG_ID,
+  PHASE1_ARTIFACT_ROLES,
+  buildArtifactInventory,
+  buildCandidateCommandEvidence,
+  redactArtifactConfiguration,
+  validateArtifactConfiguration,
+  verifyArtifactInventory,
+} from "../test/eval/extraction-phase1-artifacts.js";
+import {
+  PHASE1_COMPANION_SOURCE_PATHS,
+  buildPrivacyEvidence,
+  buildRunnerEnvironmentAttestation,
+  buildGenerationPrivacyAttestation,
+  createExecutionCompanion,
+  deriveRunnerResourceFacts,
+  verifyFinalGenerationPrivacy,
+} from "../test/eval/extraction-phase1-companion.js";
+import { publishImmutableGeneration } from "../test/eval/extraction-phase1-publisher.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
@@ -42,8 +63,89 @@ const DEFAULT_PATHS = Object.freeze({
   requestSchema: path.join(PHASE1_ROOT, "candidate-request.schema.json"),
   responseSchema: path.join(PHASE1_ROOT, "candidate-response.schema.json"),
   reportSchema: path.join(PHASE1_ROOT, "report.schema.json"),
-  output: path.join(REPO_ROOT, "docs", "evidence", "extraction-phase1-sidecars.v1.json"),
+  companionSchema: path.join(PHASE1_ROOT, "execution-companion.schema.json"),
+  artifactInventorySchema: path.join(PHASE1_ROOT, "artifact-inventory.schema.json"),
 });
+
+function pathInside(root, candidate) {
+  const relative = path.relative(path.resolve(root), path.resolve(candidate));
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+async function prospectiveRealPath(target) {
+  let cursor = path.resolve(target);
+  const missingSegments = [];
+  while (true) {
+    try {
+      const realAncestor = await fs.realpath(cursor);
+      return path.join(realAncestor, ...missingSegments.reverse());
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+      const parent = path.dirname(cursor);
+      if (parent === cursor) throw error;
+      missingSegments.push(path.basename(cursor));
+      cursor = parent;
+    }
+  }
+}
+
+async function validateSourcePrivacyBoundary({ trustedPrivacyClass, trustedProhibitedRoots, generationRoot }) {
+  if (!["public_synthetic", "private_local", "private_local_minimized"].includes(trustedPrivacyClass)) {
+    throw new Error("Unknown extraction privacy class");
+  }
+  if (trustedPrivacyClass === "public_synthetic") return { realTrustedProhibitedRoots: trustedProhibitedRoots };
+  if (!generationRoot || !path.isAbsolute(generationRoot)
+    || !Array.isArray(trustedProhibitedRoots) || trustedProhibitedRoots.length === 0) {
+    throw new Error("Private extraction requires an absolute generation root and trusted source prohibited roots");
+  }
+  const [realRepoRoot, realGenerationRoot, realTrustedProhibitedRoots] = await Promise.all([
+    fs.realpath(REPO_ROOT),
+    prospectiveRealPath(generationRoot),
+    Promise.all(trustedProhibitedRoots.map(root => fs.realpath(root))),
+  ]);
+  if (!realTrustedProhibitedRoots.some(root => pathInside(root, realRepoRoot))) {
+    throw new Error("Private extraction source prohibited roots must cover the repository and package root");
+  }
+  for (const prohibited of realTrustedProhibitedRoots) {
+    if (pathInside(prohibited, realGenerationRoot) || pathInside(realGenerationRoot, prohibited)) {
+      throw new Error("Private extraction generation root overlaps a trusted prohibited repository or package root");
+    }
+  }
+  return { realRepoRoot, realGenerationRoot, realTrustedProhibitedRoots };
+}
+
+function notApplicableArtifactConfig(candidateId) {
+  return {
+    config_id: PHASE1_ARTIFACT_CONFIG_ID,
+    candidate_id: candidateId,
+    configured: false,
+    root_specs: [],
+    role_dispositions: PHASE1_ARTIFACT_ROLES.map(role => ({ role, status: "not_applicable", reason: "candidate_not_configured" })),
+    components: [],
+    licenses: [],
+  };
+}
+
+async function loadRunnerSourceBytes() {
+  return Object.fromEntries(await Promise.all(Object.entries(PHASE1_COMPANION_SOURCE_PATHS).map(async ([role, relativePath]) => [
+    role,
+    { path: relativePath, bytes: await fs.readFile(path.join(REPO_ROOT, relativePath)) },
+  ])));
+}
+
+function assertRunnerSourcesUnchanged(beforeSources, afterSources, beforeEnvironment, afterEnvironment) {
+  const projection = sources => Object.fromEntries(Object.entries(sources).map(([role, source]) => [role, {
+    path: source.path,
+    bytes: source.bytes.length,
+    sha256: sha256(source.bytes),
+  }]));
+  if (canonicalJson(projection(beforeSources)) !== canonicalJson(projection(afterSources))
+    || canonicalJson(beforeEnvironment) !== canonicalJson(afterEnvironment)) {
+    const error = new Error("Runner direct sources or runtime environment changed during candidate execution");
+    error.code = "RUNNER_SOURCE_DRIFT";
+    throw error;
+  }
+}
 
 function option(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -419,7 +521,7 @@ async function runAttempt({
     request = buildCandidateRequest({
       candidateId: candidate.id,
       inputMode: selection.input_mode,
-      stagedSourcePath,
+      stagedSourcePath: "source.pdf",
       sourceSha256: source.sha256,
       sourceSizeBytes: source.size_bytes,
       pageCount: source.page_count,
@@ -553,29 +655,53 @@ export async function runExtractionCandidates({
   requestSchemaPath = DEFAULT_PATHS.requestSchema,
   responseSchemaPath = DEFAULT_PATHS.responseSchema,
   reportSchemaPath = DEFAULT_PATHS.reportSchema,
+  artifactConfigSchemaPath = path.join(PHASE1_ROOT, "artifact-config.schema.json"),
+  artifactInventorySchemaPath = DEFAULT_PATHS.artifactInventorySchema,
+  companionSchemaPath = DEFAULT_PATHS.companionSchema,
+  executionIndexSchemaPath = path.join(PHASE1_ROOT, "execution-index.schema.json"),
+  generationPrivacySchemaPath = path.join(PHASE1_ROOT, "generation-privacy.schema.json"),
+  generationRoot = null,
   outputPath = null,
   inputBuilders = null,
   verificationEvidence = null,
+  artifactConfigurations = null,
+  trustedPrivacyClass = "public_synthetic",
+  trustedProhibitedRoots = [],
+  testOnlyRunnerSourceLoader = null,
+  testOnlyAfterAttempts = null,
 } = {}) {
-  const [manifest, registryLoaded, planLoaded, requestSchemaText, responseSchemaText, reportSchemaText] = await Promise.all([
+  if (outputPath !== null) throw new Error("Direct report persistence was removed; use generationRoot for immutable generation publication");
+  const [manifest, registryLoaded, planLoaded, requestSchemaText, responseSchemaText, reportSchemaText, artifactConfigSchemaText, artifactInventorySchemaText, companionSchemaText, executionIndexSchemaText, generationPrivacySchemaText] = await Promise.all([
     loadExtractionManifest(manifestPath, manifestSchemaPath),
     loadJsonWithSchema(registryPath, registrySchemaPath, "extraction candidate registry"),
     loadJsonWithSchema(planPath, planSchemaPath, "extraction Phase 1 plan"),
     fs.readFile(requestSchemaPath, "utf8"),
     fs.readFile(responseSchemaPath, "utf8"),
     fs.readFile(reportSchemaPath, "utf8"),
+    fs.readFile(artifactConfigSchemaPath, "utf8"),
+    fs.readFile(artifactInventorySchemaPath, "utf8"),
+    fs.readFile(companionSchemaPath, "utf8"),
+    fs.readFile(executionIndexSchemaPath, "utf8"),
+    fs.readFile(generationPrivacySchemaPath, "utf8"),
   ]);
   const registry = registryLoaded.value;
   const plan = planLoaded.value;
   const requestSchema = JSON.parse(requestSchemaText);
   const responseSchema = JSON.parse(responseSchemaText);
   const reportSchema = JSON.parse(reportSchemaText);
+  const artifactConfigSchema = JSON.parse(artifactConfigSchemaText);
+  const artifactInventorySchema = JSON.parse(artifactInventorySchemaText);
+  const companionSchema = JSON.parse(companionSchemaText);
+  const executionIndexSchema = JSON.parse(executionIndexSchemaText);
+  const generationPrivacySchema = JSON.parse(generationPrivacySchemaText);
   validateRegistry(registry);
   validatePlan(plan, registry);
   if (plan.phase0_suite_id !== manifest.manifest.suite_id) throw new Error("Extraction Phase 1 plan targets the wrong Phase 0 suite");
   const manifestById = new Map(manifest.manifest.fixtures.map(fixture => [fixture.id, fixture]));
   const selectedCaseIds = plan.case_ids ?? manifest.manifest.fixtures.map(fixture => fixture.id);
   if (selectedCaseIds.some(id => !manifestById.has(id))) throw new Error("Extraction Phase 1 plan selects an unknown Phase 0 case");
+  const plannedAttempts = plan.candidates.length * selectedCaseIds.length * plan.repetitions;
+  validatePhase1ReportByteContract({ limits: plan.limits, plannedAttempts });
 
   const capabilities = detectHarnessCapabilities();
   const adapterAvailability = {
@@ -583,23 +709,108 @@ export async function runExtractionCandidates({
     layout_ir: typeof inputBuilders?.layout_ir === "function",
     raster: typeof inputBuilders?.raster === "function",
   };
+  const selectedCandidateIds = plan.candidates.map(item => item.candidate_id);
+  const trustedCandidateIds = registry.candidates.map(item => item.id);
+  const artifactConfigByCandidateId = {};
+  for (const candidateId of selectedCandidateIds) {
+    const candidate = registry.candidates.find(item => item.id === candidateId);
+    const configured = artifactConfigurations?.[candidateId] ?? notApplicableArtifactConfig(candidateId);
+    if (candidate.configured && !artifactConfigurations?.[candidateId]) {
+      throw new Error(`Configured candidate requires a separate runner-owned artifact configuration: ${candidateId}`);
+    }
+    if (configured.configured !== candidate.configured) throw new Error(`Candidate registry and artifact configuration disagree: ${candidateId}`);
+    artifactConfigByCandidateId[candidateId] = configured;
+  }
+  const artifactConfigBindingByCandidateId = Object.fromEntries(selectedCandidateIds.map(candidateId => {
+    const config = artifactConfigByCandidateId[candidateId];
+    const rawBytes = Buffer.from(`${JSON.stringify(config, null, 2)}\n`);
+    const redacted = redactArtifactConfiguration(config);
+    return [candidateId, {
+      raw_bytes: rawBytes.length,
+      raw_sha256: sha256(rawBytes),
+      canonical_sha256: sha256(Buffer.from(canonicalJson(config))),
+      redacted_config: redacted,
+      redacted_config_sha256: sha256(Buffer.from(canonicalJson(redacted))),
+    }];
+  }));
+  for (const candidateId of selectedCandidateIds) {
+    assertSchema(artifactConfigByCandidateId[candidateId], artifactConfigSchema, `artifact configuration ${candidateId}`);
+    validateArtifactConfiguration(artifactConfigByCandidateId[candidateId], trustedCandidateIds);
+  }
+  if (testOnlyRunnerSourceLoader !== null && typeof testOnlyRunnerSourceLoader !== "function") {
+    throw new Error("testOnlyRunnerSourceLoader must be a function when supplied");
+  }
+  if (testOnlyAfterAttempts !== null && typeof testOnlyAfterAttempts !== "function") throw new Error("testOnlyAfterAttempts must be a function when supplied");
+  await validateSourcePrivacyBoundary({ trustedPrivacyClass, trustedProhibitedRoots, generationRoot });
+  const runnerSourceLoader = testOnlyRunnerSourceLoader ?? loadRunnerSourceBytes;
+  const sourceBytesBeforeAttempts = await runnerSourceLoader();
+  const runnerEnvironmentBeforeAttempts = await buildRunnerEnvironmentAttestation({ sourceBytesByRole: sourceBytesBeforeAttempts });
+  const beforeResultByCandidateId = Object.fromEntries(await Promise.all(selectedCandidateIds.map(async candidateId => {
+    try {
+      return [candidateId, { status: "captured", inventory: await buildArtifactInventory(artifactConfigByCandidateId[candidateId], { trustedCandidateIds }), error_code: null, error_message_sha256: null }];
+    } catch (error) {
+      return [candidateId, { status: "failed", inventory: null, error_code: stableFailureDetailCode(error.code ?? error.name), error_message_sha256: sha256(Buffer.from(String(error.message ?? error.name).slice(0, 500))) }];
+    }
+  })));
+  const commandBeforeByCandidateId = {};
+  for (const candidateId of selectedCandidateIds) {
+    const candidate = registry.candidates.find(item => item.id === candidateId);
+    if (!candidate.configured || beforeResultByCandidateId[candidateId].status === "failed") {
+      commandBeforeByCandidateId[candidateId] = null;
+      continue;
+    }
+    try {
+      commandBeforeByCandidateId[candidateId] = await buildCandidateCommandEvidence(
+        candidate,
+        artifactConfigByCandidateId[candidateId],
+        beforeResultByCandidateId[candidateId].inventory,
+      );
+    } catch (error) {
+      commandBeforeByCandidateId[candidateId] = null;
+      beforeResultByCandidateId[candidateId] = {
+        status: "failed", inventory: null, error_code: stableFailureDetailCode(error.code ?? error.name),
+        error_message_sha256: sha256(Buffer.from(String(error.message ?? error.name).slice(0, 500))),
+      };
+    }
+  }
+  const potentiallySpawnedSelections = plan.candidates.filter(selection => {
+    const candidate = registry.candidates.find(item => item.id === selection.candidate_id);
+    return candidate.configured
+      && beforeResultByCandidateId[candidate.id].status !== "failed"
+      && beforeResultByCandidateId[candidate.id].inventory?.state !== "captured_review_pending"
+      && commandBeforeByCandidateId[candidate.id] !== null
+      && candidateUnmetRequirements(candidate, selection, capabilities, inputBuilders).length === 0;
+  }).length;
+  const potentiallySpawnedAttempts = potentiallySpawnedSelections * selectedCaseIds.length * plan.repetitions;
+  validatePhase1ReportByteContract({ limits: plan.limits, plannedAttempts, potentiallySpawnedAttempts });
   const runId = sha256(Buffer.from(randomUUID()));
   const runRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-extraction-phase1-"));
   const attempts = [];
   const failureEvidenceByAttemptKey = {};
   const verifiedSourceFacts = {};
+  let retainedEvidenceBytes = 4 * 1024 * 1024;
   const recordAttempt = attempt => {
     const key = reportAttemptKey(attempt);
     if (Object.hasOwn(failureEvidenceByAttemptKey, key)) throw new Error(`Duplicate extraction attempt evidence key: ${key}`);
-    failureEvidenceByAttemptKey[key] = deepFreeze(structuredClone({
+    const failureEvidence = {
       outcome: attempt.outcome,
       error_code: attempt.error_code,
       outcome_reason: attempt.outcome_reason,
       unmet_requirements: attempt.unmet_requirements,
       failure: attempt.failure,
-    }));
+    };
+    const incrementalBytes = Buffer.byteLength(JSON.stringify(attempt)) + Buffer.byteLength(JSON.stringify(failureEvidence));
+    validatePhase1ReportByteContract({
+      limits: plan.limits,
+      plannedAttempts,
+      retainedEvidenceBytes: retainedEvidenceBytes + incrementalBytes,
+    });
+    retainedEvidenceBytes += incrementalBytes;
+    failureEvidenceByAttemptKey[key] = deepFreeze(structuredClone(failureEvidence));
     attempts.push(attempt);
   };
+  let afterResultByCandidateId = null;
+  let commandObservationRegistry = registry;
   try {
     const registryById = new Map(registry.candidates.map(candidate => [candidate.id, candidate]));
     for (const selection of plan.candidates) {
@@ -618,6 +829,8 @@ export async function runExtractionCandidates({
           const eligibilityUnmet = candidate.configured
             ? candidateUnmetRequirements(candidate, selection, capabilities, inputBuilders)
             : [];
+          if (candidate.configured && beforeResultByCandidateId[candidate.id].status === "failed") eligibilityUnmet.push("artifact_precheck_failed");
+          if (candidate.configured && beforeResultByCandidateId[candidate.id].inventory?.state === "captured_review_pending") eligibilityUnmet.push("artifact_license_review");
           if (!candidate.configured) {
             recordAttempt(await unconfiguredAttempt({ candidate, selection, fixture, repetition, source }));
           } else if (eligibilityUnmet.length > 0) {
@@ -655,6 +868,84 @@ export async function runExtractionCandidates({
     }
   } finally {
     await fs.rm(runRoot, { recursive: true, force: true });
+    if (testOnlyAfterAttempts) {
+      commandObservationRegistry = structuredClone(registry);
+      await testOnlyAfterAttempts({ registry: commandObservationRegistry, plan: structuredClone(plan) });
+    }
+    afterResultByCandidateId = Object.fromEntries(await Promise.all(selectedCandidateIds.map(async candidateId => {
+      try {
+        return [candidateId, { status: "captured", inventory: await buildArtifactInventory(artifactConfigByCandidateId[candidateId], { trustedCandidateIds }), error_code: null, error_message_sha256: null }];
+      } catch (error) {
+        return [candidateId, {
+          status: "failed",
+          inventory: null,
+          error_code: stableFailureDetailCode(error.code ?? error.name),
+          error_message_sha256: sha256(Buffer.from(String(error.message ?? error.name).slice(0, 500))),
+        }];
+      }
+    })));
+  }
+
+  const sourceBytesAfterAttempts = await runnerSourceLoader();
+  const runnerEnvironmentAfterAttempts = await buildRunnerEnvironmentAttestation({ sourceBytesByRole: sourceBytesAfterAttempts });
+  assertRunnerSourcesUnchanged(sourceBytesBeforeAttempts, sourceBytesAfterAttempts, runnerEnvironmentBeforeAttempts, runnerEnvironmentAfterAttempts);
+  const commandAfterByCandidateId = {};
+  for (const candidateId of selectedCandidateIds) {
+    const candidate = commandObservationRegistry.candidates.find(item => item.id === candidateId);
+    if (!candidate.configured || commandBeforeByCandidateId[candidateId] === null || afterResultByCandidateId[candidateId].status === "failed") {
+      commandAfterByCandidateId[candidateId] = null;
+      continue;
+    }
+    try {
+      commandAfterByCandidateId[candidateId] = await buildCandidateCommandEvidence(
+        candidate,
+        artifactConfigByCandidateId[candidateId],
+        afterResultByCandidateId[candidateId].inventory,
+      );
+    } catch {
+      commandAfterByCandidateId[candidateId] = null;
+    }
+  }
+
+  const driftedCandidateIds = new Set(selectedCandidateIds.filter(candidateId => {
+    if (beforeResultByCandidateId[candidateId].status === "failed") return false;
+    const result = afterResultByCandidateId[candidateId];
+    if (result.status !== "captured") return true;
+    try {
+      verifyArtifactInventory(result.inventory, beforeResultByCandidateId[candidateId].inventory);
+      if (canonicalJson(commandBeforeByCandidateId[candidateId]) !== canonicalJson(commandAfterByCandidateId[candidateId])) return true;
+      return false;
+    } catch {
+      return true;
+    }
+  }));
+  for (const attempt of attempts) {
+    if (!driftedCandidateIds.has(attempt.candidate_id)) continue;
+    const operational = {
+      outcome: attempt.outcome,
+      error_code: attempt.error_code,
+      outcome_reason: attempt.outcome_reason,
+      response_canonical_sha256: attempt.bindings.response_canonical_sha256,
+      failure: structuredClone(attempt.failure),
+      unmet_requirements: structuredClone(attempt.unmet_requirements),
+      operational_evidence_sha256: null,
+    };
+    operational.operational_evidence_sha256 = artifactDriftOperationalDigest(attempt, operational);
+    attempt.artifact_drift = operational;
+    attempt.outcome = "error";
+    attempt.error_code = "ARTIFACT_DRIFT";
+    attempt.outcome_reason = "Runner detected candidate artifact deployment drift after execution";
+    attempt.response = null;
+    attempt.runner_field_bindings = [];
+    attempt.bindings.response_canonical_sha256 = null;
+    attempt.failure = retainedFailure("artifact_postcheck", "ARTIFACT_DRIFT", "ARTIFACT_DEPLOYMENT_DRIFT");
+    failureEvidenceByAttemptKey[reportAttemptKey(attempt)] = deepFreeze(structuredClone({
+      outcome: attempt.outcome,
+      error_code: attempt.error_code,
+      outcome_reason: attempt.outcome_reason,
+      unmet_requirements: attempt.unmet_requirements,
+      failure: attempt.failure,
+    }));
   }
 
   const outcomeCount = outcome => attempts.filter(attempt => attempt.outcome === outcome).length;
@@ -684,6 +975,54 @@ export async function runExtractionCandidates({
     attempts,
     limitations: [...PHASE1_LIMITATIONS],
   };
+  const artifactAttestationByCandidateId = Object.fromEntries(selectedCandidateIds.map(candidateId => {
+    const beforeResult = beforeResultByCandidateId[candidateId];
+    const before = beforeResult.inventory;
+    const afterResult = afterResultByCandidateId[candidateId];
+    const after = afterResult.inventory;
+    const precheckFailed = beforeResult.status === "failed";
+    const changed = driftedCandidateIds.has(candidateId);
+    return [candidateId, {
+      before,
+      after,
+      precheck: {
+        status: beforeResult.status,
+        error_code: beforeResult.error_code,
+        error_message_sha256: beforeResult.error_message_sha256,
+      },
+      postcheck: {
+        status: afterResult.status,
+        error_code: afterResult.error_code,
+        error_message_sha256: afterResult.error_message_sha256,
+      },
+      drift: {
+        status: precheckFailed ? "precheck_failed" : afterResult.status === "failed" ? "postcheck_failed" : changed ? "changed" : "unchanged",
+        before_inventory_self_sha256: before?.digests.inventory_self_sha256 ?? null,
+        after_inventory_self_sha256: after?.digests.inventory_self_sha256 ?? null,
+      },
+    }];
+  }));
+  const commandRuntimeByCandidateId = Object.fromEntries(selectedCandidateIds.map(candidateId => [candidateId, {
+    before: commandBeforeByCandidateId[candidateId],
+    after: commandAfterByCandidateId[candidateId],
+    status: commandBeforeByCandidateId[candidateId] === null ? "unavailable"
+      : canonicalJson(commandBeforeByCandidateId[candidateId]) === canonicalJson(commandAfterByCandidateId[candidateId]) ? "unchanged_incomplete_nonclaiming" : "changed",
+  }]));
+  const resourceFactsByAttemptKey = deepFreeze(deriveRunnerResourceFacts(report, artifactAttestationByCandidateId));
+  const retainedEvidenceBytesBeforeSerialization = (4 * 1024 * 1024)
+    + Buffer.byteLength(JSON.stringify(attempts))
+    + Buffer.byteLength(JSON.stringify(failureEvidenceByAttemptKey));
+  validatePhase1ReportByteContract({
+    limits: plan.limits,
+    plannedAttempts,
+    retainedEvidenceBytes: retainedEvidenceBytesBeforeSerialization,
+  });
+  const reportBytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
+  validatePhase1ReportByteContract({ limits: plan.limits, plannedAttempts, observedBytes: reportBytes.length });
+  for (const attestation of Object.values(artifactAttestationByCandidateId)) {
+    if (attestation.before) assertSchema(attestation.before, artifactInventorySchema, "before artifact inventory");
+    if (attestation.after) assertSchema(attestation.after, artifactInventorySchema, "after artifact inventory");
+  }
   assertSchema(report, reportSchema, "extraction Phase 1 report");
   verifyPhase1Report(report, {
     registry,
@@ -697,27 +1036,99 @@ export async function runExtractionCandidates({
     reportSchema,
     adapterAvailability,
     failureEvidenceByAttemptKey,
+    artifactEligibilityByCandidateId: Object.fromEntries(selectedCandidateIds.map(candidateId => [candidateId, beforeResultByCandidateId[candidateId].status === "failed" ? "precheck_failed" : beforeResultByCandidateId[candidateId].inventory.state])),
     repositoryRoot: REPO_ROOT,
   });
   if (verificationEvidence && typeof verificationEvidence === "object") {
     verificationEvidence.adapterAvailability = structuredClone(adapterAvailability);
     verificationEvidence.failureEvidenceByAttemptKey = structuredClone(failureEvidenceByAttemptKey);
+    verificationEvidence.resourceFactsByAttemptKey = structuredClone(resourceFactsByAttemptKey);
+    verificationEvidence.artifactAttestationByCandidateId = structuredClone(artifactAttestationByCandidateId);
+    verificationEvidence.artifactConfigBindingByCandidateId = structuredClone(artifactConfigBindingByCandidateId);
+    verificationEvidence.commandRuntimeByCandidateId = structuredClone(commandRuntimeByCandidateId);
   }
-  if (outputPath) {
-    await fs.mkdir(path.dirname(outputPath), { recursive: true });
-    await fs.writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`);
-    await fs.writeFile(`${outputPath}.preflight.json`, `${JSON.stringify({
-      report_id: report.report_id,
-      run_id: report.run_id,
-      preflight_evidence_sha256: report.preflight_evidence_sha256,
-      failure_evidence_by_attempt_key: failureEvidenceByAttemptKey,
-    }, null, 2)}\n`);
+  if (generationRoot) {
+    await validateSourcePrivacyBoundary({ trustedPrivacyClass, trustedProhibitedRoots, generationRoot });
+    const resolvedGenerationRoot = path.resolve(generationRoot);
+    const relativeToRepo = path.relative(REPO_ROOT, resolvedGenerationRoot);
+    if (relativeToRepo === "" || (!relativeToRepo.startsWith("..") && !path.isAbsolute(relativeToRepo))) {
+      throw new Error("Extraction generations must be persisted outside the repository");
+    }
+    await fs.mkdir(generationRoot, { recursive: true, mode: 0o700 });
+    const publicationPrivacyBoundary = await validateSourcePrivacyBoundary({
+      trustedPrivacyClass,
+      trustedProhibitedRoots,
+      generationRoot,
+    });
+    const sourceProhibitedRoots = trustedPrivacyClass === "public_synthetic"
+      ? trustedProhibitedRoots
+      : publicationPrivacyBoundary.realTrustedProhibitedRoots;
+    const sourceBytesByRole = sourceBytesBeforeAttempts;
+    const privacyEvidence = await buildPrivacyEvidence({
+      trustedPrivacyClass,
+      runRoot: generationRoot,
+      trustedProhibitedRoots: sourceProhibitedRoots,
+      publicationAuthorized: false,
+      expectedRetainedFilePaths: trustedPrivacyClass === "public_synthetic" ? null : [],
+      policyOnly: true,
+    });
+    const runnerEnvironmentAttestation = runnerEnvironmentBeforeAttempts;
+    const companion = createExecutionCompanion({
+      report,
+      reportBytes,
+      failureEvidenceByAttemptKey,
+      resourceFactsByAttemptKey,
+      artifactAttestationByCandidateId,
+      artifactConfigBindingByCandidateId,
+      commandRuntimeByCandidateId,
+      privacyEvidence,
+      sourceBytesByRole,
+      runnerEnvironmentAttestation,
+    });
+    const companionBytes = Buffer.from(`${JSON.stringify(companion, null, 2)}\n`);
+    assertSchema(companion, companionSchema, "execution companion");
+    const inventoryArtifacts = {};
+    const normalizedIds = new Set();
+    for (const [candidateId, attestation] of Object.entries(artifactAttestationByCandidateId)) {
+      const safeId = candidateId.replace(/[^a-z0-9]+/g, "_");
+      if (normalizedIds.has(safeId)) throw new Error("Candidate IDs collide after generation filename normalization");
+      normalizedIds.add(safeId);
+      inventoryArtifacts[`artifact_config_${safeId}`] = { filename: `artifact-config-${safeId}.json`, bytes: Buffer.from(`${JSON.stringify(artifactConfigBindingByCandidateId[candidateId], null, 2)}\n`) };
+      if (attestation.before) inventoryArtifacts[`artifact_before_${safeId}`] = { filename: `artifact-before-${safeId}.json`, bytes: Buffer.from(`${JSON.stringify(attestation.before, null, 2)}\n`) };
+      if (attestation.after) inventoryArtifacts[`artifact_after_${safeId}`] = { filename: `artifact-after-${safeId}.json`, bytes: Buffer.from(`${JSON.stringify(attestation.after, null, 2)}\n`) };
+    }
+    let generationPrivacyAttestation = null;
+    const published = await publishImmutableGeneration({
+      parentDirectory: generationRoot,
+      runId,
+      kind: "execution",
+      artifacts: {
+        execution_companion: { filename: "execution-companion.v1.json", bytes: companionBytes },
+        execution_report: { filename: "execution-report.v1.json", bytes: reportBytes },
+        ...inventoryArtifacts,
+      },
+      preIndexArtifactBuilder: async ({ stagingPath, artifacts }) => {
+        generationPrivacyAttestation = await buildGenerationPrivacyAttestation({
+          stagingPath,
+          artifacts,
+          policy: trustedPrivacyClass,
+          trustedProhibitedRoots: sourceProhibitedRoots,
+        });
+        assertSchema(generationPrivacyAttestation, generationPrivacySchema, "generation privacy attestation");
+        return { role: "privacy_attestation", filename: "generation-privacy.v1.json", bytes: Buffer.from(`${JSON.stringify(generationPrivacyAttestation, null, 2)}\n`) };
+      },
+      finalGenerationVerifier: ({ generationPath, index }) => verifyFinalGenerationPrivacy({ generationPath, index, privacyAttestation: generationPrivacyAttestation }),
+    });
+    assertSchema(published.index, executionIndexSchema, "execution generation index");
+    if (verificationEvidence && typeof verificationEvidence === "object") verificationEvidence.generation = published;
   }
   return report;
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
-  const output = path.resolve(option("--output", DEFAULT_PATHS.output));
+  const generationRootOption = option("--generation-root", null);
+  if (!generationRootOption) throw new Error("Usage requires an explicit --generation-root outside the repository and sync/share roots");
+  const generationRoot = path.resolve(generationRootOption);
   const report = await runExtractionCandidates({
     manifestPath: path.resolve(option("--manifest", DEFAULT_PATHS.manifest)),
     manifestSchemaPath: path.resolve(option("--manifest-schema", DEFAULT_PATHS.manifestSchema)),
@@ -728,7 +1139,7 @@ if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.me
     requestSchemaPath: path.resolve(option("--request-schema", DEFAULT_PATHS.requestSchema)),
     responseSchemaPath: path.resolve(option("--response-schema", DEFAULT_PATHS.responseSchema)),
     reportSchemaPath: path.resolve(option("--report-schema", DEFAULT_PATHS.reportSchema)),
-    outputPath: output,
+    generationRoot,
   });
-  process.stdout.write(`${JSON.stringify({ output, denominator: report.denominator }, null, 2)}\n`);
+  process.stdout.write(`${JSON.stringify({ generation_root: generationRoot, run_id: report.run_id, denominator: report.denominator, claim_ready: false }, null, 2)}\n`);
 }

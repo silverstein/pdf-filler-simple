@@ -1,0 +1,150 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/execution-companion.schema.json",
+  "title": "PDF Tools extraction Phase 1 execution companion v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["companion_id", "companion_version", "report", "failure_evidence_by_attempt_key", "resource_facts_by_attempt_key", "artifact_attestation_by_candidate_id", "artifact_config_binding_by_candidate_id", "command_runtime_by_candidate_id", "privacy", "host", "runtime", "runner_environment", "limitations", "direct_sources", "direct_source_set_sha256"],
+  "properties": {
+    "companion_id": { "const": "pdf-tools.extraction-phase1-execution-companion.v1" },
+    "companion_version": { "const": 1 },
+    "report": { "$ref": "#/$defs/report" },
+    "failure_evidence_by_attempt_key": { "type": "object", "additionalProperties": { "$ref": "#/$defs/failureEvidence" } },
+    "resource_facts_by_attempt_key": { "type": "object", "additionalProperties": { "$ref": "#/$defs/resourceFacts" } },
+    "artifact_attestation_by_candidate_id": { "type": "object", "additionalProperties": { "$ref": "#/$defs/artifactAttestation" } },
+    "artifact_config_binding_by_candidate_id": { "type": "object", "additionalProperties": { "$ref": "#/$defs/artifactConfigBinding" } },
+    "command_runtime_by_candidate_id": { "type": "object", "additionalProperties": { "$ref": "#/$defs/commandRuntime" } },
+    "privacy": { "$ref": "#/$defs/privacy" },
+    "host": { "$ref": "#/$defs/host" },
+    "runtime": { "type": "object" },
+    "runner_environment": { "$ref": "#/$defs/runnerEnvironment" },
+    "limitations": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
+    "direct_sources": { "type": "array", "minItems": 21, "maxItems": 21, "items": { "$ref": "#/$defs/source" } },
+    "direct_source_set_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "commandRuntime": {
+      "type": "object", "additionalProperties": false, "required": ["before", "after", "status"],
+      "properties": { "before": { "anyOf": [{ "$ref": "#/$defs/commandEvidence" }, { "type": "null" }] }, "after": { "anyOf": [{ "$ref": "#/$defs/commandEvidence" }, { "type": "null" }] }, "status": { "enum": ["unavailable", "unchanged_incomplete_nonclaiming", "changed"] } }
+    },
+    "commandEvidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_id", "closure", "executable", "arguments", "bound_adapter_entrypoints"],
+      "properties": {
+        "candidate_id": { "type": "string", "minLength": 1 },
+        "closure": { "const": "incomplete_nonclaiming" },
+        "executable": {
+          "type": "object", "additionalProperties": false,
+          "required": ["bytes", "sha256", "mode", "device", "inode", "realpath_sha256"],
+          "properties": { "bytes": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" }, "mode": { "type": "integer" }, "device": { "type": "string", "minLength": 1 }, "inode": { "type": "string", "minLength": 1 }, "realpath_sha256": { "$ref": "#/$defs/sha256" } }
+        },
+        "arguments": {
+          "type": "array", "minItems": 1,
+          "items": { "oneOf": [
+            { "type": "object", "additionalProperties": false, "required": ["index", "kind", "value_sha256"], "properties": { "index": { "type": "integer", "minimum": 0 }, "kind": { "const": "literal" }, "value_sha256": { "$ref": "#/$defs/sha256" } } },
+            { "type": "object", "additionalProperties": false, "required": ["index", "kind", "artifact_id", "artifact_role", "sha256"], "properties": { "index": { "type": "integer", "minimum": 0 }, "kind": { "const": "artifact" }, "artifact_id": { "type": "string", "minLength": 1 }, "artifact_role": { "type": "string", "minLength": 1 }, "sha256": { "$ref": "#/$defs/sha256" } } }
+          ] }
+        },
+        "bound_adapter_entrypoints": { "const": 1 }
+      }
+    },
+    "report": {
+      "type": "object", "additionalProperties": false,
+      "required": ["report_id", "run_id", "canonical_sha256", "raw_bytes", "raw_sha256"],
+      "properties": { "report_id": { "const": "pdf-tools.extraction-phase1-report.v1" }, "run_id": { "$ref": "#/$defs/sha256" }, "canonical_sha256": { "$ref": "#/$defs/sha256" }, "raw_bytes": { "type": "integer", "minimum": 1 }, "raw_sha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "failure": {
+      "type": "object", "additionalProperties": false,
+      "required": ["stage", "runner_code", "detail_code", "request_observed_bytes", "request_limit_bytes"],
+      "properties": { "stage": { "type": ["string", "null"] }, "runner_code": { "type": ["string", "null"] }, "detail_code": { "type": ["string", "null"] }, "request_observed_bytes": { "type": ["integer", "null"], "minimum": 0 }, "request_limit_bytes": { "type": ["integer", "null"], "minimum": 1 } }
+    },
+    "failureEvidence": {
+      "type": "object", "additionalProperties": false,
+      "required": ["outcome", "error_code", "outcome_reason", "unmet_requirements", "failure"],
+      "properties": { "outcome": { "enum": ["completed", "partial", "abstained", "error", "not_run"] }, "error_code": { "type": ["string", "null"] }, "outcome_reason": { "type": "string" }, "unmet_requirements": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }, "failure": { "$ref": "#/$defs/failure" } }
+    },
+    "unavailable": {
+      "type": "object", "additionalProperties": false,
+      "required": ["continuous_immutability", "cost_usd", "cpu_time_ms", "energy_joules", "filesystem_bytes_read", "filesystem_bytes_written", "gpu_memory_peak_bytes", "network_egress_bytes", "process_count_peak", "process_tree_peak_rss_bytes"],
+      "properties": { "continuous_immutability": { "type": "null" }, "cost_usd": { "type": "null" }, "cpu_time_ms": { "type": "null" }, "energy_joules": { "type": "null" }, "filesystem_bytes_read": { "type": "null" }, "filesystem_bytes_written": { "type": "null" }, "gpu_memory_peak_bytes": { "type": "null" }, "network_egress_bytes": { "type": "null" }, "process_count_peak": { "type": "null" }, "process_tree_peak_rss_bytes": { "type": "null" } }
+    },
+    "resourceFacts": {
+      "type": "object", "additionalProperties": false,
+      "required": ["wall_elapsed_ms", "source_bytes", "request_payload_bytes", "stdout_observed_bytes", "stdout_retained_bytes", "stderr_observed_bytes", "stderr_retained_bytes", "artifact_logical_bytes", "artifact_unique_content_bytes", "environment_bytes", "environment_bytes_unavailable_reason", "model_bytes", "model_bytes_unavailable_reason", "unavailable"],
+      "properties": { "wall_elapsed_ms": { "type": ["number", "null"], "minimum": 0 }, "source_bytes": { "type": "integer", "minimum": 1 }, "request_payload_bytes": { "type": ["integer", "null"], "minimum": 0 }, "stdout_observed_bytes": { "type": ["integer", "null"], "minimum": 0 }, "stdout_retained_bytes": { "type": ["integer", "null"], "minimum": 0 }, "stderr_observed_bytes": { "type": ["integer", "null"], "minimum": 0 }, "stderr_retained_bytes": { "type": ["integer", "null"], "minimum": 0 }, "artifact_logical_bytes": { "type": ["integer", "null"], "minimum": 0 }, "artifact_unique_content_bytes": { "type": ["integer", "null"], "minimum": 0 }, "environment_bytes": { "type": ["integer", "null"], "minimum": 0 }, "environment_bytes_unavailable_reason": { "enum": [null, "artifact_precheck_failed", "environment_roles_pending", "environment_required_role_not_captured", "environment_role_disposition_incomplete"] }, "model_bytes": { "type": ["integer", "null"], "minimum": 0 }, "model_bytes_unavailable_reason": { "enum": [null, "artifact_precheck_failed", "model_roles_pending", "model_required_role_not_captured", "model_role_disposition_incomplete"] }, "unavailable": { "$ref": "#/$defs/unavailable" } }
+    },
+    "inventory": {
+      "type": "object", "additionalProperties": false,
+      "required": ["inventory_id", "inventory_version", "candidate_id", "state", "role_dispositions", "roots", "components", "licenses", "artifacts", "logical_bytes", "unique_content_bytes", "digests"],
+      "properties": { "inventory_id": { "const": "pdf-tools.extraction-phase1-artifact-inventory.v1" }, "inventory_version": { "const": 1 }, "candidate_id": { "type": "string" }, "state": { "enum": ["not_applicable", "captured_incomplete", "captured_review_pending"] }, "role_dispositions": { "type": "array", "minItems": 16, "maxItems": 16 }, "roots": { "type": "array" }, "components": { "type": "array" }, "licenses": { "type": "array" }, "artifacts": { "type": "array" }, "logical_bytes": { "type": "integer", "minimum": 0 }, "unique_content_bytes": { "type": "integer", "minimum": 0 }, "digests": { "type": "object" } }
+    },
+    "artifactAttestation": {
+      "type": "object", "additionalProperties": false,
+      "required": ["before", "after", "precheck", "postcheck", "drift"],
+      "properties": {
+        "before": { "anyOf": [{ "$ref": "#/$defs/inventory" }, { "type": "null" }] },
+        "after": { "anyOf": [{ "$ref": "#/$defs/inventory" }, { "type": "null" }] },
+        "postcheck": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "error_code", "error_message_sha256"],
+          "properties": { "status": { "enum": ["captured", "failed"] }, "error_code": { "type": ["string", "null"] }, "error_message_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] } }
+        },
+        "precheck": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "error_code", "error_message_sha256"],
+          "properties": { "status": { "enum": ["captured", "failed"] }, "error_code": { "type": ["string", "null"] }, "error_message_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] } }
+        },
+        "drift": {
+          "type": "object", "additionalProperties": false,
+          "required": ["status", "before_inventory_self_sha256", "after_inventory_self_sha256"],
+          "properties": { "status": { "enum": ["unchanged", "changed", "precheck_failed", "postcheck_failed"] }, "before_inventory_self_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] }, "after_inventory_self_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] } }
+        }
+      }
+    },
+    "artifactConfigBinding": {
+      "type": "object", "additionalProperties": false,
+      "required": ["raw_bytes", "raw_sha256", "canonical_sha256", "redacted_config", "redacted_config_sha256"],
+      "properties": { "raw_bytes": { "type": "integer", "minimum": 1 }, "raw_sha256": { "$ref": "#/$defs/sha256" }, "canonical_sha256": { "$ref": "#/$defs/sha256" }, "redacted_config": { "type": "object" }, "redacted_config_sha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "privacy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["policy", "private_run", "publication_authorized", "run_root_sha256", "run_root_mode", "retained_file_mode", "prohibited_root_set_sha256", "retained_file_set_sha256", "content_minimization_policy", "content_minimization_measured", "capture_content_review", "generation_file_proof", "raw_path_values_retained", "path_identity_hashes_retained", "path_hash_secrecy_claim", "environment_value_absence_measured"],
+      "properties": { "policy": { "enum": ["public_synthetic", "private_local", "private_local_minimized"] }, "private_run": { "type": "boolean" }, "publication_authorized": { "type": "boolean" }, "run_root_sha256": { "$ref": "#/$defs/sha256" }, "run_root_mode": { "type": "integer", "minimum": 0, "maximum": 511 }, "retained_file_mode": { "type": ["integer", "null"] }, "prohibited_root_set_sha256": { "$ref": "#/$defs/sha256" }, "retained_file_set_sha256": { "$ref": "#/$defs/sha256" }, "content_minimization_policy": { "enum": ["required", "not_required"] }, "content_minimization_measured": { "type": "null" }, "capture_content_review": { "const": "unavailable" }, "generation_file_proof": { "enum": ["local_root_enumeration", "separate_indexed_privacy_attestation"] }, "raw_path_values_retained": { "type": "null" }, "path_identity_hashes_retained": { "const": true }, "path_hash_secrecy_claim": { "const": false }, "environment_value_absence_measured": { "type": "null" } }
+    },
+    "host": {
+      "type": "object", "additionalProperties": false,
+      "required": ["platform", "architecture", "node_version"],
+      "properties": { "platform": { "type": "string" }, "architecture": { "type": "string" }, "node_version": { "type": "string" } }
+    },
+    "runnerEnvironment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["authenticity", "runtime_closure", "node_executable", "mcp_sdk", "pdf_lib", "package_lock_sha256"],
+      "properties": {
+        "authenticity": { "const": "unavailable" },
+        "runtime_closure": { "const": "incomplete" },
+        "package_lock_sha256": { "$ref": "#/$defs/sha256" },
+        "node_executable": {
+          "type": "object", "additionalProperties": false,
+          "required": ["bytes", "sha256", "mode", "device", "inode", "realpath_sha256"],
+          "properties": { "bytes": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" }, "mode": { "type": "integer" }, "device": { "type": "string" }, "inode": { "type": "string" }, "realpath_sha256": { "$ref": "#/$defs/sha256" } }
+        },
+        "mcp_sdk": {
+          "type": "object", "additionalProperties": false,
+          "required": ["version", "package_json_sha256"],
+          "properties": { "version": { "type": "string", "minLength": 1 }, "package_json_sha256": { "$ref": "#/$defs/sha256" } }
+        },
+        "pdf_lib": {
+          "type": "object", "additionalProperties": false,
+          "required": ["version", "package_json_sha256"],
+          "properties": { "version": { "type": "string", "minLength": 1 }, "package_json_sha256": { "$ref": "#/$defs/sha256" } }
+        }
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "bytes", "sha256"],
+      "properties": { "role": { "enum": ["artifact_config_schema", "artifact_inventory_schema", "artifact_module", "companion_module", "companion_schema", "execution_index_schema", "extraction_manifest_loader", "generation_privacy_schema", "mcp_sdk_package", "package_json", "package_lock", "pdf_lib_package", "plan_schema", "protocol_module", "publisher_module", "receipt_schema", "registry_schema", "report_schema", "request_schema", "response_schema", "runner_script"] }, "path": { "type": "string", "minLength": 1 }, "bytes": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
+    }
+  }
+}

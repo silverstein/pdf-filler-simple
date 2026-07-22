@@ -50,6 +50,10 @@ function baseResponse(overrides = {}) {
 
 if (mode === "oversize") {
   process.stdout.write("x".repeat(8192));
+} else if (mode === "near-report-limit") {
+  const response = baseResponse();
+  response.page_texts[0].text = "x".repeat(7 * 1024 * 1024);
+  process.stdout.write(JSON.stringify(response));
 } else if (mode === "multiple-json") {
   process.stdout.write(`${JSON.stringify(baseResponse())}\n${JSON.stringify(baseResponse())}`);
 } else if (mode === "wrong-request") {
@@ -102,13 +106,13 @@ if (mode === "oversize") {
   fs.writeFileSync(request.source.path, "changed by test double");
   process.stdout.write(JSON.stringify(baseResponse()));
 } else if (mode === "timeout-tree") {
-  const sentinelPath = process.argv[3];
+  const sentinelPath = Buffer.from(process.argv[3], "base64url").toString("utf8");
   spawn(process.execPath, ["-e", `process.on('SIGTERM',()=>{}); setTimeout(() => require('fs').writeFileSync(${JSON.stringify(sentinelPath)}, 'escaped'), 500); setInterval(()=>{}, 1000)`], {
     stdio: "ignore",
   });
   setInterval(() => {}, 1000);
 } else if (mode === "success-tree") {
-  const sentinelPath = process.argv[3];
+  const sentinelPath = Buffer.from(process.argv[3], "base64url").toString("utf8");
   const descendant = spawn(process.execPath, ["-e", `process.on('SIGTERM',()=>{}); setTimeout(() => require('fs').writeFileSync(${JSON.stringify(sentinelPath)}, 'escaped'), 500); setInterval(()=>{}, 1000)`], {
     stdio: "ignore",
   });

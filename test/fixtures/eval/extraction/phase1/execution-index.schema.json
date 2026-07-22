@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/execution-index.schema.json",
+  "title": "PDF Tools extraction Phase 1 immutable generation index v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["index_id", "index_version", "state", "claim_ready", "run_id", "kind", "transaction_id", "source_generation_sha256", "artifacts", "index_content_sha256"],
+  "properties": {
+    "index_id": { "const": "pdf-tools.extraction-phase1-execution-index.v1" },
+    "index_version": { "const": 1 },
+    "state": { "const": "complete" },
+    "claim_ready": { "const": false },
+    "run_id": { "$ref": "#/$defs/sha256" },
+    "kind": { "enum": ["execution", "received_execution", "score", "received_score"] },
+    "transaction_id": { "type": "string", "format": "uuid" },
+    "source_generation_sha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+    "artifacts": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "$ref": "#/$defs/artifact" } },
+    "index_content_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "kind": { "const": "execution" } }, "required": ["kind"] },
+      "then": { "properties": { "source_generation_sha256": { "type": "null" } } },
+      "else": { "properties": { "source_generation_sha256": { "$ref": "#/$defs/sha256" } } }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "artifact": {
+      "type": "object", "additionalProperties": false,
+      "required": ["role", "path", "bytes", "sha256"],
+      "properties": { "role": { "type": "string", "pattern": "^[a-z][a-z0-9_]{0,63}$" }, "path": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\\.json$" }, "bytes": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
+    }
+  }
+}

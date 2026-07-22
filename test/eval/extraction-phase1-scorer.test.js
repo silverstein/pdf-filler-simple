@@ -6,6 +6,13 @@ import { afterEach, describe, expect, it } from "vitest";
 import { runExtractionCandidates } from "../../scripts/eval-run-extraction-candidates.mjs";
 import { scoreExtractionCandidateReport } from "../../scripts/eval-score-extraction-candidates.mjs";
 import {
+  computeGenerationSha256,
+  inspectGenerationDirectory,
+  publishImmutableGeneration,
+  readVerifiedGenerationArtifact,
+  receiveVerifiedGeneration,
+} from "./extraction-phase1-publisher.js";
+import {
   canonicalJson,
   sha256,
 } from "./extraction-phase1-protocol.js";
@@ -19,6 +26,14 @@ import {
   validatePhase1ScoringOracle,
   verifyPhase1ScoreBundle,
 } from "./extraction-phase1-scorer.js";
+import { createPhase1TestDeployment } from "./extraction-phase1-test-artifacts.js";
+import {
+  buildGenerationPrivacyAttestation,
+  companionProhibitedRootSetSha256,
+  createCrossDeviceReceipt,
+  generationProhibitedRootSetSha256,
+  verifyFinalGenerationPrivacy,
+} from "./extraction-phase1-companion.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
@@ -128,32 +143,62 @@ if (properties.tags) {
   if (mode === "abstain-all") { structured = null; abstainAll = true; gaps = [{ field_path: "/answer_state", reason: "insufficient_evidence", detail: "No answer" }, { field_path: "/final_status", reason: "contradictory_source", detail: "No final status" }, { field_path: "/settlement_amount", reason: "absent_in_source", detail: "No settlement" }]; }
 }
 const partial = gaps.length > 0;
+if (mode === "large-valid") text = "x".repeat(7 * 1024 * 1024);
 const page = { page: 1, text, text_kind: "visual_parser", source_item_ids: [], origin: { engine_id: "phase1-score-test", engine_version: "1.0.0" } };
 process.stdout.write(JSON.stringify({ protocol: request.protocol, request_id: request.request_id, status: abstainAll ? "abstained" : partial ? "partial" : "completed", decision: abstainAll ? "abstain" : "answer", structured_candidate: structured, page_texts: mode === "hostile" ? [page, page] : abstainAll ? [] : [page], tables, native_evidence: [], evidence: [], field_evidence: [], gaps, diagnostics: { code: null, message: null } }));
 `;
 
-async function configuredReport(caseIds, mode = "ideal") {
+async function configuredReport(caseIds, mode = "ideal", {
+  persist = false,
+  repetitions = null,
+  maxStdoutBytes = null,
+  maxReportBytes = null,
+} = {}) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-phase1-score-"));
   temporaryRoots.push(root);
   const [registry, plan] = await Promise.all([readJson(PATHS.registry), readJson(PATHS.plan)]);
   const candidate = registry.candidates.find(item => item.id === "candidate.direct_pdf.v1");
-  const candidatePath = path.join(root, "candidate.mjs");
-  await fs.writeFile(candidatePath, CANDIDATE_SOURCE);
+  const deployment = await createPhase1TestDeployment({
+    root,
+    candidateId: candidate.id,
+    sourceBytes: Buffer.from(CANDIDATE_SOURCE),
+    filename: "candidate.mjs",
+  });
   Object.assign(candidate, {
     configured: true,
     version: "score-test-1.0.0",
     license: { framework_spdx: "MIT", model_license: null, reviewed: true },
-    command: { executable: process.execPath, args: [candidatePath, mode] },
+    command: { executable: process.execPath, args: [deployment.candidatePath, mode] },
   });
   plan.case_ids = caseIds;
   plan.candidates = [{ candidate_id: candidate.id, input_mode: "direct_pdf" }];
   plan.limits.deadline_ms = 2000;
+  plan.limits.max_stdout_bytes = 1024 * 1024;
+  plan.limits.max_stderr_bytes = 64 * 1024;
+  plan.limits.max_request_bytes = 256 * 1024;
+  if (repetitions !== null) plan.repetitions = repetitions;
+  if (maxStdoutBytes !== null) plan.limits.max_stdout_bytes = maxStdoutBytes;
+  if (maxReportBytes !== null) plan.limits.max_report_bytes = maxReportBytes;
   const registryPath = path.join(root, "registry.json");
   const planPath = path.join(root, "plan.json");
   await Promise.all([fs.writeFile(registryPath, JSON.stringify(registry)), fs.writeFile(planPath, JSON.stringify(plan))]);
   const verificationEvidence = {};
-  const report = await runExtractionCandidates({ registryPath, planPath, verificationEvidence });
-  return { report, context: await scoringContext(report, verificationEvidence, { registryPath, planPath }) };
+  const generationRoot = persist ? path.join(root, "execution-generations") : null;
+  const report = await runExtractionCandidates({
+    registryPath,
+    planPath,
+    verificationEvidence,
+    artifactConfigurations: { [candidate.id]: deployment.artifactConfiguration },
+    generationRoot,
+  });
+  return {
+    report,
+    context: await scoringContext(report, verificationEvidence, { registryPath, planPath }),
+    generation: verificationEvidence.generation ?? null,
+    registryPath,
+    planPath,
+    root,
+  };
 }
 
 describe("structured extraction Phase 1 pure scorer", () => {
@@ -180,25 +225,312 @@ describe("structured extraction Phase 1 pure scorer", () => {
   it("executes, persists, reloads, and independently rescores the all-not-run report", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-phase1-score-cli-"));
     temporaryRoots.push(root);
-    const reportPath = path.join(root, "report.json");
-    const scorePath = path.join(root, "scores", "score.json");
-    const indexPath = path.join(root, "indexes", "index.json");
-    await runExtractionCandidates({ outputPath: reportPath });
-    const reportBefore = await fs.readFile(reportPath);
-    const result = await scoreExtractionCandidateReport({ reportPath, scorePath, indexPath });
+    const executionRoot = path.join(root, "executions");
+    const scoreRoot = path.join(root, "scores");
+    const verificationEvidence = {};
+    await runExtractionCandidates({ generationRoot: executionRoot, verificationEvidence });
+    const executionGenerationPath = verificationEvidence.generation.generationPath;
+    const result = await scoreExtractionCandidateReport({ executionGenerationPath, generationRoot: scoreRoot });
     expect(result.score.aggregate.denominator).toMatchObject({ planned: 120, quality_available: 0, outcomes: { not_run: 120 } });
     expect(result.score.stability.every(group => group.stable === null)).toBe(true);
-    expect(JSON.parse(await fs.readFile(scorePath, "utf8"))).toEqual(result.score);
-    expect(JSON.parse(await fs.readFile(indexPath, "utf8"))).toEqual(result.index);
-    expect(result.index.score_report.path).toBe("../scores/score.json");
-    await expect(scoreExtractionCandidateReport({ reportPath, scorePath: reportPath, indexPath: path.join(root, "alias-index.json") })).rejects.toThrow(/must not alias/);
-    expect(await fs.readFile(reportPath)).toEqual(reportBefore);
-    const hardlinkScorePath = path.join(root, "report-hardlink.json");
-    await fs.link(reportPath, hardlinkScorePath);
-    await expect(scoreExtractionCandidateReport({ reportPath, scorePath: hardlinkScorePath, indexPath: path.join(root, "hardlink-index.json") })).rejects.toThrow(/must not alias/);
-    expect(await fs.readFile(reportPath)).toEqual(reportBefore);
-    await expect(scoreExtractionCandidateReport({ reportPath, scorePath: path.join(root, "same.json"), indexPath: path.join(root, "same.json") })).rejects.toThrow(/must be distinct/);
-  }, 30_000);
+    const inspection = await inspectGenerationDirectory(result.generation.generationPath);
+    expect(inspection).toMatchObject({
+      state: "complete",
+      index: { kind: "score", source_generation_sha256: verificationEvidence.generation.generation_sha256 },
+    });
+    expect(inspection.index.artifacts.map(item => item.role)).toEqual(["privacy_attestation", "score_provenance", "score_report"]);
+    const receivedScoreRoot = path.join(root, "received-score-generation");
+    await fs.mkdir(receivedScoreRoot, { mode: 0o700 });
+    const receivedScoreGeneration = await receiveVerifiedGeneration({
+      sourceGenerationPath: result.generation.generationPath,
+      destinationParentDirectory: receivedScoreRoot,
+      sourceHost: "silverbook",
+      destinationHost: "silvercloud",
+      transportedAt: "2026-07-22T00:00:00Z",
+      transport: "tailscale_tailnet",
+    });
+    expect(receivedScoreGeneration.destination.index.kind).toBe("received_score");
+    expect(receivedScoreGeneration.receipt.source_code_identity).toEqual({
+      kind: "score_scorer_source_set_sha256",
+      sha256: result.provenance.bindings.scorer_source_set_sha256,
+      source_artifact_role: "score_provenance",
+    });
+    const receivedRoot = path.join(root, "received");
+    await fs.mkdir(receivedRoot, { mode: 0o700 });
+    const received = await receiveVerifiedGeneration({
+      sourceGenerationPath: executionGenerationPath,
+      destinationParentDirectory: receivedRoot,
+      sourceHost: "silverbook",
+      destinationHost: "silvercloud",
+      transportedAt: "2026-07-22T00:00:00Z",
+      transport: "tailscale_tailnet",
+    });
+    const receivedScore = await scoreExtractionCandidateReport({
+      executionGenerationPath: received.generationPath,
+      generationRoot: path.join(root, "received-scores"),
+    });
+    expect(receivedScore.generation.index.source_generation_sha256).toBe(received.generation_sha256);
+
+    const receivedInspection = await inspectGenerationDirectory(received.generationPath);
+    const receivedArtifacts = Object.fromEntries(await Promise.all(receivedInspection.index.artifacts.map(async record => [
+      record.role,
+      { filename: record.path, bytes: (await readVerifiedGenerationArtifact(received.generationPath, receivedInspection, record.role)).bytes },
+    ])));
+    const wrongKindArtifacts = Object.fromEntries(Object.entries(receivedArtifacts)
+      .filter(([role]) => role !== "received_privacy_attestation")
+      .map(([role, artifact]) => [role, { filename: artifact.filename, bytes: Buffer.from(artifact.bytes) }]));
+    const wrongKindSourceIndex = JSON.parse(wrongKindArtifacts.source_generation_index.bytes);
+    wrongKindSourceIndex.kind = "score";
+    wrongKindSourceIndex.source_generation_sha256 = "1".repeat(64);
+    const { index_content_sha256: ignoredIndexDigest, ...wrongKindIndexContent } = wrongKindSourceIndex;
+    wrongKindSourceIndex.index_content_sha256 = sha256(Buffer.from(
+      `pdf-tools.extraction-phase1-execution-index.v1\0${canonicalJson(wrongKindIndexContent)}`,
+    ));
+    wrongKindArtifacts.source_generation_index.bytes = Buffer.from(`${JSON.stringify(wrongKindSourceIndex, null, 2)}\n`);
+    const wrongKindSourceGenerationSha256 = computeGenerationSha256(
+      wrongKindSourceIndex,
+      wrongKindArtifacts.source_generation_index.bytes,
+    );
+    const originalReceipt = JSON.parse(wrongKindArtifacts.transfer_receipt.bytes);
+    const wrongKindReceipt = createCrossDeviceReceipt({
+      runId: wrongKindSourceIndex.run_id,
+      indexBytes: wrongKindArtifacts.source_generation_index.bytes,
+      sourceGenerationSha256: wrongKindSourceGenerationSha256,
+      sourceHost: originalReceipt.source_host,
+      destinationHost: originalReceipt.destination_host,
+      sourceCodeIdentity: originalReceipt.source_code_identity,
+      transportedAt: originalReceipt.transported_at,
+      transport: originalReceipt.transport,
+    });
+    wrongKindArtifacts.transfer_receipt.bytes = Buffer.from(`${JSON.stringify(wrongKindReceipt, null, 2)}\n`);
+    const wrongKindRoot = path.join(root, "hostile-wrong-source-kind");
+    await fs.mkdir(wrongKindRoot, { mode: 0o700 });
+    let wrongKindPrivacy;
+    const wrongKindGeneration = await publishImmutableGeneration({
+      parentDirectory: wrongKindRoot,
+      runId: receivedInspection.index.run_id,
+      kind: "received_execution",
+      sourceGenerationSha256: wrongKindSourceGenerationSha256,
+      artifacts: wrongKindArtifacts,
+      preIndexArtifactBuilder: async ({ stagingPath, artifacts }) => {
+        wrongKindPrivacy = await buildGenerationPrivacyAttestation({
+          stagingPath,
+          artifacts,
+          policy: "public_synthetic",
+          trustedProhibitedRoots: [],
+        });
+        return {
+          role: "received_privacy_attestation",
+          filename: "received-generation-privacy.v1.json",
+          bytes: Buffer.from(`${JSON.stringify(wrongKindPrivacy, null, 2)}\n`),
+        };
+      },
+      finalGenerationVerifier: context => verifyFinalGenerationPrivacy({
+        ...context,
+        privacyAttestation: wrongKindPrivacy,
+        privacyRole: "received_privacy_attestation",
+      }),
+    });
+    await expect(scoreExtractionCandidateReport({
+      executionGenerationPath: wrongKindGeneration.generationPath,
+      generationRoot: path.join(root, "hostile-score-wrong-source-kind"),
+    })).rejects.toThrow(/source generation digest is inconsistent/);
+    const hostileCases = [
+      ["source-index-bytes", artifacts => { artifacts.source_generation_index.bytes = Buffer.from("{}\n"); }, receivedInspection.index.source_generation_sha256],
+      ["receipt-index-mismatch", artifacts => {
+        const receipt = JSON.parse(artifacts.transfer_receipt.bytes);
+        receipt.index_raw_sha256 = "0".repeat(64);
+        artifacts.transfer_receipt.bytes = Buffer.from(`${JSON.stringify(receipt, null, 2)}\n`);
+      }, receivedInspection.index.source_generation_sha256],
+      ["source-generation-digest", () => {}, "0".repeat(64)],
+      ["missing-transfer-metadata", artifacts => { delete artifacts.source_generation_index; }, receivedInspection.index.source_generation_sha256],
+      ["extra-transfer-metadata", artifacts => {
+        artifacts.unexpected_transfer_metadata = { filename: "unexpected-transfer.json", bytes: Buffer.from("{}\n") };
+      }, receivedInspection.index.source_generation_sha256],
+    ];
+    for (const [label, mutate, sourceGenerationSha256] of hostileCases) {
+      const hostileArtifacts = Object.fromEntries(Object.entries(receivedArtifacts).map(([role, artifact]) => [role, {
+        filename: artifact.filename,
+        bytes: Buffer.from(artifact.bytes),
+      }]));
+      mutate(hostileArtifacts);
+      delete hostileArtifacts.received_privacy_attestation;
+      const hostileRoot = path.join(root, `hostile-${label}`);
+      await fs.mkdir(hostileRoot, { mode: 0o700 });
+      let hostileReceivedPrivacy;
+      const hostile = await publishImmutableGeneration({
+        parentDirectory: hostileRoot,
+        runId: receivedInspection.index.run_id,
+        kind: "received_execution",
+        sourceGenerationSha256,
+        artifacts: hostileArtifacts,
+        preIndexArtifactBuilder: async ({ stagingPath, artifacts }) => {
+          hostileReceivedPrivacy = await buildGenerationPrivacyAttestation({
+            stagingPath,
+            artifacts,
+            policy: "public_synthetic",
+            trustedProhibitedRoots: [],
+          });
+          return {
+            role: "received_privacy_attestation",
+            filename: "received-generation-privacy.v1.json",
+            bytes: Buffer.from(`${JSON.stringify(hostileReceivedPrivacy, null, 2)}\n`),
+          };
+        },
+        finalGenerationVerifier: context => verifyFinalGenerationPrivacy({
+          ...context,
+          privacyAttestation: hostileReceivedPrivacy,
+          privacyRole: "received_privacy_attestation",
+        }),
+      });
+      await expect(scoreExtractionCandidateReport({
+        executionGenerationPath: hostile.generationPath,
+        generationRoot: path.join(root, `hostile-score-${label}`),
+      }), label).rejects.toThrow();
+    }
+    const forgedArtifacts = Object.fromEntries(Object.entries(receivedArtifacts)
+      .filter(([role]) => role !== "received_privacy_attestation")
+      .map(([role, artifact]) => [role, { filename: artifact.filename, bytes: Buffer.from(artifact.bytes) }]));
+    const forgedCompanion = JSON.parse(forgedArtifacts.execution_companion.bytes);
+    forgedCompanion.privacy.run_root_sha256 = "f".repeat(64);
+    forgedArtifacts.execution_companion.bytes = Buffer.from(`${JSON.stringify(forgedCompanion, null, 2)}\n`);
+    const forgedRoot = path.join(root, "hostile-ordinary-companion-swap");
+    await fs.mkdir(forgedRoot, { mode: 0o700 });
+    let forgedReceivedPrivacy;
+    const forged = await publishImmutableGeneration({
+      parentDirectory: forgedRoot,
+      runId: receivedInspection.index.run_id,
+      kind: "received_execution",
+      sourceGenerationSha256: receivedInspection.index.source_generation_sha256,
+      artifacts: forgedArtifacts,
+      preIndexArtifactBuilder: async ({ stagingPath, artifacts }) => {
+        forgedReceivedPrivacy = await buildGenerationPrivacyAttestation({
+          stagingPath,
+          artifacts,
+          policy: "public_synthetic",
+          trustedProhibitedRoots: [],
+        });
+        return {
+          role: "received_privacy_attestation",
+          filename: "received-generation-privacy.v1.json",
+          bytes: Buffer.from(`${JSON.stringify(forgedReceivedPrivacy, null, 2)}\n`),
+        };
+      },
+      finalGenerationVerifier: context => verifyFinalGenerationPrivacy({
+        ...context,
+        privacyAttestation: forgedReceivedPrivacy,
+        privacyRole: "received_privacy_attestation",
+      }),
+    });
+    await expect(scoreExtractionCandidateReport({
+      executionGenerationPath: forged.generationPath,
+      generationRoot: path.join(root, "hostile-score-ordinary-companion-swap"),
+    })).rejects.toThrow(/changed an original source artifact record/);
+    await expect(scoreExtractionCandidateReport({
+      executionGenerationPath,
+      generationRoot: path.join(REPO_ROOT, "forbidden-score-generation"),
+    })).rejects.toThrow(/outside the repository/);
+    const repoExecutionRoot = await fs.mkdtemp(path.join(REPO_ROOT, ".phase1-score-input-test-"));
+    temporaryRoots.push(repoExecutionRoot);
+    const repoExecutionPath = path.join(repoExecutionRoot, "copied-generation");
+    await fs.cp(executionGenerationPath, repoExecutionPath, { recursive: true, preserveTimestamps: true });
+    await fs.chmod(repoExecutionPath, 0o700);
+    await Promise.all((await fs.readdir(repoExecutionPath)).map(filename => fs.chmod(path.join(repoExecutionPath, filename), 0o600)));
+    await expect(scoreExtractionCandidateReport({
+      executionGenerationPath: repoExecutionPath,
+      generationRoot: path.join(root, "forbidden-input-score"),
+    })).rejects.toThrow(/input generations must remain outside/);
+    await expect(scoreExtractionCandidateReport({ reportPath: path.join(root, "legacy.json"), scorePath: path.join(root, "legacy-score.json") })).rejects.toThrow(/executionGenerationPath/);
+
+    const privateExecutionRoot = path.join(root, "private-executions");
+    const sourceSyncRoot = path.join(root, "simulated-source-sync-root");
+    const destinationSyncRoot = path.join(root, "simulated-destination-sync-root");
+    await Promise.all([fs.mkdir(sourceSyncRoot, { mode: 0o700 }), fs.mkdir(destinationSyncRoot, { mode: 0o700 })]);
+    const sourceProhibitedRoots = [REPO_ROOT, sourceSyncRoot];
+    const destinationProhibitedRoots = [REPO_ROOT, destinationSyncRoot];
+    const trustedSourcePrivacyDigests = {
+      companion_prohibited_root_set_sha256: companionProhibitedRootSetSha256(sourceProhibitedRoots),
+      generation_prohibited_root_set_sha256: generationProhibitedRootSetSha256(sourceProhibitedRoots),
+    };
+    const privateEvidence = {};
+    await runExtractionCandidates({
+      generationRoot: privateExecutionRoot,
+      verificationEvidence: privateEvidence,
+      trustedPrivacyClass: "private_local",
+      trustedProhibitedRoots: sourceProhibitedRoots,
+    });
+    await expect(scoreExtractionCandidateReport({
+      executionGenerationPath: privateEvidence.generation.generationPath,
+      generationRoot: path.join(root, "private-scores-missing-policy"),
+    })).rejects.toThrow(/trusted prohibited roots/);
+    const privateScore = await scoreExtractionCandidateReport({
+      executionGenerationPath: privateEvidence.generation.generationPath,
+      generationRoot: path.join(root, "private-scores"),
+      trustedSourcePrivacyDigests,
+      destinationTrustedProhibitedRoots: destinationProhibitedRoots,
+    });
+    expect(privateScore.generation.index.artifacts.map(item => item.role)).toContain("privacy_attestation");
+    await expect(scoreExtractionCandidateReport({
+      executionGenerationPath: privateEvidence.generation.generationPath,
+      generationRoot: path.join(destinationSyncRoot, "score-output"),
+      trustedSourcePrivacyDigests,
+      destinationTrustedProhibitedRoots: destinationProhibitedRoots,
+    })).rejects.toThrow(/trusted prohibited/);
+    expect(await fs.readdir(destinationSyncRoot)).toEqual([]);
+
+    const privateReceivedRoot = path.join(root, "private-received");
+    await fs.mkdir(privateReceivedRoot, { mode: 0o700 });
+    const privateReceived = await receiveVerifiedGeneration({
+      sourceGenerationPath: privateEvidence.generation.generationPath,
+      destinationParentDirectory: privateReceivedRoot,
+      sourceHost: "silverbook",
+      destinationHost: "silvercloud",
+      transportedAt: "2026-07-22T00:00:00Z",
+      transport: "tailscale_tailnet",
+      trustedSourceProhibitedRootSetSha256: trustedSourcePrivacyDigests.generation_prohibited_root_set_sha256,
+      destinationTrustedProhibitedRoots: destinationProhibitedRoots,
+    });
+    const privateReceivedScore = await scoreExtractionCandidateReport({
+      executionGenerationPath: privateReceived.generationPath,
+      generationRoot: path.join(root, "private-received-scores"),
+      trustedSourcePrivacyDigests,
+      destinationTrustedProhibitedRoots: destinationProhibitedRoots,
+    });
+    expect(privateReceivedScore.generation.index.kind).toBe("score");
+  }, 60_000);
+
+  it("scores a valid report larger than 16 MiB within its explicit plan cap", async () => {
+    const nestedId = "pdf-tools.extraction.phase0.born-digital-nested";
+    const large = await configuredReport([nestedId], "large-valid", {
+      persist: true,
+      repetitions: 1,
+      maxStdoutBytes: 16 * 1024 * 1024,
+      maxReportBytes: 64 * 1024 * 1024,
+    });
+    const inspection = await inspectGenerationDirectory(large.generation.generationPath);
+    const reportRecord = inspection.index.artifacts.find(item => item.role === "execution_report");
+    expect(reportRecord.bytes).toBeGreaterThan(16 * 1024 * 1024);
+    expect(reportRecord.bytes).toBeLessThanOrEqual(64 * 1024 * 1024);
+
+    const scored = await scoreExtractionCandidateReport({
+      executionGenerationPath: large.generation.generationPath,
+      generationRoot: path.join(large.root, "score-generations"),
+      registryPath: large.registryPath,
+      planPath: large.planPath,
+    });
+    expect(scored.generation.index).toMatchObject({ kind: "score", state: "complete" });
+
+    const underCapPlan = await readJson(large.planPath);
+    underCapPlan.limits.max_report_bytes = 16 * 1024 * 1024;
+    const underCapPlanPath = path.join(large.root, "under-cap-plan.json");
+    await fs.writeFile(underCapPlanPath, JSON.stringify(underCapPlan));
+    await expect(scoreExtractionCandidateReport({
+      executionGenerationPath: large.generation.generationPath,
+      generationRoot: path.join(large.root, "under-cap-score-generations"),
+      registryPath: large.registryPath,
+      planPath: underCapPlanPath,
+    })).rejects.toThrow(/max_report_bytes/);
+  }, 60_000);
 
   it("keeps every all-not-run attempt operationally visible without inventing quality", async () => {
     const verificationEvidence = {};
@@ -333,10 +665,10 @@ describe("structured extraction Phase 1 pure scorer", () => {
       expect(() => verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: bundle.index, report }, hostileContext)).toThrow();
     }
     const hostilePreflight = structuredClone(context);
-    const sidecar = JSON.parse(Buffer.from(hostilePreflight.preflightEvidenceBytes).toString("utf8"));
-    sidecar.failure_evidence_by_attempt_key[Object.keys(sidecar.failure_evidence_by_attempt_key)[0]].outcome_reason = "changed";
-    hostilePreflight.preflightEvidenceBytes = Buffer.from(JSON.stringify(sidecar));
-    expect(() => scorePhase1Report(report, hostilePreflight)).toThrow(/preflight sidecar bytes/);
+    const failureEvidenceMap = JSON.parse(Buffer.from(hostilePreflight.preflightEvidenceBytes).toString("utf8"));
+    failureEvidenceMap.failure_evidence_by_attempt_key[Object.keys(failureEvidenceMap.failure_evidence_by_attempt_key)[0]].outcome_reason = "changed";
+    hostilePreflight.preflightEvidenceBytes = Buffer.from(JSON.stringify(failureEvidenceMap));
+    expect(() => scorePhase1Report(report, hostilePreflight)).toThrow(/trusted failure evidence map bytes/);
     const hostileIndex = structuredClone(bundle.index);
     hostileIndex.bindings.score_schema_sha256 = "0".repeat(64);
     expect(() => verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: hostileIndex, report }, context)).toThrow(/index input bindings/);

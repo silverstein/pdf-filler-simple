@@ -8,7 +8,6 @@ import {
   canonicalJson,
   computeCandidateRequestId,
   deriveTargetLeafPointers,
-  loadPreflightEvidenceSidecar,
   loadJsonWithSchema,
   sha256,
   validatePlan,
@@ -17,6 +16,9 @@ import {
   verifyPhase1Report,
 } from "./extraction-phase1-protocol.js";
 import { runExtractionCandidates } from "../../scripts/eval-run-extraction-candidates.mjs";
+import { createPhase1TestDeployment } from "./extraction-phase1-test-artifacts.js";
+import { PHASE1_COMPANION_SOURCE_PATHS } from "./extraction-phase1-companion.js";
+import { inspectGenerationDirectory } from "./extraction-phase1-publisher.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
@@ -51,10 +53,16 @@ async function configuredRun(mode, {
   deadlineMs = 2000,
   maxStdoutBytes = 4096,
   maxRequestBytes = null,
+  maxReportBytes = null,
   extraArgs = [],
   inputBuilders = null,
   executable = process.execPath,
   returnContext = false,
+  generationRoot = null,
+  trustedPrivacyClass = "public_synthetic",
+  trustedProhibitedRoots = [],
+  testOnlyRunnerSourceLoader = null,
+  testOnlyAfterAttempts = null,
 } = {}) {
   const root = await temporaryRoot();
   const [registry, plan, manifest] = await Promise.all([
@@ -63,16 +71,20 @@ async function configuredRun(mode, {
     fs.readFile(MANIFEST, "utf8").then(JSON.parse),
   ]);
   const candidate = registry.candidates.find(item => item.id === candidateId);
+  const deployment = await createPhase1TestDeployment({ root, candidateId, sourceBytes: await fs.readFile(MOCK_CANDIDATE), filename: "mock-candidate.mjs" });
   candidate.configured = true;
   candidate.version = "test-double-1.0.0";
   candidate.license = { framework_spdx: "MIT", model_license: null, reviewed: true };
-  candidate.command = { executable, args: [MOCK_CANDIDATE, mode, ...extraArgs] };
+  candidate.command = { executable, args: [deployment.candidatePath, mode, ...extraArgs] };
   plan.case_ids = [manifest.fixtures[0].id];
   plan.repetitions = repetitions;
   plan.candidates = [{ candidate_id: candidateId, input_mode: inputMode }];
   plan.limits.deadline_ms = deadlineMs;
   plan.limits.max_stdout_bytes = maxStdoutBytes;
   if (maxRequestBytes !== null) plan.limits.max_request_bytes = maxRequestBytes;
+  const theoreticalReportMax = (4 * 1024 * 1024) + (plan.candidates.length * plan.case_ids.length * plan.repetitions
+    * ((8 * plan.limits.max_stdout_bytes) + (2 * plan.limits.max_stderr_bytes) + (2 * plan.limits.max_request_bytes) + (1024 * 1024)));
+  plan.limits.max_report_bytes = maxReportBytes ?? Math.min(plan.limits.max_report_bytes, theoreticalReportMax);
   const registryPath = path.join(root, "registry.json");
   const planPath = path.join(root, "plan.json");
   await Promise.all([
@@ -92,6 +104,12 @@ async function configuredRun(mode, {
     reportSchemaPath: REPORT_SCHEMA,
     inputBuilders,
     verificationEvidence,
+    artifactConfigurations: { [candidateId]: deployment.artifactConfiguration },
+    generationRoot,
+    trustedPrivacyClass,
+    trustedProhibitedRoots,
+    testOnlyRunnerSourceLoader,
+    testOnlyAfterAttempts,
   });
   return returnContext ? { report, registry, plan, verificationEvidence } : report;
 }
@@ -119,12 +137,12 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     const request = buildCandidateRequest({
       candidateId: "candidate.direct_pdf.v1",
       inputMode: "direct_pdf",
-      stagedSourcePath: path.join(os.tmpdir(), "phase1-source.pdf"),
+      stagedSourcePath: "source.pdf",
       sourceSha256: "a".repeat(64),
       sourceSizeBytes: 100,
       pageCount: 1,
       targetSchema: { type: "object", properties: { vendor: { type: "string" } } },
-      limits: { deadline_ms: 1000, max_stdout_bytes: 1024, max_stderr_bytes: 0, max_request_bytes: 4096, max_source_bytes: 1000, max_pages: 1 },
+      limits: { deadline_ms: 1000, max_stdout_bytes: 1024, max_stderr_bytes: 0, max_request_bytes: 4096, max_report_bytes: 8 * 1024 * 1024, max_source_bytes: 1000, max_pages: 1 },
       repositoryRoot: REPO_ROOT,
       attemptBinding: "opaque-attempt",
     });
@@ -158,12 +176,12 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     const request = buildCandidateRequest({
       candidateId: "candidate.direct_pdf.v1",
       inputMode: "direct_pdf",
-      stagedSourcePath: path.join(os.tmpdir(), "phase1-source.pdf"),
+      stagedSourcePath: "source.pdf",
       sourceSha256: "a".repeat(64),
       sourceSizeBytes: 100,
       pageCount: 1,
       targetSchema,
-      limits: { deadline_ms: 1000, max_stdout_bytes: 1024, max_stderr_bytes: 0, max_request_bytes: 4096, max_source_bytes: 1000, max_pages: 1 },
+      limits: { deadline_ms: 1000, max_stdout_bytes: 1024, max_stderr_bytes: 0, max_request_bytes: 4096, max_report_bytes: 8 * 1024 * 1024, max_source_bytes: 1000, max_pages: 1 },
     });
     const partial = {
       protocol: request.protocol,
@@ -237,7 +255,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     const rootRequest = buildCandidateRequest({
       candidateId: "candidate.direct_pdf.v1",
       inputMode: "direct_pdf",
-      stagedSourcePath: path.join(os.tmpdir(), "phase1-root-source.pdf"),
+      stagedSourcePath: "source.pdf",
       sourceSha256: "a".repeat(64),
       sourceSizeBytes: 100,
       pageCount: 1,
@@ -260,16 +278,10 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
 
   it("retains every default candidate, case, and repetition as explicit not_run", async () => {
     const root = await temporaryRoot();
-    const outputPath = path.join(root, "phase1-report.json");
     const verificationEvidence = {};
-    const report = await runExtractionCandidates({ outputPath, verificationEvidence });
-    const sidecarPath = `${outputPath}.preflight.json`;
-    const loadedEvidence = await loadPreflightEvidenceSidecar(sidecarPath, report);
-    expect(loadedEvidence).toEqual(verificationEvidence.failureEvidenceByAttemptKey);
-    const malformedSidecar = JSON.parse(await fs.readFile(sidecarPath, "utf8"));
-    malformedSidecar.unexpected = true;
-    await fs.writeFile(sidecarPath, `${JSON.stringify(malformedSidecar, null, 2)}\n`);
-    await expect(loadPreflightEvidenceSidecar(sidecarPath, report)).rejects.toThrow();
+    const report = await runExtractionCandidates({ verificationEvidence });
+    expect(Object.keys(verificationEvidence.failureEvidenceByAttemptKey)).toHaveLength(120);
+    expect(Object.values(verificationEvidence.artifactAttestationByCandidateId).every(item => item.before.state === "not_applicable")).toBe(true);
     expect(report.denominator).toMatchObject({
       planned: 120,
       retained: 120,
@@ -356,6 +368,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     plan.repetitions = 1;
     plan.candidates = [{ candidate_id: "candidate.direct_pdf.v1", input_mode: "direct_pdf" }];
     plan.limits.max_source_bytes = 1;
+    plan.limits.max_report_bytes = 8 * 1024 * 1024;
     const planPath = path.join(root, "unconfigured-plan.json");
     await fs.writeFile(planPath, `${JSON.stringify(plan, null, 2)}\n`);
     const report = await runExtractionCandidates({ planPath });
@@ -375,13 +388,20 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       fs.readFile(REPORT_SCHEMA, "utf8").then(JSON.parse),
     ]);
     const candidate = registry.candidates.find(item => item.id === "candidate.direct_pdf.v1");
+    const deployment = await createPhase1TestDeployment({
+      root: path.join(root, "direct-deployment"),
+      candidateId: candidate.id,
+      sourceBytes: await fs.readFile(MOCK_CANDIDATE),
+      filename: "mock-candidate.mjs",
+    });
     candidate.configured = true;
     candidate.version = "test-double-1.0.0";
     candidate.license = { framework_spdx: "MIT", model_license: null, reviewed: true };
-    candidate.command = { executable: process.execPath, args: [MOCK_CANDIDATE, "partial"] };
+    candidate.command = { executable: process.execPath, args: [deployment.candidatePath, "partial"] };
     candidate.requirements.filesystem_isolation = true;
     plan.case_ids = [manifest.fixtures[0].id];
     plan.repetitions = 1;
+    plan.limits.max_report_bytes = 8 * 1024 * 1024;
     plan.candidates = [{ candidate_id: candidate.id, input_mode: "direct_pdf" }];
     const registryPath = path.join(root, "ineligible-registry.json");
     const planPath = path.join(root, "ineligible-plan.json");
@@ -390,7 +410,12 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       fs.writeFile(planPath, `${JSON.stringify(plan, null, 2)}\n`),
     ]);
     const verificationEvidence = {};
-    const report = await runExtractionCandidates({ registryPath, planPath, verificationEvidence });
+    const report = await runExtractionCandidates({
+      registryPath,
+      planPath,
+      verificationEvidence,
+      artifactConfigurations: { [candidate.id]: deployment.artifactConfiguration },
+    });
     expect(report.attempts[0]).toMatchObject({
       outcome: "not_run",
       unmet_requirements: ["filesystem_isolation"],
@@ -461,12 +486,19 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     const adapterRegistry = JSON.parse(await fs.readFile(REGISTRY, "utf8"));
     const adapterPlan = JSON.parse(await fs.readFile(PLAN, "utf8"));
     const adapterCandidate = adapterRegistry.candidates.find(item => item.id === "candidate.layout_ir.v1");
+    const adapterDeployment = await createPhase1TestDeployment({
+      root: path.join(root, "layout-deployment"),
+      candidateId: adapterCandidate.id,
+      sourceBytes: await fs.readFile(MOCK_CANDIDATE),
+      filename: "mock-candidate.mjs",
+    });
     adapterCandidate.configured = true;
     adapterCandidate.version = "test-double-1.0.0";
     adapterCandidate.license = { framework_spdx: "MIT", model_license: null, reviewed: true };
-    adapterCandidate.command = { executable: process.execPath, args: [MOCK_CANDIDATE, "partial"] };
+    adapterCandidate.command = { executable: process.execPath, args: [adapterDeployment.candidatePath, "partial"] };
     adapterPlan.case_ids = [fixture.id];
     adapterPlan.repetitions = 1;
+    adapterPlan.limits.max_report_bytes = 8 * 1024 * 1024;
     adapterPlan.candidates = [{ candidate_id: adapterCandidate.id, input_mode: "layout_ir" }];
     const adapterRegistryPath = path.join(root, "adapter-ineligible-registry.json");
     const adapterPlanPath = path.join(root, "adapter-ineligible-plan.json");
@@ -479,6 +511,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       registryPath: adapterRegistryPath,
       planPath: adapterPlanPath,
       verificationEvidence: adapterVerificationEvidence,
+      artifactConfigurations: { [adapterCandidate.id]: adapterDeployment.artifactConfiguration },
     });
     expect(adapterReport.attempts[0]).toMatchObject({
       outcome: "not_run",
@@ -664,12 +697,63 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     });
     const spawnFailure = await configuredRun("partial", { executable: path.join(os.tmpdir(), "missing-phase1-candidate") });
     expect(spawnFailure.attempts[0]).toMatchObject({
-      outcome: "error",
-      error_code: "SPAWN_FAILED",
+      outcome: "not_run",
+      error_code: null,
+      unmet_requirements: ["artifact_precheck_failed"],
       execution: { spawned: false, process_id: null },
       captures: { stdout_base64: null, stderr_base64: null },
     });
-  });
+  }, 30_000);
+
+  it("bounds aggregate retained evidence across repeated near-limit candidate output", async () => {
+    await expect(configuredRun("near-report-limit", {
+      repetitions: 4,
+      maxStdoutBytes: 16 * 1024 * 1024,
+      maxReportBytes: 64 * 1024 * 1024,
+    })).rejects.toThrow(/incremental retained evidence/);
+  }, 60_000);
+
+  it("requires private source prohibited roots to cover the repository before execution", async () => {
+    const negativeRoot = await temporaryRoot();
+    const unrelatedProhibitedRoot = await temporaryRoot();
+    const negativeGenerationRoot = path.join(negativeRoot, "private-generations");
+    let attemptsFinished = false;
+    await expect(configuredRun("partial", {
+      generationRoot: negativeGenerationRoot,
+      trustedPrivacyClass: "private_local",
+      trustedProhibitedRoots: [unrelatedProhibitedRoot],
+      testOnlyAfterAttempts: () => { attemptsFinished = true; },
+    })).rejects.toThrow(/must cover the repository and package root/);
+    expect(attemptsFinished).toBe(false);
+    await expect(fs.lstat(negativeGenerationRoot)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const overlapRoot = await temporaryRoot();
+    const overlapGenerationRoot = path.join(overlapRoot, "private-generations");
+    await expect(configuredRun("partial", {
+      generationRoot: overlapGenerationRoot,
+      trustedPrivacyClass: "private_local",
+      trustedProhibitedRoots: [path.dirname(REPO_ROOT), overlapRoot],
+      testOnlyAfterAttempts: () => { attemptsFinished = true; },
+    })).rejects.toThrow(/generation root overlaps a trusted prohibited/);
+    expect(attemptsFinished).toBe(false);
+    await expect(fs.lstat(overlapGenerationRoot)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const positiveRoot = await temporaryRoot();
+    const positiveGenerationRoot = path.join(positiveRoot, "private-generations");
+    const context = await configuredRun("partial", {
+      generationRoot: positiveGenerationRoot,
+      trustedPrivacyClass: "private_local",
+      trustedProhibitedRoots: [path.dirname(REPO_ROOT)],
+      returnContext: true,
+    });
+    expect(context.report.attempts[0].outcome).toBe("partial");
+    expect(context.verificationEvidence.generation.state).toBe("complete");
+    const companion = JSON.parse(await fs.readFile(path.join(
+      context.verificationEvidence.generation.generationPath,
+      "execution-companion.v1.json",
+    )));
+    expect(companion.privacy).toMatchObject({ policy: "private_local", private_run: true });
+  }, 30_000);
 
   it("fails closed on source mutation while preserving the original fixture", async () => {
     const before = await fs.readFile(path.join(EXTRACTION_ROOT, "synthetic", "born-digital-flat.pdf"));
@@ -682,6 +766,45 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     });
     expect(await fs.readFile(path.join(EXTRACTION_ROOT, "synthetic", "born-digital-flat.pdf"))).toEqual(before);
   });
+
+  it("fails closed before generation when a private runner-source sentinel drifts", async () => {
+    const testRoot = await temporaryRoot();
+    const sentinel = path.join(testRoot, "runner-source-sentinel.json");
+    const sourcePath = path.join(REPO_ROOT, PHASE1_COMPANION_SOURCE_PATHS.receipt_schema);
+    const original = await fs.readFile(sourcePath);
+    await fs.writeFile(sentinel, original, { mode: 0o600 });
+    let reads = 0;
+    const testOnlyRunnerSourceLoader = async () => {
+      const sources = Object.fromEntries(await Promise.all(Object.entries(PHASE1_COMPANION_SOURCE_PATHS).map(async ([role, relativePath]) => [
+        role,
+        { path: relativePath, bytes: await fs.readFile(path.join(REPO_ROOT, relativePath)) },
+      ])));
+      sources.receipt_schema.bytes = await fs.readFile(sentinel);
+      reads += 1;
+      if (reads === 1) await fs.appendFile(sentinel, "\n");
+      return sources;
+    };
+    const generationRoot = path.join(testRoot, "generations");
+    await expect(configuredRun("partial", { generationRoot, testOnlyRunnerSourceLoader })).rejects.toMatchObject({ code: "RUNNER_SOURCE_DRIFT" });
+    await expect(fs.readdir(generationRoot)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(await fs.readFile(sourcePath)).toEqual(original);
+  });
+
+  it("publishes a command-only drift result with consistent companion evidence", async () => {
+    const testRoot = await temporaryRoot();
+    const generationRoot = path.join(testRoot, "command-drift-generations");
+    const context = await configuredRun("partial", {
+      returnContext: true,
+      generationRoot,
+      testOnlyAfterAttempts: ({ registry }) => {
+        registry.candidates.find(item => item.id === "candidate.direct_pdf.v1").command.args[1] = "abstain";
+      },
+    });
+    expect(context.report.attempts[0]).toMatchObject({ outcome: "error", error_code: "ARTIFACT_DRIFT" });
+    expect(context.verificationEvidence.commandRuntimeByCandidateId["candidate.direct_pdf.v1"].status).toBe("changed");
+    expect(context.verificationEvidence.artifactAttestationByCandidateId["candidate.direct_pdf.v1"].drift.status).toBe("changed");
+    expect(await inspectGenerationDirectory(context.verificationEvidence.generation.generationPath)).toMatchObject({ state: "complete" });
+  }, 30_000);
 
   it("retains native evidence but structurally prohibits canonical evidence for every input mode", async () => {
     const native = await configuredRun("native-evidence");
@@ -732,7 +855,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
   it.runIf(process.platform !== "win32")("terminates the candidate process group at the deadline", async () => {
     const root = await temporaryRoot();
     const sentinel = path.join(root, "escaped-child.txt");
-    const report = await configuredRun("timeout-tree", { deadlineMs: 100, extraArgs: [sentinel] });
+    const report = await configuredRun("timeout-tree", { deadlineMs: 100, extraArgs: [Buffer.from(sentinel).toString("base64url")] });
     expect(report.attempts[0]).toMatchObject({
       outcome: "error",
       error_code: "DEADLINE_EXCEEDED",
@@ -745,7 +868,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
   it.runIf(process.platform !== "win32")("cleans the process group after a successful leader exits", async () => {
     const root = await temporaryRoot();
     const sentinel = path.join(root, "successful-escaped-child.txt");
-    const report = await configuredRun("success-tree", { extraArgs: [sentinel] });
+    const report = await configuredRun("success-tree", { extraArgs: [Buffer.from(sentinel).toString("base64url")] });
     expect(report.attempts[0]).toMatchObject({
       outcome: "partial",
       execution: {
@@ -781,6 +904,15 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
   it("independently rejects schema, capture, execution, request, and denominator mutations", async () => {
     const configuredContext = await configuredRun("partial", { returnContext: true });
     const { report } = configuredContext;
+    const configuredResource = Object.values(configuredContext.verificationEvidence.resourceFactsByAttemptKey)[0];
+    expect(configuredResource).toMatchObject({
+      artifact_logical_bytes: expect.any(Number),
+      artifact_unique_content_bytes: expect.any(Number),
+      environment_bytes: null,
+      environment_bytes_unavailable_reason: "environment_roles_pending",
+      model_bytes: 0,
+      model_bytes_unavailable_reason: null,
+    });
     const [registry, registrySchema, plan, planSchema, manifest, requestSchema, responseSchema, reportSchema] = await Promise.all([
       loadJsonWithSchema(REGISTRY, REGISTRY_SCHEMA, "registry"),
       fs.readFile(REGISTRY_SCHEMA, "utf8").then(JSON.parse),
@@ -791,18 +923,8 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       fs.readFile(RESPONSE_SCHEMA, "utf8").then(JSON.parse),
       fs.readFile(REPORT_SCHEMA, "utf8").then(JSON.parse),
     ]);
-    const configuredRegistry = structuredClone(registry.value);
-    const candidate = configuredRegistry.candidates.find(item => item.id === "candidate.direct_pdf.v1");
-    candidate.configured = true;
-    candidate.version = "test-double-1.0.0";
-    candidate.license = { framework_spdx: "MIT", model_license: null, reviewed: true };
-    candidate.command = { executable: process.execPath, args: [MOCK_CANDIDATE, "partial"] };
-    const configuredPlan = structuredClone(plan.value);
-    configuredPlan.case_ids = [manifest.fixtures[0].id];
-    configuredPlan.repetitions = 1;
-    configuredPlan.candidates = [{ candidate_id: "candidate.direct_pdf.v1", input_mode: "direct_pdf" }];
-    configuredPlan.limits.deadline_ms = 2000;
-    configuredPlan.limits.max_stdout_bytes = 4096;
+    const configuredRegistry = configuredContext.registry;
+    const configuredPlan = configuredContext.plan;
     const selectedFixture = manifest.fixtures[0];
     const selectedFixtureStat = await fs.stat(path.join(EXTRACTION_ROOT, selectedFixture.path));
     const sourceFactsById = {
@@ -871,12 +993,10 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
 
     const failedContext = await configuredRun("multiple-json", { returnContext: true });
     const noResponseError = failedContext.report;
-    const failedRegistry = structuredClone(configuredRegistry);
-    failedRegistry.candidates.find(item => item.id === "candidate.direct_pdf.v1").command.args = [MOCK_CANDIDATE, "multiple-json"];
     const verifyFailed = mutant => verifyPhase1Report(mutant, {
-      registry: failedRegistry,
+      registry: failedContext.registry,
       registrySchema,
-      plan: configuredPlan,
+      plan: failedContext.plan,
       planSchema,
       manifest,
       sourceFactsById,

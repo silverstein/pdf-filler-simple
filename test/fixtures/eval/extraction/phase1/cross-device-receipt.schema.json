@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/cross-device-receipt.schema.json",
+  "title": "PDF Tools extraction Phase 1 cross-device receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["receipt_id", "receipt_version", "run_id", "index_raw_bytes", "index_raw_sha256", "index_content_sha256", "source_generation_sha256", "source_host", "destination_host", "source_code_identity", "transported_at", "transport", "key_id", "signature", "authenticity", "signed_payload_sha256"],
+  "properties": {
+    "receipt_id": { "const": "pdf-tools.extraction-phase1-cross-device-receipt.v1" },
+    "receipt_version": { "const": 1 },
+    "run_id": { "$ref": "#/$defs/sha256" },
+    "index_raw_bytes": { "type": "integer", "minimum": 1 },
+    "index_raw_sha256": { "$ref": "#/$defs/sha256" },
+    "index_content_sha256": { "$ref": "#/$defs/sha256" },
+    "source_generation_sha256": { "$ref": "#/$defs/sha256" },
+    "source_host": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "destination_host": { "type": "string", "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$" },
+    "source_code_identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["kind", "sha256", "source_artifact_role"],
+      "properties": {
+        "kind": { "enum": ["execution_direct_source_set_sha256", "score_scorer_source_set_sha256"] },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "source_artifact_role": { "enum": ["execution_companion", "score_provenance"] }
+      }
+    },
+    "transported_at": { "type": "string", "format": "date-time" },
+    "transport": { "enum": ["tailscale_tailnet", "verified_local_copy"] },
+    "key_id": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" },
+    "signature": { "type": ["string", "null"], "pattern": "^[A-Za-z0-9+/=_-]{16,4096}$" },
+    "authenticity": { "enum": ["unavailable", "trusted_signer_required"] },
+    "signed_payload_sha256": { "$ref": "#/$defs/sha256" }
+  },
+  "$defs": { "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" } }
+}

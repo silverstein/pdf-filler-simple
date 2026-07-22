@@ -16,6 +16,39 @@ export const PHASE1_LIMITATIONS = Object.freeze([
   "Process-group cleanup cannot contain a candidate that deliberately creates a new operating-system session.",
   "All committed candidate slots are unconfigured. Third-party framework, model, license, and native-host evidence are separate work.",
 ]);
+
+export function validatePhase1ReportByteContract({
+  limits,
+  plannedAttempts,
+  potentiallySpawnedAttempts = null,
+  retainedEvidenceBytes = null,
+  observedBytes = null,
+}) {
+  if (!limits || !Number.isInteger(limits.max_report_bytes) || limits.max_report_bytes < 1024 * 1024
+    || !Number.isInteger(plannedAttempts) || plannedAttempts < 1) throw new Error("Phase 1 report byte contract inputs are invalid");
+  let denominatorTheoreticalMaxBytes = null;
+  if (potentiallySpawnedAttempts !== null) {
+    if (!Number.isInteger(potentiallySpawnedAttempts) || potentiallySpawnedAttempts < 0 || potentiallySpawnedAttempts > plannedAttempts) {
+      throw new Error("Phase 1 potentially spawned attempt count is invalid");
+    }
+    const fixedReportBytes = 4 * 1024 * 1024;
+    const unspawnedAttemptBytes = 64 * 1024;
+    const spawnedAttemptBytes = (3 * limits.max_stdout_bytes) + (2 * limits.max_stderr_bytes)
+      + (2 * limits.max_request_bytes) + (256 * 1024);
+    denominatorTheoreticalMaxBytes = fixedReportBytes
+      + (potentiallySpawnedAttempts * spawnedAttemptBytes)
+      + ((plannedAttempts - potentiallySpawnedAttempts) * unspawnedAttemptBytes);
+    if (!Number.isSafeInteger(denominatorTheoreticalMaxBytes)) throw new Error("Phase 1 conservative denominator footprint is not a safe integer");
+  }
+  if (retainedEvidenceBytes !== null
+    && (!Number.isInteger(retainedEvidenceBytes) || retainedEvidenceBytes < 0 || retainedEvidenceBytes > limits.max_report_bytes)) {
+    throw new Error("Phase 1 incremental retained evidence exceeds max_report_bytes before report serialization");
+  }
+  if (observedBytes !== null && (!Number.isInteger(observedBytes) || observedBytes < 1 || observedBytes > limits.max_report_bytes)) {
+    throw new Error("Phase 1 retained report exceeds the explicit max_report_bytes memory and publication ceiling");
+  }
+  return { max_report_bytes: limits.max_report_bytes, denominator_theoretical_max_bytes: denominatorTheoreticalMaxBytes };
+}
 export const PREDECLARED_CANDIDATE_IDS = Object.freeze([
   "control.current_product.v0",
   "candidate.layout_ir.v1",
@@ -57,38 +90,6 @@ export function canonicalJson(value) {
 
 export function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-export async function loadPreflightEvidenceSidecar(sidecarPath, report) {
-  const sidecar = JSON.parse(await fs.readFile(sidecarPath, "utf8"));
-  const exactTopLevelKeys = [
-    "failure_evidence_by_attempt_key",
-    "preflight_evidence_sha256",
-    "report_id",
-    "run_id",
-  ];
-  if (!sidecar || typeof sidecar !== "object" || Array.isArray(sidecar)
-    || canonicalJson(Object.keys(sidecar).sort()) !== canonicalJson(exactTopLevelKeys)
-    || sidecar.report_id !== report.report_id
-    || sidecar.run_id !== report.run_id
-    || sidecar.preflight_evidence_sha256 !== report.preflight_evidence_sha256) {
-    throw new Error("Invalid extraction preflight evidence sidecar identity or keys");
-  }
-  const evidence = sidecar.failure_evidence_by_attempt_key;
-  const expectedAttemptKeys = report.attempts.map(reportAttemptKey).sort();
-  if (!evidence || typeof evidence !== "object" || Array.isArray(evidence)
-    || canonicalJson(Object.keys(evidence).sort()) !== canonicalJson(expectedAttemptKeys)
-    || sha256(Buffer.from(canonicalJson(evidence))) !== report.preflight_evidence_sha256) {
-    throw new Error("Extraction preflight evidence sidecar does not bind the exact report denominator");
-  }
-  const exactEvidenceKeys = ["error_code", "failure", "outcome", "outcome_reason", "unmet_requirements"];
-  for (const value of Object.values(evidence)) {
-    if (!value || typeof value !== "object" || Array.isArray(value)
-      || canonicalJson(Object.keys(value).sort()) !== canonicalJson(exactEvidenceKeys)) {
-      throw new Error("Extraction preflight evidence sidecar contains an invalid attempt record");
-    }
-  }
-  return evidence;
 }
 
 export async function loadJsonWithSchema(jsonPath, schemaPath, label) {
@@ -225,7 +226,7 @@ export function buildCandidateRequest({
 }) {
   if (!PREDECLARED_CANDIDATE_IDS.includes(candidateId)) throw new Error(`Unknown candidate ID: ${candidateId}`);
   if (!INPUT_MODES.has(inputMode)) throw new Error(`Unsupported input mode: ${inputMode}`);
-  if (!path.isAbsolute(stagedSourcePath)) throw new Error("Staged candidate source path must be absolute");
+  if (stagedSourcePath !== "source.pdf") throw new Error("Staged candidate source path must be exactly source.pdf relative to the candidate working directory");
   if (!SHA256.test(sourceSha256)) throw new Error("Source digest must be runner-owned SHA-256");
   const targetSchemaSha256 = sha256(Buffer.from(canonicalJson(targetSchema)));
   const requestBody = {
@@ -474,6 +475,23 @@ export function reportAttemptKey(attempt) {
   return `${attempt.candidate_id}\u0000${attempt.case_id}\u0000${attempt.repetition}`;
 }
 
+export function artifactDriftOperationalDigest(attempt, drift) {
+  const { operational_evidence_sha256: ignored, ...operational } = drift;
+  return sha256(Buffer.from(`pdf-tools.artifact-drift-operational.v1\0${canonicalJson({
+    candidate_id: attempt.candidate_id,
+    case_id: attempt.case_id,
+    repetition: attempt.repetition,
+    source: attempt.source,
+    request: attempt.request,
+    execution: attempt.execution,
+    captures: attempt.captures,
+    request_sha256: attempt.bindings.request_sha256,
+    stdout_sha256: attempt.bindings.stdout_sha256,
+    stderr_sha256: attempt.bindings.stderr_sha256,
+    operational,
+  })}`));
+}
+
 export function verifyPhase1Report(report, {
   registry,
   registrySchema,
@@ -486,6 +504,7 @@ export function verifyPhase1Report(report, {
   reportSchema,
   adapterAvailability,
   failureEvidenceByAttemptKey,
+  artifactEligibilityByCandidateId = {},
   repositoryRoot = null,
 }) {
   assertSchema(report, reportSchema, "retained extraction Phase 1 report");
@@ -592,6 +611,8 @@ export function verifyPhase1Report(report, {
     if (attempt.input_mode !== selection.input_mode) throw new Error(`Report input mode drifted for ${attempt.candidate_id}`);
     const eligibilityUnmet = unmetRequirements(candidate, report.environment);
     if (candidate.configured && candidate.license?.reviewed !== true) eligibilityUnmet.push("reviewed_license");
+    if (candidate.configured && artifactEligibilityByCandidateId[candidate.id] === "captured_review_pending") eligibilityUnmet.push("artifact_license_review");
+    if (candidate.configured && artifactEligibilityByCandidateId[candidate.id] === "precheck_failed") eligibilityUnmet.push("artifact_precheck_failed");
     if (candidate.configured && selection.input_mode !== "direct_pdf" && adapterAvailability[selection.input_mode] !== true) {
       eligibilityUnmet.push(`${selection.input_mode}_adapter`);
     }
@@ -608,7 +629,7 @@ export function verifyPhase1Report(report, {
       throw new Error(`Report source is not bound to the Phase 0 fixture for ${attempt.case_id}`);
     }
     const sourceMutated = attempt.source.sha256 !== attempt.source.after_sha256;
-    if (sourceMutated && (attempt.outcome !== "error" || attempt.error_code !== "SOURCE_MUTATED")) {
+    if (sourceMutated && (attempt.outcome !== "error" || !["SOURCE_MUTATED", "ARTIFACT_DRIFT"].includes(attempt.error_code))) {
       throw new Error(`Report does not fail closed on source mutation for ${attempt.case_id}`);
     }
     if (attempt.source.immutable !== !sourceMutated
@@ -714,6 +735,20 @@ export function verifyPhase1Report(report, {
     if (attempt.outcome === "error" ? attempt.error_code === null : attempt.error_code !== null) {
       throw new Error(`Attempt error code is inconsistent with outcome for ${attempt.case_id}`);
     }
+    if ((attempt.error_code === "ARTIFACT_DRIFT") !== Object.hasOwn(attempt, "artifact_drift")) {
+      throw new Error(`Attempt artifact drift diagnostics are inconsistent for ${attempt.case_id}`);
+    }
+    if (attempt.artifact_drift) {
+      if (attempt.artifact_drift.operational_evidence_sha256 !== artifactDriftOperationalDigest(attempt, attempt.artifact_drift)) {
+        throw new Error(`Attempt artifact drift operational evidence is invalid for ${attempt.case_id}`);
+      }
+      if (attempt.artifact_drift.response_canonical_sha256 !== null) {
+        if (!stdoutBytes) throw new Error(`Attempt artifact drift lost operational response bytes for ${attempt.case_id}`);
+        const operationalResponse = JSON.parse(stdoutBytes.toString("utf8"));
+        if (sha256(Buffer.from(canonicalJson(operationalResponse))) !== attempt.artifact_drift.response_canonical_sha256
+          || operationalResponse.status !== attempt.artifact_drift.outcome) throw new Error(`Attempt artifact drift operational response is invalid for ${attempt.case_id}`);
+      }
+    }
 
     const successfulOutcomes = new Set(["completed", "partial", "abstained"]);
     if (successfulOutcomes.has(attempt.outcome)) {
@@ -742,7 +777,7 @@ export function verifyPhase1Report(report, {
         }
       }
     } else if (attempt.outcome === "error") {
-      if (!candidate.configured || eligibilityUnmet.length !== 0 || attempt.unmet_requirements.length !== 0
+      if (!candidate.configured || (attempt.error_code !== "ARTIFACT_DRIFT" && (eligibilityUnmet.length !== 0 || attempt.unmet_requirements.length !== 0))
         || attempt.failure.runner_code !== attempt.error_code || attempt.failure.stage === null
         || attempt.failure.detail_code === null
         || (attempt.error_code !== "REQUEST_LIMIT_EXCEEDED"
@@ -778,6 +813,11 @@ export function verifyPhase1Report(report, {
             && attempt.outcome_reason === `Runner could not complete the candidate attempt: ${attempt.failure.detail_code}`;
         } else if (attempt.error_code === "SOURCE_MUTATED") {
           failureProven = !attempt.source.immutable && attempt.failure.stage === "source_postcheck";
+        } else if (attempt.error_code === "ARTIFACT_DRIFT") {
+          failureProven = attempt.failure.stage === "artifact_postcheck"
+            && attempt.failure.detail_code === "ARTIFACT_DEPLOYMENT_DRIFT"
+            && attempt.artifact_drift && attempt.artifact_drift.outcome !== undefined
+            && attempt.outcome_reason === "Runner detected candidate artifact deployment drift after execution";
         } else if (attempt.error_code === "SPAWN_FAILED") {
           failureProven = Boolean(attempt.request) && !execution.spawned && attempt.failure.stage === "process_spawn";
         } else if (attempt.error_code === "DEADLINE_EXCEEDED") {
