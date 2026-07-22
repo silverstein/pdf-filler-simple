@@ -11,7 +11,7 @@ import {
   prepareDoclingMacHandoff,
   prepareDoclingMacHandoffForTest,
 } from "./extraction-docling-handoff.js";
-import { canonicalJson, validateFinalizationSchemaMirror } from "../../scripts/eval-docling-authority.mjs";
+import { canonicalJson, normalizeUvLockSentinels, validateFinalizationSchemaMirror } from "../../scripts/eval-docling-authority.mjs";
 
 const roots = [];
 const DARWIN_ARM64 = {
@@ -48,6 +48,34 @@ async function fixture(root, name = "fixture.pdf") {
   const filename = path.join(root, name);
   await fs.writeFile(filename, "%PDF-1.7\ntruth-free handoff fixture\n%%EOF\n", { mode: 0o600 });
   return filename;
+}
+
+async function uvLockFixture() {
+  const root = await temporaryRoot("pdf-tools-docling-uv-lock-");
+  const managed = path.join(root, "managed-python");
+  const snapshot = path.join(root, "snapshot");
+  const venv = path.join(snapshot, "venv");
+  const managedPython = path.join(managed, "cpython/bin/python3.12");
+  const venvPython = path.join(venv, "bin/python");
+  const managedLock = path.join(managed, ".lock");
+  const venvLock = path.join(venv, ".lock");
+  const packageLock = path.join(venv, "lib/python3.12/site-packages/setuptools/_vendor/.lock");
+  await fs.mkdir(path.dirname(managedPython), { recursive: true, mode: 0o755 });
+  await fs.mkdir(path.dirname(venvPython), { recursive: true, mode: 0o755 });
+  await fs.mkdir(path.dirname(packageLock), { recursive: true, mode: 0o755 });
+  await Promise.all([fs.chmod(managed, 0o700), fs.chmod(snapshot, 0o700), fs.chmod(venv, 0o755)]);
+  await fs.writeFile(managedPython, "python", { mode: 0o755 });
+  await fs.symlink(managedPython, venvPython);
+  await Promise.all([
+    fs.writeFile(managedLock, "", { mode: 0o600 }),
+    fs.writeFile(venvLock, "", { mode: 0o600 }),
+    fs.writeFile(packageLock, "", { mode: 0o600 }),
+  ]);
+  await Promise.all([fs.chmod(managedLock, 0o666), fs.chmod(venvLock, 0o666)]);
+  return {
+    root, managed, snapshot, venv, managedPython, venvPython, managedLock, venvLock, packageLock,
+    receipt: { roots: { uv_python_install: managed, sidecar_snapshot: snapshot } },
+  };
 }
 
 async function options(root, fixturePaths, uvVersion = "uv 0.8.15") {
@@ -122,6 +150,62 @@ afterEach(async () => {
 });
 
 describe("Docling macOS handoff", () => {
+  it("normalizes only the two exact uv lock sentinels while preserving managed-runtime symlinks", async () => {
+    const value = await uvLockFixture();
+    await normalizeUvLockSentinels(value.receipt);
+    expect((await fs.lstat(value.managedLock)).mode & 0o777).toBe(0o600);
+    expect((await fs.lstat(value.venvLock)).mode & 0o777).toBe(0o600);
+    expect((await fs.lstat(value.packageLock)).mode & 0o777).toBe(0o600);
+    expect((await fs.lstat(value.venvPython)).isSymbolicLink()).toBe(true);
+    expect(await fs.realpath(value.venvPython)).toBe(value.managedPython);
+  });
+
+  it("rejects any other writable runtime entry before changing either sentinel", async () => {
+    const value = await uvLockFixture();
+    const extra = path.join(value.venv, "unexpected-writable");
+    await fs.writeFile(extra, "", { mode: 0o600 });
+    await fs.chmod(extra, 0o666);
+    await expect(normalizeUvLockSentinels(value.receipt)).rejects.toThrow(/unexpected group\/other-writable entry/i);
+    expect((await fs.lstat(value.managedLock)).mode & 0o777).toBe(0o666);
+    expect((await fs.lstat(value.venvLock)).mode & 0o777).toBe(0o666);
+  });
+
+  it.each(["symlink", "special", "nonzero", "hardlink", "mode", "missing", "root-mode", "root-substitution", "parent-substitution"])("rejects a %s uv lock sentinel mutation", async mutation => {
+    const value = await uvLockFixture();
+    if (mutation === "symlink") {
+      await fs.unlink(value.venvLock);
+      await fs.symlink(value.packageLock, value.venvLock);
+    } else if (mutation === "special") {
+      await fs.unlink(value.venvLock);
+      const fifo = spawnSync("/usr/bin/mkfifo", [value.venvLock], { encoding: "utf8" });
+      expect(fifo.status, fifo.stderr).toBe(0);
+    } else if (mutation === "nonzero") {
+      await fs.writeFile(value.venvLock, "not empty");
+      await fs.chmod(value.venvLock, 0o666);
+    } else if (mutation === "hardlink") {
+      const target = path.join(value.root, "hardlink-target");
+      await fs.unlink(value.venvLock);
+      await fs.writeFile(target, "", { mode: 0o600 });
+      await fs.chmod(target, 0o666);
+      await fs.link(target, value.venvLock);
+    } else if (mutation === "mode") {
+      await fs.chmod(value.venvLock, 0o644);
+    } else if (mutation === "missing") {
+      await fs.unlink(value.venvLock);
+    } else if (mutation === "root-mode") {
+      await fs.chmod(value.managed, 0o755);
+    } else if (mutation === "root-substitution") {
+      const real = `${value.managed}-real`;
+      await fs.rename(value.managed, real);
+      await fs.symlink(real, value.managed);
+    } else if (mutation === "parent-substitution") {
+      const real = `${value.venv}-real`;
+      await fs.rename(value.venv, real);
+      await fs.symlink(real, value.venv);
+    }
+    await expect(normalizeUvLockSentinels(value.receipt)).rejects.toThrow();
+  });
+
   it("enforces the retained finalization schema mirror before live-state checks", async () => {
     const sha = "a".repeat(64);
     const uvTool = { path: "/private/uv", version: SILVERBOOK_UV_VERSION, bytes: 1, sha256: sha, mode: 0o755, links: 1 };

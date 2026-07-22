@@ -414,6 +414,144 @@ async function spawnBound(command, { environment, cwd, isolationRoots = [], stdi
   return { ...result, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) };
 }
 
+function sameIdentity(first, second, properties) {
+  return properties.every(property => String(first[property]) === String(second[property]));
+}
+
+async function openBoundDirectory(filename, allowedModes, label) {
+  if (typeof fsConstants.O_NOFOLLOW !== "number" || typeof fsConstants.O_DIRECTORY !== "number") {
+    throw new Error("Docling lock normalization requires O_NOFOLLOW and O_DIRECTORY");
+  }
+  if (path.resolve(filename) !== filename) throw new Error(`${label} is not canonical absolute`);
+  await assertNoLinkAncestors(filename);
+  const handle = await fs.open(filename, fsConstants.O_RDONLY | fsConstants.O_DIRECTORY | fsConstants.O_NOFOLLOW);
+  try {
+    const descriptor = await handle.stat({ bigint: true });
+    const pathname = await fs.lstat(filename, { bigint: true });
+    const mode = Number(descriptor.mode & 0o777n);
+    if (!descriptor.isDirectory() || descriptor.nlink < 1n || !allowedModes.includes(mode)
+      || !sameIdentity(descriptor, pathname, ["dev", "ino", "nlink", "mode"]) || await fs.realpath(filename) !== filename) {
+      throw new Error(`${label} violates its receipt-bound directory identity`);
+    }
+    return { filename, handle, identity: descriptor, allowedModes, label };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
+async function verifyBoundDirectory(bound) {
+  await assertNoLinkAncestors(bound.filename);
+  const descriptor = await bound.handle.stat({ bigint: true });
+  const pathname = await fs.lstat(bound.filename, { bigint: true });
+  const mode = Number(descriptor.mode & 0o777n);
+  if (!descriptor.isDirectory() || !bound.allowedModes.includes(mode) || await fs.realpath(bound.filename) !== bound.filename
+    || !sameIdentity(bound.identity, descriptor, ["dev", "ino", "nlink", "mode"])
+    || !sameIdentity(descriptor, pathname, ["dev", "ino", "nlink", "mode"])) {
+    throw new Error(`${bound.label} changed during lock normalization`);
+  }
+}
+
+async function openUvLockSentinel(filename, parent, label) {
+  if (path.dirname(filename) !== parent.filename || path.basename(filename) !== ".lock") {
+    throw new Error(`${label} is not the exact receipt-bound sentinel path`);
+  }
+  const pathname = await fs.lstat(filename, { bigint: true });
+  if (!pathname.isFile() || pathname.nlink !== 1n || pathname.size !== 0n || Number(pathname.mode & 0o777n) !== 0o666) {
+    throw new Error(`${label} is not the exact zero-byte mode-0666 uv sentinel`);
+  }
+  const handle = await fs.open(filename, fsConstants.O_RDWR | fsConstants.O_NOFOLLOW);
+  try {
+    const descriptor = await handle.stat({ bigint: true });
+    if (!descriptor.isFile() || !sameIdentity(pathname, descriptor, ["dev", "ino", "nlink", "size", "mode"])) {
+      throw new Error(`${label} changed while it was opened`);
+    }
+    return { filename, handle, identity: descriptor, label };
+  } catch (error) {
+    await handle.close();
+    throw error;
+  }
+}
+
+async function rejectUnexpectedWritableEntries(root, allowedSentinels) {
+  let entriesSeen = 0;
+  async function inspect(directory) {
+    for (const name of await fs.readdir(directory)) {
+      entriesSeen += 1;
+      if (entriesSeen > MAX_TREE_ENTRIES) throw new Error("Writable-entry preflight exceeds its entry-count ceiling");
+      const filename = path.join(directory, name);
+      const metadata = await fs.lstat(filename);
+      if (metadata.isSymbolicLink()) continue;
+      if ((metadata.mode & 0o022) !== 0 && !allowedSentinels.has(filename)) {
+        throw new Error(`Unexpected group/other-writable entry in finalized tree: ${path.relative(root, filename)}`);
+      }
+      if (metadata.isDirectory()) await inspect(filename);
+    }
+  }
+  await inspect(root);
+}
+
+export async function normalizeUvLockSentinels(receipt) {
+  // This exact policy is receipt-bound through the retained handoff-authority source hash.
+  const snapshot = receipt?.roots?.sidecar_snapshot;
+  const managedRoot = receipt?.roots?.uv_python_install;
+  if (typeof snapshot !== "string" || typeof managedRoot !== "string") throw new Error("Receipt lacks uv lock normalization roots");
+  const venvRoot = path.join(snapshot, "venv");
+  const specifications = [
+    { root: managedRoot, parent: managedRoot, filename: path.join(managedRoot, ".lock"), parentModes: [0o700], label: "Managed Python uv lock" },
+    { root: snapshot, parent: venvRoot, filename: path.join(venvRoot, ".lock"), parentModes: [0o700, 0o755], label: "Virtual environment uv lock" },
+  ];
+  const resources = [];
+  try {
+    for (const specification of specifications) {
+      if (!within(specification.root, specification.parent) || path.resolve(specification.filename) !== specification.filename) {
+        throw new Error(`${specification.label} escapes its receipt-bound root`);
+      }
+      const root = await openBoundDirectory(specification.root, [0o700], `${specification.label} root`);
+      resources.push(root);
+      const parent = await openBoundDirectory(specification.parent, specification.parentModes, `${specification.label} parent`);
+      resources.push(parent);
+      const sentinel = await openUvLockSentinel(specification.filename, parent, specification.label);
+      resources.push(sentinel);
+      specification.boundRoot = root;
+      specification.boundParent = parent;
+      specification.boundSentinel = sentinel;
+    }
+    const allowedSentinels = new Set(specifications.map(specification => specification.filename));
+    await rejectUnexpectedWritableEntries(managedRoot, allowedSentinels);
+    await rejectUnexpectedWritableEntries(venvRoot, allowedSentinels);
+    for (const specification of specifications) {
+      await verifyBoundDirectory(specification.boundParent);
+      await verifyBoundDirectory(specification.boundRoot);
+      const descriptor = await specification.boundSentinel.handle.stat({ bigint: true });
+      const pathname = await fs.lstat(specification.filename, { bigint: true });
+      if (!sameIdentity(specification.boundSentinel.identity, descriptor, ["dev", "ino", "nlink", "size", "mode"])
+        || !sameIdentity(descriptor, pathname, ["dev", "ino", "nlink", "size", "mode"])) {
+        throw new Error(`${specification.label} changed before normalization`);
+      }
+      await specification.boundSentinel.handle.chmod(0o600);
+      await specification.boundSentinel.handle.sync();
+    }
+    for (const specification of specifications) {
+      await specification.boundParent.handle.sync();
+      await specification.boundRoot.handle.sync();
+      const descriptor = await specification.boundSentinel.handle.stat({ bigint: true });
+      const pathname = await fs.lstat(specification.filename, { bigint: true });
+      if (!descriptor.isFile() || descriptor.nlink !== 1n || descriptor.size !== 0n || Number(descriptor.mode & 0o777n) !== 0o600
+        || !sameIdentity(specification.boundSentinel.identity, descriptor, ["dev", "ino", "nlink", "size"])
+        || !sameIdentity(descriptor, pathname, ["dev", "ino", "nlink", "size", "mode"])) {
+        throw new Error(`${specification.label} changed during normalization`);
+      }
+      await verifyBoundDirectory(specification.boundParent);
+      await verifyBoundDirectory(specification.boundRoot);
+    }
+  } finally {
+    const results = await Promise.allSettled(resources.map(resource => resource.handle.close()));
+    const rejected = results.find(result => result.status === "rejected");
+    if (rejected) throw rejected.reason;
+  }
+}
+
 async function digestTree(root, allowedRoots, { strictPrivate = false } = {}) {
   async function captureShape() {
     const shape = []; let entriesSeen = 0;
@@ -488,6 +626,7 @@ async function finalizeSetup(context, receiptPath, receiptSha) {
   const { receipt } = context;
   const snapshot = receipt.roots.sidecar_snapshot;
   const isolationRoots = [receipt.roots.authority_home, receipt.roots.authority_tmp, receipt.roots.hf_cache];
+  await normalizeUvLockSentinels(receipt);
   const python = path.join(snapshot, "venv", "bin", "python");
   const pythonReal = await fs.realpath(python);
   if (!within(receipt.roots.uv_python_install, pythonReal)) throw new Error("Managed Python executable escapes its receipt-bound root");
