@@ -1,7 +1,14 @@
 #!/usr/bin/env node
 
-import { runDoclingAuthority } from "../test/eval/extraction-docling-handoff-verifier.js";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
+
+const selfPath = fileURLToPath(import.meta.url);
+const sealedVerifier = new URL("./extraction-docling-handoff-verifier.js", import.meta.url);
+const repositoryVerifier = new URL("../test/eval/extraction-docling-handoff-verifier.js", import.meta.url);
+const isSealedBootstrap = path.basename(path.dirname(selfPath)).startsWith(".bootstrap-seal.");
+const verifierUrl = isSealedBootstrap ? sealedVerifier : repositoryVerifier;
+const { runDoclingAuthority } = await import(verifierUrl);
 
 function option(name, required = true) {
   const index = process.argv.indexOf(name);

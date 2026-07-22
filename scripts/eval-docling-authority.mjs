@@ -14,6 +14,7 @@ const MAX_INPUT_BYTES = 128 * 1024 * 1024;
 const MAX_TREE_ENTRIES = 50000;
 const MAX_TREE_FILE_BYTES = 512 * 1024 * 1024;
 const MAX_TREE_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
+const DOCLING_BOOTSTRAP_V1_SHA256 = "9921055c8883627b062c4edfa8996c49ec37e6a7262374cdff27fc3ec7067b6f";
 const EXPECTED_ROLES = new Set([
   "adapter_entrypoint", "model_setup_helper", "candidate_config", "candidate_config_schema",
   "candidate_request_schema", "candidate_response_schema", "handoff_schema", "handoff_generator_source",
@@ -173,8 +174,31 @@ function assertRealizedRecipe(receipt, receiptPath) {
   const receiptDigestPlaceholder = "$OUT_OF_BAND_RECEIPT_SHA256";
   const protectedRootsPlaceholder = "$OUT_OF_BAND_PROTECTED_ROOTS_JSON";
   const finalizationDigestPlaceholder = "$OUT_OF_BAND_FINALIZATION_SHA256";
-  const launcherPath = receipt.setup?.authority_command?.[8];
-  if (typeof launcherPath !== "string" || path.resolve(launcherPath) !== launcherPath) throw new Error("Receipt launcher path is invalid");
+  const authorityCommand = receipt.setup?.authority_command;
+  const bootstrapScript = authorityCommand?.[2];
+  if (authorityCommand?.[0] !== "/bin/sh" || authorityCommand[1] !== "-c"
+    || authorityCommand[3] !== "pdf-tools-docling-bootstrap.v1" || typeof bootstrapScript !== "string"
+    || sha256(Buffer.from(bootstrapScript)) !== DOCLING_BOOTSTRAP_V1_SHA256) {
+    throw new Error("Receipt bootstrap is not the independently reviewed shell trust root");
+  }
+  const launcherRecord = recordByRole(receipt, "handoff_verifier_cli");
+  const verifierRecord = recordByRole(receipt, "handoff_verifier_source");
+  const launcherPath = authorityCommand[9];
+  const verifierPath = authorityCommand[14];
+  const sourceMode = value => typeof value === "string" && /^[0-7]{3}$/.test(value) ? Number.parseInt(value, 8) : null;
+  const launcherMode = sourceMode(authorityCommand[12]);
+  const verifierMode = sourceMode(authorityCommand[17]);
+  if (typeof launcherPath !== "string" || path.resolve(launcherPath) !== launcherPath
+    || typeof verifierPath !== "string" || path.resolve(verifierPath) !== verifierPath
+    || authorityCommand[4] !== receipt.toolchain.node.path || authorityCommand[5] !== receipt.toolchain.node.sha256
+    || authorityCommand[6] !== String(receipt.toolchain.node.bytes) || authorityCommand[7] !== receipt.toolchain.node.mode.toString(8)
+    || authorityCommand[8] !== String(receipt.toolchain.node.links)
+    || authorityCommand[10] !== launcherRecord.sha256 || authorityCommand[11] !== String(launcherRecord.bytes)
+    || launcherMode === null || authorityCommand[13] !== "1"
+    || authorityCommand[15] !== verifierRecord.sha256 || authorityCommand[16] !== String(verifierRecord.bytes)
+    || verifierMode === null || authorityCommand[18] !== "1"
+    || authorityCommand[19] !== path.dirname(receiptPath) || authorityCommand[20] !== receipt.roots.authority_home
+    || authorityCommand[21] !== receipt.roots.authority_tmp) throw new Error("Receipt bootstrap metadata is invalid");
   const baseEnvironment = {
     HOME: receipt.roots.authority_home, TMPDIR: receipt.roots.authority_tmp, PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
     UV_CACHE_DIR: receipt.roots.uv, UV_PYTHON_INSTALL_DIR: receipt.roots.uv_python_install, PYTHONDONTWRITEBYTECODE: "1",
@@ -190,16 +214,19 @@ function assertRealizedRecipe(receipt, receiptPath) {
     python, "-I", "-B", rolePath("adapter_entrypoint"), "--config", rolePath("candidate_config"), "--artifacts-path", receipt.roots.models,
     "--receipt", receiptPath, "--expected-receipt-sha256", receiptDigestPlaceholder,
   ];
-  const cleanLauncherPrefix = [
-    "/usr/bin/env", "-i", `HOME=${receipt.roots.authority_home}`, `TMPDIR=${receipt.roots.authority_tmp}`,
-    "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", receipt.toolchain.node.path, launcherPath,
+  const bootstrapPrefix = [
+    "/bin/sh", "-c", bootstrapScript, "pdf-tools-docling-bootstrap.v1",
+    receipt.toolchain.node.path, receipt.toolchain.node.sha256, String(receipt.toolchain.node.bytes), receipt.toolchain.node.mode.toString(8), String(receipt.toolchain.node.links),
+    launcherPath, launcherRecord.sha256, String(launcherRecord.bytes), authorityCommand[12], authorityCommand[13],
+    verifierPath, verifierRecord.sha256, String(verifierRecord.bytes), authorityCommand[17], authorityCommand[18],
+    path.dirname(receiptPath), receipt.roots.authority_home, receipt.roots.authority_tmp,
   ];
   const expectedSetupAuthority = [
-    ...cleanLauncherPrefix, "--action", "setup", "--receipt", receiptPath, "--expected-receipt-sha256", receiptDigestPlaceholder,
+    ...bootstrapPrefix, "--action", "setup", "--receipt", receiptPath, "--expected-receipt-sha256", receiptDigestPlaceholder,
     "--protected-roots-json", protectedRootsPlaceholder,
   ];
   const expectedExecuteAuthority = [
-    ...cleanLauncherPrefix, "--action", "execute", "--receipt", receiptPath, "--expected-receipt-sha256", receiptDigestPlaceholder,
+    ...bootstrapPrefix, "--action", "execute", "--receipt", receiptPath, "--expected-receipt-sha256", receiptDigestPlaceholder,
     "--protected-roots-json", protectedRootsPlaceholder, "--finalization", finalization,
     "--expected-finalization-sha256", finalizationDigestPlaceholder,
   ];
@@ -210,7 +237,7 @@ function assertRealizedRecipe(receipt, receiptPath) {
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
         UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
-      authority_command: ["/usr/bin/env", "-i", "HOME=$AUTHORITY_HOME", "TMPDIR=$AUTHORITY_TMP", "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "$NODE", "$LAUNCHER", "--action", "setup", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder, "--protected-roots-json", protectedRootsPlaceholder],
+      authority_command: ["/bin/sh", "-c", bootstrapScript, "pdf-tools-docling-bootstrap.v1", "$NODE", "$NODE_SHA256", "$NODE_BYTES", "$NODE_MODE", "$NODE_LINKS", "$LAUNCHER", "$LAUNCHER_SHA256", "$LAUNCHER_BYTES", "$LAUNCHER_MODE", "$LAUNCHER_LINKS", "$VERIFIER", "$VERIFIER_SHA256", "$VERIFIER_BYTES", "$VERIFIER_MODE", "$VERIFIER_LINKS", "$RUN_ROOT", "$AUTHORITY_HOME", "$AUTHORITY_TMP", "--action", "setup", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder, "--protected-roots-json", protectedRootsPlaceholder],
       commands: [
         ["$UV", "python", "install", "3.12.13"],
         ["$UV", "venv", "--python", "3.12.13", "$VENV_ROOT"],
@@ -227,7 +254,7 @@ function assertRealizedRecipe(receipt, receiptPath) {
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
         UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
-      authority_command: ["/usr/bin/env", "-i", "HOME=$AUTHORITY_HOME", "TMPDIR=$AUTHORITY_TMP", "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "$NODE", "$LAUNCHER", "--action", "execute", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder, "--protected-roots-json", protectedRootsPlaceholder, "--finalization", "$FINALIZATION", "--expected-finalization-sha256", finalizationDigestPlaceholder],
+      authority_command: ["/bin/sh", "-c", bootstrapScript, "pdf-tools-docling-bootstrap.v1", "$NODE", "$NODE_SHA256", "$NODE_BYTES", "$NODE_MODE", "$NODE_LINKS", "$LAUNCHER", "$LAUNCHER_SHA256", "$LAUNCHER_BYTES", "$LAUNCHER_MODE", "$LAUNCHER_LINKS", "$VERIFIER", "$VERIFIER_SHA256", "$VERIFIER_BYTES", "$VERIFIER_MODE", "$VERIFIER_LINKS", "$RUN_ROOT", "$AUTHORITY_HOME", "$AUTHORITY_TMP", "--action", "execute", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder, "--protected-roots-json", protectedRootsPlaceholder, "--finalization", "$FINALIZATION", "--expected-finalization-sha256", finalizationDigestPlaceholder],
       adapter_command: ["$PYTHON", "-I", "-B", "$ADAPTER", "--config", "$CONFIG", "--artifacts-path", "$MODELS_ROOT", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder],
     },
   };
@@ -242,12 +269,14 @@ function assertRealizedRecipe(receipt, receiptPath) {
     || canonicalJson(receipt.execution.adapter_command) !== canonicalJson(expectedAdapterCommand)) {
     throw new Error("Receipt does not realize the retained authority recipe");
   }
-  return launcherPath;
+  return { launcherPath, launcherMode, verifierPath, verifierMode };
 }
 
 async function verifyTool(tool, label) {
+  if (!tool || canonicalJson(Object.keys(tool).sort()) !== canonicalJson(["bytes", "links", "mode", "path", "sha256", "version"])
+    || !Number.isInteger(tool.mode) || tool.mode < 0 || tool.mode > 0o777 || tool.links !== 1) throw new Error(`${label} identity metadata is invalid`);
   await assertNoLinkAncestors(tool.path);
-  const bytes = await readStable(tool.path, MAX_INPUT_BYTES);
+  const bytes = await readStable(tool.path, MAX_INPUT_BYTES, tool.mode);
   if (bytes.length !== tool.bytes || sha256(bytes) !== tool.sha256) throw new Error(`${label} binary differs from receipt identity`);
 }
 
@@ -276,7 +305,7 @@ export async function verifyHandoffAuthority({ receiptPath, expectedReceiptSha25
   const receipt = JSON.parse(receiptBytes);
   if (!receiptBytes.equals(Buffer.from(`${canonicalJson(receipt)}\n`))) throw new Error("Receipt bytes are not canonical");
   assertReceiptShape(receipt);
-  const launcherPath = assertRealizedRecipe(receipt, receiptPath);
+  const { launcherPath, launcherMode, verifierPath, verifierMode } = assertRealizedRecipe(receipt, receiptPath);
   const protectedRoots = parseProtectedRoots(protectedRootsJson);
   if (sha256(Buffer.from(`pdf-tools.docling-protected-roots.v1\0${canonicalJson(protectedRoots)}`)) !== receipt.roots.protected_roots_sha256) {
     throw new Error("Protected roots differ from the receipt-bound digest");
@@ -296,10 +325,15 @@ export async function verifyHandoffAuthority({ receiptPath, expectedReceiptSha25
   if (executedAuthority.length !== authorityRecord.bytes || sha256(executedAuthority) !== authorityRecord.sha256) {
     throw new Error("Executed sealed authority is not the receipt-bound retained authority");
   }
-  const launcherBytes = await readStable(launcherPath, MAX_INPUT_BYTES);
+  const launcherBytes = await readStable(launcherPath, MAX_INPUT_BYTES, launcherMode);
   const launcherRecord = recordByRole(receipt, "handoff_verifier_cli");
   if (launcherBytes.length !== launcherRecord.bytes || sha256(launcherBytes) !== launcherRecord.sha256) {
     throw new Error("Trusted launcher no longer matches the receipt-bound launcher source");
+  }
+  const verifierBytes = await readStable(verifierPath, MAX_INPUT_BYTES, verifierMode);
+  const verifierRecord = recordByRole(receipt, "handoff_verifier_source");
+  if (verifierBytes.length !== verifierRecord.bytes || sha256(verifierBytes) !== verifierRecord.sha256) {
+    throw new Error("Trusted launcher module no longer matches the receipt-bound verifier source");
   }
   await Promise.all([verifyTool(receipt.toolchain.uv, "uv"), verifyTool(receipt.toolchain.node, "Node")]);
   if (await fs.realpath(process.execPath) !== receipt.toolchain.node.path) throw new Error("Executed Node is not the receipt-bound Node binary");
@@ -481,8 +515,9 @@ export function validateFinalizationSchemaMirror(value) {
   }
   if (!exactKeys(value.toolchain, ["uv", "node"])) throw new Error("Finalization toolchain violates its retained schema mirror");
   for (const tool of [value.toolchain.uv, value.toolchain.node]) {
-    if (!exactKeys(tool, ["path", "version", "bytes", "sha256"]) || !absolutePath(tool.path) || !boundedString(tool.version, 128)
-      || !integer(tool.bytes, 1, 134217728) || !SHA256.test(tool.sha256 ?? "")) throw new Error("Finalization tool identity violates its retained schema mirror");
+    if (!exactKeys(tool, ["path", "version", "bytes", "sha256", "mode", "links"]) || !absolutePath(tool.path) || !boundedString(tool.version, 128)
+      || !integer(tool.bytes, 1, 134217728) || !SHA256.test(tool.sha256 ?? "") || !integer(tool.mode, 0, 511)
+      || tool.links !== 1) throw new Error("Finalization tool identity violates its retained schema mirror");
   }
   if (!exactKeys(value.lock, ["bytes", "sha256"]) || !integer(value.lock.bytes, 0, 536870912) || !SHA256.test(value.lock.sha256 ?? "")
     || !exactKeys(value.python, ["path", "bytes", "sha256", "version"]) || !absolutePath(value.python.path)

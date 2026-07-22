@@ -55,8 +55,8 @@
       }
     },
     "tool_identity": {
-      "type": "object", "additionalProperties": false, "required": ["path", "version", "bytes", "sha256"],
-      "properties": { "path": { "$ref": "#/$defs/absolute_path" }, "version": { "type": "string", "minLength": 1, "maxLength": 128 }, "bytes": { "type": "integer", "minimum": 1, "maximum": 134217728 }, "sha256": { "$ref": "#/$defs/sha256" } }
+      "type": "object", "additionalProperties": false, "required": ["path", "version", "bytes", "sha256", "mode", "links"],
+      "properties": { "path": { "$ref": "#/$defs/absolute_path" }, "version": { "type": "string", "minLength": 1, "maxLength": 128 }, "bytes": { "type": "integer", "minimum": 1, "maximum": 134217728 }, "sha256": { "$ref": "#/$defs/sha256" }, "mode": { "type": "integer", "minimum": 0, "maximum": 511 }, "links": { "const": 1 } }
     },
     "toolchain": {
       "type": "object", "additionalProperties": false, "required": ["uv", "node"],

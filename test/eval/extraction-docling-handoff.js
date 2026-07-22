@@ -13,6 +13,44 @@ const MAX_HANDOFF_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_FIXTURE_TOTAL_BYTES = 8 * 1024 * 1024;
 const MAX_TOOL_BYTES = 128 * 1024 * 1024;
 const TEST_CAPABILITY = Symbol("docling-handoff-test-capability");
+export const DOCLING_BOOTSTRAP_V1 = [
+  "set -eu",
+  "umask 077",
+  "node=$1; node_sha=$2; node_bytes=$3; node_mode=$4; node_links=$5",
+  "cli=$6; cli_sha=$7; cli_bytes=$8; cli_mode=$9; shift 9",
+  "cli_links=$1; verifier=$2; verifier_sha=$3; verifier_bytes=$4; verifier_mode=$5; verifier_links=$6",
+  "seal_parent=$7; authority_home=$8; authority_tmp=$9; shift 9",
+  "os=$(/usr/bin/uname -s)",
+  "check_file() {",
+  "  file=$1; expected_sha=$2; expected_bytes=$3; expected_mode=$4; expected_links=$5",
+  "  if [ \"$os\" = Darwin ]; then metadata=$(/usr/bin/stat -f '%HT|%Lp|%l|%z' \"$file\"); else metadata=$(/usr/bin/stat -c '%F|%a|%h|%s' \"$file\"); fi",
+  "  old_ifs=$IFS; IFS='|'; set -- $metadata; IFS=$old_ifs",
+  "  { [ \"$1\" = 'Regular File' ] || [ \"$1\" = 'regular file' ]; } || return 70",
+  "  [ \"$2\" = \"$expected_mode\" ] && [ \"$3\" = \"$expected_links\" ] && [ \"$4\" = \"$expected_bytes\" ] || return 71",
+  "  digest=$(/usr/bin/shasum -a 256 \"$file\"); digest=${digest%% *}",
+  "  [ \"$digest\" = \"$expected_sha\" ] || return 72",
+  "}",
+  "check_file \"$node\" \"$node_sha\" \"$node_bytes\" \"$node_mode\" \"$node_links\"",
+  "check_file \"$cli\" \"$cli_sha\" \"$cli_bytes\" \"$cli_mode\" \"$cli_links\"",
+  "check_file \"$verifier\" \"$verifier_sha\" \"$verifier_bytes\" \"$verifier_mode\" \"$verifier_links\"",
+  "seal=$(/usr/bin/mktemp -d \"$seal_parent/.bootstrap-seal.XXXXXX\")",
+  "trap '/bin/rm -rf \"$seal\"' EXIT HUP INT TERM",
+  "/bin/chmod 700 \"$seal\"",
+  "/bin/cp \"$cli\" \"$seal/eval-verify-docling-macos-handoff.mjs\"",
+  "/bin/cp \"$verifier\" \"$seal/extraction-docling-handoff-verifier.js\"",
+  "/bin/chmod 400 \"$seal/eval-verify-docling-macos-handoff.mjs\" \"$seal/extraction-docling-handoff-verifier.js\"",
+  "check_file \"$seal/eval-verify-docling-macos-handoff.mjs\" \"$cli_sha\" \"$cli_bytes\" 400 1",
+  "check_file \"$seal/extraction-docling-handoff-verifier.js\" \"$verifier_sha\" \"$verifier_bytes\" 400 1",
+  "check_file \"$node\" \"$node_sha\" \"$node_bytes\" \"$node_mode\" \"$node_links\"",
+  "set +e",
+  "/usr/bin/env -i HOME=\"$authority_home\" TMPDIR=\"$authority_tmp\" PATH=/usr/bin:/bin LANG=C LC_ALL=C \"$node\" \"$seal/eval-verify-docling-macos-handoff.mjs\" \"$@\"",
+  "status=$?",
+  "set -e",
+  "check_file \"$node\" \"$node_sha\" \"$node_bytes\" \"$node_mode\" \"$node_links\"",
+  "check_file \"$cli\" \"$cli_sha\" \"$cli_bytes\" \"$cli_mode\" \"$cli_links\"",
+  "check_file \"$verifier\" \"$verifier_sha\" \"$verifier_bytes\" \"$verifier_mode\" \"$verifier_links\"",
+  "exit \"$status\"",
+].join("\n");
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -56,7 +94,7 @@ async function observedUv(testOnlyUv, capability) {
   const bytes = await readStableRegularFile(uvPath, MAX_TOOL_BYTES);
   const version = testOnlyUv?.version ?? commandOutput(uvPath, ["--version"]);
   if (!/^uv [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(version)) throw new Error("uv version output is invalid");
-  return { path: uvPath, version, bytes: bytes.length, sha256: sha256(bytes) };
+  return { path: uvPath, version, bytes: bytes.length, sha256: sha256(bytes), mode: metadata.mode & 0o777, links: metadata.nlink };
 }
 
 async function observedNode() {
@@ -65,7 +103,7 @@ async function observedNode() {
   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1) throw new Error("Node must resolve to a single-link regular binary");
   const bytes = await readStableRegularFile(nodePath, MAX_TOOL_BYTES);
   if (!/^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(process.version)) throw new Error("Node version is invalid");
-  return { path: nodePath, version: process.version, bytes: bytes.length, sha256: sha256(bytes) };
+  return { path: nodePath, version: process.version, bytes: bytes.length, sha256: sha256(bytes), mode: metadata.mode & 0o777, links: metadata.nlink };
 }
 
 function within(parent, child) {
@@ -175,6 +213,7 @@ async function prepareDoclingMacHandoffCore({
   fixturePaths,
   testOnlyHost = null,
   testOnlyUv = null,
+  testOnlyBootstrapRoot = null,
   testCapability = null,
 } = {}) {
   if (!cacheRoot || !sidecarRoot || !Array.isArray(protectedRoots) || protectedRoots.length < 1
@@ -194,6 +233,8 @@ async function prepareDoclingMacHandoffCore({
     throw new Error("Docling cache and sidecar roots must not contain one another");
   }
 
+  if (testOnlyBootstrapRoot !== null && testCapability !== TEST_CAPABILITY) throw new Error("Docling bootstrap root override requires the private test capability");
+  const bootstrapRoot = testOnlyBootstrapRoot === null ? repoRoot : path.resolve(testOnlyBootstrapRoot);
   const sourceSpecs = [
     ["adapter_entrypoint", "test/eval/candidates/docling/adapter.py"],
     ["model_setup_helper", "test/eval/candidates/docling/fetch_pinned_layout.py"],
@@ -203,17 +244,19 @@ async function prepareDoclingMacHandoffCore({
     ["candidate_response_schema", "test/fixtures/eval/extraction/phase1/candidate-response.schema.json"],
     ["handoff_schema", "test/fixtures/eval/extraction/phase1/docling-handoff.schema.json"],
     ["handoff_generator_source", "test/eval/extraction-docling-handoff.js"],
-    ["handoff_verifier_source", "test/eval/extraction-docling-handoff-verifier.js"],
+    ["handoff_verifier_source", "test/eval/extraction-docling-handoff-verifier.js", path.join(bootstrapRoot, "test/eval/extraction-docling-handoff-verifier.js")],
     ["runtime_evidence_source", "test/eval/extraction-docling-runtime-evidence.js"],
     ["handoff_authority", "scripts/eval-docling-authority.mjs"],
-    ["handoff_verifier_cli", "scripts/eval-verify-docling-macos-handoff.mjs"],
+    ["handoff_verifier_cli", "scripts/eval-verify-docling-macos-handoff.mjs", path.join(bootstrapRoot, "scripts/eval-verify-docling-macos-handoff.mjs")],
     ["finalization_schema", "test/fixtures/eval/extraction/phase1/docling-finalization.schema.json"],
     ["three_process_schema", "test/fixtures/eval/extraction/phase1/docling-three-process-evidence.schema.json"],
   ];
   const sourceInputs = [];
-  for (const [role, relativePath] of sourceSpecs) {
-    const bytes = await readStableRegularFile(path.join(repoRoot, ...relativePath.split("/")));
-    sourceInputs.push({ role, relativePath, bytes, sha256: sha256(bytes) });
+  for (const [role, relativePath, overridePath] of sourceSpecs) {
+    const sourcePath = overridePath ?? path.join(repoRoot, ...relativePath.split("/"));
+    const bytes = await readStableRegularFile(sourcePath);
+    const metadata = await fs.lstat(sourcePath);
+    sourceInputs.push({ role, relativePath, sourcePath, sourceMode: metadata.mode & 0o777, sourceLinks: metadata.nlink, bytes, sha256: sha256(bytes) });
   }
   const config = JSON.parse(sourceInputs.find(item => item.role === "candidate_config").bytes);
   const configSchema = JSON.parse(sourceInputs.find(item => item.role === "candidate_config_schema").bytes);
@@ -224,6 +267,14 @@ async function prepareDoclingMacHandoffCore({
     .sort().join("\n")}\n`);
   sourceInputs.push({ role: "direct_requirements", relativePath: "direct-requirements.in", bytes: requirementsBytes, sha256: sha256(requirementsBytes) });
 
+  const normalizedBootstrapPrefix = [
+    "/bin/sh", "-c", DOCLING_BOOTSTRAP_V1, "pdf-tools-docling-bootstrap.v1",
+    "$NODE", "$NODE_SHA256", "$NODE_BYTES", "$NODE_MODE", "$NODE_LINKS",
+    "$LAUNCHER", "$LAUNCHER_SHA256", "$LAUNCHER_BYTES", "$LAUNCHER_MODE", "$LAUNCHER_LINKS",
+    "$VERIFIER", "$VERIFIER_SHA256", "$VERIFIER_BYTES", "$VERIFIER_MODE", "$VERIFIER_LINKS",
+    "$RUN_ROOT", "$AUTHORITY_HOME", "$AUTHORITY_TMP",
+  ];
+
   const normalizedRecipe = {
     setup: {
       network_required: true,
@@ -231,7 +282,7 @@ async function prepareDoclingMacHandoffCore({
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
         UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
-      authority_command: ["/usr/bin/env", "-i", "HOME=$AUTHORITY_HOME", "TMPDIR=$AUTHORITY_TMP", "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "$NODE", "$LAUNCHER", "--action", "setup", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256", "--protected-roots-json", "$OUT_OF_BAND_PROTECTED_ROOTS_JSON"],
+      authority_command: [...normalizedBootstrapPrefix, "--action", "setup", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256", "--protected-roots-json", "$OUT_OF_BAND_PROTECTED_ROOTS_JSON"],
       commands: [
         ["$UV", "python", "install", "3.12.13"],
         ["$UV", "venv", "--python", "3.12.13", "$VENV_ROOT"],
@@ -249,7 +300,7 @@ async function prepareDoclingMacHandoffCore({
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
         UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
-      authority_command: ["/usr/bin/env", "-i", "HOME=$AUTHORITY_HOME", "TMPDIR=$AUTHORITY_TMP", "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "$NODE", "$LAUNCHER", "--action", "execute", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256", "--protected-roots-json", "$OUT_OF_BAND_PROTECTED_ROOTS_JSON", "--finalization", "$FINALIZATION", "--expected-finalization-sha256", "$OUT_OF_BAND_FINALIZATION_SHA256"],
+      authority_command: [...normalizedBootstrapPrefix, "--action", "execute", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256", "--protected-roots-json", "$OUT_OF_BAND_PROTECTED_ROOTS_JSON", "--finalization", "$FINALIZATION", "--expected-finalization-sha256", "$OUT_OF_BAND_FINALIZATION_SHA256"],
       adapter_command: ["$PYTHON", "-I", "-B", "$ADAPTER", "--config", "$CONFIG", "--artifacts-path", "$MODELS_ROOT", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256"],
     },
   };
@@ -268,7 +319,7 @@ async function prepareDoclingMacHandoffCore({
     fixtureDigests.add(digest);
     fixtureInputs.push({ ordinal: index + 1, bytes, sha256: digest, filename: `source-${String(index + 1).padStart(3, "0")}-${digest.slice(0, 12)}.pdf` });
   }
-  const retainedIdentityInputs = sourceInputs.map(({ role, relativePath, bytes, ...identity }) => ({ role, filename: role === "direct_requirements" ? "direct-requirements.in" : path.basename(relativePath), bytes: bytes.length, ...identity }));
+  const retainedIdentityInputs = sourceInputs.map(({ role, relativePath, sourcePath, sourceMode, sourceLinks, bytes, ...identity }) => ({ role, filename: role === "direct_requirements" ? "direct-requirements.in" : path.basename(relativePath), bytes: bytes.length, ...identity }));
   const retainedIdentityFixtures = fixtureInputs.map(({ bytes, ...identity }) => ({ ...identity, bytes: bytes.length }));
   const handoffIdentity = {
     protocol: "pdf-tools.docling-macos-handoff.v1",
@@ -325,16 +376,25 @@ async function prepareDoclingMacHandoffCore({
   const adapterPath = path.join(snapshotRoot, "adapter.py");
   const setupHelperPath = path.join(snapshotRoot, "fetch_pinned_layout.py");
   const configPath = path.join(snapshotRoot, "docling-candidate-config.v1.json");
-  const launcherPath = path.join(repoRoot, "scripts/eval-verify-docling-macos-handoff.mjs");
+  const launcherSource = sourceInputs.find(item => item.role === "handoff_verifier_cli");
+  const verifierSource = sourceInputs.find(item => item.role === "handoff_verifier_source");
+  const launcherPath = launcherSource.sourcePath;
+  const verifierPath = verifierSource.sourcePath;
   const configSha256 = retainedInputs.find(item => item.role === "candidate_config").sha256;
   const receiptPath = path.join(runRoot, "docling-handoff.v1.json");
   const finalizationPath = path.join(runRoot, "docling-finalization.v1.json");
   const receiptShaPlaceholder = "$OUT_OF_BAND_RECEIPT_SHA256";
   const finalizationShaPlaceholder = "$OUT_OF_BAND_FINALIZATION_SHA256";
   const protectedRootsPlaceholder = "$OUT_OF_BAND_PROTECTED_ROOTS_JSON";
-  const cleanLauncherPrefix = ["/usr/bin/env", "-i", `HOME=${authorityHome}`, `TMPDIR=${authorityTmp}`, "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", node.path, launcherPath];
-  const setupAuthorityCommand = [...cleanLauncherPrefix, "--action", "setup", "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder, "--protected-roots-json", protectedRootsPlaceholder];
-  const executionAuthorityCommand = [...cleanLauncherPrefix, "--action", "execute", "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder, "--protected-roots-json", protectedRootsPlaceholder, "--finalization", finalizationPath, "--expected-finalization-sha256", finalizationShaPlaceholder];
+  const bootstrapPrefix = [
+    "/bin/sh", "-c", DOCLING_BOOTSTRAP_V1, "pdf-tools-docling-bootstrap.v1",
+    node.path, node.sha256, String(node.bytes), node.mode.toString(8), String(node.links),
+    launcherPath, launcherSource.sha256, String(launcherSource.bytes.length), launcherSource.sourceMode.toString(8), String(launcherSource.sourceLinks),
+    verifierPath, verifierSource.sha256, String(verifierSource.bytes.length), verifierSource.sourceMode.toString(8), String(verifierSource.sourceLinks),
+    runRoot, authorityHome, authorityTmp,
+  ];
+  const setupAuthorityCommand = [...bootstrapPrefix, "--action", "setup", "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder, "--protected-roots-json", protectedRootsPlaceholder];
+  const executionAuthorityCommand = [...bootstrapPrefix, "--action", "execute", "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder, "--protected-roots-json", protectedRootsPlaceholder, "--finalization", finalizationPath, "--expected-finalization-sha256", finalizationShaPlaceholder];
   const pythonPath = path.join(venvRoot, "bin", "python");
   const baseEnvironment = {
     HOME: authorityHome, TMPDIR: authorityTmp, PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
@@ -354,8 +414,8 @@ async function prepareDoclingMacHandoffCore({
       node_version: host.node_version,
     },
     toolchain: {
-      uv: { path: uv.path, version: uv.version, bytes: uv.bytes, sha256: uv.sha256 },
-      node: { path: node.path, version: node.version, bytes: node.bytes, sha256: node.sha256 },
+      uv: { path: uv.path, version: uv.version, bytes: uv.bytes, sha256: uv.sha256, mode: uv.mode, links: uv.links },
+      node: { path: node.path, version: node.version, bytes: node.bytes, sha256: node.sha256, mode: node.mode, links: node.links },
     },
     roots: {
       uv: uvRoot,
@@ -400,11 +460,17 @@ async function prepareDoclingMacHandoffCore({
   const validation = new AjvJsonSchemaValidator().getValidator(trustedSchema)(receipt);
   if (!validation.valid) throw new Error(`Generated Docling handoff is invalid: ${validation.errorMessage}`);
   await writeExclusive(receiptPath, receiptBytes);
-  return { receipt, receiptPath, receipt_sha256: sha256(receiptBytes), protected_roots_json: canonicalJson([...protectedRoots].map(value => path.resolve(value)).sort()) };
+  return {
+    receipt,
+    receiptPath,
+    receipt_sha256: sha256(receiptBytes),
+    bootstrap_sha256: sha256(Buffer.from(DOCLING_BOOTSTRAP_V1)),
+    protected_roots_json: canonicalJson([...protectedRoots].map(value => path.resolve(value)).sort()),
+  };
 }
 
 export async function prepareDoclingMacHandoff(options = {}) {
-  if ("testOnlyHost" in options || "testOnlyUv" in options || "testCapability" in options) {
+  if ("testOnlyHost" in options || "testOnlyUv" in options || "testOnlyBootstrapRoot" in options || "testCapability" in options) {
     throw new Error("Production handoff API does not accept injected host or toolchain facts");
   }
   return prepareDoclingMacHandoffCore(options);

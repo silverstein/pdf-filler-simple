@@ -41,9 +41,21 @@ configured protected root. It copies only PDF bytes into the candidate handoff,
 not the Phase 0 manifest, case IDs, expected values, or ground truth. The JSON
 receipt contains the exact clean-launcher setup/execution recipe and hashes for
 every retained input. Its SHA-256 and protected-root JSON must be carried out of
-band. The trusted launcher verifies the exact Node binary and retained authority,
-executes a sealed copy with a NODE-free allowlisted environment, then verifies
-both again. The adapter independently requires the same receipt and digest. A
+band. Before executing either receipt command, a human must authenticate that
+receipt SHA-256 with a trusted system mechanism independent of the checkout.
+The builder also prints the inline bootstrap SHA-256. Compare it independently
+to the reviewed value
+`9921055c8883627b062c4edfa8996c49ec37e6a7262374cdff27fc3ec7067b6f`; the
+generator's own output is not its authority. The receipt-bound `/bin/sh`
+bootstrap uses fixed system primitives to verify the exact Node binary,
+launcher CLI, and launcher module before any JavaScript executes. It copies the
+CLI and module into one mode-0700 seal, makes both files mode 0400, and launches
+the sealed CLI with an empty, allowlisted Node environment. The sealed CLI
+resolves only its sealed sibling module; the module then verifies and seals the
+retained authority. Directly running
+`node scripts/eval-verify-docling-macos-handoff.mjs` is a convenience diagnostic,
+not the independent authority path. The adapter independently requires the same
+receipt and digest. A
 mutable receipt, config, adapter, fixture, helper, launcher, authority, Node, or
 `uv` binary fails closed.
 

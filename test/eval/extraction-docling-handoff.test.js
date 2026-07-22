@@ -5,6 +5,7 @@ import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { assertSchema } from "./extraction-phase1-protocol.js";
 import {
+  DOCLING_BOOTSTRAP_V1,
   prepareDoclingMacHandoff,
   prepareDoclingMacHandoffForTest,
 } from "./extraction-docling-handoff.js";
@@ -57,9 +58,26 @@ function cleanVerifyCommand(result) {
       : value === "$OUT_OF_BAND_PROTECTED_ROOTS_JSON" ? result.protected_roots_json : value);
 }
 
-function runCleanVerify(result) {
+function runCleanVerify(result, environment = process.env) {
   const command = cleanVerifyCommand(result);
-  return spawnSync(command[0], command.slice(1), { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: process.env });
+  return spawnSync(command[0], command.slice(1), { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: environment });
+}
+
+async function bootstrapMutationCase(suffix) {
+  const root = await temporaryRoot(`pdf-tools-docling-bootstrap-${suffix}-`);
+  const bootstrapRoot = path.join(root, "bootstrap-source");
+  await fs.mkdir(path.join(bootstrapRoot, "scripts"), { recursive: true, mode: 0o700 });
+  await fs.mkdir(path.join(bootstrapRoot, "test/eval"), { recursive: true, mode: 0o700 });
+  const cliPath = path.join(bootstrapRoot, "scripts/eval-verify-docling-macos-handoff.mjs");
+  const verifierPath = path.join(bootstrapRoot, "test/eval/extraction-docling-handoff-verifier.js");
+  await fs.copyFile(path.resolve("scripts/eval-verify-docling-macos-handoff.mjs"), cliPath);
+  await fs.copyFile(path.resolve("test/eval/extraction-docling-handoff-verifier.js"), verifierPath);
+  await Promise.all([fs.chmod(cliPath, 0o644), fs.chmod(verifierPath, 0o644)]);
+  const result = await prepareDoclingMacHandoffForTest({
+    ...(await options(root, [await fixture(root)])),
+    testOnlyBootstrapRoot: bootstrapRoot,
+  });
+  return { root, result, cliPath, verifierPath };
 }
 
 afterEach(async () => {
@@ -69,7 +87,7 @@ afterEach(async () => {
 describe("Docling macOS handoff", () => {
   it("enforces the retained finalization schema mirror before live-state checks", () => {
     const sha = "a".repeat(64);
-    const tool = { path: "/private/tool", version: "tool 1.0", bytes: 1, sha256: sha };
+    const tool = { path: "/private/tool", version: "tool 1.0", bytes: 1, sha256: sha, mode: 0o755, links: 1 };
     const tree = [{ relative_path: "file", type: "file", mode: 0o600, links: 1, bytes: 1, sha256: sha }];
     const rootRecord = { path: "/private/root", real_path: "/private/root", mode: 0o700, links: 1 };
     const value = {
@@ -98,25 +116,22 @@ describe("Docling macOS handoff", () => {
       setup: { network_required: true },
       execution: { offline_intent: true, network_isolation_enforced: false },
     });
-    expect(result.receipt.setup.authority_command.slice(0, 9)).toEqual([
-      "/usr/bin/env", "-i", `HOME=${result.receipt.roots.authority_home}`, `TMPDIR=${result.receipt.roots.authority_tmp}`,
-      "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", result.receipt.toolchain.node.path,
-      path.join(path.resolve("."), "scripts/eval-verify-docling-macos-handoff.mjs"),
+    expect(result.receipt.setup.authority_command.slice(0, 10)).toEqual([
+      "/bin/sh", "-c", DOCLING_BOOTSTRAP_V1, "pdf-tools-docling-bootstrap.v1",
+      result.receipt.toolchain.node.path, result.receipt.toolchain.node.sha256,
+      String(result.receipt.toolchain.node.bytes), result.receipt.toolchain.node.mode.toString(8),
+      String(result.receipt.toolchain.node.links), path.join(path.resolve("."), "scripts/eval-verify-docling-macos-handoff.mjs"),
     ]);
+    expect(result.bootstrap_sha256).toBe("9921055c8883627b062c4edfa8996c49ec37e6a7262374cdff27fc3ec7067b6f");
     expect(result.receipt.setup.commands.at(-1).slice(0, 3)).toEqual([path.join(result.receipt.roots.sidecar_snapshot, "venv/bin/python"), "-I", "-B"]);
     expect(result.receipt.execution.adapter_command.slice(0, 3)).toEqual([path.join(result.receipt.roots.sidecar_snapshot, "venv/bin/python"), "-I", "-B"]);
     expect(result.receipt.handoff_id).toMatch(/^[a-f0-9]{64}$/);
     expect(result.receipt_sha256).toMatch(/^[a-f0-9]{64}$/);
-    const cleanCommand = cleanVerifyCommand(result);
     const cleanVerify = runCleanVerify(result);
     expect(cleanVerify.status, cleanVerify.stderr).toBe(0);
     expect(JSON.parse(cleanVerify.stdout)).toMatchObject({ verified: true, handoff_id: result.receipt.handoff_id });
-    const dirtyVerify = spawnSync(result.receipt.toolchain.node.path, cleanCommand.slice(8), {
-      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
-      env: { HOME: result.receipt.roots.authority_home, TMPDIR: result.receipt.roots.authority_tmp, PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", NODE_OPTIONS: "--no-warnings" },
-    });
-    expect(dirtyVerify.status).not.toBe(0);
-    expect(dirtyVerify.stderr).toMatch(/clean Node startup/);
+    const hostileParentVerify = runCleanVerify(result, { ...process.env, NODE_OPTIONS: "--no-warnings" });
+    expect(hostileParentVerify.status, hostileParentVerify.stderr).toBe(0);
     const serialized = JSON.stringify({ inputs: result.receipt.inputs, fixtures: result.receipt.fixtures });
     for (const forbidden of ["ground_truth", "expected", "partition", "category", "fact_ids", "truth_boxes", "answer_state"]) {
       expect(serialized).not.toContain(forbidden);
@@ -133,7 +148,7 @@ describe("Docling macOS handoff", () => {
       const bytes = await fs.readFile(path.join(result.receipt.roots.sidecar_snapshot, retained.filename));
       expect(bytes.length).toBe(retained.bytes);
     }
-  });
+  }, 10000);
 
   it("is content deterministic across distinct secure destinations", async () => {
     const firstRoot = await temporaryRoot("pdf-tools-docling-handoff-a-");
@@ -189,20 +204,21 @@ describe("Docling macOS handoff", () => {
     await expect(prepareDoclingMacHandoffForTest(await options(root, [large]))).rejects.toThrow(/bounded|8 MiB/);
   });
 
-  it("rejects receipt and retained-input mutations against the out-of-band receipt digest", async () => {
+  it("rejects a receipt mutation against the out-of-band receipt digest", async () => {
     const receiptCase = await mutationCase("receipt");
     await fs.appendFile(receiptCase.result.receiptPath, " ");
     const receiptVerification = runCleanVerify(receiptCase.result);
     expect(receiptVerification.status).not.toBe(0);
     expect(receiptVerification.stderr).toMatch(/out-of-band/);
+  });
 
+  it("rejects a retained-input mutation against the out-of-band receipt digest", async () => {
     const inputCase = await mutationCase("input");
     const config = inputCase.result.receipt.inputs.find(item => item.role === "candidate_config");
     await fs.appendFile(path.join(inputCase.result.receipt.roots.sidecar_snapshot, config.filename), " ");
     const inputVerification = runCleanVerify(inputCase.result);
     expect(inputVerification.status).not.toBe(0);
     expect(inputVerification.stderr).toMatch(/input mismatch/i);
-
   });
 
   it("rejects mismatched authority bytes before executing them", async () => {
@@ -217,14 +233,34 @@ describe("Docling macOS handoff", () => {
     await expect(fs.stat(executionMarker)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
-  it("rejects retained fixture and uv mutations", async () => {
+  it("rejects a mutated launcher CLI in a fresh process before any mutation executes", async () => {
+    const mutation = await bootstrapMutationCase("cli");
+    const marker = path.join(mutation.root, "mutated-cli-executed");
+    await fs.writeFile(mutation.cliPath, `import fs from "node:fs";fs.writeFileSync(${JSON.stringify(marker)}, "executed");\n`);
+    const verification = runCleanVerify(mutation.result);
+    expect(verification.status).not.toBe(0);
+    await expect(fs.stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a mutated launcher module in a fresh process before any mutation executes", async () => {
+    const mutation = await bootstrapMutationCase("module");
+    const marker = path.join(mutation.root, "mutated-module-executed");
+    await fs.writeFile(mutation.verifierPath, `import fs from "node:fs";fs.writeFileSync(${JSON.stringify(marker)}, "executed");\nexport const runDoclingAuthority = null;\n`);
+    const verification = runCleanVerify(mutation.result);
+    expect(verification.status).not.toBe(0);
+    await expect(fs.stat(marker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects a retained fixture mutation", async () => {
     const fixtureCase = await mutationCase("fixture");
     const retainedFixture = fixtureCase.result.receipt.fixtures[0];
     await fs.appendFile(path.join(path.dirname(fixtureCase.result.receiptPath), "fixtures", retainedFixture.filename), " ");
     const fixtureVerification = runCleanVerify(fixtureCase.result);
     expect(fixtureVerification.status).not.toBe(0);
     expect(fixtureVerification.stderr).toMatch(/fixture mismatch/i);
+  });
 
+  it("rejects a uv mutation", async () => {
     const uvCase = await mutationCase("uv");
     await fs.appendFile(uvCase.result.receipt.toolchain.uv.path, "mutated");
     const uvVerification = runCleanVerify(uvCase.result);
@@ -232,13 +268,15 @@ describe("Docling macOS handoff", () => {
     expect(uvVerification.stderr).toMatch(/uv binary/i);
   });
 
-  it("rejects unbound snapshot entries and nonempty authority isolation roots", async () => {
+  it("rejects an unbound snapshot entry", async () => {
     const snapshotCase = await mutationCase("snapshot-extra");
     await fs.writeFile(path.join(snapshotCase.result.receipt.roots.sidecar_snapshot, "unbound.py"), "raise SystemExit(0)\n", { mode: 0o600 });
     const snapshotVerification = runCleanVerify(snapshotCase.result);
     expect(snapshotVerification.status).not.toBe(0);
     expect(snapshotVerification.stderr).toMatch(/unbound top-level entry/i);
+  });
 
+  it("rejects a nonempty authority isolation root", async () => {
     const isolationCase = await mutationCase("isolation-root");
     await fs.writeFile(path.join(isolationCase.result.receipt.roots.authority_home, "usercustomize.py"), "raise SystemExit(0)\n", { mode: 0o600 });
     const isolationVerification = runCleanVerify(isolationCase.result);

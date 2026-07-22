@@ -78,12 +78,15 @@ async function verifyBoundFile(filename, record, label, requiredMode = null) {
 
 async function verifyNode(receipt, environment) {
   const node = receipt.toolchain?.node;
-  if (!node || !SHA256.test(node.sha256 ?? "") || !Number.isInteger(node.bytes)) throw new Error("Docling receipt lacks Node identity");
-  const bytes = await readStable(node.path, MAX_TOOL_BYTES);
+  if (!node || !SHA256.test(node.sha256 ?? "") || !Number.isInteger(node.bytes)
+    || !Number.isInteger(node.mode) || node.mode < 0 || node.mode > 0o777 || node.links !== 1) {
+    throw new Error("Docling receipt lacks exact Node identity");
+  }
+  const bytes = await readStable(node.path, MAX_TOOL_BYTES, node.mode);
   if (bytes.length !== node.bytes || sha256(bytes) !== node.sha256) throw new Error("Node binary differs from the out-of-band receipt before execution");
   const version = spawnSync(node.path, ["--version"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: environment });
   if (version.error || version.status !== 0 || version.stdout.trim() !== node.version) throw new Error("Node version differs from the out-of-band receipt before execution");
-  const after = await readStable(node.path, MAX_TOOL_BYTES);
+  const after = await readStable(node.path, MAX_TOOL_BYTES, node.mode);
   if (!after.equals(bytes)) throw new Error("Node binary changed across launcher verification");
   return node;
 }
