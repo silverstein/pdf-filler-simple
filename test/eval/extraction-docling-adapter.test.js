@@ -102,6 +102,33 @@ async function runAdapter({ request, source, exported = EXPORT_FIXTURE, environm
   });
 }
 
+async function runStagedSourceHarness(lines, { environment = {}, arguments_: extraArguments = [] } = {}) {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-staged-source-"));
+  temporaryRoots.push(root);
+  const authorityTmp = path.join(root, "authority-tmp");
+  await fs.mkdir(authorityTmp, { mode: 0o700 });
+  const source = Buffer.from("%PDF-1.7\nstaged-source harness\n%%EOF\n");
+  await fs.writeFile(path.join(root, "source.pdf"), source, { mode: 0o400 });
+  const request = requestFor(source);
+  const adapter = path.join(REPO_ROOT, "test/eval/candidates/docling/adapter.py");
+  const program = [
+    "import importlib.util,json,os,stat,sys",
+    "from pathlib import Path",
+    "spec=importlib.util.spec_from_file_location('adapter',sys.argv[1])",
+    "module=importlib.util.module_from_spec(spec)",
+    "spec.loader.exec_module(module)",
+    "request=json.loads(sys.stdin.buffer.read())",
+    ...lines,
+  ].join("\n");
+  const result = spawnSync("python3", ["-I", "-B", "-c", program, adapter, ...extraArguments], {
+    cwd: root,
+    input: JSON.stringify(request),
+    env: { PATH: process.env.PATH, PYTHONDONTWRITEBYTECODE: "1", TMPDIR: authorityTmp, ...environment },
+    encoding: "utf8",
+  });
+  return { ...result, authorityTmp };
+}
+
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })));
 });
@@ -144,6 +171,91 @@ describe("evaluation-only Docling direct-PDF adapter", () => {
     });
     expect(result.status, result.stderr).toBe(0);
     expect(result.stdout).toBe(canonicalJson(exported));
+  });
+
+  it("binds TorchInductor to the exact private staging child and restores present or absent environment state", async () => {
+    const result = await runStagedSourceHarness([
+      "result={}",
+      "os.environ['TORCHINDUCTOR_CACHE_DIR']='prior-cache-value'",
+      "with module.staged_source(request) as private_path:",
+      "    normal_root=private_path.parent",
+      "    normal_cache=Path(os.environ['TORCHINDUCTOR_CACHE_DIR'])",
+      "    (normal_cache/'created-by-torch').write_text('cache')",
+      "    result['normal']={'root':str(normal_root),'cache':str(normal_cache),'expected':str(normal_root/module.TORCHINDUCTOR_CACHE_BASENAME),'root_mode':stat.S_IMODE(os.lstat(normal_root).st_mode),'cache_mode':stat.S_IMODE(os.lstat(normal_cache).st_mode),'cache_real':str(normal_cache.resolve(strict=True))}",
+      "result['normal'].update({'root_removed':not normal_root.exists(),'cache_removed':not normal_cache.exists(),'restored':os.environ.get('TORCHINDUCTOR_CACHE_DIR')})",
+      "os.environ.pop('TORCHINDUCTOR_CACHE_DIR')",
+      "try:",
+      "    with module.staged_source(request) as private_path:",
+      "        exceptional_root=private_path.parent",
+      "        exceptional_cache=Path(os.environ['TORCHINDUCTOR_CACHE_DIR'])",
+      "        (exceptional_cache/'partial-artifact').write_text('cache')",
+      "        result['exceptional']={'cache':str(exceptional_cache),'expected':str(exceptional_root/module.TORCHINDUCTOR_CACHE_BASENAME)}",
+      "        raise RuntimeError('forced failure')",
+      "except RuntimeError:",
+      "    pass",
+      "result['exceptional'].update({'root_removed':not exceptional_root.exists(),'cache_removed':not exceptional_cache.exists(),'environment_absent':'TORCHINDUCTOR_CACHE_DIR' not in os.environ})",
+      "sys.stdout.write(json.dumps(result,sort_keys=True,separators=(',',':')))",
+    ]);
+    expect(result.status, result.stderr).toBe(0);
+    const observed = JSON.parse(result.stdout);
+    expect(observed.normal).toMatchObject({
+      cache: observed.normal.expected,
+      cache_real: observed.normal.expected,
+      root_mode: 0o700,
+      cache_mode: 0o700,
+      root_removed: true,
+      cache_removed: true,
+      restored: "prior-cache-value",
+    });
+    expect(observed.exceptional).toMatchObject({
+      cache: observed.exceptional.expected,
+      root_removed: true,
+      cache_removed: true,
+      environment_absent: true,
+    });
+    expect(await fs.readdir(result.authorityTmp)).toEqual([]);
+  });
+
+  it("rejects a substituted TorchInductor cache symlink without following or retaining it", async () => {
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-cache-outside-"));
+    temporaryRoots.push(outside);
+    const sentinel = path.join(outside, "sentinel");
+    await fs.writeFile(sentinel, "outside");
+    const result = await runStagedSourceHarness([
+      "outside=Path(sys.argv[2])",
+      "real_mkdir=module.os.mkdir",
+      "state={'root':None}",
+      "def substitute(target,mode=0o777,*,dir_fd=None):",
+      "    candidate=Path(target)",
+      "    if candidate.name==module.TORCHINDUCTOR_CACHE_BASENAME:",
+      "        state['root']=candidate.parent",
+      "        os.symlink(outside,candidate)",
+      "        return None",
+      "    if dir_fd is None:",
+      "        return real_mkdir(target,mode)",
+      "    return real_mkdir(target,mode,dir_fd=dir_fd)",
+      "module.os.mkdir=substitute",
+      "try:",
+      "    with module.staged_source(request):",
+      "        state['accepted']=True",
+      "except module.AdapterError as error:",
+      "    state['code']=error.code",
+      "finally:",
+      "    module.os.mkdir=real_mkdir",
+      "state['root_removed']=state['root'] is not None and not state['root'].exists()",
+      "state['outside_exists']=outside.is_dir()",
+      "state['environment_absent']='TORCHINDUCTOR_CACHE_DIR' not in os.environ",
+      "sys.stdout.write(json.dumps(state,sort_keys=True,separators=(',',':'),default=str))",
+    ], { arguments_: [outside] });
+    expect(result.status, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toMatchObject({
+      code: "TORCHINDUCTOR_CACHE_INVALID",
+      root_removed: true,
+      outside_exists: true,
+      environment_absent: true,
+    });
+    expect(await fs.readFile(sentinel, "utf8")).toBe("outside");
+    expect(await fs.readdir(result.authorityTmp)).toEqual([]);
   });
 
   it("matches Phase 1 JavaScript canonical JSON for hostile numeric and UTF-16 key-order cases", () => {

@@ -38,6 +38,7 @@ MAX_SCHEMA_DEPTH = 32
 MAX_SCHEMA_NODES = 2048
 MAX_SCHEMA_LEAVES = 1024
 RESPONSE_ENVELOPE_RESERVE_BYTES = 768
+TORCHINDUCTOR_CACHE_BASENAME = "torchinductor-cache"
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 SAFE_ID = re.compile(r"[^A-Za-z0-9._:-]+")
 FORBIDDEN_TRUTH_KEYS = {
@@ -465,9 +466,10 @@ def staged_source(request: dict[str, Any]):
         descriptor = os.open(source_path, flags)
     except OSError as error:
         raise AdapterError("SOURCE_OPEN_FAILED", "Staged source could not be opened as a regular file") from error
-    staging_root = Path(tempfile.mkdtemp(prefix="pdf-tools-docling-source-"))
+    staging_root = Path(tempfile.mkdtemp(prefix="pdf-tools-docling-source-")).resolve(strict=True)
     os.chmod(staging_root, 0o700)
     private_path = staging_root / "source.pdf"
+    torchinductor_cache = staging_root / TORCHINDUCTOR_CACHE_BASENAME
     destination = None
     try:
         destination = os.open(private_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o400)
@@ -505,7 +507,26 @@ def staged_source(request: dict[str, Any]):
         private_size, private_digest = digest_stable_regular(private_path, expected_size, 0o400)
         if private_size != expected_size or private_digest != request["source"]["sha256"]:
             raise AdapterError("SOURCE_STAGE_FAILED", "Private source staging changed the verified bytes")
-        yield private_path
+        try:
+            os.mkdir(torchinductor_cache, 0o700)
+            cache_metadata = os.lstat(torchinductor_cache)
+            if (not stat.S_ISDIR(cache_metadata.st_mode) or stat.S_ISLNK(cache_metadata.st_mode)
+                    or stat.S_IMODE(cache_metadata.st_mode) != 0o700 or cache_metadata.st_nlink < 1
+                    or torchinductor_cache.resolve(strict=True) != torchinductor_cache
+                    or torchinductor_cache.parent != staging_root):
+                raise AdapterError("TORCHINDUCTOR_CACHE_INVALID", "Private TorchInductor cache is not an exact staging child")
+        except OSError as error:
+            raise AdapterError("TORCHINDUCTOR_CACHE_INVALID", "Private TorchInductor cache could not be created") from error
+        had_torchinductor_cache = "TORCHINDUCTOR_CACHE_DIR" in os.environ
+        previous_torchinductor_cache = os.environ.get("TORCHINDUCTOR_CACHE_DIR")
+        os.environ["TORCHINDUCTOR_CACHE_DIR"] = str(torchinductor_cache)
+        try:
+            yield private_path
+        finally:
+            if had_torchinductor_cache:
+                os.environ["TORCHINDUCTOR_CACHE_DIR"] = previous_torchinductor_cache
+            else:
+                os.environ.pop("TORCHINDUCTOR_CACHE_DIR", None)
     finally:
         if destination is not None:
             os.close(destination)
