@@ -32,6 +32,11 @@ import {
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
+const CMAP_ORACLE_PROVENANCE = JSON.parse(readFileSync(
+  path.join(REPO_ROOT, "test/fixtures/eval/extraction/oracles/layout-unijis-vertical.provenance.json"),
+  "utf8",
+));
+const CMAP_ORACLE_ASSETS = CMAP_ORACLE_PROVENANCE.runtime_assets.files;
 const DEFAULT_OUTPUT = path.join(REPO_ROOT, "pdf-toolkit-mcp.mcpb");
 const MCPB_VERSION = "2.1.2";
 const FFLATE_VERSION = "0.8.3";
@@ -287,14 +292,16 @@ function verifyStagedProductionGraph(stagingDir, packages) {
     "dist-ui/index.html",
     "node_modules/pdfjs-dist/legacy/build/pdf.mjs",
     "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
-    "node_modules/pdfjs-dist/cmaps/UniJIS-UTF16-V.bcmap",
-    "node_modules/pdfjs-dist/cmaps/LICENSE",
-    "node_modules/pdfjs-dist/LICENSE",
-    "node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf",
-    "node_modules/pdfjs-dist/standard_fonts/LICENSE_FOXIT",
-    "node_modules/pdfjs-dist/standard_fonts/LICENSE_LIBERATION",
+    ...CMAP_ORACLE_ASSETS.map(asset => asset.path),
   ]) {
     if (!paths.includes(required)) throw new Error(`Staged MCPB is missing required runtime file: ${required}`);
+  }
+  const expectedByPath = new Map(expected.map(file => [file.path, file]));
+  for (const binding of CMAP_ORACLE_ASSETS) {
+    const file = expectedByPath.get(binding.path);
+    if (!file || file.size !== binding.size_bytes || file.sha256 !== binding.sha256) {
+      throw new Error(`Staged MCPB PDF.js asset does not match oracle provenance: ${binding.path}`);
+    }
   }
   for (const filename of paths) {
     if (FORBIDDEN_ARCHIVE_FILES.has(filename) || FORBIDDEN_ARCHIVE_PREFIXES.some(prefix => filename.startsWith(prefix))) {

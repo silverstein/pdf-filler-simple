@@ -1,0 +1,106 @@
+{
+  "schema_version": 1,
+  "fixture_id": "pdf-tools.oracle.layout-unijis-vertical.v1",
+  "ownership": "Open Document Alliance generated synthetic fixture",
+  "license": "CC0-1.0",
+  "privacy": "Synthetic text-only fixture; no personal data",
+  "redistribution": "allowed",
+  "generator": {
+    "path": "scripts/generate-layout-cmap-oracle.mjs",
+    "sha256": "37479cef3137a34f64d88b32a2ee44111467edd8c91dc05c43fb52abf7ee8ea1",
+    "hash_contract": "SHA-256 of UTF-8 generator source after CRLF or CR line endings are normalized to LF",
+    "runtime": "Node.js standard library only",
+    "command": "node scripts/generate-layout-cmap-oracle.mjs"
+  },
+  "fixture": {
+    "path": "test/fixtures/eval/extraction/oracles/layout-unijis-vertical.pdf",
+    "sha256": "230d3a259b86f9f0fe4353175e42b4cf668d17b91e47f92ed9b8e2444ccf2366",
+    "size_bytes": 1481
+  },
+  "oracle": {
+    "exact_unicode_text": "日本語",
+    "named_encoding": "UniJIS-UTF16-V",
+    "descendant_collection": "Adobe-Japan1-7",
+    "requires_packaged_cmaps": [
+      "UniJIS-UTF16-V.bcmap",
+      "UniJIS-UTF16-H.bcmap",
+      "Adobe-Japan1-UCS2.bcmap"
+    ],
+    "geometry_claim": "PDF.js 5.4.624 TextItem vertical advance-box approximation only; not glyph ink bounds or rendered-visibility proof"
+  },
+  "runtime_assets": {
+    "pdfjs_dist_version": "5.4.624",
+    "files": [
+      {
+        "path": "node_modules/pdfjs-dist/cmaps/UniJIS-UTF16-V.bcmap",
+        "sha256": "c67126fc7c73850855186bb0d6482ac0a365057e0b58778c4ab9f234683fef53",
+        "size_bytes": 643
+      },
+      {
+        "path": "node_modules/pdfjs-dist/cmaps/UniJIS-UTF16-H.bcmap",
+        "sha256": "f6a89c5688978548c83fcee990e205bc63c74274d5c69b49032a3bd4c49a05ee",
+        "size_bytes": 39443
+      },
+      {
+        "path": "node_modules/pdfjs-dist/cmaps/Adobe-Japan1-UCS2.bcmap",
+        "sha256": "66c5d0dc4964f4093e77b194023f3a0f689324028ec8330e1e1d0570bcba7c2f",
+        "size_bytes": 40951
+      },
+      {
+        "path": "node_modules/pdfjs-dist/cmaps/LICENSE",
+        "sha256": "aa92ab5a472974865a96fd4a4e9c13bb41bf6fe1b309cb6b8da48bc9e19839a2",
+        "size_bytes": 2080
+      },
+      {
+        "path": "node_modules/pdfjs-dist/LICENSE",
+        "sha256": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+        "size_bytes": 10174
+      },
+      {
+        "path": "node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf",
+        "sha256": "f8ace1f892b2bd9dc1792ba7f097fa7588f84fed48321480e04de5390828221f",
+        "size_bytes": 139512
+      },
+      {
+        "path": "node_modules/pdfjs-dist/standard_fonts/LICENSE_FOXIT",
+        "sha256": "b578cdd2345840ada550bd12519533812320d5f1d21cf4c1c7e1b1b0a31c98b7",
+        "size_bytes": 1553
+      },
+      {
+        "path": "node_modules/pdfjs-dist/standard_fonts/LICENSE_LIBERATION",
+        "sha256": "93fed46019c38bbe566b479d22148e2e8a1e85ada614accb0211c37b2c61c19b",
+        "size_bytes": 4414
+      }
+    ],
+    "license_note": "The named CMaps and their terms are retained from pdfjs-dist; Foxit and Liberation notices are retained for the packaged PDF.js standard-font assets even though this fixture embeds no font program."
+  },
+  "font_program": {
+    "embedded": false,
+    "bytes": 0,
+    "note": "The synthetic PDF contains only an ODA-authored font dictionary and references named Adobe CMaps shipped under pdfjs-dist/cmaps/LICENSE."
+  },
+  "independent_structure_check": {
+    "object_count": 8,
+    "object_numbers": [
+      1,
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8
+    ],
+    "xref_offset": 1225,
+    "xref_subsection": "0 9",
+    "xref_entry_count": 9,
+    "trailer": {
+      "size": 9,
+      "root": "1 0 R",
+      "info": "8 0 R"
+    },
+    "named_encoding": "UniJIS-UTF16-V",
+    "embedded_font_programs": 0,
+    "embedded_to_unicode_maps": 0
+  }
+}

@@ -1,0 +1,49 @@
+%PDF-1.7
+%‚„œ”
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 300 400] /Resources << /Font << /F0 5 0 R >> >> /Contents 4 0 R >>
+endobj
+4 0 obj
+<<  /Length 52 >>
+stream
+BT
+/F0 24 Tf
+1 0 0 1 150 340 Tm
+<65E5672C8A9E> Tj
+ET
+endstream
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type0 /BaseFont /ODAOracleMincho /Encoding /UniJIS-UTF16-V /DescendantFonts [6 0 R] >>
+endobj
+6 0 obj
+<< /Type /Font /Subtype /CIDFontType0 /BaseFont /ODAOracleMincho /CIDSystemInfo << /Registry (Adobe) /Ordering (Japan1) /Supplement 7 >> /FontDescriptor 7 0 R /DW 1000 /DW2 [880 -1000] >>
+endobj
+7 0 obj
+<< /Type /FontDescriptor /FontName /ODAOracleMincho /Flags 4 /FontBBox [0 -1000 1000 1000] /ItalicAngle 0 /Ascent 880 /Descent -120 /CapHeight 880 /StemV 80 >>
+endobj
+8 0 obj
+<< /Title (ODA deterministic UniJIS vertical extraction oracle) /Author (Open Document Alliance) /Creator (scripts/generate-layout-cmap-oracle.mjs) /Producer (Open Document Alliance minimal PDF writer) /Subject (Synthetic text-only test fixture; no personal data or embedded font program) /CreationDate (D:20260722000000Z) /ModDate (D:20260722000000Z) >>
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000015 00000 n 
+0000000064 00000 n 
+0000000121 00000 n 
+0000000247 00000 n 
+0000000350 00000 n 
+0000000477 00000 n 
+0000000680 00000 n 
+0000000855 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R /Info 8 0 R >>
+startxref
+1225
+%%EOF

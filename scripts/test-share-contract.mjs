@@ -24,6 +24,11 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
+const CMAP_ORACLE_SOURCE = path.join(REPO_ROOT, "test/fixtures/eval/extraction/oracles/layout-unijis-vertical.pdf");
+const CMAP_ORACLE_PROVENANCE = JSON.parse(readFileSync(
+  path.join(REPO_ROOT, "test/fixtures/eval/extraction/oracles/layout-unijis-vertical.provenance.json"),
+  "utf8",
+));
 const PROTECTED_DIRECT_DEPENDENCIES = {
   "@modelcontextprotocol/sdk": "1.29.0",
   "@napi-rs/canvas": "0.1.99",
@@ -309,6 +314,7 @@ async function main() {
   let packageRoot = sourcePackageRoot;
   const specialFilename = process.platform === "win32" ? "quarterly #1 draft.pdf" : "quarterly #1 ? draft.pdf";
   const fixturePath = path.join(tempRoot, specialFilename);
+  const cMapOraclePath = path.join(tempRoot, "layout-unijis-vertical.pdf");
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";
   let transport;
 
@@ -400,6 +406,7 @@ async function main() {
 
     run("unzip", ["-q", archivePath, "-d", extractedRoot], buildRoot);
     copyFileSync(path.join(REPO_ROOT, "example-fw9.pdf"), fixturePath);
+    copyFileSync(CMAP_ORACLE_SOURCE, cMapOraclePath);
 
     const provenance = JSON.parse(readFileSync(path.join(sourcePackageRoot, "SHARE-PROVENANCE.json"), "utf8"));
     assertEqual(provenance.schema_version, "1.1", "Unexpected share provenance schema");
@@ -562,17 +569,14 @@ async function main() {
     if (byteResult.isError || byteResult.structuredContent?.byteCount !== 8) {
       throw new Error("Generic-client read_pdf_bytes compatibility check failed");
     }
-    for (const asset of [
-      "node_modules/pdfjs-dist/cmaps/UniJIS-UTF16-V.bcmap",
-      "node_modules/pdfjs-dist/cmaps/LICENSE",
-      "node_modules/pdfjs-dist/LICENSE",
-      "node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf",
-      "node_modules/pdfjs-dist/standard_fonts/LICENSE_FOXIT",
-      "node_modules/pdfjs-dist/standard_fonts/LICENSE_LIBERATION",
-    ]) {
-      const assetPath = path.join(packageRoot, asset);
-      if (!existsSync(assetPath) || !statSync(assetPath).isFile() || statSync(assetPath).size === 0) {
-        throw new Error(`Share runtime is missing nonempty PDF.js asset ${asset}`);
+    for (const asset of CMAP_ORACLE_PROVENANCE.runtime_assets.files) {
+      const assetPath = path.join(packageRoot, ...asset.path.split("/"));
+      if (!existsSync(assetPath) || !statSync(assetPath).isFile()) {
+        throw new Error(`Share runtime is missing provenance-bound PDF.js asset ${asset.path}`);
+      }
+      const bytes = readFileSync(assetPath);
+      if (bytes.length !== asset.size_bytes || sha256(bytes) !== asset.sha256) {
+        throw new Error(`Share runtime PDF.js asset does not match oracle provenance: ${asset.path}`);
       }
     }
     const layout = await client.callTool({
@@ -583,6 +587,19 @@ async function main() {
       || layout.structuredContent?.ir?.version !== "1.0.0"
       || layout.structuredContent?.source?.size_bytes !== statSync(fixturePath).size) {
       throw new Error("Share read_pdf_layout contract smoke failed");
+    }
+    const cMapLayout = await client.callTool({
+      name: "read_pdf_layout",
+      arguments: { pdf_path: cMapOraclePath, max_output_characters: 200000 },
+    });
+    const cMapItem = cMapLayout.structuredContent?.pages?.[0]?.raw_items?.[0];
+    if (cMapLayout.isError
+      || cMapLayout.structuredContent?.pages?.[0]?.flow_text !== "日本語"
+      || cMapItem?.font?.vertical !== true
+      || cMapItem?.raw_height !== 72
+      || cMapItem?.geometry_provenance?.advance_source !== "item_height"
+      || cMapItem?.bbox?.height !== 72) {
+      throw new Error("Share read_pdf_layout named-CMap vertical oracle failed");
     }
     const uriResult = await client.callTool({ name: "get_pdf_resource_uri", arguments: { pdf_path: fixturePath } });
     const uri = uriResult.structuredContent?.uri;
