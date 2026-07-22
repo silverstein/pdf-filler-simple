@@ -1,0 +1,77 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/candidate-request.schema.json",
+  "title": "PDF Tools extraction candidate request v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "request_id", "candidate_id", "input_mode", "source", "inputs", "task", "limits"],
+  "properties": {
+    "protocol": { "const": "pdf-tools.extraction-candidate.v1" },
+    "request_id": { "$ref": "#/$defs/sha256" },
+    "candidate_id": { "enum": ["control.current_product.v0", "candidate.layout_ir.v1", "candidate.direct_pdf.v1", "candidate.raster.v1", "candidate.remote_model.v1"] },
+    "input_mode": { "enum": ["layout_ir", "direct_pdf", "raster"] },
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["path", "media_type", "sha256", "size_bytes", "page_count"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "media_type": { "const": "application/pdf" },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "size_bytes": { "type": "integer", "minimum": 1 },
+        "page_count": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "inputs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["layout_ir", "raster_manifest", "geometry_reconciliation"],
+      "properties": {
+        "layout_ir": { "type": ["object", "null"] },
+        "raster_manifest": { "type": ["object", "null"] },
+        "geometry_reconciliation": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["status", "coordinate_space", "method", "source_sha256", "input_sha256"],
+              "properties": {
+                "status": { "const": "proven" },
+                "coordinate_space": { "const": "pdf-tools.display-top-left-points.v1" },
+                "method": { "type": "string", "minLength": 1, "maxLength": 256 },
+                "source_sha256": { "$ref": "#/$defs/sha256" },
+                "input_sha256": { "$ref": "#/$defs/sha256" }
+              }
+            }
+          ]
+        }
+      }
+    },
+    "task": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["instruction", "target_schema", "target_schema_sha256"],
+      "properties": {
+        "instruction": { "type": "string", "minLength": 1 },
+        "target_schema": { "type": "object" },
+        "target_schema_sha256": { "$ref": "#/$defs/sha256" }
+      }
+    },
+    "limits": { "$ref": "#/$defs/limits" }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["deadline_ms", "max_stdout_bytes", "max_stderr_bytes", "max_source_bytes", "max_pages"],
+      "properties": {
+        "deadline_ms": { "type": "integer", "minimum": 1, "maximum": 600000 },
+        "max_stdout_bytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 },
+        "max_stderr_bytes": { "type": "integer", "minimum": 0, "maximum": 4194304 },
+        "max_source_bytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "max_pages": { "type": "integer", "minimum": 1, "maximum": 10000 }
+      }
+    }
+  }
+}

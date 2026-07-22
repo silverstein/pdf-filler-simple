@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/run-plan.schema.json",
+  "title": "PDF Tools extraction Phase 1 run plan v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["plan_id", "plan_version", "phase0_suite_id", "case_ids", "repetitions", "candidates", "limits", "execution_policy"],
+  "properties": {
+    "plan_id": { "const": "pdf-tools.extraction-phase1-plan.v1" },
+    "plan_version": { "const": 1 },
+    "phase0_suite_id": { "const": "pdf-tools.extraction.phase0" },
+    "case_ids": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+      ]
+    },
+    "repetitions": { "type": "integer", "minimum": 1, "maximum": 20 },
+    "candidates": {
+      "type": "array", "minItems": 1, "maxItems": 5,
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["candidate_id", "input_mode"],
+        "properties": {
+          "candidate_id": { "enum": ["control.current_product.v0", "candidate.layout_ir.v1", "candidate.direct_pdf.v1", "candidate.raster.v1", "candidate.remote_model.v1"] },
+          "input_mode": { "enum": ["layout_ir", "direct_pdf", "raster"] }
+        }
+      }
+    },
+    "limits": {
+      "type": "object", "additionalProperties": false,
+      "required": ["deadline_ms", "max_stdout_bytes", "max_stderr_bytes", "max_source_bytes", "max_pages"],
+      "properties": {
+        "deadline_ms": { "type": "integer", "minimum": 1, "maximum": 600000 },
+        "max_stdout_bytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 },
+        "max_stderr_bytes": { "type": "integer", "minimum": 0, "maximum": 4194304 },
+        "max_source_bytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
+        "max_pages": { "type": "integer", "minimum": 1, "maximum": 10000 }
+      }
+    },
+    "execution_policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["fresh_process_per_attempt", "stdin_format", "stdout_format", "source_copy_per_attempt", "scrub_environment"],
+      "properties": {
+        "fresh_process_per_attempt": { "const": true },
+        "stdin_format": { "const": "one_json_request_then_eof" },
+        "stdout_format": { "const": "exactly_one_json_response" },
+        "source_copy_per_attempt": { "const": true },
+        "scrub_environment": { "const": true }
+      }
+    }
+  }
+}

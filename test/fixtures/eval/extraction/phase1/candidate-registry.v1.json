@@ -1,0 +1,91 @@
+{
+  "registry_id": "pdf-tools.extraction-candidate-registry.v1",
+  "registry_version": 1,
+  "candidates": [
+    {
+      "id": "control.current_product.v0",
+      "configured": false,
+      "version": null,
+      "input_modes": ["direct_pdf"],
+      "license": null,
+      "command": null,
+      "requirements": {
+        "process_group_termination": false,
+        "filesystem_isolation": false,
+        "network_isolation": false,
+        "cpu_limit": false,
+        "memory_limit": false,
+        "process_count_limit": false
+      },
+      "notes": "Reserved control slot. Phase 0 remains the frozen current-product baseline."
+    },
+    {
+      "id": "candidate.layout_ir.v1",
+      "configured": false,
+      "version": null,
+      "input_modes": ["layout_ir"],
+      "license": null,
+      "command": null,
+      "requirements": {
+        "process_group_termination": false,
+        "filesystem_isolation": false,
+        "network_isolation": false,
+        "cpu_limit": false,
+        "memory_limit": false,
+        "process_count_limit": false
+      },
+      "notes": "Reserved local sidecar slot for canonical PDF Tools layout IR input."
+    },
+    {
+      "id": "candidate.direct_pdf.v1",
+      "configured": false,
+      "version": null,
+      "input_modes": ["direct_pdf"],
+      "license": null,
+      "command": null,
+      "requirements": {
+        "process_group_termination": false,
+        "filesystem_isolation": false,
+        "network_isolation": false,
+        "cpu_limit": false,
+        "memory_limit": false,
+        "process_count_limit": false
+      },
+      "notes": "Reserved local sidecar slot for a direct-PDF structured extraction candidate."
+    },
+    {
+      "id": "candidate.raster.v1",
+      "configured": false,
+      "version": null,
+      "input_modes": ["raster"],
+      "license": null,
+      "command": null,
+      "requirements": {
+        "process_group_termination": false,
+        "filesystem_isolation": false,
+        "network_isolation": false,
+        "cpu_limit": false,
+        "memory_limit": false,
+        "process_count_limit": false
+      },
+      "notes": "Reserved local sidecar slot for runner-generated raster input."
+    },
+    {
+      "id": "candidate.remote_model.v1",
+      "configured": false,
+      "version": null,
+      "input_modes": ["direct_pdf", "layout_ir", "raster"],
+      "license": null,
+      "command": null,
+      "requirements": {
+        "process_group_termination": false,
+        "filesystem_isolation": false,
+        "network_isolation": false,
+        "cpu_limit": false,
+        "memory_limit": false,
+        "process_count_limit": false
+      },
+      "notes": "Reserved remote-model adapter slot. It remains unconfigured until privacy and egress policy are explicit."
+    }
+  ]
+}

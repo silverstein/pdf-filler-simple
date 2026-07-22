@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/candidate-response.schema.json",
+  "title": "PDF Tools extraction candidate response v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["protocol", "request_id", "status", "decision", "structured_candidate", "page_texts", "tables", "native_evidence", "evidence", "field_evidence", "gaps", "diagnostics"],
+  "properties": {
+    "protocol": { "const": "pdf-tools.extraction-candidate.v1" },
+    "request_id": { "$ref": "#/$defs/sha256" },
+    "status": { "enum": ["completed", "partial", "abstained", "error"] },
+    "decision": { "enum": ["answer", "abstain"] },
+    "structured_candidate": {},
+    "page_texts": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["page", "text", "text_kind", "source_item_ids", "origin"],
+        "properties": {
+          "page": { "type": "integer", "minimum": 1 },
+          "text": { "type": "string" },
+          "text_kind": { "enum": ["born_digital_text_layer", "ocr", "visual_parser", "hybrid"] },
+          "source_item_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "origin": {
+            "type": "object", "additionalProperties": false, "required": ["engine_id", "engine_version"],
+            "properties": {
+              "engine_id": { "type": "string", "minLength": 1 },
+              "engine_version": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "tables": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "pages", "row_count", "column_count", "merged_cells", "cells"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" },
+          "pages": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } },
+          "row_count": { "type": "integer", "minimum": 1 },
+          "column_count": { "type": "integer", "minimum": 1 },
+          "merged_cells": { "type": "array", "items": { "type": "string" } },
+          "cells": {
+            "type": "array",
+            "items": {
+              "type": "object", "additionalProperties": false, "required": ["row", "column", "value"],
+              "properties": {
+                "row": { "type": "integer", "minimum": 1 },
+                "column": { "type": "integer", "minimum": 1 },
+                "value": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "native_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "page", "coordinate_space", "bbox", "native_ref", "quote", "origin", "page_geometry"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" },
+          "page": { "type": "integer", "minimum": 1 },
+          "coordinate_space": {
+            "type": "string", "minLength": 1,
+            "not": { "const": "pdf-tools.display-top-left-points.v1" }
+          },
+          "bbox": { "$ref": "#/$defs/bbox" },
+          "native_ref": { "type": ["string", "null"] },
+          "quote": { "type": "string" },
+          "origin": {
+            "type": "object", "additionalProperties": false, "required": ["engine_id", "engine_version"],
+            "properties": {
+              "engine_id": { "type": "string", "minLength": 1 },
+              "engine_version": { "type": "string", "minLength": 1 }
+            }
+          },
+          "page_geometry": {
+            "type": "object", "additionalProperties": false,
+            "required": ["width", "height", "rotation", "box_basis", "user_unit_handling"],
+            "properties": {
+              "width": { "type": "number", "exclusiveMinimum": 0 },
+              "height": { "type": "number", "exclusiveMinimum": 0 },
+              "rotation": { "enum": [0, 90, 180, 270] },
+              "box_basis": { "enum": ["media_box", "crop_box", "engine_display_box", "unknown"] },
+              "user_unit_handling": { "enum": ["applied", "not_applied", "unknown"] }
+            }
+          }
+        }
+      }
+    },
+    "evidence": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false,
+        "required": ["id", "page", "coordinate_space", "bbox", "source_item_ids", "quote"],
+        "properties": {
+          "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" },
+          "page": { "type": "integer", "minimum": 1 },
+          "coordinate_space": { "const": "pdf-tools.display-top-left-points.v1" },
+          "bbox": { "$ref": "#/$defs/bbox" },
+          "source_item_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+          "quote": { "type": "string" }
+        }
+      }
+    },
+    "field_evidence": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["field_path", "evidence_ids"],
+        "properties": {
+          "field_path": { "type": "string", "pattern": "^/(?:[^/~]|~[01])*(?:/(?:[^/~]|~[01])*)*$" },
+          "evidence_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } }
+        }
+      }
+    },
+    "gaps": {
+      "type": "array",
+      "items": {
+        "type": "object", "additionalProperties": false, "required": ["field_path", "reason", "detail"],
+        "properties": {
+          "field_path": { "type": "string", "pattern": "^/(?:[^/~]|~[01])*(?:/(?:[^/~]|~[01])*)*$" },
+          "reason": { "enum": ["insufficient_evidence", "contradictory_source", "absent_in_source", "unsupported_modality", "resource_limit", "candidate_failure"] },
+          "detail": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "diagnostics": {
+      "type": "object", "additionalProperties": false, "required": ["code", "message"],
+      "properties": {
+        "code": { "anyOf": [{ "type": "null" }, { "type": "string", "pattern": "^[A-Z][A-Z0-9_]{1,63}$" }] },
+        "message": { "anyOf": [{ "type": "null" }, { "type": "string", "maxLength": 500 }] }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "enum": ["completed", "partial"] } }, "required": ["status"] },
+      "then": { "properties": { "decision": { "const": "answer" } } }
+    },
+    {
+      "if": { "properties": { "status": { "enum": ["abstained", "error"] } }, "required": ["status"] },
+      "then": { "properties": { "decision": { "const": "abstain" }, "structured_candidate": { "type": "null" } } }
+    }
+  ],
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "bbox": {
+      "type": "object", "additionalProperties": false, "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number" }, "y": { "type": "number" },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    }
+  }
+}

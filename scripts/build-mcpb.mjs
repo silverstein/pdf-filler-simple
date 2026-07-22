@@ -93,6 +93,11 @@ const FORBIDDEN_ARCHIVE_PREFIXES = [
 const FORBIDDEN_ARCHIVE_FILES = new Set(["package-lock.json", "node_modules/.package-lock.json"]);
 const DEVELOPMENT_FILE_SUFFIXES = [".map", ".d.ts", ".d.mts", ".d.cts", ".tsbuildinfo"];
 
+export function isForbiddenArchivePath(filename) {
+  return FORBIDDEN_ARCHIVE_FILES.has(filename)
+    || FORBIDDEN_ARCHIVE_PREFIXES.some(prefix => filename.startsWith(prefix));
+}
+
 function run(command, args, { cwd = REPO_ROOT, capture = false } = {}) {
   const result = spawnSync(command, args, {
     cwd,
@@ -304,7 +309,7 @@ function verifyStagedProductionGraph(stagingDir, packages) {
     }
   }
   for (const filename of paths) {
-    if (FORBIDDEN_ARCHIVE_FILES.has(filename) || FORBIDDEN_ARCHIVE_PREFIXES.some(prefix => filename.startsWith(prefix))) {
+    if (isForbiddenArchivePath(filename)) {
       throw new Error(`Staged MCPB contains forbidden entry: ${filename}`);
     }
     if (DEVELOPMENT_FILE_SUFFIXES.some(suffix => filename.endsWith(suffix))) {

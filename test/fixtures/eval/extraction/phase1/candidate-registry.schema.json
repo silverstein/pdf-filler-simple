@@ -1,0 +1,87 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/candidate-registry.schema.json",
+  "title": "PDF Tools extraction candidate registry v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["registry_id", "registry_version", "candidates"],
+  "properties": {
+    "registry_id": { "const": "pdf-tools.extraction-candidate-registry.v1" },
+    "registry_version": { "const": 1 },
+    "candidates": { "type": "array", "minItems": 5, "maxItems": 5, "items": { "$ref": "#/$defs/candidate" } }
+  },
+  "$defs": {
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "configured", "version", "input_modes", "license", "command", "requirements", "notes"],
+      "properties": {
+        "id": { "enum": ["control.current_product.v0", "candidate.layout_ir.v1", "candidate.direct_pdf.v1", "candidate.raster.v1", "candidate.remote_model.v1"] },
+        "configured": { "type": "boolean" },
+        "version": { "type": ["string", "null"] },
+        "input_modes": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "enum": ["layout_ir", "direct_pdf", "raster"] } },
+        "license": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object", "additionalProperties": false,
+              "required": ["framework_spdx", "model_license", "reviewed"],
+              "properties": {
+                "framework_spdx": { "type": "string", "minLength": 1 },
+                "model_license": { "type": ["string", "null"] },
+                "reviewed": { "type": "boolean" }
+              }
+            }
+          ]
+        },
+        "command": {
+          "anyOf": [
+            { "type": "null" },
+            {
+              "type": "object", "additionalProperties": false, "required": ["executable", "args"],
+              "properties": {
+                "executable": { "type": "string", "minLength": 1 },
+                "args": { "type": "array", "items": { "type": "string" } }
+              }
+            }
+          ]
+        },
+        "requirements": {
+          "type": "object", "additionalProperties": false,
+          "required": ["process_group_termination", "filesystem_isolation", "network_isolation", "cpu_limit", "memory_limit", "process_count_limit"],
+          "properties": {
+            "process_group_termination": { "type": "boolean" },
+            "filesystem_isolation": { "type": "boolean" },
+            "network_isolation": { "type": "boolean" },
+            "cpu_limit": { "type": "boolean" },
+            "memory_limit": { "type": "boolean" },
+            "process_count_limit": { "type": "boolean" }
+          }
+        },
+        "notes": { "type": "string", "minLength": 1 }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "configured": { "const": true } }, "required": ["configured"] },
+          "then": {
+            "properties": {
+              "version": { "type": "string", "minLength": 1 },
+              "license": { "type": "object" },
+              "command": { "type": "object" }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "configured": { "const": false } }, "required": ["configured"] },
+          "then": {
+            "properties": {
+              "version": { "type": "null" },
+              "license": { "type": "null" },
+              "command": { "type": "null" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

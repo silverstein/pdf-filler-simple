@@ -1,0 +1,122 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/report.schema.json",
+  "title": "PDF Tools extraction Phase 1 sidecar report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["report_id", "report_version", "run_id", "benchmark_claim_ready", "calibration_claim_ready", "claim_boundary", "phase0_manifest_sha256", "registry_sha256", "registry_schema_sha256", "plan_sha256", "plan_schema_sha256", "request_schema_sha256", "response_schema_sha256", "environment", "denominator", "attempts", "limitations"],
+  "properties": {
+    "report_id": { "const": "pdf-tools.extraction-phase1-report.v1" },
+    "report_version": { "const": 1 },
+    "run_id": { "$ref": "#/$defs/sha256" },
+    "benchmark_claim_ready": { "const": false },
+    "calibration_claim_ready": { "const": false },
+    "claim_boundary": { "type": "string", "minLength": 1 },
+    "phase0_manifest_sha256": { "$ref": "#/$defs/sha256" },
+    "registry_sha256": { "$ref": "#/$defs/sha256" },
+    "registry_schema_sha256": { "$ref": "#/$defs/sha256" },
+    "plan_sha256": { "$ref": "#/$defs/sha256" },
+    "plan_schema_sha256": { "$ref": "#/$defs/sha256" },
+    "request_schema_sha256": { "$ref": "#/$defs/sha256" },
+    "response_schema_sha256": { "$ref": "#/$defs/sha256" },
+    "environment": { "$ref": "#/$defs/environment" },
+    "denominator": {
+      "type": "object", "additionalProperties": false,
+      "required": ["planned", "retained", "planned_case_ids", "outcomes"],
+      "properties": {
+        "planned": { "type": "integer", "minimum": 1 },
+        "retained": { "type": "integer", "minimum": 1 },
+        "planned_case_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } },
+        "outcomes": {
+          "type": "object", "additionalProperties": false,
+          "required": ["completed", "partial", "abstained", "error", "not_run"],
+          "properties": {
+            "completed": { "type": "integer", "minimum": 0 },
+            "partial": { "type": "integer", "minimum": 0 },
+            "abstained": { "type": "integer", "minimum": 0 },
+            "error": { "type": "integer", "minimum": 0 },
+            "not_run": { "type": "integer", "minimum": 0 }
+          }
+        }
+      }
+    },
+    "attempts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/attempt" } },
+    "limitations": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "nullableSha256": { "anyOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }] },
+    "environment": {
+      "type": "object", "additionalProperties": false,
+      "required": ["platform", "architecture", "node_version", "wall_clock_timeout", "stdout_byte_limit", "stderr_byte_limit", "clean_environment", "source_mutation_detection", "fresh_process_per_attempt", "process_group_termination", "filesystem_isolation", "network_isolation", "cpu_limit", "memory_limit", "process_count_limit", "process_tree_memory_measurement"],
+      "properties": {
+        "platform": { "type": "string" }, "architecture": { "type": "string" }, "node_version": { "type": "string" },
+        "wall_clock_timeout": { "type": "boolean" }, "stdout_byte_limit": { "type": "boolean" },
+        "stderr_byte_limit": { "type": "boolean" }, "clean_environment": { "type": "boolean" },
+        "source_mutation_detection": { "type": "boolean" }, "fresh_process_per_attempt": { "type": "boolean" },
+        "process_group_termination": { "type": "boolean" }, "filesystem_isolation": { "type": "boolean" },
+        "network_isolation": { "type": "boolean" }, "cpu_limit": { "type": "boolean" },
+        "memory_limit": { "type": "boolean" }, "process_count_limit": { "type": "boolean" },
+        "process_tree_memory_measurement": { "type": "boolean" }
+      }
+    },
+    "source": {
+      "type": "object", "additionalProperties": false,
+      "required": ["manifest_path", "sha256", "after_sha256", "after_read_error", "size_bytes", "page_count", "immutable"],
+      "properties": {
+        "manifest_path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }, "after_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "after_read_error": { "type": ["string", "null"] },
+        "size_bytes": { "type": "integer", "minimum": 1 }, "page_count": { "type": "integer", "minimum": 1 },
+        "immutable": { "type": "boolean" }
+      }
+    },
+    "bindings": {
+      "type": "object", "additionalProperties": false,
+      "required": ["request_sha256", "stdout_sha256", "stderr_sha256", "response_canonical_sha256"],
+      "properties": {
+        "request_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "stdout_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "stderr_sha256": { "$ref": "#/$defs/nullableSha256" },
+        "response_canonical_sha256": { "$ref": "#/$defs/nullableSha256" }
+      }
+    },
+    "execution": {
+      "type": "object", "additionalProperties": false,
+      "required": ["spawned", "exit_code", "signal", "timed_out", "stdout_limit_exceeded", "stderr_limit_exceeded", "stdout_bytes", "stderr_bytes", "process_group_termination_attempted", "elapsed_ms"],
+      "properties": {
+        "spawned": { "type": "boolean" },
+        "exit_code": { "type": ["integer", "null"] }, "signal": { "type": ["string", "null"] },
+        "timed_out": { "type": "boolean" }, "stdout_limit_exceeded": { "type": "boolean" },
+        "stderr_limit_exceeded": { "type": "boolean" }, "stdout_bytes": { "type": "integer", "minimum": 0 },
+        "stderr_bytes": { "type": "integer", "minimum": 0 },
+        "process_group_termination_attempted": { "type": "boolean" }, "elapsed_ms": { "type": "number", "minimum": 0 }
+      }
+    },
+    "attempt": {
+      "type": "object", "additionalProperties": false,
+      "required": ["candidate_id", "case_id", "repetition", "input_mode", "outcome", "outcome_reason", "error_code", "source", "request", "response", "runner_field_bindings", "bindings", "unmet_requirements", "execution"],
+      "properties": {
+        "candidate_id": { "enum": ["control.current_product.v0", "candidate.layout_ir.v1", "candidate.direct_pdf.v1", "candidate.raster.v1", "candidate.remote_model.v1"] },
+        "case_id": { "type": "string", "minLength": 1 }, "repetition": { "type": "integer", "minimum": 1 },
+        "input_mode": { "enum": ["layout_ir", "direct_pdf", "raster"] },
+        "outcome": { "enum": ["completed", "partial", "abstained", "error", "not_run"] },
+        "outcome_reason": { "type": "string", "minLength": 1 }, "error_code": { "type": ["string", "null"] },
+        "source": { "$ref": "#/$defs/source" }, "request": { "type": ["object", "null"] },
+        "response": { "type": ["object", "null"] }, "bindings": { "$ref": "#/$defs/bindings" },
+        "runner_field_bindings": {
+          "type": "array",
+          "items": {
+            "type": "object", "additionalProperties": false, "required": ["field_path", "value_sha256", "evidence_ids"],
+            "properties": {
+              "field_path": { "type": "string" }, "value_sha256": { "$ref": "#/$defs/sha256" },
+              "evidence_ids": { "type": "array", "uniqueItems": true, "items": { "type": "string" } }
+            }
+          }
+        },
+        "unmet_requirements": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
+        "execution": { "$ref": "#/$defs/execution" }
+      }
+    }
+  }
+}

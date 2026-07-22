@@ -1,0 +1,28 @@
+{
+  "plan_id": "pdf-tools.extraction-phase1-plan.v1",
+  "plan_version": 1,
+  "phase0_suite_id": "pdf-tools.extraction.phase0",
+  "case_ids": null,
+  "repetitions": 3,
+  "candidates": [
+    { "candidate_id": "control.current_product.v0", "input_mode": "direct_pdf" },
+    { "candidate_id": "candidate.layout_ir.v1", "input_mode": "layout_ir" },
+    { "candidate_id": "candidate.direct_pdf.v1", "input_mode": "direct_pdf" },
+    { "candidate_id": "candidate.raster.v1", "input_mode": "raster" },
+    { "candidate_id": "candidate.remote_model.v1", "input_mode": "direct_pdf" }
+  ],
+  "limits": {
+    "deadline_ms": 60000,
+    "max_stdout_bytes": 4194304,
+    "max_stderr_bytes": 1048576,
+    "max_source_bytes": 16777216,
+    "max_pages": 10
+  },
+  "execution_policy": {
+    "fresh_process_per_attempt": true,
+    "stdin_format": "one_json_request_then_eof",
+    "stdout_format": "exactly_one_json_response",
+    "source_copy_per_attempt": true,
+    "scrub_environment": true
+  }
+}
