@@ -27,7 +27,7 @@ import {
   validateRegistry,
 } from "../test/eval/extraction-phase1-protocol.js";
 import {
-  loadExtractionManifest,
+  validateExtractionManifestBytes,
   resolveExtractionFixture,
 } from "../test/eval/extraction-manifest.js";
 import {
@@ -46,14 +46,14 @@ import {
   buildGenerationPrivacyAttestation,
   createExecutionCompanion,
   deriveRunnerResourceFacts,
-  verifyFinalGenerationPrivacy,
 } from "../test/eval/extraction-phase1-companion.js";
-import { publishImmutableGeneration, readVerifiedGenerationArtifact } from "../test/eval/extraction-phase1-publisher.js";
+import { publishImmutableGeneration } from "../test/eval/extraction-phase1-publisher.js";
 import {
   reconcileLayoutIrEvidence,
 } from "../test/eval/extraction-phase1-layout-evidence.js";
-import { buildRetainedPhase1Corpus, loadRetainedPhase1Corpus } from "../test/eval/extraction-phase1-corpus.js";
+import { PHASE1_CORPUS_LIMITS, buildRetainedPhase1Corpus } from "../test/eval/extraction-phase1-corpus.js";
 import { verifyRetainedPhase1Report } from "../test/eval/extraction-phase1-report-verifier.js";
+import { createExecutionGenerationSemanticVerifier } from "../test/eval/extraction-phase1-generation-verifiers.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
@@ -710,10 +710,20 @@ export async function runExtractionCandidates({
   trustedProhibitedRoots = [],
   testOnlyRunnerSourceLoader = null,
   testOnlyAfterAttempts = null,
+  testOnlyPublicationFaultInjector = null,
 } = {}) {
   if (outputPath !== null) throw new Error("Direct report persistence was removed; use generationRoot for immutable generation publication");
-  const [manifest, registryLoaded, planLoaded, requestSchemaText, responseSchemaText, reportSchemaText, artifactConfigSchemaText, artifactInventorySchemaText, companionSchemaText, executionIndexSchemaText, generationPrivacySchemaText] = await Promise.all([
-    loadExtractionManifest(manifestPath, manifestSchemaPath),
+  const [manifestBytes, manifestSchemaBytes] = await Promise.all([
+    readTrustedCorpusFile(manifestPath, PHASE1_CORPUS_LIMITS.max_manifest_bytes),
+    readTrustedCorpusFile(manifestSchemaPath, PHASE1_CORPUS_LIMITS.max_manifest_bytes),
+  ]);
+  const manifest = await validateExtractionManifestBytes({
+    manifestPath,
+    manifestBytes,
+    schemaBytes: manifestSchemaBytes,
+    verifyFixtureFiles: false,
+  });
+  const [registryLoaded, planLoaded, requestSchemaText, responseSchemaText, reportSchemaText, artifactConfigSchemaText, artifactInventorySchemaText, companionSchemaText, corpusSchemaBytes, executionIndexSchemaText, generationPrivacySchemaText] = await Promise.all([
     loadJsonWithSchema(registryPath, registrySchemaPath, "extraction candidate registry"),
     loadJsonWithSchema(planPath, planSchemaPath, "extraction Phase 1 plan"),
     fs.readFile(requestSchemaPath, "utf8"),
@@ -722,6 +732,7 @@ export async function runExtractionCandidates({
     fs.readFile(artifactConfigSchemaPath, "utf8"),
     fs.readFile(artifactInventorySchemaPath, "utf8"),
     fs.readFile(companionSchemaPath, "utf8"),
+    readTrustedCorpusFile(corpusSchemaPath, PHASE1_CORPUS_LIMITS.max_manifest_bytes),
     fs.readFile(executionIndexSchemaPath, "utf8"),
     fs.readFile(generationPrivacySchemaPath, "utf8"),
   ]);
@@ -733,6 +744,7 @@ export async function runExtractionCandidates({
   const artifactConfigSchema = JSON.parse(artifactConfigSchemaText);
   const artifactInventorySchema = JSON.parse(artifactInventorySchemaText);
   const companionSchema = JSON.parse(companionSchemaText);
+  const corpusSchema = JSON.parse(corpusSchemaBytes);
   const executionIndexSchema = JSON.parse(executionIndexSchemaText);
   const generationPrivacySchema = JSON.parse(generationPrivacySchemaText);
   validateRegistry(registry);
@@ -741,14 +753,28 @@ export async function runExtractionCandidates({
   const manifestById = new Map(manifest.manifest.fixtures.map(fixture => [fixture.id, fixture]));
   const selectedCaseIds = plan.case_ids ?? manifest.manifest.fixtures.map(fixture => fixture.id);
   if (selectedCaseIds.some(id => !manifestById.has(id))) throw new Error("Extraction Phase 1 plan selects an unknown Phase 0 case");
-  const [manifestBytes, manifestSchemaBytes, corpusSchema, registrySchema, planSchema] = await Promise.all([
-    readTrustedCorpusFile(manifestPath, 1024 * 1024), readTrustedCorpusFile(manifestSchemaPath, 1024 * 1024), fs.readFile(corpusSchemaPath, "utf8").then(JSON.parse),
+  const [registrySchema, planSchema] = await Promise.all([
     fs.readFile(registrySchemaPath, "utf8").then(JSON.parse), fs.readFile(planSchemaPath, "utf8").then(JSON.parse),
   ]);
-  const retainedFixtureBytesById = Object.fromEntries(await Promise.all(selectedCaseIds.map(async caseId => {
+  const retainedFixtureBytesById = {};
+  let remainingFixtureBytes = PHASE1_CORPUS_LIMITS.max_total_fixture_bytes;
+  for (const caseId of selectedCaseIds) {
     const fixture = manifestById.get(caseId);
-    return [caseId, await readTrustedCorpusFile(resolveExtractionFixture(manifestPath, fixture), 8 * 1024 * 1024)];
-  })));
+    if (remainingFixtureBytes < 1) throw new Error("Selected extraction fixtures exceed the aggregate retained-corpus byte ceiling");
+    const bytes = await readTrustedCorpusFile(
+      resolveExtractionFixture(manifestPath, fixture),
+      Math.min(PHASE1_CORPUS_LIMITS.max_fixture_bytes, remainingFixtureBytes),
+    );
+    retainedFixtureBytesById[caseId] = bytes;
+    remainingFixtureBytes -= bytes.length;
+  }
+  await validateExtractionManifestBytes({
+    manifestPath,
+    manifestBytes,
+    schemaBytes: manifestSchemaBytes,
+    fixtureBytesById: retainedFixtureBytesById,
+    verifyFixtureFiles: false,
+  });
   const retainedCorpus = await buildRetainedPhase1Corpus({
     manifestBytes,
     manifestSchemaBytes,
@@ -804,6 +830,7 @@ export async function runExtractionCandidates({
     throw new Error("testOnlyRunnerSourceLoader must be a function when supplied");
   }
   if (testOnlyAfterAttempts !== null && typeof testOnlyAfterAttempts !== "function") throw new Error("testOnlyAfterAttempts must be a function when supplied");
+  if (testOnlyPublicationFaultInjector !== null && typeof testOnlyPublicationFaultInjector !== "function") throw new Error("testOnlyPublicationFaultInjector must be a function when supplied");
   await validateSourcePrivacyBoundary({ trustedPrivacyClass, trustedProhibitedRoots, generationRoot });
   const runnerSourceLoader = testOnlyRunnerSourceLoader ?? loadRunnerSourceBytes;
   const sourceBytesBeforeAttempts = await runnerSourceLoader();
@@ -1182,42 +1209,27 @@ export async function runExtractionCandidates({
       if (attestation.after) inventoryArtifacts[`artifact_after_${safeId}`] = { filename: `artifact-after-${safeId}.json`, bytes: Buffer.from(`${JSON.stringify(attestation.after, null, 2)}\n`) };
     }
     let generationPrivacyAttestation = null;
-    const executionSemanticVerifier = async ({ generationPath, index }) => {
-      const inspection = { state: "complete", index };
-      const retainedReport = await readVerifiedGenerationArtifact(generationPath, inspection, "execution_report", { maxBytes: plan.limits.max_report_bytes });
-      const retainedCompanion = await readVerifiedGenerationArtifact(generationPath, inspection, "execution_companion");
-      const parsedCompanion = JSON.parse(retainedCompanion.bytes);
-      if (canonicalJson(parsedCompanion.failure_evidence_by_attempt_key) !== canonicalJson(failureEvidenceByAttemptKey)) {
-        throw new Error("Retained execution companion differs from the trusted runner failure evidence map");
-      }
-      const corpus = await loadRetainedPhase1Corpus({
-        readArtifact: async role => (await readVerifiedGenerationArtifact(generationPath, inspection, role)).bytes,
-        corpusSchema,
-        trustedPrivacyClass,
-        ...corpusManifestAnchors,
-      });
-      await verifyRetainedPhase1Report({
-        reportBytes: retainedReport.bytes,
-        verification: reportVerificationInputs,
-        corpus,
-        pdfjsLib,
-        validatorSourceBytesByRole: sourceBytesBeforeAttempts,
-        trustedFailureEvidenceByAttemptKey: parsedCompanion.failure_evidence_by_attempt_key,
-      });
-      const privacyRole = index.artifacts.some(item => item.role === "received_privacy_attestation")
-        ? "received_privacy_attestation" : "privacy_attestation";
-      const privacyArtifact = await readVerifiedGenerationArtifact(generationPath, inspection, privacyRole);
-      await verifyFinalGenerationPrivacy({ generationPath, index, privacyAttestation: JSON.parse(privacyArtifact.bytes), privacyRole });
-    };
+    const publicationTransactionId = randomUUID();
+    const executionSemanticVerifier = await createExecutionGenerationSemanticVerifier({
+      repositoryRoot: REPO_ROOT,
+      manifestPath,
+      manifestSchemaPath,
+      trustedPrivacyClass,
+      trustedProhibitedRoots: sourceProhibitedRoots,
+      trust: { kind: "local_claim_owned", expected_transaction_id: publicationTransactionId, expected_generation_sha256: null },
+    });
     const published = await publishImmutableGeneration({
       parentDirectory: generationRoot,
       runId,
       kind: "execution",
+      transactionId: publicationTransactionId,
       artifacts: {
+        candidate_registry: { filename: "candidate-registry.v1.json", bytes: Buffer.from(`${JSON.stringify(registry, null, 2)}\n`) },
         execution_companion: { filename: "execution-companion.v1.json", bytes: companionBytes },
         execution_report: { filename: "execution-report.v1.json", bytes: reportBytes },
         ...retainedCorpus.artifacts,
         ...inventoryArtifacts,
+        run_plan: { filename: "run-plan.v1.json", bytes: Buffer.from(`${JSON.stringify(plan, null, 2)}\n`) },
       },
       preIndexArtifactBuilder: async ({ stagingPath, artifacts }) => {
         generationPrivacyAttestation = await buildGenerationPrivacyAttestation({
@@ -1230,6 +1242,7 @@ export async function runExtractionCandidates({
         return { role: "privacy_attestation", filename: "generation-privacy.v1.json", bytes: Buffer.from(`${JSON.stringify(generationPrivacyAttestation, null, 2)}\n`) };
       },
       finalGenerationVerifier: executionSemanticVerifier,
+      faultInjector: testOnlyPublicationFaultInjector,
     });
     assertSchema(published.index, executionIndexSchema, "execution generation index");
     if (verificationEvidence && typeof verificationEvidence === "object") {

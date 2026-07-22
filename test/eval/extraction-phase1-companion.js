@@ -16,6 +16,7 @@ export const PHASE1_COMPANION_SOURCE_ROLES = Object.freeze([
   "execution_index_schema",
   "extraction_manifest_loader",
   "generation_privacy_schema",
+  "generation_verifier_module",
   "layout_evidence_module",
   "layout_extraction_module",
   "layout_output_schemas_module",
@@ -46,6 +47,7 @@ export const PHASE1_COMPANION_SOURCE_PATHS = Object.freeze({
   execution_index_schema: "test/fixtures/eval/extraction/phase1/execution-index.schema.json",
   extraction_manifest_loader: "test/eval/extraction-manifest.js",
   generation_privacy_schema: "test/fixtures/eval/extraction/phase1/generation-privacy.schema.json",
+  generation_verifier_module: "test/eval/extraction-phase1-generation-verifiers.js",
   layout_evidence_module: "test/eval/extraction-phase1-layout-evidence.js",
   layout_extraction_module: "server/layout-extraction.js",
   layout_output_schemas_module: "server/output-schemas.js",
@@ -530,10 +532,10 @@ export function createCrossDeviceReceipt({
   exactKeys(sourceCodeIdentity, ["kind", "sha256", "source_artifact_role"], "Cross-device source code identity");
   if (![
     "execution_direct_source_set_sha256",
-    "score_scorer_source_set_sha256",
+    "score_scorer_local_source_set_sha256",
   ].includes(sourceCodeIdentity.kind) || !/^[a-f0-9]{64}$/.test(sourceCodeIdentity.sha256)
     || (sourceCodeIdentity.kind === "execution_direct_source_set_sha256" && sourceCodeIdentity.source_artifact_role !== "execution_companion")
-    || (sourceCodeIdentity.kind === "score_scorer_source_set_sha256" && sourceCodeIdentity.source_artifact_role !== "score_provenance")) {
+    || (sourceCodeIdentity.kind === "score_scorer_local_source_set_sha256" && sourceCodeIdentity.source_artifact_role !== "score_provenance")) {
     throw new Error("Cross-device source code identity is invalid");
   }
   const authentic = keyId !== null && signature !== null;

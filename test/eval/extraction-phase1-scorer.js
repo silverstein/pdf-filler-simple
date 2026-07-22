@@ -30,29 +30,54 @@ const EXACT_ORACLE_CASE_KEYS = ["case_id", "contract_leaf_policies", "expected_p
 const EXACT_POLICY_KEYS = ["allowed_gap_reasons", "expected_decision", "field_path"];
 const EXACT_TRUTH_LEAF_KEYS = ["contract_path", "disposition", "fact_support", "field_path", "value"];
 const EXACT_FACT_SUPPORT_KEYS = ["fact_ids", "mode"];
-const REQUIRED_SCORER_SOURCE_ROLES = ["corpus_module", "corpus_schema", "index_schema", "layout_evidence_module", "layout_extraction_module", "layout_oracle", "layout_oracle_generator", "layout_oracle_schema", "manifest_loader", "oracle_schema", "orchestration_script", "output_schemas_module", "package_lock", "pdfjs_package", "protocol_module", "report_schema", "report_verifier_module", "score_schema", "scorer_module", "scoring_oracle"];
-const REQUIRED_SCORER_SOURCE_PATHS = Object.freeze({
+export const PHASE1_SCORER_LOCAL_SOURCE_PATHS = Object.freeze({
+  artifact_config_schema: "test/fixtures/eval/extraction/phase1/artifact-config.schema.json",
+  artifact_inventory_schema: "test/fixtures/eval/extraction/phase1/artifact-inventory.schema.json",
+  artifact_module: "test/eval/extraction-phase1-artifacts.js",
+  companion_module: "test/eval/extraction-phase1-companion.js",
+  companion_schema: "test/fixtures/eval/extraction/phase1/execution-companion.schema.json",
   corpus_module: "test/eval/extraction-phase1-corpus.js",
   corpus_schema: "test/fixtures/eval/extraction/phase1/corpus.schema.json",
+  execution_index_schema: "test/fixtures/eval/extraction/phase1/execution-index.schema.json",
+  generation_privacy_schema: "test/fixtures/eval/extraction/phase1/generation-privacy.schema.json",
+  generation_verifier_module: "test/eval/extraction-phase1-generation-verifiers.js",
   index_schema: "test/fixtures/eval/extraction/phase1/score-index.schema.json",
   layout_evidence_module: "test/eval/extraction-phase1-layout-evidence.js",
   layout_extraction_module: "server/layout-extraction.js",
   layout_oracle: "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.v1.json",
   layout_oracle_generator: "scripts/eval-generate-extraction-layout-oracle.mjs",
   layout_oracle_schema: "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
+  manifest_schema: "test/fixtures/eval/extraction/manifest.schema.json",
   manifest_loader: "test/eval/extraction-manifest.js",
+  mcp_sdk_package: "node_modules/@modelcontextprotocol/sdk/package.json",
   oracle_schema: "test/fixtures/eval/extraction/phase1/scoring-oracle.schema.json",
   orchestration_script: "scripts/eval-score-extraction-candidates.mjs",
   output_schemas_module: "server/output-schemas.js",
+  package_json: "package.json",
   package_lock: "package-lock.json",
+  pdf_lib_package: "node_modules/pdf-lib/package.json",
   pdfjs_package: "node_modules/pdfjs-dist/package.json",
+  plan_schema: "test/fixtures/eval/extraction/phase1/run-plan.schema.json",
   protocol_module: "test/eval/extraction-phase1-protocol.js",
+  publisher_module: "test/eval/extraction-phase1-publisher.js",
+  receipt_schema: "test/fixtures/eval/extraction/phase1/cross-device-receipt.schema.json",
+  registry_schema: "test/fixtures/eval/extraction/phase1/candidate-registry.schema.json",
   report_schema: "test/fixtures/eval/extraction/phase1/report.schema.json",
   report_verifier_module: "test/eval/extraction-phase1-report-verifier.js",
+  request_schema: "test/fixtures/eval/extraction/phase1/candidate-request.schema.json",
+  response_schema: "test/fixtures/eval/extraction/phase1/candidate-response.schema.json",
   score_schema: "test/fixtures/eval/extraction/phase1/score-report.schema.json",
   scorer_module: "test/eval/extraction-phase1-scorer.js",
   scoring_oracle: "test/fixtures/eval/extraction/phase1/scoring-oracle.v1.json",
 });
+const REQUIRED_SCORER_SOURCE_ROLES = Object.freeze(Object.keys(PHASE1_SCORER_LOCAL_SOURCE_PATHS).sort());
+const REQUIRED_SCORER_PARSED_JSON_ROLES = Object.freeze([
+  "artifact_config_schema", "artifact_inventory_schema", "companion_schema", "corpus_schema", "execution_index_schema",
+  "generation_privacy_schema", "index_schema", "layout_oracle", "layout_oracle_schema", "manifest_schema",
+  "mcp_sdk_package", "oracle_schema", "package_json", "package_lock", "pdf_lib_package", "pdfjs_package",
+  "plan_schema", "receipt_schema", "registry_schema", "report_schema", "request_schema", "response_schema",
+  "score_schema", "scoring_oracle",
+]);
 
 function ratio(numerator, denominator) {
   return denominator === 0 ? null : numerator / denominator;
@@ -769,6 +794,7 @@ export async function scorePhase1Report(report, {
   layoutOracle,
   layoutOracleBytes,
   layoutOracleSchema,
+  scorerParsedJsonByRole,
 } = {}) {
   const independentlyVerified = await verifyRetainedPhase1Report({ reportBytes, verification, corpus, pdfjsLib, validatorSourceBytesByRole, trustedFailureEvidenceByAttemptKey: verification.failureEvidenceByAttemptKey });
   if (canonicalJson(independentlyVerified.report) !== canonicalJson(report)) throw new Error("Extraction Phase 1 report differs from its retained source bytes");
@@ -815,14 +841,32 @@ export async function scorePhase1Report(report, {
   const scorerSources = Object.keys(scorerSourceBytesByRole).sort().map(role => {
     const source = scorerSourceBytesByRole[role];
     exactKeys(source, ["bytes", "path"], `Extraction scorer source role ${role}`);
-    if (source.path !== REQUIRED_SCORER_SOURCE_PATHS[role]) throw new Error(`Extraction scorer source role ${role} has an unexpected path`);
+    if (source.path !== PHASE1_SCORER_LOCAL_SOURCE_PATHS[role]) throw new Error(`Extraction scorer source role ${role} has an unexpected path`);
     const bytes = Buffer.from(source.bytes);
     return { role, path: source.path, bytes: bytes.length, sha256: sha256(bytes) };
   });
-  for (const [role, value] of [["scoring_oracle", oracle], ["oracle_schema", oracleSchema], ["layout_oracle", layoutOracle], ["layout_oracle_schema", layoutOracleSchema], ["score_schema", scoreSchema], ["report_schema", verification.reportSchema]]) {
+  if (!scorerParsedJsonByRole || canonicalJson(Object.keys(scorerParsedJsonByRole).sort()) !== canonicalJson(REQUIRED_SCORER_PARSED_JSON_ROLES)) {
+    throw new Error("Extraction scorer requires every parsed local JSON source input");
+  }
+  for (const [role, value] of Object.entries(scorerParsedJsonByRole)) {
     if (canonicalJson(JSON.parse(Buffer.from(scorerSourceBytesByRole[role].bytes).toString("utf8"))) !== canonicalJson(value)) {
       throw new Error(`Extraction scorer source role ${role} differs from its parsed scoring input`);
     }
+  }
+  const dependencyVersions = [
+    ["@modelcontextprotocol/sdk", "mcp_sdk_package"],
+    ["pdf-lib", "pdf_lib_package"],
+    ["pdfjs-dist", "pdfjs_package"],
+  ];
+  for (const [packageName, role] of dependencyVersions) {
+    const installedMetadata = scorerParsedJsonByRole[role];
+    const lockedMetadata = scorerParsedJsonByRole.package_lock.packages?.[`node_modules/${packageName}`];
+    if (!installedMetadata?.version || installedMetadata.version !== lockedMetadata?.version) {
+      throw new Error(`Extraction scorer dependency metadata differs from package-lock for ${packageName}`);
+    }
+  }
+  if (scorerParsedJsonByRole.pdfjs_package.version !== "5.4.624" || String(pdfjsLib?.version) !== "5.4.624") {
+    throw new Error("Extraction scorer requires exact PDF.js 5.4.624 metadata and loaded runtime version");
   }
   const score = {
     score_report_id: PHASE1_SCORE_REPORT_ID,
@@ -833,7 +877,7 @@ export async function scorePhase1Report(report, {
     scorer_id: PHASE1_SCORER_ID,
     scorer_contract_sha256: PHASE1_SCORER_CONTRACT_SHA256,
     scorer_sources: scorerSources,
-    scorer_source_set_sha256: sha256(Buffer.from(canonicalJson(scorerSources))),
+    scorer_local_source_set_sha256: sha256(Buffer.from(canonicalJson(scorerSources))),
     execution_report_sha256: sha256(Buffer.from(canonicalJson(report))),
     execution_report_bytes_sha256: sha256(Buffer.from(reportBytes)),
     phase0_manifest_sha256: report.phase0_manifest_sha256,
@@ -859,6 +903,7 @@ export async function scorePhase1Report(report, {
       "Network isolation",
       "Candidate cost",
       "Candidate command, interpreter, environment, runtime closure, artifact, model, weight, and native bridge identity",
+      "Installed external scorer runtime and module-byte closure",
       "Benchmark or calibration readiness",
     ],
   };
@@ -905,7 +950,7 @@ export function createPhase1ScoreBundle(score, {
       preflight_evidence_sha256: score.preflight_evidence_sha256,
       preflight_evidence_bytes_sha256: score.preflight_evidence_bytes_sha256,
       scorer_contract_sha256: score.scorer_contract_sha256,
-      scorer_source_set_sha256: score.scorer_source_set_sha256,
+      scorer_local_source_set_sha256: score.scorer_local_source_set_sha256,
     },
   };
   assertSchema(index, indexSchema, "extraction Phase 1 score index");
@@ -953,7 +998,7 @@ export async function verifyPhase1ScoreBundle({
     preflight_evidence_sha256: retained.preflight_evidence_sha256,
     preflight_evidence_bytes_sha256: retained.preflight_evidence_bytes_sha256,
     scorer_contract_sha256: retained.scorer_contract_sha256,
-    scorer_source_set_sha256: retained.scorer_source_set_sha256,
+    scorer_local_source_set_sha256: retained.scorer_local_source_set_sha256,
   };
   if (canonicalJson(index.bindings) !== canonicalJson(bindings)) {
     throw new Error("Extraction Phase 1 score index input bindings are invalid");

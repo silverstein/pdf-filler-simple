@@ -12,7 +12,7 @@
     "publication_authorized": { "const": false },
     "manifest": { "$ref": "#/$defs/jsonBinding" },
     "manifest_schema": { "$ref": "#/$defs/jsonBinding" },
-    "selected_case_ids": { "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } },
+    "selected_case_ids": { "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 128 } },
     "fixtures": { "type": "array", "minItems": 1, "maxItems": 100, "items": { "$ref": "#/$defs/fixture" } },
     "fixture_set_sha256": { "$ref": "#/$defs/sha256" },
     "total_fixture_bytes": { "type": "integer", "minimum": 1, "maximum": 8388608 }
@@ -23,7 +23,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["raw_base64", "bytes", "raw_sha256", "canonical_sha256"],
       "properties": {
-        "raw_base64": { "type": "string", "minLength": 4, "maxLength": 22369628, "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$" },
+        "raw_base64": { "type": "string", "minLength": 4, "maxLength": 1398104, "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$" },
         "bytes": { "type": "integer", "minimum": 1, "maximum": 1048576 }, "raw_sha256": { "$ref": "#/$defs/sha256" }, "canonical_sha256": { "$ref": "#/$defs/sha256" }
       }
     },
@@ -31,10 +31,10 @@
       "type": "object", "additionalProperties": false,
       "required": ["ordinal", "case_id", "manifest_relative_path", "media_type", "bytes", "sha256", "bytes_base64", "page_count", "privacy_class", "contains_personal_data"],
       "properties": {
-        "ordinal": { "type": "integer", "minimum": 1, "maximum": 100 }, "case_id": { "type": "string", "minLength": 1 },
-        "manifest_relative_path": { "type": "string", "pattern": "^[A-Za-z0-9._/-]+\\.pdf$" },
+        "ordinal": { "type": "integer", "minimum": 1, "maximum": 100 }, "case_id": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "manifest_relative_path": { "type": "string", "maxLength": 256, "pattern": "^[A-Za-z0-9._/-]+\\.pdf$" },
         "media_type": { "const": "application/pdf" }, "bytes": { "type": "integer", "minimum": 1, "maximum": 8388608 },
-        "sha256": { "$ref": "#/$defs/sha256" }, "bytes_base64": { "type": "string", "minLength": 4, "maxLength": 22369628, "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$" }, "page_count": { "type": "integer", "minimum": 1, "maximum": 1000 },
+        "sha256": { "$ref": "#/$defs/sha256" }, "bytes_base64": { "type": "string", "minLength": 4, "maxLength": 11184812, "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$" }, "page_count": { "type": "integer", "minimum": 1, "maximum": 1000 },
         "privacy_class": { "enum": ["synthetic", "public", "private"] }, "contains_personal_data": { "type": "boolean" }
       }
     }

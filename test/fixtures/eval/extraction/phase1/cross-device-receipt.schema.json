@@ -19,7 +19,7 @@
       "type": "object", "additionalProperties": false,
       "required": ["kind", "sha256", "source_artifact_role"],
       "properties": {
-        "kind": { "enum": ["execution_direct_source_set_sha256", "score_scorer_source_set_sha256"] },
+        "kind": { "enum": ["execution_direct_source_set_sha256", "score_scorer_local_source_set_sha256"] },
         "sha256": { "$ref": "#/$defs/sha256" },
         "source_artifact_role": { "enum": ["execution_companion", "score_provenance"] }
       }

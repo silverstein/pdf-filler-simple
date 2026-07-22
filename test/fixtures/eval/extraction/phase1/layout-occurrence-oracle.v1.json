@@ -37,14 +37,14 @@
     {
       "role": "generator_script",
       "path": "scripts/eval-generate-extraction-layout-oracle.mjs",
-      "bytes": 11362,
-      "sha256": "e610a5a1669ab32080858e92822a01f1c189fe54db5d9aca7e30c97c0c1631bc"
+      "bytes": 11369,
+      "sha256": "759daa08260c2c3101f4799c16b76d410ddd90018e1e2ee627f36916a58777e8"
     },
     {
       "role": "layout_evidence_module",
       "path": "test/eval/extraction-phase1-layout-evidence.js",
-      "bytes": 37552,
-      "sha256": "f42f1628a3cf703b70697f1ebd724c74b03ee8e23d9701b3b517773cfa460789"
+      "bytes": 38943,
+      "sha256": "913c3bf8b11f52a97d4298e56b9126098a357be07c0cc1221ad7af726391ebec"
     },
     {
       "role": "layout_extraction_module",
@@ -89,7 +89,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "e5123e0306d15008fa2e1b80ed0c23b362ca9844c3e295c23a6c1e425852092e",
+  "validator_source_set_sha256": "fd5f130e88e87787b68623af9bf7d0b9ac83deb905e92762921473a6ba2b7b7f",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",

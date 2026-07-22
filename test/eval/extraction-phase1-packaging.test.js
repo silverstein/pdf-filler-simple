@@ -13,6 +13,8 @@ const PHASE1_EVALUATION_ASSETS = [
   "scripts/eval-generate-extraction-layout-oracle.mjs",
   "test/eval/extraction-phase1-corpus.js",
   "test/eval/extraction-phase1-corpus.test.js",
+  "test/eval/extraction-phase1-generation-verifiers.js",
+  "test/eval/extraction-phase1-generation-verifiers.test.js",
   "test/eval/extraction-phase1-layout-evidence.js",
   "test/eval/extraction-phase1-layout-evidence.test.js",
   "test/eval/extraction-phase1-report-verifier.js",

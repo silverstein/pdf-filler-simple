@@ -9,7 +9,7 @@ export const PHASE1_CORPUS_LIMITS = Object.freeze({
   max_total_fixture_bytes: 8 * 1024 * 1024,
   max_pages_per_fixture: 1000,
   max_manifest_bytes: 1024 * 1024,
-  max_descriptor_bytes: 12 * 1024 * 1024,
+  max_descriptor_bytes: 16 * 1024 * 1024,
 });
 
 function exactKeys(value, keys, label) {
@@ -57,12 +57,17 @@ export async function buildRetainedPhase1Corpus({
   trustedPrivacyClass,
   corpusSchema,
 } = {}) {
-  const manifest = parseJson(manifestBytes, "Phase 0 manifest");
-  const manifestSchema = parseJson(manifestSchemaBytes, "Phase 0 manifest schema");
-  if (manifestBytes.length > PHASE1_CORPUS_LIMITS.max_manifest_bytes
+  if (!Buffer.isBuffer(manifestBytes) || !Buffer.isBuffer(manifestSchemaBytes)
+    || manifestBytes.length < 1 || manifestSchemaBytes.length < 1
+    || manifestBytes.length > PHASE1_CORPUS_LIMITS.max_manifest_bytes
     || manifestSchemaBytes.length > PHASE1_CORPUS_LIMITS.max_manifest_bytes) {
     throw new Error("Retained Phase 0 manifest or schema exceeds its byte ceiling");
   }
+  if (!corpusSchema || typeof corpusSchema !== "object" || Array.isArray(corpusSchema)) {
+    throw new Error("Retained corpus builder requires its exact descriptor schema");
+  }
+  const manifest = parseJson(manifestBytes, "Phase 0 manifest");
+  const manifestSchema = parseJson(manifestSchemaBytes, "Phase 0 manifest schema");
   const manifestValidation = new AjvJsonSchemaValidator().getValidator(manifestSchema)(manifest);
   if (!manifestValidation.valid) throw new Error(`Retained Phase 0 manifest is invalid: ${manifestValidation.errorMessage}`);
   if (!Array.isArray(selectedCaseIds) || selectedCaseIds.length === 0 || selectedCaseIds.length > PHASE1_CORPUS_LIMITS.max_fixtures
@@ -119,10 +124,8 @@ export async function buildRetainedPhase1Corpus({
     fixture_set_sha256: fixtureSetSha256,
     total_fixture_bytes: totalFixtureBytes,
   };
-  if (corpusSchema) {
-    const validation = new AjvJsonSchemaValidator().getValidator(corpusSchema)(descriptor);
-    if (!validation.valid) throw new Error(`Retained corpus descriptor schema failed: ${validation.errorMessage}`);
-  }
+  const validation = new AjvJsonSchemaValidator().getValidator(corpusSchema)(descriptor);
+  if (!validation.valid) throw new Error(`Retained corpus descriptor schema failed: ${validation.errorMessage}`);
   const artifacts = { phase0_corpus: { filename: "phase0-corpus.v1.json", bytes: canonicalBytes(descriptor) } };
   if (artifacts.phase0_corpus.bytes.length > PHASE1_CORPUS_LIMITS.max_descriptor_bytes) {
     throw new Error("Retained corpus descriptor exceeds its whole-artifact byte ceiling");
@@ -142,9 +145,9 @@ function decodeBoundBytes(base64, expectedBytes, label, maxBytes) {
   return bytes;
 }
 
-function validateEmbeddedJsonBinding(binding, label) {
+function validateEmbeddedJsonBinding(binding, label, maxBytes) {
   exactKeys(binding, ["bytes", "canonical_sha256", "raw_base64", "raw_sha256"], label);
-  const bytes = decodeBoundBytes(binding.raw_base64, binding.bytes, label, PHASE1_CORPUS_LIMITS.max_fixture_bytes);
+  const bytes = decodeBoundBytes(binding.raw_base64, binding.bytes, label, maxBytes);
   const value = parseJson(bytes, label);
   if (binding.raw_sha256 !== sha256(bytes) || binding.canonical_sha256 !== sha256(Buffer.from(canonicalJson(value)))) {
     throw new Error(`${label} byte binding is invalid`);
@@ -185,10 +188,10 @@ export async function loadRetainedPhase1Corpus({
     || descriptor.manifest_schema.bytes > PHASE1_CORPUS_LIMITS.max_manifest_bytes) {
     throw new Error("Retained corpus manifest anchors differ before embedded JSON compilation");
   }
-  const manifest = validateEmbeddedJsonBinding(descriptor.manifest, "Retained Phase 0 manifest");
-  const manifestSchema = validateEmbeddedJsonBinding(descriptor.manifest_schema, "Retained Phase 0 manifest schema");
-  const manifestBytes = decodeBoundBytes(descriptor.manifest.raw_base64, descriptor.manifest.bytes, "Retained Phase 0 manifest", PHASE1_CORPUS_LIMITS.max_fixture_bytes);
-  const manifestSchemaBytes = decodeBoundBytes(descriptor.manifest_schema.raw_base64, descriptor.manifest_schema.bytes, "Retained Phase 0 manifest schema", PHASE1_CORPUS_LIMITS.max_fixture_bytes);
+  const manifest = validateEmbeddedJsonBinding(descriptor.manifest, "Retained Phase 0 manifest", PHASE1_CORPUS_LIMITS.max_manifest_bytes);
+  const manifestSchema = validateEmbeddedJsonBinding(descriptor.manifest_schema, "Retained Phase 0 manifest schema", PHASE1_CORPUS_LIMITS.max_manifest_bytes);
+  const manifestBytes = decodeBoundBytes(descriptor.manifest.raw_base64, descriptor.manifest.bytes, "Retained Phase 0 manifest", PHASE1_CORPUS_LIMITS.max_manifest_bytes);
+  const manifestSchemaBytes = decodeBoundBytes(descriptor.manifest_schema.raw_base64, descriptor.manifest_schema.bytes, "Retained Phase 0 manifest schema", PHASE1_CORPUS_LIMITS.max_manifest_bytes);
   const manifestValidation = new AjvJsonSchemaValidator().getValidator(manifestSchema)(manifest);
   if (!manifestValidation.valid) throw new Error(`Retained Phase 0 manifest is invalid: ${manifestValidation.errorMessage}`);
   if (canonicalJson(descriptor.fixtures.map(item => item.case_id)) !== canonicalJson(descriptor.selected_case_ids)

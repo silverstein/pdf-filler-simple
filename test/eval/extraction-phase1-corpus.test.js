@@ -3,7 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { canonicalJson, sha256 } from "./extraction-phase1-protocol.js";
-import { buildRetainedPhase1Corpus, loadRetainedPhase1Corpus } from "./extraction-phase1-corpus.js";
+import { PHASE1_CORPUS_LIMITS, buildRetainedPhase1Corpus, loadRetainedPhase1Corpus } from "./extraction-phase1-corpus.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
@@ -78,6 +78,27 @@ describe("Phase 1 retained corpus trust boundary", () => {
 
   it("rejects an oversized whole envelope before JSON parsing", async () => {
     const built = await corpusFixture();
-    await expect(loadCorpus(built, Buffer.alloc((12 * 1024 * 1024) + 1, 0x20))).rejects.toThrow(/independent byte ceiling/);
+    await expect(loadCorpus(built, Buffer.alloc((16 * 1024 * 1024) + 1, 0x20))).rejects.toThrow(/independent byte ceiling/);
+  });
+
+  it("requires the exact corpus schema and enforces manifest ceilings before JSON parsing", async () => {
+    const built = await corpusFixture();
+    await expect(buildRetainedPhase1Corpus({
+      manifestBytes: built.manifestBytes,
+      manifestSchemaBytes: built.manifestSchemaBytes,
+      selectedCaseIds: built.descriptor.selected_case_ids,
+      fixtureBytesById: built.fixtureBytesById,
+      trustedPrivacyClass: "public_synthetic",
+    })).rejects.toThrow(/requires its exact descriptor schema/);
+    await expect(buildRetainedPhase1Corpus({
+      manifestBytes: Buffer.alloc(PHASE1_CORPUS_LIMITS.max_manifest_bytes + 1, 0x20),
+      manifestSchemaBytes: built.manifestSchemaBytes,
+      selectedCaseIds: built.descriptor.selected_case_ids,
+      fixtureBytesById: built.fixtureBytesById,
+      trustedPrivacyClass: "public_synthetic",
+      corpusSchema: built.corpusSchema,
+    })).rejects.toThrow(/byte ceiling/);
+    expect(PHASE1_CORPUS_LIMITS.max_fixture_bytes).toBeLessThanOrEqual(PHASE1_CORPUS_LIMITS.max_total_fixture_bytes);
+    expect(PHASE1_CORPUS_LIMITS.max_descriptor_bytes).toBe(16 * 1024 * 1024);
   });
 });

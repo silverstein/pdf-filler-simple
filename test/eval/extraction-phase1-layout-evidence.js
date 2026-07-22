@@ -153,8 +153,7 @@ function interItemSpace(previous, item, lineDirection) {
   return gap > threshold && !previous.text.endsWith(" ") ? " " : "";
 }
 
-function occurrenceRecord({ layout, page, lineId, lineStartCodePoint, lineEndCodePoint, items, sourceSpans, quote, bbox }) {
-  const layoutIrSha256 = sha256(Buffer.from(canonicalJson(layout)));
+function occurrenceRecord({ layout, layoutIrSha256, page, lineId, lineStartCodePoint, lineEndCodePoint, items, sourceSpans, quote, bbox }) {
   const occurrence = {
     source_sha256: layout.source.sha256,
     layout_ir_sha256: layoutIrSha256,
@@ -189,7 +188,14 @@ export function enumerateExactLayoutOccurrences(layout, { page: pageNumber, quot
   if (!page || typeof quote !== "string" || quote.length === 0) return [];
   const needle = [...quote];
   if (needle.length > 10000) throw new Error("Layout fact anchor exceeds the bounded Unicode occurrence contract");
+  const prefix = new Array(needle.length).fill(0);
+  for (let index = 1, matched = 0; index < needle.length;) {
+    if (needle[index] === needle[matched]) prefix[index++] = ++matched;
+    else if (matched > 0) matched = prefix[matched - 1];
+    else prefix[index++] = 0;
+  }
   const itemById = new Map(page.raw_items.map(item => [item.id, item]));
+  const layoutIrSha256 = sha256(Buffer.from(canonicalJson(layout)));
   const occurrences = [];
   for (const line of page.lines) {
     const items = line.item_ids.map(id => itemById.get(id));
@@ -197,48 +203,40 @@ export function enumerateExactLayoutOccurrences(layout, { page: pageNumber, quot
       || item.bbox.width <= 0 || item.bbox.height <= 0)) continue;
     const projection = projectLine(items, line.direction);
     const haystack = projection.map(point => point.codePoint);
-    const prefix = new Array(needle.length).fill(0);
-    for (let index = 1, matched = 0; index < needle.length;) {
-      if (needle[index] === needle[matched]) prefix[index++] = ++matched;
-      else if (matched > 0) matched = prefix[matched - 1];
-      else prefix[index++] = 0;
-    }
-    const starts = [];
     for (let index = 0, matched = 0; index < haystack.length;) {
       if (haystack[index] === needle[matched]) {
         index += 1;
         matched += 1;
         if (matched === needle.length) {
-          starts.push(index - matched);
-          if (starts.length > 1000) throw new Error("Layout fact anchor has too many exact occurrences");
+          const start = index - matched;
+          if (projection[start].item !== null && projection[start + needle.length - 1].item !== null) {
+            if (occurrences.length >= 1000) throw new Error("Layout fact anchor has too many exact occurrences");
+            const selected = projection.slice(start, start + needle.length).filter(point => point.item !== null);
+            const selectedItems = [];
+            for (const point of selected) {
+              if (selectedItems.at(-1)?.id !== point.item.id) selectedItems.push(point.item);
+            }
+            const sourceSpans = selectedItems.map(item => {
+              const offsets = selected.filter(point => point.item.id === item.id).map(point => point.offset);
+              return { source_item_id: item.id, start_code_point: offsets[0], end_code_point: offsets.at(-1) + 1 };
+            });
+            occurrences.push(occurrenceRecord({
+              layout,
+              layoutIrSha256,
+              page: pageNumber,
+              lineId: line.id,
+              lineStartCodePoint: start,
+              lineEndCodePoint: start + needle.length,
+              items: selectedItems,
+              sourceSpans,
+              quote,
+              bbox: unionBoxes(selectedItems),
+            }));
+          }
           matched = prefix[matched - 1];
         }
       } else if (matched > 0) matched = prefix[matched - 1];
       else index += 1;
-    }
-    for (const start of starts) {
-      const selected = projection.slice(start, start + needle.length).filter(point => point.item !== null);
-      if (selected.length === 0 || projection[start].item === null || projection[start + needle.length - 1].item === null) continue;
-      const selectedItems = [];
-      for (const point of selected) {
-        if (selectedItems.at(-1)?.id !== point.item.id) selectedItems.push(point.item);
-      }
-      const sourceSpans = selectedItems.map(item => {
-        const offsets = selected.filter(point => point.item.id === item.id).map(point => point.offset);
-        return { source_item_id: item.id, start_code_point: offsets[0], end_code_point: offsets.at(-1) + 1 };
-      });
-      const bbox = unionBoxes(selectedItems);
-      occurrences.push(occurrenceRecord({
-        layout,
-        page: pageNumber,
-        lineId: line.id,
-        lineStartCodePoint: start,
-        lineEndCodePoint: start + needle.length,
-        items: selectedItems,
-        sourceSpans,
-        quote,
-        bbox,
-      }));
     }
   }
   const unique = new Map(occurrences.map(item => [canonicalJson(item.source_spans), item]));
@@ -342,7 +340,7 @@ export async function buildCanonicalLayoutEvidenceInput({ sourceBytes, sourceSha
   });
 }
 
-function reconcileProposal(proposal, layout, request) {
+function reconcileProposal(proposal, layout, request, layoutIrSha256) {
   exactKeys(proposal, ["bbox", "coordinate_space", "id", "page", "quote", "source_spans"], `Evidence proposal ${proposal.id}`);
   if (proposal.coordinate_space !== DISPLAY_COORDINATE_SPACE) throw new Error("Layout evidence uses an unsupported coordinate space");
   const page = layout.pages.find(item => item.page === proposal.page);
@@ -406,6 +404,7 @@ function reconcileProposal(proposal, layout, request) {
   if (lineStartCodePoint < 0 || lineEndCodePoint <= lineStartCodePoint) throw new Error(`Evidence proposal ${proposal.id} cannot be projected onto its source line`);
   const occurrence = occurrenceRecord({
     layout,
+    layoutIrSha256,
     page: proposal.page,
     lineId: line.id,
     lineStartCodePoint,
@@ -496,7 +495,7 @@ export async function reconcileLayoutIrEvidence({
     || layout.page_range.end_page !== request.source.page_count) {
     throw new Error("Layout IR is not bound to the exact candidate source request");
   }
-  const records = response.evidence.map(proposal => reconcileProposal(proposal, layout, request));
+  const records = response.evidence.map(proposal => reconcileProposal(proposal, layout, request, layoutIrSha256));
   const evidenceIds = records.map(record => record.evidence_id);
   if (new Set(evidenceIds).size !== evidenceIds.length) throw new Error("Candidate response contains duplicate canonical evidence IDs");
   const canonicalRecordTokens = records.map(record => canonicalJson({
@@ -617,7 +616,7 @@ export function scoreLayoutCanonicalEvidence({ fixture, oracleCase, layoutOracle
       approvedByFactId.set(fact.id, factOracle.approved_occurrence);
     }
   }
-  const recordSupportsApproved = (record, factId, approved) => {
+  const rawRecordSupportsApproved = (record, factId, approved) => {
     if (!record || !approved || record.phase0_coordinate_equivalent !== true
       || record.source_sha256 !== approved.source_sha256
       || record.layout_ir_sha256 !== approved.layout_ir_sha256
@@ -629,6 +628,28 @@ export function scoreLayoutCanonicalEvidence({ fixture, oracleCase, layoutOracle
       && occurrence.line_end_code_point <= record.line_end_code_point);
     return contained.length === 1 && contained[0].occurrence_sha256 === approved.occurrence_sha256;
   };
+  const contiguousWithAssignments = (approved, assignments) => assignments.every(existing =>
+    existing.source_sha256 === approved.source_sha256
+      && existing.layout_ir_sha256 === approved.layout_ir_sha256
+      && existing.page === approved.page
+      && existing.line_id === approved.line_id
+      && existing.line_start_code_point <= approved.line_end_code_point
+      && approved.line_start_code_point <= existing.line_end_code_point);
+  const eligibleFactIdsByRecord = new Map(reconciliation.records.map(record => {
+    const assignments = [];
+    const factIds = new Set();
+    for (const fact of fixture.expected.facts) {
+      const approved = approvedByFactId.get(fact.id);
+      if (rawRecordSupportsApproved(record, fact.id, approved) && contiguousWithAssignments(approved, assignments)) {
+        assignments.push(approved);
+        factIds.add(fact.id);
+      }
+    }
+    return [record.evidence_id, factIds];
+  }));
+  const recordSupportsApproved = (record, factId, approved) =>
+    eligibleFactIdsByRecord.get(record?.evidence_id)?.has(factId) === true
+      && rawRecordSupportsApproved(record, factId, approved);
   const matchedPageFacts = new Set();
   const matchedBboxFacts = new Set();
   const matchedSemanticFacts = new Set();
@@ -645,14 +666,15 @@ export function scoreLayoutCanonicalEvidence({ fixture, oracleCase, layoutOracle
       bindingsByPath.get(fieldPath)?.evidence_ids.includes(record.evidence_id)));
     const pageRecord = records.find(record => record.phase0_coordinate_equivalent === true
       && record.source_sha256 === approved.source_sha256 && record.layout_ir_sha256 === approved.layout_ir_sha256
-      && record.page === approved.page);
+      && record.page === approved.page && eligibleFactIdsByRecord.get(record.evidence_id)?.has(fact.id));
     if (pageRecord) {
       matchedPageFacts.add(fact.id);
       pageRecordIds.add(pageRecord.evidence_id);
     }
     const bboxRecord = records.find(record => record.phase0_coordinate_equivalent === true
       && record.source_sha256 === approved.source_sha256 && record.layout_ir_sha256 === approved.layout_ir_sha256
-      && record.page === approved.page && record.line_id === approved.line_id && exactBox(record.bbox, approved.bbox));
+      && record.page === approved.page && record.line_id === approved.line_id && exactBox(record.bbox, approved.bbox)
+      && eligibleFactIdsByRecord.get(record.evidence_id)?.has(fact.id));
     if (bboxRecord) {
       matchedBboxFacts.add(fact.id);
       bboxRecordIds.add(bboxRecord.evidence_id);

@@ -161,6 +161,23 @@ describe("Phase 1 scorer-only layout occurrence oracle", () => {
       { id: "p0001-l000002", direction: "ltr", item_ids: ["p0001-i000002"] },
     ];
     expect(enumerateExactLayoutOccurrences(split, { page: 1, quote: "leftright" })).toEqual([]);
+
+    const manyItems = Array.from({ length: 5_000 }, (_, index) => rawItem(`p0001-i${String(index + 1).padStart(6, "0")}`, "match", 10));
+    const manyLines = syntheticLayout(manyItems);
+    manyLines.pages[0].lines = manyItems.map((item, index) => ({
+      id: `p0001-l${String(index + 1).padStart(6, "0")}`,
+      direction: "ltr",
+      item_ids: [item.id],
+    }));
+    const manyStarted = performance.now();
+    expect(() => enumerateExactLayoutOccurrences(manyLines, { page: 1, quote: "match" })).toThrow(/too many exact occurrences/);
+    expect(performance.now() - manyStarted).toBeLessThan(1_000);
+  });
+
+  it("projects valid layout-oracle subsets in requested plan order", async () => {
+    const retained = await fs.readFile(path.join(PHASE1_ROOT, "layout-occurrence-oracle.v1.json"), "utf8").then(JSON.parse);
+    const caseIds = retained.cases.slice(0, 2).map(item => item.case_id).reverse();
+    await expect(verifyLayoutOccurrenceOracle(retained, { caseIds })).resolves.toBe(true);
   });
 
   it("reconciles exact source evidence and scores page, bbox, fact, and answer independently", async () => {
@@ -221,5 +238,77 @@ describe("Phase 1 scorer-only layout occurrence oracle", () => {
     const shifted = structuredClone(response);
     shifted.evidence[0].bbox.x += 0.001;
     await expect(reconcileLayoutIrEvidence({ request, response: shifted, sourceBytes, pdfjsLib, validatorSourceSetSha256: "f".repeat(64) })).rejects.toThrow(/exact source-item union/);
+  });
+
+  it("does not let one broad evidence record credit noncontiguous fact assignments", () => {
+    const left = rawItem("p0001-i000001", "LEFT", 10);
+    const middle = rawItem("p0001-i000002", "gap", 45);
+    const right = rawItem("p0001-i000003", "RIGHT", 80);
+    const layout = syntheticLayout([left, middle, right]);
+    const facts = [
+      { id: "fact.left", field_path: "/left", page: 1, anchor_text: "LEFT", bbox: left.bbox },
+      { id: "fact.right", field_path: "/right", page: 1, anchor_text: "RIGHT", bbox: right.bbox },
+    ];
+    const classified = facts.map(fact => classifyLayoutFactOccurrence(layout, fact));
+    const layoutOracleCase = {
+      case_id: "case.noncontiguous",
+      source_sha256: layout.source.sha256,
+      layout_ir_sha256: classified[0].approved.layout_ir_sha256,
+      facts: facts.map((fact, index) => ({
+        fact_id: fact.id,
+        field_path: fact.field_path,
+        anchor_text: fact.anchor_text,
+        page: fact.page,
+        status: classified[index].status,
+        status_reason: classified[index].statusReason,
+        geometry_status: "eligible",
+        geometry_reason: null,
+        observed_occurrence_sha256: classified[index].occurrences.map(item => item.occurrence_sha256),
+        approved_occurrence: classified[index].approved,
+      })),
+    };
+    const fixture = {
+      id: "case.noncontiguous",
+      sha256: layout.source.sha256,
+      ground_truth: { left: "LEFT", right: "RIGHT" },
+      expected: { facts },
+    };
+    const oracleCase = {
+      truth_leaves: facts.map(fact => ({
+        field_path: fact.field_path,
+        value: fixture.ground_truth[fact.field_path.slice(1)],
+        disposition: "answer",
+        fact_support: { mode: "all", fact_ids: [fact.id] },
+      })),
+    };
+    const broadRecord = {
+      evidence_id: "broad",
+      source_sha256: layout.source.sha256,
+      layout_ir_sha256: layoutOracleCase.layout_ir_sha256,
+      page: 1,
+      line_id: "p0001-l000001",
+      line_start_code_point: 0,
+      line_end_code_point: 14,
+      occurrence_sha256: "c".repeat(64),
+      phase0_coordinate_equivalent: true,
+      bbox: { x: 10, y: 20, width: 100, height: 10 },
+    };
+    const response = { structured_candidate: structuredClone(fixture.ground_truth) };
+    const reconciliation = {
+      mode: "layout_ir",
+      availability: "measured",
+      layout_ir_sha256: layoutOracleCase.layout_ir_sha256,
+      records: [broadRecord],
+      field_bindings: facts.map(fact => ({
+        field_path: fact.field_path,
+        disposition: "answer",
+        value_sha256: canonicalEvidenceValueSha256(fact.field_path, fixture.ground_truth[fact.field_path.slice(1)]),
+        evidence_ids: ["broad"],
+      })),
+    };
+    const score = scoreLayoutCanonicalEvidence({ fixture, oracleCase, layoutOracleCase, response, reconciliation, layout });
+    expect(score.page.matched).toBe(1);
+    expect(score.fact.matched).toBe(1);
+    expect(score.answer.matched).toBe(1);
   });
 });

@@ -20,6 +20,7 @@ import {
   createPhase1ScoreBundle,
   exactEditDistance,
   flattenScoringLeaves,
+  PHASE1_SCORER_LOCAL_SOURCE_PATHS,
   scorePhase1Report,
   scoreDistinctFragmentSequence,
   scoreRawTableValueClass,
@@ -36,6 +37,10 @@ import {
 } from "./extraction-phase1-companion.js";
 import { PHASE1_COMPANION_SOURCE_PATHS } from "./extraction-phase1-companion.js";
 import { buildRetainedPhase1Corpus } from "./extraction-phase1-corpus.js";
+import {
+  createExecutionGenerationSemanticVerifier,
+  createScoreGenerationSemanticVerifier,
+} from "./extraction-phase1-generation-verifiers.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
@@ -83,29 +88,10 @@ async function scoringContext(report, verificationEvidence, { registryPath = PAT
   const corpus = await buildRetainedPhase1Corpus({ manifestBytes, manifestSchemaBytes, selectedCaseIds: report.denominator.planned_case_ids, fixtureBytesById, trustedPrivacyClass: "public_synthetic", corpusSchema });
   const validatorSourceBytesByRole = Object.fromEntries(await Promise.all(Object.entries(PHASE1_COMPANION_SOURCE_PATHS).map(async ([role, relativePath]) => [role, { path: relativePath, bytes: await fs.readFile(path.join(REPO_ROOT, relativePath)) }])));
   const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
-  const rolePaths = {
-    corpus_module: path.join(REPO_ROOT, "test/eval/extraction-phase1-corpus.js"),
-    corpus_schema: PATHS.corpusSchema,
-    scorer_module: PATHS.scorerSource,
-    scoring_oracle: PATHS.oracle,
-    oracle_schema: PATHS.oracleSchema,
-    score_schema: PATHS.scoreSchema,
-    index_schema: PATHS.indexSchema,
-    layout_evidence_module: path.join(REPO_ROOT, "test/eval/extraction-phase1-layout-evidence.js"),
-    layout_extraction_module: path.join(REPO_ROOT, "server/layout-extraction.js"),
-    layout_oracle: PATHS.layoutOracle,
-    layout_oracle_generator: path.join(REPO_ROOT, "scripts/eval-generate-extraction-layout-oracle.mjs"),
-    layout_oracle_schema: PATHS.layoutOracleSchema,
-    manifest_loader: path.join(REPO_ROOT, "test", "eval", "extraction-manifest.js"),
-    orchestration_script: PATHS.orchestration,
-    output_schemas_module: path.join(REPO_ROOT, "server/output-schemas.js"),
-    package_lock: path.join(REPO_ROOT, "package-lock.json"),
-    pdfjs_package: path.join(REPO_ROOT, "node_modules/pdfjs-dist/package.json"),
-    protocol_module: path.join(REPO_ROOT, "test", "eval", "extraction-phase1-protocol.js"),
-    report_schema: PATHS.reportSchema,
-    report_verifier_module: path.join(REPO_ROOT, "test/eval/extraction-phase1-report-verifier.js"),
-  };
-  const scorerSourceBytesByRole = Object.fromEntries(await Promise.all(Object.entries(rolePaths).map(async ([role, filename]) => [role, { path: path.relative(REPO_ROOT, filename), bytes: await fs.readFile(filename) }])));
+  const scorerSourceBytesByRole = Object.fromEntries(await Promise.all(Object.entries(PHASE1_SCORER_LOCAL_SOURCE_PATHS).map(async ([role, relativePath]) => [role, { path: relativePath, bytes: await fs.readFile(path.join(REPO_ROOT, relativePath)) }])));
+  const scorerParsedJsonByRole = Object.fromEntries(Object.entries(scorerSourceBytesByRole)
+    .filter(([, source]) => source.path.endsWith(".json"))
+    .map(([role, source]) => [role, JSON.parse(source.bytes)]));
   const reportBytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
   const preflightEvidenceBytes = Buffer.from(`${JSON.stringify({ report_id: report.report_id, run_id: report.run_id, preflight_evidence_sha256: report.preflight_evidence_sha256, failure_evidence_by_attempt_key: verificationEvidence.failureEvidenceByAttemptKey }, null, 2)}\n`);
   return {
@@ -120,7 +106,7 @@ async function scoringContext(report, verificationEvidence, { registryPath = PAT
     oracle: JSON.parse(oracleBytes), oracleBytes, oracleSchema,
     layoutOracle: JSON.parse(layoutOracleBytes), layoutOracleBytes, layoutOracleSchema,
     corpus, pdfjsLib, validatorSourceBytesByRole,
-    scoreSchema, indexSchema, scorerSourceBytesByRole, reportBytes, preflightEvidenceBytes,
+    scoreSchema, indexSchema, scorerSourceBytesByRole, scorerParsedJsonByRole, reportBytes, preflightEvidenceBytes,
   };
 }
 
@@ -260,7 +246,10 @@ describe("structured extraction Phase 1 pure scorer", () => {
       state: "complete",
       index: { kind: "score", source_generation_sha256: verificationEvidence.generation.generation_sha256 },
     });
-    expect(inspection.index.artifacts.map(item => item.role)).toEqual(["phase0_corpus", "privacy_attestation", "score_provenance", "score_report", "source_execution_report"]);
+    expect(inspection.index.artifacts.map(item => item.role)).toEqual([
+      "candidate_registry", "phase0_corpus", "privacy_attestation", "run_plan", "score_provenance", "score_report",
+      "source_execution_companion", "source_execution_report",
+    ]);
     const receivedScoreRoot = path.join(root, "received-score-generation");
     await fs.mkdir(receivedScoreRoot, { mode: 0o700 });
     await expect(receiveVerifiedGeneration({
@@ -270,7 +259,15 @@ describe("structured extraction Phase 1 pure scorer", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: result.generation.generation_sha256,
     })).rejects.toThrow(/composite extraction semantic verifier/);
+    const scoreTransferVerifier = await createScoreGenerationSemanticVerifier({
+      repositoryRoot: REPO_ROOT,
+      manifestPath: PATHS.manifest,
+      manifestSchemaPath: PATHS.manifestSchema,
+      trustedPrivacyClass: "public_synthetic",
+      trust: { kind: "out_of_band_source_generation_sha256", expected_source_generation_sha256: result.generation.generation_sha256 },
+    });
     const receivedScoreGeneration = await receiveVerifiedGeneration({
       sourceGenerationPath: result.generation.generationPath,
       destinationParentDirectory: receivedScoreRoot,
@@ -278,16 +275,24 @@ describe("structured extraction Phase 1 pure scorer", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
-      semanticVerifier: result.semanticVerifier,
+      trustedSourceGenerationSha256: result.generation.generation_sha256,
+      semanticVerifier: scoreTransferVerifier,
     });
     expect(receivedScoreGeneration.destination.index.kind).toBe("received_score");
     expect(receivedScoreGeneration.receipt.source_code_identity).toEqual({
-      kind: "score_scorer_source_set_sha256",
-      sha256: result.provenance.bindings.scorer_source_set_sha256,
+      kind: "score_scorer_local_source_set_sha256",
+      sha256: result.provenance.bindings.scorer_local_source_set_sha256,
       source_artifact_role: "score_provenance",
     });
     const receivedRoot = path.join(root, "received");
     await fs.mkdir(receivedRoot, { mode: 0o700 });
+    const executionTransferVerifier = await createExecutionGenerationSemanticVerifier({
+      repositoryRoot: REPO_ROOT,
+      manifestPath: PATHS.manifest,
+      manifestSchemaPath: PATHS.manifestSchema,
+      trustedPrivacyClass: "public_synthetic",
+      trust: { kind: "out_of_band_source_generation_sha256", expected_source_generation_sha256: verificationEvidence.generation.generation_sha256 },
+    });
     const received = await receiveVerifiedGeneration({
       sourceGenerationPath: executionGenerationPath,
       destinationParentDirectory: receivedRoot,
@@ -295,7 +300,8 @@ describe("structured extraction Phase 1 pure scorer", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
-      semanticVerifier: verificationEvidence.semanticVerifier,
+      trustedSourceGenerationSha256: verificationEvidence.generation.generation_sha256,
+      semanticVerifier: executionTransferVerifier,
     });
     const receivedScore = await scoreExtractionCandidateReport({
       executionGenerationPath: received.generationPath,
@@ -512,6 +518,15 @@ describe("structured extraction Phase 1 pure scorer", () => {
 
     const privateReceivedRoot = path.join(root, "private-received");
     await fs.mkdir(privateReceivedRoot, { mode: 0o700 });
+    const privateTransferVerifier = await createExecutionGenerationSemanticVerifier({
+      repositoryRoot: REPO_ROOT,
+      manifestPath: PATHS.manifest,
+      manifestSchemaPath: PATHS.manifestSchema,
+      trustedPrivacyClass: "private_local",
+      trustedSourceProhibitedRoots: sourceProhibitedRoots,
+      trustedReceivedProhibitedRoots: destinationProhibitedRoots,
+      trust: { kind: "out_of_band_source_generation_sha256", expected_source_generation_sha256: privateEvidence.generation.generation_sha256 },
+    });
     const privateReceived = await receiveVerifiedGeneration({
       sourceGenerationPath: privateEvidence.generation.generationPath,
       destinationParentDirectory: privateReceivedRoot,
@@ -519,9 +534,10 @@ describe("structured extraction Phase 1 pure scorer", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: privateEvidence.generation.generation_sha256,
       trustedSourceProhibitedRootSetSha256: trustedSourcePrivacyDigests.generation_prohibited_root_set_sha256,
       destinationTrustedProhibitedRoots: destinationProhibitedRoots,
-      semanticVerifier: privateEvidence.semanticVerifier,
+      semanticVerifier: privateTransferVerifier,
     });
     const privateReceivedScore = await scoreExtractionCandidateReport({
       executionGenerationPath: privateReceived.generationPath,
@@ -552,17 +568,9 @@ describe("structured extraction Phase 1 pure scorer", () => {
       planPath: large.planPath,
     });
     expect(scored.generation.index).toMatchObject({ kind: "score", state: "complete" });
-
-    const underCapPlan = await readJson(large.planPath);
-    underCapPlan.limits.max_report_bytes = 16 * 1024 * 1024;
-    const underCapPlanPath = path.join(large.root, "under-cap-plan.json");
-    await fs.writeFile(underCapPlanPath, JSON.stringify(underCapPlan));
-    await expect(scoreExtractionCandidateReport({
-      executionGenerationPath: large.generation.generationPath,
-      generationRoot: path.join(large.root, "under-cap-score-generations"),
-      registryPath: large.registryPath,
-      planPath: underCapPlanPath,
-    })).rejects.toThrow(/max_report_bytes/);
+    const scoredInspection = await inspectGenerationDirectory(scored.generation.generationPath);
+    const retainedPlan = await readVerifiedGenerationArtifact(scored.generation.generationPath, scoredInspection, "run_plan");
+    expect(JSON.parse(retainedPlan.bytes)).toEqual(await readJson(large.planPath));
   }, 60_000);
 
   it("keeps every all-not-run attempt operationally visible without inventing quality", async () => {

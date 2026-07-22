@@ -23,7 +23,7 @@ const INDEX_KEYS = ["artifacts", "claim_ready", "index_content_sha256", "index_i
 const SCORE_PROVENANCE_BINDING_KEYS = [
   "execution_report_bytes_sha256", "execution_report_sha256", "oracle_bytes_sha256", "oracle_schema_sha256",
   "oracle_sha256", "layout_oracle_bytes_sha256", "layout_oracle_schema_sha256", "layout_oracle_sha256", "phase0_manifest_sha256", "preflight_evidence_bytes_sha256", "preflight_evidence_sha256",
-  "score_schema_sha256", "scorer_contract_sha256", "scorer_source_set_sha256",
+  "score_schema_sha256", "scorer_contract_sha256", "scorer_local_source_set_sha256",
 ];
 
 function exactKeys(value, keys) {
@@ -66,6 +66,17 @@ function validateIndex(index) {
 
 async function inject(faultInjector, phase, context = {}) {
   if (faultInjector) await faultInjector(phase, context);
+}
+
+async function verifyTerminalSemanticSnapshot({ verifier, generationPath, inspection }) {
+  await runSemanticGenerationVerifier({ verifier, generationPath, inspection });
+  const postSemanticInspection = await inspectGenerationDirectory(generationPath);
+  if (postSemanticInspection.state !== "complete"
+    || postSemanticInspection.generation_sha256 !== inspection.generation_sha256
+    || !postSemanticInspection.indexBytes.equals(inspection.indexBytes)) {
+    throw new Error("Generation changed during terminal semantic verification");
+  }
+  return postSemanticInspection;
 }
 
 async function fsyncDirectory(directory) {
@@ -289,14 +300,25 @@ export async function publishImmutableGeneration({
   if (completedInspection.state !== "complete" || completedInspection.generation_sha256 !== finalGenerationSha256) {
     throw new Error(`Completed generation failed claim-free reinspection: ${completedInspection.reason ?? "generation_digest_changed"}`);
   }
-  await runSemanticGenerationVerifier({ verifier: finalGenerationVerifier, generationPath, inspection: completedInspection });
+  const terminalInspection = await verifyTerminalSemanticSnapshot({
+    verifier: finalGenerationVerifier,
+    generationPath,
+    inspection: completedInspection,
+  });
+  try {
+    await inject(faultInjector, "after_terminal_semantic_verification", { generationPath });
+  } catch (error) {
+    error.publication_state = "durability_uncertain";
+    error.generation_path = generationPath;
+    throw error;
+  }
   return {
     state: "complete",
     generationPath,
     generationName,
-    index: completedInspection.index,
-    indexBytes: completedInspection.indexBytes,
-    generation_sha256: completedInspection.generation_sha256,
+    index: terminalInspection.index,
+    indexBytes: terminalInspection.indexBytes,
+    generation_sha256: terminalInspection.generation_sha256,
   };
 }
 
@@ -427,6 +449,7 @@ async function runSemanticGenerationVerifier({ verifier, generationPath, inspect
       generationPath,
       index: inspection.index,
       indexBytes: inspection.indexBytes,
+      inspection,
     });
   }
 }
@@ -524,7 +547,7 @@ async function deriveSourceCodeIdentity(generationPath, inspection) {
       })) {
       throw new Error("Score source provenance identity is invalid");
     }
-    identity = { kind: "score_scorer_source_set_sha256", sha256: retained.bindings.scorer_source_set_sha256, source_artifact_role: role };
+    identity = { kind: "score_scorer_local_source_set_sha256", sha256: retained.bindings.scorer_local_source_set_sha256, source_artifact_role: role };
   }
   if (!/^[a-f0-9]{64}$/.test(identity.sha256)) throw new Error("Source generation code identity is unavailable or invalid");
   return identity;
@@ -541,6 +564,7 @@ export async function receiveVerifiedGeneration({
   keyId = null,
   signature = null,
   trustedSignatureVerifier = null,
+  trustedSourceGenerationSha256 = null,
   trustedSourceProhibitedRootSetSha256 = null,
   destinationTrustedProhibitedRoots = [],
   copyFaultInjector = null,
@@ -552,6 +576,10 @@ export async function receiveVerifiedGeneration({
   const sourceBefore = await inspectGenerationDirectory(realSourceGenerationPath);
   if (sourceBefore.state !== "complete" || !["execution", "score"].includes(sourceBefore.index.kind)) {
     throw new Error("Cross-device receive requires a complete original execution or score generation");
+  }
+  if (!/^[a-f0-9]{64}$/.test(trustedSourceGenerationSha256 ?? "")
+    || sourceBefore.generation_sha256 !== trustedSourceGenerationSha256) {
+    throw new Error("Cross-device receive requires the exact out-of-band trusted source generation digest");
   }
   if (requiresCompositeExtractionVerification(sourceBefore.index) && typeof semanticVerifier !== "function") {
     throw new Error("Cross-device receive requires a composite extraction semantic verifier");
@@ -723,10 +751,12 @@ export async function receiveVerifiedGeneration({
     if (completedDestination.state !== "complete" || completedDestination.generation_sha256 !== destination.generation_sha256) {
       throw new Error("Received generation failed claim-free reinspection");
     }
-    if (requiresCompositeExtractionVerification(completedDestination.index)) await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: completedDestination });
+    const terminalDestination = requiresCompositeExtractionVerification(completedDestination.index)
+      ? await verifyTerminalSemanticSnapshot({ verifier: semanticVerifier, generationPath, inspection: completedDestination })
+      : completedDestination;
     return {
-      state: "complete", generationPath, generationName, index, indexBytes, receipt, source: sourceBefore, destination: completedDestination,
-      generation_sha256: completedDestination.generation_sha256,
+      state: "complete", generationPath, generationName, index, indexBytes, receipt, source: sourceBefore, destination: terminalDestination,
+      generation_sha256: terminalDestination.generation_sha256,
     };
   } catch (error) {
     if (published) {
@@ -789,8 +819,8 @@ export async function recoverVerifiedStagingGeneration({ stagingPath, generation
   if (completedInspection.state !== "complete" || completedInspection.generation_sha256 !== inspection.generation_sha256) {
     return { state: "corruption", reason: "recovered_generation_failed_claim_free_reinspection" };
   }
-  await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: completedInspection });
-  return { ...completedInspection, state: "recovered_complete", generationPath };
+  const terminalInspection = await verifyTerminalSemanticSnapshot({ verifier: semanticVerifier, generationPath, inspection: completedInspection });
+  return { ...terminalInspection, state: "recovered_complete", generationPath };
 }
 
 export async function recoverPublishedGeneration({ generationPath, faultInjector = null, semanticVerifier = null }) {
@@ -822,6 +852,6 @@ export async function recoverPublishedGeneration({ generationPath, faultInjector
   if (completedInspection.state !== "complete" || completedInspection.generation_sha256 !== inspection.generation_sha256) {
     return { state: "corruption", reason: "recovered_generation_failed_claim_free_reinspection" };
   }
-  await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: completedInspection });
-  return { ...completedInspection, state: "recovered_complete", generationPath };
+  const terminalInspection = await verifyTerminalSemanticSnapshot({ verifier: semanticVerifier, generationPath, inspection: completedInspection });
+  return { ...terminalInspection, state: "recovered_complete", generationPath };
 }

@@ -121,6 +121,30 @@ transaction may inspect it internally. Recovery of a privacy-attested
 generation requires and reruns its semantic verifier; verifier failure leaves
 the claim in place.
 
+After the terminal claim-free semantic callback, publication, receive, staging
+recovery, and published recovery perform one more exact inspection. The final
+generation digest and canonical index bytes must equal the pre-callback
+snapshot. The returned inspection is this post-callback snapshot. This closes
+mutation during the terminal callback; continuous immutability after return is
+still unavailable and is not claimed.
+
+Execution and score semantic verifiers are exported factories, not retained
+in-memory closures. A fresh process rebuilds them from explicit trusted local
+paths, the closed local source and schema role sets, PDF.js 5.4.624, and retained
+generation artifacts. Execution and score generations retain the exact
+candidate registry and run plan used by the report. Score generations also
+retain the source execution companion so adapter, artifact, and runner-failure
+context can be reconstructed without the scoring process that created them.
+
+Local crash recovery uses an explicit `local_claim_owned` rule. The caller must
+supply the expected transaction ID and may supply the exact generation digest.
+The factory verifies the mode-0600, no-follow claim bytes before accepting the
+transaction, permits one terminal claim-free use for that same transaction,
+then becomes unusable. This is local, unauthenticated recovery trust. It is not
+cross-device authenticity. A fresh recovery after the terminal claim was
+removed must provide the exact expected generation digest and recover through a
+new exact transaction claim.
+
 Generation kinds have a strict ancestry contract. An original `execution`
 index has no source-generation digest. `score`, `received_execution`, and
 `received_score` indexes require one. A received execution must embed an
@@ -151,7 +175,9 @@ root set.
 The transfer receipt binds the exact source index bytes, source generation
 digest, hosts, transport, time, and a code identity derived from the indexed
 execution companion or score provenance. Callers cannot substitute an
-unrelated source hash. Unsigned receipts state that authenticity is unavailable.
+unrelated source hash. Receive also requires the exact source generation digest
+from an out-of-band trusted input before copying. Unsigned receipts state that
+authenticity is unavailable and self-consistency alone is not authenticity.
 For signed receipts, a trusted verifier must return the synchronous boolean
 value `true`; promises and other truthy values fail closed.
 
@@ -165,7 +191,12 @@ trusting a self-consistent destination index.
 The scorer consumes only a complete execution or received-execution generation.
 It revalidates the report, companion, artifact evidence, privacy evidence,
 source ancestry, and receipt before computing metrics. Score provenance binds
-the scorer source set, oracle inputs, schemas, report bytes, and scoring leaves.
+the explicitly named scorer local source set, oracle inputs, schemas, report
+bytes, and scoring leaves. The local set closes every repository source and
+schema that governs load, verification, scoring, publication, and recovery. It
+also binds package metadata for the MCP SDK, pdf-lib, and PDF.js plus the exact
+package lock. Installed external scorer runtime and module-byte closure remain
+unavailable and are explicitly nonclaimed.
 The score is then published as its own immutable generation that names the
 verified execution generation as its source. Scores can be transferred into a
 `received_score` generation under the same receipt and privacy rules.
@@ -203,7 +234,11 @@ exact shipped `read_pdf_layout` schema, validate layout semantics, reparse the
 source with PDF.js 5.4.624, and prove every Unicode code-point span, source item,
 line, reading order, quote, exact 0.001-rounded item-union bbox, field path, and
 typed value digest. Multiple noncontiguous facts require multiple evidence
-records. Direct-PDF and raster proposals fail closed.
+records; one broad record cannot receive repeated credit for separated facts.
+Direct-PDF and raster proposals fail closed. Exact anchor matching precomputes
+the layout digest and Unicode prefix table once per search, preserves a full
+100,000-code-point no-match scan, and fails closed before constructing more than
+1,000 occurrences across all lines.
 
 The Phase 0 coordinate gate is deliberately narrow: zero raw and display
 rotation, equal zero-origin MediaBox and CropBox, UserUnit 1, exact PDF.js view,
@@ -248,6 +283,14 @@ fixture hashes, page counts, privacy labels, and a domain-separated fixture-set
 digest are rechecked before report verification. Publication, scoring, reload,
 receive, and recovery await composite semantic verification at staging, final,
 pre-claim-removal, and claim-free boundaries.
+
+Manifest and schema inputs are opened without following symlinks and are bounded
+before JSON parsing. Plans select at most 100 cases. Selected fixtures are read
+sequentially under one remaining 8 MiB aggregate budget, with an 8 MiB
+per-fixture ceiling. The retained descriptor schema is mandatory. Base64 limits
+are the exact encoded ceilings for the 1 MiB manifest and schema inputs and the
+8 MiB fixture budget; the whole descriptor and default generation reader share
+a consistent 16 MiB ceiling.
 
 The report flags `benchmark_claim_ready`, `calibration_claim_ready`, and
 `truth_isolation_claim_ready` remain false. Candidate installation, model

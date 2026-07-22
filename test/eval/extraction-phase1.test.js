@@ -116,6 +116,56 @@ async function configuredRun(mode, {
 }
 
 describe("structured extraction Phase 1 external candidate boundary", () => {
+  it("fails closed before parsing or aggregate allocation for oversized, symlinked, special, and many-file corpus inputs", async () => {
+    const root = await temporaryRoot();
+    const oversizedManifest = path.join(root, "oversized-manifest.json");
+    await fs.writeFile(oversizedManifest, Buffer.alloc((1024 * 1024) + 1, 0x20));
+    await expect(runExtractionCandidates({ manifestPath: oversizedManifest })).rejects.toThrow(/bounded regular file/);
+
+    const symlinkManifest = path.join(root, "symlink-manifest.json");
+    await fs.symlink(MANIFEST, symlinkManifest);
+    await expect(runExtractionCandidates({ manifestPath: symlinkManifest })).rejects.toThrow();
+    await expect(runExtractionCandidates({ manifestPath: root })).rejects.toThrow(/bounded regular file|EISDIR/);
+
+    const [manifest, plan] = await Promise.all([
+      fs.readFile(MANIFEST, "utf8").then(JSON.parse),
+      fs.readFile(PLAN, "utf8").then(JSON.parse),
+    ]);
+    const tooManyPlan = { ...plan, case_ids: Array.from({ length: 101 }, (_, index) => `case-${index}`) };
+    const tooManyPlanPath = path.join(root, "too-many-plan.json");
+    await fs.writeFile(tooManyPlanPath, `${JSON.stringify(tooManyPlan, null, 2)}\n`);
+    await expect(runExtractionCandidates({ planPath: tooManyPlanPath })).rejects.toThrow(/Invalid extraction Phase 1 plan/);
+
+    const selected = manifest.fixtures[0];
+    await fs.mkdir(path.dirname(path.join(root, selected.path)), { recursive: true });
+    const selectedPlan = { ...plan, case_ids: [selected.id] };
+    const selectedPlanPath = path.join(root, "selected-plan.json");
+    const copiedManifestPath = path.join(root, "manifest.json");
+    await Promise.all([
+      fs.writeFile(selectedPlanPath, `${JSON.stringify(selectedPlan, null, 2)}\n`),
+      fs.writeFile(copiedManifestPath, `${JSON.stringify(manifest, null, 2)}\n`),
+      fs.symlink(path.join(EXTRACTION_ROOT, selected.path), path.join(root, selected.path)),
+    ]);
+    await expect(runExtractionCandidates({
+      manifestPath: copiedManifestPath,
+      manifestSchemaPath: MANIFEST_SCHEMA,
+      planPath: selectedPlanPath,
+    })).rejects.toThrow();
+
+    const largeManifest = structuredClone(manifest);
+    const sourcePdf = await fs.readFile(path.join(EXTRACTION_ROOT, selected.path));
+    const largeBytes = Buffer.concat([sourcePdf, Buffer.alloc((2 * 1024 * 1024) - sourcePdf.length, 0)]);
+    for (const [index, fixture] of largeManifest.fixtures.entries()) {
+      fixture.path = `synthetic/large-${index}.pdf`;
+      fixture.sha256 = sha256(largeBytes);
+      await fs.writeFile(path.join(root, fixture.path), largeBytes);
+    }
+    const largeManifestPath = path.join(root, "large-manifest.json");
+    await fs.writeFile(largeManifestPath, `${JSON.stringify(largeManifest, null, 2)}\n`);
+    await expect(runExtractionCandidates({ manifestPath: largeManifestPath, manifestSchemaPath: MANIFEST_SCHEMA }))
+      .rejects.toThrow(/aggregate retained-corpus byte ceiling|bounded regular file/);
+  });
+
   it("derives concrete scalar evidence leaves inside arrays without parent inheritance", () => {
     const schema = {
       type: "object", additionalProperties: false, required: ["events", "rows"], properties: {

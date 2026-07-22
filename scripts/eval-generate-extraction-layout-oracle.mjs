@@ -194,8 +194,8 @@ export async function generateLayoutOccurrenceOracle({ manifestBytes: retainedMa
 
 export async function verifyLayoutOccurrenceOracle(oracle, options = {}) {
   const regenerated = await generateLayoutOccurrenceOracle(options);
-  const selectedIds = new Set(regenerated.cases.map(item => item.case_id));
-  const projected = { ...oracle, cases: oracle.cases.filter(item => selectedIds.has(item.case_id)) };
+  const retainedById = new Map(oracle.cases.map(item => [item.case_id, item]));
+  const projected = { ...oracle, cases: regenerated.cases.map(item => retainedById.get(item.case_id)) };
   if (canonicalJson(projected) !== canonicalJson(regenerated)) {
     throw new Error("Layout occurrence oracle differs from exact independent regeneration");
   }
