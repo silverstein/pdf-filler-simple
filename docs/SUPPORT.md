@@ -13,7 +13,7 @@ Use this when handling issues from users or downstream maintainers.
 ## 2) Fast classification
 
 - Install/config issue (MCP host config, path, permissions)
-- Tool runtime issue (PDF parsing, OCR, profiles)
+- Tool runtime issue (PDF text extraction, page rendering, profiles)
 - Packaging issue (mcpb pack, zip installer)
 
 ## 3) Minimal repro

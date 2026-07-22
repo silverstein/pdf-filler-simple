@@ -26,7 +26,7 @@
 ## Testing Guidelines
 - No automated test suite yet; perform manual runs against `example-fw9.pdf` via the MCP host. Exercise `list_pdfs`, `read_pdf_fields`, `fill_pdf`, and one profile flow.
 - Validate CSV workflows with a two-row fixture before publishing; include a value with a comma to catch CSV parsing regressions.
-- Smoke-test new tools: `extract_to_csv` on two PDFs, `validate_pdf` on a partially filled form, `read_pdf_content` on text and scanned PDFs, and `get_pdf_resource_uri` with a local file path.
+- Smoke-test new tools: `extract_to_csv` on two PDFs, `validate_pdf` on a partially filled form, `read_pdf_content` on a text-layer PDF and a textless scanned PDF to verify its page-1 image fallback, and `get_pdf_resource_uri` with a local file path.
 
 ## Commit & Pull Request Guidelines
 - Follow the existing imperative subject style (`Update index.html to improve structure`). Group related changes and note version bumps explicitly.

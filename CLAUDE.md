@@ -16,13 +16,14 @@ PDF Toolkit is a Claude Desktop extension (MCPB) and MCP server that enables aut
 - Profile system for reusable data
 - Extract data from PDFs to CSV
 - Form validation
-- OCR support for scanned PDFs
+- PDF.js text-layer extraction and page/region rendering for visual inspection
 
 ## Technical Architecture
 
 ### Technology Stack
 - **Runtime**: Node.js (ES modules)
-- **PDF Libraries**: pdf-lib, pdf-parse, pdfjs-dist
+- **PDF Libraries**: pdf-lib, pdfjs-dist
+- **Raster Rendering**: @napi-rs/canvas
 - **Protocol**: MCP (Model Context Protocol)
 - **Extension Format**: MCPB (built via `mcpb pack`)
 
@@ -80,7 +81,7 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 5. `bulk_fill_from_csv` with a two-row CSV (include a comma in one value)
 6. `extract_to_csv` on two PDFs
 7. `validate_pdf` on a partially filled form
-8. `read_pdf_content` on text and scanned PDFs
+8. `read_pdf_content` on a text-layer PDF and a textless scanned PDF, confirming the page-1 image fallback boundary
 
 ## Available Tools (27 + 1 app-only)
 
@@ -95,7 +96,7 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 9. **fill_with_profile** - Fill PDF using saved profile
 10. **extract_to_csv** - Extract data from PDFs to CSV
 11. **validate_pdf** - Check for missing required fields
-12. **read_pdf_content** - Extract text/images from PDFs (OCR support)
+12. **read_pdf_content** - Read the PDF.js text layer; if the selected extraction contains no text, it may return a rendered page-1 image for host/model vision
 13. **get_pdf_resource_uri** - Get resource URI for a PDF file
 14. **read_pdf_bytes** - (app-only) Chunked byte streaming for the interactive viewer
 15. **merge_pdfs** - Merge multiple PDFs into a single document
@@ -112,6 +113,20 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 26. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent — see Signature Architecture below)
 27. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
 28. **detect_signature_zones** - Locate signature/initials/date zones with coordinates (use BEFORE apply_signature)
+
+### Current Extraction Boundary
+
+The local runtime does not bundle an OCR engine. `read_pdf_content` reads the
+PDF.js text layer. Only when the entire selected extraction contains no text may
+it return a rendered image of page 1 for a vision-capable host or model to
+inspect. `render_pdf_page` and `render_pdf_region` perform local rasterization;
+they do not produce recognized text. Mixed text/raster documents and raster
+pages after page 1 can therefore remain unrecognized by a broad text read.
+
+PDF Tools performs filesystem operations and rasterization locally and does not
+upload files to a separate PDF service. Content returned through MCP can be
+processed by the selected host or model under that provider's data terms. A
+future local OCR engine is optional planned work, not a current capability.
 
 ## Signature Architecture (v0.8.0)
 

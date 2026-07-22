@@ -45,7 +45,7 @@ host and operating system being claimed.
 - Tool definitions and helpers live in `server/index.js`.
 - Profile storage lives under `~/.pdf-toolkit-files` (migrated from `~/.pdf-filler-profiles`).
 - PDF utilities use `pdf-lib` and `pdfjs-dist`.
-- OCR/image extraction is lazy loaded to avoid startup overhead.
+- PDF.js text extraction and canvas-backed page/region rendering are lazy loaded to avoid startup overhead.
 - Interactive viewer UI lives in `ui/`, built to `dist-ui/` via Vite.
 
 ## Data flow (ASCII map)
@@ -64,11 +64,25 @@ Claude Desktop / Cursor
         │                    └─ PDF.js renders pages client-side
         ├─ form fill/read (pdf-lib)
         ├─ text extract (pdfjs-dist)
-        └─ OCR/image (pdfjs-dist + @napi-rs/canvas)
+        └─ page/region render (pdfjs-dist + @napi-rs/canvas)
         │
         ▼
  local filesystem
 ```
+
+`read_pdf_content` reads the PDF.js text layer. Only when the full selected
+extraction has no text may it return a rendered image of page 1 for the MCP host
+or model to inspect. The local runtime does not bundle an OCR engine and does
+not recognize text in that image.
+`render_pdf_page` and `render_pdf_region` also return raster images rather than
+recognized text. Mixed text/raster documents and raster pages after page 1 may
+therefore remain unrecognized by a broad text read.
+
+Filesystem operations and rasterization happen locally, and PDF Tools does not
+upload files to a separate PDF service. Text, images, and metadata returned
+through MCP may still be processed under the selected host or model provider's
+data terms. Treat optional local OCR as planned work until its runtime,
+packaging, tests, and release evidence ship together.
 
 ## Tool inventory (current)
 
@@ -283,7 +297,7 @@ Run these after any tool or packaging change:
 - `bulk_fill_from_csv` using a two-row CSV with a comma in one value
 - `extract_to_csv` on two PDFs
 - `validate_pdf` on a partially filled form
-- `read_pdf_content` on text and scanned PDFs
+- `read_pdf_content` on a text-layer PDF and a textless scanned PDF; confirm that only a wholly textless selected extraction may fall back to a rendered page-1 image
 - `get_pdf_resource_uri` with a local path
 - `merge_pdfs` with two PDFs — merged result opens in viewer, page order preserved
 - `merge_pdfs` with empty array — clear error message

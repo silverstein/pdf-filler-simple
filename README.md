@@ -1,12 +1,12 @@
 # PDF Tools for Claude Desktop and Local MCP Hosts
 
 The local PDF workflow for Claude Desktop and MCP hosts: fill, sign, merge,
-split, extract, and analyze PDFs without sending files to a web app.
+split, extract, render, and analyze PDFs with local file operations.
 
 Instead of just opening a PDF, PDF Tools lets Claude fetch PDF URLs to your
 machine, inspect documents visually, fill forms, save reusable profiles, add
 signature/date zones, merge and split files, reorganize pages visually, extract
-structured data, and analyze document content locally.
+structured data, and return document content to your chosen MCP host for analysis.
 
 This package targets Claude Desktop and other local MCP hosts today. It does not yet include a remote connector for Claude Cowork / web-hosted Claude.
 
@@ -48,8 +48,12 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 - **URL-to-PDF workflows:** fetch HTTP(S) PDF links to the local machine when sandboxed web fetches are blocked
 - **Page organization:** merge, split, rotate, reorder, and apply full page plans in one pass
 - **Extraction and analysis:** page-bounded reads, text search, page/region rendering, CSV export, page-level analysis, metadata, and validation
-- **Local-first:** files stay on your machine
+- **Local file operations:** PDF Tools reads, renders, edits, and saves files on your machine instead of uploading them to a separate PDF service
 - **Directory sandbox:** Claude Desktop users can choose which local folders PDF Tools may read from or write to
+
+Text, images, and metadata returned by PDF Tools may be processed by Claude or
+another MCP host. Your host and model provider's data terms apply to that
+content, so the complete workflow is not necessarily zero egress.
 
 ## What You Can Do
 
@@ -91,10 +95,18 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 
 ### Extraction and Analysis
 
-- Read document text for summarization, question answering, and research workflows
+- Read existing PDF text layers for summarization, question answering, and research workflows
 - Extract structured data to CSV
 - Inspect page-level details like orientation, text presence, images, and likely blank pages
 - Review metadata such as page count, dimensions, form fields, and file size
+
+PDF Tools does not currently bundle an OCR engine. Text reads use the PDF.js
+text layer. If the selected `read_pdf_content` result contains no text, the tool
+may return a rendered image of page 1 for vision-capable host/model inspection.
+Page and region rendering produces raster images, not recognized text. A mixed
+text/raster PDF, or raster pages after page 1, may therefore contain content the
+broad text read does not recognize. Optional local OCR remains a planned
+improvement rather than a shipped capability.
 
 ## Great Fit For
 
@@ -102,7 +114,7 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 - Operators processing forms and back-office PDFs
 - Lawyers organizing contracts and comparing versions
 - Accountants handling tax documents
-- Anyone who wants a serious PDF workflow in Claude without sending files to a web app
+- Anyone who wants local PDF file operations in Claude without a separate PDF upload service
 
 ## Example Prompts
 
@@ -136,7 +148,7 @@ Claude already knows how to read PDFs in limited ways. PDF Tools goes much furth
 ### Analyze and Extract
 
 - "Summarize this research paper"
-- "Extract all text from this scanned invoice"
+- "Read the available text from this invoice and tell me which pages need visual inspection"
 - "Render page 1 of this scanned invoice so you can inspect it visually"
 - "Render just the signature block on page 3 so you can inspect it visually"
 - "Read pages 8 through 10 of this contract"

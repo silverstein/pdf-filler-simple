@@ -1,6 +1,12 @@
 # PDF Tools MCP Server - Quick Setup
 
-Work with PDFs locally in Cursor: view, fill, merge, split, rotate, reorder, and extract data without uploading.
+Work with PDFs in Cursor using local file operations: view, fill, merge, split,
+rotate, reorder, render, and extract data without a separate PDF upload service.
+
+PDF Tools reads, renders, edits, and saves files locally. Text, images, and
+metadata it returns may be processed by Cursor's MCP host or selected model
+under that provider's data terms, so the complete workflow is not necessarily
+zero egress.
 
 ## Installation Methods
 
@@ -82,7 +88,7 @@ Once installed, ask Claude in Cursor:
 - *"Create a profile with my personal info for future forms"*
 - *"Fill 50 PDFs using data from this spreadsheet"*
 - *"Read the content of this PDF document"*
-- *"Analyze this scanned invoice PDF"*
+- *"Render page 1 of this scanned invoice so you can inspect it visually"*
 - *"Merge these contracts and show me the result"*
 - *"Split this report every 10 pages"*
 - *"Rotate page 3 by 90 degrees"*
@@ -97,7 +103,7 @@ Once installed, ask Claude in Cursor:
 - **fill_with_profile** - Fill PDFs using saved profiles
 - **extract_to_csv** - Export PDF data to spreadsheets
 - **validate_pdf** - Inspect value coverage and actual PDF Required flags without claiming submission readiness
-- **read_pdf_content** - Read and analyze full PDF content (with OCR support for scanned PDFs)
+- **read_pdf_content** - Read the PDF.js text layer; a wholly textless selected extraction may return only page 1 as an image for host/model vision
 - **read_pdf_pages** - Read a bounded page range with page-numbered structured output
 - **render_pdf_page** - Render a page to PNG for visual inspection of scanned/image-heavy PDFs
 - **render_pdf_region** - Render a bounded PDF region to PNG for focused visual inspection
@@ -105,6 +111,16 @@ Once installed, ask Claude in Cursor:
 - **merge_pdfs** / **split_pdf** - Combine and split documents
 - **rotate_pdf_pages** / **reorder_pdf_pages** - Organize scanned or shuffled pages
 - **get_pdf_info** / **get_page_analysis** - Inspect pages, blank detection, orientation, and metadata
+
+### Current Extraction Boundary
+
+PDF Tools does not currently bundle an OCR engine. `read_pdf_content` reads the
+PDF.js text layer. Only when the entire selected extraction contains no text may
+it return a rendered image of page 1 for a vision-capable host or model to
+inspect. `render_pdf_page` and `render_pdf_region` produce raster images, not
+recognized text. Mixed text/raster documents and raster pages after page 1 can
+therefore remain unrecognized by a broad text read. Optional local OCR remains
+planned rather than shipped.
 
 ## Troubleshooting
 - **Node.js not found?** Install from [nodejs.org](https://nodejs.org)
@@ -123,6 +139,6 @@ This MCP server lets Claude directly:
 - Validate forms for completeness
 - Merge, split, rotate, and reorder pages
 - Extract and analyze full PDF content
-- Handle scanned PDFs with automatic OCR
+- Render scanned PDF pages or regions for visual inspection
 
 Perfect for W-9s, job applications, contracts, invoices, research papers, and general PDF processing.

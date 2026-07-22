@@ -1096,7 +1096,7 @@ const PROMPT_TEMPLATES = [
     name: "merge_documents",
     description: "Combine multiple PDFs into one document",
     arguments: [],
-    text: "I'll merge your PDF files into a single document. Just tell me which files to combine and where to save the result. I'll preserve the page order and show you the merged result in the viewer so you can verify it looks right. All processing happens locally on your computer — nothing is uploaded.",
+    text: "I'll merge your PDF files into a single document. Just tell me which files to combine and where to save the result. I'll preserve the page order and show you the merged result in the viewer so you can verify it looks right. PDF file operations happen locally; content I inspect is handled under your MCP host or model provider's data terms.",
   },
   {
     name: "split_large_document",
