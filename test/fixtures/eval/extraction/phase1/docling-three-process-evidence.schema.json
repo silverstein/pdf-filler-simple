@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/docling-three-process-evidence.schema.json",
+  "title": "PDF Tools Docling runner-owned three-process evidence v1",
+  "type": "object", "additionalProperties": false,
+  "required": ["protocol", "handoff_id", "before", "after", "processes", "stable"],
+  "properties": {
+    "protocol": { "const": "pdf-tools.docling-three-process-evidence.v1" }, "handoff_id": { "$ref": "#/$defs/sha256" },
+    "before": { "$ref": "#/$defs/inventory" },
+    "after": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/inventory" } },
+    "processes": { "type": "array", "minItems": 3, "maxItems": 3, "items": { "$ref": "#/$defs/process" } },
+    "stable": { "const": true }
+  },
+  "$defs": {
+    "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+    "record": {
+      "oneOf": [
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "type", "mode", "links", "bytes", "sha256"],
+          "properties": { "path": { "type": "string", "minLength": 1 }, "type": { "const": "file" }, "mode": { "enum": [384, 420, 448, 493] }, "links": { "type": "integer", "minimum": 1 }, "bytes": { "type": "integer", "minimum": 0, "maximum": 536870912 }, "sha256": { "$ref": "#/$defs/sha256" } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "type", "mode", "links"],
+          "properties": { "path": { "type": "string", "minLength": 1 }, "type": { "const": "directory" }, "mode": { "enum": [448, 493] }, "links": { "type": "integer", "minimum": 1 } }
+        },
+        {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "type", "mode", "links", "target"],
+          "properties": { "path": { "type": "string", "minLength": 1 }, "type": { "const": "symlink" }, "mode": { "const": 511 }, "links": { "const": 1 }, "target": { "type": "string", "minLength": 1 } }
+        }
+      ]
+    },
+    "inventory": {
+      "type": "object", "additionalProperties": false,
+      "required": ["inventory_id", "handoff_id", "records", "entry_count", "total_file_bytes", "uv_version", "platform", "inventory_sha256"],
+      "properties": { "inventory_id": { "const": "pdf-tools.docling-runtime-inventory.v1" }, "handoff_id": { "$ref": "#/$defs/sha256" }, "records": { "type": "array", "minItems": 1, "maxItems": 50016, "items": { "$ref": "#/$defs/record" } }, "entry_count": { "type": "integer", "minimum": 1 }, "total_file_bytes": { "type": "integer", "minimum": 0, "maximum": 2147483648 }, "uv_version": { "type": "string", "minLength": 1 }, "platform": { "$ref": "#/$defs/platform" }, "inventory_sha256": { "$ref": "#/$defs/sha256" } }
+    },
+    "platform": {
+      "type": "object", "additionalProperties": false,
+      "required": ["interpreter", "operating_system", "architecture", "os_build", "kernel_release", "node_version"],
+      "properties": {
+        "interpreter": { "const": "cpython-3.12.13-macos-aarch64-none" }, "operating_system": { "const": "macos" },
+        "architecture": { "const": "arm64" }, "os_build": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "kernel_release": { "type": "string", "minLength": 1, "maxLength": 128 },
+        "node_version": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$" }
+      }
+    },
+    "process": {
+      "type": "object", "additionalProperties": false,
+      "required": ["repetition", "pid", "exit_code", "signal", "stdin_bytes", "request_sha256", "source_bytes", "source_sha256", "stdout_bytes", "response_sha256"],
+      "properties": { "repetition": { "type": "integer", "minimum": 1, "maximum": 3 }, "pid": { "type": "integer", "minimum": 1 }, "exit_code": { "const": 0 }, "signal": { "type": "null" }, "stdin_bytes": { "type": "integer", "minimum": 1 }, "request_sha256": { "$ref": "#/$defs/sha256" }, "source_bytes": { "type": "integer", "minimum": 1 }, "source_sha256": { "$ref": "#/$defs/sha256" }, "stdout_bytes": { "type": "integer", "minimum": 1 }, "response_sha256": { "$ref": "#/$defs/sha256" } }
+    }
+  }
+}

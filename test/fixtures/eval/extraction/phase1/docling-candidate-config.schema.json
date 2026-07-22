@@ -4,20 +4,21 @@
   "title": "PDF Tools extraction Docling candidate research configuration v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["config_id", "config_version", "candidate_id", "execution_state", "input_mode", "platform", "packages", "layout_model", "table_model", "ocr", "device", "claim_boundary"],
+  "required": ["config_id", "config_version", "candidate_id", "execution_state", "input_mode", "platform", "install_requirement", "packages", "layout_model", "table_model", "ocr", "device", "claim_boundary"],
   "properties": {
     "config_id": { "const": "pdf-tools.extraction-docling-candidate-config.v1" },
     "config_version": { "const": 1 },
     "candidate_id": { "const": "candidate.direct_pdf.v1" },
-    "execution_state": { "const": "not_run" },
+    "execution_state": { "const": "adapter_ready_not_executed" },
     "input_mode": { "const": "direct_pdf" },
     "platform": {
       "type": "object", "additionalProperties": false,
       "required": ["interpreter", "architecture", "host_identity_required"],
       "properties": { "interpreter": { "const": "cpython-3.12.13-macos-aarch64-none" }, "architecture": { "const": "arm64" }, "host_identity_required": { "const": true } }
     },
+    "install_requirement": { "const": "docling-slim[convert-core,format-pdf,models-local,feat-ocr-mac]==2.114.0" },
     "packages": {
-      "type": "array", "minItems": 6, "uniqueItems": true,
+      "type": "array", "minItems": 11, "maxItems": 11, "uniqueItems": true,
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["name", "version", "source_revision", "wheel_sha256"],
@@ -26,8 +27,8 @@
     },
     "layout_model": {
       "type": "object", "additionalProperties": false,
-      "required": ["repository", "revision", "weight_bytes", "weight_sha256", "license", "license_status"],
-      "properties": { "repository": { "const": "docling-project/docling-layout-heron" }, "revision": { "const": "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8" }, "weight_bytes": { "const": 171658996 }, "weight_sha256": { "const": "00333a43451945aaf89db8ca9c0a17e75d1537c17db60fdb91aa95f4c7929e0c" }, "license": { "const": "Apache-2.0" }, "license_status": { "const": "reviewed_license" } }
+      "required": ["repository", "revision", "weight_bytes", "weight_sha256", "config_sha256", "preprocessor_config_sha256", "license", "license_status"],
+      "properties": { "repository": { "const": "docling-project/docling-layout-heron" }, "revision": { "const": "8f39ad3c0b4c58e9c2d2c84a38465abf757272d8" }, "weight_bytes": { "const": 171658996 }, "weight_sha256": { "const": "00333a43451945aaf89db8ca9c0a17e75d1537c17db60fdb91aa95f4c7929e0c" }, "config_sha256": { "const": "fdea30805ce2f5666b147fca941dcdd27ad468e27d6ed21902207d3da056a97d" }, "preprocessor_config_sha256": { "const": "cd38cd59999e7a95d68e487fbe5132df3d4e5c32a0836add57e6126ba0c4eaf1" }, "license": { "const": "Apache-2.0" }, "license_status": { "const": "reviewed_license" } }
     },
     "table_model": {
       "type": "object", "additionalProperties": false,
