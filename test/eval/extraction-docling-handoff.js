@@ -13,6 +13,7 @@ const MAX_HANDOFF_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_FIXTURE_TOTAL_BYTES = 8 * 1024 * 1024;
 const MAX_TOOL_BYTES = 128 * 1024 * 1024;
 const TEST_CAPABILITY = Symbol("docling-handoff-test-capability");
+const UV_VERSION = /^uv [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?(?: \([a-f0-9]{7,40} [0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01]) [a-z0-9_]+(?:-[a-z0-9_]+){2,4}\))?$(?![\s\S])/;
 export const DOCLING_BOOTSTRAP_V1 = [
   "set -eu",
   "umask 077",
@@ -64,6 +65,10 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+export function isValidDoclingUvVersion(value) {
+  return typeof value === "string" && UV_VERSION.test(value);
+}
+
 function commandOutput(executable, args) {
   const result = spawnSync(executable, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
   if (result.error || result.status !== 0 || !result.stdout.trim()) throw new Error(`Unable to inspect ${executable}`);
@@ -93,7 +98,7 @@ async function observedUv(testOnlyUv, capability) {
   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1) throw new Error("uv must resolve to a single-link regular binary");
   const bytes = await readStableRegularFile(uvPath, MAX_TOOL_BYTES);
   const version = testOnlyUv?.version ?? commandOutput(uvPath, ["--version"]);
-  if (!/^uv [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(version)) throw new Error("uv version output is invalid");
+  if (!isValidDoclingUvVersion(version)) throw new Error("uv version output is invalid");
   return { path: uvPath, version, bytes: bytes.length, sha256: sha256(bytes), mode: metadata.mode & 0o777, links: metadata.nlink };
 }
 

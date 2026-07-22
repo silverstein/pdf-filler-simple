@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { assertSchema } from "./extraction-phase1-protocol.js";
 import {
   DOCLING_BOOTSTRAP_V1,
+  isValidDoclingUvVersion,
   prepareDoclingMacHandoff,
   prepareDoclingMacHandoffForTest,
 } from "./extraction-docling-handoff.js";
@@ -15,6 +16,17 @@ const roots = [];
 const DARWIN_ARM64 = {
   platform: "darwin", architecture: "arm64", os_build: "25G88", kernel_release: "25.6.0", node_version: process.version,
 };
+const SILVERBOOK_UV_VERSION = "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)";
+const HOSTILE_UV_VERSIONS = [
+  "uv 0.11.29 (901092 2026-07-15 aarch64-apple-darwin)",
+  "uv 0.11.29 (901092eeG 2026-07-15 aarch64-apple-darwin)",
+  "uv 0.11.29 (901092ee1 2026-13-15 aarch64-apple-darwin)",
+  "uv 0.11.29 (901092ee1 2026-07-32 aarch64-apple-darwin)",
+  "uv 0.11.29 (901092ee1 2026-07-15 aarch64-Apple-darwin)",
+  "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple)",
+  "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin) trailing",
+  "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)\n",
+];
 
 async function temporaryRoot(prefix) {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
@@ -29,10 +41,11 @@ async function fixture(root, name = "fixture.pdf") {
   return filename;
 }
 
-async function options(root, fixturePaths) {
+async function options(root, fixturePaths, uvVersion = "uv 0.8.15") {
   const uvPath = path.join(root, "uv-test-binary");
+  const shellVersion = uvVersion.replaceAll("'", "'\\''");
   try {
-    await fs.writeFile(uvPath, "#!/bin/sh\nprintf 'uv 0.8.15\\n'\n", { mode: 0o700, flag: "wx" });
+    await fs.writeFile(uvPath, `#!/bin/sh\nprintf '%s\\n' '${shellVersion}'\n`, { mode: 0o700, flag: "wx" });
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
   }
@@ -42,7 +55,7 @@ async function options(root, fixturePaths) {
     protectedRoots: [path.join(root, "Documents"), path.join(root, "Dropbox"), path.join(root, "Library/Mobile Documents")],
     fixturePaths,
     testOnlyHost: DARWIN_ARM64,
-    testOnlyUv: { path: uvPath, version: "uv 0.8.15" },
+    testOnlyUv: { path: uvPath, version: uvVersion },
   };
 }
 
@@ -85,23 +98,60 @@ afterEach(async () => {
 });
 
 describe("Docling macOS handoff", () => {
-  it("enforces the retained finalization schema mirror before live-state checks", () => {
+  it("enforces the retained finalization schema mirror before live-state checks", async () => {
     const sha = "a".repeat(64);
-    const tool = { path: "/private/tool", version: "tool 1.0", bytes: 1, sha256: sha, mode: 0o755, links: 1 };
+    const uvTool = { path: "/private/uv", version: SILVERBOOK_UV_VERSION, bytes: 1, sha256: sha, mode: 0o755, links: 1 };
+    const nodeTool = { path: "/private/node", version: "v24.4.1", bytes: 1, sha256: sha, mode: 0o755, links: 1 };
     const tree = [{ relative_path: "file", type: "file", mode: 0o600, links: 1, bytes: 1, sha256: sha }];
     const rootRecord = { path: "/private/root", real_path: "/private/root", mode: 0o700, links: 1 };
     const value = {
       protocol: "pdf-tools.docling-finalization.v1", handoff_id: sha, receipt_sha256: sha,
       platform: { interpreter: "cpython-3.12.13-macos-aarch64-none", operating_system: "macos", architecture: "arm64", os_build: "25G88", kernel_release: "25.6.0", node_version: "v24.4.1" },
-      toolchain: { uv: tool, node: tool }, lock: { bytes: 0, sha256: sha },
+      toolchain: { uv: uvTool, node: nodeTool }, lock: { bytes: 0, sha256: sha },
       python: { path: "/private/python", bytes: 1, sha256: sha, version: "Python 3.12.13" },
       installed_distributions: [["docling-slim", "2.114.0"]], model_files: tree, managed_python_files: tree, venv_files: tree,
       root_policy: Object.fromEntries(["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp"].map(name => [name, rootRecord])),
       network_isolation_enforced: false, execution_state: "setup_complete_not_executed", finalization_id: sha,
     };
+    const schema = JSON.parse(await fs.readFile(path.resolve("test/fixtures/eval/extraction/phase1/docling-finalization.schema.json"), "utf8"));
     expect(() => validateFinalizationSchemaMirror(value)).not.toThrow();
+    expect(() => assertSchema(value, schema, "Docling finalization")).not.toThrow();
     expect(() => validateFinalizationSchemaMirror({ ...value, python: { ...value.python, version: "Python 3.12.14" } })).toThrow(/schema mirror/);
     expect(() => validateFinalizationSchemaMirror({ ...value, model_files: [] })).toThrow(/schema mirror/);
+    for (const version of HOSTILE_UV_VERSIONS) {
+      expect(() => validateFinalizationSchemaMirror({ ...value, toolchain: { ...value.toolchain, uv: { ...uvTool, version } } })).toThrow(/schema mirror/);
+      expect(() => assertSchema({ ...value, toolchain: { ...value.toolchain, uv: { ...uvTool, version } } }, schema, "Docling finalization")).toThrow();
+    }
+  });
+
+  it("accepts and preserves the exact official uv metadata suffix", async () => {
+    const root = await temporaryRoot("pdf-tools-docling-uv-metadata-");
+    const result = await prepareDoclingMacHandoffForTest(await options(root, [await fixture(root)], SILVERBOOK_UV_VERSION));
+    expect(result.receipt.toolchain.uv.version).toBe(SILVERBOOK_UV_VERSION);
+    const schema = JSON.parse(await fs.readFile(path.resolve("test/fixtures/eval/extraction/phase1/docling-handoff.schema.json"), "utf8"));
+    expect(() => assertSchema(result.receipt, schema, "Docling handoff receipt")).not.toThrow();
+    for (const version of HOSTILE_UV_VERSIONS) {
+      const malformed = { ...result.receipt, toolchain: { ...result.receipt.toolchain, uv: { ...result.receipt.toolchain.uv, version } } };
+      expect(() => assertSchema(malformed, schema, "Docling handoff receipt")).toThrow();
+    }
+    const verification = runCleanVerify(result);
+    expect(verification.status, verification.stderr).toBe(0);
+  }, 10000);
+
+  it("rejects malformed uv metadata suffixes", () => {
+    expect(isValidDoclingUvVersion("uv 0.11.29")).toBe(true);
+    expect(isValidDoclingUvVersion(SILVERBOOK_UV_VERSION)).toBe(true);
+    for (const version of HOSTILE_UV_VERSIONS) expect(isValidDoclingUvVersion(version), version).toBe(false);
+  });
+
+  it("rejects a receipt-bound uv version that differs from live output", async () => {
+    const root = await temporaryRoot("pdf-tools-docling-uv-live-mismatch-");
+    const handoffOptions = await options(root, [await fixture(root)]);
+    handoffOptions.testOnlyUv.version = SILVERBOOK_UV_VERSION;
+    const result = await prepareDoclingMacHandoffForTest(handoffOptions);
+    const verification = runCleanVerify(result);
+    expect(verification.status).not.toBe(0);
+    expect(verification.stderr).toMatch(/reported version differs from receipt identity/i);
   });
 
   it("creates a truth-free, content-addressed, mode-0700/0600 handoff outside protected roots", async () => {

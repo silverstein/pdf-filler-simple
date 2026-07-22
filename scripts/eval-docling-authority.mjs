@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -15,6 +15,8 @@ const MAX_TREE_ENTRIES = 50000;
 const MAX_TREE_FILE_BYTES = 512 * 1024 * 1024;
 const MAX_TREE_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
 const DOCLING_BOOTSTRAP_V1_SHA256 = "9921055c8883627b062c4edfa8996c49ec37e6a7262374cdff27fc3ec7067b6f";
+const UV_VERSION = /^uv [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?(?: \([a-f0-9]{7,40} [0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01]) [a-z0-9_]+(?:-[a-z0-9_]+){2,4}\))?$(?![\s\S])/;
+const NODE_VERSION = /^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/;
 const EXPECTED_ROLES = new Set([
   "adapter_entrypoint", "model_setup_helper", "candidate_config", "candidate_config_schema",
   "candidate_request_schema", "candidate_response_schema", "handoff_schema", "handoff_generator_source",
@@ -273,11 +275,25 @@ function assertRealizedRecipe(receipt, receiptPath) {
 }
 
 async function verifyTool(tool, label) {
+  const versionPattern = label === "uv" ? UV_VERSION : NODE_VERSION;
   if (!tool || canonicalJson(Object.keys(tool).sort()) !== canonicalJson(["bytes", "links", "mode", "path", "sha256", "version"])
-    || !Number.isInteger(tool.mode) || tool.mode < 0 || tool.mode > 0o777 || tool.links !== 1) throw new Error(`${label} identity metadata is invalid`);
+    || !Number.isInteger(tool.mode) || tool.mode < 0 || tool.mode > 0o777 || tool.links !== 1
+    || typeof tool.version !== "string" || tool.version.length < 1 || tool.version.length > 128
+    || !versionPattern.test(tool.version)) throw new Error(`${label} identity metadata is invalid`);
   await assertNoLinkAncestors(tool.path);
   const bytes = await readStable(tool.path, MAX_INPUT_BYTES, tool.mode);
   if (bytes.length !== tool.bytes || sha256(bytes) !== tool.sha256) throw new Error(`${label} binary differs from receipt identity`);
+  if (label === "uv") {
+    const observed = spawnSync(tool.path, ["--version"], {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      env: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
+    });
+    if (observed.error || observed.status !== 0 || observed.stdout.trim() !== tool.version) {
+      throw new Error("uv reported version differs from receipt identity");
+    }
+    const after = await readStable(tool.path, MAX_INPUT_BYTES, tool.mode);
+    if (!after.equals(bytes)) throw new Error("uv binary changed across version verification");
+  }
 }
 
 async function verifySnapshotAllowlist(receipt) {
@@ -514,10 +530,11 @@ export function validateFinalizationSchemaMirror(value) {
     throw new Error("Finalization platform violates its retained schema mirror");
   }
   if (!exactKeys(value.toolchain, ["uv", "node"])) throw new Error("Finalization toolchain violates its retained schema mirror");
-  for (const tool of [value.toolchain.uv, value.toolchain.node]) {
+  for (const [name, tool] of Object.entries(value.toolchain)) {
+    const versionPattern = name === "uv" ? UV_VERSION : NODE_VERSION;
     if (!exactKeys(tool, ["path", "version", "bytes", "sha256", "mode", "links"]) || !absolutePath(tool.path) || !boundedString(tool.version, 128)
       || !integer(tool.bytes, 1, 134217728) || !SHA256.test(tool.sha256 ?? "") || !integer(tool.mode, 0, 511)
-      || tool.links !== 1) throw new Error("Finalization tool identity violates its retained schema mirror");
+      || tool.links !== 1 || !versionPattern.test(tool.version)) throw new Error("Finalization tool identity violates its retained schema mirror");
   }
   if (!exactKeys(value.lock, ["bytes", "sha256"]) || !integer(value.lock.bytes, 0, 536870912) || !SHA256.test(value.lock.sha256 ?? "")
     || !exactKeys(value.python, ["path", "bytes", "sha256", "version"]) || !absolutePath(value.python.path)
