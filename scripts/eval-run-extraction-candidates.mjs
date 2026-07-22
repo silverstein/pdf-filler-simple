@@ -8,6 +8,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { PDFDocument } from "pdf-lib";
 import {
+  PHASE1_CLAIM_BOUNDARY,
+  PHASE1_LIMITATIONS,
   PHASE1_REPORT_ID,
   assertSchema,
   buildCandidateRequest,
@@ -279,7 +281,7 @@ export async function runCandidateProcess({ command, request, attemptRoot, limit
       stderr_bytes: stderrResult.observedBytes,
       process_group_termination_attempted: terminationAttempted,
       process_group_empty_after_cleanup: processGroupEmptyAfterCleanup,
-      elapsed_ms: elapsedMs(started),
+      elapsed_ms: successfullyStarted ? elapsedMs(started) : 0,
     },
   };
 }
@@ -574,7 +576,7 @@ export async function runExtractionCandidates({
     benchmark_claim_ready: false,
     calibration_claim_ready: false,
     truth_isolation_claim_ready: false,
-    claim_boundary: "Candidate protocol calibration only. No benchmark, product, bundle, privacy-isolation, or release claim is authorized.",
+    claim_boundary: PHASE1_CLAIM_BOUNDARY,
     phase0_manifest_sha256: manifest.manifest_sha256,
     registry_sha256: registryLoaded.sha256,
     registry_schema_sha256: registryLoaded.schema_sha256,
@@ -590,14 +592,7 @@ export async function runExtractionCandidates({
       outcomes: Object.fromEntries(["completed", "partial", "abstained", "error", "not_run"].map(outcome => [outcome, outcomeCount(outcome)])),
     },
     attempts,
-    limitations: [
-      "The Node runner enforces fresh processes, wall-clock deadlines, bounded output capture, a scrubbed environment, and staged-source mutation detection.",
-      "The runner does not claim filesystem, network, CPU, memory, process-count, or process-tree memory isolation.",
-      "Truth projection is verified only for the serialized request and adapter-builder task object; the candidate process is not filesystem isolated from the repository.",
-      "Canonical ODA evidence and field evidence are prohibited until a separate scorer independently binds source items, page geometry, quotes, and regions.",
-      "Process-group cleanup cannot contain a candidate that deliberately creates a new operating-system session.",
-      "All committed candidate slots are unconfigured. Third-party framework, model, license, and native-host evidence are separate work.",
-    ],
+    limitations: [...PHASE1_LIMITATIONS],
   };
   assertSchema(report, reportSchema, "extraction Phase 1 report");
   verifyPhase1Report(report, {
@@ -609,6 +604,7 @@ export async function runExtractionCandidates({
     sourceFactsById: verifiedSourceFacts,
     requestSchema,
     responseSchema,
+    reportSchema,
     repositoryRoot: REPO_ROOT,
   });
   if (outputPath) {

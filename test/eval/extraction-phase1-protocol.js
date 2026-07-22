@@ -7,6 +7,15 @@ export const PHASE1_PROTOCOL = "pdf-tools.extraction-candidate.v1";
 export const PHASE1_REGISTRY_ID = "pdf-tools.extraction-candidate-registry.v1";
 export const PHASE1_PLAN_ID = "pdf-tools.extraction-phase1-plan.v1";
 export const PHASE1_REPORT_ID = "pdf-tools.extraction-phase1-report.v1";
+export const PHASE1_CLAIM_BOUNDARY = "Candidate protocol calibration only. No benchmark, product, bundle, privacy-isolation, or release claim is authorized.";
+export const PHASE1_LIMITATIONS = Object.freeze([
+  "The Node runner enforces fresh processes, wall-clock deadlines, bounded output capture, a scrubbed environment, and staged-source mutation detection.",
+  "The runner does not claim filesystem, network, CPU, memory, process-count, or process-tree memory isolation.",
+  "Truth projection is verified only for the serialized request and adapter-builder task object; the candidate process is not filesystem isolated from the repository.",
+  "Canonical ODA evidence and field evidence are prohibited until a separate scorer independently binds source items, page geometry, quotes, and regions.",
+  "Process-group cleanup cannot contain a candidate that deliberately creates a new operating-system session.",
+  "All committed candidate slots are unconfigured. Third-party framework, model, license, and native-host evidence are separate work.",
+]);
 export const PREDECLARED_CANDIDATE_IDS = Object.freeze([
   "control.current_product.v0",
   "candidate.layout_ir.v1",
@@ -432,8 +441,10 @@ export function verifyPhase1Report(report, {
   sourceFactsById,
   requestSchema,
   responseSchema,
+  reportSchema,
   repositoryRoot = null,
 }) {
+  assertSchema(report, reportSchema, "retained extraction Phase 1 report");
   assertSchema(registry, registrySchema, "retained extraction candidate registry");
   assertSchema(plan, planSchema, "retained extraction Phase 1 plan");
   validateRegistry(registry);
@@ -443,6 +454,11 @@ export function verifyPhase1Report(report, {
     || report.truth_isolation_claim_ready !== false) {
     throw new Error("Extraction Phase 1 readiness flags must remain false");
   }
+  if (report.claim_boundary !== PHASE1_CLAIM_BOUNDARY
+    || canonicalJson(report.limitations) !== canonicalJson(PHASE1_LIMITATIONS)) {
+    throw new Error("Extraction Phase 1 claim boundary or limitations contradict the fail-closed protocol");
+  }
+  const currentCapabilities = detectHarnessCapabilities();
   const environmentInvariant = report.environment.wall_clock_timeout
     && report.environment.stdout_byte_limit
     && report.environment.stderr_byte_limit
@@ -455,7 +471,10 @@ export function verifyPhase1Report(report, {
     && !report.environment.memory_limit
     && !report.environment.process_count_limit
     && !report.environment.process_tree_memory_measurement
-    && report.environment.process_group_termination === (report.environment.platform !== "win32");
+    && report.environment.platform === currentCapabilities.platform
+    && report.environment.architecture === currentCapabilities.architecture
+    && report.environment.node_version === currentCapabilities.node_version
+    && report.environment.process_group_termination === currentCapabilities.process_group_termination;
   if (!environmentInvariant) throw new Error("Extraction Phase 1 environment capability claims are inconsistent");
   const exactBindings = {
     registry_sha256: sha256(Buffer.from(canonicalJson(registry))),
@@ -545,7 +564,7 @@ export function verifyPhase1Report(report, {
         || execution.stdout_limit_exceeded || execution.stderr_limit_exceeded
         || execution.stdout_bytes !== 0 || execution.stderr_bytes !== 0
         || execution.process_group_termination_attempted || execution.process_group_empty_after_cleanup !== null
-        || stdoutBytes !== null || stderrBytes !== null) {
+        || execution.elapsed_ms !== 0 || stdoutBytes !== null || stderrBytes !== null) {
         throw new Error(`Unspawned attempt retains impossible execution evidence for ${attempt.case_id}`);
       }
     } else {
@@ -622,6 +641,88 @@ export function verifyPhase1Report(report, {
     }
     if (attempt.outcome === "error" ? attempt.error_code === null : attempt.error_code !== null) {
       throw new Error(`Attempt error code is inconsistent with outcome for ${attempt.case_id}`);
+    }
+
+    const successfulOutcomes = new Set(["completed", "partial", "abstained"]);
+    if (successfulOutcomes.has(attempt.outcome)) {
+      if (!candidate.configured || !attempt.request || !attempt.response || !execution.spawned
+        || execution.exit_code !== 0 || execution.signal !== null
+        || attempt.response.status !== attempt.outcome || attempt.unmet_requirements.length !== 0
+        || !attempt.source.immutable) {
+        throw new Error(`Successful attempt lacks a complete configured execution proof for ${attempt.case_id}`);
+      }
+    } else if (attempt.outcome === "not_run") {
+      if (attempt.request || attempt.response || execution.spawned || attempt.error_code !== null
+        || !attempt.source.immutable) {
+        throw new Error(`Not-run attempt retains execution or failure evidence for ${attempt.case_id}`);
+      }
+      if (!candidate.configured) {
+        if (attempt.unmet_requirements.length !== 0
+          || attempt.outcome_reason !== "Candidate registry slot is intentionally unconfigured") {
+          throw new Error(`Unconfigured not-run reason is not bound to the registry for ${attempt.case_id}`);
+        }
+      } else {
+        const expectedUnmet = unmetRequirements(candidate, report.environment);
+        if (candidate.license?.reviewed !== true) expectedUnmet.push("reviewed_license");
+        const adapterRequirement = `${selection.input_mode}_adapter`;
+        if (selection.input_mode !== "direct_pdf" && attempt.unmet_requirements.includes(adapterRequirement)) {
+          expectedUnmet.push(adapterRequirement);
+        }
+        if (expectedUnmet.length === 0
+          || canonicalJson(attempt.unmet_requirements) !== canonicalJson(expectedUnmet)
+          || attempt.outcome_reason !== `Runner cannot truthfully enforce or provide: ${expectedUnmet.join(", ")}`) {
+          throw new Error(`Configured not-run attempt lacks verifiable unmet requirements for ${attempt.case_id}`);
+        }
+      }
+    } else if (attempt.outcome === "error") {
+      if (!candidate.configured || attempt.unmet_requirements.length !== 0) {
+        throw new Error(`Error attempt is not bound to a configured candidate for ${attempt.case_id}`);
+      }
+      let failureProven = false;
+      if (attempt.response) {
+        failureProven = attempt.response.status === "error"
+          && attempt.error_code === attempt.response.diagnostics.code;
+      } else {
+        const cleanSpawnedExit = execution.spawned && execution.exit_code === 0 && execution.signal === null
+          && !execution.timed_out && !execution.stdout_limit_exceeded && !execution.stderr_limit_exceeded;
+        if (attempt.error_code === "SOURCE_LIMIT_EXCEEDED") {
+          failureProven = !attempt.request && !execution.spawned
+            && (attempt.source.size_bytes > plan.limits.max_source_bytes
+              || attempt.source.page_count > plan.limits.max_pages);
+        } else if (attempt.error_code === "REQUEST_LIMIT_EXCEEDED") {
+          failureProven = !attempt.request && !execution.spawned;
+        } else if (attempt.error_code === "HARNESS_ATTEMPT_FAILURE") {
+          failureProven = !execution.spawned;
+        } else if (attempt.error_code === "SOURCE_MUTATED") {
+          failureProven = !attempt.source.immutable;
+        } else if (attempt.error_code === "SPAWN_FAILED") {
+          failureProven = Boolean(attempt.request) && !execution.spawned;
+        } else if (attempt.error_code === "DEADLINE_EXCEEDED") {
+          failureProven = Boolean(attempt.request) && execution.spawned && execution.timed_out;
+        } else if (attempt.error_code === "STDOUT_LIMIT_EXCEEDED") {
+          failureProven = Boolean(attempt.request) && execution.spawned && execution.stdout_limit_exceeded;
+        } else if (attempt.error_code === "STDERR_LIMIT_EXCEEDED") {
+          failureProven = Boolean(attempt.request) && execution.spawned && execution.stderr_limit_exceeded;
+        } else if (attempt.error_code === "NONZERO_EXIT") {
+          failureProven = Boolean(attempt.request) && execution.spawned
+            && (execution.exit_code !== 0 || execution.signal !== null);
+        } else if (attempt.error_code === "INVALID_RESPONSE_JSON" && cleanSpawnedExit) {
+          try {
+            JSON.parse(stdoutBytes.toString("utf8"));
+          } catch {
+            failureProven = true;
+          }
+        } else if (attempt.error_code === "INVALID_RESPONSE_CONTRACT" && cleanSpawnedExit) {
+          try {
+            const rejectedResponse = JSON.parse(stdoutBytes.toString("utf8"));
+            assertSchema(rejectedResponse, responseSchema, "rejected extraction candidate response");
+            validateCandidateResponseSemantics(rejectedResponse, attempt.request, { targetSchema: fixture.target_schema });
+          } catch (error) {
+            if (!(error instanceof SyntaxError)) failureProven = true;
+          }
+        }
+      }
+      if (!failureProven) throw new Error(`Error attempt lacks independently checkable failure evidence for ${attempt.case_id}`);
     }
   }
   return true;

@@ -269,6 +269,62 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       memory_limit: false,
       process_tree_memory_measurement: false,
     });
+
+    const [registry, registrySchema, plan, planSchema, manifest, requestSchema, responseSchema, reportSchema] = await Promise.all([
+      fs.readFile(REGISTRY, "utf8").then(JSON.parse),
+      fs.readFile(REGISTRY_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(PLAN, "utf8").then(JSON.parse),
+      fs.readFile(PLAN_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(MANIFEST, "utf8").then(JSON.parse),
+      fs.readFile(REQUEST_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(RESPONSE_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(REPORT_SCHEMA, "utf8").then(JSON.parse),
+    ]);
+    const sourceFactsById = Object.fromEntries(await Promise.all(manifest.fixtures.map(async fixture => {
+      const stat = await fs.stat(path.join(EXTRACTION_ROOT, fixture.path));
+      return [fixture.id, {
+        sha256: fixture.sha256,
+        size_bytes: stat.size,
+        page_count: fixture.expected.page_geometry.length,
+      }];
+    })));
+    const verify = mutant => verifyPhase1Report(mutant, {
+      registry,
+      registrySchema,
+      plan,
+      planSchema,
+      manifest,
+      sourceFactsById,
+      requestSchema,
+      responseSchema,
+      reportSchema,
+    });
+    expect(verify(report)).toBe(true);
+    for (const outcome of ["completed", "partial", "abstained", "error"]) {
+      const mutant = structuredClone(report);
+      mutant.attempts[0].outcome = outcome;
+      mutant.denominator.outcomes.not_run -= 1;
+      mutant.denominator.outcomes[outcome] += 1;
+      if (outcome === "error") {
+        mutant.attempts[0].error_code = "HARNESS_ATTEMPT_FAILURE";
+        mutant.attempts[0].outcome_reason = "Forged runner failure";
+      }
+      expect(() => verify(mutant), `not_run -> ${outcome}`).toThrow();
+    }
+    for (const mutate of [
+      value => { value.environment.platform = value.environment.platform === "win32" ? "linux" : "win32"; },
+      value => { value.environment.architecture = "forged-architecture"; },
+      value => { value.environment.node_version = "v0.0.0"; },
+      value => { value.attempts[0].execution.elapsed_ms = 1; },
+      value => { value.unexpected = true; },
+      value => { value.attempts[0].unexpected = true; },
+      value => { value.claim_boundary = "Benchmark approved and ready"; },
+      value => { value.limitations = ["No limitations"]; },
+    ]) {
+      const mutant = structuredClone(report);
+      mutate(mutant);
+      expect(() => verify(mutant)).toThrow();
+    }
   });
 
   it("keeps an unconfigured candidate not_run when source preflight limits are ineligible", async () => {
@@ -450,7 +506,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
 
   it("independently rejects schema, capture, execution, request, and denominator mutations", async () => {
     const report = await configuredRun("partial");
-    const [registry, registrySchema, plan, planSchema, manifest, requestSchema, responseSchema] = await Promise.all([
+    const [registry, registrySchema, plan, planSchema, manifest, requestSchema, responseSchema, reportSchema] = await Promise.all([
       loadJsonWithSchema(REGISTRY, REGISTRY_SCHEMA, "registry"),
       fs.readFile(REGISTRY_SCHEMA, "utf8").then(JSON.parse),
       loadJsonWithSchema(PLAN, PLAN_SCHEMA, "plan"),
@@ -458,6 +514,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       fs.readFile(MANIFEST, "utf8").then(JSON.parse),
       fs.readFile(REQUEST_SCHEMA, "utf8").then(JSON.parse),
       fs.readFile(RESPONSE_SCHEMA, "utf8").then(JSON.parse),
+      fs.readFile(REPORT_SCHEMA, "utf8").then(JSON.parse),
     ]);
     const configuredRegistry = structuredClone(registry.value);
     const candidate = configuredRegistry.candidates.find(item => item.id === "candidate.direct_pdf.v1");
@@ -489,6 +546,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       sourceFactsById,
       requestSchema,
       responseSchema,
+      reportSchema,
     });
     expect(verify(report)).toBe(true);
     const rebindRequest = value => {
@@ -502,6 +560,8 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       value => { value.request_schema_sha256 = "0".repeat(64); },
       value => { value.response_schema_sha256 = "0".repeat(64); },
       value => { value.truth_isolation_claim_ready = true; },
+      value => { value.claim_boundary = "Benchmark approved and ready"; },
+      value => { value.limitations = ["No limitations"]; },
       value => { value.attempts[0].bindings.request_sha256 = "0".repeat(64); },
       value => { value.attempts[0].captures.stdout_base64 = Buffer.from("{}").toString("base64"); },
       value => { value.attempts[0].captures.stderr_base64 = Buffer.from("changed").toString("base64"); },
@@ -530,5 +590,27 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       mutate(mutant);
       expect(() => verify(mutant)).toThrow();
     }
+
+    const noResponseError = await configuredRun("multiple-json");
+    const failedRegistry = structuredClone(configuredRegistry);
+    failedRegistry.candidates.find(item => item.id === "candidate.direct_pdf.v1").command.args = [MOCK_CANDIDATE, "multiple-json"];
+    const verifyFailed = mutant => verifyPhase1Report(mutant, {
+      registry: failedRegistry,
+      registrySchema,
+      plan: configuredPlan,
+      planSchema,
+      manifest,
+      sourceFactsById,
+      requestSchema,
+      responseSchema,
+      reportSchema,
+    });
+    expect(verifyFailed(noResponseError)).toBe(true);
+    const forgedSuccess = structuredClone(noResponseError);
+    forgedSuccess.attempts[0].outcome = "completed";
+    forgedSuccess.attempts[0].error_code = null;
+    forgedSuccess.denominator.outcomes.error = 0;
+    forgedSuccess.denominator.outcomes.completed = 1;
+    expect(() => verifyFailed(forgedSuccess)).toThrow();
   });
 });
