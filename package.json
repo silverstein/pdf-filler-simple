@@ -23,6 +23,7 @@
     "qpdf-wasm:fetch": "node vendor/qpdf-wasm/fetch-sources.mjs",
     "qpdf-wasm:smoke": "node vendor/qpdf-wasm/smoke.mjs",
     "qpdf-wasm:verify": "node vendor/qpdf-wasm/verify-reproducible.mjs",
+    "test:layout-encrypted-oracle": "node scripts/generate-layout-encrypted-oracle.mjs",
     "test:contract:share": "node scripts/test-share-contract.mjs",
     "build:ui": "vite build",
     "build:mcpb": "node scripts/build-mcpb.mjs",

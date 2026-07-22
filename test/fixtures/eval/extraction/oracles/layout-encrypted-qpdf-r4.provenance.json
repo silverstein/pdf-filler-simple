@@ -14,20 +14,39 @@
     "bytes": 3247,
     "sha256": "28f4003b7ff37735033778c96c7c704ee1b5955d2a424aeb507d65de046e4e5a",
     "encryption": "AES-128 revision 4",
+    "encryption_dictionary": {
+      "filter": "Standard",
+      "version": 4,
+      "revision": 4,
+      "key_length_bits": 128,
+      "crypt_filter_method": "AESV2",
+      "stream_filter": "StdCF",
+      "string_filter": "StdCF"
+    },
     "qpdf_output_sha256_before_malformed_header_oracle": "23dd0051ce9932f47fa27e39ce4590ea3b589d5c586b679b251f1c6d0a1d431b",
     "intentional_malformation": "The five-byte %PDF- header marker was deterministically replaced with xxxxx after QPDF encryption. PDF.js 5.4.624 recovers and authenticates the document; pdf-lib 1.17.1 rejects it, exercising fail-soft raw-box enrichment."
   },
   "qpdf": {
     "version": "12.3.2",
     "scratch_image": "oda-qpdf-wasm-probe@sha256:01296613065c60ee861b5aeb542fb30ef1d8212491e968585e049a62c5c3e4e8",
+    "scratch_image_id_sha256": "sha256:01296613065c60ee861b5aeb542fb30ef1d8212491e968585e049a62c5c3e4e8",
+    "qpdf_mjs_bytes": 34382,
     "qpdf_mjs_sha256": "0c087b0d6ed0b57dd24a8b82e081207809dd97edff618d753c39a5639dcdc7c3",
-    "qpdf_wasm_sha256": "36830fb93e3f8a8a9bf4e8352b8b9b5f9ef1a25702b2eeaae0b52ab0b6746e6f"
+    "qpdf_wasm_bytes": 2450542,
+    "qpdf_wasm_sha256": "36830fb93e3f8a8a9bf4e8352b8b9b5f9ef1a25702b2eeaae0b52ab0b6746e6f",
+    "version_stdout": [
+      "generate-layout-encrypted-oracle.mjs version 12.3.2",
+      "Run generate-layout-encrypted-oracle.mjs --copyright to see copyright and license information."
+    ],
+    "version_stdout_sha256": "2dd2382cc10110d3687a1aa1c087cc7ee116ef03aa53730ac608578a95b5efe4"
   },
   "passwords": {
     "user": "oda-layout-user-2026",
-    "owner": "oda-layout-owner-2026"
+    "owner": "oda-layout-owner-2026",
+    "wrong_password_oracle": "definitely-wrong-layout-password"
   },
   "generation": {
+    "generator": "scripts/generate-layout-encrypted-oracle.mjs",
     "qpdf_arguments": [
       "/input.pdf",
       "--encrypt",
@@ -42,10 +61,37 @@
     ],
     "postprocess": "Replace byte offsets 0-4 (%PDF-) with ASCII xxxxx without changing file length.",
     "reproducible_across_two_runs": true,
+    "runs": [
+      {
+        "run": 1,
+        "input_sha256": "aaaae6795676db9e33f79e75f4662808ee9646f8f2bb12a319f74e3edb11c101",
+        "qpdf_intermediate_bytes": 3247,
+        "qpdf_intermediate_sha256": "23dd0051ce9932f47fa27e39ce4590ea3b589d5c586b679b251f1c6d0a1d431b",
+        "final_fixture_bytes": 3247,
+        "final_fixture_sha256": "28f4003b7ff37735033778c96c7c704ee1b5955d2a424aeb507d65de046e4e5a",
+        "run_record_sha256": "be910b4cd47736a554c47e33b3edaea270ba3984881bde6173aa7b5d8ba3cdf0"
+      },
+      {
+        "run": 2,
+        "input_sha256": "aaaae6795676db9e33f79e75f4662808ee9646f8f2bb12a319f74e3edb11c101",
+        "qpdf_intermediate_bytes": 3247,
+        "qpdf_intermediate_sha256": "23dd0051ce9932f47fa27e39ce4590ea3b589d5c586b679b251f1c6d0a1d431b",
+        "final_fixture_bytes": 3247,
+        "final_fixture_sha256": "28f4003b7ff37735033778c96c7c704ee1b5955d2a424aeb507d65de046e4e5a",
+        "run_record_sha256": "e4f6d4a8df9bc3341163a1b49486664d9d51c5924cea45824d0d7c3ede2621df"
+      }
+    ],
+    "reversible_header_transform": {
+      "byte_offsets": [0, 4],
+      "forward": "%PDF- to xxxxx",
+      "inverse": "xxxxx to %PDF-",
+      "byte_length_preserved": true,
+      "round_trip_verified": true
+    },
     "test_only_insecure_flags": [
       "--static-id",
       "--static-aes-iv"
     ],
-    "security_notice": "This fixture deliberately uses fixed document IDs and AES initialization vectors for byte reproducibility. It is insecure and must never be used as a production encryption recipe."
+    "security_notice": "This test fixture deliberately uses fixed document IDs and AES initialization vectors for byte reproducibility. It is insecure and must never be used for production encryption. The generator obtains two hash-pinned research artifacts from an exact local scratch image and never packages QPDF with PDF Tools."
   }
 }

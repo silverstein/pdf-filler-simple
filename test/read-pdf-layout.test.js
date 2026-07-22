@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
+import { once } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { LoggingMessageNotificationSchema } from "@modelcontextprotocol/sdk/types.js";
 import { PDFDocument, PDFName, PDFNumber, StandardFonts, degrees } from "pdf-lib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { extractPdfLayout, validatePdfLayoutSemantics } from "../server/layout-extraction.js";
@@ -21,6 +23,7 @@ const MIXED = path.join(REPO_ROOT, "test/fixtures/eval/extraction/synthetic/mixe
 const ROTATED_CROP = path.join(REPO_ROOT, "test/fixtures/golden-forms/rotated-signature.pdf");
 const ENCRYPTED_LAYOUT = path.join(REPO_ROOT, "test/fixtures/eval/extraction/oracles/layout-encrypted-qpdf-r4.pdf");
 const ENCRYPTED_LAYOUT_PROVENANCE = path.join(REPO_ROOT, "test/fixtures/eval/extraction/oracles/layout-encrypted-qpdf-r4.provenance.json");
+const STDERR_SENTINEL_HELPER = path.join(REPO_ROOT, "test/helpers/mcp-stderr-sentinel.mjs");
 
 function multiply(left, right) {
   return [
@@ -147,6 +150,19 @@ function instrumentRealPdfjs(actualPdfjs) {
         });
       },
     },
+  };
+}
+
+function completeErrorSurface(error) {
+  if (!error) return null;
+  return {
+    name: error.name,
+    message: error.message,
+    stack: error.stack,
+    code: error.code,
+    data: error.data,
+    cause: completeErrorSurface(error.cause),
+    enumerable: { ...error },
   };
 }
 
@@ -402,33 +418,92 @@ describe("read_pdf_layout MCP tool", () => {
       qpdf: { version: "12.3.2" },
       generation: { reproducible_across_two_runs: true, test_only_insecure_flags: ["--static-id", "--static-aes-iv"] },
     });
+    const sentinel = "__PDF_TOOLS_ENCRYPTED_STDERR_FULLY_DRAINED__";
+    const dedicatedStderr = [];
+    const protocolLogs = [];
+    const rawProtocol = [];
+    const dedicatedTransport = new StdioClientTransport({
+      command: process.execPath,
+      args: [STDERR_SENTINEL_HELPER],
+      cwd: REPO_ROOT,
+      env: {
+        ALLOWED_DIRECTORIES: [REPO_ROOT, temporaryRoot].join(path.delimiter),
+        PDF_TOOLS_TEST_STDERR_SENTINEL: sentinel,
+      },
+      stderr: "pipe",
+    });
+    dedicatedTransport.stderr.on("data", chunk => dedicatedStderr.push(Buffer.from(chunk)));
+    const stderrEnded = once(dedicatedTransport.stderr, "end");
+    const dedicatedClient = new Client({ name: "pdf-layout-encrypted-leak-test", version: "1.0.0" });
+    dedicatedClient.setNotificationHandler(LoggingMessageNotificationSchema, notification => {
+      protocolLogs.push(structuredClone(notification));
+    });
+    let closed = false;
+    const callTraced = async arguments_ => {
+      const start = rawProtocol.length;
+      let result = null;
+      let error = null;
+      try {
+        result = await dedicatedClient.callTool({ name: "read_pdf_layout", arguments: arguments_ });
+      } catch (caught) {
+        error = caught;
+      }
+      return { result, error, rawProtocol: rawProtocol.slice(start) };
+    };
+    let missingTrace;
+    let wrongTrace;
+    let userTrace;
+    let ownerTrace;
+    try {
+      await dedicatedClient.connect(dedicatedTransport);
+      const receiveProtocolMessage = dedicatedTransport.onmessage;
+      dedicatedTransport.onmessage = (message, extra) => {
+        rawProtocol.push(structuredClone(message));
+        receiveProtocolMessage?.(message, extra);
+      };
+      missingTrace = await callTraced({ pdf_path: ENCRYPTED_LAYOUT });
+      wrongTrace = await callTraced({
+        pdf_path: ENCRYPTED_LAYOUT,
+        password: provenance.passwords.wrong_password_oracle,
+      });
+      userTrace = await callTraced({
+        pdf_path: ENCRYPTED_LAYOUT,
+        password: provenance.passwords.user,
+        max_output_characters: 200000,
+      });
+      ownerTrace = await callTraced({
+        pdf_path: ENCRYPTED_LAYOUT,
+        password: provenance.passwords.owner,
+        max_output_characters: 200000,
+      });
+      await dedicatedClient.listTools();
+      await dedicatedClient.close();
+      closed = true;
+      await stderrEnded;
+    } finally {
+      if (!closed) await dedicatedClient.close().catch(() => {});
+    }
 
-    const missing = await client.callTool({ name: "read_pdf_layout", arguments: { pdf_path: ENCRYPTED_LAYOUT } });
+    const missing = missingTrace.result;
+    expect(missingTrace.error).toBeNull();
     expect(missing).toMatchObject({
       isError: true,
       structuredContent: { status: "failed", error: { error_schema_version: 1, code: "PASSWORD_REQUIRED" } },
     });
     expect(JSON.stringify(missing)).not.toContain(provenance.passwords.user);
 
-    const wrong = await client.callTool({
-      name: "read_pdf_layout",
-      arguments: { pdf_path: ENCRYPTED_LAYOUT, password: "definitely-wrong-layout-password" },
-    });
+    const wrong = wrongTrace.result;
+    expect(wrongTrace.error).toBeNull();
     expect(wrong).toMatchObject({
       isError: true,
       structuredContent: { status: "failed", error: { error_schema_version: 1, code: "PASSWORD_INCORRECT" } },
     });
-    expect(JSON.stringify(wrong)).not.toContain("definitely-wrong-layout-password");
-    expect(JSON.stringify(wrong)).not.toContain(provenance.passwords.user);
-
-    const correct = await client.callTool({
-      name: "read_pdf_layout",
-      arguments: { pdf_path: ENCRYPTED_LAYOUT, password: provenance.passwords.user, max_output_characters: 200000 },
-    });
-    expect(correct.isError).not.toBe(true);
-    expect(correct.structuredContent.source.sha256).toBe(provenance.encrypted_fixture.sha256);
-    expect(correct.structuredContent.extraction_status).toBe("partial");
-    expect(correct.structuredContent.pages[0]).toMatchObject({
+    const correctUser = userTrace.result;
+    expect(userTrace.error).toBeNull();
+    expect(correctUser.isError).not.toBe(true);
+    expect(correctUser.structuredContent.source.sha256).toBe(provenance.encrypted_fixture.sha256);
+    expect(correctUser.structuredContent.extraction_status).toBe("partial");
+    expect(correctUser.structuredContent.pages[0]).toMatchObject({
       extraction_status: "partial",
       geometry: {
         media_box: null,
@@ -440,9 +515,47 @@ describe("read_pdf_layout MCP tool", () => {
       },
       errors: [expect.objectContaining({ code: "RAW_PAGE_GEOMETRY_UNAVAILABLE" })],
     });
-    expect(correct.structuredContent.pages[0].flow_text).toContain("TWO COLUMN NOTICE");
-    expect(JSON.stringify(correct)).not.toContain(provenance.passwords.user);
-    expect(JSON.stringify(correct)).not.toContain(provenance.passwords.owner);
+    expect(correctUser.structuredContent.pages[0].flow_text).toContain("TWO COLUMN NOTICE");
+
+    const correctOwner = ownerTrace.result;
+    expect(ownerTrace.error).toBeNull();
+    expect(correctOwner.isError).not.toBe(true);
+    expect(correctOwner.structuredContent.source.sha256).toBe(provenance.encrypted_fixture.sha256);
+    expect(correctOwner.structuredContent.pages[0].flow_text).toContain("TWO COLUMN NOTICE");
+    const completeStderr = Buffer.concat(dedicatedStderr).toString("utf8");
+    const stderrLines = completeStderr.trimEnd().split(/\r?\n/);
+    expect(stderrLines.at(-1)).toBe(sentinel);
+    expect(stderrLines.filter(line => line === sentinel)).toHaveLength(1);
+    for (const trace of [missingTrace, wrongTrace, userTrace, ownerTrace]) {
+      expect(trace.rawProtocol.some(message => "result" in message || "error" in message)).toBe(true);
+    }
+
+    const leakSurfaces = {
+      complete_result_objects: { missing, wrong, correctUser, correctOwner },
+      result_content: [missing.content, wrong.content, correctUser.content, correctOwner.content],
+      result_structured_content: [missing.structuredContent, wrong.structuredContent, correctUser.structuredContent, correctOwner.structuredContent],
+      result_meta: [missing._meta, wrong._meta, correctUser._meta, correctOwner._meta],
+      complete_error_objects: {
+        missing: { call_error: completeErrorSurface(missingTrace.error), result_error: missing.structuredContent?.error },
+        wrong: { call_error: completeErrorSurface(wrongTrace.error), result_error: wrong.structuredContent?.error },
+        user: { call_error: completeErrorSurface(userTrace.error), result_error: correctUser.structuredContent?.error },
+        owner: { call_error: completeErrorSurface(ownerTrace.error), result_error: correctOwner.structuredContent?.error },
+      },
+      complete_raw_protocol: {
+        missing: missingTrace.rawProtocol,
+        wrong: wrongTrace.rawProtocol,
+        user: userTrace.rawProtocol,
+        owner: ownerTrace.rawProtocol,
+        all: rawProtocol,
+      },
+      protocol_logs: protocolLogs,
+      complete_stderr: completeStderr,
+    };
+    for (const password of Object.values(provenance.passwords)) {
+      for (const [surface, value] of Object.entries(leakSurfaces)) {
+        expect(JSON.stringify(value), `${surface} exposed a test password`).not.toContain(password);
+      }
+    }
   });
 });
 
@@ -645,29 +758,56 @@ describe("Extraction IR hostile reconstruction", () => {
 
   it("cleans up the real PDF.js task, authenticated document, and page for the encrypted fail-soft oracle", async () => {
     const actualPdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-    const { pdfjs, state } = instrumentRealPdfjs(actualPdfjs);
     const bytes = await fs.readFile(ENCRYPTED_LAYOUT);
     const provenance = JSON.parse(await fs.readFile(ENCRYPTED_LAYOUT_PROVENANCE, "utf8"));
-    const result = await extractPdfLayout({
-      pdfjsLib: pdfjs,
-      pdfBytes: bytes,
-      sourcePath: ENCRYPTED_LAYOUT,
-      sourceFileName: path.basename(ENCRYPTED_LAYOUT),
-      sourceSha256: createHash("sha256").update(bytes).digest("hex"),
-      password: provenance.passwords.user,
-      requestedStartPage: 1,
-      requestedEndPage: 1,
-      maxOutputCharacters: 200000,
-    });
-    expect(state).toEqual({ loading_destroyed: 1, document_destroyed: 1, page_cleanups: 1 });
-    expect(result.pages[0]).toMatchObject({
-      extraction_status: "partial",
-      geometry: { media_box: null, crop_box: null, pdfjs_view: [0, 0, 612, 792] },
-      errors: [expect.objectContaining({ code: "RAW_PAGE_GEOMETRY_UNAVAILABLE" })],
-    });
-    expect(result.pages[0].flow_text).toContain("TWO COLUMN NOTICE");
-    expect(JSON.stringify(result)).not.toContain(provenance.passwords.user);
-    expect(JSON.stringify(result)).not.toContain(provenance.passwords.owner);
+    for (const password of [provenance.passwords.user, provenance.passwords.owner]) {
+      const { pdfjs, state } = instrumentRealPdfjs(actualPdfjs);
+      const result = await extractPdfLayout({
+        pdfjsLib: pdfjs,
+        pdfBytes: bytes,
+        sourcePath: ENCRYPTED_LAYOUT,
+        sourceFileName: path.basename(ENCRYPTED_LAYOUT),
+        sourceSha256: createHash("sha256").update(bytes).digest("hex"),
+        password,
+        requestedStartPage: 1,
+        requestedEndPage: 1,
+        maxOutputCharacters: 200000,
+      });
+      expect(state).toEqual({ loading_destroyed: 1, document_destroyed: 1, page_cleanups: 1 });
+      expect(result.pages[0]).toMatchObject({
+        extraction_status: "partial",
+        geometry: { media_box: null, crop_box: null, pdfjs_view: [0, 0, 612, 792] },
+        errors: [expect.objectContaining({ code: "RAW_PAGE_GEOMETRY_UNAVAILABLE" })],
+      });
+      expect(result.pages[0].flow_text).toContain("TWO COLUMN NOTICE");
+      for (const testPassword of Object.values(provenance.passwords)) {
+        expect(JSON.stringify(result)).not.toContain(testPassword);
+      }
+    }
+  });
+
+  it("destroys each real PDF.js password task exactly once on missing and wrong passwords", async () => {
+    const actualPdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+    const bytes = await fs.readFile(ENCRYPTED_LAYOUT);
+    const provenance = JSON.parse(await fs.readFile(ENCRYPTED_LAYOUT_PROVENANCE, "utf8"));
+    for (const testCase of [
+      { password: null, code: "PASSWORD_REQUIRED" },
+      { password: provenance.passwords.wrong_password_oracle, code: "PASSWORD_INCORRECT" },
+    ]) {
+      const { pdfjs, state } = instrumentRealPdfjs(actualPdfjs);
+      await expect(extractPdfLayout({
+        pdfjsLib: pdfjs,
+        pdfBytes: bytes,
+        sourcePath: ENCRYPTED_LAYOUT,
+        sourceFileName: path.basename(ENCRYPTED_LAYOUT),
+        sourceSha256: createHash("sha256").update(bytes).digest("hex"),
+        password: testCase.password,
+        requestedStartPage: 1,
+        requestedEndPage: 1,
+        maxOutputCharacters: 200000,
+      })).rejects.toMatchObject({ code: testCase.code });
+      expect(state).toEqual({ loading_destroyed: 1, document_destroyed: 0, page_cleanups: 0 });
+    }
   });
 
   it("destroys a loading task on deadline", async () => {
