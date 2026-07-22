@@ -5,7 +5,11 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { generateExtractionFixtures } from "../../scripts/eval-generate-extraction-fixtures.mjs";
-import { runExtractionBaseline } from "../../scripts/eval-run-extraction-baseline.mjs";
+import {
+  classifyCaseError,
+  runExtractionBaseline,
+  verifyExtractionReport,
+} from "../../scripts/eval-run-extraction-baseline.mjs";
 import {
   loadExtractionManifest,
   resolveExtractionFixture,
@@ -93,6 +97,28 @@ describe("structured extraction Phase 0", () => {
     await expect(loadExtractionManifest(manifestPath, MANIFEST_SCHEMA_PATH)).rejects.toThrow(/hash mismatch/);
   });
 
+  it("rejects semantic manifest mutations that can corrupt scoring truth", async () => {
+    const root = await temporaryDirectory();
+    await fs.cp(path.join(EXTRACTION_ROOT, "synthetic"), path.join(root, "synthetic"), { recursive: true });
+    const manifest = JSON.parse(await fs.readFile(MANIFEST_PATH, "utf8"));
+    const mutants = [
+      value => { value.fixtures[0].expected.facts[1].id = value.fixtures[0].expected.facts[0].id; },
+      value => { value.fixtures[0].expected.facts[0].field_path = "/missing/value"; },
+      value => { value.fixtures[0].expected.facts[0].page = 99; },
+      value => { value.fixtures[0].expected.facts[0].bbox.x = 600; },
+      value => { value.fixtures[0].expected.facts[0].anchor_text = "NOT PRESENT"; },
+      value => { value.fixtures[1].category = value.fixtures[0].category; },
+      value => { for (const fixture of value.fixtures) fixture.partition = "development"; },
+    ];
+    for (const [index, mutate] of mutants.entries()) {
+      const mutant = structuredClone(manifest);
+      mutate(mutant);
+      const manifestPath = path.join(root, `manifest-${index}.json`);
+      await fs.writeFile(manifestPath, `${JSON.stringify(mutant, null, 2)}\n`);
+      await expect(loadExtractionManifest(manifestPath, MANIFEST_SCHEMA_PATH)).rejects.toThrow();
+    }
+  });
+
   it("reports unconditional field precision, recall, F1, missing, and spurious counts", async () => {
     const { manifest } = await loadExtractionManifest(MANIFEST_PATH, MANIFEST_SCHEMA_PATH);
     const fixture = manifest.fixtures[0];
@@ -101,7 +127,7 @@ describe("structured extraction Phase 0", () => {
       page_texts: [{ page: 1, text: fixture.expected.pages[0].transcript }],
       page_result_sha256: "a".repeat(64),
       evidence: [],
-    });
+    }, manifest.evaluation_policy);
     expect(exact.field_correctness).toMatchObject({
       true_positive: 5,
       missing: 0,
@@ -114,11 +140,35 @@ describe("structured extraction Phase 0", () => {
     const hostile = structuredClone(fixture.ground_truth);
     delete hostile.vendor;
     hostile.unplanned = "invented";
-    const scored = scoreExtractionCase(fixture, { structured_candidate: hostile });
+    const scored = scoreExtractionCase(fixture, { structured_candidate: hostile }, manifest.evaluation_policy);
     expect(scored.schema_validity.score).toBe(0);
     expect(scored.field_correctness.missing).toBe(1);
     expect(scored.field_correctness.spurious).toBe(1);
     expect(scored.field_correctness.f1).toBeLessThan(1);
+  });
+
+  it("penalizes spurious table cells with precision, recall, and F1", async () => {
+    const { manifest } = await loadExtractionManifest(MANIFEST_PATH, MANIFEST_SCHEMA_PATH);
+    const fixture = manifest.fixtures.find(item => item.category === "table");
+    const tableCandidate = structuredClone(fixture.expected.table);
+    tableCandidate.cells.push({ row: 99, column: 99, value: "invented" });
+    const scored = scoreExtractionCase(fixture, { table_candidate: tableCandidate }, manifest.evaluation_policy);
+    expect(scored.table_cells).toMatchObject({
+      true_positive: fixture.expected.table.cells.length,
+      missing: 0,
+      spurious: 1,
+      recall: 1,
+    });
+    expect(scored.table_cells.precision).toBeLessThan(1);
+    expect(scored.table_cells.f1).toBeLessThan(1);
+    expect(scored.table_cells.score).toBe(scored.table_cells.f1);
+  });
+
+  it("attributes unknown post-handoff failures to the product", () => {
+    expect(classifyCaseError(new Error("server disconnected"), { handoffComplete: true })).toBe("product_failure");
+    expect(classifyCaseError({ code: "PRODUCT_TIMEOUT" }, { handoffComplete: true })).toBe("product_timeout");
+    expect(classifyCaseError({ code: "INVALID_PRODUCT_OUTPUT" }, { handoffComplete: true })).toBe("invalid_output");
+    expect(classifyCaseError(new Error("controller setup"), { handoffComplete: false })).toBe("harness_failure");
   });
 
   it("requires evidence source and result digests and bounds any claimed box", async () => {
@@ -140,14 +190,15 @@ describe("structured extraction Phase 0", () => {
         fact_ids: [fact.id],
       }],
     };
-    const valid = scoreExtractionCase(fixture, base);
+    const valid = scoreExtractionCase(fixture, base, manifest.evaluation_policy);
     expect(valid.evidence_page.numerator).toBe(1);
     expect(valid.evidence_fact.numerator).toBe(1);
     expect(valid.evidence_bbox.numerator).toBe(1);
+    expect(valid.evidence_answer).toMatchObject({ availability: "unavailable", numerator: 0, score: 0 });
 
     const pageOnly = structuredClone(base);
     pageOnly.evidence[0].fact_ids = [];
-    expect(scoreExtractionCase(fixture, pageOnly)).toMatchObject({
+    expect(scoreExtractionCase(fixture, pageOnly, manifest.evaluation_policy)).toMatchObject({
       evidence_page: { numerator: 1, availability: "measured" },
       evidence_fact: { numerator: 0, availability: "unavailable" },
       evidence_bbox: { numerator: 0, availability: "unavailable" },
@@ -155,11 +206,20 @@ describe("structured extraction Phase 0", () => {
 
     const forged = structuredClone(base);
     forged.evidence[0].source_sha256 = "0".repeat(64);
-    expect(scoreExtractionCase(fixture, forged).evidence_page.numerator).toBe(0);
+    expect(scoreExtractionCase(fixture, forged, manifest.evaluation_policy).evidence_page.numerator).toBe(0);
+
+    const wrongButInPage = structuredClone(base);
+    wrongButInPage.evidence[0].bbox.x = 350;
+    expect(scoreExtractionCase(fixture, wrongButInPage, manifest.evaluation_policy).evidence_bbox.numerator).toBe(0);
+
+    const fullPage = structuredClone(base);
+    const pageBox = fixture.expected.page_geometry[0].media_box;
+    fullPage.evidence[0].bbox = { ...pageBox, coordinate_space: "top_left_pdf_points" };
+    expect(scoreExtractionCase(fixture, fullPage, manifest.evaluation_policy).evidence_bbox.numerator).toBe(0);
 
     const outOfBounds = structuredClone(base);
     outOfBounds.evidence[0].bbox.x = 700;
-    expect(scoreExtractionCase(fixture, outOfBounds).evidence_bbox.numerator).toBe(0);
+    expect(scoreExtractionCase(fixture, outOfBounds, manifest.evaluation_policy).evidence_bbox.numerator).toBe(0);
   });
 
   it("retains the full attempted denominator and counts unavailable required extraction as product failure", async () => {
@@ -205,18 +265,34 @@ describe("structured extraction Phase 0", () => {
     });
   }, 30_000);
 
-  it("schema prevents either readiness flag from being promoted", async () => {
+  it("rejects case, binding, denominator, readiness, and aggregate report tampering", async () => {
     const report = await runExtractionBaseline({
       manifestPath: MANIFEST_PATH,
       manifestSchemaPath: MANIFEST_SCHEMA_PATH,
       reportSchemaPath: REPORT_SCHEMA_PATH,
     });
-    const schema = JSON.parse(await fs.readFile(REPORT_SCHEMA_PATH, "utf8"));
-    const validator = new AjvJsonSchemaValidator().getValidator(schema);
-    for (const key of ["benchmark_claim_ready", "calibration_claim_ready"]) {
+    const loaded = await loadExtractionManifest(MANIFEST_PATH, MANIFEST_SCHEMA_PATH);
+    const verify = mutant => verifyExtractionReport(mutant, {
+      manifest: loaded.manifest,
+      manifestSha256: loaded.manifest_sha256,
+      schemaSha256: loaded.schema_sha256,
+    });
+    expect(verify(report)).toBe(true);
+    const mutants = [
+      value => { value.cases.pop(); },
+      value => { [value.cases[0], value.cases[1]] = [value.cases[1], value.cases[0]]; },
+      value => { value.cases[0].source.sha256 = "0".repeat(64); },
+      value => { value.cases[0].calls[0].result_sha256 = "0".repeat(64); },
+      value => { value.cases[0].bindings.page_result_sha256 = "0".repeat(64); },
+      value => { value.benchmark_claim_ready = true; },
+      value => { value.denominator.attempted = 7; },
+      value => { value.aggregate_metrics.ocr.measured_cases = 1; },
+      value => { value.aggregate_metrics.evidence_page.mean_score_over_applicable = 1; },
+    ];
+    for (const mutate of mutants) {
       const mutant = structuredClone(report);
-      mutant[key] = true;
-      expect(validator(mutant).valid).toBe(false);
+      mutate(mutant);
+      expect(() => verify(mutant)).toThrow();
     }
   }, 30_000);
 });

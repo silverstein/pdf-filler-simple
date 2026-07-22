@@ -30,8 +30,10 @@ The calibration measures current product output exactly as returned. It never:
 - treats missing output, invalid output, or a timeout as a pass;
 - removes a failed attempt from the planned denominator.
 
-Harness failures remain distinct from product failures. Every planned case must
-produce one retained case record in the same order as the frozen plan.
+Harness failures remain distinct from product failures. Setup and controller
+faults before a valid MCP handoff are harness failures. Unknown server or tool
+faults after handoff are product failures. Every planned case must produce one
+retained case record in the same order as the frozen plan.
 
 ## Current product surface
 
@@ -87,7 +89,9 @@ quality score.
 - Field correctness reports true positives, missing leaves, spurious leaves,
   precision, recall, and F1.
 - Text coverage and reading order score born-digital fragments by page.
-- Table topology and table cells are separate.
+- Table topology and table cells are separate. Cell scoring reports missing and
+  spurious cells plus precision, recall, and F1, so extra cells cannot receive a
+  perfect score.
 - OCR records output coverage plus CER and WER when recognized text exists.
   When PDF Tools returns no recognized text, availability is `unavailable`, the
   coverage score is zero, and CER and WER remain null.
@@ -97,7 +101,10 @@ quality score.
   must bind the expected source digest and retained tool-result digest. Bounding
   boxes must also fit the recorded page geometry. Fact support requires an
   explicit matching fact identifier, so a matching page snippet alone does not
-  receive fact-level credit.
+  receive fact-level credit. Bounding-box support also uses manifest-pinned IoU,
+  truth-containment, and page-area thresholds. Answer support remains
+  unavailable until a per-answer mapping can require valid JSON, target-schema
+  validity, correct relevant fields, and their evidence.
 - Latency and Linux server RSS are recorded per case.
 - Privacy, fixture license, and bundle cost have separate records. Phase 0 does
   not instrument network syscalls and does not build a package, so those values

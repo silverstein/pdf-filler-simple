@@ -5,11 +5,11 @@
   "benchmark_claim_ready": false,
   "calibration_claim_ready": false,
   "claim_boundary": "Synthetic local direct-tool calibration only. No model, host UI, external dataset, OCR engine, table engine, or general structured extractor is evaluated.",
-  "manifest_sha256": "7174c95aa084eb65d6a7c794796a8a8543ccc3fed6855d5893a52cb810647408",
-  "schema_sha256": "daa1dd4ab86284becd000d2571e478cd3c41e83ad80a24f37fe90275e9033f83",
+  "manifest_sha256": "76f66a83eb4fba74a058467d15c6bebd17d56961776eba8f0411c7bbbc6b8430",
+  "schema_sha256": "53fae8cabbabeb4af9476716d809367d2c6590838d3da2ddf47013bdbc465605",
   "run": {
     "runtime_version": "0.8.6",
-    "runtime_commit": "6cc04a4cb2c3e420d51fc1341e0c0936b30fe394",
+    "runtime_commit": "8eca480d31726b2b621cd5d5e9fea9d0ac77cc86",
     "node_version": "v22.22.3",
     "platform": "linux",
     "architecture": "x64",
@@ -178,7 +178,8 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "ba70f2e073c0f9306bc7a8359dd211689294a3e8a35d7c1b2ecb95ffa875ff6f",
+        "raw_result_sha256": "02e77c576832edf4ba88506eb427bbedd3231dc413efbd0f817b908b3aae125d",
+        "page_result_sha256": "2c9fa6c283076ce92b58338f82ee286751630a7b0ee3200148175b6e7cef31d5",
         "evidence_ids": [
           "evidence.born-digital-flat.page-1"
         ]
@@ -190,8 +191,8 @@
           "is_error": false,
           "result_sha256": "2c9fa6c283076ce92b58338f82ee286751630a7b0ee3200148175b6e7cef31d5",
           "structured_sha256": "d10e410fbe636a907c1dcb910c9773901ea774f84c29851725c3f564f8a287b7",
-          "latency_ms": 174.374,
-          "peak_rss_bytes": 157470720
+          "latency_ms": 214.278,
+          "peak_rss_bytes": 162885632
         },
         {
           "name": "read_pdf_content",
@@ -199,8 +200,8 @@
           "is_error": false,
           "result_sha256": "2d983c7898c3feb5db29a4fd3ce2d1cd12828a7306efea7944da1507ae84435d",
           "structured_sha256": "a5f9cf06930be2e6f7eb00c92d2319caf8902a63bb111b7b9c9b7671b4fa9cf8",
-          "latency_ms": 14.579,
-          "peak_rss_bytes": 157380608,
+          "latency_ms": 14.059,
+          "peak_rss_bytes": 161955840,
           "extraction_mode": "text",
           "extraction_status": "complete"
         },
@@ -210,8 +211,8 @@
           "is_error": false,
           "result_sha256": "c16072603c24bb9632c679e981c4e7d8a496123e172ee88a26e4faac4821e34b",
           "structured_sha256": "68143b74f155263287f13c9f06d439bcc1046fc5144c5fac2b688a28770e6b24",
-          "latency_ms": 23.419,
-          "peak_rss_bytes": 158105600
+          "latency_ms": 23.861,
+          "peak_rss_bytes": 162500608
         }
       ],
       "metrics": {
@@ -313,12 +314,13 @@
           "availability": "unavailable",
           "numerator": 0,
           "denominator": 1,
-          "score": 0
+          "score": 0,
+          "reason": "No per-answer mapping is implemented"
         }
       },
       "resources": {
-        "latency_ms": 225.998,
-        "peak_rss_bytes": 158105600
+        "latency_ms": 264.188,
+        "peak_rss_bytes": 162885632
       },
       "privacy": {
         "source_immutable": true,
@@ -378,7 +380,8 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "400d98b2ec280cc68a0f300f36c5b7df756777e7487074587da1b93f6c840010",
+        "raw_result_sha256": "6fc3cc3b044292b5e24d2b51edf046cbf7ee7923f0496e792dd4616c3cddaa71",
+        "page_result_sha256": "01889100964b74433e1c21eb7d80d45fe5180ec9fb2c4e92637b02e1ef9f7502",
         "evidence_ids": [
           "evidence.born-digital-nested.page-1"
         ]
@@ -390,8 +393,8 @@
           "is_error": false,
           "result_sha256": "01889100964b74433e1c21eb7d80d45fe5180ec9fb2c4e92637b02e1ef9f7502",
           "structured_sha256": "c1d9ff8b403746d1fc932c6b671537ab851a2e7966917e0243c8e6729e7157f1",
-          "latency_ms": 7.857,
-          "peak_rss_bytes": 158081024
+          "latency_ms": 8.979,
+          "peak_rss_bytes": 162897920
         },
         {
           "name": "read_pdf_content",
@@ -399,8 +402,8 @@
           "is_error": false,
           "result_sha256": "47e74cb093ab1e0898b8063ba8a8994a11b3d296826216258ae488ed71a9538e",
           "structured_sha256": "07dbca87d15dbbd4f9254965d4e0443fccfc00706213997b8f29b24d378d17bc",
-          "latency_ms": 6.443,
-          "peak_rss_bytes": 158093312,
+          "latency_ms": 12.187,
+          "peak_rss_bytes": 162959360,
           "extraction_mode": "text",
           "extraction_status": "complete"
         },
@@ -410,8 +413,8 @@
           "is_error": false,
           "result_sha256": "1db047ed69bffc3a54fdb290e8b58a857d254afc409b548c291b07c24b861c0a",
           "structured_sha256": "75917fbf7450ead3c66cc226cc7141f7c3cdc2714ee759a291e8e67b081fd69e",
-          "latency_ms": 9.404,
-          "peak_rss_bytes": 158396416
+          "latency_ms": 14.249,
+          "peak_rss_bytes": 163188736
         }
       ],
       "metrics": {
@@ -513,12 +516,13 @@
           "availability": "unavailable",
           "numerator": 0,
           "denominator": 1,
-          "score": 0
+          "score": 0,
+          "reason": "No per-answer mapping is implemented"
         }
       },
       "resources": {
-        "latency_ms": 27.531,
-        "peak_rss_bytes": 158396416
+        "latency_ms": 37.55,
+        "peak_rss_bytes": 163188736
       },
       "privacy": {
         "source_immutable": true,
@@ -578,7 +582,8 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "1e08e1fa245442a7bfa49eae7366f985398a16cabe258d4f97006c3af3b6b54a",
+        "raw_result_sha256": "508b61a52405553ec95e65a60ff31e9572395ec94af67374f0442625b343cb87",
+        "page_result_sha256": "699b7863b9395530e895eac68998d3bc8ecac574028c58b6b82c6afb0a815d11",
         "evidence_ids": [
           "evidence.two-column-order.page-1"
         ]
@@ -590,8 +595,8 @@
           "is_error": false,
           "result_sha256": "699b7863b9395530e895eac68998d3bc8ecac574028c58b6b82c6afb0a815d11",
           "structured_sha256": "c1a170ec03cb446f22d0a150c17fb034b8b0654ab9472c509be5506bd6bc57dd",
-          "latency_ms": 6.128,
-          "peak_rss_bytes": 158081024
+          "latency_ms": 6.901,
+          "peak_rss_bytes": 163033088
         },
         {
           "name": "read_pdf_content",
@@ -599,8 +604,8 @@
           "is_error": false,
           "result_sha256": "d58c25d1e5d0ed7a8bf6a93de7d20b061b5d3eca54fd1d70681ce73a5136e138",
           "structured_sha256": "5632806f96269ad5b3feed45547a856a75b8940a70ef2331de518f51ad63e2a0",
-          "latency_ms": 9.659,
-          "peak_rss_bytes": 158326784,
+          "latency_ms": 6.487,
+          "peak_rss_bytes": 163049472,
           "extraction_mode": "text",
           "extraction_status": "complete"
         },
@@ -610,8 +615,8 @@
           "is_error": false,
           "result_sha256": "ee00254b1baa8e5e3f17050292d59fd670cb969e5d45e8e9018c80e4ed72ae5c",
           "structured_sha256": "4e96f99fe5dbf89801524109deaf13251e219a6868bdfd0d8d2aca922601c6ca",
-          "latency_ms": 21.163,
-          "peak_rss_bytes": 158605312
+          "latency_ms": 13.689,
+          "peak_rss_bytes": 163454976
         }
       ],
       "metrics": {
@@ -713,12 +718,13 @@
           "availability": "unavailable",
           "numerator": 0,
           "denominator": 1,
-          "score": 0
+          "score": 0,
+          "reason": "No per-answer mapping is implemented"
         }
       },
       "resources": {
-        "latency_ms": 39.159,
-        "peak_rss_bytes": 158605312
+        "latency_ms": 28.32,
+        "peak_rss_bytes": 163454976
       },
       "privacy": {
         "source_immutable": true,
@@ -778,7 +784,8 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "4457ef3a5d925a1db3cb4076b7e1bca1d5af6732c769c5263532f0471f52734d",
+        "raw_result_sha256": "50bd0b9e876b1a27f5294c61bb6885312943581be69f46ce4a7968c63358f12f",
+        "page_result_sha256": "a8ba50580911e226f9d2f939de750940aee140d2958f79062e4eb203309a8739",
         "evidence_ids": [
           "evidence.table-merged-blank.page-1"
         ]
@@ -790,8 +797,8 @@
           "is_error": false,
           "result_sha256": "a8ba50580911e226f9d2f939de750940aee140d2958f79062e4eb203309a8739",
           "structured_sha256": "96956d125c248deff195a2a4ae73a24d8f7981699a8bc4755e03222987435506",
-          "latency_ms": 10.628,
-          "peak_rss_bytes": 155688960
+          "latency_ms": 7.665,
+          "peak_rss_bytes": 160514048
         },
         {
           "name": "read_pdf_content",
@@ -799,8 +806,8 @@
           "is_error": false,
           "result_sha256": "0bf8bc8dcc431ea9895b29d2b13244bac64a17039496c47925e91774eee207f1",
           "structured_sha256": "dc519da92d83a776d71ed7fd4ddf201d3d2c61c3d7b69ef89aec9460279b41af",
-          "latency_ms": 9.421,
-          "peak_rss_bytes": 155930624,
+          "latency_ms": 6.168,
+          "peak_rss_bytes": 160555008,
           "extraction_mode": "text",
           "extraction_status": "complete"
         },
@@ -810,8 +817,8 @@
           "is_error": false,
           "result_sha256": "18a612bd8d84c8a3f77008fb7af2e2aba7ec6807ba706860b68bff4b50af5073",
           "structured_sha256": "68a774532fe4314869859ad96c7d71b45ee09c7bdd319ed640122a84ec2d8732",
-          "latency_ms": 15.717,
-          "peak_rss_bytes": 156495872
+          "latency_ms": 9.296,
+          "peak_rss_bytes": 162230272
         }
       ],
       "metrics": {
@@ -913,12 +920,13 @@
           "availability": "unavailable",
           "numerator": 0,
           "denominator": 1,
-          "score": 0
+          "score": 0,
+          "reason": "No per-answer mapping is implemented"
         }
       },
       "resources": {
-        "latency_ms": 38.511,
-        "peak_rss_bytes": 156495872
+        "latency_ms": 24.357,
+        "peak_rss_bytes": 162230272
       },
       "privacy": {
         "source_immutable": true,
@@ -978,7 +986,8 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "3006919a28d218402904775668122bbf56dc60e4203b612607e4f57436bad5b1",
+        "raw_result_sha256": "2d90e976c19167b5233e315355502732bfc71ce34a7d3de58f6f76588a65981d",
+        "page_result_sha256": "48e133b98fb40346288936bed1d8dfae5a74f35bdb773dd519fc9276ab844be8",
         "evidence_ids": [
           "evidence.raster-clean.page-1"
         ]
@@ -990,8 +999,8 @@
           "is_error": false,
           "result_sha256": "48e133b98fb40346288936bed1d8dfae5a74f35bdb773dd519fc9276ab844be8",
           "structured_sha256": "85e390ff0c230da66ca524fad25ab604dd5fbed1c02adca6ae9b12027ae7f90e",
-          "latency_ms": 6.145,
-          "peak_rss_bytes": 156667904
+          "latency_ms": 3.189,
+          "peak_rss_bytes": 162553856
         },
         {
           "name": "read_pdf_content",
@@ -999,8 +1008,8 @@
           "is_error": false,
           "result_sha256": "abe3ef4e125769323bbd909c1fbc2b3ffa91f9591c31af9bedd1d85a5587eb84",
           "structured_sha256": "75df20063be0a0c55a8233746200eb4c1c84f5fcecb90dc424156bdd288069fd",
-          "latency_ms": 129.305,
-          "peak_rss_bytes": 200486912,
+          "latency_ms": 121.525,
+          "peak_rss_bytes": 202285056,
           "extraction_mode": "image-fallback",
           "extraction_status": "partial"
         },
@@ -1010,8 +1019,8 @@
           "is_error": false,
           "result_sha256": "176676134a6fb293a06abc91f182dbd7174aeb8b01c3e75cbaf3dd3036cf2dd4",
           "structured_sha256": "eacafe911b2722afa4c929d66a18a50ba671bc0bfd1d6fdea97b18d67d46e681",
-          "latency_ms": 5.459,
-          "peak_rss_bytes": 200499200
+          "latency_ms": 9.279,
+          "peak_rss_bytes": 202313728
         },
         {
           "name": "render_pdf_page",
@@ -1019,8 +1028,8 @@
           "is_error": false,
           "result_sha256": "9bcdca87af8fcd48d357c421e56af1605748a641bcd9ba532d39cc6503600b7f",
           "structured_sha256": "a882f39fdbdc0573421acdf5981338741b7c094ade80211df97458a282ca7ce2",
-          "latency_ms": 140.758,
-          "peak_rss_bytes": 212344832,
+          "latency_ms": 127.167,
+          "peak_rss_bytes": 214351872,
           "page": 1,
           "png_observed": true
         }
@@ -1124,12 +1133,13 @@
           "availability": "unavailable",
           "numerator": 0,
           "denominator": 1,
-          "score": 0
+          "score": 0,
+          "reason": "No per-answer mapping is implemented"
         }
       },
       "resources": {
-        "latency_ms": 282.867,
-        "peak_rss_bytes": 212344832
+        "latency_ms": 263.834,
+        "peak_rss_bytes": 214351872
       },
       "privacy": {
         "source_immutable": true,
@@ -1189,7 +1199,8 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "ac39d8bf95ef2b209c696d401be6b0850e406184a845c582749abc0eb61bfa7b",
+        "raw_result_sha256": "b5a06926aee7094184bc05051c46101eeff5e71f9ab81ed6173c3d2ac1e8135c",
+        "page_result_sha256": "711fec6775171db68cd7676f9cfb246c3fa9e526613e663afe701a7010fb37cf",
         "evidence_ids": [
           "evidence.raster-degraded.page-1"
         ]
@@ -1201,8 +1212,8 @@
           "is_error": false,
           "result_sha256": "711fec6775171db68cd7676f9cfb246c3fa9e526613e663afe701a7010fb37cf",
           "structured_sha256": "dc1a9edf81d4c25b24432331829178c9db7a00e0cb9e43ee63993c6f281ed04a",
-          "latency_ms": 3.087,
-          "peak_rss_bytes": 212344832
+          "latency_ms": 3.86,
+          "peak_rss_bytes": 214138880
         },
         {
           "name": "read_pdf_content",
@@ -1210,8 +1221,8 @@
           "is_error": false,
           "result_sha256": "1d54773c5a4e54c97a31e8142b82abfe243c2dff69508750bbacb2ed8077b3ef",
           "structured_sha256": "31b92eafe83bedf205533ee2d21bcca41f96a7b4592a0b4947a394a9c4ae23cb",
-          "latency_ms": 44.607,
-          "peak_rss_bytes": 212406272,
+          "latency_ms": 42.88,
+          "peak_rss_bytes": 214204416,
           "extraction_mode": "image-fallback",
           "extraction_status": "partial"
         },
@@ -1221,8 +1232,8 @@
           "is_error": false,
           "result_sha256": "176676134a6fb293a06abc91f182dbd7174aeb8b01c3e75cbaf3dd3036cf2dd4",
           "structured_sha256": "eacafe911b2722afa4c929d66a18a50ba671bc0bfd1d6fdea97b18d67d46e681",
-          "latency_ms": 5.682,
-          "peak_rss_bytes": 212459520
+          "latency_ms": 5.954,
+          "peak_rss_bytes": 214261760
         },
         {
           "name": "render_pdf_page",
@@ -1230,8 +1241,8 @@
           "is_error": false,
           "result_sha256": "f9afc3c3ab0b9df78636860cff346de9baa8bcb67648a3906f2606c8a5ddb9f2",
           "structured_sha256": "829c8a4361fd8b7e97c2f6c8066d7407a664354e8be849637c1790f7cad9ca3f",
-          "latency_ms": 57.817,
-          "peak_rss_bytes": 218906624,
+          "latency_ms": 46.614,
+          "peak_rss_bytes": 220708864,
           "page": 1,
           "png_observed": true
         }
@@ -1335,12 +1346,13 @@
           "availability": "unavailable",
           "numerator": 0,
           "denominator": 1,
-          "score": 0
+          "score": 0,
+          "reason": "No per-answer mapping is implemented"
         }
       },
       "resources": {
-        "latency_ms": 113.68,
-        "peak_rss_bytes": 218906624
+        "latency_ms": 100.856,
+        "peak_rss_bytes": 220708864
       },
       "privacy": {
         "source_immutable": true,
@@ -1422,7 +1434,8 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "47eb1f78659da4f4252fde1d58ba1e55a9246f625984c3a86d54d4c45c3421b4",
+        "raw_result_sha256": "57fbaf71b3a51d4149545cbf9512b5b302f68f2570948086bc0dec1ed6fbb1eb",
+        "page_result_sha256": "2914eb68f91412fb7165ef4d23a9433dba30d73d0cab0d67c9b517cf18022f01",
         "evidence_ids": [
           "evidence.mixed-text-raster.page-1",
           "evidence.mixed-text-raster.page-2"
@@ -1435,8 +1448,8 @@
           "is_error": false,
           "result_sha256": "2914eb68f91412fb7165ef4d23a9433dba30d73d0cab0d67c9b517cf18022f01",
           "structured_sha256": "db1f009e3f7859108a6778f393509a6552e9202f9fdb35fefcd8fded0663d0b8",
-          "latency_ms": 5.042,
-          "peak_rss_bytes": 219566080
+          "latency_ms": 8.562,
+          "peak_rss_bytes": 221368320
         },
         {
           "name": "read_pdf_content",
@@ -1444,8 +1457,8 @@
           "is_error": false,
           "result_sha256": "178bca3fd50376eb502f87cc4ab1b5c579285b801a2f9f7d99ca2b5fff7f663c",
           "structured_sha256": "d33f150b2704a85c9b19385371b365196064a5ec2360c8e30b4bde3621f45362",
-          "latency_ms": 4.148,
-          "peak_rss_bytes": 219586560,
+          "latency_ms": 7.247,
+          "peak_rss_bytes": 221368320,
           "extraction_mode": "text",
           "extraction_status": "complete"
         },
@@ -1455,8 +1468,8 @@
           "is_error": false,
           "result_sha256": "0af69346ca044a439809f8907954af34ed2d3b1bd166ad19e3e3e70a5b8f895e",
           "structured_sha256": "4ccb7779712c36b3adbd1796e0f2cdf3699a80692eb35cc148762b4783d7dba0",
-          "latency_ms": 9.471,
-          "peak_rss_bytes": 219631616
+          "latency_ms": 18.912,
+          "peak_rss_bytes": 221380608
         },
         {
           "name": "render_pdf_page",
@@ -1464,8 +1477,8 @@
           "is_error": false,
           "result_sha256": "914e246e90d5278b7e1dbbf575eb6f9f57de60c06aff52e5a4e3df0d1b557da4",
           "structured_sha256": "a2d5b79e98445911dabdfd27527a8feb71c6dc3e4578d4d82462b06ba9d0308e",
-          "latency_ms": 143.315,
-          "peak_rss_bytes": 252538880,
+          "latency_ms": 133.884,
+          "peak_rss_bytes": 256249856,
           "page": 2,
           "png_observed": true
         }
@@ -1569,12 +1582,13 @@
           "availability": "unavailable",
           "numerator": 0,
           "denominator": 1,
-          "score": 0
+          "score": 0,
+          "reason": "No per-answer mapping is implemented"
         }
       },
       "resources": {
-        "latency_ms": 164.601,
-        "peak_rss_bytes": 252538880
+        "latency_ms": 171.284,
+        "peak_rss_bytes": 256249856
       },
       "privacy": {
         "source_immutable": true,
@@ -1634,7 +1648,8 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "c80f396f6acd421e4726f4ab34f9fc3f218e2e3e4ea543acb40b44d5e9805be3",
+        "raw_result_sha256": "e5edd1d2c93c3d2f9bec6c37696278088a2bdb5b461ff9cd116bdac1ab775e71",
+        "page_result_sha256": "1911511d0345efc57715316518d483d8989b62ee633ce777a0144e1d8e66618e",
         "evidence_ids": [
           "evidence.no-answer-contradiction.page-1"
         ]
@@ -1646,8 +1661,8 @@
           "is_error": false,
           "result_sha256": "1911511d0345efc57715316518d483d8989b62ee633ce777a0144e1d8e66618e",
           "structured_sha256": "12d6d7b590966223f7fbcea51e921e486bc7a4c0d8e5ef7eb36a4506e7936a7a",
-          "latency_ms": 5.163,
-          "peak_rss_bytes": 252538880
+          "latency_ms": 4.829,
+          "peak_rss_bytes": 256249856
         },
         {
           "name": "read_pdf_content",
@@ -1655,8 +1670,8 @@
           "is_error": false,
           "result_sha256": "2db8076724162d37f6c8845b1692f3a9526ca4919a6e56696e7130d75d874265",
           "structured_sha256": "f09163bb24e8f65d733555934fb4636a45845a5e1e8821354cc70738d4d1bce7",
-          "latency_ms": 4.185,
-          "peak_rss_bytes": 252551168,
+          "latency_ms": 4.214,
+          "peak_rss_bytes": 256266240,
           "extraction_mode": "text",
           "extraction_status": "complete"
         },
@@ -1666,8 +1681,8 @@
           "is_error": false,
           "result_sha256": "3faee167444a93e1a7bc61edb8611bfa7b891bab777ffcc8c2ebf97320a7f583",
           "structured_sha256": "5ddcac761261d9a3d51fb14775386ad586576a09e0abfd788764e6a2a73dcd1f",
-          "latency_ms": 5.626,
-          "peak_rss_bytes": 252551168
+          "latency_ms": 6.138,
+          "peak_rss_bytes": 256270336
         }
       ],
       "metrics": {
@@ -1769,12 +1784,13 @@
           "availability": "unavailable",
           "numerator": 0,
           "denominator": 1,
-          "score": 0
+          "score": 0,
+          "reason": "No per-answer mapping is implemented"
         }
       },
       "resources": {
-        "latency_ms": 17.24,
-        "peak_rss_bytes": 252551168
+        "latency_ms": 17.608,
+        "peak_rss_bytes": 256270336
       },
       "privacy": {
         "source_immutable": true,

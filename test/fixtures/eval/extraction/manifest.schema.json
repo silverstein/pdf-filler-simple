@@ -4,12 +4,29 @@
   "title": "PDF Tools structured extraction Phase 0 manifest",
   "type": "object",
   "additionalProperties": false,
-  "required": ["manifest_version", "suite_id", "suite_version", "claim_boundary", "fixtures"],
+  "required": ["manifest_version", "suite_id", "suite_version", "claim_boundary", "evaluation_policy", "fixtures"],
   "properties": {
     "manifest_version": { "const": 1 },
     "suite_id": { "const": "pdf-tools.extraction.phase0" },
     "suite_version": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
     "claim_boundary": { "type": "string", "minLength": 1 },
+    "evaluation_policy": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["evidence_bbox"],
+      "properties": {
+        "evidence_bbox": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["minimum_iou", "minimum_truth_containment", "maximum_page_area_ratio"],
+          "properties": {
+            "minimum_iou": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+            "minimum_truth_containment": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+            "maximum_page_area_ratio": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 }
+          }
+        }
+      }
+    },
     "fixtures": {
       "type": "array",
       "minItems": 8,

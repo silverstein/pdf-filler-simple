@@ -3,6 +3,13 @@
   "suite_id": "pdf-tools.extraction.phase0",
   "suite_version": "v0.1.0",
   "claim_boundary": "Synthetic local direct-tool calibration only. No model, host UI, external dataset, OCR engine, table engine, or general structured extractor is evaluated.",
+  "evaluation_policy": {
+    "evidence_bbox": {
+      "minimum_iou": 0.5,
+      "minimum_truth_containment": 0.9,
+      "maximum_page_area_ratio": 0.25
+    }
+  },
   "fixtures": [
     {
       "id": "pdf-tools.extraction.phase0.born-digital-flat",

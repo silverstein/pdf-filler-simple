@@ -184,15 +184,74 @@ function scoreTable(fixture, observation) {
     candidate.column_count === expected.column_count,
     JSON.stringify(candidate.merged_cells ?? []) === JSON.stringify(expected.merged_cells),
   ];
-  const actualCells = new Map((candidate.cells ?? []).map(cell => [`${cell.row}:${cell.column}`, cell.value]));
-  const matchedCells = expected.cells.filter(cell => actualCells.get(`${cell.row}:${cell.column}`) === cell.value).length;
+  const cellToken = cell => `${cell.row}:${cell.column}:${JSON.stringify(cell.value)}`;
+  const remainingExpected = new Map();
+  for (const cell of expected.cells) {
+    const token = cellToken(cell);
+    remainingExpected.set(token, (remainingExpected.get(token) ?? 0) + 1);
+  }
+  let matchedCells = 0;
+  let spuriousCells = 0;
+  for (const cell of candidate.cells ?? []) {
+    const token = cellToken(cell);
+    const remaining = remainingExpected.get(token) ?? 0;
+    if (remaining > 0) {
+      matchedCells += 1;
+      remainingExpected.set(token, remaining - 1);
+    } else {
+      spuriousCells += 1;
+    }
+  }
+  const missingCells = expected.cells.length - matchedCells;
+  const precision = matchedCells + spuriousCells === 0 ? 0 : matchedCells / (matchedCells + spuriousCells);
+  const recall = expected.cells.length === 0 ? 1 : matchedCells / expected.cells.length;
+  const f1 = precision + recall === 0 ? 0 : 2 * precision * recall / (precision + recall);
   return {
     table_topology: metric({ numerator: topology.filter(Boolean).length, denominator: topology.length, score: topology.filter(Boolean).length / topology.length }),
-    table_cells: metric({ numerator: matchedCells, denominator: expected.cells.length, score: matchedCells / expected.cells.length }),
+    table_cells: metric({
+      numerator: matchedCells,
+      denominator: expected.cells.length,
+      score: f1,
+      true_positive: matchedCells,
+      missing: missingCells,
+      spurious: spuriousCells,
+      precision,
+      recall,
+      f1,
+    }),
   };
 }
 
-function scoreEvidence(fixture, observation) {
+function intersectionArea(left, right) {
+  const width = Math.max(0, Math.min(left.x + left.width, right.x + right.width) - Math.max(left.x, right.x));
+  const height = Math.max(0, Math.min(left.y + left.height, right.y + right.height) - Math.max(left.y, right.y));
+  return width * height;
+}
+
+function bboxMatchesTruth(candidate, truth, geometry, policy) {
+  if (!candidate || !truth || !geometry || candidate.coordinate_space !== truth.coordinate_space) return false;
+  if (candidate.width <= 0 || candidate.height <= 0) return false;
+  const page = geometry.media_box;
+  const withinPage = candidate.x >= page.x
+    && candidate.y >= page.y
+    && candidate.x + candidate.width <= page.x + page.width
+    && candidate.y + candidate.height <= page.y + page.height;
+  if (!withinPage) return false;
+  const candidateArea = candidate.width * candidate.height;
+  const truthArea = truth.width * truth.height;
+  const overlap = intersectionArea(candidate, truth);
+  const union = candidateArea + truthArea - overlap;
+  const iou = union === 0 ? 0 : overlap / union;
+  const truthContainment = truthArea === 0 ? 0 : overlap / truthArea;
+  const pageAreaRatio = candidateArea / (page.width * page.height);
+  return iou >= policy.minimum_iou
+    && truthContainment >= policy.minimum_truth_containment
+    && pageAreaRatio <= policy.maximum_page_area_ratio;
+}
+
+function scoreEvidence(fixture, observation, evaluationPolicy) {
+  const bboxPolicy = evaluationPolicy?.evidence_bbox;
+  if (!bboxPolicy) throw new Error("Missing manifest-pinned evidence bbox policy");
   const pageEvidence = new Map((observation.evidence ?? [])
     .filter(item => item.kind === "page"
       && item.source_sha256 === fixture.sha256
@@ -208,30 +267,23 @@ function scoreEvidence(fixture, observation) {
     if (pageBound) pageSupported += 1;
     const factBound = pageBound && evidence.fact_ids?.includes(fact.id);
     if (factBound) factSupported += 1;
-    const bbox = evidence?.bbox;
-    const bboxValid = bbox && geometry
-      && bbox.coordinate_space === "top_left_pdf_points"
-      && bbox.x >= geometry.media_box.x
-      && bbox.y >= geometry.media_box.y
-      && bbox.x + bbox.width <= geometry.media_box.x + geometry.media_box.width
-      && bbox.y + bbox.height <= geometry.media_box.y + geometry.media_box.height;
+    const bboxValid = bboxMatchesTruth(evidence?.bbox, fact.bbox, geometry, bboxPolicy);
     if (factBound && bboxValid) bboxSupported += 1;
   }
   const total = fixture.expected.facts.length;
-  const answerSupported = observation.structured_candidate !== null && total > 0 && pageSupported === total;
   return {
     evidence_page: metric({ applicable: total > 0, availability: total > 0 ? "measured" : "not_applicable", numerator: pageSupported, denominator: total, score: total > 0 ? pageSupported / total : null }),
     evidence_bbox: metric({ applicable: total > 0, availability: total > 0 ? (bboxSupported > 0 ? "measured" : "unavailable") : "not_applicable", numerator: bboxSupported, denominator: total, score: total > 0 ? bboxSupported / total : null }),
     evidence_fact: metric({ applicable: total > 0, availability: total > 0 ? (factSupported > 0 ? "measured" : "unavailable") : "not_applicable", numerator: factSupported, denominator: total, score: total > 0 ? factSupported / total : null }),
-    evidence_answer: metric({ applicable: true, availability: observation.structured_candidate === null ? "unavailable" : "measured", numerator: answerSupported ? 1 : 0, denominator: 1, score: answerSupported ? 1 : 0 }),
+    evidence_answer: metric({ applicable: true, availability: "unavailable", numerator: 0, denominator: 1, score: 0, reason: "No per-answer mapping is implemented" }),
   };
 }
 
-export function scoreExtractionCase(fixture, observation) {
+export function scoreExtractionCase(fixture, observation, evaluationPolicy) {
   return {
     ...scoreStructured(fixture, observation),
     ...scoreTextAndOcr(fixture, observation),
     ...scoreTable(fixture, observation),
-    ...scoreEvidence(fixture, observation),
+    ...scoreEvidence(fixture, observation, evaluationPolicy),
   };
 }

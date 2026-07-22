@@ -23,6 +23,7 @@ const DEFAULT_MANIFEST_SCHEMA = path.join(REPO_ROOT, "test", "fixtures", "eval",
 const DEFAULT_REPORT_SCHEMA = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction", "report.schema.json");
 const DEFAULT_OUTPUT = path.join(REPO_ROOT, "docs", "evidence", "extraction-phase0-current-product.v1.json");
 const TOOL_TIMEOUT_MS = 20_000;
+const SHA256 = /^[a-f0-9]{64}$/;
 
 function option(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -122,7 +123,79 @@ function aggregateMetrics(cases) {
   return aggregate;
 }
 
-function harnessMetricSet(reason) {
+function assertEqual(actual, expected, message) {
+  if (canonicalJson(actual) !== canonicalJson(expected)) throw new Error(message);
+}
+
+export function verifyExtractionReport(report, {
+  manifest,
+  manifestSha256,
+  schemaSha256,
+}) {
+  if (report.benchmark_claim_ready !== false || report.calibration_claim_ready !== false) {
+    throw new Error("Extraction report readiness flags must remain false");
+  }
+  if (report.suite_id !== manifest.suite_id || report.suite_version !== manifest.suite_version) {
+    throw new Error("Extraction report suite identity does not match its manifest");
+  }
+  if (report.manifest_sha256 !== manifestSha256 || report.schema_sha256 !== schemaSha256) {
+    throw new Error("Extraction report manifest or schema binding is invalid");
+  }
+
+  const expectedIds = manifest.fixtures.map(fixture => fixture.id);
+  const observedIds = report.cases?.map(item => item.id) ?? [];
+  assertEqual(observedIds, expectedIds, "Extraction report case IDs are missing, duplicated, or reordered");
+  assertEqual(report.denominator.planned_case_ids, expectedIds, "Extraction report planned case IDs do not match the manifest");
+  assertEqual(report.denominator.observed_case_ids, expectedIds, "Extraction report observed case IDs do not match the retained cases");
+
+  const counts = Object.fromEntries([
+    ["completed", "completed"],
+    ["product_failures", "product_failure"],
+    ["product_timeouts", "product_timeout"],
+    ["invalid_outputs", "invalid_output"],
+    ["harness_failures", "harness_failure"],
+  ].map(([field, outcome]) => [field, report.cases.filter(item => item.outcome === outcome).length]));
+  const retained = Object.values(counts).reduce((sum, count) => sum + count, 0);
+  if (report.denominator.planned !== expectedIds.length
+    || report.denominator.attempted !== expectedIds.length
+    || retained !== expectedIds.length) {
+    throw new Error("Extraction report denominator does not retain every planned case exactly once");
+  }
+  for (const [field, count] of Object.entries(counts)) {
+    if (report.denominator[field] !== count) throw new Error(`Extraction report denominator field is inconsistent: ${field}`);
+  }
+
+  for (let index = 0; index < manifest.fixtures.length; index += 1) {
+    const fixture = manifest.fixtures[index];
+    const retainedCase = report.cases[index];
+    if (retainedCase.source?.path !== fixture.path
+      || retainedCase.source?.sha256 !== fixture.sha256
+      || retainedCase.source?.immutable !== true) {
+      throw new Error(`Extraction report source binding is invalid for ${fixture.id}`);
+    }
+    if (!Array.isArray(retainedCase.calls) || !retainedCase.bindings || !retainedCase.metrics) {
+      throw new Error(`Extraction report is missing retained calls, bindings, or metrics for ${fixture.id}`);
+    }
+    for (const call of retainedCase.calls) {
+      if (!SHA256.test(call.result_sha256)) throw new Error(`Extraction report contains an invalid call digest for ${fixture.id}`);
+    }
+    const expectedRawDigest = sha256(Buffer.from(canonicalJson(retainedCase.calls)));
+    if (retainedCase.bindings.raw_result_sha256 !== expectedRawDigest) {
+      throw new Error(`Extraction report raw-result binding is invalid for ${fixture.id}`);
+    }
+    const pageCall = retainedCase.calls.find(call => call.name === "read_pdf_pages");
+    if ((pageCall && retainedCase.bindings.page_result_sha256 !== pageCall.result_sha256)
+      || (!pageCall && retainedCase.bindings.page_result_sha256 !== null)) {
+      throw new Error(`Extraction report page-result binding is invalid for ${fixture.id}`);
+    }
+  }
+
+  const recomputedAggregate = aggregateMetrics(report.cases);
+  assertEqual(report.aggregate_metrics, recomputedAggregate, "Extraction report aggregate metrics do not match retained case metrics");
+  return true;
+}
+
+function failureMetricSet(reason, harnessFailure) {
   const names = [
     "json_parse", "schema_validity", "field_correctness", "text_coverage", "reading_order",
     "ocr", "raster_render", "table_topology", "table_cells", "evidence_page", "evidence_bbox",
@@ -130,15 +203,22 @@ function harnessMetricSet(reason) {
   ];
   return Object.fromEntries(names.map(name => [name, {
     applicable: true,
-    availability: "harness_failure",
-    numerator: null,
+    availability: harnessFailure ? "harness_failure" : "unavailable",
+    numerator: harnessFailure ? null : 0,
     denominator: null,
-    score: null,
+    score: harnessFailure ? null : 0,
     reason,
   }]));
 }
 
-async function runCase({ fixture, fixturePath, client, transport }) {
+export function classifyCaseError(error, { handoffComplete }) {
+  if (!handoffComplete) return "harness_failure";
+  if (error?.code === "PRODUCT_TIMEOUT") return "product_timeout";
+  if (error?.code === "INVALID_PRODUCT_OUTPUT") return "invalid_output";
+  return "product_failure";
+}
+
+async function runCase({ fixture, fixturePath, client, transport, evaluationPolicy }) {
   const sourceBytes = await fs.readFile(fixturePath);
   const beforeSha = sha256(sourceBytes);
   const calls = [];
@@ -242,10 +322,11 @@ async function runCase({ fixture, fixturePath, client, transport }) {
     },
     bindings: {
       raw_result_sha256: sha256(Buffer.from(canonicalJson(calls))),
+      page_result_sha256: pageResultHash,
       evidence_ids: evidence.map(item => item.id),
     },
     calls,
-    metrics: scoreExtractionCase(fixture, observation),
+    metrics: scoreExtractionCase(fixture, observation, evaluationPolicy),
     resources: {
       latency_ms: Number((clockMs() - started).toFixed(3)),
       peak_rss_bytes: calls.reduce((peak, call) => Math.max(peak ?? 0, call.peak_rss_bytes ?? 0), null),
@@ -305,20 +386,35 @@ export async function runExtractionBaseline({
           fixturePath: resolveExtractionFixture(manifestPath, fixture),
           client,
           transport,
+          evaluationPolicy: loaded.manifest.evaluation_policy,
         }));
       } catch (error) {
-        const outcome = error.code === "PRODUCT_TIMEOUT"
-          ? "product_timeout"
-          : error.code === "INVALID_PRODUCT_OUTPUT"
-            ? "invalid_output"
-            : "harness_failure";
+        const outcome = classifyCaseError(error, { handoffComplete: true });
+        const fixturePath = resolveExtractionFixture(manifestPath, fixture);
+        const sourceBytes = await fs.readFile(fixturePath);
+        const sourceDigest = sha256(sourceBytes);
+        const emptyCalls = [];
         cases.push({
           id: fixture.id,
           partition: fixture.partition,
           category: fixture.category,
           outcome,
-          error_code: error.code ?? "HARNESS_FAILURE",
-          metrics: harnessMetricSet(error.message),
+          error_code: error.code ?? "PRODUCT_FAILURE",
+          source: {
+            path: fixture.path,
+            sha256: sourceDigest,
+            immutable: sourceDigest === fixture.sha256,
+            size_bytes: sourceBytes.length,
+            independent_geometry: [],
+            observed_geometry: [],
+          },
+          bindings: {
+            raw_result_sha256: sha256(Buffer.from(canonicalJson(emptyCalls))),
+            page_result_sha256: null,
+            evidence_ids: [],
+          },
+          calls: emptyCalls,
+          metrics: failureMetricSet(error.message, outcome === "harness_failure"),
         });
       }
     }
@@ -372,9 +468,11 @@ export async function runExtractionBaseline({
   const reportSchema = JSON.parse(await fs.readFile(reportSchemaPath, "utf8"));
   const validation = new AjvJsonSchemaValidator().getValidator(reportSchema)(report);
   if (!validation.valid) throw new Error(`Invalid extraction report: ${validation.errorMessage}`);
-  if (report.denominator.planned !== report.denominator.attempted || report.denominator.planned_case_ids.join("\n") !== report.denominator.observed_case_ids.join("\n")) {
-    throw new Error("Extraction denominator is incomplete or reordered");
-  }
+  verifyExtractionReport(report, {
+    manifest: loaded.manifest,
+    manifestSha256: loaded.manifest_sha256,
+    schemaSha256: loaded.schema_sha256,
+  });
   if (outputPath) {
     await fs.mkdir(path.dirname(outputPath), { recursive: true });
     await fs.writeFile(outputPath, `${JSON.stringify(report, null, 2)}\n`);
