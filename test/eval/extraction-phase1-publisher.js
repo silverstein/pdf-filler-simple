@@ -25,6 +25,13 @@ const SCORE_PROVENANCE_BINDING_KEYS = [
   "oracle_sha256", "layout_oracle_bytes_sha256", "layout_oracle_schema_sha256", "layout_oracle_sha256", "phase0_manifest_sha256", "preflight_evidence_bytes_sha256", "preflight_evidence_sha256",
   "score_schema_sha256", "scorer_contract_sha256", "scorer_local_source_set_sha256",
 ];
+export const TRANSFER_LOCAL_ARTIFACTS = Object.freeze({
+  received_privacy_attestation: "received-generation-privacy.v1.json",
+  source_generation_index: "source-generation-index.v1.json",
+  transfer_receipt: "cross-device-receipt.v1.json",
+});
+const TRANSFER_LOCAL_ROLES = Object.freeze(Object.keys(TRANSFER_LOCAL_ARTIFACTS).sort(compareUnicodeCodePoints));
+const TRANSFER_LOCAL_PATHS = new Set(Object.values(TRANSFER_LOCAL_ARTIFACTS).map(value => value.toLowerCase()));
 
 function exactKeys(value, keys) {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -40,6 +47,52 @@ export function computeGenerationSha256(index, indexBytes) {
   if (!validateIndex(index) || !Buffer.isBuffer(indexBytes)
     || !indexBytes.equals(Buffer.from(`${JSON.stringify(index, null, 2)}\n`))) throw new Error("Generation digest requires a valid canonical index");
   return sha256(Buffer.from(`pdf-tools.extraction-generation.v1\0${canonicalJson({ index, index_raw_sha256: sha256(indexBytes) })}`));
+}
+
+export function verifyReceivedArtifactRecordMapping({ sourceIndex, sourceIndexBytes, receiptBytes, destinationIndex } = {}) {
+  if (!sourceIndex || !destinationIndex || !Buffer.isBuffer(sourceIndexBytes) || !Buffer.isBuffer(receiptBytes)
+    || !Array.isArray(sourceIndex.artifacts) || !Array.isArray(destinationIndex.artifacts)) {
+    throw new Error("Received artifact mapping requires exact source and destination index inputs");
+  }
+  const sourceRoles = sourceIndex.artifacts.map(item => item.role);
+  const destinationRoles = destinationIndex.artifacts.map(item => item.role);
+  if (new Set(sourceRoles).size !== sourceRoles.length || new Set(destinationRoles).size !== destinationRoles.length
+    || sourceIndex.artifacts.some(item => TRANSFER_LOCAL_ROLES.includes(item.role) || TRANSFER_LOCAL_PATHS.has(item.path.toLowerCase()))) {
+    throw new Error("Source generation collides with transfer-local artifact identity");
+  }
+  const expectedRoles = [...sourceRoles, ...TRANSFER_LOCAL_ROLES].sort(compareUnicodeCodePoints);
+  if (canonicalJson([...destinationRoles].sort(compareUnicodeCodePoints)) !== canonicalJson(expectedRoles)) {
+    throw new Error("Received generation does not contain exactly the copied source records and transfer-local additions");
+  }
+  for (const artifact of sourceIndex.artifacts) {
+    const received = destinationIndex.artifacts.find(item => item.role === artifact.role);
+    if (canonicalJson(received) !== canonicalJson(artifact)) {
+      throw new Error(`Received generation changed a source artifact record: ${artifact.role}`);
+    }
+  }
+  const expectedLocalRecords = {
+    source_generation_index: {
+      role: "source_generation_index",
+      path: TRANSFER_LOCAL_ARTIFACTS.source_generation_index,
+      bytes: sourceIndexBytes.length,
+      sha256: sha256(sourceIndexBytes),
+    },
+    transfer_receipt: {
+      role: "transfer_receipt",
+      path: TRANSFER_LOCAL_ARTIFACTS.transfer_receipt,
+      bytes: receiptBytes.length,
+      sha256: sha256(receiptBytes),
+    },
+  };
+  for (const [role, expected] of Object.entries(expectedLocalRecords)) {
+    const observed = destinationIndex.artifacts.find(item => item.role === role);
+    if (canonicalJson(observed) !== canonicalJson(expected)) throw new Error(`Received generation ${role} record is invalid`);
+  }
+  const privacy = destinationIndex.artifacts.find(item => item.role === "received_privacy_attestation");
+  if (privacy?.path !== TRANSFER_LOCAL_ARTIFACTS.received_privacy_attestation) {
+    throw new Error("Received generation privacy artifact record is invalid");
+  }
+  return true;
 }
 
 function validateIndex(index) {
@@ -581,6 +634,9 @@ export async function receiveVerifiedGeneration({
     || sourceBefore.generation_sha256 !== trustedSourceGenerationSha256) {
     throw new Error("Cross-device receive requires the exact out-of-band trusted source generation digest");
   }
+  if (sourceBefore.index.artifacts.some(artifact => TRANSFER_LOCAL_ROLES.includes(artifact.role) || TRANSFER_LOCAL_PATHS.has(artifact.path.toLowerCase()))) {
+    throw new Error("Cross-device receive source collides with transfer-local artifact identity");
+  }
   if (requiresCompositeExtractionVerification(sourceBefore.index) && typeof semanticVerifier !== "function") {
     throw new Error("Cross-device receive requires a composite extraction semantic verifier");
   }
@@ -637,7 +693,9 @@ export async function receiveVerifiedGeneration({
   await inject(publicationFaultInjector, "after_staging_create", { stagingPath });
   const retained = [];
   for (const artifact of sourceBefore.index.artifacts) {
-    if (artifact.role === "transfer_receipt") throw new Error("Cross-device receive does not recursively receive a receipt-bearing generation");
+    if (TRANSFER_LOCAL_ROLES.includes(artifact.role) || TRANSFER_LOCAL_PATHS.has(artifact.path.toLowerCase())) {
+      throw new Error("Cross-device receive source collides with transfer-local artifact identity");
+    }
     await inject(copyFaultInjector, "before_source_artifact_copy", { role: artifact.role, path: artifact.path });
     retained.push(await copyVerifiedArtifactToStaging({
       sourcePath: path.join(realSourceGenerationPath, artifact.path), stagingPath, artifact, copyFaultInjector,
@@ -688,6 +746,7 @@ export async function receiveVerifiedGeneration({
   index.index_content_sha256 = indexContentSha256(index);
   if (!validateIndex(index)) throw new Error("Received generation index failed its strict contract");
   const indexBytes = Buffer.from(`${JSON.stringify(index, null, 2)}\n`);
+  verifyReceivedArtifactRecordMapping({ sourceIndex: sourceBefore.index, sourceIndexBytes: sourceBefore.indexBytes, receiptBytes, destinationIndex: index });
   await inject(publicationFaultInjector, "before_commit_marker", { stagingPath });
   await writeVerifiedFile(stagingPath, { role: "execution_index", filename: "execution-index.v1.json", bytes: indexBytes }, publicationFaultInjector, true);
   await inject(publicationFaultInjector, "after_commit_marker", { stagingPath });
@@ -700,6 +759,7 @@ export async function receiveVerifiedGeneration({
     if (stagingInspection.state !== "complete" || stagingInspection.index.source_generation_sha256 !== sourceBefore.generation_sha256) {
       throw new Error("Received staging generation does not bind the verified source generation");
     }
+    verifyReceivedArtifactRecordMapping({ sourceIndex: sourceBefore.index, sourceIndexBytes: sourceBefore.indexBytes, receiptBytes, destinationIndex: stagingInspection.index });
     await verifyFinalGenerationPrivacy({
       generationPath: stagingPath,
       index: stagingInspection.index,
@@ -707,10 +767,6 @@ export async function receiveVerifiedGeneration({
       privacyRole: "received_privacy_attestation",
     });
     if (requiresCompositeExtractionVerification(stagingInspection.index)) await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath: stagingPath, inspection: stagingInspection });
-    for (const artifact of sourceBefore.index.artifacts) {
-      const received = stagingInspection.index.artifacts.find(item => item.role === artifact.role);
-      if (canonicalJson(received) !== canonicalJson(artifact)) throw new Error(`Received staging generation changed a source artifact record: ${artifact.role}`);
-    }
     await inject(publicationFaultInjector, "before_final_rename", { stagingPath, generationPath });
     try {
       await fs.lstat(generationPath);
@@ -723,6 +779,7 @@ export async function receiveVerifiedGeneration({
     await inject(publicationFaultInjector, "after_final_rename", { generationPath });
     const destination = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: transactionId });
     if (destination.state !== "complete" || destination.index.source_generation_sha256 !== sourceBefore.generation_sha256) throw new Error("Received generation does not bind the verified source generation");
+    verifyReceivedArtifactRecordMapping({ sourceIndex: sourceBefore.index, sourceIndexBytes: sourceBefore.indexBytes, receiptBytes, destinationIndex: destination.index });
     await verifyFinalGenerationPrivacy({
       generationPath,
       index: destination.index,
@@ -730,14 +787,11 @@ export async function receiveVerifiedGeneration({
       privacyRole: "received_privacy_attestation",
     });
     if (requiresCompositeExtractionVerification(destination.index)) await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: destination });
-    for (const artifact of sourceBefore.index.artifacts) {
-      const received = destination.index.artifacts.find(item => item.role === artifact.role);
-      if (canonicalJson(received) !== canonicalJson(artifact)) throw new Error(`Received generation changed a source artifact record: ${artifact.role}`);
-    }
     await fsyncDirectory(destinationParentDirectory);
     await inject(publicationFaultInjector, "after_parent_fsync", { generationPath });
     const finalInspection = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: transactionId });
     if (finalInspection.state !== "complete" || finalInspection.generation_sha256 !== destination.generation_sha256) throw new Error("Received generation changed before claim cleanup");
+    verifyReceivedArtifactRecordMapping({ sourceIndex: sourceBefore.index, sourceIndexBytes: sourceBefore.indexBytes, receiptBytes, destinationIndex: finalInspection.index });
     await verifyFinalGenerationPrivacy({
       generationPath,
       index: finalInspection.index,
@@ -751,6 +805,7 @@ export async function receiveVerifiedGeneration({
     if (completedDestination.state !== "complete" || completedDestination.generation_sha256 !== destination.generation_sha256) {
       throw new Error("Received generation failed claim-free reinspection");
     }
+    verifyReceivedArtifactRecordMapping({ sourceIndex: sourceBefore.index, sourceIndexBytes: sourceBefore.indexBytes, receiptBytes, destinationIndex: completedDestination.index });
     const terminalDestination = requiresCompositeExtractionVerification(completedDestination.index)
       ? await verifyTerminalSemanticSnapshot({ verifier: semanticVerifier, generationPath, inspection: completedDestination })
       : completedDestination;

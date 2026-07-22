@@ -128,16 +128,22 @@ snapshot. The returned inspection is this post-callback snapshot. This closes
 mutation during the terminal callback; continuous immutability after return is
 still unavailable and is not claimed.
 
-Execution and score semantic verifiers are exported factories, not retained
-in-memory closures. A fresh process rebuilds them from explicit trusted local
-paths, the closed local source and schema role sets, PDF.js 5.4.624, and retained
-generation artifacts. Execution and score generations retain the exact
-candidate registry and run plan used by the report. Score generations also
-retain the source execution companion so adapter, artifact, and runner-failure
-context can be reconstructed without the scoring process that created them.
+Execution and score semantic verifiers are separate exported factories, not
+retained in-memory closures. They share only bounded-read, transaction,
+transport, and privacy primitives. The execution verifier does not import the
+scorer or oracle generator, and the score verifier does not import the execution
+verifier or runner. Each named local source map equals the complete reachable
+static local module graph for its orchestration entry point. A fresh process
+rebuilds the selected verifier from explicit trusted local paths, its exact
+source and schema role set, PDF.js 5.4.624, and retained generation artifacts.
+Execution and score generations retain the exact candidate registry and run
+plan used by the report. Score generations also retain the source execution
+companion so adapter, artifact, and runner-failure context can be reconstructed
+without the scoring process that created them.
 
 Local crash recovery uses an explicit `local_claim_owned` rule. The caller must
-supply the expected transaction ID and may supply the exact generation digest.
+supply the expected transaction ID and may supply the exact generation digest;
+recovery of a received generation requires that exact digest.
 The factory verifies the mode-0600, no-follow claim bytes before accepting the
 transaction, permits one terminal claim-free use for that same transaction,
 then becomes unusable. This is local, unauthenticated recovery trust. It is not
@@ -176,10 +182,17 @@ The transfer receipt binds the exact source index bytes, source generation
 digest, hosts, transport, time, and a code identity derived from the indexed
 execution companion or score provenance. Callers cannot substitute an
 unrelated source hash. Receive also requires the exact source generation digest
-from an out-of-band trusted input before copying. Unsigned receipts state that
-authenticity is unavailable and self-consistency alone is not authenticity.
-For signed receipts, a trusted verifier must return the synchronous boolean
-value `true`; promises and other truthy values fail closed.
+from an out-of-band trusted input before copying. A received execution must
+anchor an original execution, and a received score must anchor an original
+score. The destination must contain every source artifact record byte-for-byte
+and record-for-record, plus exactly the source index, transfer receipt, and
+received privacy attestation. Source generations may not use those transfer-local
+roles or paths. The expected receipt code identity is derived from the already
+independently verified execution companion or score provenance, never from the
+receipt itself. Unsigned receipts state that receipt authenticity is unavailable
+and do not call a configured signature verifier. For signed receipts, the fresh
+factory requires an explicit trusted verifier, which must return the synchronous
+boolean value `true`; promises and other truthy values fail closed.
 
 A received generation retains every original source artifact record exactly and
 adds only `source_generation_index`, `transfer_receipt`, and

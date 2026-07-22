@@ -7,13 +7,25 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { runExtractionCandidates } from "../../scripts/eval-run-extraction-candidates.mjs";
 import { scoreExtractionCandidateReport } from "../../scripts/eval-score-extraction-candidates.mjs";
-import { inspectGenerationDirectory } from "./extraction-phase1-publisher.js";
+import {
+  computeGenerationSha256,
+  inspectGenerationDirectory,
+  readVerifiedGenerationArtifact,
+} from "./extraction-phase1-publisher.js";
+import {
+  PHASE1_COMPANION_SOURCE_PATHS,
+  createCrossDeviceReceipt,
+} from "./extraction-phase1-companion.js";
+import { PHASE1_SCORER_LOCAL_SOURCE_PATHS } from "./extraction-phase1-scorer.js";
+import { verifyReceivedGenerationAncestry } from "./extraction-phase1-generation-verifier-common.js";
+import { canonicalJson, sha256 } from "./extraction-phase1-protocol.js";
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
 const PHASE1_ROOT = path.join(EXTRACTION_ROOT, "phase1");
-const FACTORY_MODULE = new URL("./extraction-phase1-generation-verifiers.js", import.meta.url).href;
+const EXECUTION_FACTORY_MODULE = new URL("./extraction-phase1-execution-generation-verifier.js", import.meta.url).href;
+const SCORE_FACTORY_MODULE = new URL("./extraction-phase1-score-generation-verifier.js", import.meta.url).href;
 const PUBLISHER_MODULE = new URL("./extraction-phase1-publisher.js", import.meta.url).href;
 const temporaryRoots = [];
 
@@ -25,6 +37,42 @@ async function temporaryRoot() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "phase1-fresh-verifier-"));
   temporaryRoots.push(root);
   return root;
+}
+
+async function exactStaticModuleGraph(sourcePaths, rootRole) {
+  const modulePaths = new Set(Object.values(sourcePaths).filter(value => /\.(?:m?js)$/.test(value)));
+  const adjacency = new Map();
+  const importPattern = /(?:import|export)\s+(?:[^;]*?\sfrom\s+)?["']([^"']+)["']|import\(\s*["']([^"']+)["']\s*\)/g;
+  for (const relativePath of modulePaths) {
+    const imports = new Set();
+    const source = await fs.readFile(path.join(REPO_ROOT, relativePath), "utf8");
+    for (const match of source.matchAll(importPattern)) {
+      const specifier = match[1] ?? match[2];
+      if (!specifier.startsWith(".")) continue;
+      const resolved = path.relative(REPO_ROOT, path.resolve(path.dirname(path.join(REPO_ROOT, relativePath)), specifier));
+      expect(modulePaths.has(resolved), `${relativePath} imports unbound local module ${resolved}`).toBe(true);
+      imports.add(resolved);
+    }
+    adjacency.set(relativePath, imports);
+  }
+  const rootPath = sourcePaths[rootRole];
+  const reached = new Set();
+  const pending = [rootPath];
+  while (pending.length > 0) {
+    const current = pending.pop();
+    if (reached.has(current)) continue;
+    reached.add(current);
+    for (const dependency of adjacency.get(current) ?? []) pending.push(dependency);
+  }
+  expect([...reached].sort()).toEqual([...modulePaths].sort());
+  return reached;
+}
+
+function withIndexContentDigest(index) {
+  const value = structuredClone(index);
+  const { index_content_sha256: ignored, ...content } = value;
+  value.index_content_sha256 = sha256(Buffer.from(`pdf-tools.extraction-phase1-execution-index.v1\0${canonicalJson(content)}`));
+  return value;
 }
 
 const CHILD_SOURCE = `
@@ -68,7 +116,7 @@ async function runFreshProcess(config) {
     "-e",
     CHILD_SOURCE,
     JSON.stringify({
-      factory_module: FACTORY_MODULE,
+      factory_module: config.factory_kind === "execution" ? EXECUTION_FACTORY_MODULE : SCORE_FACTORY_MODULE,
       publisher_module: PUBLISHER_MODULE,
       repository_root: REPO_ROOT,
       manifest_path: path.join(EXTRACTION_ROOT, "manifest.v1.json"),
@@ -81,6 +129,15 @@ async function runFreshProcess(config) {
 }
 
 describe("fresh-process extraction generation semantic verifier factories", () => {
+  it("closes role-exact execution and score static module graphs without cross-importing verifier surfaces", async () => {
+    const executionGraph = await exactStaticModuleGraph(PHASE1_COMPANION_SOURCE_PATHS, "runner_script");
+    expect(executionGraph).not.toContain("test/eval/extraction-phase1-scorer.js");
+    expect(executionGraph).not.toContain("scripts/eval-generate-extraction-layout-oracle.mjs");
+    const scoreGraph = await exactStaticModuleGraph(PHASE1_SCORER_LOCAL_SOURCE_PATHS, "orchestration_script");
+    expect(scoreGraph).not.toContain("test/eval/extraction-phase1-execution-generation-verifier.js");
+    expect(scoreGraph).not.toContain("scripts/eval-run-extraction-candidates.mjs");
+  });
+
   it("receives execution and score generations and recovers a terminal publication fault without a source-process closure", async () => {
     const root = await temporaryRoot();
     const [registry, plan, manifest] = await Promise.all([
@@ -115,6 +172,141 @@ describe("fresh-process extraction generation semantic verifier factories", () =
       trust: { kind: "out_of_band_source_generation_sha256", expected_source_generation_sha256: execution.generation_sha256 },
     });
     expect(receivedExecution.state).toBe("complete");
+    const receivedExecutionInspection = await inspectGenerationDirectory(receivedExecution.generation_path);
+    const [sourceIndexArtifact, receiptArtifact, companionArtifact] = await Promise.all([
+      readVerifiedGenerationArtifact(receivedExecution.generation_path, receivedExecutionInspection, "source_generation_index"),
+      readVerifiedGenerationArtifact(receivedExecution.generation_path, receivedExecutionInspection, "transfer_receipt"),
+      readVerifiedGenerationArtifact(receivedExecution.generation_path, receivedExecutionInspection, "execution_companion"),
+    ]);
+    const sourceIndex = JSON.parse(sourceIndexArtifact.bytes);
+    const companion = JSON.parse(companionArtifact.bytes);
+    const expectedIdentity = {
+      kind: "execution_direct_source_set_sha256",
+      sha256: companion.direct_source_set_sha256,
+      source_artifact_role: "execution_companion",
+    };
+    const ancestryInputs = {
+      inspection: receivedExecutionInspection,
+      sourceIndexBytes: sourceIndexArtifact.bytes,
+      receiptBytes: receiptArtifact.bytes,
+      expectedSourceGenerationSha256: execution.generation_sha256,
+      expectedSourceKind: "execution",
+      expectedSourceCodeIdentity: expectedIdentity,
+    };
+    let unsignedVerifierCalls = 0;
+    const unsigned = verifyReceivedGenerationAncestry({
+      ...ancestryInputs,
+      trustedSignatureVerifier: () => { unsignedVerifierCalls += 1; return true; },
+    });
+    expect(unsigned.receiptVerification).toEqual({ internally_consistent: true, authentic: false });
+    expect(unsignedVerifierCalls).toBe(0);
+
+    const wrongReceivedKind = { state: "complete", index: structuredClone(receivedExecutionInspection.index) };
+    wrongReceivedKind.index.kind = "received_score";
+    expect(() => verifyReceivedGenerationAncestry({ ...ancestryInputs, inspection: wrongReceivedKind })).toThrow(/kind/);
+    const wrongSourceKindIndex = withIndexContentDigest({
+      ...structuredClone(sourceIndex),
+      kind: "score",
+      source_generation_sha256: "1".repeat(64),
+    });
+    const wrongSourceKindBytes = Buffer.from(`${JSON.stringify(wrongSourceKindIndex, null, 2)}\n`);
+    const wrongSourceKindSha256 = computeGenerationSha256(wrongSourceKindIndex, wrongSourceKindBytes);
+    const wrongSourceKindReceipt = createCrossDeviceReceipt({
+      runId: wrongSourceKindIndex.run_id,
+      indexBytes: wrongSourceKindBytes,
+      sourceGenerationSha256: wrongSourceKindSha256,
+      sourceHost: "silverbook",
+      destinationHost: "silvercloud",
+      sourceCodeIdentity: expectedIdentity,
+      transportedAt: "2026-07-22T00:00:00Z",
+      transport: "tailscale_tailnet",
+    });
+    const wrongSourceKindInspection = { state: "complete", index: structuredClone(receivedExecutionInspection.index) };
+    wrongSourceKindInspection.index.source_generation_sha256 = wrongSourceKindSha256;
+    expect(() => verifyReceivedGenerationAncestry({
+      ...ancestryInputs,
+      inspection: wrongSourceKindInspection,
+      sourceIndexBytes: wrongSourceKindBytes,
+      receiptBytes: Buffer.from(`${JSON.stringify(wrongSourceKindReceipt, null, 2)}\n`),
+      expectedSourceGenerationSha256: wrongSourceKindSha256,
+    })).toThrow(/source anchor/);
+    expect(() => verifyReceivedGenerationAncestry({
+      ...ancestryInputs,
+      expectedSourceCodeIdentity: { ...expectedIdentity, sha256: "0".repeat(64) },
+    })).toThrow(/receipt|inconsistent/);
+
+    const copiedRole = sourceIndex.artifacts[0].role;
+    for (const mutate of [
+      index => { index.artifacts.find(item => item.role === copiedRole).sha256 = "0".repeat(64); },
+      index => { index.artifacts = index.artifacts.filter(item => item.role !== copiedRole); },
+      index => { index.artifacts.push({ role: "unexpected", path: "unexpected.json", bytes: 1, sha256: "0".repeat(64) }); },
+    ]) {
+      const hostile = { state: "complete", index: structuredClone(receivedExecutionInspection.index) };
+      mutate(hostile.index);
+      expect(() => verifyReceivedGenerationAncestry({ ...ancestryInputs, inspection: hostile })).toThrow(/copied source records|source artifact record/);
+    }
+
+    const collisionIndex = structuredClone(sourceIndex);
+    collisionIndex.artifacts.push({
+      role: "received_privacy_attestation",
+      path: "source-collision.json",
+      bytes: 3,
+      sha256: sha256(Buffer.from("{}\n")),
+    });
+    collisionIndex.artifacts.sort((left, right) => left.role < right.role ? -1 : left.role > right.role ? 1 : 0);
+    const signedCollisionIndex = withIndexContentDigest(collisionIndex);
+    const collisionIndexBytes = Buffer.from(`${JSON.stringify(signedCollisionIndex, null, 2)}\n`);
+    const collisionGenerationSha256 = computeGenerationSha256(signedCollisionIndex, collisionIndexBytes);
+    const collisionReceipt = createCrossDeviceReceipt({
+      runId: signedCollisionIndex.run_id,
+      indexBytes: collisionIndexBytes,
+      sourceGenerationSha256: collisionGenerationSha256,
+      sourceHost: "silverbook",
+      destinationHost: "silvercloud",
+      sourceCodeIdentity: expectedIdentity,
+      transportedAt: "2026-07-22T00:00:00Z",
+      transport: "tailscale_tailnet",
+    });
+    const collisionInspection = { state: "complete", index: structuredClone(receivedExecutionInspection.index) };
+    collisionInspection.index.source_generation_sha256 = collisionGenerationSha256;
+    expect(() => verifyReceivedGenerationAncestry({
+      ...ancestryInputs,
+      inspection: collisionInspection,
+      sourceIndexBytes: collisionIndexBytes,
+      receiptBytes: Buffer.from(`${JSON.stringify(collisionReceipt, null, 2)}\n`),
+      expectedSourceGenerationSha256: collisionGenerationSha256,
+    })).toThrow(/transfer-local/);
+
+    const signedReceipt = createCrossDeviceReceipt({
+      runId: sourceIndex.run_id,
+      indexBytes: sourceIndexArtifact.bytes,
+      sourceGenerationSha256: execution.generation_sha256,
+      sourceHost: "silverbook",
+      destinationHost: "silvercloud",
+      sourceCodeIdentity: expectedIdentity,
+      transportedAt: "2026-07-22T00:00:00Z",
+      transport: "tailscale_tailnet",
+      keyId: "test:key",
+      signature: "A".repeat(16),
+    });
+    const signedReceiptBytes = Buffer.from(`${JSON.stringify(signedReceipt, null, 2)}\n`);
+    const signedInspection = { state: "complete", index: structuredClone(receivedExecutionInspection.index) };
+    const signedReceiptRecord = signedInspection.index.artifacts.find(item => item.role === "transfer_receipt");
+    Object.assign(signedReceiptRecord, { bytes: signedReceiptBytes.length, sha256: sha256(signedReceiptBytes) });
+    expect(() => verifyReceivedGenerationAncestry({
+      ...ancestryInputs,
+      inspection: signedInspection,
+      receiptBytes: signedReceiptBytes,
+    })).toThrow(/authenticity/);
+    let authenticatedInput = null;
+    const signed = verifyReceivedGenerationAncestry({
+      ...ancestryInputs,
+      inspection: signedInspection,
+      receiptBytes: signedReceiptBytes,
+      trustedSignatureVerifier: input => { authenticatedInput = input; return true; },
+    });
+    expect(signed.receiptVerification).toEqual({ internally_consistent: true, authentic: true });
+    expect(authenticatedInput).toMatchObject({ keyId: "test:key", signature: "A".repeat(16), payloadSha256: signedReceipt.signed_payload_sha256 });
 
     const scored = await scoreExtractionCandidateReport({
       executionGenerationPath: execution.generationPath,

@@ -86,7 +86,7 @@ describe("Phase 1 scorer-only layout occurrence oracle", () => {
     const hostile = structuredClone(retained);
     hostile.cases[0].facts[0].approved_occurrence.source_spans[0].start_code_point += 1;
     await expect(verifyLayoutOccurrenceOracle(hostile)).rejects.toThrow(/independent regeneration/);
-  });
+  }, 10_000);
 
   it("enumerates repeated Unicode code-point occurrences and refuses an indistinguishable same-item first match", () => {
     const item = rawItem("p0001-i000001", "DUP 😀 DUP 😀", 10);

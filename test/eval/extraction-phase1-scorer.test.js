@@ -37,10 +37,8 @@ import {
 } from "./extraction-phase1-companion.js";
 import { PHASE1_COMPANION_SOURCE_PATHS } from "./extraction-phase1-companion.js";
 import { buildRetainedPhase1Corpus } from "./extraction-phase1-corpus.js";
-import {
-  createExecutionGenerationSemanticVerifier,
-  createScoreGenerationSemanticVerifier,
-} from "./extraction-phase1-generation-verifiers.js";
+import { createExecutionGenerationSemanticVerifier } from "./extraction-phase1-execution-generation-verifier.js";
+import { createScoreGenerationSemanticVerifier } from "./extraction-phase1-score-generation-verifier.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
@@ -698,6 +696,7 @@ describe("structured extraction Phase 1 pure scorer", () => {
       value => { delete value.scorerSourceBytesByRole.oracle_schema; },
       value => { value.scorerSourceBytesByRole.score_schema.path = "wrong.json"; },
       value => { value.scorerSourceBytesByRole.scorer_module.bytes = Buffer.from("changed"); },
+      value => { value.scorerSourceBytesByRole.score_generation_verifier_module.bytes = Buffer.from("changed"); },
       value => { value.scorerSourceBytesByRole.protocol_module.bytes = Buffer.from("changed"); },
       value => { value.scorerSourceBytesByRole.report_schema.bytes = Buffer.from("{}"); },
     ]) {

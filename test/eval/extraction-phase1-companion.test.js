@@ -101,6 +101,17 @@ describe("Phase 1 execution companion and transfer receipt", () => {
       mutate(hostile);
       expect(() => verifyExecutionCompanion(hostile, trusted)).toThrow();
     }
+    const verifierTamper = {
+      ...trusted,
+      sourceBytesByRole: {
+        ...trusted.sourceBytesByRole,
+        execution_generation_verifier_module: {
+          ...trusted.sourceBytesByRole.execution_generation_verifier_module,
+          bytes: Buffer.from("changed execution verifier"),
+        },
+      },
+    };
+    expect(() => verifyExecutionCompanion(companion, verifierTamper)).toThrow(/differs|source/);
     const fakeResources = structuredClone(trusted.resourceFactsByAttemptKey);
     Object.values(fakeResources)[0].cost_usd = 0;
     expect(() => createExecutionCompanion({ ...trusted, resourceFactsByAttemptKey: fakeResources })).toThrow(/resource facts/);

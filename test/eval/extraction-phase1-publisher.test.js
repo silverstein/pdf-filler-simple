@@ -50,14 +50,14 @@ function artifacts() {
   };
 }
 
-async function sourceGeneration({ policy = "public_synthetic", trustedProhibitedRoots = [] } = {}) {
+async function sourceGeneration({ policy = "public_synthetic", trustedProhibitedRoots = [], extraArtifacts = {} } = {}) {
   const parent = await root();
   let privacyAttestation;
   return publishImmutableGeneration({
     parentDirectory: parent,
     runId: RUN_ID,
     kind: "execution",
-    artifacts: artifacts(),
+    artifacts: { ...artifacts(), ...extraArtifacts },
     preIndexArtifactBuilder: async ({ stagingPath, artifacts: retained }) => {
       privacyAttestation = await buildGenerationPrivacyAttestation({
         stagingPath,
@@ -566,6 +566,23 @@ describe("Phase 1 immutable generation publisher", () => {
       }), label).rejects.toThrow();
       expect(await fs.readdir(destinationParent), label).toEqual([]);
     }
+
+    const transferCollision = await sourceGeneration({
+      extraArtifacts: {
+        received_privacy_attestation: { filename: "source-collision.json", bytes: Buffer.from("{}\n") },
+      },
+    });
+    const collisionDestination = await root();
+    await expect(receiveVerifiedGeneration({
+      sourceGenerationPath: transferCollision.generationPath,
+      destinationParentDirectory: collisionDestination,
+      sourceHost: "silverbook",
+      destinationHost: "silvercloud",
+      transportedAt: "2026-07-22T00:00:00Z",
+      transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: transferCollision.generation_sha256,
+    })).rejects.toThrow(/transfer-local/);
+    expect(await fs.readdir(collisionDestination)).toEqual([]);
 
     const source = await sourceGeneration();
     const destinationParent = await root();

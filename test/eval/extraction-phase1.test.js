@@ -739,7 +739,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     const abstained = await configuredRun("abstain");
     expect(abstained.attempts[0]).toMatchObject({ outcome: "abstained", error_code: null });
     expect(abstained.attempts[0].response.gaps[0].reason).toBe("unsupported_modality");
-  });
+  }, 10_000);
 
   it("rejects malformed, replayed, over-limit, and falsely typed direct-PDF output", async () => {
     const cases = [

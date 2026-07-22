@@ -28,7 +28,7 @@ import {
   readVerifiedGenerationArtifact,
 } from "../test/eval/extraction-phase1-publisher.js";
 import { loadRetainedPhase1Corpus } from "../test/eval/extraction-phase1-corpus.js";
-import { createScoreGenerationSemanticVerifier } from "../test/eval/extraction-phase1-generation-verifiers.js";
+import { createScoreGenerationSemanticVerifier } from "../test/eval/extraction-phase1-score-generation-verifier.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
@@ -112,10 +112,6 @@ export async function scoreExtractionCandidateReport({
   await fs.mkdir(resolvedGenerationRoot, { recursive: true, mode: 0o700 });
   const realGenerationRoot = await fs.realpath(resolvedGenerationRoot);
   if (realGenerationRoot !== prospectiveGenerationRoot) throw new Error("Score generation root changed while establishing its privacy boundary");
-  const scorerModulePath = path.join(REPO_ROOT, "test", "eval", "extraction-phase1-scorer.js");
-  const protocolModulePath = path.join(REPO_ROOT, "test", "eval", "extraction-phase1-protocol.js");
-  const manifestLoaderPath = path.join(REPO_ROOT, "test", "eval", "extraction-manifest.js");
-  const orchestrationPath = fileURLToPath(import.meta.url);
   const sourceGeneration = await inspectGenerationDirectory(realExecutionGenerationPath);
   if (sourceGeneration.state !== "complete" || !["execution", "received_execution"].includes(sourceGeneration.index.kind)) throw new Error("Scoring requires a complete local execution generation");
   const [retainedPlanArtifact, retainedRegistryArtifact, reportLimitManifestLoaded] = await Promise.all([

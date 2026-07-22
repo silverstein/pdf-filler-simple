@@ -53,7 +53,7 @@ import {
 } from "../test/eval/extraction-phase1-layout-evidence.js";
 import { PHASE1_CORPUS_LIMITS, buildRetainedPhase1Corpus } from "../test/eval/extraction-phase1-corpus.js";
 import { verifyRetainedPhase1Report } from "../test/eval/extraction-phase1-report-verifier.js";
-import { createExecutionGenerationSemanticVerifier } from "../test/eval/extraction-phase1-generation-verifiers.js";
+import { createExecutionGenerationSemanticVerifier } from "../test/eval/extraction-phase1-execution-generation-verifier.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
