@@ -218,7 +218,7 @@ function assertRealizedRecipe(receipt, receiptPath) {
     UV_CACHE_DIR: receipt.roots.uv, UV_PYTHON_INSTALL_DIR: receipt.roots.uv_python_install, PYTHONDONTWRITEBYTECODE: "1",
   };
   const expectedSetupCommands = [
-    [receipt.toolchain.uv.path, "python", "install", "3.12.13"],
+    [receipt.toolchain.uv.path, "python", "install", "--no-bin", "3.12.13"],
     [receipt.toolchain.uv.path, "venv", "--python", "3.12.13", venv],
     [receipt.toolchain.uv.path, "pip", "compile", rolePath("direct_requirements"), "--python", python, "--generate-hashes", "--output-file", lock],
     [receipt.toolchain.uv.path, "pip", "sync", lock, "--python", python, "--require-hashes"],
@@ -253,7 +253,7 @@ function assertRealizedRecipe(receipt, receiptPath) {
       },
       authority_command: ["/bin/sh", "-c", bootstrapScript, "pdf-tools-docling-bootstrap.v1", "$NODE", "$NODE_SHA256", "$NODE_BYTES", "$NODE_MODE", "$NODE_LINKS", "$LAUNCHER", "$LAUNCHER_SHA256", "$LAUNCHER_BYTES", "$LAUNCHER_MODE", "$LAUNCHER_LINKS", "$VERIFIER", "$VERIFIER_SHA256", "$VERIFIER_BYTES", "$VERIFIER_MODE", "$VERIFIER_LINKS", "$RUN_ROOT", "$AUTHORITY_HOME", "$AUTHORITY_TMP", "--action", "setup", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder, "--protected-roots-json", protectedRootsPlaceholder],
       commands: [
-        ["$UV", "python", "install", "3.12.13"],
+        ["$UV", "python", "install", "--no-bin", "3.12.13"],
         ["$UV", "venv", "--python", "3.12.13", "$VENV_ROOT"],
         ["$UV", "pip", "compile", "$DIRECT_REQUIREMENTS", "--python", "$PYTHON", "--generate-hashes", "--output-file", "$LOCK"],
         ["$UV", "pip", "sync", "$LOCK", "--python", "$PYTHON", "--require-hashes"],

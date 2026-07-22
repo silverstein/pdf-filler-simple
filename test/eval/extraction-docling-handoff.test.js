@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { assertSchema } from "./extraction-phase1-protocol.js";
@@ -10,7 +11,7 @@ import {
   prepareDoclingMacHandoff,
   prepareDoclingMacHandoffForTest,
 } from "./extraction-docling-handoff.js";
-import { validateFinalizationSchemaMirror } from "../../scripts/eval-docling-authority.mjs";
+import { canonicalJson, validateFinalizationSchemaMirror } from "../../scripts/eval-docling-authority.mjs";
 
 const roots = [];
 const DARWIN_ARM64 = {
@@ -53,7 +54,16 @@ async function options(root, fixturePaths, uvVersion = "uv 0.8.15") {
   const uvPath = path.join(root, "uv-test-binary");
   const shellVersion = uvVersion.replaceAll("'", "'\\''");
   try {
-    await fs.writeFile(uvPath, `#!/bin/sh\nprintf '%s\\n' '${shellVersion}'\n`, { mode: 0o700, flag: "wx" });
+    await fs.writeFile(uvPath, `#!/bin/sh
+if [ "$1" = python ] && [ "$2" = install ]; then
+  case " $* " in
+    *" --no-bin "*) ;;
+    *) /bin/mkdir -p "$HOME/.local/bin"; : > "$HOME/.local/bin/python3.12" ;;
+  esac
+  exit 0
+fi
+printf '%s\\n' '${shellVersion}'
+`, { mode: 0o700, flag: "wx" });
   } catch (error) {
     if (error.code !== "EEXIST") throw error;
   }
@@ -82,6 +92,12 @@ function cleanVerifyCommand(result) {
 function runCleanVerify(result, environment = process.env) {
   const command = cleanVerifyCommand(result);
   return spawnSync(command[0], command.slice(1), { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: environment });
+}
+
+async function rewriteCanonicalReceipt(result, receipt) {
+  const bytes = Buffer.from(`${canonicalJson(receipt)}\n`);
+  await fs.writeFile(result.receiptPath, bytes);
+  return { ...result, receipt_sha256: createHash("sha256").update(bytes).digest("hex") };
 }
 
 async function bootstrapMutationCase(suffix) {
@@ -193,6 +209,23 @@ describe("Docling macOS handoff", () => {
       String(result.receipt.toolchain.node.links), path.join(path.resolve("."), "scripts/eval-verify-docling-macos-handoff.mjs"),
     ]);
     expect(result.bootstrap_sha256).toBe("9921055c8883627b062c4edfa8996c49ec37e6a7262374cdff27fc3ec7067b6f");
+    expect(result.receipt.identity.recipe.setup.commands[0]).toEqual(["$UV", "python", "install", "--no-bin", "3.12.13"]);
+    expect(result.receipt.setup.commands[0]).toEqual([result.receipt.toolchain.uv.path, "python", "install", "--no-bin", "3.12.13"]);
+    const unsafeHome = path.join(root, "unsafe-home-control");
+    await fs.mkdir(unsafeHome, { mode: 0o700 });
+    const unsafeCommand = result.receipt.setup.commands[0].filter(argument => argument !== "--no-bin");
+    const unsafeInstall = spawnSync(unsafeCommand[0], unsafeCommand.slice(1), {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      env: { ...result.receipt.setup.environment, HOME: unsafeHome }, cwd: result.receipt.roots.authority_tmp,
+    });
+    expect(unsafeInstall.status, unsafeInstall.stderr).toBe(0);
+    expect((await fs.stat(path.join(unsafeHome, ".local/bin/python3.12"))).isFile()).toBe(true);
+    const fakeInstall = spawnSync(result.receipt.setup.commands[0][0], result.receipt.setup.commands[0].slice(1), {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: result.receipt.setup.environment,
+      cwd: result.receipt.roots.authority_tmp,
+    });
+    expect(fakeInstall.status, fakeInstall.stderr).toBe(0);
+    expect(await fs.readdir(result.receipt.roots.authority_home)).toEqual([]);
     expect(result.receipt.setup.commands.at(-1).slice(0, 3)).toEqual([path.join(result.receipt.roots.sidecar_snapshot, "venv/bin/python"), "-I", "-B"]);
     expect(result.receipt.execution.adapter_command.slice(0, 3)).toEqual([path.join(result.receipt.roots.sidecar_snapshot, "venv/bin/python"), "-I", "-B"]);
     expect(result.receipt.handoff_id).toMatch(/^[a-f0-9]{64}$/);
@@ -217,6 +250,20 @@ describe("Docling macOS handoff", () => {
     for (const retained of result.receipt.inputs) {
       const bytes = await fs.readFile(path.join(result.receipt.roots.sidecar_snapshot, retained.filename));
       expect(bytes.length).toBe(retained.bytes);
+    }
+  }, 10000);
+
+  it("rejects omission or reordering of the receipt-bound --no-bin flag", async () => {
+    for (const mutation of ["omit", "reorder"]) {
+      const root = await temporaryRoot(`pdf-tools-docling-no-bin-${mutation}-`);
+      const result = await prepareDoclingMacHandoffForTest(await options(root, [await fixture(root)]));
+      const receipt = structuredClone(result.receipt);
+      receipt.setup.commands[0] = mutation === "omit"
+        ? [receipt.toolchain.uv.path, "python", "install", "3.12.13"]
+        : [receipt.toolchain.uv.path, "python", "install", "3.12.13", "--no-bin"];
+      const verification = runCleanVerify(await rewriteCanonicalReceipt(result, receipt));
+      expect(verification.status).not.toBe(0);
+      expect(verification.stderr).toMatch(/does not realize the retained authority recipe/i);
     }
   }, 10000);
 

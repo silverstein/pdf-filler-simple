@@ -297,7 +297,7 @@ async function prepareDoclingMacHandoffCore({
       },
       authority_command: [...normalizedBootstrapPrefix, "--action", "setup", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256", "--protected-roots-json", "$OUT_OF_BAND_PROTECTED_ROOTS_JSON"],
       commands: [
-        ["$UV", "python", "install", "3.12.13"],
+        ["$UV", "python", "install", "--no-bin", "3.12.13"],
         ["$UV", "venv", "--python", "3.12.13", "$VENV_ROOT"],
         ["$UV", "pip", "compile", "$DIRECT_REQUIREMENTS", "--python", "$PYTHON", "--generate-hashes", "--output-file", "$LOCK"],
         ["$UV", "pip", "sync", "$LOCK", "--python", "$PYTHON", "--require-hashes"],
@@ -447,7 +447,7 @@ async function prepareDoclingMacHandoffCore({
       environment: baseEnvironment,
       authority_command: setupAuthorityCommand,
       commands: [
-        [uv.path, "python", "install", "3.12.13"],
+        [uv.path, "python", "install", "--no-bin", "3.12.13"],
         [uv.path, "venv", "--python", "3.12.13", venvRoot],
         [uv.path, "pip", "compile", inputPath, "--python", pythonPath, "--generate-hashes", "--output-file", lockPath],
         [uv.path, "pip", "sync", lockPath, "--python", pythonPath, "--require-hashes"],
