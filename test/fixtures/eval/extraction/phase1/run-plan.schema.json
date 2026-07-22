@@ -28,11 +28,12 @@
     },
     "limits": {
       "type": "object", "additionalProperties": false,
-      "required": ["deadline_ms", "max_stdout_bytes", "max_stderr_bytes", "max_source_bytes", "max_pages"],
+      "required": ["deadline_ms", "max_stdout_bytes", "max_stderr_bytes", "max_request_bytes", "max_source_bytes", "max_pages"],
       "properties": {
         "deadline_ms": { "type": "integer", "minimum": 1, "maximum": 600000 },
         "max_stdout_bytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 },
         "max_stderr_bytes": { "type": "integer", "minimum": 0, "maximum": 4194304 },
+        "max_request_bytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 },
         "max_source_bytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
         "max_pages": { "type": "integer", "minimum": 1, "maximum": 10000 }
       }

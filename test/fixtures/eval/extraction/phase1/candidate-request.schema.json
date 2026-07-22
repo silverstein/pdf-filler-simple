@@ -25,26 +25,10 @@
     "inputs": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["layout_ir", "raster_manifest", "geometry_reconciliation"],
+      "required": ["layout_ir", "raster_manifest"],
       "properties": {
         "layout_ir": { "type": ["object", "null"] },
-        "raster_manifest": { "type": ["object", "null"] },
-        "geometry_reconciliation": {
-          "anyOf": [
-            { "type": "null" },
-            {
-              "type": "object", "additionalProperties": false,
-              "required": ["status", "coordinate_space", "method", "source_sha256", "input_sha256"],
-              "properties": {
-                "status": { "const": "proven" },
-                "coordinate_space": { "const": "pdf-tools.display-top-left-points.v1" },
-                "method": { "type": "string", "minLength": 1, "maxLength": 256 },
-                "source_sha256": { "$ref": "#/$defs/sha256" },
-                "input_sha256": { "$ref": "#/$defs/sha256" }
-              }
-            }
-          ]
-        }
+        "raster_manifest": { "type": ["object", "null"] }
       }
     },
     "task": {
@@ -64,11 +48,12 @@
     "limits": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["deadline_ms", "max_stdout_bytes", "max_stderr_bytes", "max_source_bytes", "max_pages"],
+      "required": ["deadline_ms", "max_stdout_bytes", "max_stderr_bytes", "max_request_bytes", "max_source_bytes", "max_pages"],
       "properties": {
         "deadline_ms": { "type": "integer", "minimum": 1, "maximum": 600000 },
         "max_stdout_bytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 },
         "max_stderr_bytes": { "type": "integer", "minimum": 0, "maximum": 4194304 },
+        "max_request_bytes": { "type": "integer", "minimum": 1024, "maximum": 16777216 },
         "max_source_bytes": { "type": "integer", "minimum": 1, "maximum": 1073741824 },
         "max_pages": { "type": "integer", "minimum": 1, "maximum": 10000 }
       }

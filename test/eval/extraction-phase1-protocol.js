@@ -174,7 +174,6 @@ export function buildCandidateRequest({
   layoutIr = null,
   rasterManifest = null,
   attemptBinding = null,
-  geometryReconciliation = null,
 }) {
   if (!PREDECLARED_CANDIDATE_IDS.includes(candidateId)) throw new Error(`Unknown candidate ID: ${candidateId}`);
   if (!INPUT_MODES.has(inputMode)) throw new Error(`Unsupported input mode: ${inputMode}`);
@@ -194,10 +193,9 @@ export function buildCandidateRequest({
     inputs: {
       layout_ir: inputMode === "layout_ir" ? layoutIr : null,
       raster_manifest: inputMode === "raster" ? rasterManifest : null,
-      geometry_reconciliation: geometryReconciliation,
     },
     task: {
-      instruction: "Return only source-supported structured data conforming to target_schema, with field-level evidence or a typed gap.",
+      instruction: "Return only source-supported structured data conforming to target_schema, with engine-native evidence when available or a typed gap.",
       target_schema: targetSchema,
       target_schema_sha256: targetSchemaSha256,
     },
@@ -205,11 +203,22 @@ export function buildCandidateRequest({
   };
   const request = {
     protocol: PHASE1_PROTOCOL,
-    request_id: sha256(Buffer.from(canonicalJson({ ...requestBody, attempt_binding: attemptBinding }))),
+    request_id: computeCandidateRequestId({ protocol: PHASE1_PROTOCOL, ...requestBody }, attemptBinding),
     ...requestBody,
   };
+  if (!Number.isInteger(limits.max_request_bytes)
+    || Buffer.byteLength(canonicalJson(request)) > limits.max_request_bytes) {
+    const error = new Error("Serialized candidate request exceeds the runner request byte limit");
+    error.code = "REQUEST_LIMIT_EXCEEDED";
+    throw error;
+  }
   assertTruthProjectedRequest(request, { repositoryRoot });
   return request;
+}
+
+export function computeCandidateRequestId(request, attemptBinding) {
+  const { request_id: ignoredRequestId, protocol: ignoredProtocol, ...requestBody } = request;
+  return sha256(Buffer.from(canonicalJson({ ...requestBody, attempt_binding: attemptBinding })));
 }
 
 export function assertResponseIdentity(response, request) {
@@ -226,7 +235,7 @@ export function assertResponseIdentity(response, request) {
 }
 
 function valueAtJsonPointer(value, pointer) {
-  if (pointer === "/") return { found: true, value };
+  if (pointer === "") return { found: true, value };
   let current = value;
   for (const raw of pointer.slice(1).split("/")) {
     const key = raw.replace(/~1/g, "/").replace(/~0/g, "~");
@@ -268,24 +277,76 @@ export function deriveTargetLeafPointers(schema, pointer = "") {
     || Array.isArray(schema.enum)
     || Array.isArray(schema.anyOf);
   if (!supportedLeaf) throw new Error("Unsupported target schema leaf for Phase 1 gap accounting");
-  return [pointer || "/"];
+  return [pointer];
+}
+
+function buildAnsweredProjectionSchema(schema, answeredLeafSet, pointer = "") {
+  if (schema.type !== "object") return structuredClone(schema);
+  const properties = {};
+  const required = [];
+  for (const name of Object.keys(schema.properties).sort()) {
+    const childPointer = `${pointer}/${pointerToken(name)}`;
+    if (![...answeredLeafSet].some(leaf => leaf === childPointer || leaf.startsWith(`${childPointer}/`))) continue;
+    properties[name] = buildAnsweredProjectionSchema(schema.properties[name], answeredLeafSet, childPointer);
+    required.push(name);
+  }
+  return { type: "object", additionalProperties: false, required, properties };
+}
+
+function validateTables(tables, pageCount) {
+  const tableIds = tables.map(table => table.id);
+  if (new Set(tableIds).size !== tableIds.length) throw new Error("Candidate response contains duplicate table IDs");
+  for (const table of tables) {
+    if (table.pages.some(page => page > pageCount)) throw new Error("Candidate table references a page outside the source");
+    const starts = new Set();
+    const occupied = new Set();
+    const expectedMergedRegions = [];
+    for (const cell of table.cells) {
+      if (cell.present !== true || !Object.hasOwn(cell, "value")) {
+        throw new Error("Candidate table cell must explicitly preserve a present raw value");
+      }
+      const start = `${cell.row}:${cell.column}`;
+      if (starts.has(start)) throw new Error(`Candidate table contains duplicate cell coordinate ${start}`);
+      starts.add(start);
+      const endRow = cell.row + cell.row_span - 1;
+      const endColumn = cell.column + cell.column_span - 1;
+      if (endRow > table.row_count || endColumn > table.column_count) {
+        throw new Error(`Candidate table cell span is outside declared bounds at ${start}`);
+      }
+      for (let row = cell.row; row <= endRow; row += 1) {
+        for (let column = cell.column; column <= endColumn; column += 1) {
+          const coordinate = `${row}:${column}`;
+          if (occupied.has(coordinate)) throw new Error(`Candidate table cells overlap at ${coordinate}`);
+          occupied.add(coordinate);
+        }
+      }
+      if (cell.row_span > 1 || cell.column_span > 1) {
+        expectedMergedRegions.push({
+          start_row: cell.row,
+          start_column: cell.column,
+          end_row: endRow,
+          end_column: endColumn,
+        });
+      }
+    }
+    const sortRegion = (left, right) => left.start_row - right.start_row
+      || left.start_column - right.start_column
+      || left.end_row - right.end_row
+      || left.end_column - right.end_column;
+    if (canonicalJson([...table.merged_regions].sort(sortRegion)) !== canonicalJson(expectedMergedRegions.sort(sortRegion))) {
+      throw new Error("Candidate table merged regions do not exactly match canonical cell-span coverage");
+    }
+  }
 }
 
 export function validateCandidateResponseSemantics(response, request, {
   targetSchema,
-  geometryReconciled = false,
 } = {}) {
   assertResponseIdentity(response, request);
   const requestedLeaves = deriveTargetLeafPointers(targetSchema);
   const requestedLeafSet = new Set(requestedLeaves);
-  const evidenceIds = response.evidence.map(item => item.id);
-  if (new Set(evidenceIds).size !== evidenceIds.length) throw new Error("Candidate response contains duplicate evidence IDs");
-  const evidenceIdSet = new Set(evidenceIds);
-  for (const evidence of response.evidence) {
-    if (evidence.page > request.source.page_count) throw new Error("Candidate evidence references a page outside the source");
-  }
-  if (response.evidence.length > 0 && !geometryReconciled) {
-    throw new Error("Candidate evidence geometry is not independently reconciled to pdf-tools.display-top-left-points.v1");
+  if (response.evidence.length > 0 || response.field_evidence.length > 0) {
+    throw new Error("Canonical evidence is unavailable until the independent ODA geometry scorer is implemented");
   }
   for (const pageText of response.page_texts) {
     if (pageText.page > request.source.page_count) throw new Error("Candidate page text references a page outside the source");
@@ -298,34 +359,24 @@ export function validateCandidateResponseSemantics(response, request, {
   }
   for (const nativeEvidence of response.native_evidence) {
     if (nativeEvidence.page > request.source.page_count) throw new Error("Candidate native evidence references a page outside the source");
+    const { bbox, page_geometry: geometry } = nativeEvidence;
+    if (bbox.x < 0 || bbox.y < 0 || bbox.x + bbox.width > geometry.width || bbox.y + bbox.height > geometry.height) {
+      throw new Error("Candidate native evidence bbox is outside its declared engine page geometry");
+    }
   }
-  for (const table of response.tables) {
-    if (table.pages.some(page => page > request.source.page_count)) throw new Error("Candidate table references a page outside the source");
-  }
-  const fieldPaths = response.field_evidence.map(item => item.field_path);
-  if (new Set(fieldPaths).size !== fieldPaths.length) throw new Error("Candidate response contains duplicate field-evidence paths");
+  const nativeEvidenceIds = response.native_evidence.map(item => item.id);
+  if (new Set(nativeEvidenceIds).size !== nativeEvidenceIds.length) throw new Error("Candidate response contains duplicate native evidence IDs");
+  validateTables(response.tables, request.source.page_count);
   const runnerFieldBindings = [];
-  for (const binding of response.field_evidence) {
-    if (!requestedLeafSet.has(binding.field_path)) {
-      throw new Error(`Candidate field evidence does not reference an exact requested leaf: ${binding.field_path}`);
-    }
-    const resolved = valueAtJsonPointer(response.structured_candidate, binding.field_path);
-    if (!resolved.found) throw new Error(`Candidate field evidence references a missing value: ${binding.field_path}`);
-    if (binding.evidence_ids.some(id => !evidenceIdSet.has(id))) {
-      throw new Error(`Candidate field evidence references an unknown evidence ID: ${binding.field_path}`);
-    }
-    runnerFieldBindings.push({
-      field_path: binding.field_path,
-      value_sha256: sha256(Buffer.from(canonicalJson(resolved.value))),
-      evidence_ids: [...binding.evidence_ids],
-    });
-  }
   const gapPaths = response.gaps.map(gap => gap.field_path);
   if (new Set(gapPaths).size !== gapPaths.length) throw new Error("Candidate response contains duplicate gap paths");
   for (const gapPath of gapPaths) {
     if (!requestedLeafSet.has(gapPath)) throw new Error(`Candidate gap is not an exact requested leaf: ${gapPath}`);
   }
-  const answeredLeaves = requestedLeaves.filter(pointer => valueAtJsonPointer(response.structured_candidate, pointer).found);
+  const answerBearing = response.status === "completed" || response.status === "partial";
+  const answeredLeaves = answerBearing
+    ? requestedLeaves.filter(pointer => valueAtJsonPointer(response.structured_candidate, pointer).found)
+    : [];
   const answeredLeafSet = new Set(answeredLeaves);
   if (gapPaths.some(pointer => answeredLeafSet.has(pointer))) {
     throw new Error("Candidate response overlaps answered and gap leaf paths");
@@ -342,6 +393,9 @@ export function validateCandidateResponseSemantics(response, request, {
     if (answeredLeaves.length === 0 || gapPaths.length === 0 || accountedLeaves.size !== requestedLeaves.length) {
       throw new Error("Partial candidate response must account for every requested leaf with both answers and typed gaps");
     }
+    const projectionSchema = buildAnsweredProjectionSchema(targetSchema, answeredLeafSet);
+    const validation = new AjvJsonSchemaValidator().getValidator(projectionSchema)(response.structured_candidate);
+    if (!validation.valid) throw new Error(`Partial candidate output violates its answered schema projection: ${validation.errorMessage}`);
   }
   if (response.status === "abstained") {
     if (answeredLeaves.length !== 0 || gapPaths.length !== requestedLeaves.length || accountedLeaves.size !== requestedLeaves.length) {
@@ -359,6 +413,8 @@ export function validateCandidateResponseSemantics(response, request, {
       || response.diagnostics.message.length > 500) {
       throw new Error("Error candidate response requires stable bounded diagnostics");
     }
+  } else if (response.diagnostics.code !== null || response.diagnostics.message !== null) {
+    throw new Error("Non-error candidate response diagnostics must remain null");
   }
   return runnerFieldBindings;
 }
@@ -369,25 +425,51 @@ export function reportAttemptKey(attempt) {
 
 export function verifyPhase1Report(report, {
   registry,
-  registrySha256,
+  registrySchema,
   plan,
-  planSha256,
-  manifestSha256,
-  manifestCaseIds,
-  manifestFixtures = null,
+  planSchema,
+  manifest,
+  sourceFactsById,
   requestSchema,
   responseSchema,
   repositoryRoot = null,
 }) {
+  assertSchema(registry, registrySchema, "retained extraction candidate registry");
+  assertSchema(plan, planSchema, "retained extraction Phase 1 plan");
+  validateRegistry(registry);
+  validatePlan(plan, registry);
   if (report.report_id !== PHASE1_REPORT_ID) throw new Error("Unexpected extraction Phase 1 report ID");
-  if (report.benchmark_claim_ready !== false || report.calibration_claim_ready !== false) {
+  if (report.benchmark_claim_ready !== false || report.calibration_claim_ready !== false
+    || report.truth_isolation_claim_ready !== false) {
     throw new Error("Extraction Phase 1 readiness flags must remain false");
   }
-  if (report.registry_sha256 !== registrySha256
-    || report.plan_sha256 !== planSha256
-    || report.phase0_manifest_sha256 !== manifestSha256) {
-    throw new Error("Extraction Phase 1 report input bindings are invalid");
+  const environmentInvariant = report.environment.wall_clock_timeout
+    && report.environment.stdout_byte_limit
+    && report.environment.stderr_byte_limit
+    && report.environment.clean_environment
+    && report.environment.source_mutation_detection
+    && report.environment.fresh_process_per_attempt
+    && !report.environment.filesystem_isolation
+    && !report.environment.network_isolation
+    && !report.environment.cpu_limit
+    && !report.environment.memory_limit
+    && !report.environment.process_count_limit
+    && !report.environment.process_tree_memory_measurement
+    && report.environment.process_group_termination === (report.environment.platform !== "win32");
+  if (!environmentInvariant) throw new Error("Extraction Phase 1 environment capability claims are inconsistent");
+  const exactBindings = {
+    registry_sha256: sha256(Buffer.from(canonicalJson(registry))),
+    registry_schema_sha256: sha256(Buffer.from(canonicalJson(registrySchema))),
+    plan_sha256: sha256(Buffer.from(canonicalJson(plan))),
+    plan_schema_sha256: sha256(Buffer.from(canonicalJson(planSchema))),
+    phase0_manifest_sha256: sha256(Buffer.from(canonicalJson(manifest))),
+    request_schema_sha256: sha256(Buffer.from(canonicalJson(requestSchema))),
+    response_schema_sha256: sha256(Buffer.from(canonicalJson(responseSchema))),
+  };
+  for (const [field, digest] of Object.entries(exactBindings)) {
+    if (report[field] !== digest) throw new Error(`Extraction Phase 1 report ${field} binding is invalid`);
   }
+  const manifestCaseIds = manifest.fixtures.map(fixture => fixture.id);
   const fixtureIds = plan.case_ids ?? manifestCaseIds;
   if (canonicalJson(report.denominator.planned_case_ids) !== canonicalJson(fixtureIds)) {
     throw new Error("Extraction Phase 1 report case selection is not bound to the plan and manifest");
@@ -412,76 +494,134 @@ export function verifyPhase1Report(report, {
     const count = report.attempts.filter(attempt => attempt.outcome === outcome).length;
     if (report.denominator.outcomes[outcome] !== count) throw new Error(`Incorrect ${outcome} denominator count`);
   }
-  const registryIds = new Set(registry.candidates.map(candidate => candidate.id));
-  const fixturesById = new Map((manifestFixtures ?? []).map(fixture => [fixture.id, fixture]));
+  const registryById = new Map(registry.candidates.map(candidate => [candidate.id, candidate]));
+  const selectionById = new Map(plan.candidates.map(selection => [selection.candidate_id, selection]));
+  const fixturesById = new Map(manifest.fixtures.map(fixture => [fixture.id, fixture]));
   for (const attempt of report.attempts) {
-    if (!registryIds.has(attempt.candidate_id)) throw new Error(`Report retains unknown candidate ${attempt.candidate_id}`);
+    const candidate = registryById.get(attempt.candidate_id);
+    const selection = selectionById.get(attempt.candidate_id);
+    const fixture = fixturesById.get(attempt.case_id);
+    const verifiedSource = sourceFactsById?.[attempt.case_id];
+    if (!candidate || !selection || !fixture) throw new Error(`Report retains an unknown candidate or case: ${reportAttemptKey(attempt)}`);
+    if (attempt.input_mode !== selection.input_mode) throw new Error(`Report input mode drifted for ${attempt.candidate_id}`);
     if (!SHA256.test(attempt.source.sha256)
       || (attempt.source.after_sha256 !== null && !SHA256.test(attempt.source.after_sha256))) {
       throw new Error(`Report has an invalid source digest for ${attempt.case_id}`);
+    }
+    if (!verifiedSource
+      || attempt.source.manifest_path !== fixture.path
+      || attempt.source.sha256 !== fixture.sha256
+      || attempt.source.sha256 !== verifiedSource.sha256
+      || attempt.source.size_bytes !== verifiedSource.size_bytes
+      || attempt.source.page_count !== verifiedSource.page_count) {
+      throw new Error(`Report source is not bound to the Phase 0 fixture for ${attempt.case_id}`);
     }
     const sourceMutated = attempt.source.sha256 !== attempt.source.after_sha256;
     if (sourceMutated && (attempt.outcome !== "error" || attempt.error_code !== "SOURCE_MUTATED")) {
       throw new Error(`Report does not fail closed on source mutation for ${attempt.case_id}`);
     }
-    if (attempt.source.immutable !== !sourceMutated) {
-      throw new Error(`Report source immutability flag is invalid for ${attempt.case_id}`);
+    if (attempt.source.immutable !== !sourceMutated
+      || (attempt.source.after_sha256 === null) !== (attempt.source.after_read_error !== null)) {
+      throw new Error(`Report source immutability evidence is invalid for ${attempt.case_id}`);
     }
-    const fixture = fixturesById.get(attempt.case_id);
-    if (fixture && (attempt.source.manifest_path !== fixture.path || attempt.source.sha256 !== fixture.sha256)) {
-      throw new Error(`Report source is not bound to the Phase 0 fixture for ${attempt.case_id}`);
-    }
-    if (attempt.request) {
-      if (requestSchema) assertSchema(attempt.request, requestSchema, "retained extraction candidate request");
-      if (sha256(Buffer.from(canonicalJson(attempt.request))) !== attempt.bindings.request_sha256) {
-        throw new Error(`Report request binding is invalid for ${attempt.case_id}`);
+
+    const execution = attempt.execution;
+    const stdoutBytes = attempt.captures.stdout_base64 === null ? null : Buffer.from(attempt.captures.stdout_base64, "base64");
+    const stderrBytes = attempt.captures.stderr_base64 === null ? null : Buffer.from(attempt.captures.stderr_base64, "base64");
+    for (const [label, encoded, bytes, digest] of [
+      ["stdout", attempt.captures.stdout_base64, stdoutBytes, attempt.bindings.stdout_sha256],
+      ["stderr", attempt.captures.stderr_base64, stderrBytes, attempt.bindings.stderr_sha256],
+    ]) {
+      if (encoded === null) {
+        if (digest !== null) throw new Error(`Attempt has an unexplained ${label} digest for ${attempt.case_id}`);
+      } else {
+        if (bytes.toString("base64") !== encoded || sha256(bytes) !== digest) {
+          throw new Error(`Attempt ${label} capture binding is invalid for ${attempt.case_id}`);
+        }
       }
-      assertTruthProjectedRequest(attempt.request, { repositoryRoot });
-    } else if (attempt.bindings.request_sha256 !== null) {
-      throw new Error(`Not-run attempt has an unexplained request digest for ${attempt.case_id}`);
     }
+    if (!execution.spawned) {
+      if (execution.process_id !== null || execution.exit_code !== null || execution.signal !== null || execution.timed_out
+        || execution.stdout_limit_exceeded || execution.stderr_limit_exceeded
+        || execution.stdout_bytes !== 0 || execution.stderr_bytes !== 0
+        || execution.process_group_termination_attempted || execution.process_group_empty_after_cleanup !== null
+        || stdoutBytes !== null || stderrBytes !== null) {
+        throw new Error(`Unspawned attempt retains impossible execution evidence for ${attempt.case_id}`);
+      }
+    } else {
+      if (!Number.isInteger(execution.process_id) || execution.process_id < 1) {
+        throw new Error(`Spawned attempt lacks a process identity for ${attempt.case_id}`);
+      }
+      if ((execution.exit_code === null) === (execution.signal === null)) {
+        throw new Error(`Spawned attempt must retain exactly one exit code or signal for ${attempt.case_id}`);
+      }
+      if (!stdoutBytes || !stderrBytes || execution.stdout_bytes < stdoutBytes.length || execution.stderr_bytes < stderrBytes.length) {
+        throw new Error(`Spawned attempt capture counts are invalid for ${attempt.case_id}`);
+      }
+      if (attempt.request) {
+        if (stdoutBytes.length !== Math.min(execution.stdout_bytes, attempt.request.limits.max_stdout_bytes)
+          || stderrBytes.length !== Math.min(execution.stderr_bytes, attempt.request.limits.max_stderr_bytes)
+          || execution.stdout_limit_exceeded !== (execution.stdout_bytes > attempt.request.limits.max_stdout_bytes)
+          || execution.stderr_limit_exceeded !== (execution.stderr_bytes > attempt.request.limits.max_stderr_bytes)) {
+          throw new Error(`Attempt output-limit evidence is inconsistent for ${attempt.case_id}`);
+        }
+      }
+      if ((execution.timed_out || execution.stdout_limit_exceeded || execution.stderr_limit_exceeded)
+        && !execution.process_group_termination_attempted) {
+        throw new Error(`Bounded attempt lacks process-group cleanup evidence for ${attempt.case_id}`);
+      }
+      if (report.environment.process_group_termination
+        && (!execution.process_group_termination_attempted || execution.process_group_empty_after_cleanup !== true)) {
+        throw new Error(`Attempt does not prove an empty process group after cleanup for ${attempt.case_id}`);
+      }
+    }
+
+    if (attempt.request) {
+      assertSchema(attempt.request, requestSchema, "retained extraction candidate request");
+      assertTruthProjectedRequest(attempt.request, { repositoryRoot });
+      const attemptBinding = sha256(Buffer.from(`${report.run_id}\u0000${attempt.candidate_id}\u0000${attempt.case_id}\u0000${attempt.repetition}`));
+      if (attempt.request.request_id !== computeCandidateRequestId(attempt.request, attemptBinding)
+        || attempt.request.candidate_id !== attempt.candidate_id
+        || attempt.request.input_mode !== attempt.input_mode
+        || attempt.request.source.sha256 !== attempt.source.sha256
+        || attempt.request.source.size_bytes !== attempt.source.size_bytes
+        || attempt.request.source.page_count !== attempt.source.page_count
+        || attempt.request.source.media_type !== fixture.media_type
+        || canonicalJson(attempt.request.task.target_schema) !== canonicalJson(fixture.target_schema)
+        || attempt.request.task.target_schema_sha256 !== sha256(Buffer.from(canonicalJson(fixture.target_schema)))
+        || canonicalJson(attempt.request.limits) !== canonicalJson(plan.limits)
+        || sha256(Buffer.from(canonicalJson(attempt.request))) !== attempt.bindings.request_sha256) {
+        throw new Error(`Retained request is not exactly bound to its plan, fixture, and attempt for ${attempt.case_id}`);
+      }
+      if ((attempt.input_mode === "direct_pdf" && (attempt.request.inputs.layout_ir !== null || attempt.request.inputs.raster_manifest !== null))
+        || (attempt.input_mode === "layout_ir" && (attempt.request.inputs.layout_ir === null || attempt.request.inputs.raster_manifest !== null))
+        || (attempt.input_mode === "raster" && (attempt.request.inputs.raster_manifest === null || attempt.request.inputs.layout_ir !== null))) {
+        throw new Error(`Retained request input payload does not match its mode for ${attempt.case_id}`);
+      }
+    } else if (attempt.bindings.request_sha256 !== null || execution.spawned) {
+      throw new Error(`Attempt lacks a required request binding for ${attempt.case_id}`);
+    }
+
     if (attempt.response) {
-      if (responseSchema) assertSchema(attempt.response, responseSchema, "retained extraction candidate response");
-      if (sha256(Buffer.from(canonicalJson(attempt.response))) !== attempt.bindings.response_canonical_sha256) {
+      assertSchema(attempt.response, responseSchema, "retained extraction candidate response");
+      if (!attempt.request || sha256(Buffer.from(canonicalJson(attempt.response))) !== attempt.bindings.response_canonical_sha256) {
         throw new Error(`Report response binding is invalid for ${attempt.case_id}`);
       }
-      assertResponseIdentity(attempt.response, attempt.request);
-      if (fixture) {
-        const geometry = attempt.request.inputs.geometry_reconciliation;
-        const inputPayload = attempt.request.input_mode === "layout_ir"
-          ? attempt.request.inputs.layout_ir
-          : attempt.request.input_mode === "raster"
-            ? attempt.request.inputs.raster_manifest
-            : null;
-        const geometryReconciled = attempt.request.input_mode !== "direct_pdf"
-          && geometry?.status === "proven"
-          && geometry.coordinate_space === "pdf-tools.display-top-left-points.v1"
-          && geometry.source_sha256 === attempt.source.sha256
-          && geometry.input_sha256 === sha256(Buffer.from(canonicalJson(inputPayload)));
-        validateCandidateResponseSemantics(attempt.response, attempt.request, {
-          targetSchema: fixture.target_schema,
-          geometryReconciled,
-        });
+      validateCandidateResponseSemantics(attempt.response, attempt.request, { targetSchema: fixture.target_schema });
+      if (attempt.outcome !== attempt.response.status || attempt.runner_field_bindings.length !== 0) {
+        throw new Error(`Report outcome or prohibited field bindings drifted for ${attempt.case_id}`);
       }
-      if (attempt.outcome !== attempt.response.status) {
-        throw new Error(`Report outcome is not bound to the retained response for ${attempt.case_id}`);
+      const parsedStdout = JSON.parse(stdoutBytes.toString("utf8"));
+      if (canonicalJson(parsedStdout) !== canonicalJson(attempt.response)
+        || execution.exit_code !== 0 || execution.signal !== null
+        || execution.timed_out || execution.stdout_limit_exceeded || execution.stderr_limit_exceeded) {
+        throw new Error(`Retained response is inconsistent with exact process output for ${attempt.case_id}`);
       }
-      const expectedFieldBindings = attempt.response.field_evidence.map(binding => {
-        const resolved = valueAtJsonPointer(attempt.response.structured_candidate, binding.field_path);
-        if (!resolved.found) throw new Error(`Retained field evidence references a missing value: ${binding.field_path}`);
-        return {
-          field_path: binding.field_path,
-          value_sha256: sha256(Buffer.from(canonicalJson(resolved.value))),
-          evidence_ids: [...binding.evidence_ids],
-        };
-      });
-      if (canonicalJson(attempt.runner_field_bindings) !== canonicalJson(expectedFieldBindings)) {
-        throw new Error(`Runner-owned field-value bindings are invalid for ${attempt.case_id}`);
-      }
-    } else if (attempt.bindings.response_canonical_sha256 !== null) {
-      throw new Error(`Attempt has an unexplained canonical response digest for ${attempt.case_id}`);
-    } else if (attempt.runner_field_bindings.length !== 0) {
-      throw new Error(`Attempt has field-value bindings without a retained response for ${attempt.case_id}`);
+    } else if (attempt.bindings.response_canonical_sha256 !== null || attempt.runner_field_bindings.length !== 0) {
+      throw new Error(`Attempt has response bindings without a retained response for ${attempt.case_id}`);
+    }
+    if (attempt.outcome === "error" ? attempt.error_code === null : attempt.error_code !== null) {
+      throw new Error(`Attempt error code is inconsistent with outcome for ${attempt.case_id}`);
     }
   }
   return true;

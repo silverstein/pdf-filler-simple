@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   buildCandidateRequest,
   canonicalJson,
+  computeCandidateRequestId,
   deriveTargetLeafPointers,
   loadJsonWithSchema,
   sha256,
@@ -47,9 +48,10 @@ async function configuredRun(mode, {
   repetitions = 1,
   deadlineMs = 2000,
   maxStdoutBytes = 4096,
+  maxRequestBytes = null,
   extraArgs = [],
   inputBuilders = null,
-  geometryReconciliationVerifier = null,
+  executable = process.execPath,
 } = {}) {
   const root = await temporaryRoot();
   const [registry, plan, manifest] = await Promise.all([
@@ -61,12 +63,13 @@ async function configuredRun(mode, {
   candidate.configured = true;
   candidate.version = "test-double-1.0.0";
   candidate.license = { framework_spdx: "MIT", model_license: null, reviewed: true };
-  candidate.command = { executable: process.execPath, args: [MOCK_CANDIDATE, mode, ...extraArgs] };
+  candidate.command = { executable, args: [MOCK_CANDIDATE, mode, ...extraArgs] };
   plan.case_ids = [manifest.fixtures[0].id];
   plan.repetitions = repetitions;
   plan.candidates = [{ candidate_id: candidateId, input_mode: inputMode }];
   plan.limits.deadline_ms = deadlineMs;
   plan.limits.max_stdout_bytes = maxStdoutBytes;
+  if (maxRequestBytes !== null) plan.limits.max_request_bytes = maxRequestBytes;
   const registryPath = path.join(root, "registry.json");
   const planPath = path.join(root, "plan.json");
   await Promise.all([
@@ -84,7 +87,6 @@ async function configuredRun(mode, {
     responseSchemaPath: RESPONSE_SCHEMA,
     reportSchemaPath: REPORT_SCHEMA,
     inputBuilders,
-    geometryReconciliationVerifier,
   });
 }
 
@@ -116,7 +118,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       sourceSizeBytes: 100,
       pageCount: 1,
       targetSchema: { type: "object", properties: { vendor: { type: "string" } } },
-      limits: { deadline_ms: 1000, max_stdout_bytes: 1024, max_stderr_bytes: 0, max_source_bytes: 1000, max_pages: 1 },
+      limits: { deadline_ms: 1000, max_stdout_bytes: 1024, max_stderr_bytes: 0, max_request_bytes: 4096, max_source_bytes: 1000, max_pages: 1 },
       repositoryRoot: REPO_ROOT,
       attemptBinding: "opaque-attempt",
     });
@@ -125,6 +127,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       expect(serialized).not.toContain(forbidden);
     }
     expect(request.request_id).toMatch(/^[a-f0-9]{64}$/);
+    expect(request.request_id).toBe(computeCandidateRequestId(request, "opaque-attempt"));
     const mutated = structuredClone(request);
     mutated.source.sha256 = "b".repeat(64);
     expect(sha256(Buffer.from(canonicalJson(mutated)))).not.toBe(sha256(Buffer.from(canonicalJson(request))));
@@ -154,7 +157,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       sourceSizeBytes: 100,
       pageCount: 1,
       targetSchema,
-      limits: { deadline_ms: 1000, max_stdout_bytes: 1024, max_stderr_bytes: 0, max_source_bytes: 1000, max_pages: 1 },
+      limits: { deadline_ms: 1000, max_stdout_bytes: 1024, max_stderr_bytes: 0, max_request_bytes: 4096, max_source_bytes: 1000, max_pages: 1 },
     });
     const partial = {
       protocol: request.protocol,
@@ -172,11 +175,17 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       value => { value.gaps.push(structuredClone(value.gaps[0])); },
       value => { value.gaps[0].field_path = "/a"; },
       value => { value.gaps = []; },
+      value => { value.structured_candidate.a = 42; },
+      value => { value.structured_candidate.extra = true; },
+      value => { value.structured_candidate.nested = {}; },
     ]) {
       const mutant = structuredClone(partial);
       mutate(mutant);
       expect(() => validateCandidateResponseSemantics(mutant, request, { targetSchema })).toThrow();
     }
+    const diagnosticMutant = structuredClone(partial);
+    diagnosticMutant.diagnostics.message = "not allowed on non-error output";
+    expect(() => validateCandidateResponseSemantics(diagnosticMutant, request, { targetSchema })).toThrow();
 
     const completed = structuredClone(partial);
     Object.assign(completed, {
@@ -210,6 +219,37 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     const optionalSchema = structuredClone(targetSchema);
     optionalSchema.required = ["a"];
     expect(() => deriveTargetLeafPointers(optionalSchema)).toThrow(/every declared object property/);
+    expect(deriveTargetLeafPointers({ type: "string" })).toEqual([""]);
+    expect(deriveTargetLeafPointers({
+      type: "object",
+      additionalProperties: false,
+      required: [""],
+      properties: { "": { type: "string" } },
+    })).toEqual(["/"]);
+
+    const rootSchema = { type: "string" };
+    const rootRequest = buildCandidateRequest({
+      candidateId: "candidate.direct_pdf.v1",
+      inputMode: "direct_pdf",
+      stagedSourcePath: path.join(os.tmpdir(), "phase1-root-source.pdf"),
+      sourceSha256: "a".repeat(64),
+      sourceSizeBytes: 100,
+      pageCount: 1,
+      targetSchema: rootSchema,
+      limits: { deadline_ms: 1000, max_stdout_bytes: 1024, max_stderr_bytes: 0, max_request_bytes: 4096, max_source_bytes: 1000, max_pages: 1 },
+    });
+    const rootCompleted = {
+      ...structuredClone(completed),
+      request_id: rootRequest.request_id,
+      structured_candidate: "root answer",
+    };
+    expect(validateCandidateResponseSemantics(rootCompleted, rootRequest, { targetSchema: rootSchema })).toEqual([]);
+    const rootAbstained = {
+      ...structuredClone(abstained),
+      request_id: rootRequest.request_id,
+      gaps: [{ field_path: "", reason: "insufficient_evidence", detail: "No root answer" }],
+    };
+    expect(validateCandidateResponseSemantics(rootAbstained, rootRequest, { targetSchema: rootSchema })).toEqual([]);
   });
 
   it("retains every default candidate, case, and repetition as explicit not_run", async () => {
@@ -221,6 +261,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     });
     expect(report.benchmark_claim_ready).toBe(false);
     expect(report.calibration_claim_ready).toBe(false);
+    expect(report.truth_isolation_claim_ready).toBe(false);
     expect(report.environment).toMatchObject({
       fresh_process_per_attempt: true,
       network_isolation: false,
@@ -230,13 +271,44 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     });
   });
 
+  it("keeps an unconfigured candidate not_run when source preflight limits are ineligible", async () => {
+    const root = await temporaryRoot();
+    const [plan, manifest] = await Promise.all([
+      fs.readFile(PLAN, "utf8").then(JSON.parse),
+      fs.readFile(MANIFEST, "utf8").then(JSON.parse),
+    ]);
+    plan.case_ids = [manifest.fixtures[0].id];
+    plan.repetitions = 1;
+    plan.candidates = [{ candidate_id: "candidate.direct_pdf.v1", input_mode: "direct_pdf" }];
+    plan.limits.max_source_bytes = 1;
+    const planPath = path.join(root, "unconfigured-plan.json");
+    await fs.writeFile(planPath, `${JSON.stringify(plan, null, 2)}\n`);
+    const report = await runExtractionCandidates({ planPath });
+    expect(report.attempts[0]).toMatchObject({ outcome: "not_run", error_code: null, request: null });
+  });
+
+  it("bounds the serialized request including supplemental adapter input", async () => {
+    const report = await configuredRun("partial", {
+      candidateId: "candidate.layout_ir.v1",
+      inputMode: "layout_ir",
+      maxRequestBytes: 1024,
+      inputBuilders: { layout_ir: async () => ({ payload: { text: "x".repeat(4096) } }) },
+    });
+    expect(report.attempts[0]).toMatchObject({
+      outcome: "error",
+      error_code: "REQUEST_LIMIT_EXCEEDED",
+      request: null,
+      execution: { spawned: false, process_id: null },
+    });
+  });
+
   it("uses a fresh process for every repetition and accepts typed partial and abstained outcomes", async () => {
     const completed = await configuredRun("completed");
     expect(completed.attempts[0]).toMatchObject({ outcome: "completed", error_code: null });
 
     const partial = await configuredRun("partial", { repetitions: 2 });
     expect(partial.denominator.outcomes.partial).toBe(2);
-    expect(new Set(partial.attempts.map(attempt => attempt.response.diagnostics.message)).size).toBe(2);
+    expect(new Set(partial.attempts.map(attempt => attempt.execution.process_id)).size).toBe(2);
     expect(new Set(partial.attempts.map(attempt => attempt.request.request_id)).size).toBe(2);
 
     const abstained = await configuredRun("abstain");
@@ -260,6 +332,13 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
       error_code: "STDOUT_LIMIT_EXCEEDED",
       execution: { stdout_limit_exceeded: true, process_group_termination_attempted: true },
     });
+    const spawnFailure = await configuredRun("partial", { executable: path.join(os.tmpdir(), "missing-phase1-candidate") });
+    expect(spawnFailure.attempts[0]).toMatchObject({
+      outcome: "error",
+      error_code: "SPAWN_FAILED",
+      execution: { spawned: false, process_id: null },
+      captures: { stdout_base64: null, stderr_base64: null },
+    });
   });
 
   it("fails closed on source mutation while preserving the original fixture", async () => {
@@ -274,18 +353,29 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     expect(await fs.readFile(path.join(EXTRACTION_ROOT, "synthetic", "born-digital-flat.pdf"))).toEqual(before);
   });
 
-  it("accepts geometry evidence only behind a runner-owned reconciliation and recomputes field digests", async () => {
+  it("retains native evidence but structurally prohibits canonical evidence for every input mode", async () => {
     const native = await configuredRun("native-evidence");
     expect(native.attempts[0]).toMatchObject({
       outcome: "partial",
       response: { evidence: [], native_evidence: [{ coordinate_space: "test-engine.bottom-left-points.v1", native_ref: "#/texts/0" }] },
     });
+    for (const mutate of [
+      value => { value.native_evidence.push(structuredClone(value.native_evidence[0])); },
+      value => { value.native_evidence[0].bbox.x = 700; },
+      value => { value.native_evidence[0].bbox.height = 900; },
+    ]) {
+      const mutant = structuredClone(native.attempts[0].response);
+      mutate(mutant);
+      expect(() => validateCandidateResponseSemantics(mutant, native.attempts[0].request, {
+        targetSchema: native.attempts[0].request.task.target_schema,
+      })).toThrow();
+    }
 
     const rejected = await configuredRun("evidence");
     expect(rejected.attempts[0]).toMatchObject({ outcome: "error", error_code: "INVALID_RESPONSE_CONTRACT" });
 
     let observedBuilderInput;
-    const accepted = await configuredRun("evidence", {
+    const emptyIrCannotAuthorize = await configuredRun("evidence", {
       candidateId: "candidate.layout_ir.v1",
       inputMode: "layout_ir",
       inputBuilders: {
@@ -296,30 +386,17 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
           };
         },
       },
-      geometryReconciliationVerifier: async ({ input_mode: inputMode, input, task }) => {
-        expect(inputMode).toBe("layout_ir");
-        expect(input.ir).toEqual({ name: "pdf-tools.extraction-ir", version: "1.0.0" });
-        expect(Object.isFrozen(task)).toBe(true);
-        return "phase1-test exact display geometry oracle";
-      },
     });
-    expect(accepted.attempts[0].outcome).toBe("partial");
-    expect(accepted.attempts[0].response.field_evidence[0]).not.toHaveProperty("value_sha256");
-    expect(accepted.attempts[0].request.inputs.geometry_reconciliation).toMatchObject({
-      status: "proven",
-      coordinate_space: "pdf-tools.display-top-left-points.v1",
-      method: "phase1-test exact display geometry oracle",
-      source_sha256: accepted.attempts[0].source.sha256,
+    expect(emptyIrCannotAuthorize.attempts[0]).toMatchObject({
+      outcome: "error",
+      error_code: "INVALID_RESPONSE_CONTRACT",
+      response: null,
     });
     expect(Object.isFrozen(observedBuilderInput.task)).toBe(true);
     expect(Object.isFrozen(observedBuilderInput.task.source)).toBe(true);
     expect(canonicalJson(observedBuilderInput.task)).not.toMatch(/ground_truth|expected|partition|category|fact_ids|answer_state|evaluation_policy|\.pdf|pdf-tools\.extraction\.phase0/);
     expect(observedBuilderInput).not.toHaveProperty("fixture");
-    expect(accepted.attempts[0].runner_field_bindings).toEqual([{
-      field_path: "/vendor",
-      value_sha256: sha256(Buffer.from(canonicalJson("fixture-value"))),
-      evidence_ids: ["evidence.1"],
-    }]);
+    expect(emptyIrCannotAuthorize.attempts[0].runner_field_bindings).toEqual([]);
   });
 
   it.runIf(process.platform !== "win32")("terminates the candidate process group at the deadline", async () => {
@@ -335,11 +412,49 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     await expect(fs.access(sentinel)).rejects.toThrow();
   });
 
-  it("rejects retained report, field digest, and denominator mutation", async () => {
+  it.runIf(process.platform !== "win32")("cleans the process group after a successful leader exits", async () => {
+    const root = await temporaryRoot();
+    const sentinel = path.join(root, "successful-escaped-child.txt");
+    const report = await configuredRun("success-tree", { extraArgs: [sentinel] });
+    expect(report.attempts[0]).toMatchObject({
+      outcome: "partial",
+      execution: {
+        exit_code: 0,
+        process_group_termination_attempted: true,
+        process_group_empty_after_cleanup: true,
+      },
+    });
+    await new Promise(resolve => setTimeout(resolve, 650));
+    await expect(fs.access(sentinel)).rejects.toThrow();
+  });
+
+  it("preserves raw table values and rejects invalid span topology", async () => {
+    const report = await configuredRun("table");
+    const attempt = report.attempts[0];
+    expect(attempt.outcome).toBe("partial");
+    expect(attempt.response.tables[0].cells.map(cell => cell.value)).toEqual(["", 0, null]);
+    expect(attempt.response.tables[0].cells.some(cell => cell.row === 2 && cell.column === 2)).toBe(false);
+    const targetSchema = attempt.request.task.target_schema;
+    for (const mutate of [
+      value => { value.tables[0].cells.push(structuredClone(value.tables[0].cells[0])); },
+      value => { value.tables[0].cells[0].column_span = 4; },
+      value => { value.tables[0].cells[1].column = 2; },
+      value => { value.tables[0].merged_regions = []; },
+      value => { value.tables[0].cells[0].present = false; },
+    ]) {
+      const mutant = structuredClone(attempt.response);
+      mutate(mutant);
+      expect(() => validateCandidateResponseSemantics(mutant, attempt.request, { targetSchema })).toThrow();
+    }
+  });
+
+  it("independently rejects schema, capture, execution, request, and denominator mutations", async () => {
     const report = await configuredRun("partial");
-    const [registry, plan, manifest, requestSchema, responseSchema] = await Promise.all([
+    const [registry, registrySchema, plan, planSchema, manifest, requestSchema, responseSchema] = await Promise.all([
       loadJsonWithSchema(REGISTRY, REGISTRY_SCHEMA, "registry"),
+      fs.readFile(REGISTRY_SCHEMA, "utf8").then(JSON.parse),
       loadJsonWithSchema(PLAN, PLAN_SCHEMA, "plan"),
+      fs.readFile(PLAN_SCHEMA, "utf8").then(JSON.parse),
       fs.readFile(MANIFEST, "utf8").then(JSON.parse),
       fs.readFile(REQUEST_SCHEMA, "utf8").then(JSON.parse),
       fs.readFile(RESPONSE_SCHEMA, "utf8").then(JSON.parse),
@@ -356,22 +471,59 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     configuredPlan.candidates = [{ candidate_id: "candidate.direct_pdf.v1", input_mode: "direct_pdf" }];
     configuredPlan.limits.deadline_ms = 2000;
     configuredPlan.limits.max_stdout_bytes = 4096;
+    const selectedFixture = manifest.fixtures[0];
+    const selectedFixtureStat = await fs.stat(path.join(EXTRACTION_ROOT, selectedFixture.path));
+    const sourceFactsById = {
+      [selectedFixture.id]: {
+        sha256: selectedFixture.sha256,
+        size_bytes: selectedFixtureStat.size,
+        page_count: selectedFixture.expected.page_geometry.length,
+      },
+    };
     const verify = mutant => verifyPhase1Report(mutant, {
       registry: configuredRegistry,
-      registrySha256: report.registry_sha256,
+      registrySchema,
       plan: configuredPlan,
-      planSha256: report.plan_sha256,
-      manifestSha256: report.phase0_manifest_sha256,
-      manifestCaseIds: manifest.fixtures.map(fixture => fixture.id),
-      manifestFixtures: manifest.fixtures,
+      planSchema,
+      manifest,
+      sourceFactsById,
       requestSchema,
       responseSchema,
     });
     expect(verify(report)).toBe(true);
+    const rebindRequest = value => {
+      value.attempts[0].bindings.request_sha256 = sha256(Buffer.from(canonicalJson(value.attempts[0].request)));
+    };
     for (const mutate of [
       value => { value.attempts.pop(); },
       value => { value.denominator.outcomes.partial = 0; },
+      value => { value.registry_schema_sha256 = "0".repeat(64); },
+      value => { value.plan_schema_sha256 = "0".repeat(64); },
+      value => { value.request_schema_sha256 = "0".repeat(64); },
+      value => { value.response_schema_sha256 = "0".repeat(64); },
+      value => { value.truth_isolation_claim_ready = true; },
       value => { value.attempts[0].bindings.request_sha256 = "0".repeat(64); },
+      value => { value.attempts[0].captures.stdout_base64 = Buffer.from("{}").toString("base64"); },
+      value => { value.attempts[0].captures.stderr_base64 = Buffer.from("changed").toString("base64"); },
+      value => { value.attempts[0].execution.stdout_bytes += 1; },
+      value => { value.attempts[0].execution.stdout_limit_exceeded = true; },
+      value => { value.attempts[0].execution.process_group_empty_after_cleanup = false; },
+      value => { value.attempts[0].execution.spawned = false; },
+      value => { value.attempts[0].execution.process_id = null; },
+      value => { value.attempts[0].source.after_read_error = "EIO"; },
+      value => { value.attempts[0].source.after_sha256 = null; },
+      value => { value.attempts[0].source.immutable = false; },
+      value => { value.attempts[0].source.size_bytes += 1; },
+      value => { value.attempts[0].source.page_count += 1; },
+      value => { value.attempts[0].request.request_id = "0".repeat(64); rebindRequest(value); },
+      value => { value.attempts[0].request.candidate_id = "candidate.raster.v1"; rebindRequest(value); },
+      value => { value.attempts[0].request.input_mode = "raster"; rebindRequest(value); },
+      value => { value.attempts[0].request.source.sha256 = "0".repeat(64); rebindRequest(value); },
+      value => { value.attempts[0].request.source.size_bytes += 1; rebindRequest(value); },
+      value => { value.attempts[0].request.source.page_count += 1; rebindRequest(value); },
+      value => { value.attempts[0].request.task.target_schema.properties.vendor.type = "number"; rebindRequest(value); },
+      value => { value.attempts[0].request.task.target_schema_sha256 = "0".repeat(64); rebindRequest(value); },
+      value => { value.attempts[0].request.limits.deadline_ms += 1; rebindRequest(value); },
       value => { value.attempts[0].outcome = "completed"; value.denominator.outcomes.partial = 0; value.denominator.outcomes.completed = 1; },
     ]) {
       const mutant = structuredClone(report);

@@ -4,13 +4,14 @@
   "title": "PDF Tools extraction Phase 1 sidecar report v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["report_id", "report_version", "run_id", "benchmark_claim_ready", "calibration_claim_ready", "claim_boundary", "phase0_manifest_sha256", "registry_sha256", "registry_schema_sha256", "plan_sha256", "plan_schema_sha256", "request_schema_sha256", "response_schema_sha256", "environment", "denominator", "attempts", "limitations"],
+  "required": ["report_id", "report_version", "run_id", "benchmark_claim_ready", "calibration_claim_ready", "truth_isolation_claim_ready", "claim_boundary", "phase0_manifest_sha256", "registry_sha256", "registry_schema_sha256", "plan_sha256", "plan_schema_sha256", "request_schema_sha256", "response_schema_sha256", "environment", "denominator", "attempts", "limitations"],
   "properties": {
     "report_id": { "const": "pdf-tools.extraction-phase1-report.v1" },
     "report_version": { "const": 1 },
     "run_id": { "$ref": "#/$defs/sha256" },
     "benchmark_claim_ready": { "const": false },
     "calibration_claim_ready": { "const": false },
+    "truth_isolation_claim_ready": { "const": false },
     "claim_boundary": { "type": "string", "minLength": 1 },
     "phase0_manifest_sha256": { "$ref": "#/$defs/sha256" },
     "registry_sha256": { "$ref": "#/$defs/sha256" },
@@ -83,19 +84,30 @@
     },
     "execution": {
       "type": "object", "additionalProperties": false,
-      "required": ["spawned", "exit_code", "signal", "timed_out", "stdout_limit_exceeded", "stderr_limit_exceeded", "stdout_bytes", "stderr_bytes", "process_group_termination_attempted", "elapsed_ms"],
+      "required": ["spawned", "process_id", "exit_code", "signal", "timed_out", "stdout_limit_exceeded", "stderr_limit_exceeded", "stdout_bytes", "stderr_bytes", "process_group_termination_attempted", "process_group_empty_after_cleanup", "elapsed_ms"],
       "properties": {
         "spawned": { "type": "boolean" },
+        "process_id": { "type": ["integer", "null"], "minimum": 1 },
         "exit_code": { "type": ["integer", "null"] }, "signal": { "type": ["string", "null"] },
         "timed_out": { "type": "boolean" }, "stdout_limit_exceeded": { "type": "boolean" },
         "stderr_limit_exceeded": { "type": "boolean" }, "stdout_bytes": { "type": "integer", "minimum": 0 },
         "stderr_bytes": { "type": "integer", "minimum": 0 },
-        "process_group_termination_attempted": { "type": "boolean" }, "elapsed_ms": { "type": "number", "minimum": 0 }
+        "process_group_termination_attempted": { "type": "boolean" },
+        "process_group_empty_after_cleanup": { "type": ["boolean", "null"] },
+        "elapsed_ms": { "type": "number", "minimum": 0 }
+      }
+    },
+    "captures": {
+      "type": "object", "additionalProperties": false,
+      "required": ["stdout_base64", "stderr_base64"],
+      "properties": {
+        "stdout_base64": { "type": ["string", "null"] },
+        "stderr_base64": { "type": ["string", "null"] }
       }
     },
     "attempt": {
       "type": "object", "additionalProperties": false,
-      "required": ["candidate_id", "case_id", "repetition", "input_mode", "outcome", "outcome_reason", "error_code", "source", "request", "response", "runner_field_bindings", "bindings", "unmet_requirements", "execution"],
+      "required": ["candidate_id", "case_id", "repetition", "input_mode", "outcome", "outcome_reason", "error_code", "source", "request", "response", "runner_field_bindings", "bindings", "captures", "unmet_requirements", "execution"],
       "properties": {
         "candidate_id": { "enum": ["control.current_product.v0", "candidate.layout_ir.v1", "candidate.direct_pdf.v1", "candidate.raster.v1", "candidate.remote_model.v1"] },
         "case_id": { "type": "string", "minLength": 1 }, "repetition": { "type": "integer", "minimum": 1 },
@@ -106,6 +118,7 @@
         "response": { "type": ["object", "null"] }, "bindings": { "$ref": "#/$defs/bindings" },
         "runner_field_bindings": {
           "type": "array",
+          "maxItems": 0,
           "items": {
             "type": "object", "additionalProperties": false, "required": ["field_path", "value_sha256", "evidence_ids"],
             "properties": {
@@ -114,6 +127,7 @@
             }
           }
         },
+        "captures": { "$ref": "#/$defs/captures" },
         "unmet_requirements": { "type": "array", "uniqueItems": true, "items": { "type": "string" } },
         "execution": { "$ref": "#/$defs/execution" }
       }

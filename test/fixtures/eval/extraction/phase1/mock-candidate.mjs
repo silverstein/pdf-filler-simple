@@ -43,7 +43,7 @@ function baseResponse(overrides = {}) {
     evidence: [],
     field_evidence: [],
     gaps: partialGaps,
-    diagnostics: { code: null, message: String(process.pid) },
+    diagnostics: { code: null, message: null },
     ...overrides,
   };
 }
@@ -107,6 +107,28 @@ if (mode === "oversize") {
     stdio: "ignore",
   });
   setInterval(() => {}, 1000);
+} else if (mode === "success-tree") {
+  const sentinelPath = process.argv[3];
+  const descendant = spawn(process.execPath, ["-e", `process.on('SIGTERM',()=>{}); setTimeout(() => require('fs').writeFileSync(${JSON.stringify(sentinelPath)}, 'escaped'), 500); setInterval(()=>{}, 1000)`], {
+    stdio: "ignore",
+  });
+  descendant.unref();
+  process.stdout.write(JSON.stringify(baseResponse()));
+} else if (mode === "table") {
+  process.stdout.write(JSON.stringify(baseResponse({
+    tables: [{
+      id: "table.1",
+      pages: [1],
+      row_count: 2,
+      column_count: 3,
+      merged_regions: [{ start_row: 1, start_column: 1, end_row: 1, end_column: 2 }],
+      cells: [
+        { row: 1, column: 1, row_span: 1, column_span: 2, present: true, value: "" },
+        { row: 1, column: 3, row_span: 1, column_span: 1, present: true, value: 0 },
+        { row: 2, column: 1, row_span: 1, column_span: 1, present: true, value: null },
+      ],
+    }],
+  })));
 } else if (mode === "abstain") {
   process.stdout.write(JSON.stringify(baseResponse({
     status: "abstained",

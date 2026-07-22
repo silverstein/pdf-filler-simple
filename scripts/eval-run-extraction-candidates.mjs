@@ -63,7 +63,9 @@ function emptyExecution() {
     stderr_limit_exceeded: false,
     stdout_bytes: 0,
     stderr_bytes: 0,
+    process_id: null,
     process_group_termination_attempted: false,
+    process_group_empty_after_cleanup: null,
     elapsed_ms: 0,
   };
 }
@@ -148,6 +150,19 @@ export async function runCandidateProcess({ command, request, attemptRoot, limit
   let timeoutTimer;
   let escalationPromise = null;
   let resolveEscalation = null;
+  let processGroupEmptyAfterCleanup = null;
+
+  const processGroupExists = () => {
+    if (!child || !capabilities.process_group_termination) return false;
+    try {
+      process.kill(-child.pid, 0);
+      return true;
+    } catch (error) {
+      if (error.code === "ESRCH") return false;
+      spawnError = spawnError ?? error;
+      return true;
+    }
+  };
 
   const terminate = () => {
     if (!child || terminationAttempted) return;
@@ -178,6 +193,8 @@ export async function runCandidateProcess({ command, request, attemptRoot, limit
   let spawnError = null;
   let exitCode = null;
   let exitSignal = null;
+  let successfullyStarted = false;
+  let processId = null;
 
   await fs.mkdir(path.join(attemptRoot, "home"), { recursive: true, mode: 0o700 });
   await fs.mkdir(path.join(attemptRoot, "tmp"), { recursive: true, mode: 0o700 });
@@ -197,6 +214,10 @@ export async function runCandidateProcess({ command, request, attemptRoot, limit
     child.stdout.on("data", chunk => stdout.add(chunk));
     child.stderr.on("data", chunk => stderr.add(chunk));
     const completion = new Promise(resolve => {
+      child.once("spawn", () => {
+        successfullyStarted = true;
+        processId = child.pid;
+      });
       child.once("error", error => {
         spawnError = error;
       });
@@ -217,6 +238,26 @@ export async function runCandidateProcess({ command, request, attemptRoot, limit
     child.stdin.end(`${canonicalJson(request)}\n`);
     await completion;
     if (escalationPromise) await escalationPromise;
+    if (successfullyStarted && capabilities.process_group_termination) {
+      terminationAttempted = true;
+      if (processGroupExists()) {
+        try {
+          process.kill(-child.pid, "SIGTERM");
+        } catch (error) {
+          if (error.code !== "ESRCH") spawnError = spawnError ?? error;
+        }
+        await new Promise(resolve => setTimeout(resolve, 100));
+      }
+      if (processGroupExists()) {
+        try {
+          process.kill(-child.pid, "SIGKILL");
+        } catch (error) {
+          if (error.code !== "ESRCH") spawnError = spawnError ?? error;
+        }
+        await new Promise(resolve => setTimeout(resolve, 25));
+      }
+      processGroupEmptyAfterCleanup = !processGroupExists();
+    }
   }
   clearTimeout(timeoutTimer);
   if (!terminationAttempted) clearTimeout(forceTimer);
@@ -227,15 +268,17 @@ export async function runCandidateProcess({ command, request, attemptRoot, limit
     stderr: stderrResult.bytes,
     spawnError,
     execution: {
-      spawned: Boolean(child),
-      exit_code: exitCode,
-      signal: exitSignal,
+      spawned: successfullyStarted,
+      process_id: processId,
+      exit_code: successfullyStarted ? exitCode : null,
+      signal: successfullyStarted ? exitSignal : null,
       timed_out: timedOut,
       stdout_limit_exceeded: stdoutResult.exceeded,
       stderr_limit_exceeded: stderrResult.exceeded,
       stdout_bytes: stdoutResult.observedBytes,
       stderr_bytes: stderrResult.observedBytes,
       process_group_termination_attempted: terminationAttempted,
+      process_group_empty_after_cleanup: processGroupEmptyAfterCleanup,
       elapsed_ms: elapsedMs(started),
     },
   };
@@ -272,6 +315,7 @@ async function unconfiguredAttempt({ candidate, selection, fixture, repetition, 
     response: null,
     runner_field_bindings: [],
     bindings: nullBindings(),
+    captures: { stdout_base64: null, stderr_base64: null },
     unmet_requirements: [],
     execution: emptyExecution(),
   };
@@ -291,7 +335,6 @@ async function runAttempt({
   responseSchema,
   runRoot,
   inputBuilders,
-  geometryReconciliationVerifier,
 }) {
   if (!candidate.configured) return unconfiguredAttempt({ candidate, selection, fixture, repetition, source });
   const unmet = unmetRequirements(candidate, capabilities);
@@ -332,24 +375,6 @@ async function runAttempt({
       ? await inputBuilder({ attemptRoot, stagedSourcePath, task: publicTask })
       : null;
     const inputPayload = supplementalInput?.payload ?? supplementalInput;
-    let geometryReconciliation = null;
-    if (selection.input_mode !== "direct_pdf" && typeof geometryReconciliationVerifier === "function") {
-      const method = await geometryReconciliationVerifier({
-        input_mode: selection.input_mode,
-        input: inputPayload,
-        task: publicTask,
-      });
-      if (typeof method === "string" && method.length > 0) {
-        geometryReconciliation = {
-          status: "proven",
-          coordinate_space: "pdf-tools.display-top-left-points.v1",
-          method,
-          source_sha256: source.sha256,
-          input_sha256: sha256(Buffer.from(canonicalJson(inputPayload))),
-        };
-      }
-    }
-    const geometryReconciled = geometryReconciliation !== null;
     request = buildCandidateRequest({
       candidateId: candidate.id,
       inputMode: selection.input_mode,
@@ -363,7 +388,6 @@ async function runAttempt({
       layoutIr: selection.input_mode === "layout_ir" ? inputPayload : null,
       rasterManifest: selection.input_mode === "raster" ? inputPayload : null,
       attemptBinding: sha256(Buffer.from(`${runId}\u0000${candidate.id}\u0000${fixture.id}\u0000${repetition}`)),
-      geometryReconciliation,
     });
     assertSchema(request, requestSchema, "extraction candidate request");
     processResult = await runCandidateProcess({
@@ -388,10 +412,7 @@ async function runAttempt({
       if (response) {
         try {
           assertSchema(response, responseSchema, "extraction candidate response");
-          runnerFieldBindings = validateCandidateResponseSemantics(response, request, {
-            targetSchema: fixture.target_schema,
-            geometryReconciled,
-          });
+          runnerFieldBindings = validateCandidateResponseSemantics(response, request, { targetSchema: fixture.target_schema });
           outcome = response.status;
           errorCode = response.status === "error" ? response.diagnostics.code ?? "CANDIDATE_ERROR" : null;
           outcomeReason = response.status === "error"
@@ -407,7 +428,7 @@ async function runAttempt({
     }
   } catch (error) {
     outcome = "error";
-    errorCode = "HARNESS_ATTEMPT_FAILURE";
+    errorCode = error.code === "REQUEST_LIMIT_EXCEEDED" ? error.code : "HARNESS_ATTEMPT_FAILURE";
     outcomeReason = `Runner could not complete the candidate attempt: ${error.code ?? error.name ?? "unknown"}`;
     response = null;
     runnerFieldBindings = [];
@@ -445,9 +466,13 @@ async function runAttempt({
     runner_field_bindings: runnerFieldBindings,
     bindings: {
       request_sha256: request ? sha256(Buffer.from(canonicalJson(request))) : null,
-      stdout_sha256: stdout ? sha256(stdout) : null,
-      stderr_sha256: stderr ? sha256(stderr) : null,
+      stdout_sha256: processResult?.execution.spawned && stdout ? sha256(stdout) : null,
+      stderr_sha256: processResult?.execution.spawned && stderr ? sha256(stderr) : null,
       response_canonical_sha256: response ? sha256(Buffer.from(canonicalJson(response))) : null,
+    },
+    captures: {
+      stdout_base64: processResult?.execution.spawned && stdout ? stdout.toString("base64") : null,
+      stderr_base64: processResult?.execution.spawned && stderr ? stderr.toString("base64") : null,
     },
     unmet_requirements: [],
     execution: processResult?.execution ?? emptyExecution(),
@@ -468,7 +493,6 @@ export async function runExtractionCandidates({
   reportSchemaPath = DEFAULT_PATHS.reportSchema,
   outputPath = null,
   inputBuilders = null,
-  geometryReconciliationVerifier = null,
 } = {}) {
   const [manifest, registryLoaded, planLoaded, requestSchemaText, responseSchemaText, reportSchemaText] = await Promise.all([
     loadExtractionManifest(manifestPath, manifestSchemaPath),
@@ -494,6 +518,7 @@ export async function runExtractionCandidates({
   const runId = sha256(Buffer.from(randomUUID()));
   const runRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-extraction-phase1-"));
   const attempts = [];
+  const verifiedSourceFacts = {};
   try {
     const registryById = new Map(registry.candidates.map(candidate => [candidate.id, candidate]));
     for (const selection of plan.candidates) {
@@ -503,8 +528,15 @@ export async function runExtractionCandidates({
         const fixturePath = resolveExtractionFixture(manifestPath, fixture);
         const source = await sourceFacts(fixturePath);
         if (source.sha256 !== fixture.sha256) throw new Error(`Source hash drifted before candidate execution: ${fixture.id}`);
+        verifiedSourceFacts[fixture.id] = {
+          sha256: source.sha256,
+          size_bytes: source.size_bytes,
+          page_count: source.page_count,
+        };
         for (let repetition = 1; repetition <= plan.repetitions; repetition += 1) {
-          if (source.size_bytes > plan.limits.max_source_bytes || source.page_count > plan.limits.max_pages) {
+          if (!candidate.configured) {
+            attempts.push(await unconfiguredAttempt({ candidate, selection, fixture, repetition, source }));
+          } else if (source.size_bytes > plan.limits.max_source_bytes || source.page_count > plan.limits.max_pages) {
             const retained = await unconfiguredAttempt({ candidate, selection, fixture, repetition, source });
             retained.outcome = "error";
             retained.error_code = "SOURCE_LIMIT_EXCEEDED";
@@ -525,7 +557,6 @@ export async function runExtractionCandidates({
               responseSchema,
               runRoot,
               inputBuilders,
-              geometryReconciliationVerifier,
             }));
           }
         }
@@ -542,6 +573,7 @@ export async function runExtractionCandidates({
     run_id: runId,
     benchmark_claim_ready: false,
     calibration_claim_ready: false,
+    truth_isolation_claim_ready: false,
     claim_boundary: "Candidate protocol calibration only. No benchmark, product, bundle, privacy-isolation, or release claim is authorized.",
     phase0_manifest_sha256: manifest.manifest_sha256,
     registry_sha256: registryLoaded.sha256,
@@ -561,19 +593,20 @@ export async function runExtractionCandidates({
     limitations: [
       "The Node runner enforces fresh processes, wall-clock deadlines, bounded output capture, a scrubbed environment, and staged-source mutation detection.",
       "The runner does not claim filesystem, network, CPU, memory, process-count, or process-tree memory isolation.",
-      "Candidate evidence remains unverified until a separate scorer independently binds field values, source items, page geometry, quotes, and regions.",
+      "Truth projection is verified only for the serialized request and adapter-builder task object; the candidate process is not filesystem isolated from the repository.",
+      "Canonical ODA evidence and field evidence are prohibited until a separate scorer independently binds source items, page geometry, quotes, and regions.",
+      "Process-group cleanup cannot contain a candidate that deliberately creates a new operating-system session.",
       "All committed candidate slots are unconfigured. Third-party framework, model, license, and native-host evidence are separate work.",
     ],
   };
   assertSchema(report, reportSchema, "extraction Phase 1 report");
   verifyPhase1Report(report, {
     registry,
-    registrySha256: registryLoaded.sha256,
+    registrySchema: JSON.parse(await fs.readFile(registrySchemaPath, "utf8")),
     plan,
-    planSha256: planLoaded.sha256,
-    manifestSha256: manifest.manifest_sha256,
-    manifestCaseIds: manifest.manifest.fixtures.map(fixture => fixture.id),
-    manifestFixtures: manifest.manifest.fixtures,
+    planSchema: JSON.parse(await fs.readFile(planSchemaPath, "utf8")),
+    manifest: manifest.manifest,
+    sourceFactsById: verifiedSourceFacts,
     requestSchema,
     responseSchema,
     repositoryRoot: REPO_ROOT,

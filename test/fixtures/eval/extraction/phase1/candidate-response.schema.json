@@ -35,20 +35,36 @@
       "type": "array",
       "items": {
         "type": "object", "additionalProperties": false,
-        "required": ["id", "pages", "row_count", "column_count", "merged_cells", "cells"],
+        "required": ["id", "pages", "row_count", "column_count", "merged_regions", "cells"],
         "properties": {
           "id": { "type": "string", "pattern": "^[A-Za-z0-9._:-]+$" },
           "pages": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "integer", "minimum": 1 } },
           "row_count": { "type": "integer", "minimum": 1 },
           "column_count": { "type": "integer", "minimum": 1 },
-          "merged_cells": { "type": "array", "items": { "type": "string" } },
+          "merged_regions": {
+            "type": "array", "uniqueItems": true,
+            "items": {
+              "type": "object", "additionalProperties": false,
+              "required": ["start_row", "start_column", "end_row", "end_column"],
+              "properties": {
+                "start_row": { "type": "integer", "minimum": 1 },
+                "start_column": { "type": "integer", "minimum": 1 },
+                "end_row": { "type": "integer", "minimum": 1 },
+                "end_column": { "type": "integer", "minimum": 1 }
+              }
+            }
+          },
           "cells": {
             "type": "array",
             "items": {
-              "type": "object", "additionalProperties": false, "required": ["row", "column", "value"],
+              "type": "object", "additionalProperties": false,
+              "required": ["row", "column", "row_span", "column_span", "present", "value"],
               "properties": {
                 "row": { "type": "integer", "minimum": 1 },
                 "column": { "type": "integer", "minimum": 1 },
+                "row_span": { "type": "integer", "minimum": 1 },
+                "column_span": { "type": "integer", "minimum": 1 },
+                "present": { "const": true },
                 "value": {}
               }
             }
@@ -94,6 +110,7 @@
     },
     "evidence": {
       "type": "array",
+      "maxItems": 0,
       "items": {
         "type": "object", "additionalProperties": false,
         "required": ["id", "page", "coordinate_space", "bbox", "source_item_ids", "quote"],
@@ -109,10 +126,11 @@
     },
     "field_evidence": {
       "type": "array",
+      "maxItems": 0,
       "items": {
         "type": "object", "additionalProperties": false, "required": ["field_path", "evidence_ids"],
         "properties": {
-          "field_path": { "type": "string", "pattern": "^/(?:[^/~]|~[01])*(?:/(?:[^/~]|~[01])*)*$" },
+          "field_path": { "type": "string", "pattern": "^(?:|/(?:[^/~]|~[01])*(?:/(?:[^/~]|~[01])*)*)$" },
           "evidence_ids": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string" } }
         }
       }
@@ -122,7 +140,7 @@
       "items": {
         "type": "object", "additionalProperties": false, "required": ["field_path", "reason", "detail"],
         "properties": {
-          "field_path": { "type": "string", "pattern": "^/(?:[^/~]|~[01])*(?:/(?:[^/~]|~[01])*)*$" },
+          "field_path": { "type": "string", "pattern": "^(?:|/(?:[^/~]|~[01])*(?:/(?:[^/~]|~[01])*)*)$" },
           "reason": { "enum": ["insufficient_evidence", "contradictory_source", "absent_in_source", "unsupported_modality", "resource_limit", "candidate_failure"] },
           "detail": { "type": "string", "minLength": 1 }
         }
