@@ -56,7 +56,7 @@
     },
     "uv_identity": {
       "type": "object", "additionalProperties": false, "required": ["path", "version", "bytes", "sha256", "mode", "links"],
-      "properties": { "path": { "$ref": "#/$defs/absolute_path" }, "version": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^uv [0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?(?: \\([a-f0-9]{7,40} [0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01]) [a-z0-9_]+(?:-[a-z0-9_]+){2,4}\\))?$(?![\\s\\S])" }, "bytes": { "type": "integer", "minimum": 1, "maximum": 134217728 }, "sha256": { "$ref": "#/$defs/sha256" }, "mode": { "type": "integer", "minimum": 0, "maximum": 511 }, "links": { "const": 1 } }
+      "properties": { "path": { "$ref": "#/$defs/absolute_path" }, "version": { "type": "string", "minLength": 1, "maxLength": 128, "pattern": "^uv [0-9]+\\.[0-9]+\\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?(?: \\([a-f0-9]{7,40} (?:(?!0000)[0-9]{4}-(?:(?:01|03|05|07|08|10|12)-(?:0[1-9]|[12][0-9]|3[01])|(?:04|06|09|11)-(?:0[1-9]|[12][0-9]|30)|02-(?:0[1-9]|1[0-9]|2[0-8]))|(?:[0-9]{2}(?:0[48]|[2468][048]|[13579][26])|(?:0[48]|[2468][048]|[13579][26])00)-02-29) [a-z0-9_]+(?:-[a-z0-9_]+){2,4}\\))?$(?![\\s\\S])" }, "bytes": { "type": "integer", "minimum": 1, "maximum": 134217728 }, "sha256": { "$ref": "#/$defs/sha256" }, "mode": { "type": "integer", "minimum": 0, "maximum": 511 }, "links": { "const": 1 } }
     },
     "node_identity": {
       "type": "object", "additionalProperties": false, "required": ["path", "version", "bytes", "sha256", "mode", "links"],

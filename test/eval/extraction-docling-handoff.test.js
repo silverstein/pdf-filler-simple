@@ -17,11 +17,19 @@ const DARWIN_ARM64 = {
   platform: "darwin", architecture: "arm64", os_build: "25G88", kernel_release: "25.6.0", node_version: process.version,
 };
 const SILVERBOOK_UV_VERSION = "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)";
+const LEAP_DAY_UV_VERSION = "uv 0.11.29 (901092ee1 2024-02-29 aarch64-apple-darwin)";
+const LEAP_CENTURY_UV_VERSION = "uv 0.11.29 (901092ee1 2000-02-29 aarch64-apple-darwin)";
 const HOSTILE_UV_VERSIONS = [
   "uv 0.11.29 (901092 2026-07-15 aarch64-apple-darwin)",
   "uv 0.11.29 (901092eeG 2026-07-15 aarch64-apple-darwin)",
   "uv 0.11.29 (901092ee1 2026-13-15 aarch64-apple-darwin)",
   "uv 0.11.29 (901092ee1 2026-07-32 aarch64-apple-darwin)",
+  "uv 0.11.29 (901092ee1 2025-02-29 aarch64-apple-darwin)",
+  "uv 0.11.29 (901092ee1 2026-02-30 aarch64-apple-darwin)",
+  "uv 0.11.29 (901092ee1 2026-02-31 aarch64-apple-darwin)",
+  "uv 0.11.29 (901092ee1 2026-04-31 aarch64-apple-darwin)",
+  "uv 0.11.29 (901092ee1 1900-02-29 aarch64-apple-darwin)",
+  "uv 0.11.29 (901092ee1 0000-01-01 aarch64-apple-darwin)",
   "uv 0.11.29 (901092ee1 2026-07-15 aarch64-Apple-darwin)",
   "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple)",
   "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin) trailing",
@@ -116,6 +124,12 @@ describe("Docling macOS handoff", () => {
     const schema = JSON.parse(await fs.readFile(path.resolve("test/fixtures/eval/extraction/phase1/docling-finalization.schema.json"), "utf8"));
     expect(() => validateFinalizationSchemaMirror(value)).not.toThrow();
     expect(() => assertSchema(value, schema, "Docling finalization")).not.toThrow();
+    const leapValue = { ...value, toolchain: { ...value.toolchain, uv: { ...uvTool, version: LEAP_DAY_UV_VERSION } } };
+    expect(() => validateFinalizationSchemaMirror(leapValue)).not.toThrow();
+    expect(() => assertSchema(leapValue, schema, "Docling finalization")).not.toThrow();
+    const leapCenturyValue = { ...value, toolchain: { ...value.toolchain, uv: { ...uvTool, version: LEAP_CENTURY_UV_VERSION } } };
+    expect(() => validateFinalizationSchemaMirror(leapCenturyValue)).not.toThrow();
+    expect(() => assertSchema(leapCenturyValue, schema, "Docling finalization")).not.toThrow();
     expect(() => validateFinalizationSchemaMirror({ ...value, python: { ...value.python, version: "Python 3.12.14" } })).toThrow(/schema mirror/);
     expect(() => validateFinalizationSchemaMirror({ ...value, model_files: [] })).toThrow(/schema mirror/);
     for (const version of HOSTILE_UV_VERSIONS) {
@@ -130,6 +144,10 @@ describe("Docling macOS handoff", () => {
     expect(result.receipt.toolchain.uv.version).toBe(SILVERBOOK_UV_VERSION);
     const schema = JSON.parse(await fs.readFile(path.resolve("test/fixtures/eval/extraction/phase1/docling-handoff.schema.json"), "utf8"));
     expect(() => assertSchema(result.receipt, schema, "Docling handoff receipt")).not.toThrow();
+    const leapReceipt = { ...result.receipt, toolchain: { ...result.receipt.toolchain, uv: { ...result.receipt.toolchain.uv, version: LEAP_DAY_UV_VERSION } } };
+    expect(() => assertSchema(leapReceipt, schema, "Docling handoff receipt")).not.toThrow();
+    const leapCenturyReceipt = { ...result.receipt, toolchain: { ...result.receipt.toolchain, uv: { ...result.receipt.toolchain.uv, version: LEAP_CENTURY_UV_VERSION } } };
+    expect(() => assertSchema(leapCenturyReceipt, schema, "Docling handoff receipt")).not.toThrow();
     for (const version of HOSTILE_UV_VERSIONS) {
       const malformed = { ...result.receipt, toolchain: { ...result.receipt.toolchain, uv: { ...result.receipt.toolchain.uv, version } } };
       expect(() => assertSchema(malformed, schema, "Docling handoff receipt")).toThrow();
@@ -141,6 +159,8 @@ describe("Docling macOS handoff", () => {
   it("rejects malformed uv metadata suffixes", () => {
     expect(isValidDoclingUvVersion("uv 0.11.29")).toBe(true);
     expect(isValidDoclingUvVersion(SILVERBOOK_UV_VERSION)).toBe(true);
+    expect(isValidDoclingUvVersion(LEAP_DAY_UV_VERSION)).toBe(true);
+    expect(isValidDoclingUvVersion(LEAP_CENTURY_UV_VERSION)).toBe(true);
     for (const version of HOSTILE_UV_VERSIONS) expect(isValidDoclingUvVersion(version), version).toBe(false);
   });
 

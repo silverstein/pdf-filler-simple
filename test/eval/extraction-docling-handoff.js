@@ -13,7 +13,7 @@ const MAX_HANDOFF_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_FIXTURE_TOTAL_BYTES = 8 * 1024 * 1024;
 const MAX_TOOL_BYTES = 128 * 1024 * 1024;
 const TEST_CAPABILITY = Symbol("docling-handoff-test-capability");
-const UV_VERSION = /^uv [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?(?: \([a-f0-9]{7,40} [0-9]{4}-(?:0[1-9]|1[0-2])-(?:0[1-9]|[12][0-9]|3[01]) [a-z0-9_]+(?:-[a-z0-9_]+){2,4}\))?$(?![\s\S])/;
+const UV_VERSION = /^uv [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?(?: \([a-f0-9]{7,40} ([0-9]{4})-([0-9]{2})-([0-9]{2}) [a-z0-9_]+(?:-[a-z0-9_]+){2,4}\))?$(?![\s\S])/;
 export const DOCLING_BOOTSTRAP_V1 = [
   "set -eu",
   "umask 077",
@@ -66,7 +66,15 @@ function sha256(value) {
 }
 
 export function isValidDoclingUvVersion(value) {
-  return typeof value === "string" && UV_VERSION.test(value);
+  if (typeof value !== "string") return false;
+  const match = UV_VERSION.exec(value);
+  if (!match) return false;
+  if (match[1] === undefined) return true;
+  const [year, month, day] = match.slice(1, 4).map(Number);
+  if (year < 1 || month < 1 || month > 12) return false;
+  const leap = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leap ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day >= 1 && day <= daysInMonth[month - 1];
 }
 
 function commandOutput(executable, args) {
