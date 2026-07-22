@@ -18,6 +18,8 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$/;
 const SAFE_ROLE = /^[a-z][a-z0-9_]{0,63}$/;
 const GENERATION_KINDS = new Set(["execution", "received_execution", "received_score", "score"]);
+const RECEIVED_GENERATION_KINDS = new Set(["received_execution", "received_score"]);
+const SHA256 = /^[a-f0-9]{64}$/;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const INDEX_KEYS = ["artifacts", "claim_ready", "index_content_sha256", "index_id", "index_version", "kind", "run_id", "source_generation_sha256", "state", "transaction_id"];
 const SCORE_PROVENANCE_BINDING_KEYS = [
@@ -119,6 +121,18 @@ function validateIndex(index) {
 
 async function inject(faultInjector, phase, context = {}) {
   if (faultInjector) await faultInjector(phase, context);
+}
+
+function verifyExpectedRecoveryGenerationSha256(inspection, expectedGenerationSha256) {
+  if (expectedGenerationSha256 !== null && !SHA256.test(expectedGenerationSha256)) {
+    throw new Error("Recovery expected generation digest is invalid");
+  }
+  if (RECEIVED_GENERATION_KINDS.has(inspection.index.kind) && expectedGenerationSha256 === null) {
+    throw new Error("Recovery of a received generation requires its exact received-generation digest");
+  }
+  if (expectedGenerationSha256 !== null && inspection.generation_sha256 !== expectedGenerationSha256) {
+    throw new Error("Recovery generation differs from its exact expected generation digest");
+  }
 }
 
 async function verifyTerminalSemanticSnapshot({ verifier, generationPath, inspection }) {
@@ -822,7 +836,13 @@ export async function receiveVerifiedGeneration({
   }
 }
 
-export async function recoverVerifiedStagingGeneration({ stagingPath, generationPath, faultInjector = null, semanticVerifier = null }) {
+export async function recoverVerifiedStagingGeneration({
+  stagingPath,
+  generationPath,
+  expectedGenerationSha256 = null,
+  faultInjector = null,
+  semanticVerifier = null,
+}) {
   const [stagingParent, generationParent] = await Promise.all([fs.realpath(path.dirname(stagingPath)), fs.realpath(path.dirname(generationPath))]);
   const [stagingParentStat, generationParentStat] = await Promise.all([fs.stat(stagingParent), fs.stat(generationParent)]);
   if (stagingParent !== generationParent || stagingParentStat.dev !== generationParentStat.dev || !path.basename(stagingPath).startsWith(".staging-")
@@ -837,6 +857,7 @@ export async function recoverVerifiedStagingGeneration({ stagingPath, generation
     activeClaimTransactionId: transactionId,
   });
   if (inspection.state !== "complete") return inspection;
+  verifyExpectedRecoveryGenerationSha256(inspection, expectedGenerationSha256);
   try {
     await fs.lstat(generationPath);
     return { state: "corruption", reason: "generation_name_reused" };
@@ -853,16 +874,19 @@ export async function recoverVerifiedStagingGeneration({ stagingPath, generation
     activeClaimTransactionId: inspection.index.transaction_id,
   });
   if (postClaimInspection.state !== "complete" || postClaimInspection.generation_sha256 !== inspection.generation_sha256) return { state: "corruption", reason: "staging_changed_after_claim" };
+  verifyExpectedRecoveryGenerationSha256(postClaimInspection, expectedGenerationSha256);
   await inject(faultInjector, "before_recovery_rename", { stagingPath, generationPath });
   await fs.rename(stagingPath, generationPath);
   try {
     const finalInspection = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: inspection.index.transaction_id });
     if (finalInspection.state !== "complete" || finalInspection.generation_sha256 !== inspection.generation_sha256) throw new Error("Recovered generation changed after rename");
+    verifyExpectedRecoveryGenerationSha256(finalInspection, expectedGenerationSha256);
     await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: finalInspection });
     await fsyncDirectory(stagingParent);
     await inject(faultInjector, "after_recovery_parent_fsync", { generationPath });
     const cleanupInspection = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: inspection.index.transaction_id });
     if (cleanupInspection.state !== "complete" || cleanupInspection.generation_sha256 !== inspection.generation_sha256) throw new Error("Recovered generation changed before claim cleanup");
+    verifyExpectedRecoveryGenerationSha256(cleanupInspection, expectedGenerationSha256);
     await fs.unlink(claimPath);
     await fsyncDirectory(stagingParent);
   } catch (error) {
@@ -874,11 +898,18 @@ export async function recoverVerifiedStagingGeneration({ stagingPath, generation
   if (completedInspection.state !== "complete" || completedInspection.generation_sha256 !== inspection.generation_sha256) {
     return { state: "corruption", reason: "recovered_generation_failed_claim_free_reinspection" };
   }
+  verifyExpectedRecoveryGenerationSha256(completedInspection, expectedGenerationSha256);
   const terminalInspection = await verifyTerminalSemanticSnapshot({ verifier: semanticVerifier, generationPath, inspection: completedInspection });
+  verifyExpectedRecoveryGenerationSha256(terminalInspection, expectedGenerationSha256);
   return { ...terminalInspection, state: "recovered_complete", generationPath };
 }
 
-export async function recoverPublishedGeneration({ generationPath, faultInjector = null, semanticVerifier = null }) {
+export async function recoverPublishedGeneration({
+  generationPath,
+  expectedGenerationSha256 = null,
+  faultInjector = null,
+  semanticVerifier = null,
+}) {
   const parent = await fs.realpath(path.dirname(generationPath));
   const transactionId = path.basename(generationPath).slice(-36);
   if (!UUID_V4.test(transactionId)) return { state: "corruption", reason: "recovery_transaction_identity_invalid" };
@@ -886,6 +917,7 @@ export async function recoverPublishedGeneration({ generationPath, faultInjector
   await acquireOrVerifyClaim(claimPath, transactionId, { adoptExisting: true });
   const inspection = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: transactionId });
   if (inspection.state !== "complete") return inspection;
+  verifyExpectedRecoveryGenerationSha256(inspection, expectedGenerationSha256);
   if (requiresSemanticGenerationVerification(inspection.index) && typeof semanticVerifier !== "function") {
     return { state: "recovery_required", reason: "semantic_verifier_required", generationPath };
   }
@@ -893,6 +925,7 @@ export async function recoverPublishedGeneration({ generationPath, faultInjector
     await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection });
     const postClaimInspection = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: inspection.index.transaction_id });
     if (postClaimInspection.state !== "complete" || postClaimInspection.generation_sha256 !== inspection.generation_sha256) throw new Error("Published generation changed after claim verification");
+    verifyExpectedRecoveryGenerationSha256(postClaimInspection, expectedGenerationSha256);
     await fsyncDirectory(parent);
     await inject(faultInjector, "after_published_recovery_parent_fsync", { generationPath });
     await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: postClaimInspection });
@@ -907,6 +940,8 @@ export async function recoverPublishedGeneration({ generationPath, faultInjector
   if (completedInspection.state !== "complete" || completedInspection.generation_sha256 !== inspection.generation_sha256) {
     return { state: "corruption", reason: "recovered_generation_failed_claim_free_reinspection" };
   }
+  verifyExpectedRecoveryGenerationSha256(completedInspection, expectedGenerationSha256);
   const terminalInspection = await verifyTerminalSemanticSnapshot({ verifier: semanticVerifier, generationPath, inspection: completedInspection });
+  verifyExpectedRecoveryGenerationSha256(terminalInspection, expectedGenerationSha256);
   return { ...terminalInspection, state: "recovered_complete", generationPath };
 }

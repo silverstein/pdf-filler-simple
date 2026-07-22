@@ -11,6 +11,9 @@ import {
   computeGenerationSha256,
   inspectGenerationDirectory,
   readVerifiedGenerationArtifact,
+  receiveVerifiedGeneration,
+  recoverPublishedGeneration,
+  recoverVerifiedStagingGeneration,
 } from "./extraction-phase1-publisher.js";
 import {
   PHASE1_COMPANION_SOURCE_PATHS,
@@ -18,6 +21,8 @@ import {
 } from "./extraction-phase1-companion.js";
 import { PHASE1_SCORER_LOCAL_SOURCE_PATHS } from "./extraction-phase1-scorer.js";
 import { verifyReceivedGenerationAncestry } from "./extraction-phase1-generation-verifier-common.js";
+import { createExecutionGenerationSemanticVerifier } from "./extraction-phase1-execution-generation-verifier.js";
+import { createScoreGenerationSemanticVerifier } from "./extraction-phase1-score-generation-verifier.js";
 import { canonicalJson, sha256 } from "./extraction-phase1-protocol.js";
 
 const execFileAsync = promisify(execFile);
@@ -104,6 +109,7 @@ if (config.action === "receive") {
 } else {
   result = await publisher.recoverPublishedGeneration({
     generationPath: config.source_generation_path,
+    expectedGenerationSha256: config.expected_generation_sha256 ?? null,
     semanticVerifier,
   });
 }
@@ -126,6 +132,99 @@ async function runFreshProcess(config) {
   ], { cwd: REPO_ROOT, maxBuffer: 1024 * 1024 });
   expect(stderr).toBe("");
   return JSON.parse(stdout);
+}
+
+async function createFaultedReceivedGeneration({
+  sourceGenerationPath,
+  destinationParent,
+  trustedSourceGenerationSha256,
+  semanticVerifier,
+  faultPhase,
+}) {
+  await fs.mkdir(destinationParent, { mode: 0o700 });
+  let fault;
+  try {
+    await receiveVerifiedGeneration({
+      sourceGenerationPath,
+      destinationParentDirectory: destinationParent,
+      sourceHost: "silverbook",
+      destinationHost: "silvercloud",
+      transportedAt: "2026-07-22T00:00:00Z",
+      transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256,
+      semanticVerifier,
+      publicationFaultInjector: phase => {
+        if (phase === faultPhase) throw new Error(`received recovery fixture fault: ${phase}`);
+      },
+    });
+  } catch (error) {
+    fault = error;
+  }
+  expect(fault).toMatchObject({ message: `received recovery fixture fault: ${faultPhase}` });
+  const entries = await fs.readdir(destinationParent);
+  const activeName = entries.find(name => name.startsWith(".staging-received_") || name.startsWith("received_"));
+  expect(activeName).toBeTruthy();
+  const staging = activeName.startsWith(".staging-");
+  const activePath = path.join(destinationParent, activeName);
+  const generationPath = staging
+    ? path.join(destinationParent, activeName.slice(".staging-".length))
+    : activePath;
+  const transactionId = activeName.slice(-36);
+  const inspection = await inspectGenerationDirectory(activePath, {
+    allowStaging: staging,
+    activeClaimTransactionId: transactionId,
+  });
+  expect(inspection.state).toBe("complete");
+  return {
+    activePath,
+    generationPath,
+    inspection,
+    recover: options => staging
+      ? recoverVerifiedStagingGeneration({ stagingPath: activePath, generationPath, semanticVerifier, ...options })
+      : recoverPublishedGeneration({ generationPath, semanticVerifier, ...options }),
+    staging,
+  };
+}
+
+async function exerciseReceivedRecoveryDigestBoundary({
+  sourceGenerationPath,
+  sourceGenerationSha256,
+  semanticVerifier,
+  root,
+  label,
+}) {
+  const [staging, published] = await Promise.all([
+    createFaultedReceivedGeneration({
+      sourceGenerationPath,
+      destinationParent: path.join(root, `${label}-staging-recovery`),
+      trustedSourceGenerationSha256: sourceGenerationSha256,
+      semanticVerifier,
+      faultPhase: "before_final_rename",
+    }),
+    createFaultedReceivedGeneration({
+      sourceGenerationPath,
+      destinationParent: path.join(root, `${label}-published-recovery`),
+      trustedSourceGenerationSha256: sourceGenerationSha256,
+      semanticVerifier,
+      faultPhase: "after_final_rename",
+    }),
+  ]);
+  expect(staging.staging).toBe(true);
+  expect(published.staging).toBe(false);
+  expect(staging.inspection.index.source_generation_sha256).toBe(sourceGenerationSha256);
+  expect(published.inspection.index.source_generation_sha256).toBe(sourceGenerationSha256);
+  expect(staging.inspection.generation_sha256).not.toBe(published.inspection.generation_sha256);
+
+  for (const [subject, other] of [[staging, published], [published, staging]]) {
+    await expect(subject.recover({})).rejects.toThrow(/exact received-generation digest/);
+    await expect(subject.recover({ expectedGenerationSha256: "invalid" })).rejects.toThrow(/digest is invalid/);
+    await expect(subject.recover({ expectedGenerationSha256: other.inspection.generation_sha256 })).rejects.toThrow(/differs from its exact expected/);
+    const recovered = await subject.recover({ expectedGenerationSha256: subject.inspection.generation_sha256 });
+    expect(recovered).toMatchObject({
+      state: "recovered_complete",
+      generation_sha256: subject.inspection.generation_sha256,
+    });
+  }
 }
 
 describe("fresh-process extraction generation semantic verifier factories", () => {
@@ -172,6 +271,20 @@ describe("fresh-process extraction generation semantic verifier factories", () =
       trust: { kind: "out_of_band_source_generation_sha256", expected_source_generation_sha256: execution.generation_sha256 },
     });
     expect(receivedExecution.state).toBe("complete");
+    const executionOobVerifier = await createExecutionGenerationSemanticVerifier({
+      repositoryRoot: REPO_ROOT,
+      manifestPath: path.join(EXTRACTION_ROOT, "manifest.v1.json"),
+      manifestSchemaPath: path.join(EXTRACTION_ROOT, "manifest.schema.json"),
+      trustedPrivacyClass: "public_synthetic",
+      trust: { kind: "out_of_band_source_generation_sha256", expected_source_generation_sha256: execution.generation_sha256 },
+    });
+    await exerciseReceivedRecoveryDigestBoundary({
+      sourceGenerationPath: execution.generationPath,
+      sourceGenerationSha256: execution.generation_sha256,
+      semanticVerifier: executionOobVerifier,
+      root,
+      label: "execution",
+    });
     const receivedExecutionInspection = await inspectGenerationDirectory(receivedExecution.generation_path);
     const [sourceIndexArtifact, receiptArtifact, companionArtifact] = await Promise.all([
       readVerifiedGenerationArtifact(receivedExecution.generation_path, receivedExecutionInspection, "source_generation_index"),
@@ -322,6 +435,20 @@ describe("fresh-process extraction generation semantic verifier factories", () =
       trust: { kind: "out_of_band_source_generation_sha256", expected_source_generation_sha256: scored.generation.generation_sha256 },
     });
     expect(receivedScore.state).toBe("complete");
+    const scoreOobVerifier = await createScoreGenerationSemanticVerifier({
+      repositoryRoot: REPO_ROOT,
+      manifestPath: path.join(EXTRACTION_ROOT, "manifest.v1.json"),
+      manifestSchemaPath: path.join(EXTRACTION_ROOT, "manifest.schema.json"),
+      trustedPrivacyClass: "public_synthetic",
+      trust: { kind: "out_of_band_source_generation_sha256", expected_source_generation_sha256: scored.generation.generation_sha256 },
+    });
+    await exerciseReceivedRecoveryDigestBoundary({
+      sourceGenerationPath: scored.generation.generationPath,
+      sourceGenerationSha256: scored.generation.generation_sha256,
+      semanticVerifier: scoreOobVerifier,
+      root,
+      label: "score",
+    });
 
     let publicationError;
     try {

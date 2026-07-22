@@ -141,15 +141,21 @@ plan used by the report. Score generations also retain the source execution
 companion so adapter, artifact, and runner-failure context can be reconstructed
 without the scoring process that created them.
 
-Local crash recovery uses an explicit `local_claim_owned` rule. The caller must
-supply the expected transaction ID and may supply the exact generation digest;
-recovery of a received generation requires that exact digest.
-The factory verifies the mode-0600, no-follow claim bytes before accepting the
-transaction, permits one terminal claim-free use for that same transaction,
-then becomes unusable. This is local, unauthenticated recovery trust. It is not
-cross-device authenticity. A fresh recovery after the terminal claim was
-removed must provide the exact expected generation digest and recover through a
-new exact transaction claim.
+Local crash recovery can use an explicit `local_claim_owned` semantic trust
+rule. The caller supplies the expected transaction ID and may bind that verifier
+to the exact generation digest. Independently of semantic trust mode, both
+recovery APIs require an externally supplied exact destination-generation digest
+for every `received_execution` or `received_score` recovery. They compare it
+before semantic verification, after semantic verification, and after terminal
+claim-free reinspection. An out-of-band source-generation digest can authenticate
+the source during initial receive, but it cannot authorize recovery of either of
+two different received generations that reference that source. The factory
+verifies the mode-0600, no-follow claim bytes before accepting a local claim,
+permits one terminal claim-free use for that same transaction, then becomes
+unusable. This is local, unauthenticated recovery trust. It is not cross-device
+authenticity. A fresh recovery after the terminal claim was removed must provide
+the exact expected generation digest and recover through a new exact transaction
+claim.
 
 Generation kinds have a strict ancestry contract. An original `execution`
 index has no source-generation digest. `score`, `received_execution`, and
