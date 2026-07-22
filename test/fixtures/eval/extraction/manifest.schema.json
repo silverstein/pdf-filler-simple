@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/manifest.schema.json",
+  "title": "PDF Tools structured extraction Phase 0 manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["manifest_version", "suite_id", "suite_version", "claim_boundary", "fixtures"],
+  "properties": {
+    "manifest_version": { "const": 1 },
+    "suite_id": { "const": "pdf-tools.extraction.phase0" },
+    "suite_version": { "type": "string", "pattern": "^v[0-9]+\\.[0-9]+\\.[0-9]+$" },
+    "claim_boundary": { "type": "string", "minLength": 1 },
+    "fixtures": {
+      "type": "array",
+      "minItems": 8,
+      "maxItems": 8,
+      "items": { "$ref": "#/$defs/fixture" }
+    }
+  },
+  "$defs": {
+    "box": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height", "coordinate_space"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "coordinate_space": { "const": "top_left_pdf_points" }
+      }
+    },
+    "pageGeometry": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "width", "height", "rotation", "media_box", "crop_box"],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1 },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 },
+        "rotation": { "enum": [0, 90, 180, 270] },
+        "media_box": { "$ref": "#/$defs/geometryBox" },
+        "crop_box": { "$ref": "#/$defs/geometryBox" }
+      }
+    },
+    "geometryBox": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["x", "y", "width", "height"],
+      "properties": {
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "width": { "type": "number", "exclusiveMinimum": 0 },
+        "height": { "type": "number", "exclusiveMinimum": 0 }
+      }
+    },
+    "textPage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "modality", "transcript", "ordered_fragments"],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1 },
+        "modality": { "enum": ["born_digital", "raster"] },
+        "transcript": { "type": "string" },
+        "ordered_fragments": { "type": "array", "items": { "type": "string", "minLength": 1 } }
+      }
+    },
+    "fact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "field_path", "anchor_text", "page", "bbox", "important"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^fact\\.[a-z0-9.-]+$" },
+        "field_path": { "type": "string", "minLength": 1 },
+        "anchor_text": { "type": "string", "minLength": 1 },
+        "page": { "type": "integer", "minimum": 1 },
+        "bbox": { "$ref": "#/$defs/box" },
+        "important": { "type": "boolean" }
+      }
+    },
+    "table": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["page", "row_count", "column_count", "merged_cells", "cells"],
+      "properties": {
+        "page": { "type": "integer", "minimum": 1 },
+        "row_count": { "type": "integer", "minimum": 1 },
+        "column_count": { "type": "integer", "minimum": 1 },
+        "merged_cells": { "type": "array", "items": { "type": "string" } },
+        "cells": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["row", "column", "value"],
+            "properties": {
+              "row": { "type": "integer", "minimum": 1 },
+              "column": { "type": "integer", "minimum": 1 },
+              "value": { "type": "string" }
+            }
+          }
+        }
+      }
+    },
+    "fixture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id", "path", "sha256", "media_type", "partition", "category", "description",
+        "provenance", "license", "privacy", "target_schema", "ground_truth", "expected"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^pdf-tools\\.extraction\\.phase0\\.[a-z0-9.-]+$" },
+        "path": { "type": "string", "pattern": "^synthetic/[a-z0-9-]+\\.pdf$" },
+        "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
+        "media_type": { "const": "application/pdf" },
+        "partition": { "enum": ["development", "held_out_calibration"] },
+        "category": {
+          "enum": ["flat_schema", "nested_schema", "layout_order", "table", "ocr_clean", "ocr_degraded", "mixed_modality", "no_answer_contradiction"]
+        },
+        "description": { "type": "string", "minLength": 1 },
+        "provenance": {
+          "type": "object", "additionalProperties": false,
+          "required": ["kind", "origin", "generator", "source_url"],
+          "properties": {
+            "kind": { "const": "synthetic" },
+            "origin": { "const": "Open Document Alliance PDF Tools Phase 0 generator" },
+            "generator": { "const": "scripts/eval-generate-extraction-fixtures.mjs" },
+            "source_url": { "type": "null" }
+          }
+        },
+        "license": {
+          "type": "object", "additionalProperties": false,
+          "required": ["name", "spdx_id", "url", "redistribution"],
+          "properties": {
+            "name": { "const": "MIT License" },
+            "spdx_id": { "const": "MIT" },
+            "url": { "const": "https://opensource.org/license/mit" },
+            "redistribution": { "const": "allowed" }
+          }
+        },
+        "privacy": {
+          "type": "object", "additionalProperties": false,
+          "required": ["class", "contains_personal_data", "notes"],
+          "properties": {
+            "class": { "const": "synthetic" },
+            "contains_personal_data": { "const": false },
+            "notes": { "type": "string", "minLength": 1 }
+          }
+        },
+        "target_schema": { "type": "object" },
+        "ground_truth": { "type": "object" },
+        "expected": {
+          "type": "object", "additionalProperties": false,
+          "required": ["pages", "page_geometry", "facts", "table", "answer_state"],
+          "properties": {
+            "pages": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/textPage" } },
+            "page_geometry": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/pageGeometry" } },
+            "facts": { "type": "array", "items": { "$ref": "#/$defs/fact" } },
+            "table": { "anyOf": [{ "$ref": "#/$defs/table" }, { "type": "null" }] },
+            "answer_state": { "enum": ["answerable", "contradictory_and_absent"] }
+          }
+        }
+      }
+    }
+  }
+}

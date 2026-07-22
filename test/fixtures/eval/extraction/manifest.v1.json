@@ -1,0 +1,182 @@
+{
+  "manifest_version": 1,
+  "suite_id": "pdf-tools.extraction.phase0",
+  "suite_version": "v0.1.0",
+  "claim_boundary": "Synthetic local direct-tool calibration only. No model, host UI, external dataset, OCR engine, table engine, or general structured extractor is evaluated.",
+  "fixtures": [
+    {
+      "id": "pdf-tools.extraction.phase0.born-digital-flat",
+      "path": "synthetic/born-digital-flat.pdf",
+      "sha256": "706dcc669a763bc88852eff3bfdf3ee428d3ff1dac01b85e2b60942e907d5403",
+      "media_type": "application/pdf",
+      "partition": "development",
+      "category": "flat_schema",
+      "description": "Single-page born-digital invoice with a small nested target schema.",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools Phase 0 generator", "generator": "scripts/eval-generate-extraction-fixtures.mjs", "source_url": null },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Fictional organization and identifiers only." },
+      "target_schema": { "type": "object", "additionalProperties": false, "required": ["invoice_id", "vendor", "invoice_date", "total"], "properties": { "invoice_id": { "type": "string" }, "vendor": { "type": "string" }, "invoice_date": { "type": "string" }, "total": { "type": "object", "additionalProperties": false, "required": ["currency", "amount"], "properties": { "currency": { "const": "USD" }, "amount": { "type": "number" } } } } },
+      "ground_truth": { "invoice_id": "INV-1001", "vendor": "Northwind Paper", "invoice_date": "2026-07-15", "total": { "currency": "USD", "amount": 42.5 } },
+      "expected": {
+        "pages": [{ "page": 1, "modality": "born_digital", "transcript": "SYNTHETIC INVOICE Invoice ID: INV-1001 Vendor: Northwind Paper Invoice date: 2026-07-15 Total: USD 42.50", "ordered_fragments": ["Invoice ID: INV-1001", "Vendor: Northwind Paper", "Invoice date: 2026-07-15", "Total: USD 42.50"] }],
+        "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0, "media_box": { "x": 0, "y": 0, "width": 612, "height": 792 }, "crop_box": { "x": 0, "y": 0, "width": 612, "height": 792 } }],
+        "facts": [
+          { "id": "fact.flat.invoice-id", "field_path": "/invoice_id", "anchor_text": "INV-1001", "page": 1, "bbox": { "x": 72, "y": 78, "width": 190, "height": 30, "coordinate_space": "top_left_pdf_points" }, "important": true },
+          { "id": "fact.flat.total", "field_path": "/total", "anchor_text": "USD 42.50", "page": 1, "bbox": { "x": 72, "y": 162, "width": 170, "height": 30, "coordinate_space": "top_left_pdf_points" }, "important": true }
+        ],
+        "table": null,
+        "answer_state": "answerable"
+      }
+    },
+    {
+      "id": "pdf-tools.extraction.phase0.born-digital-nested",
+      "path": "synthetic/born-digital-nested.pdf",
+      "sha256": "c9baaed165000f0e7112e2bfc89e070e0bda26c7ce3f1f16b0dbeebb67e9f11f",
+      "media_type": "application/pdf",
+      "partition": "development",
+      "category": "nested_schema",
+      "description": "Born-digital record with nested address, array, and boolean fields.",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools Phase 0 generator", "generator": "scripts/eval-generate-extraction-fixtures.mjs", "source_url": null },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Fictional business record only." },
+      "target_schema": { "type": "object", "additionalProperties": false, "required": ["customer_id", "organization", "address", "tags", "active"], "properties": { "customer_id": { "type": "string" }, "organization": { "type": "string" }, "address": { "type": "object", "additionalProperties": false, "required": ["street", "city", "region", "postal_code"], "properties": { "street": { "type": "string" }, "city": { "type": "string" }, "region": { "type": "string" }, "postal_code": { "type": "string" } } }, "tags": { "type": "array", "items": { "type": "string" } }, "active": { "type": "boolean" } } },
+      "ground_truth": { "customer_id": "C-204", "organization": "Alpine Works", "address": { "street": "77 Cedar Avenue", "city": "Portland", "region": "OR", "postal_code": "97205" }, "tags": ["renewal", "priority"], "active": true },
+      "expected": {
+        "pages": [{ "page": 1, "modality": "born_digital", "transcript": "SYNTHETIC CUSTOMER RECORD Customer ID: C-204 Organization: Alpine Works Street: 77 Cedar Avenue City: Portland Region: OR Postal code: 97205 Tags: renewal, priority Active: yes", "ordered_fragments": ["Customer ID: C-204", "Organization: Alpine Works", "Street: 77 Cedar Avenue", "City: Portland", "Region: OR", "Postal code: 97205", "Tags: renewal, priority", "Active: yes"] }],
+        "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0, "media_box": { "x": 0, "y": 0, "width": 612, "height": 792 }, "crop_box": { "x": 0, "y": 0, "width": 612, "height": 792 } }],
+        "facts": [
+          { "id": "fact.nested.customer", "field_path": "/customer_id", "anchor_text": "C-204", "page": 1, "bbox": { "x": 72, "y": 78, "width": 170, "height": 30, "coordinate_space": "top_left_pdf_points" }, "important": true },
+          { "id": "fact.nested.postal", "field_path": "/address/postal_code", "anchor_text": "97205", "page": 1, "bbox": { "x": 72, "y": 218, "width": 170, "height": 30, "coordinate_space": "top_left_pdf_points" }, "important": true }
+        ],
+        "table": null,
+        "answer_state": "answerable"
+      }
+    },
+    {
+      "id": "pdf-tools.extraction.phase0.two-column-order",
+      "path": "synthetic/two-column-order.pdf",
+      "sha256": "aaaae6795676db9e33f79e75f4662808ee9646f8f2bb12a319f74e3edb11c101",
+      "media_type": "application/pdf",
+      "partition": "development",
+      "category": "layout_order",
+      "description": "Two-column born-digital notice with an explicit logical reading order.",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools Phase 0 generator", "generator": "scripts/eval-generate-extraction-fixtures.mjs", "source_url": null },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Synthetic notice text only." },
+      "target_schema": { "type": "object", "additionalProperties": false, "required": ["events"], "properties": { "events": { "type": "array", "items": { "type": "string" }, "minItems": 4, "maxItems": 4 } } },
+      "ground_truth": { "events": ["Coverage begins July 1.", "Claims close July 31.", "Review starts August 2.", "Decision follows review."] },
+      "expected": {
+        "pages": [{ "page": 1, "modality": "born_digital", "transcript": "TWO COLUMN NOTICE LEFT-1 Coverage begins July 1. LEFT-2 Claims close July 31. RIGHT-1 Review starts August 2. RIGHT-2 Decision follows review.", "ordered_fragments": ["LEFT-1 Coverage begins July 1.", "LEFT-2 Claims close July 31.", "RIGHT-1 Review starts August 2.", "RIGHT-2 Decision follows review."] }],
+        "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0, "media_box": { "x": 0, "y": 0, "width": 612, "height": 792 }, "crop_box": { "x": 0, "y": 0, "width": 612, "height": 792 } }],
+        "facts": [{ "id": "fact.columns.review", "field_path": "/events/2", "anchor_text": "Review starts August 2.", "page": 1, "bbox": { "x": 326, "y": 100, "width": 230, "height": 30, "coordinate_space": "top_left_pdf_points" }, "important": true }],
+        "table": null,
+        "answer_state": "answerable"
+      }
+    },
+    {
+      "id": "pdf-tools.extraction.phase0.table-merged-blank",
+      "path": "synthetic/table-merged-blank.pdf",
+      "sha256": "370dc0ac71939cba9db8584327c87899716dc770ac9ee8cad33fc27b5e73b73c",
+      "media_type": "application/pdf",
+      "partition": "development",
+      "category": "table",
+      "description": "Ruled table with a merged title cell and an intentional blank cell.",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools Phase 0 generator", "generator": "scripts/eval-generate-extraction-fixtures.mjs", "source_url": null },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Synthetic purchase rows only." },
+      "target_schema": { "type": "object", "additionalProperties": false, "required": ["title", "headers", "rows"], "properties": { "title": { "type": "string" }, "headers": { "type": "array", "items": { "type": "string" } }, "rows": { "type": "array", "items": { "type": "object", "additionalProperties": false, "required": ["item", "qty", "amount"], "properties": { "item": { "type": "string" }, "qty": { "anyOf": [{ "type": "integer" }, { "type": "null" }] }, "amount": { "type": "number" } } } } } },
+      "ground_truth": { "title": "Q3 PURCHASES", "headers": ["Item", "Qty", "Amount"], "rows": [{ "item": "Paper", "qty": 2, "amount": 20 }, { "item": "Delivery", "qty": null, "amount": 5 }] },
+      "expected": {
+        "pages": [{ "page": 1, "modality": "born_digital", "transcript": "Q3 PURCHASES Item Qty Amount Paper 2 USD 20.00 Delivery USD 5.00", "ordered_fragments": ["Q3 PURCHASES", "Item", "Qty", "Amount", "Paper", "2", "USD 20.00", "Delivery", "USD 5.00"] }],
+        "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0, "media_box": { "x": 0, "y": 0, "width": 612, "height": 792 }, "crop_box": { "x": 0, "y": 0, "width": 612, "height": 792 } }],
+        "facts": [{ "id": "fact.table.delivery", "field_path": "/rows/1/amount", "anchor_text": "USD 5.00", "page": 1, "bbox": { "x": 430, "y": 216, "width": 105, "height": 30, "coordinate_space": "top_left_pdf_points" }, "important": true }],
+        "table": { "page": 1, "row_count": 4, "column_count": 3, "merged_cells": ["R1C1:R1C3"], "cells": [{ "row": 1, "column": 1, "value": "Q3 PURCHASES" }, { "row": 2, "column": 1, "value": "Item" }, { "row": 2, "column": 2, "value": "Qty" }, { "row": 2, "column": 3, "value": "Amount" }, { "row": 3, "column": 1, "value": "Paper" }, { "row": 3, "column": 2, "value": "2" }, { "row": 3, "column": 3, "value": "USD 20.00" }, { "row": 4, "column": 1, "value": "Delivery" }, { "row": 4, "column": 2, "value": "" }, { "row": 4, "column": 3, "value": "USD 5.00" }] },
+        "answer_state": "answerable"
+      }
+    },
+    {
+      "id": "pdf-tools.extraction.phase0.raster-clean",
+      "path": "synthetic/raster-clean.pdf",
+      "sha256": "8287bc8965aef64fe33ae81b0abc2f2c3a9df4dc86c2335982f0747e0ae851e9",
+      "media_type": "application/pdf",
+      "partition": "development",
+      "category": "ocr_clean",
+      "description": "Clean raster-only receipt with no PDF text layer.",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools Phase 0 generator", "generator": "scripts/eval-generate-extraction-fixtures.mjs", "source_url": null },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Fictional merchant and receipt only." },
+      "target_schema": { "type": "object", "additionalProperties": false, "required": ["receipt_id", "merchant", "total"], "properties": { "receipt_id": { "type": "string" }, "merchant": { "type": "string" }, "total": { "type": "number" } } },
+      "ground_truth": { "receipt_id": "R-550", "merchant": "Cedar Cafe", "total": 18.75 },
+      "expected": {
+        "pages": [{ "page": 1, "modality": "raster", "transcript": "SYNTHETIC RASTER RECEIPT Receipt ID: R-550 Merchant: Cedar Cafe Total: USD 18.75", "ordered_fragments": ["Receipt ID: R-550", "Merchant: Cedar Cafe", "Total: USD 18.75"] }],
+        "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0, "media_box": { "x": 0, "y": 0, "width": 612, "height": 792 }, "crop_box": { "x": 0, "y": 0, "width": 612, "height": 792 } }],
+        "facts": [{ "id": "fact.raster.total", "field_path": "/total", "anchor_text": "USD 18.75", "page": 1, "bbox": { "x": 72, "y": 258, "width": 180, "height": 28, "coordinate_space": "top_left_pdf_points" }, "important": true }],
+        "table": null,
+        "answer_state": "answerable"
+      }
+    },
+    {
+      "id": "pdf-tools.extraction.phase0.raster-degraded",
+      "path": "synthetic/raster-degraded.pdf",
+      "sha256": "570b9f004596d5f8c0fc1f52c2ea3d1d0e88f987f287aa7692be2a5b3a6fc042",
+      "media_type": "application/pdf",
+      "partition": "held_out_calibration",
+      "category": "ocr_degraded",
+      "description": "Low-resolution, low-contrast raster receipt with the same truth as the clean raster case.",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools Phase 0 generator", "generator": "scripts/eval-generate-extraction-fixtures.mjs", "source_url": null },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Fictional merchant and receipt only." },
+      "target_schema": { "type": "object", "additionalProperties": false, "required": ["receipt_id", "merchant", "total"], "properties": { "receipt_id": { "type": "string" }, "merchant": { "type": "string" }, "total": { "type": "number" } } },
+      "ground_truth": { "receipt_id": "R-550", "merchant": "Cedar Cafe", "total": 18.75 },
+      "expected": {
+        "pages": [{ "page": 1, "modality": "raster", "transcript": "SYNTHETIC RASTER RECEIPT Receipt ID: R-550 Merchant: Cedar Cafe Total: USD 18.75", "ordered_fragments": ["Receipt ID: R-550", "Merchant: Cedar Cafe", "Total: USD 18.75"] }],
+        "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0, "media_box": { "x": 0, "y": 0, "width": 612, "height": 792 }, "crop_box": { "x": 0, "y": 0, "width": 612, "height": 792 } }],
+        "facts": [{ "id": "fact.degraded.total", "field_path": "/total", "anchor_text": "USD 18.75", "page": 1, "bbox": { "x": 72, "y": 258, "width": 180, "height": 28, "coordinate_space": "top_left_pdf_points" }, "important": true }],
+        "table": null,
+        "answer_state": "answerable"
+      }
+    },
+    {
+      "id": "pdf-tools.extraction.phase0.mixed-text-raster",
+      "path": "synthetic/mixed-text-raster.pdf",
+      "sha256": "b5374f2e96b6205a6cf824ba90b55ffa23612658eca169270682c9445daa476f",
+      "media_type": "application/pdf",
+      "partition": "held_out_calibration",
+      "category": "mixed_modality",
+      "description": "Two-page packet with born-digital text followed by a raster-only receipt page.",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools Phase 0 generator", "generator": "scripts/eval-generate-extraction-fixtures.mjs", "source_url": null },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Fictional packet and merchant only." },
+      "target_schema": { "type": "object", "additionalProperties": false, "required": ["packet_id", "receipt"], "properties": { "packet_id": { "type": "string" }, "receipt": { "type": "object", "additionalProperties": false, "required": ["receipt_id", "merchant", "total"], "properties": { "receipt_id": { "type": "string" }, "merchant": { "type": "string" }, "total": { "type": "number" } } } } },
+      "ground_truth": { "packet_id": "MIX-77", "receipt": { "receipt_id": "R-550", "merchant": "Cedar Cafe", "total": 18.75 } },
+      "expected": {
+        "pages": [{ "page": 1, "modality": "born_digital", "transcript": "MIXED DOCUMENT Packet ID: MIX-77 Page one is born digital.", "ordered_fragments": ["Packet ID: MIX-77", "Page one is born digital."] }, { "page": 2, "modality": "raster", "transcript": "SYNTHETIC RASTER RECEIPT Receipt ID: R-550 Merchant: Cedar Cafe Total: USD 18.75", "ordered_fragments": ["Receipt ID: R-550", "Merchant: Cedar Cafe", "Total: USD 18.75"] }],
+        "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0, "media_box": { "x": 0, "y": 0, "width": 612, "height": 792 }, "crop_box": { "x": 0, "y": 0, "width": 612, "height": 792 } }, { "page": 2, "width": 612, "height": 792, "rotation": 0, "media_box": { "x": 0, "y": 0, "width": 612, "height": 792 }, "crop_box": { "x": 0, "y": 0, "width": 612, "height": 792 } }],
+        "facts": [{ "id": "fact.mixed.packet", "field_path": "/packet_id", "anchor_text": "MIX-77", "page": 1, "bbox": { "x": 72, "y": 78, "width": 170, "height": 30, "coordinate_space": "top_left_pdf_points" }, "important": true }, { "id": "fact.mixed.total", "field_path": "/receipt/total", "anchor_text": "USD 18.75", "page": 2, "bbox": { "x": 72, "y": 258, "width": 180, "height": 28, "coordinate_space": "top_left_pdf_points" }, "important": true }],
+        "table": null,
+        "answer_state": "answerable"
+      }
+    },
+    {
+      "id": "pdf-tools.extraction.phase0.no-answer-contradiction",
+      "path": "synthetic/no-answer-contradiction.pdf",
+      "sha256": "2938fbd44c847b950a87a691fa1d1a956e5c12e1ea17482e30d8e255e6876dde",
+      "media_type": "application/pdf",
+      "partition": "held_out_calibration",
+      "category": "no_answer_contradiction",
+      "description": "Born-digital review log with contradictory recommendations and absent final values.",
+      "provenance": { "kind": "synthetic", "origin": "Open Document Alliance PDF Tools Phase 0 generator", "generator": "scripts/eval-generate-extraction-fixtures.mjs", "source_url": null },
+      "license": { "name": "MIT License", "spdx_id": "MIT", "url": "https://opensource.org/license/mit", "redistribution": "allowed" },
+      "privacy": { "class": "synthetic", "contains_personal_data": false, "notes": "Synthetic reviewer labels only." },
+      "target_schema": { "type": "object", "additionalProperties": false, "required": ["answer_state", "final_status", "settlement_amount"], "properties": { "answer_state": { "const": "contradictory_and_absent" }, "final_status": { "type": "null" }, "settlement_amount": { "type": "null" } } },
+      "ground_truth": { "answer_state": "contradictory_and_absent", "final_status": null, "settlement_amount": null },
+      "expected": {
+        "pages": [{ "page": 1, "modality": "born_digital", "transcript": "SYNTHETIC REVIEW LOG Reviewer A status: APPROVED Reviewer B status: REJECTED Final status: not recorded Final settlement amount: not provided", "ordered_fragments": ["Reviewer A status: APPROVED", "Reviewer B status: REJECTED", "Final status: not recorded", "Final settlement amount: not provided"] }],
+        "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0, "media_box": { "x": 0, "y": 0, "width": 612, "height": 792 }, "crop_box": { "x": 0, "y": 0, "width": 612, "height": 792 } }],
+        "facts": [{ "id": "fact.contradiction.approved", "field_path": "/answer_state", "anchor_text": "APPROVED", "page": 1, "bbox": { "x": 72, "y": 78, "width": 240, "height": 30, "coordinate_space": "top_left_pdf_points" }, "important": true }, { "id": "fact.contradiction.rejected", "field_path": "/answer_state", "anchor_text": "REJECTED", "page": 1, "bbox": { "x": 72, "y": 106, "width": 240, "height": 30, "coordinate_space": "top_left_pdf_points" }, "important": true }, { "id": "fact.contradiction.absent", "field_path": "/settlement_amount", "anchor_text": "not provided", "page": 1, "bbox": { "x": 72, "y": 162, "width": 270, "height": 30, "coordinate_space": "top_left_pdf_points" }, "important": true }],
+        "table": null,
+        "answer_state": "contradictory_and_absent"
+      }
+    }
+  ]
+}
