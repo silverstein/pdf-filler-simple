@@ -34,6 +34,8 @@ import {
   generationProhibitedRootSetSha256,
   verifyFinalGenerationPrivacy,
 } from "./extraction-phase1-companion.js";
+import { PHASE1_COMPANION_SOURCE_PATHS } from "./extraction-phase1-companion.js";
+import { buildRetainedPhase1Corpus } from "./extraction-phase1-corpus.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
@@ -50,6 +52,9 @@ const PATHS = {
   reportSchema: path.join(PHASE1_ROOT, "report.schema.json"),
   oracle: path.join(PHASE1_ROOT, "scoring-oracle.v1.json"),
   oracleSchema: path.join(PHASE1_ROOT, "scoring-oracle.schema.json"),
+  layoutOracle: path.join(PHASE1_ROOT, "layout-occurrence-oracle.v1.json"),
+  layoutOracleSchema: path.join(PHASE1_ROOT, "layout-occurrence-oracle.schema.json"),
+  corpusSchema: path.join(PHASE1_ROOT, "corpus.schema.json"),
   scoreSchema: path.join(PHASE1_ROOT, "score-report.schema.json"),
   indexSchema: path.join(PHASE1_ROOT, "score-index.schema.json"),
   scorerSource: path.join(REPO_ROOT, "test", "eval", "extraction-phase1-scorer.js"),
@@ -66,25 +71,39 @@ async function readJson(filename) {
 }
 
 async function scoringContext(report, verificationEvidence, { registryPath = PATHS.registry, planPath = PATHS.plan } = {}) {
-  const [manifestBytes, manifestSchemaBytes, registry, registrySchema, plan, planSchema, requestSchema, responseSchema, reportSchema, oracleBytes, oracleSchema, scoreSchema, indexSchema] = await Promise.all([
+  const [manifestBytes, manifestSchemaBytes, registry, registrySchema, plan, planSchema, requestSchema, responseSchema, reportSchema, oracleBytes, oracleSchema, layoutOracleBytes, layoutOracleSchema, corpusSchema, scoreSchema, indexSchema] = await Promise.all([
     fs.readFile(PATHS.manifest), fs.readFile(PATHS.manifestSchema), readJson(registryPath), readJson(PATHS.registrySchema), readJson(planPath), readJson(PATHS.planSchema),
-    readJson(PATHS.requestSchema), readJson(PATHS.responseSchema), readJson(PATHS.reportSchema), fs.readFile(PATHS.oracle), readJson(PATHS.oracleSchema), readJson(PATHS.scoreSchema), readJson(PATHS.indexSchema),
+    readJson(PATHS.requestSchema), readJson(PATHS.responseSchema), readJson(PATHS.reportSchema), fs.readFile(PATHS.oracle), readJson(PATHS.oracleSchema), fs.readFile(PATHS.layoutOracle), readJson(PATHS.layoutOracleSchema), readJson(PATHS.corpusSchema), readJson(PATHS.scoreSchema), readJson(PATHS.indexSchema),
   ]);
   const manifest = JSON.parse(manifestBytes);
-  const sourceFactsById = Object.fromEntries(await Promise.all(manifest.fixtures.map(async fixture => {
-    const stat = await fs.stat(path.join(EXTRACTION_ROOT, fixture.path));
-    return [fixture.id, { sha256: fixture.sha256, size_bytes: stat.size, page_count: fixture.expected.page_geometry.length }];
+  const fixtureBytesById = Object.fromEntries(await Promise.all(report.denominator.planned_case_ids.map(async caseId => {
+    const fixture = manifest.fixtures.find(item => item.id === caseId);
+    return [caseId, await fs.readFile(path.join(EXTRACTION_ROOT, fixture.path))];
   })));
+  const corpus = await buildRetainedPhase1Corpus({ manifestBytes, manifestSchemaBytes, selectedCaseIds: report.denominator.planned_case_ids, fixtureBytesById, trustedPrivacyClass: "public_synthetic", corpusSchema });
+  const validatorSourceBytesByRole = Object.fromEntries(await Promise.all(Object.entries(PHASE1_COMPANION_SOURCE_PATHS).map(async ([role, relativePath]) => [role, { path: relativePath, bytes: await fs.readFile(path.join(REPO_ROOT, relativePath)) }])));
+  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const rolePaths = {
+    corpus_module: path.join(REPO_ROOT, "test/eval/extraction-phase1-corpus.js"),
+    corpus_schema: PATHS.corpusSchema,
     scorer_module: PATHS.scorerSource,
     scoring_oracle: PATHS.oracle,
     oracle_schema: PATHS.oracleSchema,
     score_schema: PATHS.scoreSchema,
     index_schema: PATHS.indexSchema,
+    layout_evidence_module: path.join(REPO_ROOT, "test/eval/extraction-phase1-layout-evidence.js"),
+    layout_extraction_module: path.join(REPO_ROOT, "server/layout-extraction.js"),
+    layout_oracle: PATHS.layoutOracle,
+    layout_oracle_generator: path.join(REPO_ROOT, "scripts/eval-generate-extraction-layout-oracle.mjs"),
+    layout_oracle_schema: PATHS.layoutOracleSchema,
     manifest_loader: path.join(REPO_ROOT, "test", "eval", "extraction-manifest.js"),
     orchestration_script: PATHS.orchestration,
+    output_schemas_module: path.join(REPO_ROOT, "server/output-schemas.js"),
+    package_lock: path.join(REPO_ROOT, "package-lock.json"),
+    pdfjs_package: path.join(REPO_ROOT, "node_modules/pdfjs-dist/package.json"),
     protocol_module: path.join(REPO_ROOT, "test", "eval", "extraction-phase1-protocol.js"),
     report_schema: PATHS.reportSchema,
+    report_verifier_module: path.join(REPO_ROOT, "test/eval/extraction-phase1-report-verifier.js"),
   };
   const scorerSourceBytesByRole = Object.fromEntries(await Promise.all(Object.entries(rolePaths).map(async ([role, filename]) => [role, { path: path.relative(REPO_ROOT, filename), bytes: await fs.readFile(filename) }])));
   const reportBytes = Buffer.from(`${JSON.stringify(report, null, 2)}\n`);
@@ -93,12 +112,15 @@ async function scoringContext(report, verificationEvidence, { registryPath = PAT
     verification: {
       registry, registrySchema, plan, planSchema, manifest, manifestSchema: JSON.parse(manifestSchemaBytes),
       manifestBytesSha256: sha256(manifestBytes), manifestSchemaBytesSha256: sha256(manifestSchemaBytes),
-      sourceFactsById, requestSchema, responseSchema, reportSchema,
+      requestSchema, responseSchema, reportSchema,
       adapterAvailability: verificationEvidence.adapterAvailability,
       failureEvidenceByAttemptKey: verificationEvidence.failureEvidenceByAttemptKey,
       repositoryRoot: REPO_ROOT,
     },
-    oracle: JSON.parse(oracleBytes), oracleBytes, oracleSchema, scoreSchema, indexSchema, scorerSourceBytesByRole, reportBytes, preflightEvidenceBytes,
+    oracle: JSON.parse(oracleBytes), oracleBytes, oracleSchema,
+    layoutOracle: JSON.parse(layoutOracleBytes), layoutOracleBytes, layoutOracleSchema,
+    corpus, pdfjsLib, validatorSourceBytesByRole,
+    scoreSchema, indexSchema, scorerSourceBytesByRole, reportBytes, preflightEvidenceBytes,
   };
 }
 
@@ -238,9 +260,17 @@ describe("structured extraction Phase 1 pure scorer", () => {
       state: "complete",
       index: { kind: "score", source_generation_sha256: verificationEvidence.generation.generation_sha256 },
     });
-    expect(inspection.index.artifacts.map(item => item.role)).toEqual(["privacy_attestation", "score_provenance", "score_report"]);
+    expect(inspection.index.artifacts.map(item => item.role)).toEqual(["phase0_corpus", "privacy_attestation", "score_provenance", "score_report", "source_execution_report"]);
     const receivedScoreRoot = path.join(root, "received-score-generation");
     await fs.mkdir(receivedScoreRoot, { mode: 0o700 });
+    await expect(receiveVerifiedGeneration({
+      sourceGenerationPath: result.generation.generationPath,
+      destinationParentDirectory: receivedScoreRoot,
+      sourceHost: "silverbook",
+      destinationHost: "silvercloud",
+      transportedAt: "2026-07-22T00:00:00Z",
+      transport: "tailscale_tailnet",
+    })).rejects.toThrow(/composite extraction semantic verifier/);
     const receivedScoreGeneration = await receiveVerifiedGeneration({
       sourceGenerationPath: result.generation.generationPath,
       destinationParentDirectory: receivedScoreRoot,
@@ -248,6 +278,7 @@ describe("structured extraction Phase 1 pure scorer", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
+      semanticVerifier: result.semanticVerifier,
     });
     expect(receivedScoreGeneration.destination.index.kind).toBe("received_score");
     expect(receivedScoreGeneration.receipt.source_code_identity).toEqual({
@@ -264,6 +295,7 @@ describe("structured extraction Phase 1 pure scorer", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
+      semanticVerifier: verificationEvidence.semanticVerifier,
     });
     const receivedScore = await scoreExtractionCandidateReport({
       executionGenerationPath: received.generationPath,
@@ -489,6 +521,7 @@ describe("structured extraction Phase 1 pure scorer", () => {
       transport: "tailscale_tailnet",
       trustedSourceProhibitedRootSetSha256: trustedSourcePrivacyDigests.generation_prohibited_root_set_sha256,
       destinationTrustedProhibitedRoots: destinationProhibitedRoots,
+      semanticVerifier: privateEvidence.semanticVerifier,
     });
     const privateReceivedScore = await scoreExtractionCandidateReport({
       executionGenerationPath: privateReceived.generationPath,
@@ -536,7 +569,7 @@ describe("structured extraction Phase 1 pure scorer", () => {
     const verificationEvidence = {};
     const report = await runExtractionCandidates({ verificationEvidence });
     const context = await scoringContext(report, verificationEvidence);
-    const score = scorePhase1Report(report, context);
+    const score = await scorePhase1Report(report, context);
     expect(score.aggregate.denominator).toMatchObject({ planned: 120, retained: 120, configured: 0, spawned: 0, quality_available: 0, outcomes: { not_run: 120 } });
     expect(score.aggregate.structured).toMatchObject({ truth_data_leaves: 0, correct: 0, missing: 0, false_answers: 0, false_abstentions: 0 });
     expect(score.aggregate.text).toMatchObject({ pages: 0, fragments: 0, character_distance: 0 });
@@ -545,14 +578,14 @@ describe("structured extraction Phase 1 pure scorer", () => {
 
     const bundle = createPhase1ScoreBundle(score, context);
     expect(() => createPhase1ScoreBundle(score, { ...context, scorePath: "same.json", indexPath: "same.json" })).toThrow(/must be distinct/);
-    expect(verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: bundle.index, report }, context)).toBe(true);
+    await expect(verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: bundle.index, report }, context)).resolves.toBe(true);
     const hostileScore = JSON.parse(bundle.scoreText);
     hostileScore.aggregate.denominator.quality_available = 120;
     const hostileText = `${JSON.stringify(hostileScore, null, 2)}\n`;
     const hostileIndex = structuredClone(bundle.index);
     hostileIndex.score_report.bytes = Buffer.byteLength(hostileText);
     hostileIndex.score_report.sha256 = sha256(Buffer.from(hostileText));
-    expect(() => verifyPhase1ScoreBundle({ scoreText: hostileText, index: hostileIndex, report }, context)).toThrow(/independent rescore/);
+    await expect(verifyPhase1ScoreBundle({ scoreText: hostileText, index: hostileIndex, report }, context)).rejects.toThrow(/independent rescore/);
   }, 30_000);
 
   it("scores array leaves, typed abstention, text, raw tables, and three-run stability independently", async () => {
@@ -562,7 +595,7 @@ describe("structured extraction Phase 1 pure scorer", () => {
       "pdf-tools.extraction.phase0.no-answer-contradiction",
     ];
     const { report, context } = await configuredReport(ids);
-    const score = scorePhase1Report(report, context);
+    const score = await scorePhase1Report(report, context);
     expect(score.aggregate.denominator).toMatchObject({ planned: 9, configured: 9, spawned: 9, quality_available: 9 });
     const nested = score.attempts.find(item => item.case_id.endsWith("born-digital-nested"));
     expect(nested.structured.data_leaves).toMatchObject({ truth: 9, candidate: 9, correct: 9, wrong: 0, spurious: 0, shifted_array: 0 });
@@ -579,49 +612,49 @@ describe("structured extraction Phase 1 pure scorer", () => {
   it("fails closed on shifted arrays, duplicate pages, extra tables, false null answers, and wrong gap reasons", async () => {
     const nestedId = "pdf-tools.extraction.phase0.born-digital-nested";
     const hostile = await configuredReport([nestedId], "hostile");
-    const hostileScore = scorePhase1Report(hostile.report, hostile.context).attempts[0];
+    const hostileScore = (await scorePhase1Report(hostile.report, hostile.context)).attempts[0];
     expect(hostileScore.structured.data_leaves).toMatchObject({ wrong: 2, spurious: 1, shifted_array: 2 });
     expect(hostileScore.text).toMatchObject({ duplicate_pages: 1, pages_present: 1, fragments_found: 0, ordered_pages: 0 });
     expect(hostileScore.table).toMatchObject({ applicable: false, expected_tables: 0, observed_tables: 1, spurious_tables: 1, spans: { spurious: 1 }, cells: { spurious: 1 } });
 
     const partialOne = await configuredReport([nestedId], "partial-one");
-    const partialOneScore = scorePhase1Report(partialOne.report, partialOne.context).attempts[0];
+    const partialOneScore = (await scorePhase1Report(partialOne.report, partialOne.context)).attempts[0];
     expect(partialOneScore.structured.data_leaves).toMatchObject({ correct: 1, missing: 8, precision: 1, recall: 1 / 9 });
     expect(partialOneScore.structured.data_leaves.f1).toBeLessThan(0.25);
 
     const eventsId = "pdf-tools.extraction.phase0.two-column-order";
     const reversed = await configuredReport([eventsId], "reverse");
-    expect(scorePhase1Report(reversed.report, reversed.context).attempts[0].structured.data_leaves).toMatchObject({ wrong: 4, shifted_array: 4, correct: 0 });
+    expect((await scorePhase1Report(reversed.report, reversed.context)).attempts[0].structured.data_leaves).toMatchObject({ wrong: 4, shifted_array: 4, correct: 0 });
 
     const noAnswerId = "pdf-tools.extraction.phase0.no-answer-contradiction";
     const completed = await configuredReport([noAnswerId], "completed-null");
-    const completedScore = scorePhase1Report(completed.report, completed.context).attempts[0];
+    const completedScore = (await scorePhase1Report(completed.report, completed.context)).attempts[0];
     expect(completedScore.structured).toMatchObject({ schema_valid: true, schema_scope: "complete_target" });
     expect(completedScore.structured.contract_leaves).toMatchObject({ false_answers: 2, correctly_abstained: 0 });
     expect(completedScore.structured.data_leaves).toMatchObject({ truth: 1, correct: 1, missing: 0 });
 
     const wrongGap = await configuredReport([noAnswerId], "wrong-gap");
-    const wrongGapScore = scorePhase1Report(wrongGap.report, wrongGap.context).attempts[0];
+    const wrongGapScore = (await scorePhase1Report(wrongGap.report, wrongGap.context)).attempts[0];
     expect(wrongGapScore.structured.contract_leaves).toMatchObject({ correctly_abstained: 1, typed_gap_correct: 1, typed_gap_wrong_reason: 1 });
     const abstainAll = await configuredReport([noAnswerId], "abstain-all");
-    expect(scorePhase1Report(abstainAll.report, abstainAll.context).attempts[0].structured.contract_leaves).toMatchObject({ false_abstentions: 1, correctly_abstained: 2, false_answers: 0 });
+    expect((await scorePhase1Report(abstainAll.report, abstainAll.context)).attempts[0].structured.contract_leaves).toMatchObject({ false_abstentions: 1, correctly_abstained: 2, false_answers: 0 });
 
     const tableId = "pdf-tools.extraction.phase0.table-merged-blank";
     const duplicateTable = await configuredReport([tableId], "duplicate-table");
-    expect(scorePhase1Report(duplicateTable.report, duplicateTable.context).attempts[0].table).toMatchObject({ missing_tables: 0, spurious_tables: 1, spans: { correct: 1, spurious: 1 }, cells: { correct: 10, spurious: 10 } });
+    expect((await scorePhase1Report(duplicateTable.report, duplicateTable.context)).attempts[0].table).toMatchObject({ missing_tables: 0, spurious_tables: 1, spans: { correct: 1, spurious: 1 }, cells: { correct: 10, spurious: 10 } });
     const alternateTable = await configuredReport([tableId], "alt-table");
-    const alternateScore = scorePhase1Report(alternateTable.report, alternateTable.context).attempts[0].table;
+    const alternateScore = (await scorePhase1Report(alternateTable.report, alternateTable.context)).attempts[0].table;
     expect(alternateScore.topology.accuracy).toBeLessThan(1);
     expect(alternateScore.cells).toMatchObject({ wrong: 0, spurious: 1 });
     const correctWrong = await configuredReport([tableId], "correct-wrong");
     const wrongCorrect = await configuredReport([tableId], "wrong-correct");
-    expect(scorePhase1Report(correctWrong.report, correctWrong.context).attempts[0].table).toEqual(scorePhase1Report(wrongCorrect.report, wrongCorrect.context).attempts[0].table);
+    expect((await scorePhase1Report(correctWrong.report, correctWrong.context)).attempts[0].table).toEqual((await scorePhase1Report(wrongCorrect.report, wrongCorrect.context)).attempts[0].table);
     const coveredCell = await configuredReport([tableId], "covered-cell");
     expect(coveredCell.report.denominator.outcomes.error).toBe(3);
-    expect(scorePhase1Report(coveredCell.report, coveredCell.context).aggregate.denominator).toMatchObject({ configured: 3, quality_available: 0, configured_quality_coverage: 0 });
+    expect((await scorePhase1Report(coveredCell.report, coveredCell.context)).aggregate.denominator).toMatchObject({ configured: 3, quality_available: 0, configured_quality_coverage: 0 });
 
     const configuredError = await configuredReport([nestedId], "error");
-    const errorAggregate = scorePhase1Report(configuredError.report, configuredError.context).aggregate;
+    const errorAggregate = (await scorePhase1Report(configuredError.report, configuredError.context)).aggregate;
     expect(errorAggregate.denominator).toMatchObject({ configured: 3, quality_available: 0, configured_quality_coverage: 0 });
     expect(errorAggregate.structured).toMatchObject({ truth_data_leaves: 0, precision: null, recall: null });
   }, 30_000);
@@ -630,7 +663,7 @@ describe("structured extraction Phase 1 pure scorer", () => {
     const verificationEvidence = {};
     const report = await runExtractionCandidates({ verificationEvidence });
     const context = await scoringContext(report, verificationEvidence);
-    const score = scorePhase1Report(report, context);
+    const score = await scorePhase1Report(report, context);
     const bundle = createPhase1ScoreBundle(score, context);
     const resignScore = mutate => {
       const retained = JSON.parse(bundle.scoreText);
@@ -648,7 +681,7 @@ describe("structured extraction Phase 1 pure scorer", () => {
       value => { value.aggregate.resources.network_egress_bytes = 0; },
     ]) {
       const hostile = resignScore(mutate);
-      expect(() => verifyPhase1ScoreBundle({ ...hostile, report }, context)).toThrow();
+      await expect(verifyPhase1ScoreBundle({ ...hostile, report }, context)).rejects.toThrow();
     }
     for (const mutateContext of [
       value => { value.reportBytes = Buffer.concat([value.reportBytes, Buffer.from(" ")]); },
@@ -660,24 +693,25 @@ describe("structured extraction Phase 1 pure scorer", () => {
       value => { value.scorerSourceBytesByRole.protocol_module.bytes = Buffer.from("changed"); },
       value => { value.scorerSourceBytesByRole.report_schema.bytes = Buffer.from("{}"); },
     ]) {
-      const hostileContext = structuredClone(context);
+      const { pdfjsLib, ...cloneableContext } = context;
+      const hostileContext = { ...structuredClone(cloneableContext), pdfjsLib };
       mutateContext(hostileContext);
-      expect(() => verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: bundle.index, report }, hostileContext)).toThrow();
+      await expect(verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: bundle.index, report }, hostileContext)).rejects.toThrow();
     }
-    const hostilePreflight = structuredClone(context);
+    const hostilePreflight = { ...context, preflightEvidenceBytes: Buffer.from(context.preflightEvidenceBytes) };
     const failureEvidenceMap = JSON.parse(Buffer.from(hostilePreflight.preflightEvidenceBytes).toString("utf8"));
     failureEvidenceMap.failure_evidence_by_attempt_key[Object.keys(failureEvidenceMap.failure_evidence_by_attempt_key)[0]].outcome_reason = "changed";
     hostilePreflight.preflightEvidenceBytes = Buffer.from(JSON.stringify(failureEvidenceMap));
-    expect(() => scorePhase1Report(report, hostilePreflight)).toThrow(/trusted failure evidence map bytes/);
+    await expect(scorePhase1Report(report, hostilePreflight)).rejects.toThrow(/trusted failure evidence map bytes/);
     const hostileIndex = structuredClone(bundle.index);
     hostileIndex.bindings.score_schema_sha256 = "0".repeat(64);
-    expect(() => verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: hostileIndex, report }, context)).toThrow(/index input bindings/);
+    await expect(verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: hostileIndex, report }, context)).rejects.toThrow(/index input bindings/);
     const pathIndex = structuredClone(bundle.index);
     pathIndex.score_report.path = "wrong.json";
-    expect(() => verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: pathIndex, report }, context)).toThrow(/byte binding/);
+    await expect(verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: pathIndex, report }, context)).rejects.toThrow(/byte binding/);
     const lengthIndex = structuredClone(bundle.index);
     lengthIndex.score_report.bytes += 1;
-    expect(() => verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: lengthIndex, report }, context)).toThrow(/byte binding/);
+    await expect(verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: lengthIndex, report }, context)).rejects.toThrow(/byte binding/);
   }, 30_000);
 
   it("binds raw and canonical oracle inputs and separates contract from indexed scoring leaves", async () => {
@@ -714,9 +748,9 @@ describe("structured extraction Phase 1 pure scorer", () => {
     ]) {
       const mutant = structuredClone(context.oracle);
       mutate(mutant);
-      expect(() => scorePhase1Report(report, { ...context, oracle: mutant })).toThrow();
+      await expect(scorePhase1Report(report, { ...context, oracle: mutant })).rejects.toThrow();
     }
-    const score = scorePhase1Report(report, context);
+    const score = await scorePhase1Report(report, context);
     expect(score.scorer_sources.map(item => item.role)).toEqual([...score.scorer_sources.map(item => item.role)].sort());
     expect(score.unavailable_claims.join(" ")).toMatch(/CPU|memory|Network|artifact/);
     expect(canonicalJson(score).includes("canonical_evidence_claim_ready\":false")).toBe(true);

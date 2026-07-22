@@ -7,6 +7,7 @@ import {
   buildCandidateRequest,
   canonicalJson,
   computeCandidateRequestId,
+  deriveAnswerEvidenceLeafPointers,
   deriveTargetLeafPointers,
   loadJsonWithSchema,
   sha256,
@@ -115,6 +116,17 @@ async function configuredRun(mode, {
 }
 
 describe("structured extraction Phase 1 external candidate boundary", () => {
+  it("derives concrete scalar evidence leaves inside arrays without parent inheritance", () => {
+    const schema = {
+      type: "object", additionalProperties: false, required: ["events", "rows"], properties: {
+        events: { type: "array", items: { type: "string" } },
+        rows: { type: "array", items: { type: "object", additionalProperties: false, required: ["amount"], properties: { amount: { type: "number" } } } },
+      },
+    };
+    expect(deriveAnswerEvidenceLeafPointers(schema, { events: ["a", "b", "c"], rows: [{ amount: 1 }, { amount: 5 }] })).toEqual([
+      "/events/0", "/events/1", "/events/2", "/rows/0/amount", "/rows/1/amount",
+    ]);
+  });
   it("strictly validates the predeclared registry and default three-repetition plan", async () => {
     const [registry, plan] = await Promise.all([
       loadJsonWithSchema(REGISTRY, REGISTRY_SCHEMA, "candidate registry"),
@@ -806,7 +818,7 @@ describe("structured extraction Phase 1 external candidate boundary", () => {
     expect(await inspectGenerationDirectory(context.verificationEvidence.generation.generationPath)).toMatchObject({ state: "complete" });
   }, 30_000);
 
-  it("retains native evidence but structurally prohibits canonical evidence for every input mode", async () => {
+  it("retains native evidence, rejects direct-PDF canonical proposals, and rejects malformed layout evidence inputs", async () => {
     const native = await configuredRun("native-evidence");
     expect(native.attempts[0]).toMatchObject({
       outcome: "partial",

@@ -9,7 +9,6 @@ import {
   verifyPhase1ScoreBundle,
 } from "../test/eval/extraction-phase1-scorer.js";
 import { assertSchema, canonicalJson, loadJsonWithSchema, sha256, validatePhase1ReportByteContract } from "../test/eval/extraction-phase1-protocol.js";
-import { loadExtractionManifest } from "../test/eval/extraction-manifest.js";
 import {
   PHASE1_COMPANION_SOURCE_PATHS,
   buildGenerationPrivacyAttestation,
@@ -26,6 +25,7 @@ import {
   publishImmutableGeneration,
   readVerifiedGenerationArtifact,
 } from "../test/eval/extraction-phase1-publisher.js";
+import { loadRetainedPhase1Corpus } from "../test/eval/extraction-phase1-corpus.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
@@ -78,6 +78,9 @@ export async function scoreExtractionCandidateReport({
   reportSchemaPath = path.join(PHASE1_ROOT, "report.schema.json"),
   oraclePath = path.join(PHASE1_ROOT, "scoring-oracle.v1.json"),
   oracleSchemaPath = path.join(PHASE1_ROOT, "scoring-oracle.schema.json"),
+  layoutOraclePath = path.join(PHASE1_ROOT, "layout-occurrence-oracle.v1.json"),
+  layoutOracleSchemaPath = path.join(PHASE1_ROOT, "layout-occurrence-oracle.schema.json"),
+  corpusSchemaPath = path.join(PHASE1_ROOT, "corpus.schema.json"),
   scoreSchemaPath = path.join(PHASE1_ROOT, "score-report.schema.json"),
   indexSchemaPath = path.join(PHASE1_ROOT, "score-index.schema.json"),
   trustedSignatureVerifier = null,
@@ -114,10 +117,10 @@ export async function scoreExtractionCandidateReport({
   if (sourceGeneration.state !== "complete" || !["execution", "received_execution"].includes(sourceGeneration.index.kind)) throw new Error("Scoring requires a complete local execution generation");
   const [reportLimitPlanLoaded, reportLimitManifestLoaded] = await Promise.all([
     loadJsonWithSchema(planPath, planSchemaPath, "report-limit plan"),
-    loadExtractionManifest(manifestPath, manifestSchemaPath),
+    loadJsonWithSchema(manifestPath, manifestSchemaPath, "extraction Phase 0 manifest"),
   ]);
   const reportLimitPlan = reportLimitPlanLoaded.value;
-  const reportLimitManifest = reportLimitManifestLoaded.manifest;
+  const reportLimitManifest = reportLimitManifestLoaded.value;
   if (reportLimitPlan.limits.max_report_bytes > 256 * 1024 * 1024) throw new Error("Phase 1 max_report_bytes exceeds the scorer hard allocation ceiling");
   const reportRecord = sourceGeneration.index.artifacts.find(item => item.role === "execution_report");
   if (!reportRecord) throw new Error("Execution generation is missing its report role");
@@ -133,13 +136,20 @@ export async function scoreExtractionCandidateReport({
     readVerifiedGenerationArtifact(realExecutionGenerationPath, sourceGeneration, "execution_report", { maxBytes: reportLimitPlan.limits.max_report_bytes }),
     readVerifiedGenerationArtifact(realExecutionGenerationPath, sourceGeneration, "execution_companion"),
   ]);
-  const [manifestBytes, manifestSchemaBytes, registry, registrySchema, plan, planSchema, requestSchema, responseSchema, reportSchema, oracleBytes, oracleSchema, scoreSchema, indexSchema, companionSchema, generationPrivacySchema] = await Promise.all([
+  const [manifestBytes, manifestSchemaBytes, registry, registrySchema, plan, planSchema, requestSchema, responseSchema, reportSchema, oracleBytes, oracleSchema, layoutOracleBytes, layoutOracleSchema, corpusSchema, scoreSchema, indexSchema, companionSchema, generationPrivacySchema] = await Promise.all([
     fs.readFile(manifestPath), fs.readFile(manifestSchemaPath),
     readJson(registryPath), readJson(registrySchemaPath), Promise.resolve(reportLimitPlan), readJson(planSchemaPath), readJson(requestSchemaPath), readJson(responseSchemaPath), readJson(reportSchemaPath),
-    fs.readFile(oraclePath), readJson(oracleSchemaPath), readJson(scoreSchemaPath), readJson(indexSchemaPath), readJson(path.join(PHASE1_ROOT, "execution-companion.schema.json")), readJson(path.join(PHASE1_ROOT, "generation-privacy.schema.json")),
+    fs.readFile(oraclePath), readJson(oracleSchemaPath), fs.readFile(layoutOraclePath), readJson(layoutOracleSchemaPath), readJson(corpusSchemaPath), readJson(scoreSchemaPath), readJson(indexSchemaPath), readJson(path.join(PHASE1_ROOT, "execution-companion.schema.json")), readJson(path.join(PHASE1_ROOT, "generation-privacy.schema.json")),
   ]);
   const report = JSON.parse(reportBytes);
   const companion = JSON.parse(executionCompanionBytes);
+  const parsedLayoutOracle = JSON.parse(layoutOracleBytes);
+  const corpusManifestAnchors = {
+    expectedManifestRawSha256: parsedLayoutOracle.manifest_bindings.document.raw_sha256,
+    expectedManifestCanonicalSha256: parsedLayoutOracle.manifest_bindings.document.canonical_sha256,
+    expectedManifestSchemaRawSha256: parsedLayoutOracle.manifest_bindings.schema.raw_sha256,
+    expectedManifestSchemaCanonicalSha256: parsedLayoutOracle.manifest_bindings.schema.canonical_sha256,
+  };
   if (!executionCompanionBytes.equals(Buffer.from(`${JSON.stringify(companion, null, 2)}\n`))) throw new Error("Execution companion bytes are not canonical");
   assertSchema(companion, companionSchema, "execution companion scoring input");
   const expectedSourcePrivacyDigests = trustedSourcePrivacyDigests ?? {
@@ -179,7 +189,7 @@ export async function scoreExtractionCandidateReport({
     sourceBytesByRole: companionSourceBytesByRole,
     runnerEnvironmentAttestation: companion.runner_environment,
   });
-  const expectedSemanticRoles = new Set(["execution_companion", "execution_report", "privacy_attestation"]);
+  const expectedSemanticRoles = new Set(["execution_companion", "execution_report", "phase0_corpus", "privacy_attestation"]);
   const sourcePrivacyArtifact = await readVerifiedGenerationArtifact(realExecutionGenerationPath, sourceGeneration, "privacy_attestation");
   const sourcePrivacyAttestation = JSON.parse(sourcePrivacyArtifact.bytes);
   if (!sourcePrivacyArtifact.bytes.equals(Buffer.from(`${JSON.stringify(sourcePrivacyAttestation, null, 2)}\n`))) throw new Error("Execution privacy evidence is not canonical");
@@ -267,7 +277,6 @@ export async function scoreExtractionCandidateReport({
   }
   const observedSemanticRoles = sourceGeneration.index.artifacts.map(item => item.role);
   if (canonicalJson([...expectedSemanticRoles].sort()) !== canonicalJson([...observedSemanticRoles].sort())) throw new Error("Execution generation has missing or extra semantic artifact roles");
-  const manifestLoaded = reportLimitManifestLoaded;
   const failureEvidenceByAttemptKey = companion.failure_evidence_by_attempt_key;
   const preflightEvidenceBytes = Buffer.from(`${JSON.stringify({
     report_id: report.report_id,
@@ -275,27 +284,42 @@ export async function scoreExtractionCandidateReport({
     preflight_evidence_sha256: report.preflight_evidence_sha256,
     failure_evidence_by_attempt_key: failureEvidenceByAttemptKey,
   }, null, 2)}\n`);
-  const sourceFactsById = Object.fromEntries(await Promise.all(manifestLoaded.manifest.fixtures.map(async fixture => {
-    const stat = await fs.stat(path.join(path.dirname(manifestPath), fixture.path));
-    return [fixture.id, { sha256: fixture.sha256, size_bytes: stat.size, page_count: fixture.expected.page_geometry.length }];
-  })));
+  const corpus = await loadRetainedPhase1Corpus({
+    readArtifact: async role => (await readVerifiedGenerationArtifact(realExecutionGenerationPath, sourceGeneration, role)).bytes,
+    corpusSchema,
+    trustedPrivacyClass: companion.privacy.policy,
+    ...corpusManifestAnchors,
+  });
+  const manifestLoaded = { manifest: corpus.manifest };
+  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
   const rolePaths = {
+    corpus_module: path.join(REPO_ROOT, "test/eval/extraction-phase1-corpus.js"),
+    corpus_schema: corpusSchemaPath,
     scorer_module: scorerModulePath,
     scoring_oracle: oraclePath,
     oracle_schema: oracleSchemaPath,
     score_schema: scoreSchemaPath,
     index_schema: indexSchemaPath,
+    layout_evidence_module: path.join(REPO_ROOT, "test/eval/extraction-phase1-layout-evidence.js"),
+    layout_extraction_module: path.join(REPO_ROOT, "server/layout-extraction.js"),
+    layout_oracle: layoutOraclePath,
+    layout_oracle_generator: path.join(REPO_ROOT, "scripts/eval-generate-extraction-layout-oracle.mjs"),
+    layout_oracle_schema: layoutOracleSchemaPath,
     manifest_loader: manifestLoaderPath,
     orchestration_script: orchestrationPath,
+    output_schemas_module: path.join(REPO_ROOT, "server/output-schemas.js"),
+    package_lock: path.join(REPO_ROOT, "package-lock.json"),
+    pdfjs_package: path.join(REPO_ROOT, "node_modules/pdfjs-dist/package.json"),
     protocol_module: protocolModulePath,
     report_schema: reportSchemaPath,
+    report_verifier_module: path.join(REPO_ROOT, "test/eval/extraction-phase1-report-verifier.js"),
   };
   const scorerSourceBytesByRole = Object.fromEntries(await Promise.all(Object.entries(rolePaths).map(async ([role, filename]) => [role, { path: path.relative(REPO_ROOT, filename), bytes: await fs.readFile(filename) }])));
   const context = {
     verification: {
       registry, registrySchema, plan, planSchema, manifest: manifestLoaded.manifest,
       manifestSchema: JSON.parse(manifestSchemaBytes), manifestBytesSha256: sha256(manifestBytes), manifestSchemaBytesSha256: sha256(manifestSchemaBytes),
-      sourceFactsById, requestSchema, responseSchema, reportSchema,
+      requestSchema, responseSchema, reportSchema,
       adapterAvailability: companion.runtime.input_adapters,
       failureEvidenceByAttemptKey,
       artifactEligibilityByCandidateId: Object.fromEntries(Object.entries(companion.artifact_attestation_by_candidate_id).map(([candidateId, evidence]) => [
@@ -304,21 +328,48 @@ export async function scoreExtractionCandidateReport({
       ])),
       repositoryRoot: REPO_ROOT,
     },
-    oracle: JSON.parse(oracleBytes), oracleBytes, oracleSchema, scoreSchema, indexSchema,
-    scorerSourceBytesByRole, reportBytes, preflightEvidenceBytes,
+    oracle: JSON.parse(oracleBytes), oracleBytes, oracleSchema,
+    layoutOracle: parsedLayoutOracle, layoutOracleBytes, layoutOracleSchema,
+    corpus, pdfjsLib, validatorSourceBytesByRole: companionSourceBytesByRole,
+    scoreSchema, indexSchema, scorerSourceBytesByRole, reportBytes, preflightEvidenceBytes,
   };
-  const score = scorePhase1Report(report, context);
+  const score = await scorePhase1Report(report, context);
   const scoreFilename = "phase1-score-report.v1.json";
   const provenanceFilename = "phase1-score-provenance.v1.json";
   const bundle = createPhase1ScoreBundle(score, { ...context, scorePath: scoreFilename, indexPath: provenanceFilename });
-  verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: bundle.index, report, scorePath: scoreFilename, indexPath: provenanceFilename }, context);
+  await verifyPhase1ScoreBundle({ scoreText: bundle.scoreText, index: bundle.index, report, scorePath: scoreFilename, indexPath: provenanceFilename }, context);
   let scorePrivacyAttestation = null;
+  const scoreSemanticVerifier = async ({ generationPath, index }) => {
+    const inspection = { state: "complete", index };
+    const [retainedScore, retainedIndex, retainedSourceReport] = await Promise.all([
+      readVerifiedGenerationArtifact(generationPath, inspection, "score_report"),
+      readVerifiedGenerationArtifact(generationPath, inspection, "score_provenance"),
+      readVerifiedGenerationArtifact(generationPath, inspection, "source_execution_report", { maxBytes: reportLimitPlan.limits.max_report_bytes }),
+    ]);
+    const retainedCorpus = await loadRetainedPhase1Corpus({
+      readArtifact: async role => (await readVerifiedGenerationArtifact(generationPath, inspection, role)).bytes,
+      corpusSchema,
+      trustedPrivacyClass: companion.privacy.policy,
+      ...corpusManifestAnchors,
+    });
+    const retainedContext = { ...context, corpus: retainedCorpus, reportBytes: retainedSourceReport.bytes };
+    await verifyPhase1ScoreBundle({
+      scoreText: retainedScore.bytes.toString("utf8"), index: JSON.parse(retainedIndex.bytes), report: JSON.parse(retainedSourceReport.bytes),
+      scorePath: scoreFilename, indexPath: provenanceFilename,
+    }, retainedContext);
+    const privacyRole = index.artifacts.some(item => item.role === "received_privacy_attestation")
+      ? "received_privacy_attestation" : "privacy_attestation";
+    const privacyArtifact = await readVerifiedGenerationArtifact(generationPath, inspection, privacyRole);
+    await verifyFinalGenerationPrivacy({ generationPath, index, privacyAttestation: JSON.parse(privacyArtifact.bytes), privacyRole });
+  };
   const generation = await publishImmutableGeneration({
     parentDirectory: realGenerationRoot,
     runId: report.run_id,
     kind: "score",
     sourceGenerationSha256: sourceGeneration.generation_sha256,
     artifacts: {
+      phase0_corpus: { filename: "phase0-corpus.v1.json", bytes: (await readVerifiedGenerationArtifact(realExecutionGenerationPath, sourceGeneration, "phase0_corpus")).bytes },
+      source_execution_report: { filename: "source-execution-report.v1.json", bytes: reportBytes },
       score_provenance: { filename: provenanceFilename, bytes: Buffer.from(bundle.indexText) },
       score_report: { filename: scoreFilename, bytes: Buffer.from(bundle.scoreText) },
     },
@@ -336,11 +387,7 @@ export async function scoreExtractionCandidateReport({
         bytes: Buffer.from(`${JSON.stringify(scorePrivacyAttestation, null, 2)}\n`),
       };
     },
-    finalGenerationVerifier: ({ generationPath, index }) => verifyFinalGenerationPrivacy({
-      generationPath,
-      index,
-      privacyAttestation: scorePrivacyAttestation,
-    }),
+    finalGenerationVerifier: scoreSemanticVerifier,
   });
   const retained = await inspectGenerationDirectory(generation.generationPath);
   if (retained.state !== "complete" || retained.index.source_generation_sha256 !== sourceGeneration.generation_sha256) throw new Error("Score generation does not bind its execution generation");
@@ -348,11 +395,18 @@ export async function scoreExtractionCandidateReport({
     readVerifiedGenerationArtifact(generation.generationPath, retained, "score_report"),
     readVerifiedGenerationArtifact(generation.generationPath, retained, "score_provenance"),
   ]);
-  verifyPhase1ScoreBundle({
-    scoreText: retainedScoreBytes.toString("utf8"), index: JSON.parse(retainedProvenanceBytes), report,
+  const retainedSourceReport = await readVerifiedGenerationArtifact(generation.generationPath, retained, "source_execution_report", { maxBytes: reportLimitPlan.limits.max_report_bytes });
+  const retainedCorpus = await loadRetainedPhase1Corpus({
+    readArtifact: async role => (await readVerifiedGenerationArtifact(generation.generationPath, retained, role)).bytes,
+    corpusSchema,
+    trustedPrivacyClass: companion.privacy.policy,
+    ...corpusManifestAnchors,
+  });
+  await verifyPhase1ScoreBundle({
+    scoreText: retainedScoreBytes.toString("utf8"), index: JSON.parse(retainedProvenanceBytes), report: JSON.parse(retainedSourceReport.bytes),
     scorePath: scoreFilename, indexPath: provenanceFilename,
-  }, context);
-  return { score, provenance: bundle.index, generation, sourceGeneration };
+  }, { ...context, corpus: retainedCorpus, reportBytes: retainedSourceReport.bytes });
+  return { score, provenance: bundle.index, generation, sourceGeneration, semanticVerifier: scoreSemanticVerifier };
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

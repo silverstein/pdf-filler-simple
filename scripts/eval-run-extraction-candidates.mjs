@@ -2,6 +2,7 @@
 
 import { randomUUID } from "node:crypto";
 import { spawn } from "node:child_process";
+import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -24,7 +25,6 @@ import {
   validatePhase1ReportByteContract,
   validatePlan,
   validateRegistry,
-  verifyPhase1Report,
 } from "../test/eval/extraction-phase1-protocol.js";
 import {
   loadExtractionManifest,
@@ -48,7 +48,12 @@ import {
   deriveRunnerResourceFacts,
   verifyFinalGenerationPrivacy,
 } from "../test/eval/extraction-phase1-companion.js";
-import { publishImmutableGeneration } from "../test/eval/extraction-phase1-publisher.js";
+import { publishImmutableGeneration, readVerifiedGenerationArtifact } from "../test/eval/extraction-phase1-publisher.js";
+import {
+  reconcileLayoutIrEvidence,
+} from "../test/eval/extraction-phase1-layout-evidence.js";
+import { buildRetainedPhase1Corpus, loadRetainedPhase1Corpus } from "../test/eval/extraction-phase1-corpus.js";
+import { verifyRetainedPhase1Report } from "../test/eval/extraction-phase1-report-verifier.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXTRACTION_ROOT = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction");
@@ -64,6 +69,7 @@ const DEFAULT_PATHS = Object.freeze({
   responseSchema: path.join(PHASE1_ROOT, "candidate-response.schema.json"),
   reportSchema: path.join(PHASE1_ROOT, "report.schema.json"),
   companionSchema: path.join(PHASE1_ROOT, "execution-companion.schema.json"),
+  corpusSchema: path.join(PHASE1_ROOT, "corpus.schema.json"),
   artifactInventorySchema: path.join(PHASE1_ROOT, "artifact-inventory.schema.json"),
 });
 
@@ -213,8 +219,7 @@ function retainedFailure(stage, runnerCode, detailCode = runnerCode, requestByte
   };
 }
 
-async function sourceFacts(sourcePath) {
-  const bytes = await fs.readFile(sourcePath);
+async function sourceFacts(bytes) {
   const pdf = await PDFDocument.load(bytes, { updateMetadata: false });
   return {
     bytes,
@@ -222,6 +227,24 @@ async function sourceFacts(sourcePath) {
     size_bytes: bytes.length,
     page_count: pdf.getPageCount(),
   };
+}
+
+async function readTrustedCorpusFile(filename, maxBytes) {
+  const handle = await fs.open(filename, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
+  try {
+    const before = await handle.stat({ bigint: true });
+    if (!before.isFile() || before.size < 1n || before.size > BigInt(maxBytes)) throw new Error(`Corpus source is not a bounded regular file: ${filename}`);
+    const bytes = await handle.readFile();
+    const after = await handle.stat({ bigint: true });
+    if (String(before.dev) !== String(after.dev) || String(before.ino) !== String(after.ino)
+      || String(before.size) !== String(after.size) || String(before.mtimeNs) !== String(after.mtimeNs)
+      || String(before.ctimeNs) !== String(after.ctimeNs) || BigInt(bytes.length) !== before.size) {
+      throw new Error(`Corpus source changed while read: ${filename}`);
+    }
+    return bytes;
+  } finally {
+    await handle.close();
+  }
 }
 
 async function afterSourceDigest(sourcePath) {
@@ -456,6 +479,7 @@ async function unconfiguredAttempt({ candidate, selection, fixture, repetition, 
     },
     request: null,
     response: null,
+    runner_evidence: null,
     runner_field_bindings: [],
     bindings: nullBindings(),
     captures: { stdout_base64: null, stderr_base64: null },
@@ -469,7 +493,6 @@ async function runAttempt({
   candidate,
   selection,
   fixture,
-  fixturePath,
   repetition,
   source,
   runId,
@@ -480,6 +503,9 @@ async function runAttempt({
   runRoot,
   inputBuilders,
   eligibilityUnmet,
+  pdfjsLib,
+  validatorSourceSetSha256,
+  layoutValidationCache,
 }) {
   if (!candidate.configured) return unconfiguredAttempt({ candidate, selection, fixture, repetition, source });
   const inputBuilder = selection.input_mode === "direct_pdf" ? null : inputBuilders?.[selection.input_mode];
@@ -492,11 +518,12 @@ async function runAttempt({
 
   const attemptRoot = await fs.mkdtemp(path.join(runRoot, "attempt-"));
   const stagedSourcePath = path.join(attemptRoot, "source.pdf");
-  await fs.copyFile(fixturePath, stagedSourcePath);
+  await fs.writeFile(stagedSourcePath, source.bytes, { mode: 0o600, flag: "wx" });
   await fs.chmod(stagedSourcePath, 0o444);
   let request = null;
   let response = null;
   let runnerFieldBindings = [];
+  let runnerEvidence = null;
   let processResult = null;
   let outcome = "error";
   let errorCode = null;
@@ -562,7 +589,16 @@ async function runAttempt({
       if (response) {
         try {
           assertSchema(response, responseSchema, "extraction candidate response");
-          runnerFieldBindings = validateCandidateResponseSemantics(response, request, { targetSchema: fixture.target_schema });
+          validateCandidateResponseSemantics(response, request, { targetSchema: fixture.target_schema });
+          runnerEvidence = await reconcileLayoutIrEvidence({
+            request,
+            response,
+            sourceBytes: source.bytes,
+            pdfjsLib,
+            validatorSourceSetSha256,
+            validationCache: layoutValidationCache,
+          });
+          runnerFieldBindings = runnerEvidence.field_bindings;
           outcome = response.status;
           errorCode = response.status === "error" ? response.diagnostics.code ?? "CANDIDATE_ERROR" : null;
           outcomeReason = response.status === "error"
@@ -573,6 +609,7 @@ async function runAttempt({
             : emptyFailure();
         } catch (error) {
           response = null;
+          runnerEvidence = null;
           runnerFieldBindings = [];
           errorCode = "INVALID_RESPONSE_CONTRACT";
           outcomeReason = error.message;
@@ -593,6 +630,7 @@ async function runAttempt({
       errorCode === "REQUEST_LIMIT_EXCEEDED" ? error.limit_bytes : null,
     );
     response = null;
+    runnerEvidence = null;
     runnerFieldBindings = [];
   }
   const after = await afterSourceDigest(stagedSourcePath);
@@ -603,6 +641,7 @@ async function runAttempt({
     outcomeReason = "Candidate changed or removed its staged source copy";
     failure = retainedFailure("source_postcheck", errorCode, after.error ?? errorCode);
     response = null;
+    runnerEvidence = null;
     runnerFieldBindings = [];
   }
   const stdout = processResult?.stdout ?? null;
@@ -626,6 +665,7 @@ async function runAttempt({
     },
     request,
     response,
+    runner_evidence: runnerEvidence,
     runner_field_bindings: runnerFieldBindings,
     bindings: {
       request_sha256: request ? sha256(Buffer.from(canonicalJson(request))) : null,
@@ -658,6 +698,7 @@ export async function runExtractionCandidates({
   artifactConfigSchemaPath = path.join(PHASE1_ROOT, "artifact-config.schema.json"),
   artifactInventorySchemaPath = DEFAULT_PATHS.artifactInventorySchema,
   companionSchemaPath = DEFAULT_PATHS.companionSchema,
+  corpusSchemaPath = DEFAULT_PATHS.corpusSchema,
   executionIndexSchemaPath = path.join(PHASE1_ROOT, "execution-index.schema.json"),
   generationPrivacySchemaPath = path.join(PHASE1_ROOT, "generation-privacy.schema.json"),
   generationRoot = null,
@@ -700,6 +741,28 @@ export async function runExtractionCandidates({
   const manifestById = new Map(manifest.manifest.fixtures.map(fixture => [fixture.id, fixture]));
   const selectedCaseIds = plan.case_ids ?? manifest.manifest.fixtures.map(fixture => fixture.id);
   if (selectedCaseIds.some(id => !manifestById.has(id))) throw new Error("Extraction Phase 1 plan selects an unknown Phase 0 case");
+  const [manifestBytes, manifestSchemaBytes, corpusSchema, registrySchema, planSchema] = await Promise.all([
+    readTrustedCorpusFile(manifestPath, 1024 * 1024), readTrustedCorpusFile(manifestSchemaPath, 1024 * 1024), fs.readFile(corpusSchemaPath, "utf8").then(JSON.parse),
+    fs.readFile(registrySchemaPath, "utf8").then(JSON.parse), fs.readFile(planSchemaPath, "utf8").then(JSON.parse),
+  ]);
+  const retainedFixtureBytesById = Object.fromEntries(await Promise.all(selectedCaseIds.map(async caseId => {
+    const fixture = manifestById.get(caseId);
+    return [caseId, await readTrustedCorpusFile(resolveExtractionFixture(manifestPath, fixture), 8 * 1024 * 1024)];
+  })));
+  const retainedCorpus = await buildRetainedPhase1Corpus({
+    manifestBytes,
+    manifestSchemaBytes,
+    selectedCaseIds,
+    fixtureBytesById: retainedFixtureBytesById,
+    trustedPrivacyClass,
+    corpusSchema,
+  });
+  const corpusManifestAnchors = {
+    expectedManifestRawSha256: sha256(manifestBytes),
+    expectedManifestCanonicalSha256: sha256(Buffer.from(canonicalJson(JSON.parse(manifestBytes)))),
+    expectedManifestSchemaRawSha256: sha256(manifestSchemaBytes),
+    expectedManifestSchemaCanonicalSha256: sha256(Buffer.from(canonicalJson(JSON.parse(manifestSchemaBytes)))),
+  };
   const plannedAttempts = plan.candidates.length * selectedCaseIds.length * plan.repetitions;
   validatePhase1ReportByteContract({ limits: plan.limits, plannedAttempts });
 
@@ -744,6 +807,14 @@ export async function runExtractionCandidates({
   await validateSourcePrivacyBoundary({ trustedPrivacyClass, trustedProhibitedRoots, generationRoot });
   const runnerSourceLoader = testOnlyRunnerSourceLoader ?? loadRunnerSourceBytes;
   const sourceBytesBeforeAttempts = await runnerSourceLoader();
+  const validatorSourceSetSha256 = sha256(Buffer.from(canonicalJson(Object.fromEntries(Object.entries(sourceBytesBeforeAttempts).map(([role, source_]) => [role, {
+    path: source_.path,
+    bytes: source_.bytes.length,
+    sha256: sha256(source_.bytes),
+  }])))));
+  const layoutValidationCache = new Map();
+  const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  if (String(pdfjsLib.version) !== "5.4.624") throw new Error("Extraction layout evidence requires pinned pdfjs-dist 5.4.624");
   const runnerEnvironmentBeforeAttempts = await buildRunnerEnvironmentAttestation({ sourceBytesByRole: sourceBytesBeforeAttempts });
   const beforeResultByCandidateId = Object.fromEntries(await Promise.all(selectedCandidateIds.map(async candidateId => {
     try {
@@ -817,8 +888,7 @@ export async function runExtractionCandidates({
       const candidate = registryById.get(selection.candidate_id);
       for (const caseId of selectedCaseIds) {
         const fixture = manifestById.get(caseId);
-        const fixturePath = resolveExtractionFixture(manifestPath, fixture);
-        const source = await sourceFacts(fixturePath);
+        const source = await sourceFacts(retainedFixtureBytesById[caseId]);
         if (source.sha256 !== fixture.sha256) throw new Error(`Source hash drifted before candidate execution: ${fixture.id}`);
         verifiedSourceFacts[fixture.id] = {
           sha256: source.sha256,
@@ -850,7 +920,6 @@ export async function runExtractionCandidates({
               candidate,
               selection,
               fixture,
-              fixturePath,
               repetition,
               source,
               runId,
@@ -861,6 +930,9 @@ export async function runExtractionCandidates({
               runRoot,
               inputBuilders,
               eligibilityUnmet,
+              pdfjsLib,
+              validatorSourceSetSha256,
+              layoutValidationCache,
             }));
           }
         }
@@ -936,6 +1008,7 @@ export async function runExtractionCandidates({
     attempt.error_code = "ARTIFACT_DRIFT";
     attempt.outcome_reason = "Runner detected candidate artifact deployment drift after execution";
     attempt.response = null;
+    attempt.runner_evidence = null;
     attempt.runner_field_bindings = [];
     attempt.bindings.response_canonical_sha256 = null;
     attempt.failure = retainedFailure("artifact_postcheck", "ARTIFACT_DRIFT", "ARTIFACT_DEPLOYMENT_DRIFT");
@@ -1024,21 +1097,31 @@ export async function runExtractionCandidates({
     if (attestation.after) assertSchema(attestation.after, artifactInventorySchema, "after artifact inventory");
   }
   assertSchema(report, reportSchema, "extraction Phase 1 report");
-  verifyPhase1Report(report, {
+  const reportVerificationInputs = {
     registry,
-    registrySchema: JSON.parse(await fs.readFile(registrySchemaPath, "utf8")),
+    registrySchema,
     plan,
-    planSchema: JSON.parse(await fs.readFile(planSchemaPath, "utf8")),
+    planSchema,
     manifest: manifest.manifest,
-    sourceFactsById: verifiedSourceFacts,
+    manifestSchema: JSON.parse(manifestSchemaBytes),
+    manifestBytesSha256: sha256(manifestBytes),
+    manifestSchemaBytesSha256: sha256(manifestSchemaBytes),
     requestSchema,
     responseSchema,
     reportSchema,
     adapterAvailability,
-    failureEvidenceByAttemptKey,
     artifactEligibilityByCandidateId: Object.fromEntries(selectedCandidateIds.map(candidateId => [candidateId, beforeResultByCandidateId[candidateId].status === "failed" ? "precheck_failed" : beforeResultByCandidateId[candidateId].inventory.state])),
     repositoryRoot: REPO_ROOT,
+  };
+  const verifiedReport = await verifyRetainedPhase1Report({
+    reportBytes,
+    verification: reportVerificationInputs,
+    corpus: retainedCorpus,
+    pdfjsLib,
+    validatorSourceBytesByRole: sourceBytesBeforeAttempts,
+    trustedFailureEvidenceByAttemptKey: failureEvidenceByAttemptKey,
   });
+  const independentlyVerifiedLayoutEvidence = verifiedReport.layoutEvidenceByAttemptKey;
   if (verificationEvidence && typeof verificationEvidence === "object") {
     verificationEvidence.adapterAvailability = structuredClone(adapterAvailability);
     verificationEvidence.failureEvidenceByAttemptKey = structuredClone(failureEvidenceByAttemptKey);
@@ -1046,6 +1129,7 @@ export async function runExtractionCandidates({
     verificationEvidence.artifactAttestationByCandidateId = structuredClone(artifactAttestationByCandidateId);
     verificationEvidence.artifactConfigBindingByCandidateId = structuredClone(artifactConfigBindingByCandidateId);
     verificationEvidence.commandRuntimeByCandidateId = structuredClone(commandRuntimeByCandidateId);
+    verificationEvidence.layoutEvidenceByAttemptKey = structuredClone(independentlyVerifiedLayoutEvidence);
   }
   if (generationRoot) {
     await validateSourcePrivacyBoundary({ trustedPrivacyClass, trustedProhibitedRoots, generationRoot });
@@ -1098,6 +1182,33 @@ export async function runExtractionCandidates({
       if (attestation.after) inventoryArtifacts[`artifact_after_${safeId}`] = { filename: `artifact-after-${safeId}.json`, bytes: Buffer.from(`${JSON.stringify(attestation.after, null, 2)}\n`) };
     }
     let generationPrivacyAttestation = null;
+    const executionSemanticVerifier = async ({ generationPath, index }) => {
+      const inspection = { state: "complete", index };
+      const retainedReport = await readVerifiedGenerationArtifact(generationPath, inspection, "execution_report", { maxBytes: plan.limits.max_report_bytes });
+      const retainedCompanion = await readVerifiedGenerationArtifact(generationPath, inspection, "execution_companion");
+      const parsedCompanion = JSON.parse(retainedCompanion.bytes);
+      if (canonicalJson(parsedCompanion.failure_evidence_by_attempt_key) !== canonicalJson(failureEvidenceByAttemptKey)) {
+        throw new Error("Retained execution companion differs from the trusted runner failure evidence map");
+      }
+      const corpus = await loadRetainedPhase1Corpus({
+        readArtifact: async role => (await readVerifiedGenerationArtifact(generationPath, inspection, role)).bytes,
+        corpusSchema,
+        trustedPrivacyClass,
+        ...corpusManifestAnchors,
+      });
+      await verifyRetainedPhase1Report({
+        reportBytes: retainedReport.bytes,
+        verification: reportVerificationInputs,
+        corpus,
+        pdfjsLib,
+        validatorSourceBytesByRole: sourceBytesBeforeAttempts,
+        trustedFailureEvidenceByAttemptKey: parsedCompanion.failure_evidence_by_attempt_key,
+      });
+      const privacyRole = index.artifacts.some(item => item.role === "received_privacy_attestation")
+        ? "received_privacy_attestation" : "privacy_attestation";
+      const privacyArtifact = await readVerifiedGenerationArtifact(generationPath, inspection, privacyRole);
+      await verifyFinalGenerationPrivacy({ generationPath, index, privacyAttestation: JSON.parse(privacyArtifact.bytes), privacyRole });
+    };
     const published = await publishImmutableGeneration({
       parentDirectory: generationRoot,
       runId,
@@ -1105,6 +1216,7 @@ export async function runExtractionCandidates({
       artifacts: {
         execution_companion: { filename: "execution-companion.v1.json", bytes: companionBytes },
         execution_report: { filename: "execution-report.v1.json", bytes: reportBytes },
+        ...retainedCorpus.artifacts,
         ...inventoryArtifacts,
       },
       preIndexArtifactBuilder: async ({ stagingPath, artifacts }) => {
@@ -1117,10 +1229,13 @@ export async function runExtractionCandidates({
         assertSchema(generationPrivacyAttestation, generationPrivacySchema, "generation privacy attestation");
         return { role: "privacy_attestation", filename: "generation-privacy.v1.json", bytes: Buffer.from(`${JSON.stringify(generationPrivacyAttestation, null, 2)}\n`) };
       },
-      finalGenerationVerifier: ({ generationPath, index }) => verifyFinalGenerationPrivacy({ generationPath, index, privacyAttestation: generationPrivacyAttestation }),
+      finalGenerationVerifier: executionSemanticVerifier,
     });
     assertSchema(published.index, executionIndexSchema, "execution generation index");
-    if (verificationEvidence && typeof verificationEvidence === "object") verificationEvidence.generation = published;
+    if (verificationEvidence && typeof verificationEvidence === "object") {
+      verificationEvidence.generation = published;
+      verificationEvidence.semanticVerifier = executionSemanticVerifier;
+    }
   }
   return report;
 }

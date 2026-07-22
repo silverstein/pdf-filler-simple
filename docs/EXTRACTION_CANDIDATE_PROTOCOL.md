@@ -178,7 +178,9 @@ requirement.
 
 The target schema is reduced to exact requested leaf paths using a deliberately
 small supported schema subset. Object properties must all be required and
-`additionalProperties` must be false. Arrays are treated as leaf values.
+`additionalProperties` must be false. Answered arrays expose concrete scalar
+leaves such as `/events/2` and `/rows/1/amount`; unresolved array contracts keep
+their exact schema-level gap path. Evidence never inherits from an array parent.
 Unsupported composition or optional-object shapes fail closed.
 
 - `completed` must be target-schema valid, answer every leaf, and have no gaps.
@@ -194,10 +196,23 @@ Answered and gap paths cannot overlap. Gaps must name exact schema leaves, not
 parent objects. The empty JSON Pointer identifies the root value; `/` identifies
 an object property whose name is the empty string.
 
-Canonical `evidence` and `field_evidence` arrays are structurally required to be
-empty. No candidate input, including an empty or self-described layout IR, can
-authorize canonical ODA evidence until a separate verifier proves source-item,
-quote, CropBox, UserUnit, rotation, region, and PDF.js display equivalence.
+Canonical `evidence` and `field_evidence` are untrusted candidate proposals.
+They are accepted only for `layout_ir` requests and receive no credit until the
+runner and scorer independently re-read retained fixture bytes, validate the
+exact shipped `read_pdf_layout` schema, validate layout semantics, reparse the
+source with PDF.js 5.4.624, and prove every Unicode code-point span, source item,
+line, reading order, quote, exact 0.001-rounded item-union bbox, field path, and
+typed value digest. Multiple noncontiguous facts require multiple evidence
+records. Direct-PDF and raster proposals fail closed.
+
+The Phase 0 coordinate gate is deliberately narrow: zero raw and display
+rotation, equal zero-origin MediaBox and CropBox, UserUnit 1, exact PDF.js view,
+display dimensions, viewport transform, complete pages, and valid positive item
+geometry. A scorer-only occurrence oracle is independently regenerated from the
+retained synthetic corpus. It may approve one of several exhaustive exact
+occurrences only when one has a unique positive maximum overlap with the Phase 0
+review region. Candidate bboxes themselves must equal the exact item union; the
+review region is not copied into candidate evidence.
 Page text declares a typed origin:
 `born_digital_text_layer`, `ocr`, `visual_parser`, or `hybrid`. Direct-PDF
 candidate text cannot claim born-digital text-layer origin without
@@ -221,9 +236,18 @@ cells whose row or column span is greater than one.
 ## Claim boundary
 
 The current Node runner truthfully reports that it does not enforce filesystem,
-network, CPU, memory, process-count, or process-tree memory isolation. Candidate
-evidence also remains unscored until a separate scorer binds values, source
-items, page geometry, quotes, and regions independently.
+network, CPU, memory, process-count, or process-tree memory isolation. Canonical
+page, bbox, fact, and answer metrics are separate and scorer-only. Gaps and
+abstentions never enter the answer denominator, though exact gap-bound evidence
+may support an independently applicable fact metric.
+
+Each immutable execution generation retains one bounded JSON corpus envelope
+containing the exact raw Phase 0 manifest and schema bytes plus the selected
+synthetic PDFs. Raw and canonical hashes, ordered case IDs, byte lengths, full
+fixture hashes, page counts, privacy labels, and a domain-separated fixture-set
+digest are rechecked before report verification. Publication, scoring, reload,
+receive, and recovery await composite semantic verification at staging, final,
+pre-claim-removal, and claim-free boundaries.
 
 The report flags `benchmark_claim_ready`, `calibration_claim_ready`, and
 `truth_isolation_claim_ready` remain false. Candidate installation, model

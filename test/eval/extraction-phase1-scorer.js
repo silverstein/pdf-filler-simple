@@ -5,8 +5,10 @@ import {
   deriveTargetLeafPointers,
   reportAttemptKey,
   sha256,
-  verifyPhase1Report,
 } from "./extraction-phase1-protocol.js";
+import { verifyRetainedPhase1Report } from "./extraction-phase1-report-verifier.js";
+import { aggregateLayoutCanonicalEvidence, scoreLayoutCanonicalEvidence } from "./extraction-phase1-layout-evidence.js";
+import { verifyLayoutOccurrenceOracle } from "../../scripts/eval-generate-extraction-layout-oracle.mjs";
 
 export const PHASE1_SCORER_ID = "pdf-tools.extraction-phase1-scorer.v1";
 export const PHASE1_SCORE_REPORT_ID = "pdf-tools.extraction-phase1-score-report.v1";
@@ -19,7 +21,7 @@ export const PHASE1_SCORER_CONTRACT_SHA256 = sha256(Buffer.from(canonicalJson({
   text: "normalized-whitespace-fragment-order-cer-wer-v1",
   table: "raw-start-cell-and-canonical-span-v1",
   stability: "response-without-request-id-or-runner-outcome-v1",
-  evidence_credit: "prohibited",
+  evidence_credit: "source-validated-layout-ir-scorer-only-page-bbox-fact-answer-v1",
 })));
 
 const SUCCESS_OUTCOMES = new Set(["completed", "partial", "abstained"]);
@@ -28,14 +30,25 @@ const EXACT_ORACLE_CASE_KEYS = ["case_id", "contract_leaf_policies", "expected_p
 const EXACT_POLICY_KEYS = ["allowed_gap_reasons", "expected_decision", "field_path"];
 const EXACT_TRUTH_LEAF_KEYS = ["contract_path", "disposition", "fact_support", "field_path", "value"];
 const EXACT_FACT_SUPPORT_KEYS = ["fact_ids", "mode"];
-const REQUIRED_SCORER_SOURCE_ROLES = ["index_schema", "manifest_loader", "oracle_schema", "orchestration_script", "protocol_module", "report_schema", "score_schema", "scorer_module", "scoring_oracle"];
+const REQUIRED_SCORER_SOURCE_ROLES = ["corpus_module", "corpus_schema", "index_schema", "layout_evidence_module", "layout_extraction_module", "layout_oracle", "layout_oracle_generator", "layout_oracle_schema", "manifest_loader", "oracle_schema", "orchestration_script", "output_schemas_module", "package_lock", "pdfjs_package", "protocol_module", "report_schema", "report_verifier_module", "score_schema", "scorer_module", "scoring_oracle"];
 const REQUIRED_SCORER_SOURCE_PATHS = Object.freeze({
+  corpus_module: "test/eval/extraction-phase1-corpus.js",
+  corpus_schema: "test/fixtures/eval/extraction/phase1/corpus.schema.json",
   index_schema: "test/fixtures/eval/extraction/phase1/score-index.schema.json",
+  layout_evidence_module: "test/eval/extraction-phase1-layout-evidence.js",
+  layout_extraction_module: "server/layout-extraction.js",
+  layout_oracle: "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.v1.json",
+  layout_oracle_generator: "scripts/eval-generate-extraction-layout-oracle.mjs",
+  layout_oracle_schema: "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
   manifest_loader: "test/eval/extraction-manifest.js",
   oracle_schema: "test/fixtures/eval/extraction/phase1/scoring-oracle.schema.json",
   orchestration_script: "scripts/eval-score-extraction-candidates.mjs",
+  output_schemas_module: "server/output-schemas.js",
+  package_lock: "package-lock.json",
+  pdfjs_package: "node_modules/pdfjs-dist/package.json",
   protocol_module: "test/eval/extraction-phase1-protocol.js",
   report_schema: "test/fixtures/eval/extraction/phase1/report.schema.json",
+  report_verifier_module: "test/eval/extraction-phase1-report-verifier.js",
   score_schema: "test/fixtures/eval/extraction/phase1/score-report.schema.json",
   scorer_module: "test/eval/extraction-phase1-scorer.js",
   scoring_oracle: "test/fixtures/eval/extraction/phase1/scoring-oracle.v1.json",
@@ -548,9 +561,9 @@ function semanticDigest(attempt) {
   })));
 }
 
-function scoreAttempt(attempt, fixture, oracleCase) {
+function scoreAttempt(attempt, fixture, oracleCase, layoutOracleCase, reconciliation) {
   const eligible = SUCCESS_OUTCOMES.has(attempt.outcome) && Boolean(attempt.response);
-  return {
+  const scored = {
     attempt_key: reportAttemptKey(attempt),
     candidate_id: attempt.candidate_id,
     case_id: attempt.case_id,
@@ -561,6 +574,14 @@ function scoreAttempt(attempt, fixture, oracleCase) {
     structured: scoreStructured(fixture, oracleCase, attempt.response, eligible),
     text: scoreText(fixture, attempt.response, eligible),
     table: scoreTable(fixture, attempt.response, eligible),
+    canonical_evidence: scoreLayoutCanonicalEvidence({
+      fixture,
+      oracleCase,
+      layoutOracleCase,
+      response: attempt.response,
+      reconciliation,
+      layout: attempt.request?.inputs?.layout_ir ?? null,
+    }),
     resources: {
       spawned: attempt.execution.spawned,
       elapsed_ms: attempt.execution.elapsed_ms,
@@ -578,6 +599,7 @@ function scoreAttempt(attempt, fixture, oracleCase) {
       network_egress_bytes: null,
     },
   };
+  return scored;
 }
 
 function sum(attempts, selector) {
@@ -732,7 +754,7 @@ function stability(attempts, plan) {
   return groups;
 }
 
-export function scorePhase1Report(report, {
+export async function scorePhase1Report(report, {
   verification,
   oracle,
   oracleBytes,
@@ -741,17 +763,21 @@ export function scorePhase1Report(report, {
   scorerSourceBytesByRole,
   reportBytes,
   preflightEvidenceBytes,
+  corpus,
+  pdfjsLib,
+  validatorSourceBytesByRole,
+  layoutOracle,
+  layoutOracleBytes,
+  layoutOracleSchema,
 } = {}) {
-  verifyPhase1Report(report, verification);
-  if (!reportBytes || canonicalJson(JSON.parse(Buffer.from(reportBytes).toString("utf8"))) !== canonicalJson(report)) {
-    throw new Error("Extraction Phase 1 report differs from its retained source bytes");
-  }
+  const independentlyVerified = await verifyRetainedPhase1Report({ reportBytes, verification, corpus, pdfjsLib, validatorSourceBytesByRole, trustedFailureEvidenceByAttemptKey: verification.failureEvidenceByAttemptKey });
+  if (canonicalJson(independentlyVerified.report) !== canonicalJson(report)) throw new Error("Extraction Phase 1 report differs from its retained source bytes");
   if (!preflightEvidenceBytes) throw new Error("Extraction Phase 1 scorer requires retained trusted failure evidence map bytes");
   const retainedFailureEvidence = JSON.parse(Buffer.from(preflightEvidenceBytes).toString("utf8"));
   exactKeys(retainedFailureEvidence, ["failure_evidence_by_attempt_key", "preflight_evidence_sha256", "report_id", "run_id"], "Extraction trusted failure evidence map");
   if (retainedFailureEvidence.report_id !== report.report_id || retainedFailureEvidence.run_id !== report.run_id
     || retainedFailureEvidence.preflight_evidence_sha256 !== report.preflight_evidence_sha256
-    || canonicalJson(retainedFailureEvidence.failure_evidence_by_attempt_key) !== canonicalJson(verification.failureEvidenceByAttemptKey)) {
+    || canonicalJson(retainedFailureEvidence.failure_evidence_by_attempt_key) !== canonicalJson(independentlyVerified.failureEvidenceByAttemptKey)) {
     throw new Error("Extraction trusted failure evidence map bytes differ from trusted verification evidence");
   }
   if (!oracleBytes || canonicalJson(JSON.parse(Buffer.from(oracleBytes).toString("utf8"))) !== canonicalJson(oracle)) {
@@ -762,12 +788,25 @@ export function scorePhase1Report(report, {
     manifestSchema: verification.manifestSchema,
     manifestSchemaBytesSha256: verification.manifestSchemaBytesSha256,
   });
+  if (!layoutOracleBytes || canonicalJson(JSON.parse(Buffer.from(layoutOracleBytes).toString("utf8"))) !== canonicalJson(layoutOracle)) {
+    throw new Error("Layout occurrence oracle differs from its retained source bytes");
+  }
+  assertSchema(layoutOracle, layoutOracleSchema, "extraction Phase 1 layout occurrence oracle");
+  await verifyLayoutOccurrenceOracle(layoutOracle, {
+    manifestBytes: corpus.manifestBytes,
+    manifestSchemaBytes: corpus.manifestSchemaBytes,
+    fixtureBytesById: corpus.fixtureBytesById,
+    caseIds: corpus.descriptor.selected_case_ids,
+  });
   const fixtureById = new Map(verification.manifest.fixtures.map(fixture => [fixture.id, fixture]));
   const oracleById = new Map(oracle.cases.map(item => [item.case_id, item]));
+  const layoutOracleById = new Map(layoutOracle.cases.map(item => [item.case_id, item]));
   const attempts = report.attempts.map(attempt => scoreAttempt(
     attempt,
     fixtureById.get(attempt.case_id),
     oracleById.get(attempt.case_id),
+    layoutOracleById.get(attempt.case_id),
+    independentlyVerified.layoutEvidenceByAttemptKey[reportAttemptKey(attempt)],
   ));
   if (!scorerSourceBytesByRole || typeof scorerSourceBytesByRole !== "object" || Array.isArray(scorerSourceBytesByRole)
     || canonicalJson(Object.keys(scorerSourceBytesByRole).sort()) !== canonicalJson(REQUIRED_SCORER_SOURCE_ROLES)) {
@@ -780,7 +819,7 @@ export function scorePhase1Report(report, {
     const bytes = Buffer.from(source.bytes);
     return { role, path: source.path, bytes: bytes.length, sha256: sha256(bytes) };
   });
-  for (const [role, value] of [["scoring_oracle", oracle], ["oracle_schema", oracleSchema], ["score_schema", scoreSchema], ["report_schema", verification.reportSchema]]) {
+  for (const [role, value] of [["scoring_oracle", oracle], ["oracle_schema", oracleSchema], ["layout_oracle", layoutOracle], ["layout_oracle_schema", layoutOracleSchema], ["score_schema", scoreSchema], ["report_schema", verification.reportSchema]]) {
     if (canonicalJson(JSON.parse(Buffer.from(scorerSourceBytesByRole[role].bytes).toString("utf8"))) !== canonicalJson(value)) {
       throw new Error(`Extraction scorer source role ${role} differs from its parsed scoring input`);
     }
@@ -801,20 +840,17 @@ export function scorePhase1Report(report, {
     oracle_sha256: sha256(Buffer.from(canonicalJson(oracle))),
     oracle_bytes_sha256: sha256(Buffer.from(oracleBytes)),
     oracle_schema_sha256: sha256(Buffer.from(canonicalJson(oracleSchema))),
+    layout_oracle_sha256: sha256(Buffer.from(canonicalJson(layoutOracle))),
+    layout_oracle_bytes_sha256: sha256(Buffer.from(layoutOracleBytes)),
+    layout_oracle_schema_sha256: sha256(Buffer.from(canonicalJson(layoutOracleSchema))),
     preflight_evidence_sha256: report.preflight_evidence_sha256,
     preflight_evidence_bytes_sha256: sha256(Buffer.from(preflightEvidenceBytes)),
     attempts,
     aggregate: aggregate(attempts, report, verification.registry, verification.manifest),
     stability: stability(attempts, verification.plan),
-    canonical_evidence: {
-      availability: "unavailable",
-      page: null,
-      bbox: null,
-      fact: null,
-      answer: null,
-    },
+    canonical_evidence: aggregateLayoutCanonicalEvidence(attempts),
     unavailable_claims: [
-      "Canonical ODA evidence correctness and completeness",
+      "Canonical ODA evidence outside exact source-validated layout_ir attempts",
       "Process-tree peak memory",
       "CPU time and CPU limits",
       "Process-count limits",
@@ -862,6 +898,9 @@ export function createPhase1ScoreBundle(score, {
       oracle_sha256: score.oracle_sha256,
       oracle_bytes_sha256: score.oracle_bytes_sha256,
       oracle_schema_sha256: score.oracle_schema_sha256,
+      layout_oracle_sha256: score.layout_oracle_sha256,
+      layout_oracle_bytes_sha256: score.layout_oracle_bytes_sha256,
+      layout_oracle_schema_sha256: score.layout_oracle_schema_sha256,
       score_schema_sha256: sha256(Buffer.from(canonicalJson(scoreSchema))),
       preflight_evidence_sha256: score.preflight_evidence_sha256,
       preflight_evidence_bytes_sha256: score.preflight_evidence_bytes_sha256,
@@ -873,7 +912,7 @@ export function createPhase1ScoreBundle(score, {
   return { score, scoreText, index, indexText: `${JSON.stringify(index, null, 2)}\n` };
 }
 
-export function verifyPhase1ScoreBundle({
+export async function verifyPhase1ScoreBundle({
   scoreText,
   index,
   report,
@@ -896,7 +935,7 @@ export function verifyPhase1ScoreBundle({
   }
   const retained = JSON.parse(scoreText);
   assertSchema(retained, context.scoreSchema, "retained extraction Phase 1 score report");
-  const rescored = scorePhase1Report(report, context);
+  const rescored = await scorePhase1Report(report, context);
   if (canonicalJson(retained) !== canonicalJson(rescored)) {
     throw new Error("Retained extraction Phase 1 score differs from independent rescore");
   }
@@ -907,6 +946,9 @@ export function verifyPhase1ScoreBundle({
     oracle_sha256: retained.oracle_sha256,
     oracle_bytes_sha256: retained.oracle_bytes_sha256,
     oracle_schema_sha256: retained.oracle_schema_sha256,
+    layout_oracle_sha256: retained.layout_oracle_sha256,
+    layout_oracle_bytes_sha256: retained.layout_oracle_bytes_sha256,
+    layout_oracle_schema_sha256: retained.layout_oracle_schema_sha256,
     score_schema_sha256: sha256(Buffer.from(canonicalJson(context.scoreSchema))),
     preflight_evidence_sha256: retained.preflight_evidence_sha256,
     preflight_evidence_bytes_sha256: retained.preflight_evidence_bytes_sha256,

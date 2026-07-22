@@ -22,7 +22,7 @@ const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f
 const INDEX_KEYS = ["artifacts", "claim_ready", "index_content_sha256", "index_id", "index_version", "kind", "run_id", "source_generation_sha256", "state", "transaction_id"];
 const SCORE_PROVENANCE_BINDING_KEYS = [
   "execution_report_bytes_sha256", "execution_report_sha256", "oracle_bytes_sha256", "oracle_schema_sha256",
-  "oracle_sha256", "phase0_manifest_sha256", "preflight_evidence_bytes_sha256", "preflight_evidence_sha256",
+  "oracle_sha256", "layout_oracle_bytes_sha256", "layout_oracle_schema_sha256", "layout_oracle_sha256", "phase0_manifest_sha256", "preflight_evidence_bytes_sha256", "preflight_evidence_sha256",
   "score_schema_sha256", "scorer_contract_sha256", "scorer_source_set_sha256",
 ];
 
@@ -242,6 +242,7 @@ export async function publishImmutableGeneration({
   await writeVerifiedFile(stagingPath, { role: "execution_index", filename: "execution-index.v1.json", bytes: indexBytes }, faultInjector, true);
   await inject(faultInjector, "after_commit_marker", { stagingPath });
   let published = false;
+  let finalGenerationSha256 = null;
   try {
     const stagingInspection = await inspectGenerationDirectory(stagingPath, {
       allowStaging: true,
@@ -265,6 +266,7 @@ export async function publishImmutableGeneration({
     await inject(faultInjector, "after_final_rename", { generationPath });
     const finalInspection = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: transactionId });
     if (finalInspection.state !== "complete") throw new Error(`Final generation failed exact reinspection: ${finalInspection.reason}`);
+    finalGenerationSha256 = finalInspection.generation_sha256;
     await runSemanticGenerationVerifier({
       verifier: finalGenerationVerifier,
       generationPath,
@@ -284,7 +286,10 @@ export async function publishImmutableGeneration({
     throw error;
   }
   const completedInspection = await inspectGenerationDirectory(generationPath);
-  if (completedInspection.state !== "complete") throw new Error(`Completed generation failed claim-free reinspection: ${completedInspection.reason}`);
+  if (completedInspection.state !== "complete" || completedInspection.generation_sha256 !== finalGenerationSha256) {
+    throw new Error(`Completed generation failed claim-free reinspection: ${completedInspection.reason ?? "generation_digest_changed"}`);
+  }
+  await runSemanticGenerationVerifier({ verifier: finalGenerationVerifier, generationPath, inspection: completedInspection });
   return {
     state: "complete",
     generationPath,
@@ -407,6 +412,10 @@ export async function inspectGenerationDirectory(generationPath, { allowStaging 
 
 function requiresSemanticGenerationVerification(index) {
   return index.artifacts.some(item => ["privacy_attestation", "received_privacy_attestation"].includes(item.role));
+}
+
+function requiresCompositeExtractionVerification(index) {
+  return index.artifacts.some(item => item.role === "phase0_corpus");
 }
 
 async function runSemanticGenerationVerifier({ verifier, generationPath, inspection }) {
@@ -536,12 +545,19 @@ export async function receiveVerifiedGeneration({
   destinationTrustedProhibitedRoots = [],
   copyFaultInjector = null,
   publicationFaultInjector = null,
+  semanticVerifier = null,
 }) {
   if (!UUID_V4.test(transactionId)) throw new Error("Cross-device receive transaction identity is invalid");
   const realSourceGenerationPath = await fs.realpath(path.resolve(sourceGenerationPath));
   const sourceBefore = await inspectGenerationDirectory(realSourceGenerationPath);
   if (sourceBefore.state !== "complete" || !["execution", "score"].includes(sourceBefore.index.kind)) {
     throw new Error("Cross-device receive requires a complete original execution or score generation");
+  }
+  if (requiresCompositeExtractionVerification(sourceBefore.index) && typeof semanticVerifier !== "function") {
+    throw new Error("Cross-device receive requires a composite extraction semantic verifier");
+  }
+  if (requiresCompositeExtractionVerification(sourceBefore.index)) {
+    await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath: realSourceGenerationPath, inspection: sourceBefore });
   }
   const sourcePrivacyArtifact = await readVerifiedGenerationArtifact(realSourceGenerationPath, sourceBefore, "privacy_attestation");
   const sourcePrivacyAttestation = JSON.parse(sourcePrivacyArtifact.bytes);
@@ -604,6 +620,9 @@ export async function receiveVerifiedGeneration({
   const sourceAfter = await inspectGenerationDirectory(realSourceGenerationPath);
   if (sourceAfter.state !== "complete" || sourceAfter.generation_sha256 !== sourceBefore.generation_sha256
     || !sourceAfter.indexBytes.equals(sourceBefore.indexBytes)) throw new Error("Source generation changed during cross-device copy");
+  if (requiresCompositeExtractionVerification(sourceAfter.index)) {
+    await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath: realSourceGenerationPath, inspection: sourceAfter });
+  }
   await inject(copyFaultInjector, "after_source_generation_reinspection", { sourceGenerationPath: realSourceGenerationPath });
   const receipt = createCrossDeviceReceipt({
     runId: sourceBefore.index.run_id, indexBytes: sourceBefore.indexBytes, sourceGenerationSha256: sourceBefore.generation_sha256,
@@ -659,6 +678,7 @@ export async function receiveVerifiedGeneration({
       privacyAttestation: receivedPrivacyAttestation,
       privacyRole: "received_privacy_attestation",
     });
+    if (requiresCompositeExtractionVerification(stagingInspection.index)) await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath: stagingPath, inspection: stagingInspection });
     for (const artifact of sourceBefore.index.artifacts) {
       const received = stagingInspection.index.artifacts.find(item => item.role === artifact.role);
       if (canonicalJson(received) !== canonicalJson(artifact)) throw new Error(`Received staging generation changed a source artifact record: ${artifact.role}`);
@@ -681,6 +701,7 @@ export async function receiveVerifiedGeneration({
       privacyAttestation: receivedPrivacyAttestation,
       privacyRole: "received_privacy_attestation",
     });
+    if (requiresCompositeExtractionVerification(destination.index)) await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: destination });
     for (const artifact of sourceBefore.index.artifacts) {
       const received = destination.index.artifacts.find(item => item.role === artifact.role);
       if (canonicalJson(received) !== canonicalJson(artifact)) throw new Error(`Received generation changed a source artifact record: ${artifact.role}`);
@@ -695,12 +716,14 @@ export async function receiveVerifiedGeneration({
       privacyAttestation: receivedPrivacyAttestation,
       privacyRole: "received_privacy_attestation",
     });
+    if (requiresCompositeExtractionVerification(finalInspection.index)) await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: finalInspection });
     await fs.unlink(claimPath);
     await fsyncDirectory(destinationParentDirectory);
     const completedDestination = await inspectGenerationDirectory(generationPath);
     if (completedDestination.state !== "complete" || completedDestination.generation_sha256 !== destination.generation_sha256) {
       throw new Error("Received generation failed claim-free reinspection");
     }
+    if (requiresCompositeExtractionVerification(completedDestination.index)) await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: completedDestination });
     return {
       state: "complete", generationPath, generationName, index, indexBytes, receipt, source: sourceBefore, destination: completedDestination,
       generation_sha256: completedDestination.generation_sha256,
@@ -766,6 +789,7 @@ export async function recoverVerifiedStagingGeneration({ stagingPath, generation
   if (completedInspection.state !== "complete" || completedInspection.generation_sha256 !== inspection.generation_sha256) {
     return { state: "corruption", reason: "recovered_generation_failed_claim_free_reinspection" };
   }
+  await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: completedInspection });
   return { ...completedInspection, state: "recovered_complete", generationPath };
 }
 
@@ -798,5 +822,6 @@ export async function recoverPublishedGeneration({ generationPath, faultInjector
   if (completedInspection.state !== "complete" || completedInspection.generation_sha256 !== inspection.generation_sha256) {
     return { state: "corruption", reason: "recovered_generation_failed_claim_free_reinspection" };
   }
+  await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: completedInspection });
   return { ...completedInspection, state: "recovered_complete", generationPath };
 }

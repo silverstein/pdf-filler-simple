@@ -16,10 +16,10 @@
     },
     "bindings": {
       "type": "object", "additionalProperties": false,
-      "required": ["execution_report_sha256", "execution_report_bytes_sha256", "phase0_manifest_sha256", "oracle_sha256", "oracle_bytes_sha256", "oracle_schema_sha256", "score_schema_sha256", "preflight_evidence_sha256", "preflight_evidence_bytes_sha256", "scorer_contract_sha256", "scorer_source_set_sha256"],
+      "required": ["execution_report_sha256", "execution_report_bytes_sha256", "phase0_manifest_sha256", "oracle_sha256", "oracle_bytes_sha256", "oracle_schema_sha256", "layout_oracle_sha256", "layout_oracle_bytes_sha256", "layout_oracle_schema_sha256", "score_schema_sha256", "preflight_evidence_sha256", "preflight_evidence_bytes_sha256", "scorer_contract_sha256", "scorer_source_set_sha256"],
       "properties": {
         "execution_report_sha256": { "$ref": "#/$defs/sha256" }, "execution_report_bytes_sha256": { "$ref": "#/$defs/sha256" }, "phase0_manifest_sha256": { "$ref": "#/$defs/sha256" }, "oracle_sha256": { "$ref": "#/$defs/sha256" }, "oracle_bytes_sha256": { "$ref": "#/$defs/sha256" },
-        "oracle_schema_sha256": { "$ref": "#/$defs/sha256" }, "score_schema_sha256": { "$ref": "#/$defs/sha256" }, "preflight_evidence_sha256": { "$ref": "#/$defs/sha256" }, "preflight_evidence_bytes_sha256": { "$ref": "#/$defs/sha256" }, "scorer_contract_sha256": { "$ref": "#/$defs/sha256" }, "scorer_source_set_sha256": { "$ref": "#/$defs/sha256" }
+        "oracle_schema_sha256": { "$ref": "#/$defs/sha256" }, "layout_oracle_sha256": { "$ref": "#/$defs/sha256" }, "layout_oracle_bytes_sha256": { "$ref": "#/$defs/sha256" }, "layout_oracle_schema_sha256": { "$ref": "#/$defs/sha256" }, "score_schema_sha256": { "$ref": "#/$defs/sha256" }, "preflight_evidence_sha256": { "$ref": "#/$defs/sha256" }, "preflight_evidence_bytes_sha256": { "$ref": "#/$defs/sha256" }, "scorer_contract_sha256": { "$ref": "#/$defs/sha256" }, "scorer_source_set_sha256": { "$ref": "#/$defs/sha256" }
       }
     }
   },
