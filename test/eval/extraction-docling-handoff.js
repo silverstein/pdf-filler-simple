@@ -231,13 +231,13 @@ async function prepareDoclingMacHandoffCore({
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
         UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
-      authority_command: ["$NODE", "$AUTHORITY", "setup", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256", "--protected-roots-json", "$OUT_OF_BAND_PROTECTED_ROOTS_JSON"],
+      authority_command: ["/usr/bin/env", "-i", "HOME=$AUTHORITY_HOME", "TMPDIR=$AUTHORITY_TMP", "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "$NODE", "$LAUNCHER", "--action", "setup", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256", "--protected-roots-json", "$OUT_OF_BAND_PROTECTED_ROOTS_JSON"],
       commands: [
         ["$UV", "python", "install", "3.12.13"],
         ["$UV", "venv", "--python", "3.12.13", "$VENV_ROOT"],
         ["$UV", "pip", "compile", "$DIRECT_REQUIREMENTS", "--python", "$PYTHON", "--generate-hashes", "--output-file", "$LOCK"],
         ["$UV", "pip", "sync", "$LOCK", "--python", "$PYTHON", "--require-hashes"],
-        ["$PYTHON", "-B", "$MODEL_SETUP_HELPER", "--config", "$CONFIG", "--expected-config-sha256", "$CONFIG_SHA256", "--models-path", "$MODELS_ROOT"],
+        ["$PYTHON", "-I", "-B", "$MODEL_SETUP_HELPER", "--config", "$CONFIG", "--expected-config-sha256", "$CONFIG_SHA256", "--models-path", "$MODELS_ROOT"],
       ],
       finalization: { protocol: "pdf-tools.docling-finalization.v1", out_of_band_sha256_required: true },
     },
@@ -249,8 +249,8 @@ async function prepareDoclingMacHandoffCore({
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
         UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
-      authority_command: ["$NODE", "$AUTHORITY", "execute", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256", "--protected-roots-json", "$OUT_OF_BAND_PROTECTED_ROOTS_JSON", "--finalization", "$FINALIZATION", "--expected-finalization-sha256", "$OUT_OF_BAND_FINALIZATION_SHA256"],
-      adapter_command: ["$PYTHON", "-B", "$ADAPTER", "--config", "$CONFIG", "--artifacts-path", "$MODELS_ROOT", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256"],
+      authority_command: ["/usr/bin/env", "-i", "HOME=$AUTHORITY_HOME", "TMPDIR=$AUTHORITY_TMP", "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "$NODE", "$LAUNCHER", "--action", "execute", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256", "--protected-roots-json", "$OUT_OF_BAND_PROTECTED_ROOTS_JSON", "--finalization", "$FINALIZATION", "--expected-finalization-sha256", "$OUT_OF_BAND_FINALIZATION_SHA256"],
+      adapter_command: ["$PYTHON", "-I", "-B", "$ADAPTER", "--config", "$CONFIG", "--artifacts-path", "$MODELS_ROOT", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256"],
     },
   };
 
@@ -325,15 +325,16 @@ async function prepareDoclingMacHandoffCore({
   const adapterPath = path.join(snapshotRoot, "adapter.py");
   const setupHelperPath = path.join(snapshotRoot, "fetch_pinned_layout.py");
   const configPath = path.join(snapshotRoot, "docling-candidate-config.v1.json");
-  const authorityPath = path.join(snapshotRoot, "eval-docling-authority.mjs");
+  const launcherPath = path.join(repoRoot, "scripts/eval-verify-docling-macos-handoff.mjs");
   const configSha256 = retainedInputs.find(item => item.role === "candidate_config").sha256;
   const receiptPath = path.join(runRoot, "docling-handoff.v1.json");
   const finalizationPath = path.join(runRoot, "docling-finalization.v1.json");
   const receiptShaPlaceholder = "$OUT_OF_BAND_RECEIPT_SHA256";
   const finalizationShaPlaceholder = "$OUT_OF_BAND_FINALIZATION_SHA256";
   const protectedRootsPlaceholder = "$OUT_OF_BAND_PROTECTED_ROOTS_JSON";
-  const setupAuthorityCommand = [node.path, authorityPath, "setup", "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder, "--protected-roots-json", protectedRootsPlaceholder];
-  const executionAuthorityCommand = [node.path, authorityPath, "execute", "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder, "--protected-roots-json", protectedRootsPlaceholder, "--finalization", finalizationPath, "--expected-finalization-sha256", finalizationShaPlaceholder];
+  const cleanLauncherPrefix = ["/usr/bin/env", "-i", `HOME=${authorityHome}`, `TMPDIR=${authorityTmp}`, "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", node.path, launcherPath];
+  const setupAuthorityCommand = [...cleanLauncherPrefix, "--action", "setup", "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder, "--protected-roots-json", protectedRootsPlaceholder];
+  const executionAuthorityCommand = [...cleanLauncherPrefix, "--action", "execute", "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder, "--protected-roots-json", protectedRootsPlaceholder, "--finalization", finalizationPath, "--expected-finalization-sha256", finalizationShaPlaceholder];
   const pythonPath = path.join(venvRoot, "bin", "python");
   const baseEnvironment = {
     HOME: authorityHome, TMPDIR: authorityTmp, PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
@@ -377,7 +378,7 @@ async function prepareDoclingMacHandoffCore({
         [uv.path, "venv", "--python", "3.12.13", venvRoot],
         [uv.path, "pip", "compile", inputPath, "--python", pythonPath, "--generate-hashes", "--output-file", lockPath],
         [uv.path, "pip", "sync", lockPath, "--python", pythonPath, "--require-hashes"],
-        [pythonPath, "-B", setupHelperPath, "--config", configPath, "--expected-config-sha256", configSha256, "--models-path", modelsRoot],
+        [pythonPath, "-I", "-B", setupHelperPath, "--config", configPath, "--expected-config-sha256", configSha256, "--models-path", modelsRoot],
       ],
       finalization: { protocol: "pdf-tools.docling-finalization.v1", path: finalizationPath, out_of_band_sha256_required: true },
     },
@@ -389,7 +390,7 @@ async function prepareDoclingMacHandoffCore({
         HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1",
       },
       command_template: executionAuthorityCommand,
-      adapter_command: [pythonPath, "-B", adapterPath, "--config", configPath, "--artifacts-path", modelsRoot, "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder],
+      adapter_command: [pythonPath, "-I", "-B", adapterPath, "--config", configPath, "--artifacts-path", modelsRoot, "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder],
       fixture_presentation: "Runner stages each retained PDF as source.pdf and does not expose this receipt or Phase 0 truth to the candidate request.",
     },
     claim_boundary: "Unexecuted private evaluation handoff only. No benchmark, package, product, redistribution, or release claim is authorized.",

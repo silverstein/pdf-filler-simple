@@ -38,9 +38,9 @@ async function setup({ failDownload = false } = {}) {
   return { root, parent, models, fakeModuleRoot, configPath, configSha: sha256(configBytes) };
 }
 
-function run(fixture, expectedSha = fixture.configSha) {
+function run(fixture, expectedSha = fixture.configSha, environment = {}) {
   return spawnSync("python3", [HELPER, "--config", fixture.configPath, "--expected-config-sha256", expectedSha, "--models-path", fixture.models], {
-    env: { PATH: process.env.PATH, PYTHONPATH: fixture.fakeModuleRoot, PYTHONDONTWRITEBYTECODE: "1" }, encoding: "utf8",
+    env: { PATH: process.env.PATH, PYTHONPATH: fixture.fakeModuleRoot, PYTHONDONTWRITEBYTECODE: "1", ...environment }, encoding: "utf8",
   });
 }
 
@@ -71,5 +71,17 @@ describe("Docling pinned model helper", () => {
     expect(run(interrupted).status).not.toBe(0);
     expect(await fs.stat(interrupted.models).catch(error => error.code)).toBe("ENOENT");
     expect((await fs.readdir(interrupted.parent)).some(name => name.includes(".staging-"))).toBe(false);
+  });
+
+  it("reconciles only an intent-marked target after post-rename parent fsync failure", async () => {
+    const fixture = await setup();
+    const failed = run(fixture, fixture.configSha, { PDF_TOOLS_DOCLING_TEST_PARENT_FSYNC_FAILURE: "1" });
+    expect(failed.status).not.toBe(0);
+    expect((await fs.stat(fixture.models)).isDirectory()).toBe(true);
+    expect((await fs.readdir(fixture.parent)).some(name => name.endsWith(".publication-intent.v1.json"))).toBe(true);
+    const recovered = run(fixture);
+    expect(recovered.status, recovered.stderr).toBe(0);
+    expect(JSON.parse(recovered.stdout)).toMatchObject({ reused: false, recovered_after_parent_fsync: true });
+    expect((await fs.readdir(fixture.parent)).sort()).toEqual(["fresh-target"]);
   });
 });

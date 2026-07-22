@@ -39,20 +39,24 @@ It creates content-addressed inputs under these private local roots:
 The builder refuses destinations under Documents, iCloud, Dropbox, or another
 configured protected root. It copies only PDF bytes into the candidate handoff,
 not the Phase 0 manifest, case IDs, expected values, or ground truth. The JSON
-receipt contains the exact setup/execution recipe and hashes for every retained
-input. Its SHA-256 must be carried out of band. Before either setup or execution,
-run the retained verifier with that digest; the adapter independently requires
-the same receipt and digest. A mutable receipt, config, adapter, fixture, helper,
-or `uv` binary fails closed.
+receipt contains the exact clean-launcher setup/execution recipe and hashes for
+every retained input. Its SHA-256 and protected-root JSON must be carried out of
+band. The trusted launcher verifies the exact Node binary and retained authority,
+executes a sealed copy with a NODE-free allowlisted environment, then verifies
+both again. The adapter independently requires the same receipt and digest. A
+mutable receipt, config, adapter, fixture, helper, launcher, authority, Node, or
+`uv` binary fails closed.
 
 The networked setup phase resolves and hashes the full Python lock, then fetches
 the exact layout-model repository revision. The model setup helper verifies the
 receipt-bound config SHA-256, expected weight byte length and SHA-256, exact
-config files, file modes, and complete file inventory. A valid existing
-content-addressed model root is reused; any extra or changed file fails closed.
-No model is downloaded by the handoff builder itself. `UV_PYTHON_INSTALL_DIR`
-is pinned below the private cache, and `PYTHONDONTWRITEBYTECODE=1` applies to
-setup and execution.
+config files, file modes, and complete file inventory. Each handoff uses a fresh
+target published with an atomic no-replace operation. Only an explicit durable
+publication-intent record may reconcile a post-rename parent-fsync failure; an
+unmarked existing target fails closed. No model is downloaded by the handoff
+builder itself. `UV_PYTHON_INSTALL_DIR` is pinned below the private cache. All
+Python processes use isolated `-I -B` startup, and authority HOME/TMPDIR must
+remain empty.
 
 The execution phase sets the Hugging Face and Transformers offline variables,
 uses the explicit local artifacts directory, and disables Docling remote
@@ -65,6 +69,10 @@ process repetitions per case, immutable generation publication, scoring, and
 independent review. Runtime evidence must inventory the exact managed Python,
 virtual environment, resolved lock, and model tree before and after three
 distinct fresh processes, with no `.pyc` or `__pycache__` drift.
+The retained finalization schema is the declarative form of the contract. The
+self-contained authority enforces an exact manual mirror of all of its shape,
+cardinality, version, path, mode, link, and byte constraints before live-state
+comparison.
 
 The synthetic fixture is a scrubbed DoclingDocument 1.10-shaped projection of
 only the fields consumed by the adapter. Its strict local schema is not a claim

@@ -11,6 +11,9 @@ const SELF = fileURLToPath(import.meta.url);
 const SHA256 = /^[a-f0-9]{64}$/;
 const MAX_RECEIPT_BYTES = 1024 * 1024;
 const MAX_INPUT_BYTES = 128 * 1024 * 1024;
+const MAX_TREE_ENTRIES = 50000;
+const MAX_TREE_FILE_BYTES = 512 * 1024 * 1024;
+const MAX_TREE_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
 const EXPECTED_ROLES = new Set([
   "adapter_entrypoint", "model_setup_helper", "candidate_config", "candidate_config_schema",
   "candidate_request_schema", "candidate_response_schema", "handoff_schema", "handoff_generator_source",
@@ -87,6 +90,17 @@ async function assertDirectory(filename, { allowMissingLeaf = false } = {}) {
   return checked;
 }
 
+async function assertEmptyDirectory(filename, label) {
+  await assertDirectory(filename);
+  if ((await fs.readdir(filename)).length !== 0) throw new Error(`${label} must remain empty across authority actions`);
+}
+
+function assertCleanAuthorityStartup() {
+  if (process.execArgv.length !== 0 || Object.keys(process.env).some(name => name.startsWith("NODE_"))) {
+    throw new Error("Docling authority requires clean Node startup without exec arguments or NODE_* state");
+  }
+}
+
 function parseProtectedRoots(raw) {
   let roots;
   try { roots = JSON.parse(raw); } catch { throw new Error("Out-of-band protected roots are not JSON"); }
@@ -119,6 +133,10 @@ async function verifyRootPolicy(receipt, protectedRoots) {
   if (!within(receipt.roots.runs, receipt.roots.authority_home) || !within(receipt.roots.runs, receipt.roots.authority_tmp)) {
     throw new Error("Authority HOME/TMPDIR must remain under the run root");
   }
+  await Promise.all([
+    assertEmptyDirectory(receipt.roots.authority_home, "Authority HOME"),
+    assertEmptyDirectory(receipt.roots.authority_tmp, "Authority TMPDIR"),
+  ]);
 }
 
 function assertReceiptShape(receipt) {
@@ -155,6 +173,8 @@ function assertRealizedRecipe(receipt, receiptPath) {
   const receiptDigestPlaceholder = "$OUT_OF_BAND_RECEIPT_SHA256";
   const protectedRootsPlaceholder = "$OUT_OF_BAND_PROTECTED_ROOTS_JSON";
   const finalizationDigestPlaceholder = "$OUT_OF_BAND_FINALIZATION_SHA256";
+  const launcherPath = receipt.setup?.authority_command?.[8];
+  if (typeof launcherPath !== "string" || path.resolve(launcherPath) !== launcherPath) throw new Error("Receipt launcher path is invalid");
   const baseEnvironment = {
     HOME: receipt.roots.authority_home, TMPDIR: receipt.roots.authority_tmp, PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
     UV_CACHE_DIR: receipt.roots.uv, UV_PYTHON_INSTALL_DIR: receipt.roots.uv_python_install, PYTHONDONTWRITEBYTECODE: "1",
@@ -164,18 +184,22 @@ function assertRealizedRecipe(receipt, receiptPath) {
     [receipt.toolchain.uv.path, "venv", "--python", "3.12.13", venv],
     [receipt.toolchain.uv.path, "pip", "compile", rolePath("direct_requirements"), "--python", python, "--generate-hashes", "--output-file", lock],
     [receipt.toolchain.uv.path, "pip", "sync", lock, "--python", python, "--require-hashes"],
-    [python, "-B", rolePath("model_setup_helper"), "--config", rolePath("candidate_config"), "--expected-config-sha256", recordByRole(receipt, "candidate_config").sha256, "--models-path", receipt.roots.models],
+    [python, "-I", "-B", rolePath("model_setup_helper"), "--config", rolePath("candidate_config"), "--expected-config-sha256", recordByRole(receipt, "candidate_config").sha256, "--models-path", receipt.roots.models],
   ];
   const expectedAdapterCommand = [
-    python, "-B", rolePath("adapter_entrypoint"), "--config", rolePath("candidate_config"), "--artifacts-path", receipt.roots.models,
+    python, "-I", "-B", rolePath("adapter_entrypoint"), "--config", rolePath("candidate_config"), "--artifacts-path", receipt.roots.models,
     "--receipt", receiptPath, "--expected-receipt-sha256", receiptDigestPlaceholder,
   ];
+  const cleanLauncherPrefix = [
+    "/usr/bin/env", "-i", `HOME=${receipt.roots.authority_home}`, `TMPDIR=${receipt.roots.authority_tmp}`,
+    "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", receipt.toolchain.node.path, launcherPath,
+  ];
   const expectedSetupAuthority = [
-    receipt.toolchain.node.path, SELF, "setup", "--receipt", receiptPath, "--expected-receipt-sha256", receiptDigestPlaceholder,
+    ...cleanLauncherPrefix, "--action", "setup", "--receipt", receiptPath, "--expected-receipt-sha256", receiptDigestPlaceholder,
     "--protected-roots-json", protectedRootsPlaceholder,
   ];
   const expectedExecuteAuthority = [
-    receipt.toolchain.node.path, SELF, "execute", "--receipt", receiptPath, "--expected-receipt-sha256", receiptDigestPlaceholder,
+    ...cleanLauncherPrefix, "--action", "execute", "--receipt", receiptPath, "--expected-receipt-sha256", receiptDigestPlaceholder,
     "--protected-roots-json", protectedRootsPlaceholder, "--finalization", finalization,
     "--expected-finalization-sha256", finalizationDigestPlaceholder,
   ];
@@ -186,13 +210,13 @@ function assertRealizedRecipe(receipt, receiptPath) {
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
         UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
-      authority_command: ["$NODE", "$AUTHORITY", "setup", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder, "--protected-roots-json", protectedRootsPlaceholder],
+      authority_command: ["/usr/bin/env", "-i", "HOME=$AUTHORITY_HOME", "TMPDIR=$AUTHORITY_TMP", "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "$NODE", "$LAUNCHER", "--action", "setup", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder, "--protected-roots-json", protectedRootsPlaceholder],
       commands: [
         ["$UV", "python", "install", "3.12.13"],
         ["$UV", "venv", "--python", "3.12.13", "$VENV_ROOT"],
         ["$UV", "pip", "compile", "$DIRECT_REQUIREMENTS", "--python", "$PYTHON", "--generate-hashes", "--output-file", "$LOCK"],
         ["$UV", "pip", "sync", "$LOCK", "--python", "$PYTHON", "--require-hashes"],
-        ["$PYTHON", "-B", "$MODEL_SETUP_HELPER", "--config", "$CONFIG", "--expected-config-sha256", "$CONFIG_SHA256", "--models-path", "$MODELS_ROOT"],
+        ["$PYTHON", "-I", "-B", "$MODEL_SETUP_HELPER", "--config", "$CONFIG", "--expected-config-sha256", "$CONFIG_SHA256", "--models-path", "$MODELS_ROOT"],
       ],
       finalization: { protocol: "pdf-tools.docling-finalization.v1", out_of_band_sha256_required: true },
     },
@@ -203,8 +227,8 @@ function assertRealizedRecipe(receipt, receiptPath) {
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
         UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
-      authority_command: ["$NODE", "$AUTHORITY", "execute", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder, "--protected-roots-json", protectedRootsPlaceholder, "--finalization", "$FINALIZATION", "--expected-finalization-sha256", finalizationDigestPlaceholder],
-      adapter_command: ["$PYTHON", "-B", "$ADAPTER", "--config", "$CONFIG", "--artifacts-path", "$MODELS_ROOT", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder],
+      authority_command: ["/usr/bin/env", "-i", "HOME=$AUTHORITY_HOME", "TMPDIR=$AUTHORITY_TMP", "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", "$NODE", "$LAUNCHER", "--action", "execute", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder, "--protected-roots-json", protectedRootsPlaceholder, "--finalization", "$FINALIZATION", "--expected-finalization-sha256", finalizationDigestPlaceholder],
+      adapter_command: ["$PYTHON", "-I", "-B", "$ADAPTER", "--config", "$CONFIG", "--artifacts-path", "$MODELS_ROOT", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder],
     },
   };
   if (canonicalJson(receipt.identity.recipe) !== canonicalJson(expectedNormalizedRecipe)
@@ -218,6 +242,7 @@ function assertRealizedRecipe(receipt, receiptPath) {
     || canonicalJson(receipt.execution.adapter_command) !== canonicalJson(expectedAdapterCommand)) {
     throw new Error("Receipt does not realize the retained authority recipe");
   }
+  return launcherPath;
 }
 
 async function verifyTool(tool, label) {
@@ -226,7 +251,23 @@ async function verifyTool(tool, label) {
   if (bytes.length !== tool.bytes || sha256(bytes) !== tool.sha256) throw new Error(`${label} binary differs from receipt identity`);
 }
 
+async function verifySnapshotAllowlist(receipt) {
+  const snapshot = receipt.roots.sidecar_snapshot;
+  const expectedFiles = new Set(receipt.inputs.map(item => item.filename));
+  const entries = await fs.readdir(snapshot, { withFileTypes: true });
+  for (const entry of entries) {
+    if (expectedFiles.has(entry.name)) {
+      if (!entry.isFile() || entry.isSymbolicLink()) throw new Error(`Retained snapshot input has the wrong type: ${entry.name}`);
+    } else if (entry.name === "requirements.lock") {
+      if (!entry.isFile() || entry.isSymbolicLink()) throw new Error("Retained snapshot lock has the wrong type");
+    } else if (entry.name === "venv") {
+      if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("Retained snapshot environment has the wrong type");
+    } else throw new Error(`Retained snapshot contains an unbound top-level entry: ${entry.name}`);
+  }
+}
+
 export async function verifyHandoffAuthority({ receiptPath, expectedReceiptSha256, protectedRootsJson }) {
+  assertCleanAuthorityStartup();
   if (!SHA256.test(expectedReceiptSha256 ?? "")) throw new Error("Out-of-band receipt SHA-256 is required");
   if (path.resolve(receiptPath) !== receiptPath) throw new Error("Receipt path must be canonical absolute");
   await assertNoLinkAncestors(receiptPath);
@@ -235,12 +276,13 @@ export async function verifyHandoffAuthority({ receiptPath, expectedReceiptSha25
   const receipt = JSON.parse(receiptBytes);
   if (!receiptBytes.equals(Buffer.from(`${canonicalJson(receipt)}\n`))) throw new Error("Receipt bytes are not canonical");
   assertReceiptShape(receipt);
-  assertRealizedRecipe(receipt, receiptPath);
+  const launcherPath = assertRealizedRecipe(receipt, receiptPath);
   const protectedRoots = parseProtectedRoots(protectedRootsJson);
   if (sha256(Buffer.from(`pdf-tools.docling-protected-roots.v1\0${canonicalJson(protectedRoots)}`)) !== receipt.roots.protected_roots_sha256) {
     throw new Error("Protected roots differ from the receipt-bound digest");
   }
   await verifyRootPolicy(receipt, protectedRoots);
+  await verifySnapshotAllowlist(receipt);
   const snapshot = receipt.roots.sidecar_snapshot;
   for (const item of receipt.inputs) {
     const filename = path.join(snapshot, item.filename);
@@ -248,8 +290,17 @@ export async function verifyHandoffAuthority({ receiptPath, expectedReceiptSha25
     const bytes = await readStable(filename, MAX_INPUT_BYTES, 0o600);
     if (bytes.length !== item.bytes || sha256(bytes) !== item.sha256) throw new Error(`Retained input mismatch: ${item.role}`);
   }
-  const authority = path.join(snapshot, recordByRole(receipt, "handoff_authority").filename);
-  if (await fs.realpath(SELF) !== authority) throw new Error("Executed authority is not the receipt-bound retained authority");
+  const authorityRecord = recordByRole(receipt, "handoff_authority");
+  await assertNoLinkAncestors(SELF);
+  const executedAuthority = await readStable(SELF, MAX_INPUT_BYTES, 0o400);
+  if (executedAuthority.length !== authorityRecord.bytes || sha256(executedAuthority) !== authorityRecord.sha256) {
+    throw new Error("Executed sealed authority is not the receipt-bound retained authority");
+  }
+  const launcherBytes = await readStable(launcherPath, MAX_INPUT_BYTES);
+  const launcherRecord = recordByRole(receipt, "handoff_verifier_cli");
+  if (launcherBytes.length !== launcherRecord.bytes || sha256(launcherBytes) !== launcherRecord.sha256) {
+    throw new Error("Trusted launcher no longer matches the receipt-bound launcher source");
+  }
   await Promise.all([verifyTool(receipt.toolchain.uv, "uv"), verifyTool(receipt.toolchain.node, "Node")]);
   if (await fs.realpath(process.execPath) !== receipt.toolchain.node.path) throw new Error("Executed Node is not the receipt-bound Node binary");
   const fixtureRoot = path.join(path.dirname(receiptPath), "fixtures");
@@ -276,8 +327,9 @@ function exactEnvironment(environment) {
   return Object.freeze({ ...environment });
 }
 
-async function spawnBound(command, { environment, cwd, stdin = null, stdoutLimit = 16 * 1024 * 1024, stderrLimit = 4 * 1024 * 1024 }) {
+async function spawnBound(command, { environment, cwd, isolationRoots = [], stdin = null, stdoutLimit = 16 * 1024 * 1024, stderrLimit = 4 * 1024 * 1024 }) {
   if (!Array.isArray(command) || command.length < 1 || command.some(item => typeof item !== "string" || !item)) throw new Error("Bound command is invalid");
+  for (const [index, root] of isolationRoots.entries()) await assertEmptyDirectory(root, `Authority isolation root ${index + 1}`);
   const child = spawn(command[0], command.slice(1), { cwd, env: exactEnvironment(environment), stdio: ["pipe", "pipe", "pipe"] });
   const stdout = []; const stderr = [];
   let stdoutBytes = 0; let stderrBytes = 0;
@@ -285,17 +337,43 @@ async function spawnBound(command, { environment, cwd, stdin = null, stdoutLimit
   child.stderr.on("data", chunk => { stderrBytes += chunk.length; if (stderrBytes <= stderrLimit) stderr.push(chunk); else child.kill("SIGKILL"); });
   if (stdin === null) child.stdin.end(); else child.stdin.end(stdin);
   const result = await new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code, signal) => resolve({ code, signal, pid: child.pid })); });
+  for (const [index, root] of isolationRoots.entries()) await assertEmptyDirectory(root, `Authority isolation root ${index + 1}`);
   if (stdoutBytes > stdoutLimit || stderrBytes > stderrLimit) throw new Error("Bound command exceeded its capture ceiling");
   return { ...result, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr) };
 }
 
 async function digestTree(root, allowedRoots, { strictPrivate = false } = {}) {
-  const records = [];
+  async function captureShape() {
+    const shape = []; let entriesSeen = 0;
+    async function inspect(filename, relativePath) {
+      const metadata = await fs.lstat(filename, { bigint: true });
+      const type = metadata.isSymbolicLink() ? "symlink" : metadata.isDirectory() ? "directory" : metadata.isFile() ? "file" : "unsupported";
+      const record = {
+        path: relativePath, type, dev: String(metadata.dev), ino: String(metadata.ino), nlink: String(metadata.nlink),
+        size: String(metadata.size), mode: String(metadata.mode), mtimeNs: String(metadata.mtimeNs), ctimeNs: String(metadata.ctimeNs),
+      };
+      if (type === "symlink") record.target = await fs.readlink(filename);
+      shape.push(record);
+      if (type === "directory") {
+        for (const name of (await fs.readdir(filename)).sort()) {
+          entriesSeen += 1;
+          if (entriesSeen > MAX_TREE_ENTRIES) throw new Error("Finalized tree exceeds its entry-count ceiling");
+          await inspect(path.join(filename, name), relativePath ? `${relativePath}/${name}` : name);
+        }
+      } else if (type === "unsupported") throw new Error(`Finalized tree contains an unsupported entry: ${relativePath}`);
+    }
+    await inspect(root, "");
+    return shape;
+  }
+
+  const beforeShape = await captureShape();
+  const records = []; let totalBytes = 0;
   async function walk(directory) {
     const entries = await fs.readdir(directory, { withFileTypes: true });
     for (const entry of entries.sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
       const filename = path.join(directory, entry.name);
       const relative_path = path.relative(root, filename).split(path.sep).join("/");
+      if (!relative_path || relative_path.length > 4096 || records.length >= MAX_TREE_ENTRIES) throw new Error("Finalized tree exceeds its schema bounds");
       const metadata = await fs.lstat(filename);
       const mode = metadata.mode & 0o777;
       if (metadata.isSymbolicLink()) {
@@ -313,15 +391,19 @@ async function digestTree(root, allowedRoots, { strictPrivate = false } = {}) {
         await walk(filename);
       }
       else if (metadata.isFile()) {
-        const bytes = await readStable(filename, 512 * 1024 * 1024, null, true);
+        const bytes = await readStable(filename, MAX_TREE_FILE_BYTES, null, true);
         if (![0o600, 0o644, 0o700, 0o755].includes(mode) || metadata.nlink < 1 || (strictPrivate && (mode !== 0o600 || metadata.nlink !== 1))) {
           throw new Error(`Finalized tree file violates mode/link policy: ${relative_path}`);
         }
+        totalBytes += bytes.length;
+        if (totalBytes > MAX_TREE_TOTAL_BYTES) throw new Error("Finalized tree exceeds its aggregate-byte ceiling");
         records.push({ relative_path, type: "file", bytes: bytes.length, mode, links: metadata.nlink, sha256: sha256(bytes) });
       } else throw new Error(`Finalized tree contains an unsupported entry: ${relative_path}`);
     }
   }
   await walk(root);
+  const afterShape = await captureShape();
+  if (canonicalJson(beforeShape) !== canonicalJson(afterShape)) throw new Error("Finalized tree changed across its stable second enumeration");
   return records;
 }
 
@@ -333,14 +415,15 @@ async function writeExclusive(filename, bytes) {
 async function finalizeSetup(context, receiptPath, receiptSha) {
   const { receipt } = context;
   const snapshot = receipt.roots.sidecar_snapshot;
+  const isolationRoots = [receipt.roots.authority_home, receipt.roots.authority_tmp];
   const python = path.join(snapshot, "venv", "bin", "python");
   const pythonReal = await fs.realpath(python);
   if (!within(receipt.roots.uv_python_install, pythonReal)) throw new Error("Managed Python executable escapes its receipt-bound root");
   const pythonBytes = await readStable(pythonReal, MAX_INPUT_BYTES);
-  const versionResult = await spawnBound([python, "-B", "--version"], { environment: receipt.setup.environment, cwd: receipt.roots.authority_tmp });
+  const versionResult = await spawnBound([python, "-I", "-B", "--version"], { environment: receipt.setup.environment, cwd: receipt.roots.authority_tmp, isolationRoots });
   if (versionResult.code !== 0) throw new Error("Managed Python version capture failed");
   const distributionsProgram = "import importlib.metadata,json;print(json.dumps(sorted((d.metadata['Name'],d.version) for d in importlib.metadata.distributions()),separators=(',',':')))";
-  const distributionsResult = await spawnBound([python, "-B", "-c", distributionsProgram], { environment: receipt.setup.environment, cwd: receipt.roots.authority_tmp });
+  const distributionsResult = await spawnBound([python, "-I", "-B", "-c", distributionsProgram], { environment: receipt.setup.environment, cwd: receipt.roots.authority_tmp, isolationRoots });
   if (distributionsResult.code !== 0) throw new Error("Installed distribution capture failed");
   const lockPath = path.join(snapshot, "requirements.lock");
   const lockBytes = await readStable(lockPath, 16 * 1024 * 1024, null, true);
@@ -378,6 +461,62 @@ async function finalizeSetup(context, receiptPath, receiptSha) {
   return { finalization, finalizationPath: filename, finalizationSha256: sha256(bytes) };
 }
 
+export function validateFinalizationSchemaMirror(value) {
+  const exactKeys = (candidate, expected) => candidate && typeof candidate === "object" && !Array.isArray(candidate)
+    && canonicalJson(Object.keys(candidate).sort()) === canonicalJson([...expected].sort());
+  const absolutePath = candidate => typeof candidate === "string" && candidate.length >= 2 && candidate.length <= 4096 && candidate.startsWith("/");
+  const boundedString = (candidate, maximum = Infinity) => typeof candidate === "string" && candidate.length >= 1 && candidate.length <= maximum;
+  const integer = (candidate, minimum, maximum = Infinity) => Number.isInteger(candidate) && candidate >= minimum && candidate <= maximum;
+  const topKeys = ["protocol", "handoff_id", "receipt_sha256", "platform", "toolchain", "lock", "python", "installed_distributions", "model_files", "managed_python_files", "venv_files", "root_policy", "network_isolation_enforced", "execution_state", "finalization_id"];
+  if (!exactKeys(value, topKeys) || value.protocol !== "pdf-tools.docling-finalization.v1" || !SHA256.test(value.handoff_id ?? "")
+    || !SHA256.test(value.receipt_sha256 ?? "") || !SHA256.test(value.finalization_id ?? "")
+    || value.network_isolation_enforced !== false || value.execution_state !== "setup_complete_not_executed") {
+    throw new Error("Finalization violates its retained schema mirror");
+  }
+  if (!exactKeys(value.platform, ["interpreter", "operating_system", "architecture", "os_build", "kernel_release", "node_version"])
+    || value.platform.interpreter !== "cpython-3.12.13-macos-aarch64-none" || value.platform.operating_system !== "macos"
+    || value.platform.architecture !== "arm64" || !boundedString(value.platform.os_build, 128)
+    || !boundedString(value.platform.kernel_release, 128) || !/^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(value.platform.node_version)) {
+    throw new Error("Finalization platform violates its retained schema mirror");
+  }
+  if (!exactKeys(value.toolchain, ["uv", "node"])) throw new Error("Finalization toolchain violates its retained schema mirror");
+  for (const tool of [value.toolchain.uv, value.toolchain.node]) {
+    if (!exactKeys(tool, ["path", "version", "bytes", "sha256"]) || !absolutePath(tool.path) || !boundedString(tool.version, 128)
+      || !integer(tool.bytes, 1, 134217728) || !SHA256.test(tool.sha256 ?? "")) throw new Error("Finalization tool identity violates its retained schema mirror");
+  }
+  if (!exactKeys(value.lock, ["bytes", "sha256"]) || !integer(value.lock.bytes, 0, 536870912) || !SHA256.test(value.lock.sha256 ?? "")
+    || !exactKeys(value.python, ["path", "bytes", "sha256", "version"]) || !absolutePath(value.python.path)
+    || !integer(value.python.bytes, 1, 134217728) || !SHA256.test(value.python.sha256 ?? "") || value.python.version !== "Python 3.12.13") {
+    throw new Error("Finalization lock or Python identity violates its retained schema mirror");
+  }
+  if (!Array.isArray(value.installed_distributions) || value.installed_distributions.length < 1 || value.installed_distributions.length > 10000
+    || value.installed_distributions.some(item => !Array.isArray(item) || item.length !== 2 || item.some(part => !boundedString(part)))) {
+    throw new Error("Finalization distribution inventory violates its retained schema mirror");
+  }
+  const validateTree = tree => {
+    if (!Array.isArray(tree) || tree.length < 1 || tree.length > MAX_TREE_ENTRIES) throw new Error("Finalization tree inventory violates its retained schema mirror");
+    for (const entry of tree) {
+      if (!boundedString(entry?.relative_path, 4096) || !integer(entry.links, 1)) throw new Error("Finalization tree record violates its retained schema mirror");
+      if (entry.type === "file") {
+        if (!exactKeys(entry, ["relative_path", "type", "mode", "links", "bytes", "sha256"]) || ![0o600, 0o644, 0o700, 0o755].includes(entry.mode)
+          || !integer(entry.bytes, 0, 536870912) || !SHA256.test(entry.sha256 ?? "")) throw new Error("Finalization file record violates its retained schema mirror");
+      } else if (entry.type === "directory") {
+        if (!exactKeys(entry, ["relative_path", "type", "mode", "links"]) || ![0o700, 0o755].includes(entry.mode)) throw new Error("Finalization directory record violates its retained schema mirror");
+      } else if (entry.type === "symlink") {
+        if (!exactKeys(entry, ["relative_path", "type", "mode", "links", "target"]) || entry.mode !== 0o777 || entry.links !== 1
+          || !boundedString(entry.target, 4096)) throw new Error("Finalization symlink record violates its retained schema mirror");
+      } else throw new Error("Finalization tree record type violates its retained schema mirror");
+    }
+  };
+  for (const tree of [value.model_files, value.managed_python_files, value.venv_files]) validateTree(tree);
+  const rootNames = ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp"];
+  if (!exactKeys(value.root_policy, rootNames)) throw new Error("Finalization root policy violates its retained schema mirror");
+  for (const root of Object.values(value.root_policy)) {
+    if (!exactKeys(root, ["path", "real_path", "mode", "links"]) || !absolutePath(root.path) || !absolutePath(root.real_path)
+      || root.mode !== 0o700 || !integer(root.links, 1)) throw new Error("Finalization root record violates its retained schema mirror");
+  }
+}
+
 async function verifyFinalization(context, finalizationPath, expectedFinalizationSha256) {
   if (!SHA256.test(expectedFinalizationSha256 ?? "")) throw new Error("Out-of-band finalization SHA-256 is required");
   const receiptRunRoot = path.dirname(context.receipt.setup.finalization.path);
@@ -387,15 +526,15 @@ async function verifyFinalization(context, finalizationPath, expectedFinalizatio
   const bytes = await readStable(finalizationPath, 16 * 1024 * 1024, 0o600);
   if (sha256(bytes) !== expectedFinalizationSha256) throw new Error("Finalization differs from its out-of-band SHA-256");
   const value = JSON.parse(bytes);
-  if (!bytes.equals(Buffer.from(`${canonicalJson(value)}\n`)) || value.protocol !== "pdf-tools.docling-finalization.v1"
+  if (!bytes.equals(Buffer.from(`${canonicalJson(value)}\n`))) throw new Error("Finalization is not canonical");
+  validateFinalizationSchemaMirror(value);
+  if (value.protocol !== "pdf-tools.docling-finalization.v1"
     || value.handoff_id !== context.receipt.handoff_id || value.receipt_sha256 !== sha256(context.receiptBytes)) {
     throw new Error("Finalization identity is invalid");
   }
   const { finalization_id, ...core } = value;
   if (finalization_id !== sha256(Buffer.from(`pdf-tools.docling-finalization.v1\0${canonicalJson(core)}`))) throw new Error("Finalization digest is invalid");
-  const exactTopLevel = ["execution_state", "finalization_id", "handoff_id", "installed_distributions", "lock", "managed_python_files", "model_files", "network_isolation_enforced", "platform", "protocol", "python", "receipt_sha256", "root_policy", "toolchain", "venv_files"];
-  if (canonicalJson(Object.keys(value).sort()) !== canonicalJson(exactTopLevel)
-    || value.execution_state !== "setup_complete_not_executed" || value.network_isolation_enforced !== false
+  if (value.execution_state !== "setup_complete_not_executed" || value.network_isolation_enforced !== false
     || canonicalJson(value.platform) !== canonicalJson(context.receipt.platform)
     || canonicalJson(value.toolchain) !== canonicalJson(context.receipt.toolchain)
     || !Array.isArray(value.installed_distributions)
@@ -403,15 +542,16 @@ async function verifyFinalization(context, finalizationPath, expectedFinalizatio
     throw new Error("Finalization shape or retained identity is invalid");
   }
   const snapshot = context.receipt.roots.sidecar_snapshot;
+  const isolationRoots = [context.receipt.roots.authority_home, context.receipt.roots.authority_tmp];
   const lockBytes = await readStable(path.join(snapshot, "requirements.lock"), 16 * 1024 * 1024, null, true);
   if (canonicalJson(value.lock) !== canonicalJson({ bytes: lockBytes.length, sha256: sha256(lockBytes) })) throw new Error("Finalized lock has drifted");
   const python = path.join(snapshot, "venv", "bin", "python");
   const pythonReal = await fs.realpath(python);
   if (!within(context.receipt.roots.uv_python_install, pythonReal)) throw new Error("Finalized Python escapes its receipt-bound root");
   const pythonBytes = await readStable(pythonReal, MAX_INPUT_BYTES);
-  const versionResult = await spawnBound([python, "-B", "--version"], { environment: context.receipt.setup.environment, cwd: context.receipt.roots.authority_tmp });
+  const versionResult = await spawnBound([python, "-I", "-B", "--version"], { environment: context.receipt.setup.environment, cwd: context.receipt.roots.authority_tmp, isolationRoots });
   const distributionsProgram = "import importlib.metadata,json;print(json.dumps(sorted((d.metadata['Name'],d.version) for d in importlib.metadata.distributions()),separators=(',',':')))";
-  const distributionsResult = await spawnBound([python, "-B", "-c", distributionsProgram], { environment: context.receipt.setup.environment, cwd: context.receipt.roots.authority_tmp });
+  const distributionsResult = await spawnBound([python, "-I", "-B", "-c", distributionsProgram], { environment: context.receipt.setup.environment, cwd: context.receipt.roots.authority_tmp, isolationRoots });
   if (versionResult.code !== 0 || distributionsResult.code !== 0) throw new Error("Finalized Python identity capture failed");
   const currentPython = {
     path: pythonReal, bytes: pythonBytes.length, sha256: sha256(pythonBytes),
@@ -457,7 +597,7 @@ async function main() {
   if (action === "setup") {
     for (const command of context.receipt.setup.commands) {
       context = await verifyHandoffAuthority({ receiptPath, expectedReceiptSha256, protectedRootsJson });
-      const result = await spawnBound(command, { environment: context.receipt.setup.environment, cwd: context.receipt.roots.authority_tmp });
+      const result = await spawnBound(command, { environment: context.receipt.setup.environment, cwd: context.receipt.roots.authority_tmp, isolationRoots: [context.receipt.roots.authority_home, context.receipt.roots.authority_tmp] });
       if (result.code !== 0) throw new Error(`Setup command failed (${path.basename(command[0])}): ${result.stderr.toString().slice(0, 500)}`);
       context = await verifyHandoffAuthority({ receiptPath, expectedReceiptSha256, protectedRootsJson });
     }
@@ -477,7 +617,7 @@ async function main() {
     });
     const command = context.receipt.execution.adapter_command.map(value => value === "$OUT_OF_BAND_RECEIPT_SHA256" ? expectedReceiptSha256
       : value === "$OUT_OF_BAND_FINALIZATION_SHA256" ? expectedFinalizationSha256 : value);
-    const result = await spawnBound(command, { environment: context.receipt.execution.environment, cwd: context.receipt.roots.authority_tmp, stdin: request });
+    const result = await spawnBound(command, { environment: context.receipt.execution.environment, cwd: context.receipt.roots.authority_tmp, isolationRoots: [context.receipt.roots.authority_home, context.receipt.roots.authority_tmp], stdin: request });
     context = await verifyHandoffAuthority({ receiptPath, expectedReceiptSha256, protectedRootsJson });
     await verifyFinalization(context, finalizationPath, expectedFinalizationSha256);
     if (result.code !== 0) throw new Error(`Adapter command failed: ${result.stderr.toString().slice(0, 500)}`);

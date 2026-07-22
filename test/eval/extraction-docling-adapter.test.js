@@ -85,7 +85,7 @@ async function runAdapter({ request, source, exported = EXPORT_FIXTURE, environm
   await fs.mkdir(handoff.receipt.roots.models, { mode: 0o700 });
   if (mutateSnapshot) await mutateSnapshot({ snapshot, adapter, config, handoff });
   return new Promise((resolve, reject) => {
-    const child = spawn("python3", [adapter, "--config", config, "--artifacts-path", handoff.receipt.roots.models,
+    const child = spawn("python3", ["-I", "-B", adapter, "--config", config, "--artifacts-path", handoff.receipt.roots.models,
       "--receipt", handoff.receiptPath, "--expected-receipt-sha256", handoff.receipt_sha256,
       "--translate-export", exported, ...extraArgs], {
       cwd: root,

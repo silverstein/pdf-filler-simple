@@ -1,13 +1,14 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { afterEach, describe, expect, it } from "vitest";
 import { assertSchema } from "./extraction-phase1-protocol.js";
 import {
   prepareDoclingMacHandoff,
   prepareDoclingMacHandoffForTest,
 } from "./extraction-docling-handoff.js";
-import { verifyDoclingHandoff } from "./extraction-docling-handoff-verifier.js";
+import { validateFinalizationSchemaMirror } from "../../scripts/eval-docling-authority.mjs";
 
 const roots = [];
 const DARWIN_ARM64 = {
@@ -44,11 +45,47 @@ async function options(root, fixturePaths) {
   };
 }
 
+async function mutationCase(suffix) {
+  const root = await temporaryRoot(`pdf-tools-docling-mutation-${suffix}-`);
+  const result = await prepareDoclingMacHandoffForTest(await options(root, [await fixture(root)]));
+  return { root, result };
+}
+
+function cleanVerifyCommand(result) {
+  return result.receipt.setup.authority_command.map(value => value === "setup" ? "verify"
+    : value === "$OUT_OF_BAND_RECEIPT_SHA256" ? result.receipt_sha256
+      : value === "$OUT_OF_BAND_PROTECTED_ROOTS_JSON" ? result.protected_roots_json : value);
+}
+
+function runCleanVerify(result) {
+  const command = cleanVerifyCommand(result);
+  return spawnSync(command[0], command.slice(1), { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: process.env });
+}
+
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })));
 });
 
 describe("Docling macOS handoff", () => {
+  it("enforces the retained finalization schema mirror before live-state checks", () => {
+    const sha = "a".repeat(64);
+    const tool = { path: "/private/tool", version: "tool 1.0", bytes: 1, sha256: sha };
+    const tree = [{ relative_path: "file", type: "file", mode: 0o600, links: 1, bytes: 1, sha256: sha }];
+    const rootRecord = { path: "/private/root", real_path: "/private/root", mode: 0o700, links: 1 };
+    const value = {
+      protocol: "pdf-tools.docling-finalization.v1", handoff_id: sha, receipt_sha256: sha,
+      platform: { interpreter: "cpython-3.12.13-macos-aarch64-none", operating_system: "macos", architecture: "arm64", os_build: "25G88", kernel_release: "25.6.0", node_version: "v24.4.1" },
+      toolchain: { uv: tool, node: tool }, lock: { bytes: 0, sha256: sha },
+      python: { path: "/private/python", bytes: 1, sha256: sha, version: "Python 3.12.13" },
+      installed_distributions: [["docling-slim", "2.114.0"]], model_files: tree, managed_python_files: tree, venv_files: tree,
+      root_policy: Object.fromEntries(["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp"].map(name => [name, rootRecord])),
+      network_isolation_enforced: false, execution_state: "setup_complete_not_executed", finalization_id: sha,
+    };
+    expect(() => validateFinalizationSchemaMirror(value)).not.toThrow();
+    expect(() => validateFinalizationSchemaMirror({ ...value, python: { ...value.python, version: "Python 3.12.14" } })).toThrow(/schema mirror/);
+    expect(() => validateFinalizationSchemaMirror({ ...value, model_files: [] })).toThrow(/schema mirror/);
+  });
+
   it("creates a truth-free, content-addressed, mode-0700/0600 handoff outside protected roots", async () => {
     const root = await temporaryRoot("pdf-tools-docling-handoff-");
     const source = await fixture(root);
@@ -61,13 +98,25 @@ describe("Docling macOS handoff", () => {
       setup: { network_required: true },
       execution: { offline_intent: true, network_isolation_enforced: false },
     });
+    expect(result.receipt.setup.authority_command.slice(0, 9)).toEqual([
+      "/usr/bin/env", "-i", `HOME=${result.receipt.roots.authority_home}`, `TMPDIR=${result.receipt.roots.authority_tmp}`,
+      "PATH=/usr/bin:/bin", "LANG=C", "LC_ALL=C", result.receipt.toolchain.node.path,
+      path.join(path.resolve("."), "scripts/eval-verify-docling-macos-handoff.mjs"),
+    ]);
+    expect(result.receipt.setup.commands.at(-1).slice(0, 3)).toEqual([path.join(result.receipt.roots.sidecar_snapshot, "venv/bin/python"), "-I", "-B"]);
+    expect(result.receipt.execution.adapter_command.slice(0, 3)).toEqual([path.join(result.receipt.roots.sidecar_snapshot, "venv/bin/python"), "-I", "-B"]);
     expect(result.receipt.handoff_id).toMatch(/^[a-f0-9]{64}$/);
     expect(result.receipt_sha256).toMatch(/^[a-f0-9]{64}$/);
-    await expect(verifyDoclingHandoff({
-      receiptPath: result.receiptPath,
-      expectedReceiptSha256: result.receipt_sha256,
-      protectedRootsJson: result.protected_roots_json,
-    })).resolves.toMatchObject({ receipt_sha256: result.receipt_sha256 });
+    const cleanCommand = cleanVerifyCommand(result);
+    const cleanVerify = runCleanVerify(result);
+    expect(cleanVerify.status, cleanVerify.stderr).toBe(0);
+    expect(JSON.parse(cleanVerify.stdout)).toMatchObject({ verified: true, handoff_id: result.receipt.handoff_id });
+    const dirtyVerify = spawnSync(result.receipt.toolchain.node.path, cleanCommand.slice(8), {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+      env: { HOME: result.receipt.roots.authority_home, TMPDIR: result.receipt.roots.authority_tmp, PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C", NODE_OPTIONS: "--no-warnings" },
+    });
+    expect(dirtyVerify.status).not.toBe(0);
+    expect(dirtyVerify.stderr).toMatch(/clean Node startup/);
     const serialized = JSON.stringify({ inputs: result.receipt.inputs, fixtures: result.receipt.fixtures });
     for (const forbidden of ["ground_truth", "expected", "partition", "category", "fact_ids", "truth_boxes", "answer_state"]) {
       expect(serialized).not.toContain(forbidden);
@@ -140,29 +189,61 @@ describe("Docling macOS handoff", () => {
     await expect(prepareDoclingMacHandoffForTest(await options(root, [large]))).rejects.toThrow(/bounded|8 MiB/);
   });
 
-  it("rejects receipt, retained-input, fixture, and uv mutations against the out-of-band receipt digest", async () => {
-    const create = async suffix => {
-      const root = await temporaryRoot(`pdf-tools-docling-mutation-${suffix}-`);
-      const result = await prepareDoclingMacHandoffForTest(await options(root, [await fixture(root)]));
-      return { root, result };
-    };
-    const receiptCase = await create("receipt");
+  it("rejects receipt and retained-input mutations against the out-of-band receipt digest", async () => {
+    const receiptCase = await mutationCase("receipt");
     await fs.appendFile(receiptCase.result.receiptPath, " ");
-    await expect(verifyDoclingHandoff({ receiptPath: receiptCase.result.receiptPath, expectedReceiptSha256: receiptCase.result.receipt_sha256, protectedRootsJson: receiptCase.result.protected_roots_json })).rejects.toThrow(/out-of-band/);
+    const receiptVerification = runCleanVerify(receiptCase.result);
+    expect(receiptVerification.status).not.toBe(0);
+    expect(receiptVerification.stderr).toMatch(/out-of-band/);
 
-    const inputCase = await create("input");
+    const inputCase = await mutationCase("input");
     const config = inputCase.result.receipt.inputs.find(item => item.role === "candidate_config");
     await fs.appendFile(path.join(inputCase.result.receipt.roots.sidecar_snapshot, config.filename), " ");
-    await expect(verifyDoclingHandoff({ receiptPath: inputCase.result.receiptPath, expectedReceiptSha256: inputCase.result.receipt_sha256, protectedRootsJson: inputCase.result.protected_roots_json })).rejects.toThrow(/input mismatch/i);
+    const inputVerification = runCleanVerify(inputCase.result);
+    expect(inputVerification.status).not.toBe(0);
+    expect(inputVerification.stderr).toMatch(/input mismatch/i);
 
-    const fixtureCase = await create("fixture");
+  });
+
+  it("rejects mismatched authority bytes before executing them", async () => {
+    const authorityCase = await mutationCase("authority");
+    const authority = authorityCase.result.receipt.inputs.find(item => item.role === "handoff_authority");
+    const authorityPath = path.join(authorityCase.result.receipt.roots.sidecar_snapshot, authority.filename);
+    const executionMarker = path.join(authorityCase.root, "mutated-authority-executed");
+    await fs.writeFile(authorityPath, `import fs from "node:fs";fs.writeFileSync(${JSON.stringify(executionMarker)}, "executed");\n`, { mode: 0o600 });
+    const authorityVerification = runCleanVerify(authorityCase.result);
+    expect(authorityVerification.status).not.toBe(0);
+    expect(authorityVerification.stderr).toMatch(/before execution/);
+    await expect(fs.stat(executionMarker)).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("rejects retained fixture and uv mutations", async () => {
+    const fixtureCase = await mutationCase("fixture");
     const retainedFixture = fixtureCase.result.receipt.fixtures[0];
     await fs.appendFile(path.join(path.dirname(fixtureCase.result.receiptPath), "fixtures", retainedFixture.filename), " ");
-    await expect(verifyDoclingHandoff({ receiptPath: fixtureCase.result.receiptPath, expectedReceiptSha256: fixtureCase.result.receipt_sha256, protectedRootsJson: fixtureCase.result.protected_roots_json })).rejects.toThrow(/fixture mismatch/i);
+    const fixtureVerification = runCleanVerify(fixtureCase.result);
+    expect(fixtureVerification.status).not.toBe(0);
+    expect(fixtureVerification.stderr).toMatch(/fixture mismatch/i);
 
-    const uvCase = await create("uv");
+    const uvCase = await mutationCase("uv");
     await fs.appendFile(uvCase.result.receipt.toolchain.uv.path, "mutated");
-    await expect(verifyDoclingHandoff({ receiptPath: uvCase.result.receiptPath, expectedReceiptSha256: uvCase.result.receipt_sha256, protectedRootsJson: uvCase.result.protected_roots_json })).rejects.toThrow(/uv binary/i);
+    const uvVerification = runCleanVerify(uvCase.result);
+    expect(uvVerification.status).not.toBe(0);
+    expect(uvVerification.stderr).toMatch(/uv binary/i);
+  });
+
+  it("rejects unbound snapshot entries and nonempty authority isolation roots", async () => {
+    const snapshotCase = await mutationCase("snapshot-extra");
+    await fs.writeFile(path.join(snapshotCase.result.receipt.roots.sidecar_snapshot, "unbound.py"), "raise SystemExit(0)\n", { mode: 0o600 });
+    const snapshotVerification = runCleanVerify(snapshotCase.result);
+    expect(snapshotVerification.status).not.toBe(0);
+    expect(snapshotVerification.stderr).toMatch(/unbound top-level entry/i);
+
+    const isolationCase = await mutationCase("isolation-root");
+    await fs.writeFile(path.join(isolationCase.result.receipt.roots.authority_home, "usercustomize.py"), "raise SystemExit(0)\n", { mode: 0o600 });
+    const isolationVerification = runCleanVerify(isolationCase.result);
+    expect(isolationVerification.status).not.toBe(0);
+    expect(isolationVerification.stderr).toMatch(/must remain empty/i);
   });
 
   it("rejects post-handoff root substitution into protected storage", async () => {
@@ -171,10 +252,8 @@ describe("Docling macOS handoff", () => {
     const protectedTarget = path.join(root, "Dropbox/model-target");
     await fs.mkdir(protectedTarget, { recursive: true, mode: 0o700 });
     await fs.symlink(protectedTarget, result.receipt.roots.models);
-    await expect(verifyDoclingHandoff({
-      receiptPath: result.receiptPath,
-      expectedReceiptSha256: result.receipt_sha256,
-      protectedRootsJson: result.protected_roots_json,
-    })).rejects.toThrow(/symbolic link|real path|protected storage/i);
+    const verification = runCleanVerify(result);
+    expect(verification.status).not.toBe(0);
+    expect(verification.stderr).toMatch(/symbolic link|real path|protected storage/i);
   });
 });

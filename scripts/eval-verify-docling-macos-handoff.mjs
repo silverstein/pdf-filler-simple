@@ -1,20 +1,48 @@
 #!/usr/bin/env node
 
-import { verifyDoclingHandoff } from "../test/eval/extraction-docling-handoff-verifier.js";
+import { runDoclingAuthority } from "../test/eval/extraction-docling-handoff-verifier.js";
+import { fileURLToPath } from "node:url";
 
-function option(name) {
+function option(name, required = true) {
   const index = process.argv.indexOf(name);
-  if (index < 0 || !process.argv[index + 1]) throw new Error(`${name} is required`);
+  if (index < 0 || !process.argv[index + 1]) {
+    if (!required) return null;
+    throw new Error(`${name} is required`);
+  }
   return process.argv[index + 1];
 }
 
-verifyDoclingHandoff({
-  receiptPath: option("--receipt"),
-  expectedReceiptSha256: option("--expected-receipt-sha256"),
-  protectedRootsJson: option("--protected-roots-json"),
-}).then(result => {
-  process.stdout.write(`${JSON.stringify({ verified: true, handoff_id: result.receipt.handoff_id, receipt_sha256: result.receipt_sha256 })}\n`);
-}).catch(error => {
-  process.stderr.write(`Docling handoff verification failed: ${error.message}\n`);
+async function boundedStdin(maxBytes) {
+  const chunks = []; let total = 0;
+  for await (const chunk of process.stdin) {
+    total += chunk.length;
+    if (total > maxBytes) throw new Error("Docling launcher stdin exceeds its ceiling");
+    chunks.push(chunk);
+  }
+  return Buffer.concat(chunks);
+}
+
+async function main() {
+  const action = option("--action", false) ?? "verify";
+  const additionalArgs = [];
+  for (const name of action === "execute" ? ["--finalization", "--expected-finalization-sha256"]
+    : action === "probe" ? ["--finalization", "--expected-finalization-sha256", "--attempt-dir", "--request"] : []) {
+    additionalArgs.push(name, option(name));
+  }
+  const result = await runDoclingAuthority({
+    receiptPath: option("--receipt"),
+    expectedReceiptSha256: option("--expected-receipt-sha256"),
+    protectedRootsJson: option("--protected-roots-json"),
+    action,
+    additionalArgs,
+    input: action === "execute" ? await boundedStdin(16 * 1024 * 1024) : null,
+    launcherPath: fileURLToPath(import.meta.url),
+  });
+  process.stdout.write(result.stdout);
+  process.stderr.write(result.stderr);
+}
+
+main().catch(error => {
+  process.stderr.write(`Docling handoff launcher failed: ${error.message}\n`);
   process.exitCode = 1;
 });

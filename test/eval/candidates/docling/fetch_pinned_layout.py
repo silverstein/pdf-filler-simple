@@ -47,6 +47,28 @@ def publish_fresh(staging: Path, target: Path) -> None:
         raise OSError(error_number, os.strerror(error_number), target)
 
 
+def fsync_directory(directory: Path) -> None:
+    descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def write_exclusive(filename: Path, value: bytes) -> None:
+    descriptor = os.open(filename, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        offset = 0
+        while offset < len(value):
+            written = os.write(descriptor, value[offset:])
+            if written < 1:
+                raise RuntimeError("exclusive setup write made no progress")
+            offset += written
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
 def canonical_json(value):
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
 
@@ -181,8 +203,38 @@ def main() -> int:
     parent_real = parent.resolve(strict=True)
     if parent_real != parent or parent.is_symlink() or not parent.is_dir() or stat.S_IMODE(parent.stat().st_mode) != 0o700:
         raise RuntimeError("models parent must be a real mode-0700 directory")
+    intent_path = parent / f".{models_path.name}.publication-intent.v1.json"
     if models_path.exists() or models_path.is_symlink():
-        raise RuntimeError("fresh content-addressed models target must not already exist")
+        if not intent_path.exists() or intent_path.is_symlink():
+            raise RuntimeError("fresh content-addressed models target must not already exist")
+        target_metadata = models_path.lstat()
+        if (not stat.S_ISDIR(target_metadata.st_mode) or stat.S_IMODE(target_metadata.st_mode) != 0o700
+                or models_path.resolve(strict=True) != models_path):
+            raise RuntimeError("published model recovery target is not a real mode-0700 directory")
+        intent_bytes = read_regular(intent_path, MAX_INVENTORY_BYTES, 0o600)
+        intent = json.loads(intent_bytes, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("non-finite JSON")))
+        inventory_path = models_path / "layout-model-inventory.v1.json"
+        inventory_bytes = read_regular(inventory_path, MAX_INVENTORY_BYTES, 0o600)
+        inventory = json.loads(inventory_bytes, parse_constant=lambda _: (_ for _ in ()).throw(ValueError("non-finite JSON")))
+        expected_intent = {
+            "protocol": "pdf-tools.docling-model-publication-intent.v1",
+            "target": str(models_path),
+            "config_sha256": args.expected_config_sha256,
+            "file_set_sha256": inventory.get("file_set_sha256"),
+        }
+        if intent_bytes != (canonical_json(intent) + "\n").encode() or intent != expected_intent:
+            raise RuntimeError("published model recovery intent is invalid")
+        validate_inventory(models_path, model, inventory)
+        fsync_directory(parent)
+        os.unlink(intent_path)
+        try:
+            fsync_directory(parent)
+        except OSError:
+            pass  # The target was already durably reconciled; a stale intent is safe to revalidate.
+        print(json.dumps({"inventory_path": str(inventory_path), "file_set_sha256": inventory["file_set_sha256"], "reused": False, "recovered_after_parent_fsync": True}, separators=(",", ":")))
+        return 0
+    if intent_path.exists() or intent_path.is_symlink():
+        raise RuntimeError("model publication intent exists without its published target")
 
     staging = Path(tempfile.mkdtemp(prefix=f".{models_path.name}.staging-", dir=parent))
     os.chmod(staging, 0o700)
@@ -202,12 +254,7 @@ def main() -> int:
         }
         validate_inventory(staging, model, inventory)
         inventory_path = staging / "layout-model-inventory.v1.json"
-        descriptor = os.open(inventory_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-        try:
-            os.write(descriptor, (canonical_json(inventory) + "\n").encode())
-            os.fsync(descriptor)
-        finally:
-            os.close(descriptor)
+        write_exclusive(inventory_path, (canonical_json(inventory) + "\n").encode())
         for directory, _, filenames in os.walk(staging, topdown=False, followlinks=False):
             for filename in filenames:
                 file_descriptor = os.open(Path(directory) / filename, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
@@ -215,22 +262,32 @@ def main() -> int:
                     os.fsync(file_descriptor)
                 finally:
                     os.close(file_descriptor)
-            directory_descriptor = os.open(directory, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
-            try:
-                os.fsync(directory_descriptor)
-            finally:
-                os.close(directory_descriptor)
+            fsync_directory(Path(directory))
+        intent = {
+            "protocol": "pdf-tools.docling-model-publication-intent.v1",
+            "target": str(models_path),
+            "config_sha256": args.expected_config_sha256,
+            "file_set_sha256": inventory["file_set_sha256"],
+        }
+        write_exclusive(intent_path, (canonical_json(intent) + "\n").encode())
+        fsync_directory(parent)
         publish_fresh(staging, models_path)
-        parent_descriptor = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        if os.environ.get("PDF_TOOLS_DOCLING_TEST_PARENT_FSYNC_FAILURE") == "1":
+            raise OSError("injected post-publication parent fsync failure")
+        fsync_directory(parent)
+        os.unlink(intent_path)
         try:
-            os.fsync(parent_descriptor)
-        finally:
-            os.close(parent_descriptor)
-        print(json.dumps({"inventory_path": str(models_path / inventory_path.name), "file_set_sha256": inventory["file_set_sha256"], "reused": False}, separators=(",", ":")))
+            fsync_directory(parent)
+        except OSError:
+            pass  # Publication was already durable before intent cleanup.
+        print(json.dumps({"inventory_path": str(models_path / inventory_path.name), "file_set_sha256": inventory["file_set_sha256"], "reused": False, "recovered_after_parent_fsync": False}, separators=(",", ":")))
         return 0
     except BaseException:
         if staging.exists():
             shutil.rmtree(staging)
+        if intent_path.exists() and not models_path.exists():
+            os.unlink(intent_path)
+            fsync_directory(parent)
         raise
 
 
