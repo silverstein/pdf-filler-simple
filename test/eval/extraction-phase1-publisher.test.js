@@ -50,14 +50,14 @@ function artifacts() {
   };
 }
 
-async function sourceGeneration({ policy = "public_synthetic", trustedProhibitedRoots = [] } = {}) {
+async function sourceGeneration({ policy = "public_synthetic", trustedProhibitedRoots = [], extraArtifacts = {} } = {}) {
   const parent = await root();
   let privacyAttestation;
   return publishImmutableGeneration({
     parentDirectory: parent,
     runId: RUN_ID,
     kind: "execution",
-    artifacts: artifacts(),
+    artifacts: { ...artifacts(), ...extraArtifacts },
     preIndexArtifactBuilder: async ({ stagingPath, artifacts: retained }) => {
       privacyAttestation = await buildGenerationPrivacyAttestation({
         stagingPath,
@@ -338,6 +338,87 @@ describe("Phase 1 immutable generation publisher", () => {
     }
   });
 
+  it("rejects mutation during the terminal claim-free semantic callback in publish, receive, and both recovery paths", async () => {
+    const mutatingVerifier = () => {
+      let calls = 0;
+      return async ({ generationPath }) => {
+        calls += 1;
+        if (calls === 3) {
+          await fs.writeFile(path.join(generationPath, "execution-report.v1.json"), "{\"terminal_mutation\":true}\n", { mode: 0o600 });
+        }
+      };
+    };
+
+    const publishParent = await root();
+    await expect(publishImmutableGeneration({
+      parentDirectory: publishParent,
+      runId: RUN_ID,
+      kind: "execution",
+      artifacts: artifacts(),
+      transactionId: TX,
+      finalGenerationVerifier: mutatingVerifier(),
+    })).rejects.toThrow(/changed during terminal semantic verification/);
+
+    for (const phase of ["before_final_rename", "after_final_rename"]) {
+      const parent = await root();
+      let privacyAttestation;
+      await expect(publishImmutableGeneration({
+        parentDirectory: parent,
+        runId: RUN_ID,
+        kind: "execution",
+        artifacts: artifacts(),
+        transactionId: TX,
+        preIndexArtifactBuilder: async ({ stagingPath, artifacts: retained }) => {
+          privacyAttestation = await buildGenerationPrivacyAttestation({ stagingPath, artifacts: retained, policy: "public_synthetic", trustedProhibitedRoots: [] });
+          return { role: "privacy_attestation", filename: "generation-privacy.v1.json", bytes: Buffer.from(`${JSON.stringify(privacyAttestation, null, 2)}\n`) };
+        },
+        finalGenerationVerifier: context => verifyFinalGenerationPrivacy({ ...context, privacyAttestation }),
+        faultInjector: current => { if (current === phase) throw new Error(phase); },
+      })).rejects.toThrow(phase);
+      const generationPath = path.join(parent, `execution-${RUN_ID}-${TX}`);
+      const recovery = phase === "before_final_rename"
+        ? () => recoverVerifiedStagingGeneration({
+          stagingPath: path.join(parent, `.staging-execution-${RUN_ID}-${TX}`),
+          generationPath,
+          semanticVerifier: mutatingVerifier(),
+        })
+        : () => recoverPublishedGeneration({ generationPath, semanticVerifier: mutatingVerifier() });
+      await expect(recovery()).rejects.toThrow(/changed during terminal semantic verification/);
+    }
+
+    const sourceParent = await root();
+    let sourcePrivacy;
+    const source = await publishImmutableGeneration({
+      parentDirectory: sourceParent,
+      runId: RUN_ID,
+      kind: "execution",
+      artifacts: { ...artifacts(), phase0_corpus: { filename: "phase0-corpus.v1.json", bytes: Buffer.from("{}\n") } },
+      preIndexArtifactBuilder: async ({ stagingPath, artifacts: retained }) => {
+        sourcePrivacy = await buildGenerationPrivacyAttestation({ stagingPath, artifacts: retained, policy: "public_synthetic", trustedProhibitedRoots: [] });
+        return { role: "privacy_attestation", filename: "generation-privacy.v1.json", bytes: Buffer.from(`${JSON.stringify(sourcePrivacy, null, 2)}\n`) };
+      },
+      finalGenerationVerifier: context => verifyFinalGenerationPrivacy({ ...context, privacyAttestation: sourcePrivacy }),
+    });
+    const destinationParent = await root();
+    let destinationSemanticCalls = 0;
+    await expect(receiveVerifiedGeneration({
+      sourceGenerationPath: source.generationPath,
+      destinationParentDirectory: destinationParent,
+      sourceHost: "silverbook",
+      destinationHost: "silvercloud",
+      transportedAt: "2026-07-22T00:00:00Z",
+      transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: source.generation_sha256,
+      semanticVerifier: async ({ generationPath }) => {
+        if (!generationPath.startsWith(destinationParent)) return;
+        destinationSemanticCalls += 1;
+        if (destinationSemanticCalls === 4) {
+          await fs.writeFile(path.join(generationPath, "execution-report.v1.json"), "{\"terminal_mutation\":true}\n", { mode: 0o600 });
+        }
+      },
+    })).rejects.toThrow(/changed during terminal semantic verification/);
+  });
+
   it("receives a fully rehashed source generation into a destination-local immutable generation", async () => {
     const source = await sourceGeneration();
     const destinationParent = await root();
@@ -349,6 +430,7 @@ describe("Phase 1 immutable generation publisher", () => {
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
       transactionId: TX,
+      trustedSourceGenerationSha256: source.generation_sha256,
     });
     expect(received.destination).toMatchObject({
       state: "complete",
@@ -390,6 +472,7 @@ describe("Phase 1 immutable generation publisher", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: source.generation_sha256,
       trustedSourceProhibitedRootSetSha256,
       destinationTrustedProhibitedRoots,
     });
@@ -406,6 +489,7 @@ describe("Phase 1 immutable generation publisher", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: source.generation_sha256,
       trustedSourceProhibitedRootSetSha256,
       destinationTrustedProhibitedRoots,
     })).rejects.toThrow(/complete original|source or destination overlaps/);
@@ -417,6 +501,7 @@ describe("Phase 1 immutable generation publisher", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: source.generation_sha256,
       trustedSourceProhibitedRootSetSha256,
       destinationTrustedProhibitedRoots,
     })).rejects.toThrow(/source or destination overlaps/);
@@ -429,6 +514,7 @@ describe("Phase 1 immutable generation publisher", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: source.generation_sha256,
       trustedSourceProhibitedRootSetSha256: "0".repeat(64),
       destinationTrustedProhibitedRoots,
     })).rejects.toThrow(/do not match source/);
@@ -476,9 +562,27 @@ describe("Phase 1 immutable generation publisher", () => {
         destinationHost: "silvercloud",
         transportedAt: "2026-07-22T00:00:00Z",
         transport: "tailscale_tailnet",
+        trustedSourceGenerationSha256: source.generation_sha256,
       }), label).rejects.toThrow();
       expect(await fs.readdir(destinationParent), label).toEqual([]);
     }
+
+    const transferCollision = await sourceGeneration({
+      extraArtifacts: {
+        received_privacy_attestation: { filename: "source-collision.json", bytes: Buffer.from("{}\n") },
+      },
+    });
+    const collisionDestination = await root();
+    await expect(receiveVerifiedGeneration({
+      sourceGenerationPath: transferCollision.generationPath,
+      destinationParentDirectory: collisionDestination,
+      sourceHost: "silverbook",
+      destinationHost: "silvercloud",
+      transportedAt: "2026-07-22T00:00:00Z",
+      transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: transferCollision.generation_sha256,
+    })).rejects.toThrow(/transfer-local/);
+    expect(await fs.readdir(collisionDestination)).toEqual([]);
 
     const source = await sourceGeneration();
     const destinationParent = await root();
@@ -489,6 +593,7 @@ describe("Phase 1 immutable generation publisher", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: source.generation_sha256,
       copyFaultInjector: phase => { if (phase === "after_source_artifact_copy") throw new Error("copy fault"); },
     })).rejects.toThrow("copy fault");
     const partialNames = await fs.readdir(destinationParent);
@@ -525,6 +630,7 @@ describe("Phase 1 immutable generation publisher", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: largeSource.generation_sha256,
       copyFaultInjector: (phase, context) => {
         if (phase === "source_chunk") sourceChunkSizes.push(context.chunk_bytes);
         if (phase === "destination_verify_chunk") destinationChunkSizes.push(context.chunk_bytes);
@@ -545,6 +651,7 @@ describe("Phase 1 immutable generation publisher", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: changingSource.generation_sha256,
       copyFaultInjector: async phase => {
         if (phase === "after_source_artifact_copy" && !changed) {
           changed = true;
@@ -563,6 +670,7 @@ describe("Phase 1 immutable generation publisher", () => {
       destinationHost: "silvercloud",
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
+      trustedSourceGenerationSha256: stableSource.generation_sha256,
       publicationFaultInjector: async (phase, context) => {
         if (phase === "after_destination_artifact_copy" && !tampered) {
           tampered = true;
@@ -581,6 +689,7 @@ describe("Phase 1 immutable generation publisher", () => {
       transportedAt: "2026-07-22T00:00:00Z",
       transport: "tailscale_tailnet",
       transactionId: TX,
+      trustedSourceGenerationSha256: raceSource.generation_sha256,
       publicationFaultInjector: async (phase, context) => {
         if (phase === "before_final_rename") await fs.mkdir(context.generationPath, { mode: 0o700 });
       },

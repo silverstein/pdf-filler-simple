@@ -12,7 +12,8 @@ export const PHASE1_LIMITATIONS = Object.freeze([
   "The Node runner enforces fresh processes, wall-clock deadlines, bounded output capture, a scrubbed environment, and staged-source mutation detection.",
   "The runner does not claim filesystem, network, CPU, memory, process-count, or process-tree memory isolation.",
   "Truth projection is verified only for the serialized request and adapter-builder task object; the candidate process is not filesystem isolated from the repository.",
-  "Canonical ODA evidence and field evidence are prohibited until a separate scorer independently binds source items, page geometry, quotes, and regions.",
+  "Canonical evidence proposals remain untrusted; only layout_ir attempts receive scorer-only credit after exact schema, semantic, source-byte, PDF.js 5.4.624, coordinate, occurrence, field-path, and typed-value revalidation.",
+  "Canonical ODA evidence remains unavailable for direct-PDF, raster, native-engine, truncated, rotated, cropped, non-unit-UserUnit, or otherwise coordinate-ineligible inputs.",
   "Process-group cleanup cannot contain a candidate that deliberately creates a new operating-system session.",
   "All committed candidate slots are unconfigured. Third-party framework, model, license, and native-host evidence are separate work.",
 ]);
@@ -332,6 +333,20 @@ export function deriveTargetLeafPointers(schema, pointer = "") {
   return [pointer];
 }
 
+export function deriveAnswerEvidenceLeafPointers(schema, value, pointer = "") {
+  if (schema?.type === "object") {
+    if (!value || typeof value !== "object" || Array.isArray(value)) return [];
+    return Object.keys(schema.properties ?? {}).sort().flatMap(name => Object.hasOwn(value, name)
+      ? deriveAnswerEvidenceLeafPointers(schema.properties[name], value[name], `${pointer}/${pointerToken(name)}`)
+      : []);
+  }
+  if (schema?.type === "array") {
+    if (!Array.isArray(value) || !schema.items) return [];
+    return value.flatMap((item, index) => deriveAnswerEvidenceLeafPointers(schema.items, item, `${pointer}/${index}`));
+  }
+  return [pointer];
+}
+
 function buildAnsweredProjectionSchema(schema, answeredLeafSet, pointer = "") {
   if (schema.type !== "object") return structuredClone(schema);
   const properties = {};
@@ -397,8 +412,8 @@ export function validateCandidateResponseSemantics(response, request, {
   assertResponseIdentity(response, request);
   const requestedLeaves = deriveTargetLeafPointers(targetSchema);
   const requestedLeafSet = new Set(requestedLeaves);
-  if (response.evidence.length > 0 || response.field_evidence.length > 0) {
-    throw new Error("Canonical evidence is unavailable until the independent ODA geometry scorer is implemented");
+  if (request.input_mode !== "layout_ir" && (response.evidence.length > 0 || response.field_evidence.length > 0)) {
+    throw new Error("Canonical evidence proposals are available only for layout_ir inputs");
   }
   for (const pageText of response.page_texts) {
     if (pageText.page > request.source.page_count) throw new Error("Candidate page text references a page outside the source");
@@ -430,6 +445,23 @@ export function validateCandidateResponseSemantics(response, request, {
     ? requestedLeaves.filter(pointer => valueAtJsonPointer(response.structured_candidate, pointer).found)
     : [];
   const answeredLeafSet = new Set(answeredLeaves);
+  const answeredEvidenceLeafSet = new Set(answerBearing
+    ? deriveAnswerEvidenceLeafPointers(targetSchema, response.structured_candidate)
+    : []);
+  const evidenceIds = response.evidence.map(item => item.id);
+  if (new Set(evidenceIds).size !== evidenceIds.length) throw new Error("Candidate response contains duplicate canonical evidence IDs");
+  const fieldEvidencePaths = response.field_evidence.map(item => item.field_path);
+  if (new Set(fieldEvidencePaths).size !== fieldEvidencePaths.length) throw new Error("Candidate response contains duplicate field evidence paths");
+  for (const binding of response.field_evidence) {
+    if ((binding.disposition === "answer" && (!answeredEvidenceLeafSet.has(binding.field_path) || gapPaths.includes(binding.field_path)))
+      || (binding.disposition === "gap" && (!requestedLeafSet.has(binding.field_path)
+        || !gapPaths.includes(binding.field_path) || answeredLeafSet.has(binding.field_path)))) {
+      throw new Error("Candidate field evidence must bind an exact answered or typed-gap flattened leaf");
+    }
+    if (new Set(binding.evidence_ids).size !== binding.evidence_ids.length) {
+      throw new Error(`Candidate field evidence repeats an evidence ID for ${binding.field_path}`);
+    }
+  }
   if (gapPaths.some(pointer => answeredLeafSet.has(pointer))) {
     throw new Error("Candidate response overlaps answered and gap leaf paths");
   }
@@ -492,7 +524,7 @@ export function artifactDriftOperationalDigest(attempt, drift) {
   })}`));
 }
 
-export function verifyPhase1Report(report, {
+export function verifyPhase1ReportStructure(report, {
   registry,
   registrySchema,
   plan,
@@ -720,8 +752,12 @@ export function verifyPhase1Report(report, {
         throw new Error(`Report response binding is invalid for ${attempt.case_id}`);
       }
       validateCandidateResponseSemantics(attempt.response, attempt.request, { targetSchema: fixture.target_schema });
-      if (attempt.outcome !== attempt.response.status || attempt.runner_field_bindings.length !== 0) {
-        throw new Error(`Report outcome or prohibited field bindings drifted for ${attempt.case_id}`);
+      if (!attempt.runner_evidence
+        || canonicalJson(attempt.runner_field_bindings) !== canonicalJson(attempt.runner_evidence.field_bindings)) {
+        throw new Error(`Report runner-owned layout evidence is internally inconsistent for ${attempt.case_id}`);
+      }
+      if (attempt.outcome !== attempt.response.status) {
+        throw new Error(`Report outcome drifted from the retained response for ${attempt.case_id}`);
       }
       const parsedStdout = JSON.parse(stdoutBytes.toString("utf8"));
       if (canonicalJson(parsedStdout) !== canonicalJson(attempt.response)
@@ -729,7 +765,8 @@ export function verifyPhase1Report(report, {
         || execution.timed_out || execution.stdout_limit_exceeded || execution.stderr_limit_exceeded) {
         throw new Error(`Retained response is inconsistent with exact process output for ${attempt.case_id}`);
       }
-    } else if (attempt.bindings.response_canonical_sha256 !== null || attempt.runner_field_bindings.length !== 0) {
+    } else if (attempt.bindings.response_canonical_sha256 !== null || attempt.runner_field_bindings.length !== 0
+      || attempt.runner_evidence !== null) {
       throw new Error(`Attempt has response bindings without a retained response for ${attempt.case_id}`);
     }
     if (attempt.outcome === "error" ? attempt.error_code === null : attempt.error_code !== null) {
@@ -856,3 +893,7 @@ export function verifyPhase1Report(report, {
   }
   return true;
 }
+
+// Kept for narrow structural unit callers. Production publication and scoring
+// paths use the asynchronous composite verifier.
+export const verifyPhase1Report = verifyPhase1ReportStructure;

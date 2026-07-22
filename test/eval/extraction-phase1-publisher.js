@@ -18,13 +18,22 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const SAFE_FILENAME = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}\.json$/;
 const SAFE_ROLE = /^[a-z][a-z0-9_]{0,63}$/;
 const GENERATION_KINDS = new Set(["execution", "received_execution", "received_score", "score"]);
+const RECEIVED_GENERATION_KINDS = new Set(["received_execution", "received_score"]);
+const SHA256 = /^[a-f0-9]{64}$/;
 const UUID_V4 = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const INDEX_KEYS = ["artifacts", "claim_ready", "index_content_sha256", "index_id", "index_version", "kind", "run_id", "source_generation_sha256", "state", "transaction_id"];
 const SCORE_PROVENANCE_BINDING_KEYS = [
   "execution_report_bytes_sha256", "execution_report_sha256", "oracle_bytes_sha256", "oracle_schema_sha256",
-  "oracle_sha256", "phase0_manifest_sha256", "preflight_evidence_bytes_sha256", "preflight_evidence_sha256",
-  "score_schema_sha256", "scorer_contract_sha256", "scorer_source_set_sha256",
+  "oracle_sha256", "layout_oracle_bytes_sha256", "layout_oracle_schema_sha256", "layout_oracle_sha256", "phase0_manifest_sha256", "preflight_evidence_bytes_sha256", "preflight_evidence_sha256",
+  "score_schema_sha256", "scorer_contract_sha256", "scorer_local_source_set_sha256",
 ];
+export const TRANSFER_LOCAL_ARTIFACTS = Object.freeze({
+  received_privacy_attestation: "received-generation-privacy.v1.json",
+  source_generation_index: "source-generation-index.v1.json",
+  transfer_receipt: "cross-device-receipt.v1.json",
+});
+const TRANSFER_LOCAL_ROLES = Object.freeze(Object.keys(TRANSFER_LOCAL_ARTIFACTS).sort(compareUnicodeCodePoints));
+const TRANSFER_LOCAL_PATHS = new Set(Object.values(TRANSFER_LOCAL_ARTIFACTS).map(value => value.toLowerCase()));
 
 function exactKeys(value, keys) {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -40,6 +49,52 @@ export function computeGenerationSha256(index, indexBytes) {
   if (!validateIndex(index) || !Buffer.isBuffer(indexBytes)
     || !indexBytes.equals(Buffer.from(`${JSON.stringify(index, null, 2)}\n`))) throw new Error("Generation digest requires a valid canonical index");
   return sha256(Buffer.from(`pdf-tools.extraction-generation.v1\0${canonicalJson({ index, index_raw_sha256: sha256(indexBytes) })}`));
+}
+
+export function verifyReceivedArtifactRecordMapping({ sourceIndex, sourceIndexBytes, receiptBytes, destinationIndex } = {}) {
+  if (!sourceIndex || !destinationIndex || !Buffer.isBuffer(sourceIndexBytes) || !Buffer.isBuffer(receiptBytes)
+    || !Array.isArray(sourceIndex.artifacts) || !Array.isArray(destinationIndex.artifacts)) {
+    throw new Error("Received artifact mapping requires exact source and destination index inputs");
+  }
+  const sourceRoles = sourceIndex.artifacts.map(item => item.role);
+  const destinationRoles = destinationIndex.artifacts.map(item => item.role);
+  if (new Set(sourceRoles).size !== sourceRoles.length || new Set(destinationRoles).size !== destinationRoles.length
+    || sourceIndex.artifacts.some(item => TRANSFER_LOCAL_ROLES.includes(item.role) || TRANSFER_LOCAL_PATHS.has(item.path.toLowerCase()))) {
+    throw new Error("Source generation collides with transfer-local artifact identity");
+  }
+  const expectedRoles = [...sourceRoles, ...TRANSFER_LOCAL_ROLES].sort(compareUnicodeCodePoints);
+  if (canonicalJson([...destinationRoles].sort(compareUnicodeCodePoints)) !== canonicalJson(expectedRoles)) {
+    throw new Error("Received generation does not contain exactly the copied source records and transfer-local additions");
+  }
+  for (const artifact of sourceIndex.artifacts) {
+    const received = destinationIndex.artifacts.find(item => item.role === artifact.role);
+    if (canonicalJson(received) !== canonicalJson(artifact)) {
+      throw new Error(`Received generation changed a source artifact record: ${artifact.role}`);
+    }
+  }
+  const expectedLocalRecords = {
+    source_generation_index: {
+      role: "source_generation_index",
+      path: TRANSFER_LOCAL_ARTIFACTS.source_generation_index,
+      bytes: sourceIndexBytes.length,
+      sha256: sha256(sourceIndexBytes),
+    },
+    transfer_receipt: {
+      role: "transfer_receipt",
+      path: TRANSFER_LOCAL_ARTIFACTS.transfer_receipt,
+      bytes: receiptBytes.length,
+      sha256: sha256(receiptBytes),
+    },
+  };
+  for (const [role, expected] of Object.entries(expectedLocalRecords)) {
+    const observed = destinationIndex.artifacts.find(item => item.role === role);
+    if (canonicalJson(observed) !== canonicalJson(expected)) throw new Error(`Received generation ${role} record is invalid`);
+  }
+  const privacy = destinationIndex.artifacts.find(item => item.role === "received_privacy_attestation");
+  if (privacy?.path !== TRANSFER_LOCAL_ARTIFACTS.received_privacy_attestation) {
+    throw new Error("Received generation privacy artifact record is invalid");
+  }
+  return true;
 }
 
 function validateIndex(index) {
@@ -66,6 +121,29 @@ function validateIndex(index) {
 
 async function inject(faultInjector, phase, context = {}) {
   if (faultInjector) await faultInjector(phase, context);
+}
+
+function verifyExpectedRecoveryGenerationSha256(inspection, expectedGenerationSha256) {
+  if (expectedGenerationSha256 !== null && !SHA256.test(expectedGenerationSha256)) {
+    throw new Error("Recovery expected generation digest is invalid");
+  }
+  if (RECEIVED_GENERATION_KINDS.has(inspection.index.kind) && expectedGenerationSha256 === null) {
+    throw new Error("Recovery of a received generation requires its exact received-generation digest");
+  }
+  if (expectedGenerationSha256 !== null && inspection.generation_sha256 !== expectedGenerationSha256) {
+    throw new Error("Recovery generation differs from its exact expected generation digest");
+  }
+}
+
+async function verifyTerminalSemanticSnapshot({ verifier, generationPath, inspection }) {
+  await runSemanticGenerationVerifier({ verifier, generationPath, inspection });
+  const postSemanticInspection = await inspectGenerationDirectory(generationPath);
+  if (postSemanticInspection.state !== "complete"
+    || postSemanticInspection.generation_sha256 !== inspection.generation_sha256
+    || !postSemanticInspection.indexBytes.equals(inspection.indexBytes)) {
+    throw new Error("Generation changed during terminal semantic verification");
+  }
+  return postSemanticInspection;
 }
 
 async function fsyncDirectory(directory) {
@@ -242,6 +320,7 @@ export async function publishImmutableGeneration({
   await writeVerifiedFile(stagingPath, { role: "execution_index", filename: "execution-index.v1.json", bytes: indexBytes }, faultInjector, true);
   await inject(faultInjector, "after_commit_marker", { stagingPath });
   let published = false;
+  let finalGenerationSha256 = null;
   try {
     const stagingInspection = await inspectGenerationDirectory(stagingPath, {
       allowStaging: true,
@@ -265,6 +344,7 @@ export async function publishImmutableGeneration({
     await inject(faultInjector, "after_final_rename", { generationPath });
     const finalInspection = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: transactionId });
     if (finalInspection.state !== "complete") throw new Error(`Final generation failed exact reinspection: ${finalInspection.reason}`);
+    finalGenerationSha256 = finalInspection.generation_sha256;
     await runSemanticGenerationVerifier({
       verifier: finalGenerationVerifier,
       generationPath,
@@ -284,14 +364,28 @@ export async function publishImmutableGeneration({
     throw error;
   }
   const completedInspection = await inspectGenerationDirectory(generationPath);
-  if (completedInspection.state !== "complete") throw new Error(`Completed generation failed claim-free reinspection: ${completedInspection.reason}`);
+  if (completedInspection.state !== "complete" || completedInspection.generation_sha256 !== finalGenerationSha256) {
+    throw new Error(`Completed generation failed claim-free reinspection: ${completedInspection.reason ?? "generation_digest_changed"}`);
+  }
+  const terminalInspection = await verifyTerminalSemanticSnapshot({
+    verifier: finalGenerationVerifier,
+    generationPath,
+    inspection: completedInspection,
+  });
+  try {
+    await inject(faultInjector, "after_terminal_semantic_verification", { generationPath });
+  } catch (error) {
+    error.publication_state = "durability_uncertain";
+    error.generation_path = generationPath;
+    throw error;
+  }
   return {
     state: "complete",
     generationPath,
     generationName,
-    index: completedInspection.index,
-    indexBytes: completedInspection.indexBytes,
-    generation_sha256: completedInspection.generation_sha256,
+    index: terminalInspection.index,
+    indexBytes: terminalInspection.indexBytes,
+    generation_sha256: terminalInspection.generation_sha256,
   };
 }
 
@@ -409,6 +503,10 @@ function requiresSemanticGenerationVerification(index) {
   return index.artifacts.some(item => ["privacy_attestation", "received_privacy_attestation"].includes(item.role));
 }
 
+function requiresCompositeExtractionVerification(index) {
+  return index.artifacts.some(item => item.role === "phase0_corpus");
+}
+
 async function runSemanticGenerationVerifier({ verifier, generationPath, inspection }) {
   if (requiresSemanticGenerationVerification(inspection.index) && typeof verifier !== "function") {
     throw new Error("Semantic generation verification is required for privacy-attested artifacts");
@@ -418,6 +516,7 @@ async function runSemanticGenerationVerifier({ verifier, generationPath, inspect
       generationPath,
       index: inspection.index,
       indexBytes: inspection.indexBytes,
+      inspection,
     });
   }
 }
@@ -515,7 +614,7 @@ async function deriveSourceCodeIdentity(generationPath, inspection) {
       })) {
       throw new Error("Score source provenance identity is invalid");
     }
-    identity = { kind: "score_scorer_source_set_sha256", sha256: retained.bindings.scorer_source_set_sha256, source_artifact_role: role };
+    identity = { kind: "score_scorer_local_source_set_sha256", sha256: retained.bindings.scorer_local_source_set_sha256, source_artifact_role: role };
   }
   if (!/^[a-f0-9]{64}$/.test(identity.sha256)) throw new Error("Source generation code identity is unavailable or invalid");
   return identity;
@@ -532,16 +631,31 @@ export async function receiveVerifiedGeneration({
   keyId = null,
   signature = null,
   trustedSignatureVerifier = null,
+  trustedSourceGenerationSha256 = null,
   trustedSourceProhibitedRootSetSha256 = null,
   destinationTrustedProhibitedRoots = [],
   copyFaultInjector = null,
   publicationFaultInjector = null,
+  semanticVerifier = null,
 }) {
   if (!UUID_V4.test(transactionId)) throw new Error("Cross-device receive transaction identity is invalid");
   const realSourceGenerationPath = await fs.realpath(path.resolve(sourceGenerationPath));
   const sourceBefore = await inspectGenerationDirectory(realSourceGenerationPath);
   if (sourceBefore.state !== "complete" || !["execution", "score"].includes(sourceBefore.index.kind)) {
     throw new Error("Cross-device receive requires a complete original execution or score generation");
+  }
+  if (!/^[a-f0-9]{64}$/.test(trustedSourceGenerationSha256 ?? "")
+    || sourceBefore.generation_sha256 !== trustedSourceGenerationSha256) {
+    throw new Error("Cross-device receive requires the exact out-of-band trusted source generation digest");
+  }
+  if (sourceBefore.index.artifacts.some(artifact => TRANSFER_LOCAL_ROLES.includes(artifact.role) || TRANSFER_LOCAL_PATHS.has(artifact.path.toLowerCase()))) {
+    throw new Error("Cross-device receive source collides with transfer-local artifact identity");
+  }
+  if (requiresCompositeExtractionVerification(sourceBefore.index) && typeof semanticVerifier !== "function") {
+    throw new Error("Cross-device receive requires a composite extraction semantic verifier");
+  }
+  if (requiresCompositeExtractionVerification(sourceBefore.index)) {
+    await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath: realSourceGenerationPath, inspection: sourceBefore });
   }
   const sourcePrivacyArtifact = await readVerifiedGenerationArtifact(realSourceGenerationPath, sourceBefore, "privacy_attestation");
   const sourcePrivacyAttestation = JSON.parse(sourcePrivacyArtifact.bytes);
@@ -593,7 +707,9 @@ export async function receiveVerifiedGeneration({
   await inject(publicationFaultInjector, "after_staging_create", { stagingPath });
   const retained = [];
   for (const artifact of sourceBefore.index.artifacts) {
-    if (artifact.role === "transfer_receipt") throw new Error("Cross-device receive does not recursively receive a receipt-bearing generation");
+    if (TRANSFER_LOCAL_ROLES.includes(artifact.role) || TRANSFER_LOCAL_PATHS.has(artifact.path.toLowerCase())) {
+      throw new Error("Cross-device receive source collides with transfer-local artifact identity");
+    }
     await inject(copyFaultInjector, "before_source_artifact_copy", { role: artifact.role, path: artifact.path });
     retained.push(await copyVerifiedArtifactToStaging({
       sourcePath: path.join(realSourceGenerationPath, artifact.path), stagingPath, artifact, copyFaultInjector,
@@ -604,6 +720,9 @@ export async function receiveVerifiedGeneration({
   const sourceAfter = await inspectGenerationDirectory(realSourceGenerationPath);
   if (sourceAfter.state !== "complete" || sourceAfter.generation_sha256 !== sourceBefore.generation_sha256
     || !sourceAfter.indexBytes.equals(sourceBefore.indexBytes)) throw new Error("Source generation changed during cross-device copy");
+  if (requiresCompositeExtractionVerification(sourceAfter.index)) {
+    await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath: realSourceGenerationPath, inspection: sourceAfter });
+  }
   await inject(copyFaultInjector, "after_source_generation_reinspection", { sourceGenerationPath: realSourceGenerationPath });
   const receipt = createCrossDeviceReceipt({
     runId: sourceBefore.index.run_id, indexBytes: sourceBefore.indexBytes, sourceGenerationSha256: sourceBefore.generation_sha256,
@@ -641,6 +760,7 @@ export async function receiveVerifiedGeneration({
   index.index_content_sha256 = indexContentSha256(index);
   if (!validateIndex(index)) throw new Error("Received generation index failed its strict contract");
   const indexBytes = Buffer.from(`${JSON.stringify(index, null, 2)}\n`);
+  verifyReceivedArtifactRecordMapping({ sourceIndex: sourceBefore.index, sourceIndexBytes: sourceBefore.indexBytes, receiptBytes, destinationIndex: index });
   await inject(publicationFaultInjector, "before_commit_marker", { stagingPath });
   await writeVerifiedFile(stagingPath, { role: "execution_index", filename: "execution-index.v1.json", bytes: indexBytes }, publicationFaultInjector, true);
   await inject(publicationFaultInjector, "after_commit_marker", { stagingPath });
@@ -653,16 +773,14 @@ export async function receiveVerifiedGeneration({
     if (stagingInspection.state !== "complete" || stagingInspection.index.source_generation_sha256 !== sourceBefore.generation_sha256) {
       throw new Error("Received staging generation does not bind the verified source generation");
     }
+    verifyReceivedArtifactRecordMapping({ sourceIndex: sourceBefore.index, sourceIndexBytes: sourceBefore.indexBytes, receiptBytes, destinationIndex: stagingInspection.index });
     await verifyFinalGenerationPrivacy({
       generationPath: stagingPath,
       index: stagingInspection.index,
       privacyAttestation: receivedPrivacyAttestation,
       privacyRole: "received_privacy_attestation",
     });
-    for (const artifact of sourceBefore.index.artifacts) {
-      const received = stagingInspection.index.artifacts.find(item => item.role === artifact.role);
-      if (canonicalJson(received) !== canonicalJson(artifact)) throw new Error(`Received staging generation changed a source artifact record: ${artifact.role}`);
-    }
+    if (requiresCompositeExtractionVerification(stagingInspection.index)) await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath: stagingPath, inspection: stagingInspection });
     await inject(publicationFaultInjector, "before_final_rename", { stagingPath, generationPath });
     try {
       await fs.lstat(generationPath);
@@ -675,35 +793,39 @@ export async function receiveVerifiedGeneration({
     await inject(publicationFaultInjector, "after_final_rename", { generationPath });
     const destination = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: transactionId });
     if (destination.state !== "complete" || destination.index.source_generation_sha256 !== sourceBefore.generation_sha256) throw new Error("Received generation does not bind the verified source generation");
+    verifyReceivedArtifactRecordMapping({ sourceIndex: sourceBefore.index, sourceIndexBytes: sourceBefore.indexBytes, receiptBytes, destinationIndex: destination.index });
     await verifyFinalGenerationPrivacy({
       generationPath,
       index: destination.index,
       privacyAttestation: receivedPrivacyAttestation,
       privacyRole: "received_privacy_attestation",
     });
-    for (const artifact of sourceBefore.index.artifacts) {
-      const received = destination.index.artifacts.find(item => item.role === artifact.role);
-      if (canonicalJson(received) !== canonicalJson(artifact)) throw new Error(`Received generation changed a source artifact record: ${artifact.role}`);
-    }
+    if (requiresCompositeExtractionVerification(destination.index)) await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: destination });
     await fsyncDirectory(destinationParentDirectory);
     await inject(publicationFaultInjector, "after_parent_fsync", { generationPath });
     const finalInspection = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: transactionId });
     if (finalInspection.state !== "complete" || finalInspection.generation_sha256 !== destination.generation_sha256) throw new Error("Received generation changed before claim cleanup");
+    verifyReceivedArtifactRecordMapping({ sourceIndex: sourceBefore.index, sourceIndexBytes: sourceBefore.indexBytes, receiptBytes, destinationIndex: finalInspection.index });
     await verifyFinalGenerationPrivacy({
       generationPath,
       index: finalInspection.index,
       privacyAttestation: receivedPrivacyAttestation,
       privacyRole: "received_privacy_attestation",
     });
+    if (requiresCompositeExtractionVerification(finalInspection.index)) await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: finalInspection });
     await fs.unlink(claimPath);
     await fsyncDirectory(destinationParentDirectory);
     const completedDestination = await inspectGenerationDirectory(generationPath);
     if (completedDestination.state !== "complete" || completedDestination.generation_sha256 !== destination.generation_sha256) {
       throw new Error("Received generation failed claim-free reinspection");
     }
+    verifyReceivedArtifactRecordMapping({ sourceIndex: sourceBefore.index, sourceIndexBytes: sourceBefore.indexBytes, receiptBytes, destinationIndex: completedDestination.index });
+    const terminalDestination = requiresCompositeExtractionVerification(completedDestination.index)
+      ? await verifyTerminalSemanticSnapshot({ verifier: semanticVerifier, generationPath, inspection: completedDestination })
+      : completedDestination;
     return {
-      state: "complete", generationPath, generationName, index, indexBytes, receipt, source: sourceBefore, destination: completedDestination,
-      generation_sha256: completedDestination.generation_sha256,
+      state: "complete", generationPath, generationName, index, indexBytes, receipt, source: sourceBefore, destination: terminalDestination,
+      generation_sha256: terminalDestination.generation_sha256,
     };
   } catch (error) {
     if (published) {
@@ -714,7 +836,13 @@ export async function receiveVerifiedGeneration({
   }
 }
 
-export async function recoverVerifiedStagingGeneration({ stagingPath, generationPath, faultInjector = null, semanticVerifier = null }) {
+export async function recoverVerifiedStagingGeneration({
+  stagingPath,
+  generationPath,
+  expectedGenerationSha256 = null,
+  faultInjector = null,
+  semanticVerifier = null,
+}) {
   const [stagingParent, generationParent] = await Promise.all([fs.realpath(path.dirname(stagingPath)), fs.realpath(path.dirname(generationPath))]);
   const [stagingParentStat, generationParentStat] = await Promise.all([fs.stat(stagingParent), fs.stat(generationParent)]);
   if (stagingParent !== generationParent || stagingParentStat.dev !== generationParentStat.dev || !path.basename(stagingPath).startsWith(".staging-")
@@ -729,6 +857,7 @@ export async function recoverVerifiedStagingGeneration({ stagingPath, generation
     activeClaimTransactionId: transactionId,
   });
   if (inspection.state !== "complete") return inspection;
+  verifyExpectedRecoveryGenerationSha256(inspection, expectedGenerationSha256);
   try {
     await fs.lstat(generationPath);
     return { state: "corruption", reason: "generation_name_reused" };
@@ -745,16 +874,19 @@ export async function recoverVerifiedStagingGeneration({ stagingPath, generation
     activeClaimTransactionId: inspection.index.transaction_id,
   });
   if (postClaimInspection.state !== "complete" || postClaimInspection.generation_sha256 !== inspection.generation_sha256) return { state: "corruption", reason: "staging_changed_after_claim" };
+  verifyExpectedRecoveryGenerationSha256(postClaimInspection, expectedGenerationSha256);
   await inject(faultInjector, "before_recovery_rename", { stagingPath, generationPath });
   await fs.rename(stagingPath, generationPath);
   try {
     const finalInspection = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: inspection.index.transaction_id });
     if (finalInspection.state !== "complete" || finalInspection.generation_sha256 !== inspection.generation_sha256) throw new Error("Recovered generation changed after rename");
+    verifyExpectedRecoveryGenerationSha256(finalInspection, expectedGenerationSha256);
     await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: finalInspection });
     await fsyncDirectory(stagingParent);
     await inject(faultInjector, "after_recovery_parent_fsync", { generationPath });
     const cleanupInspection = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: inspection.index.transaction_id });
     if (cleanupInspection.state !== "complete" || cleanupInspection.generation_sha256 !== inspection.generation_sha256) throw new Error("Recovered generation changed before claim cleanup");
+    verifyExpectedRecoveryGenerationSha256(cleanupInspection, expectedGenerationSha256);
     await fs.unlink(claimPath);
     await fsyncDirectory(stagingParent);
   } catch (error) {
@@ -766,10 +898,18 @@ export async function recoverVerifiedStagingGeneration({ stagingPath, generation
   if (completedInspection.state !== "complete" || completedInspection.generation_sha256 !== inspection.generation_sha256) {
     return { state: "corruption", reason: "recovered_generation_failed_claim_free_reinspection" };
   }
-  return { ...completedInspection, state: "recovered_complete", generationPath };
+  verifyExpectedRecoveryGenerationSha256(completedInspection, expectedGenerationSha256);
+  const terminalInspection = await verifyTerminalSemanticSnapshot({ verifier: semanticVerifier, generationPath, inspection: completedInspection });
+  verifyExpectedRecoveryGenerationSha256(terminalInspection, expectedGenerationSha256);
+  return { ...terminalInspection, state: "recovered_complete", generationPath };
 }
 
-export async function recoverPublishedGeneration({ generationPath, faultInjector = null, semanticVerifier = null }) {
+export async function recoverPublishedGeneration({
+  generationPath,
+  expectedGenerationSha256 = null,
+  faultInjector = null,
+  semanticVerifier = null,
+}) {
   const parent = await fs.realpath(path.dirname(generationPath));
   const transactionId = path.basename(generationPath).slice(-36);
   if (!UUID_V4.test(transactionId)) return { state: "corruption", reason: "recovery_transaction_identity_invalid" };
@@ -777,6 +917,7 @@ export async function recoverPublishedGeneration({ generationPath, faultInjector
   await acquireOrVerifyClaim(claimPath, transactionId, { adoptExisting: true });
   const inspection = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: transactionId });
   if (inspection.state !== "complete") return inspection;
+  verifyExpectedRecoveryGenerationSha256(inspection, expectedGenerationSha256);
   if (requiresSemanticGenerationVerification(inspection.index) && typeof semanticVerifier !== "function") {
     return { state: "recovery_required", reason: "semantic_verifier_required", generationPath };
   }
@@ -784,6 +925,7 @@ export async function recoverPublishedGeneration({ generationPath, faultInjector
     await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection });
     const postClaimInspection = await inspectGenerationDirectory(generationPath, { activeClaimTransactionId: inspection.index.transaction_id });
     if (postClaimInspection.state !== "complete" || postClaimInspection.generation_sha256 !== inspection.generation_sha256) throw new Error("Published generation changed after claim verification");
+    verifyExpectedRecoveryGenerationSha256(postClaimInspection, expectedGenerationSha256);
     await fsyncDirectory(parent);
     await inject(faultInjector, "after_published_recovery_parent_fsync", { generationPath });
     await runSemanticGenerationVerifier({ verifier: semanticVerifier, generationPath, inspection: postClaimInspection });
@@ -798,5 +940,8 @@ export async function recoverPublishedGeneration({ generationPath, faultInjector
   if (completedInspection.state !== "complete" || completedInspection.generation_sha256 !== inspection.generation_sha256) {
     return { state: "corruption", reason: "recovered_generation_failed_claim_free_reinspection" };
   }
-  return { ...completedInspection, state: "recovered_complete", generationPath };
+  verifyExpectedRecoveryGenerationSha256(completedInspection, expectedGenerationSha256);
+  const terminalInspection = await verifyTerminalSemanticSnapshot({ verifier: semanticVerifier, generationPath, inspection: completedInspection });
+  verifyExpectedRecoveryGenerationSha256(terminalInspection, expectedGenerationSha256);
+  return { ...terminalInspection, state: "recovered_complete", generationPath };
 }

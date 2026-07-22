@@ -1,0 +1,630 @@
+{
+  "oracle_id": "pdf-tools.extraction-phase1-layout-occurrence-oracle.v1",
+  "oracle_version": 1,
+  "manifest_bindings": {
+    "document": {
+      "path": "test/fixtures/eval/extraction/manifest.v1.json",
+      "bytes": 20412,
+      "raw_sha256": "9cf89f50aeaeb84aaa4373901d87a27875cc8119814fdd517ca980e208541bb9",
+      "canonical_sha256": "76f66a83eb4fba74a058467d15c6bebd17d56961776eba8f0411c7bbbc6b8430"
+    },
+    "schema": {
+      "path": "test/fixtures/eval/extraction/manifest.schema.json",
+      "bytes": 8627,
+      "raw_sha256": "92f07ed4576a9d8851458a084fa17558520bff64da1bd379230c4d470b67bd63",
+      "canonical_sha256": "03cc2daff2a33e23201502b98f517a75debc6edb3b6ebc5c098110e78ebad5a0"
+    }
+  },
+  "scoring_oracle_bindings": {
+    "document": {
+      "path": "test/fixtures/eval/extraction/phase1/scoring-oracle.v1.json",
+      "bytes": 20384,
+      "raw_sha256": "806334c6458ba11371e0b0369d376f07d5682db181d4973b4eed21363f2d18b9",
+      "canonical_sha256": "d0e38a645b12530170ef65aa12ef5478ed2c70faec488288ca6dfc2724cf921d"
+    },
+    "schema": {
+      "path": "test/fixtures/eval/extraction/phase1/scoring-oracle.schema.json",
+      "bytes": 3714,
+      "raw_sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94",
+      "canonical_sha256": "8c6ccc65e21b18f525d9e7236b4717cf95a6631fdea0c9112700f4d703eb864f"
+    }
+  },
+  "layout_contract_bindings": {
+    "layout_output_schema_sha256": "632f89096cebdcb1f1de79c4d1915fc7af3282cf854f50add402a630a5bf2097",
+    "layout_evidence_contract_sha256": "39cb7e89cd65558bb661ebc0edab517dabc9398908750de6c3b56d511b887bef"
+  },
+  "validator_sources": [
+    {
+      "role": "generator_script",
+      "path": "scripts/eval-generate-extraction-layout-oracle.mjs",
+      "bytes": 11369,
+      "sha256": "759daa08260c2c3101f4799c16b76d410ddd90018e1e2ee627f36916a58777e8"
+    },
+    {
+      "role": "layout_evidence_module",
+      "path": "test/eval/extraction-phase1-layout-evidence.js",
+      "bytes": 38943,
+      "sha256": "913c3bf8b11f52a97d4298e56b9126098a357be07c0cc1221ad7af726391ebec"
+    },
+    {
+      "role": "layout_extraction_module",
+      "path": "server/layout-extraction.js",
+      "bytes": 87102,
+      "sha256": "184a76b3361398bf673b7db04a1bbe25bc749304d90dd0c040f0424efbc488aa"
+    },
+    {
+      "role": "layout_oracle_schema",
+      "path": "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
+      "bytes": 7152,
+      "sha256": "90551926c2ff16dde99dca57806527d0a7b279b9dfc085df7c17caac4d05dbf9"
+    },
+    {
+      "role": "output_schemas_module",
+      "path": "server/output-schemas.js",
+      "bytes": 23213,
+      "sha256": "41f6187a8f82975c583ce6dfcfae959d45ce6afda62b5488a407b28d292e9aa4"
+    },
+    {
+      "role": "package_json",
+      "path": "package.json",
+      "bytes": 2058,
+      "sha256": "218717dbf977958d34fe46fe7cb47984024724b98ec68319b80e0d89c9a288e2"
+    },
+    {
+      "role": "package_lock",
+      "path": "package-lock.json",
+      "bytes": 118977,
+      "sha256": "6c583e1edc71164a6b74c610fb04b579e1b76a5c4aaaf7af1bd303456435a462"
+    },
+    {
+      "role": "pdfjs_package",
+      "path": "node_modules/pdfjs-dist/package.json",
+      "bytes": 769,
+      "sha256": "d6118f647e840de4f40637b1bc205941ddd95f1cafff684ef3f9b712be3f9e9d"
+    },
+    {
+      "role": "scoring_oracle_schema",
+      "path": "test/fixtures/eval/extraction/phase1/scoring-oracle.schema.json",
+      "bytes": 3714,
+      "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
+    }
+  ],
+  "validator_source_set_sha256": "fd5f130e88e87787b68623af9bf7d0b9ac83deb905e92762921473a6ba2b7b7f",
+  "pdfjs_version": "5.4.624",
+  "generation_contract": {
+    "source_path": "source.pdf",
+    "source_file_name": "source.pdf",
+    "start_page": 1,
+    "end_page": "source_page_count",
+    "max_items": 5000,
+    "max_characters": 100000,
+    "max_output_characters": 200000,
+    "deadline_ms": 20000,
+    "occurrence_offsets": "unicode_code_point_half_open",
+    "bbox": "rounded_whole_oda_item_union"
+  },
+  "cases": [
+    {
+      "case_id": "pdf-tools.extraction.phase0.born-digital-flat",
+      "source_path": "synthetic/born-digital-flat.pdf",
+      "source_sha256": "706dcc669a763bc88852eff3bfdf3ee428d3ff1dac01b85e2b60942e907d5403",
+      "source_bytes": 2325,
+      "page_count": 1,
+      "layout_ir_sha256": "04a5b3131756f7cb6a03f220bc5ab302bd5b1be9d44141e44f398cd9bb68c5e3",
+      "layout_id_scope_sha256": "94525323c1539f80aee8ba84801c8426aff855295de257e8eae8ae3e420d0a7b",
+      "layout_extraction_status": "complete",
+      "facts": [
+        {
+          "fact_id": "fact.flat.invoice-id",
+          "field_path": "/invoice_id",
+          "anchor_text": "INV-1001",
+          "page": 1,
+          "status": "approved_unique",
+          "status_reason": "one exact Unicode occurrence exists on the source-validated layout page",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [
+            "f5dd41f59c5d1146d331c805cf87bbe01867e8f2bac681ebd96cc162afc7bb7b"
+          ],
+          "approved_occurrence": {
+            "source_sha256": "706dcc669a763bc88852eff3bfdf3ee428d3ff1dac01b85e2b60942e907d5403",
+            "layout_ir_sha256": "04a5b3131756f7cb6a03f220bc5ab302bd5b1be9d44141e44f398cd9bb68c5e3",
+            "page": 1,
+            "line_id": "p0001-l000003",
+            "line_start_code_point": 12,
+            "line_end_code_point": 20,
+            "source_item_ids": [
+              "p0001-i000003"
+            ],
+            "source_spans": [
+              {
+                "source_item_id": "p0001-i000003",
+                "start_code_point": 12,
+                "end_code_point": 20
+              }
+            ],
+            "quote": "INV-1001",
+            "bbox": {
+              "x": 72,
+              "y": 79.33,
+              "width": 129.164,
+              "height": 14
+            },
+            "occurrence_sha256": "f5dd41f59c5d1146d331c805cf87bbe01867e8f2bac681ebd96cc162afc7bb7b"
+          }
+        },
+        {
+          "fact_id": "fact.flat.total",
+          "field_path": "/total",
+          "anchor_text": "USD 42.50",
+          "page": 1,
+          "status": "approved_unique",
+          "status_reason": "one exact Unicode occurrence exists on the source-validated layout page",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [
+            "f9b8720a6d350513b8e59e9533e48df5b074f360a003c9edf600d31b95ccac0e"
+          ],
+          "approved_occurrence": {
+            "source_sha256": "706dcc669a763bc88852eff3bfdf3ee428d3ff1dac01b85e2b60942e907d5403",
+            "layout_ir_sha256": "04a5b3131756f7cb6a03f220bc5ab302bd5b1be9d44141e44f398cd9bb68c5e3",
+            "page": 1,
+            "line_id": "p0001-l000009",
+            "line_start_code_point": 7,
+            "line_end_code_point": 16,
+            "source_item_ids": [
+              "p0001-i000009"
+            ],
+            "source_spans": [
+              {
+                "source_item_id": "p0001-i000009",
+                "start_code_point": 7,
+                "end_code_point": 16
+              }
+            ],
+            "quote": "USD 42.50",
+            "bbox": {
+              "x": 72,
+              "y": 163.33,
+              "width": 107.38,
+              "height": 14
+            },
+            "occurrence_sha256": "f9b8720a6d350513b8e59e9533e48df5b074f360a003c9edf600d31b95ccac0e"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.born-digital-nested",
+      "source_path": "synthetic/born-digital-nested.pdf",
+      "source_sha256": "c9baaed165000f0e7112e2bfc89e070e0bda26c7ce3f1f16b0dbeebb67e9f11f",
+      "source_bytes": 2571,
+      "page_count": 1,
+      "layout_ir_sha256": "bf73e08027f9ddf9a4a801d3f167f01ebcc08fd750c3b143020fd41ca8046a19",
+      "layout_id_scope_sha256": "ae210a4ae63e5dd2756e9a69d9035ceffb245e4073c0fcd5533e9fa9ca62b755",
+      "layout_extraction_status": "complete",
+      "facts": [
+        {
+          "fact_id": "fact.nested.customer",
+          "field_path": "/customer_id",
+          "anchor_text": "C-204",
+          "page": 1,
+          "status": "approved_unique",
+          "status_reason": "one exact Unicode occurrence exists on the source-validated layout page",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [
+            "6c3540a0b6215d3736dee77e460d528d44316d1a82e16f5fd278d07f46191b5e"
+          ],
+          "approved_occurrence": {
+            "source_sha256": "c9baaed165000f0e7112e2bfc89e070e0bda26c7ce3f1f16b0dbeebb67e9f11f",
+            "layout_ir_sha256": "bf73e08027f9ddf9a4a801d3f167f01ebcc08fd750c3b143020fd41ca8046a19",
+            "page": 1,
+            "line_id": "p0001-l000003",
+            "line_start_code_point": 13,
+            "line_end_code_point": 18,
+            "source_item_ids": [
+              "p0001-i000003"
+            ],
+            "source_spans": [
+              {
+                "source_item_id": "p0001-i000003",
+                "start_code_point": 13,
+                "end_code_point": 18
+              }
+            ],
+            "quote": "C-204",
+            "bbox": {
+              "x": 72,
+              "y": 79.33,
+              "width": 124.474,
+              "height": 14
+            },
+            "occurrence_sha256": "6c3540a0b6215d3736dee77e460d528d44316d1a82e16f5fd278d07f46191b5e"
+          }
+        },
+        {
+          "fact_id": "fact.nested.postal",
+          "field_path": "/address/postal_code",
+          "anchor_text": "97205",
+          "page": 1,
+          "status": "approved_unique",
+          "status_reason": "one exact Unicode occurrence exists on the source-validated layout page",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [
+            "d4558a4128a1c74c026e84c4f342bf2a10080f7d7e05b05c25de4c6e9da616e4"
+          ],
+          "approved_occurrence": {
+            "source_sha256": "c9baaed165000f0e7112e2bfc89e070e0bda26c7ce3f1f16b0dbeebb67e9f11f",
+            "layout_ir_sha256": "bf73e08027f9ddf9a4a801d3f167f01ebcc08fd750c3b143020fd41ca8046a19",
+            "page": 1,
+            "line_id": "p0001-l000013",
+            "line_start_code_point": 13,
+            "line_end_code_point": 18,
+            "source_item_ids": [
+              "p0001-i000013"
+            ],
+            "source_spans": [
+              {
+                "source_item_id": "p0001-i000013",
+                "start_code_point": 13,
+                "end_code_point": 18
+              }
+            ],
+            "quote": "97205",
+            "bbox": {
+              "x": 72,
+              "y": 219.33,
+              "width": 119.854,
+              "height": 14
+            },
+            "occurrence_sha256": "d4558a4128a1c74c026e84c4f342bf2a10080f7d7e05b05c25de4c6e9da616e4"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.two-column-order",
+      "source_path": "synthetic/two-column-order.pdf",
+      "source_sha256": "aaaae6795676db9e33f79e75f4662808ee9646f8f2bb12a319f74e3edb11c101",
+      "source_bytes": 2427,
+      "page_count": 1,
+      "layout_ir_sha256": "e6551d4f7ed5a714593074be636bca9e3b8a448951e494b50a67957c7a9bc611",
+      "layout_id_scope_sha256": "248ec3ef6d60b35d42200b58881acd98e3708a11a4cc08a5a2aad544e8310239",
+      "layout_extraction_status": "partial",
+      "facts": [
+        {
+          "fact_id": "fact.columns.review",
+          "field_path": "/events/2",
+          "anchor_text": "Review starts August 2.",
+          "page": 1,
+          "status": "approved_unique",
+          "status_reason": "one exact Unicode occurrence exists on the source-validated layout page",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [
+            "822549e6ea468b8f0b303b3b5e58fe20c69ec053bf4c2639e8c3a1afece12952"
+          ],
+          "approved_occurrence": {
+            "source_sha256": "aaaae6795676db9e33f79e75f4662808ee9646f8f2bb12a319f74e3edb11c101",
+            "layout_ir_sha256": "e6551d4f7ed5a714593074be636bca9e3b8a448951e494b50a67957c7a9bc611",
+            "page": 1,
+            "line_id": "p0001-l000007",
+            "line_start_code_point": 8,
+            "line_end_code_point": 31,
+            "source_item_ids": [
+              "p0001-i000007"
+            ],
+            "source_spans": [
+              {
+                "source_item_id": "p0001-i000007",
+                "start_code_point": 8,
+                "end_code_point": 31
+              }
+            ],
+            "quote": "Review starts August 2.",
+            "bbox": {
+              "x": 326,
+              "y": 110.235,
+              "width": 192.166,
+              "height": 13
+            },
+            "occurrence_sha256": "822549e6ea468b8f0b303b3b5e58fe20c69ec053bf4c2639e8c3a1afece12952"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.table-merged-blank",
+      "source_path": "synthetic/table-merged-blank.pdf",
+      "source_sha256": "370dc0ac71939cba9db8584327c87899716dc770ac9ee8cad33fc27b5e73b73c",
+      "source_bytes": 2622,
+      "page_count": 1,
+      "layout_ir_sha256": "cb2eb5a022740e3f2781a35524ed6dd2d34dcde05b51bbf38d102c82d3154455",
+      "layout_id_scope_sha256": "a1ec2fc17eebd77505099868cf1e836f2f8019c8358169251dbd8951a3b80c9f",
+      "layout_extraction_status": "partial",
+      "facts": [
+        {
+          "fact_id": "fact.table.delivery",
+          "field_path": "/rows/1/amount",
+          "anchor_text": "USD 5.00",
+          "page": 1,
+          "status": "approved_unique",
+          "status_reason": "one exact Unicode occurrence exists on the source-validated layout page",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [
+            "fba2f00dea2a8f70c706bf6e05d46a99ca2c932e7a6cb4f62a049685244e7ef4"
+          ],
+          "approved_occurrence": {
+            "source_sha256": "370dc0ac71939cba9db8584327c87899716dc770ac9ee8cad33fc27b5e73b73c",
+            "layout_ir_sha256": "cb2eb5a022740e3f2781a35524ed6dd2d34dcde05b51bbf38d102c82d3154455",
+            "page": 1,
+            "line_id": "p0001-l000017",
+            "line_start_code_point": 0,
+            "line_end_code_point": 8,
+            "source_item_ids": [
+              "p0001-i000017"
+            ],
+            "source_spans": [
+              {
+                "source_item_id": "p0001-i000017",
+                "start_code_point": 0,
+                "end_code_point": 8
+              }
+            ],
+            "quote": "USD 5.00",
+            "bbox": {
+              "x": 430,
+              "y": 244.14,
+              "width": 52.02,
+              "height": 12
+            },
+            "occurrence_sha256": "fba2f00dea2a8f70c706bf6e05d46a99ca2c932e7a6cb4f62a049685244e7ef4"
+          }
+        }
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.raster-clean",
+      "source_path": "synthetic/raster-clean.pdf",
+      "source_sha256": "8287bc8965aef64fe33ae81b0abc2f2c3a9df4dc86c2335982f0747e0ae851e9",
+      "source_bytes": 25293,
+      "page_count": 1,
+      "layout_ir_sha256": "946ce164fba0702b0ee8192ca8987131a22f843bd209ec2ff607db2b78db0fc1",
+      "layout_id_scope_sha256": "3d83f832c5974313bc7271aff4cdc5bb6b70f2707ac085559fc7fd77ba340841",
+      "layout_extraction_status": "partial",
+      "facts": [
+        {
+          "fact_id": "fact.raster.total",
+          "field_path": "/total",
+          "anchor_text": "USD 18.75",
+          "page": 1,
+          "status": "absent",
+          "status_reason": "the exact anchor text is absent from the source-validated ODA text items",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [],
+          "approved_occurrence": null
+        }
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.raster-degraded",
+      "source_path": "synthetic/raster-degraded.pdf",
+      "source_sha256": "570b9f004596d5f8c0fc1f52c2ea3d1d0e88f987f287aa7692be2a5b3a6fc042",
+      "source_bytes": 8183,
+      "page_count": 1,
+      "layout_ir_sha256": "f0f2c97a6616855b75709d11f3d9ec3a0ab11a87503e2dc1f57eb02da3b76f8a",
+      "layout_id_scope_sha256": "7342bc70e0fd23db000587367c7127334f75bf7cc8ea9f95a38d47f1a9577422",
+      "layout_extraction_status": "partial",
+      "facts": [
+        {
+          "fact_id": "fact.degraded.total",
+          "field_path": "/total",
+          "anchor_text": "USD 18.75",
+          "page": 1,
+          "status": "absent",
+          "status_reason": "the exact anchor text is absent from the source-validated ODA text items",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [],
+          "approved_occurrence": null
+        }
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.mixed-text-raster",
+      "source_path": "synthetic/mixed-text-raster.pdf",
+      "source_sha256": "b5374f2e96b6205a6cf824ba90b55ffa23612658eca169270682c9445daa476f",
+      "source_bytes": 25899,
+      "page_count": 2,
+      "layout_ir_sha256": "3f6346698b53c6dea2901dc05af2e379f722545b1aff4b2fc3748a316fd4367d",
+      "layout_id_scope_sha256": "ac8f03854d86e26869fe980c651faef57726f3c14ec31ee0e6a81f07a94ef25c",
+      "layout_extraction_status": "partial",
+      "facts": [
+        {
+          "fact_id": "fact.mixed.packet",
+          "field_path": "/packet_id",
+          "anchor_text": "MIX-77",
+          "page": 1,
+          "status": "approved_unique",
+          "status_reason": "one exact Unicode occurrence exists on the source-validated layout page",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [
+            "e84db787ae72871ac6b240a1bc754ef1ea3919fabca63381d383f443ee09c996"
+          ],
+          "approved_occurrence": {
+            "source_sha256": "b5374f2e96b6205a6cf824ba90b55ffa23612658eca169270682c9445daa476f",
+            "layout_ir_sha256": "3f6346698b53c6dea2901dc05af2e379f722545b1aff4b2fc3748a316fd4367d",
+            "page": 1,
+            "line_id": "p0001-l000003",
+            "line_start_code_point": 11,
+            "line_end_code_point": 17,
+            "source_item_ids": [
+              "p0001-i000003"
+            ],
+            "source_spans": [
+              {
+                "source_item_id": "p0001-i000003",
+                "start_code_point": 11,
+                "end_code_point": 17
+              }
+            ],
+            "quote": "MIX-77",
+            "bbox": {
+              "x": 72,
+              "y": 79.33,
+              "width": 113.596,
+              "height": 14
+            },
+            "occurrence_sha256": "e84db787ae72871ac6b240a1bc754ef1ea3919fabca63381d383f443ee09c996"
+          }
+        },
+        {
+          "fact_id": "fact.mixed.total",
+          "field_path": "/receipt/total",
+          "anchor_text": "USD 18.75",
+          "page": 2,
+          "status": "absent",
+          "status_reason": "the exact anchor text is absent from the source-validated ODA text items",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [],
+          "approved_occurrence": null
+        }
+      ]
+    },
+    {
+      "case_id": "pdf-tools.extraction.phase0.no-answer-contradiction",
+      "source_path": "synthetic/no-answer-contradiction.pdf",
+      "source_sha256": "2938fbd44c847b950a87a691fa1d1a956e5c12e1ea17482e30d8e255e6876dde",
+      "source_bytes": 2411,
+      "page_count": 1,
+      "layout_ir_sha256": "2522992db39c400c76cf2fbacb8c05b4485e8c573f562b67d8dcd26b0b865ec8",
+      "layout_id_scope_sha256": "f7ecebc32e8a66d36e324bc091d1e3998860001419df166aa73c34d2af526c74",
+      "layout_extraction_status": "complete",
+      "facts": [
+        {
+          "fact_id": "fact.contradiction.approved",
+          "field_path": "/answer_state",
+          "anchor_text": "APPROVED",
+          "page": 1,
+          "status": "approved_unique",
+          "status_reason": "one exact Unicode occurrence exists on the source-validated layout page",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [
+            "647fc4fea3f49290740f5aed44a6f00bd57cee2fc54eada7b2cf51c5cad4b51d"
+          ],
+          "approved_occurrence": {
+            "source_sha256": "2938fbd44c847b950a87a691fa1d1a956e5c12e1ea17482e30d8e255e6876dde",
+            "layout_ir_sha256": "2522992db39c400c76cf2fbacb8c05b4485e8c573f562b67d8dcd26b0b865ec8",
+            "page": 1,
+            "line_id": "p0001-l000003",
+            "line_start_code_point": 19,
+            "line_end_code_point": 27,
+            "source_item_ids": [
+              "p0001-i000003"
+            ],
+            "source_spans": [
+              {
+                "source_item_id": "p0001-i000003",
+                "start_code_point": 19,
+                "end_code_point": 27
+              }
+            ],
+            "quote": "APPROVED",
+            "bbox": {
+              "x": 72,
+              "y": 79.33,
+              "width": 198.394,
+              "height": 14
+            },
+            "occurrence_sha256": "647fc4fea3f49290740f5aed44a6f00bd57cee2fc54eada7b2cf51c5cad4b51d"
+          }
+        },
+        {
+          "fact_id": "fact.contradiction.rejected",
+          "field_path": "/answer_state",
+          "anchor_text": "REJECTED",
+          "page": 1,
+          "status": "approved_unique",
+          "status_reason": "one exact Unicode occurrence exists on the source-validated layout page",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [
+            "cf035c8051af5cf0cd3931d691ab829062363b6c5159c0288c57da6ceeb2d3af"
+          ],
+          "approved_occurrence": {
+            "source_sha256": "2938fbd44c847b950a87a691fa1d1a956e5c12e1ea17482e30d8e255e6876dde",
+            "layout_ir_sha256": "2522992db39c400c76cf2fbacb8c05b4485e8c573f562b67d8dcd26b0b865ec8",
+            "page": 1,
+            "line_id": "p0001-l000005",
+            "line_start_code_point": 19,
+            "line_end_code_point": 27,
+            "source_item_ids": [
+              "p0001-i000005"
+            ],
+            "source_spans": [
+              {
+                "source_item_id": "p0001-i000005",
+                "start_code_point": 19,
+                "end_code_point": 27
+              }
+            ],
+            "quote": "REJECTED",
+            "bbox": {
+              "x": 72,
+              "y": 107.33,
+              "width": 194.488,
+              "height": 14
+            },
+            "occurrence_sha256": "cf035c8051af5cf0cd3931d691ab829062363b6c5159c0288c57da6ceeb2d3af"
+          }
+        },
+        {
+          "fact_id": "fact.contradiction.absent",
+          "field_path": "/settlement_amount",
+          "anchor_text": "not provided",
+          "page": 1,
+          "status": "approved_unique",
+          "status_reason": "one exact Unicode occurrence exists on the source-validated layout page",
+          "geometry_status": "eligible",
+          "geometry_reason": null,
+          "observed_occurrence_sha256": [
+            "8cf76e933e2455d863978245d4df8ce268c20d428ad5d9aa16b46b2587d3151b"
+          ],
+          "approved_occurrence": {
+            "source_sha256": "2938fbd44c847b950a87a691fa1d1a956e5c12e1ea17482e30d8e255e6876dde",
+            "layout_ir_sha256": "2522992db39c400c76cf2fbacb8c05b4485e8c573f562b67d8dcd26b0b865ec8",
+            "page": 1,
+            "line_id": "p0001-l000009",
+            "line_start_code_point": 25,
+            "line_end_code_point": 37,
+            "source_item_ids": [
+              "p0001-i000009"
+            ],
+            "source_spans": [
+              {
+                "source_item_id": "p0001-i000009",
+                "start_code_point": 25,
+                "end_code_point": 37
+              }
+            ],
+            "quote": "not provided",
+            "bbox": {
+              "x": 72,
+              "y": 163.33,
+              "width": 234.22,
+              "height": 14
+            },
+            "occurrence_sha256": "8cf76e933e2455d863978245d4df8ce268c20d428ad5d9aa16b46b2587d3151b"
+          }
+        }
+      ]
+    }
+  ]
+}

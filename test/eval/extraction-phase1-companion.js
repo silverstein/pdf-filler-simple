@@ -11,19 +11,28 @@ export const PHASE1_COMPANION_SOURCE_ROLES = Object.freeze([
   "artifact_module",
   "companion_module",
   "companion_schema",
+  "corpus_module",
+  "corpus_schema",
+  "execution_generation_verifier_module",
   "execution_index_schema",
   "extraction_manifest_loader",
   "generation_privacy_schema",
+  "generation_verifier_common_module",
+  "layout_evidence_module",
+  "layout_extraction_module",
+  "layout_output_schemas_module",
   "mcp_sdk_package",
   "package_json",
   "package_lock",
   "pdf_lib_package",
+  "pdfjs_package",
   "plan_schema",
   "protocol_module",
   "publisher_module",
   "receipt_schema",
   "registry_schema",
   "report_schema",
+  "report_verifier_module",
   "request_schema",
   "response_schema",
   "runner_script",
@@ -34,19 +43,28 @@ export const PHASE1_COMPANION_SOURCE_PATHS = Object.freeze({
   artifact_module: "test/eval/extraction-phase1-artifacts.js",
   companion_module: "test/eval/extraction-phase1-companion.js",
   companion_schema: "test/fixtures/eval/extraction/phase1/execution-companion.schema.json",
+  corpus_module: "test/eval/extraction-phase1-corpus.js",
+  corpus_schema: "test/fixtures/eval/extraction/phase1/corpus.schema.json",
+  execution_generation_verifier_module: "test/eval/extraction-phase1-execution-generation-verifier.js",
   execution_index_schema: "test/fixtures/eval/extraction/phase1/execution-index.schema.json",
   extraction_manifest_loader: "test/eval/extraction-manifest.js",
   generation_privacy_schema: "test/fixtures/eval/extraction/phase1/generation-privacy.schema.json",
+  generation_verifier_common_module: "test/eval/extraction-phase1-generation-verifier-common.js",
+  layout_evidence_module: "test/eval/extraction-phase1-layout-evidence.js",
+  layout_extraction_module: "server/layout-extraction.js",
+  layout_output_schemas_module: "server/output-schemas.js",
   mcp_sdk_package: "node_modules/@modelcontextprotocol/sdk/package.json",
   package_json: "package.json",
   package_lock: "package-lock.json",
   pdf_lib_package: "node_modules/pdf-lib/package.json",
+  pdfjs_package: "node_modules/pdfjs-dist/package.json",
   plan_schema: "test/fixtures/eval/extraction/phase1/run-plan.schema.json",
   protocol_module: "test/eval/extraction-phase1-protocol.js",
   publisher_module: "test/eval/extraction-phase1-publisher.js",
   receipt_schema: "test/fixtures/eval/extraction/phase1/cross-device-receipt.schema.json",
   registry_schema: "test/fixtures/eval/extraction/phase1/candidate-registry.schema.json",
   report_schema: "test/fixtures/eval/extraction/phase1/report.schema.json",
+  report_verifier_module: "test/eval/extraction-phase1-report-verifier.js",
   request_schema: "test/fixtures/eval/extraction/phase1/candidate-request.schema.json",
   response_schema: "test/fixtures/eval/extraction/phase1/candidate-response.schema.json",
   runner_script: "scripts/eval-run-extraction-candidates.mjs",
@@ -241,6 +259,10 @@ export async function buildRunnerEnvironmentAttestation({ nodeExecutable = proce
       version: JSON.parse(Buffer.from(sourceBytesByRole.pdf_lib_package.bytes).toString("utf8")).version,
       package_json_sha256: sha256(sourceBytesByRole.pdf_lib_package.bytes),
     },
+    pdfjs: {
+      version: JSON.parse(Buffer.from(sourceBytesByRole.pdfjs_package.bytes).toString("utf8")).version,
+      package_json_sha256: sha256(sourceBytesByRole.pdfjs_package.bytes),
+    },
     package_lock_sha256: sha256(sourceBytesByRole.package_lock.bytes),
   };
 }
@@ -434,15 +456,18 @@ export function createExecutionCompanion({
     }
   }
   const sources = validateSourceRecords(sourceBytesByRole);
-  exactKeys(runnerEnvironmentAttestation, ["authenticity", "mcp_sdk", "node_executable", "package_lock_sha256", "pdf_lib", "runtime_closure"], "Runner environment attestation");
+  exactKeys(runnerEnvironmentAttestation, ["authenticity", "mcp_sdk", "node_executable", "package_lock_sha256", "pdf_lib", "pdfjs", "runtime_closure"], "Runner environment attestation");
   exactKeys(runnerEnvironmentAttestation.node_executable, ["bytes", "device", "inode", "mode", "realpath_sha256", "sha256"], "Runner Node executable attestation");
   exactKeys(runnerEnvironmentAttestation.mcp_sdk, ["package_json_sha256", "version"], "Runner MCP SDK attestation");
   exactKeys(runnerEnvironmentAttestation.pdf_lib, ["package_json_sha256", "version"], "Runner PDF library attestation");
+  exactKeys(runnerEnvironmentAttestation.pdfjs, ["package_json_sha256", "version"], "Runner PDF.js attestation");
   const sourceByRole = Object.fromEntries(sources.map(item => [item.role, item]));
   if (runnerEnvironmentAttestation.authenticity !== "unavailable" || runnerEnvironmentAttestation.runtime_closure !== "incomplete"
     || runnerEnvironmentAttestation.package_lock_sha256 !== sourceByRole.package_lock.sha256
     || runnerEnvironmentAttestation.mcp_sdk.package_json_sha256 !== sourceByRole.mcp_sdk_package.sha256
     || runnerEnvironmentAttestation.pdf_lib.package_json_sha256 !== sourceByRole.pdf_lib_package.sha256
+    || runnerEnvironmentAttestation.pdfjs.version !== "5.4.624"
+    || runnerEnvironmentAttestation.pdfjs.package_json_sha256 !== sourceByRole.pdfjs_package.sha256
     || typeof runnerEnvironmentAttestation.mcp_sdk.version !== "string" || !runnerEnvironmentAttestation.mcp_sdk.version
     || !/^[a-f0-9]{64}$/.test(runnerEnvironmentAttestation.node_executable.sha256)) {
     throw new Error("Runner environment attestation is inconsistent with direct runtime sources");
@@ -509,10 +534,10 @@ export function createCrossDeviceReceipt({
   exactKeys(sourceCodeIdentity, ["kind", "sha256", "source_artifact_role"], "Cross-device source code identity");
   if (![
     "execution_direct_source_set_sha256",
-    "score_scorer_source_set_sha256",
+    "score_scorer_local_source_set_sha256",
   ].includes(sourceCodeIdentity.kind) || !/^[a-f0-9]{64}$/.test(sourceCodeIdentity.sha256)
     || (sourceCodeIdentity.kind === "execution_direct_source_set_sha256" && sourceCodeIdentity.source_artifact_role !== "execution_companion")
-    || (sourceCodeIdentity.kind === "score_scorer_source_set_sha256" && sourceCodeIdentity.source_artifact_role !== "score_provenance")) {
+    || (sourceCodeIdentity.kind === "score_scorer_local_source_set_sha256" && sourceCodeIdentity.source_artifact_role !== "score_provenance")) {
     throw new Error("Cross-device source code identity is invalid");
   }
   const authentic = keyId !== null && signature !== null;

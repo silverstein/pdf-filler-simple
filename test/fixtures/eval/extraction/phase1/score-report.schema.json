@@ -4,7 +4,7 @@
   "title": "PDF Tools extraction Phase 1 score report v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["score_report_id", "score_report_version", "benchmark_claim_ready", "calibration_claim_ready", "canonical_evidence_claim_ready", "scorer_id", "scorer_contract_sha256", "scorer_sources", "scorer_source_set_sha256", "execution_report_sha256", "execution_report_bytes_sha256", "phase0_manifest_sha256", "oracle_sha256", "oracle_bytes_sha256", "oracle_schema_sha256", "preflight_evidence_sha256", "preflight_evidence_bytes_sha256", "attempts", "aggregate", "stability", "canonical_evidence", "unavailable_claims"],
+  "required": ["score_report_id", "score_report_version", "benchmark_claim_ready", "calibration_claim_ready", "canonical_evidence_claim_ready", "scorer_id", "scorer_contract_sha256", "scorer_sources", "scorer_local_source_set_sha256", "execution_report_sha256", "execution_report_bytes_sha256", "phase0_manifest_sha256", "oracle_sha256", "oracle_bytes_sha256", "oracle_schema_sha256", "layout_oracle_sha256", "layout_oracle_bytes_sha256", "layout_oracle_schema_sha256", "preflight_evidence_sha256", "preflight_evidence_bytes_sha256", "attempts", "aggregate", "stability", "canonical_evidence", "unavailable_claims"],
   "properties": {
     "score_report_id": { "const": "pdf-tools.extraction-phase1-score-report.v1" },
     "score_report_version": { "const": 1 },
@@ -13,25 +13,45 @@
     "canonical_evidence_claim_ready": { "const": false },
     "scorer_id": { "const": "pdf-tools.extraction-phase1-scorer.v1" },
     "scorer_contract_sha256": { "$ref": "#/$defs/sha256" },
-    "scorer_sources": { "type": "array", "minItems": 9, "maxItems": 9, "uniqueItems": true, "items": { "$ref": "#/$defs/sourceBinding" } },
-    "scorer_source_set_sha256": { "$ref": "#/$defs/sha256" },
+    "scorer_sources": { "type": "array", "minItems": 38, "maxItems": 38, "uniqueItems": true, "items": { "$ref": "#/$defs/sourceBinding" } },
+    "scorer_local_source_set_sha256": { "$ref": "#/$defs/sha256" },
     "execution_report_sha256": { "$ref": "#/$defs/sha256" },
     "execution_report_bytes_sha256": { "$ref": "#/$defs/sha256" },
     "phase0_manifest_sha256": { "$ref": "#/$defs/sha256" },
     "oracle_sha256": { "$ref": "#/$defs/sha256" },
     "oracle_bytes_sha256": { "$ref": "#/$defs/sha256" },
     "oracle_schema_sha256": { "$ref": "#/$defs/sha256" },
+    "layout_oracle_sha256": { "$ref": "#/$defs/sha256" },
+    "layout_oracle_bytes_sha256": { "$ref": "#/$defs/sha256" },
+    "layout_oracle_schema_sha256": { "$ref": "#/$defs/sha256" },
     "preflight_evidence_sha256": { "$ref": "#/$defs/sha256" },
     "preflight_evidence_bytes_sha256": { "$ref": "#/$defs/sha256" },
     "attempts": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/attempt" } },
     "aggregate": { "$ref": "#/$defs/aggregate" },
     "stability": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/stability" } },
-    "canonical_evidence": { "type": "object", "additionalProperties": false, "required": ["availability", "page", "bbox", "fact", "answer"], "properties": { "availability": { "const": "unavailable" }, "page": { "type": "null" }, "bbox": { "type": "null" }, "fact": { "type": "null" }, "answer": { "type": "null" } } },
+    "canonical_evidence": { "$ref": "#/$defs/canonicalEvidenceAggregate" },
     "unavailable_claims": { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
   },
   "$defs": {
     "sha256": { "type": "string", "pattern": "^[a-f0-9]{64}$" },
-    "sourceBinding": { "type": "object", "additionalProperties": false, "required": ["role", "path", "bytes", "sha256"], "properties": { "role": { "enum": ["index_schema", "manifest_loader", "oracle_schema", "orchestration_script", "protocol_module", "report_schema", "score_schema", "scorer_module", "scoring_oracle"] }, "path": { "type": "string", "minLength": 1 }, "bytes": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" } } },
+    "sourceBinding": { "type": "object", "additionalProperties": false, "required": ["role", "path", "bytes", "sha256"], "properties": { "role": { "enum": ["artifact_config_schema", "artifact_inventory_schema", "artifact_module", "companion_module", "companion_schema", "corpus_module", "corpus_schema", "execution_index_schema", "generation_privacy_schema", "generation_verifier_common_module", "index_schema", "layout_evidence_module", "layout_extraction_module", "layout_oracle", "layout_oracle_generator", "layout_oracle_schema", "manifest_schema", "mcp_sdk_package", "oracle_schema", "orchestration_script", "output_schemas_module", "package_json", "package_lock", "pdf_lib_package", "pdfjs_package", "plan_schema", "protocol_module", "publisher_module", "receipt_schema", "registry_schema", "report_schema", "report_verifier_module", "request_schema", "response_schema", "score_generation_verifier_module", "score_schema", "scorer_module", "scoring_oracle"] }, "path": { "type": "string", "minLength": 1 }, "bytes": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" } } },
+    "canonicalMetric": {
+      "type": "object", "additionalProperties": false,
+      "required": ["availability", "applicable", "evaluable", "matched", "missing", "spurious", "coverage", "precision", "recall", "score"],
+      "properties": {
+        "availability": { "enum": ["unavailable", "not_applicable", "partial", "measured"] },
+        "applicable": { "type": "integer", "minimum": 0 }, "evaluable": { "type": "integer", "minimum": 0 }, "matched": { "type": "integer", "minimum": 0 }, "missing": { "type": "integer", "minimum": 0 }, "spurious": { "type": "integer", "minimum": 0 },
+        "coverage": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "precision": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "recall": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }, "score": { "type": ["number", "null"], "minimum": 0, "maximum": 1 }
+      }
+    },
+    "canonicalEvidenceAttempt": {
+      "type": "object", "additionalProperties": false, "required": ["availability", "reason", "page", "bbox", "fact", "answer"],
+      "properties": { "availability": { "enum": ["unavailable", "partial", "measured"] }, "reason": { "type": ["string", "null"] }, "page": { "$ref": "#/$defs/canonicalMetric" }, "bbox": { "$ref": "#/$defs/canonicalMetric" }, "fact": { "$ref": "#/$defs/canonicalMetric" }, "answer": { "$ref": "#/$defs/canonicalMetric" } }
+    },
+    "canonicalEvidenceAggregate": {
+      "type": "object", "additionalProperties": false, "required": ["availability", "page", "bbox", "fact", "answer"],
+      "properties": { "availability": { "enum": ["unavailable", "partial", "measured"] }, "page": { "$ref": "#/$defs/canonicalMetric" }, "bbox": { "$ref": "#/$defs/canonicalMetric" }, "fact": { "$ref": "#/$defs/canonicalMetric" }, "answer": { "$ref": "#/$defs/canonicalMetric" } }
+    },
     "countClass": {
       "type": "object", "additionalProperties": false,
       "required": ["expected", "correct", "wrong", "missing"],
@@ -89,11 +109,11 @@
     },
     "attempt": {
       "type": "object", "additionalProperties": false,
-      "required": ["attempt_key", "candidate_id", "case_id", "repetition", "outcome", "quality_available", "semantic_sha256", "structured", "text", "table", "resources"],
+      "required": ["attempt_key", "candidate_id", "case_id", "repetition", "outcome", "quality_available", "semantic_sha256", "structured", "text", "table", "canonical_evidence", "resources"],
       "properties": {
         "attempt_key": { "type": "string", "minLength": 1 }, "candidate_id": { "type": "string", "minLength": 1 }, "case_id": { "type": "string", "minLength": 1 },
         "repetition": { "type": "integer", "minimum": 1 }, "outcome": { "enum": ["completed", "partial", "abstained", "error", "not_run"] }, "quality_available": { "type": "boolean" },
-        "semantic_sha256": { "$ref": "#/$defs/sha256" }, "structured": { "$ref": "#/$defs/structured" }, "text": { "$ref": "#/$defs/text" }, "table": { "$ref": "#/$defs/table" }, "resources": { "$ref": "#/$defs/resources" }
+        "semantic_sha256": { "$ref": "#/$defs/sha256" }, "structured": { "$ref": "#/$defs/structured" }, "text": { "$ref": "#/$defs/text" }, "table": { "$ref": "#/$defs/table" }, "canonical_evidence": { "$ref": "#/$defs/canonicalEvidenceAttempt" }, "resources": { "$ref": "#/$defs/resources" }
       }
     },
     "aggregate": {

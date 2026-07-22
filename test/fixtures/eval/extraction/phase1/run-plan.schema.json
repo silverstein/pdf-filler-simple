@@ -12,7 +12,7 @@
     "case_ids": {
       "anyOf": [
         { "type": "null" },
-        { "type": "array", "minItems": 1, "uniqueItems": true, "items": { "type": "string", "minLength": 1 } }
+        { "type": "array", "minItems": 1, "maxItems": 100, "uniqueItems": true, "items": { "type": "string", "minLength": 1, "maxLength": 128 } }
       ]
     },
     "repetitions": { "type": "integer", "minimum": 1, "maximum": 20 },

@@ -121,6 +121,42 @@ transaction may inspect it internally. Recovery of a privacy-attested
 generation requires and reruns its semantic verifier; verifier failure leaves
 the claim in place.
 
+After the terminal claim-free semantic callback, publication, receive, staging
+recovery, and published recovery perform one more exact inspection. The final
+generation digest and canonical index bytes must equal the pre-callback
+snapshot. The returned inspection is this post-callback snapshot. This closes
+mutation during the terminal callback; continuous immutability after return is
+still unavailable and is not claimed.
+
+Execution and score semantic verifiers are separate exported factories, not
+retained in-memory closures. They share only bounded-read, transaction,
+transport, and privacy primitives. The execution verifier does not import the
+scorer or oracle generator, and the score verifier does not import the execution
+verifier or runner. Each named local source map equals the complete reachable
+static local module graph for its orchestration entry point. A fresh process
+rebuilds the selected verifier from explicit trusted local paths, its exact
+source and schema role set, PDF.js 5.4.624, and retained generation artifacts.
+Execution and score generations retain the exact candidate registry and run
+plan used by the report. Score generations also retain the source execution
+companion so adapter, artifact, and runner-failure context can be reconstructed
+without the scoring process that created them.
+
+Local crash recovery can use an explicit `local_claim_owned` semantic trust
+rule. The caller supplies the expected transaction ID and may bind that verifier
+to the exact generation digest. Independently of semantic trust mode, both
+recovery APIs require an externally supplied exact destination-generation digest
+for every `received_execution` or `received_score` recovery. They compare it
+before semantic verification, after semantic verification, and after terminal
+claim-free reinspection. An out-of-band source-generation digest can authenticate
+the source during initial receive, but it cannot authorize recovery of either of
+two different received generations that reference that source. The factory
+verifies the mode-0600, no-follow claim bytes before accepting a local claim,
+permits one terminal claim-free use for that same transaction, then becomes
+unusable. This is local, unauthenticated recovery trust. It is not cross-device
+authenticity. A fresh recovery after the terminal claim was removed must provide
+the exact expected generation digest and recover through a new exact transaction
+claim.
+
 Generation kinds have a strict ancestry contract. An original `execution`
 index has no source-generation digest. `score`, `received_execution`, and
 `received_score` indexes require one. A received execution must embed an
@@ -151,9 +187,18 @@ root set.
 The transfer receipt binds the exact source index bytes, source generation
 digest, hosts, transport, time, and a code identity derived from the indexed
 execution companion or score provenance. Callers cannot substitute an
-unrelated source hash. Unsigned receipts state that authenticity is unavailable.
-For signed receipts, a trusted verifier must return the synchronous boolean
-value `true`; promises and other truthy values fail closed.
+unrelated source hash. Receive also requires the exact source generation digest
+from an out-of-band trusted input before copying. A received execution must
+anchor an original execution, and a received score must anchor an original
+score. The destination must contain every source artifact record byte-for-byte
+and record-for-record, plus exactly the source index, transfer receipt, and
+received privacy attestation. Source generations may not use those transfer-local
+roles or paths. The expected receipt code identity is derived from the already
+independently verified execution companion or score provenance, never from the
+receipt itself. Unsigned receipts state that receipt authenticity is unavailable
+and do not call a configured signature verifier. For signed receipts, the fresh
+factory requires an explicit trusted verifier, which must return the synchronous
+boolean value `true`; promises and other truthy values fail closed.
 
 A received generation retains every original source artifact record exactly and
 adds only `source_generation_index`, `transfer_receipt`, and
@@ -165,7 +210,12 @@ trusting a self-consistent destination index.
 The scorer consumes only a complete execution or received-execution generation.
 It revalidates the report, companion, artifact evidence, privacy evidence,
 source ancestry, and receipt before computing metrics. Score provenance binds
-the scorer source set, oracle inputs, schemas, report bytes, and scoring leaves.
+the explicitly named scorer local source set, oracle inputs, schemas, report
+bytes, and scoring leaves. The local set closes every repository source and
+schema that governs load, verification, scoring, publication, and recovery. It
+also binds package metadata for the MCP SDK, pdf-lib, and PDF.js plus the exact
+package lock. Installed external scorer runtime and module-byte closure remain
+unavailable and are explicitly nonclaimed.
 The score is then published as its own immutable generation that names the
 verified execution generation as its source. Scores can be transferred into a
 `received_score` generation under the same receipt and privacy rules.
@@ -178,7 +228,9 @@ requirement.
 
 The target schema is reduced to exact requested leaf paths using a deliberately
 small supported schema subset. Object properties must all be required and
-`additionalProperties` must be false. Arrays are treated as leaf values.
+`additionalProperties` must be false. Answered arrays expose concrete scalar
+leaves such as `/events/2` and `/rows/1/amount`; unresolved array contracts keep
+their exact schema-level gap path. Evidence never inherits from an array parent.
 Unsupported composition or optional-object shapes fail closed.
 
 - `completed` must be target-schema valid, answer every leaf, and have no gaps.
@@ -194,10 +246,27 @@ Answered and gap paths cannot overlap. Gaps must name exact schema leaves, not
 parent objects. The empty JSON Pointer identifies the root value; `/` identifies
 an object property whose name is the empty string.
 
-Canonical `evidence` and `field_evidence` arrays are structurally required to be
-empty. No candidate input, including an empty or self-described layout IR, can
-authorize canonical ODA evidence until a separate verifier proves source-item,
-quote, CropBox, UserUnit, rotation, region, and PDF.js display equivalence.
+Canonical `evidence` and `field_evidence` are untrusted candidate proposals.
+They are accepted only for `layout_ir` requests and receive no credit until the
+runner and scorer independently re-read retained fixture bytes, validate the
+exact shipped `read_pdf_layout` schema, validate layout semantics, reparse the
+source with PDF.js 5.4.624, and prove every Unicode code-point span, source item,
+line, reading order, quote, exact 0.001-rounded item-union bbox, field path, and
+typed value digest. Multiple noncontiguous facts require multiple evidence
+records; one broad record cannot receive repeated credit for separated facts.
+Direct-PDF and raster proposals fail closed. Exact anchor matching precomputes
+the layout digest and Unicode prefix table once per search, preserves a full
+100,000-code-point no-match scan, and fails closed before constructing more than
+1,000 occurrences across all lines.
+
+The Phase 0 coordinate gate is deliberately narrow: zero raw and display
+rotation, equal zero-origin MediaBox and CropBox, UserUnit 1, exact PDF.js view,
+display dimensions, viewport transform, complete pages, and valid positive item
+geometry. A scorer-only occurrence oracle is independently regenerated from the
+retained synthetic corpus. It may approve one of several exhaustive exact
+occurrences only when one has a unique positive maximum overlap with the Phase 0
+review region. Candidate bboxes themselves must equal the exact item union; the
+review region is not copied into candidate evidence.
 Page text declares a typed origin:
 `born_digital_text_layer`, `ocr`, `visual_parser`, or `hybrid`. Direct-PDF
 candidate text cannot claim born-digital text-layer origin without
@@ -221,9 +290,26 @@ cells whose row or column span is greater than one.
 ## Claim boundary
 
 The current Node runner truthfully reports that it does not enforce filesystem,
-network, CPU, memory, process-count, or process-tree memory isolation. Candidate
-evidence also remains unscored until a separate scorer binds values, source
-items, page geometry, quotes, and regions independently.
+network, CPU, memory, process-count, or process-tree memory isolation. Canonical
+page, bbox, fact, and answer metrics are separate and scorer-only. Gaps and
+abstentions never enter the answer denominator, though exact gap-bound evidence
+may support an independently applicable fact metric.
+
+Each immutable execution generation retains one bounded JSON corpus envelope
+containing the exact raw Phase 0 manifest and schema bytes plus the selected
+synthetic PDFs. Raw and canonical hashes, ordered case IDs, byte lengths, full
+fixture hashes, page counts, privacy labels, and a domain-separated fixture-set
+digest are rechecked before report verification. Publication, scoring, reload,
+receive, and recovery await composite semantic verification at staging, final,
+pre-claim-removal, and claim-free boundaries.
+
+Manifest and schema inputs are opened without following symlinks and are bounded
+before JSON parsing. Plans select at most 100 cases. Selected fixtures are read
+sequentially under one remaining 8 MiB aggregate budget, with an 8 MiB
+per-fixture ceiling. The retained descriptor schema is mandatory. Base64 limits
+are the exact encoded ceilings for the 1 MiB manifest and schema inputs and the
+8 MiB fixture budget; the whole descriptor and default generation reader share
+a consistent 16 MiB ceiling.
 
 The report flags `benchmark_claim_ready`, `calibration_claim_ready`, and
 `truth_isolation_claim_ready` remain false. Candidate installation, model
