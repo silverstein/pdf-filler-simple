@@ -32,6 +32,7 @@ import {
   validateStructuredToolResult,
   withToolOutputSchema,
 } from "./output-schemas.js";
+import { extractPdfLayout } from "./layout-extraction.js";
 
 const _require = createRequire(import.meta.url);
 
@@ -109,6 +110,50 @@ function formatErrorChain(error, maxDepth = 6) {
   }
   if (current) messages.push("...");
   return messages.join(" <- caused by ");
+}
+
+function boundedInteger(value, fallback, { name, minimum, maximum }) {
+  const candidate = value === undefined || value === null ? fallback : value;
+  if (!Number.isInteger(candidate) || candidate < minimum || candidate > maximum) {
+    throw new Error(`${name} must be an integer from ${minimum} to ${maximum}.`);
+  }
+  return candidate;
+}
+
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.size === right.size
+    && left.mtimeMs === right.mtimeMs
+    && left.ctimeMs === right.ctimeMs;
+}
+
+async function readBoundedPdfFile(resolvedPath, maxBytes) {
+  const canonicalPath = await fs.realpath(resolvedPath);
+  assertPathAllowed(canonicalPath);
+  const flags = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+  const handle = await fs.open(canonicalPath, flags);
+  try {
+    const before = await handle.stat();
+    if (!before.isFile()) throw new Error("PDF path must identify a regular file.");
+    if (!Number.isSafeInteger(before.size) || before.size > maxBytes) {
+      throw new Error("read_pdf_layout accepts source PDFs up to 250 MiB.");
+    }
+    const bytes = Buffer.allocUnsafe(before.size);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
+      if (bytesRead === 0) throw new Error("PDF changed while it was being read. Retry the request.");
+      offset += bytesRead;
+    }
+    const [after, pathAfter] = await Promise.all([handle.stat(), fs.stat(canonicalPath)]);
+    if (!sameFileIdentity(before, after) || !sameFileIdentity(after, pathAfter)) {
+      throw new Error("PDF changed while it was being read. Retry the request.");
+    }
+    return { bytes, sizeBytes: before.size };
+  } finally {
+    await handle.close();
+  }
 }
 
 function shouldUseSystemPdfRenderer() {
@@ -2427,6 +2472,31 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         }
       },
       {
+        name: "read_pdf_layout",
+        description: "Extract a bounded page range into the versioned PDF Tools Extraction IR using the local pinned PDF.js parser. Returns source identity, raw page boxes and rotation when available, PDF.js-authoritative display geometry in physical 1/72-inch points after UserUnit, conservative lines and nonsemantic flow blocks, normalized flow/spatial text, and explicit raster or partial gaps. Text-run quads are advance boxes, not glyph ink bounds. This tool does not render pages, run OCR, infer tables, or fill an arbitrary schema. Narrow the page range or lower limits for large documents. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            pdf_path: { type: "string", description: "Absolute path to the local PDF file." },
+            password: { type: "string", description: "Password for an encrypted PDF, when required." },
+            start_page: { type: "integer", minimum: 1, description: "First page to extract, 1-indexed. Default: 1." },
+            end_page: { type: "integer", minimum: 1, description: "Last page to extract, inclusive. Default: start_page. At most 10 pages per call." },
+            max_items: { type: "integer", minimum: 1, maximum: 5000, description: "Maximum returned raw text items across the requested range. Default: 1000." },
+            max_characters: { type: "integer", minimum: 1, maximum: 100000, description: "Maximum returned raw text characters across the requested range. Default: 50000." },
+            max_output_characters: { type: "integer", minimum: 20000, maximum: 200000, description: "Maximum serialized structured-output characters. Whole page detail is omitted with explicit metadata if needed. Default: 50000." }
+          },
+          required: ["pdf_path"]
+        },
+        annotations: {
+          title: "Read PDF Layout",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
         name: "render_pdf_page",
         description: "Render one PDF page to a PNG image for visual reasoning. Use this when text extraction is weak, the PDF is scanned/image-only, or the model needs to inspect layout, signatures, handwriting, or tables visually. Returns the rendered page as image content plus page metadata. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
@@ -3984,6 +4054,71 @@ async function handleToolCall(request) {
               type: "text",
               text: `Error reading PDF pages: ${error.message}\n\nPlease ensure the file path is correct and the requested page range is valid.`
             }],
+          };
+        }
+      }
+
+      case "read_pdf_layout": {
+        const { pdf_path, password = null } = args;
+        const resolvedPath = resolvePath(pdf_path);
+        try {
+          const startPage = boundedInteger(args.start_page, 1, { name: "start_page", minimum: 1, maximum: 1000000 });
+          const endPage = boundedInteger(args.end_page, startPage, { name: "end_page", minimum: 1, maximum: 1000000 });
+          if (endPage < startPage) throw new Error("end_page must be greater than or equal to start_page.");
+          if (endPage - startPage + 1 > 10) throw new Error("read_pdf_layout accepts at most 10 pages per call. Request a narrower range.");
+          const maxItems = boundedInteger(args.max_items, 1000, { name: "max_items", minimum: 1, maximum: 5000 });
+          const maxCharacters = boundedInteger(args.max_characters, 50000, { name: "max_characters", minimum: 1, maximum: 100000 });
+          const maxOutputCharacters = boundedInteger(args.max_output_characters, 50000, { name: "max_output_characters", minimum: 20000, maximum: 200000 });
+          const { bytes: pdfBytes, sizeBytes } = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
+          await loadPdfjs();
+          const fileName = path.basename(resolvedPath);
+          const payload = await withSuppressedStderr(() => extractPdfLayout({
+            pdfjsLib,
+            pdfBytes,
+            sourcePath: resolvedPath,
+            sourceFileName: fileName,
+            sourceSha256: createHash("sha256").update(pdfBytes).digest("hex"),
+            sourceSizeBytes: sizeBytes,
+            password,
+            requestedStartPage: startPage,
+            requestedEndPage: endPage,
+            maxItems,
+            maxCharacters,
+            maxOutputCharacters,
+          }));
+          const summary = [
+            `Extracted PDF layout IR ${payload.ir.version} from pages ${payload.page_range.start_page}-${payload.page_range.end_page} of ${fileName}.`,
+            `Status: ${payload.extraction_status}. Parser: ${payload.parser.name} ${payload.parser.version}.`,
+            `Source SHA-256: ${payload.source.sha256}.`,
+            ...payload.pages.map(page => {
+              const preview = page.flow_text.replace(/\s+/g, " ").trim().slice(0, 120);
+              return `Page ${page.page}: ${page.extraction_status}; text=${page.text_layer_status}; modality=${page.modality_hint}; ${page.counts.returned_items}/${page.counts.observed_items} items; order=${page.reading_order.strategy}; preview=${preview || "[none]"}`;
+            }),
+            ...(payload.truncation.truncated
+              ? [`Truncated: ${payload.truncation.reasons.join(", ")}. Omitted ${payload.truncation.omitted_items} items and ${payload.truncation.omitted_characters} characters.`]
+              : []),
+            "Coordinates use the PDF.js top-left display viewport in physical 1/72-inch points after UserUnit and are not interchangeable with render_pdf_region or signing coordinates. Text-run quads are advance boxes, not glyph ink bounds. No rendering, OCR, table inference, or arbitrary schema extraction was performed.",
+          ].join("\n");
+          return {
+            content: [{ type: "text", text: summary }],
+            structuredContent: payload,
+          };
+        } catch (error) {
+          const passwordCode = ["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"].includes(error?.code)
+            ? error.code
+            : null;
+          return {
+            isError: true,
+            content: [{
+              type: "text",
+              text: `Error reading PDF layout: ${error.message}\n\nUse a valid local PDF up to 250 MiB, a page range of at most 10 pages, and narrower limits if the document is large.`,
+            }],
+            ...(passwordCode ? {
+              structuredContent: {
+                status: "failed",
+                error: { error_schema_version: 1, code: passwordCode },
+              },
+            } : {}),
           };
         }
       }

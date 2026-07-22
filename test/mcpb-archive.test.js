@@ -142,13 +142,17 @@ describe("canonical MCPB archive", () => {
     }
   });
 
-  it("applies PDF.js exclusions without removing the legacy build runtime", () => {
+  it("applies PDF.js exclusions while preserving the legacy runtime and licensed CMaps", () => {
     const stage = temporaryRoot();
     const pdfjs = path.join(stage, "node_modules", "pdfjs-dist");
     for (const directory of ["build", "web", "types", "image_decoders", "cmaps", "wasm", "legacy/build"]) {
       mkdirSync(path.join(pdfjs, directory), { recursive: true });
       writeFileSync(path.join(pdfjs, directory, "fixture"), directory);
     }
+    writeFileSync(path.join(pdfjs, "cmaps", "LICENSE"), "CMap redistribution terms");
+    mkdirSync(path.join(pdfjs, "standard_fonts"), { recursive: true });
+    writeFileSync(path.join(pdfjs, "standard_fonts", "LICENSE_LIBERATION"), "Liberation font terms");
+    writeFileSync(path.join(pdfjs, "LICENSE"), "PDF.js license terms");
     mkdirSync(path.join(stage, "node_modules"), { recursive: true });
     mkdirSync(path.join(stage, "node_modules", ".bin"), { recursive: true });
     writeFileSync(path.join(stage, "node_modules", ".bin", "unused-cli"), "shim");
@@ -158,7 +162,11 @@ describe("canonical MCPB archive", () => {
     writeFileSync(path.join(stage, "node_modules", ".package-lock.json"), "install lock");
     trimStagedProductionGraph(stage);
     expect(readFileSync(path.join(pdfjs, "legacy", "build", "fixture"), "utf8")).toBe("legacy/build");
-    for (const directory of ["build", "web", "types", "image_decoders", "cmaps", "wasm"]) {
+    expect(readFileSync(path.join(pdfjs, "cmaps", "fixture"), "utf8")).toBe("cmaps");
+    expect(readFileSync(path.join(pdfjs, "cmaps", "LICENSE"), "utf8")).toBe("CMap redistribution terms");
+    expect(readFileSync(path.join(pdfjs, "standard_fonts", "LICENSE_LIBERATION"), "utf8")).toBe("Liberation font terms");
+    expect(readFileSync(path.join(pdfjs, "LICENSE"), "utf8")).toBe("PDF.js license terms");
+    for (const directory of ["build", "web", "types", "image_decoders", "wasm"]) {
       expect(() => readFileSync(path.join(pdfjs, directory, "fixture"))).toThrow();
     }
     expect(() => readFileSync(path.join(stage, "package-lock.json"))).toThrow();

@@ -479,6 +479,8 @@ async function main() {
     for (const relativePath of [
       "server/helpers.js",
       "server/index.js",
+      "server/layout-extraction.js",
+      "server/output-schemas.js",
       "server/resource-uri.js",
       "server/stderr-suppression.js",
       "dist-ui/index.html",
@@ -545,7 +547,7 @@ async function main() {
     const { tools } = await client.listTools();
     const { prompts } = await client.listPrompts();
     const { resources } = await client.listResources();
-    if (tools.length !== 37 || prompts.length !== 14 || resources.length !== 1) {
+    if (tools.length !== 38 || prompts.length !== 14 || resources.length !== 1) {
       throw new Error(
         `Unexpected discovery counts: ${tools.length} tools, ${prompts.length} prompts, ${resources.length} resources`,
       );
@@ -558,6 +560,28 @@ async function main() {
     });
     if (byteResult.isError || byteResult.structuredContent?.byteCount !== 8) {
       throw new Error("Generic-client read_pdf_bytes compatibility check failed");
+    }
+    for (const asset of [
+      "node_modules/pdfjs-dist/cmaps/UniJIS-UTF16-V.bcmap",
+      "node_modules/pdfjs-dist/cmaps/LICENSE",
+      "node_modules/pdfjs-dist/LICENSE",
+      "node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf",
+      "node_modules/pdfjs-dist/standard_fonts/LICENSE_FOXIT",
+      "node_modules/pdfjs-dist/standard_fonts/LICENSE_LIBERATION",
+    ]) {
+      const assetPath = path.join(packageRoot, asset);
+      if (!existsSync(assetPath) || !statSync(assetPath).isFile() || statSync(assetPath).size === 0) {
+        throw new Error(`Share runtime is missing nonempty PDF.js asset ${asset}`);
+      }
+    }
+    const layout = await client.callTool({
+      name: "read_pdf_layout",
+      arguments: { pdf_path: fixturePath, max_output_characters: 200000 },
+    });
+    if (layout.isError
+      || layout.structuredContent?.ir?.version !== "1.0.0"
+      || layout.structuredContent?.source?.size_bytes !== statSync(fixturePath).size) {
+      throw new Error("Share read_pdf_layout contract smoke failed");
     }
     const uriResult = await client.callTool({ name: "get_pdf_resource_uri", arguments: { pdf_path: fixturePath } });
     const uri = uriResult.structuredContent?.uri;

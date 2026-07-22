@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdtempSync, rmSync, statSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -67,10 +67,24 @@ async function main() {
     });
     await client.connect(transport);
 
+    for (const asset of [
+      "node_modules/pdfjs-dist/cmaps/UniJIS-UTF16-V.bcmap",
+      "node_modules/pdfjs-dist/cmaps/LICENSE",
+      "node_modules/pdfjs-dist/LICENSE",
+      "node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf",
+      "node_modules/pdfjs-dist/standard_fonts/LICENSE_FOXIT",
+      "node_modules/pdfjs-dist/standard_fonts/LICENSE_LIBERATION",
+    ]) {
+      const assetPath = path.join(extensionDir, asset);
+      if (!existsSync(assetPath) || !statSync(assetPath).isFile() || statSync(assetPath).size === 0) {
+        throw new Error(`Packed runtime is missing nonempty PDF.js asset ${asset}`);
+      }
+    }
+
     const tools = await client.listTools();
     const prompts = await client.listPrompts();
     const resources = await client.listResources();
-    if (tools.tools.length !== 37 || !tools.tools.some(tool => tool.name === "render_pdf_page")) {
+    if (tools.tools.length !== 38 || !tools.tools.some(tool => tool.name === "render_pdf_page")) {
       throw new Error("Packed server did not expose render_pdf_page");
     }
     if (prompts.prompts.length !== 14 || resources.resources.length !== 1) {
@@ -99,6 +113,15 @@ async function main() {
     });
     if (byteResult.isError || byteResult.structuredContent?.byteCount !== 8) {
       throw new Error("Packed generic-client read_pdf_bytes compatibility check failed");
+    }
+    const layout = await client.callTool({
+      name: "read_pdf_layout",
+      arguments: { pdf_path: fixturePath, max_output_characters: 200000 },
+    });
+    if (layout.isError
+      || layout.structuredContent?.ir?.version !== "1.0.0"
+      || layout.structuredContent?.source?.size_bytes !== statSync(fixturePath).size) {
+      throw new Error("Packed read_pdf_layout contract smoke failed");
     }
 
     const uriResult = await client.callTool({

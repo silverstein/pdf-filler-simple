@@ -29,7 +29,7 @@ const textFixture = path.join(fixtureDirectory, "synthetic-text-two-page.pdf");
 const rasterFixture = path.join(fixtureDirectory, "synthetic-raster-only.pdf");
 const mutationDirectory = path.join(fixtureDirectory, "mutation-output");
 const toolNames = [];
-const EXPECTED_TOOL_CONTRACT_SHA256 = "0063db0c31ae840e4f7efb5202843f5f12ca0d69b3e77146771f845198edca7a";
+const EXPECTED_TOOL_CONTRACT_SHA256 = "cc150eb9f467fe5aad914b824425192e91c378edd5daf8cfd49c1d0eae3f19d9";
 let toolContractSha256;
 let structuredToolCount;
 
@@ -67,8 +67,8 @@ let rasterHash;
 try {
   const tools = await first.client.listTools();
   toolNames.push(...tools.tools.map(tool => tool.name).sort());
-  assert(toolNames.length === 37, `Expected 37 tools, received ${toolNames.length}`);
-  assert(new Set(toolNames).size === 37, "Tool names were not unique");
+  assert(toolNames.length === 38, `Expected 38 tools, received ${toolNames.length}`);
+  assert(new Set(toolNames).size === 38, "Tool names were not unique");
   toolContractSha256 = createHash("sha256")
     .update(JSON.stringify(tools.tools))
     .digest("hex");
@@ -77,7 +77,7 @@ try {
     `Tool contract digest drifted: ${toolContractSha256}`,
   );
   structuredToolCount = tools.tools.filter(tool => tool.outputSchema).length;
-  assert(structuredToolCount === 31, `Expected 31 structured tools, received ${structuredToolCount}`);
+  assert(structuredToolCount === 32, `Expected 32 structured tools, received ${structuredToolCount}`);
 
   const listed = await first.client.callTool({
     name: "list_pdfs",
@@ -145,7 +145,7 @@ assert(mutationFiles.length === 2, `Expected two mutation outputs, received ${mu
 const fresh = await connect("fresh-session");
 try {
   const tools = await fresh.client.listTools();
-  assert(tools.tools.length === 37, "Fresh session did not discover 37 tools");
+  assert(tools.tools.length === 38, "Fresh session did not discover 38 tools");
   const info = await fresh.client.callTool({
     name: "get_pdf_info",
     arguments: { pdf_path: path.join(mutationDirectory, mutationFiles[1]) },

@@ -7,7 +7,7 @@
   },
   "approved_suites": {
     "pdf-tools.trajectory.v1": {
-      "suite_sha256": "e30d99e7650f8ec5f8b4c6d9a8a08ff2515d2d3595944ba5e2811de046017d5c",
+      "suite_sha256": "5dc703c9d8c7b7f0f86ba85ccc56106e6c43c3a6011631016297e5d002535cd4",
       "categories": [
         "inspect_and_answer",
         "fill_and_validate",

@@ -83,7 +83,7 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 7. `validate_pdf` on a partially filled form
 8. `read_pdf_content` on a text-layer PDF and a textless scanned PDF, confirming the page-1 image fallback boundary
 
-## Available Tools (27 + 1 app-only)
+## Core Available Tools (selected; 1 app-only)
 
 1. **display_pdf** - Interactive PDF viewer with search, navigation, zoom, and form field sidebar
 2. **list_pdfs** - Lists PDF files in a directory
@@ -97,22 +97,23 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 10. **extract_to_csv** - Extract data from PDFs to CSV
 11. **validate_pdf** - Check for missing required fields
 12. **read_pdf_content** - Read the PDF.js text layer; if the selected extraction contains no text, it may return a rendered page-1 image for host/model vision
-13. **get_pdf_resource_uri** - Get resource URI for a PDF file
-14. **read_pdf_bytes** - (app-only) Chunked byte streaming for the interactive viewer
-15. **merge_pdfs** - Merge multiple PDFs into a single document
-16. **split_pdf** - Split a PDF by page ranges or at regular intervals
-17. **rotate_pdf_pages** - Rotate pages by 90, 180, or 270 degrees
-18. **reorder_pdf_pages** - Rearrange pages in a new order
-19. **get_pdf_info** - Get page count, file size, dimensions, form field info
-20. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
-21. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
-22. **fetch_pdf_from_url** - Download a PDF from a URL to the user's local machine (bypasses Claude's WebFetch sandbox)
-23. **create_signature** - Save a reusable typed or image signature
-24. **list_signatures** - List saved signatures
-25. **add_signature_field** - Draw a "Sign here" placeholder box (does NOT sign)
-26. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent — see Signature Architecture below)
-27. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
-28. **detect_signature_zones** - Locate signature/initials/date zones with coordinates (use BEFORE apply_signature)
+13. **read_pdf_layout** - Extract bounded local text geometry and conservative reading order without OCR or table inference
+14. **get_pdf_resource_uri** - Get resource URI for a PDF file
+15. **read_pdf_bytes** - (app-only) Chunked byte streaming for the interactive viewer
+16. **merge_pdfs** - Merge multiple PDFs into a single document
+17. **split_pdf** - Split a PDF by page ranges or at regular intervals
+18. **rotate_pdf_pages** - Rotate pages by 90, 180, or 270 degrees
+19. **reorder_pdf_pages** - Rearrange the pages of a PDF into a new order
+20. **get_pdf_info** - Get page count, file size, dimensions, form field info
+21. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
+22. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
+23. **fetch_pdf_from_url** - Download a PDF from a URL to the user's local machine (bypasses Claude's WebFetch sandbox)
+24. **create_signature** - Save a reusable typed or image signature
+25. **list_signatures** - List saved signatures
+26. **add_signature_field** - Draw a "Sign here" placeholder box (does NOT sign)
+27. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent; see Signature Architecture below)
+28. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
+29. **detect_signature_zones** - Locate signature/initials/date zones with coordinates (use BEFORE apply_signature)
 
 ### Current Extraction Boundary
 

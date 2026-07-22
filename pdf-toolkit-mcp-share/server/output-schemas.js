@@ -1,4 +1,5 @@
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+import { validatePdfLayoutSemantics } from "./layout-extraction.js";
 
 const string = { type: "string" };
 const number = { type: "number" };
@@ -81,6 +82,13 @@ const standardError = object({
   error: object({
     error_schema_version: { const: 1 },
     code: enumString(["path_policy_denied", "tool_execution_failed"]),
+  }),
+});
+const layoutPasswordError = object({
+  status: { const: "failed" },
+  error: object({
+    error_schema_version: { const: 1 },
+    code: enumString(["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"]),
   }),
 });
 
@@ -228,6 +236,146 @@ const analysisError = object({
   page: integer,
   code: string,
 }, ["scope", "code"]);
+const layoutBox = object({ x: number, y: number, width: number, height: number });
+const layoutItemSpace = object({
+  origin: { const: "top_left" },
+  unit: { const: "points_1_72_in_after_user_unit" },
+  reference_box: { const: "pdfjs_display_viewport" },
+});
+const layoutRawPageSpace = object({
+  basis: { const: "pdf_default_user_space" },
+  unit: { const: "pdf_user_unit" },
+  stage: { const: "before_user_unit_and_page_rotation" },
+});
+const layoutGeometry = object({
+  page: integer,
+  media_box: nullable(layoutBox),
+  crop_box: nullable(layoutBox),
+  pdfjs_view: nullable({ type: "array", minItems: 4, maxItems: 4, items: number }),
+  user_unit: nullable(number),
+  raw_pdf_rotation: nullable({ type: "integer", enum: [0, 90, 180, 270] }),
+  display_rotation: nullable({ type: "integer", enum: [0, 90, 180, 270] }),
+  rotation_matches_raw: nullable(boolean),
+  display_width: nullable(number),
+  display_height: nullable(number),
+  viewport_transform: nullable({ type: "array", minItems: 6, maxItems: 6, items: number }),
+  raw_page_space: layoutRawPageSpace,
+  item_space: layoutItemSpace,
+});
+const layoutPageTruncation = object({
+  truncated: boolean,
+  reasons: stringArray,
+  omitted_items: integer,
+  omitted_non_whitespace_items: integer,
+  omitted_characters: integer,
+  first_omitted_source_index: nullable(integer),
+});
+const layoutDocumentTruncation = object({
+  truncated: boolean,
+  reasons: stringArray,
+  omitted_items: integer,
+  omitted_characters: integer,
+  first_omitted_page: nullable(integer),
+  first_omitted_source_index: nullable(integer),
+});
+const layoutError = object({
+  stage: enumString(["page", "text", "operators", "geometry"]),
+  code: string,
+  message: string,
+});
+const layoutPoint = object({ x: number, y: number });
+const layoutRawItem = object({
+  id: string,
+  source_index: integer,
+  text: string,
+  is_whitespace: boolean,
+  text_kind: enumString(["empty", "whitespace", "non_whitespace"]),
+  has_eol: boolean,
+  raw_transform: { type: "array", minItems: 6, maxItems: 6, items: nullable(number) },
+  raw_width: nullable(number),
+  raw_height: nullable(number),
+  font_name: nullable(string),
+  font: object({
+    family: nullable(string),
+    ascent: nullable(number),
+    descent: nullable(number),
+    vertical: boolean,
+  }),
+  geometry_kind: { const: "pdfjs_text_run_advance_box" },
+  geometry_valid: boolean,
+  bbox_status: enumString(["valid", "degenerate", "invalid"]),
+  geometry_provenance: object({
+    formula: { const: "pdfjs_text_item_style_metric_advance_box_approximation" },
+    quad_order: { const: "anchor_top_terminal_top_anchor_bottom_terminal_bottom" },
+    advance_source: enumString(["item_width", "item_height"]),
+    ascent_source: nullable(enumString(["style_ascent", "style_descent_fallback", "default_0_8"])),
+    ascent_ratio: nullable(number),
+  }),
+  quad: nullable({ type: "array", minItems: 4, maxItems: 4, items: layoutPoint }),
+  bbox: nullable(layoutBox),
+  x: nullable(number),
+  y: nullable(number),
+  width: nullable(number),
+  height: nullable(number),
+  line_height: nullable(number),
+  direction: enumString(["ltr", "rtl", "ttb", "unknown"]),
+  reading_order_index: integer,
+  line_id: nullable(string),
+  column_index: nullable(integer),
+});
+const layoutLine = object({
+  id: string,
+  source_first_index: integer,
+  text: string,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  direction: enumString(["ltr", "rtl", "ttb", "unknown"]),
+  item_ids: stringArray,
+  reading_order_index: integer,
+  column_index: integer,
+});
+const layoutBlock = object({
+  id: string,
+  kind: enumString(["page_flow", "column_flow", "spanning_flow"]),
+  column_index: integer,
+  line_ids: stringArray,
+});
+const layoutPage = object({
+  id: string,
+  page: integer,
+  text_layer_status: enumString(["present", "empty", "partial", "failed"]),
+  image_detection_status: enumString(["detected", "not_detected", "failed"]),
+  modality_hint: enumString(["text-layer-candidate", "mixed-content-candidate", "image-only-candidate", "vector-only-candidate", "empty-candidate", "unknown"]),
+  extraction_status: enumString(["complete", "partial", "failed"]),
+  needs_visual_inspection: boolean,
+  geometry: layoutGeometry,
+  has_image_operations: nullable(boolean),
+  has_vector_paint_operations: nullable(boolean),
+  raw_items: arrayOf(layoutRawItem),
+  lines: arrayOf(layoutLine),
+  blocks: arrayOf(layoutBlock),
+  reading_order: object({
+    strategy: enumString(["source_order_fallback", "two_column_left_to_right", "unavailable_output_omitted"]),
+    confidence: { const: "not_calibrated" },
+    column_count: integer,
+    limitations: stringArray,
+  }),
+  flow_text: string,
+  spatial_text: string,
+  counts: object({
+    observed_items: integer,
+    returned_items: integer,
+    observed_non_whitespace_items: integer,
+    returned_non_whitespace_items: integer,
+    observed_characters: integer,
+    returned_characters: integer,
+  }),
+  truncation: layoutPageTruncation,
+  errors: arrayOf(layoutError),
+  limitations: stringArray,
+});
 
 export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
   read_pdf_fields: activeDocument(),
@@ -268,6 +416,43 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     pages: arrayOf(pageTextPreview),
     text_found: boolean,
     truncated: boolean,
+  }),
+  read_pdf_layout: object({
+    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.0.0" } }),
+    parser: object({ name: { const: "pdfjs-dist" }, version: { const: "5.4.624" } }),
+    source: object({
+      pdf_path: string,
+      file_name: string,
+      sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      size_bytes: integer,
+    }),
+    id_scope: object({
+      kind: { const: "source_parser_ir_options" },
+      source_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      parser_version: { const: "5.4.624" },
+      ir_version: { const: "1.0.0" },
+      requested_start_page: integer,
+      requested_end_page: integer,
+      max_items: integer,
+      max_characters: integer,
+    }),
+    page_range: object({
+      requested_start_page: integer,
+      requested_end_page: integer,
+      start_page: integer,
+      end_page: integer,
+      total_pages: integer,
+    }),
+    extraction_status: enumString(["complete", "partial", "failed"]),
+    pages: arrayOf(layoutPage),
+    limits: object({
+      max_items: integer,
+      max_characters: integer,
+      max_output_characters: integer,
+      deadline_ms: integer,
+    }),
+    truncation: layoutDocumentTruncation,
+    limitations: stringArray,
   }),
   render_pdf_page: object({
     pdf_path: string,
@@ -438,6 +623,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
 const specialErrorSchemas = {
   validate_pdf: [validationFailure],
   read_pdf_content: [contentFailure],
+  read_pdf_layout: [layoutPasswordError],
 };
 
 export const TOOL_ERROR_OUTPUT_SCHEMAS = Object.freeze(Object.fromEntries(
@@ -471,6 +657,9 @@ const errorValidators = new Map(Object.entries(TOOL_ERROR_OUTPUT_SCHEMAS).map(
   ([name, schema]) => [name, validatorProvider.getValidator(schema)],
 ));
 const standardErrorValidator = validatorProvider.getValidator(standardError);
+const semanticSuccessValidators = new Map([
+  ["read_pdf_layout", validatePdfLayoutSemantics],
+]);
 
 export function withToolOutputSchema(tool) {
   const outputSchema = TOOL_OUTPUT_SCHEMAS[tool.name];
@@ -503,6 +692,14 @@ export function validateStructuredToolResult(toolName, result) {
   const validation = validator(result.structuredContent);
   if (!validation.valid) {
     return internalValidationError(toolName, validation.errorMessage);
+  }
+  const semanticValidator = semanticSuccessValidators.get(toolName);
+  if (semanticValidator) {
+    try {
+      semanticValidator(result.structuredContent);
+    } catch (error) {
+      return internalValidationError(toolName, error.message);
+    }
   }
   return result;
 }

@@ -13,7 +13,7 @@ const REPO_ROOT = path.join(__dirname, "..");
 const SOURCE_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.json"), "utf8"));
 const MCPB_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.mcpb.json"), "utf8"));
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TOOL_CONTRACT_SHA256 = "0063db0c31ae840e4f7efb5202843f5f12ca0d69b3e77146771f845198edca7a";
+const TOOL_CONTRACT_SHA256 = "cc150eb9f467fe5aad914b824425192e91c378edd5daf8cfd49c1d0eae3f19d9";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -58,6 +58,7 @@ const TOOL_EFFECT_ANNOTATIONS = {
   extract_to_csv: CLOSED_IDEMPOTENT_OVERWRITE,
   validate_pdf: CLOSED_READ,
   read_pdf_content: CLOSED_READ,
+  read_pdf_layout: CLOSED_READ,
   read_pdf_pages: CLOSED_READ,
   render_pdf_page: CLOSED_READ,
   render_pdf_region: CLOSED_READ,
@@ -210,6 +211,7 @@ describe("MCPB static declarations", () => {
       "index.js",
       "helpers.js",
       "output-schemas.js",
+      "layout-extraction.js",
       "resource-uri.js",
       "stderr-suppression.js",
     ]) {
@@ -256,7 +258,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(37);
+    expect(tools).toHaveLength(38);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))
@@ -302,6 +304,19 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
       pdfPath: EXAMPLE_PDF,
       offset: 0,
       byteCount: 16,
+    });
+  });
+
+  it("executes the spatial extraction contract in both source and share runtimes", async () => {
+    const result = await client.callTool({
+      name: "read_pdf_layout",
+      arguments: { pdf_path: EXAMPLE_PDF, start_page: 1, end_page: 1, max_output_characters: 200000 },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      ir: { name: "pdf-tools.extraction-ir", version: "1.0.0" },
+      parser: { name: "pdfjs-dist", version: "5.4.624" },
+      page_range: { start_page: 1, end_page: 1 },
     });
   });
 
@@ -467,6 +482,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
       { name: "get_pdf_resource_uri", arguments: { pdf_path: missingPdf } },
       { name: "read_pdf_bytes", arguments: { pdf_path: missingPdf, offset: 0, byteCount: 8 } },
       { name: "read_pdf_content", arguments: { pdf_path: missingPdf } },
+      { name: "read_pdf_layout", arguments: { pdf_path: missingPdf } },
       { name: "read_pdf_pages", arguments: { pdf_path: missingPdf, start_page: 1, end_page: 1 } },
       { name: "render_pdf_page", arguments: { pdf_path: missingPdf, page: 1 } },
       {

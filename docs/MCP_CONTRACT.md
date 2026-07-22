@@ -36,7 +36,7 @@ every tool in both runtime copies. The handler evidence and classification
 rules are recorded in
 [`TOOL_ANNOTATION_AUDIT_2026-07-21.md`](TOOL_ANNOTATION_AUDIT_2026-07-21.md).
 
-The source manifest lists all 37 tools. The packed MCPB manifest lists the 36
+The source manifest lists all 38 tools. The packed MCPB manifest lists the 37
 normal model-workflow tools and omits `read_pdf_bytes`, whose runtime metadata
 marks it `ui.visibility: ["app"]`. `tools_generated: true` explicitly tells MCPB
 hosts that runtime discovery includes an additional tool. That visibility hint
@@ -45,14 +45,40 @@ a generic MCP client can still discover and call `read_pdf_bytes`. It is not an
 authorization or confidentiality boundary. Filesystem allowlists and the tool's
 bounded reads remain the enforced controls.
 
-Twenty-nine tool handlers can return `structuredContent`. They also return a
-human-readable `content` text block so non-Apps and older clients remain usable.
-No tool currently publishes an `outputSchema`; MCP permits structured content
-without one, while any future output schema would make conformance mandatory.
-Add output schemas only as a separately reviewed, versioned contract change
-with success and error-path fixtures for every affected tool.
+Thirty-two tool handlers advertise strict `outputSchema` contracts and return
+`structuredContent`. They also return a human-readable `content` text block so
+non-Apps and older clients remain usable. Successful structured output is
+validated before it leaves the server, with separate generic and tool-specific
+error branches where required.
 
 #### Extraction and page-analysis truthfulness
+
+`read_pdf_layout` returns the versioned PDF Tools Extraction IR for at most 10
+pages per call. It binds each ID scope to the source SHA-256, pinned PDF.js
+parser, IR version, page range, and retention options. When pdf-lib can parse
+the same authenticated bytes, it preserves raw MediaBox, CropBox, and PDF
+rotation; otherwise those enrichment fields are null and an explicit geometry
+error is returned while PDF.js remains the display-geometry authority. Raw
+MediaBox and CropBox values remain in PDF default user space before UserUnit
+and page rotation. `pdfjs_view` is recorded separately in that raw coordinate
+space, and UserUnit comes from PDF.js. Item quads and boxes
+use a separate top-left space in physical 1/72-inch points after UserUnit and
+rotation in the PDF.js display viewport. Text-run quads use a deterministic
+PDF.js TextItem/style-metric approximation: the baseline is shifted by the
+recorded ascent ratio, the advance axis uses item width (or item height for
+vertical text) times the effective viewport scale, and the cross axis uses
+transformed font height. The IR records the advance and ascent provenance.
+These boxes are neither browser DOM TextLayer boxes nor glyph ink bounds. Quad
+points are ordered anchor-top, terminal-top, anchor-bottom, terminal-bottom;
+they are not polygon winding order. `line_height` is the modeled TextLayer
+font-height vector, not a font-size or ink-height measurement.
+Stable item, line, and nonsemantic flow-block references support conservative
+reading order without claiming paragraphs or document structure. Raster-only,
+mixed, hidden, clipped, duplicate, and OCR-overlay gaps remain explicit. The
+tool does not render, OCR, infer tables, or claim arbitrary schema extraction,
+and every item, character, or output limit is fail-closed with truncation
+metadata. Its coordinates must not be passed to `render_pdf_region` or signing
+tools.
 
 `read_pdf_content` exposes `extraction_status` as `complete`, `partial`, or
 `failed`. A text result is partial when it is page-limited or response-

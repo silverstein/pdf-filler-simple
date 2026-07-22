@@ -165,6 +165,7 @@ improvement rather than a shipped capability.
 - `list_pdfs`
 - `read_pdf_content`
 - `read_pdf_pages`
+- `read_pdf_layout`
 - `render_pdf_page`
 - `render_pdf_region`
 - `search_pdf_text`

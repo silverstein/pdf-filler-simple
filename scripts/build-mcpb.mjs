@@ -39,6 +39,7 @@ const PROTECTED_PDFJS_VERSION = "5.4.624";
 const SERVER_FILES = [
   "helpers.js",
   "index.js",
+  "layout-extraction.js",
   "output-schemas.js",
   "resource-uri.js",
   "stderr-suppression.js",
@@ -62,7 +63,6 @@ const PDFJS_EXCLUDED_DIRECTORIES = [
   "web",
   "types",
   "image_decoders",
-  "cmaps",
   "wasm",
 ];
 const FORBIDDEN_ARCHIVE_PREFIXES = [
@@ -286,6 +286,12 @@ function verifyStagedProductionGraph(stagingDir, packages) {
     "dist-ui/index.html",
     "node_modules/pdfjs-dist/legacy/build/pdf.mjs",
     "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
+    "node_modules/pdfjs-dist/cmaps/UniJIS-UTF16-V.bcmap",
+    "node_modules/pdfjs-dist/cmaps/LICENSE",
+    "node_modules/pdfjs-dist/LICENSE",
+    "node_modules/pdfjs-dist/standard_fonts/LiberationSans-Regular.ttf",
+    "node_modules/pdfjs-dist/standard_fonts/LICENSE_FOXIT",
+    "node_modules/pdfjs-dist/standard_fonts/LICENSE_LIBERATION",
   ]) {
     if (!paths.includes(required)) throw new Error(`Staged MCPB is missing required runtime file: ${required}`);
   }

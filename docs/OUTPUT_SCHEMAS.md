@@ -42,6 +42,7 @@ an `isError` result is never forced through a success schema.
 | `read_pdf_content` | complete/partial text or image-fallback result |
 | `read_pdf_fields` | active document and form fields |
 | `read_pdf_pages` | bounded page-numbered text |
+| `read_pdf_layout` | versioned bounded Extraction IR with source, geometry, reading order, gaps, and limits |
 | `render_pdf_page` | page raster metadata |
 | `render_pdf_region` | region raster metadata |
 | `reorder_pdf_pages` | active output document and page order |

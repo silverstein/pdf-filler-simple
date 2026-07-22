@@ -9,7 +9,7 @@
     "run_plan_id": "pdf-tools.trajectory.calibration.run-plan.v1",
     "trial_set_id": "pdf-tools.trajectory.calibration.v1",
     "suite_id": "pdf-tools.trajectory.v1",
-    "suite_sha256": "e30d99e7650f8ec5f8b4c6d9a8a08ff2515d2d3595944ba5e2811de046017d5c",
+    "suite_sha256": "5dc703c9d8c7b7f0f86ba85ccc56106e6c43c3a6011631016297e5d002535cd4",
     "claim_boundary": "Synthetic grader calibration only; records and observations are generated fixtures, not observed agent or host benchmark results.",
     "planned_at": "2026-07-20T23:59:00.000Z",
     "planner": "scripts/eval-generate-trajectory-calibration.mjs",
@@ -221,11 +221,11 @@
     "kind": "synthetic_calibration",
     "producer": "scripts/eval-generate-trajectory-calibration.mjs",
     "produced_at": "2026-07-21T00:00:00.000Z",
-    "suite_sha256": "e30d99e7650f8ec5f8b4c6d9a8a08ff2515d2d3595944ba5e2811de046017d5c",
+    "suite_sha256": "5dc703c9d8c7b7f0f86ba85ccc56106e6c43c3a6011631016297e5d002535cd4",
     "raw_transcript_sha256": "a43c2cfcde297dc8ff39120198085610badf2bf3dd20b3ab1ab485e1f8a3cc10",
     "observer_sha256": "1008ee251be9cbb24fa77c512778fd3398d57fb9a7cf63afe6b4a5dd4b5aeac9",
-    "trial_payload_sha256": "d41bb101d067c3a5ff87284945c354ec6218acda261957ba607455df05668241",
-    "run_plan_sha256": "370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+    "trial_payload_sha256": "ddcaab7af5bae71c827d7c5071a0630c2db70403ae0d9f8e0a451ff1eff21cdd",
+    "run_plan_sha256": "e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
     "key_id": null,
     "signature": null
   },
@@ -264,12 +264,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:05:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "ceee01f0bf714f39ad56ebfe9d0c76c081fa876347ab97901c388ad1be675244"
+              "raw_sha256": "a44d3bde392e55b51710fced525ebe5184ee971c5234b73ba0e96f284b6db274"
             }
           },
           {
@@ -486,12 +486,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:10:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "89434a3db76999203a38fa0abf6049afb40ca59224b5d374c609b435dd488ac1"
+              "raw_sha256": "27d8561ca2a6ecd54d41f26b8dd7552f721b15cb18ea00a10fdae98a0cadd0ec"
             }
           },
           {
@@ -708,12 +708,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:15:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "7a6fa2b603e6453d67253bb6e45a60eec147df18518da2751881121d5d85f548"
+              "raw_sha256": "a010d99a19257fe87f509dfe0c00ff5802b98c3346e212d00a0f580970cf2ed3"
             }
           },
           {
@@ -934,12 +934,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T00:20:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "53f8d03400a5deafec3198d19fc554d27dec808c51f0c11a350a0a4022a8baf5"
+              "raw_sha256": "26c1f2407770e8819b33b053d49388570d520a9d2a7ad554ffecd2da1b8d50bd"
             }
           },
           {
@@ -1028,12 +1028,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:05:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "15069e431204343ef5ff75ccfabbd02b198110da5d0dd32966ff83e7893a50ab"
+              "raw_sha256": "2c035fe6cb3861d588c248c196007a0dc27ccd9ee48e72a152f33b9714a5ffa0"
             }
           },
           {
@@ -1392,12 +1392,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:10:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "5a7746feb3b402380e00323e6017ff84d3d080a7e94f1fec71662585229a3a8e"
+              "raw_sha256": "8303f54cc1d872b000d54ea681cbdde56d71bb624e2d04bd04d5e2f44158b9d6"
             }
           },
           {
@@ -1756,12 +1756,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:15:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "de8637c1e8cd90f434a6bae9b6289666280cdf8b8cbf1a16f05939b01998695c"
+              "raw_sha256": "39091d41b2b4423ba2a4d04ad109ffb648ef6873dd451d507e8d7171221ae3fa"
             }
           },
           {
@@ -2115,12 +2115,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T01:20:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "00539696ef4c0b6e55a4e570c3ab72a0163fe49d52c2a02364d773808a15a1a7"
+              "raw_sha256": "ded778e74496c03a6d0df5ce4b76c6a4b15bc10c197b7e69483e0ac6375abfc8"
             }
           },
           {
@@ -2209,12 +2209,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:05:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "97af265705cf486454d99420c22b3af4af93b1587d7bb7b0246fc991717a4475"
+              "raw_sha256": "b80d7575c5acdf6f7267e2c6bfd50b91f1329139975de2cba3def629d4909832"
             }
           },
           {
@@ -2783,12 +2783,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:10:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "ada33ac4c9aa383ce9a60e99f03ad90278f06a5becee61f92785ed0999b524c7"
+              "raw_sha256": "e14db4868ee22ed355a6cdb42f5ac17f22d2e0f79a7776139b9b5a89918c7653"
             }
           },
           {
@@ -3357,12 +3357,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:15:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "4cfd6a6fb19ca519f73f6d167a7dae9c64fec01ce64ff94ae79d105de0bab391"
+              "raw_sha256": "33c5d40013825989ddae8ec8c9f2dee8560556df3007f7765b3887987d22ac76"
             }
           },
           {
@@ -3964,12 +3964,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T02:20:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "3ecbf1834218b7e0501414836b05a7d977dc0d0efd91f743a98a592ba69899cc"
+              "raw_sha256": "9270afd63deae0dccd2ab2a9c4257ec1b0f7e56fd2b0e3fc3e6cdafcdd5738c7"
             }
           },
           {
@@ -4058,12 +4058,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:05:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "2467ff9d74f6fe3e01f1e3f7b5440d5aa2609c9a2cad429b131ffb969d7eb41e"
+              "raw_sha256": "380bfe7e316c2d12dda8a1a8926b552385d3417e1375b89e1a49a6181c9a4d6c"
             }
           },
           {
@@ -4405,12 +4405,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:10:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "a2648062c045f72ff890950fc82f70cc7caf10cf146b70b42b31397c34b2257c"
+              "raw_sha256": "ef1fcfa67fee0d2e50792db404c52b4dc3edf2fd06b54140405760171f86cb55"
             }
           },
           {
@@ -4752,12 +4752,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:15:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "cb672a02b74eecd36f9b56ed2fb93ff99dea14b58501676be8469b375562d3c7"
+              "raw_sha256": "006a8d47139ed24805fa96dfa737ed2457276f428a6128c5059f4a980cb53860"
             }
           },
           {
@@ -5105,12 +5105,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T03:20:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "26c5f6fa5170589b5fbef69b341052c37c15ee4859b80f0e27f9c8304b5d1c8b"
+              "raw_sha256": "afe7b4cebf1df332e61be85a9913df569b26bd63e4942884af533321e7292c8b"
             }
           },
           {
@@ -5199,12 +5199,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:05:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "e9320705618d8ee04a3b3ab0118535dff9002dc8b47713d548eee8e5f362e4a9"
+              "raw_sha256": "64f859634c6886c25c9b151d6cfc27f31c6ee8f0734b7bbc9cc4a20357580bf2"
             }
           },
           {
@@ -5597,12 +5597,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:10:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "63fd285175f0b98c5c396bda69835c421942a58121cb224e4fd79ffd0ad2613a"
+              "raw_sha256": "f2a977146a6b40ba0678f8db74bba99af7d66ab8bc4444f69563fa2e7dcec71a"
             }
           },
           {
@@ -5995,12 +5995,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:15:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "28c598153e0b87c73aa7f10e2f56abb46d3896cbacff79553a6518a9d5d3e06a"
+              "raw_sha256": "5ccd0c37f2c8409e7bbf570c375bed4d6235f1effd3d4c609673bb711eacfd3e"
             }
           },
           {
@@ -6456,12 +6456,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T04:20:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "88f67ae62c4db1fabae375454e81f09306902c34d4cad0c9058102cccdcdbb13"
+              "raw_sha256": "c43eb15de1d5fcd9019c6edee65eaaf45158f2dafa92865b8614e9589bb4ea4f"
             }
           },
           {
@@ -6550,12 +6550,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:05:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "6fe0856eb53836849cd6fc613da4fb1566deef7b4888880bc33d5286f86f2f98"
+              "raw_sha256": "b4fd563f3c2d228f548e424d1df197c4f300d6848813dde54907989f7eaedb76"
             }
           },
           {
@@ -6788,12 +6788,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:10:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "5f666c0e74f7c1c3f5a373ef6bd3553798a2b861acd910fc3191604568aadd22"
+              "raw_sha256": "a8bc57465a6d00b1d25c0fbec0bcaf4cfbd0268d403a34358a983784bf93bccb"
             }
           },
           {
@@ -7026,12 +7026,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:15:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "284cfcbe99711d59eae77cfa4e6c83df28ea494d962b6a10cb9f7d839939a63d"
+              "raw_sha256": "b2c90ccea87bc5d2a8c018591faed5d7da88e801cf1874315cb57ffdb6f15b95"
             }
           },
           {
@@ -7236,12 +7236,12 @@
             "type": "run_plan_committed",
             "source": "synthetic_calibration_generator",
             "observed_at": "2026-07-21T05:20:00.000Z",
-            "reference": "sha256:370cb59266affcda9f3fdb75f88fb6bd13f235241de1cf562ddd18e378e8ecbf",
+            "reference": "sha256:e9064e487af0ece1afa34e5aad2da583dc7cb6bbb7581d95bc005ffc12eda120",
             "provenance": {
               "provenance_schema_version": 1,
               "authority": "calibration",
               "capture_method": "deterministic_generator",
-              "raw_sha256": "0f0a224de45903c631580490efd79f0f016042df287a292b94f322b9b9c3c779"
+              "raw_sha256": "97555dc129959e243d54f897342ab2e75248ff072132db885374b9af97e30a49"
             }
           },
           {

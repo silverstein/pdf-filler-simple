@@ -74,6 +74,10 @@
       "description": "Read a bounded page range from a PDF with page-numbered structured output"
     },
     {
+      "name": "read_pdf_layout",
+      "description": "Extract bounded local text geometry and conservative reading order into the versioned PDF Tools Extraction IR"
+    },
+    {
       "name": "render_pdf_page",
       "description": "Render one PDF page to PNG for visual reasoning on scanned or image-heavy documents"
     },

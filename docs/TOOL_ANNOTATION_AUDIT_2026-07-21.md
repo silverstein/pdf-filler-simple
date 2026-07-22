@@ -54,6 +54,7 @@ not idempotent.
 | `validate_pdf` | T | F | T | F | Reads and evaluates a local PDF without saving it. |
 | `read_pdf_content` | T | F | T | F | Reads/extracts local PDF content; renderer scratch work has no retained output. |
 | `read_pdf_pages` | T | F | T | F | Reads a bounded local page range. |
+| `read_pdf_layout` | T | F | T | F | Reads bounded local text geometry without rendering, OCR, or retained output. |
 | `render_pdf_page` | T | F | T | F | Reads and returns an in-memory raster; it does not retain an image file. |
 | `render_pdf_region` | T | F | T | F | Reads and returns an in-memory crop; it does not retain an image file. |
 | `search_pdf_text` | T | F | T | F | Reads and searches local PDF text. |

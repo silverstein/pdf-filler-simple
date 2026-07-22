@@ -39,6 +39,7 @@ const STRUCTURED_TOOLS = [
   "prepare_signing_packet",
   "read_pdf_bytes",
   "read_pdf_content",
+  "read_pdf_layout",
   "read_pdf_fields",
   "read_pdf_pages",
   "render_pdf_page",
@@ -73,11 +74,11 @@ function collectKeys(value, output = new Set()) {
 }
 
 describe("output schema definitions", () => {
-  it("covers the exact 31 structured tools and no text-only tool", () => {
+  it("covers the exact 32 structured tools and no text-only tool", () => {
     expect(Object.keys(TOOL_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_ERROR_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
-    expect(STRUCTURED_TOOLS).toHaveLength(31);
+    expect(STRUCTURED_TOOLS).toHaveLength(32);
     expect(TEXT_ONLY_TOOLS).toHaveLength(6);
   });
 
