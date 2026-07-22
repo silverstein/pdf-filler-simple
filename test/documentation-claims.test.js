@@ -22,6 +22,10 @@ const POSITIVE_OCR_PATTERNS = [
   /\b(?:automatic|built[- ]in|bundled|integrated|native|local)\s+OCR\b/i,
   /\b(?:includes?|runs?|performs?|provides?|supports?|uses?|ships?|offers?|handles?)\b[^.!?;\n]{0,60}\bOCR\b/i,
   /\bwith\s+(?:(?:automatic|built[- ]in|integrated|local)\s+)?OCR\b/i,
+  /\bOCR\s+is\s+(?:not\s+)?(?:supported|included|available|enabled|bundled|built[ -]in)\b/i,
+  /\b(?:has|have|features?|contains?)\b[^.!?;\n]{0,40}\bOCR\b/i,
+  /\bOCR[ -]enabled\b/i,
+  /\bOCR\b[^.!?;\n]{0,40}\bbuilt[ -]in\b/i,
 ];
 const EXPLICIT_OCR_BOUNDARIES = [
   /\b(?:does not|do not|doesn't|don't|cannot|can't|never)\s+(?:currently\s+)?(?:bundle|include|run|perform|provide|support|use|ship|offer|have)\b[^.!?;\n]{0,80}\bOCR\b/i,
@@ -30,14 +34,33 @@ const EXPLICIT_OCR_BOUNDARIES = [
   /\b(?:future|planned|proposed|candidate|experimental|optional)\s+(?:(?:local|bundled|integrated)\s+)?OCR\b/i,
   /\bOCR\b[^.!?;\n]{0,100}\b(?:unavailable|unsupported|unshipped|planned|proposed|future|candidate|evaluation|benchmark)\b/i,
   /\bOCR\b[^.!?;\n]{0,100}\bnot\s+(?:shipped|included|available|supported|bundled|implemented|enabled)\b/i,
+  /\bOCR\s+is\s+not\s+(?:supported|included|available|enabled|bundled|built[ -]in)\b/i,
+  /\b(?:has|have|features?|contains?)\s+no\s+OCR\b/i,
+  /\bOCR\b[^.!?;\n]{0,40}\bdoes not come built[ -]in\b/i,
+  /\bnot\s+OCR[ -]enabled\b/i,
 ];
 const POSITIVE_SCANNED_TEXT_PATTERNS = [
   /\b(?:recognizes?|extracts?|reads?|transcribes?)\s+(?:all\s+)?scanned\s+text\b/i,
   /\b(?:recognizes?|extracts?|reads?|transcribes?)\s+(?:all\s+)?text\s+(?:from|in)\s+scanned\s+(?:PDFs?|documents?|pages?)\b/i,
+  /\bscanned\s+(?:PDFs?|text|documents?|pages?)\s+(?:is|are)\s+(?:not\s+)?(?:automatically\s+)?(?:recognized|extracted|read|transcribed)\b/i,
+  /\btext\s+(?:in|from)\s+scanned\s+(?:PDFs?|documents?|pages?)\s+(?:is|are)\s+(?:not\s+)?(?:automatically\s+)?(?:recognized|extracted|read|transcribed)\b/i,
 ];
 const EXPLICIT_SCANNED_TEXT_BOUNDARIES = [
   /\b(?:does not|do not|doesn't|don't|cannot|can't|never)\s+(?:currently\s+)?(?:recognize|extract|read|transcribe)\b[^.!?;\n]{0,80}\bscanned\s+(?:text|PDFs?|documents?|pages?)\b/i,
   /\bscanned\s+(?:text|PDFs?|documents?|pages?)\b[^.!?;\n]{0,80}\b(?:not recognized|not extracted|unrecognized|unsupported|planned|future)\b/i,
+  /\btext\s+(?:in|from)\s+scanned\s+(?:PDFs?|documents?|pages?)\s+(?:is|are)\s+not\s+(?:recognized|extracted|read|transcribed)\b/i,
+];
+const POSITIVE_PDF_PARSE_PATTERNS = [
+  /\b(?:uses?|includes?|requires?|bundles?)\b[^.!?;\n]{0,50}\bpdf-parse\b/i,
+  /\bdepends?\s+on\b[^.!?;\n]{0,50}\bpdf-parse\b/i,
+  /\bships?\s+with\b[^.!?;\n]{0,50}\bpdf-parse\b/i,
+  /\bpdf-parse\s+is\s+(?:not\s+)?(?:used|included|required|bundled|installed)\b/i,
+];
+const EXPLICIT_PDF_PARSE_BOUNDARIES = [
+  /\b(?:does not|do not|doesn't|don't|never)\s+(?:currently\s+)?(?:use|include|require|bundle)\b[^.!?;\n]{0,50}\bpdf-parse\b/i,
+  /\b(?:does not|do not|doesn't|don't|never)\s+(?:currently\s+)?depend\s+on\b[^.!?;\n]{0,50}\bpdf-parse\b/i,
+  /\b(?:does not|do not|doesn't|don't|never)\s+(?:currently\s+)?ship\s+with\b[^.!?;\n]{0,50}\bpdf-parse\b/i,
+  /\bpdf-parse\s+is\s+not\s+(?:used|included|required|bundled|installed)\b/i,
 ];
 
 async function readRepositoryFile(relativePath) {
@@ -96,16 +119,24 @@ function findOcrClaimViolations(units) {
   });
 }
 
+function findPdfParseClaimViolations(units) {
+  return units.filter(unit =>
+    POSITIVE_PDF_PARSE_PATTERNS.some(pattern => pattern.test(unit)) &&
+    !EXPLICIT_PDF_PARSE_BOUNDARIES.some(pattern => pattern.test(unit))
+  );
+}
+
 describe("documentation capability claims", () => {
   it("does not advertise absent PDF or OCR dependencies on current product surfaces", async () => {
     const violations = [];
 
     for (const relativePath of CURRENT_PRODUCT_SURFACES) {
       const contents = await readRepositoryFile(relativePath);
-      for (const match of findMatches(contents, /pdf-parse/i)) {
-        violations.push(`${relativePath}:${match}`);
+      const units = claimUnits(relativePath, contents);
+      for (const unit of findPdfParseClaimViolations(units)) {
+        violations.push(`${relativePath}: ${unit}`);
       }
-      for (const unit of findOcrClaimViolations(claimUnits(relativePath, contents))) {
+      for (const unit of findOcrClaimViolations(units)) {
         violations.push(`${relativePath}: ${unit}`);
       }
       if (relativePath.endsWith("server/index.js")) {
@@ -142,8 +173,14 @@ describe("documentation capability claims", () => {
     "OCR support is unavailable in the current runtime.",
     "Optional local OCR remains a candidate for evaluation.",
     "The current package has no built-in OCR engine.",
+    "OCR is not supported by the current runtime.",
+    "The package has no OCR.",
+    "OCR does not come built in.",
+    "The runtime is not OCR-enabled.",
     "PDF Tools renders scanned PDF pages for host/model visual inspection.",
     "The runtime does not recognize scanned text; it returns raster images for visual inspection.",
+    "Scanned PDFs are not recognized as text.",
+    "Text in scanned PDFs is not extracted by the runtime.",
   ])("allows explicitly qualified OCR boundary: %s", phrase => {
     expect(findOcrClaimViolations(splitClaimUnits(phrase))).toEqual([]);
   });
@@ -166,8 +203,44 @@ describe("documentation capability claims", () => {
     "PDF Tools recognizes scanned text.",
     "PDF Tools extracts text from scanned PDFs.",
     "PDF Tools reads scanned text automatically.",
+    "OCR is supported.",
+    "OCR is included.",
+    "OCR is available.",
+    "OCR is enabled.",
+    "OCR is bundled.",
+    "OCR is built in.",
+    "PDF Tools has OCR.",
+    "PDF Tools features OCR.",
+    "PDF Tools contains OCR.",
+    "This is an OCR-enabled runtime.",
+    "Scanned PDFs are recognized as text.",
+    "Scanned text is extracted automatically.",
+    "Scanned documents are read by the runtime.",
+    "Scanned pages are transcribed.",
+    "Text in scanned PDFs is recognized.",
+    "Text from scanned PDFs is extracted automatically.",
   ])("rejects positive or qualification-bypass OCR claim: %s", phrase => {
     expect(findOcrClaimViolations(splitClaimUnits(phrase))).not.toEqual([]);
+  });
+
+  it.each([
+    "PDF Tools does not use pdf-parse.",
+    "The current runtime does not depend on pdf-parse.",
+    "The package does not include pdf-parse.",
+    "pdf-parse is not installed.",
+  ])("allows explicitly negative pdf-parse boundary: %s", phrase => {
+    expect(findPdfParseClaimViolations(splitClaimUnits(phrase))).toEqual([]);
+  });
+
+  it.each([
+    "PDF Tools uses pdf-parse.",
+    "The package includes pdf-parse.",
+    "The runtime depends on pdf-parse.",
+    "PDF Tools ships with pdf-parse.",
+    "pdf-parse is installed.",
+    "PDF Tools does not upload files but uses pdf-parse.",
+  ])("rejects positive pdf-parse dependency claim: %s", phrase => {
+    expect(findPdfParseClaimViolations(splitClaimUnits(phrase))).not.toEqual([]);
   });
 
   it("allows historical and evaluation files to describe former or candidate dependencies", () => {
