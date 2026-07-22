@@ -33,6 +33,7 @@ import {
   withToolOutputSchema,
 } from "./output-schemas.js";
 import { extractPdfLayout } from "./layout-extraction.js";
+import { readBoundedPdfFileSafely } from "./bounded-pdf-file.js";
 
 const _require = createRequire(import.meta.url);
 
@@ -120,40 +121,8 @@ function boundedInteger(value, fallback, { name, minimum, maximum }) {
   return candidate;
 }
 
-function sameFileIdentity(left, right) {
-  return left.dev === right.dev
-    && left.ino === right.ino
-    && left.size === right.size
-    && left.mtimeMs === right.mtimeMs
-    && left.ctimeMs === right.ctimeMs;
-}
-
 async function readBoundedPdfFile(resolvedPath, maxBytes) {
-  const canonicalPath = await fs.realpath(resolvedPath);
-  assertPathAllowed(canonicalPath);
-  const flags = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
-  const handle = await fs.open(canonicalPath, flags);
-  try {
-    const before = await handle.stat();
-    if (!before.isFile()) throw new Error("PDF path must identify a regular file.");
-    if (!Number.isSafeInteger(before.size) || before.size > maxBytes) {
-      throw new Error("read_pdf_layout accepts source PDFs up to 250 MiB.");
-    }
-    const bytes = Buffer.allocUnsafe(before.size);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const { bytesRead } = await handle.read(bytes, offset, bytes.length - offset, offset);
-      if (bytesRead === 0) throw new Error("PDF changed while it was being read. Retry the request.");
-      offset += bytesRead;
-    }
-    const [after, pathAfter] = await Promise.all([handle.stat(), fs.stat(canonicalPath)]);
-    if (!sameFileIdentity(before, after) || !sameFileIdentity(after, pathAfter)) {
-      throw new Error("PDF changed while it was being read. Retry the request.");
-    }
-    return { bytes, sizeBytes: before.size };
-  } finally {
-    await handle.close();
-  }
+  return readBoundedPdfFileSafely(resolvedPath, maxBytes, { assertPathAllowed });
 }
 
 function shouldUseSystemPdfRenderer() {

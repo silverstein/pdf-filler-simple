@@ -477,6 +477,7 @@ async function main() {
     );
 
     for (const relativePath of [
+      "server/bounded-pdf-file.js",
       "server/helpers.js",
       "server/index.js",
       "server/layout-extraction.js",

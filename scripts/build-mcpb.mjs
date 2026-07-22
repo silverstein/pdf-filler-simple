@@ -37,6 +37,7 @@ const MCPB_VERSION = "2.1.2";
 const FFLATE_VERSION = "0.8.3";
 const PROTECTED_PDFJS_VERSION = "5.4.624";
 const SERVER_FILES = [
+  "bounded-pdf-file.js",
   "helpers.js",
   "index.js",
   "layout-extraction.js",
