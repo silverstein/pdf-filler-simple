@@ -58,9 +58,19 @@ describe("ODA QPDF WASM recipe", () => {
       "compiler-rt bundled by Emscripten 6.0.3",
       "libc++ bundled by Emscripten 6.0.3",
       "libc++abi bundled by Emscripten 6.0.3",
+      "libunwind bundled by Emscripten 6.0.3",
     ]) {
       expect(components).toContain(expected);
     }
+
+    const qpdfNotice = manifest.files.find((entry) => entry.file === "QPDF-NOTICE.md");
+    expect(qpdfNotice).toEqual({
+      component: "qpdf 12.3.2 bundled-code notices",
+      spdx: "LicenseRef-QPDF-Notice",
+      file: "QPDF-NOTICE.md",
+      sha256: "b207f65a9e5491195ded63b2941199b19a4d30148871f2742c88eae7bfc513a6",
+    });
+    expect(qpdfNotice.component).not.toBe("qpdf 12.3.2");
 
     for (const entry of manifest.files) {
       const bytes = await readFile(path.join(recipeDir, "licenses", entry.file));
@@ -74,6 +84,8 @@ describe("ODA QPDF WASM recipe", () => {
     const dockerfile = await readFile(path.join(recipeDir, "Dockerfile"), "utf8");
     const build = await readFile(path.join(recipeDir, "build.sh"), "utf8");
     const fetcher = await readFile(path.join(recipeDir, "fetch-sources.mjs"), "utf8");
+    const verifier = await readFile(path.join(recipeDir, "verify-reproducible.mjs"), "utf8");
+    const smoke = await readFile(path.join(recipeDir, "smoke.mjs"), "utf8");
 
     expect(packageJson.dependencies["pdfjs-dist"]).toBe("5.4.624");
     expect(packageJson.dependencies).not.toHaveProperty("@neslinesli93/qpdf-wasm");
@@ -83,6 +95,16 @@ describe("ODA QPDF WASM recipe", () => {
     expect(build).toContain("-DUSE_IMPLICIT_CRYPTO=OFF");
     expect(build).not.toContain("USE_INSECURE_RANDOM=ON");
     expect(fetcher).toContain("SHA-256 mismatch");
+    expect(verifier).toMatch(
+      /"buildx", "build",\s+"--platform=linux\/amd64",\s+"--network=none",/,
+    );
+    expect(verifier).toMatch(
+      /"build",\s+"--platform=linux\/amd64",\s+"--network=none",/,
+    );
+    expect(smoke).toContain('const requiredModuleSurface = ["FS", "_main", "callMain"]');
+    expect(smoke).toContain(
+      'const requiredFsSurface = ["writeFile", "readFile", "unlink", "mkdir", "rename", "symlink"]',
+    );
 
     const trackedRecipeFiles = await readdir(recipeDir);
     expect(trackedRecipeFiles).not.toContain("node_modules");

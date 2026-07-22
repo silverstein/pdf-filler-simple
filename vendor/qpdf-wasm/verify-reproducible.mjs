@@ -34,6 +34,7 @@ function build(tag) {
     run("docker", [
       "buildx", "build",
       "--platform=linux/amd64",
+      "--network=none",
       "--no-cache",
       "--target", "export",
       "--load",
@@ -46,6 +47,7 @@ function build(tag) {
   run("docker", [
     "build",
     "--platform=linux/amd64",
+    "--network=none",
     "--no-cache",
     "--target", "export",
     "--tag", tag,

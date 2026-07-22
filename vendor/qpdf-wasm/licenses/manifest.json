@@ -9,7 +9,7 @@
       "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
     },
     {
-      "component": "qpdf 12.3.2",
+      "component": "qpdf 12.3.2 bundled-code notices",
       "spdx": "LicenseRef-QPDF-Notice",
       "file": "QPDF-NOTICE.md",
       "sha256": "b207f65a9e5491195ded63b2941199b19a4d30148871f2742c88eae7bfc513a6"

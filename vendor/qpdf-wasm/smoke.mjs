@@ -8,6 +8,22 @@ const fixturePath = path.resolve(
   process.argv[3] || path.join(recipeDir, "..", "..", "example-fw9.pdf"),
 );
 const createQpdf = (await import(pathToFileURL(path.join(artifactDir, "qpdf.mjs")).href)).default;
+const requiredModuleSurface = ["FS", "_main", "callMain"];
+const requiredFsSurface = ["writeFile", "readFile", "unlink", "mkdir", "rename", "symlink"];
+
+function assertRawModuleSurface(qpdf) {
+  const missingModuleSurface = requiredModuleSurface.filter((name) => !(name in qpdf));
+  const missingFsSurface = requiredFsSurface.filter((name) => typeof qpdf.FS?.[name] !== "function");
+  if (missingModuleSurface.length || missingFsSurface.length) {
+    throw new Error(
+      `QPDF raw module surface drifted; missing module [${missingModuleSurface.join(", ")}], `
+      + `FS [${missingFsSurface.join(", ")}]`,
+    );
+  }
+  if (typeof qpdf._main !== "function" || typeof qpdf.callMain !== "function") {
+    throw new Error("QPDF raw module entry points are not callable");
+  }
+}
 
 async function runQpdf(args, inputs = {}) {
   const stdout = [];
@@ -46,6 +62,7 @@ async function runQpdf(args, inputs = {}) {
 
 const fixture = new Uint8Array(await readFile(fixturePath));
 const version = await runQpdf(["--version"]);
+assertRawModuleSurface(version.qpdf);
 if (version.status !== 0 || !version.stdout.join("\n").includes("version 12.3.2")) {
   throw new Error(`QPDF version smoke failed with status ${version.status}`);
 }
@@ -103,6 +120,8 @@ if (checkRun.status !== 0) {
 console.log(JSON.stringify({
   schema_version: 1,
   qpdf_version: "12.3.2",
+  raw_module_surface: requiredModuleSurface,
+  raw_fs_surface: requiredFsSurface,
   version_status: version.status,
   encrypt_status: encryptedRun.status,
   wrong_password_status: wrongPassword.status,

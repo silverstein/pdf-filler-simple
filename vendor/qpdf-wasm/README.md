@@ -45,10 +45,12 @@ Docker is required. Run:
 npm run qpdf-wasm:verify
 ```
 
-The verifier:
+The verifier fetches and hash-verifies the pinned source archives first. It
+then gives every Docker build stage `--network=none`, so compilation cannot
+reach the network. The verifier:
 
 1. hash-verifies every source archive;
-2. performs two independent `--no-cache` builds;
+2. performs two independent `--no-cache --network=none` builds;
 3. extracts every runtime, input, version, and notice file from both builds;
 4. requires byte-for-byte identical inventories;
 5. checks `qpdf.mjs` and `qpdf.wasm` against `expected-output.json`; and
@@ -61,7 +63,9 @@ structural check of the decrypted result. It never signs a document.
 On systems with Docker Buildx, the verifier builds and loads a pinned
 `linux/amd64` image. The fallback uses the legacy Docker builder because some
 maintainer VMs do not install the Buildx component. Both paths use the same
-platform-specific Emscripten image digest.
+platform-specific Emscripten image digest and disable build-stage networking.
+Docker may still need registry access to obtain the already-pinned base image;
+`--network=none` governs the commands executed inside the build stages.
 
 To smoke an already extracted artifact directory separately, run:
 
@@ -71,7 +75,8 @@ npm run qpdf-wasm:smoke -- /absolute/path/to/artifacts
 
 ## Artifact API
 
-The build exports an asynchronous ESM factory and a separate WebAssembly file:
+The research build exports an asynchronous ESM factory and a separate
+WebAssembly file:
 
 ```js
 import createQpdf from "./qpdf.mjs";
@@ -82,10 +87,18 @@ const status = qpdf.callMain(["/input.pdf", "--check"]);
 const outputBytes = qpdf.FS.readFile("/output.pdf");
 ```
 
-Only `callMain`, `FS.writeFile`, `FS.readFile`, and `FS.unlink` are exported.
-Create a fresh module for each application operation so filesystem contents,
-password-bearing arguments, output handlers, and QPDF process state do not
-cross request boundaries.
+The reproduced raw module exposes `FS`, `_main`, and `callMain`. `FS` is the
+broader Emscripten filesystem object, not a capability-limited facade. Treat
+the raw module and its filesystem as internal implementation details. A later
+production wrapper must expose only the narrow PDF operation API that the
+application needs, rather than returning the module or `FS` to callers.
+The runtime smoke guards this inventory and also verifies that `FS` exposes
+broader methods including `mkdir`, `rename`, and `symlink`.
+
+Create a fresh internal module for each application operation so filesystem
+contents, password-bearing arguments, output handlers, and QPDF process state
+do not cross request boundaries. This example demonstrates the research
+artifact only; it is not the production application API.
 
 ## Distribution notices
 
