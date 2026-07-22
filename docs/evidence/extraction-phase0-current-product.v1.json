@@ -6,10 +6,10 @@
   "calibration_claim_ready": false,
   "claim_boundary": "Synthetic local direct-tool calibration only. No model, host UI, external dataset, OCR engine, table engine, or general structured extractor is evaluated.",
   "manifest_sha256": "76f66a83eb4fba74a058467d15c6bebd17d56961776eba8f0411c7bbbc6b8430",
-  "schema_sha256": "53fae8cabbabeb4af9476716d809367d2c6590838d3da2ddf47013bdbc465605",
+  "schema_sha256": "03cc2daff2a33e23201502b98f517a75debc6edb3b6ebc5c098110e78ebad5a0",
   "run": {
     "runtime_version": "0.8.6",
-    "runtime_commit": "8eca480d31726b2b621cd5d5e9fea9d0ac77cc86",
+    "runtime_commit": "43747f902d8cc83fa39d2603bb83aa6862943e10",
     "node_version": "v22.22.3",
     "platform": "linux",
     "architecture": "x64",
@@ -178,8 +178,9 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "02e77c576832edf4ba88506eb427bbedd3231dc413efbd0f817b908b3aae125d",
+        "raw_result_sha256": "113583104a985324373d149ee4d27bc596a3e5b826a3b66ebb73b59a7da27f60",
         "page_result_sha256": "2c9fa6c283076ce92b58338f82ee286751630a7b0ee3200148175b6e7cef31d5",
+        "scoring_input_sha256": "7716a832085913cd2f43b0ccd9c49b4ca2a8c5c04d2bddc545d445f6f44b8bb8",
         "evidence_ids": [
           "evidence.born-digital-flat.page-1"
         ]
@@ -191,8 +192,8 @@
           "is_error": false,
           "result_sha256": "2c9fa6c283076ce92b58338f82ee286751630a7b0ee3200148175b6e7cef31d5",
           "structured_sha256": "d10e410fbe636a907c1dcb910c9773901ea774f84c29851725c3f564f8a287b7",
-          "latency_ms": 214.278,
-          "peak_rss_bytes": 162885632
+          "latency_ms": 168.461,
+          "peak_rss_bytes": 157212672
         },
         {
           "name": "read_pdf_content",
@@ -200,8 +201,8 @@
           "is_error": false,
           "result_sha256": "2d983c7898c3feb5db29a4fd3ce2d1cd12828a7306efea7944da1507ae84435d",
           "structured_sha256": "a5f9cf06930be2e6f7eb00c92d2319caf8902a63bb111b7b9c9b7671b4fa9cf8",
-          "latency_ms": 14.059,
-          "peak_rss_bytes": 161955840,
+          "latency_ms": 10.611,
+          "peak_rss_bytes": 157458432,
           "extraction_mode": "text",
           "extraction_status": "complete"
         },
@@ -211,10 +212,46 @@
           "is_error": false,
           "result_sha256": "c16072603c24bb9632c679e981c4e7d8a496123e172ee88a26e4faac4821e34b",
           "structured_sha256": "68143b74f155263287f13c9f06d439bcc1046fc5144c5fac2b688a28770e6b24",
-          "latency_ms": 23.861,
-          "peak_rss_bytes": 162500608
+          "latency_ms": 30.868,
+          "peak_rss_bytes": 158060544
         }
       ],
+      "scoring_input": {
+        "structured_candidate": null,
+        "structured_candidate_raw": null,
+        "table_candidate": null,
+        "ocr_texts": [],
+        "page_texts": [
+          {
+            "page": 1,
+            "text": "SYNTHETIC INVOICEInvoice ID: INV-1001Vendor: Northwind PaperInvoice date: 2026-07-15Total: USD 42.50"
+          }
+        ],
+        "raster_pages": [],
+        "evidence": [
+          {
+            "evidence_schema_version": 1,
+            "id": "evidence.born-digital-flat.page-1",
+            "kind": "page",
+            "source_sha256": "706dcc669a763bc88852eff3bfdf3ee428d3ff1dac01b85e2b60942e907d5403",
+            "result_sha256": "2c9fa6c283076ce92b58338f82ee286751630a7b0ee3200148175b6e7cef31d5",
+            "page": 1,
+            "text": "SYNTHETIC INVOICEInvoice ID: INV-1001Vendor: Northwind PaperInvoice date: 2026-07-15Total: USD 42.50",
+            "text_sha256": "6e95b80410c9a6137cee0daced6c38fd40c8eeb0ecb3dd77c7f1c1efa3794b12",
+            "bbox": null,
+            "fact_ids": []
+          }
+        ],
+        "page_result_sha256": "2c9fa6c283076ce92b58338f82ee286751630a7b0ee3200148175b6e7cef31d5",
+        "observed_geometry": [
+          {
+            "page": 1,
+            "width": 612,
+            "height": 792,
+            "rotation": 0
+          }
+        ]
+      },
       "metrics": {
         "json_parse": {
           "applicable": true,
@@ -319,8 +356,8 @@
         }
       },
       "resources": {
-        "latency_ms": 264.188,
-        "peak_rss_bytes": 162885632
+        "latency_ms": 215.261,
+        "peak_rss_bytes": 158060544
       },
       "privacy": {
         "source_immutable": true,
@@ -380,8 +417,9 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "6fc3cc3b044292b5e24d2b51edf046cbf7ee7923f0496e792dd4616c3cddaa71",
+        "raw_result_sha256": "4818c01182a3d50a7c6047a5d3bce287c0cd5ec33004a796568d422a1bdd7297",
         "page_result_sha256": "01889100964b74433e1c21eb7d80d45fe5180ec9fb2c4e92637b02e1ef9f7502",
+        "scoring_input_sha256": "f6f14eb76baa091dd9ee249458e313689cbe494133fc5246a7a9dd5c8e5cdee9",
         "evidence_ids": [
           "evidence.born-digital-nested.page-1"
         ]
@@ -393,8 +431,8 @@
           "is_error": false,
           "result_sha256": "01889100964b74433e1c21eb7d80d45fe5180ec9fb2c4e92637b02e1ef9f7502",
           "structured_sha256": "c1d9ff8b403746d1fc932c6b671537ab851a2e7966917e0243c8e6729e7157f1",
-          "latency_ms": 8.979,
-          "peak_rss_bytes": 162897920
+          "latency_ms": 8.337,
+          "peak_rss_bytes": 158158848
         },
         {
           "name": "read_pdf_content",
@@ -402,8 +440,8 @@
           "is_error": false,
           "result_sha256": "47e74cb093ab1e0898b8063ba8a8994a11b3d296826216258ae488ed71a9538e",
           "structured_sha256": "07dbca87d15dbbd4f9254965d4e0443fccfc00706213997b8f29b24d378d17bc",
-          "latency_ms": 12.187,
-          "peak_rss_bytes": 162959360,
+          "latency_ms": 5.988,
+          "peak_rss_bytes": 158158848,
           "extraction_mode": "text",
           "extraction_status": "complete"
         },
@@ -413,10 +451,46 @@
           "is_error": false,
           "result_sha256": "1db047ed69bffc3a54fdb290e8b58a857d254afc409b548c291b07c24b861c0a",
           "structured_sha256": "75917fbf7450ead3c66cc226cc7141f7c3cdc2714ee759a291e8e67b081fd69e",
-          "latency_ms": 14.249,
-          "peak_rss_bytes": 163188736
+          "latency_ms": 11.816,
+          "peak_rss_bytes": 158281728
         }
       ],
+      "scoring_input": {
+        "structured_candidate": null,
+        "structured_candidate_raw": null,
+        "table_candidate": null,
+        "ocr_texts": [],
+        "page_texts": [
+          {
+            "page": 1,
+            "text": "SYNTHETIC CUSTOMER RECORDCustomer ID: C-204Organization: Alpine WorksStreet: 77 Cedar AvenueCity: PortlandRegion: ORPostal code: 97205Tags: renewal, priorityActive: yes"
+          }
+        ],
+        "raster_pages": [],
+        "evidence": [
+          {
+            "evidence_schema_version": 1,
+            "id": "evidence.born-digital-nested.page-1",
+            "kind": "page",
+            "source_sha256": "c9baaed165000f0e7112e2bfc89e070e0bda26c7ce3f1f16b0dbeebb67e9f11f",
+            "result_sha256": "01889100964b74433e1c21eb7d80d45fe5180ec9fb2c4e92637b02e1ef9f7502",
+            "page": 1,
+            "text": "SYNTHETIC CUSTOMER RECORDCustomer ID: C-204Organization: Alpine WorksStreet: 77 Cedar AvenueCity: PortlandRegion: ORPostal code: 97205Tags: renewal, priorityActive: yes",
+            "text_sha256": "dffb79613bd5b5ea1d2338b3eaadb31c3fad1d0b862f3c0541aff46c2ad1a9fe",
+            "bbox": null,
+            "fact_ids": []
+          }
+        ],
+        "page_result_sha256": "01889100964b74433e1c21eb7d80d45fe5180ec9fb2c4e92637b02e1ef9f7502",
+        "observed_geometry": [
+          {
+            "page": 1,
+            "width": 612,
+            "height": 792,
+            "rotation": 0
+          }
+        ]
+      },
       "metrics": {
         "json_parse": {
           "applicable": true,
@@ -521,8 +595,8 @@
         }
       },
       "resources": {
-        "latency_ms": 37.55,
-        "peak_rss_bytes": 163188736
+        "latency_ms": 29.98,
+        "peak_rss_bytes": 158281728
       },
       "privacy": {
         "source_immutable": true,
@@ -582,8 +656,9 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "508b61a52405553ec95e65a60ff31e9572395ec94af67374f0442625b343cb87",
+        "raw_result_sha256": "d3a4244675a43594f1758cbf181821b2bb97b5785fbb70ae216dc28987a36fbf",
         "page_result_sha256": "699b7863b9395530e895eac68998d3bc8ecac574028c58b6b82c6afb0a815d11",
+        "scoring_input_sha256": "da6138e1caf844cb068b8e700af18a9f084edb2750afdb059f03d120a6d85b55",
         "evidence_ids": [
           "evidence.two-column-order.page-1"
         ]
@@ -595,8 +670,8 @@
           "is_error": false,
           "result_sha256": "699b7863b9395530e895eac68998d3bc8ecac574028c58b6b82c6afb0a815d11",
           "structured_sha256": "c1a170ec03cb446f22d0a150c17fb034b8b0654ab9472c509be5506bd6bc57dd",
-          "latency_ms": 6.901,
-          "peak_rss_bytes": 163033088
+          "latency_ms": 6.42,
+          "peak_rss_bytes": 156160000
         },
         {
           "name": "read_pdf_content",
@@ -604,8 +679,8 @@
           "is_error": false,
           "result_sha256": "d58c25d1e5d0ed7a8bf6a93de7d20b061b5d3eca54fd1d70681ce73a5136e138",
           "structured_sha256": "5632806f96269ad5b3feed45547a856a75b8940a70ef2331de518f51ad63e2a0",
-          "latency_ms": 6.487,
-          "peak_rss_bytes": 163049472,
+          "latency_ms": 4.808,
+          "peak_rss_bytes": 156381184,
           "extraction_mode": "text",
           "extraction_status": "complete"
         },
@@ -615,10 +690,46 @@
           "is_error": false,
           "result_sha256": "ee00254b1baa8e5e3f17050292d59fd670cb969e5d45e8e9018c80e4ed72ae5c",
           "structured_sha256": "4e96f99fe5dbf89801524109deaf13251e219a6868bdfd0d8d2aca922601c6ca",
-          "latency_ms": 13.689,
-          "peak_rss_bytes": 163454976
+          "latency_ms": 8.802,
+          "peak_rss_bytes": 156663808
         }
       ],
+      "scoring_input": {
+        "structured_candidate": null,
+        "structured_candidate_raw": null,
+        "table_candidate": null,
+        "ocr_texts": [],
+        "page_texts": [
+          {
+            "page": 1,
+            "text": "TWO COLUMN NOTICELEFT-1 Coverage begins July 1.LEFT-2 Claims close July 31.RIGHT-1 Review starts August 2.RIGHT-2 Decision follows review."
+          }
+        ],
+        "raster_pages": [],
+        "evidence": [
+          {
+            "evidence_schema_version": 1,
+            "id": "evidence.two-column-order.page-1",
+            "kind": "page",
+            "source_sha256": "aaaae6795676db9e33f79e75f4662808ee9646f8f2bb12a319f74e3edb11c101",
+            "result_sha256": "699b7863b9395530e895eac68998d3bc8ecac574028c58b6b82c6afb0a815d11",
+            "page": 1,
+            "text": "TWO COLUMN NOTICELEFT-1 Coverage begins July 1.LEFT-2 Claims close July 31.RIGHT-1 Review starts August 2.RIGHT-2 Decision follows review.",
+            "text_sha256": "37a3c9c79a71fdac620975df1c6444e9bcdeff9482301a56d3b076c29d61a435",
+            "bbox": null,
+            "fact_ids": []
+          }
+        ],
+        "page_result_sha256": "699b7863b9395530e895eac68998d3bc8ecac574028c58b6b82c6afb0a815d11",
+        "observed_geometry": [
+          {
+            "page": 1,
+            "width": 612,
+            "height": 792,
+            "rotation": 0
+          }
+        ]
+      },
       "metrics": {
         "json_parse": {
           "applicable": true,
@@ -723,8 +834,8 @@
         }
       },
       "resources": {
-        "latency_ms": 28.32,
-        "peak_rss_bytes": 163454976
+        "latency_ms": 22.453,
+        "peak_rss_bytes": 156663808
       },
       "privacy": {
         "source_immutable": true,
@@ -784,8 +895,9 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "50bd0b9e876b1a27f5294c61bb6885312943581be69f46ce4a7968c63358f12f",
+        "raw_result_sha256": "b4905e8e02c25dfdf3e805110b76011d8e3a41731e41bb2c4ae21b9c36ad846a",
         "page_result_sha256": "a8ba50580911e226f9d2f939de750940aee140d2958f79062e4eb203309a8739",
+        "scoring_input_sha256": "1e592dd6272fd590c801064e7a8e7d6e6e8f833f9e2b5cc5c5c4b67e9e65ae00",
         "evidence_ids": [
           "evidence.table-merged-blank.page-1"
         ]
@@ -797,8 +909,8 @@
           "is_error": false,
           "result_sha256": "a8ba50580911e226f9d2f939de750940aee140d2958f79062e4eb203309a8739",
           "structured_sha256": "96956d125c248deff195a2a4ae73a24d8f7981699a8bc4755e03222987435506",
-          "latency_ms": 7.665,
-          "peak_rss_bytes": 160514048
+          "latency_ms": 9.357,
+          "peak_rss_bytes": 156753920
         },
         {
           "name": "read_pdf_content",
@@ -806,8 +918,8 @@
           "is_error": false,
           "result_sha256": "0bf8bc8dcc431ea9895b29d2b13244bac64a17039496c47925e91774eee207f1",
           "structured_sha256": "dc519da92d83a776d71ed7fd4ddf201d3d2c61c3d7b69ef89aec9460279b41af",
-          "latency_ms": 6.168,
-          "peak_rss_bytes": 160555008,
+          "latency_ms": 9.231,
+          "peak_rss_bytes": 157798400,
           "extraction_mode": "text",
           "extraction_status": "complete"
         },
@@ -817,10 +929,46 @@
           "is_error": false,
           "result_sha256": "18a612bd8d84c8a3f77008fb7af2e2aba7ec6807ba706860b68bff4b50af5073",
           "structured_sha256": "68a774532fe4314869859ad96c7d71b45ee09c7bdd319ed640122a84ec2d8732",
-          "latency_ms": 9.296,
-          "peak_rss_bytes": 162230272
+          "latency_ms": 12.919,
+          "peak_rss_bytes": 158633984
         }
       ],
+      "scoring_input": {
+        "structured_candidate": null,
+        "structured_candidate_raw": null,
+        "table_candidate": null,
+        "ocr_texts": [],
+        "page_texts": [
+          {
+            "page": 1,
+            "text": "Q3 PURCHASESItem Qty AmountPaper 2 USD 20.00Delivery USD 5.00"
+          }
+        ],
+        "raster_pages": [],
+        "evidence": [
+          {
+            "evidence_schema_version": 1,
+            "id": "evidence.table-merged-blank.page-1",
+            "kind": "page",
+            "source_sha256": "370dc0ac71939cba9db8584327c87899716dc770ac9ee8cad33fc27b5e73b73c",
+            "result_sha256": "a8ba50580911e226f9d2f939de750940aee140d2958f79062e4eb203309a8739",
+            "page": 1,
+            "text": "Q3 PURCHASESItem Qty AmountPaper 2 USD 20.00Delivery USD 5.00",
+            "text_sha256": "ba9439da13a3d764510266005f709f6cc106a82dfe7846839a37078b3e8b6979",
+            "bbox": null,
+            "fact_ids": []
+          }
+        ],
+        "page_result_sha256": "a8ba50580911e226f9d2f939de750940aee140d2958f79062e4eb203309a8739",
+        "observed_geometry": [
+          {
+            "page": 1,
+            "width": 612,
+            "height": 792,
+            "rotation": 0
+          }
+        ]
+      },
       "metrics": {
         "json_parse": {
           "applicable": true,
@@ -925,8 +1073,8 @@
         }
       },
       "resources": {
-        "latency_ms": 24.357,
-        "peak_rss_bytes": 162230272
+        "latency_ms": 34.064,
+        "peak_rss_bytes": 158633984
       },
       "privacy": {
         "source_immutable": true,
@@ -986,8 +1134,9 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "2d90e976c19167b5233e315355502732bfc71ce34a7d3de58f6f76588a65981d",
+        "raw_result_sha256": "ceccfac563441098dceb6ffc62bbdb97d011819aa2be68db0f7705114d8f1436",
         "page_result_sha256": "48e133b98fb40346288936bed1d8dfae5a74f35bdb773dd519fc9276ab844be8",
+        "scoring_input_sha256": "7c2f8d3588e4d72ddef168440b5d27ad97a99af50d2b24af089a2e3fbec3da06",
         "evidence_ids": [
           "evidence.raster-clean.page-1"
         ]
@@ -999,8 +1148,8 @@
           "is_error": false,
           "result_sha256": "48e133b98fb40346288936bed1d8dfae5a74f35bdb773dd519fc9276ab844be8",
           "structured_sha256": "85e390ff0c230da66ca524fad25ab604dd5fbed1c02adca6ae9b12027ae7f90e",
-          "latency_ms": 3.189,
-          "peak_rss_bytes": 162553856
+          "latency_ms": 5.539,
+          "peak_rss_bytes": 158908416
         },
         {
           "name": "read_pdf_content",
@@ -1008,8 +1157,8 @@
           "is_error": false,
           "result_sha256": "abe3ef4e125769323bbd909c1fbc2b3ffa91f9591c31af9bedd1d85a5587eb84",
           "structured_sha256": "75df20063be0a0c55a8233746200eb4c1c84f5fcecb90dc424156bdd288069fd",
-          "latency_ms": 121.525,
-          "peak_rss_bytes": 202285056,
+          "latency_ms": 157.277,
+          "peak_rss_bytes": 197140480,
           "extraction_mode": "image-fallback",
           "extraction_status": "partial"
         },
@@ -1019,8 +1168,8 @@
           "is_error": false,
           "result_sha256": "176676134a6fb293a06abc91f182dbd7174aeb8b01c3e75cbaf3dd3036cf2dd4",
           "structured_sha256": "eacafe911b2722afa4c929d66a18a50ba671bc0bfd1d6fdea97b18d67d46e681",
-          "latency_ms": 9.279,
-          "peak_rss_bytes": 202313728
+          "latency_ms": 6.59,
+          "peak_rss_bytes": 191012864
         },
         {
           "name": "render_pdf_page",
@@ -1028,12 +1177,53 @@
           "is_error": false,
           "result_sha256": "9bcdca87af8fcd48d357c421e56af1605748a641bcd9ba532d39cc6503600b7f",
           "structured_sha256": "a882f39fdbdc0573421acdf5981338741b7c094ade80211df97458a282ca7ce2",
-          "latency_ms": 127.167,
-          "peak_rss_bytes": 214351872,
+          "latency_ms": 151.106,
+          "peak_rss_bytes": 217030656,
           "page": 1,
           "png_observed": true
         }
       ],
+      "scoring_input": {
+        "structured_candidate": null,
+        "structured_candidate_raw": null,
+        "table_candidate": null,
+        "ocr_texts": [],
+        "page_texts": [
+          {
+            "page": 1,
+            "text": ""
+          }
+        ],
+        "raster_pages": [
+          {
+            "page": 1,
+            "ok": true
+          }
+        ],
+        "evidence": [
+          {
+            "evidence_schema_version": 1,
+            "id": "evidence.raster-clean.page-1",
+            "kind": "page",
+            "source_sha256": "8287bc8965aef64fe33ae81b0abc2f2c3a9df4dc86c2335982f0747e0ae851e9",
+            "result_sha256": "48e133b98fb40346288936bed1d8dfae5a74f35bdb773dd519fc9276ab844be8",
+            "page": 1,
+            "text": "",
+            "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bbox": null,
+            "fact_ids": []
+          }
+        ],
+        "page_result_sha256": "48e133b98fb40346288936bed1d8dfae5a74f35bdb773dd519fc9276ab844be8",
+        "observed_geometry": [
+          {
+            "page": 1,
+            "width": 612,
+            "height": 792,
+            "rotation": 0
+          }
+        ]
+      },
       "metrics": {
         "json_parse": {
           "applicable": true,
@@ -1138,8 +1328,8 @@
         }
       },
       "resources": {
-        "latency_ms": 263.834,
-        "peak_rss_bytes": 214351872
+        "latency_ms": 323.335,
+        "peak_rss_bytes": 217030656
       },
       "privacy": {
         "source_immutable": true,
@@ -1199,8 +1389,9 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "b5a06926aee7094184bc05051c46101eeff5e71f9ab81ed6173c3d2ac1e8135c",
+        "raw_result_sha256": "c6c32ca80992ddf876fcfc5ae441234c1643885c75b8607c21393faa7febf462",
         "page_result_sha256": "711fec6775171db68cd7676f9cfb246c3fa9e526613e663afe701a7010fb37cf",
+        "scoring_input_sha256": "05b44588bad5e1c0ccc5f1aa02374f2c4a62f9c496d478c7195f9d9cbecd499f",
         "evidence_ids": [
           "evidence.raster-degraded.page-1"
         ]
@@ -1212,8 +1403,8 @@
           "is_error": false,
           "result_sha256": "711fec6775171db68cd7676f9cfb246c3fa9e526613e663afe701a7010fb37cf",
           "structured_sha256": "dc1a9edf81d4c25b24432331829178c9db7a00e0cb9e43ee63993c6f281ed04a",
-          "latency_ms": 3.86,
-          "peak_rss_bytes": 214138880
+          "latency_ms": 3.495,
+          "peak_rss_bytes": 216961024
         },
         {
           "name": "read_pdf_content",
@@ -1221,8 +1412,8 @@
           "is_error": false,
           "result_sha256": "1d54773c5a4e54c97a31e8142b82abfe243c2dff69508750bbacb2ed8077b3ef",
           "structured_sha256": "31b92eafe83bedf205533ee2d21bcca41f96a7b4592a0b4947a394a9c4ae23cb",
-          "latency_ms": 42.88,
-          "peak_rss_bytes": 214204416,
+          "latency_ms": 47.48,
+          "peak_rss_bytes": 217010176,
           "extraction_mode": "image-fallback",
           "extraction_status": "partial"
         },
@@ -1232,8 +1423,8 @@
           "is_error": false,
           "result_sha256": "176676134a6fb293a06abc91f182dbd7174aeb8b01c3e75cbaf3dd3036cf2dd4",
           "structured_sha256": "eacafe911b2722afa4c929d66a18a50ba671bc0bfd1d6fdea97b18d67d46e681",
-          "latency_ms": 5.954,
-          "peak_rss_bytes": 214261760
+          "latency_ms": 6.78,
+          "peak_rss_bytes": 217059328
         },
         {
           "name": "render_pdf_page",
@@ -1241,12 +1432,53 @@
           "is_error": false,
           "result_sha256": "f9afc3c3ab0b9df78636860cff346de9baa8bcb67648a3906f2606c8a5ddb9f2",
           "structured_sha256": "829c8a4361fd8b7e97c2f6c8066d7407a664354e8be849637c1790f7cad9ca3f",
-          "latency_ms": 46.614,
-          "peak_rss_bytes": 220708864,
+          "latency_ms": 42.098,
+          "peak_rss_bytes": 217202688,
           "page": 1,
           "png_observed": true
         }
       ],
+      "scoring_input": {
+        "structured_candidate": null,
+        "structured_candidate_raw": null,
+        "table_candidate": null,
+        "ocr_texts": [],
+        "page_texts": [
+          {
+            "page": 1,
+            "text": ""
+          }
+        ],
+        "raster_pages": [
+          {
+            "page": 1,
+            "ok": true
+          }
+        ],
+        "evidence": [
+          {
+            "evidence_schema_version": 1,
+            "id": "evidence.raster-degraded.page-1",
+            "kind": "page",
+            "source_sha256": "570b9f004596d5f8c0fc1f52c2ea3d1d0e88f987f287aa7692be2a5b3a6fc042",
+            "result_sha256": "711fec6775171db68cd7676f9cfb246c3fa9e526613e663afe701a7010fb37cf",
+            "page": 1,
+            "text": "",
+            "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bbox": null,
+            "fact_ids": []
+          }
+        ],
+        "page_result_sha256": "711fec6775171db68cd7676f9cfb246c3fa9e526613e663afe701a7010fb37cf",
+        "observed_geometry": [
+          {
+            "page": 1,
+            "width": 612,
+            "height": 792,
+            "rotation": 0
+          }
+        ]
+      },
       "metrics": {
         "json_parse": {
           "applicable": true,
@@ -1351,8 +1583,8 @@
         }
       },
       "resources": {
-        "latency_ms": 100.856,
-        "peak_rss_bytes": 220708864
+        "latency_ms": 102.875,
+        "peak_rss_bytes": 217202688
       },
       "privacy": {
         "source_immutable": true,
@@ -1434,8 +1666,9 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "57fbaf71b3a51d4149545cbf9512b5b302f68f2570948086bc0dec1ed6fbb1eb",
+        "raw_result_sha256": "d9ca4e2ee5e2aa80bb4058fd2aaf86b15f30a205b8f0f515a0362277677ce088",
         "page_result_sha256": "2914eb68f91412fb7165ef4d23a9433dba30d73d0cab0d67c9b517cf18022f01",
+        "scoring_input_sha256": "204052beb8fd6c17309686a7a6e417707e527abdebd51b45f0cf25cd6ae3b1f1",
         "evidence_ids": [
           "evidence.mixed-text-raster.page-1",
           "evidence.mixed-text-raster.page-2"
@@ -1448,8 +1681,8 @@
           "is_error": false,
           "result_sha256": "2914eb68f91412fb7165ef4d23a9433dba30d73d0cab0d67c9b517cf18022f01",
           "structured_sha256": "db1f009e3f7859108a6778f393509a6552e9202f9fdb35fefcd8fded0663d0b8",
-          "latency_ms": 8.562,
-          "peak_rss_bytes": 221368320
+          "latency_ms": 4.76,
+          "peak_rss_bytes": 217460736
         },
         {
           "name": "read_pdf_content",
@@ -1457,8 +1690,8 @@
           "is_error": false,
           "result_sha256": "178bca3fd50376eb502f87cc4ab1b5c579285b801a2f9f7d99ca2b5fff7f663c",
           "structured_sha256": "d33f150b2704a85c9b19385371b365196064a5ec2360c8e30b4bde3621f45362",
-          "latency_ms": 7.247,
-          "peak_rss_bytes": 221368320,
+          "latency_ms": 4.082,
+          "peak_rss_bytes": 217481216,
           "extraction_mode": "text",
           "extraction_status": "complete"
         },
@@ -1468,8 +1701,8 @@
           "is_error": false,
           "result_sha256": "0af69346ca044a439809f8907954af34ed2d3b1bd166ad19e3e3e70a5b8f895e",
           "structured_sha256": "4ccb7779712c36b3adbd1796e0f2cdf3699a80692eb35cc148762b4783d7dba0",
-          "latency_ms": 18.912,
-          "peak_rss_bytes": 221380608
+          "latency_ms": 7.818,
+          "peak_rss_bytes": 217509888
         },
         {
           "name": "render_pdf_page",
@@ -1477,12 +1710,75 @@
           "is_error": false,
           "result_sha256": "914e246e90d5278b7e1dbbf575eb6f9f57de60c06aff52e5a4e3df0d1b557da4",
           "structured_sha256": "a2d5b79e98445911dabdfd27527a8feb71c6dc3e4578d4d82462b06ba9d0308e",
-          "latency_ms": 133.884,
-          "peak_rss_bytes": 256249856,
+          "latency_ms": 106.388,
+          "peak_rss_bytes": 249851904,
           "page": 2,
           "png_observed": true
         }
       ],
+      "scoring_input": {
+        "structured_candidate": null,
+        "structured_candidate_raw": null,
+        "table_candidate": null,
+        "ocr_texts": [],
+        "page_texts": [
+          {
+            "page": 1,
+            "text": "MIXED DOCUMENTPacket ID: MIX-77Page one is born digital."
+          },
+          {
+            "page": 2,
+            "text": ""
+          }
+        ],
+        "raster_pages": [
+          {
+            "page": 2,
+            "ok": true
+          }
+        ],
+        "evidence": [
+          {
+            "evidence_schema_version": 1,
+            "id": "evidence.mixed-text-raster.page-1",
+            "kind": "page",
+            "source_sha256": "b5374f2e96b6205a6cf824ba90b55ffa23612658eca169270682c9445daa476f",
+            "result_sha256": "2914eb68f91412fb7165ef4d23a9433dba30d73d0cab0d67c9b517cf18022f01",
+            "page": 1,
+            "text": "MIXED DOCUMENTPacket ID: MIX-77Page one is born digital.",
+            "text_sha256": "8ff5de521ee36610cf180ca1e8ef55e54504abaa2e24d9beb97f1a3f8cede1c3",
+            "bbox": null,
+            "fact_ids": []
+          },
+          {
+            "evidence_schema_version": 1,
+            "id": "evidence.mixed-text-raster.page-2",
+            "kind": "page",
+            "source_sha256": "b5374f2e96b6205a6cf824ba90b55ffa23612658eca169270682c9445daa476f",
+            "result_sha256": "2914eb68f91412fb7165ef4d23a9433dba30d73d0cab0d67c9b517cf18022f01",
+            "page": 2,
+            "text": "",
+            "text_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+            "bbox": null,
+            "fact_ids": []
+          }
+        ],
+        "page_result_sha256": "2914eb68f91412fb7165ef4d23a9433dba30d73d0cab0d67c9b517cf18022f01",
+        "observed_geometry": [
+          {
+            "page": 1,
+            "width": 612,
+            "height": 792,
+            "rotation": 0
+          },
+          {
+            "page": 2,
+            "width": 612,
+            "height": 792,
+            "rotation": 0
+          }
+        ]
+      },
       "metrics": {
         "json_parse": {
           "applicable": true,
@@ -1587,8 +1883,8 @@
         }
       },
       "resources": {
-        "latency_ms": 171.284,
-        "peak_rss_bytes": 256249856
+        "latency_ms": 125.621,
+        "peak_rss_bytes": 249851904
       },
       "privacy": {
         "source_immutable": true,
@@ -1648,8 +1944,9 @@
         ]
       },
       "bindings": {
-        "raw_result_sha256": "e5edd1d2c93c3d2f9bec6c37696278088a2bdb5b461ff9cd116bdac1ab775e71",
+        "raw_result_sha256": "cd1a1b43cbfadc2069f64a6b87ee69c7929ca53ca065f82feb57358f56ef81fd",
         "page_result_sha256": "1911511d0345efc57715316518d483d8989b62ee633ce777a0144e1d8e66618e",
+        "scoring_input_sha256": "304ba3a1e928424893b5e7efed1dee2d0711552d42221926aa3142920273a91c",
         "evidence_ids": [
           "evidence.no-answer-contradiction.page-1"
         ]
@@ -1661,8 +1958,8 @@
           "is_error": false,
           "result_sha256": "1911511d0345efc57715316518d483d8989b62ee633ce777a0144e1d8e66618e",
           "structured_sha256": "12d6d7b590966223f7fbcea51e921e486bc7a4c0d8e5ef7eb36a4506e7936a7a",
-          "latency_ms": 4.829,
-          "peak_rss_bytes": 256249856
+          "latency_ms": 4.954,
+          "peak_rss_bytes": 249851904
         },
         {
           "name": "read_pdf_content",
@@ -1670,8 +1967,8 @@
           "is_error": false,
           "result_sha256": "2db8076724162d37f6c8845b1692f3a9526ca4919a6e56696e7130d75d874265",
           "structured_sha256": "f09163bb24e8f65d733555934fb4636a45845a5e1e8821354cc70738d4d1bce7",
-          "latency_ms": 4.214,
-          "peak_rss_bytes": 256266240,
+          "latency_ms": 3.99,
+          "peak_rss_bytes": 249851904,
           "extraction_mode": "text",
           "extraction_status": "complete"
         },
@@ -1681,10 +1978,46 @@
           "is_error": false,
           "result_sha256": "3faee167444a93e1a7bc61edb8611bfa7b891bab777ffcc8c2ebf97320a7f583",
           "structured_sha256": "5ddcac761261d9a3d51fb14775386ad586576a09e0abfd788764e6a2a73dcd1f",
-          "latency_ms": 6.138,
-          "peak_rss_bytes": 256270336
+          "latency_ms": 5.928,
+          "peak_rss_bytes": 249860096
         }
       ],
+      "scoring_input": {
+        "structured_candidate": null,
+        "structured_candidate_raw": null,
+        "table_candidate": null,
+        "ocr_texts": [],
+        "page_texts": [
+          {
+            "page": 1,
+            "text": "SYNTHETIC REVIEW LOGReviewer A status: APPROVEDReviewer B status: REJECTEDFinal status: not recordedFinal settlement amount: not provided"
+          }
+        ],
+        "raster_pages": [],
+        "evidence": [
+          {
+            "evidence_schema_version": 1,
+            "id": "evidence.no-answer-contradiction.page-1",
+            "kind": "page",
+            "source_sha256": "2938fbd44c847b950a87a691fa1d1a956e5c12e1ea17482e30d8e255e6876dde",
+            "result_sha256": "1911511d0345efc57715316518d483d8989b62ee633ce777a0144e1d8e66618e",
+            "page": 1,
+            "text": "SYNTHETIC REVIEW LOGReviewer A status: APPROVEDReviewer B status: REJECTEDFinal status: not recordedFinal settlement amount: not provided",
+            "text_sha256": "07bffdaa4330f4e8ecce92293c96170e1eb58783b54c73c59553c2d599d4784b",
+            "bbox": null,
+            "fact_ids": []
+          }
+        ],
+        "page_result_sha256": "1911511d0345efc57715316518d483d8989b62ee633ce777a0144e1d8e66618e",
+        "observed_geometry": [
+          {
+            "page": 1,
+            "width": 612,
+            "height": 792,
+            "rotation": 0
+          }
+        ]
+      },
       "metrics": {
         "json_parse": {
           "applicable": true,
@@ -1789,8 +2122,8 @@
         }
       },
       "resources": {
-        "latency_ms": 17.608,
-        "peak_rss_bytes": 256270336
+        "latency_ms": 18.17,
+        "peak_rss_bytes": 249860096
       },
       "privacy": {
         "source_immutable": true,

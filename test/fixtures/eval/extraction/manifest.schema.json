@@ -103,7 +103,11 @@
         "page": { "type": "integer", "minimum": 1 },
         "row_count": { "type": "integer", "minimum": 1 },
         "column_count": { "type": "integer", "minimum": 1 },
-        "merged_cells": { "type": "array", "items": { "type": "string" } },
+        "merged_cells": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "pattern": "^R[1-9][0-9]*C[1-9][0-9]*:R[1-9][0-9]*C[1-9][0-9]*$" }
+        },
         "cells": {
           "type": "array",
           "items": {
@@ -178,7 +182,33 @@
             "answer_state": { "enum": ["answerable", "contradictory_and_absent"] }
           }
         }
-      }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "expected": { "properties": { "answer_state": { "const": "contradictory_and_absent" } } } } },
+          "then": {
+            "properties": {
+              "ground_truth": {
+                "required": ["answer_state"],
+                "properties": { "answer_state": { "const": "contradictory_and_absent" } }
+              }
+            }
+          }
+        },
+        {
+          "if": { "properties": { "expected": { "properties": { "answer_state": { "const": "answerable" } } } } },
+          "then": {
+            "properties": {
+              "ground_truth": {
+                "not": {
+                  "required": ["answer_state"],
+                  "properties": { "answer_state": { "const": "contradictory_and_absent" } }
+                }
+              }
+            }
+          }
+        }
+      ]
     }
   }
 }

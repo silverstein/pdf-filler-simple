@@ -107,6 +107,41 @@ export async function loadExtractionManifest(manifestPath, schemaPath) {
     if (fixture.expected.table && (!pages.has(fixture.expected.table.page) || !geometry.has(fixture.expected.table.page))) {
       throw new Error(`Table references missing page or geometry for ${fixture.id}`);
     }
+    if (fixture.expected.answer_state === "contradictory_and_absent"
+      && fixture.ground_truth.answer_state !== "contradictory_and_absent") {
+      throw new Error(`Contradictory answer state is inconsistent with ground truth for ${fixture.id}`);
+    }
+    if (fixture.expected.answer_state === "answerable"
+      && fixture.ground_truth.answer_state === "contradictory_and_absent") {
+      throw new Error(`Answerable state is inconsistent with ground truth for ${fixture.id}`);
+    }
+    if (fixture.expected.table) {
+      const table = fixture.expected.table;
+      const coordinates = new Set();
+      for (const cell of table.cells) {
+        if (cell.row > table.row_count || cell.column > table.column_count) {
+          throw new Error(`Table cell is outside declared bounds for ${fixture.id}: R${cell.row}C${cell.column}`);
+        }
+        const coordinate = `${cell.row}:${cell.column}`;
+        if (coordinates.has(coordinate)) throw new Error(`Duplicate table cell coordinate for ${fixture.id}: R${cell.row}C${cell.column}`);
+        coordinates.add(coordinate);
+      }
+      const mergedRanges = new Set();
+      for (const range of table.merged_cells) {
+        const match = /^R([1-9][0-9]*)C([1-9][0-9]*):R([1-9][0-9]*)C([1-9][0-9]*)$/.exec(range);
+        if (!match) throw new Error(`Malformed merged cell range for ${fixture.id}: ${range}`);
+        const [, startRowText, startColumnText, endRowText, endColumnText] = match;
+        const [startRow, startColumn, endRow, endColumn] = [startRowText, startColumnText, endRowText, endColumnText].map(Number);
+        if (startRow > endRow || startColumn > endColumn
+          || endRow > table.row_count || endColumn > table.column_count
+          || (startRow === endRow && startColumn === endColumn)) {
+          throw new Error(`Invalid or out-of-range merged cell range for ${fixture.id}: ${range}`);
+        }
+        const canonicalRange = `${startRow}:${startColumn}:${endRow}:${endColumn}`;
+        if (mergedRanges.has(canonicalRange)) throw new Error(`Duplicate merged cell range for ${fixture.id}: ${range}`);
+        mergedRanges.add(canonicalRange);
+      }
+    }
     for (const fact of fixture.expected.facts) {
       if (factIds.has(fact.id)) throw new Error(`Duplicate extraction fact ID: ${fact.id}`);
       factIds.add(fact.id);

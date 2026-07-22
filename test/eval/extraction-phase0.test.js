@@ -109,6 +109,19 @@ describe("structured extraction Phase 0", () => {
       value => { value.fixtures[0].expected.facts[0].anchor_text = "NOT PRESENT"; },
       value => { value.fixtures[1].category = value.fixtures[0].category; },
       value => { for (const fixture of value.fixtures) fixture.partition = "development"; },
+      value => { value.fixtures.find(fixture => fixture.category === "table").expected.table.cells[0].row = 99; },
+      value => {
+        const table = value.fixtures.find(fixture => fixture.category === "table").expected.table;
+        table.cells.push(structuredClone(table.cells[0]));
+      },
+      value => { value.fixtures.find(fixture => fixture.category === "table").expected.table.merged_cells[0] = "not-a-range"; },
+      value => {
+        const table = value.fixtures.find(fixture => fixture.category === "table").expected.table;
+        table.merged_cells.push(table.merged_cells[0]);
+      },
+      value => { value.fixtures.find(fixture => fixture.category === "table").expected.table.merged_cells[0] = "R1C1:R1C4"; },
+      value => { value.fixtures[0].expected.answer_state = "contradictory_and_absent"; },
+      value => { value.fixtures.find(fixture => fixture.category === "no_answer_contradiction").expected.answer_state = "answerable"; },
     ];
     for (const [index, mutate] of mutants.entries()) {
       const mutant = structuredClone(manifest);
@@ -284,10 +297,20 @@ describe("structured extraction Phase 0", () => {
       value => { value.cases[0].source.sha256 = "0".repeat(64); },
       value => { value.cases[0].calls[0].result_sha256 = "0".repeat(64); },
       value => { value.cases[0].bindings.page_result_sha256 = "0".repeat(64); },
+      value => { value.cases[0].category = "table"; },
+      value => { value.cases[0].partition = "held_out_calibration"; },
+      value => { value.cases[0].source.independent_geometry[0].media_box.width = 611; },
+      value => { value.cases[0].source.observed_geometry[0].width = 611; },
+      value => { value.cases[0].bindings.evidence_ids.pop(); },
       value => { value.benchmark_claim_ready = true; },
       value => { value.denominator.attempted = 7; },
       value => { value.aggregate_metrics.ocr.measured_cases = 1; },
       value => { value.aggregate_metrics.evidence_page.mean_score_over_applicable = 1; },
+      value => {
+        value.cases[4].metrics.evidence_page.numerator = 1;
+        value.cases[4].metrics.evidence_page.score = 1;
+        value.aggregate_metrics.evidence_page.mean_score_over_applicable += 0.125;
+      },
     ];
     for (const mutate of mutants) {
       const mutant = structuredClone(report);

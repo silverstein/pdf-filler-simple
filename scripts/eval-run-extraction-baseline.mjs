@@ -168,13 +168,33 @@ export function verifyExtractionReport(report, {
   for (let index = 0; index < manifest.fixtures.length; index += 1) {
     const fixture = manifest.fixtures[index];
     const retainedCase = report.cases[index];
+    if (retainedCase.category !== fixture.category || retainedCase.partition !== fixture.partition) {
+      throw new Error(`Extraction report category or partition binding is invalid for ${fixture.id}`);
+    }
     if (retainedCase.source?.path !== fixture.path
       || retainedCase.source?.sha256 !== fixture.sha256
       || retainedCase.source?.immutable !== true) {
       throw new Error(`Extraction report source binding is invalid for ${fixture.id}`);
     }
-    if (!Array.isArray(retainedCase.calls) || !retainedCase.bindings || !retainedCase.metrics) {
-      throw new Error(`Extraction report is missing retained calls, bindings, or metrics for ${fixture.id}`);
+    if (!Array.isArray(retainedCase.calls) || !retainedCase.bindings || !retainedCase.metrics || !retainedCase.scoring_input) {
+      throw new Error(`Extraction report is missing retained calls, bindings, scoring input, or metrics for ${fixture.id}`);
+    }
+    const expectedIndependentGeometry = fixture.expected.page_geometry.map(page => ({
+      page: page.page,
+      media_box: page.media_box,
+      crop_box: page.crop_box,
+      rotation: page.rotation,
+    }));
+    assertEqual(retainedCase.source.independent_geometry, expectedIndependentGeometry, `Extraction report independent geometry is invalid for ${fixture.id}`);
+    assertEqual(retainedCase.source.observed_geometry, retainedCase.scoring_input.observed_geometry, `Extraction report observed geometry is not bound to retained input for ${fixture.id}`);
+    if (retainedCase.source.observed_geometry.length > 0) {
+      const expectedObservedGeometry = fixture.expected.page_geometry.map(page => ({
+        page: page.page,
+        width: page.width,
+        height: page.height,
+        rotation: page.rotation,
+      }));
+      assertEqual(retainedCase.source.observed_geometry, expectedObservedGeometry, `Extraction report observed geometry is invalid for ${fixture.id}`);
     }
     for (const call of retainedCase.calls) {
       if (!SHA256.test(call.result_sha256)) throw new Error(`Extraction report contains an invalid call digest for ${fixture.id}`);
@@ -183,32 +203,30 @@ export function verifyExtractionReport(report, {
     if (retainedCase.bindings.raw_result_sha256 !== expectedRawDigest) {
       throw new Error(`Extraction report raw-result binding is invalid for ${fixture.id}`);
     }
+    const expectedScoringInputDigest = sha256(Buffer.from(canonicalJson(retainedCase.scoring_input)));
+    if (retainedCase.bindings.scoring_input_sha256 !== expectedScoringInputDigest) {
+      throw new Error(`Extraction report scoring-input binding is invalid for ${fixture.id}`);
+    }
     const pageCall = retainedCase.calls.find(call => call.name === "read_pdf_pages");
     if ((pageCall && retainedCase.bindings.page_result_sha256 !== pageCall.result_sha256)
       || (!pageCall && retainedCase.bindings.page_result_sha256 !== null)) {
       throw new Error(`Extraction report page-result binding is invalid for ${fixture.id}`);
     }
+    if (retainedCase.scoring_input.page_result_sha256 !== retainedCase.bindings.page_result_sha256) {
+      throw new Error(`Extraction report scorer page-result binding is invalid for ${fixture.id}`);
+    }
+    const retainedEvidenceIds = (retainedCase.scoring_input.evidence ?? []).map(item => item.id);
+    if (new Set(retainedEvidenceIds).size !== retainedEvidenceIds.length) {
+      throw new Error(`Extraction report contains duplicate retained evidence IDs for ${fixture.id}`);
+    }
+    assertEqual(retainedCase.bindings.evidence_ids, retainedEvidenceIds, `Extraction report evidence IDs are not bound to retained evidence for ${fixture.id}`);
+    const rescoredMetrics = scoreExtractionCase(fixture, retainedCase.scoring_input, manifest.evaluation_policy);
+    assertEqual(retainedCase.metrics, rescoredMetrics, `Extraction report case metrics do not match retained scoring input for ${fixture.id}`);
   }
 
   const recomputedAggregate = aggregateMetrics(report.cases);
   assertEqual(report.aggregate_metrics, recomputedAggregate, "Extraction report aggregate metrics do not match retained case metrics");
   return true;
-}
-
-function failureMetricSet(reason, harnessFailure) {
-  const names = [
-    "json_parse", "schema_validity", "field_correctness", "text_coverage", "reading_order",
-    "ocr", "raster_render", "table_topology", "table_cells", "evidence_page", "evidence_bbox",
-    "evidence_fact", "evidence_answer",
-  ];
-  return Object.fromEntries(names.map(name => [name, {
-    applicable: true,
-    availability: harnessFailure ? "harness_failure" : "unavailable",
-    numerator: harnessFailure ? null : 0,
-    denominator: null,
-    score: harnessFailure ? null : 0,
-    reason,
-  }]));
 }
 
 export function classifyCaseError(error, { handoffComplete }) {
@@ -300,6 +318,7 @@ async function runCase({ fixture, fixturePath, client, transport, evaluationPoli
     raster_pages: rasterPages,
     evidence,
     page_result_sha256: pageResultHash,
+    observed_geometry: observedGeometry,
   };
   const afterSha = sha256(await fs.readFile(fixturePath));
   const callFailures = calls.filter(call => !call.ok).length;
@@ -323,9 +342,11 @@ async function runCase({ fixture, fixturePath, client, transport, evaluationPoli
     bindings: {
       raw_result_sha256: sha256(Buffer.from(canonicalJson(calls))),
       page_result_sha256: pageResultHash,
+      scoring_input_sha256: sha256(Buffer.from(canonicalJson(observation))),
       evidence_ids: evidence.map(item => item.id),
     },
     calls,
+    scoring_input: observation,
     metrics: scoreExtractionCase(fixture, observation, evaluationPolicy),
     resources: {
       latency_ms: Number((clockMs() - started).toFixed(3)),
@@ -394,6 +415,24 @@ export async function runExtractionBaseline({
         const sourceBytes = await fs.readFile(fixturePath);
         const sourceDigest = sha256(sourceBytes);
         const emptyCalls = [];
+        const independentPdf = await PDFDocument.load(sourceBytes, { updateMetadata: false });
+        const independentGeometry = independentPdf.getPages().map((page, index) => ({
+          page: index + 1,
+          media_box: page.getMediaBox(),
+          crop_box: page.getCropBox(),
+          rotation: page.getRotation().angle,
+        }));
+        const scoringInput = {
+          structured_candidate: null,
+          structured_candidate_raw: null,
+          table_candidate: null,
+          ocr_texts: [],
+          page_texts: [],
+          raster_pages: [],
+          evidence: [],
+          page_result_sha256: null,
+          observed_geometry: [],
+        };
         cases.push({
           id: fixture.id,
           partition: fixture.partition,
@@ -405,16 +444,18 @@ export async function runExtractionBaseline({
             sha256: sourceDigest,
             immutable: sourceDigest === fixture.sha256,
             size_bytes: sourceBytes.length,
-            independent_geometry: [],
+            independent_geometry: independentGeometry,
             observed_geometry: [],
           },
           bindings: {
             raw_result_sha256: sha256(Buffer.from(canonicalJson(emptyCalls))),
             page_result_sha256: null,
+            scoring_input_sha256: sha256(Buffer.from(canonicalJson(scoringInput))),
             evidence_ids: [],
           },
           calls: emptyCalls,
-          metrics: failureMetricSet(error.message, outcome === "harness_failure"),
+          scoring_input: scoringInput,
+          metrics: scoreExtractionCase(fixture, scoringInput, loaded.manifest.evaluation_policy),
         });
       }
     }

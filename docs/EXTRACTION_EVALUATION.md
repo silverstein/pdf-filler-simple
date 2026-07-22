@@ -35,6 +35,12 @@ faults before a valid MCP handoff are harness failures. Unknown server or tool
 faults after handoff are product failures. Every planned case must produce one
 retained case record in the same order as the frozen plan.
 
+Each case retains its canonical scorer input and binds it by SHA-256. Report
+verification checks case identity, category, partition, source and result
+digests, page geometry, and evidence identifiers, reruns the scorer from that
+retained input, and recomputes aggregate metrics. Case metrics and aggregates
+are therefore not accepted as independent trusted claims.
+
 ## Current product surface
 
 | Surface | Current behavior | Phase 0 interpretation |
@@ -78,6 +84,11 @@ All pages currently use default-origin MediaBox and CropBox geometry. The
 manifest records those boxes exactly. Rotated, offset, cropped, `UserUnit`, and
 hostile coordinate cases remain outside Phase 0 and must not be inferred from
 these results.
+
+Manifest loading also enforces semantic truth integrity. Fact pointers must
+resolve, anchors must be visible, page references and boxes must be valid, and
+table cells and merged ranges must be unique and inside declared dimensions.
+The contradictory-and-absent answer state must also agree with ground truth.
 
 ## Metrics
 
