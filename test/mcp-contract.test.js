@@ -13,7 +13,7 @@ const REPO_ROOT = path.join(__dirname, "..");
 const SOURCE_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.json"), "utf8"));
 const MCPB_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.mcpb.json"), "utf8"));
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TOOL_CONTRACT_SHA256 = "cc150eb9f467fe5aad914b824425192e91c378edd5daf8cfd49c1d0eae3f19d9";
+const TOOL_CONTRACT_SHA256 = "767deb96af849ff5d491903a2684ca2d6a6c43c4de9b54db0e16a236a3f17bc2";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

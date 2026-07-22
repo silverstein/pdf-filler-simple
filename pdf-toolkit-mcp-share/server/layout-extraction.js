@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 
 const IR_NAME = "pdf-tools.extraction-ir";
 const IR_VERSION = "1.0.0";
+const INTERNAL_SOURCE_REPLAY = Symbol("pdf-layout-internal-source-replay");
 const PDFJS_DOCUMENT_ASSETS = Object.freeze({
   cMapUrl: fileURLToPath(new URL("../node_modules/pdfjs-dist/cmaps/", import.meta.url)),
   cMapPacked: true,
@@ -451,6 +452,14 @@ function classifyLoadingError(error, pdfjsLib) {
   return Object.assign(new Error("PDF password authentication failed."), { code: "PASSWORD_AUTHENTICATION_FAILED" });
 }
 
+function isFatalParserResourceError(error) {
+  const name = String(error?.name || "");
+  const code = String(error?.code || "");
+  return code === "LAYOUT_DEADLINE"
+    || /Abort|Cancel|Timeout|MissingPDF|UnexpectedResponse/i.test(name)
+    || /DEADLINE|TIMEOUT|ABORT|CANCEL|ENOMEM|RESOURCE|EIO|EMFILE|ENFILE/i.test(code);
+}
+
 function recomputeDocumentTruncation(payload) {
   const truncatedPages = payload.pages.filter(page => page.truncation.truncated);
   payload.truncation.truncated = truncatedPages.length > 0;
@@ -517,6 +526,60 @@ function sameRoundedNumber(left, right) {
   return Number.isFinite(left) && Number.isFinite(right) && Math.abs(left - right) <= 0.002;
 }
 
+function roundedProductTolerance(left, right, leftError = 0.0005, rightError = 0.0005) {
+  return 0.001 + Math.abs(left) * rightError + Math.abs(right) * leftError + leftError * rightError;
+}
+
+function roundedSpanProductTolerance(start, end, scale) {
+  const span = end - start;
+  return 0.001 + Math.abs(span) * 0.0005 + Math.abs(scale) * 0.001 + 0.0000005;
+}
+
+function expectedViewportGeometry(view, userUnit, rotation) {
+  const [x1, y1, x2, y2] = view;
+  const scale = userUnit;
+  const xSpanTolerance = roundedSpanProductTolerance(x1, x2, scale);
+  const ySpanTolerance = roundedSpanProductTolerance(y1, y2, scale);
+  if (rotation === 0) {
+    return {
+      width: (x2 - x1) * scale,
+      height: (y2 - y1) * scale,
+      transform: [scale, 0, 0, -scale, -x1 * scale, y2 * scale],
+      width_tolerance: xSpanTolerance,
+      height_tolerance: ySpanTolerance,
+      transform_tolerances: [0.002, 0.002, 0.002, 0.002, roundedProductTolerance(x1, scale), roundedProductTolerance(y2, scale)],
+    };
+  }
+  if (rotation === 90) {
+    return {
+      width: (y2 - y1) * scale,
+      height: (x2 - x1) * scale,
+      transform: [0, scale, scale, 0, -y1 * scale, -x1 * scale],
+      width_tolerance: ySpanTolerance,
+      height_tolerance: xSpanTolerance,
+      transform_tolerances: [0.002, 0.002, 0.002, 0.002, roundedProductTolerance(y1, scale), roundedProductTolerance(x1, scale)],
+    };
+  }
+  if (rotation === 180) {
+    return {
+      width: (x2 - x1) * scale,
+      height: (y2 - y1) * scale,
+      transform: [-scale, 0, 0, scale, x2 * scale, -y1 * scale],
+      width_tolerance: xSpanTolerance,
+      height_tolerance: ySpanTolerance,
+      transform_tolerances: [0.002, 0.002, 0.002, 0.002, roundedProductTolerance(x2, scale), roundedProductTolerance(y1, scale)],
+    };
+  }
+  return {
+    width: (y2 - y1) * scale,
+    height: (x2 - x1) * scale,
+    transform: [0, -scale, -scale, 0, y2 * scale, x2 * scale],
+    width_tolerance: ySpanTolerance,
+    height_tolerance: xSpanTolerance,
+    transform_tolerances: [0.002, 0.002, 0.002, 0.002, roundedProductTolerance(y2, scale), roundedProductTolerance(x2, scale)],
+  };
+}
+
 export function validatePdfLayoutSemantics(payload, { sourceBytes = null } = {}) {
   semanticAssertion(payload.id_scope.source_sha256 === payload.source.sha256, "ID scope source hash mismatch");
   semanticAssertion(payload.id_scope.parser_version === payload.parser.version, "ID scope parser mismatch");
@@ -525,6 +588,7 @@ export function validatePdfLayoutSemantics(payload, { sourceBytes = null } = {})
   semanticAssertion(payload.id_scope.requested_end_page === payload.page_range.requested_end_page, "ID scope end page mismatch");
   semanticAssertion(payload.id_scope.max_items === payload.limits.max_items, "ID scope item limit mismatch");
   semanticAssertion(payload.id_scope.max_characters === payload.limits.max_characters, "ID scope character limit mismatch");
+  semanticAssertion(payload.id_scope.max_output_characters === payload.limits.max_output_characters, "ID scope output limit mismatch");
   semanticAssertion(Number.isSafeInteger(payload.source.size_bytes)
     && payload.source.size_bytes >= 1
     && payload.source.size_bytes <= 250 * 1024 * 1024, "invalid source size");
@@ -553,6 +617,17 @@ export function validatePdfLayoutSemantics(payload, { sourceBytes = null } = {})
     semanticAssertion(page.geometry.page === page.page, `page ${page.page} geometry identity mismatch`);
     semanticAssertion(page.geometry.rotation_matches_raw === (page.geometry.display_rotation === null || page.geometry.raw_pdf_rotation === null
       ? null : page.geometry.display_rotation === page.geometry.raw_pdf_rotation), `page ${page.page} rotation cross-check mismatch`);
+    const rawGeometryUnavailable = page.errors.some(error => error.code === "RAW_PAGE_GEOMETRY_UNAVAILABLE");
+    if (rawGeometryUnavailable) {
+      semanticAssertion(page.geometry.media_box === null
+        && page.geometry.crop_box === null
+        && page.geometry.raw_pdf_rotation === null
+        && page.geometry.rotation_matches_raw === null, `page ${page.page} unavailable raw geometry contains claims`);
+    } else {
+      semanticAssertion(page.geometry.media_box !== null
+        && page.geometry.crop_box !== null
+        && page.geometry.raw_pdf_rotation !== null, `page ${page.page} raw geometry lacks unavailability evidence`);
+    }
     for (const rawBox of [page.geometry.media_box, page.geometry.crop_box]) {
       if (rawBox) {
         semanticAssertion([rawBox.x, rawBox.y, rawBox.width, rawBox.height].every(Number.isFinite)
@@ -570,6 +645,17 @@ export function validatePdfLayoutSemantics(payload, { sourceBytes = null } = {})
         && page.geometry.pdfjs_view.every(Number.isFinite), `page ${page.page} invalid PDF.js view`);
       semanticAssertion(Number.isFinite(page.geometry.user_unit) && page.geometry.user_unit > 0, `page ${page.page} invalid UserUnit`);
       semanticAssertion(sameRoundedNumber(effectiveViewportScale(page.geometry.viewport_transform), page.geometry.user_unit), `page ${page.page} viewport scale/UserUnit mismatch`);
+      const [viewX1, viewY1, viewX2, viewY2] = page.geometry.pdfjs_view;
+      semanticAssertion(viewX2 > viewX1 && viewY2 > viewY1, `page ${page.page} invalid PDF.js view bounds`);
+      semanticAssertion([0, 90, 180, 270].includes(page.geometry.display_rotation), `page ${page.page} invalid display rotation`);
+      const expectedViewport = expectedViewportGeometry(
+        page.geometry.pdfjs_view,
+        page.geometry.user_unit,
+        page.geometry.display_rotation,
+      );
+      semanticAssertion(Math.abs(page.geometry.display_width - expectedViewport.width) <= expectedViewport.width_tolerance
+        && Math.abs(page.geometry.display_height - expectedViewport.height) <= expectedViewport.height_tolerance, `page ${page.page} display size/view mismatch`);
+      semanticAssertion(page.geometry.viewport_transform.every((value, index) => Math.abs(value - expectedViewport.transform[index]) <= expectedViewport.transform_tolerances[index]), `page ${page.page} viewport transform/view/rotation mismatch`);
     }
     semanticAssertion(!documentIds.has(page.id), `duplicate ID ${page.id}`);
     documentIds.add(page.id);
@@ -581,8 +667,8 @@ export function validatePdfLayoutSemantics(payload, { sourceBytes = null } = {})
       const expectedId = `${pagePrefix}-i${String(item.source_index + 1).padStart(6, "0")}`;
       semanticAssertion(item.id === expectedId, `item ID ${item.id} is outside its page/source scope`);
       semanticAssertion(!documentIds.has(item.id), `duplicate ID ${item.id}`);
-      semanticAssertion(index === 0 || page.raw_items[index - 1].source_index < item.source_index, `page ${page.page} item source order is not strict`);
       semanticAssertion(Number.isSafeInteger(item.source_index) && item.source_index >= 0, `item ${item.id} has unsafe source index`);
+      semanticAssertion(item.source_index === index, `page ${page.page} retained items are not the exact source prefix`);
       documentIds.add(item.id);
       itemById.set(item.id, item);
       returnedCharacters += item.text.length;
@@ -664,9 +750,9 @@ export function validatePdfLayoutSemantics(payload, { sourceBytes = null } = {})
     semanticAssertion(page.truncation.truncated
       ? page.truncation.reasons.length > 0 && page.truncation.first_omitted_source_index !== null
       : page.truncation.reasons.length === 0 && page.truncation.first_omitted_source_index === null, `page ${page.page} truncation evidence mismatch`);
-    if (page.truncation.first_omitted_source_index !== null && page.raw_items.length > 0) {
-      semanticAssertion(page.truncation.reasons.includes("max_output_characters")
-        || page.truncation.first_omitted_source_index > page.raw_items.at(-1).source_index, `page ${page.page} omitted index is not after retained items`);
+    if (page.truncation.first_omitted_source_index !== null) {
+      semanticAssertion(page.truncation.first_omitted_source_index === page.raw_items.length,
+        `page ${page.page} first omitted index is not the exact prefix boundary`);
     }
     semanticAssertion(page.text_layer_status === "partial" ? page.truncation.truncated : true, `page ${page.page} partial text status lacks truncation`);
 
@@ -792,6 +878,384 @@ export function validatePdfLayoutSemantics(payload, { sourceBytes = null } = {})
   return payload;
 }
 
+function sourceEvidenceAssertion(condition, message) {
+  if (!condition) throw new Error(`Invalid Extraction IR source evidence: ${message}`);
+}
+
+function sameJson(left, right) {
+  return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function replayOutputBudgetIndependently(seedPayload, maxOutputCharacters) {
+  const replay = structuredClone(seedPayload);
+  replay.id_scope.max_output_characters = maxOutputCharacters;
+  replay.limits.max_output_characters = maxOutputCharacters;
+  if (JSON.stringify(replay).length <= maxOutputCharacters) return replay;
+  if (!replay.truncation.reasons.includes("max_output_characters")) replay.truncation.reasons.push("max_output_characters");
+  for (let index = replay.pages.length - 1; index >= 0 && JSON.stringify(replay).length > maxOutputCharacters; index -= 1) {
+    const page = replay.pages[index];
+    if (page.raw_items.length === 0 && page.lines.length === 0 && page.flow_text.length === 0) continue;
+    page.truncation.truncated = true;
+    if (!page.truncation.reasons.includes("max_output_characters")) page.truncation.reasons.push("max_output_characters");
+    page.truncation.first_omitted_source_index = page.raw_items[0]?.source_index ?? page.truncation.first_omitted_source_index;
+    page.truncation.omitted_items = page.counts.observed_items;
+    page.truncation.omitted_non_whitespace_items = page.counts.observed_non_whitespace_items;
+    page.truncation.omitted_characters = page.counts.observed_characters;
+    page.counts.returned_items = 0;
+    page.counts.returned_non_whitespace_items = 0;
+    page.counts.returned_characters = 0;
+    page.raw_items = [];
+    page.lines = [];
+    page.blocks = [];
+    page.flow_text = "";
+    page.spatial_text = "";
+    page.reading_order = {
+      strategy: "unavailable_output_omitted",
+      confidence: "not_calibrated",
+      column_count: 0,
+      limitations: ["Reading-order evidence was omitted to satisfy max_output_characters."],
+    };
+    if (page.text_layer_status === "present") page.text_layer_status = "partial";
+    page.extraction_status = "partial";
+    page.needs_visual_inspection = true;
+    if (!page.limitations.includes("Page detail omitted to satisfy max_output_characters.")) {
+      page.limitations.push("Page detail omitted to satisfy max_output_characters.");
+    }
+  }
+  const truncatedPages = replay.pages.filter(page => page.truncation.truncated);
+  replay.truncation.truncated = truncatedPages.length > 0;
+  replay.truncation.reasons = [...new Set(replay.pages.flatMap(page => page.truncation.reasons))];
+  replay.truncation.omitted_items = truncatedPages.reduce((sum, page) => sum + page.truncation.omitted_items, 0);
+  replay.truncation.omitted_characters = truncatedPages.reduce((sum, page) => sum + page.truncation.omitted_characters, 0);
+  replay.truncation.first_omitted_page = truncatedPages[0]?.page ?? null;
+  replay.truncation.first_omitted_source_index = truncatedPages[0]?.truncation.first_omitted_source_index ?? null;
+  sourceEvidenceAssertion(JSON.stringify(replay).length <= maxOutputCharacters, "independent output-budget replay exceeds its declared limit");
+  replay.extraction_status = replay.pages.every(page => page.extraction_status === "failed") ? "failed" : "partial";
+  return replay;
+}
+
+/**
+ * Reparse the named source bytes and bind the Extraction IR's raw page and
+ * TextItem evidence to that parse. Raw pdf-lib boxes/rotation are bound when a
+ * second pdf-lib parse succeeds; otherwise their explicit unavailable/null
+ * state is verified. validatePdfLayoutSemantics is deliberately
+ * synchronous and proves only internal consistency (plus byte identity when
+ * sourceBytes is supplied); callers claiming source-bound evidence must await
+ * this validator instead.
+ */
+export async function validatePdfLayoutSourceEvidence(payload, {
+  pdfjsLib,
+  sourceBytes,
+  password = null,
+  deadlineAt = Date.now() + 20000,
+} = {}) {
+  validatePdfLayoutSemantics(payload, { sourceBytes });
+  sourceEvidenceAssertion(pdfjsLib && typeof pdfjsLib.getDocument === "function", "PDF.js parser is required");
+  sourceEvidenceAssertion(sourceBytes && Number.isSafeInteger(sourceBytes.length), "source bytes are required");
+  sourceEvidenceAssertion(String(pdfjsLib.version || "unknown") === payload.parser.version, "parser version mismatch");
+
+  let loadingTask = null;
+  let document = null;
+  let pdfLibPages = null;
+  try {
+    loadingTask = pdfjsLib.getDocument({
+      data: new Uint8Array(sourceBytes),
+      password: password || undefined,
+      useWorkerFetch: false,
+      isEvalSupported: false,
+      ...PDFJS_DOCUMENT_ASSETS,
+    });
+    try {
+      document = await withDeadline(loadingTask.promise, deadlineAt);
+    } catch (error) {
+      throw classifyLoadingError(error, pdfjsLib);
+    }
+    sourceEvidenceAssertion(document.numPages === payload.page_range.total_pages, "source page count mismatch");
+    try {
+      const pdfLibDocument = await withDeadline(PDFDocument.load(sourceBytes, { ignoreEncryption: true, updateMetadata: false }), deadlineAt);
+      pdfLibPages = pdfLibDocument.getPages();
+      if (pdfLibPages.length !== document.numPages) pdfLibPages = null;
+    } catch (error) {
+      if (isFatalParserResourceError(error)) throw error;
+      pdfLibPages = null;
+    }
+
+    // Independent reference replay of the public retention contract. Keep this
+    // intentionally small and separate from extractPdfLayout's product loop so
+    // a shared implementation bug cannot validate itself.
+    let replayRetainedItems = 0;
+    let replayRetainedCharacters = 0;
+    const sourceImageOps = imageOperationSet(pdfjsLib);
+    const sourceVectorOps = vectorOperationSet(pdfjsLib);
+    for (const outputPage of payload.pages) {
+      let sourcePage = null;
+      try {
+        let sourceViewport = null;
+        let sourcePageError = null;
+        try {
+          sourcePage = await withDeadline(document.getPage(outputPage.page), deadlineAt);
+          sourceViewport = sourcePage.getViewport({ scale: 1 });
+        } catch (error) {
+          if (isFatalParserResourceError(error)) throw error;
+          sourcePageError = error;
+        }
+        const sourceGeometry = pageGeometry(
+          pdfLibPages?.[outputPage.page - 1] ?? null,
+          sourcePage,
+          sourceViewport,
+          outputPage.page,
+        );
+        for (const field of [
+          "pdfjs_view",
+          "user_unit",
+          "display_rotation",
+          "display_width",
+          "display_height",
+          "viewport_transform",
+        ]) {
+          sourceEvidenceAssertion(
+            sameJson(outputPage.geometry[field], sourceGeometry[field]),
+            `page ${outputPage.page} ${field} differs from reparsed source`,
+          );
+        }
+        if (pdfLibPages) {
+          for (const field of ["media_box", "crop_box", "raw_pdf_rotation", "rotation_matches_raw"]) {
+            sourceEvidenceAssertion(
+              sameJson(outputPage.geometry[field], sourceGeometry[field]),
+              `page ${outputPage.page} ${field} differs from reparsed source`,
+            );
+          }
+        } else {
+          sourceEvidenceAssertion(
+            outputPage.geometry.media_box === null
+              && outputPage.geometry.crop_box === null
+              && outputPage.geometry.raw_pdf_rotation === null
+              && outputPage.geometry.rotation_matches_raw === null
+              && outputPage.errors.some(error => error.code === "RAW_PAGE_GEOMETRY_UNAVAILABLE"),
+            `page ${outputPage.page} raw page geometry is unverified but output contains claims`,
+          );
+        }
+        if (sourcePageError !== null) {
+          const expectedError = errorRecord("page", sourcePageError);
+          const expectedErrors = [];
+          if (!pdfLibPages) {
+            expectedErrors.push({
+              stage: "geometry",
+              code: "RAW_PAGE_GEOMETRY_UNAVAILABLE",
+              message: "Raw page-box enrichment was unavailable; PDF.js display geometry remains authoritative.",
+            });
+          }
+          expectedErrors.push(expectedError);
+          sourceEvidenceAssertion(
+            sameJson(outputPage.errors, expectedErrors)
+              && outputPage.text_layer_status === "failed"
+              && outputPage.image_detection_status === "failed"
+              && outputPage.extraction_status === "failed"
+              && outputPage.modality_hint === "unknown"
+              && outputPage.needs_visual_inspection === true
+              && sameJson(outputPage.counts, {
+                observed_items: 0,
+                returned_items: 0,
+                observed_non_whitespace_items: 0,
+                returned_non_whitespace_items: 0,
+                observed_characters: 0,
+                returned_characters: 0,
+              })
+              && sameJson(outputPage.truncation, {
+                truncated: false,
+                reasons: [],
+                omitted_items: 0,
+                omitted_non_whitespace_items: 0,
+                omitted_characters: 0,
+                first_omitted_source_index: null,
+              })
+              && outputPage.raw_items.length === 0
+              && outputPage.lines.length === 0
+              && outputPage.blocks.length === 0
+              && outputPage.flow_text === ""
+              && outputPage.spatial_text === ""
+              && sameJson(outputPage.reading_order, {
+                strategy: "source_order_fallback",
+                confidence: "not_calibrated",
+                column_count: 1,
+                limitations: [
+                  "Column evidence was insufficient or ambiguous, so source item order was retained.",
+                  "Source order is parser order and is not proof of intended or visible reading order.",
+                ],
+              })
+              && outputPage.has_image_operations === null
+              && outputPage.has_vector_paint_operations === null,
+            `page ${outputPage.page} ordinary page failure differs from reparsed source`,
+          );
+          continue;
+        }
+
+        let textContent = null;
+        try {
+          textContent = await withDeadline(sourcePage.getTextContent({ includeMarkedContent: false, disableNormalization: false }), deadlineAt);
+        } catch (error) {
+          if (isFatalParserResourceError(error)) throw error;
+          const expectedError = errorRecord("text", error);
+          sourceEvidenceAssertion(
+            outputPage.text_layer_status === "failed"
+              && outputPage.raw_items.length === 0
+              && outputPage.errors.some(outputError => sameJson(outputError, expectedError)),
+            `page ${outputPage.page} source text parse failed but output claims text evidence`,
+          );
+        }
+        const sourceEntries = (textContent?.items ?? [])
+          .filter(item => typeof item?.str === "string")
+          .map((item, sourceIndex) => [sourceIndex, item]);
+        sourceEvidenceAssertion(outputPage.counts.observed_items === sourceEntries.length, `page ${outputPage.page} observed item count differs from reparsed source`);
+        sourceEvidenceAssertion(
+          outputPage.counts.observed_non_whitespace_items === sourceEntries.filter(([, item]) => item.str.trim().length > 0).length,
+          `page ${outputPage.page} observed non-whitespace count differs from reparsed source`,
+        );
+        sourceEvidenceAssertion(
+          outputPage.counts.observed_characters === sourceEntries.reduce((sum, [, item]) => sum + item.str.length, 0),
+          `page ${outputPage.page} observed character count differs from reparsed source`,
+        );
+
+        let replayPrefixLength = 0;
+        let replayReason = null;
+        for (const [, sourceItem] of sourceEntries) {
+          const exceedsItems = replayRetainedItems >= payload.limits.max_items;
+          const exceedsCharacters = replayRetainedCharacters + sourceItem.str.length > payload.limits.max_characters;
+          if (replayReason !== null || exceedsItems || exceedsCharacters) {
+            if (replayReason === null) replayReason = exceedsItems ? "max_items" : "max_characters";
+            continue;
+          }
+          replayPrefixLength += 1;
+          replayRetainedItems += 1;
+          replayRetainedCharacters += sourceItem.str.length;
+        }
+        const outputOmitted = outputPage.truncation.reasons.includes("max_output_characters");
+        const expectedReturnedEntries = outputOmitted ? [] : sourceEntries.slice(0, replayPrefixLength);
+        const expectedOmittedEntries = outputOmitted ? sourceEntries : sourceEntries.slice(replayPrefixLength);
+        const expectedReasons = [
+          ...(replayReason === null ? [] : [replayReason]),
+          ...(outputOmitted ? ["max_output_characters"] : []),
+        ];
+        sourceEvidenceAssertion(
+          sameJson(outputPage.raw_items.map(item => item.source_index), expectedReturnedEntries.map(([sourceIndex]) => sourceIndex)),
+          `page ${outputPage.page} retained items differ from independently replayed limits`,
+        );
+        sourceEvidenceAssertion(
+          sameJson(outputPage.truncation.reasons, expectedReasons),
+          `page ${outputPage.page} truncation reason differs from independently replayed limits`,
+        );
+        sourceEvidenceAssertion(
+          outputPage.truncation.omitted_items === expectedOmittedEntries.length
+            && outputPage.truncation.omitted_non_whitespace_items === expectedOmittedEntries.filter(([, item]) => item.str.trim().length > 0).length
+            && outputPage.truncation.omitted_characters === expectedOmittedEntries.reduce((sum, [, item]) => sum + item.str.length, 0),
+          `page ${outputPage.page} omission counts differ from independently replayed limits`,
+        );
+        sourceEvidenceAssertion(
+          outputPage.truncation.first_omitted_source_index === (expectedOmittedEntries.length > 0 ? expectedReturnedEntries.length : null),
+          `page ${outputPage.page} first omitted index differs from independently replayed limits`,
+        );
+
+        const sourceByIndex = new Map(sourceEntries);
+        const fontIds = new Map();
+        for (const outputItem of outputPage.raw_items) {
+          const sourceItem = sourceByIndex.get(outputItem.source_index);
+          sourceEvidenceAssertion(sourceItem, `item ${outputItem.id} source index is absent from reparsed source`);
+          const sourceStyle = textContent?.styles?.[sourceItem.fontName] ?? {};
+          if (typeof sourceItem.fontName === "string" && !fontIds.has(sourceItem.fontName)) {
+            fontIds.set(sourceItem.fontName, `font-${String(fontIds.size + 1).padStart(4, "0")}`);
+          }
+          const sourceFont = {
+            family: typeof sourceStyle.fontFamily === "string" ? sourceStyle.fontFamily : null,
+            ascent: finiteOrNull(sourceStyle.ascent),
+            descent: finiteOrNull(sourceStyle.descent),
+            vertical: sourceStyle.vertical === true,
+          };
+          const comparisons = [
+            ["text", outputItem.text, sourceItem.str],
+            ["has_eol", outputItem.has_eol, sourceItem.hasEOL === true],
+            ["raw_transform", outputItem.raw_transform, safeTransform(sourceItem.transform)],
+            ["raw_width", outputItem.raw_width, finiteOrNull(sourceItem.width)],
+            ["raw_height", outputItem.raw_height, finiteOrNull(sourceItem.height)],
+            ["font_name", outputItem.font_name, typeof sourceItem.fontName === "string" ? fontIds.get(sourceItem.fontName) : null],
+            ["font", outputItem.font, sourceFont],
+            ["direction", outputItem.direction, direction(sourceItem.dir)],
+          ];
+          for (const [field, actual, expected] of comparisons) {
+            sourceEvidenceAssertion(sameJson(actual, expected), `item ${outputItem.id} ${field} differs from reparsed source`);
+          }
+        }
+
+        let sourceOperators = null;
+        let sourceOperatorError = null;
+        try {
+          sourceOperators = await withDeadline(sourcePage.getOperatorList(), deadlineAt);
+        } catch (error) {
+          if (isFatalParserResourceError(error)) throw error;
+          sourceOperatorError = error;
+        }
+        if (sourceOperatorError === null) {
+          const sourceHasImageOperations = sourceOperators.fnArray.some(operation => sourceImageOps.has(operation));
+          const sourceHasVectorOperations = sourceOperators.fnArray.some(operation => sourceVectorOps.has(operation));
+          sourceEvidenceAssertion(
+            outputPage.has_image_operations === sourceHasImageOperations
+              && outputPage.has_vector_paint_operations === sourceHasVectorOperations
+              && !outputPage.errors.some(error => error.stage === "operators"),
+            `page ${outputPage.page} operator evidence differs from reparsed source`,
+          );
+        } else {
+          const expectedError = errorRecord("operators", sourceOperatorError);
+          sourceEvidenceAssertion(
+            outputPage.has_image_operations === null
+              && outputPage.has_vector_paint_operations === null
+              && outputPage.errors.some(outputError => sameJson(outputError, expectedError)),
+            `page ${outputPage.page} source operator parse failed but output claims operator evidence`,
+          );
+        }
+      } finally {
+        sourcePage?.cleanup();
+      }
+    }
+    const sourceTruncatedPages = payload.pages.filter(page => page.truncation.truncated);
+    const sourceDocumentTruncation = {
+      truncated: sourceTruncatedPages.length > 0,
+      reasons: [...new Set(payload.pages.flatMap(page => page.truncation.reasons))],
+      omitted_items: sourceTruncatedPages.reduce((sum, page) => sum + page.truncation.omitted_items, 0),
+      omitted_characters: sourceTruncatedPages.reduce((sum, page) => sum + page.truncation.omitted_characters, 0),
+      first_omitted_page: sourceTruncatedPages[0]?.page ?? null,
+      first_omitted_source_index: sourceTruncatedPages[0]?.truncation.first_omitted_source_index ?? null,
+    };
+    sourceEvidenceAssertion(sameJson(payload.truncation, sourceDocumentTruncation), "document truncation differs from source-verified page records");
+    const sourceDocumentStatus = payload.pages.every(page => page.extraction_status === "complete")
+      ? "complete" : payload.pages.every(page => page.extraction_status === "failed") ? "failed" : "partial";
+    sourceEvidenceAssertion(payload.extraction_status === sourceDocumentStatus, "document status differs from source-verified page records");
+    if (payload.pages.some(page => page.truncation.reasons.includes("max_output_characters"))) {
+      const replaySeed = await extractPdfLayout({
+        pdfjsLib,
+        pdfBytes: sourceBytes,
+        sourcePath: payload.source.pdf_path,
+        sourceFileName: payload.source.file_name,
+        sourceSha256: payload.source.sha256,
+        sourceSizeBytes: payload.source.size_bytes,
+        password,
+        requestedStartPage: payload.page_range.requested_start_page,
+        requestedEndPage: payload.page_range.requested_end_page,
+        maxItems: payload.limits.max_items,
+        maxCharacters: payload.limits.max_characters,
+        maxOutputCharacters: 200000,
+        deadlineMs: payload.limits.deadline_ms,
+        operationDeadlineAt: deadlineAt,
+        sourceEvidenceValidationToken: INTERNAL_SOURCE_REPLAY,
+      });
+      const replayedBudget = replayOutputBudgetIndependently(replaySeed, payload.limits.max_output_characters);
+      sourceEvidenceAssertion(sameJson(payload, replayedBudget), "output omission differs from independent budget replay");
+    }
+    return payload;
+  } finally {
+    await document?.destroy().catch(() => {});
+    await loadingTask?.destroy?.().catch(() => {});
+  }
+}
+
 function horizontalGeometryIsAmbiguous(item) {
   if (item.direction === "ttb") return true;
   if (!item.geometry_valid || !item.quad || item.raw_width === 0) return false;
@@ -815,8 +1279,10 @@ export async function extractPdfLayout({
   maxCharacters = 50000,
   maxOutputCharacters = 50000,
   deadlineMs = 20000,
+  operationDeadlineAt = null,
+  sourceEvidenceValidationToken = null,
 }) {
-  const deadlineAt = Date.now() + deadlineMs;
+  const deadlineAt = operationDeadlineAt ?? Date.now() + deadlineMs;
   let loadingTask = null;
   let document = null;
   try {
@@ -836,7 +1302,8 @@ export async function extractPdfLayout({
     try {
       const pdfLibDocument = await withDeadline(PDFDocument.load(pdfBytes, { ignoreEncryption: true, updateMetadata: false }), deadlineAt);
       pdfLibPages = pdfLibDocument.getPages();
-    } catch {
+    } catch (error) {
+      if (isFatalParserResourceError(error)) throw error;
       pdfLibPages = null;
     }
     const totalPages = document.numPages;
@@ -876,6 +1343,7 @@ export async function extractPdfLayout({
         try {
           textContent = await withDeadline(pdfjsPage.getTextContent({ includeMarkedContent: false, disableNormalization: false }), deadlineAt);
         } catch (error) {
+          if (isFatalParserResourceError(error)) throw error;
           errors.push(errorRecord("text", error));
         }
         try {
@@ -883,10 +1351,11 @@ export async function extractPdfLayout({
           hasImageOperations = operators.fnArray.some(operation => imageOps.has(operation));
           hasVectorPaintOperations = operators.fnArray.some(operation => vectorOps.has(operation));
         } catch (error) {
+          if (isFatalParserResourceError(error)) throw error;
           errors.push(errorRecord("operators", error));
         }
       } catch (error) {
-        if (error?.code === "LAYOUT_DEADLINE") throw error;
+        if (isFatalParserResourceError(error)) throw error;
         errors.push(errorRecord("page", error));
       } finally {
         pdfjsPage?.cleanup();
@@ -894,8 +1363,8 @@ export async function extractPdfLayout({
 
       const geometry = pageGeometry(pdfLibPages?.[pageNumber - 1] ?? null, pdfjsPage, viewport, pageNumber);
       const textItemEntries = (textContent?.items ?? [])
-        .map((item, sourceIndex) => [sourceIndex, item])
-        .filter(([, item]) => typeof item?.str === "string");
+        .filter(item => typeof item?.str === "string")
+        .map((item, sourceIndex) => [sourceIndex, item]);
       const observedCharacters = textItemEntries.reduce((sum, [, item]) => sum + item.str.length, 0);
       const rawItems = [];
       const pageReasons = [];
@@ -1097,6 +1566,7 @@ export async function extractPdfLayout({
         requested_end_page: requestedEndPage,
         max_items: maxItems,
         max_characters: maxCharacters,
+        max_output_characters: maxOutputCharacters,
       },
       page_range: {
         requested_start_page: requestedStartPage,
@@ -1126,7 +1596,14 @@ export async function extractPdfLayout({
       ],
     };
     recomputeDocumentTruncation(payload);
-    return validatePdfLayoutSemantics(markOutputBudget(payload, maxOutputCharacters), { sourceBytes: pdfBytes });
+    const boundedPayload = validatePdfLayoutSemantics(markOutputBudget(payload, maxOutputCharacters), { sourceBytes: pdfBytes });
+    if (sourceEvidenceValidationToken === INTERNAL_SOURCE_REPLAY) return boundedPayload;
+    return await validatePdfLayoutSourceEvidence(boundedPayload, {
+      pdfjsLib,
+      sourceBytes: pdfBytes,
+      password,
+      deadlineAt,
+    });
   } finally {
     await document?.destroy().catch(() => {});
     await loadingTask?.destroy?.().catch(() => {});

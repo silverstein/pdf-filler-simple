@@ -435,6 +435,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       requested_end_page: integer,
       max_items: integer,
       max_characters: integer,
+      max_output_characters: integer,
     }),
     page_range: object({
       requested_start_page: integer,
