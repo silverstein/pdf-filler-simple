@@ -11,14 +11,18 @@ reconciliation gate.
 from __future__ import annotations
 
 import argparse
+from contextlib import contextmanager
 import hashlib
 import importlib.metadata
 import json
+import math
 import os
 from pathlib import Path
 import re
+import shutil
 import stat
 import sys
+import tempfile
 from typing import Any
 
 
@@ -26,6 +30,13 @@ PROTOCOL = "pdf-tools.extraction-candidate.v1"
 CANDIDATE_ID = "candidate.direct_pdf.v1"
 ENGINE_ID = "docling"
 MAX_STDIN_BYTES = 16 * 1024 * 1024
+MAX_RECEIPT_BYTES = 1024 * 1024
+MAX_MODEL_INVENTORY_BYTES = 16 * 1024 * 1024
+MAX_MODEL_FILE_BYTES = 512 * 1024 * 1024
+MAX_MODEL_TOTAL_BYTES = 2 * 1024 * 1024 * 1024
+MAX_SCHEMA_DEPTH = 32
+MAX_SCHEMA_NODES = 2048
+MAX_SCHEMA_LEAVES = 1024
 SHA256 = re.compile(r"^[a-f0-9]{64}$")
 SAFE_ID = re.compile(r"[^A-Za-z0-9._:-]+")
 FORBIDDEN_TRUTH_KEYS = {
@@ -46,6 +57,12 @@ PACKAGE_IMPORTS = {
     "huggingface-hub": "huggingface_hub",
     "defusedxml": "defusedxml",
 }
+HANDOFF_INPUT_ROLES = {
+    "adapter_entrypoint", "model_setup_helper", "candidate_config", "candidate_config_schema",
+    "candidate_request_schema", "candidate_response_schema", "handoff_schema",
+    "handoff_generator_source", "handoff_verifier_source", "runtime_evidence_source",
+    "handoff_verifier_cli", "direct_requirements",
+}
 
 
 class AdapterError(Exception):
@@ -56,12 +73,103 @@ class AdapterError(Exception):
         self.code = code
 
 
+def js_string(value: str) -> str:
+    escaped = []
+    short = {"\b": "\\b", "\f": "\\f", "\n": "\\n", "\r": "\\r", "\t": "\\t", '"': '\\"', "\\": "\\\\"}
+    for character in value:
+        code = ord(character)
+        if character in short:
+            escaped.append(short[character])
+        elif code < 0x20 or 0xD800 <= code <= 0xDFFF:
+            escaped.append(f"\\u{code:04x}")
+        else:
+            escaped.append(character)
+    return f'"{"".join(escaped)}"'
+
+
+def utf16_sort_key(value: str) -> bytes:
+    return value.encode("utf-16-be", "surrogatepass")
+
+
+def js_number(value: int | float) -> str:
+    numeric = float(value)
+    if not (numeric == numeric and abs(numeric) != float("inf")):
+        return "null"
+    if numeric == 0:
+        return "0"
+    representation = repr(numeric).lower()
+    if "e" not in representation:
+        if representation.endswith(".0"):
+            return representation[:-2]
+        return representation
+    mantissa, exponent_text = representation.split("e")
+    exponent = int(exponent_text)
+    negative = mantissa.startswith("-")
+    unsigned = mantissa[1:] if negative else mantissa
+    whole, _, fraction = unsigned.partition(".")
+    digits = whole + fraction
+    decimal_position = len(whole) + exponent
+    sign = "-" if negative else ""
+    if -6 < decimal_position <= 21:
+        if decimal_position <= 0:
+            return f"{sign}0.{('0' * -decimal_position)}{digits}"
+        if decimal_position >= len(digits):
+            return f"{sign}{digits}{'0' * (decimal_position - len(digits))}"
+        return f"{sign}{digits[:decimal_position]}.{digits[decimal_position:]}"
+    normalized = digits[0]
+    if len(digits) > 1:
+        normalized += f".{digits[1:]}"
+    scientific_exponent = decimal_position - 1
+    exponent_sign = "+" if scientific_exponent >= 0 else ""
+    return f"{sign}{normalized}e{exponent_sign}{scientific_exponent}"
+
+
+def canonical_json_text(value: Any) -> str:
+    if value is None:
+        return "null"
+    if value is True:
+        return "true"
+    if value is False:
+        return "false"
+    if isinstance(value, (int, float)):
+        return js_number(value)
+    if isinstance(value, str):
+        return js_string(value)
+    if isinstance(value, list):
+        return f"[{','.join(canonical_json_text(item) for item in value)}]"
+    if isinstance(value, dict):
+        members = [f"{js_string(key)}:{canonical_json_text(value[key])}" for key in sorted(value, key=utf16_sort_key)]
+        return f"{{{','.join(members)}}}"
+    raise AdapterError("JSON_VALUE_INVALID", "Value is outside the JSON data model")
+
+
 def canonical_json(value: Any) -> bytes:
-    return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return canonical_json_text(value).encode("utf-8")
 
 
 def sha256(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def strict_json_loads(value: bytes) -> Any:
+    def finite_float(raw: str) -> float:
+        parsed = float(raw)
+        if not math.isfinite(parsed):
+            raise ValueError("non-finite JSON number")
+        return parsed
+
+    def finite_int(raw: str) -> int:
+        parsed = int(raw)
+        try:
+            finite = math.isfinite(float(parsed))
+        except OverflowError as error:
+            raise ValueError("non-finite JSON number") from error
+        if not finite:
+            raise ValueError("non-finite JSON number")
+        return parsed
+
+    return json.loads(value, parse_float=finite_float, parse_int=finite_int,
+                      parse_constant=lambda _: (_ for _ in ()).throw(ValueError("non-finite JSON")))
 
 
 def read_bounded_stdin() -> bytes:
@@ -71,6 +179,113 @@ def read_bounded_stdin() -> bytes:
     if not data:
         raise AdapterError("REQUEST_EMPTY", "Candidate request is empty")
     return data
+
+
+def read_stable_regular(filename: Path, max_bytes: int, required_mode: int | None = None) -> bytes:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(filename, flags)
+    except OSError as error:
+        raise AdapterError("TRUSTED_INPUT_OPEN_FAILED", "Trusted input could not be opened without following links") from error
+    try:
+        before = os.fstat(descriptor)
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size < 1
+                or before.st_size > max_bytes or (required_mode is not None and stat.S_IMODE(before.st_mode) != required_mode)):
+            raise AdapterError("TRUSTED_INPUT_INVALID", "Trusted input violates its file contract")
+        data = bytearray()
+        while len(data) <= max_bytes:
+            chunk = os.read(descriptor, min(1024 * 1024, max_bytes + 1 - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
+        after = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino, before.st_nlink, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                after.st_dev, after.st_ino, after.st_nlink, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise AdapterError("TRUSTED_INPUT_MUTATED", "Trusted input changed while it was read")
+        if len(data) != before.st_size:
+            raise AdapterError("TRUSTED_INPUT_INVALID", "Trusted input length changed while it was read")
+        return bytes(data)
+    finally:
+        os.close(descriptor)
+
+
+def digest_stable_regular(filename: Path, max_bytes: int, required_mode: int | None = None) -> tuple[int, str]:
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(filename, flags)
+    except OSError as error:
+        raise AdapterError("TRUSTED_INPUT_OPEN_FAILED", "Trusted input could not be opened without following links") from error
+    try:
+        before = os.fstat(descriptor)
+        if (not stat.S_ISREG(before.st_mode) or before.st_nlink != 1 or before.st_size < 1
+                or before.st_size > max_bytes or (required_mode is not None and stat.S_IMODE(before.st_mode) != required_mode)):
+            raise AdapterError("TRUSTED_INPUT_INVALID", "Trusted input violates its file contract")
+        digest = hashlib.sha256()
+        observed = 0
+        while observed <= max_bytes:
+            chunk = os.read(descriptor, min(1024 * 1024, max_bytes + 1 - observed))
+            if not chunk:
+                break
+            observed += len(chunk)
+            digest.update(chunk)
+        after = os.fstat(descriptor)
+        if (before.st_dev, before.st_ino, before.st_nlink, before.st_size, before.st_mtime_ns, before.st_ctime_ns) != (
+                after.st_dev, after.st_ino, after.st_nlink, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
+            raise AdapterError("TRUSTED_INPUT_MUTATED", "Trusted input changed while it was read")
+        if observed != before.st_size:
+            raise AdapterError("TRUSTED_INPUT_INVALID", "Trusted input length changed while it was read")
+        return observed, digest.hexdigest()
+    finally:
+        os.close(descriptor)
+
+
+def verify_receipt_anchor(receipt_path: Path, expected_sha256: str, config_path: Path, artifacts_path: Path) -> dict[str, Any]:
+    if not SHA256.fullmatch(expected_sha256):
+        raise AdapterError("RECEIPT_TRUST_INVALID", "Expected handoff receipt digest is not SHA-256")
+    receipt_bytes = read_stable_regular(receipt_path, MAX_RECEIPT_BYTES, 0o600)
+    if sha256(receipt_bytes) != expected_sha256:
+        raise AdapterError("RECEIPT_DIGEST_MISMATCH", "Handoff receipt does not match the out-of-band digest")
+    try:
+        receipt = strict_json_loads(receipt_bytes)
+    except (json.JSONDecodeError, ValueError) as error:
+        raise AdapterError("RECEIPT_INVALID", "Handoff receipt is not strict JSON") from error
+    if receipt_bytes != canonical_json(receipt) + b"\n":
+        raise AdapterError("RECEIPT_NONCANONICAL", "Handoff receipt bytes are not canonical")
+    if (not isinstance(receipt, dict) or receipt.get("protocol") != "pdf-tools.docling-macos-handoff.v1"
+            or receipt.get("execution_state") != "not_run" or not SHA256.fullmatch(str(receipt.get("handoff_id", "")))):
+        raise AdapterError("RECEIPT_INVALID", "Handoff receipt identity is invalid")
+    identity = receipt.get("identity")
+    if (not isinstance(identity, dict)
+            or sha256(b"pdf-tools.docling-macos-handoff.v1\0" + canonical_json(identity)) != receipt["handoff_id"]):
+        raise AdapterError("RECEIPT_INVALID", "Handoff receipt identity digest is invalid")
+    roots = receipt.get("roots")
+    inputs = receipt.get("inputs")
+    if not isinstance(roots, dict) or not isinstance(inputs, list):
+        raise AdapterError("RECEIPT_INVALID", "Handoff receipt inventory is missing")
+    snapshot = Path(roots.get("sidecar_snapshot", "")).resolve(strict=True)
+    if snapshot.is_symlink() or stat.S_IMODE(snapshot.stat().st_mode) != 0o700:
+        raise AdapterError("RECEIPT_INVALID", "Handoff snapshot root is not a real mode-0700 directory")
+    by_role: dict[str, dict[str, Any]] = {}
+    for item in inputs:
+        if (not isinstance(item, dict) or set(item) != {"role", "filename", "bytes", "sha256"}
+                or item.get("role") in by_role or not isinstance(item.get("filename"), str)
+                or Path(item["filename"]).name != item["filename"] or type(item.get("bytes")) is not int
+                or item["bytes"] < 1 or not SHA256.fullmatch(str(item.get("sha256", "")))):
+            raise AdapterError("RECEIPT_INVALID", "Handoff receipt input inventory is invalid")
+        by_role[item["role"]] = item
+        input_path = snapshot / item["filename"]
+        data = read_stable_regular(input_path, MAX_STDIN_BYTES, 0o600)
+        if len(data) != item["bytes"] or sha256(data) != item["sha256"]:
+            raise AdapterError("HANDOFF_INPUT_MISMATCH", "Retained handoff input does not match the anchored receipt")
+    if set(by_role) != HANDOFF_INPUT_ROLES or identity.get("inputs") != inputs or identity.get("fixtures") != receipt.get("fixtures"):
+        raise AdapterError("RECEIPT_INVALID", "Handoff receipt does not bind the exact retained inventories")
+    expected_config = (snapshot / by_role["candidate_config"]["filename"]).resolve(strict=True)
+    expected_adapter = (snapshot / by_role["adapter_entrypoint"]["filename"]).resolve(strict=True)
+    if config_path.resolve(strict=True) != expected_config or Path(__file__).resolve(strict=True) != expected_adapter:
+        raise AdapterError("HANDOFF_PATH_MISMATCH", "Adapter or configuration path is outside the anchored handoff")
+    if artifacts_path.resolve(strict=True) != Path(roots.get("models", "")).resolve(strict=True):
+        raise AdapterError("HANDOFF_PATH_MISMATCH", "Model path is outside the anchored handoff")
+    return {"receipt": receipt, "inputs_by_role": by_role}
 
 
 def exact_keys(value: dict[str, Any], expected: set[str], label: str) -> None:
@@ -94,7 +309,26 @@ def pointer_token(value: str) -> str:
     return value.replace("~", "~0").replace("/", "~1")
 
 
-def target_leaf_pointers(schema: Any, pointer: str = "") -> list[str]:
+def bound_json_shape(value: Any, depth: int = 0, state: dict[str, int] | None = None) -> None:
+    if state is None:
+        state = {"nodes": 0}
+    state["nodes"] += 1
+    if depth > MAX_SCHEMA_DEPTH or state["nodes"] > MAX_SCHEMA_NODES:
+        raise AdapterError("TARGET_SCHEMA_TOO_COMPLEX", "Target schema exceeds the adapter complexity ceiling")
+    if isinstance(value, dict):
+        for child in value.values():
+            bound_json_shape(child, depth + 1, state)
+    elif isinstance(value, list):
+        for child in value:
+            bound_json_shape(child, depth + 1, state)
+
+
+def target_leaf_pointers(schema: Any, pointer: str = "", depth: int = 0,
+                         state: dict[str, int] | None = None) -> list[str]:
+    if state is None:
+        state = {"leaves": 0}
+    if depth > MAX_SCHEMA_DEPTH:
+        raise AdapterError("TARGET_SCHEMA_TOO_COMPLEX", "Target schema exceeds the adapter depth ceiling")
     if not isinstance(schema, dict):
         raise AdapterError("TARGET_SCHEMA_UNSUPPORTED", "Target schema must be an object")
     for keyword in ("$ref", "allOf", "oneOf", "not", "if", "then", "else"):
@@ -104,20 +338,25 @@ def target_leaf_pointers(schema: Any, pointer: str = "") -> list[str]:
         properties = schema.get("properties")
         if schema.get("type") != "object" or schema.get("additionalProperties") is not False or not isinstance(properties, dict):
             raise AdapterError("TARGET_SCHEMA_UNSUPPORTED", "Object schemas must be closed and declare properties")
-        names = sorted(properties)
-        if sorted(schema.get("required", [])) != names:
+        names = sorted(properties, key=utf16_sort_key)
+        required = schema.get("required", [])
+        if (not isinstance(required, list) or any(not isinstance(name, str) for name in required)
+                or sorted(required, key=utf16_sort_key) != names):
             raise AdapterError("TARGET_SCHEMA_UNSUPPORTED", "Every object property must be required")
         result: list[str] = []
         for name in names:
-            result.extend(target_leaf_pointers(properties[name], f"{pointer}/{pointer_token(name)}"))
+            result.extend(target_leaf_pointers(properties[name], f"{pointer}/{pointer_token(name)}", depth + 1, state))
         return result
     if (schema.get("type") in {"string", "number", "integer", "boolean", "null", "array"}
             or "const" in schema or isinstance(schema.get("enum"), list) or isinstance(schema.get("anyOf"), list)):
+        state["leaves"] += 1
+        if state["leaves"] > MAX_SCHEMA_LEAVES:
+            raise AdapterError("TARGET_SCHEMA_TOO_COMPLEX", "Target schema exceeds the adapter leaf ceiling")
         return [pointer]
     raise AdapterError("TARGET_SCHEMA_UNSUPPORTED", "Target schema leaf is outside the Phase 1 subset")
 
 
-def validate_request(value: Any) -> dict[str, Any]:
+def validate_request(value: Any, raw_bytes: int) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise AdapterError("REQUEST_CONTRACT_INVALID", "Candidate request must be an object")
     exact_keys(value, {"protocol", "request_id", "candidate_id", "input_mode", "source", "inputs", "task", "limits"}, "request")
@@ -146,6 +385,9 @@ def validate_request(value: Any) -> dict[str, Any]:
         raise AdapterError("TRUTH_PROJECTION_VIOLATION", "Candidate request contains a forbidden truth key")
     if not isinstance(task.get("target_schema"), dict):
         raise AdapterError("REQUEST_CONTRACT_INVALID", "Target schema must be an object")
+    if not isinstance(task.get("instruction"), str) or not task["instruction"]:
+        raise AdapterError("REQUEST_CONTRACT_INVALID", "Candidate instruction must be a nonempty string")
+    bound_json_shape(task["target_schema"])
     if sha256(canonical_json(task["target_schema"])) != task.get("target_schema_sha256"):
         raise AdapterError("TARGET_SCHEMA_DIGEST_MISMATCH", "Target schema digest does not match its canonical bytes")
     limit_ranges = {
@@ -157,6 +399,8 @@ def validate_request(value: Any) -> dict[str, Any]:
     if any(type(limits.get(name)) is not int or limits[name] < minimum or limits[name] > maximum
            for name, (minimum, maximum) in limit_ranges.items()):
         raise AdapterError("REQUEST_CONTRACT_INVALID", "Request limits are outside the Phase 1 contract")
+    if raw_bytes > limits["max_request_bytes"]:
+        raise AdapterError("REQUEST_TOO_LARGE", "Candidate request exceeds its declared input ceiling")
     if type(source.get("size_bytes")) is not int or source["size_bytes"] < 1 or type(source.get("page_count")) is not int or source["page_count"] < 1:
         raise AdapterError("REQUEST_CONTRACT_INVALID", "Source size and page count must be positive integers")
     if not isinstance(source.get("sha256"), str) or not SHA256.fullmatch(source["sha256"]):
@@ -167,14 +411,20 @@ def validate_request(value: Any) -> dict[str, Any]:
     return value
 
 
-def read_source(request: dict[str, Any]) -> Path:
+@contextmanager
+def staged_source(request: dict[str, Any]):
     source_path = Path(request["source"]["path"])
     flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
     try:
         descriptor = os.open(source_path, flags)
     except OSError as error:
         raise AdapterError("SOURCE_OPEN_FAILED", "Staged source could not be opened as a regular file") from error
+    staging_root = Path(tempfile.mkdtemp(prefix="pdf-tools-docling-source-"))
+    os.chmod(staging_root, 0o700)
+    private_path = staging_root / "source.pdf"
+    destination = None
     try:
+        destination = os.open(private_path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o400)
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_nlink != 1:
             raise AdapterError("SOURCE_TYPE_INVALID", "Staged source must be a single-link regular file")
@@ -191,24 +441,39 @@ def read_source(request: dict[str, Any]) -> Path:
             if observed > expected_size:
                 raise AdapterError("SOURCE_SIZE_MISMATCH", "Staged source grew while it was read")
             digest.update(chunk)
+            view = memoryview(chunk)
+            while view:
+                written = os.write(destination, view)
+                if written < 1:
+                    raise AdapterError("SOURCE_STAGE_FAILED", "Private source staging did not make progress")
+                view = view[written:]
+        os.fsync(destination)
         after = os.fstat(descriptor)
         if observed != expected_size or digest.hexdigest() != request["source"]["sha256"]:
             raise AdapterError("SOURCE_DIGEST_MISMATCH", "Staged source bytes do not match the runner binding")
         if (metadata.st_dev, metadata.st_ino, metadata.st_size, metadata.st_mtime_ns, metadata.st_ctime_ns) != (
                 after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns):
             raise AdapterError("SOURCE_MUTATED", "Staged source changed while it was read")
+        os.close(destination)
+        destination = None
+        private_size, private_digest = digest_stable_regular(private_path, expected_size, 0o400)
+        if private_size != expected_size or private_digest != request["source"]["sha256"]:
+            raise AdapterError("SOURCE_STAGE_FAILED", "Private source staging changed the verified bytes")
+        yield private_path
     finally:
+        if destination is not None:
+            os.close(destination)
         os.close(descriptor)
-    return source_path.resolve(strict=True)
+        shutil.rmtree(staging_root)
 
 
 def load_config(config_path: Path) -> dict[str, Any]:
     try:
-        raw = config_path.read_bytes()
-        config = json.loads(raw)
-    except (OSError, json.JSONDecodeError) as error:
+        raw = read_stable_regular(config_path, MAX_RECEIPT_BYTES, 0o600)
+        config = strict_json_loads(raw)
+    except (OSError, json.JSONDecodeError, ValueError) as error:
         raise AdapterError("CONFIG_INVALID", "Pinned Docling configuration could not be loaded") from error
-    if (config.get("config_id") != "pdf-tools.extraction-docling-candidate-config.v1"
+    if (not isinstance(config, dict) or config.get("config_id") != "pdf-tools.extraction-docling-candidate-config.v1"
             or config.get("candidate_id") != CANDIDATE_ID or config.get("input_mode") != "direct_pdf"
             or config.get("execution_state") != "adapter_ready_not_executed"):
         raise AdapterError("CONFIG_INVALID", "Pinned Docling configuration identity is invalid")
@@ -246,27 +511,74 @@ def verify_python_packages(config: dict[str, Any]) -> None:
 
 
 def verify_layout_artifacts(artifacts_path: Path, config: dict[str, Any]) -> None:
-    if not artifacts_path.is_absolute() or not artifacts_path.is_dir() or artifacts_path.is_symlink():
+    if (not artifacts_path.is_absolute() or not artifacts_path.is_dir() or artifacts_path.is_symlink()
+            or stat.S_IMODE(artifacts_path.stat().st_mode) != 0o700):
         raise AdapterError("ARTIFACT_ROOT_INVALID", "Docling artifact root must be an absolute, existing real directory")
+    inventory_path = artifacts_path / "layout-model-inventory.v1.json"
+    try:
+        inventory_bytes = read_stable_regular(inventory_path, MAX_MODEL_INVENTORY_BYTES, 0o600)
+        inventory = strict_json_loads(inventory_bytes)
+    except (json.JSONDecodeError, ValueError) as error:
+        raise AdapterError("LAYOUT_INVENTORY_INVALID", "Pinned layout inventory is not strict JSON") from error
+    if (not isinstance(inventory, dict)
+            or set(inventory) != {"inventory_id", "repository", "revision", "files", "file_set_sha256", "networked_setup", "execution_state"}
+            or inventory.get("inventory_id") != "pdf-tools.docling-layout-model-inventory.v1"
+            or inventory.get("repository") != config["layout_model"]["repository"]
+            or inventory.get("revision") != config["layout_model"]["revision"]
+            or inventory.get("networked_setup") is not True or inventory.get("execution_state") != "not_run"
+            or not isinstance(inventory.get("files"), list) or not 1 <= len(inventory["files"]) <= 10000):
+        raise AdapterError("LAYOUT_INVENTORY_INVALID", "Pinned layout inventory identity is invalid")
+    if inventory_bytes != (json.dumps(inventory, ensure_ascii=False, sort_keys=True, separators=(",", ":")) + "\n").encode():
+        raise AdapterError("LAYOUT_INVENTORY_INVALID", "Pinned layout inventory bytes are not canonical")
+    if (not SHA256.fullmatch(str(inventory.get("file_set_sha256", "")))
+            or hashlib.sha256(("pdf-tools.docling-layout-model-files.v1\0" + json.dumps(
+                inventory["files"], ensure_ascii=False, sort_keys=True, separators=(",", ":"))).encode()).hexdigest()
+            != inventory["file_set_sha256"]):
+        raise AdapterError("LAYOUT_INVENTORY_INVALID", "Pinned layout inventory digest is invalid")
+    records: dict[str, dict[str, Any]] = {}
+    total_bytes = 0
+    for item in inventory["files"]:
+        if (not isinstance(item, dict) or set(item) != {"relative_path", "bytes", "sha256"}
+                or not isinstance(item.get("relative_path"), str) or not item["relative_path"]
+                or Path(item["relative_path"]).is_absolute() or ".." in Path(item["relative_path"]).parts
+                or item["relative_path"] in records or type(item.get("bytes")) is not int
+                or not 1 <= item["bytes"] <= MAX_MODEL_FILE_BYTES
+                or not SHA256.fullmatch(str(item.get("sha256", "")))):
+            raise AdapterError("LAYOUT_INVENTORY_INVALID", "Pinned layout inventory contains an invalid record")
+        total_bytes += item["bytes"]
+        if total_bytes > MAX_MODEL_TOTAL_BYTES:
+            raise AdapterError("LAYOUT_INVENTORY_INVALID", "Pinned layout inventory exceeds the aggregate byte ceiling")
+        records[item["relative_path"]] = item
+    observed_paths: set[str] = set()
+    for root, directories, filenames in os.walk(artifacts_path, followlinks=False):
+        root_path = Path(root)
+        for name in directories:
+            directory = root_path / name
+            if directory.is_symlink() or stat.S_IMODE(directory.stat().st_mode) != 0o700:
+                raise AdapterError("ARTIFACT_LINK_FORBIDDEN", "Docling artifact root contains a link or weak directory")
+        for name in filenames:
+            candidate = root_path / name
+            if candidate.is_symlink():
+                raise AdapterError("ARTIFACT_LINK_FORBIDDEN", "Docling artifact root contains a symbolic link")
+            observed_paths.add(candidate.relative_to(artifacts_path).as_posix())
+    if observed_paths != set(records) | {"layout-model-inventory.v1.json"}:
+        raise AdapterError("LAYOUT_INVENTORY_INVALID", "Docling artifact root does not match its exact inventory")
     expected_bytes = config["layout_model"]["weight_bytes"]
     expected_sha = config["layout_model"]["weight_sha256"]
-    matches: list[Path] = []
-    for candidate in artifacts_path.rglob("*"):
-        if candidate.is_symlink():
-            raise AdapterError("ARTIFACT_LINK_FORBIDDEN", "Docling artifact root contains a symbolic link")
-        if candidate.is_file() and candidate.stat().st_size == expected_bytes:
-            digest = hashlib.sha256()
-            with candidate.open("rb") as handle:
-                for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-                    digest.update(chunk)
-            if digest.hexdigest() == expected_sha:
-                matches.append(candidate)
+    matches: list[str] = []
+    for relative_path, item in records.items():
+        size, digest = digest_stable_regular(artifacts_path / relative_path, MAX_MODEL_FILE_BYTES, 0o600)
+        if size != item["bytes"] or digest != item["sha256"]:
+            raise AdapterError("LAYOUT_INVENTORY_INVALID", "Docling model file does not match its stable inventory")
+        if size == expected_bytes and digest == expected_sha:
+            matches.append(relative_path)
     if len(matches) != 1:
         raise AdapterError("LAYOUT_WEIGHT_IDENTITY_MISMATCH", "Exactly one pinned layout weight must be present")
     repository_path = artifacts_path / config["layout_model"]["repository"].replace("/", "--")
     for filename, digest_key in (("config.json", "config_sha256"), ("preprocessor_config.json", "preprocessor_config_sha256")):
         candidate = repository_path / filename
-        if not candidate.is_file() or candidate.is_symlink() or sha256(candidate.read_bytes()) != config["layout_model"][digest_key]:
+        size, digest = digest_stable_regular(candidate, MAX_MODEL_FILE_BYTES, 0o600)
+        if size < 1 or digest != config["layout_model"][digest_key]:
             raise AdapterError("LAYOUT_CONFIG_IDENTITY_MISMATCH", f"Pinned layout {filename} is missing or changed")
 
 
@@ -282,7 +594,8 @@ def page_map(document: dict[str, Any], expected_count: int) -> dict[int, dict[st
         width = page["size"].get("width")
         height = page["size"].get("height")
         if (type(page_number) is not int or page_number < 1 or isinstance(width, bool) or isinstance(height, bool)
-                or not isinstance(width, (int, float)) or not isinstance(height, (int, float)) or width <= 0 or height <= 0):
+                or not isinstance(width, (int, float)) or not isinstance(height, (int, float))
+                or not math.isfinite(float(width)) or not math.isfinite(float(height)) or width <= 0 or height <= 0):
             raise AdapterError("DOCLING_EXPORT_INVALID", "Docling page geometry is invalid")
         if page_number in result:
             raise AdapterError("DOCLING_EXPORT_INVALID", "Docling export contains duplicate pages")
@@ -296,7 +609,7 @@ def native_bbox(bbox: Any, geometry: dict[str, float]) -> tuple[dict[str, float]
     if not isinstance(bbox, dict):
         raise AdapterError("DOCLING_EXPORT_INVALID", "Native provenance bbox is missing")
     values = [bbox.get(name) for name in ("l", "t", "r", "b")]
-    if any(isinstance(value, bool) or not isinstance(value, (int, float)) for value in values):
+    if any(isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(float(value)) for value in values):
         raise AdapterError("DOCLING_EXPORT_INVALID", "Native provenance bbox is not numeric")
     left, top, right, bottom = [float(value) for value in values]
     origin = bbox.get("coord_origin", "TOPLEFT")
@@ -319,8 +632,26 @@ def safe_id(value: str) -> str:
     return cleaned[:120] or "item"
 
 
+class TranslationBudget:
+    def __init__(self, limit: int):
+        self.limit = limit
+        self.used = 0
+        self.items = 0
+
+    def consume(self, text: str = "", overhead: int = 256) -> None:
+        self.items += 1
+        self.used += overhead + len(text.encode("utf-8"))
+        if self.items > 100000 or self.used > self.limit:
+            raise AdapterError("DOCLING_EXPORT_LIMIT_EXCEEDED", "Docling export exceeds the bounded translation budget")
+
+    def collection(self, value: list[Any]) -> None:
+        if len(value) > min(100000, max(1, self.limit // 64)):
+            raise AdapterError("DOCLING_EXPORT_LIMIT_EXCEEDED", "Docling export collection exceeds the bounded translation budget")
+
+
 def native_record(item_id: str, page: int, bbox: Any, quote: str, native_ref: Any,
-                  geometry: dict[str, float], engine_version: str) -> dict[str, Any]:
+                  geometry: dict[str, float], engine_version: str, budget: TranslationBudget) -> dict[str, Any]:
+    budget.consume(quote if isinstance(quote, str) else "", 512)
     translated_bbox, coordinate_space = native_bbox(bbox, geometry)
     return {
         "id": safe_id(item_id),
@@ -338,36 +669,46 @@ def native_record(item_id: str, page: int, bbox: Any, quote: str, native_ref: An
 
 
 def table_value(cell: dict[str, Any]) -> tuple[bool, Any]:
-    if "value" in cell:
-        return True, cell["value"]
     if "text" in cell:
+        if not isinstance(cell["text"], str):
+            raise AdapterError("DOCLING_EXPORT_INVALID", "Pinned Docling table cell text must be a string")
         return True, cell["text"]
     return False, None
 
 
 def translate_table(table: dict[str, Any], index: int, pages: dict[int, dict[str, float]],
-                    engine_version: str) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+                    engine_version: str, budget: TranslationBudget) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     data = table.get("data")
     if not isinstance(data, dict) or type(data.get("num_rows")) is not int or type(data.get("num_cols")) is not int:
         raise AdapterError("DOCLING_EXPORT_INVALID", "Docling table dimensions are missing")
     rows, columns = data["num_rows"], data["num_cols"]
-    if rows < 1 or columns < 1 or not isinstance(data.get("table_cells", []), list):
+    if not isinstance(data.get("table_cells", []), list):
         raise AdapterError("DOCLING_EXPORT_INVALID", "Docling table dimensions or cells are invalid")
+    budget.collection(data.get("table_cells", []))
+    if rows < 0 or columns < 0 or rows * columns > min(100000, max(1, budget.limit // 16)):
+        raise AdapterError("DOCLING_EXPORT_LIMIT_EXCEEDED", "Docling table grid exceeds the bounded translation budget")
     cells: list[dict[str, Any]] = []
     occupied: set[tuple[int, int]] = set()
     merged: list[dict[str, int]] = []
     native: list[dict[str, Any]] = []
     table_pages: set[int] = set()
     table_ref = table.get("self_ref")
-    for prov_index, provenance in enumerate(table.get("prov", [])):
+    provenance_items = table.get("prov", [])
+    if not isinstance(provenance_items, list):
+        raise AdapterError("DOCLING_EXPORT_INVALID", "Docling table provenance is invalid")
+    budget.collection(provenance_items)
+    for prov_index, provenance in enumerate(provenance_items):
         if not isinstance(provenance, dict) or type(provenance.get("page_no")) is not int or provenance["page_no"] not in pages:
             raise AdapterError("PAGE_BINDING_MISMATCH", "Docling table provenance references an unknown page")
         page = provenance["page_no"]
         table_pages.add(page)
-        native.append(native_record(f"docling.table.{index}.prov.{prov_index}", page, provenance.get("bbox"), "", table_ref, pages[page], engine_version))
+        native.append(native_record(f"docling.table.{index}.prov.{prov_index}", page, provenance.get("bbox"), "", table_ref, pages[page], engine_version, budget))
     if not table_pages:
         raise AdapterError("DOCLING_EXPORT_INVALID", "Docling table has no page provenance")
-    default_page = min(table_pages)
+    if rows == 0 and columns == 0 and not data.get("table_cells"):
+        return None, native
+    if rows < 1 or columns < 1:
+        raise AdapterError("DOCLING_EXPORT_INVALID", "Docling table dimensions are inconsistent")
     for cell_index, cell in enumerate(data.get("table_cells", [])):
         if not isinstance(cell, dict):
             raise AdapterError("DOCLING_EXPORT_INVALID", "Docling table cell is not an object")
@@ -397,6 +738,7 @@ def translate_table(table: dict[str, Any], index: int, pages: dict[int, dict[str
             "row_span": row_span, "column_span": column_span,
             "present": True, "value": value,
         }
+        budget.consume(value, 256)
         cells.append(translated)
         if row_span > 1 or column_span > 1:
             merged.append({
@@ -404,11 +746,16 @@ def translate_table(table: dict[str, Any], index: int, pages: dict[int, dict[str
                 "end_row": end_row, "end_column": end_column,
             })
         if cell.get("bbox") is not None:
+            cell_page = cell.get("page_no")
+            if cell_page is None and len(table_pages) == 1:
+                cell_page = next(iter(table_pages))
+            if type(cell_page) is not int or cell_page not in table_pages:
+                continue
             native.append(native_record(
-                f"docling.table.{index}.cell.{cell_index}", default_page, cell["bbox"],
+                f"docling.table.{index}.cell.{cell_index}", cell_page, cell["bbox"],
                 value if isinstance(value, str) else json.dumps(value, ensure_ascii=False, separators=(",", ":")),
                 f"{table_ref or '#/tables/' + str(index)}/data/table_cells/{cell_index}",
-                pages[default_page], engine_version,
+                pages[cell_page], engine_version, budget,
             ))
     result = {
         "id": safe_id(f"docling.table.{index}"), "pages": sorted(table_pages),
@@ -418,59 +765,83 @@ def translate_table(table: dict[str, Any], index: int, pages: dict[int, dict[str
 
 
 def translate_export(document: dict[str, Any], request: dict[str, Any], engine_version: str) -> dict[str, Any]:
+    if not isinstance(document, dict):
+        raise AdapterError("DOCLING_EXPORT_INVALID", "Docling export must be an object")
+    if document.get("schema_name") != "DoclingDocument" or document.get("version") != "1.10.0":
+        raise AdapterError("DOCLING_EXPORT_VERSION_MISMATCH", "Docling export schema identity does not match the pinned adapter contract")
     pages = page_map(document, request["source"]["page_count"])
+    budget = TranslationBudget(request["limits"]["max_report_bytes"])
     page_chunks: dict[int, list[str]] = {page: [] for page in pages}
     native: list[dict[str, Any]] = []
     texts = document.get("texts", [])
     if not isinstance(texts, list):
         raise AdapterError("DOCLING_EXPORT_INVALID", "Docling text collection is invalid")
+    budget.collection(texts)
     for item_index, item in enumerate(texts):
         if not isinstance(item, dict) or not isinstance(item.get("text"), str) or not isinstance(item.get("prov", []), list):
             raise AdapterError("DOCLING_EXPORT_INVALID", "Docling text item is invalid")
         text = item["text"]
-        item_pages: set[int] = set()
-        for prov_index, provenance in enumerate(item.get("prov", [])):
+        provenance_items = item.get("prov", [])
+        budget.collection(provenance_items)
+        for prov_index, provenance in enumerate(provenance_items):
             if not isinstance(provenance, dict) or type(provenance.get("page_no")) is not int or provenance["page_no"] not in pages:
                 raise AdapterError("PAGE_BINDING_MISMATCH", "Docling text provenance references an unknown page")
             page = provenance["page_no"]
-            item_pages.add(page)
+            charspan = provenance.get("charspan")
+            if (not isinstance(charspan, list) or len(charspan) != 2 or any(type(value) is not int for value in charspan)
+                    or charspan[0] < 0 or charspan[1] <= charspan[0] or charspan[1] > len(text)):
+                raise AdapterError("DOCLING_EXPORT_INVALID", "Docling text provenance charspan is invalid")
+            quote = text[charspan[0]:charspan[1]]
             native.append(native_record(
-                f"docling.text.{item_index}.prov.{prov_index}", page, provenance.get("bbox"), text,
-                item.get("self_ref"), pages[page], engine_version,
+                f"docling.text.{item_index}.prov.{prov_index}", page, provenance.get("bbox"), quote,
+                item.get("self_ref"), pages[page], engine_version, budget,
             ))
-        if item.get("content_layer", "body") == "body":
-            for page in sorted(item_pages):
-                page_chunks[page].append(text)
+            if item.get("content_layer", "body") == "body":
+                page_chunks[page].append(quote)
     exported_page_texts = document.get("_oda_body_page_texts")
     if exported_page_texts is not None:
         if (not isinstance(exported_page_texts, dict) or set(exported_page_texts) != {str(page) for page in pages}
                 or any(not isinstance(value, str) for value in exported_page_texts.values())):
             raise AdapterError("DOCLING_EXPORT_INVALID", "Docling BODY page-text export is invalid")
         page_chunks = {page: [exported_page_texts[str(page)]] for page in pages}
+        for value in exported_page_texts.values():
+            budget.consume(value, 256)
     tables: list[dict[str, Any]] = []
     exported_tables = document.get("tables", [])
     if not isinstance(exported_tables, list):
         raise AdapterError("DOCLING_EXPORT_INVALID", "Docling table collection is invalid")
+    budget.collection(exported_tables)
     for table_index, table in enumerate(exported_tables):
         if not isinstance(table, dict):
             raise AdapterError("DOCLING_EXPORT_INVALID", "Docling table item is invalid")
-        translated, table_native = translate_table(table, table_index, pages, engine_version)
-        tables.append(translated)
+        translated, table_native = translate_table(table, table_index, pages, engine_version, budget)
+        if translated is not None:
+            tables.append(translated)
         native.extend(table_native)
     page_texts = [{
         "page": page, "text": "\n".join(page_chunks[page]), "text_kind": "visual_parser",
         "source_item_ids": [], "origin": {"engine_id": ENGINE_ID, "engine_version": engine_version},
     } for page in sorted(pages)]
+    pointers = target_leaf_pointers(request["task"]["target_schema"])
+    budget.collection(pointers)
     gaps = [{
         "field_path": pointer, "reason": "unsupported_modality",
         "detail": "Parser-only Docling lane does not answer arbitrary target schemas",
-    } for pointer in target_leaf_pointers(request["task"]["target_schema"])]
+    } for pointer in pointers]
     return {
         "protocol": PROTOCOL, "request_id": request["request_id"], "status": "abstained", "decision": "abstain",
         "structured_candidate": None, "page_texts": page_texts, "tables": tables,
         "native_evidence": native, "evidence": [], "field_evidence": [], "gaps": gaps,
         "diagnostics": {"code": None, "message": None},
     }
+
+
+def require_conversion_success(status: Any) -> None:
+    raw = getattr(status, "value", status)
+    normalized = str(raw).strip().lower()
+    if normalized not in {"success", "conversionstatus.success"}:
+        bounded = re.sub(r"[^a-z0-9_.-]", "_", normalized)[:64] or "unknown"
+        raise AdapterError("DOCLING_CONVERSION_INCOMPLETE", f"Docling conversion did not complete successfully ({bounded})")
 
 
 def run_docling(source_path: Path, artifacts_path: Path, config: dict[str, Any], request: dict[str, Any]) -> dict[str, Any]:
@@ -506,6 +877,7 @@ def run_docling(source_path: Path, artifacts_path: Path, config: dict[str, Any],
             max_file_size=request["limits"]["max_source_bytes"],
             raises_on_error=True,
         )
+        require_conversion_success(conversion.status)
         document = conversion.document.export_to_dict()
         document["_oda_body_page_texts"] = {
             str(page): conversion.document.export_to_text(
@@ -548,7 +920,10 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, type=Path)
     parser.add_argument("--artifacts-path", required=True, type=Path)
+    parser.add_argument("--receipt", required=True, type=Path)
+    parser.add_argument("--expected-receipt-sha256", required=True)
     parser.add_argument("--translate-export", type=Path, help=argparse.SUPPRESS)
+    parser.add_argument("--test-conversion-status", help=argparse.SUPPRESS)
     return parser.parse_args()
 
 
@@ -556,20 +931,38 @@ def main() -> int:
     args = parse_args()
     request: dict[str, Any] | None = None
     try:
-        request = validate_request(json.loads(read_bounded_stdin()))
-        source_path = read_source(request)
-        config = load_config(args.config.resolve(strict=True))
-        if args.translate_export is not None:
-            if os.environ.get("PDF_TOOLS_DOCLING_TEST_EXPORT") != "1":
-                raise AdapterError("TEST_SEAM_FORBIDDEN", "Synthetic export translation is available only to the adapter test harness")
-            document = json.loads(args.translate_export.read_bytes())
-        else:
-            document = run_docling(source_path, args.artifacts_path.resolve(strict=True), config, request)
+        raw_request = read_bounded_stdin()
+        parsed_request = strict_json_loads(raw_request)
+        if (isinstance(parsed_request, dict) and isinstance(parsed_request.get("request_id"), str)
+                and SHA256.fullmatch(parsed_request["request_id"]) and isinstance(parsed_request.get("limits"), dict)
+                and type(parsed_request["limits"].get("max_stdout_bytes")) is int
+                and 1024 <= parsed_request["limits"]["max_stdout_bytes"] <= 16777216):
+            request = parsed_request
+        request = validate_request(parsed_request, len(raw_request))
+        config_path = args.config if args.config.is_absolute() else Path.cwd() / args.config
+        artifacts_path = args.artifacts_path if args.artifacts_path.is_absolute() else Path.cwd() / args.artifacts_path
+        receipt_path = args.receipt if args.receipt.is_absolute() else Path.cwd() / args.receipt
+        verify_receipt_anchor(receipt_path, args.expected_receipt_sha256, config_path, artifacts_path)
+        config = load_config(config_path)
+        with staged_source(request) as source_path:
+            if args.translate_export is not None:
+                if os.environ.get("PDF_TOOLS_DOCLING_TEST_EXPORT") != "1":
+                    raise AdapterError("TEST_SEAM_FORBIDDEN", "Synthetic export translation is available only to the adapter test harness")
+                if args.test_conversion_status is not None:
+                    require_conversion_success(args.test_conversion_status)
+                try:
+                    document = strict_json_loads(read_stable_regular(args.translate_export, request["limits"]["max_report_bytes"]))
+                except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
+                    raise AdapterError("DOCLING_EXPORT_INVALID", "Synthetic Docling export is not strict JSON") from error
+            else:
+                if args.test_conversion_status is not None:
+                    raise AdapterError("TEST_SEAM_FORBIDDEN", "Synthetic conversion status is available only with the export test seam")
+                document = run_docling(source_path, artifacts_path, config, request)
         engine_version = next(item["version"] for item in config["packages"] if item["name"] == "docling-slim")
         response = translate_export(document, request, engine_version)
         emit(response, request["limits"]["max_stdout_bytes"])
         return 0
-    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+    except (json.JSONDecodeError, UnicodeDecodeError, ValueError) as error:
         print(f"Invalid JSON input: {type(error).__name__}", file=sys.stderr)
         return 2
     except AdapterError as error:

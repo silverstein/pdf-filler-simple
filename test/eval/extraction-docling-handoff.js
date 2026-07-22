@@ -1,13 +1,17 @@
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
+import { computeDoclingHandoffId } from "./extraction-docling-handoff-verifier.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const MAX_HANDOFF_FILE_BYTES = 16 * 1024 * 1024;
 const MAX_FIXTURE_TOTAL_BYTES = 8 * 1024 * 1024;
+const MAX_TOOL_BYTES = 128 * 1024 * 1024;
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -19,6 +23,39 @@ function canonicalJson(value) {
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function commandOutput(executable, args) {
+  const result = spawnSync(executable, args, { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  if (result.error || result.status !== 0 || !result.stdout.trim()) throw new Error(`Unable to inspect ${executable}`);
+  return result.stdout.trim();
+}
+
+async function observedHost(testOnlyHost) {
+  if (testOnlyHost !== null) {
+    if (process.env.NODE_ENV !== "test") throw new Error("Docling host override is available only to the test harness");
+    return structuredClone(testOnlyHost);
+  }
+  if (process.platform !== "darwin" || process.arch !== "arm64") throw new Error("Docling handoff requires darwin/arm64");
+  return {
+    platform: process.platform,
+    architecture: process.arch,
+    os_build: commandOutput("/usr/bin/sw_vers", ["-buildVersion"]),
+    kernel_release: os.release(),
+    node_version: process.version,
+  };
+}
+
+async function observedUv(testOnlyUv) {
+  if (testOnlyUv !== null && process.env.NODE_ENV !== "test") throw new Error("Docling uv override is available only to the test harness");
+  const requestedPath = testOnlyUv?.path ?? commandOutput("/usr/bin/which", ["uv"]);
+  const uvPath = await fs.realpath(requestedPath);
+  const metadata = await fs.lstat(uvPath);
+  if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1) throw new Error("uv must resolve to a single-link regular binary");
+  const bytes = await readStableRegularFile(uvPath, MAX_TOOL_BYTES);
+  const version = testOnlyUv?.version ?? commandOutput(uvPath, ["--version"]);
+  if (!/^uv [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/.test(version)) throw new Error("uv version output is invalid");
+  return { path: uvPath, version, bytes: bytes.length, sha256: sha256(bytes) };
 }
 
 function within(parent, child) {
@@ -126,16 +163,15 @@ export async function prepareDoclingMacHandoff({
   sidecarRoot,
   protectedRoots,
   fixturePaths,
-  expectedPlatform = { platform: "darwin", architecture: "arm64" },
-  observedPlatform = { platform: process.platform, architecture: process.arch },
+  testOnlyHost = null,
+  testOnlyUv = null,
 } = {}) {
   if (!cacheRoot || !sidecarRoot || !Array.isArray(protectedRoots) || protectedRoots.length < 1
-    || !Array.isArray(fixturePaths) || fixturePaths.length < 1) {
+    || !Array.isArray(fixturePaths) || fixturePaths.length < 1 || fixturePaths.length > 100) {
     throw new Error("Docling handoff requires explicit roots and at least one PDF fixture");
   }
-  if (observedPlatform.platform !== expectedPlatform.platform || observedPlatform.architecture !== expectedPlatform.architecture) {
-    throw new Error(`Docling handoff requires ${expectedPlatform.platform}/${expectedPlatform.architecture}`);
-  }
+  const [host, uv] = await Promise.all([observedHost(testOnlyHost), observedUv(testOnlyUv)]);
+  if (host.platform !== "darwin" || host.architecture !== "arm64") throw new Error("Docling handoff requires darwin/arm64");
   const resolvedCache = path.resolve(cacheRoot);
   const resolvedSidecar = path.resolve(sidecarRoot);
   for (const destination of [resolvedCache, resolvedSidecar]) {
@@ -155,6 +191,10 @@ export async function prepareDoclingMacHandoff({
     ["candidate_request_schema", "test/fixtures/eval/extraction/phase1/candidate-request.schema.json"],
     ["candidate_response_schema", "test/fixtures/eval/extraction/phase1/candidate-response.schema.json"],
     ["handoff_schema", "test/fixtures/eval/extraction/phase1/docling-handoff.schema.json"],
+    ["handoff_generator_source", "test/eval/extraction-docling-handoff.js"],
+    ["handoff_verifier_source", "test/eval/extraction-docling-handoff-verifier.js"],
+    ["runtime_evidence_source", "test/eval/extraction-docling-runtime-evidence.js"],
+    ["handoff_verifier_cli", "scripts/eval-verify-docling-macos-handoff.mjs"],
   ];
   const sourceInputs = [];
   for (const [role, relativePath] of sourceSpecs) {
@@ -162,10 +202,42 @@ export async function prepareDoclingMacHandoff({
     sourceInputs.push({ role, relativePath, bytes, sha256: sha256(bytes) });
   }
   const config = JSON.parse(sourceInputs.find(item => item.role === "candidate_config").bytes);
+  const configSchema = JSON.parse(sourceInputs.find(item => item.role === "candidate_config_schema").bytes);
+  const configValidation = new AjvJsonSchemaValidator().getValidator(configSchema)(config);
+  if (!configValidation.valid) throw new Error(`Pinned Docling configuration is invalid: ${configValidation.errorMessage}`);
   const requirementsBytes = Buffer.from(`${config.packages
     .map(item => `${item.name === "docling-slim" ? config.install_requirement : `${item.name}==${item.version}`} --hash=sha256:${item.wheel_sha256}`)
     .sort().join("\n")}\n`);
   sourceInputs.push({ role: "direct_requirements", relativePath: "direct-requirements.in", bytes: requirementsBytes, sha256: sha256(requirementsBytes) });
+
+  const normalizedRecipe = {
+    setup: {
+      network_required: true,
+      environment: {
+        UV_CACHE_DIR: "$UV_CACHE_ROOT",
+        UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT",
+        PYTHONDONTWRITEBYTECODE: "1",
+      },
+      preflight: ["$TRUSTED_NODE", "$TRUSTED_VERIFIER", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256"],
+      commands: [
+        ["$UV", "python", "install", "3.12.13"],
+        ["$UV", "venv", "--python", "3.12.13", "$VENV_ROOT"],
+        ["$UV", "pip", "compile", "$DIRECT_REQUIREMENTS", "--python", "$PYTHON", "--generate-hashes", "--output-file", "$LOCK"],
+        ["$UV", "pip", "sync", "$LOCK", "--python", "$PYTHON", "--require-hashes"],
+        ["$PYTHON", "$MODEL_SETUP_HELPER", "--config", "$CONFIG", "--expected-config-sha256", "$CONFIG_SHA256", "--models-path", "$MODELS_ROOT"],
+      ],
+    },
+    execution: {
+      offline_intent: true,
+      network_isolation_enforced: false,
+      environment: {
+        HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1",
+        UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
+      },
+      preflight: ["$TRUSTED_NODE", "$TRUSTED_VERIFIER", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256"],
+      command: ["$PYTHON", "$ADAPTER", "--config", "$CONFIG", "--artifacts-path", "$MODELS_ROOT", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256"],
+    },
+  };
 
   let fixtureTotalBytes = 0;
   const fixtureInputs = [];
@@ -181,17 +253,22 @@ export async function prepareDoclingMacHandoff({
     fixtureDigests.add(digest);
     fixtureInputs.push({ ordinal: index + 1, bytes, sha256: digest, filename: `source-${String(index + 1).padStart(3, "0")}-${digest.slice(0, 12)}.pdf` });
   }
+  const retainedIdentityInputs = sourceInputs.map(({ role, relativePath, bytes, ...identity }) => ({ role, filename: role === "direct_requirements" ? "direct-requirements.in" : path.basename(relativePath), bytes: bytes.length, ...identity }));
+  const retainedIdentityFixtures = fixtureInputs.map(({ bytes, ...identity }) => ({ ...identity, bytes: bytes.length }));
   const handoffIdentity = {
     protocol: "pdf-tools.docling-macos-handoff.v1",
-    platform: expectedPlatform,
-    source_inputs: sourceInputs.map(({ role, relativePath, bytes, ...identity }) => ({ role, source_name: path.basename(relativePath), bytes: bytes.length, ...identity })),
-    fixtures: fixtureInputs.map(({ bytes, ...identity }) => ({ ...identity, bytes: bytes.length })),
+    platform_contract: { platform: "darwin", architecture: "arm64", interpreter: "cpython-3.12.13-macos-aarch64-none" },
+    inputs: retainedIdentityInputs,
+    fixtures: retainedIdentityFixtures,
+    recipe: normalizedRecipe,
   };
-  const handoffId = sha256(Buffer.from(`pdf-tools.docling-macos-handoff.v1\0${canonicalJson(handoffIdentity)}`));
+  const handoffId = computeDoclingHandoffId(handoffIdentity);
 
   await Promise.all([secureDirectory(resolvedCache), secureDirectory(resolvedSidecar)]);
   const uvRoot = await secureDirectory(path.join(resolvedCache, "uv"));
-  const modelsRoot = await secureDirectory(path.join(resolvedCache, "models"));
+  const uvPythonInstallRoot = await secureDirectory(path.join(uvRoot, `python-${sha256(Buffer.from("cpython-3.12.13-macos-aarch64-none")).slice(0, 16)}`));
+  const modelsParent = await secureDirectory(path.join(resolvedCache, "models"));
+  const modelsRoot = await secureDirectory(path.join(modelsParent, `heron-${config.layout_model.revision.slice(0, 12)}-${config.layout_model.weight_sha256.slice(0, 12)}`));
   const runsRoot = await secureDirectory(path.join(resolvedCache, "runs"));
   const snapshotRoot = path.join(resolvedSidecar, `docling-${handoffId.slice(0, 16)}`);
   const runRoot = path.join(runsRoot, `handoff-${handoffId.slice(0, 16)}`);
@@ -225,13 +302,29 @@ export async function prepareDoclingMacHandoff({
   const adapterPath = path.join(snapshotRoot, "adapter.py");
   const setupHelperPath = path.join(snapshotRoot, "fetch_pinned_layout.py");
   const configPath = path.join(snapshotRoot, "docling-candidate-config.v1.json");
+  const configSha256 = retainedInputs.find(item => item.role === "candidate_config").sha256;
+  const verifierCliPath = path.join(repoRoot, "scripts/eval-verify-docling-macos-handoff.mjs");
+  const receiptPath = path.join(runRoot, "docling-handoff.v1.json");
+  const receiptShaPlaceholder = "$OUT_OF_BAND_RECEIPT_SHA256";
+  const preflightCommand = [process.execPath, verifierCliPath, "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder];
+  const pythonPath = path.join(venvRoot, "bin", "python");
   const receipt = {
     protocol: "pdf-tools.docling-macos-handoff.v1",
     handoff_id: handoffId,
     execution_state: "not_run",
-    platform: { interpreter: "cpython-3.12.13-macos-aarch64-none", operating_system: "macos", architecture: "arm64", os_build: "capture_at_setup" },
+    identity: handoffIdentity,
+    platform: {
+      interpreter: "cpython-3.12.13-macos-aarch64-none",
+      operating_system: "macos",
+      architecture: "arm64",
+      os_build: host.os_build,
+      kernel_release: host.kernel_release,
+      node_version: host.node_version,
+    },
+    toolchain: { uv: { path: uv.path, version: uv.version, bytes: uv.bytes, sha256: uv.sha256 } },
     roots: {
       uv: uvRoot,
+      uv_python_install: uvPythonInstallRoot,
       models: modelsRoot,
       runs: runsRoot,
       sidecar_snapshot: snapshotRoot,
@@ -241,27 +334,34 @@ export async function prepareDoclingMacHandoff({
     fixtures: retainedFixtures,
     setup: {
       network_required: true,
-      environment: { UV_CACHE_DIR: uvRoot },
+      environment: { UV_CACHE_DIR: uvRoot, UV_PYTHON_INSTALL_DIR: uvPythonInstallRoot, PYTHONDONTWRITEBYTECODE: "1" },
+      preflight_command: preflightCommand,
       commands: [
-        ["uv", "python", "install", "3.12.13"],
-        ["uv", "venv", "--python", "3.12.13", venvRoot],
-        ["uv", "pip", "compile", inputPath, "--python", path.join(venvRoot, "bin", "python"), "--generate-hashes", "--output-file", lockPath],
-        ["uv", "pip", "sync", lockPath, "--python", path.join(venvRoot, "bin", "python"), "--require-hashes"],
-        [path.join(venvRoot, "bin", "python"), setupHelperPath, "--config", configPath, "--models-path", modelsRoot],
+        [uv.path, "python", "install", "3.12.13"],
+        [uv.path, "venv", "--python", "3.12.13", venvRoot],
+        [uv.path, "pip", "compile", inputPath, "--python", pythonPath, "--generate-hashes", "--output-file", lockPath],
+        [uv.path, "pip", "sync", lockPath, "--python", pythonPath, "--require-hashes"],
+        [pythonPath, setupHelperPath, "--config", configPath, "--expected-config-sha256", configSha256, "--models-path", modelsRoot],
       ],
-      required_post_setup_evidence: ["uv_version", "python_version", "os_build", "resolved_lock_sha256", "installed_distribution_inventory", "model_file_inventory", "model_weight_sha256"],
+      required_post_setup_evidence: ["receipt_sha256", "uv_binary_sha256", "uv_version", "managed_python_inventory", "python_version", "os_build", "resolved_lock_sha256", "installed_distribution_inventory", "model_file_inventory", "model_weight_sha256", "three_process_inventory_stability"],
     },
     execution: {
       offline_intent: true,
       network_isolation_enforced: false,
-      environment: { HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1", UV_CACHE_DIR: uvRoot },
-      command_template: [path.join(venvRoot, "bin", "python"), adapterPath, "--config", configPath, "--artifacts-path", modelsRoot],
+      environment: {
+        HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1",
+        UV_CACHE_DIR: uvRoot, UV_PYTHON_INSTALL_DIR: uvPythonInstallRoot, PYTHONDONTWRITEBYTECODE: "1",
+      },
+      preflight_command: preflightCommand,
+      command_template: [pythonPath, adapterPath, "--config", configPath, "--artifacts-path", modelsRoot, "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder],
       fixture_presentation: "Runner stages each retained PDF as source.pdf and does not expose this receipt or Phase 0 truth to the candidate request.",
     },
     claim_boundary: "Unexecuted private evaluation handoff only. No benchmark, package, product, redistribution, or release claim is authorized.",
   };
   const receiptBytes = Buffer.from(`${canonicalJson(receipt)}\n`);
-  const receiptPath = path.join(runRoot, "docling-handoff.v1.json");
+  const trustedSchema = JSON.parse(sourceInputs.find(item => item.role === "handoff_schema").bytes);
+  const validation = new AjvJsonSchemaValidator().getValidator(trustedSchema)(receipt);
+  if (!validation.valid) throw new Error(`Generated Docling handoff is invalid: ${validation.errorMessage}`);
   await writeExclusive(receiptPath, receiptBytes);
   return { receipt, receiptPath, receipt_sha256: sha256(receiptBytes) };
 }

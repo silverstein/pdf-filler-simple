@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/docling-export.adapter-projection.schema.json",
+  "title": "Pinned DoclingDocument 1.10 adapter projection",
+  "description": "Strict schema for the exact Docling export fields consumed by the evaluation adapter. TableCell text follows DoclingDocument 1.10 and is string-valued when present.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_name", "version", "name", "pages", "texts", "tables"],
+  "properties": {
+    "schema_name": { "const": "DoclingDocument" },
+    "version": { "const": "1.10.0" },
+    "name": { "type": "string", "minLength": 1 },
+    "pages": {
+      "type": "object", "minProperties": 1,
+      "patternProperties": { "^[1-9][0-9]*$": { "$ref": "#/$defs/page" } },
+      "additionalProperties": false
+    },
+    "texts": { "type": "array", "items": { "$ref": "#/$defs/text_item" } },
+    "tables": { "type": "array", "items": { "$ref": "#/$defs/table_item" } }
+  },
+  "$defs": {
+    "bbox": {
+      "type": "object", "additionalProperties": false,
+      "required": ["l", "t", "r", "b", "coord_origin"],
+      "properties": {
+        "l": { "type": "number" }, "t": { "type": "number" }, "r": { "type": "number" }, "b": { "type": "number" },
+        "coord_origin": { "enum": ["TOPLEFT", "BOTTOMLEFT"] }
+      }
+    },
+    "provenance": {
+      "type": "object", "additionalProperties": false,
+      "required": ["page_no", "bbox", "charspan"],
+      "properties": {
+        "page_no": { "type": "integer", "minimum": 1 },
+        "bbox": { "$ref": "#/$defs/bbox" },
+        "charspan": { "type": "array", "minItems": 2, "maxItems": 2, "prefixItems": [{ "type": "integer", "minimum": 0 }, { "type": "integer", "minimum": 0 }] }
+      }
+    },
+    "page": {
+      "type": "object", "additionalProperties": false,
+      "required": ["page_no", "size"],
+      "properties": {
+        "page_no": { "type": "integer", "minimum": 1 },
+        "size": {
+          "type": "object", "additionalProperties": false, "required": ["width", "height"],
+          "properties": { "width": { "type": "number", "exclusiveMinimum": 0 }, "height": { "type": "number", "exclusiveMinimum": 0 } }
+        }
+      }
+    },
+    "text_item": {
+      "type": "object", "additionalProperties": false,
+      "required": ["self_ref", "text", "prov"],
+      "properties": {
+        "self_ref": { "type": "string", "minLength": 1 },
+        "text": { "type": "string" },
+        "prov": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/provenance" } },
+        "content_layer": { "type": "string" }
+      }
+    },
+    "table_cell": {
+      "type": "object", "additionalProperties": false,
+      "required": ["bbox", "row_span", "col_span", "start_row_offset_idx", "end_row_offset_idx", "start_col_offset_idx", "end_col_offset_idx"],
+      "properties": {
+        "bbox": { "anyOf": [{ "$ref": "#/$defs/bbox" }, { "type": "null" }] },
+        "page_no": { "type": "integer", "minimum": 1 },
+        "row_span": { "type": "integer", "minimum": 1 }, "col_span": { "type": "integer", "minimum": 1 },
+        "start_row_offset_idx": { "type": "integer", "minimum": 0 }, "end_row_offset_idx": { "type": "integer", "minimum": 1 },
+        "start_col_offset_idx": { "type": "integer", "minimum": 0 }, "end_col_offset_idx": { "type": "integer", "minimum": 1 },
+        "text": { "type": "string" }
+      }
+    },
+    "table_item": {
+      "type": "object", "additionalProperties": false,
+      "required": ["self_ref", "prov", "data"],
+      "properties": {
+        "self_ref": { "type": "string", "minLength": 1 },
+        "prov": { "type": "array", "minItems": 1, "items": { "$ref": "#/$defs/provenance" } },
+        "data": {
+          "type": "object", "additionalProperties": false,
+          "required": ["num_rows", "num_cols", "table_cells"],
+          "properties": {
+            "num_rows": { "type": "integer", "minimum": 0 }, "num_cols": { "type": "integer", "minimum": 0 },
+            "table_cells": { "type": "array", "items": { "$ref": "#/$defs/table_cell" } }
+          }
+        }
+      }
+    }
+  }
+}

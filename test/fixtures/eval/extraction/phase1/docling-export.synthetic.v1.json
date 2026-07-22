@@ -1,6 +1,6 @@
 {
   "schema_name": "DoclingDocument",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "name": "synthetic-direct-pdf",
   "pages": {
     "1": { "page_no": 1, "size": { "width": 612, "height": 792 } },
@@ -50,7 +50,7 @@
             "end_row_offset_idx": 1,
             "start_col_offset_idx": 2,
             "end_col_offset_idx": 3,
-            "value": 0
+            "text": "0"
           },
           {
             "bbox": { "l": 72, "t": 150, "r": 168, "b": 180, "coord_origin": "TOPLEFT" },
@@ -60,7 +60,7 @@
             "end_row_offset_idx": 2,
             "start_col_offset_idx": 0,
             "end_col_offset_idx": 1,
-            "value": null
+            "text": "null"
           },
           {
             "bbox": null,
