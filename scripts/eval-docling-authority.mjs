@@ -852,7 +852,7 @@ async function main() {
     const attemptDir = path.resolve(option(argv, "--attempt-dir"));
     const requestPath = path.resolve(option(argv, "--request"));
     await assertDirectory(attemptDir);
-    await verifyFinalization(context, finalizationPath, expectedFinalizationSha256);
+    const finalization = await verifyFinalization(context, finalizationPath, expectedFinalizationSha256);
     const requestBytes = await readStable(requestPath, 16 * 1024 * 1024, 0o600);
     const request = JSON.parse(requestBytes);
     if (!Number.isInteger(request?.limits?.max_stdout_bytes) || request.limits.max_stdout_bytes < 1) throw new Error("Probe request lacks a bounded stdout limit");
@@ -868,7 +868,7 @@ async function main() {
     };
     await reverify();
     const evidence = await runtime.runThreeFreshProcessEvidence({
-      receipt: context.receipt, command, cwd: attemptDir, environment: context.receipt.execution.environment,
+      receipt: context.receipt, finalization, command, cwd: attemptDir, environment: context.receipt.execution.environment,
       requestBytes, sourcePath, maxStdoutBytes: request.limits.max_stdout_bytes, beforeEach: reverify, afterEach: reverify,
     });
     const evidenceBytes = Buffer.from(`${canonicalJson(evidence)}\n`);

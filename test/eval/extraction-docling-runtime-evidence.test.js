@@ -44,7 +44,57 @@ function resignInventory(inventory) {
   return { ...core, inventory_sha256: digest(Buffer.from(`pdf-tools.docling-runtime-inventory.v1\0${canonicalJson(core)}`)) };
 }
 
-async function captureWithObservedSymlinkMode(receipt, filenames, mode) {
+function boundFinalization(receipt, {
+  managed_python_files = [],
+  venv_files = [],
+  model_files = [],
+} = {}) {
+  const core = {
+    protocol: "pdf-tools.docling-finalization.v1",
+    handoff_id: receipt.handoff_id,
+    receipt_sha256: SHA,
+    managed_python_files,
+    venv_files,
+    model_files,
+    execution_state: "setup_complete_not_executed",
+  };
+  return { ...core, finalization_id: digest(Buffer.from(`pdf-tools.docling-finalization.v1\0${canonicalJson(core)}`)) };
+}
+
+async function finalizedTreeRecord(root, relativePath) {
+  const filename = path.join(root, ...relativePath.split("/"));
+  const metadata = await fs.lstat(filename);
+  const base = { relative_path: relativePath, type: metadata.isDirectory() ? "directory" : "file", mode: metadata.mode & 0o777, links: metadata.nlink };
+  if (metadata.isDirectory()) return base;
+  const bytes = await fs.readFile(filename);
+  return { ...base, bytes: bytes.length, sha256: digest(bytes) };
+}
+
+async function installManagedBytecode(receipt) {
+  const directoryRelative = "lib/python3.12/encodings/__pycache__";
+  const directory = path.join(receipt.roots.uv_python_install, ...directoryRelative.split("/"));
+  await fs.mkdir(directory, { recursive: true, mode: 0o700 });
+  await fs.chmod(directory, 0o700);
+  const fileRelatives = ["aliases.cpython-312.pyc", "ascii.cpython-312.pyc", "utf_8.cpython-312.pyc"]
+    .map(name => `${directoryRelative}/${name}`);
+  await Promise.all(fileRelatives.map((relativePath, index) => fs.writeFile(
+    path.join(receipt.roots.uv_python_install, ...relativePath.split("/")),
+    Buffer.from(`finalized-bytecode-${index}`),
+    { mode: 0o600 },
+  )));
+  const managed_python_files = [];
+  for (const relativePath of [directoryRelative, ...fileRelatives]) {
+    managed_python_files.push(await finalizedTreeRecord(receipt.roots.uv_python_install, relativePath));
+  }
+  return {
+    directoryRelative,
+    fileRelatives,
+    inventories: { managed_python_files, venv_files: [], model_files: [] },
+    finalization: boundFinalization(receipt, { managed_python_files }),
+  };
+}
+
+async function captureWithObservedSymlinkMode(receipt, filenames, mode, finalization = boundFinalization(receipt)) {
   const selected = new Set(filenames.map(filename => path.resolve(filename)));
   const realLstat = fs.lstat.bind(fs);
   const lstat = vi.spyOn(fs, "lstat").mockImplementation(async (...arguments_) => {
@@ -52,7 +102,7 @@ async function captureWithObservedSymlinkMode(receipt, filenames, mode) {
     if (selected.has(path.resolve(String(arguments_[0]))) && metadata.isSymbolicLink()) metadata.mode = (metadata.mode & ~0o777) | mode;
     return metadata;
   });
-  try { return await captureDoclingRuntimeInventory(receipt); } finally { lstat.mockRestore(); }
+  try { return await captureDoclingRuntimeInventory(receipt, finalization); } finally { lstat.mockRestore(); }
 }
 
 afterEach(async () => {
@@ -65,7 +115,7 @@ describe("Docling runtime evidence", () => {
     const { receipt, attempt } = await fixture();
     const requestBytes = Buffer.from('{"request_id":"probe"}\n');
     const evidence = await runThreeFreshProcessEvidence({
-      receipt, command: [process.execPath, "-e", "let b='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>b+=c);process.stdin.on('end',()=>process.stdout.write(JSON.stringify({ok:true,input:b.length})+'\\n'))"],
+      receipt, finalization: boundFinalization(receipt), command: [process.execPath, "-e", "let b='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>b+=c);process.stdin.on('end',()=>process.stdout.write(JSON.stringify({ok:true,input:b.length})+'\\n'))"],
       cwd: attempt, environment: { PATH: process.env.PATH }, requestBytes, sourcePath: path.join(attempt, "source.pdf"), maxStdoutBytes: 4096,
     });
     expect(new Set(evidence.processes.map(item => item.pid)).size).toBe(3);
@@ -103,17 +153,95 @@ describe("Docling runtime evidence", () => {
     expect(() => validateThreeFreshProcessEvidence(forged)).toThrow(/digest/);
   });
 
-  it("rejects forged inventory digests, drift, and Python bytecode while accepting empty marker files", async () => {
-    const { receipt, snapshot } = await fixture();
-    const inventory = await captureDoclingRuntimeInventory(receipt);
+  it("requires a valid receipt-bound finalization while accepting empty marker files", async () => {
+    const { receipt } = await fixture();
+    await expect(captureDoclingRuntimeInventory(receipt)).rejects.toThrow(/finalization/);
+    const inventory = await captureDoclingRuntimeInventory(receipt, boundFinalization(receipt));
     expect(inventory.records).toContainEqual(expect.objectContaining({ path: "venv/empty.marker", bytes: 0, sha256: digest("") }));
+    const wrongReceipt = boundFinalization({ ...receipt, handoff_id: "b".repeat(64) });
+    await expect(captureDoclingRuntimeInventory(receipt, wrongReceipt)).rejects.toThrow(/receipt-bound finalization/);
+    const invalidDigest = { ...boundFinalization(receipt), finalization_id: "0".repeat(64) };
+    await expect(captureDoclingRuntimeInventory(receipt, invalidDigest)).rejects.toThrow(/finalization digest/);
+  });
+
+  it("accepts the exact finalized managed-Python bytecode baseline", async () => {
+    const { receipt } = await fixture();
+    const bytecode = await installManagedBytecode(receipt);
+    const inventory = await captureDoclingRuntimeInventory(receipt, bytecode.finalization);
+    for (const record of bytecode.inventories.managed_python_files) {
+      expect(inventory.records).toContainEqual({ path: `managed_python/${record.relative_path}`, ...Object.fromEntries(Object.entries(record).filter(([key]) => key !== "relative_path")) });
+    }
+  });
+
+  it("rejects unbound __pycache__ directories and .pyc files", async () => {
+    const { receipt, snapshot } = await fixture();
+    const unboundDirectory = path.join(snapshot, "venv/__pycache__");
+    await fs.mkdir(unboundDirectory, { mode: 0o700 });
+    await expect(captureDoclingRuntimeInventory(receipt, boundFinalization(receipt))).rejects.toThrow(/bytecode differs/);
+    await fs.rm(unboundDirectory, { recursive: true });
     await fs.writeFile(path.join(snapshot, "venv/leak.pyc"), "bytecode");
-    await expect(captureDoclingRuntimeInventory(receipt)).rejects.toThrow(/bytecode drift/);
+    await expect(captureDoclingRuntimeInventory(receipt, boundFinalization(receipt))).rejects.toThrow(/bytecode/);
+  });
+
+  it("rejects finalized bytecode with mismatched hash, bytes, mode, path, role, type, or links", async () => {
+    const { receipt } = await fixture();
+    const bytecode = await installManagedBytecode(receipt);
+    const mutate = async callback => {
+      const inventories = structuredClone(bytecode.inventories);
+      callback(inventories);
+      await expect(captureDoclingRuntimeInventory(receipt, boundFinalization(receipt, inventories))).rejects.toThrow(/bytecode|Finalization/);
+    };
+    const file = inventories => inventories.managed_python_files.find(record => record.type === "file");
+    await mutate(inventories => { file(inventories).sha256 = "0".repeat(64); });
+    await mutate(inventories => { file(inventories).bytes += 1; });
+    await mutate(inventories => { file(inventories).mode = 0o644; });
+    await mutate(inventories => { file(inventories).relative_path = `${bytecode.directoryRelative}/other.cpython-312.pyc`; });
+    await mutate(inventories => { inventories.venv_files.push(inventories.managed_python_files.pop()); });
+    await mutate(inventories => { file(inventories).type = "directory"; });
+    await mutate(inventories => { file(inventories).links += 1; });
+  });
+
+  it("rejects finalized bytecode that is missing from the live runtime", async () => {
+    const { receipt } = await fixture();
+    const relative_path = "lib/python3.12/encodings/__pycache__/missing.cpython-312.pyc";
+    const missing = { relative_path, type: "file", mode: 0o600, links: 1, bytes: 4, sha256: digest("miss") };
+    await expect(captureDoclingRuntimeInventory(receipt, boundFinalization(receipt, { managed_python_files: [missing] }))).rejects.toThrow(/missing/);
+  });
+
+  it("rejects bytecode newly appearing after the three-process baseline", async () => {
+    const { receipt, snapshot, attempt } = await fixture();
+    const requestBytes = Buffer.from('{"request_id":"probe"}\n');
+    await expect(runThreeFreshProcessEvidence({
+      receipt,
+      finalization: boundFinalization(receipt),
+      command: [process.execPath, "-e", "process.stdin.resume();process.stdin.on('end',()=>process.stdout.write('{\"ok\":true}\\n'))"],
+      cwd: attempt,
+      environment: { PATH: process.env.PATH },
+      requestBytes,
+      sourcePath: path.join(attempt, "source.pdf"),
+      maxStdoutBytes: 4096,
+      beforeEach: async repetition => {
+        if (repetition === 1) await fs.writeFile(path.join(snapshot, "venv/new-after-baseline.pyc"), "new-bytecode");
+      },
+    })).rejects.toThrow(/bytecode differs/);
+  });
+
+  it("never authorizes Python bytecode in the models role", async () => {
+    const { receipt, models } = await fixture();
+    const directoryRelative = "__pycache__";
+    const fileRelative = "__pycache__/model.cpython-312.pyc";
+    await fs.mkdir(path.join(models, directoryRelative), { mode: 0o700 });
+    await fs.writeFile(path.join(models, ...fileRelative.split("/")), "model-bytecode", { mode: 0o600 });
+    const model_files = [
+      await finalizedTreeRecord(models, directoryRelative),
+      await finalizedTreeRecord(models, fileRelative),
+    ];
+    await expect(captureDoclingRuntimeInventory(receipt, boundFinalization(receipt, { model_files }))).rejects.toThrow(/bytecode differs/);
   });
 
   it("accepts exact mode-0711 files only in receipt-bound managed Python and venv inventories", async () => {
     const { receipt, managedExecutable, venvExecutable } = await fixture();
-    const inventory = await captureDoclingRuntimeInventory(receipt);
+    const inventory = await captureDoclingRuntimeInventory(receipt, boundFinalization(receipt));
     expect(inventory.records).toContainEqual(expect.objectContaining({ path: "managed_python/bin/python3.12", mode: 0o711 }));
     expect(inventory.records).toContainEqual(expect.objectContaining({ path: "venv/bin/docling", mode: 0o711 }));
     expect((await fs.stat(managedExecutable)).mode & 0o777).toBe(0o711);
@@ -133,7 +261,7 @@ describe("Docling runtime evidence", () => {
 
   it("accepts and retains observed mode-0700 or mode-0777 only for managed Python and venv symlinks", async () => {
     const value = await fixture();
-    const ordinary = await captureDoclingRuntimeInventory(value.receipt);
+    const ordinary = await captureDoclingRuntimeInventory(value.receipt, boundFinalization(value.receipt));
     expect(ordinary.records).toContainEqual(expect.objectContaining({ path: "managed_python/bin/python-link", type: "symlink", mode: 0o777 }));
     expect(ordinary.records).toContainEqual(expect.objectContaining({ path: "venv/bin/python", type: "symlink", mode: 0o777 }));
 
@@ -166,13 +294,13 @@ describe("Docling runtime evidence", () => {
   it("rejects model and escaping runtime symlinks", async () => {
     const modelCase = await fixture();
     await fs.symlink(path.join(modelCase.models, "weight.bin"), path.join(modelCase.models, "weight-link"));
-    await expect(captureDoclingRuntimeInventory(modelCase.receipt)).rejects.toThrow(/symlink violates/);
+    await expect(captureDoclingRuntimeInventory(modelCase.receipt, boundFinalization(modelCase.receipt))).rejects.toThrow(/symlink violates/);
 
     const escapeCase = await fixture();
     const outside = path.join(escapeCase.root, "outside-runtime");
     await fs.writeFile(outside, "outside");
     await fs.symlink(outside, path.join(escapeCase.snapshot, "venv/bin/escape"));
-    await expect(captureDoclingRuntimeInventory(escapeCase.receipt)).rejects.toThrow(/symlink violates/);
+    await expect(captureDoclingRuntimeInventory(escapeCase.receipt, boundFinalization(escapeCase.receipt))).rejects.toThrow(/symlink violates/);
   });
 
   it.each([
@@ -182,6 +310,6 @@ describe("Docling runtime evidence", () => {
   ])("rejects %s", async (_label, target, mode) => {
     const value = await fixture();
     await fs.chmod(value[target], mode);
-    await expect(captureDoclingRuntimeInventory(value.receipt)).rejects.toThrow(/mode\/link\/size policy/);
+    await expect(captureDoclingRuntimeInventory(value.receipt, boundFinalization(value.receipt))).rejects.toThrow(/mode\/link\/size policy/);
   });
 });

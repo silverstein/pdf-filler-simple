@@ -27,6 +27,60 @@ function isCanonicalRecordPath(value) {
     && value.split("/").every(component => component && component !== "." && component !== "..");
 }
 
+function isFinalizedBytecodePath(recordPath) {
+  const components = recordPath.split("/");
+  return components.slice(1).includes("__pycache__") || components.at(-1).endsWith(".pyc");
+}
+
+function buildFinalizedBytecodeAuthority(receipt, finalization) {
+  if (!finalization || typeof finalization !== "object" || Array.isArray(finalization)
+    || finalization.protocol !== "pdf-tools.docling-finalization.v1"
+    || finalization.handoff_id !== receipt.handoff_id || !SHA256.test(finalization.receipt_sha256 ?? "")
+    || !SHA256.test(finalization.finalization_id ?? "")
+    || finalization.execution_state !== "setup_complete_not_executed"
+    || !Array.isArray(finalization.managed_python_files) || !Array.isArray(finalization.venv_files)) {
+    throw new Error("Runtime capture requires a valid receipt-bound finalization");
+  }
+  const { finalization_id: finalizationId, ...core } = finalization;
+  if (finalizationId !== sha256(Buffer.from(`pdf-tools.docling-finalization.v1\0${canonicalJson(core)}`))) {
+    throw new Error("Runtime capture finalization digest is invalid");
+  }
+
+  const authority = new Map();
+  for (const [label, entries] of [["managed_python", finalization.managed_python_files], ["venv", finalization.venv_files]]) {
+    for (const entry of entries) {
+      if (!isCanonicalRecordPath(entry?.relative_path)) throw new Error("Finalized runtime record path is invalid");
+      const recordPath = `${label}/${entry.relative_path}`;
+      if (!isFinalizedBytecodePath(recordPath)) continue;
+      const basename = entry.relative_path.split("/").at(-1);
+      let record;
+      if (entry.type === "directory" && basename === "__pycache__"
+        && [0o700, 0o755].includes(entry.mode) && Number.isInteger(entry.links) && entry.links >= 1) {
+        record = { path: recordPath, type: "directory", mode: entry.mode, links: entry.links };
+      } else if (entry.type === "file" && basename.endsWith(".pyc")
+        && [0o600, 0o644, 0o700, 0o711, 0o755].includes(entry.mode)
+        && Number.isInteger(entry.links) && entry.links >= 1 && Number.isInteger(entry.bytes) && entry.bytes >= 0
+        && SHA256.test(entry.sha256 ?? "")) {
+        record = { path: recordPath, type: "file", mode: entry.mode, links: entry.links, bytes: entry.bytes, sha256: entry.sha256 };
+      } else {
+        throw new Error(`Finalization contains unauthorized Python bytecode record: ${recordPath}`);
+      }
+      if (authority.has(recordPath)) throw new Error(`Finalization contains duplicate Python bytecode authority: ${recordPath}`);
+      authority.set(recordPath, record);
+    }
+  }
+  return authority;
+}
+
+function acceptFinalizedBytecodeRecord(record, authority, observed) {
+  if (!isFinalizedBytecodePath(record.path)) return;
+  const expected = authority.get(record.path);
+  if (!expected || canonicalJson(expected) !== canonicalJson(record) || observed.has(record.path)) {
+    throw new Error(`Runtime Python bytecode differs from finalization: ${record.path}`);
+  }
+  observed.add(record.path);
+}
+
 async function stableFileSnapshot(filename, recordPath, { allowOwnerExecuteOnly = false } = {}) {
   const handle = await fs.open(filename, fsConstants.O_RDONLY | fsConstants.O_NOFOLLOW);
   try {
@@ -49,16 +103,17 @@ async function stableFileRecord(filename, recordPath, options) {
   return (await stableFileSnapshot(filename, recordPath, options)).record;
 }
 
-async function walk(label, root, allowedRoots, records, state, relative = "", allowPrivateRuntimeModes = false) {
+async function walk(label, root, allowedRoots, records, state, bytecodeAuthority, observedBytecode, relative = "", allowPrivateRuntimeModes = false) {
   const directory = relative ? path.join(root, relative) : root;
   const metadata = await fs.lstat(directory);
   const mode = metadata.mode & 0o777;
   if (!metadata.isDirectory() || metadata.isSymbolicLink() || metadata.nlink < 1 || ![0o700, 0o755].includes(mode)) {
     throw new Error(`Runtime directory violates mode/link policy: ${label}`);
   }
-  records.push({ path: relative ? `${label}/${relative.split(path.sep).join("/")}` : label, type: "directory", mode, links: metadata.nlink });
+  const directoryRecord = { path: relative ? `${label}/${relative.split(path.sep).join("/")}` : label, type: "directory", mode, links: metadata.nlink };
+  acceptFinalizedBytecodeRecord(directoryRecord, bytecodeAuthority, observedBytecode);
+  records.push(directoryRecord);
   for (const entry of (await fs.readdir(directory, { withFileTypes: true })).sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0)) {
-    if (entry.name === "__pycache__" || entry.name.endsWith(".pyc")) throw new Error("Runtime environment contains forbidden Python bytecode drift");
     if (++state.entries > MAX_ENTRIES) throw new Error("Runtime environment exceeds the entry-count ceiling");
     const childRelative = relative ? path.join(relative, entry.name) : entry.name;
     const child = path.join(root, childRelative);
@@ -72,12 +127,15 @@ async function walk(label, root, allowedRoots, records, state, relative = "", al
         || !allowedRoots.some(rootPath => within(rootPath, resolved))) {
         throw new Error(`Runtime symlink violates link/containment policy: ${recordPath}`);
       }
-      records.push({ path: recordPath, type: "symlink", mode: symlinkMode, links: 1, target });
-    } else if (childMetadata.isDirectory()) await walk(label, root, allowedRoots, records, state, childRelative, allowPrivateRuntimeModes);
+      const record = { path: recordPath, type: "symlink", mode: symlinkMode, links: 1, target };
+      acceptFinalizedBytecodeRecord(record, bytecodeAuthority, observedBytecode);
+      records.push(record);
+    } else if (childMetadata.isDirectory()) await walk(label, root, allowedRoots, records, state, bytecodeAuthority, observedBytecode, childRelative, allowPrivateRuntimeModes);
     else if (childMetadata.isFile()) {
       const record = await stableFileRecord(child, recordPath, { allowOwnerExecuteOnly: allowPrivateRuntimeModes });
       state.bytes += record.bytes;
       if (state.bytes > MAX_TOTAL_BYTES) throw new Error("Runtime environment exceeds the aggregate byte ceiling");
+      acceptFinalizedBytecodeRecord(record, bytecodeAuthority, observedBytecode);
       records.push(record);
     } else throw new Error(`Runtime environment contains an unsupported entry: ${recordPath}`);
   }
@@ -118,14 +176,17 @@ export function validateDoclingRuntimeInventory(inventory) {
   return inventory;
 }
 
-export async function captureDoclingRuntimeInventory(receipt) {
+export async function captureDoclingRuntimeInventory(receipt, finalization) {
   if (!receipt?.toolchain?.uv || !receipt.platform || !SHA256.test(receipt.handoff_id ?? "")) throw new Error("Runtime capture requires receipt-bound identity");
+  const bytecodeAuthority = buildFinalizedBytecodeAuthority(receipt, finalization);
+  const observedBytecode = new Set();
   const roots = { managed_python: receipt.roots.uv_python_install, venv: path.join(receipt.roots.sidecar_snapshot, "venv"), models: receipt.roots.models };
   const allowedRoots = Object.values(roots).map(value => path.resolve(value));
   const records = []; const state = { entries: 0, bytes: 0 };
   for (const [label, root] of Object.entries(roots)) {
-    await walk(label, path.resolve(root), allowedRoots, records, state, "", label === "managed_python" || label === "venv");
+    await walk(label, path.resolve(root), allowedRoots, records, state, bytecodeAuthority, observedBytecode, "", label === "managed_python" || label === "venv");
   }
+  if (observedBytecode.size !== bytecodeAuthority.size) throw new Error("Finalized Python bytecode is missing from the runtime environment");
   for (const [filename, recordPath] of [[path.join(receipt.roots.sidecar_snapshot, "requirements.lock"), "requirements.lock"], [receipt.toolchain.uv.path, "toolchain/uv"]]) {
     const record = await stableFileRecord(filename, recordPath); records.push(record); state.bytes += record.bytes;
   }
@@ -151,10 +212,10 @@ async function spawnCaptured({ command, cwd, environment, stdin, maxStdoutBytes 
   return { pid: child.pid, exit_code: exit.code, signal: exit.signal, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), stdout_bytes: stdoutBytes, stderr_bytes: stderrBytes };
 }
 
-export async function runThreeFreshProcessEvidence({ receipt, command, cwd, environment, requestBytes, sourcePath, maxStdoutBytes, beforeEach = null, afterEach = null }) {
+export async function runThreeFreshProcessEvidence({ receipt, finalization, command, cwd, environment, requestBytes, sourcePath, maxStdoutBytes, beforeEach = null, afterEach = null }) {
   if (!Array.isArray(command) || command.length < 1 || !Buffer.isBuffer(requestBytes) || !Number.isInteger(maxStdoutBytes) || maxStdoutBytes < 1) throw new Error("Fresh-process runner arguments are invalid");
   const sourceBytes = (await stableFileSnapshot(sourcePath, "source.pdf")).bytes;
-  const before = await captureDoclingRuntimeInventory(receipt);
+  const before = await captureDoclingRuntimeInventory(receipt, finalization);
   const after = []; const processes = [];
   for (let repetition = 1; repetition <= 3; repetition += 1) {
     if (beforeEach) await beforeEach(repetition);
@@ -166,7 +227,7 @@ export async function runThreeFreshProcessEvidence({ receipt, command, cwd, envi
       stdin_bytes: requestBytes.length, request_sha256: sha256(requestBytes), source_bytes: sourceBytes.length,
       source_sha256: sha256(sourceBytes), stdout_bytes: observed.stdout_bytes, response_sha256: sha256(Buffer.from(canonicalJson(response))),
     });
-    after.push(await captureDoclingRuntimeInventory(receipt));
+    after.push(await captureDoclingRuntimeInventory(receipt, finalization));
     if (afterEach) await afterEach(repetition);
   }
   return validateThreeFreshProcessEvidence({
