@@ -1,29 +1,44 @@
-import { execFileSync } from "child_process";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 import { describe, expect, it } from "vitest";
 
 const REPO_ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
-
-function trackedDocumentationPaths() {
-  return execFileSync(
-    "git",
-    ["ls-files", "-z", "--", "*.md", "manifest.json", "manifest.mcpb.json"],
-    { cwd: REPO_ROOT },
-  )
-    .toString("utf8")
-    .split("\0")
-    .filter(Boolean);
-}
-
-function claimBearingPaths() {
-  return [
-    ...trackedDocumentationPaths(),
-    "server/index.js",
-    "pdf-toolkit-mcp-share/server/index.js",
-  ];
-}
+const CURRENT_PRODUCT_SURFACES = [
+  "README.md",
+  "CLAUDE.md",
+  "AGENTS.md",
+  "docs/MAINTAINERS.md",
+  "docs/SUPPORT.md",
+  "docs/releases/v0.8.6.md",
+  "pdf-toolkit-mcp-share/README.md",
+  "manifest.json",
+  "manifest.mcpb.json",
+  "server/index.js",
+  "pdf-toolkit-mcp-share/server/index.js",
+];
+const POSITIVE_OCR_PATTERNS = [
+  /\bOCR\s*(?:\/\s*image\s*)?(?:support|fallback|extraction|engine|capabilit(?:y|ies)|pipeline)\b/i,
+  /\b(?:automatic|built[- ]in|bundled|integrated|native|local)\s+OCR\b/i,
+  /\b(?:includes?|runs?|performs?|provides?|supports?|uses?|ships?|offers?|handles?)\b[^.!?;\n]{0,60}\bOCR\b/i,
+  /\bwith\s+(?:(?:automatic|built[- ]in|integrated|local)\s+)?OCR\b/i,
+];
+const EXPLICIT_OCR_BOUNDARIES = [
+  /\b(?:does not|do not|doesn't|don't|cannot|can't|never)\s+(?:currently\s+)?(?:bundle|include|run|perform|provide|support|use|ship|offer|have)\b[^.!?;\n]{0,80}\bOCR\b/i,
+  /\bno\s+(?:(?:built[- ]in|bundled|integrated|local|automatic)\s+)?OCR\s+(?:support|fallback|extraction|engine|capabilit(?:y|ies)|pipeline)\b/i,
+  /\bwithout\s+(?:(?:built[- ]in|bundled|integrated|local|automatic)\s+)?OCR\b/i,
+  /\b(?:future|planned|proposed|candidate|experimental|optional)\s+(?:(?:local|bundled|integrated)\s+)?OCR\b/i,
+  /\bOCR\b[^.!?;\n]{0,100}\b(?:unavailable|unsupported|unshipped|planned|proposed|future|candidate|evaluation|benchmark)\b/i,
+  /\bOCR\b[^.!?;\n]{0,100}\bnot\s+(?:shipped|included|available|supported|bundled|implemented|enabled)\b/i,
+];
+const POSITIVE_SCANNED_TEXT_PATTERNS = [
+  /\b(?:recognizes?|extracts?|reads?|transcribes?)\s+(?:all\s+)?scanned\s+text\b/i,
+  /\b(?:recognizes?|extracts?|reads?|transcribes?)\s+(?:all\s+)?text\s+(?:from|in)\s+scanned\s+(?:PDFs?|documents?|pages?)\b/i,
+];
+const EXPLICIT_SCANNED_TEXT_BOUNDARIES = [
+  /\b(?:does not|do not|doesn't|don't|cannot|can't|never)\s+(?:currently\s+)?(?:recognize|extract|read|transcribe)\b[^.!?;\n]{0,80}\bscanned\s+(?:text|PDFs?|documents?|pages?)\b/i,
+  /\bscanned\s+(?:text|PDFs?|documents?|pages?)\b[^.!?;\n]{0,80}\b(?:not recognized|not extracted|unrecognized|unsupported|planned|future)\b/i,
+];
 
 async function readRepositoryFile(relativePath) {
   return fs.readFile(path.join(REPO_ROOT, relativePath), "utf8");
@@ -35,38 +50,75 @@ function findMatches(contents, pattern) {
     .flatMap((line, index) => pattern.test(line) ? [`${index + 1}: ${line.trim()}`] : []);
 }
 
+function collectJsonStrings(value, strings = []) {
+  if (typeof value === "string") {
+    strings.push(value);
+  } else if (Array.isArray(value)) {
+    value.forEach(item => collectJsonStrings(item, strings));
+  } else if (value && typeof value === "object") {
+    Object.values(value).forEach(item => collectJsonStrings(item, strings));
+  }
+  return strings;
+}
+
+function splitClaimUnits(text, { sourceCode = false } = {}) {
+  if (sourceCode) {
+    return text.split("\n").map(line => line.trim()).filter(Boolean);
+  }
+
+  return text
+    .replaceAll("\r\n", "\n")
+    .split(/\n\s*\n/)
+    .flatMap(paragraph => {
+      const lines = paragraph.split("\n").map(line => line.trim()).filter(Boolean);
+      const hasListItems = lines.some(line => /^(?:[-*•]|\d+[.)])\s+/.test(line));
+      const units = hasListItems ? lines : [lines.join(" ")];
+      return units.flatMap(unit => unit.split(/(?<=[.!?;])\s+/));
+    })
+    .map(unit => unit.trim())
+    .filter(Boolean);
+}
+
+function claimUnits(relativePath, contents) {
+  if (relativePath.endsWith(".json")) {
+    return collectJsonStrings(JSON.parse(contents)).flatMap(value => splitClaimUnits(value));
+  }
+  return splitClaimUnits(contents, { sourceCode: relativePath.endsWith(".js") });
+}
+
+function findOcrClaimViolations(units) {
+  return units.filter(unit => {
+    const positiveOcr = POSITIVE_OCR_PATTERNS.some(pattern => pattern.test(unit));
+    const boundedOcr = EXPLICIT_OCR_BOUNDARIES.some(pattern => pattern.test(unit));
+    const positiveScannedText = POSITIVE_SCANNED_TEXT_PATTERNS.some(pattern => pattern.test(unit));
+    const boundedScannedText = EXPLICIT_SCANNED_TEXT_BOUNDARIES.some(pattern => pattern.test(unit));
+    return (positiveOcr && !boundedOcr) || (positiveScannedText && !boundedScannedText);
+  });
+}
+
 describe("documentation capability claims", () => {
-  it("does not advertise absent PDF or OCR dependencies", async () => {
-    const falseCapabilityPatterns = [
-      /\bOCR support\b/i,
-      /\bautomatic OCR\b/i,
-      /\bOCR\/image extraction\b/i,
-      /\bwith OCR\b/i,
-      /\bperform(?:s|ed|ing)? OCR\b/i,
-    ];
-    const allowedBoundaryContext =
-      /\b(?:does not|do not|not|no|future|planned|proposal|candidate|evaluation|benchmark|unsupported|unavailable)\b/i;
+  it("does not advertise absent PDF or OCR dependencies on current product surfaces", async () => {
     const violations = [];
 
-    for (const relativePath of claimBearingPaths()) {
+    for (const relativePath of CURRENT_PRODUCT_SURFACES) {
       const contents = await readRepositoryFile(relativePath);
       for (const match of findMatches(contents, /pdf-parse/i)) {
         violations.push(`${relativePath}:${match}`);
       }
-      for (const pattern of falseCapabilityPatterns) {
-        const globalPattern = new RegExp(pattern.source, `${pattern.flags}g`);
-        for (const match of contents.matchAll(globalPattern)) {
-          const context = contents.slice(
-            Math.max(0, match.index - 100),
-            Math.min(contents.length, match.index + match[0].length + 100),
-          );
-          if (!allowedBoundaryContext.test(context)) {
-            const lineNumber = contents.slice(0, match.index).split("\n").length;
-            violations.push(`${relativePath}:${lineNumber}: ${match[0]}`);
-          }
-        }
+      for (const unit of findOcrClaimViolations(claimUnits(relativePath, contents))) {
+        violations.push(`${relativePath}: ${unit}`);
+      }
+      if (relativePath.endsWith("server/index.js")) {
+        expect(contents, relativePath).toContain("No text was found in the PDF.js text layer.");
+        expect(contents, relativePath).toContain(
+          "Rendering page 1 as an image for host/model visual inspection...",
+        );
+        expect(contents, relativePath).not.toMatch(/OCR fallback/i);
       }
     }
+
+    expect(CURRENT_PRODUCT_SURFACES).toContain("docs/releases/v0.8.6.md");
+    expect(CURRENT_PRODUCT_SURFACES.some(relativePath => /evaluation/i.test(relativePath))).toBe(false);
 
     for (const relativePath of ["package.json", "pdf-toolkit-mcp-share/package.json"]) {
       const packageJson = JSON.parse(await readRepositoryFile(relativePath));
@@ -82,6 +134,50 @@ describe("documentation capability claims", () => {
     }
 
     expect(violations).toEqual([]);
+  });
+
+  it.each([
+    "PDF Tools does not include OCR support.",
+    "A future OCR fallback is planned but not shipped.",
+    "OCR support is unavailable in the current runtime.",
+    "Optional local OCR remains a candidate for evaluation.",
+    "The current package has no built-in OCR engine.",
+    "PDF Tools renders scanned PDF pages for host/model visual inspection.",
+    "The runtime does not recognize scanned text; it returns raster images for visual inspection.",
+  ])("allows explicitly qualified OCR boundary: %s", phrase => {
+    expect(findOcrClaimViolations(splitClaimUnits(phrase))).toEqual([]);
+  });
+
+  it.each([
+    "OCR fallback handles scanned PDFs.",
+    "Built-in OCR reads scans.",
+    "PDF Tools includes OCR for invoices.",
+    "The runtime runs OCR locally.",
+    "PDF Tools performs OCR automatically.",
+    "Scans work with OCR.",
+    "Automatic OCR is available.",
+    "No text layer is required, and PDF Tools includes OCR.",
+    "The runtime has no upload step but performs OCR.",
+    "OCR support is included. Future improvements are planned.",
+    "PDF Tools includes OCR, although no separate service is used.",
+    "No OCR errors occur because built-in OCR reads scans.",
+    "PDF Tools does not fail when it includes OCR.",
+    "Future UI polish includes OCR support today.",
+    "PDF Tools recognizes scanned text.",
+    "PDF Tools extracts text from scanned PDFs.",
+    "PDF Tools reads scanned text automatically.",
+  ])("rejects positive or qualification-bypass OCR claim: %s", phrase => {
+    expect(findOcrClaimViolations(splitClaimUnits(phrase))).not.toEqual([]);
+  });
+
+  it("allows historical and evaluation files to describe former or candidate dependencies", () => {
+    const historicalText =
+      "Version 0.2 used pdf-parse. A candidate OCR engine was evaluated and removed.";
+
+    expect(CURRENT_PRODUCT_SURFACES).not.toContain("docs/releases/v0.2.0.md");
+    expect(CURRENT_PRODUCT_SURFACES).not.toContain("docs/EXTRACTION_EVALUATION.md");
+    expect(historicalText).toContain("pdf-parse");
+    expect(findOcrClaimViolations(splitClaimUnits(historicalText))).toEqual([]);
   });
 
   it("keeps extraction limitations explicit on current product surfaces", async () => {
@@ -119,20 +215,9 @@ describe("documentation capability claims", () => {
       /(?:files|PDFs).{0,80}stay on (?:your|the user's) machine/i,
       /without (?:sending|uploading)(?: files| PDFs?)?(?: to a web app)?/i,
     ];
-    const currentProductPaths = [
-      "README.md",
-      "CLAUDE.md",
-      "docs/MAINTAINERS.md",
-      "docs/releases/v0.8.6.md",
-      "pdf-toolkit-mcp-share/README.md",
-      "manifest.json",
-      "manifest.mcpb.json",
-      "server/index.js",
-      "pdf-toolkit-mcp-share/server/index.js",
-    ];
     const violations = [];
 
-    for (const relativePath of currentProductPaths) {
+    for (const relativePath of CURRENT_PRODUCT_SURFACES) {
       const contents = await readRepositoryFile(relativePath);
       for (const pattern of zeroEgressPatterns) {
         for (const match of findMatches(contents, pattern)) {

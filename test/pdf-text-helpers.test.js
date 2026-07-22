@@ -1,5 +1,32 @@
 import { describe, expect, it } from "vitest";
-import { buildPageTextSegments, searchPageTexts } from "../server/helpers.js";
+import {
+  buildPageTextSegments,
+  preparePdfTextResponse,
+  searchPageTexts,
+} from "../server/helpers.js";
+
+describe("preparePdfTextResponse", () => {
+  it("keeps later meaningful text on the text branch when the bounded prefix is whitespace", () => {
+    const sourceText = `${" ".repeat(50001)}VISIBLE_TAIL`;
+    const response = preparePdfTextResponse(sourceText, { maxChars: 50000 });
+
+    expect(response).toMatchObject({
+      sourceLength: sourceText.length,
+      textFound: true,
+      truncated: true,
+    });
+    expect(response.outputText).toHaveLength(50000);
+    expect(response.outputText.trim()).toBe("");
+  });
+
+  it("keeps a wholly whitespace extraction on the image-fallback branch", () => {
+    const response = preparePdfTextResponse(" ".repeat(50001), { maxChars: 50000 });
+
+    expect(response.textFound).toBe(false);
+    expect(response.truncated).toBe(true);
+    expect(response.outputText).toHaveLength(50000);
+  });
+});
 
 describe("buildPageTextSegments", () => {
   it("returns bounded page text with per-page and total truncation metadata", () => {

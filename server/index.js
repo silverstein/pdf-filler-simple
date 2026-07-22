@@ -194,7 +194,7 @@ async function loadPdfjs() {
   return _pdfjsLoading;
 }
 
-// Load pdfjs-dist + canvas (for image rendering / OCR fallback)
+// Load pdfjs-dist + canvas (for image/raster fallback)
 async function loadImageDependencies() {
   await loadPdfjs();
   if (createCanvas) return;
@@ -699,6 +699,7 @@ import {
   detectSignatureZones,
   computeIoU,
   extractPdfTextWithBounds,
+  preparePdfTextResponse,
   buildPageTextSegments,
   getPageRenderScale,
   getRegionPixelRect,
@@ -3744,7 +3745,9 @@ async function handleToolCall(request) {
 
           // Extract text content using pdfjs-dist
           const result = await withSuppressedStderr(() => extractPdfText(pdfBuffer, max_pages));
-          let extractedText = result.text;
+          const textResponse = preparePdfTextResponse(result.text, { maxChars: MAX_CHARS });
+          const textFound = textResponse.textFound;
+          const extractedText = textResponse.outputText;
           const pageCount = result.totalPages;
           const pagesRead = result.pagesRead;
           const pagePreview = buildPageTextSegments(result.pages, {
@@ -3763,13 +3766,11 @@ async function handleToolCall(request) {
             response += ` (extracted ${pagesRead} of ${pageCount})`;
           }
           response += `\n`;
-          response += `Text Length: ${extractedText.length} characters\n`;
+          response += `Text Length: ${textResponse.sourceLength} characters\n`;
 
           // Truncate if too large for context window
-          let truncated = false;
-          if (extractedText.length > MAX_CHARS) {
-            extractedText = extractedText.substring(0, MAX_CHARS);
-            truncated = true;
+          const truncated = textResponse.truncated;
+          if (truncated) {
             response += `\n⚠️ Output truncated to ${MAX_CHARS} characters. Use max_pages to limit extraction scope.\n`;
           }
 
@@ -3783,11 +3784,11 @@ async function handleToolCall(request) {
           }
 
           // Check if text was extracted
-          if (!extractedText || extractedText.trim().length === 0) {
-            // No text found - try to extract first page as image
+          if (!textFound) {
+            // No PDF.js text-layer text found; render page 1 for host/model visual inspection.
             try {
-              response = `No text could be extracted from this PDF (likely a scanned document).\n`;
-              response += `Converting page 1 to image for visual analysis...\n\n`;
+              response = `No text was found in the PDF.js text layer.\n`;
+              response += `Rendering page 1 as an image for host/model visual inspection...\n\n`;
               response += `File: ${fileName}\n`;
               response += `Size: ${fileSizeKB} KB\n`;
               response += `Pages: ${pageCount}\n`;
@@ -3821,7 +3822,7 @@ async function handleToolCall(request) {
                   pages_read: pagesRead,
                   text_length: 0,
                   text_truncated: false,
-                  text_found: false,
+                  text_found: textFound,
                   content_available: true,
                   extraction_status: "partial",
                   page_previews: pagePreview.pages,
@@ -3850,7 +3851,7 @@ async function handleToolCall(request) {
                   pages_read: pagesRead,
                   text_length: result.text.length,
                   text_truncated: false,
-                  text_found: false,
+                  text_found: textFound,
                   content_available: false,
                   extraction_status: "failed",
                   page_previews: pagePreview.pages,
@@ -3876,10 +3877,10 @@ async function handleToolCall(request) {
               file_name: fileName,
               total_pages: pageCount,
               pages_read: pagesRead,
-              text_length: result.text.length,
+              text_length: textResponse.sourceLength,
               text_truncated: truncated,
-              text_found: extractedText.trim().length > 0,
-              content_available: extractedText.trim().length > 0,
+              text_found: textFound,
+              content_available: textFound,
               extraction_status: extractionPartial ? "partial" : "complete",
               page_previews: pagePreview.pages,
               preview_truncated: pagePreview.truncated,

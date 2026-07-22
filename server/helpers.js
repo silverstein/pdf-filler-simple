@@ -2661,6 +2661,23 @@ function normalizeExtractedText(text) {
     .trim();
 }
 
+export function preparePdfTextResponse(text, { maxChars = 50000 } = {}) {
+  if (!Number.isInteger(maxChars) || maxChars < 1) {
+    throw new Error("maxChars must be an integer >= 1.");
+  }
+
+  const sourceText = String(text ?? "");
+  const textFound = sourceText.trim().length > 0;
+  const truncated = sourceText.length > maxChars;
+
+  return {
+    outputText: truncated ? sourceText.slice(0, maxChars) : sourceText,
+    sourceLength: sourceText.length,
+    textFound,
+    truncated,
+  };
+}
+
 export function buildPageTextSegments(pageTexts, {
   startPage = 1,
   endPage = pageTexts.length,
