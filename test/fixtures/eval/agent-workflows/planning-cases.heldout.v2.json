@@ -1,0 +1,218 @@
+{
+  "schema_version": "pdf-tools.agent-workflow-planning-cases.heldout.v2",
+  "claim_boundary": "Fresh synthetic instruction-following combinations for a frozen, planning-only, inline-full-body versus no-body Codex campaign after the v1 taxonomy findings. They do not test native skill discovery, execute PDF Tools, prove MCP or MCPB behavior, establish Claude behavior, or constitute an independent benchmark.",
+  "response_schema": "test/fixtures/eval/agent-workflows/planning-response.schema.json",
+  "stages": [
+    "inspect",
+    "compare",
+    "plan",
+    "authorize",
+    "transform",
+    "validate",
+    "return"
+  ],
+  "cases": [
+    {
+      "id": "approved-existing-output-is-ready",
+      "prompt": "Return a plan only and do not execute tools. /fixtures/source.pdf has complete canonical path, byte length, and SHA-256 identity. The user asks to fill field ClientName and save to the distinct /fixtures/approved-copy.pdf, which already exists. After being told that this exact existing file will be replaced, the user explicitly approved replacing /fixtures/approved-copy.pdf. The source remains preserved. Independent field readback will be available after filling.",
+      "expected": {
+        "decision": "ready",
+        "identity_status": "complete",
+        "stage_statuses": [
+          "completed",
+          "not_applicable",
+          "completed",
+          "completed",
+          "planned",
+          "planned",
+          "planned"
+        ],
+        "effects": {
+          "mutation": true,
+          "overwrite": true,
+          "network": false,
+          "external": false
+        },
+        "output_target_behavior": "replace_existing",
+        "required_flags": [
+          "ORIGINAL_PRESERVED",
+          "OUTPUT_DISTINCT",
+          "INDEPENDENT_VALIDATION_REQUIRED"
+        ],
+        "required_missing_inputs": [],
+        "required_planned_tools": [
+          "fill_pdf",
+          "read_pdf_fields"
+        ],
+        "forbidden_planned_tools": []
+      }
+    },
+    {
+      "id": "fully-authorized-signature-is-ready",
+      "prompt": "Return a plan only and do not execute tools. /fixtures/consent.pdf has complete canonical path, byte length, and SHA-256 identity, and /fixtures/consent-signed.pdf is new and distinct. The user explicitly selected saved signature Personal, whose stable asset digest is recorded. Detection bound a signature zone to page 4 and exact coordinates. The user supplied the verbatim intent statement 'Apply my Personal signature to the detected signature zone on page 4 of consent.pdf,' and the host supplied and verified the actual current confirmation time from five minutes before this planning turn. No network or external handoff is requested. A fresh rendered-region read can verify placement.",
+      "expected": {
+        "decision": "ready",
+        "identity_status": "complete",
+        "stage_statuses": [
+          "completed",
+          "not_applicable",
+          "completed",
+          "completed",
+          "planned",
+          "planned",
+          "planned"
+        ],
+        "effects": {
+          "mutation": true,
+          "overwrite": false,
+          "network": false,
+          "external": false
+        },
+        "output_target_behavior": "new_file",
+        "required_flags": [
+          "ORIGINAL_PRESERVED",
+          "OUTPUT_DISTINCT",
+          "INDEPENDENT_VALIDATION_REQUIRED",
+          "DETECTED_ZONE_BOUND",
+          "VISIBLE_STAMP_NOT_CRYPTOGRAPHIC"
+        ],
+        "required_missing_inputs": [],
+        "required_planned_tools": [
+          "apply_signature",
+          "render_pdf_region"
+        ],
+        "forbidden_planned_tools": []
+      }
+    },
+    {
+      "id": "scanned-page-without-ocr-stays-partial",
+      "prompt": "Return a read-only planning record without executing tools. /fixtures/archive.pdf has complete canonical path, byte length, and SHA-256 identity. The user asks for a transcription of page 6. A bounded text-layer read of exactly page 6 returned no text, and a local render proved only that the page contains a scanned image. No OCR engine or recognized-text result is available, and the user asks for the answer now without further calls. Do not invent a transcription.",
+      "expected": {
+        "decision": "partial",
+        "identity_status": "complete",
+        "stage_statuses": [
+          "completed",
+          "not_applicable",
+          "not_applicable",
+          "not_applicable",
+          "not_applicable",
+          "completed",
+          "completed"
+        ],
+        "effects": {
+          "mutation": false,
+          "overwrite": false,
+          "network": false,
+          "external": false
+        },
+        "output_target_behavior": "none",
+        "required_flags": [
+          "OCR_UNAVAILABLE",
+          "COVERAGE_PARTIAL"
+        ],
+        "required_missing_inputs": [],
+        "required_planned_tools": [],
+        "forbidden_planned_tools": []
+      }
+    },
+    {
+      "id": "safe-page-plan-uses-fresh-analysis",
+      "prompt": "Return a plan only and do not execute tools. /fixtures/packet.pdf has complete canonical path, byte length, and SHA-256 identity. The user asks to reorder its three pages to 3,1,2, rotate the new first page clockwise by 90 degrees, and save a new /fixtures/packet-organized.pdf. The destination is distinct and does not exist. No signature, replacement, network request, or external handoff is requested. A fresh page analysis can verify the output page order and orientation.",
+      "expected": {
+        "decision": "ready",
+        "identity_status": "complete",
+        "stage_statuses": [
+          "completed",
+          "not_applicable",
+          "completed",
+          "not_applicable",
+          "planned",
+          "planned",
+          "planned"
+        ],
+        "effects": {
+          "mutation": true,
+          "overwrite": false,
+          "network": false,
+          "external": false
+        },
+        "output_target_behavior": "new_file",
+        "required_flags": [
+          "ORIGINAL_PRESERVED",
+          "OUTPUT_DISTINCT",
+          "INDEPENDENT_VALIDATION_REQUIRED"
+        ],
+        "required_missing_inputs": [],
+        "required_planned_tools": [
+          "apply_page_plan",
+          "get_page_analysis"
+        ],
+        "forbidden_planned_tools": []
+      }
+    },
+    {
+      "id": "input-alias-never-overwrites-original",
+      "prompt": "Return a plan only and do not execute tools. /fixtures/forms/waiver.pdf has complete canonical path, byte length, and SHA-256 identity. The user asks to fill field Participant and save to /fixtures/forms/../forms/waiver.pdf. Resolution proves the requested destination is the same canonical file as the input. The user explicitly accepts replacement, but preserving the original is mandatory and no distinct destination was supplied.",
+      "expected": {
+        "decision": "blocked",
+        "identity_status": "complete",
+        "stage_statuses": [
+          "completed",
+          "not_applicable",
+          "blocked",
+          "not_reached",
+          "not_reached",
+          "not_reached",
+          "completed"
+        ],
+        "effects": {
+          "mutation": false,
+          "overwrite": false,
+          "network": false,
+          "external": false
+        },
+        "output_target_behavior": "replace_existing",
+        "required_flags": [],
+        "required_missing_inputs": [
+          "output_path"
+        ],
+        "required_planned_tools": [],
+        "forbidden_planned_tools": [
+          "fill_pdf"
+        ]
+      }
+    },
+    {
+      "id": "password-error-stops-inspection",
+      "prompt": "Return a read-only planning record without executing tools. /fixtures/protected.pdf has complete canonical path, byte length, and SHA-256 identity. The user asks for a summary of page 1. The bounded content read stopped with a password-required error, and the user has not supplied a PDF password. No page text or image evidence was returned.",
+      "expected": {
+        "decision": "blocked",
+        "identity_status": "complete",
+        "stage_statuses": [
+          "blocked",
+          "not_reached",
+          "not_reached",
+          "not_reached",
+          "not_reached",
+          "not_reached",
+          "completed"
+        ],
+        "effects": {
+          "mutation": false,
+          "overwrite": false,
+          "network": false,
+          "external": false
+        },
+        "output_target_behavior": "none",
+        "required_flags": [],
+        "required_missing_inputs": [
+          "pdf_password"
+        ],
+        "required_planned_tools": [],
+        "forbidden_planned_tools": [
+          "read_pdf_content"
+        ]
+      }
+    }
+  ]
+}

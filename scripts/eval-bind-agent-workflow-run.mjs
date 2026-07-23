@@ -149,7 +149,10 @@ export async function bindAgentWorkflowRun({
   if (
     heldout
     && (
-      preparation.protocol_id !== "inline-full-body-heldout-v1"
+      (
+        preparation.protocol_id !== "inline-full-body-heldout-v1"
+        && preparation.protocol_id !== "inline-full-body-heldout-v2"
+      )
       || !scheduledRun
       || scheduledRun.arm !== arm
       || scheduledRun.case_id !== caseId
@@ -384,7 +387,9 @@ export async function bindAgentWorkflowRun({
       plan,
     );
     if (
-      intervention?.id !== "full_skill_markdown_in_user_prompt_v1"
+      !/^full_skill_markdown_in_user_prompt_v[12]$/.test(
+        intervention?.id ?? "",
+      )
       || userMessages.length !== 2
       || userMessages.some(item => item.content.length !== 1)
       || sha256(capturedPrompt) !== expectedPromptSha

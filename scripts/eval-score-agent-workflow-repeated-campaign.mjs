@@ -123,7 +123,10 @@ export async function scoreRepeatedAgentWorkflowCampaign({
   const preparation = parseJson(preparationBytes, "preparation manifest");
   const oracle = parseJson(oracleBytes, "oracle");
   if (
-    preparation.protocol_id !== "inline-full-body-heldout-v1"
+    ![
+      "inline-full-body-heldout-v1",
+      "inline-full-body-heldout-v2",
+    ].includes(preparation.protocol_id)
     || oracle.protocol_id !== preparation.protocol_id
     || oracle.source_commit !== preparation.source_commit
     || sha256(oracleBytes) !== preparation.oracle_sha256
@@ -284,6 +287,8 @@ export async function scoreRepeatedAgentWorkflowCampaign({
   const rawEventHashes = runs.map(
     run => run.manifest.event_validation.raw_sha256,
   );
+  const compoundEventIds = runs.map(run =>
+    `${run.manifest.event_validation.thread_id}\0${run.manifest.event_validation.agent_message_item_id}`);
   const developerDigests = new Set(runs.map(
     run => run.manifest.prompt_input_evidence.normalized_developer_sha256,
   ));
@@ -297,7 +302,7 @@ export async function scoreRepeatedAgentWorkflowCampaign({
     || threadIds.some(value => typeof value !== "string" || !value)
     || new Set(threadIds).size !== runs.length
     || messageItemIds.some(value => typeof value !== "string" || !value)
-    || new Set(messageItemIds).size !== runs.length
+    || new Set(compoundEventIds).size !== runs.length
     || rawEventHashes.some(value => typeof value !== "string" || !value)
     || new Set(rawEventHashes).size !== runs.length
     || developerDigests.size !== 1
@@ -381,7 +386,7 @@ export async function scoreRepeatedAgentWorkflowCampaign({
     treatmentOnlyExactWins >= 6 && controlOnlyExactWins === 0;
 
   const result = {
-    schema_version: "pdf-tools.agent-workflow-repeated-campaign-score.v1",
+    schema_version: "pdf-tools.agent-workflow-repeated-campaign-score.v2",
     claim_boundary: "Descriptive paired planning evidence for exact workflow Markdown present in the Codex user prompt versus absent. No inferential population claim, native skill-loading claim, PDF execution claim, MCP or MCPB claim, Claude claim, or independent benchmark claim is supported.",
     source_commit: preparation.source_commit,
     protocol_id: preparation.protocol_id,

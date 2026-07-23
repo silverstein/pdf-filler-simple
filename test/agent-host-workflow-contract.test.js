@@ -196,6 +196,24 @@ describe("cross-host PDF Tools workflow contract", () => {
     );
     expect(skill).toMatch(/do not list unrelated tools as prohibited/i);
     expect(skill).toMatch(/ready form fill plans `fill_pdf` followed by `read_pdf_fields`/i);
+    expect(skill).toMatch(
+      /gated mutation cannot proceed[\s\S]*`PRE_MUTATION_AUTHORIZATION_REQUIRED`/i,
+    );
+    expect(skill).toMatch(
+      /`read_only_complete` means the exact bounded read-only question[\s\S]*`partial` means the requested conclusion itself cannot be completed/i,
+    );
+    expect(skill).toMatch(
+      /missing destination still uses\s+`new_file` and reports `output_path` as missing/i,
+    );
+    expect(skill).toMatch(
+      /destination resolves to an input[\s\S]*`replace_existing`[\s\S]*`output_path` as missing/i,
+    );
+    expect(skill).toMatch(
+      /structured plan to apply a visible signature stamp[\s\S]*`VISIBLE_STAMP_NOT_CRYPTOGRAPHIC`[\s\S]*`DETECTED_ZONE_BOUND`/i,
+    );
+    expect(skill).toMatch(
+      /no OCR engine or recognized-text result exists[\s\S]*`OCR_UNAVAILABLE` and `COVERAGE_PARTIAL`/i,
+    );
     const hostWorkflowGuide = await readText("docs/AGENT_HOST_WORKFLOWS.md");
     expect(hostWorkflowGuide).toContain("eval-attest-agent-workflow-arm.mjs");
     expect(hostWorkflowGuide).toContain("eval-run-codex-agent-workflow-case.mjs");
@@ -288,6 +306,11 @@ describe("cross-host PDF Tools workflow contract", () => {
     );
     expect(schema.properties.missing_inputs.items.enum).toContain(
       "verbatim_user_intent",
+    );
+    expect(schema.properties.missing_inputs.items.enum).toContain("pdf_password");
+    expect(schema.properties.safety_flags.items.enum).toContain("OCR_UNAVAILABLE");
+    expect(schema.properties.planned_tools.items.enum).toEqual(
+      expect.arrayContaining(["apply_page_plan", "get_page_analysis"]),
     );
   });
 

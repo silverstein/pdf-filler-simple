@@ -23,7 +23,7 @@ const HELDOUT = JSON.parse(await fs.readFile(path.join(
   "fixtures",
   "eval",
   "agent-workflows",
-  "planning-cases.heldout.v1.json",
+  "planning-cases.heldout.v2.json",
 ), "utf8"));
 const roots = [];
 
@@ -81,7 +81,7 @@ if (args[0] === "--version") {
     {
       type: "item.completed",
       item: {
-        id: \`item_\${identity}\`,
+        id: "item_0",
         type: "agent_message",
         text: JSON.stringify(response),
       },
@@ -154,7 +154,7 @@ describe("repeated agent workflow campaign", () => {
     const preparation = await prepareAgentWorkflowCampaign({
       participantsDestination: participants,
       oracleDestination: oracleRoot,
-      protocolId: "inline-full-body-heldout-v1",
+      protocolId: "inline-full-body-heldout-v2",
     });
     const codexBinary = await fakeCodex(root);
     const sandboxBinary = await fakeSandbox(root);

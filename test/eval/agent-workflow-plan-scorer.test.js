@@ -23,7 +23,7 @@ const HELDOUT_CASES = JSON.parse(await fs.readFile(path.join(
   "fixtures",
   "eval",
   "agent-workflows",
-  "planning-cases.heldout.v1.json",
+  "planning-cases.heldout.v2.json",
 ), "utf8"));
 const STAGES = CASES.stages;
 const RESPONSE_SCHEMA = JSON.parse(await fs.readFile(path.join(

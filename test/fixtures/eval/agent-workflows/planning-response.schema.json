@@ -116,6 +116,8 @@
           "render_pdf_region",
           "fill_pdf",
           "validate_pdf",
+          "get_page_analysis",
+          "apply_page_plan",
           "detect_signature_zones",
           "apply_signature",
           "fetch_pdf_from_url"
@@ -128,6 +130,8 @@
       "items": {
         "enum": [
           "fill_pdf",
+          "read_pdf_content",
+          "apply_page_plan",
           "apply_signature",
           "fetch_pdf_from_url"
         ]
@@ -151,7 +155,8 @@
           "UNOBSERVED_SURFACES_UNKNOWN",
           "ORIGINAL_PRESERVED",
           "OUTPUT_DISTINCT",
-          "INDEPENDENT_VALIDATION_REQUIRED"
+          "INDEPENDENT_VALIDATION_REQUIRED",
+          "OCR_UNAVAILABLE"
         ]
       }
     },
@@ -165,7 +170,8 @@
           "verbatim_user_intent",
           "current_confirmation_time",
           "output_path",
-          "existing_output_replacement_approval"
+          "existing_output_replacement_approval",
+          "pdf_password"
         ]
       }
     },

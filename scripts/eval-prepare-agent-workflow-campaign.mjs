@@ -25,6 +25,14 @@ const HELDOUT_CASES_PATH = path.join(
   "agent-workflows",
   "planning-cases.heldout.v1.json",
 );
+const HELDOUT_V2_CASES_PATH = path.join(
+  REPO_ROOT,
+  "test",
+  "fixtures",
+  "eval",
+  "agent-workflows",
+  "planning-cases.heldout.v2.json",
+);
 const RUBRIC_PATH = path.join(
   REPO_ROOT,
   "test",
@@ -72,6 +80,7 @@ export const CONDITION_END =
   "<<<END PDF TOOLS CAMPAIGN CONDITION>>>";
 const PROTOCOLS = {
   "metadata-regression-v1": {
+    kind: "metadata-regression",
     casesPath: REGRESSION_CASES_PATH,
     armNames: REGRESSION_ARM_NAMES,
     explicitCodexArms: REGRESSION_EXPLICIT_CODEX_ARMS,
@@ -79,17 +88,31 @@ const PROTOCOLS = {
     claimBoundary: "Prompt-only participant roots and the trusted oracle have independent destinations. Transfer only the participant root to a model host. This preparation does not run or validate a model host.",
   },
   "inline-full-body-heldout-v1": {
+    kind: "inline-full-body-heldout",
     casesPath: HELDOUT_CASES_PATH,
     armNames: [FULL_BODY_TREATMENT_ARM, FULL_BODY_CONTROL_ARM],
     explicitCodexArms: new Set([FULL_BODY_TREATMENT_ARM, FULL_BODY_CONTROL_ARM]),
     repetitions: 3,
+    interventionId: "full_skill_markdown_in_user_prompt_v1",
+    frozenSkillBytes: 11702,
+    frozenSkillSha256:
+      "8196ad2ad4e6969428e0f1ca482bd13b4a463036fe53aee544ce5c73ab9a42a7",
     claimBoundary: "Planning-only, inline-full-body versus no-body Codex prompt trials. The treatment proves only that exact workflow Markdown was present in the user prompt. It does not prove native skill discovery, PDF execution, MCP, MCPB, Claude behavior, or an independent benchmark.",
+  },
+  "inline-full-body-heldout-v2": {
+    kind: "inline-full-body-heldout",
+    casesPath: HELDOUT_V2_CASES_PATH,
+    armNames: [FULL_BODY_TREATMENT_ARM, FULL_BODY_CONTROL_ARM],
+    explicitCodexArms: new Set([FULL_BODY_TREATMENT_ARM, FULL_BODY_CONTROL_ARM]),
+    repetitions: 3,
+    interventionId: "full_skill_markdown_in_user_prompt_v2",
+    frozenSkillBytes: 13487,
+    frozenSkillSha256:
+      "4bcc22a21497dbc3ec8dcdbba2fa6497a307f7aa8b0a9d10369da892695064ff",
+    claimBoundary: "Fresh v2 planning-only, inline-full-body versus no-body Codex prompt trials after preserving the v1 NO-GO. The treatment proves only that exact workflow Markdown was present in the user prompt. It does not prove native skill discovery, PDF execution, MCP, MCPB, Claude behavior, or an independent benchmark.",
   },
 };
 const DEFAULT_PROTOCOL = "metadata-regression-v1";
-const FROZEN_HELDOUT_SKILL_BYTES = 11702;
-const FROZEN_HELDOUT_SKILL_SHA256 =
-  "8196ad2ad4e6969428e0f1ca482bd13b4a463036fe53aee544ce5c73ab9a42a7";
 const SYNTHETIC_GIT_ENV = {
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_NOSYSTEM: "1",
@@ -331,6 +354,7 @@ export async function prepareAgentWorkflowCampaign({
 }) {
   const protocol = PROTOCOLS[protocolId];
   if (!protocol) throw new Error(`unsupported campaign protocol: ${protocolId}`);
+  const isHeldout = protocol.kind === "inline-full-body-heldout";
   if (!path.isAbsolute(participantsDestination)) {
     throw new Error("participantsDestination must be absolute");
   }
@@ -368,14 +392,14 @@ export async function prepareAgentWorkflowCampaign({
   const skillBodyBytes = await fs.readFile(path.join(SKILL_ROOT, "SKILL.md"));
   const skillBody = skillBodyBytes.toString("utf8");
   if (
-    protocolId === "inline-full-body-heldout-v1"
+    isHeldout
     && (
-      skillBodyBytes.length !== FROZEN_HELDOUT_SKILL_BYTES
-      || sha256(skillBodyBytes) !== FROZEN_HELDOUT_SKILL_SHA256
+      skillBodyBytes.length !== protocol.frozenSkillBytes
+      || sha256(skillBodyBytes) !== protocol.frozenSkillSha256
     )
   ) {
     throw new Error(
-      "held-out v1 requires the frozen a2e541b PDF workflow skill body",
+      `${protocolId} requires its exact frozen PDF workflow skill body`,
     );
   }
 
@@ -389,7 +413,7 @@ export async function prepareAgentWorkflowCampaign({
           path.join(caseRoot, "response-schema.json"),
           compatibleSchema,
         );
-        const prompt = protocolId === "inline-full-body-heldout-v1"
+        const prompt = isHeldout
           ? heldoutParticipantPrompt(testCase, embeddedRubric, {
             skillBody: arm === FULL_BODY_TREATMENT_ARM ? skillBody : "",
           })
@@ -480,7 +504,7 @@ export async function prepareAgentWorkflowCampaign({
     `${JSON.stringify(oracle, null, 2)}\n`,
   );
 
-  const pairedCaseContracts = protocolId === "inline-full-body-heldout-v1"
+  const pairedCaseContracts = isHeldout
     ? Object.fromEntries(await Promise.all(cases.cases.map(async testCase => {
       const treatmentPrompt = await fs.readFile(path.join(
         participantsRoot,
@@ -515,14 +539,14 @@ export async function prepareAgentWorkflowCampaign({
       }];
     })))
     : null;
-  const runSchedule = protocolId === "inline-full-body-heldout-v1"
+  const runSchedule = isHeldout
     ? balancedHeldoutSchedule(
       cases.cases.map(testCase => testCase.id),
       protocol.repetitions,
     )
     : [];
   const manifest = {
-    schema_version: protocolId === "inline-full-body-heldout-v1"
+    schema_version: isHeldout
       ? "pdf-tools.agent-workflow-campaign-preparation.v2"
       : "pdf-tools.agent-workflow-campaign-preparation.v1",
     protocol_id: protocolId,
@@ -530,12 +554,12 @@ export async function prepareAgentWorkflowCampaign({
     claim_boundary: protocol.claimBoundary,
     arm_names: protocol.armNames,
     repetitions: protocol.repetitions,
-    sampling_seed: protocolId === "inline-full-body-heldout-v1"
+    sampling_seed: isHeldout
       ? "unavailable"
       : null,
-    intervention: protocolId === "inline-full-body-heldout-v1"
+    intervention: isHeldout
       ? {
-        id: "full_skill_markdown_in_user_prompt_v1",
+        id: protocol.interventionId,
         treatment_arm: FULL_BODY_TREATMENT_ARM,
         control_arm: FULL_BODY_CONTROL_ARM,
         skill_body_bytes: skillBodyBytes.length,

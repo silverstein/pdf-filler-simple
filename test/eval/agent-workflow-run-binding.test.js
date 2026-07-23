@@ -273,9 +273,9 @@ describe("agent workflow run binding", () => {
     "codex-prompt-no-skill-body",
   ])("binds exact held-out prompt intervention evidence for %s", async arm => {
     const run = await preparedRun({
-      protocolId: "inline-full-body-heldout-v1",
+      protocolId: "inline-full-body-heldout-v2",
       arm,
-      caseId: "missing-output-path-blocks-plan",
+      caseId: "approved-existing-output-is-ready",
     });
     const outputPath = path.join(run.resultsRoot, "run-manifest.json");
     const manifest = await bindAgentWorkflowRun({
@@ -291,7 +291,7 @@ describe("agent workflow run binding", () => {
       run_id: run.scheduled.run_id,
       schedule_ordinal: run.scheduled.ordinal,
       intervention_evidence: {
-        id: "full_skill_markdown_in_user_prompt_v1",
+        id: "full_skill_markdown_in_user_prompt_v2",
         condition: arm === "codex-prompt-full-skill-body"
           ? "full_skill_body_present"
           : "no_skill_body_present",

@@ -278,15 +278,15 @@ describe("agent workflow campaign preparation", () => {
     const manifest = await prepareAgentWorkflowCampaign({
       participantsDestination: participants,
       oracleDestination: trusted,
-      protocolId: "inline-full-body-heldout-v1",
+      protocolId: "inline-full-body-heldout-v2",
     });
 
     expect(manifest).toMatchObject({
-      protocol_id: "inline-full-body-heldout-v1",
+      protocol_id: "inline-full-body-heldout-v2",
       arm_names: [FULL_BODY_TREATMENT_ARM, FULL_BODY_CONTROL_ARM],
       repetitions: 3,
       intervention: {
-        id: "full_skill_markdown_in_user_prompt_v1",
+        id: "full_skill_markdown_in_user_prompt_v2",
         treatment_arm: FULL_BODY_TREATMENT_ARM,
         control_arm: FULL_BODY_CONTROL_ARM,
       },
@@ -311,28 +311,28 @@ describe("agent workflow campaign preparation", () => {
       .filter(run => run.repeat_index === repeatIndex && run.pair_position === 1)
       .map(run => run.case_id))).toEqual([
       [
-        "missing-output-path-blocks-plan",
-        "existing-output-needs-specific-approval",
-        "preview-click-does-not-authorize-signature",
-        "safe-fill-ignores-embedded-fetch",
-        "partial-diff-rejects-embedded-fetch",
-        "bounded-summary-needs-no-diff-flags",
+        "approved-existing-output-is-ready",
+        "fully-authorized-signature-is-ready",
+        "scanned-page-without-ocr-stays-partial",
+        "safe-page-plan-uses-fresh-analysis",
+        "input-alias-never-overwrites-original",
+        "password-error-stops-inspection",
       ],
       [
-        "preview-click-does-not-authorize-signature",
-        "safe-fill-ignores-embedded-fetch",
-        "partial-diff-rejects-embedded-fetch",
-        "bounded-summary-needs-no-diff-flags",
-        "missing-output-path-blocks-plan",
-        "existing-output-needs-specific-approval",
+        "scanned-page-without-ocr-stays-partial",
+        "safe-page-plan-uses-fresh-analysis",
+        "input-alias-never-overwrites-original",
+        "password-error-stops-inspection",
+        "approved-existing-output-is-ready",
+        "fully-authorized-signature-is-ready",
       ],
       [
-        "partial-diff-rejects-embedded-fetch",
-        "bounded-summary-needs-no-diff-flags",
-        "missing-output-path-blocks-plan",
-        "existing-output-needs-specific-approval",
-        "preview-click-does-not-authorize-signature",
-        "safe-fill-ignores-embedded-fetch",
+        "input-alias-never-overwrites-original",
+        "password-error-stops-inspection",
+        "approved-existing-output-is-ready",
+        "fully-authorized-signature-is-ready",
+        "scanned-page-without-ocr-stays-partial",
+        "safe-page-plan-uses-fresh-analysis",
       ],
     ]);
 
@@ -344,7 +344,7 @@ describe("agent workflow campaign preparation", () => {
       "pdf-tools-workflow",
       "SKILL.md",
     ), "utf8");
-    const caseId = "missing-output-path-blocks-plan";
+    const caseId = "approved-existing-output-is-ready";
     const treatmentPrompt = await fs.readFile(path.join(
       participants,
       FULL_BODY_TREATMENT_ARM,
@@ -382,7 +382,7 @@ describe("agent workflow campaign preparation", () => {
       path.join(trusted, "oracle.json"),
       "utf8",
     ));
-    expect(oracle.protocol_id).toBe("inline-full-body-heldout-v1");
+    expect(oracle.protocol_id).toBe("inline-full-body-heldout-v2");
     expect(oracle.cases).toHaveLength(6);
   });
 });

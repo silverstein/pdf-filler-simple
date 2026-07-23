@@ -80,6 +80,10 @@ configure an MCP server.
    - selected raster regions only when visual evidence is necessary.
 4. State coverage and gaps. PDF Tools has no bundled OCR engine. A textless
    result or page image is not recognized text.
+5. When the user requests recognized text but only a scanned image is
+   available and no OCR engine or recognized-text result exists, a structured
+   planning record reports `OCR_UNAVAILABLE` and `COVERAGE_PARTIAL`. Do not
+   invent a transcription or repeat a text-layer call as if it were OCR.
 
 ## 2. Compare
 
@@ -131,6 +135,11 @@ event into signature intent.
 
 For a local, original-preserving operation with a new output and no signature,
 network, or external effect, record this stage as not applicable.
+
+When a gated mutation cannot proceed because its required approval is missing,
+including replacement of an existing output or application of a signature, a
+structured planning record reports `PRE_MUTATION_AUTHORIZATION_REQUIRED`.
+Do not emit that flag after the exact gated effect has been authorized.
 
 ## 5. Transform
 
@@ -195,6 +204,16 @@ When the host requests a structured planning response:
 - never claim a full diff, legal signature, or UI-derived authorization unless
   the evidence proves that exact assertion.
 
+Use decision values by requested scope:
+
+- `read_only_complete` means the exact bounded read-only question the user
+  asked has been answered from the supplied evidence. It may coexist with
+  explicit coverage-gap flags for pages or surfaces outside that requested
+  scope.
+- `partial` means the requested conclusion itself cannot be completed from the
+  supplied evidence. For example, bounded pages cannot establish whether two
+  full documents are identical.
+
 Use these stage semantics:
 
 - Compare is not applicable for a single-document task.
@@ -218,15 +237,26 @@ Use these stage semantics:
 Use these record boundaries:
 
 - Preserve the requested output-target behavior even when execution is blocked.
+- `output_target_behavior` describes the requested artifact behavior, not
+  whether an exact destination string has already been supplied. A requested
+  original-preserving mutation with a missing destination still uses
+  `new_file` and reports `output_path` as missing. Use `none` only when the
+  request produces no output artifact.
+- If a supplied destination resolves to an input, treat the output target as
+  invalid. Preserve the requested `replace_existing` behavior, block the plan,
+  and report `output_path` as missing because no valid distinct destination is
+  available.
 - Reserve `NO_MUTATION` for a mutation stopped by missing required PDF
   artifact identity. It is not a generic blocked-execution flag: do not emit it
   for an authorization-only block when the PDF artifact identity is complete.
   A read-only result already has no mutation effect.
 - Do not add comparison-coverage flags to a bounded summary when the evidence
   exactly covers the pages the user requested.
-- An incompletely authorized visible signature stamp always reports
-  `VISIBLE_STAMP_NOT_CRYPTOGRAPHIC` in addition to the directly applicable
-  authorization, asset-identity, and detected-zone flags.
+- Any structured plan to apply a visible signature stamp reports
+  `VISIBLE_STAMP_NOT_CRYPTOGRAPHIC`. When a detected zone is bound to the
+  identified document page and coordinates, it also reports
+  `DETECTED_ZONE_BOUND`, whether the plan is ready or blocked. Add
+  authorization or asset-identity flags only when those gaps are present.
 - When identity or authorization blocks a mutation, plan no mutating or
   validation tools.
 - A ready form fill plans `fill_pdf` followed by `read_pdf_fields` as the
