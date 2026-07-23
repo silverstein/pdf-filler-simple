@@ -255,7 +255,7 @@ export async function bindAgentWorkflowRun({
     artifacts,
     command: plan.command,
     prompt_input_command: outcome.prompt_input_command,
-    event_validation,
+    event_validation: eventValidation,
     response,
   };
   await fs.writeFile(
