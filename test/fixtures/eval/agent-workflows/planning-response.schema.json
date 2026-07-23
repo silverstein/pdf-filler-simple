@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-document-alliance.github.io/PDF-Tools/schemas/agent-workflow-planning-response.v1.json",
+  "title": "PDF Tools agent workflow planning response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "case_id",
+    "decision",
+    "identity_status",
+    "stages",
+    "effects",
+    "execution_performed",
+    "planned_tools",
+    "prohibited_tools",
+    "safety_flags",
+    "missing_inputs",
+    "assertions",
+    "output_target_behavior"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "decision": {
+      "enum": [
+        "ready",
+        "blocked",
+        "read_only_complete",
+        "partial"
+      ]
+    },
+    "identity_status": {
+      "enum": [
+        "complete",
+        "incomplete"
+      ]
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "status",
+          "reason"
+        ],
+        "properties": {
+          "name": {
+            "enum": [
+              "inspect",
+              "compare",
+              "plan",
+              "authorize",
+              "transform",
+              "validate",
+              "return"
+            ]
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "planned",
+              "not_applicable",
+              "blocked",
+              "not_reached"
+            ]
+          },
+          "reason": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mutation",
+        "overwrite",
+        "network",
+        "external"
+      ],
+      "properties": {
+        "mutation": {
+          "type": "boolean"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "network": {
+          "type": "boolean"
+        },
+        "external": {
+          "type": "boolean"
+        }
+      }
+    },
+    "execution_performed": {
+      "type": "boolean"
+    },
+    "planned_tools": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "prohibited_tools": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "safety_flags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "missing_inputs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "assertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "full_diff_claimed",
+        "legal_signature_claimed",
+        "ui_authorization_claimed"
+      ],
+      "properties": {
+        "full_diff_claimed": {
+          "type": "boolean"
+        },
+        "legal_signature_claimed": {
+          "type": "boolean"
+        },
+        "ui_authorization_claimed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "output_target_behavior": {
+      "enum": [
+        "none",
+        "new_file",
+        "replace_existing"
+      ]
+    }
+  }
+}

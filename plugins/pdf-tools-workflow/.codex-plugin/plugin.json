@@ -1,6 +1,6 @@
 {
   "name": "pdf-tools-workflow",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "description": "A host-portable, evidence-first workflow for using a separately configured PDF Tools MCP connection.",
   "author": {
     "name": "Open Document Alliance",
@@ -19,7 +19,7 @@
   "interface": {
     "displayName": "PDF Tools Workflow",
     "shortDescription": "Review and transform PDFs with evidence.",
-    "longDescription": "Guide an agent through bounded inspection, comparison, original-preserving transformation, independent validation, approval, and return.",
+    "longDescription": "Guide an agent through bounded inspection, comparison, planning, pre-effect authorization, original-preserving transformation, independent validation, and return.",
     "developerName": "Open Document Alliance",
     "category": "Productivity",
     "capabilities": [

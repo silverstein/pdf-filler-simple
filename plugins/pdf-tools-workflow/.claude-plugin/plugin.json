@@ -1,6 +1,6 @@
 {
   "name": "pdf-tools-workflow",
-  "version": "0.1.0",
+  "version": "0.1.0-alpha.1",
   "description": "A host-portable, evidence-first workflow for using a separately configured PDF Tools MCP connection.",
   "author": {
     "name": "Open Document Alliance",

@@ -1,7 +1,7 @@
 {
   "schema_version": "pdf-tools.agent-workflow-tasks.v1",
   "claim_boundary": "Static cross-host task definitions. No native-host completion or benchmark claim is made.",
-  "stage_accounting": "Every stage must be completed, marked not applicable with a reason, or reported blocked. A blocked stage ends the workflow.",
+  "stage_accounting": "Every stage must be completed, planned, marked not applicable with a reason, reported blocked, or marked not reached after a block. Return still records a blocked workflow.",
   "tasks": [
     {
       "id": "inspect-and-answer",
@@ -37,9 +37,10 @@
       "mutates": true,
       "required_stages": [
         "inspect",
+        "plan",
+        "authorize",
         "transform",
         "validate",
-        "approve",
         "return"
       ],
       "success_evidence": [
@@ -53,9 +54,10 @@
       "mutates": true,
       "required_stages": [
         "inspect",
+        "plan",
+        "authorize",
         "transform",
         "validate",
-        "approve",
         "return"
       ],
       "success_evidence": [
@@ -69,9 +71,10 @@
       "mutates": true,
       "required_stages": [
         "inspect",
+        "plan",
+        "authorize",
         "transform",
         "validate",
-        "approve",
         "return"
       ],
       "success_evidence": [
@@ -85,14 +88,19 @@
       "mutates": true,
       "required_stages": [
         "inspect",
+        "plan",
+        "authorize",
         "transform",
         "validate",
-        "approve",
         "return"
       ],
       "success_evidence": [
         "exact_user_intent",
         "current_confirmation_time",
+        "pre_mutation_authorization",
+        "detected_zone_provenance",
+        "document_page_coordinate_binding",
+        "signature_asset_identity_or_explicit_gap",
         "independent_placement_readback",
         "noncryptographic_disclaimer"
       ]

@@ -4,9 +4,10 @@
   "stages": [
     "inspect",
     "compare",
+    "plan",
+    "authorize",
     "transform",
     "validate",
-    "approve",
     "return"
   ],
   "identity": {
@@ -54,8 +55,16 @@
   "signature": {
     "explicit_user_intent_required": true,
     "intent_may_be_fabricated": false,
+    "authorization_before_transform": true,
+    "detected_zone_binding_required": true,
+    "stable_signature_asset_identity_must_be_reported": true,
     "ui_approval_is_authorization": false,
     "cryptographic_claim_allowed": false
+  },
+  "network": {
+    "user_requested_url_required": true,
+    "custom_headers_allowed": false,
+    "credentials_allowed": false
   },
   "presentation": {
     "rich_ui_required": false,
@@ -67,6 +76,8 @@
   "stage_accounting": {
     "ordered": true,
     "not_applicable_reason_required": true,
-    "blocked_stages_must_not_be_reported_as_completed": true
+    "blocked_stages_must_not_be_reported_as_completed": true,
+    "intervening_stages_after_block_must_be_not_reached": true,
+    "return_runs_after_block": true
   }
 }

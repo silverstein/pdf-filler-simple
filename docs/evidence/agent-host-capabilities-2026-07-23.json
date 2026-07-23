@@ -162,6 +162,16 @@
       ]
     },
     {
+      "id": "anthropic-claude-plugins",
+      "publisher": "Anthropic",
+      "title": "Use plugins in Claude",
+      "url": "https://support.claude.com/en/articles/13837440-use-plugins-in-claude",
+      "supports": [
+        "plugin skills in web Chat, Claude Desktop Chat, and Cowork",
+        "custom plugin upload and repository marketplace installation"
+      ]
+    },
+    {
       "id": "anthropic-claude-desktop-local-mcp",
       "publisher": "Anthropic",
       "title": "Getting Started with Local MCP Servers on Claude Desktop",
@@ -180,6 +190,16 @@
         "Cowork plugins bundle skills and connectors",
         "local file access requires a connected desktop app",
         "remote execution and provider retention boundary"
+      ]
+    },
+    {
+      "id": "anthropic-cowork-architecture",
+      "publisher": "Anthropic",
+      "title": "Claude Cowork architecture overview",
+      "url": "https://support.claude.com/en/articles/14479288-claude-cowork-architecture-overview",
+      "supports": [
+        "remote-by-default Cowork execution boundary",
+        "existing local desktop session execution boundary"
       ]
     },
     {
@@ -268,11 +288,12 @@
       "id": "claude-desktop-chat",
       "label": "Claude Desktop Chat",
       "workflow_instructions": {
-        "status": "not_portably_installable_from_this_plugin",
-        "mechanism": "Use the same workflow as prompt guidance; do not claim Codex or Claude Code plugin installation",
+        "status": "documented_plugin_skill_support_exact_install_pending",
+        "mechanism": "Install through custom plugin upload or a repository marketplace; exact package behavior still requires a native trial",
         "source_ids": [
-          "anthropic-claude-desktop-local-mcp",
-          "anthropic-claude-code-plugins"
+          "anthropic-claude-plugins",
+          "anthropic-claude-code-plugins",
+          "anthropic-claude-code-marketplaces"
         ]
       },
       "pdf_tools_connection": {
@@ -297,7 +318,7 @@
           "anthropic-claude-desktop-local-mcp"
         ]
       },
-      "prototype_status": "workflow_prompt_only_native_run_pending"
+      "prototype_status": "static_contract_ready_native_install_pending"
     },
     {
       "id": "claude-cowork",
@@ -306,7 +327,8 @@
         "status": "host_plugins_documented_exact_marketplace_unverified",
         "mechanism": "Cowork plugins support workflow skills, but this exact marketplace requires a native install trial",
         "source_ids": [
-          "anthropic-cowork"
+          "anthropic-cowork",
+          "anthropic-claude-plugins"
         ]
       },
       "pdf_tools_connection": {
@@ -326,10 +348,11 @@
         ]
       },
       "filesystem_boundary": {
-        "status": "remote_session_with_desktop_reach_through",
-        "mechanism": "Local files require a connected desktop app and granted folders; session data is processed by Anthropic",
+        "status": "mode_dependent_local_or_remote",
+        "mechanism": "Remote-by-default sessions use Anthropic infrastructure and a desktop permission bridge; existing local desktop sessions can run the agent loop, local files, and plugin MCP on the device",
         "source_ids": [
-          "anthropic-cowork"
+          "anthropic-cowork",
+          "anthropic-cowork-architecture"
         ]
       },
       "prototype_status": "static_contract_ready_native_run_pending"
