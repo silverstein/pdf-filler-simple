@@ -157,6 +157,7 @@ export async function prepareAgentWorkflowCampaign({
   const cases = JSON.parse(casesBytes);
   const rubricBytes = await fs.readFile(RUBRIC_PATH);
   const rubric = rubricBytes.toString("utf8");
+  const embeddedRubric = rubric.trim();
   const responseSchemaPath = path.join(REPO_ROOT, cases.response_schema);
   const responseSchemaBytes = await fs.readFile(responseSchemaPath);
   const responseSchema = JSON.parse(responseSchemaBytes);
@@ -170,7 +171,7 @@ export async function prepareAgentWorkflowCampaign({
     for (const testCase of cases.cases) {
       await writePrivate(
         path.join(promptsRoot, `${testCase.id}.txt`),
-        `${participantPrompt(testCase, rubric)}\n`,
+        `${participantPrompt(testCase, embeddedRubric)}\n`,
       );
     }
   }
@@ -194,7 +195,8 @@ export async function prepareAgentWorkflowCampaign({
     schema_version: cases.schema_version,
     source_commit: sourceCommit,
     cases_sha256: sha256(casesBytes),
-    rubric_sha256: sha256(rubricBytes),
+    rubric_source_sha256: sha256(rubricBytes),
+    rubric_embedded_sha256: sha256(embeddedRubric),
     response_schema_sha256: sha256(responseSchemaBytes),
     cases: cases.cases.map(testCase => ({
       id: testCase.id,

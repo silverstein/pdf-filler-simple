@@ -316,14 +316,15 @@ or remote architecture.
 Run each frozen planning case with and without the skill. The five initial cases
 cover missing identity, embedded instructions, incomplete signature
 authorization, partial comparison, and safe distinct-output filling. The same
-case-independent response-classification rubric is embedded in both arms so
-the required identifiers, labels, and planning-only effect semantics are not
-left implicit. The rubric does not contain the oracle's per-case expected
-arrays. The machine scorer loads its committed response schema directly from
-the controller repository. Participant responses cannot provide or weaken that
-schema. It checks exact stage states, effects, blocked tools, required safety
-flags, missing inputs, and overclaim booleans. These are descriptive
-instruction-following trials, not native MCP executions or a benchmark.
+neutral response-classification rubric is embedded in both arms so field
+meanings, stage-status semantics, and the exact case identifier are not left
+implicit. It contains no case-to-stage recipe, flag bundle, tool sequence, or
+other condition-to-answer mapping. The machine scorer loads its committed
+response schema directly from the controller repository. Participant responses
+cannot provide or weaken that schema. It checks exact stage states, effects,
+blocked tools, required safety flags, missing inputs, and overclaim booleans.
+These are descriptive instruction-following trials, not native MCP executions
+or a benchmark.
 
 No native-host results are recorded by this prototype. The next evidence gate
 is one Codex and one Claude planning trial campaign, followed by actual

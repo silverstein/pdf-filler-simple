@@ -1,10 +1,17 @@
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { prepareAgentWorkflowCampaign } from "../../scripts/eval-prepare-agent-workflow-campaign.mjs";
 
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const temporaryRoots = [];
+
+function sha256(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
 
 afterEach(async () => {
   await Promise.all(temporaryRoots.splice(0).map(root =>
@@ -51,7 +58,17 @@ describe("agent workflow campaign preparation", () => {
     const oracle = JSON.parse(await fs.readFile(path.join(trusted, "oracle.json"), "utf8"));
     expect(oracle.cases).toHaveLength(5);
     expect(oracle.cases.every(testCase => testCase.expected)).toBe(true);
-    expect(oracle.rubric_sha256).toMatch(/^[a-f0-9]{64}$/);
+    const rubricBytes = await fs.readFile(path.join(
+      REPO_ROOT,
+      "test",
+      "fixtures",
+      "eval",
+      "agent-workflows",
+      "planning-rubric.v1.txt",
+    ));
+    const embeddedRubric = rubricBytes.toString("utf8").trim();
+    expect(oracle.rubric_source_sha256).toBe(sha256(rubricBytes));
+    expect(oracle.rubric_embedded_sha256).toBe(sha256(embeddedRubric));
 
     const claudePrompt = await fs.readFile(path.join(
       participants,
@@ -61,6 +78,20 @@ describe("agent workflow campaign preparation", () => {
     ), "utf8");
     expect(claudePrompt).toContain("Case ID: missing-identity-fails-closed");
     expect(claudePrompt).toContain("Use this shared response classification contract:");
+    const embeddedStart = claudePrompt.indexOf(
+      "Use this shared response classification contract:",
+    );
+    const embeddedEnd = claudePrompt.indexOf("\n\nCase:", embeddedStart);
+    expect(claudePrompt.slice(embeddedStart, embeddedEnd)).toBe(embeddedRubric);
+    const oracleOnlyTokens = new Set(oracle.cases.flatMap(testCase => [
+      testCase.id,
+      ...testCase.expected.required_flags,
+      ...testCase.expected.required_planned_tools,
+      ...testCase.expected.forbidden_planned_tools,
+    ]));
+    for (const token of oracleOnlyTokens) {
+      expect(embeddedRubric, token).not.toContain(token);
+    }
     for (const arm of ["claude-baseline", "codex-skill", "codex-baseline"]) {
       expect(await fs.readFile(path.join(
         participants,
