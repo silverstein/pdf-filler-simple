@@ -184,7 +184,10 @@ describe("cross-host PDF Tools workflow contract", () => {
     expect(skill).toMatch(/UX evidence only\. It is never authorization/i);
     expect(skill).toMatch(/Rich UI is optional only/i);
     expect(skill).toMatch(/text and structured results/i);
-    expect(skill).toMatch(/mark\s+Return completed because the response returns the partial record/i);
+    expect(skill).toMatch(
+      /earlier block takes precedence[\s\S]*every\s+later stage through Validate not reached/i,
+    );
+    expect(skill).toMatch(/Mark Return completed because the response returns the\s+partial record/i);
     expect(skill).toMatch(/Reserve `NO_MUTATION` for a mutation stopped by missing required artifact/i);
     expect(skill).toMatch(/do not list unrelated tools as prohibited/i);
     expect(skill).toMatch(/ready form fill plans `fill_pdf` followed by `read_pdf_fields`/i);

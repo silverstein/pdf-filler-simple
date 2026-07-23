@@ -20,6 +20,12 @@ If a required stage cannot be completed, stop at that gate, mark intervening
 stages not reached, and return the evidence gathered so far. Never imply that a
 later stage ran.
 
+Stage classification is sequential. An earlier block takes precedence over a
+later stage's ordinary classification: after a stage is blocked, mark every
+later stage through Validate not reached, even when that stage would otherwise
+be not applicable. Mark only Return completed so it can report the partial
+record.
+
 Use only PDF Tools exposed by the host's configured MCP connection. This skill
 contains workflow instructions only. It does not install, bundle, start, or
 configure an MCP server.
@@ -190,8 +196,10 @@ Use these stage semantics:
 - Authorize is not applicable for a safe, local, original-preserving operation
   with a new output. It is completed only when a gated effect has actual
   pre-effect authority, not merely because the case lacks a gate.
-- If a stage is blocked, mark later operational stages not reached, but mark
-  Return completed because the response returns the partial record.
+- If a stage is blocked, mark every later stage through Validate not reached,
+  even if a later stage would ordinarily be not applicable. This earlier-block
+  rule takes precedence. Mark Return completed because the response returns the
+  partial record.
 - For a read-only request whose needed bounded evidence is already supplied,
   mark Inspect completed; mark Compare completed only for an actual comparison;
   mark Plan, Authorize, and Transform not applicable; and mark Validate and
