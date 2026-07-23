@@ -48,6 +48,8 @@ import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
 import {
   PDF_MUTATION_MAX_FILE_BYTES,
   pdfMutationFileLimitError,
+  preflightBoundedPdfFileSafely,
+  preflightPdfMutationInputsWithinMergeLimit,
   readBoundedPdfFileSafely,
   readPdfMutationInputsWithinMergeLimit,
 } from "./bounded-pdf-file.js";
@@ -143,6 +145,26 @@ async function readBoundedPdfFile(resolvedPath, maxBytes, options = {}) {
     ...options,
     assertPathAllowed,
   });
+}
+
+async function preflightPdfInputWithoutRecovery(inputPath, maxBytes, createSizeLimitError) {
+  const resolvedPath = resolvePath(inputPath);
+  try {
+    const observation = await preflightBoundedPdfFileSafely(resolvedPath, maxBytes, {
+      createSizeLimitError,
+      assertPathAllowed,
+    });
+    return { resolvedPath, ...observation, missingBeforeRecovery: false };
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    return {
+      resolvedPath,
+      sizeBytes: null,
+      canonicalPath: null,
+      fileIdentity: null,
+      missingBeforeRecovery: true,
+    };
+  }
 }
 
 function sameStableFileIdentity(left, right) {
@@ -817,6 +839,11 @@ async function readPdfInputWithRecovery(inputPath, {
   createSizeLimitError = pdfMutationFileLimitError,
 } = {}) {
   const resolvedPath = resolvePath(inputPath);
+  await preflightPdfInputWithoutRecovery(
+    resolvedPath,
+    maxBytes,
+    createSizeLimitError,
+  );
   const canonicalDirectory = await fs.realpath(path.dirname(resolvedPath));
   for (let attempt = 0; attempt < 4; attempt += 1) {
     try {
@@ -4997,6 +5024,16 @@ async function handleToolCall(request) {
           throw new Error("output_path must be different from all input paths to prevent file corruption.");
         }
 
+        await preflightPdfMutationInputsWithinMergeLimit(resolvedInputPaths, {
+          preflightInput: async (inputPath, maxBytes, createSizeLimitError) => {
+            const observation = await preflightPdfInputWithoutRecovery(
+              inputPath,
+              maxBytes,
+              createSizeLimitError,
+            );
+            return observation.missingBeforeRecovery ? null : observation;
+          },
+        });
         const { inputs: retainedInputs } = await readPdfMutationInputsWithinMergeLimit(
           resolvedInputPaths,
           {

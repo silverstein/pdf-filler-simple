@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { spawn } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +23,7 @@ const RUNTIMES = [
 ];
 const TOOL_CALL_TIMEOUT_MS = 5_000;
 const EXPECTED_ERROR = `Error: ${PDF_MUTATION_FILE_LIMIT_MESSAGE}`;
+const CRASH_CHILD = path.join(REPO_ROOT, "test", "helpers", "atomic-output-crash-child.mjs");
 
 const MUTATING_PDF_TOOLS = [
   {
@@ -166,6 +168,23 @@ function sha256(bytes) {
   return crypto.createHash("sha256").update(bytes).digest("hex");
 }
 
+async function runCrashChild(directoryPath, transition) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [CRASH_CHILD, directoryPath, transition], {
+      cwd: REPO_ROOT,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stderr = [];
+    child.stderr.on("data", chunk => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", (code, signal) => resolve({
+      code,
+      signal,
+      stderr: Buffer.concat(stderr).toString("utf8"),
+    }));
+  });
+}
+
 function discoverPdfProducingMutators(tools) {
   return tools
     .filter(tool => {
@@ -240,6 +259,48 @@ async function sparseInputIdentity(inputPath) {
     mtimeNs: String(stats.mtimeNs),
     ctimeNs: String(stats.ctimeNs),
   };
+}
+
+async function snapshotRecoveryState(root) {
+  const snapshot = {};
+
+  async function visit(directoryPath, relativeDirectory = "") {
+    const entries = await fs.readdir(directoryPath, { withFileTypes: true });
+    entries.sort((left, right) => left.name.localeCompare(right.name));
+    for (const entry of entries) {
+      const relativePath = path.join(relativeDirectory, entry.name);
+      const absolutePath = path.join(directoryPath, entry.name);
+      const stats = await fs.lstat(absolutePath, { bigint: true });
+      const identity = {
+        device: String(stats.dev),
+        inode: String(stats.ino),
+        mode: Number(stats.mode & 0o777n),
+        size: String(stats.size),
+        mtimeNs: String(stats.mtimeNs),
+        ctimeNs: String(stats.ctimeNs),
+      };
+      if (entry.isDirectory()) {
+        snapshot[`${relativePath}/`] = { type: "directory", ...identity };
+        await visit(absolutePath, relativePath);
+      } else if (entry.isFile()) {
+        snapshot[relativePath] = {
+          type: "file",
+          ...identity,
+          ...(stats.size <= 1024n * 1024n
+            ? { sha256: sha256(await fs.readFile(absolutePath)) }
+            : { sparse_large_file: true, blocks: String(stats.blocks) }),
+        };
+      } else {
+        snapshot[relativePath] = {
+          type: entry.isSymbolicLink() ? "symlink" : "other",
+          ...identity,
+        };
+      }
+    }
+  }
+
+  await visit(root);
+  return snapshot;
 }
 
 function expectCleanLimitError(result, hasOutputSchema, privateRoot) {
@@ -419,6 +480,100 @@ describe.each(RUNTIMES)("$name mutation PDF input limits", ({ root }) => {
       }
     }
   }, 30_000);
+
+  it("rejects an oversized source without recovering a real interrupted output transaction", async () => {
+    const recoveryRoot = path.join(stateRoot, "oversize-recovery-state");
+    const firstPath = path.join(recoveryRoot, "first.pdf");
+    const secondPath = path.join(recoveryRoot, "second.pdf");
+    const oversizedPath = path.join(recoveryRoot, "oversized.pdf");
+    const outputPath = path.join(recoveryRoot, "must-not-exist.pdf");
+    await fs.mkdir(recoveryRoot, { recursive: true });
+    await fs.writeFile(firstPath, "first original", { mode: 0o600 });
+    await fs.writeFile(secondPath, "second original", { mode: 0o600 });
+    const oversizedHandle = await fs.open(oversizedPath, "w", 0o600);
+    try {
+      await oversizedHandle.truncate(PDF_MUTATION_MAX_FILE_BYTES + 1);
+    } finally {
+      await oversizedHandle.close();
+    }
+    expect(await runCrashChild(recoveryRoot, "activate_0")).toEqual({
+      code: 86,
+      signal: null,
+      stderr: "",
+    });
+    await expect(fs.readFile(firstPath, "utf8")).resolves.toBe("first replacement");
+    const before = await snapshotRecoveryState(recoveryRoot);
+    expect(
+      Object.keys(before).some(name => name.endsWith("-transaction.json")),
+    ).toBe(true);
+
+    const result = await callToolBounded(client, {
+      name: "rotate_pdf_pages",
+      arguments: {
+        input_path: oversizedPath,
+        output_path: outputPath,
+        degrees: 90,
+      },
+    });
+    expectCleanLimitError(
+      result,
+      toolsWithOutputSchema.has("rotate_pdf_pages"),
+      stateRoot,
+    );
+    expect(await snapshotRecoveryState(recoveryRoot)).toEqual(before);
+    await expect(fs.lstat(outputPath)).rejects.toMatchObject({ code: "ENOENT" });
+    const active = await callToolBounded(client, {
+      name: "get_active_document",
+      arguments: {},
+    });
+    expect(activeIdentity(active)).toEqual(baselineActiveIdentity);
+  }, 15_000);
+
+  it("recovers a temporarily missing accepted input before its bounded descriptor read", async () => {
+    const recoveryRoot = path.join(stateRoot, "missing-input-recovery");
+    const firstPath = path.join(recoveryRoot, "first.pdf");
+    const secondPath = path.join(recoveryRoot, "second.pdf");
+    const outputPath = path.join(recoveryRoot, "rotated.pdf");
+    await fs.mkdir(recoveryRoot, { recursive: true });
+    const firstDocument = await PDFDocument.create();
+    firstDocument.addPage([400, 500]);
+    const firstBytes = Buffer.from(await firstDocument.save());
+    const secondDocument = await PDFDocument.create();
+    secondDocument.addPage([300, 300]);
+    const secondBytes = Buffer.from(await secondDocument.save());
+    await fs.writeFile(firstPath, firstBytes, { mode: 0o600 });
+    await fs.writeFile(secondPath, secondBytes, { mode: 0o600 });
+    expect(await runCrashChild(recoveryRoot, "rollback_0")).toEqual({
+      code: 86,
+      signal: null,
+      stderr: "",
+    });
+    await expect(fs.lstat(firstPath)).rejects.toMatchObject({ code: "ENOENT" });
+
+    const result = await callToolBounded(client, {
+      name: "rotate_pdf_pages",
+      arguments: {
+        input_path: firstPath,
+        output_path: outputPath,
+        degrees: 90,
+      },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(Buffer.from(await fs.readFile(firstPath)).equals(firstBytes)).toBe(true);
+    expect(Buffer.from(await fs.readFile(secondPath)).equals(secondBytes)).toBe(true);
+    const outputDocument = await PDFDocument.load(await fs.readFile(outputPath));
+    expect(outputDocument.getPage(0).getRotation().angle).toBe(90);
+    expect(
+      (await fs.readdir(recoveryRoot)).filter(name => name.startsWith(".pdf-tools-")),
+    ).toEqual([]);
+
+    const resetActive = await callToolBounded(client, {
+      name: "set_active_document",
+      arguments: { pdf_path: validControlPath },
+    });
+    expect(resetActive.isError).not.toBe(true);
+    baselineActiveIdentity = activeIdentity(resetActive);
+  }, 15_000);
 
   it("rejects all supported same-path mutations before changing the sparse source or backup state", async () => {
     for (const tool of MUTATING_PDF_TOOLS.filter(candidate =>

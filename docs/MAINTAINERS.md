@@ -111,10 +111,16 @@ Every user-visible PDF output follows an explicit commit policy:
   `rotate_pdf_pages`, `reorder_pdf_pages`, `apply_page_plan`,
   `add_signature_field`, `apply_signature`, `prepare_signing_packet`, and
   `apply_text`. `merge_pdfs` additionally enforces a 500 MiB
-  (524,288,000-byte) aggregate source limit. Each source is opened once for
-  the size check and bounded read; descriptor, pathname, and canonical-path
-  identity are checked around that read, and the exact retained bytes are
-  passed to the parser. The stable user-facing failures are `PDF input exceeds
+  (524,288,000-byte) aggregate source limit. Existing inputs first receive a
+  descriptor-only size and identity preflight that reads and allocates no file
+  contents. Oversized inputs therefore fail before stale output-transaction
+  recovery can alter unrelated directory state. Missing inputs remain eligible
+  for recovery because a stale transaction may legitimately restore them.
+  After preflight and recovery, the actual size check and bounded read share
+  one newly opened descriptor; descriptor, pathname, and canonical-path
+  identity are checked around that read, and its exact bytes are passed to the
+  parser. `merge_pdfs` preflights all currently present inputs before its first
+  recovery-aware read. The stable user-facing failures are `PDF input exceeds
   the 250 MiB per-file limit.` and `merge_pdfs inputs exceed the 500 MiB
   aggregate limit.` These failures happen before any output, backup, or
   active-document state change. Their internal `PDF_INPUT_TOO_LARGE` and

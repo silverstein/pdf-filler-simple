@@ -8,6 +8,8 @@ import {
   PDF_MERGE_MAX_TOTAL_BYTES,
   PDF_MUTATION_FILE_LIMIT_MESSAGE,
   PDF_MUTATION_MAX_FILE_BYTES,
+  preflightBoundedPdfFileSafely,
+  preflightPdfMutationInputsWithinMergeLimit,
   readBoundedPdfFileSafely,
   readPdfMutationInputsWithinMergeLimit,
 } from "../server/bounded-pdf-file.js";
@@ -339,6 +341,24 @@ describe("readBoundedPdfFileSafely", () => {
     });
     expect(state.closeCount).toBe(1);
   });
+
+  it("preflights an oversized descriptor without reading or allocating file contents", async () => {
+    const { fileSystem, state } = createRaceFileSystem();
+    await expect(preflightBoundedPdfFileSafely(pdfPath, 3, {
+      fileSystem,
+      constants: fsConstants,
+      assertPathAllowed: pathPolicy,
+      createSizeLimitError() {
+        const error = new Error(PDF_MUTATION_FILE_LIMIT_MESSAGE);
+        error.code = "PDF_INPUT_TOO_LARGE";
+        return error;
+      },
+    })).rejects.toMatchObject({
+      code: "PDF_INPUT_TOO_LARGE",
+      message: PDF_MUTATION_FILE_LIMIT_MESSAGE,
+    });
+    expect(state).toMatchObject({ openCount: 1, readCount: 0, closeCount: 1 });
+  });
 });
 
 describe("merge PDF input allocation budget", () => {
@@ -355,6 +375,53 @@ describe("merge PDF input allocation budget", () => {
       return { resolvedPath, sizeBytes, pdfBytes: Buffer.alloc(sizeBytes) };
     };
   }
+
+  it("preflights every present input and rejects aggregate excess before any allocating reader runs", async () => {
+    const calls = [];
+    await expect(preflightPdfMutationInputsWithinMergeLimit(
+      ["first.pdf", "temporarily-missing.pdf", "second.pdf"],
+      {
+        maxFileBytes: TEST_MAX_FILE_BYTES,
+        maxTotalBytes: TEST_MAX_TOTAL_BYTES,
+        async preflightInput(resolvedPath, maxBytes, createSizeLimitError) {
+          calls.push({ resolvedPath, maxBytes });
+          if (resolvedPath === "temporarily-missing.pdf") return null;
+          const sizeBytes = resolvedPath === "first.pdf" ? 251 : 250;
+          if (sizeBytes > maxBytes) throw createSizeLimitError();
+          return { sizeBytes };
+        },
+      },
+    )).rejects.toMatchObject({
+      code: "PDF_INPUT_TOO_LARGE",
+      message: PDF_MUTATION_FILE_LIMIT_MESSAGE,
+    });
+    expect(calls).toEqual([
+      { resolvedPath: "first.pdf", maxBytes: TEST_MAX_FILE_BYTES },
+    ]);
+
+    calls.length = 0;
+    await expect(preflightPdfMutationInputsWithinMergeLimit(
+      ["first.pdf", "temporarily-missing.pdf", "second.pdf", "excess.pdf"],
+      {
+        maxFileBytes: TEST_MAX_FILE_BYTES,
+        maxTotalBytes: TEST_MAX_TOTAL_BYTES,
+        async preflightInput(resolvedPath, maxBytes) {
+          calls.push({ resolvedPath, maxBytes });
+          if (resolvedPath === "temporarily-missing.pdf") return null;
+          return { sizeBytes: resolvedPath === "excess.pdf" ? 1 : 250 };
+        },
+      },
+    )).rejects.toMatchObject({
+      code: "PDF_MERGE_INPUTS_TOO_LARGE",
+      message: PDF_MERGE_AGGREGATE_LIMIT_MESSAGE,
+    });
+    expect(calls.map(call => call.resolvedPath)).toEqual([
+      "first.pdf",
+      "temporarily-missing.pdf",
+      "second.pdf",
+      "excess.pdf",
+    ]);
+  });
 
   it("allows the exact 250 MiB per-file and 500 MiB aggregate boundaries", async () => {
     expect(PDF_MUTATION_MAX_FILE_BYTES).toBe(250 * 1024 * 1024);
