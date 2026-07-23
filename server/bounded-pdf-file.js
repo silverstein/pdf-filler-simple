@@ -82,6 +82,55 @@ function recoveryDirectoryChangedError(cause) {
   return error;
 }
 
+function pdfInputAliasChangedError(cause) {
+  const error = new Error(
+    "PDF input alias changed during recovery. Retry the request.",
+    cause ? { cause } : undefined,
+  );
+  error.code = "PDF_INPUT_ALIAS_CHANGED";
+  return error;
+}
+
+function pdfInputAliasUnsafeError(cause) {
+  const error = new Error(
+    "PDF input alias has an unsafe or unsupported target.",
+    cause ? { cause } : undefined,
+  );
+  error.code = "PDF_INPUT_ALIAS_UNSAFE";
+  return error;
+}
+
+function stableSymlinkIdentity(stats) {
+  return {
+    ...stableFileIdentity(stats),
+    size: String(stats.size),
+    mtime: comparableTime(stats, "mtimeNs", "mtimeMs"),
+    ctime: comparableTime(stats, "ctimeNs", "ctimeMs"),
+  };
+}
+
+function sameStableSymlinkIdentity(left, right) {
+  return isStableSymlinkIdentity(left)
+    && isStableSymlinkIdentity(right)
+    && sameStableFileIdentity(left, right)
+    && typeof left.size === "string"
+    && left.size === right?.size
+    && typeof left.mtime === "string"
+    && left.mtime === right?.mtime
+    && typeof left.ctime === "string"
+    && left.ctime === right?.ctime;
+}
+
+function isStableSymlinkIdentity(identity) {
+  return isStableFileIdentity(identity)
+    && typeof identity.size === "string"
+    && identity.size.length > 0
+    && typeof identity.mtime === "string"
+    && identity.mtime.length > 0
+    && typeof identity.ctime === "string"
+    && identity.ctime.length > 0;
+}
+
 function boundedFileSize(stats, maxBytes, createSizeLimitError) {
   const size = stats.size;
   if (typeof size === "bigint") {
@@ -165,17 +214,19 @@ export async function bindCanonicalRecoveryDirectory(directoryPath, {
   if (typeof assertPathAllowed !== "function") {
     throw new TypeError("bindCanonicalRecoveryDirectory requires an allowed-path policy.");
   }
+  const requestedPath = path.resolve(directoryPath);
   let canonicalPath;
   try {
-    canonicalPath = await fileSystem.realpath(directoryPath);
+    canonicalPath = await fileSystem.realpath(requestedPath);
   } catch (error) {
     throw recoveryDirectoryChangedError(error);
   }
-  return await inspectCanonicalDirectoryBinding(
+  const inspected = await inspectCanonicalDirectoryBinding(
     canonicalPath,
     fileSystem,
     assertPathAllowed,
   );
+  return { requestedPath, ...inspected };
 }
 
 export async function assertCanonicalRecoveryDirectory(binding, {
@@ -184,18 +235,170 @@ export async function assertCanonicalRecoveryDirectory(binding, {
 } = {}) {
   if (
     !binding
+    || typeof binding.requestedPath !== "string"
     || typeof binding.canonicalPath !== "string"
     || !isStableFileIdentity(binding.fileIdentity)
     || typeof assertPathAllowed !== "function"
   ) {
     throw new TypeError("assertCanonicalRecoveryDirectory requires a valid binding and allowed-path policy.");
   }
-  return await inspectCanonicalDirectoryBinding(
-    binding.canonicalPath,
+  try {
+    assertPathAllowed(binding.requestedPath);
+    const canonicalFromRequestedPath = await fileSystem.realpath(binding.requestedPath);
+    if (canonicalFromRequestedPath !== binding.canonicalPath) {
+      throw recoveryDirectoryChangedError();
+    }
+    const inspected = await inspectCanonicalDirectoryBinding(
+      binding.canonicalPath,
+      fileSystem,
+      assertPathAllowed,
+      binding.fileIdentity,
+    );
+    return { requestedPath: binding.requestedPath, ...inspected };
+  } catch (error) {
+    if (error?.code === "PDF_RECOVERY_DIRECTORY_CHANGED") throw error;
+    throw recoveryDirectoryChangedError(error);
+  }
+}
+
+async function inspectDanglingPdfInputAlias(binding, {
+  fileSystem,
+  assertPathAllowed,
+  allowPresentTarget,
+}) {
+  try {
+    assertPathAllowed(binding.aliasPath);
+    const before = await fileSystem.lstat(binding.aliasPath, { bigint: true });
+    if (!before.isSymbolicLink()) throw pdfInputAliasChangedError();
+    const linkTarget = await fileSystem.readlink(binding.aliasPath);
+    const after = await fileSystem.lstat(binding.aliasPath, { bigint: true });
+    const identity = stableSymlinkIdentity(after);
+    if (
+      !after.isSymbolicLink()
+      || !sameFileIdentity(before, after)
+      || !sameStableSymlinkIdentity(identity, binding.aliasIdentity)
+      || linkTarget !== binding.linkTarget
+    ) {
+      throw pdfInputAliasChangedError();
+    }
+
+    const resolvedTargetPath = path.resolve(path.dirname(binding.aliasPath), linkTarget);
+    if (resolvedTargetPath !== binding.resolvedTargetPath) throw pdfInputAliasChangedError();
+    assertPathAllowed(resolvedTargetPath);
+    const recoveryDirectory = await assertCanonicalRecoveryDirectory(
+      binding.recoveryDirectory,
+      { fileSystem, assertPathAllowed },
+    );
+    const expectedCanonicalPath = path.join(
+      recoveryDirectory.canonicalPath,
+      path.basename(resolvedTargetPath),
+    );
+    if (expectedCanonicalPath !== binding.expectedCanonicalPath) {
+      throw pdfInputAliasChangedError();
+    }
+
+    let targetStats;
+    try {
+      targetStats = await fileSystem.lstat(resolvedTargetPath, { bigint: true });
+    } catch (error) {
+      if (error?.code === "ENOENT") return binding;
+      throw error;
+    }
+    if (!allowPresentTarget || !targetStats.isFile() || targetStats.isSymbolicLink()) {
+      throw pdfInputAliasUnsafeError();
+    }
+    const canonicalTargetPath = await fileSystem.realpath(resolvedTargetPath);
+    assertPathAllowed(canonicalTargetPath);
+    if (canonicalTargetPath !== binding.expectedCanonicalPath) {
+      throw pdfInputAliasUnsafeError();
+    }
+    return binding;
+  } catch (error) {
+    if (
+      error?.code === "PDF_INPUT_ALIAS_CHANGED"
+      || error?.code === "PDF_INPUT_ALIAS_UNSAFE"
+      || error?.code === "PDF_RECOVERY_DIRECTORY_CHANGED"
+    ) {
+      throw error;
+    }
+    if (PATH_RACE_ERROR_CODES.has(error?.code)) throw pdfInputAliasChangedError(error);
+    throw pdfInputAliasUnsafeError(error);
+  }
+}
+
+export async function bindDanglingPdfInputAlias(aliasPath, {
+  fileSystem = defaultFileSystem,
+  assertPathAllowed,
+} = {}) {
+  if (typeof assertPathAllowed !== "function") {
+    throw new TypeError("bindDanglingPdfInputAlias requires an allowed-path policy.");
+  }
+  const resolvedAliasPath = path.resolve(aliasPath);
+  try {
+    assertPathAllowed(resolvedAliasPath);
+    const before = await fileSystem.lstat(resolvedAliasPath, { bigint: true });
+    if (!before.isSymbolicLink()) throw pdfInputAliasUnsafeError();
+    const linkTarget = await fileSystem.readlink(resolvedAliasPath);
+    const after = await fileSystem.lstat(resolvedAliasPath, { bigint: true });
+    if (!after.isSymbolicLink() || !sameFileIdentity(before, after)) {
+      throw pdfInputAliasChangedError();
+    }
+    const resolvedTargetPath = path.resolve(path.dirname(resolvedAliasPath), linkTarget);
+    assertPathAllowed(resolvedTargetPath);
+    const recoveryDirectory = await bindCanonicalRecoveryDirectory(
+      path.dirname(resolvedTargetPath),
+      { fileSystem, assertPathAllowed },
+    );
+    const binding = {
+      aliasPath: resolvedAliasPath,
+      aliasIdentity: stableSymlinkIdentity(after),
+      linkTarget,
+      resolvedTargetPath,
+      expectedCanonicalPath: path.join(
+        recoveryDirectory.canonicalPath,
+        path.basename(resolvedTargetPath),
+      ),
+      recoveryDirectory,
+    };
+    return await inspectDanglingPdfInputAlias(binding, {
+      fileSystem,
+      assertPathAllowed,
+      allowPresentTarget: false,
+    });
+  } catch (error) {
+    if (
+      error?.code === "PDF_INPUT_ALIAS_CHANGED"
+      || error?.code === "PDF_INPUT_ALIAS_UNSAFE"
+      || error?.code === "PDF_RECOVERY_DIRECTORY_CHANGED"
+    ) {
+      throw error;
+    }
+    if (PATH_RACE_ERROR_CODES.has(error?.code)) throw pdfInputAliasChangedError(error);
+    throw pdfInputAliasUnsafeError(error);
+  }
+}
+
+export async function assertDanglingPdfInputAlias(binding, {
+  fileSystem = defaultFileSystem,
+  assertPathAllowed,
+  allowPresentTarget = true,
+} = {}) {
+  if (
+    !binding
+    || typeof binding.aliasPath !== "string"
+    || typeof binding.linkTarget !== "string"
+    || typeof binding.resolvedTargetPath !== "string"
+    || typeof binding.expectedCanonicalPath !== "string"
+    || !isStableSymlinkIdentity(binding.aliasIdentity)
+    || typeof assertPathAllowed !== "function"
+  ) {
+    throw new TypeError("assertDanglingPdfInputAlias requires a valid binding and allowed-path policy.");
+  }
+  return await inspectDanglingPdfInputAlias(binding, {
     fileSystem,
     assertPathAllowed,
-    binding.fileIdentity,
-  );
+    allowPresentTarget,
+  });
 }
 
 /**

@@ -47,7 +47,9 @@ import { extractPdfLayout, extractPdfLayoutForMarkdown } from "./layout-extracti
 import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
 import {
   PDF_MUTATION_MAX_FILE_BYTES,
+  assertDanglingPdfInputAlias,
   assertCanonicalRecoveryDirectory,
+  bindDanglingPdfInputAlias,
   bindCanonicalRecoveryDirectory,
   pdfMutationFileLimitError,
   preflightBoundedPdfFileSafely,
@@ -159,6 +161,27 @@ async function preflightPdfInputWithoutRecovery(inputPath, maxBytes, createSizeL
     return { resolvedPath, ...observation, missingBeforeRecovery: false };
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
+    let finalComponent;
+    try {
+      finalComponent = await fs.lstat(resolvedPath, { bigint: true });
+    } catch (lstatError) {
+      if (lstatError?.code !== "ENOENT") throw lstatError;
+    }
+    if (finalComponent) {
+      const aliasBinding = await bindDanglingPdfInputAlias(resolvedPath, {
+        assertPathAllowed,
+      });
+      return {
+        resolvedPath,
+        sizeBytes: null,
+        canonicalPath: null,
+        fileIdentity: null,
+        recoveryDirectory: aliasBinding.recoveryDirectory,
+        expectedCanonicalPath: aliasBinding.expectedCanonicalPath,
+        aliasBinding,
+        missingBeforeRecovery: true,
+      };
+    }
     const recoveryDirectory = await bindCanonicalRecoveryDirectory(
       path.dirname(resolvedPath),
       { assertPathAllowed },
@@ -169,6 +192,11 @@ async function preflightPdfInputWithoutRecovery(inputPath, maxBytes, createSizeL
       canonicalPath: null,
       fileIdentity: null,
       recoveryDirectory,
+      expectedCanonicalPath: path.join(
+        recoveryDirectory.canonicalPath,
+        path.basename(resolvedPath),
+      ),
+      aliasBinding: null,
       missingBeforeRecovery: true,
     };
   }
@@ -841,6 +869,16 @@ async function extractPdfText(pdfBuffer, maxPages) {
 }
 
 // Helper: load a PDF from disk with password support and clear error messages
+async function assertPdfInputRecoveryBinding(binding) {
+  if (!binding?.recoveryDirectory) {
+    throw new TypeError("A PDF input recovery binding is required.");
+  }
+  await assertCanonicalRecoveryDirectory(binding.recoveryDirectory, { assertPathAllowed });
+  if (binding.aliasBinding) {
+    await assertDanglingPdfInputAlias(binding.aliasBinding, { assertPathAllowed });
+  }
+}
+
 async function readPdfInputWithRecovery(inputPath, {
   maxBytes = PDF_MUTATION_MAX_FILE_BYTES,
   createSizeLimitError = pdfMutationFileLimitError,
@@ -852,17 +890,25 @@ async function readPdfInputWithRecovery(inputPath, {
     createSizeLimitError,
   );
   const recoveryDirectory = preflight.recoveryDirectory;
-  const expectedCanonicalPath = preflight.missingBeforeRecovery
-    ? path.join(recoveryDirectory.canonicalPath, path.basename(resolvedPath))
-    : preflight.canonicalPath;
+  const expectedCanonicalPath = preflight.expectedCanonicalPath ?? preflight.canonicalPath;
+  const inputRecoveryBinding = {
+    recoveryDirectory,
+    aliasBinding: preflight.aliasBinding,
+  };
+  const assertRecoveryBinding = async () => {
+    await assertPdfInputRecoveryBinding(inputRecoveryBinding);
+  };
   for (let attempt = 0; attempt < 4; attempt += 1) {
-    await assertCanonicalRecoveryDirectory(recoveryDirectory, { assertPathAllowed });
+    await assertRecoveryBinding(recoveryDirectory);
     try {
-      await recoverPdfOutputTransactions(recoveryDirectory.canonicalPath);
-      await assertCanonicalRecoveryDirectory(recoveryDirectory, { assertPathAllowed });
+      await recoverPdfOutputTransactions(recoveryDirectory.canonicalPath, {
+        recoveryDirectoryBinding: recoveryDirectory,
+        assertRecoveryDirectoryBinding: assertRecoveryBinding,
+      });
+      await assertRecoveryBinding(recoveryDirectory);
       break;
     } catch (error) {
-      await assertCanonicalRecoveryDirectory(recoveryDirectory, { assertPathAllowed });
+      await assertRecoveryBinding(recoveryDirectory);
       if (error?.code !== "ATOMIC_OUTPUT_CONCURRENT") throw error;
       if (attempt === 3) {
         throw backupIdentityError("CONCURRENT_MODIFICATION", "Another process is committing PDF output in this directory. Retry after that mutation finishes.", error);
@@ -870,11 +916,11 @@ async function readPdfInputWithRecovery(inputPath, {
       await new Promise(resolve => setTimeout(resolve, 5));
     }
   }
-  await assertCanonicalRecoveryDirectory(recoveryDirectory, { assertPathAllowed });
+  await assertRecoveryBinding(recoveryDirectory);
   const boundedInput = await readBoundedPdfFile(resolvedPath, maxBytes, {
     createSizeLimitError,
   });
-  await assertCanonicalRecoveryDirectory(recoveryDirectory, { assertPathAllowed });
+  await assertRecoveryBinding(recoveryDirectory);
   if (boundedInput.canonicalPath !== expectedCanonicalPath) {
     throw backupIdentityError(
       "PDF_RECOVERY_INPUT_CHANGED",
@@ -893,6 +939,7 @@ async function readPdfInputWithRecovery(inputPath, {
     sizeBytes: boundedInput.sizeBytes,
     canonicalPath: boundedInput.canonicalPath,
     fileIdentity: boundedInput.fileIdentity,
+    inputRecoveryBinding,
   };
 }
 
@@ -1002,9 +1049,9 @@ async function loadPdfBytes(pdfBytes, password = null) {
 }
 
 async function loadPdf(inputPath, password = null) {
-  const { resolvedPath, pdfBytes } = await readPdfInputWithRecovery(inputPath);
+  const { resolvedPath, pdfBytes, inputRecoveryBinding } = await readPdfInputWithRecovery(inputPath);
   const pdfDoc = await loadPdfBytes(pdfBytes, password);
-  return { pdfDoc, resolvedPath, pdfBytes };
+  return { pdfDoc, resolvedPath, pdfBytes, inputRecoveryBinding };
 }
 
 async function readCurrentPdfMutationBytes(inputPath) {
@@ -2134,6 +2181,7 @@ async function persistPdfMutation({
   outputPath,
   toolName,
   expectedInputSha256,
+  inputRecoveryBinding,
   initialPage = 1,
   extraPayload = {},
 }) {
@@ -2143,9 +2191,29 @@ async function persistPdfMutation({
   let outputCanonical = null;
   try { outputCanonical = await fs.realpath(resolvedOutputPath); } catch {}
   const sameDocument = inputCanonical === outputCanonical;
+  if (
+    !inputRecoveryBinding?.recoveryDirectory
+    || inputRecoveryBinding.recoveryDirectory.canonicalPath !== path.dirname(inputCanonical)
+    || (
+      inputRecoveryBinding.aliasBinding
+      && inputRecoveryBinding.aliasBinding.expectedCanonicalPath !== inputCanonical
+    )
+  ) {
+    throw backupIdentityError(
+      "PDF_RECOVERY_INPUT_CHANGED",
+      "PDF input recovery binding no longer identifies the parsed canonical input.",
+    );
+  }
 
   const commit = async () => {
-    await recoverPdfOutputTransactions(path.dirname(inputCanonical));
+    await assertPdfInputRecoveryBinding(inputRecoveryBinding);
+    await recoverPdfOutputTransactions(path.dirname(inputCanonical), {
+      recoveryDirectoryBinding: inputRecoveryBinding.recoveryDirectory,
+      assertRecoveryDirectoryBinding: async () => {
+        await assertPdfInputRecoveryBinding(inputRecoveryBinding);
+      },
+    });
+    await assertPdfInputRecoveryBinding(inputRecoveryBinding);
     const recoveredInputSha256 = sha256Bytes(await readCurrentPdfMutationBytes(inputCanonical));
     if (
       /^[a-f0-9]{64}$/.test(expectedInputSha256 ?? "") &&
@@ -3760,7 +3828,10 @@ async function handleToolCall(request) {
         const { pdf_path, output_path, field_data, password, force_xfa = false } = args;
         const resolvedPdfPath = resolvePath(pdf_path);
         const resolvedOutputPath = resolvePath(output_path);
-        const { pdfBytes: rawPdfBytes } = await readPdfInputWithRecovery(resolvedPdfPath);
+        const {
+          pdfBytes: rawPdfBytes,
+          inputRecoveryBinding,
+        } = await readPdfInputWithRecovery(resolvedPdfPath);
         assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
         const { pdfDoc, filledFields, errors } = await fillPdfBytes(rawPdfBytes, field_data, password);
         const { payload, backupPath } = await persistPdfMutation({
@@ -3769,6 +3840,7 @@ async function handleToolCall(request) {
           outputPath: resolvedOutputPath,
           toolName: "fill_pdf",
           expectedInputSha256: sha256Bytes(rawPdfBytes),
+          inputRecoveryBinding,
           extraPayload: {
             filled_fields: filledFields,
             fill_errors: errors,
@@ -3927,7 +3999,10 @@ async function handleToolCall(request) {
         
         // Merge profile data with additional data
         const mergedData = { ...profileData, ...additional_data };
-        const { pdfBytes: rawPdfBytes } = await readPdfInputWithRecovery(resolvedPdfPath);
+        const {
+          pdfBytes: rawPdfBytes,
+          inputRecoveryBinding,
+        } = await readPdfInputWithRecovery(resolvedPdfPath);
         const { pdfDoc, filledFields, errors } = await fillPdfBytes(rawPdfBytes, mergedData, password);
         const { payload, backupPath } = await persistPdfMutation({
           pdfDoc,
@@ -3935,6 +4010,7 @@ async function handleToolCall(request) {
           outputPath: resolvedOutputPath,
           toolName: "fill_with_profile",
           expectedInputSha256: sha256Bytes(rawPdfBytes),
+          inputRecoveryBinding,
           extraPayload: {
             profile_name,
             filled_fields: filledFields,
@@ -5623,7 +5699,7 @@ async function handleToolCall(request) {
         } = normalizeAddSignatureFieldArguments(args);
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
-        const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
+        const { pdfDoc, pdfBytes, inputRecoveryBinding } = await loadPdf(pdf_path, password);
         const existingSigs = detectExistingSignatures(pdfDoc);
         if (existingSigs.present && !allow_resign) {
           throw new Error(
@@ -5640,6 +5716,7 @@ async function handleToolCall(request) {
           outputPath: resolvedOutput,
           toolName: "add_signature_field",
           expectedInputSha256: sha256Bytes(pdfBytes),
+          inputRecoveryBinding,
           initialPage: page,
         });
         return {
@@ -5698,7 +5775,7 @@ async function handleToolCall(request) {
         signatureRecord = await normalizeStoredSignatureRecord(signatureRecord, cleanSigName);
 
         // 3. Load the PDF
-        const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
+        const { pdfDoc, pdfBytes, inputRecoveryBinding } = await loadPdf(pdf_path, password);
 
         // 3a. Refuse to invalidate existing cryptographic signatures (pdf-lib
         // round-trip breaks them). Users opt in with allow_resign=true.
@@ -5748,6 +5825,7 @@ async function handleToolCall(request) {
           outputPath: resolvedOutput,
           toolName: "apply_signature",
           expectedInputSha256: sha256Bytes(pdfBytes),
+          inputRecoveryBinding,
           initialPage: page,
         });
 
@@ -5784,7 +5862,7 @@ async function handleToolCall(request) {
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
 
-        const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
+        const { pdfDoc, pdfBytes, inputRecoveryBinding } = await loadPdf(pdf_path, password);
         const existingSigs = detectExistingSignatures(pdfDoc);
         if (existingSigs.present && !allow_resign) {
           throw new Error(
@@ -5846,6 +5924,7 @@ async function handleToolCall(request) {
           outputPath: resolvedOutput,
           toolName: "prepare_signing_packet",
           expectedInputSha256: sha256Bytes(pdfBytes),
+          inputRecoveryBinding,
           initialPage: manifest[0]?.page || 1,
           extraPayload: {
             pending_signatures: manifest,
@@ -5891,7 +5970,7 @@ async function handleToolCall(request) {
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
 
-        const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
+        const { pdfDoc, pdfBytes, inputRecoveryBinding } = await loadPdf(pdf_path, password);
 
         // Same safety rails as apply_signature: refuse to invalidate existing
         // crypto sigs or strip XFA data silently.
@@ -5918,6 +5997,7 @@ async function handleToolCall(request) {
           outputPath: resolvedOutput,
           toolName: "apply_text",
           expectedInputSha256: sha256Bytes(pdfBytes),
+          inputRecoveryBinding,
           initialPage: page,
         });
 

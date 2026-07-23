@@ -1221,6 +1221,7 @@ const PDF_OUTPUT_LOCK_CANDIDATE_PATTERN = /^\.pdf-tools-output-transaction\.lock
 const PDF_OUTPUT_STALE_LOCK_PATTERN = /^\.pdf-tools-output-transaction\.lock\.stale-[a-f0-9-]+$/;
 const PDF_OUTPUT_LOCK_OWNER_NAME = "owner.json";
 const NOFOLLOW_READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+const RECOVERY_DIRECTORY_GUARD_FAILURE = Symbol("recoveryDirectoryGuardFailure");
 function sha256Value(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -1238,8 +1239,18 @@ function atomicJournalPath(directoryPath, tokenId) {
   return path.join(directoryPath, `.pdf-tools-${tokenId}-transaction.json`);
 }
 
-async function removeAtomicArtifact(fsOps, artifactPath, cleanupErrors) {
+async function removeAtomicArtifact(
+  fsOps,
+  artifactPath,
+  cleanupErrors,
+  {
+    recoveryDirectoryGuard = null,
+    verifyBeforeUnlink = null,
+  } = {},
+) {
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (verifyBeforeUnlink && !await verifyBeforeUnlink()) return;
+    await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_artifact_unlink");
     try {
       await fsOps.unlink(artifactPath);
       return;
@@ -1247,6 +1258,18 @@ async function removeAtomicArtifact(fsOps, artifactPath, cleanupErrors) {
       if (error?.code === "ENOENT") return;
       if (attempt === 2) cleanupErrors.push({ path: artifactPath, error });
     }
+  }
+}
+
+async function assertRecoveryDirectoryGuard(recoveryDirectoryGuard, phase) {
+  if (!recoveryDirectoryGuard) return;
+  try {
+    await recoveryDirectoryGuard(phase);
+  } catch (error) {
+    if (error && (typeof error === "object" || typeof error === "function")) {
+      error[RECOVERY_DIRECTORY_GUARD_FAILURE] = true;
+    }
+    throw error;
   }
 }
 
@@ -1461,10 +1484,26 @@ async function assertExpectedArtifact(fsOps, artifactPath, { sha256 = null, iden
   }
   return stat;
 }
-async function removeExpectedArtifact(fsOps, artifactPath, expectations = {}) {
+async function removeExpectedArtifact(
+  fsOps,
+  artifactPath,
+  expectations = {},
+  recoveryDirectoryGuard = null,
+) {
+  await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_artifact_inspection");
   if (!await assertExpectedArtifact(fsOps, artifactPath, expectations)) return;
+  await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_artifact_removal");
   const cleanupErrors = [];
-  await removeAtomicArtifact(fsOps, artifactPath, cleanupErrors);
+  await removeAtomicArtifact(fsOps, artifactPath, cleanupErrors, {
+    recoveryDirectoryGuard,
+    verifyBeforeUnlink: async () => {
+      await assertRecoveryDirectoryGuard(
+        recoveryDirectoryGuard,
+        "before_artifact_retry_inspection",
+      );
+      return Boolean(await assertExpectedArtifact(fsOps, artifactPath, expectations));
+    },
+  });
   if (cleanupErrors.length > 0) {
     throw atomicOutputError(
       "ATOMIC_OUTPUT_RECOVERY_CLEANUP_FAILED",
@@ -1474,7 +1513,8 @@ async function removeExpectedArtifact(fsOps, artifactPath, expectations = {}) {
     );
   }
 }
-async function recoverAtomicJournal(fsOps, journalPath) {
+async function recoverAtomicJournal(fsOps, journalPath, recoveryDirectoryGuard = null) {
+  await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_journal_read");
   const payload = await readAtomicJournal(fsOps, journalPath);
   const directoryPath = path.dirname(journalPath);
   const entries = payload.entries.map(entry => ({
@@ -1491,7 +1531,7 @@ async function recoverAtomicJournal(fsOps, journalPath) {
       await removeExpectedArtifact(fsOps, entry.stagePath, {
         sha256: entry.new_sha256,
         privateMode: true,
-      });
+      }, recoveryDirectoryGuard);
     }
   } else if (payload.state === "activating") {
     for (const entry of [...entries].reverse()) {
@@ -1499,9 +1539,6 @@ async function recoverAtomicJournal(fsOps, journalPath) {
         sha256: entry.new_sha256,
         privateMode: true,
       });
-      if (payload.schema_version >= 2 && !stage) {
-        throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Staged output identity is missing: ${entry.stagePath}`);
-      }
       const rollback = await assertExpectedArtifact(fsOps, entry.rollbackPath, {
         identity: entry.initial_identity,
         sha256: entry.initial_sha256,
@@ -1516,6 +1553,19 @@ async function recoverAtomicJournal(fsOps, journalPath) {
           : payload.schema_version === 1)
       );
       if (entry.initial_identity !== null) {
+        if (
+          payload.schema_version >= 2
+          && !stage
+          && !rollback
+          && target
+          && recoveryIdentity(target) === entry.initial_identity
+          && await sha256RegularFile(fsOps, entry.targetPath) === entry.initial_sha256
+        ) {
+          continue;
+        }
+        if (payload.schema_version >= 2 && !stage) {
+          throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Staged output identity is missing: ${entry.stagePath}`);
+        }
         if (rollback) {
           if (target) {
             if (!targetOwnedByTransaction) {
@@ -1524,8 +1574,25 @@ async function recoverAtomicJournal(fsOps, journalPath) {
             await removeExpectedArtifact(fsOps, entry.targetPath, {
               identity: stageIdentity,
               sha256: entry.new_sha256,
-            });
+            }, recoveryDirectoryGuard);
           }
+          const rollbackBeforeRestore = await assertExpectedArtifact(fsOps, entry.rollbackPath, {
+            identity: entry.initial_identity,
+            sha256: entry.initial_sha256,
+          });
+          if (!rollbackBeforeRestore) {
+            throw atomicOutputError(
+              "ATOMIC_OUTPUT_RECOVERY_CONFLICT",
+              `Rollback disappeared before restoration: ${entry.rollbackPath}`,
+            );
+          }
+          if (await lstatIfPresent(fsOps, entry.targetPath)) {
+            throw atomicOutputError(
+              "ATOMIC_OUTPUT_RECOVERY_CONFLICT",
+              `Target reappeared before rollback restoration: ${entry.targetPath}`,
+            );
+          }
+          await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_rollback_restore");
           await fsOps.rename(entry.rollbackPath, entry.targetPath);
         } else {
           if (!target || recoveryIdentity(target) !== entry.initial_identity) {
@@ -1536,6 +1603,12 @@ async function recoverAtomicJournal(fsOps, journalPath) {
           }
         }
       } else {
+        if (payload.schema_version >= 2 && !stage && !rollback && !target) {
+          continue;
+        }
+        if (payload.schema_version >= 2 && !stage) {
+          throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Staged output identity is missing: ${entry.stagePath}`);
+        }
         if (rollback) {
           throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Unexpected rollback exists for a new output: ${entry.rollbackPath}`);
         }
@@ -1543,14 +1616,14 @@ async function recoverAtomicJournal(fsOps, journalPath) {
           await removeExpectedArtifact(fsOps, entry.targetPath, {
             identity: stageIdentity,
             sha256: entry.new_sha256,
-          });
+          }, recoveryDirectoryGuard);
         }
       }
       await removeExpectedArtifact(fsOps, entry.stagePath, {
         identity: stageIdentity,
         sha256: entry.new_sha256,
         privateMode: true,
-      });
+      }, recoveryDirectoryGuard);
     }
   } else {
     for (const entry of entries) {
@@ -1560,7 +1633,7 @@ async function recoverAtomicJournal(fsOps, journalPath) {
       await removeExpectedArtifact(fsOps, entry.stagePath, {
         sha256: entry.new_sha256,
         privateMode: true,
-      });
+      }, recoveryDirectoryGuard);
       if (entry.initial_identity === null) {
         if (await lstatIfPresent(fsOps, entry.rollbackPath)) {
           throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Unexpected rollback exists for a committed new output: ${entry.rollbackPath}`);
@@ -1569,50 +1642,99 @@ async function recoverAtomicJournal(fsOps, journalPath) {
         await removeExpectedArtifact(fsOps, entry.rollbackPath, {
           identity: entry.initial_identity,
           sha256: entry.initial_sha256,
-        });
+        }, recoveryDirectoryGuard);
       }
     }
   }
+  await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_recovery_directory_sync");
   await syncAtomicOutputDirectory(fsOps, directoryPath);
-  await removeExpectedArtifact(fsOps, journalPath, { privateMode: true });
+  await removeExpectedArtifact(
+    fsOps,
+    journalPath,
+    { privateMode: true },
+    recoveryDirectoryGuard,
+  );
+  await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_final_recovery_directory_sync");
   await syncAtomicOutputDirectory(fsOps, directoryPath);
   return { journal_path: journalPath, recovered_state: payload.state };
 }
 async function recoverPdfOutputTransactionsUnlocked(directoryPath, {
   fsOps = fs,
   resolveDirectory = true,
+  recoveryDirectoryGuard = null,
 } = {}) {
   const resolvedDirectory = resolveDirectory ? path.resolve(directoryPath) : directoryPath;
+  await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_unlocked_recovery_entry");
   const directoryStat = await fsOps.lstat(resolvedDirectory);
   if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
     throw atomicOutputError("ATOMIC_OUTPUT_DIRECTORY_INVALID", `Output transaction directory is invalid: ${resolvedDirectory}`);
   }
+  await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_recovery_directory_listing");
   const names = await fsOps.readdir(resolvedDirectory);
   const journals = names.filter(name => PDF_OUTPUT_JOURNAL_PATTERN.test(name)).sort();
   const recovered = [];
   for (const name of journals) {
-    recovered.push(await recoverAtomicJournal(fsOps, path.join(resolvedDirectory, name)));
+    recovered.push(await recoverAtomicJournal(
+      fsOps,
+      path.join(resolvedDirectory, name),
+      recoveryDirectoryGuard,
+    ));
   }
   for (const name of names.filter(name => PDF_OUTPUT_JOURNAL_CANDIDATE_PATTERN.test(name)).sort()) {
-    await removeExpectedArtifact(fsOps, path.join(resolvedDirectory, name), { privateMode: true });
+    await removeExpectedArtifact(
+      fsOps,
+      path.join(resolvedDirectory, name),
+      { privateMode: true },
+      recoveryDirectoryGuard,
+    );
   }
   for (const name of names.filter(name => PDF_OUTPUT_STALE_LOCK_PATTERN.test(name)).sort()) {
-    await removeOutputLockDirectory(fsOps, path.join(resolvedDirectory, name), { allowPartial: true });
+    await removeOutputLockDirectory(fsOps, path.join(resolvedDirectory, name), {
+      allowPartial: true,
+      recoveryDirectoryGuard,
+    });
   }
   for (const name of names.filter(name => PDF_OUTPUT_LOCK_CANDIDATE_PATTERN.test(name)).sort()) {
     const pid = Number(name.match(PDF_OUTPUT_LOCK_CANDIDATE_PATTERN)[1]);
     if (!processAppearsAlive(pid)) {
-      await removeOutputLockDirectory(fsOps, path.join(resolvedDirectory, name), { allowPartial: true });
+      await removeOutputLockDirectory(fsOps, path.join(resolvedDirectory, name), {
+        allowPartial: true,
+        recoveryDirectoryGuard,
+      });
     }
   }
   return recovered;
 }
-export async function recoverPdfOutputTransactions(directoryPath, { fsOps = fs } = {}) {
+export async function recoverPdfOutputTransactions(directoryPath, {
+  fsOps = fs,
+  recoveryDirectoryBinding = null,
+  assertRecoveryDirectoryBinding = null,
+} = {}) {
   const resolvedDirectory = path.resolve(directoryPath);
+  if ((recoveryDirectoryBinding === null) !== (assertRecoveryDirectoryBinding === null)) {
+    throw new TypeError("Recovery directory binding and assertion must be provided together.");
+  }
+  if (
+    recoveryDirectoryBinding
+    && (
+      typeof recoveryDirectoryBinding.canonicalPath !== "string"
+      || path.resolve(recoveryDirectoryBinding.canonicalPath) !== resolvedDirectory
+      || typeof assertRecoveryDirectoryBinding !== "function"
+    )
+  ) {
+    throw new TypeError("Recovery directory binding must identify the requested canonical directory.");
+  }
+  const recoveryDirectoryGuard = recoveryDirectoryBinding
+    ? async phase => {
+      await assertRecoveryDirectoryBinding(recoveryDirectoryBinding, phase);
+    }
+    : null;
+  await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "recovery_entry");
   const directoryStat = await fsOps.lstat(resolvedDirectory);
   if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()) {
     throw atomicOutputError("ATOMIC_OUTPUT_DIRECTORY_INVALID", `Output transaction directory is invalid: ${resolvedDirectory}`);
   }
+  await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_initial_recovery_directory_listing");
   const names = await fsOps.readdir(resolvedDirectory);
   const needsRecovery = names.some(name => (
     name === PDF_OUTPUT_LOCK_NAME || PDF_OUTPUT_JOURNAL_PATTERN.test(name) ||
@@ -1620,9 +1742,15 @@ export async function recoverPdfOutputTransactions(directoryPath, { fsOps = fs }
     PDF_OUTPUT_LOCK_CANDIDATE_PATTERN.test(name) || PDF_OUTPUT_STALE_LOCK_PATTERN.test(name)
   ));
   if (!needsRecovery) return [];
-  const release = await acquireAtomicOutputDirectoryLock(fsOps, resolvedDirectory);
+  const release = await acquireAtomicOutputDirectoryLock(fsOps, resolvedDirectory, {
+    recoveryDirectoryGuard,
+  });
   try {
-    return await recoverPdfOutputTransactionsUnlocked(resolvedDirectory, { fsOps });
+    await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "after_lock_acquired");
+    return await recoverPdfOutputTransactionsUnlocked(resolvedDirectory, {
+      fsOps,
+      recoveryDirectoryGuard,
+    });
   } finally {
     await release();
   }
@@ -1754,7 +1882,9 @@ async function removeOutputLockDirectory(fsOps, lockPath, {
   identity = null,
   ownerIdentity = null,
   allowPartial = false,
+  recoveryDirectoryGuard = null,
 } = {}) {
+  await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_lock_inspection");
   const stat = await lstatIfPresent(fsOps, lockPath);
   if (!stat) return;
   assertOwnedPrivateDirectory(lockPath, stat);
@@ -1769,11 +1899,26 @@ async function removeOutputLockDirectory(fsOps, lockPath, {
     await removeExpectedArtifact(fsOps, path.join(lockPath, PDF_OUTPUT_LOCK_OWNER_NAME), {
       identity: ownerIdentity,
       privateMode: true,
-    });
+    }, recoveryDirectoryGuard);
   }
+  const beforeRemoval = await lstatIfPresent(fsOps, lockPath);
+  if (
+    !beforeRemoval?.isDirectory()
+    || beforeRemoval.isSymbolicLink()
+    || beforeRemoval.dev !== stat.dev
+    || beforeRemoval.ino !== stat.ino
+  ) {
+    throw atomicOutputError(
+      "ATOMIC_OUTPUT_LOCK_CHANGED",
+      `Output transaction lock changed before removal: ${lockPath}`,
+    );
+  }
+  await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_lock_directory_removal");
   await fsOps.rmdir(lockPath);
 }
-async function acquireAtomicOutputDirectoryLock(fsOps, directoryPath) {
+async function acquireAtomicOutputDirectoryLock(fsOps, directoryPath, {
+  recoveryDirectoryGuard = null,
+} = {}) {
   const lockPath = path.join(directoryPath, PDF_OUTPUT_LOCK_NAME);
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const token = randomUUID();
@@ -1783,8 +1928,10 @@ async function acquireAtomicOutputDirectoryLock(fsOps, directoryPath) {
     let candidateCreated = false;
     let published = false;
     try {
+      await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_lock_candidate_create");
       await fsOps.mkdir(candidatePath, { mode: 0o700 });
       candidateCreated = true;
+      await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_lock_owner_create");
       handle = await fsOps.open(candidateOwnerPath, "wx", 0o600);
       await handle.writeFile(`${JSON.stringify({
         schema_version: 1,
@@ -1796,23 +1943,32 @@ async function acquireAtomicOutputDirectoryLock(fsOps, directoryPath) {
       await handle.close();
       handle = null;
       await syncAtomicOutputDirectory(fsOps, candidatePath);
+      await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_lock_publish");
       await fsOps.rename(candidatePath, lockPath);
       published = true;
       const lockArtifact = await readOutputLockDirectory(fsOps, lockPath);
       await syncAtomicOutputDirectory(fsOps, directoryPath);
       return async () => {
+        await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_lock_release");
         await removeOutputLockDirectory(fsOps, lockPath, {
           identity: lockArtifact.identity,
           ownerIdentity: lockArtifact.ownerIdentity,
+          recoveryDirectoryGuard,
         });
+        await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_lock_release_sync");
         await syncAtomicOutputDirectory(fsOps, directoryPath);
       };
     } catch (error) {
       try { await handle?.close(); } catch {}
+      if (error?.[RECOVERY_DIRECTORY_GUARD_FAILURE]) throw error;
       if (candidateCreated) {
         try {
-          await removeOutputLockDirectory(fsOps, candidatePath, { allowPartial: true });
+          await removeOutputLockDirectory(fsOps, candidatePath, {
+            allowPartial: true,
+            recoveryDirectoryGuard,
+          });
         } catch (cleanupError) {
+          if (cleanupError?.[RECOVERY_DIRECTORY_GUARD_FAILURE]) throw cleanupError;
           throw atomicOutputError(
             "ATOMIC_OUTPUT_LOCK_CLEANUP_FAILED",
             `Failed to clean an output transaction lock candidate: ${candidatePath}`,
@@ -1822,7 +1978,10 @@ async function acquireAtomicOutputDirectoryLock(fsOps, directoryPath) {
         }
       }
       if (published) {
-        await removeOutputLockDirectory(fsOps, lockPath, { allowPartial: true });
+        await removeOutputLockDirectory(fsOps, lockPath, {
+          allowPartial: true,
+          recoveryDirectoryGuard,
+        });
       }
       if (!new Set(["EEXIST", "ENOTEMPTY"]).has(error?.code)) throw error;
       let lockArtifact;
@@ -1853,6 +2012,15 @@ async function acquireAtomicOutputDirectoryLock(fsOps, directoryPath) {
       }
       const stalePath = `${lockPath}.stale-${randomUUID()}`;
       try {
+        await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_stale_lock_rename");
+        const lockBeforeRename = await lstatIfPresent(fsOps, lockPath);
+        if (recoveryIdentity(lockBeforeRename) !== lockArtifact.identity) {
+          throw atomicOutputError(
+            "ATOMIC_OUTPUT_LOCK_CHANGED",
+            `Output transaction lock changed before stale rename: ${lockPath}`,
+          );
+        }
+        await assertRecoveryDirectoryGuard(recoveryDirectoryGuard, "before_stale_lock_rename_commit");
         await fsOps.rename(lockPath, stalePath);
       } catch (renameError) {
         if (renameError?.code === "ENOENT") continue;
@@ -1861,6 +2029,7 @@ async function acquireAtomicOutputDirectoryLock(fsOps, directoryPath) {
       await removeOutputLockDirectory(fsOps, stalePath, {
         identity: lockArtifact.identity,
         ownerIdentity: lockArtifact.ownerIdentity,
+        recoveryDirectoryGuard,
       });
       await syncAtomicOutputDirectory(fsOps, directoryPath);
     }

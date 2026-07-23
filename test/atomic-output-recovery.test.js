@@ -5,6 +5,10 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { recoverPdfOutputTransactions, writePdfOutputAtomic } from "../server/helpers.js";
+import {
+  assertCanonicalRecoveryDirectory,
+  bindCanonicalRecoveryDirectory,
+} from "../server/bounded-pdf-file.js";
 import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -104,6 +108,31 @@ async function expectNoTransactionArtifacts(directoryPath) {
   expect(names.filter(name => name.startsWith(".pdf-tools-")).sort()).toEqual([]);
 }
 
+async function snapshotDirectoryTree(directoryPath, relativePath = "") {
+  const entries = await fs.readdir(path.join(directoryPath, relativePath), { withFileTypes: true });
+  const snapshot = [];
+  for (const entry of entries.sort((left, right) => left.name.localeCompare(right.name))) {
+    const entryRelativePath = path.join(relativePath, entry.name);
+    if (entry.isDirectory()) {
+      snapshot.push({ path: entryRelativePath, type: "directory" });
+      snapshot.push(...await snapshotDirectoryTree(directoryPath, entryRelativePath));
+    } else if (entry.isSymbolicLink()) {
+      snapshot.push({
+        path: entryRelativePath,
+        type: "symlink",
+        target: await fs.readlink(path.join(directoryPath, entryRelativePath)),
+      });
+    } else {
+      snapshot.push({
+        path: entryRelativePath,
+        type: "file",
+        sha256: sha256(await fs.readFile(path.join(directoryPath, entryRelativePath))),
+      });
+    }
+  }
+  return snapshot;
+}
+
 afterEach(async () => {
   await Promise.all(tempDirectories.splice(0).map(removeTestTempDirectory));
 });
@@ -150,6 +179,106 @@ describe("durable PDF output transaction recovery", () => {
     });
     await expect(fs.readFile(externalPath, "utf8")).resolves.toBe("external bytes");
     await expect(fs.readlink(journalPath)).resolves.toBe(externalPath);
+  });
+
+  const guardedSwapPhases = [
+    "recovery_entry",
+    "before_lock_candidate_create",
+    "before_lock_owner_create",
+    "before_lock_publish",
+    "before_artifact_removal",
+    "before_artifact_unlink",
+    "before_stale_lock_rename",
+    "before_stale_lock_rename_commit",
+    "before_lock_directory_removal",
+    "before_rollback_restore",
+  ];
+  for (const swapPhase of guardedSwapPhases) {
+    it.runIf(process.platform !== "win32")(
+      `rejects a directory swap at ${swapPhase} without mutating the substituted tree`,
+      async () => {
+        const directoryPath = await makeTransactionDirectory(`bound-${swapPhase}`);
+        expect((await runCrashChild(directoryPath, "activate_0")).code).toBe(86);
+        const binding = await bindCanonicalRecoveryDirectory(directoryPath, {
+          assertPathAllowed() {},
+        });
+        const movedDirectory = `${directoryPath}-bound`;
+        const substitutedDirectory = await createTestTempDirectory(
+          REPO_ROOT,
+          `atomic-recovery-substituted-${swapPhase.replaceAll("_", "-")}`,
+        );
+        tempDirectories.push(movedDirectory, substitutedDirectory);
+        await fs.cp(directoryPath, substitutedDirectory, { recursive: true });
+        const substitutedBefore = await snapshotDirectoryTree(substitutedDirectory);
+        let swapped = false;
+
+        const swapDirectory = async () => {
+          if (swapped) return;
+          await fs.rename(directoryPath, movedDirectory);
+          await fs.symlink(substitutedDirectory, directoryPath);
+          swapped = true;
+        };
+        await expect(recoverPdfOutputTransactions(directoryPath, {
+          recoveryDirectoryBinding: binding,
+          assertRecoveryDirectoryBinding: async (currentBinding, phase) => {
+            if (phase === swapPhase) await swapDirectory();
+            await assertCanonicalRecoveryDirectory(currentBinding, {
+              assertPathAllowed() {},
+            });
+          },
+        })).rejects.toMatchObject({
+          code: "PDF_RECOVERY_DIRECTORY_CHANGED",
+        });
+
+        expect(swapped).toBe(true);
+        expect(await snapshotDirectoryTree(substitutedDirectory)).toEqual(substitutedBefore);
+        await fs.unlink(directoryPath);
+        await fs.rename(movedDirectory, directoryPath);
+
+        for (const name of await fs.readdir(directoryPath)) {
+          if (name.startsWith(".pdf-tools-output-transaction.lock")) {
+            await fs.rm(path.join(directoryPath, name), { recursive: true, force: true });
+          }
+        }
+        await recoverPdfOutputTransactions(directoryPath);
+        await expect(fs.readFile(path.join(directoryPath, "first.pdf"), "utf8"))
+          .resolves.toBe("first original");
+        await expect(fs.readFile(path.join(directoryPath, "second.pdf"), "utf8"))
+          .resolves.toBe("second original");
+        await expectNoTransactionArtifacts(directoryPath);
+      },
+      30_000,
+    );
+  }
+
+  it("revalidates artifact identity before every unlink retry", async () => {
+    const directoryPath = await makeTransactionDirectory("unlink-retry-identity");
+    expect((await runCrashChild(directoryPath, "journal_prepared")).code).toBe(86);
+    let substitutedPath = null;
+    const retryingFs = new Proxy(fs, {
+      get(target, property) {
+        if (property !== "unlink") return target[property];
+        return async artifactPath => {
+          if (!substitutedPath && artifactPath.endsWith("-stage")) {
+            substitutedPath = artifactPath;
+            await fs.unlink(artifactPath);
+            await fs.writeFile(artifactPath, "unowned replacement", { mode: 0o600 });
+            const error = new Error("injected retryable unlink failure");
+            error.code = "EBUSY";
+            throw error;
+          }
+          return await fs.unlink(artifactPath);
+        };
+      },
+    });
+
+    await expect(recoverPdfOutputTransactions(directoryPath, {
+      fsOps: retryingFs,
+    })).rejects.toMatchObject({
+      code: "ATOMIC_OUTPUT_RECOVERY_CONFLICT",
+    });
+    expect(substitutedPath).not.toBeNull();
+    await expect(fs.readFile(substitutedPath, "utf8")).resolves.toBe("unowned replacement");
   });
 
   it("serializes same-directory writers and reclaims a dead process lock", async () => {

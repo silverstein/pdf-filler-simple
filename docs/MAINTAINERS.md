@@ -117,11 +117,25 @@ Every user-visible PDF output follows an explicit commit policy:
   recovery can alter unrelated directory state. Missing inputs remain eligible
   for recovery because a stale transaction may legitimately restore them.
   Present inputs bind recovery to the preflight's canonical parent directory;
-  missing inputs bind it to the canonical raw parent. The directory device and
-  inode are revalidated before and after recovery attempts, and the eventual
-  bounded read must resolve to the expected canonical input path. A symlinked
-  alias therefore recovers its target directory rather than the alias
-  directory, while an ancestor-directory substitution fails closed.
+  direct missing inputs bind it to the canonical raw parent. A dangling
+  direct final-component symlink instead binds the alias device/inode, size,
+  modification/change times, and exact link text, enforces the target path
+  policy, and binds recovery to the target's canonical parent. Link chains and
+  alias substitutions fail closed. The originally requested parent path,
+  canonical directory path, and directory device/inode are revalidated at
+  recovery entry, inside lock acquisition and recovery, and immediately before
+  path-based recovery mutations and cleanup. The eventual bounded read must
+  still resolve to the bound canonical input path. A symlinked alias therefore
+  recovers its target directory rather than the alias directory. Mutators that
+  use the shared persistence lifecycle carry that exact input binding through
+  parsing and reapply it to their pre-commit input recovery instead of
+  rebinding to whatever the pathname identifies later.
+  Node does not expose portable directory-relative `openat`/`renameat`/
+  `unlinkat` operations needed to make a path walk inseparable from every
+  mutation. Per-mutation guards close the tested deterministic swap seams and
+  narrow the irreducible final-syscall race, including a parent swap
+  immediately before recovery entry, but they do not claim race-free
+  containment against a privileged, non-cooperating filesystem actor.
   After preflight and recovery, the actual size check and bounded read share
   one newly opened descriptor; descriptor, pathname, and canonical-path
   identity are checked around that read, and its exact bytes are passed to the

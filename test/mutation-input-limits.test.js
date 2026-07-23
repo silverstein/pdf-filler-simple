@@ -640,6 +640,91 @@ describe.each(RUNTIMES)("$name mutation PDF input limits", ({ root }) => {
     15_000,
   );
 
+  it.runIf(process.platform !== "win32")(
+    "recovers a dangling input alias in its bound target directory before parsing",
+    async () => {
+      const caseRoot = path.join(stateRoot, "dangling-symlink-recovery-input");
+      const actualRoot = path.join(caseRoot, "actual");
+      const aliasesRoot = path.join(caseRoot, "aliases");
+      const firstPath = path.join(actualRoot, "first.pdf");
+      const secondPath = path.join(actualRoot, "second.pdf");
+      const aliasPath = path.join(aliasesRoot, "input.pdf");
+      const outputPath = path.join(actualRoot, "rotated.pdf");
+      const persistedOutputPath = path.join(actualRoot, "filled.pdf");
+      await fs.mkdir(actualRoot, { recursive: true });
+      await fs.mkdir(aliasesRoot, { recursive: true });
+
+      const firstDocument = await PDFDocument.create();
+      firstDocument.addPage([400, 500]);
+      firstDocument.setTitle("dangling canonical recovery source");
+      const firstBytes = Buffer.from(await firstDocument.save());
+      const secondDocument = await PDFDocument.create();
+      secondDocument.addPage([300, 300]);
+      const secondBytes = Buffer.from(await secondDocument.save());
+      await fs.writeFile(firstPath, firstBytes, { mode: 0o600 });
+      await fs.writeFile(secondPath, secondBytes, { mode: 0o600 });
+      await fs.symlink(path.relative(aliasesRoot, firstPath), aliasPath);
+
+      expect(await runCrashChild(actualRoot, "rollback_0")).toEqual({
+        code: 86,
+        signal: null,
+        stderr: "",
+      });
+      await expect(fs.lstat(firstPath)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.lstat(aliasPath)).resolves.toMatchObject({});
+      expect(
+        (await fs.readdir(actualRoot)).some(name => name.endsWith("-transaction.json")),
+      ).toBe(true);
+      expect(
+        (await fs.readdir(aliasesRoot)).filter(name => name.startsWith(".pdf-tools-")),
+      ).toEqual([]);
+
+      const result = await callToolBounded(client, {
+        name: "rotate_pdf_pages",
+        arguments: {
+          input_path: aliasPath,
+          output_path: outputPath,
+          degrees: 90,
+        },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(Buffer.from(await fs.readFile(firstPath)).equals(firstBytes)).toBe(true);
+      expect(Buffer.from(await fs.readFile(secondPath)).equals(secondBytes)).toBe(true);
+      expect(
+        (await fs.readdir(actualRoot)).filter(name => name.startsWith(".pdf-tools-")),
+      ).toEqual([]);
+      expect(
+        (await fs.readdir(aliasesRoot)).filter(name => name.startsWith(".pdf-tools-")),
+      ).toEqual([]);
+      const outputDocument = await PDFDocument.load(await fs.readFile(outputPath));
+      expect(outputDocument.getTitle()).toBe("dangling canonical recovery source");
+      expect(outputDocument.getPage(0).getRotation().angle).toBe(90);
+
+      const persisted = await callToolBounded(client, {
+        name: "fill_pdf",
+        arguments: {
+          pdf_path: aliasPath,
+          output_path: persistedOutputPath,
+          field_data: {},
+        },
+      });
+      expect(persisted.isError).not.toBe(true);
+      const persistedDocument = await PDFDocument.load(await fs.readFile(persistedOutputPath));
+      expect(persistedDocument.getTitle()).toBe("dangling canonical recovery source");
+      expect(
+        (await fs.readdir(actualRoot)).filter(name => name.startsWith(".pdf-tools-")),
+      ).toEqual([]);
+
+      const resetActive = await callToolBounded(client, {
+        name: "set_active_document",
+        arguments: { pdf_path: validControlPath },
+      });
+      expect(resetActive.isError).not.toBe(true);
+      baselineActiveIdentity = activeIdentity(resetActive);
+    },
+    15_000,
+  );
+
   it("rejects all supported same-path mutations before changing the sparse source or backup state", async () => {
     for (const tool of MUTATING_PDF_TOOLS.filter(candidate =>
       SAME_PATH_MUTATING_TOOLS.has(candidate.name))) {

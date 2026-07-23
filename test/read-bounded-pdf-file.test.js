@@ -9,7 +9,9 @@ import {
   PDF_MUTATION_FILE_LIMIT_MESSAGE,
   PDF_MUTATION_MAX_FILE_BYTES,
   assertCanonicalRecoveryDirectory,
+  assertDanglingPdfInputAlias,
   bindCanonicalRecoveryDirectory,
+  bindDanglingPdfInputAlias,
   preflightBoundedPdfFileSafely,
   preflightPdfMutationInputsWithinMergeLimit,
   readBoundedPdfFileSafely,
@@ -388,6 +390,58 @@ describe("readBoundedPdfFileSafely", () => {
       message: "PDF recovery directory changed during input preparation. Retry the request.",
     });
   });
+
+  it.runIf(process.platform !== "win32")(
+    "rejects deterministic dangling-alias substitution after binding",
+    async () => {
+      const actualDirectory = path.join(temporaryRoot, "dangling-alias-actual");
+      const aliasDirectory = path.join(temporaryRoot, "dangling-alias-links");
+      const targetPath = path.join(actualDirectory, "missing.pdf");
+      const aliasPath = path.join(aliasDirectory, "input.pdf");
+      await fs.mkdir(actualDirectory);
+      await fs.mkdir(aliasDirectory);
+      await fs.symlink(path.relative(aliasDirectory, targetPath), aliasPath);
+
+      const binding = await bindDanglingPdfInputAlias(aliasPath, {
+        assertPathAllowed: pathPolicy,
+      });
+      await expect(assertDanglingPdfInputAlias(binding, {
+        assertPathAllowed: pathPolicy,
+        allowPresentTarget: false,
+      })).resolves.toBe(binding);
+
+      await fs.unlink(aliasPath);
+      await fs.symlink(path.relative(aliasDirectory, targetPath), aliasPath);
+      await expect(assertDanglingPdfInputAlias(binding, {
+        assertPathAllowed: pathPolicy,
+      })).rejects.toMatchObject({
+        code: "PDF_INPUT_ALIAS_CHANGED",
+        message: "PDF input alias changed during recovery. Retry the request.",
+      });
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "rejects a dangling alias whose final target is another symlink",
+    async () => {
+      const actualDirectory = path.join(temporaryRoot, "alias-chain-actual");
+      const aliasDirectory = path.join(temporaryRoot, "alias-chain-links");
+      const chainedTargetPath = path.join(actualDirectory, "chained.pdf");
+      const absentTargetPath = path.join(actualDirectory, "absent.pdf");
+      const aliasPath = path.join(aliasDirectory, "input.pdf");
+      await fs.mkdir(actualDirectory);
+      await fs.mkdir(aliasDirectory);
+      await fs.symlink(absentTargetPath, chainedTargetPath);
+      await fs.symlink(chainedTargetPath, aliasPath);
+
+      await expect(bindDanglingPdfInputAlias(aliasPath, {
+        assertPathAllowed: pathPolicy,
+      })).rejects.toMatchObject({
+        code: "PDF_INPUT_ALIAS_UNSAFE",
+        message: "PDF input alias has an unsafe or unsupported target.",
+      });
+    },
+  );
 });
 
 describe("merge PDF input allocation budget", () => {
