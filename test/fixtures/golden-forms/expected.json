@@ -67,22 +67,31 @@
       "url": "https://www.irs.gov/pub/irs-pdf/fw9.pdf",
       "sha256": "2d420cbb4123dcf1fb82595b2359cfbb5d81f00b9df9d359fcc7af361d093f53",
       "description": "Current IRS W-9 (rev 3-2024)",
+      "annotation_evidence": {
+        "method": "Independent visual transcription of the printed signing-row cell boundaries before candidate detector coordinates were inspected",
+        "source_sha256": "2d420cbb4123dcf1fb82595b2359cfbb5d81f00b9df9d359fcc7af361d093f53",
+        "page": 1,
+        "native_page_size_points": [612, 792],
+        "renderer": "native-canvas",
+        "render_pixel_size": [1389, 1798],
+        "render_scale": 2.27
+      },
       "min_score": 0.5,
       "expected_zones": [
         {
           "type": "signature",
           "page": 1,
-          "note": "Signature of U.S. person line — Part II Certification block",
-          "x_min": 100, "x_max": 500,
-          "y_min": 540, "y_max": 640,
+          "note": "Part II signing-row cell after the Sign Here label, visually transcribed from the SHA-pinned render",
+          "x_min": 72, "x_max": 384,
+          "y_min": 576, "y_max": 600,
           "min_iou": 0.25
         },
         {
           "type": "date",
           "page": 1,
-          "note": "Date field to the right of the signature",
-          "x_min": 380, "x_max": 570,
-          "y_min": 540, "y_max": 640,
+          "note": "Part II date cell to the right of the signature cell, visually transcribed from the SHA-pinned render",
+          "x_min": 384, "x_max": 576,
+          "y_min": 576, "y_max": 600,
           "min_iou": 0.25
         }
       ]

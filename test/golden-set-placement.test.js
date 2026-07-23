@@ -199,6 +199,9 @@ describe("Golden-set signature-zone placement", () => {
       expect(fx.id).toBeTruthy();
       expect(fx.source).toMatch(/^(local|url)$/);
       expect(fx.expected_zones).toBeDefined();
+      if (fx.source === "url") {
+        expect(fx.sha256).toMatch(/^[a-f0-9]{64}$/);
+      }
       for (const z of fx.expected_zones) {
         expect(["signature", "initials", "name", "date"]).toContain(z.type);
         expect(z.page).toBeGreaterThanOrEqual(1);
@@ -208,6 +211,21 @@ describe("Golden-set signature-zone placement", () => {
       }
       if (fx.sha256) {
         expect(fx.sha256).toMatch(/^[a-f0-9]{64}$/);
+      }
+      if (fx.annotation_evidence) {
+        expect(fx.annotation_evidence.source_sha256).toBe(fx.sha256);
+        expect(fx.annotation_evidence.method).toMatch(/independent visual transcription/i);
+        expect(fx.annotation_evidence.page).toBeGreaterThanOrEqual(1);
+        expect(fx.annotation_evidence.native_page_size_points).toEqual([
+          expect.any(Number),
+          expect.any(Number),
+        ]);
+        expect(fx.annotation_evidence.renderer).toBe("native-canvas");
+        expect(fx.annotation_evidence.render_pixel_size).toEqual([
+          expect.any(Number),
+          expect.any(Number),
+        ]);
+        expect(fx.annotation_evidence.render_scale).toBeGreaterThan(0);
       }
       if (fx.expected_page_geometry) {
         expect(fx.expected_page_geometry.page).toBeGreaterThanOrEqual(1);
