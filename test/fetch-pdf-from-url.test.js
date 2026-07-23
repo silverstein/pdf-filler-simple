@@ -615,7 +615,7 @@ describe("downloadPdfFromUrl", () => {
               contentionWaits++;
               if (!released) {
                 released = true;
-                holder.child.stdin.write("release\n");
+                holder.child.stdin.end("release\n");
               }
               await new Promise(resolve => setTimeout(resolve, delayMs));
             },
@@ -630,7 +630,7 @@ describe("downloadPdfFromUrl", () => {
           && holder.child.exitCode === null
           && holder.child.signalCode === null
         ) {
-          holder.child.stdin.write("release\n");
+          holder.child.stdin.end("release\n");
         }
         const outcome = await holder.closed;
         expect(outcome).toEqual({ code: 0, signal: null });
