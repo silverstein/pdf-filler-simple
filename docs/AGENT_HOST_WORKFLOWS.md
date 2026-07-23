@@ -71,21 +71,25 @@ the model host; the oracle and repository must remain on the controller.
 The launch commands below were checked against Claude Code 2.1.216 and Codex
 CLI 0.145.0. Run them only in the transferred participant arm on a model host.
 Do not run them in the repository or on the controller that retains the
-oracle.
+oracle. Use a dedicated clean OS user, container, or trial home for both arms.
+Mount or copy only the selected participant arm, run from a path with no
+ancestor instruction files, and invalidate the trial if the effective
+inventory shows an unexpected skill, plugin, MCP server, or instruction source.
 
-For a Claude skill-arm case:
+For a Claude skill-arm case, provision a compatible API-key credential through
+the host's secret mechanism and keep it out of commands and logs:
 
 ```bash
 mkdir -p results
 CLAUDE_EVAL_SCHEMA="$(jq -c . response-schema.json)"
 claude --print \
+  --bare \
   --model claude-fable-5 \
   --output-format json \
   --no-session-persistence \
   --permission-mode plan \
   --tools "" \
   --no-chrome \
-  --setting-sources "" \
   --strict-mcp-config \
   --mcp-config '{"mcpServers":{}}' \
   --json-schema "$CLAUDE_EVAL_SCHEMA" \
@@ -96,15 +100,18 @@ claude --print \
 
 Use the same command without `--plugin-dir plugin/pdf-tools-workflow` in the
 Claude baseline arm. Keep every other flag and the prompt byte-for-byte
-identical. `--tools ""` is the native no-tools boundary. `--setting-sources ""`
-and the strict empty MCP configuration exclude user, project, local, and MCP
-configuration from the trial.
+identical. `--tools ""` is the native no-tools boundary. `--bare` excludes
+keychain OAuth, ambient instructions, settings, hooks, auto-memory, and plugin
+sync while still allowing the one explicit plugin directory. The strict empty
+MCP configuration excludes MCP servers. If clean `--bare` authentication is not
+available, record the Claude arm as blocked rather than weakening isolation.
 
 For a Codex skill-arm or baseline-arm case:
 
 ```bash
 mkdir -p results
-codex exec \
+: "${PDF_WORKFLOW_CODEX_HOME:?set this to the clean trial home}"
+CODEX_HOME="$PDF_WORKFLOW_CODEX_HOME" codex exec \
   --skip-git-repo-check \
   --ephemeral \
   --ignore-user-config \
@@ -143,11 +150,14 @@ codex exec \
   > results/missing-identity-fails-closed.events.jsonl
 ```
 
-The Codex skill arm discovers only its copied
-`.agents/skills/pdf-tools-workflow`; the baseline root contains no skill.
-The explicit feature denies prevent the trial from inheriting app, plugin,
-shell, browser, computer-use, memory, hook, goal, or multi-agent capability.
-The read-only sandbox remains defense in depth.
+Set `CODEX_HOME` to a dedicated mode-0700 directory containing only separately
+provisioned authentication material before running this command. Do not copy
+user configuration, skills, plugins, rules, sessions, or memories into it.
+The skill arm then discovers its copied `.agents/skills/pdf-tools-workflow`;
+the baseline root contains no local skill. The explicit feature denies prevent
+the trial from enabling app, plugin, shell, browser, computer-use, memory, hook,
+goal, or multi-agent capability. The read-only sandbox remains defense in
+depth.
 
 Before every arm, retain a negative isolation probe showing that neither an
 oracle nor repository exists on the model host, plus the effective host
@@ -305,11 +315,14 @@ or remote architecture.
 
 Run each frozen planning case with and without the skill. The five initial cases
 cover missing identity, embedded instructions, incomplete signature
-authorization, partial comparison, and safe distinct-output filling. The
-machine scorer loads its committed response schema directly from the controller
-repository. Participant responses cannot provide or weaken that schema. It
-checks exact stage states, effects, blocked tools, required safety flags,
-missing inputs, and overclaim booleans. These are descriptive
+authorization, partial comparison, and safe distinct-output filling. The same
+case-independent response-classification rubric is embedded in both arms so
+the required identifiers, labels, and planning-only effect semantics are not
+left implicit. The rubric does not contain the oracle's per-case expected
+arrays. The machine scorer loads its committed response schema directly from
+the controller repository. Participant responses cannot provide or weaken that
+schema. It checks exact stage states, effects, blocked tools, required safety
+flags, missing inputs, and overclaim booleans. These are descriptive
 instruction-following trials, not native MCP executions or a benchmark.
 
 No native-host results are recorded by this prototype. The next evidence gate

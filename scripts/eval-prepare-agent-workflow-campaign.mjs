@@ -16,6 +16,14 @@ const CASES_PATH = path.join(
   "agent-workflows",
   "planning-cases.v1.json",
 );
+const RUBRIC_PATH = path.join(
+  REPO_ROOT,
+  "test",
+  "fixtures",
+  "eval",
+  "agent-workflows",
+  "planning-rubric.v1.txt",
+);
 const SKILL_ROOT = path.join(
   REPO_ROOT,
   "plugins",
@@ -76,14 +84,16 @@ async function inventory(root) {
   };
 }
 
-function participantPrompt(testCase) {
+function participantPrompt(testCase, rubric) {
   return [
     "This is a synthetic planning-only evaluation.",
     "Do not call tools, inspect files, or execute any operation.",
     "Return only one JSON object matching response-schema.json.",
     "Account for all seven workflow stages in order.",
-    testCase.prompt,
-  ].join(" ");
+    `Case ID: ${testCase.id}`,
+    rubric.trim(),
+    `Case: ${testCase.prompt}`,
+  ].join("\n\n");
 }
 
 function hostCompatibleSchema(value) {
@@ -145,6 +155,8 @@ export async function prepareAgentWorkflowCampaign({
 
   const casesBytes = await fs.readFile(CASES_PATH);
   const cases = JSON.parse(casesBytes);
+  const rubricBytes = await fs.readFile(RUBRIC_PATH);
+  const rubric = rubricBytes.toString("utf8");
   const responseSchemaPath = path.join(REPO_ROOT, cases.response_schema);
   const responseSchemaBytes = await fs.readFile(responseSchemaPath);
   const responseSchema = JSON.parse(responseSchemaBytes);
@@ -158,7 +170,7 @@ export async function prepareAgentWorkflowCampaign({
     for (const testCase of cases.cases) {
       await writePrivate(
         path.join(promptsRoot, `${testCase.id}.txt`),
-        `${participantPrompt(testCase)}\n`,
+        `${participantPrompt(testCase, rubric)}\n`,
       );
     }
   }
@@ -182,6 +194,7 @@ export async function prepareAgentWorkflowCampaign({
     schema_version: cases.schema_version,
     source_commit: sourceCommit,
     cases_sha256: sha256(casesBytes),
+    rubric_sha256: sha256(rubricBytes),
     response_schema_sha256: sha256(responseSchemaBytes),
     cases: cases.cases.map(testCase => ({
       id: testCase.id,

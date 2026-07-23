@@ -332,6 +332,7 @@ describe("cross-host PDF Tools workflow contract", () => {
       "test/fixtures/eval/agent-workflows/shared-tasks.v1.json",
       "test/fixtures/eval/agent-workflows/planning-cases.v1.json",
       "test/fixtures/eval/agent-workflows/planning-response.schema.json",
+      "test/fixtures/eval/agent-workflows/planning-rubric.v1.txt",
     ];
     for (const relativePath of publicArtifacts) {
       const contents = await readText(relativePath);

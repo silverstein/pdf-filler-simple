@@ -51,6 +51,7 @@ describe("agent workflow campaign preparation", () => {
     const oracle = JSON.parse(await fs.readFile(path.join(trusted, "oracle.json"), "utf8"));
     expect(oracle.cases).toHaveLength(5);
     expect(oracle.cases.every(testCase => testCase.expected)).toBe(true);
+    expect(oracle.rubric_sha256).toMatch(/^[a-f0-9]{64}$/);
 
     const claudePrompt = await fs.readFile(path.join(
       participants,
@@ -58,6 +59,8 @@ describe("agent workflow campaign preparation", () => {
       "prompts",
       "missing-identity-fails-closed.txt",
     ), "utf8");
+    expect(claudePrompt).toContain("Case ID: missing-identity-fails-closed");
+    expect(claudePrompt).toContain("Use this shared response classification contract:");
     for (const arm of ["claude-baseline", "codex-skill", "codex-baseline"]) {
       expect(await fs.readFile(path.join(
         participants,
