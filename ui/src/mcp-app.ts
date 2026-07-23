@@ -451,6 +451,7 @@ function requestFitToContent() {
 
   // Defer to next frame so the browser has reflowed after canvas resize
   requestAnimationFrame(() => {
+    if (isTearingDown) return;
     const toolbarEl = document.querySelector(".toolbar") as HTMLElement;
     const pageWrapperEl = document.querySelector(".page-wrapper") as HTMLElement;
     if (!toolbarEl || !pageWrapperEl) return;
@@ -466,7 +467,9 @@ function requestFitToContent() {
 
     // Minimum 400px so the viewer is always usable
     const height = Math.max(400, Math.min(total, 900));
-    app.sendSizeChanged({ height });
+    void app.sendSizeChanged({ height }).catch((err: unknown) => {
+      if (!isTearingDown) console.warn("[viewer] Size update failed:", err);
+    });
   });
 }
 
@@ -521,7 +524,7 @@ async function toggleFullscreen() {
 // ─── Model Context ───────────────────────────────────────────────────────────
 
 async function updatePageContext() {
-  if (!pdfDocument) return;
+  if (!pdfDocument || isTearingDown) return;
   try {
     const pageText = pageTextCache.get(currentPage) || "";
     const sel = window.getSelection();
@@ -548,12 +551,12 @@ async function updatePageContext() {
       contextText += `\n\nSelected form field: ${selectedField}`;
     }
 
-    app.updateModelContext({ content: [{ type: "text", text: contextText }] });
+    await app.updateModelContext({ content: [{ type: "text", text: contextText }] });
   } catch {}
 }
 
 async function syncActiveDocumentState() {
-  if (!pdfPath) return;
+  if (!pdfPath || isTearingDown) return;
   try {
     await app.callServerTool({
       name: "set_active_document",

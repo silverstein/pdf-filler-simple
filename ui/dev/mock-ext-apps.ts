@@ -96,9 +96,9 @@ export class App {
     return await postJson<any>("/__dev__/tool", { name, arguments: args });
   }
 
-  sendSizeChanged(_payload: SizeChangedPayload) {}
+  async sendSizeChanged(_payload: SizeChangedPayload) {}
 
-  updateModelContext(_payload: UpdateModelContextPayload) {}
+  async updateModelContext(_payload: UpdateModelContextPayload) {}
 
   async requestDisplayMode({ mode }: RequestDisplayModePayload) {
     this.#hostContext = {
