@@ -327,6 +327,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       arguments: { pdf_path: symlinkSource, output_path: symlinkTarget, overwrite: true },
     });
     expect(symlinkResult.isError).toBe(true);
+    expect(symlinkResult.content[0].text).toContain("output_path resolves to the same file as the source PDF");
     expect(await fs.readFile(symlinkTarget)).toEqual(originalBytes);
     expect(await fs.readlink(symlinkSource)).toBe(symlinkTarget);
 
@@ -340,6 +341,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       arguments: { pdf_path: hardlinkSource, output_path: hardlinkOutput, overwrite: true },
     });
     expect(hardlinkResult.isError).toBe(true);
+    expect(hardlinkResult.content[0].text).toContain("output_path resolves to the same file as the source PDF");
     expect(await fs.readFile(hardlinkSource)).toEqual(originalBytes);
     expect(await fs.readFile(hardlinkOutput)).toEqual(originalBytes);
   }, 30_000);
