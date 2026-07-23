@@ -203,4 +203,26 @@ describe("agent workflow run binding", () => {
       outputPath: path.join(run.resultsRoot, "run-manifest.json"),
     })).rejects.toThrow(/response does not equal/);
   });
+
+  it("rejects an ambient or duplicate project skill in prompt-input evidence", async () => {
+    const run = await preparedRun();
+    const promptInputPath = path.join(run.resultsRoot, "prompt-input.json");
+    const promptInput = JSON.parse(await fs.readFile(promptInputPath, "utf8"));
+    promptInput.unshift({
+      type: "message",
+      role: "developer",
+      content: [{
+        type: "input_text",
+        text: "file: /unexpected/.agents/skills/pdf-tools-workflow/SKILL.md",
+      }],
+    });
+    await fs.writeFile(promptInputPath, JSON.stringify(promptInput));
+    await expect(bindAgentWorkflowRun({
+      runRoot: run.resultsRoot,
+      preparationManifestPath: run.manifestPath,
+      arm: run.arm,
+      caseId: run.caseId,
+      outputPath: path.join(run.resultsRoot, "run-manifest.json"),
+    })).rejects.toThrow(/skill inventory does not match/);
+  });
 });
