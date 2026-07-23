@@ -195,7 +195,7 @@ export async function bindAgentWorkflowRun({
   }
   const expectedCodexArgs = codexExecArgs({
     model: plan.model,
-    responsePath: path.join(runRoot, "response.json"),
+    responsePath: path.join(plan.results_root, "response.json"),
   });
   const expectedExecArgs = sandboxedCodexArgs({
     sandboxProfile: plan.isolation?.sandbox_profile,
@@ -208,8 +208,8 @@ export async function bindAgentWorkflowRun({
     || plan.command.program !== plan.isolation?.sandbox_program
     || !equalJson(plan.isolation?.environment_names, CODEX_ENVIRONMENT_NAMES)
     || plan.command.cwd !== plan.case_root
-    || plan.command.stdout !== path.join(runRoot, "events.jsonl")
-    || plan.command.stderr !== path.join(runRoot, "stderr.txt")
+    || plan.command.stdout !== path.join(plan.results_root, "events.jsonl")
+    || plan.command.stderr !== path.join(plan.results_root, "stderr.txt")
     || !equalJson(plan.command.codex_argv, expectedCodexArgs)
     || !equalJson(plan.command.argv, expectedExecArgs)
   ) {

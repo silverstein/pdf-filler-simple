@@ -143,9 +143,11 @@ async function preparedRun() {
 describe("agent workflow run binding", () => {
   it("binds the scored response to the validated event and every run artifact", async () => {
     const run = await preparedRun();
-    const outputPath = path.join(run.resultsRoot, "run-manifest.json");
+    const controllerRunRoot = path.join(run.root, "controller-results");
+    await fs.cp(run.resultsRoot, controllerRunRoot, { recursive: true });
+    const outputPath = path.join(controllerRunRoot, "run-manifest.json");
     const manifest = await bindAgentWorkflowRun({
-      runRoot: run.resultsRoot,
+      runRoot: controllerRunRoot,
       preparationManifestPath: run.manifestPath,
       arm: run.arm,
       caseId: run.caseId,
