@@ -7,6 +7,10 @@ import { afterEach, describe, expect, it } from "vitest";
 import { prepareAgentWorkflowCampaign } from "../../scripts/eval-prepare-agent-workflow-campaign.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
+const REVIEWED_RUBRIC_SOURCE_SHA256 =
+  "b0dc68aa961c8f0f2eb3ef197b96762323ffdcc4afc52bdbcd54b2373fcff642";
+const REVIEWED_RUBRIC_EMBEDDED_SHA256 =
+  "c194c1817d07fb9813128f3ef4b31e7229b3b6d5e33b6a0e8c424feda070dd76";
 const temporaryRoots = [];
 
 function sha256(value) {
@@ -69,6 +73,8 @@ describe("agent workflow campaign preparation", () => {
     const embeddedRubric = rubricBytes.toString("utf8").trim();
     expect(oracle.rubric_source_sha256).toBe(sha256(rubricBytes));
     expect(oracle.rubric_embedded_sha256).toBe(sha256(embeddedRubric));
+    expect(oracle.rubric_source_sha256).toBe(REVIEWED_RUBRIC_SOURCE_SHA256);
+    expect(oracle.rubric_embedded_sha256).toBe(REVIEWED_RUBRIC_EMBEDDED_SHA256);
 
     const claudePrompt = await fs.readFile(path.join(
       participants,
@@ -86,6 +92,7 @@ describe("agent workflow campaign preparation", () => {
     const oracleOnlyTokens = new Set(oracle.cases.flatMap(testCase => [
       testCase.id,
       ...testCase.expected.required_flags,
+      ...testCase.expected.required_missing_inputs,
       ...testCase.expected.required_planned_tools,
       ...testCase.expected.forbidden_planned_tools,
     ]));
