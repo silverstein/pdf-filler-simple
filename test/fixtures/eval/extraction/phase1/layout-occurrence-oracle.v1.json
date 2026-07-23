@@ -49,8 +49,8 @@
     {
       "role": "layout_extraction_module",
       "path": "server/layout-extraction.js",
-      "bytes": 88475,
-      "sha256": "3142dd0f33534b7aebfd1fce6a57f1ae913f45957911d27bbe2b76e6affff73a"
+      "bytes": 89322,
+      "sha256": "b20d80e354a5ce6648f52e4a7eeaba64c5f1b7825cc079314afd64fbcab06b29"
     },
     {
       "role": "layout_oracle_schema",
@@ -95,7 +95,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "d3f46c65b44c9079b9cd7fbacf5523716c82c8224fee44e02d3b4016513c7b59",
+  "validator_source_set_sha256": "37c5701f6b183781f5147ed84a4397b08774fe52fe6f97fc45c5bc19c60071fb",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",
@@ -347,7 +347,7 @@
       "source_sha256": "370dc0ac71939cba9db8584327c87899716dc770ac9ee8cad33fc27b5e73b73c",
       "source_bytes": 2622,
       "page_count": 1,
-      "layout_ir_sha256": "cb2eb5a022740e3f2781a35524ed6dd2d34dcde05b51bbf38d102c82d3154455",
+      "layout_ir_sha256": "a48c1e4a9855b099a00f785647d4aea09025226cea853c76b745aa123aca7021",
       "layout_id_scope_sha256": "a1ec2fc17eebd77505099868cf1e836f2f8019c8358169251dbd8951a3b80c9f",
       "layout_extraction_status": "partial",
       "facts": [
@@ -361,15 +361,15 @@
           "geometry_status": "eligible",
           "geometry_reason": null,
           "observed_occurrence_sha256": [
-            "fba2f00dea2a8f70c706bf6e05d46a99ca2c932e7a6cb4f62a049685244e7ef4"
+            "8d83dfbd4be591d9b37d8914524fe38cb369e74f747ef3941097750bf0277d20"
           ],
           "approved_occurrence": {
             "source_sha256": "370dc0ac71939cba9db8584327c87899716dc770ac9ee8cad33fc27b5e73b73c",
-            "layout_ir_sha256": "cb2eb5a022740e3f2781a35524ed6dd2d34dcde05b51bbf38d102c82d3154455",
+            "layout_ir_sha256": "a48c1e4a9855b099a00f785647d4aea09025226cea853c76b745aa123aca7021",
             "page": 1,
-            "line_id": "p0001-l000017",
-            "line_start_code_point": 0,
-            "line_end_code_point": 8,
+            "line_id": "p0001-l000015",
+            "line_start_code_point": 9,
+            "line_end_code_point": 17,
             "source_item_ids": [
               "p0001-i000017"
             ],
@@ -387,7 +387,7 @@
               "width": 52.02,
               "height": 12
             },
-            "occurrence_sha256": "fba2f00dea2a8f70c706bf6e05d46a99ca2c932e7a6cb4f62a049685244e7ef4"
+            "occurrence_sha256": "8d83dfbd4be591d9b37d8914524fe38cb369e74f747ef3941097750bf0277d20"
           }
         }
       ]
