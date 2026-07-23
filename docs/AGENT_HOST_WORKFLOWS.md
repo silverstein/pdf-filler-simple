@@ -63,7 +63,7 @@ Runnable synthetic planning cases and their exact response contract are
 `test/fixtures/eval/agent-workflows/planning-cases.v1.json` and
 `planning-response.schema.json`. Their deterministic scorer is
 `test/eval/agent-workflow-plan-scorer.js`. Before a host trial,
-`scripts/eval-prepare-agent-workflow-campaign.mjs` creates four prompt-only
+`scripts/eval-prepare-agent-workflow-campaign.mjs` creates six prompt-only
 participant roots and a trusted oracle at independent absolute destinations.
 Run it only from a clean exact Git HEAD. Transfer only the participant root to
 the model host; the oracle and repository must remain on the controller.
@@ -106,7 +106,7 @@ sync while still allowing the one explicit plugin directory. The strict empty
 MCP configuration excludes MCP servers. If clean `--bare` authentication is not
 available, record the Claude arm as blocked rather than weakening isolation.
 
-For a Codex skill-arm or baseline-arm case:
+For an implicit Codex skill-arm or baseline-arm case:
 
 ```bash
 mkdir -p results
@@ -159,11 +159,71 @@ the trial from enabling app, plugin, shell, browser, computer-use, memory, hook,
 goal, or multi-agent capability. The read-only sandbox remains defense in
 depth.
 
+Codex exposes project skill metadata in the model-visible prompt, but the full
+skill body uses progressive disclosure. A no-tools trial therefore measures
+implicit metadata triggering only. Run the paired explicit arms from a
+synthetic Git repository containing only the selected participant arm:
+
+```bash
+git init
+git add .
+git -c user.name="PDF Workflow Eval" \
+  -c user.email="eval@invalid.local" \
+  commit -m "Synthetic participant arm"
+mkdir -p results
+: "${PDF_WORKFLOW_CODEX_HOME:?set this to the clean trial home}"
+CODEX_HOME="$PDF_WORKFLOW_CODEX_HOME" codex exec \
+  --ephemeral \
+  --ignore-user-config \
+  --ignore-rules \
+  --sandbox read-only \
+  --model gpt-5.6-sol \
+  --output-schema response-schema.json \
+  --json \
+  --output-last-message results/missing-identity-fails-closed.response.json \
+  --disable apps \
+  --disable auth_elicitation \
+  --disable browser_use \
+  --disable browser_use_external \
+  --disable browser_use_full_cdp_access \
+  --disable code_mode \
+  --disable code_mode_host \
+  --disable computer_use \
+  --disable goals \
+  --disable hooks \
+  --disable image_generation \
+  --disable in_app_browser \
+  --disable memories \
+  --disable multi_agent \
+  --disable multi_agent_v2 \
+  --disable network_proxy \
+  --disable plugins \
+  --disable remote_plugin \
+  --disable request_permissions_tool \
+  --disable skill_mcp_dependency_install \
+  --disable tool_call_mcp_elicitation \
+  --disable tool_suggest \
+  --disable workspace_dependencies \
+  - < prompts/missing-identity-fails-closed.txt \
+  > results/missing-identity-fails-closed.events.jsonl
+```
+
+The explicit skill and explicit baseline prompts are byte-identical and both
+contain the literal `$pdf-tools-workflow` mention. Only the skill arm contains
+that local skill. Shell and unified execution remain available solely because
+the host uses its read path for progressive skill loading. The read-only
+sandbox and participant-only root prevent mutation and oracle access. Reject a
+trial if its event stream contains a task, PDF, network, or unrelated file
+operation. Record `codex debug prompt-input` output to prove the effective skill
+inventory without inferring it from token counts.
+
 Before every arm, retain a negative isolation probe showing that neither an
-oracle nor repository exists on the model host, plus the effective host
-version, model, loaded skill/plugin inventory, tool policy, source commit, arm
-tree hash, exact command, and raw response. Remote model inference remains an
-explicitly recorded transport, not a denied network path.
+oracle nor the source repository exists on the model host, plus the effective
+host version, model, loaded skill/plugin inventory, tool policy, source commit,
+arm tree hash, exact command, and raw response. A participant-only synthetic Git
+repository is permitted for Codex discovery; record its tracked-file inventory
+and prove that it contains no source history or oracle. Remote model inference
+remains an explicitly recorded transport, not a denied network path.
 
 ### Identity and mutation boundary
 
@@ -313,18 +373,18 @@ fallback mode, privacy boundary, and any approval interaction. A passing
 instruction-only test does not prove the server, MCP App, packaged extension,
 or remote architecture.
 
-Run each frozen planning case with and without the skill. The five initial cases
-cover missing identity, embedded instructions, incomplete signature
-authorization, partial comparison, and safe distinct-output filling. The same
-neutral response-classification rubric is embedded in both arms so field
-meanings, stage-status semantics, and the exact case identifier are not left
-implicit. It contains no case-to-stage recipe, flag bundle, tool sequence, or
-other condition-to-answer mapping. The machine scorer loads its committed
-response schema directly from the controller repository. Participant responses
-cannot provide or weaken that schema. It checks exact stage states, effects,
-blocked tools, required safety flags, missing inputs, and overclaim booleans.
-These are descriptive instruction-following trials, not native MCP executions
-or a benchmark.
+Run each frozen planning case with and without the skill, in paired implicit and
+explicit Codex modes. The five initial cases cover missing identity, embedded
+instructions, incomplete signature authorization, partial comparison, and safe
+distinct-output filling. The same neutral response-classification rubric is
+embedded in both members of each pair so field meanings, stage-status
+semantics, and the exact case identifier are not left implicit. It contains no
+case-to-stage recipe, flag bundle, tool sequence, or other condition-to-answer
+mapping. The machine scorer loads its committed response schema directly from
+the controller repository. Participant responses cannot provide or weaken that
+schema. It checks exact stage states, effects, blocked tools, required safety
+flags, missing inputs, and overclaim booleans. These are descriptive
+instruction-following trials, not native MCP executions or a benchmark.
 
 No native-host results are recorded by this prototype. The next evidence gate
 is one Codex and one Claude planning trial campaign, followed by actual

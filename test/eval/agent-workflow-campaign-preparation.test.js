@@ -49,6 +49,8 @@ describe("agent workflow campaign preparation", () => {
       "claude-baseline",
       "codex-skill",
       "codex-baseline",
+      "codex-explicit-skill",
+      "codex-explicit-baseline",
     ]);
     expect(manifest.source_commit).toMatch(/^[a-f0-9]{40,64}$/);
     expect(await allText(participants)).not.toMatch(/"expected"\s*:/);
@@ -107,6 +109,21 @@ describe("agent workflow campaign preparation", () => {
         "missing-identity-fails-closed.txt",
       ), "utf8")).toBe(claudePrompt);
     }
+    const explicitPrompt = await fs.readFile(path.join(
+      participants,
+      "codex-explicit-skill",
+      "prompts",
+      "missing-identity-fails-closed.txt",
+    ), "utf8");
+    expect(explicitPrompt).toContain("$pdf-tools-workflow");
+    expect(explicitPrompt).toContain("may load only the explicitly named");
+    expect(await fs.readFile(path.join(
+      participants,
+      "codex-explicit-baseline",
+      "prompts",
+      "missing-identity-fails-closed.txt",
+    ), "utf8")).toBe(explicitPrompt);
+    expect(claudePrompt).not.toContain("$pdf-tools-workflow");
     expect(await fs.stat(path.join(
       participants,
       "claude-skill",
@@ -124,6 +141,19 @@ describe("agent workflow campaign preparation", () => {
       "pdf-tools-workflow",
       "SKILL.md",
     ))).toMatchObject({ mode: expect.any(Number) });
+    expect(await fs.stat(path.join(
+      participants,
+      "codex-explicit-skill",
+      ".agents",
+      "skills",
+      "pdf-tools-workflow",
+      "SKILL.md",
+    ))).toMatchObject({ mode: expect.any(Number) });
+    await expect(fs.stat(path.join(
+      participants,
+      "codex-explicit-baseline",
+      ".agents",
+    ))).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("refuses relative, repository-contained, and nested destinations", async () => {

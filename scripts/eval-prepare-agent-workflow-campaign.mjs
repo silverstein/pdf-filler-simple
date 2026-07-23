@@ -38,7 +38,13 @@ const ARM_NAMES = [
   "claude-baseline",
   "codex-skill",
   "codex-baseline",
+  "codex-explicit-skill",
+  "codex-explicit-baseline",
 ];
+const EXPLICIT_CODEX_ARMS = new Set([
+  "codex-explicit-skill",
+  "codex-explicit-baseline",
+]);
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -84,16 +90,20 @@ async function inventory(root) {
   };
 }
 
-function participantPrompt(testCase, rubric) {
-  return [
+function participantPrompt(testCase, rubric, { explicitSkill = false } = {}) {
+  const lines = [
     "This is a synthetic planning-only evaluation.",
-    "Do not call tools, inspect files, or execute any operation.",
+    explicitSkill
+      ? "The host may load only the explicitly named pdf-tools-workflow skill. Do not call PDF, network, task, or other tools, and do not execute any operation."
+      : "Do not call tools, inspect files, or execute any operation.",
     "Return only one JSON object matching response-schema.json.",
     "Account for all seven workflow stages in order.",
     `Case ID: ${testCase.id}`,
     rubric.trim(),
     `Case: ${testCase.prompt}`,
-  ].join("\n\n");
+  ];
+  if (explicitSkill) lines.unshift("$pdf-tools-workflow");
+  return lines.join("\n\n");
 }
 
 function hostCompatibleSchema(value) {
@@ -171,7 +181,9 @@ export async function prepareAgentWorkflowCampaign({
     for (const testCase of cases.cases) {
       await writePrivate(
         path.join(promptsRoot, `${testCase.id}.txt`),
-        `${participantPrompt(testCase, embeddedRubric)}\n`,
+        `${participantPrompt(testCase, embeddedRubric, {
+          explicitSkill: EXPLICIT_CODEX_ARMS.has(arm),
+        })}\n`,
       );
     }
   }
@@ -188,6 +200,21 @@ export async function prepareAgentWorkflowCampaign({
   await fs.cp(
     SKILL_ROOT,
     path.join(participantsRoot, "codex-skill", ".agents", "skills", "pdf-tools-workflow"),
+    { recursive: true, errorOnExist: true, force: false },
+  );
+  await fs.mkdir(
+    path.join(participantsRoot, "codex-explicit-skill", ".agents", "skills"),
+    { recursive: true, mode: 0o700 },
+  );
+  await fs.cp(
+    SKILL_ROOT,
+    path.join(
+      participantsRoot,
+      "codex-explicit-skill",
+      ".agents",
+      "skills",
+      "pdf-tools-workflow",
+    ),
     { recursive: true, errorOnExist: true, force: false },
   );
 
