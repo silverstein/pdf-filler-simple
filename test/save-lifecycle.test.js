@@ -93,7 +93,9 @@ async function mutationLockPaths(pdfPath) {
 
 describe("canonical save lifecycle", () => {
   beforeEach(async () => {
-    TMP_DIR = await fs.mkdtemp(path.join(tmpdir(), "pdf-tools-save-lifecycle-"));
+    TMP_DIR = await fs.realpath(
+      await fs.mkdtemp(path.join(tmpdir(), "pdf-tools-save-lifecycle-")),
+    );
     PROFILE_DIR = path.join(TMP_DIR, "profiles");
     await fs.copyFile(EXAMPLE_PDF, path.join(TMP_DIR, "w9-working.pdf"));
     await fs.copyFile(EXAMPLE_PDF, path.join(TMP_DIR, "w9-managed-source.pdf"));

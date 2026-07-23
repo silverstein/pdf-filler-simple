@@ -2264,7 +2264,11 @@ async function persistPdfMutation({
       }
     }
 
-    await writePdfOutputAtomic(sameDocument ? inputCanonical : resolvedOutputPath, bytes, {
+    const committedOutput = await writePdfOutputAtomic(
+      sameDocument ? inputCanonical : resolvedOutputPath,
+      bytes,
+      {
+      assertPathAllowed,
       beforeTransaction: sameDocument
         ? async () => {
             if (sha256Bytes(await readCurrentPdfMutationBytes(inputCanonical)) !== commitInputSha256) {
@@ -2272,19 +2276,21 @@ async function persistPdfMutation({
             }
           }
         : undefined,
-    });
+      },
+    );
+    const committedOutputPath = committedOutput.targetPath;
     if (record) {
       record.last_committed_sha256 = pendingSha256;
       record.pending_sha256 = null;
       await replaceBackupRecord(record);
     }
 
-    activeDocumentState.activePath = resolvedOutputPath;
+    activeDocumentState.activePath = committedOutputPath;
     activeDocumentState.backupPath = backupPath;
     activeDocumentState.lastMutationTool = toolName;
     activeDocumentState.lastMutationAt = new Date().toISOString();
 
-    const payload = await buildActiveDocumentPayload(resolvedOutputPath, initialPage, {
+    const payload = await buildActiveDocumentPayload(committedOutputPath, initialPage, {
       ...getFormFieldInfo(pdfDoc),
       ...extraPayload,
     });
@@ -3919,7 +3925,13 @@ async function handleToolCall(request) {
         }
 
         if (pendingOutputs.length > 0) {
-          await writePdfOutputsAtomic(pendingOutputs);
+          const committedOutputs = await writePdfOutputsAtomic(
+            pendingOutputs,
+            { assertPathAllowed },
+          );
+          committedOutputs.forEach((committed, index) => {
+            results[index].output_path = committed.targetPath;
+          });
         }
 
         const resultLines = results.map(result => {
@@ -5162,9 +5174,14 @@ async function handleToolCall(request) {
         }
 
         const mergedBytes = await mergedDoc.save();
-        await writePdfOutputAtomic(resolvedOutputPath, mergedBytes);
-        const outputStats = await fs.stat(resolvedOutputPath);
-        const payload = await buildNewOutputDocumentPayload(resolvedOutputPath, "merge_pdfs", 1, {
+        const committedOutput = await writePdfOutputAtomic(
+          resolvedOutputPath,
+          mergedBytes,
+          { assertPathAllowed },
+        );
+        const committedOutputPath = committedOutput.targetPath;
+        const outputStats = await fs.stat(committedOutputPath);
+        const payload = await buildNewOutputDocumentPayload(committedOutputPath, "merge_pdfs", 1, {
           total_pages: totalPageCount,
         });
 
@@ -5212,7 +5229,7 @@ async function handleToolCall(request) {
           results.push(`${filename} (${end - start + 1} pages)`);
         }
 
-        await writePdfOutputsAtomic(pendingOutputs);
+        await writePdfOutputsAtomic(pendingOutputs, { assertPathAllowed });
 
         return {
           content: [{
@@ -5251,9 +5268,14 @@ async function handleToolCall(request) {
         }
 
         const rotatedBytes = await pdfDoc.save();
-        await writePdfOutputAtomic(resolvedOutputPath, rotatedBytes);
-        const outputStats = await fs.stat(resolvedOutputPath);
-        const payload = await buildNewOutputDocumentPayload(resolvedOutputPath, "rotate_pdf_pages", 1, {
+        const committedOutput = await writePdfOutputAtomic(
+          resolvedOutputPath,
+          rotatedBytes,
+          { assertPathAllowed },
+        );
+        const committedOutputPath = committedOutput.targetPath;
+        const outputStats = await fs.stat(committedOutputPath);
+        const payload = await buildNewOutputDocumentPayload(committedOutputPath, "rotate_pdf_pages", 1, {
           rotated_pages: targetPages.length,
           degrees,
         });
@@ -5298,9 +5320,14 @@ async function handleToolCall(request) {
         await copyPdfPagesPreservingForms(newDoc, pdfDoc, pageIndices);
 
         const reorderedBytes = await newDoc.save();
-        await writePdfOutputAtomic(resolvedOutputPath, reorderedBytes);
-        const outputStats = await fs.stat(resolvedOutputPath);
-        const payload = await buildNewOutputDocumentPayload(resolvedOutputPath, "reorder_pdf_pages", 1, {
+        const committedOutput = await writePdfOutputAtomic(
+          resolvedOutputPath,
+          reorderedBytes,
+          { assertPathAllowed },
+        );
+        const committedOutputPath = committedOutput.targetPath;
+        const outputStats = await fs.stat(committedOutputPath);
+        const payload = await buildNewOutputDocumentPayload(committedOutputPath, "reorder_pdf_pages", 1, {
           page_order,
         });
 
@@ -5429,9 +5456,15 @@ async function handleToolCall(request) {
 
         const newBytes = await newDoc.save();
         let outputStats;
+        let committedOutputPath;
         try {
-          await writePdfOutputAtomic(resolvedOutputPath, newBytes);
-          outputStats = await fs.stat(resolvedOutputPath);
+          const committedOutput = await writePdfOutputAtomic(
+            resolvedOutputPath,
+            newBytes,
+            { assertPathAllowed },
+          );
+          committedOutputPath = committedOutput.targetPath;
+          outputStats = await fs.stat(committedOutputPath);
         } catch (writeErr) {
           throw new Error(`Failed to save PDF: ${writeErr.message}. Check that the output directory exists and is writable.`);
         }
@@ -5441,7 +5474,7 @@ async function handleToolCall(request) {
         let summary = `Saved ${page_order.length}-page PDF to: ${output_path}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`;
         if (deletedCount > 0) summary += `\n${deletedCount} page(s) removed`;
         if (rotatedCount > 0) summary += `\n${rotatedCount} page(s) rotated`;
-        const payload = await buildNewOutputDocumentPayload(resolvedOutputPath, "apply_page_plan", 1, {
+        const payload = await buildNewOutputDocumentPayload(committedOutputPath, "apply_page_plan", 1, {
           deleted_pages: deletedCount,
           rotated_pages: rotatedCount,
           page_order,
@@ -6080,6 +6113,7 @@ async function handleToolCall(request) {
           maxSizeMb: max_size_mb,
           headers: headers || {},
           allowPrivateHosts: allow_private_hosts,
+          assertPathAllowed,
         });
         noteDocumentOpened(result.path);
 

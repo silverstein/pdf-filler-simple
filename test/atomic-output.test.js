@@ -5,6 +5,7 @@ import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  recoverPdfOutputTransactions,
   writePdfOutputAtomic,
   writePdfOutputsAtomic,
 } from "../server/helpers.js";
@@ -13,6 +14,7 @@ import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp
 let tempDir;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const ANCHORED_CHILD = path.join(REPO_ROOT, "test/helpers/atomic-output-anchored-child.mjs");
+const DIRECTORY_SWAP_CHILD = path.join(REPO_ROOT, "test/helpers/atomic-output-directory-swap-child.mjs");
 
 function injectedError(code, operation) {
   const error = new Error(`Injected ${operation} failure`);
@@ -23,7 +25,10 @@ function injectedError(code, operation) {
 function faultingFs({
   openAt = null,
   writeAt = null,
+  beforeWriteAt = null,
   syncAt = null,
+  beforeSyncAt = null,
+  beforeSync = null,
   syncCode = "EIO",
   renameAt = null,
   beforeRename = null,
@@ -36,15 +41,19 @@ function faultingFs({
     async open(...args) {
       counts.open += 1;
       if (counts.open === openAt) throw injectedError("EACCES", "open");
+      const openedPath = args[0];
       const handle = await fs.open(...args);
       return {
         async writeFile(...writeArgs) {
           counts.write += 1;
+          if (counts.write === beforeWriteAt?.at) await beforeWriteAt.run();
           if (counts.write === writeAt) throw injectedError("ENOSPC", "write");
           return await handle.writeFile(...writeArgs);
         },
         async sync() {
           counts.sync += 1;
+          if (beforeSync) await beforeSync({ count: counts.sync, path: openedPath });
+          if (counts.sync === beforeSyncAt?.at) await beforeSyncAt.run();
           if (counts.sync === syncAt) throw injectedError(syncCode, "sync");
           return await handle.sync();
         },
@@ -57,15 +66,22 @@ function faultingFs({
         async readFile(...readArgs) {
           return await handle.readFile(...readArgs);
         },
+        async stat(...statArgs) {
+          return await handle.stat(...statArgs);
+        },
       };
     },
     async readdir(...args) {
       return await fs.readdir(...args);
     },
     async lstat(...args) {
+      if (args[1]?.bigint === true) return await fs.lstat(...args);
       counts.lstat += 1;
       if (counts.lstat === beforeLstatAt?.at) await beforeLstatAt.run();
       return await fs.lstat(...args);
+    },
+    async realpath(...args) {
+      return await fs.realpath(...args);
     },
     async mkdir(...args) {
       return await fs.mkdir(...args);
@@ -113,6 +129,35 @@ async function runAnchoredChild(original, moved, outside) {
   });
 }
 
+async function runDirectorySwapChild({
+  outputDirectory,
+  ancestorDirectory,
+  movedAncestor,
+  substitutedAncestor,
+  swapPhase,
+}) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [
+      DIRECTORY_SWAP_CHILD,
+      outputDirectory,
+      ancestorDirectory,
+      movedAncestor,
+      substitutedAncestor,
+      swapPhase,
+    ], {
+      cwd: REPO_ROOT,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const stderr = [];
+    child.stderr.on("data", chunk => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", code => resolve({
+      code,
+      stderr: Buffer.concat(stderr).toString("utf8"),
+    }));
+  });
+}
+
 beforeEach(async () => {
   tempDir = await createTestTempDirectory(process.cwd(), "atomic-output");
 });
@@ -122,6 +167,96 @@ afterEach(async () => {
 });
 
 describe("atomic PDF output commits", () => {
+  it("does not swallow a tagged EINVAL directory-guard failure as unsupported fsync", async () => {
+    const target = path.join(tempDir, "guard-einval.pdf");
+    await fs.writeFile(target, "original bytes");
+    const guardError = injectedError("EINVAL", "directory guard");
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      async beforeDirectoryGuard(phase) {
+        if (phase === "before_output_directory_sync_open") throw guardError;
+      },
+    })).rejects.toBe(guardError);
+
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("original bytes");
+  });
+
+  it.runIf(process.platform !== "win32")("rebases a final-component output-directory symlink to its stable canonical parent", async () => {
+    const canonicalDirectory = path.join(tempDir, "canonical-output");
+    const aliasDirectory = path.join(tempDir, "output-alias");
+    await fs.mkdir(canonicalDirectory);
+    await fs.symlink(canonicalDirectory, aliasDirectory, "dir");
+
+    const committed = await writePdfOutputAtomic(
+      path.join(aliasDirectory, "result.pdf"),
+      Buffer.from("canonical bytes"),
+    );
+
+    expect(committed.targetPath).toBe(path.join(canonicalDirectory, "result.pdf"));
+    await expect(fs.readFile(path.join(canonicalDirectory, "result.pdf"), "utf8"))
+      .resolves.toBe("canonical bytes");
+    await expect(fs.realpath(aliasDirectory)).resolves.toBe(canonicalDirectory);
+    expect((await fs.readdir(canonicalDirectory))
+      .filter(name => name.startsWith(".pdf-tools-"))).toEqual([]);
+  });
+
+  it("refuses to publish a lock whose owner record was substituted after descriptor close", async () => {
+    const target = path.join(tempDir, "owner-substitution.pdf");
+    await fs.writeFile(target, "original bytes");
+    let substitutedOwnerPath = null;
+    const substitutedBytes = `${JSON.stringify({
+      schema_version: 1,
+      pid: 999999999,
+      token: "substituted-owner",
+      created_at: new Date(0).toISOString(),
+    })}\n`;
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      async beforeDirectoryGuard(phase) {
+        if (phase !== "after_lock_owner_close" || substitutedOwnerPath) return;
+        const candidate = (await fs.readdir(tempDir))
+          .find(name => name.startsWith(".pdf-tools-output-transaction.lock.candidate-"));
+        substitutedOwnerPath = path.join(tempDir, candidate, "owner.json");
+        await fs.unlink(substitutedOwnerPath);
+        await fs.writeFile(substitutedOwnerPath, substitutedBytes, { mode: 0o600 });
+      },
+    })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_LOCK_CLEANUP_FAILED" });
+
+    expect(substitutedOwnerPath).not.toBeNull();
+    await expect(fs.readFile(substitutedOwnerPath, "utf8")).resolves.toBe(substitutedBytes);
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("original bytes");
+    await expect(fs.stat(path.join(tempDir, ".pdf-tools-output-transaction.lock")))
+      .rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("does not unlink an owner from a substituted lock directory during release", async () => {
+    const target = path.join(tempDir, "lock-directory-substitution.pdf");
+    const lockPath = path.join(tempDir, ".pdf-tools-output-transaction.lock");
+    const movedLockPath = path.join(tempDir, "moved-output-lock");
+    const substitutedOwnerBytes = "substituted owner bytes";
+    let swapped = false;
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("committed bytes"), {
+      async beforeDirectoryGuard(phase) {
+        if (swapped || phase !== "before_lock_owner_cleanup") return;
+        await fs.rename(lockPath, movedLockPath);
+        await fs.mkdir(lockPath, { mode: 0o700 });
+        await fs.writeFile(
+          path.join(lockPath, "owner.json"),
+          substitutedOwnerBytes,
+          { mode: 0o600 },
+        );
+        swapped = true;
+      },
+    })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_LOCK_CHANGED" });
+
+    expect(swapped).toBe(true);
+    await expect(fs.readFile(path.join(lockPath, "owner.json"), "utf8"))
+      .resolves.toBe(substitutedOwnerBytes);
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("committed bytes");
+    expect((await fs.stat(path.join(movedLockPath, "owner.json"))).isFile()).toBe(true);
+  });
+
   it("cleans an output-lock candidate after metadata write or sync failure", async () => {
     const target = path.join(tempDir, "existing.pdf");
     await fs.writeFile(target, "original bytes");
@@ -139,6 +274,41 @@ describe("atomic PDF output commits", () => {
     await expectNoTransactionArtifacts();
     await expect(fs.readFile(target, "utf8")).resolves.toBe("original bytes");
   });
+
+  it.each(["write", "sync"])(
+    "does not unlink a substituted lock owner when its descriptor %s fails",
+    async operation => {
+      const target = path.join(tempDir, `owner-${operation}-failure.pdf`);
+      await fs.writeFile(target, "original bytes");
+      const substitutedBytes = "substituted owner bytes";
+      let substitutedOwnerPath = null;
+      let substitutedIdentity = null;
+      const beforeFailure = {
+        at: 1,
+        run: async () => {
+          const candidate = (await fs.readdir(tempDir))
+            .find(name => name.startsWith(".pdf-tools-output-transaction.lock.candidate-"));
+          substitutedOwnerPath = path.join(tempDir, candidate, "owner.json");
+          await fs.unlink(substitutedOwnerPath);
+          await fs.writeFile(substitutedOwnerPath, substitutedBytes, { mode: 0o600 });
+          const stats = await fs.lstat(substitutedOwnerPath);
+          substitutedIdentity = { dev: stats.dev, ino: stats.ino };
+        },
+      };
+
+      await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+        token: `lock-owner-${operation}-substitution`,
+        fsOps: faultingFs(operation === "write"
+          ? { writeAt: 1, beforeWriteAt: beforeFailure }
+          : { syncAt: 1, beforeSyncAt: beforeFailure }),
+      })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_LOCK_CLEANUP_FAILED" });
+
+      const retained = await fs.lstat(substitutedOwnerPath);
+      expect({ dev: retained.dev, ino: retained.ino }).toEqual(substitutedIdentity);
+      await expect(fs.readFile(substitutedOwnerPath, "utf8")).resolves.toBe(substitutedBytes);
+      await expect(fs.readFile(target, "utf8")).resolves.toBe("original bytes");
+    },
+  );
 
   it("preserves an existing output when the staged write runs out of space", async () => {
     const target = path.join(tempDir, "existing.pdf");
@@ -257,6 +427,45 @@ describe("atomic PDF output commits", () => {
     expect((await fs.readdir(outside)).filter(name => name.includes(".pdf-tools-"))).toEqual([]);
   }, 30_000);
 
+  for (const swapPhase of ["output_transaction_entry", "before_target_0_rollback"]) {
+    it.runIf(process.platform !== "win32")(
+      `rejects an ancestor substitution at ${swapPhase} without mutating it and leaves the original recoverable`,
+      async () => {
+        const ancestor = path.join(tempDir, `ancestor-${swapPhase}`);
+        const outputDirectory = path.join(ancestor, "output");
+        const movedAncestor = path.join(tempDir, `moved-${swapPhase}`);
+        const substitutedAncestor = path.join(tempDir, `substituted-${swapPhase}`);
+        await fs.mkdir(outputDirectory, { recursive: true });
+        await fs.mkdir(path.join(substitutedAncestor, "output"), { recursive: true });
+        await fs.writeFile(path.join(outputDirectory, "first.pdf"), "first original");
+        await fs.writeFile(path.join(substitutedAncestor, "output", "first.pdf"), "substituted bytes");
+        const substitutedBefore = await fs.readFile(
+          path.join(substitutedAncestor, "output", "first.pdf"),
+        );
+
+        const result = await runDirectorySwapChild({
+          outputDirectory,
+          ancestorDirectory: ancestor,
+          movedAncestor,
+          substitutedAncestor,
+          swapPhase,
+        });
+        expect(result.code, result.stderr).toBe(73);
+        await expect(fs.readFile(path.join(substitutedAncestor, "output", "first.pdf")))
+          .resolves.toEqual(substitutedBefore);
+        expect((await fs.readdir(path.join(substitutedAncestor, "output")))
+          .filter(name => name.startsWith(".pdf-tools-"))).toEqual([]);
+
+        await recoverPdfOutputTransactions(path.join(movedAncestor, "output"));
+        await expect(fs.readFile(path.join(movedAncestor, "output", "first.pdf"), "utf8"))
+          .resolves.toBe("first original");
+        expect((await fs.readdir(path.join(movedAncestor, "output")))
+          .filter(name => name.startsWith(".pdf-tools-"))).toEqual([]);
+      },
+      30_000,
+    );
+  }
+
   it("exposes the locked initial target identity to validation before staging", async () => {
     const target = path.join(tempDir, "identity.pdf");
     await fs.writeFile(target, "original bytes");
@@ -312,6 +521,110 @@ describe("atomic PDF output commits", () => {
     await expectNoTransactionArtifacts();
   });
 
+  it("does not commit a same-byte different-inode target substituted after verification", async () => {
+    const target = path.join(tempDir, "same-byte-substitution.pdf");
+    await fs.writeFile(target, "original bytes");
+    let substitutedIdentity = null;
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("replacement bytes"), {
+      verifyActivatedTargets: async () => {
+        await fs.unlink(target);
+        await fs.writeFile(target, "replacement bytes");
+        const stats = await fs.lstat(target);
+        substitutedIdentity = { dev: stats.dev, ino: stats.ino };
+      },
+    })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_ROLLBACK_FAILED" });
+
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("replacement bytes");
+    const retained = await fs.lstat(target);
+    expect({ dev: retained.dev, ino: retained.ino }).toEqual(substitutedIdentity);
+  });
+
+  it("preserves a same-byte different-inode journal substituted before committed cleanup", async () => {
+    const target = path.join(tempDir, "journal-substitution.pdf");
+    await fs.writeFile(target, "original bytes");
+    let substitutedJournal = null;
+    let substitutedIdentity = null;
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("replacement bytes"), {
+      async onTransition(transition) {
+        if (transition !== "rollback_removed_0") return;
+        const journalName = (await fs.readdir(tempDir))
+          .find(name => name.endsWith("-transaction.json"));
+        substitutedJournal = path.join(tempDir, journalName);
+        const bytes = await fs.readFile(substitutedJournal);
+        await fs.unlink(substitutedJournal);
+        await fs.writeFile(substitutedJournal, bytes, { mode: 0o600 });
+        const stats = await fs.lstat(substitutedJournal);
+        substitutedIdentity = { dev: stats.dev, ino: stats.ino };
+      },
+    })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_COMMITTED_CLEANUP_FAILED" });
+
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("replacement bytes");
+    const retained = await fs.lstat(substitutedJournal);
+    expect({ dev: retained.dev, ino: retained.ino }).toEqual(substitutedIdentity);
+  });
+
+  it("preserves a same-byte different-inode journal substituted between durable states", async () => {
+    const target = path.join(tempDir, "journal-between-states.pdf");
+    await fs.writeFile(target, "original bytes");
+    let substitutedJournal = null;
+    let substitutedIdentity = null;
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("replacement bytes"), {
+      async onTransition(transition) {
+        if (transition !== "journal_staging") return;
+        const journalName = (await fs.readdir(tempDir))
+          .find(name => name.endsWith("-transaction.json"));
+        substitutedJournal = path.join(tempDir, journalName);
+        const bytes = await fs.readFile(substitutedJournal);
+        await fs.unlink(substitutedJournal);
+        await fs.writeFile(substitutedJournal, bytes, { mode: 0o600 });
+        const stats = await fs.lstat(substitutedJournal);
+        substitutedIdentity = { dev: stats.dev, ino: stats.ino };
+      },
+    })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_JOURNAL_CHANGED" });
+
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("original bytes");
+    const retained = await fs.lstat(substitutedJournal);
+    expect({ dev: retained.dev, ino: retained.ino }).toEqual(substitutedIdentity);
+  });
+
+  it("does not rebind self-recovery to a substituted journal after a producer fails", async () => {
+    const target = path.join(tempDir, "journal-producer-failure.pdf");
+    await fs.writeFile(target, "original bytes");
+    const producerError = injectedError("PDF_GENERATION_FAILED", "producer");
+    let substitutedJournal = null;
+    let substitutedIdentity = null;
+
+    await expect(writePdfOutputsAtomic([{
+      targetPath: target,
+      produceBytes: async () => {
+        throw producerError;
+      },
+    }], {
+      async onTransition(transition) {
+        if (transition !== "journal_staging") return;
+        const journalName = (await fs.readdir(tempDir))
+          .find(name => name.endsWith("-transaction.json"));
+        substitutedJournal = path.join(tempDir, journalName);
+        const bytes = await fs.readFile(substitutedJournal);
+        await fs.unlink(substitutedJournal);
+        await fs.writeFile(substitutedJournal, bytes, { mode: 0o600 });
+        const stats = await fs.lstat(substitutedJournal);
+        substitutedIdentity = { dev: stats.dev, ino: stats.ino };
+      },
+    })).rejects.toMatchObject({
+      code: "ATOMIC_OUTPUT_ROLLBACK_FAILED",
+      cause: producerError,
+      cleanup_errors: [{ code: "ATOMIC_OUTPUT_JOURNAL_CHANGED" }],
+    });
+
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("original bytes");
+    const retained = await fs.lstat(substitutedJournal);
+    expect({ dev: retained.dev, ino: retained.ino }).toEqual(substitutedIdentity);
+  });
+
   it("preserves a target replaced between the last identity check and rollback move", async () => {
     const target = path.join(tempDir, "late-existing.pdf");
     const external = path.join(tempDir, "late-existing-external.pdf");
@@ -358,6 +671,35 @@ describe("atomic PDF output commits", () => {
       token: "directory-sync",
     })).rejects.toMatchObject({ code: "EIO" });
 
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("original bytes");
+    await expectNoTransactionArtifacts();
+  });
+
+  it("uses a proven partially published journal to recover the original sync error", async () => {
+    const target = path.join(tempDir, "published-journal-sync-failure.pdf");
+    await fs.writeFile(target, "original bytes");
+    const syncError = injectedError("EIO", "published journal directory sync");
+    let injected = false;
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      token: "published-journal-sync-failure",
+      fsOps: faultingFs({
+        beforeSync: async ({ path: openedPath }) => {
+          if (injected || openedPath !== tempDir) return;
+          const journalName = (await fs.readdir(tempDir))
+            .find(name => name.endsWith("-transaction.json"));
+          if (!journalName) return;
+          const envelope = JSON.parse(
+            await fs.readFile(path.join(tempDir, journalName), "utf8"),
+          );
+          if (envelope.payload?.state !== "prepared") return;
+          injected = true;
+          throw syncError;
+        },
+      }),
+    })).rejects.toBe(syncError);
+
+    expect(injected).toBe(true);
     await expect(fs.readFile(target, "utf8")).resolves.toBe("original bytes");
     await expectNoTransactionArtifacts();
   });

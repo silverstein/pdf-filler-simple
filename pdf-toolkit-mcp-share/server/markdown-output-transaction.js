@@ -166,6 +166,11 @@ async function main() {
   let verifiedOutput = null;
   const transaction = await writeOutputAtomic(request.target_name, markdownBytes, {
     anchoredDirectory: true,
+    assertPathAllowed: async currentPath => {
+      if (!request.allowed_directories.some(directory => isPathInsideDirectory(currentPath, directory))) {
+        throw new Error("Markdown output transaction directory moved outside the allowed directories.");
+      }
+    },
     overwrite: request.overwrite,
     validateInitialTargets: async ([target]) => {
       await assertCurrentDirectoryAllowed();

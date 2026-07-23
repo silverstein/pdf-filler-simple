@@ -130,10 +130,18 @@ Every user-visible PDF output follows an explicit commit policy:
   use the shared persistence lifecycle carry that exact input binding through
   parsing and reapply it to their pre-commit input recovery instead of
   rebinding to whatever the pathname identifies later.
-  These directory-continuity and per-mutation guard claims apply only to
-  input-triggered recovery and that carried shared pre-commit input recovery.
-  Output-writer recovery inside `writePdfOutputsAtomic` remains pathname-based
-  and is outside this input identity-continuity claim.
+  Output transactions independently bind their requested output parent to one
+  canonical allowed directory and its device/inode before acquiring the
+  directory lock. Safe requested-directory symlinks, including a
+  final-component symlink, are supported while they keep resolving to that
+  bound allowed parent. Non-anchored targets are rebased to the canonical
+  parent.
+  The Markdown child retains basename-relative operations anchored to its
+  inherited working-directory inode. Standalone output recovery establishes
+  the same binding automatically. The binding is rechecked inside lock
+  acquisition, recovery, staging, activation, rollback, cleanup, directory
+  sync, and lock release. Directory fsync rechecks the opened directory handle
+  against the bound device/inode before syncing it.
   Node does not expose portable directory-relative `openat`/`renameat`/
   `unlinkat` operations needed to make a path walk inseparable from every
   mutation. Per-mutation guards close the tested deterministic swap seams and
@@ -186,12 +194,19 @@ same-directory interprocess lock. Journals contain basenames only; stage and
 rollback names are recomputed from the journal token before use. Journals,
 stages, rollback entries, and owner records must be owned regular files. The
 output lock is a private owned directory published only after its owner record
-is complete. POSIX ownership and mode are enforced where the platform exposes
-them; Windows relies on the current account and parent-directory ACL. Recovery
-never follows a symlink or accepts an escaped, reserved, case-aliased, or
-Unicode-normalization-aliased transaction entry within the recovery directory
-already selected by its caller. This entry-level rule does not itself bind
-ancestor directory identity for output-writer recovery.
+is complete. Journal version 3 records the stable identity and digest of each
+completed stage, including while the journal remains in `staging`. Journal
+replacement binds the prior destination plus the private candidate across
+publication. Lock candidates bind both the private directory and owner record
+across publication. Runtime activation and cleanup recheck those captured
+identities rather than accepting a substituted same-name entry. A writer's
+self-recovery must match the journal identity and digest returned by its last
+durable publication; only a standalone recovery entry establishes a fresh
+binding to the current journal. POSIX
+ownership and mode are enforced where the platform exposes them; Windows
+relies on the current account and parent-directory ACL. Recovery never follows
+a symlink or accepts an escaped, reserved, case-aliased, or
+Unicode-normalization-aliased transaction entry.
 
 The durable states are `staging`, `prepared`, `activating`, and `committed`.
 Recovery rolls the first three states back to the exact prior set. A durably
@@ -206,12 +221,20 @@ activation.
 `test/atomic-output-recovery.test.js` terminates child processes after each
 named lock, staging, activation, commit-marker, and cleanup transition. It
 proves exact old/new bytes, mixed and all-new sets, hostile journal and symlink
-handling, stale-lock reclamation, and a no-op second recovery pass. These named
-transitions are post-syscall boundaries. Publication of the canonical output
-lock is separately protected by preparing a private candidate directory and
-atomically renaming it into place. A non-cooperating external program can still
-race the final identity check and filesystem rename; detected replacements fail
-closed and preserve the recovery journal for explicit resolution.
+handling, stale-lock reclamation, ancestor substitutions at transaction entry
+and inside activation, unchanged substituted trees, recovery of the original
+transaction after the writer exits, and a no-op second recovery pass. These
+named transitions are post-syscall boundaries. Publication of the canonical
+output lock is separately protected by preparing a private candidate directory
+and atomically renaming it into place.
+
+Portable Node does not expose directory-relative `openat`, `renameat`,
+`linkat`, and `unlinkat` operations on every supported host. A privileged,
+non-cooperating filesystem actor can therefore still race the final verified
+identity check and the immediately following pathname syscall. The guards,
+descriptor checks, stable artifact identities, and hostile deterministic swap
+matrix narrow that final-syscall window and fail closed when a substitution is
+observed; they do not claim race-free containment against such an actor.
 
 ## Local dev
 

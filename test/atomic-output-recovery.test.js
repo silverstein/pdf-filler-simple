@@ -363,6 +363,7 @@ describe("durable PDF output transaction recovery", () => {
     const journalPath = path.join(directoryPath, journalName);
     const envelope = JSON.parse(await fs.readFile(journalPath, "utf8"));
     envelope.payload.schema_version = 1;
+    for (const entry of envelope.payload.entries) delete entry.stage_identity;
     envelope.payload_sha256 = sha256(JSON.stringify(envelope.payload));
     await fs.unlink(path.join(directoryPath, envelope.payload.entries[0].stage));
     await fs.writeFile(journalPath, `${JSON.stringify(envelope)}\n`, { mode: 0o600 });
@@ -383,6 +384,7 @@ describe("durable PDF output transaction recovery", () => {
     const journalPath = path.join(directoryPath, journalName);
     const envelope = JSON.parse(await fs.readFile(journalPath, "utf8"));
     envelope.payload.schema_version = 1;
+    for (const entry of envelope.payload.entries) delete entry.stage_identity;
     envelope.payload_sha256 = sha256(JSON.stringify(envelope.payload));
     await fs.writeFile(journalPath, `${JSON.stringify(envelope)}\n`, { mode: 0o600 });
 
@@ -513,5 +515,76 @@ describe("durable PDF output transaction recovery", () => {
     });
     await expect(fs.readFile(path.join(directoryPath, "second.pdf"), "utf8")).resolves.toBe("second replacement");
     expect((await fs.readdir(directoryPath)).some(name => name.endsWith("-transaction.json"))).toBe(true);
+  });
+
+  it("rejects a committed same-byte different-inode target substitution", async () => {
+    const directoryPath = await makeTransactionDirectory("committed-target-identity");
+    expect((await runCrashChild(directoryPath, "journal_committed")).code).toBe(86);
+    const targetPath = path.join(directoryPath, "first.pdf");
+    await fs.unlink(targetPath);
+    await fs.writeFile(targetPath, "first replacement");
+    const substituted = await fs.lstat(targetPath);
+
+    await expect(recoverPdfOutputTransactions(directoryPath)).rejects.toMatchObject({
+      code: "ATOMIC_OUTPUT_RECOVERY_CONFLICT",
+    });
+    const retained = await fs.lstat(targetPath);
+    expect({ dev: retained.dev, ino: retained.ino }).toEqual({
+      dev: substituted.dev,
+      ino: substituted.ino,
+    });
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("first replacement");
+  });
+
+  it("rejects a re-signed v3 staging journal with digest and stage-identity nullness mismatch", async () => {
+    const directoryPath = await makeTransactionDirectory("staging-nullness");
+    expect((await runCrashChild(directoryPath, "stage_0")).code).toBe(86);
+    const journalName = (await fs.readdir(directoryPath))
+      .find(name => name.endsWith("-transaction.json"));
+    const journalPath = path.join(directoryPath, journalName);
+    const envelope = JSON.parse(await fs.readFile(journalPath, "utf8"));
+    expect(envelope.payload.entries[0].new_sha256).toMatch(/^[a-f0-9]{64}$/);
+    envelope.payload.entries[0].stage_identity = null;
+    envelope.payload_sha256 = sha256(JSON.stringify(envelope.payload));
+    await fs.writeFile(journalPath, `${JSON.stringify(envelope)}\n`, { mode: 0o600 });
+
+    await expect(recoverPdfOutputTransactions(directoryPath)).rejects.toMatchObject({
+      code: "ATOMIC_OUTPUT_JOURNAL_INVALID",
+    });
+  });
+
+  it("verifies the restored target after rollback rename before cleanup", async () => {
+    const directoryPath = await makeTransactionDirectory("rollback-postcondition");
+    expect((await runCrashChild(directoryPath, "activate_0")).code).toBe(86);
+    const targetPath = path.join(directoryPath, "first.pdf");
+    let substitutedIdentity = null;
+    const replacingFs = new Proxy(fs, {
+      get(target, property) {
+        if (property !== "rename") return target[property];
+        return async (from, to) => {
+          await fs.rename(from, to);
+          if (
+            substitutedIdentity === null
+            && from.endsWith("-rollback")
+            && to === targetPath
+          ) {
+            await fs.unlink(to);
+            await fs.writeFile(to, "first original");
+            const stats = await fs.lstat(to);
+            substitutedIdentity = { dev: stats.dev, ino: stats.ino };
+          }
+        };
+      },
+    });
+
+    await expect(recoverPdfOutputTransactions(directoryPath, {
+      fsOps: replacingFs,
+    })).rejects.toMatchObject({
+      code: "ATOMIC_OUTPUT_RECOVERY_CONFLICT",
+    });
+    const retained = await fs.lstat(targetPath);
+    expect({ dev: retained.dev, ino: retained.ino }).toEqual(substitutedIdentity);
+    expect((await fs.readdir(directoryPath))
+      .some(name => name.endsWith("-transaction.json"))).toBe(true);
   });
 });
