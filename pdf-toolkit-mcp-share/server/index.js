@@ -45,7 +45,12 @@ import {
 } from "./output-schemas.js";
 import { extractPdfLayout, extractPdfLayoutForMarkdown } from "./layout-extraction.js";
 import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
-import { readBoundedPdfFileSafely } from "./bounded-pdf-file.js";
+import {
+  PDF_MUTATION_MAX_FILE_BYTES,
+  pdfMutationFileLimitError,
+  readBoundedPdfFileSafely,
+  readPdfMutationInputsWithinMergeLimit,
+} from "./bounded-pdf-file.js";
 
 const _require = createRequire(import.meta.url);
 
@@ -133,8 +138,11 @@ function boundedInteger(value, fallback, { name, minimum, maximum }) {
   return candidate;
 }
 
-async function readBoundedPdfFile(resolvedPath, maxBytes) {
-  return readBoundedPdfFileSafely(resolvedPath, maxBytes, { assertPathAllowed });
+async function readBoundedPdfFile(resolvedPath, maxBytes, options = {}) {
+  return readBoundedPdfFileSafely(resolvedPath, maxBytes, {
+    ...options,
+    assertPathAllowed,
+  });
 }
 
 function sameStableFileIdentity(left, right) {
@@ -804,7 +812,10 @@ async function extractPdfText(pdfBuffer, maxPages) {
 }
 
 // Helper: load a PDF from disk with password support and clear error messages
-async function readPdfInputWithRecovery(inputPath) {
+async function readPdfInputWithRecovery(inputPath, {
+  maxBytes = PDF_MUTATION_MAX_FILE_BYTES,
+  createSizeLimitError = pdfMutationFileLimitError,
+} = {}) {
   const resolvedPath = resolvePath(inputPath);
   const canonicalDirectory = await fs.realpath(path.dirname(resolvedPath));
   for (let attempt = 0; attempt < 4; attempt += 1) {
@@ -819,8 +830,22 @@ async function readPdfInputWithRecovery(inputPath) {
       await new Promise(resolve => setTimeout(resolve, 5));
     }
   }
-  const pdfBytes = await fs.readFile(resolvedPath);
-  return { resolvedPath, pdfBytes };
+  const boundedInput = await readBoundedPdfFile(resolvedPath, maxBytes, {
+    createSizeLimitError,
+  });
+  if (
+    !Buffer.isBuffer(boundedInput.bytes)
+    || boundedInput.bytes.length !== boundedInput.sizeBytes
+  ) {
+    throw new Error("Bounded PDF input reader returned invalid bytes.");
+  }
+  return {
+    resolvedPath,
+    pdfBytes: boundedInput.bytes,
+    sizeBytes: boundedInput.sizeBytes,
+    canonicalPath: boundedInput.canonicalPath,
+    fileIdentity: boundedInput.fileIdentity,
+  };
 }
 
 const MAX_VALIDATED_PDF_STRUCTURE_DIGESTS = 32;
@@ -932,6 +957,15 @@ async function loadPdf(inputPath, password = null) {
   const { resolvedPath, pdfBytes } = await readPdfInputWithRecovery(inputPath);
   const pdfDoc = await loadPdfBytes(pdfBytes, password);
   return { pdfDoc, resolvedPath, pdfBytes };
+}
+
+async function readCurrentPdfMutationBytes(inputPath) {
+  const { bytes } = await readBoundedPdfFile(
+    inputPath,
+    PDF_MUTATION_MAX_FILE_BYTES,
+    { createSizeLimitError: pdfMutationFileLimitError },
+  );
+  return bytes;
 }
 
 // Import helpers extracted for testability
@@ -2064,7 +2098,7 @@ async function persistPdfMutation({
 
   const commit = async () => {
     await recoverPdfOutputTransactions(path.dirname(inputCanonical));
-    const recoveredInputSha256 = sha256Bytes(await fs.readFile(inputCanonical));
+    const recoveredInputSha256 = sha256Bytes(await readCurrentPdfMutationBytes(inputCanonical));
     if (
       /^[a-f0-9]{64}$/.test(expectedInputSha256 ?? "") &&
       recoveredInputSha256 !== expectedInputSha256
@@ -2080,7 +2114,7 @@ async function persistPdfMutation({
       if (!/^[a-f0-9]{64}$/.test(expectedInputSha256 ?? "")) {
         throw backupIdentityError("MUTATION_INPUT_IDENTITY_REQUIRED", "Same-document mutations require the SHA-256 captured when the input was loaded.");
       }
-      const currentBytes = await fs.readFile(inputCanonical);
+      const currentBytes = await readCurrentPdfMutationBytes(inputCanonical);
       const currentSha256 = sha256Bytes(currentBytes);
       commitInputSha256 = currentSha256;
       if (currentSha256 !== expectedInputSha256) {
@@ -2107,7 +2141,7 @@ async function persistPdfMutation({
       }
       record.pending_sha256 = pendingSha256;
       await replaceBackupRecord(record);
-      if (sha256Bytes(await fs.readFile(inputCanonical)) !== currentSha256) {
+      if (sha256Bytes(await readCurrentPdfMutationBytes(inputCanonical)) !== currentSha256) {
         record.pending_sha256 = null;
         await replaceBackupRecord(record);
         throw backupIdentityError("CONCURRENT_MODIFICATION", "The PDF changed while this mutation was preparing to commit. Reload the current document and retry.");
@@ -2117,7 +2151,7 @@ async function persistPdfMutation({
     await writePdfOutputAtomic(sameDocument ? inputCanonical : resolvedOutputPath, bytes, {
       beforeTransaction: sameDocument
         ? async () => {
-            if (sha256Bytes(await fs.readFile(inputCanonical)) !== commitInputSha256) {
+            if (sha256Bytes(await readCurrentPdfMutationBytes(inputCanonical)) !== commitInputSha256) {
               throw backupIdentityError("CONCURRENT_MODIFICATION", "The PDF changed while this mutation was preparing to activate. Reload the current document and retry.");
             }
           }
@@ -2315,11 +2349,6 @@ async function fillPdfDocumentFields(pdfDoc, fieldData) {
   }
   
   return { pdfDoc, filledFields, errors };
-}
-
-async function fillPdfFields(pdfPath, fieldData, password = null) {
-  const { pdfDoc } = await loadPdf(pdfPath, password);
-  return await fillPdfDocumentFields(pdfDoc, fieldData);
 }
 
 async function fillPdfBytes(pdfBytes, fieldData, password = null) {
@@ -3685,7 +3714,7 @@ async function handleToolCall(request) {
         const resolvedOutputPath = resolvePath(output_path);
         const { pdfBytes: rawPdfBytes } = await readPdfInputWithRecovery(resolvedPdfPath);
         assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
-        const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, field_data, password);
+        const { pdfDoc, filledFields, errors } = await fillPdfBytes(rawPdfBytes, field_data, password);
         const { payload, backupPath } = await persistPdfMutation({
           pdfDoc,
           inputPath: resolvedPdfPath,
@@ -3851,7 +3880,7 @@ async function handleToolCall(request) {
         // Merge profile data with additional data
         const mergedData = { ...profileData, ...additional_data };
         const { pdfBytes: rawPdfBytes } = await readPdfInputWithRecovery(resolvedPdfPath);
-        const { pdfDoc, filledFields, errors } = await fillPdfFields(resolvedPdfPath, mergedData, password);
+        const { pdfDoc, filledFields, errors } = await fillPdfBytes(rawPdfBytes, mergedData, password);
         const { payload, backupPath } = await persistPdfMutation({
           pdfDoc,
           inputPath: resolvedPdfPath,
@@ -4968,30 +4997,33 @@ async function handleToolCall(request) {
           throw new Error("output_path must be different from all input paths to prevent file corruption.");
         }
 
-        // Memory guard: check total file size
-        let totalSize = 0;
-        for (const rp of resolvedInputPaths) {
-          const s = await fs.stat(rp);
-          totalSize += s.size;
-        }
-        const MAX_MERGE_SIZE = 500 * 1024 * 1024;
-        if (totalSize > MAX_MERGE_SIZE) {
-          throw new Error(`Total input size (${(totalSize / 1024 / 1024).toFixed(1)}MB) exceeds 500MB limit.`);
-        }
+        const { inputs: retainedInputs } = await readPdfMutationInputsWithinMergeLimit(
+          resolvedInputPaths,
+          {
+            readInput: (inputPath, maxBytes, createSizeLimitError) =>
+              readPdfInputWithRecovery(inputPath, { maxBytes, createSizeLimitError }),
+          },
+        );
 
         const mergedDoc = await PDFDocument.create();
         let totalPageCount = 0;
-        for (let fi = 0; fi < resolvedInputPaths.length; fi++) {
+        for (let fi = 0; fi < retainedInputs.length; fi++) {
           const rp = resolvedInputPaths[fi];
+          const retainedInput = retainedInputs[fi];
           let srcDoc;
           try {
-            ({ pdfDoc: srcDoc } = await loadPdf(rp, password));
+            srcDoc = await loadPdfBytes(retainedInput.pdfBytes, password);
           } catch (err) {
+            retainedInput.pdfBytes = null;
             throw new Error(`File ${fi + 1} (${path.basename(rp)}): ${err.message}`);
           }
           const pageIndices = srcDoc.getPageIndices();
-          if (fi === 0) copyPdfDocumentMetadata(mergedDoc, srcDoc);
-          await copyPdfPagesPreservingForms(mergedDoc, srcDoc, pageIndices);
+          try {
+            if (fi === 0) copyPdfDocumentMetadata(mergedDoc, srcDoc);
+            await copyPdfPagesPreservingForms(mergedDoc, srcDoc, pageIndices);
+          } finally {
+            retainedInput.pdfBytes = null;
+          }
           totalPageCount += pageIndices.length;
         }
 
@@ -5223,7 +5255,7 @@ async function handleToolCall(request) {
 
         const { pdfBytes: rawPdfBytes } = await readPdfInputWithRecovery(resolvedInputPath);
         assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
-        const { pdfDoc } = await loadPdf(input_path, password);
+        const pdfDoc = await loadPdfBytes(rawPdfBytes, password);
         const totalPages = pdfDoc.getPageCount();
 
         // Validate page numbers

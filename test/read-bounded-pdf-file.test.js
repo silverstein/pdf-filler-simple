@@ -3,7 +3,14 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { readBoundedPdfFileSafely } from "../server/bounded-pdf-file.js";
+import {
+  PDF_MERGE_AGGREGATE_LIMIT_MESSAGE,
+  PDF_MERGE_MAX_TOTAL_BYTES,
+  PDF_MUTATION_FILE_LIMIT_MESSAGE,
+  PDF_MUTATION_MAX_FILE_BYTES,
+  readBoundedPdfFileSafely,
+  readPdfMutationInputsWithinMergeLimit,
+} from "../server/bounded-pdf-file.js";
 
 const CHANGED_MESSAGE = "PDF changed while it was being read. Retry the request.";
 
@@ -311,5 +318,109 @@ describe("readBoundedPdfFileSafely", () => {
       assertPathAllowed: pathPolicy,
     })).rejects.toThrow("read_pdf_layout accepts source PDFs up to 250 MiB.");
     expect(state.closeCount).toBe(1);
+  });
+
+  it("uses the caller's stable typed resource-limit error and still closes the descriptor", async () => {
+    const { fileSystem, state } = createRaceFileSystem();
+    await expect(readBoundedPdfFileSafely(pdfPath, 3, {
+      fileSystem,
+      constants: fsConstants,
+      assertPathAllowed: pathPolicy,
+      createSizeLimitError() {
+        const error = new Error(PDF_MUTATION_FILE_LIMIT_MESSAGE);
+        error.code = "PDF_INPUT_TOO_LARGE";
+        return error;
+      },
+    })).rejects.toMatchObject({
+      code: "PDF_INPUT_TOO_LARGE",
+      message: PDF_MUTATION_FILE_LIMIT_MESSAGE,
+    });
+    expect(state.closeCount).toBe(1);
+  });
+});
+
+describe("merge PDF input allocation budget", () => {
+  const TEST_MAX_FILE_BYTES = 250;
+  const TEST_MAX_TOTAL_BYTES = 500;
+
+  function budgetedReader(sizes, calls) {
+    let index = 0;
+    return async (resolvedPath, maxBytes, createSizeLimitError) => {
+      const sizeBytes = sizes[index];
+      index += 1;
+      calls.push({ resolvedPath, maxBytes });
+      if (sizeBytes > maxBytes) throw createSizeLimitError();
+      return { resolvedPath, sizeBytes, pdfBytes: Buffer.alloc(sizeBytes) };
+    };
+  }
+
+  it("allows the exact 250 MiB per-file and 500 MiB aggregate boundaries", async () => {
+    expect(PDF_MUTATION_MAX_FILE_BYTES).toBe(250 * 1024 * 1024);
+    expect(PDF_MERGE_MAX_TOTAL_BYTES).toBe(500 * 1024 * 1024);
+    const calls = [];
+    const result = await readPdfMutationInputsWithinMergeLimit(["first.pdf", "second.pdf"], {
+      readInput: budgetedReader(
+        [TEST_MAX_FILE_BYTES, TEST_MAX_FILE_BYTES],
+        calls,
+      ),
+      maxFileBytes: TEST_MAX_FILE_BYTES,
+      maxTotalBytes: TEST_MAX_TOTAL_BYTES,
+    });
+    expect(result.totalSizeBytes).toBe(TEST_MAX_TOTAL_BYTES);
+    expect(result.inputs).toHaveLength(2);
+    expect(calls).toEqual([
+      { resolvedPath: "first.pdf", maxBytes: TEST_MAX_FILE_BYTES },
+      { resolvedPath: "second.pdf", maxBytes: TEST_MAX_FILE_BYTES },
+    ]);
+  });
+
+  it("rejects 250 MiB plus one byte with the per-file resource error", async () => {
+    await expect(readPdfMutationInputsWithinMergeLimit(["oversize.pdf"], {
+      readInput: budgetedReader([TEST_MAX_FILE_BYTES + 1], []),
+      maxFileBytes: TEST_MAX_FILE_BYTES,
+      maxTotalBytes: TEST_MAX_TOTAL_BYTES,
+    })).rejects.toMatchObject({
+      code: "PDF_INPUT_TOO_LARGE",
+      message: PDF_MUTATION_FILE_LIMIT_MESSAGE,
+    });
+  });
+
+  it("passes only the remaining aggregate budget to the reader before rejecting 500 MiB plus one byte", async () => {
+    const calls = [];
+    await expect(readPdfMutationInputsWithinMergeLimit(
+      ["first.pdf", "second.pdf", "one-byte-too-many.pdf"],
+      {
+        readInput: budgetedReader(
+          [TEST_MAX_FILE_BYTES, TEST_MAX_FILE_BYTES, 1],
+          calls,
+        ),
+        maxFileBytes: TEST_MAX_FILE_BYTES,
+        maxTotalBytes: TEST_MAX_TOTAL_BYTES,
+      },
+    )).rejects.toMatchObject({
+      code: "PDF_MERGE_INPUTS_TOO_LARGE",
+      message: PDF_MERGE_AGGREGATE_LIMIT_MESSAGE,
+    });
+    expect(calls).toEqual([
+      { resolvedPath: "first.pdf", maxBytes: TEST_MAX_FILE_BYTES },
+      { resolvedPath: "second.pdf", maxBytes: TEST_MAX_FILE_BYTES },
+      { resolvedPath: "one-byte-too-many.pdf", maxBytes: 0 },
+    ]);
+  });
+
+  it("uses the exact remaining allowance when the aggregate is tighter than the per-file limit", async () => {
+    const calls = [];
+    const firstSize = TEST_MAX_FILE_BYTES;
+    const secondSize = TEST_MAX_FILE_BYTES - 10;
+    const result = await readPdfMutationInputsWithinMergeLimit(
+      ["first.pdf", "second.pdf", "final.pdf"],
+      {
+        readInput: budgetedReader([firstSize, secondSize, 10], calls),
+        maxFileBytes: TEST_MAX_FILE_BYTES,
+        maxTotalBytes: TEST_MAX_TOTAL_BYTES,
+      },
+    );
+    expect(result.totalSizeBytes).toBe(TEST_MAX_TOTAL_BYTES);
+    expect(calls.at(-1)).toEqual({ resolvedPath: "final.pdf", maxBytes: 10 });
   });
 });

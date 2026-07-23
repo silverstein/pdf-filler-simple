@@ -5,6 +5,23 @@ const PDF_CHANGED_MESSAGE = "PDF changed while it was being read. Retry the requ
 const PDF_TOO_LARGE_MESSAGE = "read_pdf_layout accepts source PDFs up to 250 MiB.";
 const PATH_RACE_ERROR_CODES = new Set(["ELOOP", "ENOENT", "ENOTDIR", "ESTALE"]);
 
+export const PDF_MUTATION_MAX_FILE_BYTES = 250 * 1024 * 1024;
+export const PDF_MERGE_MAX_TOTAL_BYTES = 500 * 1024 * 1024;
+export const PDF_MUTATION_FILE_LIMIT_MESSAGE = "PDF input exceeds the 250 MiB per-file limit.";
+export const PDF_MERGE_AGGREGATE_LIMIT_MESSAGE = "merge_pdfs inputs exceed the 500 MiB aggregate limit.";
+
+export function pdfMutationFileLimitError() {
+  const error = new Error(PDF_MUTATION_FILE_LIMIT_MESSAGE);
+  error.code = "PDF_INPUT_TOO_LARGE";
+  return error;
+}
+
+export function pdfMergeAggregateLimitError() {
+  const error = new Error(PDF_MERGE_AGGREGATE_LIMIT_MESSAGE);
+  error.code = "PDF_MERGE_INPUTS_TOO_LARGE";
+  return error;
+}
+
 function pdfChangedError(cause) {
   const error = new Error(PDF_CHANGED_MESSAGE, cause ? { cause } : undefined);
   error.code = "PDF_CHANGED_DURING_READ";
@@ -38,16 +55,16 @@ function stableFileIdentity(stats) {
   };
 }
 
-function boundedFileSize(stats, maxBytes) {
+function boundedFileSize(stats, maxBytes, createSizeLimitError) {
   const size = stats.size;
   if (typeof size === "bigint") {
     if (size < 0n || size > BigInt(Number.MAX_SAFE_INTEGER) || size > BigInt(maxBytes)) {
-      throw new Error(PDF_TOO_LARGE_MESSAGE);
+      throw createSizeLimitError();
     }
     return Number(size);
   }
   if (!Number.isSafeInteger(size) || size < 0 || size > maxBytes) {
-    throw new Error(PDF_TOO_LARGE_MESSAGE);
+    throw createSizeLimitError();
   }
   return size;
 }
@@ -75,9 +92,13 @@ export async function readBoundedPdfFileSafely(resolvedPath, maxBytes, {
   fileSystem = defaultFileSystem,
   constants = defaultFsConstants,
   assertPathAllowed,
+  createSizeLimitError = () => new Error(PDF_TOO_LARGE_MESSAGE),
 } = {}) {
   if (typeof assertPathAllowed !== "function") {
     throw new TypeError("readBoundedPdfFileSafely requires an allowed-path policy.");
+  }
+  if (typeof createSizeLimitError !== "function") {
+    throw new TypeError("createSizeLimitError must be a function.");
   }
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 0) {
     throw new TypeError("maxBytes must be a non-negative safe integer.");
@@ -94,7 +115,7 @@ export async function readBoundedPdfFileSafely(resolvedPath, maxBytes, {
     if (!before.isFile()) throw new Error("PDF path must identify a regular file.");
     if (!sameFileIdentity(pathBefore, before)) throw pdfChangedError();
 
-    const sizeBytes = boundedFileSize(before, maxBytes);
+    const sizeBytes = boundedFileSize(before, maxBytes, createSizeLimitError);
     const bytes = Buffer.allocUnsafe(sizeBytes);
     let offset = 0;
     while (offset < bytes.length) {
@@ -121,4 +142,54 @@ export async function readBoundedPdfFileSafely(resolvedPath, maxBytes, {
   } finally {
     await handle.close();
   }
+}
+
+/**
+ * Read merge inputs in request order while never asking the descriptor reader
+ * to allocate beyond either the per-file or remaining aggregate allowance.
+ * The injected reader is the recovery-aware one-descriptor reader in the
+ * server; the seam also makes the aggregate budget independently testable
+ * without constructing hundreds of MiB of fixture data.
+ */
+export async function readPdfMutationInputsWithinMergeLimit(resolvedPaths, {
+  readInput,
+  maxFileBytes = PDF_MUTATION_MAX_FILE_BYTES,
+  maxTotalBytes = PDF_MERGE_MAX_TOTAL_BYTES,
+} = {}) {
+  if (!Array.isArray(resolvedPaths) || typeof readInput !== "function") {
+    throw new TypeError("readPdfMutationInputsWithinMergeLimit requires paths and a reader.");
+  }
+  if (
+    !Number.isSafeInteger(maxFileBytes)
+    || maxFileBytes < 0
+    || !Number.isSafeInteger(maxTotalBytes)
+    || maxTotalBytes < 0
+  ) {
+    throw new TypeError("Merge PDF byte limits must be non-negative safe integers.");
+  }
+
+  const inputs = [];
+  let totalSizeBytes = 0;
+  for (const resolvedPath of resolvedPaths) {
+    const remainingBytes = maxTotalBytes - totalSizeBytes;
+    const aggregateLimitIsTighter = remainingBytes < maxFileBytes;
+    const maxBytes = Math.min(maxFileBytes, remainingBytes);
+    const createSizeLimitError = aggregateLimitIsTighter
+      ? pdfMergeAggregateLimitError
+      : pdfMutationFileLimitError;
+    const input = await readInput(resolvedPath, maxBytes, createSizeLimitError);
+    if (
+      !input
+      || !Number.isSafeInteger(input.sizeBytes)
+      || input.sizeBytes < 0
+      || input.sizeBytes > maxBytes
+      || !Buffer.isBuffer(input.pdfBytes)
+      || input.pdfBytes.length !== input.sizeBytes
+    ) {
+      throw new Error("Bounded PDF input reader returned an invalid result.");
+    }
+    totalSizeBytes += input.sizeBytes;
+    inputs.push(input);
+  }
+  return { inputs, totalSizeBytes };
 }

@@ -105,6 +105,22 @@ stable and in sync across:
 
 Every user-visible PDF output follows an explicit commit policy:
 
+- All twelve PDF-producing mutators enforce a 250 MiB (262,144,000-byte)
+  limit on every source PDF before parser allocation: `fill_pdf`,
+  `bulk_fill_from_csv`, `fill_with_profile`, `merge_pdfs`, `split_pdf`,
+  `rotate_pdf_pages`, `reorder_pdf_pages`, `apply_page_plan`,
+  `add_signature_field`, `apply_signature`, `prepare_signing_packet`, and
+  `apply_text`. `merge_pdfs` additionally enforces a 500 MiB
+  (524,288,000-byte) aggregate source limit. Each source is opened once for
+  the size check and bounded read; descriptor, pathname, and canonical-path
+  identity are checked around that read, and the exact retained bytes are
+  passed to the parser. The stable user-facing failures are `PDF input exceeds
+  the 250 MiB per-file limit.` and `merge_pdfs inputs exceed the 500 MiB
+  aggregate limit.` These failures happen before any output, backup, or
+  active-document state change. Their internal `PDF_INPUT_TOO_LARGE` and
+  `PDF_MERGE_INPUTS_TOO_LARGE` codes intentionally collapse to the existing
+  public `tool_execution_failed` code; expanding the public error taxonomy
+  requires a deliberate versioned contract and evaluation-oracle update.
 - `fill_pdf`, `fill_with_profile`, `add_signature_field`, `apply_signature`,
   `prepare_signing_packet`, and `apply_text` save through the shared mutation
   lifecycle. New-path outputs use a same-directory staged commit. Same-document
