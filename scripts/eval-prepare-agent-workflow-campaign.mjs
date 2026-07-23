@@ -71,7 +71,9 @@ async function writePrivate(filename, value) {
 
 async function listFiles(root, relativeRoot = "") {
   const entries = await fs.readdir(path.join(root, relativeRoot), { withFileTypes: true });
-  entries.sort((left, right) => left.name.localeCompare(right.name));
+  entries.sort((left, right) => (
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+  ));
   const files = [];
   for (const entry of entries) {
     const relative = path.join(relativeRoot, entry.name);

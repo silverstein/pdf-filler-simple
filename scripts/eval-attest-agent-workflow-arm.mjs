@@ -24,7 +24,9 @@ function canonicalJson(value) {
 
 async function listFiles(root, relativeRoot = "") {
   const entries = await fs.readdir(path.join(root, relativeRoot), { withFileTypes: true });
-  entries.sort((left, right) => left.name.localeCompare(right.name));
+  entries.sort((left, right) => (
+    left.name < right.name ? -1 : left.name > right.name ? 1 : 0
+  ));
   const files = [];
   for (const entry of entries) {
     if (relativeRoot === "" && entry.name === ".git") continue;
@@ -90,7 +92,10 @@ export async function attestAgentWorkflowArm({
     errors.push("synthetic repository must contain exactly one parentless commit");
   }
   if (status) errors.push("synthetic participant repository must be clean");
-  if (canonicalJson(trackedFiles) !== canonicalJson(contentInventory.entries.map(entry => entry.path))) {
+  if (
+    canonicalJson([...trackedFiles].sort())
+    !== canonicalJson(contentInventory.entries.map(entry => entry.path).sort())
+  ) {
     errors.push("tracked-file inventory must equal the participant content inventory");
   }
 
