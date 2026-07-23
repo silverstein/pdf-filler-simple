@@ -68,13 +68,86 @@ participant roots and a trusted oracle at independent absolute destinations.
 Run it only from a clean exact Git HEAD. Transfer only the participant root to
 the model host; the oracle and repository must remain on the controller.
 
-Run Claude with `--tools ""`, `--no-session-persistence`, `--permission-mode
-plan`, the arm's response schema, and `--plugin-dir
-plugin/pdf-tools-workflow` only for the skill arm. Run Codex with
-`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, `--sandbox read-only`,
-the arm's response schema, and plugins, shell, browser, computer use, and
-multi-agent features disabled. The skill arm discovers only its copied
+The launch commands below were checked against Claude Code 2.1.216 and Codex
+CLI 0.145.0. Run them only in the transferred participant arm on a model host.
+Do not run them in the repository or on the controller that retains the
+oracle.
+
+For a Claude skill-arm case:
+
+```bash
+mkdir -p results
+CLAUDE_EVAL_SCHEMA="$(jq -c . response-schema.json)"
+claude --print \
+  --model claude-fable-5 \
+  --output-format json \
+  --no-session-persistence \
+  --permission-mode plan \
+  --tools "" \
+  --no-chrome \
+  --setting-sources "" \
+  --strict-mcp-config \
+  --mcp-config '{"mcpServers":{}}' \
+  --json-schema "$CLAUDE_EVAL_SCHEMA" \
+  --plugin-dir plugin/pdf-tools-workflow \
+  < prompts/missing-identity-fails-closed.txt \
+  > results/missing-identity-fails-closed.raw.json
+```
+
+Use the same command without `--plugin-dir plugin/pdf-tools-workflow` in the
+Claude baseline arm. Keep every other flag and the prompt byte-for-byte
+identical. `--tools ""` is the native no-tools boundary. `--setting-sources ""`
+and the strict empty MCP configuration exclude user, project, local, and MCP
+configuration from the trial.
+
+For a Codex skill-arm or baseline-arm case:
+
+```bash
+mkdir -p results
+codex exec \
+  --skip-git-repo-check \
+  --ephemeral \
+  --ignore-user-config \
+  --ignore-rules \
+  --sandbox read-only \
+  --model gpt-5.6-sol \
+  --output-schema response-schema.json \
+  --json \
+  --output-last-message results/missing-identity-fails-closed.response.json \
+  --disable apps \
+  --disable auth_elicitation \
+  --disable browser_use \
+  --disable browser_use_external \
+  --disable browser_use_full_cdp_access \
+  --disable code_mode \
+  --disable code_mode_host \
+  --disable computer_use \
+  --disable goals \
+  --disable hooks \
+  --disable image_generation \
+  --disable in_app_browser \
+  --disable memories \
+  --disable multi_agent \
+  --disable multi_agent_v2 \
+  --disable network_proxy \
+  --disable plugins \
+  --disable remote_plugin \
+  --disable request_permissions_tool \
+  --disable shell_tool \
+  --disable skill_mcp_dependency_install \
+  --disable tool_call_mcp_elicitation \
+  --disable tool_suggest \
+  --disable unified_exec \
+  --disable workspace_dependencies \
+  - < prompts/missing-identity-fails-closed.txt \
+  > results/missing-identity-fails-closed.events.jsonl
+```
+
+The Codex skill arm discovers only its copied
 `.agents/skills/pdf-tools-workflow`; the baseline root contains no skill.
+The explicit feature denies prevent the trial from inheriting app, plugin,
+shell, browser, computer-use, memory, hook, goal, or multi-agent capability.
+The read-only sandbox remains defense in depth.
 
 Before every arm, retain a negative isolation probe showing that neither an
 oracle nor repository exists on the model host, plus the effective host
@@ -233,8 +306,10 @@ or remote architecture.
 Run each frozen planning case with and without the skill. The five initial cases
 cover missing identity, embedded instructions, incomplete signature
 authorization, partial comparison, and safe distinct-output filling. The
-machine scorer checks exact stage states, effects, blocked tools, required
-safety flags, missing inputs, and overclaim booleans. These are descriptive
+machine scorer loads its committed response schema directly from the controller
+repository. Participant responses cannot provide or weaken that schema. It
+checks exact stage states, effects, blocked tools, required safety flags,
+missing inputs, and overclaim booleans. These are descriptive
 instruction-following trials, not native MCP executions or a benchmark.
 
 No native-host results are recorded by this prototype. The next evidence gate

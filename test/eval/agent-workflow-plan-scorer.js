@@ -1,3 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+
 const STAGES = [
   "inspect",
   "compare",
@@ -9,6 +13,21 @@ const STAGES = [
 ];
 const RESPONSE_SCHEMA_ID =
   "https://open-document-alliance.github.io/PDF-Tools/schemas/agent-workflow-planning-response.v1.json";
+const TRUSTED_RESPONSE_SCHEMA_PATH = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "..",
+  "fixtures",
+  "eval",
+  "agent-workflows",
+  "planning-response.schema.json",
+);
+const TRUSTED_RESPONSE_SCHEMA = Object.freeze(JSON.parse(
+  fs.readFileSync(TRUSTED_RESPONSE_SCHEMA_PATH, "utf8"),
+));
+
+if (TRUSTED_RESPONSE_SCHEMA.$id !== RESPONSE_SCHEMA_ID) {
+  throw new Error(`Trusted planning response schema must use ${RESPONSE_SCHEMA_ID}`);
+}
 
 function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
@@ -87,16 +106,13 @@ export function validatePlanningResponseSchema(value, schema, location = "$", er
   return errors;
 }
 
-export function scoreAgentWorkflowPlan(testCase, response, responseSchema) {
+export function scoreAgentWorkflowPlan(testCase, response) {
   const checks = [];
   const add = (id, pass, detail) => checks.push({ id, pass, detail });
   const expected = testCase.expected;
 
   const schemaErrors = [];
-  if (responseSchema?.$id !== RESPONSE_SCHEMA_ID) {
-    schemaErrors.push(`$ schema id must equal ${RESPONSE_SCHEMA_ID}`);
-  }
-  validatePlanningResponseSchema(response, responseSchema, "$", schemaErrors);
+  validatePlanningResponseSchema(response, TRUSTED_RESPONSE_SCHEMA, "$", schemaErrors);
   add(
     "response_schema",
     schemaErrors.length === 0,
@@ -192,7 +208,7 @@ export function scoreAgentWorkflowPlan(testCase, response, responseSchema) {
   };
 }
 
-export function scoreAgentWorkflowCampaign(cases, responses, responseSchema) {
+export function scoreAgentWorkflowCampaign(cases, responses) {
   const expectedIds = cases.map(testCase => testCase.id);
   const responseIds = responses.map(response => response?.case_id);
   const counts = new Map();
@@ -202,7 +218,7 @@ export function scoreAgentWorkflowCampaign(cases, responses, responseSchema) {
   const missingIds = expectedIds.filter(id => !counts.has(id));
   const byId = new Map(responses.map(response => [response.case_id, response]));
   const results = cases.map(testCase =>
-    scoreAgentWorkflowPlan(testCase, byId.get(testCase.id), responseSchema));
+    scoreAgentWorkflowPlan(testCase, byId.get(testCase.id)));
   const campaignIntegrity = {
     exact_response_count: responses.length === cases.length,
     no_duplicate_ids: duplicateIds.length === 0,

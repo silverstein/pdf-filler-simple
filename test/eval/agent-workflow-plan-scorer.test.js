@@ -52,7 +52,7 @@ function passingResponse(testCase) {
 describe("agent workflow planning scorer", () => {
   it("accepts exact safe outcomes for every synthetic planning case", () => {
     const responses = CASES.cases.map(passingResponse);
-    expect(scoreAgentWorkflowCampaign(CASES.cases, responses, RESPONSE_SCHEMA)).toMatchObject({
+    expect(scoreAgentWorkflowCampaign(CASES.cases, responses)).toMatchObject({
       passed_cases: CASES.cases.length,
       total_cases: CASES.cases.length,
       pass: true,
@@ -64,7 +64,7 @@ describe("agent workflow planning scorer", () => {
     const response = passingResponse(testCase);
     response.effects.mutation = true;
     response.planned_tools = ["fill_pdf"];
-    const score = scoreAgentWorkflowPlan(testCase, response, RESPONSE_SCHEMA);
+    const score = scoreAgentWorkflowPlan(testCase, response);
     expect(score.pass).toBe(false);
     expect(score.checks.filter(check => !check.pass).map(check => check.id)).toEqual(
       expect.arrayContaining(["effects", "forbidden_planned_tools"]),
@@ -79,7 +79,7 @@ describe("agent workflow planning scorer", () => {
     response.stages[3].status = "completed";
     response.stages[4].status = "planned";
     response.planned_tools = ["apply_signature"];
-    const score = scoreAgentWorkflowPlan(testCase, response, RESPONSE_SCHEMA);
+    const score = scoreAgentWorkflowPlan(testCase, response);
     expect(score.pass).toBe(false);
     expect(score.checks.filter(check => !check.pass).map(check => check.id)).toEqual(
       expect.arrayContaining(["stage_statuses", "forbidden_planned_tools"]),
@@ -92,19 +92,19 @@ describe("agent workflow planning scorer", () => {
     );
     const embeddedResponse = passingResponse(embedded);
     embeddedResponse.planned_tools = ["fetch_pdf_from_url"];
-    expect(scoreAgentWorkflowPlan(embedded, embeddedResponse, RESPONSE_SCHEMA).pass).toBe(false);
+    expect(scoreAgentWorkflowPlan(embedded, embeddedResponse).pass).toBe(false);
 
     const comparison = CASES.cases.find(
       item => item.id === "partial-comparison-stays-partial",
     );
     const comparisonResponse = passingResponse(comparison);
     comparisonResponse.assertions.full_diff_claimed = true;
-    expect(scoreAgentWorkflowPlan(comparison, comparisonResponse, RESPONSE_SCHEMA).pass).toBe(false);
+    expect(scoreAgentWorkflowPlan(comparison, comparisonResponse).pass).toBe(false);
   });
 
   it("fails a campaign when a case response is missing", () => {
     const responses = CASES.cases.slice(1).map(passingResponse);
-    const campaign = scoreAgentWorkflowCampaign(CASES.cases, responses, RESPONSE_SCHEMA);
+    const campaign = scoreAgentWorkflowCampaign(CASES.cases, responses);
     expect(campaign.pass).toBe(false);
     expect(campaign.passed_cases).toBe(CASES.cases.length - 1);
     expect(campaign.missing_ids).toEqual(["missing-identity-fails-closed"]);
@@ -115,7 +115,7 @@ describe("agent workflow planning scorer", () => {
     const response = passingResponse(testCase);
     response.planned_tools.push("apply_signature");
     response.unreviewed = true;
-    const score = scoreAgentWorkflowPlan(testCase, response, RESPONSE_SCHEMA);
+    const score = scoreAgentWorkflowPlan(testCase, response);
     expect(score.pass).toBe(false);
     expect(score.checks.filter(check => !check.pass).map(check => check.id)).toEqual(
       expect.arrayContaining(["response_schema", "required_planned_tools"]),
@@ -131,7 +131,7 @@ describe("agent workflow planning scorer", () => {
     response.safety_flags.push("IDENTITY_EVIDENCE_UNAVAILABLE");
     response.missing_inputs.push("source_sha256");
     response.prohibited_tools.push("fill_pdf");
-    const score = scoreAgentWorkflowPlan(testCase, response, RESPONSE_SCHEMA);
+    const score = scoreAgentWorkflowPlan(testCase, response);
     expect(score.pass).toBe(false);
     expect(score.checks.filter(check => !check.pass).map(check => check.id)).toEqual(
       expect.arrayContaining([
@@ -140,7 +140,20 @@ describe("agent workflow planning scorer", () => {
         "forbidden_tools_declared",
       ]),
     );
-    expect(scoreAgentWorkflowPlan(testCase, passingResponse(testCase)).pass).toBe(false);
+    expect(scoreAgentWorkflowPlan(testCase, passingResponse(testCase)).pass).toBe(true);
+  });
+
+  it("does not accept a caller-supplied weakened schema", () => {
+    const testCase = CASES.cases.find(item => item.id === "safe-fill-plans-distinct-output");
+    const response = passingResponse(testCase);
+    response.unreviewed = true;
+    const weakenedSchema = {
+      $id: RESPONSE_SCHEMA.$id,
+      type: "object",
+      additionalProperties: true,
+    };
+
+    expect(scoreAgentWorkflowPlan(testCase, response, weakenedSchema).pass).toBe(false);
   });
 
   it("rejects duplicate and unexpected case responses", () => {
@@ -150,11 +163,7 @@ describe("agent workflow planning scorer", () => {
       ...passingResponse(CASES.cases[1]),
       case_id: "unexpected-case",
     });
-    const campaign = scoreAgentWorkflowCampaign(
-      CASES.cases,
-      responses,
-      RESPONSE_SCHEMA,
-    );
+    const campaign = scoreAgentWorkflowCampaign(CASES.cases, responses);
     expect(campaign.pass).toBe(false);
     expect(campaign.duplicate_ids).toEqual(["missing-identity-fails-closed"]);
     expect(campaign.unexpected_ids).toEqual(["unexpected-case"]);
@@ -175,6 +184,6 @@ describe("agent workflow planning scorer", () => {
       overwrite: false,
       mutation: true,
     };
-    expect(scoreAgentWorkflowPlan(testCase, response, RESPONSE_SCHEMA).pass).toBe(true);
+    expect(scoreAgentWorkflowPlan(testCase, response).pass).toBe(true);
   });
 });
