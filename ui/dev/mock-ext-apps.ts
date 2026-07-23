@@ -54,6 +54,7 @@ export class App {
   ontoolresult?: (result: any) => void | Promise<void>;
   onerror?: (err: unknown) => void;
   onhostcontextchanged?: (ctx: McpUiHostContext) => void;
+  onteardown?: () => Record<string, unknown> | Promise<Record<string, unknown>>;
 
   #hostContext: McpUiHostContext;
 
@@ -107,4 +108,6 @@ export class App {
     this.onhostcontextchanged?.(this.#hostContext);
     return { mode };
   }
+
+  async close() {}
 }

@@ -219,8 +219,10 @@ const fillProgressTextEl = $("fill-progress-text");
 const app = new App(
   { name: "PDF Tools Viewer", version: "1.0.0" },
   {},
-  { autoResize: false },
+  { autoResize: false, strict: true },
 );
+
+let isTearingDown = false;
 
 // ─── UI State ────────────────────────────────────────────────────────────────
 
@@ -3369,7 +3371,45 @@ async function loadPdfFromToolResult(result: CallToolResult) {
 
 app.onerror = (err: unknown) => {
   console.error("[viewer] App error:", err);
+  if (isTearingDown) return;
   showError(err instanceof Error ? err.message : String(err));
+};
+
+app.onteardown = async () => {
+  if (isTearingDown) return {};
+  isTearingDown = true;
+
+  // Stop asynchronous render and preload work before acknowledging teardown.
+  // The host may remove the iframe immediately after the response.
+  pdfGeneration++;
+  preloadPaused = false;
+  pendingPage = null;
+  if (searchDebounceTimer) {
+    clearTimeout(searchDebounceTimer);
+    searchDebounceTimer = null;
+  }
+  if (selectionTimer) {
+    clearTimeout(selectionTimer);
+    selectionTimer = null;
+  }
+  if (currentRenderTask) {
+    try { currentRenderTask.cancel(); } catch { /* best-effort */ }
+    currentRenderTask = null;
+  }
+  isRendering = false;
+
+  const documentToDestroy = pdfDocument;
+  pdfDocument = null;
+  if (documentToDestroy) {
+    try { await documentToDestroy.destroy(); } catch { /* best-effort */ }
+  }
+
+  rangeCache.clear();
+  inflightRequests.clear();
+  pageTextCache.clear();
+  if (pdfPath) zoneRequests.deletePath(pdfPath);
+  signaturePreviewCache.clear();
+  return {};
 };
 
 // ─── Host Context ────────────────────────────────────────────────────────────
@@ -3389,11 +3429,18 @@ app.onhostcontextchanged = handleHostContext;
 
 // ─── Connect ─────────────────────────────────────────────────────────────────
 
-app.connect().then(() => {
-  console.log("[viewer] Connected");
-  const ctx = app.getHostContext();
-  if (ctx) handleHostContext(ctx);
-  if (pdfPath) {
-    syncActiveDocumentState();
-  }
-});
+app.connect()
+  .then(() => {
+    console.log("[viewer] Connected");
+    const ctx = app.getHostContext();
+    if (ctx) handleHostContext(ctx);
+    if (pdfPath) {
+      syncActiveDocumentState();
+    }
+  })
+  .catch((err: unknown) => {
+    console.error("[viewer] Connection failed:", err);
+    if (!isTearingDown) {
+      showError(err instanceof Error ? err.message : String(err));
+    }
+  });
