@@ -15,10 +15,8 @@ const ENCRYPTED_ORACLE = path.join(
   REPO_ROOT,
   "test",
   "fixtures",
-  "eval",
-  "extraction",
-  "oracles",
-  "layout-encrypted-qpdf-r4.pdf",
+  "golden-forms",
+  "encrypted-rotated-signature.pdf",
 );
 const ENCRYPTED_PROVENANCE = ENCRYPTED_ORACLE.replace(/\.pdf$/, ".provenance.json");
 let TMP_DIR;
@@ -43,12 +41,12 @@ describe("detect_signature_zones tool result", () => {
     const committedBytes = await fs.readFile(ENCRYPTED_ORACLE);
     expect(createHash("sha256").update(committedBytes).digest("hex"))
       .toBe(encryptedProvenance.encrypted_fixture.sha256);
-    const authenticatedFixture = Buffer.from(committedBytes);
-    Buffer.from("%PDF-", "ascii").copy(authenticatedFixture, 0);
-    expect(createHash("sha256").update(authenticatedFixture).digest("hex"))
-      .toBe(encryptedProvenance.encrypted_fixture.qpdf_output_sha256_before_malformed_header_oracle);
-    encryptedPdfPath = path.join(TMP_DIR, "encrypted-zone-oracle.pdf");
-    await fs.writeFile(encryptedPdfPath, authenticatedFixture, { mode: 0o600 });
+    expect(committedBytes).toHaveLength(encryptedProvenance.encrypted_fixture.bytes);
+    const sourceBytes = await fs.readFile(path.join(REPO_ROOT, encryptedProvenance.source_fixture.path));
+    expect(createHash("sha256").update(sourceBytes).digest("hex"))
+      .toBe(encryptedProvenance.source_fixture.sha256);
+    expect(sourceBytes).toHaveLength(encryptedProvenance.source_fixture.bytes);
+    encryptedPdfPath = ENCRYPTED_ORACLE;
 
     const unresolvedDocument = await PDFDocument.create();
     const unresolvedPage = unresolvedDocument.addPage([612, 792]);
@@ -153,7 +151,9 @@ describe("detect_signature_zones tool result", () => {
       expect(result.isError).not.toBe(true);
       expect(result.structuredContent).toMatchObject({
         detection_status: "partial",
-        zones: expect.any(Array),
+        zones: expect.arrayContaining([
+          expect.objectContaining(encryptedProvenance.expected_zone),
+        ]),
         warnings: [{
           code: "ENCRYPTED_ACROFORM_SCAN_UNAVAILABLE",
           message: "Encrypted PDF zone detection used the authenticated text layer. AcroForm widgets were not scanned.",
@@ -162,6 +162,7 @@ describe("detect_signature_zones tool result", () => {
       });
       const text = textFromToolResult(result);
       expect(text).toContain("Detection warnings:");
+      expect(text).toContain("SIGNATURE p1 x=72.0 y=181.0 width=240.0 height=18.0");
       expect(text).not.toContain(password);
     }
   }, 30_000);

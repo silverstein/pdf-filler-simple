@@ -1,0 +1,69 @@
+{
+  "schema_version": 1,
+  "fixture_id": "oda-encrypted-rotated-signature-qpdf-r4-v1",
+  "ownership": "Open Document Alliance generated synthetic fixture",
+  "license": "CC0-1.0",
+  "purpose": "Authenticated encrypted-PDF signature-zone detection with exact native coordinates",
+  "source_fixture": {
+    "path": "test/fixtures/golden-forms/rotated-signature.pdf",
+    "bytes": 1788,
+    "sha256": "a6a0424171a4ab24ed28f34490da24b278768dd610defba2d811c4a747a3d1b6"
+  },
+  "encrypted_fixture": {
+    "path": "test/fixtures/golden-forms/encrypted-rotated-signature.pdf",
+    "bytes": 2614,
+    "sha256": "27e0e99e14dd626b15c6574117bd3e2bab9ea4f9b47ab522c7f337f6200f19b3",
+    "encryption": "AES-128 revision 4",
+    "encryption_dictionary": {
+      "filter": "Standard",
+      "version": 4,
+      "revision": 4,
+      "key_length_bits": 128,
+      "stream_method": "AESv2",
+      "string_method": "AESv2"
+    }
+  },
+  "qpdf": {
+    "version": "12.3.2",
+    "deterministic_test_flags": [
+      "--static-id",
+      "--static-aes-iv"
+    ]
+  },
+  "passwords": {
+    "user": "oda-zone-user-2026",
+    "owner": "oda-zone-owner-2026",
+    "wrong_password_oracle": "definitely-wrong-zone-password"
+  },
+  "expected_zone": {
+    "type": "signature",
+    "label": "Signature",
+    "page": 1,
+    "x": 72,
+    "y": 181,
+    "width": 240,
+    "height": 18,
+    "source": "text-heuristic"
+  },
+  "generation": {
+    "platform": "macOS arm64",
+    "qpdf_arguments": [
+      "test/fixtures/golden-forms/rotated-signature.pdf",
+      "--encrypt",
+      "oda-zone-user-2026",
+      "oda-zone-owner-2026",
+      "128",
+      "--use-aes=y",
+      "--",
+      "--static-id",
+      "--static-aes-iv",
+      "test/fixtures/golden-forms/encrypted-rotated-signature.pdf"
+    ],
+    "reproducible_across_two_runs": true,
+    "run_sha256": [
+      "27e0e99e14dd626b15c6574117bd3e2bab9ea4f9b47ab522c7f337f6200f19b3",
+      "27e0e99e14dd626b15c6574117bd3e2bab9ea4f9b47ab522c7f337f6200f19b3"
+    ],
+    "security_notice": "Fixed document IDs and AES initialization vectors are used only for reproducible test evidence and must not be used for production encryption."
+  }
+}

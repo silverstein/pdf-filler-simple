@@ -5,6 +5,7 @@
       "id": "example-fw9",
       "source": "local",
       "path": "../../../example-fw9.pdf",
+      "sha256": "dbae1d3279aa5c7a1c6365c2155c71758f1e9d417ce7f1ad1bb25287f7893978",
       "description": "Older IRS W-9 shipped with the repo — 4-page layout",
       "min_score": 1,
       "expected_zones": [
@@ -66,6 +67,7 @@
       "source": "url",
       "url": "https://www.irs.gov/pub/irs-pdf/fw9.pdf",
       "sha256": "2d420cbb4123dcf1fb82595b2359cfbb5d81f00b9df9d359fcc7af361d093f53",
+      "required_for_release": true,
       "description": "Current IRS W-9 (rev 3-2024)",
       "annotation_evidence": {
         "method": "Independent visual transcription of the printed signing-row cell boundaries before candidate detector coordinates were inspected",
