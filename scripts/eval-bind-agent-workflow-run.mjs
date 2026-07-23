@@ -269,7 +269,7 @@ export async function bindAgentWorkflowRun({
     || (arm === "codex-explicit-baseline"
       && skillFiles.some(filename =>
         filename.includes("pdf-tools-workflow") || filename === skillPath))
-    || /(?:AGENTS|CLAUDE)\.md/.test(promptInputText)
+    || /# (?:AGENTS|CLAUDE)\.md instructions for|<INSTRUCTIONS>/.test(promptInputText)
     || /\.codex\/plugins|\.claude-plugin|mcpServers/.test(promptInputText)
   ) {
     throw new Error("prompt-input skill inventory does not match the bound arm");
