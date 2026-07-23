@@ -97,7 +97,9 @@ describe("readBoundedPdfFileSafely", () => {
   let allowedPaths;
 
   beforeEach(async () => {
-    temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-bounded-read-"));
+    temporaryRoot = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-bounded-read-")),
+    );
     pdfPath = path.join(temporaryRoot, "source.pdf");
     await fs.writeFile(pdfPath, Buffer.from("%PDF-stable-fixture"));
     allowedPaths = [];
