@@ -161,6 +161,44 @@ async function importRetainedModule(receipt, role) {
   };
 }
 
+export async function createRetainedAuthorityVerifier({
+  receipt,
+  receiptPath,
+  receiptSha256,
+  protectedRootsJson,
+}) {
+  const verifierSource = await importRetainedModule(receipt, "handoff_verifier_source");
+  const launcherRecord = recordByRole(receipt, "handoff_verifier_cli");
+  const launcherPath = path.join(receipt.roots.sidecar_snapshot, launcherRecord.filename);
+  const launcherBytes = await stableFile(
+    launcherPath,
+    launcherRecord.bytes,
+    "retained handoff verifier CLI",
+    0o600,
+  );
+  if (launcherBytes.length !== launcherRecord.bytes || sha256(launcherBytes) !== launcherRecord.sha256
+    || typeof verifierSource.module.runDoclingAuthority !== "function") {
+    throw new Error("Retained Docling authority launcher differs from its receipt identity");
+  }
+  const verify = async () => {
+    const result = await verifierSource.module.runDoclingAuthority({
+      receiptPath,
+      expectedReceiptSha256: receiptSha256,
+      protectedRootsJson,
+      action: "verify",
+      launcherPath,
+    });
+    const evidence = parseJson(result.stdout, "sealed authority verification");
+    if (canonicalJson(Object.keys(evidence).sort()) !== canonicalJson(["handoff_id", "receipt_sha256", "verified"])
+      || evidence.verified !== true || evidence.handoff_id !== receipt.handoff_id
+      || evidence.receipt_sha256 !== receiptSha256) {
+      throw new Error("Sealed Docling authority returned invalid verification evidence");
+    }
+    return evidence;
+  };
+  return { verify, verifierSource, launcherRecord, launcherPath, launcherBytes };
+}
+
 function protectedRootsBinding(value, receipt) {
   let roots;
   try {
@@ -216,6 +254,7 @@ function adapterCommand(receipt, receiptSha256) {
 async function spawnCaptured({ command, cwd, environment, stdin, stdoutLimit, stderrLimit, deadlineMs }) {
   const child = spawn(command[0], command.slice(1), {
     cwd,
+    detached: process.platform !== "win32",
     env: { ...environment },
     shell: false,
     stdio: ["pipe", "pipe", "pipe"],
@@ -228,7 +267,10 @@ async function spawnCaptured({ command, cwd, environment, stdin, stdoutLimit, st
   let timedOut = false;
   const startedAt = process.hrtime.bigint();
   const stop = () => {
-    try { child.kill("SIGKILL"); } catch {}
+    try {
+      if (process.platform !== "win32" && Number.isSafeInteger(child.pid)) process.kill(-child.pid, "SIGKILL");
+      else child.kill("SIGKILL");
+    } catch {}
   };
   child.stdout.on("data", chunk => {
     stdoutBytes += chunk.length;
@@ -360,11 +402,15 @@ export async function captureDoclingBakeoff(options) {
   if (runRoot === outputRoot || outputPath.startsWith(`${runRoot}${path.sep}`)) {
     throw new Error("Consolidated output must remain outside the receipt run root");
   }
-  const authoritySource = await importRetainedModule(receipt, "handoff_authority");
+  const authorityRecord = recordByRole(receipt, "handoff_authority");
+  const authorityPath = path.join(receipt.roots.sidecar_snapshot, authorityRecord.filename);
+  const authorityBytes = await stableFile(authorityPath, authorityRecord.bytes, "retained handoff authority", 0o600);
+  if (authorityBytes.length !== authorityRecord.bytes || sha256(authorityBytes) !== authorityRecord.sha256) {
+    throw new Error("Retained handoff authority differs from its receipt identity");
+  }
   const runtimeSource = await importRetainedModule(receipt, "runtime_evidence_source");
-  if (typeof authoritySource.module.verifyHandoffAuthority !== "function"
-    || typeof runtimeSource.module.captureDoclingRuntimeInventory !== "function") {
-    throw new Error("Retained authority or runtime evidence module exports are invalid");
+  if (typeof runtimeSource.module.captureDoclingRuntimeInventory !== "function") {
+    throw new Error("Retained runtime evidence module exports are invalid");
   }
   const requestSchemaSource = recordByRole(receipt, "candidate_request_schema");
   const responseSchemaSource = recordByRole(receipt, "candidate_response_schema");
@@ -377,11 +423,17 @@ export async function captureDoclingBakeoff(options) {
   }
   const requestSchema = parseJson(requestSchemaBytes, "request schema");
   const responseSchema = parseJson(responseSchemaBytes, "response schema");
-  const verifyAuthority = async () => authoritySource.module.verifyHandoffAuthority({
+  const authorityVerifier = await createRetainedAuthorityVerifier({
+    receipt,
     receiptPath,
-    expectedReceiptSha256: receiptSha256,
+    receiptSha256,
     protectedRootsJson,
   });
+  const verifyAuthority = authorityVerifier.verify;
+  const verifyFinalizationFile = async () => {
+    const current = await stableFile(finalizationPath, finalizationBytes.length, "reopened finalization", 0o600);
+    if (!current.equals(finalizationBytes)) throw new Error("Docling finalization changed during the campaign");
+  };
   const captureInventory = async () => inventorySummary(
     await runtimeSource.module.captureDoclingRuntimeInventory(receipt, finalization),
   );
@@ -407,6 +459,7 @@ export async function captureDoclingBakeoff(options) {
     const runs = [];
     for (let repetition = 1; repetition <= 3; repetition += 1) {
       await verifyAuthority();
+      await verifyFinalizationFile();
       const before = await captureInventory();
       if (before.inventory_sha256 !== baselineInventory.inventory_sha256) {
         throw new Error(`Docling runtime drifted before ${binding.fixture.id} repetition ${repetition}`);
@@ -422,6 +475,7 @@ export async function captureDoclingBakeoff(options) {
       });
       const response = parseCanonicalResponse(observed.stdout, request, responseSchema);
       await verifyAuthority();
+      await verifyFinalizationFile();
       const after = await captureInventory();
       if (after.inventory_sha256 !== baselineInventory.inventory_sha256) {
         throw new Error(`Docling runtime drifted after ${binding.fixture.id} repetition ${repetition}`);
@@ -464,18 +518,29 @@ export async function captureDoclingBakeoff(options) {
     });
   }
   await verifyAuthority();
+  await verifyFinalizationFile();
   const finalInventory = await captureInventory();
   if (canonicalJson(finalInventory) !== canonicalJson(baselineInventory)) {
     throw new Error("Docling runtime inventory changed across the campaign");
   }
-  const [receiptAfter, finalizationAfter, authorityAfter, runtimeAfter] = await Promise.all([
+  const [receiptAfter, finalizationAfter, authorityAfter, verifierAfter, launcherAfter, runtimeAfter] = await Promise.all([
     stableFile(receiptPath, receiptBytes.length, "reopened receipt", 0o600),
     stableFile(finalizationPath, finalizationBytes.length, "reopened finalization", 0o600),
-    stableFile(path.join(receipt.roots.sidecar_snapshot, authoritySource.record.filename), authoritySource.bytes.length, "reopened authority", 0o600),
+    stableFile(authorityPath, authorityBytes.length, "reopened authority", 0o600),
+    stableFile(
+      path.join(receipt.roots.sidecar_snapshot, authorityVerifier.verifierSource.record.filename),
+      authorityVerifier.verifierSource.bytes.length,
+      "reopened authority verifier",
+      0o600,
+    ),
+    stableFile(authorityVerifier.launcherPath, authorityVerifier.launcherBytes.length, "reopened authority launcher", 0o600),
     stableFile(path.join(receipt.roots.sidecar_snapshot, runtimeSource.record.filename), runtimeSource.bytes.length, "reopened runtime evidence source", 0o600),
   ]);
   if (!receiptAfter.equals(receiptBytes) || !finalizationAfter.equals(finalizationBytes)
-    || !authorityAfter.equals(authoritySource.bytes) || !runtimeAfter.equals(runtimeSource.bytes)) {
+    || !authorityAfter.equals(authorityBytes)
+    || !verifierAfter.equals(authorityVerifier.verifierSource.bytes)
+    || !launcherAfter.equals(authorityVerifier.launcherBytes)
+    || !runtimeAfter.equals(runtimeSource.bytes)) {
     throw new Error("Docling retained authority changed across the campaign");
   }
   const report = {
@@ -488,7 +553,9 @@ export async function captureDoclingBakeoff(options) {
       finalization_sha256: finalizationSha256,
       finalization_schema_sha256: finalizationSchemaRecord.sha256,
       manifest_sha256: options["--manifest-sha256"],
-      authority_sha256: authoritySource.record.sha256,
+      authority_sha256: authorityRecord.sha256,
+      authority_verifier_sha256: authorityVerifier.verifierSource.record.sha256,
+      authority_launcher_sha256: authorityVerifier.launcherRecord.sha256,
       runtime_evidence_source_sha256: runtimeSource.record.sha256,
       request_schema_sha256: requestSchemaSource.sha256,
       response_schema_sha256: responseSchemaSource.sha256,

@@ -1,5 +1,12 @@
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
+import { promisify } from "node:util";
+import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
+import { prepareDoclingMacHandoffForTest } from "./extraction-docling-handoff.js";
 import {
   canonicalJson,
   validateCandidateResponse,
@@ -15,6 +22,7 @@ const PERMISSIVE_OBJECT_SCHEMA = {
   type: "object",
   additionalProperties: true,
 };
+const execFileAsync = promisify(execFile);
 
 function receiptFixture() {
   const inputs = [{ role: "input", sha256: "a".repeat(64) }];
@@ -88,4 +96,64 @@ describe("Docling bakeoff evidence validators", () => {
       PERMISSIVE_OBJECT_SCHEMA,
     )).toThrow(/not bound/);
   });
+
+  it("uses the receipt-bound launcher to execute a private sealed authority", async () => {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-bakeoff-authority-"));
+    try {
+      const fixturePath = path.join(root, "fixture.pdf");
+      const uvPath = path.join(root, "uv-test-binary");
+      const uvVersion = "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)";
+      await Promise.all([
+        fs.writeFile(fixturePath, "%PDF-1.7\nsealed authority fixture\n%%EOF\n", { mode: 0o600 }),
+        fs.writeFile(uvPath, `#!/bin/sh\nprintf '%s\\n' '${uvVersion}'\n`, { mode: 0o700 }),
+      ]);
+      const handoff = await prepareDoclingMacHandoffForTest({
+        cacheRoot: path.join(root, "Library/Caches/oda-pdf-tools-extraction"),
+        sidecarRoot: path.join(root, "Sites/pdf-tools-extraction-sidecars"),
+        protectedRoots: [path.join(root, "Documents"), path.join(root, "Dropbox")],
+        fixturePaths: [fixturePath],
+        testOnlyHost: {
+          platform: "darwin",
+          architecture: "arm64",
+          os_build: "25G5065a",
+          kernel_release: "25.6.0",
+          node_version: process.version,
+        },
+        testOnlyUv: { path: uvPath, version: uvVersion },
+      });
+      const launcherPath = path.join(root, "verify-retained-authority.mjs");
+      const moduleUrl = pathToFileURL(path.resolve("scripts/eval-capture-docling-bakeoff.mjs")).href;
+      await fs.writeFile(launcherPath, `import fs from "node:fs/promises";
+import { createRetainedAuthorityVerifier } from ${JSON.stringify(moduleUrl)};
+const receipt = JSON.parse(await fs.readFile(process.argv[2], "utf8"));
+const verifier = await createRetainedAuthorityVerifier({
+  receipt,
+  receiptPath: process.argv[2],
+  receiptSha256: process.argv[3],
+  protectedRootsJson: process.argv[4],
+});
+const evidence = await verifier.verify();
+process.stdout.write(JSON.stringify(evidence) + "\\n");
+`, { mode: 0o600 });
+      const cleanEnvironment = Object.fromEntries(
+        Object.entries(process.env).filter(([name]) => !name.startsWith("NODE_")),
+      );
+      const result = await execFileAsync(process.execPath, [
+        launcherPath,
+        handoff.receiptPath,
+        handoff.receipt_sha256,
+        handoff.protected_roots_json,
+      ], { env: cleanEnvironment, maxBuffer: 1024 * 1024 });
+      expect(JSON.parse(result.stdout)).toMatchObject({
+        verified: true,
+        handoff_id: handoff.receipt.handoff_id,
+        receipt_sha256: handoff.receipt_sha256,
+      });
+      expect((await fs.readdir(path.dirname(handoff.receiptPath))).some(
+        name => name.startsWith(".authority-seal-"),
+      )).toBe(false);
+    } finally {
+      await fs.rm(root, { recursive: true, force: true });
+    }
+  }, 30000);
 });
