@@ -7,7 +7,9 @@ import {
   sanitizePdfFilename,
   findUniquePath,
   isPrivateHost,
+  writePdfDownloadAtomic,
 } from "../server/helpers.js";
+import { PDFDocument } from "pdf-lib";
 import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -114,6 +116,84 @@ describe("findUniquePath", () => {
   });
 });
 
+describe("writePdfDownloadAtomic", () => {
+  it("retries only the exact locked target-exists classification", async () => {
+    const policy = async () => {};
+    const conflict = Object.assign(new Error("different conflict"), {
+      code: "ATOMIC_OUTPUT_CONFLICT",
+    });
+    let selections = 0;
+    let writes = 0;
+
+    await expect(
+      writePdfDownloadAtomic(path.join(TMP_DIR, "classified.pdf"), Buffer.from("%PDF-1.7"), {
+        assertPathAllowed: policy,
+        findUniquePathFn: async target => {
+          selections++;
+          return target;
+        },
+        writePdfOutputAtomicFn: async (target, bytes, options) => {
+          writes++;
+          expect(target).toBe(path.join(TMP_DIR, "classified.pdf"));
+          expect(bytes.equals(Buffer.from("%PDF-1.7"))).toBe(true);
+          expect(options).toEqual({
+            assertPathAllowed: policy,
+            overwrite: false,
+          });
+          throw conflict;
+        },
+      }),
+    ).rejects.toBe(conflict);
+    expect(selections).toBe(1);
+    expect(writes).toBe(1);
+  });
+
+  it("stops after the bounded number of locked target collisions", async () => {
+    const candidates = [];
+    let writes = 0;
+
+    await expect(
+      writePdfDownloadAtomic(path.join(TMP_DIR, "bounded.pdf"), Buffer.from("%PDF-1.7"), {
+        maxAttempts: 3,
+        findUniquePathFn: async target => {
+          const candidate = `${target}.${candidates.length + 1}`;
+          candidates.push(candidate);
+          return candidate;
+        },
+        writePdfOutputAtomicFn: async () => {
+          writes++;
+          throw Object.assign(new Error("lost candidate race"), {
+            code: "ATOMIC_OUTPUT_TARGET_EXISTS",
+          });
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "PDF_DOWNLOAD_UNIQUE_PATH_RETRY_EXHAUSTED",
+      cause: { code: "ATOMIC_OUTPUT_TARGET_EXISTS" },
+    });
+    expect(candidates).toEqual([
+      `${path.join(TMP_DIR, "bounded.pdf")}.1`,
+      `${path.join(TMP_DIR, "bounded.pdf")}.2`,
+      `${path.join(TMP_DIR, "bounded.pdf")}.3`,
+    ]);
+    expect(writes).toBe(3);
+  });
+
+  it("rejects an invalid retry bound before selecting a path", async () => {
+    let selected = false;
+    await expect(
+      writePdfDownloadAtomic(path.join(TMP_DIR, "invalid-bound.pdf"), Buffer.from("%PDF-1.7"), {
+        maxAttempts: 0,
+        findUniquePathFn: async target => {
+          selected = true;
+          return target;
+        },
+      }),
+    ).rejects.toThrow(/positive safe integer/);
+    expect(selected).toBe(false);
+  });
+});
+
 describe("downloadPdfFromUrl", () => {
   let examplePdfBuffer;
 
@@ -155,6 +235,37 @@ describe("downloadPdfFromUrl", () => {
     });
     expect(first.path).not.toBe(second.path);
     expect(second.path).toMatch(/dup \(2\)\.pdf$/);
+  });
+
+  it("commits ten concurrent same-name downloads to distinct readable PDFs", async () => {
+    const destinationDir = path.join(TMP_DIR, "concurrent");
+    await fs.mkdir(destinationDir);
+    const fetchFn = makeFakeFetch({ body: examplePdfBuffer });
+
+    const results = await Promise.all(
+      Array.from({ length: 10 }, () => downloadPdfFromUrl(
+        "https://example.com/concurrent.pdf",
+        { destinationDir, fetchFn },
+      )),
+    );
+
+    const expectedNames = new Set([
+      "concurrent.pdf",
+      ...Array.from({ length: 9 }, (_, index) => `concurrent (${index + 2}).pdf`),
+    ]);
+    const resultNames = results.map(result => path.basename(result.path));
+    expect(new Set(resultNames)).toEqual(expectedNames);
+    expect(new Set(results.map(result => result.path)).size).toBe(10);
+
+    for (const result of results) {
+      const saved = await fs.readFile(result.path);
+      expect(saved.equals(examplePdfBuffer)).toBe(true);
+      const parsed = await PDFDocument.load(saved);
+      expect(parsed.getPageCount()).toBeGreaterThan(0);
+    }
+
+    const directoryEntries = await fs.readdir(destinationDir);
+    expect(new Set(directoryEntries)).toEqual(expectedNames);
   });
 
   it("overwrites when overwrite=true", async () => {

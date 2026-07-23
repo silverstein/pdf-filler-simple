@@ -3084,6 +3084,56 @@ export async function findUniquePath(target) {
   throw new Error(`Could not find a unique filename for ${target}`);
 }
 
+const DEFAULT_PDF_DOWNLOAD_COMMIT_ATTEMPTS = 100;
+
+/**
+ * Commit fetched PDF bytes without clobbering a concurrent download.
+ *
+ * findUniquePath is intentionally only an optimistic candidate selection.
+ * writePdfOutputAtomic makes the no-clobber decision while holding the output
+ * directory lock. If another writer wins that exact candidate first, select
+ * again and retry. Every other failure is surfaced without retrying.
+ */
+export async function writePdfDownloadAtomic(targetPath, bytes, {
+  assertPathAllowed = async () => {},
+  overwrite = false,
+  maxAttempts = DEFAULT_PDF_DOWNLOAD_COMMIT_ATTEMPTS,
+  findUniquePathFn = findUniquePath,
+  writePdfOutputAtomicFn = writePdfOutputAtomic,
+} = {}) {
+  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
+    throw new RangeError("maxAttempts must be a positive safe integer.");
+  }
+
+  if (overwrite) {
+    return writePdfOutputAtomicFn(targetPath, bytes, {
+      assertPathAllowed,
+      overwrite: true,
+    });
+  }
+
+  let lastCollision = null;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const candidatePath = await findUniquePathFn(targetPath);
+    try {
+      return await writePdfOutputAtomicFn(candidatePath, bytes, {
+        assertPathAllowed,
+        overwrite: false,
+      });
+    } catch (error) {
+      if (error?.code !== "ATOMIC_OUTPUT_TARGET_EXISTS") throw error;
+      lastCollision = error;
+    }
+  }
+
+  const error = new Error(
+    `Could not commit a unique PDF filename after ${maxAttempts} attempts: ${targetPath}`,
+  );
+  error.code = "PDF_DOWNLOAD_UNIQUE_PATH_RETRY_EXHAUSTED";
+  error.cause = lastCollision;
+  throw error;
+}
+
 // Detect loopback, link-local, and RFC1918 private hostnames/IPs.
 export function isPrivateHost(hostname) {
   if (!hostname) return true;
@@ -3217,9 +3267,8 @@ export async function downloadPdfFromUrl(url, {
   const urlName = decodeURIComponent(path.basename(finalParsed.pathname) || "");
   const finalName = sanitizePdfFilename(filename || urlName || "download.pdf");
   let target = path.join(destDir, finalName);
-  if (!overwrite) target = await findUniquePath(target);
 
-  const committed = await writePdfOutputAtomic(target, buffer, {
+  const committed = await writePdfDownloadAtomic(target, buffer, {
     assertPathAllowed,
     overwrite,
   });
