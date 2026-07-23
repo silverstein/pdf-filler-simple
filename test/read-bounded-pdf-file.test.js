@@ -116,6 +116,12 @@ describe("readBoundedPdfFileSafely", () => {
 
     expect(result.bytes.equals(expected)).toBe(true);
     expect(result.sizeBytes).toBe(expected.length);
+    expect(result.canonicalPath).toBe(pdfPath);
+    const sourceStats = await fs.stat(pdfPath, { bigint: true });
+    expect(result.fileIdentity).toEqual({
+      device: String(sourceStats.dev),
+      inode: String(sourceStats.ino),
+    });
     expect(allowedPaths).toEqual([pdfPath, pdfPath]);
     expect(state).toMatchObject({ openCount: 1, realpathCount: 2, lstatCount: 2, closeCount: 1 });
     if (Number.isInteger(fsConstants.O_NOFOLLOW)) {

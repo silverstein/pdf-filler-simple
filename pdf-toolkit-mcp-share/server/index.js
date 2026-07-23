@@ -126,6 +126,15 @@ async function readBoundedPdfFile(resolvedPath, maxBytes) {
   return readBoundedPdfFileSafely(resolvedPath, maxBytes, { assertPathAllowed });
 }
 
+function sameStableFileIdentity(left, right) {
+  return Boolean(
+    left
+    && right
+    && left.device === right.device
+    && left.inode === right.inode,
+  );
+}
+
 function shouldUseSystemPdfRenderer() {
   return process.platform === "darwin" && process.env.PDF_TOOLS_DISABLE_SYSTEM_RENDERER !== "1";
 }
@@ -4166,7 +4175,11 @@ async function handleToolCall(request) {
             throw new Error("output_path must be different from the source PDF path.");
           }
 
-          const { bytes: pdfBytes, sizeBytes } = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
+          const {
+            bytes: pdfBytes,
+            sizeBytes,
+            fileIdentity: sourceFileIdentity,
+          } = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
           const sourceSha256 = createHash("sha256").update(pdfBytes).digest("hex");
           await loadPdfjs();
           const fileName = path.basename(resolvedPath);
@@ -4192,22 +4205,20 @@ async function handleToolCall(request) {
           let savedOutput = null;
           if (outputPath) {
             const markdownBytes = Buffer.from(rendered.markdown, "utf8");
-            let outputExisted = false;
-            await writeOutputAtomic(outputPath, markdownBytes, {
-              beforeTransaction: async () => {
-                try {
-                  await fs.lstat(outputPath);
-                  outputExisted = true;
-                  if (!overwrite) {
-                    throw new Error("output_path already exists. Choose a new .md path or set overwrite to true.");
-                  }
-                } catch (error) {
-                  if (error.code !== "ENOENT") throw error;
-                }
+            const transaction = await writeOutputAtomic(outputPath, markdownBytes, {
+              overwrite,
+              validateInitialTargets: async ([target]) => {
                 const currentSource = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
                 const currentSha256 = createHash("sha256").update(currentSource.bytes).digest("hex");
-                if (currentSource.sizeBytes !== sizeBytes || currentSha256 !== sourceSha256) {
+                if (
+                  currentSource.sizeBytes !== sizeBytes
+                  || currentSha256 !== sourceSha256
+                  || !sameStableFileIdentity(currentSource.fileIdentity, sourceFileIdentity)
+                ) {
                   throw new Error("The source PDF changed before the Markdown transaction. No output was written.");
+                }
+                if (target?.exists && sameStableFileIdentity(target.fileIdentity, sourceFileIdentity)) {
+                  throw new Error("output_path resolves to the same file as the source PDF. Choose a different .md path.");
                 }
               },
             });
@@ -4233,7 +4244,11 @@ async function handleToolCall(request) {
             }
             const sourceAfter = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
             const sourceAfterSha256 = createHash("sha256").update(sourceAfter.bytes).digest("hex");
-            if (sourceAfter.sizeBytes !== sizeBytes || sourceAfterSha256 !== sourceSha256) {
+            if (
+              sourceAfter.sizeBytes !== sizeBytes
+              || sourceAfterSha256 !== sourceSha256
+              || !sameStableFileIdentity(sourceAfter.fileIdentity, sourceFileIdentity)
+            ) {
               throw new Error("The source PDF changed while the Markdown output was being verified.");
             }
             savedOutput = {
@@ -4243,7 +4258,7 @@ async function handleToolCall(request) {
               sha256: createHash("sha256").update(reopened).digest("hex"),
               commit_method: "same_directory_atomic",
               reopened_verified: true,
-              overwritten: outputExisted,
+              overwritten: transaction.replacedExisting,
             };
           }
 

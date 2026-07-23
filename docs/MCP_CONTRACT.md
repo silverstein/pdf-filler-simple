@@ -85,14 +85,16 @@ deterministic UTF-8 Markdown. It preserves supported text and conservative
 reading order, escapes Markdown and HTML control syntax, and promotes headings
 or list markers only when the retained text and geometry support them. It does
 not run OCR, render image content, infer table topology, or recover PDF link
-annotation targets. Raster, mixed, vector, failed, truncated, invalid-geometry,
-and output-omission cases are represented as typed gaps and cannot receive a
-complete conversion status. The public layout projection is capped at 200,000
-serialized characters, so dense pages may become explicitly partial before
-Markdown rendering. An optional `.md` output uses the same durable
+annotation targets. Raster, mixed, vector, failed, caller-limit-truncated,
+invalid-geometry, and output-omission cases are represented as typed gaps and
+cannot receive a complete conversion status. The converter consumes
+source-validated evidence before the public `read_pdf_layout` response
+projection, so that response's 200,000-character cap cannot erase conversion
+input. Conversion remains bounded by caller item, character, page, deadline,
+and final Markdown byte limits. An optional `.md` output uses the same durable
 same-directory transaction machinery as PDF outputs, refuses an existing file
 unless `overwrite` is true, reopens the exact UTF-8 bytes, and verifies that the
-source PDF hash and size did not change.
+source PDF hash, size, and filesystem identity did not change.
 
 `read_pdf_content` exposes `extraction_status` as `complete`, `partial`, or
 `failed`. A text result is partial when it is page-limited or response-

@@ -31,6 +31,13 @@ function sameFileIdentity(left, right) {
     && leftCtime === rightCtime;
 }
 
+function stableFileIdentity(stats) {
+  return {
+    device: String(stats.dev),
+    inode: String(stats.ino),
+  };
+}
+
 function boundedFileSize(stats, maxBytes) {
   const size = stats.size;
   if (typeof size === "bigint") {
@@ -105,7 +112,12 @@ export async function readBoundedPdfFileSafely(resolvedPath, maxBytes, {
     const canonicalAfter = await raceAware(() => fileSystem.realpath(canonicalPath));
     if (canonicalAfter !== canonicalPath) throw pdfChangedError();
     assertPathAllowed(canonicalAfter);
-    return { bytes, sizeBytes };
+    return {
+      bytes,
+      sizeBytes,
+      canonicalPath: canonicalAfter,
+      fileIdentity: stableFileIdentity(after),
+    };
   } finally {
     await handle.close();
   }

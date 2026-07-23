@@ -125,6 +125,68 @@ describe("atomic PDF output commits", () => {
     await expectNoTransactionArtifacts();
   });
 
+  it("enforces no-overwrite after the directory lock and reports the captured target state", async () => {
+    const target = path.join(tempDir, "conditional.pdf");
+    const created = await writePdfOutputAtomic(target, Buffer.from("first"), {
+      overwrite: false,
+      token: "conditional-create",
+    });
+    expect(created).toEqual({ targetPath: target, replacedExisting: false });
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("second"), {
+      overwrite: false,
+      token: "conditional-refuse",
+    })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_TARGET_EXISTS" });
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("first");
+
+    const replaced = await writePdfOutputAtomic(target, Buffer.from("third"), {
+      overwrite: true,
+      token: "conditional-replace",
+    });
+    expect(replaced).toEqual({ targetPath: target, replacedExisting: true });
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("third");
+    await expectNoTransactionArtifacts();
+  });
+
+  it("refuses a target created inside the locked pre-transaction hook", async () => {
+    const target = path.join(tempDir, "raced-into-place.pdf");
+    await expect(writePdfOutputAtomic(target, Buffer.from("ours"), {
+      overwrite: false,
+      token: "conditional-race",
+      beforeTransaction: async () => {
+        await fs.writeFile(target, "external");
+      },
+    })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_TARGET_EXISTS" });
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("external");
+    await expectNoTransactionArtifacts();
+  });
+
+  it("exposes the locked initial target identity to validation before staging", async () => {
+    const target = path.join(tempDir, "identity.pdf");
+    await fs.writeFile(target, "original bytes");
+    const stats = await fs.lstat(target);
+    const validationError = new Error("target aliases protected input");
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      overwrite: true,
+      token: "identity-validation",
+      validateInitialTargets: async targets => {
+        expect(targets).toEqual([{
+          targetPath: target,
+          exists: true,
+          fileIdentity: {
+            device: String(stats.dev),
+            inode: String(stats.ino),
+          },
+        }]);
+        throw validationError;
+      },
+    })).rejects.toBe(validationError);
+
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("original bytes");
+    await expectNoTransactionArtifacts();
+  });
+
   it("preserves an existing output when staging is denied", async () => {
     const target = path.join(tempDir, "existing.pdf");
     await fs.writeFile(target, "original bytes");

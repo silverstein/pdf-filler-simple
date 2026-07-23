@@ -315,6 +315,35 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     expect(await fs.readFile(structureFixture)).toEqual(sourceBefore);
   }, 30_000);
 
+  it.runIf(process.platform !== "win32")("refuses symlink and hardlink output aliases without changing source bytes", async () => {
+    const symlinkTarget = path.join(temporaryRoot, "aliased-source.md");
+    const symlinkSource = path.join(temporaryRoot, "aliased-source.pdf");
+    const originalBytes = await fs.readFile(structureFixture);
+    await fs.writeFile(symlinkTarget, originalBytes);
+    await fs.symlink(symlinkTarget, symlinkSource);
+
+    const symlinkResult = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: symlinkSource, output_path: symlinkTarget, overwrite: true },
+    });
+    expect(symlinkResult.isError).toBe(true);
+    expect(await fs.readFile(symlinkTarget)).toEqual(originalBytes);
+    expect(await fs.readlink(symlinkSource)).toBe(symlinkTarget);
+
+    const hardlinkSource = path.join(temporaryRoot, "hardlink-source.pdf");
+    const hardlinkOutput = path.join(temporaryRoot, "hardlink-output.md");
+    await fs.writeFile(hardlinkSource, originalBytes);
+    await fs.link(hardlinkSource, hardlinkOutput);
+
+    const hardlinkResult = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: hardlinkSource, output_path: hardlinkOutput, overwrite: true },
+    });
+    expect(hardlinkResult.isError).toBe(true);
+    expect(await fs.readFile(hardlinkSource)).toEqual(originalBytes);
+    expect(await fs.readFile(hardlinkOutput)).toEqual(originalBytes);
+  }, 30_000);
+
   it("fails closed on byte limits and invalid output paths without creating files", async () => {
     const tooSmall = await client.callTool({
       name: "convert_pdf_to_markdown",

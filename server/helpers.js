@@ -1879,13 +1879,17 @@ export async function writePdfOutputAtomic(targetPath, bytes, {
   token = atomicOutputToken(),
   onTransition,
   beforeTransaction,
+  validateInitialTargets,
+  overwrite = true,
 } = {}) {
-  await writePdfOutputsAtomic([{ targetPath, bytes }], {
+  const [result] = await writePdfOutputsAtomic([{ targetPath, bytes, overwrite }], {
     fsOps,
     token,
     onTransition,
     beforeTransaction,
+    validateInitialTargets,
   });
+  return result;
 }
 
 // The durable transaction accepts arbitrary bytes. Keep the established PDF
@@ -1903,6 +1907,7 @@ export async function writePdfOutputsAtomic(entries, {
   token = atomicOutputToken(),
   onTransition = async () => {},
   beforeTransaction = async () => {},
+  validateInitialTargets = async () => {},
 } = {}) {
   if (!Array.isArray(entries) || entries.length === 0) {
     throw new TypeError("Atomic PDF output entries must be a non-empty array.");
@@ -1923,6 +1928,7 @@ export async function writePdfOutputsAtomic(entries, {
       targetPath,
       bytes: entry.bytes,
       produceBytes: entry.produceBytes,
+      overwrite: entry.overwrite !== false,
       index,
       initial: null,
       stagePath: atomicSiblingPath(targetPath, tokenId, "stage", index),
@@ -1969,6 +1975,12 @@ export async function writePdfOutputsAtomic(entries, {
       for (const entry of targets) {
         entry.initial = await lstatIfPresent(fsOps, entry.targetPath);
         assertAtomicOutputTarget(entry.targetPath, entry.initial);
+        if (entry.initial && !entry.overwrite) {
+          throw atomicOutputError(
+            "ATOMIC_OUTPUT_TARGET_EXISTS",
+            `Atomic output target already exists and overwrite is false: ${entry.targetPath}`,
+          );
+        }
         entry.initialSha256 = entry.initial
           ? await sha256RegularFile(fsOps, entry.targetPath)
           : null;
@@ -1991,6 +2003,14 @@ export async function writePdfOutputsAtomic(entries, {
           );
         }
       }
+      await validateInitialTargets(targets.map(entry => ({
+        targetPath: entry.targetPath,
+        exists: entry.initial !== null,
+        fileIdentity: entry.initial ? {
+          device: String(entry.initial.dev),
+          inode: String(entry.initial.ino),
+        } : null,
+      })));
       payload.entries = targets.map(entry => ({
         target: path.basename(entry.targetPath),
         stage: path.basename(entry.stagePath),
@@ -2075,7 +2095,12 @@ export async function writePdfOutputsAtomic(entries, {
           cleanupErrors,
         );
       }
-      if (committed) return;
+      if (committed) {
+        return targets.map(entry => ({
+          targetPath: entry.targetPath,
+          replacedExisting: entry.initial !== null,
+        }));
+      }
       throw cause;
     }
     try {
@@ -2105,6 +2130,10 @@ export async function writePdfOutputsAtomic(entries, {
         );
       }
     }
+    return targets.map(entry => ({
+      targetPath: entry.targetPath,
+      replacedExisting: entry.initial !== null,
+    }));
   } finally {
     await releaseDirectoryLock();
   }
