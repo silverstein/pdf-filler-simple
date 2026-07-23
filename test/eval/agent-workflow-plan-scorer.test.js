@@ -125,6 +125,24 @@ describe("agent workflow planning scorer", () => {
     );
   });
 
+  it("rejects contradictory extra classifications and a missing schema", () => {
+    const testCase = CASES.cases.find(item => item.id === "safe-fill-plans-distinct-output");
+    const response = passingResponse(testCase);
+    response.safety_flags.push("IDENTITY_EVIDENCE_UNAVAILABLE");
+    response.missing_inputs.push("source_sha256");
+    response.prohibited_tools.push("fill_pdf");
+    const score = scoreAgentWorkflowPlan(testCase, response, RESPONSE_SCHEMA);
+    expect(score.pass).toBe(false);
+    expect(score.checks.filter(check => !check.pass).map(check => check.id)).toEqual(
+      expect.arrayContaining([
+        "required_flags",
+        "required_missing_inputs",
+        "forbidden_tools_declared",
+      ]),
+    );
+    expect(scoreAgentWorkflowPlan(testCase, passingResponse(testCase)).pass).toBe(false);
+  });
+
   it("rejects duplicate and unexpected case responses", () => {
     const responses = CASES.cases.map(passingResponse);
     responses.push(passingResponse(CASES.cases[0]));

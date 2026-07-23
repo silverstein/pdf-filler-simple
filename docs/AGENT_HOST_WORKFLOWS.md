@@ -64,9 +64,23 @@ Runnable synthetic planning cases and their exact response contract are
 `planning-response.schema.json`. Their deterministic scorer is
 `test/eval/agent-workflow-plan-scorer.js`. Before a host trial,
 `scripts/eval-prepare-agent-workflow-campaign.mjs` creates four prompt-only
-participant roots and a separate trusted oracle directory. Run each host from
-its participant root with repository access and tools disabled. Remote model
-inference remains an explicitly recorded transport, not a denied network path.
+participant roots and a trusted oracle at independent absolute destinations.
+Run it only from a clean exact Git HEAD. Transfer only the participant root to
+the model host; the oracle and repository must remain on the controller.
+
+Run Claude with `--tools ""`, `--no-session-persistence`, `--permission-mode
+plan`, the arm's response schema, and `--plugin-dir
+plugin/pdf-tools-workflow` only for the skill arm. Run Codex with
+`--ignore-user-config`, `--ignore-rules`, `--ephemeral`, `--sandbox read-only`,
+the arm's response schema, and plugins, shell, browser, computer use, and
+multi-agent features disabled. The skill arm discovers only its copied
+`.agents/skills/pdf-tools-workflow`; the baseline root contains no skill.
+
+Before every arm, retain a negative isolation probe showing that neither an
+oracle nor repository exists on the model host, plus the effective host
+version, model, loaded skill/plugin inventory, tool policy, source commit, arm
+tree hash, exact command, and raw response. Remote model inference remains an
+explicitly recorded transport, not a denied network path.
 
 ### Identity and mutation boundary
 

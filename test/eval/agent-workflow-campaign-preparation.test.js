@@ -26,10 +26,11 @@ describe("agent workflow campaign preparation", () => {
   it("separates prompt-only participant roots from the trusted oracle", async () => {
     const parent = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-workflow-campaign-"));
     temporaryRoots.push(parent);
-    const destination = path.join(parent, "campaign");
+    const participants = path.join(parent, "participants");
+    const trusted = path.join(parent, "oracle");
     const manifest = await prepareAgentWorkflowCampaign({
-      destination,
-      sourceCommit: "3".repeat(40),
+      participantsDestination: participants,
+      oracleDestination: trusted,
     });
 
     expect(manifest.arm_names).toEqual([
@@ -38,8 +39,7 @@ describe("agent workflow campaign preparation", () => {
       "codex-skill",
       "codex-baseline",
     ]);
-    const participants = path.join(destination, "participants");
-    const trusted = path.join(destination, "trusted");
+    expect(manifest.source_commit).toMatch(/^[a-f0-9]{40,64}$/);
     expect(await allText(participants)).not.toMatch(/"expected"\s*:/);
     expect(await allText(path.join(participants, "claude-baseline"))).not.toMatch(
       /# PDF Tools workflow|Global invariants/,
@@ -85,14 +85,22 @@ describe("agent workflow campaign preparation", () => {
     ))).toMatchObject({ mode: expect.any(Number) });
   });
 
-  it("refuses a relative destination and an invalid commit identity", async () => {
+  it("refuses relative, repository-contained, and nested destinations", async () => {
     await expect(prepareAgentWorkflowCampaign({
-      destination: "relative",
-      sourceCommit: "3".repeat(40),
-    })).rejects.toThrow(/destination must be absolute/);
+      participantsDestination: "relative",
+      oracleDestination: "/tmp/oracle",
+    })).rejects.toThrow(/participantsDestination must be absolute/);
     await expect(prepareAgentWorkflowCampaign({
-      destination: "/tmp/unused",
-      sourceCommit: "not-a-commit",
-    })).rejects.toThrow(/sourceCommit must be a Git object ID/);
+      participantsDestination: "/tmp/participants",
+      oracleDestination: "relative",
+    })).rejects.toThrow(/oracleDestination must be absolute/);
+    await expect(prepareAgentWorkflowCampaign({
+      participantsDestination: path.join(process.cwd(), "participant-output"),
+      oracleDestination: "/tmp/oracle",
+    })).rejects.toThrow(/outside the source repository/);
+    await expect(prepareAgentWorkflowCampaign({
+      participantsDestination: "/tmp/campaign",
+      oracleDestination: "/tmp/campaign/oracle",
+    })).rejects.toThrow(/must not contain each other/);
   });
 });

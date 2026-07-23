@@ -1,8 +1,10 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -22,7 +24,7 @@ const SKILL_ROOT = path.join(
   "pdf-tools-workflow",
 );
 const PLUGIN_ROOT = path.join(REPO_ROOT, "plugins", "pdf-tools-workflow");
-const SHA256_PATTERN = /^[a-f0-9]{40,64}$/;
+const execFileAsync = promisify(execFile);
 const ARM_NAMES = [
   "claude-skill",
   "claude-baseline",
@@ -84,23 +86,60 @@ function participantPrompt(testCase) {
   ].join(" ");
 }
 
-function hostCompatibleSchema(schema) {
-  const copy = structuredClone(schema);
-  delete copy.$schema;
-  delete copy.$id;
-  return copy;
+function hostCompatibleSchema(value) {
+  if (Array.isArray(value)) return value.map(hostCompatibleSchema);
+  if (!value || typeof value !== "object") return value;
+  return Object.fromEntries(Object.entries(value)
+    .filter(([key]) => !new Set(["$schema", "$id", "uniqueItems"]).has(key))
+    .map(([key, child]) => [key, hostCompatibleSchema(child)]));
+}
+
+function pathInside(parent, child) {
+  const relative = path.relative(parent, child);
+  return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
+}
+
+async function verifiedSourceCommit() {
+  const [{ stdout: sourceCommit }, { stdout: status }] = await Promise.all([
+    execFileAsync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }),
+    execFileAsync(
+      "git",
+      ["-C", REPO_ROOT, "status", "--porcelain", "--untracked-files=all"],
+      { encoding: "utf8" },
+    ),
+  ]);
+  if (status.trim()) {
+    throw new Error("campaign source worktree must be clean at its exact HEAD");
+  }
+  return sourceCommit.trim();
 }
 
 export async function prepareAgentWorkflowCampaign({
-  destination,
-  sourceCommit,
+  participantsDestination,
+  oracleDestination,
 }) {
-  if (!path.isAbsolute(destination)) throw new Error("destination must be absolute");
-  if (!SHA256_PATTERN.test(sourceCommit)) throw new Error("sourceCommit must be a Git object ID");
+  if (!path.isAbsolute(participantsDestination)) {
+    throw new Error("participantsDestination must be absolute");
+  }
+  if (!path.isAbsolute(oracleDestination)) {
+    throw new Error("oracleDestination must be absolute");
+  }
+  if (
+    pathInside(REPO_ROOT, participantsDestination)
+    || pathInside(REPO_ROOT, oracleDestination)
+  ) {
+    throw new Error("campaign destinations must remain outside the source repository");
+  }
+  if (
+    pathInside(participantsDestination, oracleDestination)
+    || pathInside(oracleDestination, participantsDestination)
+  ) {
+    throw new Error("participant and oracle destinations must not contain each other");
+  }
 
-  await fs.mkdir(destination, { mode: 0o700 });
-  const participantsRoot = path.join(destination, "participants");
-  const trustedRoot = path.join(destination, "trusted");
+  const sourceCommit = await verifiedSourceCommit();
+  const participantsRoot = participantsDestination;
+  const trustedRoot = oracleDestination;
   await fs.mkdir(participantsRoot, { mode: 0o700 });
   await fs.mkdir(trustedRoot, { mode: 0o700 });
 
@@ -157,7 +196,7 @@ export async function prepareAgentWorkflowCampaign({
   const manifest = {
     schema_version: "pdf-tools.agent-workflow-campaign-preparation.v1",
     source_commit: sourceCommit,
-    claim_boundary: "Prompt-only participant roots are separated from the trusted oracle. This preparation does not run or validate a model host.",
+    claim_boundary: "Prompt-only participant roots and the trusted oracle have independent destinations. Transfer only the participant root to a model host. This preparation does not run or validate a model host.",
     arm_names: ARM_NAMES,
     participant_inventory: await inventory(participantsRoot),
     oracle_sha256: sha256(await fs.readFile(path.join(trustedRoot, "oracle.json"))),
@@ -174,12 +213,12 @@ function parseArgs(argv) {
   for (let index = 0; index < argv.length; index += 2) {
     values[argv[index]] = argv[index + 1];
   }
-  if (!values["--destination"] || !values["--source-commit"]) {
-    throw new Error("Usage: eval-prepare-agent-workflow-campaign.mjs --destination <absolute-path> --source-commit <git-object-id>");
+  if (!values["--participants-destination"] || !values["--oracle-destination"]) {
+    throw new Error("Usage: eval-prepare-agent-workflow-campaign.mjs --participants-destination <absolute-path> --oracle-destination <absolute-path>");
   }
   return {
-    destination: values["--destination"],
-    sourceCommit: values["--source-commit"],
+    participantsDestination: values["--participants-destination"],
+    oracleDestination: values["--oracle-destination"],
   };
 }
 
