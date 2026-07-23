@@ -20,6 +20,20 @@ boundaries.
 Chat transcripts are disposable execution context. A decision, failure, test
 result, or handoff that matters must be written to one of the durable systems.
 
+## Execution host policy
+
+Silvercloud is the always-on agent control plane and is resource constrained.
+Keep its workload to coordination, static inspection, bounded file edits, Git
+operations, and small incremental indexes. Do not run dependency installs,
+broad PDF test suites, UI builds, MCPB packaging, full differential runs, or
+other memory-heavy work on Silvercloud when a Mac execution host is available.
+
+Prefer Silverbook for resource-intensive work. If it is offline, use an
+available iMac or Stonebook on the tailnet. Use one test worker unless evidence
+shows a higher concurrency is safe. Record the exact execution host, operating
+system, architecture, runtime version, candidate commit, and command with every
+material test or artifact result.
+
 ## Roles and lanes
 
 ### Control tower
