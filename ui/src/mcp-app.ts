@@ -1684,6 +1684,20 @@ function closeSignModal(revertCustomType = true) {
   renderZoneOverlay();
 }
 
+function setSignModalControlsLocked(locked: boolean) {
+  signModalTypeEl.disabled = locked;
+  signModalNameEl.disabled = locked;
+  signModalExistingEl.disabled = locked;
+  signModalDateInputEl.disabled = locked;
+  signModalCancelBtn.disabled = locked;
+  signModalCloseBtn.disabled = locked;
+}
+
+function requestCloseSignModal() {
+  if (signingInFlight) return;
+  closeSignModal();
+}
+
 async function populateSavedSignatures() {
   // Clear all but the default option
   while (signModalExistingEl.options.length > 1) signModalExistingEl.remove(1);
@@ -1761,6 +1775,7 @@ async function onSavedSignatureChange() {
 }
 
 function onCustomZoneTypeChange() {
+  if (signingInFlight) return;
   if (!activeSignZone || activeSignZone.source !== "user-drag") return;
   const nextType = signModalTypeEl.value as SignatureZone["type"];
   activeSignZone.type = nextType;
@@ -1844,15 +1859,28 @@ function updateStatementPreview() {
 }
 
 async function onConfirmSign() {
-  if (!activeSignZone) return;
-  const zone = activeSignZone;
-  const cfg = MODAL_MODE_CONFIG[activeModalMode];
+  if (!activeSignZone || signingInFlight) return;
+  const liveZone = activeSignZone;
+  const zone = Object.freeze({
+    type: liveZone.type,
+    label: liveZone.label,
+    page: liveZone.page,
+    x: liveZone.x,
+    y: liveZone.y,
+    width: liveZone.width,
+    height: liveZone.height,
+    confidence: liveZone.confidence,
+    source: liveZone.source,
+    id: liveZone.id,
+  });
+  const operationMode = modeForZoneType(zone.type);
+  const cfg = MODAL_MODE_CONFIG[operationMode];
   const baseName = (pdfPath.split(/[\/\\]/).pop() || "this document");
 
   // Preflight validation per mode
-  if (activeModalMode === "date") {
+  if (operationMode === "date") {
     if (!signModalDateInputEl.value) return;
-  } else if (activeModalMode === "name") {
+  } else if (operationMode === "name") {
     if (!signModalNameEl.value.trim()) return;
   } else {
     const name = signModalNameEl.value.trim();
@@ -1860,6 +1888,7 @@ async function onConfirmSign() {
   }
 
   signingInFlight = true;
+  setSignModalControlsLocked(true);
   signModalConfirmBtn.disabled = true;
   signModalConfirmBtn.textContent = cfg.signingLabel;
   signModalErrorEl.style.display = "none";
@@ -1870,9 +1899,9 @@ async function onConfirmSign() {
     const inputForApply = pdfPath;
     const outputPath = pdfPath;
 
-    if (activeModalMode === "date" || activeModalMode === "name") {
+    if (operationMode === "date" || operationMode === "name") {
       // Plain text paths use apply_text and never invoke signature intent.
-      const textValue = activeModalMode === "date"
+      const textValue = operationMode === "date"
         ? signModalDateInputEl.value
         : signModalNameEl.value.trim();
       const applyResult = await app.callServerTool({
@@ -1889,9 +1918,9 @@ async function onConfirmSign() {
         const text = applyResult.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "apply_text failed";
         throw new Error(text);
       }
-      zone.applied = true;
-      zone.appliedValue = textValue;
-      appliedZoneKeys.add(zoneKey(pdfPath, zone));
+      liveZone.applied = true;
+      liveZone.appliedValue = textValue;
+      appliedZoneKeys.add(zoneKey(pdfPath, liveZone));
       const sc = applyResult.structuredContent as { pdf_path?: string; backup_path?: string | null } | undefined;
       activeBackupPath = sc?.backup_path ?? activeBackupPath;
       // Invalidate the tool-result short-circuit so a replay of the original
@@ -1910,17 +1939,17 @@ async function onConfirmSign() {
       renderZoneOverlay();
       renderSignPanel();
       if (reloadOk) {
-        showStampToast(sc?.pdf_path ?? outputPath, activeModalMode);
+        showStampToast(sc?.pdf_path ?? outputPath, operationMode);
       } else {
         // Stamp IS on disk; viewer just couldn't re-render. Tell the user.
         showStampToast(
           sc?.pdf_path ?? outputPath,
-          activeModalMode,
+          operationMode,
           "warning",
           `Reload failed — switch modes or reopen to see it. (${reloadErr ?? "unknown error"})`,
         );
       }
-      closeSignModal();
+      closeSignModal(false);
       return;
     }
 
@@ -1955,7 +1984,7 @@ async function onConfirmSign() {
         x: zone.x, y: zone.y, width: zone.width, height: zone.height,
         user_intent_statement: statement,
         user_confirmed_at: timestamp,
-        signing_mode: activeModalMode === "initials" ? "initials" : "signature",
+        signing_mode: operationMode === "initials" ? "initials" : "signature",
       },
     });
     if (applyResult.isError) {
@@ -1963,8 +1992,8 @@ async function onConfirmSign() {
       throw new Error(text);
     }
 
-    zone.applied = true;
-    appliedZoneKeys.add(zoneKey(pdfPath, zone));
+    liveZone.applied = true;
+    appliedZoneKeys.add(zoneKey(pdfPath, liveZone));
     const sc = applyResult.structuredContent as { pdf_path?: string; backup_path?: string | null } | undefined;
     activeBackupPath = sc?.backup_path ?? activeBackupPath;
     // Invalidate the tool-result short-circuit so a replay of the original
@@ -1982,7 +2011,7 @@ async function onConfirmSign() {
     }
     renderZoneOverlay();
     renderSignPanel();
-    const toastMode = activeModalMode === "initials" ? "initials" : "signature";
+    const toastMode = operationMode === "initials" ? "initials" : "signature";
     if (reloadOk) {
       showStampToast(sc?.pdf_path ?? outputPath, toastMode);
     } else {
@@ -2001,6 +2030,7 @@ async function onConfirmSign() {
     signModalConfirmBtn.textContent = cfg.buttonLabel;
   } finally {
     signingInFlight = false;
+    setSignModalControlsLocked(false);
   }
 }
 
@@ -3036,14 +3066,14 @@ signModalTypeEl.addEventListener("change", onCustomZoneTypeChange);
 signModalExistingEl.addEventListener("change", onSavedSignatureChange);
 signModalDateInputEl.addEventListener("input", updateStatementPreview);
 signModalDateInputEl.addEventListener("change", updateStatementPreview);
-signModalCancelBtn.addEventListener("click", closeSignModal);
-signModalCloseBtn.addEventListener("click", closeSignModal);
+signModalCancelBtn.addEventListener("click", requestCloseSignModal);
+signModalCloseBtn.addEventListener("click", requestCloseSignModal);
 signModalConfirmBtn.addEventListener("click", onConfirmSign);
 signModalEl.addEventListener("keydown", (e: Event) => {
   const keyEvent = e as KeyboardEvent;
   trapModalFocus(signModalEl, keyEvent);
-  if (keyEvent.key === "Escape") {
-    closeSignModal();
+  if (keyEvent.key === "Escape" && !signingInFlight) {
+    requestCloseSignModal();
   } else if (keyEvent.key === "Enter" && !signModalConfirmBtn.disabled) {
     // Let the native button click fire — but only if focus isn't on a textarea
     if ((keyEvent.target as HTMLElement).tagName !== "TEXTAREA") {
@@ -3054,7 +3084,7 @@ signModalEl.addEventListener("keydown", (e: Event) => {
 });
 // Click on backdrop cancels
 signModalEl.addEventListener("click", (e) => {
-  if ((e.target as HTMLElement).classList.contains("sign-modal-backdrop")) closeSignModal();
+  if ((e.target as HTMLElement).classList.contains("sign-modal-backdrop")) requestCloseSignModal();
 });
 
 // Drag-to-create wiring (only actively listens — handlers no-op when not in sign mode)
