@@ -80,6 +80,12 @@ export class LatestPathRequestState<T> {
     this.#values.delete(path);
     this.#errors.delete(path);
   }
+
+  clear() {
+    this.#activeTokens.clear();
+    this.#values.clear();
+    this.#errors.clear();
+  }
 }
 
 export function getSignPanelStatus({

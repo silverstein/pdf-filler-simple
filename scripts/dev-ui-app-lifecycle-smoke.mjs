@@ -45,6 +45,15 @@ function hostHtml() {
         protocolErrorsSent: 0,
         heldReadRequests: 0,
         releasedReadRequests: 0,
+        detectZoneCalls: 0,
+        listSignatureCalls: 0,
+        applyTextCalls: 0,
+        createSignatureCalls: 0,
+        applySignatureCalls: 0,
+        heldApplyTextRequests: 0,
+        releasedApplyTextRequests: 0,
+        heldCreateSignatureRequests: 0,
+        releasedCreateSignatureRequests: 0,
         postAckMessages: 0,
         teardownError: null,
       };
@@ -53,7 +62,12 @@ function hostHtml() {
       let nextHostRequestId = 10000;
       const pendingHostRequests = new Map();
       const heldReadRequests = [];
+      const heldApplyTextRequests = [];
+      const heldCreateSignatureRequests = [];
       let holdReads = false;
+      let holdApplyText = false;
+      let holdCreateSignature = false;
+      let detectedZoneType = "date";
       let monitorPostAckMessages = false;
 
       const fixturePromise = fetch("/fixture.pdf")
@@ -192,6 +206,76 @@ function hostHtml() {
               });
               return;
             }
+            if (name === "detect_signature_zones") {
+              state.detectZoneCalls++;
+              const type = detectedZoneType;
+              reply(message.id, {
+                content: [{ type: "text", text: "Detected one lifecycle test zone." }],
+                structuredContent: {
+                  zones: [{
+                    type,
+                    label: type === "date" ? "Lifecycle date" : "Lifecycle signature",
+                    page: 1,
+                    x: 72,
+                    y: 96,
+                    width: 160,
+                    height: 28,
+                    confidence: 1,
+                    source: "lifecycle-smoke",
+                  }],
+                  warnings: [],
+                },
+              });
+              return;
+            }
+            if (name === "list_signatures") {
+              state.listSignatureCalls++;
+              reply(message.id, {
+                content: [{ type: "text", text: "No saved signatures." }],
+                structuredContent: { signatures: [] },
+              });
+              return;
+            }
+            if (name === "apply_text") {
+              state.applyTextCalls++;
+              if (holdApplyText) {
+                state.heldApplyTextRequests++;
+                heldApplyTextRequests.push(message);
+                return;
+              }
+              reply(message.id, {
+                content: [{ type: "text", text: "Applied date text." }],
+                structuredContent: {
+                  pdf_path: "/fixtures/lifecycle.pdf",
+                  backup_path: "/fixtures/lifecycle.backup.pdf",
+                },
+              });
+              return;
+            }
+            if (name === "create_signature") {
+              state.createSignatureCalls++;
+              if (holdCreateSignature) {
+                state.heldCreateSignatureRequests++;
+                heldCreateSignatureRequests.push(message);
+                return;
+              }
+              reply(message.id, {
+                content: [{ type: "text", text: "Created lifecycle signature." }],
+                structuredContent: { name: "__pdf-tools-quick-typed__" },
+              });
+              return;
+            }
+            if (name === "apply_signature") {
+              state.applySignatureCalls++;
+              reply(message.id, {
+                content: [{ type: "text", text: "Applied lifecycle signature." }],
+                structuredContent: {
+                  pdf_path: "/fixtures/lifecycle.pdf",
+                  backup_path: "/fixtures/lifecycle.backup.pdf",
+                },
+              });
+              return;
+            }
             replyError(message.id, -32601, "Unsupported test tool: " + name);
             return;
           }
@@ -305,6 +389,66 @@ function hostHtml() {
         return requests.length;
       }
 
+      function replaceTornDownFrame(zoneType) {
+        frame?.remove();
+        frame = null;
+        holdReads = false;
+        holdApplyText = zoneType === "date";
+        holdCreateSignature = zoneType === "signature";
+        detectedZoneType = zoneType;
+        monitorPostAckMessages = false;
+        createFrame();
+      }
+
+      function enterSignMode() {
+        frame.contentDocument.getElementById("mode-sign-btn").click();
+      }
+
+      function openFirstSignZone() {
+        frame.contentDocument.querySelector(".sign-panel-item")?.click();
+      }
+
+      function confirmDateStamp() {
+        frame.contentDocument.getElementById("sign-modal-confirm").click();
+      }
+
+      function confirmQuickSignature() {
+        const doc = frame.contentDocument;
+        const nameInput = doc.getElementById("sign-modal-name");
+        nameInput.value = "Lifecycle Tester";
+        nameInput.dispatchEvent(new Event("input", { bubbles: true }));
+        doc.getElementById("sign-modal-confirm").click();
+      }
+
+      function releaseHeldApplyText() {
+        holdApplyText = false;
+        const requests = heldApplyTextRequests.splice(0);
+        state.releasedApplyTextRequests += requests.length;
+        for (const message of requests) {
+          reply(message.id, {
+            content: [{ type: "text", text: "Applied delayed date text." }],
+            structuredContent: {
+              pdf_path: "/fixtures/lifecycle.pdf",
+              backup_path: "/fixtures/lifecycle.backup.pdf",
+            },
+          });
+        }
+        return requests.length;
+      }
+
+      function releaseHeldCreateSignature() {
+        holdCreateSignature = false;
+        const requests = heldCreateSignatureRequests.splice(0);
+        state.releasedCreateSignatureRequests += requests.length;
+        for (const message of requests) {
+          reply(message.id, {
+            content: [{ type: "text", text: "Created delayed lifecycle signature." }],
+            structuredContent: { name: "__pdf-tools-quick-typed__" },
+          });
+        }
+        return requests.length;
+      }
+
       function changeTheme(theme) {
         send({
           jsonrpc: "2.0",
@@ -340,6 +484,12 @@ function hostHtml() {
           canvasHeight: canvas?.height || 0,
           errorVisible: error?.style.display === "block",
           errorText: doc?.getElementById("error-message")?.textContent || "",
+          signItemCount: doc?.querySelectorAll(".sign-panel-item").length || 0,
+          signModalDisplay: doc?.getElementById("sign-modal")?.style.display || "",
+          signConfirmDisabled: doc?.getElementById("sign-modal-confirm")?.disabled ?? null,
+          signConfirmText: doc?.getElementById("sign-modal-confirm")?.textContent || "",
+          appliedZoneCount: doc?.querySelectorAll('.sig-zone[data-applied="true"]').length || 0,
+          signToastCount: doc?.querySelectorAll(".sign-toast").length || 0,
         };
       }
 
@@ -353,6 +503,13 @@ function hostHtml() {
         openDelayedLoad,
         startConcurrentTeardown,
         releaseHeldReads,
+        replaceTornDownFrame,
+        enterSignMode,
+        openFirstSignZone,
+        confirmDateStamp,
+        confirmQuickSignature,
+        releaseHeldApplyText,
+        releaseHeldCreateSignature,
         sendProtocolError,
       };
       createFrame();
@@ -539,13 +696,140 @@ async function main() {
       `The viewer emitted ${finalState.postAckMessages} host message(s) after teardown acknowledgment.`,
     );
 
+    await runAgentBrowser(["eval", "window.__hostApi.replaceTornDownFrame('date')"]);
+    await waitFor(async () => {
+      const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");
+      return state.initializeCount === 4 && state.initializedCount === 4 && state.initialToolResults === 4
+        ? state
+        : null;
+    }, "The delayed date-stamp lifecycle did not initialize");
+    await runAgentBrowser(["eval", "window.__hostApi.enterSignMode()"]);
+    await waitFor(async () => {
+      const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");
+      const viewer = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.viewerSnapshot())");
+      return state.detectZoneCalls >= 1 && viewer.signItemCount === 1 ? { state, viewer } : null;
+    }, "The synthetic date zone did not render");
+    await runAgentBrowser(["eval", "window.__hostApi.openFirstSignZone()"]);
+    await waitFor(async () => {
+      const viewer = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.viewerSnapshot())");
+      return viewer.signModalDisplay === "flex" && viewer.signConfirmDisabled === false ? viewer : null;
+    }, "The synthetic date confirmation did not open");
+    await runAgentBrowser(["eval", "window.__hostApi.confirmDateStamp()"]);
+    await waitFor(async () => {
+      const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");
+      return state.heldApplyTextRequests === 1 ? state : null;
+    }, "The date stamp did not reach a held apply_text request");
+
+    await runAgentBrowser(["eval", "window.__hostApi.startConcurrentTeardown()"]);
+    const dateAckState = await waitFor(async () => {
+      const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");
+      if (state.teardownError) throw new Error(state.teardownError);
+      return state.teardownAcks === 6 ? state : null;
+    }, "The date-stamp teardown requests were not acknowledged");
+    assert(
+      dateAckState.releasedApplyTextRequests === 0,
+      "Date-stamp teardown waited for the delayed apply_text result.",
+    );
+    const dateViewerAfterAck = await evalJson(
+      runAgentBrowser,
+      "JSON.stringify(window.__hostApi.viewerSnapshot())",
+    );
+    await runAgentBrowser(["eval", "window.__hostApi.releaseHeldApplyText()"]);
+    await runAgentBrowser(["wait", "750"]);
+    const dateFinalState = await evalJson(
+      runAgentBrowser,
+      "JSON.stringify(window.__hostApi.snapshot())",
+    );
+    const dateViewerAfterRelease = await evalJson(
+      runAgentBrowser,
+      "JSON.stringify(window.__hostApi.viewerSnapshot())",
+    );
+    assert(dateFinalState.releasedApplyTextRequests === 1, "The delayed apply_text result was not released.");
+    assert(
+      dateFinalState.postAckMessages === 0,
+      `The delayed apply_text continuation emitted ${dateFinalState.postAckMessages} post-ack message(s).`,
+    );
+    assert(
+      JSON.stringify(dateViewerAfterRelease) === JSON.stringify(dateViewerAfterAck),
+      "The delayed apply_text continuation mutated viewer state after teardown acknowledgment.",
+    );
+
+    await runAgentBrowser(["eval", "window.__hostApi.replaceTornDownFrame('signature')"]);
+    await waitFor(async () => {
+      const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");
+      return state.initializeCount === 5 && state.initializedCount === 5 && state.initialToolResults === 5
+        ? state
+        : null;
+    }, "The delayed quick-sign lifecycle did not initialize");
+    await runAgentBrowser(["eval", "window.__hostApi.enterSignMode()"]);
+    await waitFor(async () => {
+      const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");
+      const viewer = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.viewerSnapshot())");
+      return state.detectZoneCalls >= 2 && viewer.signItemCount === 1 ? { state, viewer } : null;
+    }, "The synthetic signature zone did not render");
+    await runAgentBrowser(["eval", "window.__hostApi.openFirstSignZone()"]);
+    await waitFor(async () => {
+      const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");
+      const viewer = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.viewerSnapshot())");
+      return state.listSignatureCalls >= 1 && viewer.signModalDisplay === "flex" ? { state, viewer } : null;
+    }, "The synthetic quick-sign confirmation did not open");
+    await runAgentBrowser(["eval", "window.__hostApi.confirmQuickSignature()"]);
+    await waitFor(async () => {
+      const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");
+      return state.heldCreateSignatureRequests === 1 ? state : null;
+    }, "Quick signing did not reach a held create_signature request");
+
+    await runAgentBrowser(["eval", "window.__hostApi.startConcurrentTeardown()"]);
+    const createAckState = await waitFor(async () => {
+      const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");
+      if (state.teardownError) throw new Error(state.teardownError);
+      return state.teardownAcks === 8 ? state : null;
+    }, "The quick-sign teardown requests were not acknowledged");
+    assert(
+      createAckState.releasedCreateSignatureRequests === 0,
+      "Quick-sign teardown waited for the delayed create_signature result.",
+    );
+    const quickViewerAfterAck = await evalJson(
+      runAgentBrowser,
+      "JSON.stringify(window.__hostApi.viewerSnapshot())",
+    );
+    const applySignatureCountBeforeRelease = createAckState.applySignatureCalls;
+    await runAgentBrowser(["eval", "window.__hostApi.releaseHeldCreateSignature()"]);
+    await runAgentBrowser(["wait", "750"]);
+    const quickFinalState = await evalJson(
+      runAgentBrowser,
+      "JSON.stringify(window.__hostApi.snapshot())",
+    );
+    const quickViewerAfterRelease = await evalJson(
+      runAgentBrowser,
+      "JSON.stringify(window.__hostApi.viewerSnapshot())",
+    );
+    assert(
+      quickFinalState.releasedCreateSignatureRequests === 1,
+      "The delayed create_signature result was not released.",
+    );
+    assert(
+      quickFinalState.applySignatureCalls === applySignatureCountBeforeRelease,
+      "The delayed create_signature continuation chained into apply_signature after teardown.",
+    );
+    assert(
+      quickFinalState.postAckMessages === 0,
+      `The delayed create_signature continuation emitted ${quickFinalState.postAckMessages} post-ack message(s).`,
+    );
+    assert(
+      JSON.stringify(quickViewerAfterRelease) === JSON.stringify(quickViewerAfterAck),
+      "The delayed create_signature continuation mutated viewer state after teardown acknowledgment.",
+    );
+
     console.log(JSON.stringify({
       status: "pass",
       host: process.platform,
-      lifecycle: finalState,
+      lifecycle: quickFinalState,
       firstViewer,
       darkViewer,
       errorViewer,
+      dateViewerAfterAck,
+      quickViewerAfterAck,
     }, null, 2));
   } finally {
     await closeBrowserSession();

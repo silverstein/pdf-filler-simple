@@ -217,4 +217,22 @@ describe("sign mode polish", () => {
     expect(state.getValue("A.pdf")).toEqual(["latest"]);
     expect(state.isLoading("A.pdf")).toBe(false);
   });
+
+  it("invalidates every pending path and cached result on lifecycle clear", () => {
+    const state = new LatestPathRequestState<string[]>();
+    const requestA = state.begin("A.pdf");
+    const requestB = state.begin("B.pdf");
+
+    expect(state.succeed(requestA, ["A-zone"])).toBe(true);
+    expect(state.fail(requestB, "B detector failed")).toBe(true);
+
+    state.clear();
+
+    expect(state.isLoading("A.pdf")).toBe(false);
+    expect(state.isLoading("B.pdf")).toBe(false);
+    expect(state.getValue("A.pdf")).toBeUndefined();
+    expect(state.getError("B.pdf")).toBeNull();
+    expect(state.succeed(requestA, ["late-A-zone"])).toBe(false);
+    expect(state.fail(requestB, "late B failure")).toBe(false);
+  });
 });

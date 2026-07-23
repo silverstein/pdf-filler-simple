@@ -224,6 +224,7 @@ const app = new App(
 
 let isTearingDown = false;
 let teardownPromise: Promise<Record<string, never>> | null = null;
+let viewerLifecycleEpoch = 0;
 
 // ─── UI State ────────────────────────────────────────────────────────────────
 
@@ -278,6 +279,37 @@ class ViewerLifecycleEndedError extends Error {
   }
 }
 
+function captureViewerLifecycle() {
+  if (isTearingDown) throw new ViewerLifecycleEndedError();
+  return viewerLifecycleEpoch;
+}
+
+function assertViewerLifecycle(lifecycle: number) {
+  if (isTearingDown || lifecycle !== viewerLifecycleEpoch) {
+    throw new ViewerLifecycleEndedError();
+  }
+}
+
+function isViewerLifecycleCurrent(lifecycle: number) {
+  return !isTearingDown && lifecycle === viewerLifecycleEpoch;
+}
+
+function isViewerLifecycleEnded(err: unknown) {
+  return isTearingDown || err instanceof ViewerLifecycleEndedError;
+}
+
+type ServerToolRequest = Parameters<typeof app.callServerTool>[0];
+
+async function callServerToolDuringLifecycle(
+  request: ServerToolRequest,
+  lifecycle = captureViewerLifecycle(),
+) {
+  assertViewerLifecycle(lifecycle);
+  const result = await app.callServerTool(request);
+  assertViewerLifecycle(lifecycle);
+  return result;
+}
+
 function getPathCacheEpoch(filePath: string) {
   return pathCacheEpochs.get(filePath) ?? 0;
 }
@@ -307,7 +339,7 @@ async function fetchChunk(path: string, begin: number, end: number) {
 
   const request = (async () => {
     try {
-      const result = await app.callServerTool({
+      const result = await callServerToolDuringLifecycle({
         name: "read_pdf_bytes",
         arguments: { pdf_path: path, offset: begin, byteCount: end - begin },
       });
@@ -554,11 +586,14 @@ function resetZoom() { scale = 1.0; renderPage(); }
 // ─── Fullscreen ──────────────────────────────────────────────────────────────
 
 async function toggleFullscreen() {
+  if (isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   const ctx = app.getHostContext();
   if (!ctx?.availableDisplayModes?.includes("fullscreen")) return;
   const newMode = currentDisplayMode === "fullscreen" ? "inline" : "fullscreen";
   try {
     const result = await app.requestDisplayMode({ mode: newMode });
+    assertViewerLifecycle(lifecycle);
     currentDisplayMode = result.mode as "inline" | "fullscreen";
     mainEl.classList.toggle("fullscreen", currentDisplayMode === "fullscreen");
     fullscreenBtn.title = currentDisplayMode === "fullscreen" ? "Exit fullscreen" : "Fullscreen";
@@ -569,6 +604,7 @@ async function toggleFullscreen() {
 
 async function updatePageContext() {
   if (!pdfDocument || isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   try {
     const pageText = pageTextCache.get(currentPage) || "";
     const sel = window.getSelection();
@@ -596,21 +632,25 @@ async function updatePageContext() {
     }
 
     await app.updateModelContext({ content: [{ type: "text", text: contextText }] });
+    assertViewerLifecycle(lifecycle);
   } catch {}
 }
 
 async function syncActiveDocumentState() {
   if (!pdfPath || isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   try {
-    await app.callServerTool({
+    await callServerToolDuringLifecycle({
       name: "set_active_document",
       arguments: {
         pdf_path: pdfPath,
         ...(activeBackupPath ? { backup_path: activeBackupPath } : {}),
       },
-    });
+    }, lifecycle);
   } catch (err) {
-    console.warn("[viewer] set_active_document failed:", err);
+    if (!isViewerLifecycleEnded(err)) {
+      console.warn("[viewer] set_active_document failed:", err);
+    }
   }
 }
 
@@ -1133,6 +1173,8 @@ function initPageStates() {
 // ─── Signature zones (Sign mode) ─────────────────────────────────────────────
 
 async function fetchSignatureZones(force = false) {
+  if (isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   const requestedPath = pdfPath;
   if (!requestedPath) return;
   // If we already have zones cached for this exact file, reuse them — don't
@@ -1151,10 +1193,11 @@ async function fetchSignatureZones(force = false) {
   if (pdfPath === requestedPath) renderSignPanel();
 
   try {
-    const result = await app.callServerTool({
+    const result = await callServerToolDuringLifecycle({
       name: "detect_signature_zones",
       arguments: { pdf_path: requestedPath },
-    });
+    }, lifecycle);
+    assertViewerLifecycle(lifecycle);
     if (result.isError) {
       const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Unknown error";
       throw new Error(text);
@@ -1175,13 +1218,14 @@ async function fetchSignatureZones(force = false) {
       signatureZones = zones;
     }
   } catch (err: any) {
+    if (isViewerLifecycleEnded(err)) return;
     console.error("[viewer] detect_signature_zones failed:", err);
     if (zoneRequests.failForCurrent(request, pdfPath, err?.message ?? String(err))) {
       signatureZones = [];
       zoneWarningsByPath.delete(requestedPath);
     }
   } finally {
-    if (zoneRequests.finishForCurrent(request, pdfPath)) {
+    if (!isTearingDown && lifecycle === viewerLifecycleEpoch && zoneRequests.finishForCurrent(request, pdfPath)) {
       renderSignPanel();
       renderZoneOverlay();
     }
@@ -1688,7 +1732,8 @@ function refreshActiveZoneCopy() {
 
 async function openSignModal(zone: SignatureZone) {
   // Guard: if a sign is already underway, don't swap the active zone (Phase B review B4).
-  if (signingInFlight) return;
+  if (signingInFlight || isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   setInspectRegionArmed(false);
   activeSignZone = zone;
   activeZoneOriginalType = zone.source === "user-drag" ? zone.type : null;
@@ -1719,6 +1764,7 @@ async function openSignModal(zone: SignatureZone) {
   // Load saved signatures only when identity fields are visible
   if (activeModalMode === "signature" || activeModalMode === "initials") {
     await populateSavedSignatures();
+    if (!isViewerLifecycleCurrent(lifecycle)) return;
   }
 
   // Show modal + focus the right field
@@ -1755,13 +1801,16 @@ function requestCloseSignModal() {
 }
 
 async function populateSavedSignatures() {
+  if (isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   // Clear all but the default option
   while (signModalExistingEl.options.length > 1) signModalExistingEl.remove(1);
   try {
-    const result = await app.callServerTool({
+    const result = await callServerToolDuringLifecycle({
       name: "list_signatures",
       arguments: {},
-    });
+    }, lifecycle);
+    assertViewerLifecycle(lifecycle);
     if (result.isError) {
       savedSignatures = [];
       return;
@@ -1781,20 +1830,25 @@ async function populateSavedSignatures() {
       signModalExistingEl.appendChild(opt);
     }
   } catch (err) {
-    console.warn("[viewer] list_signatures failed (modal still usable):", err);
-    savedSignatures = [];
+    if (!isViewerLifecycleEnded(err)) {
+      console.warn("[viewer] list_signatures failed (modal still usable):", err);
+      savedSignatures = [];
+    }
   }
 }
 
 async function ensureSavedSignaturePreview(signatureName: string) {
+  if (isTearingDown) throw new ViewerLifecycleEndedError();
+  const lifecycle = captureViewerLifecycle();
   if (!signatureName) return null;
   const cached = signaturePreviewCache.get(signatureName);
   if (cached?.preview_data_url || cached?.style === "typed") return cached;
 
-  const result = await app.callServerTool({
+  const result = await callServerToolDuringLifecycle({
     name: "load_signature",
     arguments: { signature_name: signatureName },
-  });
+  }, lifecycle);
+  assertViewerLifecycle(lifecycle);
   if (result.isError) {
     const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "load_signature failed";
     throw new Error(text);
@@ -1809,6 +1863,8 @@ async function ensureSavedSignaturePreview(signatureName: string) {
 // the signature's display_name so the attestation preview + Sign button are
 // immediately usable — no "why is this still greyed out?" moment.
 async function onSavedSignatureChange() {
+  if (isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   const opt = signModalExistingEl.selectedOptions[0];
   if (!opt) return;
   const displayName = opt.dataset.displayName || "";
@@ -1822,10 +1878,13 @@ async function onSavedSignatureChange() {
   try {
     if (opt.value) {
       await ensureSavedSignaturePreview(opt.value);
+      assertViewerLifecycle(lifecycle);
     }
   } catch (err) {
+    if (isViewerLifecycleEnded(err)) return;
     console.warn("[viewer] load_signature failed (preview omitted):", err);
   }
+  if (!isViewerLifecycleCurrent(lifecycle)) return;
   updateStatementPreview();
   updateZonePreviewState();
 }
@@ -1915,7 +1974,8 @@ function updateStatementPreview() {
 }
 
 async function onConfirmSign() {
-  if (!activeSignZone || signingInFlight) return;
+  if (!activeSignZone || signingInFlight || isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   const liveZone = activeSignZone;
   const zone = Object.freeze({
     type: liveZone.type,
@@ -1960,7 +2020,7 @@ async function onConfirmSign() {
       const textValue = operationMode === "date"
         ? signModalDateInputEl.value
         : signModalNameEl.value.trim();
-      const applyResult = await app.callServerTool({
+      const applyResult = await callServerToolDuringLifecycle({
         name: "apply_text",
         arguments: {
           pdf_path: inputForApply,
@@ -1969,7 +2029,8 @@ async function onConfirmSign() {
           x: zone.x, y: zone.y, width: zone.width, height: zone.height,
           text: textValue,
         },
-      });
+      }, lifecycle);
+      assertViewerLifecycle(lifecycle);
       if (applyResult.isError) {
         const text = applyResult.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "apply_text failed";
         throw new Error(text);
@@ -1986,8 +2047,10 @@ async function onConfirmSign() {
       let reloadOk = true;
       let reloadErr: string | undefined;
       try {
-        await reloadPdfForStamp(pdfPath);
+        await reloadPdfForStamp(pdfPath, lifecycle);
+        assertViewerLifecycle(lifecycle);
       } catch (err: any) {
+        if (isViewerLifecycleEnded(err)) throw err;
         reloadOk = false;
         reloadErr = err?.message ?? String(err);
         console.warn("[viewer] post-stamp reload failed:", err);
@@ -2019,10 +2082,11 @@ async function onConfirmSign() {
     let signatureName = existing;
     if (!signatureName) {
       const quickName = "__pdf-tools-quick-typed__";
-      const createResult = await app.callServerTool({
+      const createResult = await callServerToolDuringLifecycle({
         name: "create_signature",
         arguments: { name: quickName, display_name: name, overwrite: true },
-      });
+      }, lifecycle);
+      assertViewerLifecycle(lifecycle);
       if (createResult.isError) {
         const text = createResult.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "create_signature failed";
         throw new Error(text);
@@ -2030,7 +2094,7 @@ async function onConfirmSign() {
       signatureName = quickName;
     }
 
-    const applyResult = await app.callServerTool({
+    const applyResult = await callServerToolDuringLifecycle({
       name: "apply_signature",
       arguments: {
         pdf_path: inputForApply,
@@ -2042,7 +2106,8 @@ async function onConfirmSign() {
         user_confirmed_at: timestamp,
         signing_mode: operationMode === "initials" ? "initials" : "signature",
       },
-    });
+    }, lifecycle);
+    assertViewerLifecycle(lifecycle);
     if (applyResult.isError) {
       const text = applyResult.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "apply_signature failed";
       throw new Error(text);
@@ -2059,8 +2124,10 @@ async function onConfirmSign() {
     let reloadOk = true;
     let reloadErr: string | undefined;
     try {
-      await reloadPdfForStamp(pdfPath);
+      await reloadPdfForStamp(pdfPath, lifecycle);
+      assertViewerLifecycle(lifecycle);
     } catch (err: any) {
+      if (isViewerLifecycleEnded(err)) throw err;
       reloadOk = false;
       reloadErr = err?.message ?? String(err);
       console.warn("[viewer] post-stamp reload failed:", err);
@@ -2080,13 +2147,16 @@ async function onConfirmSign() {
     }
     closeSignModal(false);
   } catch (err: any) {
+    if (isViewerLifecycleEnded(err)) return;
     signModalErrorEl.textContent = err?.message ?? String(err);
     signModalErrorEl.style.display = "block";
     signModalConfirmBtn.disabled = false;
     signModalConfirmBtn.textContent = cfg.buttonLabel;
   } finally {
-    signingInFlight = false;
-    setSignModalControlsLocked(false);
+    if (!isTearingDown && lifecycle === viewerLifecycleEpoch) {
+      signingInFlight = false;
+      setSignModalControlsLocked(false);
+    }
   }
 }
 
@@ -2220,6 +2290,8 @@ function updateDrawSaveState() {
 }
 
 async function onSaveDrawnSignature() {
+  if (isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   const name = drawNameInputEl.value.trim();
   const legalName = drawLegalNameInputEl.value.trim();
   if (!name) return;
@@ -2239,10 +2311,11 @@ async function onSaveDrawnSignature() {
     // Pass legal name through as display_name so the confirm modal can
     // auto-fill the attestation field when this signature is picked later.
     if (legalName) createArgs.display_name = legalName;
-    const result = await app.callServerTool({
+    const result = await callServerToolDuringLifecycle({
       name: "create_signature",
       arguments: createArgs,
-    });
+    }, lifecycle);
+    assertViewerLifecycle(lifecycle);
     if (result.isError) {
       const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "create_signature failed";
       throw new Error(text);
@@ -2251,17 +2324,22 @@ async function onSaveDrawnSignature() {
     // If the confirm modal is open, refresh its dropdown so the new signature appears immediately.
     if (signModalEl.style.display === "flex") {
       await populateSavedSignatures();
+      assertViewerLifecycle(lifecycle);
       signModalExistingEl.value = name;
       await onSavedSignatureChange();
+      assertViewerLifecycle(lifecycle);
       updateStatementPreview();
     }
   } catch (err: any) {
+    if (isViewerLifecycleEnded(err)) return;
     drawErrorEl.textContent = err?.message ?? String(err);
     drawErrorEl.style.display = "block";
   } finally {
-    drawSaveBtn.disabled = false;
-    drawSaveBtn.textContent = "Save signature";
-    updateDrawSaveState();
+    if (!isTearingDown && lifecycle === viewerLifecycleEpoch) {
+      drawSaveBtn.disabled = false;
+      drawSaveBtn.textContent = "Save signature";
+      updateDrawSaveState();
+    }
   }
 }
 
@@ -2269,7 +2347,11 @@ async function onSaveDrawnSignature() {
 // signatures/dates the server wrote to disk. Keeps `pdfPath` as the original
 // (that's the logical identity for zone keys + output-path stems); only the
 // bytes feeding pdfjs change. Preserves currentPage + scale.
-async function reloadPdfForStamp(stampedPath: string) {
+async function reloadPdfForStamp(
+  stampedPath: string,
+  lifecycle = captureViewerLifecycle(),
+) {
+  assertViewerLifecycle(lifecycle);
   // Cancel any in-flight render so we don't tear down the old doc mid-raster.
   if (currentRenderTask) {
     try { currentRenderTask.cancel(); } catch { /* ignore */ }
@@ -2285,6 +2367,7 @@ async function reloadPdfForStamp(stampedPath: string) {
   pdfDocument = null;
   if (oldDoc) {
     try { await oldDoc.destroy(); } catch { /* best-effort */ }
+    assertViewerLifecycle(lifecycle);
   }
 
   // Content-specific caches: page text may include our new stamp text.
@@ -2293,10 +2376,11 @@ async function reloadPdfForStamp(stampedPath: string) {
   invalidateRangeCacheForPath(stampedPath);
 
   try {
-    const probe = await app.callServerTool({
+    const probe = await callServerToolDuringLifecycle({
       name: "read_pdf_bytes",
       arguments: { pdf_path: stampedPath, offset: 0, byteCount: 1 },
-    });
+    }, lifecycle);
+    assertViewerLifecycle(lifecycle);
     if (probe.isError) {
       const text = probe.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Stamped-file probe failed";
       throw new Error(text);
@@ -2305,31 +2389,40 @@ async function reloadPdfForStamp(stampedPath: string) {
     if (!probeSc?.totalBytes) throw new Error("Stamped file has no size reported");
 
     pdfDocument = await loadPdfProgressively(stampedPath, probeSc.totalBytes, loadGeneration);
+    assertViewerLifecycle(lifecycle);
     // New doc should have the same page count — guard defensively.
     totalPages = pdfDocument.numPages;
     if (currentPage > totalPages) currentPage = totalPages;
     await renderPage();
+    assertViewerLifecycle(lifecycle);
     // Re-index the new doc so search + model context reflect stamped content.
     startPreloading();
   } catch (err: any) {
-    if (isTearingDown || loadGeneration !== pdfGeneration) return;
+    if (isViewerLifecycleEnded(err) || loadGeneration !== pdfGeneration) return;
     console.error("[viewer] reloadPdfForStamp failed:", err);
     // Best-effort: reload from original so we don't leave the viewer empty.
     try {
       invalidateRangeCacheForPath(pdfPath);
-      const probe = await app.callServerTool({
+      assertViewerLifecycle(lifecycle);
+      const probe = await callServerToolDuringLifecycle({
         name: "read_pdf_bytes",
         arguments: { pdf_path: pdfPath, offset: 0, byteCount: 1 },
-      });
+      }, lifecycle);
+      assertViewerLifecycle(lifecycle);
       const probeSc = probe.structuredContent as { totalBytes?: number } | undefined;
       if (probeSc?.totalBytes) {
         pdfDocument = await loadPdfProgressively(pdfPath, probeSc.totalBytes, loadGeneration);
+        assertViewerLifecycle(lifecycle);
         totalPages = pdfDocument.numPages;
         if (currentPage > totalPages) currentPage = totalPages;
         await renderPage();
+        assertViewerLifecycle(lifecycle);
         startPreloading();
       }
-    } catch { /* give up — error already logged */ }
+    } catch (fallbackErr) {
+      if (isViewerLifecycleEnded(fallbackErr)) return;
+      /* give up - error already logged */
+    }
     throw err;
   }
 }
@@ -2345,18 +2438,22 @@ function updateWorkingCopyBanner() {
 }
 
 async function onRevealWorkingCopy() {
-  if (!activeBackupPath) return;
+  if (!activeBackupPath || isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   try {
-    const result = await app.callServerTool({
+    const result = await callServerToolDuringLifecycle({
       name: "reveal_in_finder",
       arguments: { path: activeBackupPath },
-    });
+    }, lifecycle);
+    assertViewerLifecycle(lifecycle);
     if (result.isError) {
       const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Reveal failed";
       console.warn("[viewer] reveal_in_finder error:", text);
     }
   } catch (err) {
-    console.warn("[viewer] reveal_in_finder call failed:", err);
+    if (!isViewerLifecycleEnded(err)) {
+      console.warn("[viewer] reveal_in_finder call failed:", err);
+    }
   }
 }
 
@@ -2548,14 +2645,15 @@ function openRegionPreviewModal(preview: RegionPreviewState) {
 }
 
 async function inspectRegionSelection(region: Pick<RegionPreviewState, "page" | "x" | "y" | "width" | "height" | "zoneType">) {
-  if (!pdfPath) return;
+  if (!pdfPath || isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   const requestId = ++inspectPreviewRequestSeq;
   inspectPreviewInFlight = true;
   setInspectRegionArmed(false);
   signPanelStatusEl.textContent = "Rendering region preview…";
   signPanelStatusEl.classList.remove("empty");
   try {
-    const result = await app.callServerTool({
+    const result = await callServerToolDuringLifecycle({
       name: "render_pdf_region",
       arguments: {
         pdf_path: pdfPath,
@@ -2565,7 +2663,8 @@ async function inspectRegionSelection(region: Pick<RegionPreviewState, "page" | 
         width: region.width,
         height: region.height,
       },
-    });
+    }, lifecycle);
+    assertViewerLifecycle(lifecycle);
     if (result.isError) {
       const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Region preview failed";
       throw new Error(text);
@@ -2581,12 +2680,13 @@ async function inspectRegionSelection(region: Pick<RegionPreviewState, "page" | 
     });
     renderSignPanel();
   } catch (err: any) {
+    if (isViewerLifecycleEnded(err)) return;
     if (requestId !== inspectPreviewRequestSeq) return;
     console.error("[viewer] render_pdf_region failed:", err);
     signPanelStatusEl.textContent = `Region preview failed: ${err?.message ?? err}`;
     signPanelStatusEl.classList.remove("empty");
   } finally {
-    if (requestId === inspectPreviewRequestSeq) {
+    if (!isTearingDown && lifecycle === viewerLifecycleEpoch && requestId === inspectPreviewRequestSeq) {
       inspectPreviewInFlight = false;
       signPanelInspectBtn.disabled = false;
     }
@@ -2594,9 +2694,12 @@ async function inspectRegionSelection(region: Pick<RegionPreviewState, "page" | 
 }
 
 async function previewExistingZone(zone: SignatureZone) {
+  if (isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   if (zone.page !== currentPage) {
     currentPage = zone.page;
     await renderPage();
+    if (!isViewerLifecycleCurrent(lifecycle)) return;
   }
   await inspectRegionSelection({
     page: zone.page,
@@ -2606,6 +2709,7 @@ async function previewExistingZone(zone: SignatureZone) {
     height: zone.height,
     zoneType: zone.type,
   });
+  if (!isViewerLifecycleCurrent(lifecycle)) return;
 }
 
 function renderSignPanel() {
@@ -3049,7 +3153,8 @@ function resetPages() {
 }
 
 async function applyPagePlan() {
-  if (!hasUnsavedChanges || !pdfPath) return;
+  if (!hasUnsavedChanges || !pdfPath || isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
 
   const activePages = pageStates.filter(ps => !ps.deleted);
   const page_order = activePages.map(ps => ps.originalIndex);
@@ -3065,14 +3170,15 @@ async function applyPagePlan() {
   manageStatusEl.textContent = "Saving...";
 
   try {
-    const result = await app.callServerTool({
+    const result = await callServerToolDuringLifecycle({
       name: "apply_page_plan",
       arguments: {
         input_path: pdfPath,
         output_path,
         plan: { page_order, rotations },
       },
-    });
+    }, lifecycle);
+    assertViewerLifecycle(lifecycle);
 
     if (result.isError) {
       const errText = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Unknown error";
@@ -3083,11 +3189,13 @@ async function applyPagePlan() {
     }
 
     await loadPdfFromToolResult(result);
+    assertViewerLifecycle(lifecycle);
     manageStatusEl.textContent = `\u2705 Saved to ${output_path}`;
     manageApplyBtn.textContent = "Save as new file";
     manageGridEl.classList.add("manage-success-flash");
     setTimeout(() => manageGridEl.classList.remove("manage-success-flash"), 500);
   } catch (err: any) {
+    if (isViewerLifecycleEnded(err)) return;
     manageStatusEl.textContent = `\u274C Save failed: ${err.message}`;
     manageApplyBtn.textContent = "Save as new file";
     manageApplyBtn.disabled = false;
@@ -3298,11 +3406,13 @@ fieldFilterEl.addEventListener("input", () => {
 
 app.ontoolresult = async (result: CallToolResult) => {
   if (isTearingDown) return;
+  const lifecycle = captureViewerLifecycle();
   console.log("[viewer] Tool result:", result);
 
   if (await loadPdfFromToolResult(result)) {
     return;
   }
+  if (!isViewerLifecycleCurrent(lifecycle)) return;
 
   // Otherwise, try to parse as read_pdf_fields result (has field JSON in text)
   try {
@@ -3325,15 +3435,17 @@ app.ontoolresult = async (result: CallToolResult) => {
 
       // Probe file size with a 1-byte read
       try {
-        const probe = await app.callServerTool({
+        const probe = await callServerToolDuringLifecycle({
           name: "read_pdf_bytes",
           arguments: { pdf_path: pdfPath, offset: 0, byteCount: 1 },
-        });
+        }, lifecycle);
+        assertViewerLifecycle(lifecycle);
         const probeSc = probe.structuredContent as any;
         if (probeSc?.totalBytes && !isTearingDown) {
           const loadGeneration = ++pdfGeneration;
           showLoading("Loading PDF...");
           pdfDocument = await loadPdfProgressively(pdfPath, probeSc.totalBytes, loadGeneration);
+          assertViewerLifecycle(lifecycle);
           totalPages = pdfDocument.numPages;
           currentPage = 1;
           pagesLoaded = 0;
@@ -3362,6 +3474,7 @@ app.ontoolresult = async (result: CallToolResult) => {
 
 async function loadPdfFromToolResult(result: CallToolResult) {
   if (isTearingDown) return true;
+  const lifecycle = captureViewerLifecycle();
   const payload = getPdfToolLoadData(result);
   if (!payload) return false;
   const nextPdfPath = payload.activePath || payload.pdfPath;
@@ -3393,6 +3506,7 @@ async function loadPdfFromToolResult(result: CallToolResult) {
     // previous load (including reloadPdfForStamp) drops out.
     const loadGeneration = ++pdfGeneration;
     pdfDocument = await loadPdfProgressively(pdfPath, payload.totalBytes, loadGeneration);
+    assertViewerLifecycle(lifecycle);
     totalPages = pdfDocument.numPages;
 
     const saved = loadSavedPage();
@@ -3438,6 +3552,9 @@ app.onerror = (err: unknown) => {
 
 async function teardownViewer(): Promise<Record<string, never>> {
   isTearingDown = true;
+  viewerLifecycleEpoch++;
+  inspectPreviewRequestSeq++;
+  zoneRequests.clear();
 
   // Stop asynchronous render and preload work before acknowledging teardown.
   // The host may remove the iframe immediately after the response.
@@ -3470,7 +3587,7 @@ async function teardownViewer(): Promise<Record<string, never>> {
   inflightRequests.clear();
   pathCacheEpochs.clear();
   pageTextCache.clear();
-  if (pdfPath) zoneRequests.deletePath(pdfPath);
+  zoneWarningsByPath.clear();
   signaturePreviewCache.clear();
   return {};
 }
