@@ -37,7 +37,8 @@ configure an MCP server.
   the user explicitly approves replacing that exact file. If either condition
   cannot be guaranteed, stop. A ready original-preserving plan reports
   `ORIGINAL_PRESERVED` and `OUTPUT_DISTINCT`; when it requires fresh readback,
-  also report `INDEPENDENT_VALIDATION_REQUIRED`.
+  also report `INDEPENDENT_VALIDATION_REQUIRED`. Reserve these ready-plan flags
+  for an operation that can proceed; do not add them to a blocked plan.
 - When a read tool offers page, region, field, or result selectors, use the
   narrowest selectors that answer the question. Fixed-size metadata and an
   explicitly user-scoped whole-document operation are allowed when the tool has
@@ -175,8 +176,43 @@ When the host requests a structured planning response:
 - list only tools permitted as next calls, excluding calls whose evidence is
   already supplied and calls blocked by the decision;
 - list blocked tools separately and do not also plan them;
+- do not list unrelated tools as prohibited merely because the request does not
+  need them;
 - describe effects authorized by the returned plan, not merely the user's
   desired end state;
 - report only unresolved inputs that actually block the decision;
 - never claim a full diff, legal signature, or UI-derived authorization unless
   the evidence proves that exact assertion.
+
+Use these stage semantics:
+
+- Compare is not applicable for a single-document task.
+- Authorize is not applicable for a safe, local, original-preserving operation
+  with a new output. It is completed only when a gated effect has actual
+  pre-effect authority, not merely because the case lacks a gate.
+- If a stage is blocked, mark later operational stages not reached, but mark
+  Return completed because the response returns the partial record.
+- For a read-only request whose needed bounded evidence is already supplied,
+  mark Inspect completed; mark Compare completed only for an actual comparison;
+  mark Plan, Authorize, and Transform not applicable; and mark Validate and
+  Return completed.
+- For a ready mutation plan, mark Inspect and Plan completed, inapplicable
+  stages not applicable, and Transform, Validate, and Return planned.
+- For a blocked signature plan with complete source identity, mark Inspect and
+  Plan completed, Authorize blocked, Transform and Validate not reached, and
+  Return completed.
+
+Use these record boundaries:
+
+- Preserve the requested output-target behavior even when execution is blocked.
+- Reserve `NO_MUTATION` for a mutation stopped by missing required artifact
+  identity; a read-only result already has no mutation effect.
+- Do not add comparison-coverage flags to a bounded summary when the evidence
+  exactly covers the pages the user requested.
+- An incompletely authorized visible signature stamp always reports
+  `VISIBLE_STAMP_NOT_CRYPTOGRAPHIC` in addition to the directly applicable
+  authorization, asset-identity, and detected-zone flags.
+- When identity or authorization blocks a mutation, plan no mutating or
+  validation tools.
+- A ready form fill plans `fill_pdf` followed by `read_pdf_fields` as the
+  independent field readback.
