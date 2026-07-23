@@ -137,7 +137,7 @@ describe("cross-host PDF Tools workflow contract", () => {
     ]);
   });
 
-  it("requires the ordered six-stage workflow and its safety boundaries", async () => {
+  it("requires the ordered seven-stage workflow and its safety boundaries", async () => {
     const skill = await fs.readFile(SKILL_PATH, "utf8");
     const workflow = JSON.parse(await fs.readFile(WORKFLOW_FIXTURE_PATH, "utf8"));
 

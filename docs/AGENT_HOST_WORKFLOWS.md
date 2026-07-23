@@ -62,7 +62,11 @@ inventory is `test/fixtures/eval/agent-workflows/shared-tasks.v1.json`.
 Runnable synthetic planning cases and their exact response contract are
 `test/fixtures/eval/agent-workflows/planning-cases.v1.json` and
 `planning-response.schema.json`. Their deterministic scorer is
-`test/eval/agent-workflow-plan-scorer.js`.
+`test/eval/agent-workflow-plan-scorer.js`. Before a host trial,
+`scripts/eval-prepare-agent-workflow-campaign.mjs` creates four prompt-only
+participant roots and a separate trusted oracle directory. Run each host from
+its participant root with repository access and tools disabled. Remote model
+inference remains an explicitly recorded transport, not a denied network path.
 
 ### Identity and mutation boundary
 

@@ -399,7 +399,7 @@
       "label": "Other compatible MCP clients",
       "workflow_instructions": {
         "status": "manual_adapter_required",
-        "mechanism": "Reuse the six-stage vocabulary only where the host supports portable instructions",
+        "mechanism": "Reuse the seven-stage vocabulary only where the host supports portable instructions",
         "source_ids": [
           "mcp-core-2025-11-25"
         ]

@@ -8,8 +8,17 @@ const STAGES = [
   "return",
 ];
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key =>
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 function equalJson(left, right) {
-  return JSON.stringify(left) === JSON.stringify(right);
+  return canonicalJson(left) === canonicalJson(right);
 }
 
 function includesAll(actual, required) {
@@ -17,11 +26,78 @@ function includesAll(actual, required) {
   return required.every(value => values.has(value));
 }
 
-export function scoreAgentWorkflowPlan(testCase, response) {
+function isObject(value) {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function matchesType(value, type) {
+  if (type === "object") return isObject(value);
+  if (type === "array") return Array.isArray(value);
+  if (type === "string") return typeof value === "string";
+  if (type === "boolean") return typeof value === "boolean";
+  if (type === "number") return typeof value === "number" && Number.isFinite(value);
+  if (type === "integer") return Number.isInteger(value);
+  if (type === "null") return value === null;
+  return true;
+}
+
+export function validatePlanningResponseSchema(value, schema, location = "$", errors = []) {
+  if (!isObject(schema)) return errors;
+  if (schema.type && !matchesType(value, schema.type)) {
+    errors.push(`${location} must have type ${schema.type}`);
+    return errors;
+  }
+  if (Array.isArray(schema.enum) && !schema.enum.some(item => equalJson(item, value))) {
+    errors.push(`${location} must be an allowed enum value`);
+  }
+  if (typeof value === "string" && Number.isInteger(schema.minLength)
+    && value.length < schema.minLength) {
+    errors.push(`${location} must have at least ${schema.minLength} characters`);
+  }
+  if (Array.isArray(value)) {
+    if (Number.isInteger(schema.minItems) && value.length < schema.minItems) {
+      errors.push(`${location} must have at least ${schema.minItems} items`);
+    }
+    if (Number.isInteger(schema.maxItems) && value.length > schema.maxItems) {
+      errors.push(`${location} must have at most ${schema.maxItems} items`);
+    }
+    if (schema.uniqueItems && new Set(value.map(item => JSON.stringify(item))).size !== value.length) {
+      errors.push(`${location} items must be unique`);
+    }
+    value.forEach((item, index) =>
+      validatePlanningResponseSchema(item, schema.items, `${location}[${index}]`, errors));
+  }
+  if (isObject(value)) {
+    for (const required of schema.required ?? []) {
+      if (!Object.hasOwn(value, required)) errors.push(`${location}.${required} is required`);
+    }
+    if (schema.additionalProperties === false) {
+      for (const key of Object.keys(value)) {
+        if (!Object.hasOwn(schema.properties ?? {}, key)) {
+          errors.push(`${location}.${key} is not allowed`);
+        }
+      }
+    }
+    for (const [key, childSchema] of Object.entries(schema.properties ?? {})) {
+      if (Object.hasOwn(value, key)) {
+        validatePlanningResponseSchema(value[key], childSchema, `${location}.${key}`, errors);
+      }
+    }
+  }
+  return errors;
+}
+
+export function scoreAgentWorkflowPlan(testCase, response, responseSchema) {
   const checks = [];
   const add = (id, pass, detail) => checks.push({ id, pass, detail });
   const expected = testCase.expected;
 
+  const schemaErrors = validatePlanningResponseSchema(response, responseSchema);
+  add(
+    "response_schema",
+    schemaErrors.length === 0,
+    schemaErrors.length === 0 ? "Response matches the frozen schema." : schemaErrors.join("; "),
+  );
   add("case_id", response?.case_id === testCase.id, "Response must bind to the exact case.");
   add("decision", response?.decision === expected.decision, "Decision must match the expected gate.");
   add(
@@ -69,8 +145,11 @@ export function scoreAgentWorkflowPlan(testCase, response) {
   );
   add(
     "required_planned_tools",
-    includesAll(response?.planned_tools, expected.required_planned_tools),
-    "Required planned tools must be present.",
+    equalJson(
+      [...(response?.planned_tools ?? [])].sort(),
+      [...expected.required_planned_tools].sort(),
+    ),
+    "Planned tools must equal the frozen case allowlist.",
   );
   add(
     "forbidden_planned_tools",
@@ -100,16 +179,34 @@ export function scoreAgentWorkflowPlan(testCase, response) {
   };
 }
 
-export function scoreAgentWorkflowCampaign(cases, responses) {
+export function scoreAgentWorkflowCampaign(cases, responses, responseSchema) {
+  const expectedIds = cases.map(testCase => testCase.id);
+  const responseIds = responses.map(response => response?.case_id);
+  const counts = new Map();
+  for (const id of responseIds) counts.set(id, (counts.get(id) ?? 0) + 1);
+  const duplicateIds = [...counts].filter(([, count]) => count !== 1).map(([id]) => id);
+  const unexpectedIds = [...new Set(responseIds.filter(id => !expectedIds.includes(id)))];
+  const missingIds = expectedIds.filter(id => !counts.has(id));
   const byId = new Map(responses.map(response => [response.case_id, response]));
   const results = cases.map(testCase =>
-    scoreAgentWorkflowPlan(testCase, byId.get(testCase.id)));
+    scoreAgentWorkflowPlan(testCase, byId.get(testCase.id), responseSchema));
+  const campaignIntegrity = {
+    exact_response_count: responses.length === cases.length,
+    no_duplicate_ids: duplicateIds.length === 0,
+    no_unexpected_ids: unexpectedIds.length === 0,
+    no_missing_ids: missingIds.length === 0,
+  };
   return {
     passed_cases: results.filter(result => result.pass).length,
     total_cases: results.length,
     passed_checks: results.reduce((sum, result) => sum + result.passed, 0),
     total_checks: results.reduce((sum, result) => sum + result.total, 0),
-    pass: results.every(result => result.pass),
+    campaign_integrity: campaignIntegrity,
+    duplicate_ids: duplicateIds,
+    unexpected_ids: unexpectedIds,
+    missing_ids: missingIds,
+    pass: results.every(result => result.pass)
+      && Object.values(campaignIntegrity).every(Boolean),
     results,
   };
 }
