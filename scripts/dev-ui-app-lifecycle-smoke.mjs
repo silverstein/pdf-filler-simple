@@ -7,8 +7,8 @@ import {
 } from "./dev-ui-smoke-helpers.mjs";
 
 const repoRoot = process.cwd();
-const port = Number(process.env.PDF_TOOLS_APP_LIFECYCLE_PORT || 4182);
-const origin = `http://127.0.0.1:${port}`;
+const requestedPort = Number(process.env.PDF_TOOLS_APP_LIFECYCLE_PORT || 0);
+let origin = "";
 const session = `pdf-tools-app-lifecycle-${Date.now()}`;
 const runAgentBrowser = createAgentBrowserSessionRunner(session);
 const viewerHtml = await fs.readFile(path.join(repoRoot, "dist-ui", "index.html"));
@@ -32,6 +32,7 @@ function hostHtml() {
       const state = {
         resourceLoads: 0,
         initializeCount: 0,
+        initializeContractErrors: [],
         initializedCount: 0,
         initialToolResults: 0,
         readBytesCalls: 0,
@@ -42,11 +43,18 @@ function hostHtml() {
         teardownRequests: 0,
         teardownAcks: 0,
         protocolErrorsSent: 0,
+        heldReadRequests: 0,
+        releasedReadRequests: 0,
+        postAckMessages: 0,
+        teardownError: null,
       };
       let frame = null;
       let fixture = null;
       let nextHostRequestId = 10000;
       const pendingHostRequests = new Map();
+      const heldReadRequests = [];
+      let holdReads = false;
+      let monitorPostAckMessages = false;
 
       const fixturePromise = fetch("/fixture.pdf")
         .then(response => {
@@ -105,10 +113,43 @@ function hostHtml() {
         });
       }
 
+      async function replyToReadRequest(message) {
+        const bytes = await fixturePromise;
+        const args = message.params.arguments || {};
+        const begin = Math.max(0, Number(args.offset) || 0);
+        const end = Math.min(bytes.length, begin + Math.max(0, Number(args.byteCount) || 0));
+        state.readBytesCalls++;
+        reply(message.id, {
+          content: [{ type: "text", text: "Read PDF bytes." }],
+          structuredContent: {
+            bytes: encodeBase64(bytes.subarray(begin, end)),
+            totalBytes: bytes.length,
+            offset: begin,
+            byteCount: end - begin,
+          },
+        });
+      }
+
       async function handleRequest(message) {
         switch (message.method) {
           case "ui/initialize":
             state.initializeCount++;
+            if (message.params.protocolVersion !== "2026-01-26") {
+              state.initializeContractErrors.push("protocolVersion");
+            }
+            if (
+              message.params.appInfo?.name !== "PDF Tools Viewer" ||
+              message.params.appInfo?.version !== "1.0.0"
+            ) {
+              state.initializeContractErrors.push("appInfo");
+            }
+            if (JSON.stringify(message.params.appCapabilities) !== "{}") {
+              state.initializeContractErrors.push("appCapabilities");
+            }
+            if (state.initializeContractErrors.length > 0) {
+              replyError(message.id, -32602, "Unexpected ui/initialize contract.");
+              return;
+            }
             reply(message.id, {
               protocolVersion: "2026-01-26",
               hostInfo: {
@@ -135,21 +176,13 @@ function hostHtml() {
             return;
           case "tools/call": {
             const name = message.params.name;
-            const args = message.params.arguments || {};
             if (name === "read_pdf_bytes") {
-              const bytes = await fixturePromise;
-              const begin = Math.max(0, Number(args.offset) || 0);
-              const end = Math.min(bytes.length, begin + Math.max(0, Number(args.byteCount) || 0));
-              state.readBytesCalls++;
-              reply(message.id, {
-                content: [{ type: "text", text: "Read PDF bytes." }],
-                structuredContent: {
-                  bytes: encodeBase64(bytes.subarray(begin, end)),
-                  totalBytes: bytes.length,
-                  offset: begin,
-                  byteCount: end - begin,
-                },
-              });
+              if (holdReads) {
+                state.heldReadRequests++;
+                heldReadRequests.push(message);
+                return;
+              }
+              await replyToReadRequest(message);
               return;
             }
             if (name === "set_active_document") {
@@ -184,6 +217,7 @@ function hostHtml() {
         if (!frame || event.source !== frame.contentWindow) return;
         const message = event.data;
         if (!message || message.jsonrpc !== "2.0") return;
+        if (monitorPostAckMessages) state.postAckMessages++;
 
         if ("method" in message && "id" in message) {
           void handleRequest(message);
@@ -236,6 +270,41 @@ function hostHtml() {
         createFrame();
       }
 
+      async function openDelayedLoad() {
+        await teardown();
+        frame.remove();
+        frame = null;
+        holdReads = true;
+        monitorPostAckMessages = false;
+        await new Promise(resolve => setTimeout(resolve, 50));
+        createFrame();
+      }
+
+      async function teardownTwice() {
+        state.teardownRequests += 2;
+        await Promise.all([
+          request("ui/resource-teardown"),
+          request("ui/resource-teardown"),
+        ]);
+        state.teardownAcks += 2;
+        monitorPostAckMessages = true;
+      }
+
+      function startConcurrentTeardown() {
+        void teardownTwice().catch(error => {
+          state.teardownError = error?.message || String(error);
+        });
+        return true;
+      }
+
+      function releaseHeldReads() {
+        holdReads = false;
+        const requests = heldReadRequests.splice(0);
+        state.releasedReadRequests += requests.length;
+        for (const message of requests) void replyToReadRequest(message);
+        return requests.length;
+      }
+
       function changeTheme(theme) {
         send({
           jsonrpc: "2.0",
@@ -281,6 +350,9 @@ function hostHtml() {
         changeTheme,
         teardown,
         reopen,
+        openDelayedLoad,
+        startConcurrentTeardown,
+        releaseHeldReads,
         sendProtocolError,
       };
       createFrame();
@@ -349,8 +421,13 @@ async function closeBrowserSession() {
 async function main() {
   await new Promise((resolve, reject) => {
     server.once("error", reject);
-    server.listen(port, "127.0.0.1", resolve);
+    server.listen(requestedPort, "127.0.0.1", resolve);
   });
+  const address = server.address();
+  if (!address || typeof address === "string") {
+    throw new Error("Could not resolve the lifecycle host's bound port.");
+  }
+  origin = `http://127.0.0.1:${address.port}`;
 
   try {
     await runAgentBrowser(["open", origin]);
@@ -373,6 +450,10 @@ async function main() {
       "JSON.stringify(window.__hostApi.viewerSnapshot())",
     );
     assert(firstState.resourceLoads === 1, "The host did not fetch the PDF resource exactly once.");
+    assert(
+      firstState.initializeContractErrors.length === 0,
+      `The app sent an unexpected initialize contract: ${firstState.initializeContractErrors.join(", ")}`,
+    );
     assert(firstViewer.readyState === "complete", "The built viewer iframe did not finish loading.");
     assert(firstViewer.theme === "light", "The initial host theme was not applied.");
     assert(
@@ -429,11 +510,34 @@ async function main() {
       `Unexpected viewer transport error: ${errorViewer.errorText}`,
     );
 
-    await runAgentBrowser(["eval", "window.__hostApi.teardown()"]);
-    const finalState = await waitFor(async () => {
+    await runAgentBrowser(["eval", "window.__hostApi.openDelayedLoad()"]);
+    await waitFor(async () => {
       const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");
-      return state.teardownAcks === 2 ? state : null;
-    }, "The final teardown was not acknowledged");
+      return state.initializeCount === 3 && state.heldReadRequests > 0 ? state : null;
+    }, "The delayed-read lifecycle did not reach an in-flight PDF byte request");
+
+    await runAgentBrowser(["eval", "window.__hostApi.startConcurrentTeardown()"]);
+    const teardownState = await waitFor(async () => {
+      const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");
+      if (state.teardownError) throw new Error(state.teardownError);
+      return state.teardownAcks === 4 ? state : null;
+    }, "Concurrent teardown requests did not await and acknowledge shared cleanup");
+    assert(
+      teardownState.releasedReadRequests === 0,
+      "Teardown required the delayed byte response instead of cancelling the loading task.",
+    );
+
+    await runAgentBrowser(["eval", "window.__hostApi.releaseHeldReads()"]);
+    await runAgentBrowser(["wait", "750"]);
+    const finalState = await evalJson(
+      runAgentBrowser,
+      "JSON.stringify(window.__hostApi.snapshot())",
+    );
+    assert(finalState.releasedReadRequests > 0, "The delayed byte response was not released.");
+    assert(
+      finalState.postAckMessages === 0,
+      `The viewer emitted ${finalState.postAckMessages} host message(s) after teardown acknowledgment.`,
+    );
 
     console.log(JSON.stringify({
       status: "pass",

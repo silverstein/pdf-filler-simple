@@ -1,5 +1,8 @@
 import { describe, expect, it, vi } from "vitest";
-import { App } from "@modelcontextprotocol/ext-apps";
+import {
+  App,
+  LATEST_PROTOCOL_VERSION,
+} from "@modelcontextprotocol/ext-apps";
 
 const JSONRPC = "2.0";
 const APP_PROTOCOL_VERSION = "2026-01-26";
@@ -31,6 +34,10 @@ class TestHostTransport {
   async close() {
     if (this.closed) return;
     this.closed = true;
+    for (const pending of this.pendingHostRequests.values()) {
+      pending.reject(new Error("Test host transport closed"));
+    }
+    this.pendingHostRequests.clear();
     this.onclose?.();
   }
 
@@ -196,6 +203,20 @@ describe("@modelcontextprotocol/ext-apps lifecycle", () => {
     await vi.waitFor(() => expect(toolResults).toHaveLength(1));
 
     expect(host.started).toBe(true);
+    expect(LATEST_PROTOCOL_VERSION).toBe(APP_PROTOCOL_VERSION);
+    expect(host.requests[0]).toEqual({
+      jsonrpc: JSONRPC,
+      id: expect.any(Number),
+      method: "ui/initialize",
+      params: {
+        appCapabilities: {},
+        appInfo: {
+          name: "PDF Tools lifecycle test",
+          version: "1.0.0",
+        },
+        protocolVersion: APP_PROTOCOL_VERSION,
+      },
+    });
     expect(app.getHostVersion()).toEqual({
       name: "pdf-tools-test-host",
       version: "1.0.0",
@@ -205,6 +226,9 @@ describe("@modelcontextprotocol/ext-apps lifecycle", () => {
       displayMode: "inline",
       platform: "desktop",
     });
+    expect(() => {
+      app.ontoolinput = () => {};
+    }).toThrow(/handler registered after connect\(\) completed/);
     expect(toolResults[0].structuredContent).toMatchObject({
       pdfPath: "/fixtures/lifecycle.pdf",
       totalBytes: 5,

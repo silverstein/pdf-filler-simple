@@ -223,6 +223,7 @@ const app = new App(
 );
 
 let isTearingDown = false;
+let teardownPromise: Promise<Record<string, never>> | null = null;
 
 // ─── UI State ────────────────────────────────────────────────────────────────
 
@@ -268,6 +269,14 @@ function clearChildren(el: HTMLElement) {
 const rangeCache = new Map<string, { bytes: Uint8Array; totalBytes: number }>();
 const inflightRequests = new Map<string, Promise<{ bytes: Uint8Array; totalBytes: number }>>();
 const pathCacheEpochs = new Map<string, number>();
+const activePdfLoadingTasks = new Set<pdfjsLib.PDFDocumentLoadingTask>();
+
+class ViewerLifecycleEndedError extends Error {
+  constructor() {
+    super("The PDF viewer lifecycle has ended.");
+    this.name = "ViewerLifecycleEndedError";
+  }
+}
 
 function getPathCacheEpoch(filePath: string) {
   return pathCacheEpochs.get(filePath) ?? 0;
@@ -290,6 +299,7 @@ function invalidateRangeCacheForPath(filePath: string) {
 }
 
 async function fetchChunk(path: string, begin: number, end: number) {
+  if (isTearingDown) throw new ViewerLifecycleEndedError();
   const epoch = getPathCacheEpoch(path);
   const key = buildRangeCacheKey(path, begin, end, epoch);
   if (rangeCache.has(key)) return rangeCache.get(key)!;
@@ -301,6 +311,9 @@ async function fetchChunk(path: string, begin: number, end: number) {
         name: "read_pdf_bytes",
         arguments: { pdf_path: path, offset: begin, byteCount: end - begin },
       });
+      if (isTearingDown || getPathCacheEpoch(path) !== epoch) {
+        throw new ViewerLifecycleEndedError();
+      }
 
       if (result.isError) {
         const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "";
@@ -315,6 +328,9 @@ async function fetchChunk(path: string, begin: number, end: number) {
       for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
 
       const entry = { bytes, totalBytes: sc.totalBytes };
+      if (isTearingDown || getPathCacheEpoch(path) !== epoch) {
+        throw new ViewerLifecycleEndedError();
+      }
       rangeCache.set(key, entry);
       return entry;
     } finally {
@@ -343,24 +359,42 @@ async function fetchRange(path: string, begin: number, end: number) {
   return { bytes: combined, totalBytes: results[0].totalBytes };
 }
 
-async function loadPdfProgressively(filePath: string, fileSize: number) {
+async function loadPdfProgressively(filePath: string, fileSize: number, generation: number) {
+  if (isTearingDown || generation !== pdfGeneration) {
+    throw new ViewerLifecycleEndedError();
+  }
+
   class AppRangeTransport extends pdfjsLib.PDFDataRangeTransport {
     requestDataRange(begin: number, end: number) {
       fetchRange(filePath, begin, end)
         .then(r => this.onDataRange(begin, r.bytes))
-        .catch(err => console.error("[viewer] Range fetch error:", err));
+        .catch(err => {
+          if (!isTearingDown && generation === pdfGeneration) {
+            console.error("[viewer] Range fetch error:", err);
+          }
+        });
     }
   }
 
   const transport = new AppRangeTransport(fileSize, null);
-  const doc = await pdfjsLib.getDocument({ range: transport }).promise;
-  return doc;
+  const loadingTask = pdfjsLib.getDocument({ range: transport });
+  activePdfLoadingTasks.add(loadingTask);
+  try {
+    const document = await loadingTask.promise;
+    if (isTearingDown || generation !== pdfGeneration) {
+      try { await document.destroy(); } catch { /* best-effort */ }
+      throw new ViewerLifecycleEndedError();
+    }
+    return document;
+  } finally {
+    activePdfLoadingTasks.delete(loadingTask);
+  }
 }
 
 // ─── Page Rendering ──────────────────────────────────────────────────────────
 
 async function renderPage() {
-  if (!pdfDocument) return;
+  if (!pdfDocument || isTearingDown) return;
 
   if (isRendering) {
     pendingPage = currentPage;
@@ -372,10 +406,17 @@ async function renderPage() {
   pendingPage = null;
   currentViewport = null;
   currentViewportPage = 0;
+  const renderDocument = pdfDocument;
+  const renderGeneration = pdfGeneration;
+  const renderIsStale = () =>
+    isTearingDown ||
+    renderGeneration !== pdfGeneration ||
+    renderDocument !== pdfDocument;
 
   try {
     const pageNum = currentPage;
-    const page = await pdfDocument.getPage(pageNum);
+    const page = await renderDocument.getPage(pageNum);
+    if (renderIsStale()) return;
     const viewport = page.getViewport({ scale });
     const dpr = window.devicePixelRatio || 1;
     const ctx = canvasEl.getContext("2d")!;
@@ -401,18 +442,20 @@ async function renderPage() {
       currentRenderTask = null;
     }
 
-    if (pageNum !== currentPage) return;
+    if (renderIsStale() || pageNum !== currentPage) return;
     currentViewport = viewport;
     currentViewportPage = pageNum;
 
     // TextLayer for selection
     const textContent = await page.getTextContent();
+    if (renderIsStale()) return;
     const textLayer = new TextLayer({
       textContentSource: textContent,
       container: textLayerEl,
       viewport,
     });
     await textLayer.render();
+    if (renderIsStale()) return;
 
     // Cache page text
     if (!pageTextCache.has(pageNum)) {
@@ -431,13 +474,14 @@ async function renderPage() {
     updatePageContext();
     requestFitToContent();
   } catch (err: any) {
+    if (renderIsStale()) return;
     console.error("[viewer] Render error:", err);
     showError(`Failed to render page ${currentPage}`);
   } finally {
     preloadPaused = false;
     isRendering = false;
 
-    if (pendingPage !== null) {
+    if (!isTearingDown && pendingPage !== null) {
       const next = pendingPage;
       pendingPage = null;
       currentPage = next;
@@ -884,14 +928,21 @@ async function startPreloading() {
       pagesLoaded++;
       updateLoadingIndicator();
     } catch (err) {
-      console.error("[viewer] Preload error page", i, err);
+      if (!isTearingDown && myGen === pdfGeneration) {
+        console.error("[viewer] Preload error page", i, err);
+      }
     }
   }
 
   // Done — fade out indicator
   setTimeout(() => {
+    if (isTearingDown || myGen !== pdfGeneration) return;
     loadingIndicatorEl.style.opacity = "0";
-    setTimeout(() => { loadingIndicatorEl.style.display = "none"; loadingIndicatorEl.style.opacity = ""; }, 300);
+    setTimeout(() => {
+      if (isTearingDown || myGen !== pdfGeneration) return;
+      loadingIndicatorEl.style.display = "none";
+      loadingIndicatorEl.style.opacity = "";
+    }, 300);
   }, 500);
 
   // Refresh search if active
@@ -2229,7 +2280,7 @@ async function reloadPdfForStamp(stampedPath: string) {
 
   // Bump generation FIRST so any in-flight preloader from the old doc sees
   // it mismatch on the next iteration and aborts cleanly (Codex P2-A).
-  pdfGeneration++;
+  const loadGeneration = ++pdfGeneration;
   const oldDoc = pdfDocument;
   pdfDocument = null;
   if (oldDoc) {
@@ -2253,7 +2304,7 @@ async function reloadPdfForStamp(stampedPath: string) {
     const probeSc = probe.structuredContent as { totalBytes?: number } | undefined;
     if (!probeSc?.totalBytes) throw new Error("Stamped file has no size reported");
 
-    pdfDocument = await loadPdfProgressively(stampedPath, probeSc.totalBytes);
+    pdfDocument = await loadPdfProgressively(stampedPath, probeSc.totalBytes, loadGeneration);
     // New doc should have the same page count — guard defensively.
     totalPages = pdfDocument.numPages;
     if (currentPage > totalPages) currentPage = totalPages;
@@ -2261,6 +2312,7 @@ async function reloadPdfForStamp(stampedPath: string) {
     // Re-index the new doc so search + model context reflect stamped content.
     startPreloading();
   } catch (err: any) {
+    if (isTearingDown || loadGeneration !== pdfGeneration) return;
     console.error("[viewer] reloadPdfForStamp failed:", err);
     // Best-effort: reload from original so we don't leave the viewer empty.
     try {
@@ -2271,7 +2323,7 @@ async function reloadPdfForStamp(stampedPath: string) {
       });
       const probeSc = probe.structuredContent as { totalBytes?: number } | undefined;
       if (probeSc?.totalBytes) {
-        pdfDocument = await loadPdfProgressively(pdfPath, probeSc.totalBytes);
+        pdfDocument = await loadPdfProgressively(pdfPath, probeSc.totalBytes, loadGeneration);
         totalPages = pdfDocument.numPages;
         if (currentPage > totalPages) currentPage = totalPages;
         await renderPage();
@@ -3245,6 +3297,7 @@ fieldFilterEl.addEventListener("input", () => {
 // ─── Tool Result Handler ─────────────────────────────────────────────────────
 
 app.ontoolresult = async (result: CallToolResult) => {
+  if (isTearingDown) return;
   console.log("[viewer] Tool result:", result);
 
   if (await loadPdfFromToolResult(result)) {
@@ -3277,9 +3330,10 @@ app.ontoolresult = async (result: CallToolResult) => {
           arguments: { pdf_path: pdfPath, offset: 0, byteCount: 1 },
         });
         const probeSc = probe.structuredContent as any;
-        if (probeSc?.totalBytes) {
+        if (probeSc?.totalBytes && !isTearingDown) {
+          const loadGeneration = ++pdfGeneration;
           showLoading("Loading PDF...");
-          pdfDocument = await loadPdfProgressively(pdfPath, probeSc.totalBytes);
+          pdfDocument = await loadPdfProgressively(pdfPath, probeSc.totalBytes, loadGeneration);
           totalPages = pdfDocument.numPages;
           currentPage = 1;
           pagesLoaded = 0;
@@ -3290,6 +3344,7 @@ app.ontoolresult = async (result: CallToolResult) => {
           startPreloading();
         }
       } catch (err: any) {
+        if (isTearingDown) return;
         console.error("[viewer] Failed to load PDF for field view:", err);
         showViewer();
       }
@@ -3299,12 +3354,14 @@ app.ontoolresult = async (result: CallToolResult) => {
 
     updatePageContext();
   } catch (err: any) {
+    if (isTearingDown) return;
     console.error("[viewer] Error processing tool result:", err);
     showError(err.message || "Error processing result");
   }
 };
 
 async function loadPdfFromToolResult(result: CallToolResult) {
+  if (isTearingDown) return true;
   const payload = getPdfToolLoadData(result);
   if (!payload) return false;
   const nextPdfPath = payload.activePath || payload.pdfPath;
@@ -3334,8 +3391,8 @@ async function loadPdfFromToolResult(result: CallToolResult) {
   try {
     // New doc → new preload generation so any straggler preloader from a
     // previous load (including reloadPdfForStamp) drops out.
-    pdfGeneration++;
-    pdfDocument = await loadPdfProgressively(pdfPath, payload.totalBytes);
+    const loadGeneration = ++pdfGeneration;
+    pdfDocument = await loadPdfProgressively(pdfPath, payload.totalBytes, loadGeneration);
     totalPages = pdfDocument.numPages;
 
     const saved = loadSavedPage();
@@ -3364,6 +3421,7 @@ async function loadPdfFromToolResult(result: CallToolResult) {
     syncActiveDocumentState();
     startPreloading();
   } catch (err: any) {
+    if (isTearingDown || err instanceof ViewerLifecycleEndedError) return true;
     lastLoadedResultKey = "";
     console.error("[viewer] Load error:", err);
     showError(err.message || "Failed to load PDF");
@@ -3378,8 +3436,7 @@ app.onerror = (err: unknown) => {
   showError(err instanceof Error ? err.message : String(err));
 };
 
-app.onteardown = async () => {
-  if (isTearingDown) return {};
+async function teardownViewer(): Promise<Record<string, never>> {
   isTearingDown = true;
 
   // Stop asynchronous render and preload work before acknowledging teardown.
@@ -3403,21 +3460,30 @@ app.onteardown = async () => {
 
   const documentToDestroy = pdfDocument;
   pdfDocument = null;
-  if (documentToDestroy) {
-    try { await documentToDestroy.destroy(); } catch { /* best-effort */ }
-  }
+  const loadingTasksToDestroy = [...activePdfLoadingTasks];
+  await Promise.allSettled([
+    ...loadingTasksToDestroy.map(loadingTask => loadingTask.destroy()),
+    ...(documentToDestroy ? [documentToDestroy.destroy()] : []),
+  ]);
 
   rangeCache.clear();
   inflightRequests.clear();
+  pathCacheEpochs.clear();
   pageTextCache.clear();
   if (pdfPath) zoneRequests.deletePath(pdfPath);
   signaturePreviewCache.clear();
   return {};
+}
+
+app.onteardown = () => {
+  teardownPromise ??= teardownViewer();
+  return teardownPromise;
 };
 
 // ─── Host Context ────────────────────────────────────────────────────────────
 
 function handleHostContext(ctx: McpUiHostContext) {
+  if (isTearingDown) return;
   if (ctx.theme) applyDocumentTheme(ctx.theme);
   if (ctx.styles?.variables) applyHostStyleVariables(ctx.styles.variables);
   if (ctx.displayMode) {
