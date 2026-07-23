@@ -80,6 +80,15 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function canonicalJson(value) {
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key =>
+      `${JSON.stringify(key)}:${canonicalJson(value[key])}`).join(",")}}`;
+  }
+  return JSON.stringify(value);
+}
+
 function pathInside(parent, child) {
   const relative = path.relative(parent, child);
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
@@ -136,7 +145,89 @@ export function sandboxedCodexArgs({ sandboxProfile, codexBinary, codexArgs }) {
 }
 
 async function writeExclusive(filename, value) {
-  await fs.writeFile(filename, value, { flag: "wx", mode: 0o600 });
+  const handle = await fs.open(filename, "wx+", 0o600);
+  try {
+    await handle.writeFile(value);
+    await handle.sync();
+    return await artifactRecordFromHandle(handle);
+  } finally {
+    await handle.close();
+  }
+}
+
+async function artifactRecordFromHandle(handle, {
+  requirePrivate = true,
+  requireSingleLink = true,
+} = {}) {
+  const stat = await handle.stat();
+  if (
+    !stat.isFile()
+    || (requireSingleLink && stat.nlink !== 1)
+    || (requirePrivate && (stat.mode & 0o077) !== 0)
+  ) {
+    throw new Error("evidence artifact must be a private single-link regular file");
+  }
+  const hash = createHash("sha256");
+  const buffer = Buffer.allocUnsafe(64 * 1024);
+  let position = 0;
+  while (position < stat.size) {
+    const { bytesRead } = await handle.read(
+      buffer,
+      0,
+      Math.min(buffer.length, stat.size - position),
+      position,
+    );
+    if (bytesRead === 0) throw new Error("evidence artifact ended while hashing");
+    hash.update(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+  return {
+    bytes: stat.size,
+    sha256: hash.digest("hex"),
+    mode: stat.mode & 0o777,
+    nlink: stat.nlink,
+    device: stat.dev,
+    inode: stat.ino,
+  };
+}
+
+async function executableIdentity(filename) {
+  const canonicalPath = await fs.realpath(filename);
+  const pathStat = await fs.lstat(filename);
+  if (
+    canonicalPath !== filename
+    || !pathStat.isFile()
+    || pathStat.isSymbolicLink()
+  ) {
+    throw new Error("campaign executable must be a canonical regular file");
+  }
+  const handle = await fs.open(
+    canonicalPath,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    return {
+      canonical_path: canonicalPath,
+      ...await artifactRecordFromHandle(handle, {
+        requirePrivate: false,
+        requireSingleLink: false,
+      }),
+    };
+  } finally {
+    await handle.close();
+  }
+}
+
+async function privateFileIdentity(filename) {
+  const handle = await fs.open(
+    filename,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    return await artifactRecordFromHandle(handle);
+  } finally {
+    await handle.close();
+  }
 }
 
 async function runCaptured(program, args, {
@@ -146,8 +237,8 @@ async function runCaptured(program, args, {
   stdoutPath,
   stderrPath,
 }) {
-  const stdout = await fs.open(stdoutPath, "wx", 0o600);
-  const stderr = await fs.open(stderrPath, "wx", 0o600);
+  const stdout = await fs.open(stdoutPath, "wx+", 0o600);
+  const stderr = await fs.open(stderrPath, "wx+", 0o600);
   try {
     const child = spawn(program, args, {
       cwd,
@@ -162,7 +253,13 @@ async function runCaptured(program, args, {
     });
     if (stdin === null) child.stdin.end();
     else child.stdin.end(stdin);
-    return await completion;
+    const result = await completion;
+    await Promise.all([stdout.sync(), stderr.sync()]);
+    return {
+      ...result,
+      stdout_artifact: await artifactRecordFromHandle(stdout),
+      stderr_artifact: await artifactRecordFromHandle(stderr),
+    };
   } finally {
     await Promise.all([stdout.close(), stderr.close()]);
   }
@@ -208,6 +305,7 @@ export async function runCodexAgentWorkflowCase(options) {
     caseRoot,
     resultsRoot,
     codexHome,
+    promptCaptureHome = null,
     codexBinary,
     sandboxBinary,
     attesterPath,
@@ -222,6 +320,9 @@ export async function runCodexAgentWorkflowCase(options) {
     pairId = null,
     pairPosition = null,
     scheduleSha256 = null,
+    expectedAuthSha256 = null,
+    onPreInferenceReady = null,
+    onProcessComplete = null,
   } = options;
   if (!ALLOWED_ARMS.has(arm)) throw new Error("unsupported explicit Codex arm");
   if (!/^[a-z0-9-]+$/.test(caseId)) throw new Error("caseId is invalid");
@@ -238,6 +339,8 @@ export async function runCodexAgentWorkflowCase(options) {
       || ![1, 2].includes(pairPosition)
       || typeof scheduleSha256 !== "string"
       || !/^[a-f0-9]{64}$/.test(scheduleSha256)
+      || typeof promptCaptureHome !== "string"
+      || !path.isAbsolute(promptCaptureHome)
     ) {
       throw new Error("held-out runs require valid frozen schedule metadata");
     }
@@ -252,6 +355,18 @@ export async function runCodexAgentWorkflowCase(options) {
   })) {
     if (!path.isAbsolute(value)) throw new Error(`${label} must be absolute`);
   }
+  if (promptCaptureHome !== null && !path.isAbsolute(promptCaptureHome)) {
+    throw new Error("promptCaptureHome must be absolute when supplied");
+  }
+  if (
+    expectedAuthSha256 !== null
+    && (
+      typeof expectedAuthSha256 !== "string"
+      || !/^[a-f0-9]{64}$/.test(expectedAuthSha256)
+    )
+  ) {
+    throw new Error("expectedAuthSha256 must be a SHA-256 digest");
+  }
   if (pathInside(caseRoot, resultsRoot) || pathInside(resultsRoot, caseRoot)) {
     throw new Error("resultsRoot and caseRoot must not contain each other");
   }
@@ -260,6 +375,14 @@ export async function runCodexAgentWorkflowCase(options) {
     [codexHome, caseRoot],
     [resultsRoot, codexHome],
     [codexHome, resultsRoot],
+    ...(promptCaptureHome === null ? [] : [
+      [caseRoot, promptCaptureHome],
+      [promptCaptureHome, caseRoot],
+      [resultsRoot, promptCaptureHome],
+      [promptCaptureHome, resultsRoot],
+      [codexHome, promptCaptureHome],
+      [promptCaptureHome, codexHome],
+    ]),
   ]) {
     if (pathInside(left, right)) {
       throw new Error("caseRoot, resultsRoot, and codexHome must be disjoint");
@@ -269,6 +392,7 @@ export async function runCodexAgentWorkflowCase(options) {
     pathInside(caseRoot, attesterPath)
     || pathInside(resultsRoot, attesterPath)
     || pathInside(codexHome, attesterPath)
+    || (promptCaptureHome !== null && pathInside(promptCaptureHome, attesterPath))
   ) {
     throw new Error("attesterPath must be operator-owned outside run roots");
   }
@@ -276,6 +400,7 @@ export async function runCodexAgentWorkflowCase(options) {
     pathInside(caseRoot, sandboxBinary)
     || pathInside(resultsRoot, sandboxBinary)
     || pathInside(codexHome, sandboxBinary)
+    || (promptCaptureHome !== null && pathInside(promptCaptureHome, sandboxBinary))
   ) {
     throw new Error("sandboxBinary must remain outside run roots");
   }
@@ -283,14 +408,57 @@ export async function runCodexAgentWorkflowCase(options) {
     throw new Error("codexHome must initially contain only auth.json");
   }
   if (
+    promptCaptureHome !== null
+    && (await exactDirectoryEntries(promptCaptureHome)).join("\0") !== "auth.json"
+  ) {
+    throw new Error("promptCaptureHome must initially contain only auth.json");
+  }
+  if (
     await fs.realpath(caseRoot) !== caseRoot
     || await fs.realpath(codexHome) !== codexHome
+    || (
+      promptCaptureHome !== null
+      && await fs.realpath(promptCaptureHome) !== promptCaptureHome
+    )
   ) {
     throw new Error("caseRoot and codexHome must use canonical paths");
   }
   const authStat = await fs.lstat(path.join(codexHome, "auth.json"));
-  if (!authStat.isFile() || authStat.isSymbolicLink() || (authStat.mode & 0o077) !== 0) {
+  if (
+    !authStat.isFile()
+    || authStat.isSymbolicLink()
+    || authStat.nlink !== 1
+    || (authStat.mode & 0o077) !== 0
+  ) {
     throw new Error("auth.json must be a private regular file");
+  }
+  if (promptCaptureHome !== null) {
+    const captureAuthStat = await fs.lstat(
+      path.join(promptCaptureHome, "auth.json"),
+    );
+    if (
+      !captureAuthStat.isFile()
+      || captureAuthStat.isSymbolicLink()
+      || captureAuthStat.nlink !== 1
+      || (captureAuthStat.mode & 0o077) !== 0
+    ) {
+      throw new Error("prompt capture auth.json must be a private regular file");
+    }
+  }
+  const codexAuthIdentity = await privateFileIdentity(
+    path.join(codexHome, "auth.json"),
+  );
+  const promptCaptureAuthIdentity = promptCaptureHome === null
+    ? codexAuthIdentity
+    : await privateFileIdentity(path.join(promptCaptureHome, "auth.json"));
+  if (
+    expectedAuthSha256 !== null
+    && (
+      codexAuthIdentity.sha256 !== expectedAuthSha256
+      || promptCaptureAuthIdentity.sha256 !== expectedAuthSha256
+    )
+  ) {
+    throw new Error("isolated authentication copies differ from campaign preflight");
   }
 
   await fs.mkdir(resultsRoot, { mode: 0o700 });
@@ -304,6 +472,17 @@ export async function runCodexAgentWorkflowCase(options) {
     TMPDIR: runtimeTemporaryRoot,
     ...SYNTHETIC_GIT_ENV,
     CODEX_HOME: codexHome,
+  };
+  const promptCaptureTemporaryRoot = promptCaptureHome === null
+    ? runtimeTemporaryRoot
+    : path.join(promptCaptureHome, "tmp");
+  if (promptCaptureHome !== null) {
+    await fs.mkdir(promptCaptureTemporaryRoot, { mode: 0o700 });
+  }
+  const promptCaptureEnvironment = {
+    ...environment,
+    TMPDIR: promptCaptureTemporaryRoot,
+    CODEX_HOME: promptCaptureHome ?? codexHome,
   };
   const attesterBytes = await fs.readFile(attesterPath);
   const launcherBytes = await fs.readFile(fileURLToPath(import.meta.url));
@@ -320,18 +499,15 @@ export async function runCodexAgentWorkflowCase(options) {
     expectedTreeSha1,
     expectedContentTreeSha256,
   };
-  const preAttestation = await attester.attestAgentWorkflowArm(attestationArgs);
-  await writeExclusive(
-    path.join(resultsRoot, "pre-run-attestation.json"),
-    `${JSON.stringify(preAttestation, null, 2)}\n`,
-  );
-  if (!preAttestation.pass) throw new Error("pre-run case attestation failed");
-
   const { stdout: codexVersion } = await execFileAsync(
     codexBinary,
     ["--version"],
     { encoding: "utf8", env: environment },
   );
+  const [codexExecutable, sandboxExecutable] = await Promise.all([
+    executableIdentity(codexBinary),
+    executableIdentity(sandboxBinary),
+  ]);
   const responsePath = path.join(resultsRoot, "response.json");
   const deniedUserHome = os.userInfo().homedir;
   const sandboxProfile = codexSandboxProfile(deniedUserHome);
@@ -340,6 +516,12 @@ export async function runCodexAgentWorkflowCase(options) {
     sandboxProfile,
     codexBinary,
     codexArgs,
+  });
+  const promptInputArgs = codexPromptInputArgs(prompt);
+  const sandboxedPromptInputArgs = sandboxedCodexArgs({
+    sandboxProfile,
+    codexBinary,
+    codexArgs: promptInputArgs,
   });
   const launchPlan = {
     schema_version: "pdf-tools.agent-workflow-launch-plan.v1",
@@ -365,13 +547,19 @@ export async function runCodexAgentWorkflowCase(options) {
       node_version: process.version,
       codex_version: codexVersion.trim(),
     },
+    executable_identity: {
+      codex: codexExecutable,
+      sandbox: sandboxExecutable,
+    },
     model,
     case_root: caseRoot,
     results_root: resultsRoot,
     codex_home: codexHome,
+    prompt_capture_home: promptCaptureHome ?? codexHome,
     codex_home_initial_entries: ["auth.json"],
     prompt_sha256: sha256(prompt),
     response_schema_sha256: sha256(responseSchema),
+    auth_source_sha256: expectedAuthSha256,
     attester_sha256: sha256(attesterBytes),
     launcher_sha256: sha256(launcherBytes),
     isolation: {
@@ -397,10 +585,79 @@ export async function runCodexAgentWorkflowCase(options) {
       },
     },
   };
-  await writeExclusive(
+  const launchPlanArtifact = await writeExclusive(
     path.join(resultsRoot, "launch-plan.json"),
     `${JSON.stringify(launchPlan, null, 2)}\n`,
   );
+
+  const promptInputStartedAt = new Date().toISOString();
+  const promptInputResult = await runCaptured(
+    sandboxBinary,
+    sandboxedPromptInputArgs,
+    {
+      cwd: caseRoot,
+      env: promptCaptureEnvironment,
+      stdoutPath: path.join(resultsRoot, "prompt-input.json"),
+      stderrPath: path.join(resultsRoot, "prompt-input.stderr.txt"),
+    },
+  );
+  const promptInputFinishedAt = new Date().toISOString();
+  if (promptInputResult.code !== 0 || promptInputResult.signal !== null) {
+    throw new Error("Codex prompt-input reconstruction did not exit successfully");
+  }
+  const preAttestation = await attester.attestAgentWorkflowArm(attestationArgs);
+  const preAttestationArtifact = await writeExclusive(
+    path.join(resultsRoot, "pre-run-attestation.json"),
+    `${JSON.stringify(preAttestation, null, 2)}\n`,
+  );
+  if (!preAttestation.pass) throw new Error("pre-run case attestation failed");
+  if (typeof onPreInferenceReady === "function") {
+    await onPreInferenceReady({
+      schema_version: "pdf-tools.agent-workflow-pre-inference-ready.v1",
+      run_id: runId,
+      schedule_ordinal: scheduleOrdinal,
+      recorded_at: new Date().toISOString(),
+      prompt_input_started_at: promptInputStartedAt,
+      prompt_input_finished_at: promptInputFinishedAt,
+      prompt_input_exit_code: promptInputResult.code,
+      prompt_input_signal: promptInputResult.signal,
+      model,
+      host: launchPlan.host,
+      executable_identity: launchPlan.executable_identity,
+      expected_identity: launchPlan.expected_identity,
+      runtime_isolation: {
+        case_root: caseRoot,
+        results_root: resultsRoot,
+        codex_home: codexHome,
+        prompt_capture_home: promptCaptureHome ?? codexHome,
+      },
+      prompt_sha256: sha256(prompt),
+      response_schema_sha256: sha256(responseSchema),
+      auth_source_sha256: expectedAuthSha256,
+      auth_artifacts: {
+        codex_home: codexAuthIdentity,
+        prompt_capture_home: promptCaptureAuthIdentity,
+      },
+      inference_command: launchPlan.command,
+      prompt_reconstruction_command: {
+        program: sandboxBinary,
+        argv: sandboxedPromptInputArgs,
+        codex_program: codexBinary,
+        codex_argv: promptInputArgs,
+        cwd: caseRoot,
+        environment_policy: {
+          ...launchPlan.command.environment_policy,
+          CODEX_HOME: promptCaptureHome ?? codexHome,
+        },
+      },
+      artifacts: {
+        "launch-plan.json": launchPlanArtifact,
+        "prompt-input.json": promptInputResult.stdout_artifact,
+        "prompt-input.stderr.txt": promptInputResult.stderr_artifact,
+        "pre-run-attestation.json": preAttestationArtifact,
+      },
+    });
+  }
 
   const startedAt = new Date().toISOString();
   const processResult = await runCaptured(sandboxBinary, execArgs, {
@@ -411,24 +668,75 @@ export async function runCodexAgentWorkflowCase(options) {
     stderrPath: path.join(resultsRoot, "stderr.txt"),
   });
   const finishedAt = new Date().toISOString();
+  const [postCodexExecutable, postSandboxExecutable] = await Promise.all([
+    executableIdentity(codexBinary),
+    executableIdentity(sandboxBinary),
+  ]);
+  const postExecutableIdentity = {
+    codex: postCodexExecutable,
+    sandbox: postSandboxExecutable,
+  };
+  let responseArtifact = {
+    present: false,
+    bytes: 0,
+    sha256: null,
+    mode: null,
+    nlink: null,
+    device: null,
+    inode: null,
+  };
+  try {
+    const responseHandle = await fs.open(
+      responsePath,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+    );
+    try {
+      await responseHandle.chmod(0o600);
+      responseArtifact = {
+        present: true,
+        ...await artifactRecordFromHandle(responseHandle),
+      };
+    } finally {
+      await responseHandle.close();
+    }
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  const processArtifacts = {
+    "events.jsonl": {
+      present: true,
+      ...processResult.stdout_artifact,
+    },
+    "response.json": responseArtifact,
+    "stderr.txt": {
+      present: true,
+      ...processResult.stderr_artifact,
+    },
+  };
+  if (typeof onProcessComplete === "function") {
+    await onProcessComplete({
+      schema_version: "pdf-tools.agent-workflow-process-completion.v1",
+      run_id: runId,
+      schedule_ordinal: scheduleOrdinal,
+      started_at: startedAt,
+      finished_at: finishedAt,
+      process_exit_code: processResult.code,
+      process_signal: processResult.signal,
+      prompt_sha256: sha256(prompt),
+      model,
+      host: launchPlan.host,
+      executable_identity: launchPlan.executable_identity,
+      post_executable_identity: postExecutableIdentity,
+      inference_command_sha256: sha256(canonicalJson(launchPlan.command)),
+      artifacts: processArtifacts,
+    });
+  }
   const postAttestation = await attester.attestAgentWorkflowArm(attestationArgs);
   await writeExclusive(
     path.join(resultsRoot, "post-run-attestation.json"),
     `${JSON.stringify(postAttestation, null, 2)}\n`,
   );
 
-  const promptInputArgs = codexPromptInputArgs(prompt);
-  const sandboxedPromptInputArgs = sandboxedCodexArgs({
-    sandboxProfile,
-    codexBinary,
-    codexArgs: promptInputArgs,
-  });
-  const promptInputResult = await runCaptured(sandboxBinary, sandboxedPromptInputArgs, {
-    cwd: caseRoot,
-    env: environment,
-    stdoutPath: path.join(resultsRoot, "prompt-input.json"),
-    stderrPath: path.join(resultsRoot, "prompt-input.stderr.txt"),
-  });
   const launchOutcome = {
     schema_version: "pdf-tools.agent-workflow-launch-outcome.v1",
     started_at: startedAt,
@@ -436,6 +744,8 @@ export async function runCodexAgentWorkflowCase(options) {
     process_exit_code: processResult.code,
     process_signal: processResult.signal,
     post_attestation_pass: postAttestation.pass,
+    prompt_input_started_at: promptInputStartedAt,
+    prompt_input_finished_at: promptInputFinishedAt,
     prompt_input_exit_code: promptInputResult.code,
     prompt_input_signal: promptInputResult.signal,
     prompt_input_command: {
@@ -444,8 +754,14 @@ export async function runCodexAgentWorkflowCase(options) {
       codex_program: codexBinary,
       codex_argv: promptInputArgs,
       cwd: caseRoot,
-      environment_policy: launchPlan.command.environment_policy,
+      environment_policy: {
+        ...launchPlan.command.environment_policy,
+        CODEX_HOME: promptCaptureHome ?? codexHome,
+      },
     },
+    prompt_input_claim:
+      "deterministic_pre_inference_reconstruction_not_literal_inference_transport_capture",
+    post_executable_identity: postExecutableIdentity,
   };
   await writeExclusive(
     path.join(resultsRoot, "launch-outcome.json"),
@@ -455,9 +771,6 @@ export async function runCodexAgentWorkflowCase(options) {
     throw new Error("Codex execution did not exit successfully");
   }
   if (!postAttestation.pass) throw new Error("post-run case attestation failed");
-  if (promptInputResult.code !== 0 || promptInputResult.signal !== null) {
-    throw new Error("Codex prompt-input capture did not exit successfully");
-  }
   return launchOutcome;
 }
 
@@ -472,6 +785,7 @@ function parseArgs(argv) {
     caseRoot: "--case-root",
     resultsRoot: "--results-root",
     codexHome: "--codex-home",
+    promptCaptureHome: "--prompt-capture-home",
     codexBinary: "--codex-binary",
     sandboxBinary: "--sandbox-binary",
     attesterPath: "--attester",
@@ -498,6 +812,7 @@ function parseArgs(argv) {
         "pairId",
         "pairPosition",
         "scheduleSha256",
+        "promptCaptureHome",
       ]).has(key)
     ) {
       throw new Error(`Missing required argument: ${flag}`);

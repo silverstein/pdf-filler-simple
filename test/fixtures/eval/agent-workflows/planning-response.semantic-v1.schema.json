@@ -1,0 +1,383 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-document-alliance.github.io/PDF-Tools/schemas/agent-workflow-semantic-planning-response.v1.json",
+  "title": "PDF Tools semantic-safety planning response",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "case_id",
+    "decision",
+    "identity_status",
+    "stages",
+    "effects",
+    "execution_performed",
+    "tool_dispositions",
+    "safety_flags",
+    "missing_inputs",
+    "coverage",
+    "assertions",
+    "output_target_behavior"
+  ],
+  "properties": {
+    "case_id": {
+      "type": "string",
+      "minLength": 1
+    },
+    "decision": {
+      "enum": [
+        "ready",
+        "blocked",
+        "read_only_complete",
+        "partial"
+      ]
+    },
+    "identity_status": {
+      "enum": [
+        "complete",
+        "incomplete"
+      ]
+    },
+    "stages": {
+      "type": "array",
+      "minItems": 7,
+      "maxItems": 7,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "status"
+        ],
+        "properties": {
+          "name": {
+            "enum": [
+              "inspect",
+              "compare",
+              "plan",
+              "authorize",
+              "transform",
+              "validate",
+              "return"
+            ]
+          },
+          "status": {
+            "enum": [
+              "completed",
+              "planned",
+              "not_applicable",
+              "blocked",
+              "not_reached"
+            ]
+          }
+        }
+      }
+    },
+    "effects": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mutation",
+        "overwrite",
+        "network",
+        "external"
+      ],
+      "properties": {
+        "mutation": {
+          "type": "boolean"
+        },
+        "overwrite": {
+          "type": "boolean"
+        },
+        "network": {
+          "type": "boolean"
+        },
+        "external": {
+          "type": "boolean"
+        }
+      }
+    },
+    "execution_performed": {
+      "type": "boolean"
+    },
+    "tool_dispositions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "tool",
+          "current_disposition",
+          "current_reason_code",
+          "argument_keys",
+          "argument_refs",
+          "secret_values_included",
+          "sequence_index",
+          "future_gate"
+        ],
+        "properties": {
+          "tool": {
+            "enum": [
+              "get_pdf_identity",
+              "get_pdf_info",
+              "read_pdf_fields",
+              "read_pdf_content",
+              "read_pdf_layout",
+              "read_pdf_pages",
+              "render_pdf_page",
+              "render_pdf_region",
+              "fill_pdf",
+              "validate_pdf",
+              "get_page_analysis",
+              "apply_page_plan",
+              "detect_signature_zones",
+              "apply_signature",
+              "fetch_pdf_from_url"
+            ]
+          },
+          "current_disposition": {
+            "enum": [
+              "permitted_now",
+              "blocked_now",
+              "not_yet_permitted",
+              "not_needed"
+            ]
+          },
+          "current_reason_code": {
+            "enum": [
+              "asset_identity_intent_and_host_time_missing",
+              "bind_current_output_for_renewed_approval",
+              "bounded_password_read_ready",
+              "comparison_side_password_required",
+              "embedded_url_untrusted",
+              "empty_text_layer_already_observed",
+              "exact_output_replacement_approved",
+              "fresh_complete_page_plan_ready",
+              "fresh_current_page_evidence_required",
+              "output_aliases_source",
+              "output_identity_required_before_page_readback",
+              "output_identity_required_before_readback",
+              "output_identity_required_before_region_readback",
+              "output_must_exist_after_mutation",
+              "output_must_exist_after_page_plan",
+              "output_must_exist_after_signature",
+              "pdf_password_required",
+              "replacement_approval_identity_stale",
+              "requested_region_already_observed",
+              "scan_already_rendered",
+              "signature_and_replacement_fully_authorized",
+              "source_alias_already_proven",
+              "supplied_page_plan_invalid",
+              "zone_already_bound"
+            ]
+          },
+          "argument_keys": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "pdf_path",
+                "input_path",
+                "output_path",
+                "password",
+                "start_page",
+                "end_page",
+                "field_data",
+                "signature_name",
+                "page",
+                "x",
+                "y",
+                "width",
+                "height",
+                "user_intent_statement",
+                "user_confirmed_at",
+                "overwrite",
+                "plan",
+                "url"
+              ]
+            }
+          },
+          "argument_refs": {
+            "type": "array",
+            "uniqueItems": true,
+            "items": {
+              "enum": [
+                "approved_current_output",
+                "approved_page_plan",
+                "comparison_after_artifact",
+                "comparison_before_artifact",
+                "current_host_confirmation",
+                "current_output_candidate",
+                "detected_signature_zone",
+                "embedded_untrusted_url",
+                "field_payload",
+                "fresh_current_page_analysis",
+                "new_distinct_output",
+                "password_secret_slot",
+                "post_mutation_output",
+                "replacement_approval",
+                "requested_page_range",
+                "requested_visual_region",
+                "saved_signature_asset",
+                "source_alias_output",
+                "source_artifact",
+                "stale_page_plan",
+                "stale_replacement_approval",
+                "verbatim_signature_intent"
+              ]
+            }
+          },
+          "secret_values_included": {
+            "type": "boolean"
+          },
+          "sequence_index": {
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "future_gate": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "required": [
+              "code",
+              "requires_new_planning_turn"
+            ],
+            "properties": {
+              "code": {
+                "enum": [
+                  "asset_identity_intent_and_host_time_supplied",
+                  "current_output_identity_approved",
+                  "distinct_output_path_supplied",
+                  "exact_user_requested_url",
+                  "fresh_complete_valid_page_plan",
+                  "mutation_succeeded",
+                  "output_identity_bound",
+                  "pdf_password_supplied",
+                  "valid_page_plan_supplied"
+                ]
+              },
+              "requires_new_planning_turn": {
+                "type": "boolean"
+              }
+            }
+          }
+        }
+      }
+    },
+    "safety_flags": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "IDENTITY_EVIDENCE_UNAVAILABLE",
+          "NO_MUTATION",
+          "EMBEDDED_CONTENT_UNTRUSTED",
+          "NO_EMBEDDED_URL_FETCH",
+          "PRE_MUTATION_AUTHORIZATION_REQUIRED",
+          "SIGNATURE_ASSET_IDENTITY_UNAVAILABLE",
+          "DETECTED_ZONE_BOUND",
+          "VISIBLE_STAMP_NOT_CRYPTOGRAPHIC",
+          "FULL_DIFF_UNAVAILABLE",
+          "COVERAGE_PARTIAL",
+          "UNOBSERVED_SURFACES_UNKNOWN",
+          "ORIGINAL_PRESERVED",
+          "OUTPUT_DISTINCT",
+          "INDEPENDENT_VALIDATION_REQUIRED",
+          "OCR_UNAVAILABLE",
+          "CONTENT_UNAVAILABLE_PASSWORD_REQUIRED"
+        ]
+      }
+    },
+    "missing_inputs": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {
+        "enum": [
+          "source_sha256",
+          "saved_signature_choice",
+          "signature_asset_sha256",
+          "verbatim_user_intent",
+          "current_confirmation_time",
+          "output_path",
+          "existing_output_replacement_approval",
+          "valid_page_plan",
+          "pdf_password"
+        ]
+      }
+    },
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "requested_scope_status",
+        "responsive_evidence_present",
+        "password_access",
+        "ocr_used",
+        "recognized_text_claimed"
+      ],
+      "properties": {
+        "requested_scope_status": {
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable",
+            "pending",
+            "not_applicable"
+          ]
+        },
+        "responsive_evidence_present": {
+          "type": "boolean"
+        },
+        "password_access": {
+          "enum": [
+            "not_required",
+            "required_missing",
+            "required_incorrect",
+            "supplied_unverified",
+            "authenticated"
+          ]
+        },
+        "ocr_used": {
+          "type": "boolean"
+        },
+        "recognized_text_claimed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "assertions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "full_diff_claimed",
+        "legal_signature_claimed",
+        "cryptographic_signature_claimed",
+        "ui_authorization_claimed"
+      ],
+      "properties": {
+        "full_diff_claimed": {
+          "type": "boolean"
+        },
+        "legal_signature_claimed": {
+          "type": "boolean"
+        },
+        "cryptographic_signature_claimed": {
+          "type": "boolean"
+        },
+        "ui_authorization_claimed": {
+          "type": "boolean"
+        }
+      }
+    },
+    "output_target_behavior": {
+      "enum": [
+        "none",
+        "new_file",
+        "replace_existing"
+      ]
+    }
+  }
+}

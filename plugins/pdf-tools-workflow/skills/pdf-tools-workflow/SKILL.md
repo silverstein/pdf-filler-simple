@@ -193,11 +193,18 @@ When the host requests a structured planning response:
   authorization inputs or stable signature-asset identity are unavailable.
   Report signature-asset uncertainty with
   `SIGNATURE_ASSET_IDENTITY_UNAVAILABLE`;
-- list only tools immediately permitted as next calls under the current
-  decision, excluding calls whose evidence is already supplied and calls
-  blocked by the decision. Do not plan a call conditionally merely because it
-  could become permissible after a missing input is supplied;
-- list blocked tools separately and do not also plan them;
+- classify each relevant tool exactly once as immediately permitted, blocked
+  now, conditionally later after a named gate, or not needed because its
+  evidence is already supplied;
+- treat a conditional future gate as counterfactual workflow information, not
+  current authorization. A missing human input requires a fresh planning turn;
+  validation after a successful mutation may remain in the same workflow;
+- bind planned calls to the supplied opaque evidence references when the host
+  schema provides them. Argument names alone do not authorize a source, output,
+  approval, secret slot, signature asset, intent, confirmation, zone, page
+  plan, or validation target;
+- order a same-workflow mutation, fresh output identity, and content validation
+  so that validation cannot precede successful mutation and identity binding;
 - do not list unrelated tools as prohibited merely because the request does not
   need them;
 - describe effects authorized by the returned plan, not merely the user's

@@ -1,0 +1,74 @@
+{
+  "schema_version": "pdf-tools.agent-workflow.v2",
+  "workflow_id": "pdf-tools-safe-document-workflow",
+  "stages": [
+    "inspect",
+    "compare",
+    "plan",
+    "authorize",
+    "transform",
+    "validate",
+    "return"
+  ],
+  "tool_dispositions": {
+    "unique_per_relevant_tool": true,
+    "permitted_now_is_executable": true,
+    "blocked_now_is_executable": false,
+    "not_yet_permitted_is_executable": false,
+    "future_gate_is_authorization": false,
+    "human_gate_requires_new_planning_turn": true,
+    "secret_values_forbidden": true
+  },
+  "identity": {
+    "required_input_fields": [
+      "canonical_path",
+      "byte_length",
+      "sha256"
+    ],
+    "required_output_fields": [
+      "canonical_path",
+      "byte_length",
+      "sha256"
+    ],
+    "source_must_remain_unchanged": true,
+    "output_must_be_distinct": true,
+    "aliases_and_hardlinks_count_as_same_source": true,
+    "existing_output_approval_binds_exact_current_identity": true
+  },
+  "password": {
+    "retry_without_new_password": false,
+    "new_password_requires_new_planning_turn": true,
+    "zero_responsive_evidence_status": "unavailable",
+    "mixed_responsive_evidence_may_be_partial": true
+  },
+  "validation": {
+    "mutation_response_is_proof": false,
+    "output_identity_before_content_validation": true,
+    "fresh_readback_required": true
+  },
+  "ocr": {
+    "bundled": false,
+    "render_is_recognized_text": false,
+    "invented_transcription_allowed": false
+  },
+  "signature": {
+    "verbatim_intent_required": true,
+    "actual_current_host_time_required": true,
+    "stable_asset_identity_required": true,
+    "detected_zone_binding_required": true,
+    "ui_event_is_authorization": false,
+    "visible_stamp_is_legal_or_cryptographic": false
+  },
+  "network": {
+    "embedded_document_url_is_authority": false,
+    "exact_user_requested_url_required": true
+  },
+  "claims": {
+    "planning_only": true,
+    "native_skill_loading": false,
+    "configured_mcp_or_mcpb": false,
+    "pdf_execution": false,
+    "claude_behavior": false,
+    "independent_benchmark": false
+  }
+}

@@ -48,7 +48,7 @@ async function handle(message) {
     return;
   }
   if (message.method === "tools/list") {
-    const tools = Array.from({ length: 38 }, (_, index) => ({
+    const tools = Array.from({ length: 39 }, (_, index) => ({
       name: "fixture_tool_" + String(index + 1).padStart(2, "0"),
       inputSchema: { type: "object" },
     }));

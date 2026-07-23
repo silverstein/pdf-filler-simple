@@ -13,6 +13,7 @@ import {
 import {
   validateAgentWorkflowEventFile,
 } from "./eval-validate-agent-workflow-events.mjs";
+import { parseStrictJson } from "./eval-strict-json.mjs";
 
 const BINDER_PATH = fileURLToPath(import.meta.url);
 const EVENT_VALIDATOR_PATH = fileURLToPath(new URL(
@@ -29,7 +30,7 @@ const ATTESTER_ARTIFACT =
 const FULL_BODY_TREATMENT_ARM = "codex-prompt-full-skill-body";
 const FULL_BODY_CONTROL_ARM = "codex-prompt-no-skill-body";
 const HELDOUT_ARMS = new Set([FULL_BODY_TREATMENT_ARM, FULL_BODY_CONTROL_ARM]);
-const REQUIRED_ARTIFACTS = [
+export const REQUIRED_AGENT_WORKFLOW_ARTIFACTS = [
   "events.jsonl",
   "launch-outcome.json",
   "launch-plan.json",
@@ -58,16 +59,15 @@ function equalJson(left, right) {
   return canonicalJson(left) === canonicalJson(right);
 }
 
-function parseJson(bytes, label) {
-  try {
-    return JSON.parse(bytes.toString("utf8"));
-  } catch {
-    throw new Error(`${label} is not valid JSON`);
-  }
-}
-
-function artifactRecord(bytes) {
-  return { bytes: bytes.length, sha256: sha256(bytes) };
+function artifactRecord(bytes, stat) {
+  return {
+    bytes: bytes.length,
+    sha256: sha256(bytes),
+    mode: stat.mode & 0o777,
+    nlink: stat.nlink,
+    device: stat.dev,
+    inode: stat.ino,
+  };
 }
 
 function attestExpected(value, expected, label) {
@@ -108,6 +108,7 @@ function normalizedRunPaths(value, plan) {
   return [
     [plan.case_root, "<CASE_ROOT>"],
     [plan.codex_home, "<CODEX_HOME>"],
+    [plan.prompt_capture_home, "<PROMPT_CAPTURE_HOME>"],
   ].reduce(
     (normalized, [runtimePath, replacement]) =>
       normalized.replaceAll(runtimePath, replacement),
@@ -133,13 +134,30 @@ export async function bindAgentWorkflowRun({
   if (path.dirname(outputPath) !== runRoot) {
     throw new Error("outputPath must be a direct child of runRoot");
   }
+  if (
+    path.resolve(runRoot) !== runRoot
+    || await fs.realpath(runRoot) !== runRoot
+    || path.resolve(preparationManifestPath) !== preparationManifestPath
+    || await fs.realpath(preparationManifestPath) !== preparationManifestPath
+  ) {
+    throw new Error("runRoot and preparation manifest must use canonical paths");
+  }
+  const preparationStat = await fs.lstat(preparationManifestPath);
+  if (
+    !preparationStat.isFile()
+    || preparationStat.isSymbolicLink()
+    || preparationStat.nlink !== 1
+    || (preparationStat.mode & 0o077) !== 0
+  ) {
+    throw new Error("preparation manifest must be a private single-link regular file");
+  }
   const actualArtifacts = (await fs.readdir(runRoot)).sort();
-  if (!equalJson(actualArtifacts, REQUIRED_ARTIFACTS)) {
+  if (!equalJson(actualArtifacts, REQUIRED_AGENT_WORKFLOW_ARTIFACTS)) {
     throw new Error("runRoot must contain exactly the unbound run artifact set");
   }
 
   const preparationBytes = await fs.readFile(preparationManifestPath);
-  const preparation = parseJson(preparationBytes, "preparation manifest");
+  const preparation = parseStrictJson(preparationBytes, "preparation manifest");
   const expected = preparation?.explicit_case_attestations?.[arm]?.[caseId];
   if (!expected) throw new Error("arm and case are absent from the trusted manifest");
   const heldout = HELDOUT_ARMS.has(arm);
@@ -152,6 +170,7 @@ export async function bindAgentWorkflowRun({
       (
         preparation.protocol_id !== "inline-full-body-heldout-v1"
         && preparation.protocol_id !== "inline-full-body-heldout-v2"
+        && preparation.protocol_id !== "inline-full-body-semantic-heldout-v3"
       )
       || !scheduledRun
       || scheduledRun.arm !== arm
@@ -180,20 +199,34 @@ export async function bindAgentWorkflowRun({
   }
 
   const bytesByName = {};
-  await Promise.all(REQUIRED_ARTIFACTS.map(async name => {
-    bytesByName[name] = await fs.readFile(path.join(runRoot, name));
+  const statsByName = {};
+  await Promise.all(REQUIRED_AGENT_WORKFLOW_ARTIFACTS.map(async name => {
+    const filename = path.join(runRoot, name);
+    const stat = await fs.lstat(filename);
+    if (
+      !stat.isFile()
+      || stat.isSymbolicLink()
+      || stat.nlink !== 1
+      || (stat.mode & 0o077) !== 0
+      || await fs.realpath(filename) !== filename
+    ) {
+      throw new Error(`${name} must be a private single-link regular file`);
+    }
+    statsByName[name] = stat;
+    bytesByName[name] = await fs.readFile(filename);
   }));
   const events = bytesByName["events.jsonl"].toString("utf8")
     .split(/\r?\n/)
     .filter(line => line.trim())
-    .map((line, index) => parseJson(Buffer.from(line), `event line ${index + 1}`));
+    .map((line, index) =>
+      parseStrictJson(Buffer.from(line), `event line ${index + 1}`));
   const eventValidation = await validateAgentWorkflowEventFile(
     path.join(runRoot, "events.jsonl"),
   );
   if (!eventValidation.pass) throw new Error("event stream validation failed");
 
-  const response = parseJson(bytesByName["response.json"], "response");
-  const eventResponse = parseJson(
+  const response = parseStrictJson(bytesByName["response.json"], "response");
+  const eventResponse = parseStrictJson(
     Buffer.from(events[2].item.text),
     "validated agent message",
   );
@@ -204,16 +237,25 @@ export async function bindAgentWorkflowRun({
     throw new Error("response case_id does not match the bound case");
   }
 
-  const pre = parseJson(bytesByName["pre-run-attestation.json"], "pre-attestation");
-  const post = parseJson(bytesByName["post-run-attestation.json"], "post-attestation");
+  const pre = parseStrictJson(
+    bytesByName["pre-run-attestation.json"],
+    "pre-attestation",
+  );
+  const post = parseStrictJson(
+    bytesByName["post-run-attestation.json"],
+    "post-attestation",
+  );
   attestExpected(pre, expected, "pre-attestation");
   attestExpected(post, expected, "post-attestation");
   if (!equalJson(pre.content_inventory, post.content_inventory)) {
     throw new Error("case content changed between pre- and post-attestation");
   }
 
-  const plan = parseJson(bytesByName["launch-plan.json"], "launch plan");
-  const outcome = parseJson(bytesByName["launch-outcome.json"], "launch outcome");
+  const plan = parseStrictJson(bytesByName["launch-plan.json"], "launch plan");
+  const outcome = parseStrictJson(
+    bytesByName["launch-outcome.json"],
+    "launch outcome",
+  );
   if (
     plan.arm !== arm
     || plan.case_id !== caseId
@@ -255,6 +297,7 @@ export async function bindAgentWorkflowRun({
       !== preparation?.controller_artifacts?.[ATTESTER_ARTIFACT]?.sha256
     || plan.launcher_sha256
       !== preparation?.controller_artifacts?.[LAUNCHER_ARTIFACT]?.sha256
+    || !equalJson(outcome.post_executable_identity, plan.executable_identity)
   ) {
     throw new Error("launch plan input hashes do not match the trusted case inventory");
   }
@@ -275,6 +318,15 @@ export async function bindAgentWorkflowRun({
     || plan.command.cwd !== plan.case_root
     || plan.command.stdout !== path.join(plan.results_root, "events.jsonl")
     || plan.command.stderr !== path.join(plan.results_root, "stderr.txt")
+    || !path.isAbsolute(plan.prompt_capture_home ?? "")
+    || (
+      heldout
+      && (
+        plan.prompt_capture_home === plan.codex_home
+        || plan.prompt_capture_home === plan.case_root
+        || plan.prompt_capture_home === plan.results_root
+      )
+    )
     || !equalJson(plan.command.codex_argv, expectedCodexArgs)
     || !equalJson(plan.command.argv, expectedExecArgs)
   ) {
@@ -286,11 +338,16 @@ export async function bindAgentWorkflowRun({
     || outcome.post_attestation_pass !== true
     || outcome.prompt_input_exit_code !== 0
     || outcome.prompt_input_signal !== null
+    || outcome.prompt_input_claim
+      !== "deterministic_pre_inference_reconstruction_not_literal_inference_transport_capture"
   ) {
     throw new Error("launch outcome is not a successful attested run");
   }
 
-  const promptInput = parseJson(bytesByName["prompt-input.json"], "prompt input");
+  const promptInput = parseStrictJson(
+    bytesByName["prompt-input.json"],
+    "prompt input",
+  );
   if (
     !Array.isArray(promptInput)
     || promptInput.some(item =>
@@ -319,6 +376,8 @@ export async function bindAgentWorkflowRun({
     || outcome.prompt_input_command.cwd !== plan.case_root
     || outcome.prompt_input_command.program !== plan.command.program
     || outcome.prompt_input_command.codex_program !== plan.command.codex_program
+    || outcome.prompt_input_command.environment_policy?.CODEX_HOME
+      !== plan.prompt_capture_home
     || !promptInputText.includes(`Case ID: ${caseId}`)
     || (heldout
       ? exactUserInputs.length !== 2 || exactUserInputs[1] !== capturedPrompt
@@ -327,8 +386,20 @@ export async function bindAgentWorkflowRun({
   ) {
     throw new Error("prompt-input evidence does not match the reviewed run input");
   }
+  const promptInputStarted = Date.parse(outcome.prompt_input_started_at);
+  const promptInputFinished = Date.parse(outcome.prompt_input_finished_at);
+  const inferenceStarted = Date.parse(outcome.started_at);
+  if (
+    !Number.isFinite(promptInputStarted)
+    || !Number.isFinite(promptInputFinished)
+    || !Number.isFinite(inferenceStarted)
+    || promptInputFinished < promptInputStarted
+    || inferenceStarted < promptInputFinished
+  ) {
+    throw new Error("prompt reconstruction must finish before model inference");
+  }
   const skillPath = `${plan.case_root}/.agents/skills/pdf-tools-workflow/SKILL.md`;
-  const systemSkillRoot = `${plan.codex_home}/skills/.system/`;
+  const systemSkillRoot = `${plan.prompt_capture_home}/skills/.system/`;
   const skillFiles = [...promptInputText.matchAll(
     /file:\s*([^"\s)]+\/SKILL\.md)/g,
   )].map(match => match[1]);
@@ -353,7 +424,7 @@ export async function bindAgentWorkflowRun({
   }
 
   let interventionEvidence = null;
-  let promptInputEvidence = null;
+  let promptReconstructionEvidence = null;
   if (heldout) {
     const intervention = preparation.intervention;
     const paired = preparation.paired_case_contracts?.[caseId];
@@ -387,7 +458,7 @@ export async function bindAgentWorkflowRun({
       plan,
     );
     if (
-      !/^full_skill_markdown_in_user_prompt_v[12]$/.test(
+      !/^full_skill_markdown_in_user_prompt_v[123]$/.test(
         intervention?.id ?? "",
       )
       || userMessages.length !== 2
@@ -423,7 +494,9 @@ export async function bindAgentWorkflowRun({
       skill_body_bytes: body ? Buffer.byteLength(body) : 0,
       skill_body_sha256: body ? sha256(body) : null,
     };
-    promptInputEvidence = {
+    promptReconstructionEvidence = {
+      claim:
+        "deterministic_pre_inference_reconstruction_not_literal_inference_transport_capture",
       message_count: promptInput.length,
       developer_message_count: developerMessages.length,
       user_message_count: promptInput.filter(item => item.role === "user").length,
@@ -436,7 +509,10 @@ export async function bindAgentWorkflowRun({
   }
 
   const artifacts = Object.fromEntries(
-    REQUIRED_ARTIFACTS.map(name => [name, artifactRecord(bytesByName[name])]),
+    REQUIRED_AGENT_WORKFLOW_ARTIFACTS.map(name => [
+      name,
+      artifactRecord(bytesByName[name], statsByName[name]),
+    ]),
   );
   const manifest = {
     schema_version: "pdf-tools.agent-workflow-bound-run.v1",
@@ -452,6 +528,11 @@ export async function bindAgentWorkflowRun({
     source_commit: preparation.source_commit,
     model: plan.model,
     host: plan.host,
+    executable_identity: plan.executable_identity,
+    post_executable_identity: outcome.post_executable_identity,
+    prompt_sha256: plan.prompt_sha256,
+    response_schema_sha256: plan.response_schema_sha256,
+    auth_source_sha256: plan.auth_source_sha256,
     timing: {
       started_at: outcome.started_at,
       finished_at: outcome.finished_at,
@@ -460,6 +541,7 @@ export async function bindAgentWorkflowRun({
       case_root: plan.case_root,
       results_root: plan.results_root,
       codex_home: plan.codex_home,
+      prompt_capture_home: plan.prompt_capture_home,
     },
     expected_identity: plan.expected_identity,
     preparation_manifest: {
@@ -473,7 +555,10 @@ export async function bindAgentWorkflowRun({
     artifacts,
     command: plan.command,
     prompt_input_command: outcome.prompt_input_command,
-    prompt_input_evidence: promptInputEvidence,
+    ...(preparation.protocol_id === "inline-full-body-semantic-heldout-v3"
+      ? {}
+      : { prompt_input_evidence: promptReconstructionEvidence }),
+    prompt_reconstruction_evidence: promptReconstructionEvidence,
     intervention_evidence: interventionEvidence,
     event_validation: eventValidation,
     response,

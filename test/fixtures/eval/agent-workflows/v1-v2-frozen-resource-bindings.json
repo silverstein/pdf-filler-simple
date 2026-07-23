@@ -1,0 +1,56 @@
+{
+  "schema_version": "pdf-tools.agent-workflow-prior-resource-bindings.v1",
+  "purpose": "Abort v3 preparation if the repository copies of frozen v1 or v2 case, schema, rubric, workflow-contract, or exact-scorer resources drift. Historical source commits and outcomes remain NO-GO evidence and are not reinterpreted by v3.",
+  "campaigns": {
+    "inline-full-body-heldout-v1": {
+      "final_source_commit": "05954ac616a439d10edf508e9ff191ef83431b35",
+      "outcome": "NO_GO",
+      "treatment_passed_checks": 79,
+      "treatment_total_checks": 80,
+      "treatment_exact_runs": 4,
+      "treatment_total_runs": 5
+    },
+    "inline-full-body-heldout-v2": {
+      "source_commit": "3c22e07498959d0c9ce05ed56f49b2e8594c8ced",
+      "outcome": "NO_GO",
+      "treatment_passed_checks": 280,
+      "treatment_total_checks": 288,
+      "treatment_exact_runs": 13,
+      "treatment_total_runs": 18,
+      "control_passed_checks": 234,
+      "control_total_checks": 288,
+      "control_exact_runs": 0,
+      "control_total_runs": 18
+    }
+  },
+  "resources": [
+    {
+      "path": "test/fixtures/eval/agent-workflows/planning-cases.heldout.v1.json",
+      "sha256": "be541622d282605a417cb753511d96085a9ba4e9e9d1d0c77a20327a3e4407f6"
+    },
+    {
+      "path": "test/fixtures/eval/agent-workflows/planning-cases.heldout.v2.json",
+      "sha256": "c173fba6efc7b719ff96205849e30e528cc68cc2d5805e2c4b8a777f335b3000"
+    },
+    {
+      "path": "test/fixtures/eval/agent-workflows/planning-response.schema.json",
+      "sha256": "c065e0d4515919760cbf6bc1d0076d5c041b1f372deb1c7139632977bf55667b"
+    },
+    {
+      "path": "test/fixtures/eval/agent-workflows/planning-rubric.v1.txt",
+      "sha256": "b0dc68aa961c8f0f2eb3ef197b96762323ffdcc4afc52bdbcd54b2373fcff642"
+    },
+    {
+      "path": "test/fixtures/eval/agent-workflows/workflow-contract.v1.json",
+      "sha256": "68403f6230c9a7ac96f0e7a5d31348c7ab8b627b1aa5ac20a2ff779a006cff8d"
+    },
+    {
+      "path": "test/eval/agent-workflow-plan-scorer.js",
+      "sha256": "e314c0286edb404c3008e19bc257eaa239c792188f8c07726ffd64b3c323a7b1"
+    },
+    {
+      "path": "scripts/eval-score-agent-workflow-repeated-campaign.mjs",
+      "sha256": "a2385117592edac1dd4cc49e8063d6b90f1c8c0d65f990152d14b3621abefbde"
+    }
+  ]
+}

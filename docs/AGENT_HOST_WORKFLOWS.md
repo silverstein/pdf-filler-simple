@@ -217,12 +217,12 @@ Before initializing the runtime repository, copy the exact
 operator-owned path on the model host. The launcher creates the result
 directory exclusively, initializes deterministic SHA-1 Git without ambient
 configuration or templates, captures the exact argv and host versions, runs
-the pre-attestation immediately before `codex exec`, and runs the
-post-attestation immediately after it. Both attestations must pass. It captures
-`codex debug prompt-input` after execution under the same root, isolated Codex
-home, prompt, and feature policy, so the inventory observation cannot influence
-the evaluated response. All raw artifacts remain outside the runtime
-repository.
+`codex debug prompt-input` in a separate auth-only Codex home before inference,
+runs the pre-attestation, seals that evidence, and only then starts `codex
+exec`. It runs the post-attestation immediately after execution. Both
+attestations must pass. Prompt reconstruction is diagnostic parity evidence,
+not a literal capture of the inference transport. All raw artifacts remain
+outside the runtime repository.
 
 After transferring one complete fresh result directory back to the controller,
 bind it to the trusted preparation manifest before scoring:
@@ -246,6 +246,77 @@ manifest, case inventory, event stream, response, both attestations, and
 prompt-input evidence by SHA-256. Score only the `response` copied into a
 `claim_ready: true` bound run manifest. Apply the same binder to every skill
 and baseline case.
+
+### Sealed v3 repeated campaign
+
+The v3 campaign is a separate 96-run, 48-pair semantic-safety protocol. Do not
+run it until an independent pre-inference review returns GO. Run preparation,
+execution, and scoring from the same clean exact Git commit. Keep participant,
+oracle, runtime, result, home, prompt-capture-home, receipt, acknowledgement,
+anchor-export, and score paths physically separate.
+
+Prepare on the controller:
+
+```bash
+node scripts/eval-prepare-agent-workflow-campaign-v3.mjs \
+  --participants-destination "$PDF_V3_PARTICIPANTS" \
+  --oracle-destination "$PDF_V3_ORACLE"
+```
+
+Create a private mode-0600 anchor command config outside the repository. Its
+schema is `pdf-tools.agent-workflow-receipt-anchor-command.v1`. It must name
+the authority, namespace, and endpoint frozen in the preparation manifest.
+The `append` command must accept one receipt on standard input and return one
+signed JSON acknowledgement. The `export` command must return the signed JSON
+ledger summary for the deterministic campaign ID. Neither command may expose
+the private signing key or credential material.
+
+On the macOS model host, use canonical regular-file paths, not symlink paths.
+Prefer the signed native Codex executable inside the installed platform
+package. Use fresh absolute directories and an auth source that is a private
+single-link file:
+
+```bash
+node scripts/eval-run-agent-workflow-campaign-v3.mjs \
+  --participants-root "$PDF_V3_PARTICIPANTS" \
+  --preparation-manifest "$PDF_V3_ORACLE/preparation-manifest.json" \
+  --oracle "$PDF_V3_ORACLE/oracle.json" \
+  --results-root "$PDF_V3_RESULTS" \
+  --runtime-root "$PDF_V3_RUNTIME" \
+  --homes-root "$PDF_V3_HOMES" \
+  --prompt-capture-homes-root "$PDF_V3_CAPTURE_HOMES" \
+  --auth-source "$PDF_V3_AUTH_SOURCE" \
+  --codex-binary "$PDF_V3_CANONICAL_CODEX_BIN" \
+  --sandbox-binary /usr/bin/sandbox-exec \
+  --model "$PDF_V3_MODEL" \
+  --receipt-ledger "$PDF_V3_RECEIPTS" \
+  --anchor-ack-ledger "$PDF_V3_ANCHOR_ACKS" \
+  --anchor-export "$PDF_V3_ANCHOR_EXPORT" \
+  --anchor-command-config "$PDF_V3_ANCHOR_CONFIG"
+```
+
+The run is zero-retry. Any `attempt_failed`, missing receipt, extra receipt,
+nonzero process exit, executable drift, auth drift, or anchor mismatch
+invalidates the campaign. Do not reuse the deterministic campaign ID.
+
+Score only after all 96 scheduled runs and the signed anchor export exist:
+
+```bash
+node scripts/eval-score-agent-workflow-campaign-v3.mjs \
+  --results-root "$PDF_V3_RESULTS" \
+  --preparation-manifest "$PDF_V3_ORACLE/preparation-manifest.json" \
+  --oracle "$PDF_V3_ORACLE/oracle.json" \
+  --receipt-ledger "$PDF_V3_RECEIPTS" \
+  --anchor-ack-ledger "$PDF_V3_ANCHOR_ACKS" \
+  --anchor-export "$PDF_V3_ANCHOR_EXPORT" \
+  --anchor-command-config "$PDF_V3_ANCHOR_CONFIG" \
+  --output "$PDF_V3_SCORE"
+```
+
+Report each acceptance gate separately. `overall_go` is true only when
+integrity, semantic safety, semantic utility, exact conformance, and bounded
+prompt effect all pass. Keep the preparation claim boundary attached to every
+result.
 
 Before every arm, retain a negative isolation probe showing that neither an
 oracle nor the source repository exists on the model host, plus the effective

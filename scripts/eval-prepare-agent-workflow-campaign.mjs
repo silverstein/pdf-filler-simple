@@ -127,7 +127,7 @@ const SYNTHETIC_GIT_ENV = {
 };
 const SYNTHETIC_GIT_MESSAGE = "Synthetic participant arm";
 
-function sha256(value) {
+export function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
@@ -140,7 +140,7 @@ function canonicalJson(value) {
   return JSON.stringify(value);
 }
 
-async function writePrivate(filename, value) {
+export async function writePrivate(filename, value) {
   await fs.writeFile(filename, value, { encoding: "utf8", mode: 0o600, flag: "wx" });
 }
 
@@ -159,7 +159,7 @@ async function listFiles(root, relativeRoot = "") {
   return files;
 }
 
-async function inventory(root) {
+export async function inventory(root) {
   const entries = [];
   for (const relative of await listFiles(root)) {
     const bytes = await fs.readFile(path.join(root, relative));
@@ -173,7 +173,7 @@ async function inventory(root) {
   };
 }
 
-async function syntheticGitIdentity(root) {
+export async function syntheticGitIdentity(root) {
   const temporaryRoot = await fs.mkdtemp(path.join(
     os.tmpdir(),
     "pdf-tools-agent-workflow-git-",
@@ -258,7 +258,7 @@ function participantPrompt(testCase, rubric, { explicitSkill = false } = {}) {
 }
 
 function sharedHeldoutPrompt(testCase, rubric) {
-  return [
+  const lines = [
     "This is a synthetic planning-only evaluation.",
     "No model-callable tool use is permitted. Do not call PDF, filesystem, shell, network, task, or other tools, and do not execute any operation.",
     "Return only one JSON object matching response-schema.json.",
@@ -266,7 +266,15 @@ function sharedHeldoutPrompt(testCase, rubric) {
     `Case ID: ${testCase.id}`,
     rubric.trim(),
     `Case: ${testCase.prompt}`,
-  ].join("\n\n");
+  ];
+  if (Array.isArray(testCase.evidence_refs)) {
+    lines.splice(
+      lines.length - 1,
+      0,
+      `Available opaque evidence references: ${testCase.evidence_refs.join(", ")}.`,
+    );
+  }
+  return lines.join("\n\n");
 }
 
 export function heldoutParticipantPrompt(testCase, rubric, {
@@ -319,7 +327,7 @@ export function balancedHeldoutSchedule(caseIds, repetitions = 3) {
   return schedule;
 }
 
-function hostCompatibleSchema(value) {
+export function hostCompatibleSchema(value) {
   if (Array.isArray(value)) return value.map(hostCompatibleSchema);
   if (!value || typeof value !== "object") return value;
   return Object.fromEntries(Object.entries(value)
@@ -332,7 +340,7 @@ function pathInside(parent, child) {
   return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== "..");
 }
 
-async function verifiedSourceCommit() {
+export async function verifiedSourceCommit() {
   const [{ stdout: sourceCommit }, { stdout: status }] = await Promise.all([
     execFileAsync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }),
     execFileAsync(
@@ -377,8 +385,6 @@ export async function prepareAgentWorkflowCampaign({
   const sourceCommit = await verifiedSourceCommit();
   const participantsRoot = participantsDestination;
   const trustedRoot = oracleDestination;
-  await fs.mkdir(participantsRoot, { mode: 0o700 });
-  await fs.mkdir(trustedRoot, { mode: 0o700 });
 
   const casesBytes = await fs.readFile(protocol.casesPath);
   const cases = JSON.parse(casesBytes);
@@ -402,6 +408,9 @@ export async function prepareAgentWorkflowCampaign({
       `${protocolId} requires its exact frozen PDF workflow skill body`,
     );
   }
+
+  await fs.mkdir(participantsRoot, { mode: 0o700 });
+  await fs.mkdir(trustedRoot, { mode: 0o700 });
 
   for (const arm of protocol.armNames) {
     const armRoot = path.join(participantsRoot, arm);

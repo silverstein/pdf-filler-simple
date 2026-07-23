@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseStrictJson } from "./eval-strict-json.mjs";
 
 const EXPECTED_EVENT_TYPES = [
   "thread.started",
@@ -96,9 +97,9 @@ export async function validateAgentWorkflowEventFile(filename) {
   const parseErrors = [];
   for (const [index, line] of lines.entries()) {
     try {
-      events.push(JSON.parse(line));
-    } catch {
-      parseErrors.push(`line ${index + 1} is not valid JSON`);
+      events.push(parseStrictJson(line, `event line ${index + 1}`));
+    } catch (error) {
+      parseErrors.push(error.message);
     }
   }
   const validation = validateAgentWorkflowEvents(events);

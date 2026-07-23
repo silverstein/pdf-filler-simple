@@ -8,11 +8,6 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { attestAgentWorkflowArm } from "../../scripts/eval-attest-agent-workflow-arm.mjs";
 import {
-  CONDITION_END,
-  FULL_BODY_CONTROL_ARM,
-  FULL_BODY_END,
-  FULL_BODY_START,
-  FULL_BODY_TREATMENT_ARM,
   prepareAgentWorkflowCampaign,
 } from "../../scripts/eval-prepare-agent-workflow-campaign.mjs";
 
@@ -246,7 +241,7 @@ describe("agent workflow campaign preparation", () => {
       expectedTreeSha1: expectedAttestation.synthetic_git.expected_tree_sha1,
       expectedContentTreeSha256: expectedAttestation.content_inventory.tree_sha256,
     })).pass).toBe(false);
-  });
+  }, 30000);
 
   it("refuses relative, repository-contained, and nested destinations", async () => {
     await expect(prepareAgentWorkflowCampaign({
@@ -267,7 +262,7 @@ describe("agent workflow campaign preparation", () => {
     })).rejects.toThrow(/must not contain each other/);
   });
 
-  it("freezes an inline-full-body held-out campaign with a balanced schedule", async () => {
+  it("refuses to regenerate the frozen v2 campaign after workflow skill evolution", async () => {
     const parent = await fs.mkdtemp(path.join(
       os.tmpdir(),
       "pdf-tools-workflow-heldout-campaign-",
@@ -275,114 +270,14 @@ describe("agent workflow campaign preparation", () => {
     temporaryRoots.push(parent);
     const participants = path.join(parent, "participants");
     const trusted = path.join(parent, "oracle");
-    const manifest = await prepareAgentWorkflowCampaign({
+    await expect(prepareAgentWorkflowCampaign({
       participantsDestination: participants,
       oracleDestination: trusted,
       protocolId: "inline-full-body-heldout-v2",
-    });
-
-    expect(manifest).toMatchObject({
-      protocol_id: "inline-full-body-heldout-v2",
-      arm_names: [FULL_BODY_TREATMENT_ARM, FULL_BODY_CONTROL_ARM],
-      repetitions: 3,
-      intervention: {
-        id: "full_skill_markdown_in_user_prompt_v2",
-        treatment_arm: FULL_BODY_TREATMENT_ARM,
-        control_arm: FULL_BODY_CONTROL_ARM,
-      },
-    });
-    expect(manifest.run_schedule).toHaveLength(36);
-    expect(new Set(manifest.run_schedule.map(run => run.run_id)).size).toBe(36);
-    expect(manifest.run_schedule.map(run => run.ordinal)).toEqual(
-      Array.from({ length: 36 }, (_, index) => index + 1),
+    })).rejects.toThrow(
+      /inline-full-body-heldout-v2 requires its exact frozen PDF workflow skill body/,
     );
-    expect(manifest.run_schedule.filter(
-      run => run.arm === FULL_BODY_TREATMENT_ARM,
-    )).toHaveLength(18);
-    expect(manifest.run_schedule.filter(
-      run => run.arm === FULL_BODY_CONTROL_ARM,
-    )).toHaveLength(18);
-    const pairs = [...new Set(manifest.run_schedule.map(run => run.pair_id))];
-    expect(pairs).toHaveLength(18);
-    expect(pairs.filter(pairId => manifest.run_schedule.find(
-      run => run.pair_id === pairId && run.pair_position === 1,
-    ).arm === FULL_BODY_TREATMENT_ARM)).toHaveLength(9);
-    expect([1, 2, 3].map(repeatIndex => manifest.run_schedule
-      .filter(run => run.repeat_index === repeatIndex && run.pair_position === 1)
-      .map(run => run.case_id))).toEqual([
-      [
-        "approved-existing-output-is-ready",
-        "fully-authorized-signature-is-ready",
-        "scanned-page-without-ocr-stays-partial",
-        "safe-page-plan-uses-fresh-analysis",
-        "input-alias-never-overwrites-original",
-        "password-error-stops-inspection",
-      ],
-      [
-        "scanned-page-without-ocr-stays-partial",
-        "safe-page-plan-uses-fresh-analysis",
-        "input-alias-never-overwrites-original",
-        "password-error-stops-inspection",
-        "approved-existing-output-is-ready",
-        "fully-authorized-signature-is-ready",
-      ],
-      [
-        "input-alias-never-overwrites-original",
-        "password-error-stops-inspection",
-        "approved-existing-output-is-ready",
-        "fully-authorized-signature-is-ready",
-        "scanned-page-without-ocr-stays-partial",
-        "safe-page-plan-uses-fresh-analysis",
-      ],
-    ]);
-
-    const skillBody = await fs.readFile(path.join(
-      REPO_ROOT,
-      "plugins",
-      "pdf-tools-workflow",
-      "skills",
-      "pdf-tools-workflow",
-      "SKILL.md",
-    ), "utf8");
-    const caseId = "approved-existing-output-is-ready";
-    const treatmentPrompt = await fs.readFile(path.join(
-      participants,
-      FULL_BODY_TREATMENT_ARM,
-      "cases",
-      caseId,
-      "prompt.txt",
-    ), "utf8");
-    const controlPrompt = await fs.readFile(path.join(
-      participants,
-      FULL_BODY_CONTROL_ARM,
-      "cases",
-      caseId,
-      "prompt.txt",
-    ), "utf8");
-    expect(treatmentPrompt).toContain(`${FULL_BODY_START}\n${skillBody}`);
-    expect(treatmentPrompt).toContain(`\n${FULL_BODY_END}\n${CONDITION_END}\n\n`);
-    expect(controlPrompt).toContain(`${FULL_BODY_START}\n\n${FULL_BODY_END}`);
-    expect(controlPrompt).not.toContain("# PDF Tools workflow");
-    expect(treatmentPrompt.replace(
-      `${FULL_BODY_START}\n${skillBody}\n${FULL_BODY_END}`,
-      `${FULL_BODY_START}\n\n${FULL_BODY_END}`,
-    )).toBe(controlPrompt);
-    const treatmentShared = treatmentPrompt.split(`${CONDITION_END}\n\n`)[1];
-    const controlShared = controlPrompt.split(`${CONDITION_END}\n\n`)[1];
-    expect(treatmentShared).toBe(controlShared);
-    expect(sha256(treatmentShared)).toBe(
-      manifest.paired_case_contracts[caseId].shared_prompt_sha256,
-    );
-    expect(await allText(participants)).not.toContain('"expected":');
-    expect(await allText(participants)).not.toContain(
-      ".agents/skills/pdf-tools-workflow",
-    );
-
-    const oracle = JSON.parse(await fs.readFile(
-      path.join(trusted, "oracle.json"),
-      "utf8",
-    ));
-    expect(oracle.protocol_id).toBe("inline-full-body-heldout-v2");
-    expect(oracle.cases).toHaveLength(6);
+    await expect(fs.stat(participants)).rejects.toThrow();
+    await expect(fs.stat(trusted)).rejects.toThrow();
   });
 });

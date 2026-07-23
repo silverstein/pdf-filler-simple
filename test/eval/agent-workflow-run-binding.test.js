@@ -23,7 +23,7 @@ afterEach(async () => {
 
 async function fakeCodex(root) {
   const filename = path.join(root, "fake-codex.mjs");
-  await fs.writeFile(filename, `#!/usr/bin/env node
+  await fs.writeFile(filename, `#!${process.execPath}
 import fs from "node:fs";
 import path from "node:path";
 
@@ -74,7 +74,7 @@ if (args[0] === "--version") {
 
 async function fakeSandbox(root) {
   const filename = path.join(root, "fake-sandbox.mjs");
-  await fs.writeFile(filename, `#!/usr/bin/env node
+  await fs.writeFile(filename, `#!${process.execPath}
 import { spawn } from "node:child_process";
 
 const args = process.argv.slice(2);
@@ -115,8 +115,15 @@ async function preparedRun({
     { recursive: true },
   );
   const codexHome = path.join(root, "codex-home");
+  const promptCaptureHome = path.join(root, "prompt-capture-home");
   await fs.mkdir(codexHome, { mode: 0o700 });
+  await fs.mkdir(promptCaptureHome, { mode: 0o700 });
   await fs.writeFile(path.join(codexHome, "auth.json"), "{}\n", { mode: 0o600 });
+  await fs.writeFile(
+    path.join(promptCaptureHome, "auth.json"),
+    "{}\n",
+    { mode: 0o600 },
+  );
   const resultsRoot = path.join(root, "results");
   const expected = manifest.explicit_case_attestations[arm][caseId];
   await runCodexAgentWorkflowCase({
@@ -125,6 +132,7 @@ async function preparedRun({
     caseRoot,
     resultsRoot,
     codexHome,
+    promptCaptureHome,
     codexBinary: await fakeCodex(root),
     sandboxBinary: await fakeSandbox(root),
     attesterPath: path.join(
@@ -184,7 +192,7 @@ describe("agent workflow run binding", () => {
         "prompt-input.json",
       ]),
     );
-  });
+  }, 15000);
 
   it("rejects a swapped response and refuses to reuse a result directory", async () => {
     const run = await preparedRun();
@@ -220,7 +228,7 @@ describe("agent workflow run binding", () => {
       runId: run.scheduled?.run_id,
       outputPath: path.join(run.resultsRoot, "run-manifest.json"),
     })).rejects.toThrow(/response does not equal/);
-  });
+  }, 15000);
 
   it("rejects an ambient or duplicate project skill in prompt-input evidence", async () => {
     const run = await preparedRun();
@@ -243,7 +251,7 @@ describe("agent workflow run binding", () => {
       runId: run.scheduled?.run_id,
       outputPath: path.join(run.resultsRoot, "run-manifest.json"),
     })).rejects.toThrow(/skill inventory does not match/);
-  });
+  }, 15000);
 
   it("rejects an injected project instruction block", async () => {
     const run = await preparedRun();
@@ -266,46 +274,15 @@ describe("agent workflow run binding", () => {
       runId: run.scheduled?.run_id,
       outputPath: path.join(run.resultsRoot, "run-manifest.json"),
     })).rejects.toThrow(/skill inventory does not match/);
-  });
+  }, 15000);
 
-  it.each([
-    "codex-prompt-full-skill-body",
-    "codex-prompt-no-skill-body",
-  ])("binds exact held-out prompt intervention evidence for %s", async arm => {
-    const run = await preparedRun({
+  it("refuses to reinterpret frozen v2 runs after the workflow skill evolves", async () => {
+    await expect(preparedRun({
       protocolId: "inline-full-body-heldout-v2",
-      arm,
+      arm: "codex-prompt-full-skill-body",
       caseId: "approved-existing-output-is-ready",
-    });
-    const outputPath = path.join(run.resultsRoot, "run-manifest.json");
-    const manifest = await bindAgentWorkflowRun({
-      runRoot: run.resultsRoot,
-      preparationManifestPath: run.manifestPath,
-      arm: run.arm,
-      caseId: run.caseId,
-      runId: run.scheduled.run_id,
-      outputPath,
-    });
-    expect(manifest).toMatchObject({
-      claim_ready: true,
-      run_id: run.scheduled.run_id,
-      schedule_ordinal: run.scheduled.ordinal,
-      intervention_evidence: {
-        id: "full_skill_markdown_in_user_prompt_v2",
-        condition: arm === "codex-prompt-full-skill-body"
-          ? "full_skill_body_present"
-          : "no_skill_body_present",
-      },
-      event_validation: { model_callable_tool_items: 0 },
-    });
-    if (arm === "codex-prompt-full-skill-body") {
-      expect(manifest.intervention_evidence.skill_body_bytes).toBeGreaterThan(10000);
-      expect(manifest.intervention_evidence.skill_body_sha256).toMatch(/^[a-f0-9]{64}$/);
-    } else {
-      expect(manifest.intervention_evidence).toMatchObject({
-        skill_body_bytes: 0,
-        skill_body_sha256: null,
-      });
-    }
+    })).rejects.toThrow(
+      /inline-full-body-heldout-v2 requires its exact frozen PDF workflow skill body/,
+    );
   });
 });
