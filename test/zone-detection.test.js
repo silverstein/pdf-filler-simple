@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { PDFDocument, PDFName, StandardFonts } from "pdf-lib";
+import { EncryptedPDFError, PDFDocument, PDFName, StandardFonts } from "pdf-lib";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -9,6 +9,7 @@ import {
   extractPdfTextWithBounds,
   detectSignatureZones,
   scanPageForLabels,
+  isPdfLibEncryptedError,
 } from "../server/helpers.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -81,6 +82,17 @@ describe("computeIoU", () => {
       { x: 10, y: 10, width: 10, height: 10 }
     );
     expect(iou).toBeCloseTo(0.01, 6);
+  });
+});
+
+describe("pdf-lib encrypted error classification", () => {
+  it("accepts only pdf-lib's exact canonical encryption error", () => {
+    const canonicalMessage = new EncryptedPDFError().message;
+    expect(isPdfLibEncryptedError(new EncryptedPDFError())).toBe(true);
+    expect(isPdfLibEncryptedError(new Error(canonicalMessage))).toBe(true);
+    expect(isPdfLibEncryptedError(new Error(`${canonicalMessage} `))).toBe(false);
+    expect(isPdfLibEncryptedError(new Error("Input document is encrypted"))).toBe(false);
+    expect(isPdfLibEncryptedError(null)).toBe(false);
   });
 });
 

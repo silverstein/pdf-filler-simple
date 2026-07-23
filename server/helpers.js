@@ -6,6 +6,7 @@ import path from "path";
 import { homedir } from "os";
 import { createHash, randomUUID } from "crypto";
 import {
+  EncryptedPDFError,
   PDFArray,
   PDFDict,
   PDFDocument,
@@ -17,6 +18,7 @@ import {
   degrees as pdfDegrees,
 } from "pdf-lib";
 
+const PDF_LIB_ENCRYPTED_ERROR_MESSAGE = new EncryptedPDFError().message;
 const PDF_FIELD_VALIDATION_SCHEMA_VERSION = "1.0";
 const UNSUPPORTED_DIRECTORY_FSYNC_ERRORS = new Set([
   "EINVAL",
@@ -29,6 +31,11 @@ const PRODUCER = PDFName.of("Producer");
 const MOD_DATE = PDFName.of("ModDate");
 const ACROFORM_DEFAULT_KEYS = ["DA", "DR", "Q", "NeedAppearances", "SigFlags"]
   .map(PDFName.of);
+
+export function isPdfLibEncryptedError(error) {
+  return error instanceof EncryptedPDFError ||
+    error?.message === PDF_LIB_ENCRYPTED_ERROR_MESSAGE;
+}
 
 function indirectRef(context, object) {
   if (object instanceof PDFRef) return object;

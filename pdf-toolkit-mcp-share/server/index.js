@@ -13,7 +13,6 @@ import {
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
-  EncryptedPDFError,
   PDFArray,
   PDFCatalog,
   PDFDocument,
@@ -1066,7 +1065,7 @@ async function loadPdfForZoneDetection(inputPath, password = null) {
   try {
     pdfDoc = await PDFDocument.load(input.pdfBytes, { updateMetadata: false });
   } catch (error) {
-    if (!(error instanceof EncryptedPDFError)) {
+    if (!isPdfLibEncryptedError(error)) {
       throw new Error(
         "Failed to load PDF: the file is malformed, incomplete, or unsupported.",
         { cause: error },
@@ -1111,6 +1110,7 @@ async function readCurrentPdfMutationBytes(inputPath) {
 
 // Import helpers extracted for testability
 import {
+  isPdfLibEncryptedError,
   parsePageRanges,
   downloadPdfFromUrl,
   findUniquePath,
