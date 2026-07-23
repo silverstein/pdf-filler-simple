@@ -143,6 +143,10 @@ function validateReceipt(receipt, schema) {
     `pdf-tools.docling-macos-handoff.v1\0${canonicalJson(receipt.identity)}`,
   ));
   if (identityDigest !== receipt.handoff_id) throw new Error("Docling receipt identity digest is invalid");
+  if (canonicalJson(receipt.identity.inputs) !== canonicalJson(receipt.inputs)
+    || canonicalJson(receipt.identity.fixtures) !== canonicalJson(receipt.fixtures)) {
+    throw new Error("Docling receipt identity does not bind the exact retained inventories");
+  }
 }
 
 export function validateFixtureBindings(manifest, receipt) {

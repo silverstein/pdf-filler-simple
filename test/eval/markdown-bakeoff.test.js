@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { prepareDoclingMacHandoffForTest } from "./extraction-docling-handoff.js";
 import {
+  canonicalJson,
   runMarkdownBakeoff,
   validateFixtureBindings,
   validateMarkdownResult,
@@ -265,6 +266,22 @@ describe("packed Markdown bakeoff runner", () => {
       "--receipt": forgedPath,
       "--receipt-sha256": sha256(forgedBytes),
     })).rejects.toThrow(/identity digest is invalid/);
+  });
+
+  it("rejects a valid identity digest that does not bind the top-level fixture inventory", async () => {
+    const forged = structuredClone(receipt);
+    forged.identity.fixtures[0].sha256 = "b".repeat(64);
+    forged.handoff_id = sha256(Buffer.from(
+      `pdf-tools.docling-macos-handoff.v1\0${canonicalJson(forged.identity)}`,
+    ));
+    const forgedBytes = Buffer.from(`${JSON.stringify(forged)}\n`);
+    const forgedPath = path.join(root, "split-inventory-receipt.json");
+    await fs.writeFile(forgedPath, forgedBytes, { mode: 0o600, flag: "wx" });
+    await expect(runMarkdownBakeoff({
+      ...options,
+      "--receipt": forgedPath,
+      "--receipt-sha256": sha256(forgedBytes),
+    })).rejects.toThrow(/does not bind the exact retained inventories/);
   });
 
   it("runs three distinct packed server processes and writes private canonical evidence", async () => {
