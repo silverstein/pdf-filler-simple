@@ -378,6 +378,7 @@ Run these after any tool or packaging change:
 - `validate_pdf` on a partially filled form
 - `read_pdf_content` on a text-layer PDF and a textless scanned PDF; confirm that only a wholly textless selected extraction may fall back to a rendered page-1 image
 - `get_pdf_resource_uri` with a local path
+- `get_pdf_identity` on a local PDF, an encrypted PDF without a password, and a disallowed path; verify canonical path, exact byte length, and SHA-256
 - `merge_pdfs` with two PDFs — merged result opens in viewer, page order preserved
 - `merge_pdfs` with empty array — clear error message
 - `merge_pdfs` with same input and output path — rejection error

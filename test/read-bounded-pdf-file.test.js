@@ -1,17 +1,20 @@
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
+import { createHash } from "node:crypto";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   PDF_MERGE_AGGREGATE_LIMIT_MESSAGE,
   PDF_MERGE_MAX_TOTAL_BYTES,
+  PDF_INVALID_HEADER_MESSAGE,
   PDF_MUTATION_FILE_LIMIT_MESSAGE,
   PDF_MUTATION_MAX_FILE_BYTES,
   assertCanonicalRecoveryDirectory,
   assertDanglingPdfInputAlias,
   bindCanonicalRecoveryDirectory,
   bindDanglingPdfInputAlias,
+  hashBoundedPdfFileSafely,
   preflightBoundedPdfFileSafely,
   preflightPdfMutationInputsWithinMergeLimit,
   readBoundedPdfFileSafely,
@@ -30,6 +33,7 @@ function createRaceFileSystem(hooks = {}) {
     closeCount: 0,
     openFlags: [],
     openCount: 0,
+    readBytes: 0,
     readCount: 0,
     realpathCount: 0,
     lstatCount: 0,
@@ -71,6 +75,7 @@ function createRaceFileSystem(hooks = {}) {
           }
           const boundedLength = hooks.maxReadBytes ? Math.min(length, hooks.maxReadBytes) : length;
           const result = await handle.read(buffer, offset, boundedLength, position);
+          state.readBytes += result.bytesRead;
           if (!readStarted) {
             readStarted = true;
             if (hooks.afterRead) {
@@ -143,7 +148,7 @@ describe("readBoundedPdfFileSafely", () => {
       inode: String(sourceStats.ino),
     });
     expect(allowedPaths).toEqual([pdfPath, pdfPath]);
-    expect(state).toMatchObject({ openCount: 1, realpathCount: 2, lstatCount: 2, closeCount: 1 });
+    expect(state).toMatchObject({ openCount: 1, realpathCount: 3, lstatCount: 2, closeCount: 1 });
     if (Number.isInteger(fsConstants.O_NOFOLLOW)) {
       expect(state.openFlags[0] & fsConstants.O_NOFOLLOW).toBe(fsConstants.O_NOFOLLOW);
     }
@@ -160,6 +165,175 @@ describe("readBoundedPdfFileSafely", () => {
     expect(result.bytes.equals(expected)).toBe(true);
     expect(state.readCount).toBe(Math.ceil(expected.length / 3));
     expect(state.closeCount).toBe(1);
+  });
+
+  it("streams an exact SHA-256 identity without allocating the complete file", async () => {
+    const expected = await fs.readFile(pdfPath);
+    const expectedSha256 = createHash("sha256")
+      .update(expected)
+      .digest("hex");
+    const { fileSystem, state } = createRaceFileSystem({ maxReadBytes: 2 });
+    const result = await hashBoundedPdfFileSafely(pdfPath, 1024, {
+      fileSystem,
+      constants: fsConstants,
+      assertPathAllowed: pathPolicy,
+      chunkBytes: 3,
+    });
+
+    expect(result).toMatchObject({
+      sha256: expectedSha256,
+      sizeBytes: expected.length,
+      canonicalPath: pdfPath,
+    });
+    expect(state.readCount).toBe(Math.ceil(expected.length / 2));
+    expect(state.closeCount).toBe(1);
+    expect(allowedPaths).toEqual([pdfPath, pdfPath]);
+  });
+
+  it("rejects pathname replacement during streamed identity hashing", async () => {
+    const original = await fs.readFile(pdfPath);
+    const { fileSystem, state } = createRaceFileSystem({
+      afterRead: async filePath => {
+        const replacement = path.join(temporaryRoot, "identity-replacement.pdf");
+        await fs.writeFile(replacement, Buffer.from(original).fill(0x59));
+        await fs.rename(replacement, filePath);
+      },
+    });
+    await expectChanged(hashBoundedPdfFileSafely(pdfPath, 1024, {
+      fileSystem,
+      constants: fsConstants,
+      assertPathAllowed: pathPolicy,
+      chunkBytes: 4,
+    }));
+    expect(state.closeCount).toBe(1);
+  });
+
+  it("rejects an oversized identity input before any descriptor read", async () => {
+    const { fileSystem, state } = createRaceFileSystem();
+    await expect(hashBoundedPdfFileSafely(pdfPath, 3, {
+      fileSystem,
+      constants: fsConstants,
+      assertPathAllowed: pathPolicy,
+      createSizeLimitError() {
+        const error = new Error(PDF_MUTATION_FILE_LIMIT_MESSAGE);
+        error.code = "PDF_INPUT_TOO_LARGE";
+        return error;
+      },
+    })).rejects.toMatchObject({
+      code: "PDF_INPUT_TOO_LARGE",
+      message: PDF_MUTATION_FILE_LIMIT_MESSAGE,
+    });
+    expect(state).toMatchObject({ readCount: 0, closeCount: 1 });
+  });
+
+  it("rejects a non-PDF regular file after a bounded header check", async () => {
+    await fs.writeFile(pdfPath, Buffer.from("ordinary private profile bytes"));
+    const { fileSystem, state } = createRaceFileSystem({ maxReadBytes: 3 });
+    await expect(hashBoundedPdfFileSafely(pdfPath, 1024, {
+      fileSystem,
+      constants: fsConstants,
+      assertPathAllowed: pathPolicy,
+      chunkBytes: 4,
+    })).rejects.toMatchObject({
+      code: "PDF_INVALID_HEADER",
+      message: PDF_INVALID_HEADER_MESSAGE,
+    });
+    expect(state.readCount).toBeGreaterThan(0);
+    expect(state.closeCount).toBe(1);
+  });
+
+  it("stops a large non-PDF identity read after the 1,024-byte header window", async () => {
+    await fs.writeFile(pdfPath, Buffer.alloc(1024 * 1024, 0x58));
+    const { fileSystem, state } = createRaceFileSystem();
+    await expect(hashBoundedPdfFileSafely(pdfPath, 2 * 1024 * 1024, {
+      fileSystem,
+      constants: fsConstants,
+      assertPathAllowed: pathPolicy,
+    })).rejects.toMatchObject({
+      code: "PDF_INVALID_HEADER",
+      message: PDF_INVALID_HEADER_MESSAGE,
+    });
+    expect(state.readBytes).toBe(1024);
+    expect(state.readCount).toBe(1);
+    expect(state.closeCount).toBe(1);
+  });
+
+  it("accepts a PDF header within the first 1,024 bytes", async () => {
+    const bytes = Buffer.concat([
+      Buffer.alloc(1000, 0x20),
+      Buffer.from("%PDF-1.7\n%%EOF\n"),
+    ]);
+    await fs.writeFile(pdfPath, bytes);
+    const { fileSystem } = createRaceFileSystem({ maxReadBytes: 7 });
+    const result = await hashBoundedPdfFileSafely(pdfPath, 2048, {
+      fileSystem,
+      constants: fsConstants,
+      assertPathAllowed: pathPolicy,
+      chunkBytes: 11,
+    });
+    expect(result.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
+  });
+
+  it.runIf(process.platform !== "win32")("rejects a requested symlink retargeted after hashing", async () => {
+    const firstTarget = pdfPath;
+    const secondTarget = path.join(temporaryRoot, "second-target.pdf");
+    const aliasPath = path.join(temporaryRoot, "identity-alias.pdf");
+    await fs.writeFile(secondTarget, Buffer.from("%PDF-second-target"));
+    await fs.symlink(firstTarget, aliasPath);
+    const { fileSystem, state } = createRaceFileSystem({
+      beforeFinalRealpath: async filePath => {
+        expect(filePath).toBe(aliasPath);
+        await fs.unlink(aliasPath);
+        await fs.symlink(secondTarget, aliasPath);
+      },
+    });
+
+    await expectChanged(hashBoundedPdfFileSafely(aliasPath, 1024, {
+      fileSystem,
+      constants: fsConstants,
+      assertPathAllowed: pathPolicy,
+      chunkBytes: 4,
+    }));
+    expect(state.beforeFinalRealpathRuns).toBe(1);
+    expect(state.closeCount).toBe(1);
+  });
+
+  it("rejects growth during identity hashing before accepting the header", async () => {
+    const { fileSystem, state } = createRaceFileSystem({
+      afterRead: async filePath => fs.appendFile(filePath, "-growth"),
+    });
+    await expectChanged(hashBoundedPdfFileSafely(pdfPath, 1024, {
+      fileSystem,
+      constants: fsConstants,
+      assertPathAllowed: pathPolicy,
+      chunkBytes: 4,
+    }));
+    expect(state.afterReadRuns).toBe(1);
+    expect(state.closeCount).toBe(1);
+  });
+
+  it("shares the O_RDONLY fallback and closes after identity hashing", async () => {
+    const { fileSystem, state } = createRaceFileSystem();
+    const result = await hashBoundedPdfFileSafely(pdfPath, 1024, {
+      fileSystem,
+      constants: { O_RDONLY: fsConstants.O_RDONLY },
+      assertPathAllowed: pathPolicy,
+      chunkBytes: 4,
+    });
+    expect(result.sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(state.openFlags).toEqual([fsConstants.O_RDONLY]);
+    expect(state.closeCount).toBe(1);
+  });
+
+  it("bounds the exported identity hash buffer option before opening", async () => {
+    const { fileSystem, state } = createRaceFileSystem();
+    await expect(hashBoundedPdfFileSafely(pdfPath, 1024, {
+      fileSystem,
+      constants: fsConstants,
+      assertPathAllowed: pathPolicy,
+      chunkBytes: 8 * 1024 * 1024 + 1,
+    })).rejects.toThrow("no greater than 8388608");
+    expect(state.openCount).toBe(0);
   });
 
   it("does not open a file when the canonical allowed-path policy rejects it", async () => {

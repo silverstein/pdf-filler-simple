@@ -14,18 +14,39 @@ import {
 } from "../test/eval/render-visual-oracle.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
+const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v2.json");
 const DEFAULT_OUTPUT = path.join(
   REPO_ROOT,
   "test",
   "fixtures",
   "eval",
   "trajectories",
-  "calibration-trials.v1.json"
+  "calibration-trials.v2.json"
 );
 
 function slug(jobId) {
   return jobId.replace("pdf-tools.trajectory.v1.", "");
+}
+
+function calibrationVersion(suiteId) {
+  if (suiteId === "pdf-tools.trajectory.v1") return "v1";
+  if (suiteId === "pdf-tools.trajectory.v2") return "v2";
+  throw new Error(`Unsupported calibration suite ${suiteId}`);
+}
+
+function calibrationRunId(suiteId, jobId, repeatIndex) {
+  const version = calibrationVersion(suiteId);
+  const prefix = version === "v1"
+    ? "pdf-tools.synthetic"
+    : `pdf-tools.synthetic.${version}`;
+  return `${prefix}.${slug(jobId)}.run.${repeatIndex}`;
+}
+
+function calibrationTrialId(suiteId, jobId, repeatIndex) {
+  const version = calibrationVersion(suiteId);
+  return version === "v1"
+    ? `${jobId}.calibration.${repeatIndex}`
+    : `${suiteId}.${slug(jobId)}.calibration.${repeatIndex}`;
 }
 
 function digest(value) {
@@ -131,10 +152,9 @@ function claim(id, evidenceIds) {
   return { claim_schema_version: 1, id, important: true, evidence_ids: evidenceIds };
 }
 
-function completedRun(jobId, jobIndex, repeatIndex) {
-  const short = slug(jobId);
+function completedRun(suiteId, jobId, jobIndex, repeatIndex) {
   const startedAt = Date.parse("2026-07-21T00:00:00.000Z") + jobIndex * 60 * 60 * 1000 + repeatIndex * 5 * 60 * 1000;
-  const runId = `pdf-tools.synthetic.${short}.run.${repeatIndex}`;
+  const runId = calibrationRunId(suiteId, jobId, repeatIndex);
   const effectsEventId = `${runId}.event.effects`;
   const artifactEventId = `${runId}.event.artifact`;
   const messageEventId = `${runId}.event.agent-message`;
@@ -529,12 +549,12 @@ async function buildProductPayload(job, context) {
   throw new Error(`No calibration template for ${jobId}`);
 }
 
-async function productTrial(job, jobIndex, repeatIndex) {
+async function productTrial(suiteId, job, jobIndex, repeatIndex) {
   const jobId = job.id;
-  const { context, run } = completedRun(jobId, jobIndex, repeatIndex);
+  const { context, run } = completedRun(suiteId, jobId, jobIndex, repeatIndex);
   const trial = {
     trial_schema_version: 1,
-    trial_id: `${jobId}.calibration.${repeatIndex}`,
+    trial_id: calibrationTrialId(suiteId, jobId, repeatIndex),
     job_id: jobId,
     repeat_index: repeatIndex,
     agent: "trajectory-grader-calibration",
@@ -609,9 +629,9 @@ function failureRef(jobId, failureClass) {
   };
 }
 
-async function failingTrial(job, jobIndex) {
+async function failingTrial(suiteId, job, jobIndex) {
   const jobId = job.id;
-  const trial = await productTrial(job, jobIndex, 3);
+  const trial = await productTrial(suiteId, job, jobIndex, 3);
   if (jobId.endsWith("inspect-and-answer")) {
     trial.final_answer.claims[0].evidence_ids = [];
     trial.correction_refs = [failureRef(jobId, "unsupported-claim")];
@@ -683,16 +703,15 @@ async function failingTrial(job, jobIndex) {
   return syncTrialEvents(trial);
 }
 
-function harnessFailure(job, jobIndex) {
+function harnessFailure(suiteId, job, jobIndex) {
   const jobId = job.id;
-  const short = slug(jobId);
   const repeatIndex = 4;
   const startedAt = Date.parse("2026-07-21T00:00:00.000Z") + jobIndex * 60 * 60 * 1000 + repeatIndex * 5 * 60 * 1000;
-  const runId = `pdf-tools.synthetic.${short}.run.${repeatIndex}`;
+  const runId = calibrationRunId(suiteId, jobId, repeatIndex);
   const eventId = `${runId}.event.harness-failure`;
   return {
     trial_schema_version: 1,
-    trial_id: `${jobId}.calibration.${repeatIndex}`,
+    trial_id: calibrationTrialId(suiteId, jobId, repeatIndex),
     job_id: jobId,
     repeat_index: repeatIndex,
     agent: "trajectory-grader-calibration",
@@ -766,18 +785,19 @@ function harnessFailure(job, jobIndex) {
 
 export async function generateTrajectoryCalibration({ suitePath = DEFAULT_SUITE, outputPath = DEFAULT_OUTPUT } = {}) {
   const suite = await loadTrajectorySuite(suitePath);
-  const trialSetId = "pdf-tools.trajectory.calibration.v1";
+  const version = calibrationVersion(suite.suite_id);
+  const trialSetId = `pdf-tools.trajectory.calibration.${version}`;
   const claimBoundary = "Synthetic grader calibration only; records and observations are generated fixtures, not observed agent or host benchmark results.";
   const trialGroups = await Promise.all(suite.jobs.map(async (job, jobIndex) => [
-    await productTrial(job, jobIndex, 1),
-    await productTrial(job, jobIndex, 2),
-    await failingTrial(job, jobIndex),
-    harnessFailure(job, jobIndex),
+    await productTrial(suite.suite_id, job, jobIndex, 1),
+    await productTrial(suite.suite_id, job, jobIndex, 2),
+    await failingTrial(suite.suite_id, job, jobIndex),
+    harnessFailure(suite.suite_id, job, jobIndex),
   ]));
   const trials = trialGroups.flat();
   const runPlan = {
     run_plan_schema_version: 1,
-    run_plan_id: "pdf-tools.trajectory.calibration.run-plan.v1",
+    run_plan_id: `pdf-tools.trajectory.calibration.run-plan.${version}`,
     trial_set_id: trialSetId,
     suite_id: suite.suite_id,
     suite_sha256: digest(canonicalJson(suite)),

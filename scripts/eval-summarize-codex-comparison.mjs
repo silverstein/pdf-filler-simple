@@ -11,6 +11,10 @@ import { validateCampaign } from "./eval-run-codex-comparison.mjs";
 import { assertPrivacySafeProjection } from "./eval-comparison-evidence-integrity.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const SUITE_PATH = path.join(
+  REPO_ROOT,
+  "test", "fixtures", "eval", "trajectories", "jobs.v1.json",
+);
 const SCHEMA_PATH = path.join(
   REPO_ROOT,
   "test", "fixtures", "eval", "comparison", "agent-evidence-summary.schema.json",
@@ -99,7 +103,10 @@ export async function summarizeCodexComparison({
   if (campaign.plan_raw_sha256 !== sha256(planFile.bytes)) {
     throw new Error("Raw pre-run plan digest does not match the campaign commitment");
   }
-  const replayedReport = await runTrajectoryEvaluation({ trialsPath });
+  const replayedReport = await runTrajectoryEvaluation({
+    suitePath: SUITE_PATH,
+    trialsPath,
+  });
   if (canonicalJson(replayedReport) !== canonicalJson(report)) {
     throw new Error("Trajectory report does not replay canonically from retained measured trials");
   }

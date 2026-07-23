@@ -15,7 +15,7 @@ import { parsePngEvidence } from "../test/eval/png-evidence.js";
 import { buildTrustedVisualOracle } from "../test/eval/render-visual-oracle.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
+const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v2.json");
 
 async function writeOutput(filename, text) {
   const temporary = `${filename}.tmp-${process.pid}-${Date.now()}`;
@@ -394,7 +394,8 @@ export async function semanticObservations(item, observation = {}, runEvents = [
     })) : [];
   const outputPath = structured.output_path ?? structured.path;
   const files = typeof outputPath === "string" ? [{ path: outputPath }]
-    : item.tool === "get_pdf_info" && typeof args.pdf_path === "string" ? [{ path: args.pdf_path }] : [];
+    : (item.tool === "get_pdf_info" || item.tool === "get_pdf_identity")
+      && typeof args.pdf_path === "string" ? [{ path: args.pdf_path }] : [];
   return {
     semantic_schema_version: 2,
     pages,

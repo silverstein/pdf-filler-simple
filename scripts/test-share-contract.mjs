@@ -9,6 +9,7 @@ import {
   mkdirSync,
   mkdtempSync,
   readFileSync,
+  realpathSync,
   readdirSync,
   rmSync,
   statSync,
@@ -289,7 +290,7 @@ function testSuccessfulWrapperConfigs(sourcePackageRoot, tempRoot) {
   const printedConfig = JSON.parse(outputLines.slice(firstSeparator + 1, secondSeparator).join("\n"));
   assertEqual(
     printedConfig.mcpServers?.["pdf-tools"]?.args?.[0],
-    path.join(hostileManualSource, "server", "index.js"),
+    path.join(realpathSync(hostileManualSource), "server", "index.js"),
     "Manual installer path did not round-trip exactly through JSON",
   );
 }
@@ -557,7 +558,7 @@ async function main() {
     const { tools } = await client.listTools();
     const { prompts } = await client.listPrompts();
     const { resources } = await client.listResources();
-    if (tools.length !== 39 || prompts.length !== 14 || resources.length !== 1) {
+    if (tools.length !== 40 || prompts.length !== 14 || resources.length !== 1) {
       throw new Error(
         `Unexpected discovery counts: ${tools.length} tools, ${prompts.length} prompts, ${resources.length} resources`,
       );

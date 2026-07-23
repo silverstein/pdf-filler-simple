@@ -34,6 +34,7 @@ an `isError` result is never forced through a success schema.
 | `fill_with_profile` | active document and profile-fill outcome |
 | `get_active_document` | empty or populated active-document state |
 | `get_page_analysis` | bounded page analysis with explicit provenance |
+| `get_pdf_identity` | parser-independent canonical path, byte length, and SHA-256 |
 | `get_pdf_resource_uri` | resource URI and local file metadata |
 | `list_signatures` | saved signature summaries, including an empty array |
 | `load_signature` | signature metadata and optional preview |
@@ -59,6 +60,10 @@ advertise `outputSchema`: `get_pdf_info`, `list_pdfs`, `list_profiles`,
 text-only; attaching an undeclared `structuredContent` error would create a
 wire contract that discovery does not publish.
 
+`get_pdf_identity` adds exact structured error codes for an unavailable file,
+invalid PDF header, input over 250 MiB, and a file or pathname that changed
+during hashing. Path-policy denial remains the shared structured error.
+
 The low-level MCP server does not apply advertised input schemas on its own.
 Session rehydration and coordinate-bearing mutations therefore validate and
 normalize typed arguments before changing active-document state, opening an
@@ -75,7 +80,7 @@ before loading the target PDF, writing output, or changing active-document
 state.
 
 The executable source of truth is `server/output-schemas.js`. The MCP contract
-tests assert this complete 33/6 matrix, compile every schema through the pinned
+tests assert this complete 34/6 matrix, compile every schema through the pinned
 SDK validator, reject newer unsupported JSON Schema keywords, exercise live
 success and error branches, and require byte-identical source/share runtime
 files.

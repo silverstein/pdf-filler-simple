@@ -1,15 +1,22 @@
 import { constants as defaultFsConstants } from "node:fs";
 import defaultFileSystem from "node:fs/promises";
+import { createHash } from "node:crypto";
 import path from "node:path";
 
 const PDF_CHANGED_MESSAGE = "PDF changed while it was being read. Retry the request.";
 const PDF_TOO_LARGE_MESSAGE = "read_pdf_layout accepts source PDFs up to 250 MiB.";
+const PDF_HASH_CHUNK_BYTES = 1024 * 1024;
+const PDF_HASH_MAX_CHUNK_BYTES = 8 * 1024 * 1024;
+const PDF_HEADER_WINDOW_BYTES = 1024;
+const PDF_HEADER_MAGIC = Buffer.from("%PDF-", "ascii");
 const PATH_RACE_ERROR_CODES = new Set(["ELOOP", "ENOENT", "ENOTDIR", "ESTALE"]);
 
 export const PDF_MUTATION_MAX_FILE_BYTES = 250 * 1024 * 1024;
 export const PDF_MERGE_MAX_TOTAL_BYTES = 500 * 1024 * 1024;
 export const PDF_MUTATION_FILE_LIMIT_MESSAGE = "PDF input exceeds the 250 MiB per-file limit.";
 export const PDF_MERGE_AGGREGATE_LIMIT_MESSAGE = "merge_pdfs inputs exceed the 500 MiB aggregate limit.";
+export const PDF_INVALID_HEADER_MESSAGE =
+  "PDF input does not contain a %PDF- header within the first 1,024 bytes.";
 
 export function pdfMutationFileLimitError() {
   const error = new Error(PDF_MUTATION_FILE_LIMIT_MESSAGE);
@@ -20,6 +27,12 @@ export function pdfMutationFileLimitError() {
 export function pdfMergeAggregateLimitError() {
   const error = new Error(PDF_MERGE_AGGREGATE_LIMIT_MESSAGE);
   error.code = "PDF_MERGE_INPUTS_TOO_LARGE";
+  return error;
+}
+
+function pdfInvalidHeaderError() {
+  const error = new Error(PDF_INVALID_HEADER_MESSAGE);
+  error.code = "PDF_INVALID_HEADER";
   return error;
 }
 
@@ -464,6 +477,34 @@ export async function readBoundedPdfFileSafely(resolvedPath, maxBytes, {
   assertPathAllowed,
   createSizeLimitError = () => new Error(PDF_TOO_LARGE_MESSAGE),
 } = {}) {
+  return await consumeBoundedPdfFileSafely(resolvedPath, maxBytes, {
+    fileSystem,
+    constants,
+    assertPathAllowed,
+    createSizeLimitError,
+  }, async (handle, sizeBytes) => {
+    const bytes = Buffer.allocUnsafe(sizeBytes);
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await raceAware(() => handle.read(bytes, offset, bytes.length - offset, offset));
+      if (bytesRead === 0) throw pdfChangedError();
+      offset += bytesRead;
+    }
+    return { bytes };
+  });
+}
+
+async function consumeBoundedPdfFileSafely(
+  resolvedPath,
+  maxBytes,
+  {
+    fileSystem,
+    constants,
+    assertPathAllowed,
+    createSizeLimitError,
+  },
+  consume,
+) {
   validateBoundedReadArguments(maxBytes, assertPathAllowed, createSizeLimitError);
 
   const canonicalPath = await fileSystem.realpath(resolvedPath);
@@ -478,13 +519,7 @@ export async function readBoundedPdfFileSafely(resolvedPath, maxBytes, {
     if (!sameFileIdentity(pathBefore, before)) throw pdfChangedError();
 
     const sizeBytes = boundedFileSize(before, maxBytes, createSizeLimitError);
-    const bytes = Buffer.allocUnsafe(sizeBytes);
-    let offset = 0;
-    while (offset < bytes.length) {
-      const { bytesRead } = await raceAware(() => handle.read(bytes, offset, bytes.length - offset, offset));
-      if (bytesRead === 0) throw pdfChangedError();
-      offset += bytesRead;
-    }
+    const consumed = await consume(handle, sizeBytes);
 
     const after = await raceAware(() => handle.stat({ bigint: true }));
     if (!sameFileIdentity(before, after)) throw pdfChangedError();
@@ -492,11 +527,13 @@ export async function readBoundedPdfFileSafely(resolvedPath, maxBytes, {
     const pathAfter = await raceAware(() => fileSystem.lstat(canonicalPath, { bigint: true }));
     if (!pathAfter.isFile() || !sameFileIdentity(after, pathAfter)) throw pdfChangedError();
 
+    const canonicalFromRequestedPath = await raceAware(() => fileSystem.realpath(resolvedPath));
+    if (canonicalFromRequestedPath !== canonicalPath) throw pdfChangedError();
     const canonicalAfter = await raceAware(() => fileSystem.realpath(canonicalPath));
     if (canonicalAfter !== canonicalPath) throw pdfChangedError();
     assertPathAllowed(canonicalAfter);
     return {
-      bytes,
+      ...consumed,
       sizeBytes,
       canonicalPath: canonicalAfter,
       fileIdentity: stableFileIdentity(after),
@@ -504,6 +541,72 @@ export async function readBoundedPdfFileSafely(resolvedPath, maxBytes, {
   } finally {
     await handle.close();
   }
+}
+
+/**
+ * Hash a bounded regular file from one descriptor without allocating the
+ * complete file while rejecting the same observable pathname and inode races
+ * as the byte reader.
+ */
+export async function hashBoundedPdfFileSafely(resolvedPath, maxBytes, {
+  fileSystem = defaultFileSystem,
+  constants = defaultFsConstants,
+  assertPathAllowed,
+  createSizeLimitError = () => new Error(PDF_TOO_LARGE_MESSAGE),
+  chunkBytes = PDF_HASH_CHUNK_BYTES,
+} = {}) {
+  if (
+    !Number.isSafeInteger(chunkBytes)
+    || chunkBytes < 1
+    || chunkBytes > PDF_HASH_MAX_CHUNK_BYTES
+  ) {
+    throw new TypeError(
+      `chunkBytes must be a positive safe integer no greater than ${PDF_HASH_MAX_CHUNK_BYTES}.`,
+    );
+  }
+  const { headerValid, ...identity } = await consumeBoundedPdfFileSafely(resolvedPath, maxBytes, {
+    fileSystem,
+    constants,
+    assertPathAllowed,
+    createSizeLimitError,
+  }, async (handle, sizeBytes) => {
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(Math.min(chunkBytes, Math.max(sizeBytes, 1)));
+    const headerWindow = Buffer.allocUnsafe(Math.min(sizeBytes, PDF_HEADER_WINDOW_BYTES));
+    if (headerWindow.length === 0) return { headerValid: false };
+    let headerBytes = 0;
+    let offset = 0;
+    while (offset < sizeBytes) {
+      const headerRemaining = headerWindow.length - headerBytes;
+      const length = Math.min(
+        buffer.length,
+        sizeBytes - offset,
+        headerRemaining > 0 ? headerRemaining : Number.POSITIVE_INFINITY,
+      );
+      const { bytesRead } = await raceAware(() => handle.read(buffer, 0, length, offset));
+      if (bytesRead === 0) throw pdfChangedError();
+      if (headerBytes < headerWindow.length) {
+        const copied = Math.min(bytesRead, headerWindow.length - headerBytes);
+        buffer.copy(headerWindow, headerBytes, 0, copied);
+        headerBytes += copied;
+      }
+      hash.update(buffer.subarray(0, bytesRead));
+      offset += bytesRead;
+      if (
+        headerBytes === headerWindow.length
+        && headerWindow.indexOf(PDF_HEADER_MAGIC) < 0
+      ) {
+        return { headerValid: false };
+      }
+    }
+
+    return {
+      sha256: hash.digest("hex"),
+      headerValid: true,
+    };
+  });
+  if (!headerValid) throw pdfInvalidHeaderError();
+  return identity;
 }
 
 /**

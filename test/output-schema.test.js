@@ -33,6 +33,7 @@ const STRUCTURED_TOOLS = [
   "fill_with_profile",
   "get_active_document",
   "get_page_analysis",
+  "get_pdf_identity",
   "get_pdf_resource_uri",
   "list_signatures",
   "load_signature",
@@ -75,11 +76,11 @@ function collectKeys(value, output = new Set()) {
 }
 
 describe("output schema definitions", () => {
-  it("covers the exact 33 structured tools and no text-only tool", () => {
+  it("covers the exact 34 structured tools and no text-only tool", () => {
     expect(Object.keys(TOOL_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_ERROR_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
-    expect(STRUCTURED_TOOLS).toHaveLength(33);
+    expect(STRUCTURED_TOOLS).toHaveLength(34);
     expect(TEXT_ONLY_TOOLS).toHaveLength(6);
   });
 

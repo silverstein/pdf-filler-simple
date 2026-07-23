@@ -276,8 +276,10 @@ Use these record boundaries:
   A blocked decision plans no call that crosses the blocked gate. Never list
   the same tool as both planned and prohibited.
 - `get_pdf_info` reports PDF metadata, not canonical path plus byte length and
-  SHA-256 identity. Do not use it as a substitute for artifact identity. Until
-  a host exposes a universal artifact-identity operation, state the required
-  host rebind separately rather than adding `get_pdf_info` solely for identity.
+  SHA-256 identity. Do not use it as a substitute for artifact identity.
+- Use `get_pdf_identity` when a plan needs to bind an allowed local PDF before
+  parsing, or to bind a newly written output before validation. It returns the
+  canonical path, exact byte length, and SHA-256 without parsing or decrypting
+  the PDF. Plan it only when that read-only call is immediately permitted.
 - A ready form fill plans `fill_pdf` followed by `read_pdf_fields` as the
   independent field readback.

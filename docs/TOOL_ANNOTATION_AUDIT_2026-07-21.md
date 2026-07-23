@@ -60,6 +60,7 @@ not idempotent.
 | `render_pdf_region` | T | F | T | F | Reads and returns an in-memory crop; it does not retain an image file. |
 | `search_pdf_text` | T | F | T | F | Reads and searches local PDF text. |
 | `get_pdf_resource_uri` | T | F | T | F | Validates a local file and computes a URI without registration or persistence. |
+| `get_pdf_identity` | T | F | T | F | Streams a bounded local file to return canonical path, byte length, and SHA-256 without parsing. |
 | `display_pdf` | F | F | F | F | Reads a PDF but also replaces/timestamps active-document state and issues a fresh viewer UUID. |
 | `get_active_document` | T | F | T | F | Reads active-document state. |
 | `set_active_document` | F | F | F | F | Replaces ephemeral active-document state and refreshes `lastOpenedAt`; it does not alter user files. |
@@ -84,7 +85,7 @@ not idempotent.
 
 ## Regression proof
 
-`test/mcp-contract.test.js` contains the same exhaustive 39-tool matrix and
+`test/mcp-contract.test.js` contains the same exhaustive 40-tool matrix and
 compares all four effect hints for both runtime copies after live MCP
 discovery. It also binds the complete discovery payload to an updated SHA-256,
 so a title, description, schema, metadata, or annotation change requires

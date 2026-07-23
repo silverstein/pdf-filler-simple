@@ -112,6 +112,7 @@ Once installed, ask Claude in Cursor:
 - **search_pdf_text** - Search extracted PDF text and return page-numbered snippets
 - **merge_pdfs** / **split_pdf** - Combine and split documents
 - **rotate_pdf_pages** / **reorder_pdf_pages** - Organize scanned or shuffled pages
+- **get_pdf_identity** - Bind plans and provenance to the canonical path, byte length, and SHA-256 for a PDF up to 250 MiB without parsing its document structure
 - **get_pdf_info** / **get_page_analysis** - Inspect pages, blank detection, orientation, and metadata
 
 ### Current Extraction Boundary

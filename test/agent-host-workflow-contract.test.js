@@ -224,6 +224,9 @@ describe("cross-host PDF Tools workflow contract", () => {
       /`get_pdf_info` reports PDF metadata, not canonical path plus byte length and[\s\S]*SHA-256 identity/i,
     );
     expect(skill).toMatch(
+      /Use `get_pdf_identity`[\s\S]*canonical path, exact byte length, and SHA-256[\s\S]*without parsing or decrypting/i,
+    );
+    expect(skill).toMatch(
       /Never list\s+the same tool as both planned and prohibited/i,
     );
     const hostWorkflowGuide = await readText("docs/AGENT_HOST_WORKFLOWS.md");
@@ -325,7 +328,7 @@ describe("cross-host PDF Tools workflow contract", () => {
       "CONTENT_UNAVAILABLE_PASSWORD_REQUIRED",
     );
     expect(schema.properties.planned_tools.items.enum).toEqual(
-      expect.arrayContaining(["apply_page_plan", "get_page_analysis"]),
+      expect.arrayContaining(["apply_page_plan", "get_page_analysis", "get_pdf_identity"]),
     );
   });
 

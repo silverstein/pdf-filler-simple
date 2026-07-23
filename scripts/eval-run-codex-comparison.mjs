@@ -1823,6 +1823,7 @@ export async function finalizeCampaign(campaignPath, { documentsRoot = DOCUMENTS
   const trialsPath = path.join(campaignRoot, "measured-trials.json");
   const ingesterStdout = await commandOutput(process.execPath, [
     path.join(REPO_ROOT, "scripts", "eval-ingest-codex-trajectory.mjs"),
+    "--suite", SUITE_PATH,
     "--plan", path.join(campaignRoot, "pre-run-plan.json"),
     "--batch", batchPath,
     "--output", trialsPath,
@@ -1830,6 +1831,7 @@ export async function finalizeCampaign(campaignPath, { documentsRoot = DOCUMENTS
   await writeText(path.join(campaignRoot, "ingester.stdout"), `${ingesterStdout}\n`);
   const reportText = await commandOutput(process.execPath, [
     path.join(REPO_ROOT, "scripts", "eval-run-trajectories.mjs"),
+    "--suite", SUITE_PATH,
     "--trials", trialsPath,
   ], { cwd: REPO_ROOT });
   const report = JSON.parse(reportText);

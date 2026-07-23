@@ -31,21 +31,112 @@ const TRIAL_OUTCOMES = new Set(["completed", "harness_failure"]);
 const EVIDENCE_KINDS = new Set(["page", "field", "region", "file"]);
 const EFFECT_KEYS = ["created", "modified", "deleted", "external_requests"];
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
+const GIT_COMMIT_PATTERN = /^[a-f0-9]{40}$/;
 const BEAD_PATTERN = /^pdf-toolkit-mcp-[a-z0-9]+(?:\.[0-9]+)?$/;
 const REGRESSION_PATTERN = /^pdf-tools\.regression\.trajectory\.v1\.[a-z0-9.-]+$/;
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const TRUST_REGISTRY_PATH = path.join(
-  REPO_ROOT, "test", "fixtures", "eval", "trajectories", "trust-registry.v1.json"
+const TRAJECTORY_FIXTURE_ROOT = path.join(
+  REPO_ROOT, "test", "fixtures", "eval", "trajectories"
 );
-const TRUST_REGISTRY = JSON.parse(fsSync.readFileSync(TRUST_REGISTRY_PATH, "utf8"));
-const TOOL_CONTRACT_PATH = path.join(
-  REPO_ROOT, "test", "fixtures", "eval", "trajectories", "tool-contracts.v1.json"
-);
-const TOOL_CONTRACT = JSON.parse(fsSync.readFileSync(TOOL_CONTRACT_PATH, "utf8"));
-const TOOL_SCHEMAS = new Map(TOOL_CONTRACT.tools.map(tool => [tool.name, tool.input_schema]));
-const CORPUS_MANIFEST_RAW = fsSync.readFileSync(path.join(REPO_ROOT, TRUST_REGISTRY.corpus_manifest.path));
-const CORPUS_MANIFEST = JSON.parse(CORPUS_MANIFEST_RAW);
-const CORPUS_FIXTURE_IDS = new Set(CORPUS_MANIFEST.fixtures.map(fixture => fixture.id));
+
+function loadVersionedJson(filename) {
+  return JSON.parse(fsSync.readFileSync(path.join(TRAJECTORY_FIXTURE_ROOT, filename), "utf8"));
+}
+
+const TRUST_REGISTRIES = new Map([
+  "trust-registry.v1.json",
+  "trust-registry.v2.json",
+].map(filename => {
+  const registry = loadVersionedJson(filename);
+  return [registry.registry_id, registry];
+}));
+const TOOL_CONTRACTS = new Map([
+  "tool-contracts.v1.json",
+  "tool-contracts.v2.json",
+].map(filename => {
+  const contract = loadVersionedJson(filename);
+  return [contract.contract_id, contract];
+}));
+const VISUAL_ORACLE_APPROVALS = new Map([
+  "visual-oracle-approvals.v1.json",
+].map(filename => {
+  const approval = loadVersionedJson(filename);
+  return [approval.approval_artifact_id, approval];
+}));
+const JOB_RESOURCES = new WeakMap();
+
+export function visualOracleApprovalKey({
+  sourceSha256,
+  page,
+  scale,
+  region,
+}) {
+  return canonicalJson({
+    source_sha256: sourceSha256,
+    page,
+    scale,
+    region,
+  });
+}
+
+export function resourcesForSuite(suite) {
+  const trustRegistry = TRUST_REGISTRIES.get(
+    suite?.measurement_policy?.trust_registry_id
+  );
+  const toolContract = TOOL_CONTRACTS.get(
+    suite?.measurement_policy?.tool_contract_id
+  );
+  const approvalId = suite?.measurement_policy?.visual_oracle_approval_id;
+  const visualOracleApproval = approvalId === undefined
+    ? null
+    : VISUAL_ORACLE_APPROVALS.get(approvalId);
+  if (!trustRegistry || !toolContract || (approvalId !== undefined && !visualOracleApproval)) {
+    return null;
+  }
+  const corpusManifestRaw = fsSync.readFileSync(
+    path.join(REPO_ROOT, trustRegistry.corpus_manifest.path)
+  );
+  const corpusManifest = JSON.parse(corpusManifestRaw);
+  const approvedVisualOracleDigests = new Map();
+  for (const receipt of visualOracleApproval?.captures ?? []) {
+    if (receipt.review_outcome !== "approved") continue;
+    const key = visualOracleApprovalKey({
+      sourceSha256: receipt.source?.sha256,
+      page: receipt.source?.page,
+      scale: receipt.source?.scale,
+      region: receipt.source?.region,
+    });
+    const digests = approvedVisualOracleDigests.get(key) ?? [];
+    digests.push(receipt.oracle_canonical_sha256);
+    approvedVisualOracleDigests.set(key, digests);
+  }
+  return {
+    trustRegistry,
+    trustRegistryCanonicalSha256: sha256(canonicalJson(trustRegistry)),
+    toolContract,
+    toolSchemas: new Map(
+      toolContract.tools.map(tool => [tool.name, tool.input_schema])
+    ),
+    visualOracleApproval,
+    visualOracleApprovalCanonicalSha256: visualOracleApproval
+      ? sha256(canonicalJson(visualOracleApproval))
+      : null,
+    approvedVisualOracleDigests,
+    corpusManifestRaw,
+    corpusManifest,
+    corpusFixtureIds: new Set(
+      corpusManifest.fixtures.map(fixture => fixture.id)
+    ),
+  };
+}
+
+const DEFAULT_RESOURCES = resourcesForSuite({
+  measurement_policy: {
+    trust_registry_id: "pdf-tools.trajectory.trust.v2",
+    tool_contract_id: "pdf-tools.trajectory.tool-contracts.v2",
+    visual_oracle_approval_id: "pdf-tools.trajectory.visual-oracle-approvals.v1",
+  },
+});
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -96,6 +187,241 @@ function exactKeys(value, required, optional = []) {
   const keys = Object.keys(value);
   const allowed = new Set([...required, ...optional]);
   return required.every(key => Object.hasOwn(value, key)) && keys.every(key => allowed.has(key));
+}
+
+export function validateVisualOracleApprovalArtifact(
+  approval,
+  corpusManifest = loadVersionedJson("../manifest.v1.json"),
+) {
+  const errors = [];
+  const topKeys = [
+    "approval_artifact_version", "approval_artifact_id", "claim_boundary", "review",
+    "source_revision", "captures",
+  ];
+  if (!exactKeys(approval, topKeys)) {
+    errors.push("visual oracle approval artifact has missing or undeclared top-level fields");
+    return errors;
+  }
+  if (approval.approval_artifact_version !== 1) {
+    errors.push("visual oracle approval artifact version must equal 1");
+  }
+  if (!nonEmptyString(approval.approval_artifact_id)
+    || !nonEmptyString(approval.claim_boundary)) {
+    errors.push("visual oracle approval artifact identity and claim boundary must be non-empty");
+  }
+  if (!exactKeys(approval.review, ["reviewed_on", "review_method", "reviewer_role"])
+    || !/^\d{4}-\d{2}-\d{2}$/.test(approval.review?.reviewed_on ?? "")
+    || !nonEmptyString(approval.review?.review_method)
+    || !nonEmptyString(approval.review?.reviewer_role)) {
+    errors.push("visual oracle approval review receipt is invalid");
+  }
+
+  const revision = approval.source_revision;
+  if (!exactKeys(revision, ["repository_base_commit", "commit_binding", "files"])
+    || !GIT_COMMIT_PATTERN.test(revision?.repository_base_commit ?? "")
+    || !nonEmptyString(revision?.commit_binding)
+    || !Array.isArray(revision?.files)) {
+    errors.push("visual oracle approval source revision is invalid");
+  } else {
+    const requiredSourcePaths = new Set([
+      "scripts/eval-generate-trajectory-calibration.mjs",
+      "test/eval/render-visual-oracle.js",
+      "test/eval/comparison-observations.js",
+      "test/fixtures/eval/manifest.v1.json",
+      "package-lock.json",
+    ]);
+    const seenSourcePaths = new Set();
+    for (const [index, file] of revision.files.entries()) {
+      if (!exactKeys(file, ["path", "sha256"])
+        || !validRelativePath(file?.path)
+        || !SHA256_PATTERN.test(file?.sha256 ?? "")) {
+        errors.push(`visual oracle approval source_revision.files[${index}] is invalid`);
+        continue;
+      }
+      if (seenSourcePaths.has(file.path)) {
+        errors.push(`visual oracle approval source file ${file.path} is duplicated`);
+      }
+      seenSourcePaths.add(file.path);
+      if (!requiredSourcePaths.has(file.path)) {
+        errors.push(`visual oracle approval source file ${file.path} is not allowlisted`);
+        continue;
+      }
+      try {
+        if (sha256(fsSync.readFileSync(path.join(REPO_ROOT, file.path))) !== file.sha256) {
+          errors.push(`visual oracle approval source file ${file.path} changed`);
+        }
+      } catch {
+        errors.push(`visual oracle approval source file ${file.path} is unavailable`);
+      }
+    }
+    for (const requiredPath of requiredSourcePaths) {
+      if (!seenSourcePaths.has(requiredPath)) {
+        errors.push(`visual oracle approval source file ${requiredPath} is missing`);
+      }
+    }
+  }
+
+  if (!Array.isArray(approval.captures) || approval.captures.length !== 4) {
+    errors.push("visual oracle approval artifact must contain exactly four capture receipts");
+    return errors;
+  }
+  const fixtureBySha = new Map(
+    (corpusManifest?.fixtures ?? []).map(fixture => [fixture.sha256, fixture])
+  );
+  const receipts = new Map();
+  const approvalsBySource = new Map();
+  const captureKeys = [
+    "receipt_id", "capture_kind", "captured_on", "host", "renderer_stack", "source",
+    "retained_image", "oracle", "oracle_canonical_sha256", "review_outcome",
+  ];
+  const hostKeys = [
+    "hostname", "platform", "architecture", "platform_release", "os_product_version",
+    "os_build", "node_version",
+  ];
+  const rendererKeys = [
+    "pdfjs_dist_version", "napi_rs_canvas_version", "retained_image_method",
+    "oracle_method",
+  ];
+  const sourceKeys = [
+    "path", "fixture_id", "sha256", "page", "scale", "region", "page_box_points",
+    "max_dimension_px",
+  ];
+  const imageKeys = ["origin_kind", "origin_receipt_id", "sha256", "byte_length"];
+  const oracleKeys = [
+    "oracle_schema_version", "fixture_id", "reference_source_sha256",
+    "reference_rgba_sha256", "normalized_width_px", "normalized_height_px",
+    "host_normalized_rgba_sha256", "reference_normalized_rgba_sha256",
+    "mean_absolute_error", "foreground_iou", "aspect_ratio_error", "passed",
+  ];
+  for (const [index, receipt] of approval.captures.entries()) {
+    const location = `visual oracle approval captures[${index}]`;
+    if (!exactKeys(receipt, captureKeys)) {
+      errors.push(`${location} has missing or undeclared fields`);
+      continue;
+    }
+    if (!nonEmptyString(receipt.receipt_id) || receipts.has(receipt.receipt_id)) {
+      errors.push(`${location}.receipt_id must be non-empty and unique`);
+    } else {
+      receipts.set(receipt.receipt_id, receipt);
+    }
+    if (!new Set(["origin_reference_replay", "cross_platform_compatibility_replay"])
+      .has(receipt.capture_kind)) {
+      errors.push(`${location}.capture_kind is unsupported`);
+    }
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(receipt.captured_on ?? "")) {
+      errors.push(`${location}.captured_on must be an ISO date`);
+    }
+    if (!exactKeys(receipt.host, hostKeys)
+      || !["hostname", "platform", "architecture", "platform_release", "os_build", "node_version"]
+        .every(key => nonEmptyString(receipt.host?.[key]))
+      || !(receipt.host?.os_product_version === null
+        || nonEmptyString(receipt.host?.os_product_version))) {
+      errors.push(`${location}.host is invalid`);
+    }
+    if (!exactKeys(receipt.renderer_stack, rendererKeys)
+      || receipt.renderer_stack?.pdfjs_dist_version !== "5.4.624"
+      || receipt.renderer_stack?.napi_rs_canvas_version !== "0.1.99"
+      || !nonEmptyString(receipt.renderer_stack?.retained_image_method)
+      || receipt.renderer_stack?.oracle_method !== "buildTrustedVisualOracle") {
+      errors.push(`${location}.renderer_stack is invalid or not version-pinned`);
+    }
+    const source = receipt.source;
+    const fixture = fixtureBySha.get(source?.sha256);
+    if (!exactKeys(source, sourceKeys)
+      || !validRelativePath(source?.path)
+      || !SHA256_PATTERN.test(source?.sha256 ?? "")
+      || !nonEmptyString(source?.fixture_id)
+      || source?.page !== 1
+      || source?.scale !== 2.5
+      || source?.region !== null
+      || !Array.isArray(source?.page_box_points)
+      || source.page_box_points.length !== 4
+      || !source.page_box_points.every(Number.isFinite)
+      || source?.max_dimension_px !== 1200
+      || fixture?.id !== source.fixture_id) {
+      errors.push(`${location}.source is not bound to an approved corpus fixture and render request`);
+    }
+    const image = receipt.retained_image;
+    if (!exactKeys(image, imageKeys)
+      || !new Set(["same_host_deterministic_calibration", "linked_origin_receipt"])
+        .has(image?.origin_kind)
+      || !(image?.origin_receipt_id === null || nonEmptyString(image?.origin_receipt_id))
+      || !SHA256_PATTERN.test(image?.sha256 ?? "")
+      || !Number.isInteger(image?.byte_length)
+      || image.byte_length < 1) {
+      errors.push(`${location}.retained_image is invalid`);
+    }
+    const oracle = receipt.oracle;
+    if (!exactKeys(oracle, oracleKeys)
+      || oracle?.oracle_schema_version !== 1
+      || oracle?.fixture_id !== source?.fixture_id
+      || oracle?.reference_source_sha256 !== source?.sha256
+      || !SHA256_PATTERN.test(oracle?.reference_rgba_sha256 ?? "")
+      || !SHA256_PATTERN.test(oracle?.host_normalized_rgba_sha256 ?? "")
+      || !SHA256_PATTERN.test(oracle?.reference_normalized_rgba_sha256 ?? "")
+      || !Number.isInteger(oracle?.normalized_width_px)
+      || !Number.isInteger(oracle?.normalized_height_px)
+      || !Number.isFinite(oracle?.mean_absolute_error)
+      || !Number.isFinite(oracle?.foreground_iou)
+      || !Number.isFinite(oracle?.aspect_ratio_error)
+      || oracle?.passed !== true
+      || oracle.mean_absolute_error > VISUAL_ORACLE_MAX_MAE
+      || oracle.foreground_iou < VISUAL_ORACLE_MIN_FOREGROUND_IOU
+      || oracle.aspect_ratio_error > VISUAL_ORACLE_MAX_ASPECT_ERROR) {
+      errors.push(`${location}.oracle is invalid or outside semantic thresholds`);
+    }
+    if (!SHA256_PATTERN.test(receipt.oracle_canonical_sha256 ?? "")
+      || receipt.oracle_canonical_sha256 !== sha256(canonicalJson(oracle))) {
+      errors.push(`${location}.oracle_canonical_sha256 does not bind the complete oracle preimage`);
+    }
+    if (receipt.review_outcome !== "approved") {
+      errors.push(`${location}.review_outcome must equal approved`);
+    }
+    const sourceApprovals = approvalsBySource.get(source?.sha256) ?? [];
+    sourceApprovals.push(receipt);
+    approvalsBySource.set(source?.sha256, sourceApprovals);
+  }
+  for (const receipt of approval.captures) {
+    const location = `visual oracle approval ${receipt.receipt_id}`;
+    if (receipt.capture_kind === "origin_reference_replay") {
+      if (receipt.host?.platform !== "linux"
+        || receipt.retained_image?.origin_kind !== "same_host_deterministic_calibration"
+        || receipt.retained_image?.origin_receipt_id !== null) {
+        errors.push(`${location} must be a Linux-origin deterministic calibration receipt`);
+      }
+      continue;
+    }
+    const origin = receipts.get(receipt.retained_image?.origin_receipt_id);
+    if (receipt.host?.platform !== "darwin"
+      || receipt.retained_image?.origin_kind !== "linked_origin_receipt"
+      || origin?.capture_kind !== "origin_reference_replay"
+      || origin?.source?.sha256 !== receipt.source?.sha256
+      || origin?.retained_image?.sha256 !== receipt.retained_image?.sha256
+      || origin?.retained_image?.byte_length !== receipt.retained_image?.byte_length
+      || origin?.oracle?.host_normalized_rgba_sha256
+        !== receipt.oracle?.host_normalized_rgba_sha256) {
+      errors.push(`${location} is not bound to its Linux-origin retained image receipt`);
+    }
+  }
+  const expectedSources = new Set([
+    "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+    "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+  ]);
+  for (const sourceSha256 of expectedSources) {
+    const sourceReceipts = approvalsBySource.get(sourceSha256) ?? [];
+    const kinds = sourceReceipts.map(receipt => receipt.capture_kind).sort();
+    if (canonicalJson(kinds) !== canonicalJson([
+      "cross_platform_compatibility_replay", "origin_reference_replay",
+    ])) {
+      errors.push(`visual oracle approval source ${sourceSha256} must have one Linux origin and one Darwin compatibility receipt`);
+    }
+  }
+  for (const sourceSha256 of approvalsBySource.keys()) {
+    if (!expectedSources.has(sourceSha256)) {
+      errors.push(`visual oracle approval source ${sourceSha256} is not part of the comparison calibration`);
+    }
+  }
+  return errors;
 }
 
 function validateJsonSchema(value, schema, location, errors) {
@@ -212,7 +538,12 @@ function validateObservedArtifact(value, location, errors) {
   }
 }
 
-function validateSemanticObservations(value, location, errors) {
+function validateSemanticObservations(
+  value,
+  location,
+  errors,
+  resources = DEFAULT_RESOURCES,
+) {
   if (!addExactKeyError(errors, location, value, [
     "semantic_schema_version", "pages", "fields", "page_plans", "signature_locations",
     "render_regions", "files",
@@ -350,7 +681,9 @@ function validateSemanticObservations(value, location, errors) {
       if (oracle.reference_source_sha256 !== render.source_sha256) {
         errors.push(`${itemLocation}.visual_oracle must bind the observed source digest`);
       }
-      const expectedFixture = CORPUS_MANIFEST.fixtures.find(item => item.sha256 === render.source_sha256);
+      const expectedFixture = resources.corpusManifest.fixtures.find(
+        item => item.sha256 === render.source_sha256
+      );
       if (!expectedFixture || oracle.fixture_id !== expectedFixture.id) {
         errors.push(`${itemLocation}.visual_oracle.fixture_id must match the pinned corpus source`);
       }
@@ -443,7 +776,7 @@ function validateSampleEvidence(trial, location, errors) {
   }
 }
 
-function validateStep(step, location, errors) {
+function validateStep(step, location, errors, resources = DEFAULT_RESOURCES) {
   if (!addExactKeyError(errors, location, step, [
     "step_schema_version", "step_id", "tool", "started_at", "finished_at", "arguments", "ok",
   ], ["result", "error", "recovery_of_step_id"])) return;
@@ -489,7 +822,12 @@ function validateStep(step, location, errors) {
       step.result.observed_artifacts.forEach((artifact, index) =>
         validateObservedArtifact(artifact, `${location}.result.observed_artifacts[${index}]`, errors));
     }
-    validateSemanticObservations(step.result.semantic_observations, `${location}.result.semantic_observations`, errors);
+    validateSemanticObservations(
+      step.result.semantic_observations,
+      `${location}.result.semantic_observations`,
+      errors,
+      resources,
+    );
     const isRenderTool = new Set(["render_pdf_page", "render_pdf_region"]).has(step.tool);
     if (isRenderTool && !isObject(step.result.retained_raw_result)) {
       errors.push(`${location}.result.retained_raw_result is required for render tools`);
@@ -513,7 +851,7 @@ function validateStep(step, location, errors) {
       errors.push(`${location}.error.raw_error_sha256 must bind the retained raw MCP failure`);
     }
   }
-  const runtimeSchema = TOOL_SCHEMAS.get(step.tool);
+  const runtimeSchema = resources.toolSchemas.get(step.tool);
   if (!runtimeSchema) errors.push(`${location}.tool is absent from the pinned runtime contract`);
   else validateJsonSchema(step.arguments, runtimeSchema, `${location}.arguments`, errors);
 }
@@ -585,7 +923,13 @@ function validateEvidence(value, location, errors) {
   }
 }
 
-function validateCorrectionRef(value, location, errors, jobId) {
+function validateCorrectionRef(
+  value,
+  location,
+  errors,
+  jobId,
+  resources = DEFAULT_RESOURCES,
+) {
   if (!addExactKeyError(errors, location, value, ["bead_id", "regression_id", "relationship"])) return;
   if (!BEAD_PATTERN.test(value.bead_id ?? "")) errors.push(`${location}.bead_id must be a canonical Bead id`);
   if (!REGRESSION_PATTERN.test(value.regression_id ?? "")) {
@@ -594,7 +938,7 @@ function validateCorrectionRef(value, location, errors, jobId) {
   if (!new Set(["failure", "accepted_fix"]).has(value.relationship)) {
     errors.push(`${location}.relationship must be failure or accepted_fix`);
   }
-  const approved = TRUST_REGISTRY.approved_lineage[jobId];
+  const approved = resources.trustRegistry.approved_lineage[jobId];
   if (value.bead_id !== approved?.bead_id) {
     errors.push(`${location}.bead_id is not in the approved lineage registry`);
   }
@@ -606,8 +950,13 @@ function validateCorrectionRef(value, location, errors, jobId) {
   }
 }
 
-function approvedCorrectionRef(value, jobId, failedCheckId = null) {
-  const approved = TRUST_REGISTRY.approved_lineage[jobId];
+function approvedCorrectionRef(
+  value,
+  jobId,
+  failedCheckId = null,
+  resources = DEFAULT_RESOURCES,
+) {
+  const approved = resources.trustRegistry.approved_lineage[jobId];
   const regression = approved?.regressions?.[value?.regression_id];
   return isObject(value)
     && value.bead_id === approved?.bead_id
@@ -616,11 +965,18 @@ function approvedCorrectionRef(value, jobId, failedCheckId = null) {
     && (failedCheckId === null || regression.failure_checks?.includes(failedCheckId));
 }
 
-function validateCompletedTrial(job, trial, location, errors) {
+function validateCompletedTrial(
+  job,
+  trial,
+  location,
+  errors,
+  resources = DEFAULT_RESOURCES,
+) {
   if (!Array.isArray(trial.trajectory)) {
     errors.push(`${location}.trajectory must be an array`);
   } else {
-    trial.trajectory.forEach((step, index) => validateStep(step, `${location}.trajectory[${index}]`, errors));
+    trial.trajectory.forEach((step, index) =>
+      validateStep(step, `${location}.trajectory[${index}]`, errors, resources));
     const stepIds = trial.trajectory.map(step => step?.step_id).filter(nonEmptyString);
     const resultIds = trial.trajectory.map(step => step?.result?.result_id).filter(nonEmptyString);
     for (const duplicate of duplicates(stepIds)) errors.push(`${location}.trajectory contains duplicate step id ${duplicate}`);
@@ -710,7 +1066,13 @@ function validateCompletedTrial(job, trial, location, errors) {
     errors.push(`${location}.correction_refs must be an array`);
   } else {
     trial.correction_refs.forEach((item, index) =>
-      validateCorrectionRef(item, `${location}.correction_refs[${index}]`, errors, trial.job_id));
+      validateCorrectionRef(
+        item,
+        `${location}.correction_refs[${index}]`,
+        errors,
+        trial.job_id,
+        resources,
+      ));
   }
   if (Object.hasOwn(trial, "intent")) {
     if (addExactKeyError(errors, `${location}.intent`, trial.intent, [
@@ -748,7 +1110,15 @@ function validateCompletedTrial(job, trial, location, errors) {
   if (job && trial.job_id !== job.id) errors.push(`${location}.job_id must equal ${job.id}`);
 }
 
-export function validateTrajectoryTrial(job, trial, location = "trial") {
+export function validateTrajectoryTrial(
+  job,
+  trial,
+  location = "trial",
+  resources = JOB_RESOURCES.get(job),
+) {
+  if (!resources) {
+    return [`${location}.job is not bound to a validated trajectory suite`];
+  }
   const errors = [];
   const completedRequired = [
     "trial_schema_version", "trial_id", "job_id", "repeat_index", "agent", "model", "outcome", "run",
@@ -787,7 +1157,7 @@ export function validateTrajectoryTrial(job, trial, location = "trial") {
   }
   validateSampleEvidence(trial, location, errors);
   if (trial.outcome === "completed") {
-    validateCompletedTrial(job, trial, location, errors);
+    validateCompletedTrial(job, trial, location, errors, resources);
   } else if (trial.outcome === "harness_failure") {
     if (addExactKeyError(errors, `${location}.harness_failure`, trial.harness_failure, [
       "harness_schema_version", "code", "phase", "detail", "event_id",
@@ -814,24 +1184,50 @@ export function validateTrajectorySuite(suite) {
   if (!addExactKeyError(errors, "suite", suite, [
     "suite_version", "suite_id", "description", "measurement_policy", "jobs",
   ])) return errors;
+  const selectedResources = resourcesForSuite(suite);
+  if (!selectedResources) {
+    if (!TRUST_REGISTRIES.has(suite?.measurement_policy?.trust_registry_id)) {
+      errors.push("suite.measurement_policy.trust_registry_id is not allowlisted");
+    }
+    if (!TOOL_CONTRACTS.has(suite?.measurement_policy?.tool_contract_id)) {
+      errors.push("suite.measurement_policy.tool_contract_id is not allowlisted");
+    }
+    if (suite?.measurement_policy?.visual_oracle_approval_id !== undefined
+      && !VISUAL_ORACLE_APPROVALS.has(
+        suite.measurement_policy.visual_oracle_approval_id
+      )) {
+      errors.push("suite.measurement_policy.visual_oracle_approval_id is not allowlisted");
+    }
+  }
+  const resources = selectedResources ?? DEFAULT_RESOURCES;
+  const {
+    trustRegistry,
+    toolContract,
+    toolSchemas,
+    visualOracleApproval,
+    visualOracleApprovalCanonicalSha256,
+    corpusManifestRaw,
+    corpusManifest,
+    corpusFixtureIds,
+  } = resources;
   if (suite.suite_version !== TRAJECTORY_SUITE_VERSION) {
     errors.push(`suite.suite_version must equal ${TRAJECTORY_SUITE_VERSION}`);
   }
   if (!nonEmptyString(suite.suite_id)) errors.push("suite.suite_id must be a non-empty string");
   if (!nonEmptyString(suite.description)) errors.push("suite.description must be a non-empty string");
-  const suiteApproval = TRUST_REGISTRY.approved_suites[suite.suite_id];
+  const suiteApproval = trustRegistry.approved_suites[suite.suite_id];
   if (sha256(canonicalJson(suite)) !== suiteApproval?.suite_sha256) {
     errors.push("suite content does not match the version-pinned approved suite digest");
   }
-  const corpusDigest = sha256(CORPUS_MANIFEST_RAW);
-  if (corpusDigest !== TRUST_REGISTRY.corpus_manifest.sha256) {
+  const corpusDigest = sha256(corpusManifestRaw);
+  if (corpusDigest !== trustRegistry.corpus_manifest.sha256) {
     errors.push("approved corpus manifest digest does not match the versioned trust registry");
   }
   if (addExactKeyError(errors, "suite.measurement_policy", suite.measurement_policy, [
     "min_unique_product_trials_per_job", "confidence_level", "max_harness_failure_rate",
     "trust_registry_id", "corpus_manifest_sha256", "tool_contract_id", "tool_contract_sha256",
     "runtime_version",
-  ])) {
+  ], ["visual_oracle_approval_id", "visual_oracle_approval_sha256"])) {
     if (!Number.isInteger(suite.measurement_policy.min_unique_product_trials_per_job)
       || suite.measurement_policy.min_unique_product_trials_per_job < 1) {
       errors.push("suite.measurement_policy.min_unique_product_trials_per_job must be positive");
@@ -844,21 +1240,45 @@ export function validateTrajectorySuite(suite) {
       || suite.measurement_policy.max_harness_failure_rate >= 1) {
       errors.push("suite.measurement_policy.max_harness_failure_rate must be in [0, 1)");
     }
-    if (suite.measurement_policy.trust_registry_id !== TRUST_REGISTRY.registry_id) {
-      errors.push(`suite.measurement_policy.trust_registry_id must equal ${TRUST_REGISTRY.registry_id}`);
+    if (suite.measurement_policy.trust_registry_id !== trustRegistry.registry_id) {
+      errors.push(`suite.measurement_policy.trust_registry_id must equal ${trustRegistry.registry_id}`);
     }
-    if (suite.measurement_policy.corpus_manifest_sha256 !== TRUST_REGISTRY.corpus_manifest.sha256) {
+    if (suite.measurement_policy.corpus_manifest_sha256 !== trustRegistry.corpus_manifest.sha256) {
       errors.push("suite.measurement_policy.corpus_manifest_sha256 is not approved");
     }
-    if (suite.measurement_policy.tool_contract_id !== TOOL_CONTRACT.contract_id) {
+    if (suite.measurement_policy.tool_contract_id !== toolContract.contract_id) {
       errors.push("suite.measurement_policy.tool_contract_id is not the captured runtime contract");
     }
-    if (suite.measurement_policy.tool_contract_sha256 !== TOOL_CONTRACT.tools_sha256
-      || TOOL_CONTRACT.tools_sha256 !== sha256(canonicalJson(TOOL_CONTRACT.tools))) {
+    if (suite.measurement_policy.tool_contract_sha256 !== toolContract.tools_sha256
+      || toolContract.tools_sha256 !== sha256(canonicalJson(toolContract.tools))) {
       errors.push("suite.measurement_policy.tool_contract_sha256 does not bind the captured runtime schemas");
     }
-    if (suite.measurement_policy.runtime_version !== TOOL_CONTRACT.runtime.version) {
+    if (suite.measurement_policy.runtime_version !== toolContract.runtime.version) {
       errors.push("suite.measurement_policy.runtime_version does not match the captured runtime");
+    }
+    const registryApproval = trustRegistry.visual_oracle_approvals;
+    if (visualOracleApproval) {
+      if (suite.measurement_policy.visual_oracle_approval_id
+          !== visualOracleApproval.approval_artifact_id
+        || suite.measurement_policy.visual_oracle_approval_sha256
+          !== visualOracleApprovalCanonicalSha256) {
+        errors.push("suite.measurement_policy does not bind the exact visual oracle approval artifact");
+      }
+      if (!exactKeys(registryApproval, ["artifact_id", "path", "canonical_sha256"])
+        || registryApproval.artifact_id !== visualOracleApproval.approval_artifact_id
+        || registryApproval.path
+          !== "test/fixtures/eval/trajectories/visual-oracle-approvals.v1.json"
+        || registryApproval.canonical_sha256 !== visualOracleApprovalCanonicalSha256) {
+        errors.push("trust registry does not bind the exact visual oracle approval artifact");
+      }
+      errors.push(...validateVisualOracleApprovalArtifact(
+        visualOracleApproval,
+        corpusManifest,
+      ));
+    } else if (Object.hasOwn(suite.measurement_policy, "visual_oracle_approval_id")
+      || Object.hasOwn(suite.measurement_policy, "visual_oracle_approval_sha256")
+      || registryApproval !== undefined) {
+      errors.push("visual oracle approval bindings must be complete and allowlisted");
     }
   }
   if (!Array.isArray(suite.jobs) || suite.jobs.length < 6) {
@@ -878,7 +1298,7 @@ export function validateTrajectorySuite(suite) {
     for (const key of ["id", "title", "category", "user_job", "prompt"]) {
       if (!nonEmptyString(job[key])) errors.push(`${location}.${key} must be a non-empty string`);
     }
-    const approval = TRUST_REGISTRY.approved_suites[suite.suite_id];
+    const approval = trustRegistry.approved_suites[suite.suite_id];
     if (!approval?.categories.includes(job.category)) errors.push(`${location}.category is not approved by the trust registry`);
     if (addExactKeyError(errors, `${location}.starting_state`, job.starting_state, [
       "fixtures", "sources", "active_document",
@@ -888,7 +1308,7 @@ export function validateTrajectorySuite(suite) {
       }
       for (const fixture of job.starting_state.fixtures ?? []) {
         if (!approval?.fixture_ids.includes(fixture)) errors.push(`${location} fixture ${fixture} is not approved by the trust registry`);
-        if (!CORPUS_FIXTURE_IDS.has(fixture)) errors.push(`${location} fixture ${fixture} is not present in the approved corpus manifest`);
+        if (!corpusFixtureIds.has(fixture)) errors.push(`${location} fixture ${fixture} is not present in the approved corpus manifest`);
       }
       if (!stringArray(job.starting_state.sources, { nonEmpty: true })
         || !job.starting_state.sources.every(validRelativePath)) {
@@ -913,10 +1333,10 @@ export function validateTrajectorySuite(suite) {
     const forbidden = new Set(policy.forbidden_tools ?? []);
     for (const tool of allowed) {
       if (forbidden.has(tool)) errors.push(`${location} lists ${tool} as both allowed and forbidden`);
-      if (!TOOL_SCHEMAS.has(tool)) errors.push(`${location} allowed tool ${tool} is absent from the runtime contract`);
+      if (!toolSchemas.has(tool)) errors.push(`${location} allowed tool ${tool} is absent from the runtime contract`);
     }
     for (const tool of forbidden) {
-      if (!TOOL_SCHEMAS.has(tool)) errors.push(`${location} forbidden tool ${tool} is absent from the runtime contract`);
+      if (!toolSchemas.has(tool)) errors.push(`${location} forbidden tool ${tool} is absent from the runtime contract`);
     }
     for (const tool of [...(policy.inspection_tools ?? []), ...(policy.mutating_tools ?? [])]) {
       if (!allowed.has(tool)) errors.push(`${location} policy tool ${tool} is not allowed`);
@@ -939,7 +1359,7 @@ export function validateTrajectorySuite(suite) {
         }
         for (const tool of group.any_of ?? []) {
           if (!allowed.has(tool)) errors.push(`${groupLocation} requires non-allowed tool ${tool}`);
-          const schemaProperties = TOOL_SCHEMAS.get(tool)?.properties ?? {};
+          const schemaProperties = toolSchemas.get(tool)?.properties ?? {};
           for (const key of group.required_argument_keys ?? []) {
             if (!Object.hasOwn(schemaProperties, key)) {
               errors.push(`${groupLocation} argument ${key} is absent from runtime schema for ${tool}`);
@@ -959,7 +1379,7 @@ export function validateTrajectorySuite(suite) {
           if (!addExactKeyError(errors, callLocation, call, ["id", "tool", "arguments"])) continue;
           if (!nonEmptyString(call.id)) errors.push(`${callLocation}.id must be non-empty`);
           if (!allowed.has(call.tool)) errors.push(`${callLocation}.tool must be allowed`);
-          const schema = TOOL_SCHEMAS.get(call.tool);
+          const schema = toolSchemas.get(call.tool);
           if (!schema) errors.push(`${callLocation}.tool is absent from runtime contract`);
           else validateJsonSchema(call.arguments, schema, `${callLocation}.arguments`, errors);
         }
@@ -1041,11 +1461,14 @@ export async function loadTrajectorySuite(filename) {
   const suite = JSON.parse(await fs.readFile(filename, "utf8"));
   const errors = validateTrajectorySuite(suite);
   if (errors.length > 0) throw new Error(`Invalid trajectory suite:\n- ${errors.join("\n- ")}`);
+  const resources = resourcesForSuite(suite);
+  for (const job of suite.jobs) JOB_RESOURCES.set(job, resources);
   return suite;
 }
 
 export function validateTrajectoryTrialSet(suite, trialSet, { allowPartialPlan = false } = {}) {
   const errors = [];
+  const resources = resourcesForSuite(suite) ?? DEFAULT_RESOURCES;
   if (!addExactKeyError(errors, "trial_set", trialSet, [
     "trial_set_schema_version", "trial_set_id", "suite_id", "calibration", "claim_boundary", "run_plan",
     "attestation", "trials",
@@ -1158,6 +1581,7 @@ export function validateTrajectoryTrialSet(suite, trialSet, { allowPartialPlan =
     return errors;
   }
   const jobs = new Map(suite.jobs.map(job => [job.id, job]));
+  for (const job of jobs.values()) JOB_RESOURCES.set(job, resources);
   const ids = [];
   const runIds = [];
   const repeatKeys = [];
@@ -1165,7 +1589,12 @@ export function validateTrajectoryTrialSet(suite, trialSet, { allowPartialPlan =
   for (const [index, trial] of trialSet.trials.entries()) {
     const job = jobs.get(trial?.job_id);
     if (!job) errors.push(`trial_set.trials[${index}] references unknown job ${trial?.job_id}`);
-    errors.push(...validateTrajectoryTrial(job, trial, `trial_set.trials[${index}]`));
+    errors.push(...validateTrajectoryTrial(
+      job,
+      trial,
+      `trial_set.trials[${index}]`,
+      resources,
+    ));
     ids.push(trial?.trial_id);
     runIds.push(trial?.run?.run_id);
     repeatKeys.push(`${trial?.job_id}#${trial?.repeat_index}`);
@@ -1233,13 +1662,17 @@ export function validateTrajectoryTrialSet(suite, trialSet, { allowPartialPlan =
 }
 
 export function verifyTrajectoryAttestation(suite, trialSet) {
+  const resources = resourcesForSuite(suite);
+  if (!resources) return false;
   const attestation = trialSet?.attestation;
   if (trialSet?.calibration !== false || attestation?.kind !== "measured_ingestion") return false;
   if (attestation.suite_sha256 !== sha256(canonicalJson(suite))) return false;
   if (attestation.trial_payload_sha256 !== sha256(canonicalJson(trialSet.trials))) return false;
   if (attestation.run_plan_sha256 !== sha256(canonicalJson(trialSet.run_plan))) return false;
-  if (!verifyRunPlanAttestation(trialSet.run_plan)) return false;
-  const trustedKey = TRUST_REGISTRY.trusted_attestation_keys.find(key => key.key_id === attestation.key_id);
+  if (!verifyRunPlanAttestation(trialSet.run_plan, resources.trustRegistry)) return false;
+  const trustedKey = resources.trustRegistry.trusted_attestation_keys.find(
+    key => key.key_id === attestation.key_id
+  );
   if (!trustedKey || !nonEmptyString(attestation.signature)) return false;
   try {
     const signedPayload = trajectoryAttestationPayload(trialSet);
@@ -1272,12 +1705,14 @@ function runPlanAttestationPayload(runPlan) {
   });
 }
 
-function verifyRunPlanAttestation(runPlan) {
+function verifyRunPlanAttestation(runPlan, trustRegistry) {
   const attestation = runPlan?.attestation;
   if (attestation?.kind !== "pre_run_plan" || Date.parse(attestation.produced_at) > Date.parse(runPlan.planned_at)) {
     return false;
   }
-  const trustedKey = TRUST_REGISTRY.trusted_plan_keys.find(key => key.key_id === attestation.key_id);
+  const trustedKey = trustRegistry.trusted_plan_keys.find(
+    key => key.key_id === attestation.key_id
+  );
   if (!trustedKey || !nonEmptyString(attestation.signature)) return false;
   try {
     return verifySignature(
@@ -1358,7 +1793,11 @@ function evidenceBound(reference, successfulResults, artifactsByPath) {
   return false;
 }
 
-async function semanticObservationIssues(step, runEvents = []) {
+async function semanticObservationIssues(
+  step,
+  runEvents = [],
+  resources = DEFAULT_RESOURCES,
+) {
   const issues = [];
   const semantic = step.result?.semantic_observations;
   if (!semantic) return ["missing semantic observations"];
@@ -1521,7 +1960,34 @@ async function semanticObservationIssues(step, runEvents = []) {
         scale: render.server_scale,
         region: step.tool === "render_pdf_region" ? render.region : null,
       });
-      visualOracleValid = canonicalJson(replayedOracle) === canonicalJson(render.visual_oracle)
+      const approvedOracleDigests =
+        resources.approvedVisualOracleDigests.get(visualOracleApprovalKey({
+          sourceSha256: render.source_sha256,
+          page: render.page,
+          scale: render.server_scale,
+          region: step.tool === "render_pdf_region" ? render.region : null,
+        }));
+      const hasVersionedOracleApproval = Boolean(resources.visualOracleApproval);
+      const recordedOracleValid = hasVersionedOracleApproval
+        ? Array.isArray(approvedOracleDigests) && approvedOracleDigests.includes(
+          sha256(canonicalJson(render.visual_oracle))
+        )
+        : canonicalJson(replayedOracle) === canonicalJson(render.visual_oracle);
+      // Native PDF rasterization is not byte-identical across operating systems.
+      // Re-grade the retained image against the pinned source on this host.
+      // Recorded capture-host metrics must also match a receipt in the
+      // version-pinned approval artifact; only replayed metrics decide
+      // semantic validity.
+      visualOracleValid = recordedOracleValid
+        && replayedOracle.fixture_id === render.visual_oracle.fixture_id
+        && replayedOracle.reference_source_sha256
+          === render.visual_oracle.reference_source_sha256
+        && replayedOracle.normalized_width_px
+          === render.visual_oracle.normalized_width_px
+        && replayedOracle.normalized_height_px
+          === render.visual_oracle.normalized_height_px
+        && replayedOracle.host_normalized_rgba_sha256
+          === render.visual_oracle.host_normalized_rgba_sha256
         && replayedOracle.passed === true
         && replayedOracle.reference_source_sha256 === render.source_sha256
         && replayedOracle.mean_absolute_error <= VISUAL_ORACLE_MAX_MAE
@@ -1577,11 +2043,18 @@ function validateHumanIntent(trial, steps) {
   };
 }
 
-export async function gradeTrajectoryTrial(job, trial) {
+export async function gradeTrajectoryTrial(
+  job,
+  trial,
+  resources = JOB_RESOURCES.get(job),
+) {
   const checks = [];
+  if (!resources) {
+    throw new Error("job is not bound to a validated trajectory suite");
+  }
   if (!isObject(trial)) throw new Error("trial must be an object");
   if (trial.outcome === "harness_failure") {
-    const errors = validateTrajectoryTrial(job, trial);
+    const errors = validateTrajectoryTrial(job, trial, "trial", resources);
     if (errors.length > 0) throw new Error(`Invalid harness failure:\n- ${errors.join("\n- ")}`);
     const harnessEvent = retainedRunEvents(trial)
       .find(event => event?.event_id === trial.harness_failure.event_id);
@@ -1599,7 +2072,7 @@ export async function gradeTrajectoryTrial(job, trial) {
         && harnessEvent?.provenance?.capture_method !== "self_report",
     };
   }
-  const schemaErrors = validateTrajectoryTrial(job, trial);
+  const schemaErrors = validateTrajectoryTrial(job, trial, "trial", resources);
   gradeCheck(checks, "trial_schema", schemaErrors.length === 0, [], schemaErrors);
 
   const steps = Array.isArray(trial.trajectory) ? trial.trajectory : [];
@@ -1611,7 +2084,7 @@ export async function gradeTrajectoryTrial(job, trial) {
   gradeCheck(checks, "job_id", trial.job_id === job.id, job.id, trial.job_id);
   gradeCheck(checks, "trajectory_non_empty", steps.length > 0, "> 0 steps", steps.length);
   const semanticIssues = (await Promise.all(successfulSteps.map(async step =>
-    (await semanticObservationIssues(step, runEvents))
+    (await semanticObservationIssues(step, runEvents, resources))
       .map(issue => ({ step_id: step.step_id, issue }))))).flat();
   gradeCheck(
     checks,
@@ -1906,9 +2379,10 @@ export async function gradeTrajectoryTrial(job, trial) {
     const failedCheckIds = checks.filter(item => item.severity === "hard" && !item.passed).map(item => item.id);
     const failureRefs = (Array.isArray(trial.correction_refs) ? trial.correction_refs : [])
       .filter(reference => reference?.relationship === "failure"
-      && approvedCorrectionRef(reference, trial.job_id));
+      && approvedCorrectionRef(reference, trial.job_id, null, resources));
     const uncoveredChecks = failedCheckIds.filter(checkId =>
-      !failureRefs.some(reference => approvedCorrectionRef(reference, trial.job_id, checkId)));
+      !failureRefs.some(reference =>
+        approvedCorrectionRef(reference, trial.job_id, checkId, resources)));
     gradeCheck(
       checks,
       "failure_linkage",
@@ -1985,9 +2459,11 @@ export async function summarizeTrajectoryTrials(suite, trials, {
     trials,
   });
   if (validation.length > 0) throw new Error(`Invalid trajectory trials:\n- ${validation.join("\n- ")}`);
+  const resources = resourcesForSuite(suite) ?? DEFAULT_RESOURCES;
   const jobs = new Map(suite.jobs.map(job => [job.id, job]));
+  for (const job of jobs.values()) JOB_RESOURCES.set(job, resources);
   const results = await Promise.all(trials.map(
-    trial => gradeTrajectoryTrial(jobs.get(trial.job_id), trial)
+    trial => gradeTrajectoryTrial(jobs.get(trial.job_id), trial, resources)
   ));
   const byJob = suite.jobs.map(job => {
     const jobTrials = trials.filter(trial => trial.job_id === job.id);
@@ -2039,7 +2515,7 @@ export async function summarizeTrajectoryTrials(suite, trials, {
     trials,
   });
   const harnessReady = byJob.every(item => item.harness_ready);
-  return {
+  const report = {
     suite_id: suite.suite_id,
     grader_version: TRAJECTORY_GRADER_VERSION,
     attempted_trials: results.length,
@@ -2060,4 +2536,15 @@ export async function summarizeTrajectoryTrials(suite, trials, {
     failure_counts: failureCounts,
     results,
   };
+  if (resources.visualOracleApproval) {
+    report.resource_bindings = {
+      trust_registry_id: resources.trustRegistry.registry_id,
+      trust_registry_canonical_sha256: resources.trustRegistryCanonicalSha256,
+      visual_oracle_approval_id:
+        resources.visualOracleApproval.approval_artifact_id,
+      visual_oracle_approval_canonical_sha256:
+        resources.visualOracleApprovalCanonicalSha256,
+    };
+  }
+  return report;
 }

@@ -18,11 +18,14 @@ import {
   gradeTrajectoryTrial,
   loadTrajectorySuite,
   renderObservationReference,
+  resourcesForSuite,
   summarizeTrajectoryTrials,
   trajectoryAttestationPayload,
   validateTrajectorySuite,
   validateTrajectoryTrial,
   validateTrajectoryTrialSet,
+  validateVisualOracleApprovalArtifact,
+  visualOracleApprovalKey,
 } from "./trajectory-grader.js";
 import { renderTrustedFixturePng } from "./render-visual-oracle.js";
 
@@ -133,14 +136,46 @@ function unsignedMeasuredAttestation(suite, trials, runPlan) {
 }
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const SUITE_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
+const SUITE_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v2.json");
+const HISTORICAL_SUITE_PATH = path.join(
+  REPO_ROOT,
+  "test",
+  "fixtures",
+  "eval",
+  "trajectories",
+  "jobs.v1.json",
+);
+const HISTORICAL_TRIALS_PATH = path.join(
+  REPO_ROOT,
+  "test",
+  "fixtures",
+  "eval",
+  "trajectories",
+  "calibration-trials.v1.json",
+);
 const TRIALS_PATH = path.join(
   REPO_ROOT,
   "test",
   "fixtures",
   "eval",
   "trajectories",
-  "calibration-trials.v1.json"
+  "calibration-trials.v2.json"
+);
+const VISUAL_ORACLE_APPROVAL_PATH = path.join(
+  REPO_ROOT,
+  "test",
+  "fixtures",
+  "eval",
+  "trajectories",
+  "visual-oracle-approvals.v1.json",
+);
+const TRUST_REGISTRY_V2_PATH = path.join(
+  REPO_ROOT,
+  "test",
+  "fixtures",
+  "eval",
+  "trajectories",
+  "trust-registry.v2.json",
 );
 const TINY_PNG_BASE64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 const temporaryDirectories = [];
@@ -179,15 +214,18 @@ describe("agent trajectory grader v4 integrity contract", () => {
   it("publishes six strict representative jobs and rejects undeclared suite fields", async () => {
     const suite = await loadTrajectorySuite(SUITE_PATH);
     expect(validateTrajectorySuite(suite)).toEqual([]);
+    expect(suite.suite_id).toBe("pdf-tools.trajectory.v2");
     expect(suite.jobs).toHaveLength(6);
     expect(suite.measurement_policy).toEqual({
       min_unique_product_trials_per_job: 3,
       confidence_level: 0.95,
       max_harness_failure_rate: 0.1,
-      trust_registry_id: "pdf-tools.trajectory.trust.v1",
+      trust_registry_id: "pdf-tools.trajectory.trust.v2",
+      visual_oracle_approval_id: "pdf-tools.trajectory.visual-oracle-approvals.v1",
+      visual_oracle_approval_sha256: "554e587e84e8767945f4c836ebd52394c378a069e2179c15e326b08e6340391e",
       corpus_manifest_sha256: "f1313dc562d3466cbb0237adac6c053fafc62029d84d39ee2cb6aae317c9097b",
-      tool_contract_id: "pdf-tools.trajectory.tool-contracts.v1",
-      tool_contract_sha256: "b7db2ecc546a378c101e3d75c9b508a7d386656b98cb4c21c160681f08a2acef",
+      tool_contract_id: "pdf-tools.trajectory.tool-contracts.v2",
+      tool_contract_sha256: "0e19db42ac506773a6b60c14d4a8d37f23c72f48204eef81795fa2d818eb324e",
       runtime_version: "0.8.6",
     });
     for (const job of suite.jobs) {
@@ -204,13 +242,117 @@ describe("agent trajectory grader v4 integrity contract", () => {
     );
   });
 
-  it("regenerates the explicitly synthetic calibration set byte-for-byte", async () => {
-    const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-trajectory-"));
-    temporaryDirectories.push(directory);
-    const outputPath = path.join(directory, "calibration.json");
-    await generateTrajectoryCalibration({ outputPath });
-    expect(await fs.readFile(outputPath, "utf8")).toBe(await fs.readFile(TRIALS_PATH, "utf8"));
+  it("keeps the historical v1 suite and calibration valid under their v1 trust stack", async () => {
+    const suite = await loadTrajectorySuite(HISTORICAL_SUITE_PATH);
+    const trialSet = JSON.parse(await fs.readFile(HISTORICAL_TRIALS_PATH, "utf8"));
+    expect(suite.suite_id).toBe("pdf-tools.trajectory.v1");
+    expect(suite.measurement_policy).toMatchObject({
+      trust_registry_id: "pdf-tools.trajectory.trust.v1",
+      tool_contract_id: "pdf-tools.trajectory.tool-contracts.v1",
+      tool_contract_sha256: "b7db2ecc546a378c101e3d75c9b508a7d386656b98cb4c21c160681f08a2acef",
+    });
+    expect(validateTrajectoryTrialSet(suite, trialSet)).toEqual([]);
+    const inspectJob = suite.jobs.find(job => job.id.endsWith("inspect-and-answer"));
+    const inspectTrial = trialFor(trialSet, "inspect-and-answer");
+    expect((await gradeTrajectoryTrial(inspectJob, inspectTrial)).passed).toBe(true);
+
+    const detachedJob = structuredClone(inspectJob);
+    expect(validateTrajectoryTrial(detachedJob, inspectTrial)).toContain(
+      "trial.job is not bound to a validated trajectory suite"
+    );
+    await expect(gradeTrajectoryTrial(detachedJob, inspectTrial)).rejects.toThrow(
+      "job is not bound to a validated trajectory suite"
+    );
   });
+
+  it("binds v2 grading to complete reviewed visual-oracle receipts and fails closed on a missing source", async () => {
+    const approval = JSON.parse(
+      await fs.readFile(VISUAL_ORACLE_APPROVAL_PATH, "utf8")
+    );
+    expect(validateVisualOracleApprovalArtifact(approval)).toEqual([]);
+    expect(approval.captures).toHaveLength(4);
+    for (const receipt of approval.captures) {
+      expect(receipt.oracle_canonical_sha256).toBe(
+        digest(canonicalJson(receipt.oracle))
+      );
+    }
+
+    const missingReceipt = structuredClone(approval);
+    missingReceipt.captures = missingReceipt.captures.filter(
+      receipt => receipt.source.path !== "input/before.pdf"
+    );
+    expect(validateVisualOracleApprovalArtifact(missingReceipt)).toContain(
+      "visual oracle approval artifact must contain exactly four capture receipts"
+    );
+
+    const { suite, trialSet, jobs } = await loadFixtures();
+    const resources = resourcesForSuite(suite);
+    const missingSourceResources = {
+      ...resources,
+      approvedVisualOracleDigests: new Map(
+        [...resources.approvedVisualOracleDigests]
+          .filter(([key]) => key !== visualOracleApprovalKey({
+            sourceSha256:
+              "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+            page: 1,
+            scale: 2.5,
+            region: null,
+          }))
+      ),
+    };
+    const trial = trialFor(trialSet, "compare-and-explain");
+    const grade = await gradeTrajectoryTrial(
+      jobs.get(trial.job_id),
+      trial,
+      missingSourceResources,
+    );
+    expect(check(grade, "semantic_result_bindings").passed).toBe(false);
+  });
+
+  it("validates the current synthetic calibration set on every supported host", async () => {
+    const { suite, trialSet } = await loadFixtures();
+    const historicalTrialSet = JSON.parse(
+      await fs.readFile(HISTORICAL_TRIALS_PATH, "utf8")
+    );
+    expect(validateTrajectoryTrialSet(suite, trialSet)).toEqual([]);
+    expect(trialSet.trial_set_id).toBe("pdf-tools.trajectory.calibration.v2");
+    expect(trialSet.run_plan.run_plan_id).toBe(
+      "pdf-tools.trajectory.calibration.run-plan.v2"
+    );
+    const evidenceIds = set => new Set(set.trials.flatMap(trial => [
+      trial.trial_id,
+      trial.run?.run_id,
+      ...(trial.run?.events ?? []).map(event => event.event_id),
+      ...(trial.trajectory ?? []).flatMap(step => [
+        step.step_id,
+        step.result?.result_id,
+      ]),
+    ].filter(Boolean)));
+    const historicalIds = evidenceIds(historicalTrialSet);
+    const currentIds = evidenceIds(trialSet);
+    expect([...currentIds].filter(id => historicalIds.has(id))).toEqual([]);
+  });
+
+  it.runIf(process.platform === "linux")(
+    "regenerates the Linux-reference synthetic calibration set byte-for-byte",
+    async () => {
+      const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-trajectory-"));
+      temporaryDirectories.push(directory);
+      const currentOutputPath = path.join(directory, "calibration.v2.json");
+      await generateTrajectoryCalibration({ outputPath: currentOutputPath });
+      expect(await fs.readFile(currentOutputPath, "utf8")).toBe(
+        await fs.readFile(TRIALS_PATH, "utf8")
+      );
+      const historicalOutputPath = path.join(directory, "calibration.v1.json");
+      await generateTrajectoryCalibration({
+        suitePath: HISTORICAL_SUITE_PATH,
+        outputPath: historicalOutputPath,
+      });
+      expect(await fs.readFile(historicalOutputPath, "utf8")).toBe(
+        await fs.readFile(HISTORICAL_TRIALS_PATH, "utf8")
+      );
+    },
+  );
 
   it("binds comparison render expectations to the pinned fixture bytes and page boxes", async () => {
     const suite = await loadTrajectorySuite(SUITE_PATH);
@@ -236,7 +378,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const outputPath = path.join(directory, "tool-contracts.json");
     await captureTrajectoryToolContracts({ outputPath });
     const committed = path.join(
-      REPO_ROOT, "test", "fixtures", "eval", "trajectories", "tool-contracts.v1.json"
+      REPO_ROOT, "test", "fixtures", "eval", "trajectories", "tool-contracts.v2.json"
     );
     expect(await fs.readFile(outputPath, "utf8")).toBe(await fs.readFile(committed, "utf8"));
   });
@@ -414,6 +556,9 @@ describe("agent trajectory grader v4 integrity contract", () => {
 
   it("reports unique sample statistics, Wilson uncertainty, and harness rate without a benchmark claim", async () => {
     const report = await runTrajectoryEvaluation();
+    const trustRegistry = JSON.parse(
+      await fs.readFile(TRUST_REGISTRY_V2_PATH, "utf8")
+    );
     expect(report.calibration).toBe(true);
     expect(report.claim_boundary).toContain("not observed agent or host benchmark results");
     expect(report).toMatchObject({
@@ -428,6 +573,13 @@ describe("agent trajectory grader v4 integrity contract", () => {
       harness_ready: false,
       trust_ready: false,
       benchmark_claim_ready: false,
+      resource_bindings: {
+        trust_registry_id: "pdf-tools.trajectory.trust.v2",
+        trust_registry_canonical_sha256: digest(canonicalJson(trustRegistry)),
+        visual_oracle_approval_id: "pdf-tools.trajectory.visual-oracle-approvals.v1",
+        visual_oracle_approval_canonical_sha256:
+          "554e587e84e8767945f4c836ebd52394c378a069e2179c15e326b08e6340391e",
+      },
     });
     expect(report.product_statistics.sample_variance).toBeCloseTo(4 / 17);
     expect(report.product_statistics.confidence_interval).toBeNull();
@@ -574,6 +726,57 @@ describe("agent trajectory grader v4 integrity contract", () => {
         .result.semantic_observations.render_regions,
     );
     expect(check(await gradeTrajectoryTrial(job, fabricated), "semantic_result_bindings").passed).toBe(false);
+
+    const macReference = structuredClone(base);
+    const approval = JSON.parse(
+      await fs.readFile(VISUAL_ORACLE_APPROVAL_PATH, "utf8")
+    );
+    const macOverrides = approval.captures
+      .filter(receipt => receipt.capture_kind === "cross_platform_compatibility_replay")
+      .map(receipt => receipt.oracle);
+    const macRenders = macReference.trajectory
+      .filter(step => step.tool === "render_pdf_page")
+      .map((step, index) => {
+        const render = step.result.semantic_observations.render_regions[0];
+        render.visual_oracle = structuredClone(macOverrides[index]);
+        macReference.run.events.find(event =>
+          event.event_id === render.render_observation_event_id
+        ).reference = renderObservationReference(render);
+        return render;
+      });
+    expect(check(
+      await gradeTrajectoryTrial(job, macReference),
+      "semantic_result_bindings"
+    ).passed).toBe(true);
+
+    const unapprovedReference = structuredClone(macReference);
+    const unapprovedStep = unapprovedReference.trajectory.find(
+      step => step.tool === "render_pdf_page"
+    );
+    const unapprovedRender = unapprovedStep.result.semantic_observations.render_regions[0];
+    expect(macRenders).toHaveLength(2);
+    unapprovedRender.visual_oracle.reference_rgba_sha256 = "f".repeat(64);
+    unapprovedReference.run.events.find(event =>
+      event.event_id === unapprovedRender.render_observation_event_id
+    ).reference = renderObservationReference(unapprovedRender);
+    expect(check(
+      await gradeTrajectoryTrial(job, unapprovedReference),
+      "semantic_result_bindings"
+    ).passed).toBe(false);
+
+    const normalizedImageDrift = structuredClone(base);
+    const normalizedStep = normalizedImageDrift.trajectory.find(
+      step => step.tool === "render_pdf_page"
+    );
+    const normalizedRender = normalizedStep.result.semantic_observations.render_regions[0];
+    normalizedRender.visual_oracle.host_normalized_rgba_sha256 = "0".repeat(64);
+    normalizedImageDrift.run.events.find(event =>
+      event.event_id === normalizedRender.render_observation_event_id
+    ).reference = renderObservationReference(normalizedRender);
+    expect(check(
+      await gradeTrajectoryTrial(job, normalizedImageDrift),
+      "semantic_result_bindings"
+    ).passed).toBe(false);
   });
 
   it("rejects self-verification and requires path/hash agreement in producer and later verifier results", async () => {
@@ -973,7 +1176,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const observer = {
       observer_schema_version: 1,
       trial_set_id: "pdf-tools.trajectory.measured.codex.w9.v1",
-      suite_id: "pdf-tools.trajectory.v1",
+      suite_id: suite.suite_id,
       trial_id: "pdf-tools.trajectory.v1.fill-and-validate.measured.1",
       job_id: "pdf-tools.trajectory.v1.fill-and-validate",
       repeat_index: 1,
@@ -1292,7 +1495,7 @@ describe("agent trajectory grader v4 integrity contract", () => {
     const observer = {
       observer_schema_version: 1,
       trial_set_id: "pdf-tools.trajectory.measured.harness.v1",
-      suite_id: "pdf-tools.trajectory.v1",
+      suite_id: suite.suite_id,
       trial_id: "pdf-tools.trajectory.v1.inspect-and-answer.harness.1",
       job_id: "pdf-tools.trajectory.v1.inspect-and-answer",
       repeat_index: 1,

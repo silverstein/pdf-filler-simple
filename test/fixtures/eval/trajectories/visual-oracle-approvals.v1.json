@@ -1,0 +1,266 @@
+{
+  "approval_artifact_version": 1,
+  "approval_artifact_id": "pdf-tools.trajectory.visual-oracle-approvals.v1",
+  "claim_boundary": "These receipts approve deterministic visual-oracle preimages for the synthetic trajectory calibration. The Darwin records are cross-platform compatibility replays of Linux-origin retained PNGs, not Darwin-origin product captures or agent-host benchmark evidence.",
+  "review": {
+    "reviewed_on": "2026-07-23",
+    "review_method": "Fresh replay on each named host, canonical digest recomputation, source and retained-image binding, and independent adversarial review.",
+    "reviewer_role": "maintainer-controlled evaluation campaign"
+  },
+  "source_revision": {
+    "repository_base_commit": "9ab40a9f872992fe0ea383ec078f7e29c4407e46",
+    "commit_binding": "Exact source-file digests are authoritative because this approval artifact and the candidate implementation are committed together.",
+    "files": [
+      {
+        "path": "scripts/eval-generate-trajectory-calibration.mjs",
+        "sha256": "04b1588e57ad283410c23e7df88c22abcc4c18a06e09ac56ae1b99215b43f735"
+      },
+      {
+        "path": "test/eval/render-visual-oracle.js",
+        "sha256": "f7c1cbe5c27a1070f3cb0c74d7c352f55c583be3aabedc070ae56d8a29afa37d"
+      },
+      {
+        "path": "test/eval/comparison-observations.js",
+        "sha256": "1a1ace6eb69670be2ca28dc02416947d2227762d57073310bf60c146848e319a"
+      },
+      {
+        "path": "test/fixtures/eval/manifest.v1.json",
+        "sha256": "f1313dc562d3466cbb0237adac6c053fafc62029d84d39ee2cb6aae317c9097b"
+      },
+      {
+        "path": "package-lock.json",
+        "sha256": "91bbacd5399b9e6f72e0536750f252890f4ed743957f44a8a2e697e1858080e4"
+      }
+    ]
+  },
+  "captures": [
+    {
+      "receipt_id": "pdf-tools.visual-oracle.v1.linux.before",
+      "capture_kind": "origin_reference_replay",
+      "captured_on": "2026-07-23",
+      "host": {
+        "hostname": "silvercloud",
+        "platform": "linux",
+        "architecture": "x64",
+        "platform_release": "6.8.0-106-generic",
+        "os_product_version": null,
+        "os_build": "6.8.0-106-generic",
+        "node_version": "v22.22.3"
+      },
+      "renderer_stack": {
+        "pdfjs_dist_version": "5.4.624",
+        "napi_rs_canvas_version": "0.1.99",
+        "retained_image_method": "renderTrustedFixturePng",
+        "oracle_method": "buildTrustedVisualOracle"
+      },
+      "source": {
+        "path": "input/before.pdf",
+        "fixture_id": "pdf-tools.eval.v1.dev-page-order-source",
+        "sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+        "page": 1,
+        "scale": 2.5,
+        "region": null,
+        "page_box_points": [
+          0,
+          0,
+          360,
+          480
+        ],
+        "max_dimension_px": 1200
+      },
+      "retained_image": {
+        "origin_kind": "same_host_deterministic_calibration",
+        "origin_receipt_id": null,
+        "sha256": "86e4bffa0bfbf959afafc2da3bb495df144d95d25174228c8f27b44d5761d2b5",
+        "byte_length": 15708
+      },
+      "oracle": {
+        "oracle_schema_version": 1,
+        "fixture_id": "pdf-tools.eval.v1.dev-page-order-source",
+        "reference_source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+        "reference_rgba_sha256": "5a62e51fd76e4906314c4e2c1e322614fd8b75e2f3e93ea204af5aed4266e929",
+        "normalized_width_px": 71,
+        "normalized_height_px": 96,
+        "host_normalized_rgba_sha256": "8cddcc50d531d869949e17b5153d4bb1ff541b86012fd33fdd2721ede140941d",
+        "reference_normalized_rgba_sha256": "8cddcc50d531d869949e17b5153d4bb1ff541b86012fd33fdd2721ede140941d",
+        "mean_absolute_error": 0,
+        "foreground_iou": 1,
+        "aspect_ratio_error": 0,
+        "passed": true
+      },
+      "oracle_canonical_sha256": "e62317a87e873c7912811815ca4028c9251d11e654ae1c87bfe1913ef14aa30e",
+      "review_outcome": "approved"
+    },
+    {
+      "receipt_id": "pdf-tools.visual-oracle.v1.linux.after",
+      "capture_kind": "origin_reference_replay",
+      "captured_on": "2026-07-23",
+      "host": {
+        "hostname": "silvercloud",
+        "platform": "linux",
+        "architecture": "x64",
+        "platform_release": "6.8.0-106-generic",
+        "os_product_version": null,
+        "os_build": "6.8.0-106-generic",
+        "node_version": "v22.22.3"
+      },
+      "renderer_stack": {
+        "pdfjs_dist_version": "5.4.624",
+        "napi_rs_canvas_version": "0.1.99",
+        "retained_image_method": "renderTrustedFixturePng",
+        "oracle_method": "buildTrustedVisualOracle"
+      },
+      "source": {
+        "path": "input/after.pdf",
+        "fixture_id": "pdf-tools.eval.v1.dev-page-order-visibly-wrong",
+        "sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+        "page": 1,
+        "scale": 2.5,
+        "region": null,
+        "page_box_points": [
+          0,
+          0,
+          480,
+          360
+        ],
+        "max_dimension_px": 1200
+      },
+      "retained_image": {
+        "origin_kind": "same_host_deterministic_calibration",
+        "origin_receipt_id": null,
+        "sha256": "714067483432579ce36c1437cf75ca04f2c2730e299397ee15f03fe051ef9e63",
+        "byte_length": 18735
+      },
+      "oracle": {
+        "oracle_schema_version": 1,
+        "fixture_id": "pdf-tools.eval.v1.dev-page-order-visibly-wrong",
+        "reference_source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+        "reference_rgba_sha256": "11c344d0857e467f88811fe16a008cb53e19d784ab05e3ec5316111c4d27d858",
+        "normalized_width_px": 67,
+        "normalized_height_px": 96,
+        "host_normalized_rgba_sha256": "b7e49f9983a473ff4c19f9bb29437ce6db199cc8101ba4f4b56bd4376a04873d",
+        "reference_normalized_rgba_sha256": "b7e49f9983a473ff4c19f9bb29437ce6db199cc8101ba4f4b56bd4376a04873d",
+        "mean_absolute_error": 0,
+        "foreground_iou": 1,
+        "aspect_ratio_error": 0,
+        "passed": true
+      },
+      "oracle_canonical_sha256": "d32800e28fda12c01d58f3e2b8a0997d43d93e5004ebf7cfeb6bd03de18fd0f4",
+      "review_outcome": "approved"
+    },
+    {
+      "receipt_id": "pdf-tools.visual-oracle.v1.silverbook.before",
+      "capture_kind": "cross_platform_compatibility_replay",
+      "captured_on": "2026-07-23",
+      "host": {
+        "hostname": "M-MacBook-Pro.local",
+        "platform": "darwin",
+        "architecture": "arm64",
+        "platform_release": "25.6.0",
+        "os_product_version": "26.6",
+        "os_build": "25G5065a",
+        "node_version": "v26.3.1"
+      },
+      "renderer_stack": {
+        "pdfjs_dist_version": "5.4.624",
+        "napi_rs_canvas_version": "0.1.99",
+        "retained_image_method": "retained PNG from linked Linux receipt",
+        "oracle_method": "buildTrustedVisualOracle"
+      },
+      "source": {
+        "path": "input/before.pdf",
+        "fixture_id": "pdf-tools.eval.v1.dev-page-order-source",
+        "sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+        "page": 1,
+        "scale": 2.5,
+        "region": null,
+        "page_box_points": [
+          0,
+          0,
+          360,
+          480
+        ],
+        "max_dimension_px": 1200
+      },
+      "retained_image": {
+        "origin_kind": "linked_origin_receipt",
+        "origin_receipt_id": "pdf-tools.visual-oracle.v1.linux.before",
+        "sha256": "86e4bffa0bfbf959afafc2da3bb495df144d95d25174228c8f27b44d5761d2b5",
+        "byte_length": 15708
+      },
+      "oracle": {
+        "oracle_schema_version": 1,
+        "fixture_id": "pdf-tools.eval.v1.dev-page-order-source",
+        "reference_source_sha256": "bca00ea1e9c27e45c58ace3a80d4df0a56db91c15c0e3d812fe3d22a925b2168",
+        "reference_rgba_sha256": "47346c6b0af6035909781613b658122f5359ca1b7513a0503e04d8bd760539d1",
+        "normalized_width_px": 71,
+        "normalized_height_px": 96,
+        "host_normalized_rgba_sha256": "8cddcc50d531d869949e17b5153d4bb1ff541b86012fd33fdd2721ede140941d",
+        "reference_normalized_rgba_sha256": "a24447200e44f387586ec114926cb8705941cb7163d1f4c97c454356597c99df",
+        "mean_absolute_error": 0.000007,
+        "foreground_iou": 1,
+        "aspect_ratio_error": 0,
+        "passed": true
+      },
+      "oracle_canonical_sha256": "bf4aa413230811131d2bd97eff05b303d603df421971fd6ae62d5a50074fba43",
+      "review_outcome": "approved"
+    },
+    {
+      "receipt_id": "pdf-tools.visual-oracle.v1.silverbook.after",
+      "capture_kind": "cross_platform_compatibility_replay",
+      "captured_on": "2026-07-23",
+      "host": {
+        "hostname": "M-MacBook-Pro.local",
+        "platform": "darwin",
+        "architecture": "arm64",
+        "platform_release": "25.6.0",
+        "os_product_version": "26.6",
+        "os_build": "25G5065a",
+        "node_version": "v26.3.1"
+      },
+      "renderer_stack": {
+        "pdfjs_dist_version": "5.4.624",
+        "napi_rs_canvas_version": "0.1.99",
+        "retained_image_method": "retained PNG from linked Linux receipt",
+        "oracle_method": "buildTrustedVisualOracle"
+      },
+      "source": {
+        "path": "input/after.pdf",
+        "fixture_id": "pdf-tools.eval.v1.dev-page-order-visibly-wrong",
+        "sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+        "page": 1,
+        "scale": 2.5,
+        "region": null,
+        "page_box_points": [
+          0,
+          0,
+          480,
+          360
+        ],
+        "max_dimension_px": 1200
+      },
+      "retained_image": {
+        "origin_kind": "linked_origin_receipt",
+        "origin_receipt_id": "pdf-tools.visual-oracle.v1.linux.after",
+        "sha256": "714067483432579ce36c1437cf75ca04f2c2730e299397ee15f03fe051ef9e63",
+        "byte_length": 18735
+      },
+      "oracle": {
+        "oracle_schema_version": 1,
+        "fixture_id": "pdf-tools.eval.v1.dev-page-order-visibly-wrong",
+        "reference_source_sha256": "8dcb160b21f450a388de112767ad3a25b026f32bfd8064cfcc85e8825374b7e0",
+        "reference_rgba_sha256": "0725f04e670f6dde81ca3d4def004153a82a9c2f8d37992a0514c18abddf2012",
+        "normalized_width_px": 67,
+        "normalized_height_px": 96,
+        "host_normalized_rgba_sha256": "b7e49f9983a473ff4c19f9bb29437ce6db199cc8101ba4f4b56bd4376a04873d",
+        "reference_normalized_rgba_sha256": "9f5934cb09300622d7a49c86dea78741c9ab3d224738b79f1e637902e9ee586f",
+        "mean_absolute_error": 0.000006,
+        "foreground_iou": 1,
+        "aspect_ratio_error": 0,
+        "passed": true
+      },
+      "oracle_canonical_sha256": "17e54ba9a5a51c0e1c28abab92936498abd71d4c9166b512ec9118b55e88e1ec",
+      "review_outcome": "approved"
+    }
+  ]
+}

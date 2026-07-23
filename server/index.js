@@ -51,6 +51,7 @@ import {
   assertCanonicalRecoveryDirectory,
   bindDanglingPdfInputAlias,
   bindCanonicalRecoveryDirectory,
+  hashBoundedPdfFileSafely,
   pdfMutationFileLimitError,
   preflightBoundedPdfFileSafely,
   preflightPdfMutationInputsWithinMergeLimit,
@@ -3096,6 +3097,32 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         }
       },
       {
+        name: "get_pdf_identity",
+        description: "Return a stable local artifact identity for a PDF without parsing or decrypting its document structure: canonical path, exact byte length, and SHA-256. Use this to bind plans, approvals, outputs, or provenance to the exact input bytes. The tool reads at most 250 MiB through one race-aware file descriptor and requires a PDF header within the first 1,024 bytes.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            pdf_path: {
+              type: "string",
+              description: "Absolute path to the local PDF file."
+            }
+          },
+          required: ["pdf_path"],
+          examples: [
+            {
+              pdf_path: "/Users/alice/Documents/contract.pdf"
+            }
+          ]
+        },
+        annotations: {
+          title: "Get PDF Identity",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
         name: "display_pdf",
         description: "Open the interactive PDF viewer with page navigation, zoom, in-document search, text selection, form-field sidebar, and Sign mode. This is the primary tool for visually working with a PDF. If the user gave you a URL instead of a local path, call fetch_pdf_from_url first, then pass the downloaded local path here. Automatically detects form fields, so you usually do not need to also call read_pdf_fields. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
@@ -4962,6 +4989,42 @@ async function handleToolCall(request) {
         }
       }
 
+      case "get_pdf_identity": {
+        const { pdf_path } = args;
+        const requestedPath = resolvePath(pdf_path);
+        const identity = await hashBoundedPdfFileSafely(
+          requestedPath,
+          PDF_MUTATION_MAX_FILE_BYTES,
+          {
+            assertPathAllowed,
+            createSizeLimitError: pdfMutationFileLimitError,
+          },
+        );
+        const payload = {
+          schema_version: "1.0",
+          requested_path: requestedPath,
+          canonical_path: identity.canonicalPath,
+          file_name: path.basename(identity.canonicalPath),
+          size_bytes: identity.sizeBytes,
+          sha256: identity.sha256,
+          identity_method: "race_aware_descriptor_sha256",
+          pdf_parsed: false,
+        };
+        return {
+          content: [{
+            type: "text",
+            text: [
+              `File: ${payload.file_name}`,
+              `Canonical path: ${payload.canonical_path}`,
+              `Size: ${payload.size_bytes} bytes`,
+              `SHA-256: ${payload.sha256}`,
+              "PDF parsed: no",
+            ].join("\n"),
+          }],
+          structuredContent: payload,
+        };
+      }
+
       case "display_pdf": {
         const { pdf_path, page } = args;
         const resolvedPath = resolvePath(pdf_path);
@@ -6288,9 +6351,20 @@ async function handleToolCall(request) {
         throw new Error(`Unknown tool: ${name}`);
     }
   } catch (error) {
-    const errorCode = error?.code === "path_policy_denied"
+    let errorCode = error?.code === "path_policy_denied"
       ? "path_policy_denied"
       : "tool_execution_failed";
+    if (name === "get_pdf_identity") {
+      if ([
+        "PDF_CHANGED_DURING_READ",
+        "PDF_INPUT_TOO_LARGE",
+        "PDF_INVALID_HEADER",
+      ].includes(error?.code)) {
+        errorCode = error.code;
+      } else if (["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(error?.code)) {
+        errorCode = "PDF_UNAVAILABLE";
+      }
+    }
     return {
       content: [
         {

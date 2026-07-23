@@ -13,7 +13,7 @@ const REPO_ROOT = path.join(__dirname, "..");
 const SOURCE_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.json"), "utf8"));
 const MCPB_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.mcpb.json"), "utf8"));
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TOOL_CONTRACT_SHA256 = "cf39bf8b35d8946153f2d1fc309813c72380bc0bb48bee6da531615576963e09";
+const TOOL_CONTRACT_SHA256 = "4f5c1299b4fab3b415fa6eb7cff4c802b832a4d0d6bbe9fbbc8db1bd109bccdc";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -64,6 +64,7 @@ const TOOL_EFFECT_ANNOTATIONS = {
   render_pdf_page: CLOSED_READ,
   render_pdf_region: CLOSED_READ,
   search_pdf_text: CLOSED_READ,
+  get_pdf_identity: CLOSED_READ,
   get_pdf_resource_uri: CLOSED_READ,
   display_pdf: CLOSED_SESSION_ACTION,
   get_active_document: CLOSED_READ,
@@ -262,7 +263,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(39);
+    expect(tools).toHaveLength(40);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))
@@ -458,6 +459,90 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
       .toBe("%PDF-");
   });
 
+  it("returns a parser-independent identity for the exact allowed PDF bytes", async () => {
+    const identityPdf = path.join(stateRoot, "identity-fixture.pdf");
+    await fs.copyFile(EXAMPLE_PDF, identityPdf);
+    const expectedBytes = await fs.readFile(identityPdf);
+    const expectedCanonicalPath = await fs.realpath(identityPdf);
+    const result = await client.callTool({
+      name: "get_pdf_identity",
+      arguments: { pdf_path: identityPdf },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toEqual({
+      schema_version: "1.0",
+      requested_path: identityPdf,
+      canonical_path: expectedCanonicalPath,
+      file_name: "identity-fixture.pdf",
+      size_bytes: expectedBytes.length,
+      sha256: createHash("sha256").update(expectedBytes).digest("hex"),
+      identity_method: "race_aware_descriptor_sha256",
+      pdf_parsed: false,
+    });
+    expect(result.content?.[0]).toMatchObject({
+      type: "text",
+      text: expect.stringContaining("PDF parsed: no"),
+    });
+  });
+
+  it("identifies encrypted-looking bytes without requiring a password or PDF parse", async () => {
+    const opaquePdf = path.join(stateRoot, "opaque-encrypted-looking.pdf");
+    const opaqueBytes = Buffer.from("%PDF-1.7\n/Encrypt 9 0 R\nopaque bytes\n%%EOF\n");
+    await fs.writeFile(opaquePdf, opaqueBytes);
+
+    const result = await client.callTool({
+      name: "get_pdf_identity",
+      arguments: { pdf_path: opaquePdf },
+    });
+
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      canonical_path: await fs.realpath(opaquePdf),
+      size_bytes: opaqueBytes.length,
+      sha256: createHash("sha256").update(opaqueBytes).digest("hex"),
+      pdf_parsed: false,
+    });
+  });
+
+  it("rejects non-PDF files and oversized PDFs with distinct identity errors", async () => {
+    const textPath = path.join(stateRoot, "private-profile.txt");
+    await fs.writeFile(textPath, "ordinary private profile bytes");
+    const notPdf = await client.callTool({
+      name: "get_pdf_identity",
+      arguments: { pdf_path: textPath },
+    });
+    expect(notPdf.isError).toBe(true);
+    expect(notPdf.structuredContent).toEqual({
+      status: "failed",
+      error: {
+        error_schema_version: 1,
+        code: "PDF_INVALID_HEADER",
+      },
+    });
+
+    const oversizedPdf = path.join(stateRoot, "oversized.pdf");
+    const oversizedHandle = await fs.open(oversizedPdf, "w");
+    try {
+      await oversizedHandle.write(Buffer.from("%PDF-1.7\n"), 0, 9, 0);
+      await oversizedHandle.truncate(250 * 1024 * 1024 + 1);
+    } finally {
+      await oversizedHandle.close();
+    }
+    const tooLarge = await client.callTool({
+      name: "get_pdf_identity",
+      arguments: { pdf_path: oversizedPdf },
+    });
+    expect(tooLarge.isError).toBe(true);
+    expect(tooLarge.structuredContent).toEqual({
+      status: "failed",
+      error: {
+        error_schema_version: 1,
+        code: "PDF_INPUT_TOO_LARGE",
+      },
+    });
+  });
+
   it("uses deterministic machine errors for invalid, missing, and disallowed resources", async () => {
     const invalid = await captureMcpError(() => client.readResource({
       uri: "https://example.test/document.pdf",
@@ -482,6 +567,18 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
 
   it("marks tool execution failures with isError", async () => {
     const missingPdf = path.join(stateRoot, "missing.pdf");
+    const missingIdentity = await client.callTool({
+      name: "get_pdf_identity",
+      arguments: { pdf_path: missingPdf },
+    });
+    expect(missingIdentity.isError).toBe(true);
+    expect(missingIdentity.structuredContent).toEqual({
+      status: "failed",
+      error: {
+        error_schema_version: 1,
+        code: "PDF_UNAVAILABLE",
+      },
+    });
     const failingCalls = [
       { name: "get_pdf_resource_uri", arguments: { pdf_path: missingPdf } },
       { name: "read_pdf_bytes", arguments: { pdf_path: missingPdf, offset: 0, byteCount: 8 } },
@@ -511,6 +608,19 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(disallowed.isError).toBe(true);
     expect(disallowed.structuredContent).toEqual({
+      status: "failed",
+      error: {
+        error_schema_version: 1,
+        code: "path_policy_denied",
+      },
+    });
+
+    const deniedIdentity = await client.callTool({
+      name: "get_pdf_identity",
+      arguments: { pdf_path: path.join(path.parse(REPO_ROOT).root, "outside.pdf") },
+    });
+    expect(deniedIdentity.isError).toBe(true);
+    expect(deniedIdentity.structuredContent).toEqual({
       status: "failed",
       error: {
         error_schema_version: 1,

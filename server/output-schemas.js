@@ -101,6 +101,18 @@ const layoutPasswordError = object({
     code: enumString(["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"]),
   }),
 });
+const pdfIdentityError = object({
+  status: { const: "failed" },
+  error: object({
+    error_schema_version: { const: 1 },
+    code: enumString([
+      "PDF_CHANGED_DURING_READ",
+      "PDF_INPUT_TOO_LARGE",
+      "PDF_INVALID_HEADER",
+      "PDF_UNAVAILABLE",
+    ]),
+  }),
+});
 
 const validationField = object({
   name: string,
@@ -584,6 +596,16 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     file_name: string,
     size_bytes: integer,
   }),
+  get_pdf_identity: object({
+    schema_version: { const: "1.0" },
+    requested_path: string,
+    canonical_path: string,
+    file_name: string,
+    size_bytes: { type: "integer", minimum: 0, maximum: 250 * 1024 * 1024 },
+    sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    identity_method: { const: "race_aware_descriptor_sha256" },
+    pdf_parsed: { const: false },
+  }),
   display_pdf: activeDocument(),
   get_active_document: {
     type: "object",
@@ -710,6 +732,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
 });
 
 const specialErrorSchemas = {
+  get_pdf_identity: [pdfIdentityError],
   validate_pdf: [validationFailure],
   read_pdf_content: [contentFailure],
   read_pdf_layout: [layoutPasswordError],

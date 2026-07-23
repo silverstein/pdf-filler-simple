@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 import { createHash } from "node:crypto";
-import { readdir } from "node:fs/promises";
+import { readFile, readdir, realpath } from "node:fs/promises";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -29,7 +29,7 @@ const textFixture = path.join(fixtureDirectory, "synthetic-text-two-page.pdf");
 const rasterFixture = path.join(fixtureDirectory, "synthetic-raster-only.pdf");
 const mutationDirectory = path.join(fixtureDirectory, "mutation-output");
 const toolNames = [];
-const EXPECTED_TOOL_CONTRACT_SHA256 = "cf39bf8b35d8946153f2d1fc309813c72380bc0bb48bee6da531615576963e09";
+const EXPECTED_TOOL_CONTRACT_SHA256 = "4f5c1299b4fab3b415fa6eb7cff4c802b832a4d0d6bbe9fbbc8db1bd109bccdc";
 let toolContractSha256;
 let structuredToolCount;
 let markdownHash;
@@ -68,8 +68,8 @@ let rasterHash;
 try {
   const tools = await first.client.listTools();
   toolNames.push(...tools.tools.map(tool => tool.name).sort());
-  assert(toolNames.length === 39, `Expected 39 tools, received ${toolNames.length}`);
-  assert(new Set(toolNames).size === 39, "Tool names were not unique");
+  assert(toolNames.length === 40, `Expected 40 tools, received ${toolNames.length}`);
+  assert(new Set(toolNames).size === 40, "Tool names were not unique");
   toolContractSha256 = createHash("sha256")
     .update(JSON.stringify(tools.tools))
     .digest("hex");
@@ -78,7 +78,7 @@ try {
     `Tool contract digest drifted: ${toolContractSha256}`,
   );
   structuredToolCount = tools.tools.filter(tool => tool.outputSchema).length;
-  assert(structuredToolCount === 33, `Expected 33 structured tools, received ${structuredToolCount}`);
+  assert(structuredToolCount === 34, `Expected 34 structured tools, received ${structuredToolCount}`);
 
   const listed = await first.client.callTool({
     name: "list_pdfs",
@@ -95,6 +95,30 @@ try {
   });
   assert(!info.isError, "get_pdf_info failed for the text fixture");
   assert(/Pages:\s*2\b/.test(textContent(info)), "get_pdf_info did not report two pages");
+
+  const identity = await first.client.callTool({
+    name: "get_pdf_identity",
+    arguments: { pdf_path: textFixture },
+  });
+  const textFixtureBytes = await readFile(textFixture);
+  assert(!identity.isError, "get_pdf_identity failed for the text fixture");
+  assert(
+    identity.structuredContent?.canonical_path === await realpath(textFixture),
+    "get_pdf_identity did not return the canonical fixture path",
+  );
+  assert(
+    identity.structuredContent?.size_bytes === textFixtureBytes.length,
+    "get_pdf_identity did not return the exact fixture byte length",
+  );
+  assert(
+    identity.structuredContent?.sha256
+      === createHash("sha256").update(textFixtureBytes).digest("hex"),
+    "get_pdf_identity did not return the exact fixture SHA-256",
+  );
+  assert(
+    identity.structuredContent?.pdf_parsed === false,
+    "get_pdf_identity did not declare parser-independent operation",
+  );
 
   const textRead = await first.client.callTool({
     name: "read_pdf_content",
@@ -159,7 +183,7 @@ assert(mutationFiles.length === 2, `Expected two mutation outputs, received ${mu
 const fresh = await connect("fresh-session");
 try {
   const tools = await fresh.client.listTools();
-  assert(tools.tools.length === 39, "Fresh session did not discover 39 tools");
+  assert(tools.tools.length === 40, "Fresh session did not discover 40 tools");
   const info = await fresh.client.callTool({
     name: "get_pdf_info",
     arguments: { pdf_path: path.join(mutationDirectory, mutationFiles[1]) },
@@ -176,7 +200,7 @@ process.stdout.write(`${JSON.stringify({
   tool_contract_sha256: toolContractSha256,
   structured_tool_count: structuredToolCount,
   text_only_tool_count: toolNames.length - structuredToolCount,
-  same_session_calls: 7,
+  same_session_calls: 8,
   fresh_session_calls: 1,
   configured_directory_allowed: true,
   outside_directory_denied: true,

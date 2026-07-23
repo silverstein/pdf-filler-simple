@@ -109,6 +109,7 @@
       "uniqueItems": true,
       "items": {
         "enum": [
+          "get_pdf_identity",
           "get_pdf_info",
           "read_pdf_fields",
           "read_pdf_content",

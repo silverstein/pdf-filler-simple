@@ -98,6 +98,10 @@
       "description": "Get a resource URI for a PDF file that can be used with Claude's built-in PDF reading capabilities via the Resources API"
     },
     {
+      "name": "get_pdf_identity",
+      "description": "Get a parser-independent canonical path, exact byte length, and SHA-256 for a local PDF up to 250 MiB after validating its PDF header"
+    },
+    {
       "name": "read_pdf_bytes",
       "description": "Read PDF file bytes in chunks (for UI rendering)"
     },

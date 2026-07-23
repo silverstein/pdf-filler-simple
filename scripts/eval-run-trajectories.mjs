@@ -10,14 +10,14 @@ import {
 } from "../test/eval/trajectory-grader.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v1.json");
+const DEFAULT_SUITE = path.join(REPO_ROOT, "test", "fixtures", "eval", "trajectories", "jobs.v2.json");
 const DEFAULT_TRIALS = path.join(
   REPO_ROOT,
   "test",
   "fixtures",
   "eval",
   "trajectories",
-  "calibration-trials.v1.json"
+  "calibration-trials.v2.json"
 );
 
 function option(name, fallback) {

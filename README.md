@@ -206,6 +206,7 @@ improvement rather than a shipped capability.
 ### Extraction and Analysis
 
 - `extract_to_csv`
+- `get_pdf_identity`
 - `get_pdf_info`
 - `get_page_analysis`
 

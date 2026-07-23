@@ -93,7 +93,7 @@ async function main() {
     const tools = await client.listTools();
     const prompts = await client.listPrompts();
     const resources = await client.listResources();
-    if (tools.tools.length !== 39 || !tools.tools.some(tool => tool.name === "render_pdf_page")) {
+    if (tools.tools.length !== 40 || !tools.tools.some(tool => tool.name === "render_pdf_page")) {
       throw new Error("Packed server did not expose render_pdf_page");
     }
     if (prompts.prompts.length !== 14 || resources.resources.length !== 1) {
