@@ -108,7 +108,7 @@ export function validateFixtureBindings(manifest, receipt) {
     || manifest.manifest_version !== 1 || manifest.suite_version !== "v0.1.0"
     || manifest.fixtures.length !== 8
     || !Array.isArray(receipt?.fixtures) || receipt.fixtures.length !== manifest.fixtures.length
-    || receipt.protocol !== "pdf-tools.docling-handoff.v1" || !SHA256.test(receipt.handoff_id ?? "")) {
+    || receipt.protocol !== "pdf-tools.docling-macos-handoff.v1" || !SHA256.test(receipt.handoff_id ?? "")) {
     throw new Error("Manifest and receipt fixture sets are invalid");
   }
   return manifest.fixtures.map((fixture, index) => {

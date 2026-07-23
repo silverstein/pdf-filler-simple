@@ -90,7 +90,7 @@ describe("packed Markdown bakeoff runner", () => {
       });
     }
     receipt = {
-      protocol: "pdf-tools.docling-handoff.v1",
+      protocol: "pdf-tools.docling-macos-handoff.v1",
       handoff_id: "a".repeat(64),
       fixtures: retainedFixtures,
     };
