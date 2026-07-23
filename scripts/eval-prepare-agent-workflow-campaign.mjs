@@ -47,8 +47,16 @@ const EXPLICIT_CODEX_ARMS = new Set([
   "codex-explicit-baseline",
 ]);
 const SYNTHETIC_GIT_ENV = {
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "PDF Workflow Eval",
+  GIT_AUTHOR_EMAIL: "eval@invalid.local",
   GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+  GIT_COMMITTER_NAME: "PDF Workflow Eval",
+  GIT_COMMITTER_EMAIL: "eval@invalid.local",
   GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+  LC_ALL: "C",
+  TZ: "UTC",
 };
 const SYNTHETIC_GIT_MESSAGE = "Synthetic participant arm";
 
@@ -104,7 +112,14 @@ async function syntheticGitIdentity(root) {
     "pdf-tools-agent-workflow-git-",
   ));
   try {
-    await execFileAsync("git", ["init", "-q", temporaryRoot]);
+    const gitEnvironment = { ...process.env, ...SYNTHETIC_GIT_ENV };
+    await execFileAsync("git", [
+      "init",
+      "-q",
+      "--object-format=sha1",
+      "--template=",
+      temporaryRoot,
+    ], { env: gitEnvironment });
     for (const entry of await fs.readdir(root)) {
       await fs.cp(
         path.join(root, entry),
@@ -112,12 +127,19 @@ async function syntheticGitIdentity(root) {
         { recursive: true },
       );
     }
-    await execFileAsync("git", ["add", "-A"], { cwd: temporaryRoot });
     await execFileAsync("git", [
       "-c",
-      "user.name=PDF Workflow Eval",
+      "core.autocrlf=false",
       "-c",
-      "user.email=eval@invalid.local",
+      "core.eol=lf",
+      "add",
+      "-A",
+    ], { cwd: temporaryRoot, env: gitEnvironment });
+    await execFileAsync("git", [
+      "-c",
+      "core.autocrlf=false",
+      "-c",
+      "core.eol=lf",
       "-c",
       "commit.gpgsign=false",
       "commit",
@@ -126,7 +148,7 @@ async function syntheticGitIdentity(root) {
       SYNTHETIC_GIT_MESSAGE,
     ], {
       cwd: temporaryRoot,
-      env: { ...process.env, ...SYNTHETIC_GIT_ENV },
+      env: gitEnvironment,
     });
     const [{ stdout: commit }, { stdout: tree }] = await Promise.all([
       execFileAsync("git", ["rev-parse", "HEAD"], {
@@ -237,16 +259,31 @@ export async function prepareAgentWorkflowCampaign({
 
   for (const arm of ARM_NAMES) {
     const armRoot = path.join(participantsRoot, arm);
-    const promptsRoot = path.join(armRoot, "prompts");
-    await fs.mkdir(promptsRoot, { recursive: true, mode: 0o700 });
-    await writePrivate(path.join(armRoot, "response-schema.json"), compatibleSchema);
-    for (const testCase of cases.cases) {
-      await writePrivate(
-        path.join(promptsRoot, `${testCase.id}.txt`),
-        `${participantPrompt(testCase, embeddedRubric, {
-          explicitSkill: EXPLICIT_CODEX_ARMS.has(arm),
-        })}\n`,
-      );
+    if (EXPLICIT_CODEX_ARMS.has(arm)) {
+      for (const testCase of cases.cases) {
+        const caseRoot = path.join(armRoot, "cases", testCase.id);
+        await fs.mkdir(caseRoot, { recursive: true, mode: 0o700 });
+        await writePrivate(
+          path.join(caseRoot, "response-schema.json"),
+          compatibleSchema,
+        );
+        await writePrivate(
+          path.join(caseRoot, "prompt.txt"),
+          `${participantPrompt(testCase, embeddedRubric, {
+            explicitSkill: true,
+          })}\n`,
+        );
+      }
+    } else {
+      const promptsRoot = path.join(armRoot, "prompts");
+      await fs.mkdir(promptsRoot, { recursive: true, mode: 0o700 });
+      await writePrivate(path.join(armRoot, "response-schema.json"), compatibleSchema);
+      for (const testCase of cases.cases) {
+        await writePrivate(
+          path.join(promptsRoot, `${testCase.id}.txt`),
+          `${participantPrompt(testCase, embeddedRubric)}\n`,
+        );
+      }
     }
   }
 
@@ -264,21 +301,22 @@ export async function prepareAgentWorkflowCampaign({
     path.join(participantsRoot, "codex-skill", ".agents", "skills", "pdf-tools-workflow"),
     { recursive: true, errorOnExist: true, force: false },
   );
-  await fs.mkdir(
-    path.join(participantsRoot, "codex-explicit-skill", ".agents", "skills"),
-    { recursive: true, mode: 0o700 },
-  );
-  await fs.cp(
-    SKILL_ROOT,
-    path.join(
+  for (const testCase of cases.cases) {
+    const skillsRoot = path.join(
       participantsRoot,
       "codex-explicit-skill",
+      "cases",
+      testCase.id,
       ".agents",
       "skills",
-      "pdf-tools-workflow",
-    ),
-    { recursive: true, errorOnExist: true, force: false },
-  );
+    );
+    await fs.mkdir(skillsRoot, { recursive: true, mode: 0o700 });
+    await fs.cp(
+      SKILL_ROOT,
+      path.join(skillsRoot, "pdf-tools-workflow"),
+      { recursive: true, errorOnExist: true, force: false },
+    );
+  }
 
   const armAttestations = {};
   for (const arm of ARM_NAMES) {
@@ -287,6 +325,17 @@ export async function prepareAgentWorkflowCampaign({
       content_inventory: await inventory(armRoot),
       synthetic_git: await syntheticGitIdentity(armRoot),
     };
+  }
+  const explicitCaseAttestations = {};
+  for (const arm of EXPLICIT_CODEX_ARMS) {
+    explicitCaseAttestations[arm] = {};
+    for (const testCase of cases.cases) {
+      const caseRoot = path.join(participantsRoot, arm, "cases", testCase.id);
+      explicitCaseAttestations[arm][testCase.id] = {
+        content_inventory: await inventory(caseRoot),
+        synthetic_git: await syntheticGitIdentity(caseRoot),
+      };
+    }
   }
 
   const oracle = {
@@ -313,6 +362,7 @@ export async function prepareAgentWorkflowCampaign({
     arm_names: ARM_NAMES,
     participant_inventory: await inventory(participantsRoot),
     arm_attestations: armAttestations,
+    explicit_case_attestations: explicitCaseAttestations,
     oracle_sha256: sha256(await fs.readFile(path.join(trustedRoot, "oracle.json"))),
   };
   await writePrivate(

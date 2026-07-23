@@ -16,6 +16,19 @@ const REVIEWED_RUBRIC_EMBEDDED_SHA256 =
   "c194c1817d07fb9813128f3ef4b31e7229b3b6d5e33b6a0e8c424feda070dd76";
 const execFileAsync = promisify(execFile);
 const temporaryRoots = [];
+const SYNTHETIC_GIT_ENV = {
+  ...process.env,
+  GIT_CONFIG_GLOBAL: "/dev/null",
+  GIT_CONFIG_NOSYSTEM: "1",
+  GIT_AUTHOR_NAME: "PDF Workflow Eval",
+  GIT_AUTHOR_EMAIL: "eval@invalid.local",
+  GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+  GIT_COMMITTER_NAME: "PDF Workflow Eval",
+  GIT_COMMITTER_EMAIL: "eval@invalid.local",
+  GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+  LC_ALL: "C",
+  TZ: "UTC",
+};
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -116,8 +129,9 @@ describe("agent workflow campaign preparation", () => {
     const explicitPrompt = await fs.readFile(path.join(
       participants,
       "codex-explicit-skill",
-      "prompts",
-      "missing-identity-fails-closed.txt",
+      "cases",
+      "missing-identity-fails-closed",
+      "prompt.txt",
     ), "utf8");
     expect(explicitPrompt).toContain("$pdf-tools-workflow");
     expect(explicitPrompt).toContain("may natively load only the exact named");
@@ -125,8 +139,9 @@ describe("agent workflow campaign preparation", () => {
     expect(await fs.readFile(path.join(
       participants,
       "codex-explicit-baseline",
-      "prompts",
-      "missing-identity-fails-closed.txt",
+      "cases",
+      "missing-identity-fails-closed",
+      "prompt.txt",
     ), "utf8")).toBe(explicitPrompt);
     expect(claudePrompt).not.toContain("$pdf-tools-workflow");
     expect(await fs.stat(path.join(
@@ -149,6 +164,8 @@ describe("agent workflow campaign preparation", () => {
     expect(await fs.stat(path.join(
       participants,
       "codex-explicit-skill",
+      "cases",
+      "missing-identity-fails-closed",
       ".agents",
       "skills",
       "pdf-tools-workflow",
@@ -157,18 +174,39 @@ describe("agent workflow campaign preparation", () => {
     await expect(fs.stat(path.join(
       participants,
       "codex-explicit-baseline",
+      "cases",
+      "missing-identity-fails-closed",
       ".agents",
     ))).rejects.toMatchObject({ code: "ENOENT" });
 
-    const explicitSkillRoot = path.join(participants, "codex-explicit-skill");
-    const expectedAttestation = manifest.arm_attestations["codex-explicit-skill"];
-    await execFileAsync("git", ["init", "-q"], { cwd: explicitSkillRoot });
-    await execFileAsync("git", ["add", "-A"], { cwd: explicitSkillRoot });
+    const explicitSkillRoot = path.join(
+      participants,
+      "codex-explicit-skill",
+      "cases",
+      "missing-identity-fails-closed",
+    );
+    const expectedAttestation = manifest.explicit_case_attestations[
+      "codex-explicit-skill"
+    ]["missing-identity-fails-closed"];
+    await execFileAsync("git", [
+      "init",
+      "-q",
+      "--object-format=sha1",
+      "--template=",
+    ], { cwd: explicitSkillRoot, env: SYNTHETIC_GIT_ENV });
     await execFileAsync("git", [
       "-c",
-      "user.name=PDF Workflow Eval",
+      "core.autocrlf=false",
       "-c",
-      "user.email=eval@invalid.local",
+      "core.eol=lf",
+      "add",
+      "-A",
+    ], { cwd: explicitSkillRoot, env: SYNTHETIC_GIT_ENV });
+    await execFileAsync("git", [
+      "-c",
+      "core.autocrlf=false",
+      "-c",
+      "core.eol=lf",
       "-c",
       "commit.gpgsign=false",
       "commit",
@@ -177,11 +215,7 @@ describe("agent workflow campaign preparation", () => {
       "Synthetic participant arm",
     ], {
       cwd: explicitSkillRoot,
-      env: {
-        ...process.env,
-        GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
-        GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
-      },
+      env: SYNTHETIC_GIT_ENV,
     });
     expect(await attestAgentWorkflowArm({
       armRoot: explicitSkillRoot,
@@ -197,8 +231,7 @@ describe("agent workflow campaign preparation", () => {
 
     await fs.appendFile(path.join(
       explicitSkillRoot,
-      "prompts",
-      "missing-identity-fails-closed.txt",
+      "prompt.txt",
     ), "\nchanged after attestation\n");
     expect((await attestAgentWorkflowArm({
       armRoot: explicitSkillRoot,

@@ -80,7 +80,8 @@ For a Claude skill-arm case, provision a compatible API-key credential through
 the host's secret mechanism and keep it out of commands and logs:
 
 ```bash
-mkdir -p results
+: "${PDF_WORKFLOW_RESULTS_ROOT:?set this to an absolute operator-owned path outside the participant root}"
+mkdir -p "$PDF_WORKFLOW_RESULTS_ROOT"
 CLAUDE_EVAL_SCHEMA="$(jq -c . response-schema.json)"
 claude --print \
   --bare \
@@ -95,7 +96,7 @@ claude --print \
   --json-schema "$CLAUDE_EVAL_SCHEMA" \
   --plugin-dir plugin/pdf-tools-workflow \
   < prompts/missing-identity-fails-closed.txt \
-  > results/missing-identity-fails-closed.raw.json
+  > "$PDF_WORKFLOW_RESULTS_ROOT/missing-identity-fails-closed.raw.json"
 ```
 
 Use the same command without `--plugin-dir plugin/pdf-tools-workflow` in the
@@ -109,7 +110,8 @@ available, record the Claude arm as blocked rather than weakening isolation.
 For an implicit Codex skill-arm or baseline-arm case:
 
 ```bash
-mkdir -p results
+: "${PDF_WORKFLOW_RESULTS_ROOT:?set this to an absolute operator-owned path outside the participant root}"
+mkdir -p "$PDF_WORKFLOW_RESULTS_ROOT"
 : "${PDF_WORKFLOW_CODEX_HOME:?set this to the clean trial home}"
 CODEX_HOME="$PDF_WORKFLOW_CODEX_HOME" codex exec \
   --skip-git-repo-check \
@@ -120,7 +122,7 @@ CODEX_HOME="$PDF_WORKFLOW_CODEX_HOME" codex exec \
   --model gpt-5.6-sol \
   --output-schema response-schema.json \
   --json \
-  --output-last-message results/missing-identity-fails-closed.response.json \
+  --output-last-message "$PDF_WORKFLOW_RESULTS_ROOT/missing-identity-fails-closed.response.json" \
   --disable apps \
   --disable auth_elicitation \
   --disable browser_use \
@@ -147,7 +149,7 @@ CODEX_HOME="$PDF_WORKFLOW_CODEX_HOME" codex exec \
   --disable unified_exec \
   --disable workspace_dependencies \
   - < prompts/missing-identity-fails-closed.txt \
-  > results/missing-identity-fails-closed.events.jsonl
+  > "$PDF_WORKFLOW_RESULTS_ROOT/missing-identity-fails-closed.events.jsonl"
 ```
 
 Set `CODEX_HOME` to a dedicated mode-0700 directory containing only separately
@@ -162,18 +164,39 @@ depth.
 Codex exposes project skill metadata in the model-visible prompt, but the full
 skill body uses progressive disclosure. A no-tools trial therefore measures
 implicit metadata triggering only. Run the paired explicit arms from a
-synthetic Git repository containing only the selected participant arm:
+fresh synthetic Git repository for each case. The campaign preparer emits each
+case as `codex-explicit-{skill|baseline}/cases/<case-id>/`. Transfer only one
+generated case root into each fresh runtime repository. That root contains
+`prompt.txt`, `response-schema.json`, and, only for the skill arm, the local
+skill. Never reuse a runtime repository between cases.
 
 ```bash
-git init
-git add .
-GIT_AUTHOR_DATE="2000-01-01T00:00:00Z" \
-  GIT_COMMITTER_DATE="2000-01-01T00:00:00Z" \
-  git -c user.name="PDF Workflow Eval" \
-  -c user.email="eval@invalid.local" \
-  -c commit.gpgsign=false \
-  commit -m "Synthetic participant arm"
-mkdir -p results
+: "${PDF_WORKFLOW_RESULTS_ROOT:?set this to an absolute operator-owned path outside the runtime repository}"
+: "${PDF_WORKFLOW_ATTESTER:?set this to the separate operator-owned attester path}"
+: "${PDF_WORKFLOW_EXPECTED_COMMIT_SHA1:?set this from the trusted per-case attestation}"
+: "${PDF_WORKFLOW_EXPECTED_TREE_SHA1:?set this from the trusted per-case attestation}"
+: "${PDF_WORKFLOW_EXPECTED_CONTENT_TREE_SHA256:?set this from the trusted per-case attestation}"
+mkdir -p "$PDF_WORKFLOW_RESULTS_ROOT"
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+export GIT_AUTHOR_NAME="PDF Workflow Eval"
+export GIT_AUTHOR_EMAIL="eval@invalid.local"
+export GIT_AUTHOR_DATE="2000-01-01T00:00:00Z"
+export GIT_COMMITTER_NAME="PDF Workflow Eval"
+export GIT_COMMITTER_EMAIL="eval@invalid.local"
+export GIT_COMMITTER_DATE="2000-01-01T00:00:00Z"
+export LC_ALL=C
+export TZ=UTC
+git init -q --object-format=sha1 --template=
+git -c core.autocrlf=false -c core.eol=lf add -A
+git -c core.autocrlf=false -c core.eol=lf -c commit.gpgsign=false \
+  commit -q -m "Synthetic participant arm"
+node "$PDF_WORKFLOW_ATTESTER" \
+  --arm-root "$PWD" \
+  --expected-commit-sha1 "$PDF_WORKFLOW_EXPECTED_COMMIT_SHA1" \
+  --expected-tree-sha1 "$PDF_WORKFLOW_EXPECTED_TREE_SHA1" \
+  --expected-content-tree-sha256 "$PDF_WORKFLOW_EXPECTED_CONTENT_TREE_SHA256" \
+  > "$PDF_WORKFLOW_RESULTS_ROOT/pre-run-attestation.json"
 : "${PDF_WORKFLOW_CODEX_HOME:?set this to the clean trial home}"
 CODEX_HOME="$PDF_WORKFLOW_CODEX_HOME" codex exec \
   --ephemeral \
@@ -183,7 +206,7 @@ CODEX_HOME="$PDF_WORKFLOW_CODEX_HOME" codex exec \
   --model gpt-5.6-sol \
   --output-schema response-schema.json \
   --json \
-  --output-last-message results/missing-identity-fails-closed.response.json \
+  --output-last-message "$PDF_WORKFLOW_RESULTS_ROOT/response.json" \
   --disable apps \
   --disable auth_elicitation \
   --disable browser_use \
@@ -209,8 +232,14 @@ CODEX_HOME="$PDF_WORKFLOW_CODEX_HOME" codex exec \
   --disable tool_suggest \
   --disable unified_exec \
   --disable workspace_dependencies \
-  - < prompts/missing-identity-fails-closed.txt \
-  > results/missing-identity-fails-closed.events.jsonl
+  - < prompt.txt \
+  > "$PDF_WORKFLOW_RESULTS_ROOT/events.jsonl"
+node "$PDF_WORKFLOW_ATTESTER" \
+  --arm-root "$PWD" \
+  --expected-commit-sha1 "$PDF_WORKFLOW_EXPECTED_COMMIT_SHA1" \
+  --expected-tree-sha1 "$PDF_WORKFLOW_EXPECTED_TREE_SHA1" \
+  --expected-content-tree-sha256 "$PDF_WORKFLOW_EXPECTED_CONTENT_TREE_SHA256" \
+  > "$PDF_WORKFLOW_RESULTS_ROOT/post-run-attestation.json"
 ```
 
 The explicit skill and explicit baseline prompts are byte-identical and both
@@ -219,26 +248,32 @@ that local skill. Codex resolves the explicit mention through its native skill
 loader while shell and unified execution remain disabled. Require an event
 stream containing no model-callable tool item. Record `codex debug prompt-input`
 output to prove the effective skill inventory without inferring it from token
-counts.
+counts. Use the per-case values in
+`explicit_case_attestations.<arm>.<case-id>` from the trusted preparation
+manifest for the three expected attestation values above.
 
-Before creating `results/`, copy the exact
+Before initializing the runtime repository, copy the exact
 `scripts/eval-attest-agent-workflow-arm.mjs` controller utility to a separate
-operator-only path on the model host. Run it with the expected commit, Git tree,
-and content-tree values from the trusted preparation manifest. It fails unless
-the repository has the exact deterministic root commit, one parentless commit,
-the expected tracked-file inventory, the expected SHA-256 content tree, and a
-clean status. Keep the attestation with the raw arm evidence.
+operator-owned path on the model host. Run the pre-attestation immediately
+before `codex exec` and the post-attestation immediately after it. Both must
+pass. The attester fails unless the repository has the exact deterministic
+root commit, one parentless commit, the expected tracked-file inventory, the
+expected SHA-256 content tree, and a clean status. Because responses, events,
+and attestations are written outside the runtime repository, the post-run
+check proves Codex did not alter or contaminate that case root.
 
 After transferring raw event streams back to the controller, run:
 
 ```bash
 node scripts/eval-validate-agent-workflow-events.mjs \
-  results/*.events.jsonl
+  "$PDF_WORKFLOW_CONTROLLER_RESULTS_ROOT"/*.events.jsonl
 ```
 
 This validator fails closed on command execution, tool calls, unknown event
-types, malformed JSONL, duplicate lifecycle events, or missing lifecycle
-events. Apply the same validator to skill and baseline arms.
+types, malformed JSONL, reordered, duplicate, or missing lifecycle events,
+missing message identity or content, and missing token usage. Its report binds
+each decision to the raw event file's byte length and SHA-256. Apply the same
+validator to skill and baseline arms.
 
 Before every arm, retain a negative isolation probe showing that neither an
 oracle nor the source repository exists on the model host, plus the effective
