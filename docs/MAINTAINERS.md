@@ -116,6 +116,12 @@ Every user-visible PDF output follows an explicit commit policy:
   contents. Oversized inputs therefore fail before stale output-transaction
   recovery can alter unrelated directory state. Missing inputs remain eligible
   for recovery because a stale transaction may legitimately restore them.
+  Present inputs bind recovery to the preflight's canonical parent directory;
+  missing inputs bind it to the canonical raw parent. The directory device and
+  inode are revalidated before and after recovery attempts, and the eventual
+  bounded read must resolve to the expected canonical input path. A symlinked
+  alias therefore recovers its target directory rather than the alias
+  directory, while an ancestor-directory substitution fails closed.
   After preflight and recovery, the actual size check and bounded read share
   one newly opened descriptor; descriptor, pathname, and canonical-path
   identity are checked around that read, and its exact bytes are passed to the

@@ -575,6 +575,71 @@ describe.each(RUNTIMES)("$name mutation PDF input limits", ({ root }) => {
     baselineActiveIdentity = activeIdentity(resetActive);
   }, 15_000);
 
+  it.runIf(process.platform !== "win32")(
+    "binds symlinked inputs to the canonical interrupted-transaction directory before parsing",
+    async () => {
+      const caseRoot = path.join(stateRoot, "symlinked-recovery-input");
+      const actualRoot = path.join(caseRoot, "actual");
+      const aliasesRoot = path.join(caseRoot, "aliases");
+      const firstPath = path.join(actualRoot, "first.pdf");
+      const secondPath = path.join(actualRoot, "second.pdf");
+      const aliasPath = path.join(aliasesRoot, "input.pdf");
+      const outputPath = path.join(actualRoot, "rotated.pdf");
+      await fs.mkdir(actualRoot, { recursive: true });
+      await fs.mkdir(aliasesRoot, { recursive: true });
+
+      const firstDocument = await PDFDocument.create();
+      firstDocument.addPage([400, 500]);
+      firstDocument.setTitle("canonical recovery source");
+      const firstBytes = Buffer.from(await firstDocument.save());
+      const secondDocument = await PDFDocument.create();
+      secondDocument.addPage([300, 300]);
+      const secondBytes = Buffer.from(await secondDocument.save());
+      await fs.writeFile(firstPath, firstBytes, { mode: 0o600 });
+      await fs.writeFile(secondPath, secondBytes, { mode: 0o600 });
+      await fs.symlink(firstPath, aliasPath);
+
+      expect(await runCrashChild(actualRoot, "activate_0")).toEqual({
+        code: 86,
+        signal: null,
+        stderr: "",
+      });
+      await expect(fs.readFile(firstPath, "utf8")).resolves.toBe("first replacement");
+      expect(
+        (await fs.readdir(actualRoot)).some(name => name.endsWith("-transaction.json")),
+      ).toBe(true);
+      expect(
+        (await fs.readdir(aliasesRoot)).filter(name => name.startsWith(".pdf-tools-")),
+      ).toEqual([]);
+
+      const result = await callToolBounded(client, {
+        name: "rotate_pdf_pages",
+        arguments: {
+          input_path: aliasPath,
+          output_path: outputPath,
+          degrees: 90,
+        },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(Buffer.from(await fs.readFile(firstPath)).equals(firstBytes)).toBe(true);
+      expect(Buffer.from(await fs.readFile(secondPath)).equals(secondBytes)).toBe(true);
+      expect(
+        (await fs.readdir(actualRoot)).filter(name => name.startsWith(".pdf-tools-")),
+      ).toEqual([]);
+      const outputDocument = await PDFDocument.load(await fs.readFile(outputPath));
+      expect(outputDocument.getTitle()).toBe("canonical recovery source");
+      expect(outputDocument.getPage(0).getRotation().angle).toBe(90);
+
+      const resetActive = await callToolBounded(client, {
+        name: "set_active_document",
+        arguments: { pdf_path: validControlPath },
+      });
+      expect(resetActive.isError).not.toBe(true);
+      baselineActiveIdentity = activeIdentity(resetActive);
+    },
+    15_000,
+  );
+
   it("rejects all supported same-path mutations before changing the sparse source or backup state", async () => {
     for (const tool of MUTATING_PDF_TOOLS.filter(candidate =>
       SAME_PATH_MUTATING_TOOLS.has(candidate.name))) {

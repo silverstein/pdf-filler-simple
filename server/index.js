@@ -47,6 +47,8 @@ import { extractPdfLayout, extractPdfLayoutForMarkdown } from "./layout-extracti
 import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
 import {
   PDF_MUTATION_MAX_FILE_BYTES,
+  assertCanonicalRecoveryDirectory,
+  bindCanonicalRecoveryDirectory,
   pdfMutationFileLimitError,
   preflightBoundedPdfFileSafely,
   preflightPdfMutationInputsWithinMergeLimit,
@@ -157,11 +159,16 @@ async function preflightPdfInputWithoutRecovery(inputPath, maxBytes, createSizeL
     return { resolvedPath, ...observation, missingBeforeRecovery: false };
   } catch (error) {
     if (error?.code !== "ENOENT") throw error;
+    const recoveryDirectory = await bindCanonicalRecoveryDirectory(
+      path.dirname(resolvedPath),
+      { assertPathAllowed },
+    );
     return {
       resolvedPath,
       sizeBytes: null,
       canonicalPath: null,
       fileIdentity: null,
+      recoveryDirectory,
       missingBeforeRecovery: true,
     };
   }
@@ -839,17 +846,23 @@ async function readPdfInputWithRecovery(inputPath, {
   createSizeLimitError = pdfMutationFileLimitError,
 } = {}) {
   const resolvedPath = resolvePath(inputPath);
-  await preflightPdfInputWithoutRecovery(
+  const preflight = await preflightPdfInputWithoutRecovery(
     resolvedPath,
     maxBytes,
     createSizeLimitError,
   );
-  const canonicalDirectory = await fs.realpath(path.dirname(resolvedPath));
+  const recoveryDirectory = preflight.recoveryDirectory;
+  const expectedCanonicalPath = preflight.missingBeforeRecovery
+    ? path.join(recoveryDirectory.canonicalPath, path.basename(resolvedPath))
+    : preflight.canonicalPath;
   for (let attempt = 0; attempt < 4; attempt += 1) {
+    await assertCanonicalRecoveryDirectory(recoveryDirectory, { assertPathAllowed });
     try {
-      await recoverPdfOutputTransactions(canonicalDirectory);
+      await recoverPdfOutputTransactions(recoveryDirectory.canonicalPath);
+      await assertCanonicalRecoveryDirectory(recoveryDirectory, { assertPathAllowed });
       break;
     } catch (error) {
+      await assertCanonicalRecoveryDirectory(recoveryDirectory, { assertPathAllowed });
       if (error?.code !== "ATOMIC_OUTPUT_CONCURRENT") throw error;
       if (attempt === 3) {
         throw backupIdentityError("CONCURRENT_MODIFICATION", "Another process is committing PDF output in this directory. Retry after that mutation finishes.", error);
@@ -857,9 +870,17 @@ async function readPdfInputWithRecovery(inputPath, {
       await new Promise(resolve => setTimeout(resolve, 5));
     }
   }
+  await assertCanonicalRecoveryDirectory(recoveryDirectory, { assertPathAllowed });
   const boundedInput = await readBoundedPdfFile(resolvedPath, maxBytes, {
     createSizeLimitError,
   });
+  await assertCanonicalRecoveryDirectory(recoveryDirectory, { assertPathAllowed });
+  if (boundedInput.canonicalPath !== expectedCanonicalPath) {
+    throw backupIdentityError(
+      "PDF_RECOVERY_INPUT_CHANGED",
+      "PDF input resolved to a different canonical path after recovery. Retry the request.",
+    );
+  }
   if (
     !Buffer.isBuffer(boundedInput.bytes)
     || boundedInput.bytes.length !== boundedInput.sizeBytes

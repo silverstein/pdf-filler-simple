@@ -8,6 +8,8 @@ import {
   PDF_MERGE_MAX_TOTAL_BYTES,
   PDF_MUTATION_FILE_LIMIT_MESSAGE,
   PDF_MUTATION_MAX_FILE_BYTES,
+  assertCanonicalRecoveryDirectory,
+  bindCanonicalRecoveryDirectory,
   preflightBoundedPdfFileSafely,
   preflightPdfMutationInputsWithinMergeLimit,
   readBoundedPdfFileSafely,
@@ -113,7 +115,12 @@ describe("readBoundedPdfFileSafely", () => {
 
   const pathPolicy = canonicalPath => {
     allowedPaths.push(canonicalPath);
-    if (!canonicalPath.startsWith(temporaryRoot + path.sep)) throw new Error("Path is outside the test root.");
+    if (
+      canonicalPath !== temporaryRoot
+      && !canonicalPath.startsWith(temporaryRoot + path.sep)
+    ) {
+      throw new Error("Path is outside the test root.");
+    }
   };
 
   it("returns the exact stable descriptor bytes and rechecks the canonical allowed path", async () => {
@@ -358,6 +365,28 @@ describe("readBoundedPdfFileSafely", () => {
       message: PDF_MUTATION_FILE_LIMIT_MESSAGE,
     });
     expect(state).toMatchObject({ openCount: 1, readCount: 0, closeCount: 1 });
+  });
+
+  it("rejects deterministic recovery-directory inode substitution", async () => {
+    const recoveryDirectory = path.join(temporaryRoot, "recovery-directory");
+    const movedDirectory = path.join(temporaryRoot, "recovery-directory-moved");
+    await fs.mkdir(recoveryDirectory);
+    const binding = await bindCanonicalRecoveryDirectory(recoveryDirectory, {
+      assertPathAllowed: pathPolicy,
+    });
+    await fs.writeFile(path.join(recoveryDirectory, "contents-change-is-safe"), "value");
+    await expect(assertCanonicalRecoveryDirectory(binding, {
+      assertPathAllowed: pathPolicy,
+    })).resolves.toEqual(binding);
+
+    await fs.rename(recoveryDirectory, movedDirectory);
+    await fs.mkdir(recoveryDirectory);
+    await expect(assertCanonicalRecoveryDirectory(binding, {
+      assertPathAllowed: pathPolicy,
+    })).rejects.toMatchObject({
+      code: "PDF_RECOVERY_DIRECTORY_CHANGED",
+      message: "PDF recovery directory changed during input preparation. Retry the request.",
+    });
   });
 });
 

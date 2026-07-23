@@ -1,5 +1,6 @@
 import { constants as defaultFsConstants } from "node:fs";
 import defaultFileSystem from "node:fs/promises";
+import path from "node:path";
 
 const PDF_CHANGED_MESSAGE = "PDF changed while it was being read. Retry the request.";
 const PDF_TOO_LARGE_MESSAGE = "read_pdf_layout accepts source PDFs up to 250 MiB.";
@@ -55,6 +56,32 @@ function stableFileIdentity(stats) {
   };
 }
 
+function isStableFileIdentity(identity) {
+  return Boolean(
+    identity
+    && typeof identity.device === "string"
+    && identity.device.length > 0
+    && typeof identity.inode === "string"
+    && identity.inode.length > 0
+  );
+}
+
+function sameStableFileIdentity(left, right) {
+  return isStableFileIdentity(left)
+    && isStableFileIdentity(right)
+    && left.device === right.device
+    && left.inode === right.inode;
+}
+
+function recoveryDirectoryChangedError(cause) {
+  const error = new Error(
+    "PDF recovery directory changed during input preparation. Retry the request.",
+    cause ? { cause } : undefined,
+  );
+  error.code = "PDF_RECOVERY_DIRECTORY_CHANGED";
+  return error;
+}
+
 function boundedFileSize(stats, maxBytes, createSizeLimitError) {
   const size = stats.size;
   if (typeof size === "bigint") {
@@ -95,6 +122,82 @@ function validateBoundedReadArguments(maxBytes, assertPathAllowed, createSizeLim
   }
 }
 
+async function inspectCanonicalDirectoryBinding(
+  canonicalPath,
+  fileSystem,
+  assertPathAllowed,
+  expectedIdentity = null,
+) {
+  try {
+    assertPathAllowed(canonicalPath);
+    const before = await fileSystem.lstat(canonicalPath, { bigint: true });
+    if (!before.isDirectory() || before.isSymbolicLink()) {
+      throw recoveryDirectoryChangedError();
+    }
+    const canonicalAfter = await fileSystem.realpath(canonicalPath);
+    const after = await fileSystem.lstat(canonicalAfter, { bigint: true });
+    const beforeIdentity = stableFileIdentity(before);
+    const afterIdentity = stableFileIdentity(after);
+    if (
+      canonicalAfter !== canonicalPath
+      || !after.isDirectory()
+      || after.isSymbolicLink()
+      || !sameStableFileIdentity(beforeIdentity, afterIdentity)
+      || (expectedIdentity && !sameStableFileIdentity(afterIdentity, expectedIdentity))
+    ) {
+      throw recoveryDirectoryChangedError();
+    }
+    assertPathAllowed(canonicalAfter);
+    return {
+      canonicalPath: canonicalAfter,
+      fileIdentity: afterIdentity,
+    };
+  } catch (error) {
+    if (error?.code === "PDF_RECOVERY_DIRECTORY_CHANGED") throw error;
+    throw recoveryDirectoryChangedError(error);
+  }
+}
+
+export async function bindCanonicalRecoveryDirectory(directoryPath, {
+  fileSystem = defaultFileSystem,
+  assertPathAllowed,
+} = {}) {
+  if (typeof assertPathAllowed !== "function") {
+    throw new TypeError("bindCanonicalRecoveryDirectory requires an allowed-path policy.");
+  }
+  let canonicalPath;
+  try {
+    canonicalPath = await fileSystem.realpath(directoryPath);
+  } catch (error) {
+    throw recoveryDirectoryChangedError(error);
+  }
+  return await inspectCanonicalDirectoryBinding(
+    canonicalPath,
+    fileSystem,
+    assertPathAllowed,
+  );
+}
+
+export async function assertCanonicalRecoveryDirectory(binding, {
+  fileSystem = defaultFileSystem,
+  assertPathAllowed,
+} = {}) {
+  if (
+    !binding
+    || typeof binding.canonicalPath !== "string"
+    || !isStableFileIdentity(binding.fileIdentity)
+    || typeof assertPathAllowed !== "function"
+  ) {
+    throw new TypeError("assertCanonicalRecoveryDirectory requires a valid binding and allowed-path policy.");
+  }
+  return await inspectCanonicalDirectoryBinding(
+    binding.canonicalPath,
+    fileSystem,
+    assertPathAllowed,
+    binding.fileIdentity,
+  );
+}
+
 /**
  * Check a PDF's stable descriptor size without reading or allocating its
  * contents. This is deliberately separate from recovery: an existing
@@ -111,6 +214,10 @@ export async function preflightBoundedPdfFileSafely(resolvedPath, maxBytes, {
 
   const canonicalPath = await fileSystem.realpath(resolvedPath);
   assertPathAllowed(canonicalPath);
+  const recoveryDirectory = await bindCanonicalRecoveryDirectory(
+    path.dirname(canonicalPath),
+    { fileSystem, assertPathAllowed },
+  );
   const pathBefore = await raceAware(() => fileSystem.lstat(canonicalPath, { bigint: true }));
   if (!pathBefore.isFile()) throw new Error("PDF path must identify a regular file.");
 
@@ -128,10 +235,15 @@ export async function preflightBoundedPdfFileSafely(resolvedPath, maxBytes, {
     const canonicalAfter = await raceAware(() => fileSystem.realpath(canonicalPath));
     if (canonicalAfter !== canonicalPath) throw pdfChangedError();
     assertPathAllowed(canonicalAfter);
+    await assertCanonicalRecoveryDirectory(recoveryDirectory, {
+      fileSystem,
+      assertPathAllowed,
+    });
     return {
       sizeBytes,
       canonicalPath: canonicalAfter,
       fileIdentity: stableFileIdentity(after),
+      recoveryDirectory,
     };
   } finally {
     await handle.close();
