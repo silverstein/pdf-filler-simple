@@ -244,6 +244,34 @@ describe("durable PDF output transaction recovery", () => {
     await expectNoTransactionArtifacts(directoryPath);
   }, 30_000);
 
+  it("preserves a different-inode same-byte target while recovering a v1 journal with its stage present", async () => {
+    const directoryPath = await makeTransactionDirectory("legacy-v1-staged-identity");
+    await fs.unlink(path.join(directoryPath, "first.pdf"));
+    await fs.unlink(path.join(directoryPath, "second.pdf"));
+    expect((await runCrashChild(directoryPath, "journal_activating")).code).toBe(86);
+    const journalName = (await fs.readdir(directoryPath)).find(name => name.endsWith("-transaction.json"));
+    expect(journalName).toEqual(expect.any(String));
+    const journalPath = path.join(directoryPath, journalName);
+    const envelope = JSON.parse(await fs.readFile(journalPath, "utf8"));
+    envelope.payload.schema_version = 1;
+    envelope.payload_sha256 = sha256(JSON.stringify(envelope.payload));
+    await fs.writeFile(journalPath, `${JSON.stringify(envelope)}\n`, { mode: 0o600 });
+
+    const targetPath = path.join(directoryPath, "first.pdf");
+    await fs.writeFile(targetPath, "first replacement");
+    const externalStats = await fs.lstat(targetPath);
+    await recoverPdfOutputTransactions(directoryPath);
+
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("first replacement");
+    const retainedStats = await fs.lstat(targetPath);
+    expect({ dev: retainedStats.dev, ino: retainedStats.ino }).toEqual({
+      dev: externalStats.dev,
+      ino: externalStats.ino,
+    });
+    await expect(fs.stat(path.join(directoryPath, "second.pdf"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expectNoTransactionArtifacts(directoryPath);
+  }, 30_000);
+
   it("cleans an incomplete dead-process output-lock candidate", async () => {
     const directoryPath = await makeTransactionDirectory("partial-lock-candidate");
     const deadPid = await exitedProcessId();

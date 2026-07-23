@@ -1508,11 +1508,12 @@ async function recoverAtomicJournal(fsOps, journalPath) {
       });
       const target = await lstatIfPresent(fsOps, entry.targetPath);
       if (target) assertAtomicOutputTarget(entry.targetPath, target);
+      const stageIdentity = stage ? recoveryIdentity(stage) : null;
       const targetOwnedByTransaction = target && (
-        payload.schema_version === 1
-          ? await sha256RegularFile(fsOps, entry.targetPath) === entry.new_sha256
-          : recoveryIdentity(target) === recoveryIdentity(stage)
-            && await sha256RegularFile(fsOps, entry.targetPath) === entry.new_sha256
+        await sha256RegularFile(fsOps, entry.targetPath) === entry.new_sha256
+        && (stageIdentity !== null
+          ? recoveryIdentity(target) === stageIdentity
+          : payload.schema_version === 1)
       );
       if (entry.initial_identity !== null) {
         if (rollback) {
@@ -1521,7 +1522,7 @@ async function recoverAtomicJournal(fsOps, journalPath) {
               throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Activated output is ambiguous: ${entry.targetPath}`);
             }
             await removeExpectedArtifact(fsOps, entry.targetPath, {
-              identity: payload.schema_version >= 2 ? recoveryIdentity(stage) : null,
+              identity: stageIdentity,
               sha256: entry.new_sha256,
             });
           }
@@ -1540,13 +1541,13 @@ async function recoverAtomicJournal(fsOps, journalPath) {
         }
         if (targetOwnedByTransaction) {
           await removeExpectedArtifact(fsOps, entry.targetPath, {
-            identity: payload.schema_version >= 2 ? recoveryIdentity(stage) : null,
+            identity: stageIdentity,
             sha256: entry.new_sha256,
           });
         }
       }
       await removeExpectedArtifact(fsOps, entry.stagePath, {
-        identity: payload.schema_version >= 2 ? recoveryIdentity(stage) : null,
+        identity: stageIdentity,
         sha256: entry.new_sha256,
         privateMode: true,
       });
