@@ -188,7 +188,12 @@ describe("cross-host PDF Tools workflow contract", () => {
       /earlier block takes precedence[\s\S]*every\s+later stage through Validate not reached/i,
     );
     expect(skill).toMatch(/Mark Return completed because the response returns the\s+partial record/i);
-    expect(skill).toMatch(/Reserve `NO_MUTATION` for a mutation stopped by missing required artifact/i);
+    expect(skill).toMatch(
+      /use `identity_status` only for required PDF artifact identity[\s\S]*SIGNATURE_ASSET_IDENTITY_UNAVAILABLE/i,
+    );
+    expect(skill).toMatch(
+      /Reserve `NO_MUTATION` for a mutation stopped by missing required PDF[\s\S]*not a generic blocked-execution flag/i,
+    );
     expect(skill).toMatch(/do not list unrelated tools as prohibited/i);
     expect(skill).toMatch(/ready form fill plans `fill_pdf` followed by `read_pdf_fields`/i);
     const hostWorkflowGuide = await readText("docs/AGENT_HOST_WORKFLOWS.md");

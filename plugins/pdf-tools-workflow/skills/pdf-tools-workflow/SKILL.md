@@ -179,6 +179,11 @@ off an artifact only through a separate, freshly authorized action.
 When the host requests a structured planning response:
 
 - emit only classifications directly triggered by the case;
+- use `identity_status` only for required PDF artifact identity: canonical
+  path, byte length, and SHA-256. Do not mark it incomplete solely because
+  authorization inputs or stable signature-asset identity are unavailable.
+  Report signature-asset uncertainty with
+  `SIGNATURE_ASSET_IDENTITY_UNAVAILABLE`;
 - list only tools permitted as next calls, excluding calls whose evidence is
   already supplied and calls blocked by the decision;
 - list blocked tools separately and do not also plan them;
@@ -213,8 +218,10 @@ Use these stage semantics:
 Use these record boundaries:
 
 - Preserve the requested output-target behavior even when execution is blocked.
-- Reserve `NO_MUTATION` for a mutation stopped by missing required artifact
-  identity; a read-only result already has no mutation effect.
+- Reserve `NO_MUTATION` for a mutation stopped by missing required PDF
+  artifact identity. It is not a generic blocked-execution flag: do not emit it
+  for an authorization-only block when the PDF artifact identity is complete.
+  A read-only result already has no mutation effect.
 - Do not add comparison-coverage flags to a bounded summary when the evidence
   exactly covers the pages the user requested.
 - An incompletely authorized visible signature stamp always reports
