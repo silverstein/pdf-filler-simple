@@ -1,24 +1,39 @@
 #!/usr/bin/env node
 
+import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 
 const SHA256 = /^[a-f0-9]{64}$/;
 const MAX_ARTIFACT_BYTES = 512 * 1024 * 1024;
 const MAX_METADATA_BYTES = 1024 * 1024;
 const MAX_STDERR_BYTES = 1024 * 1024;
+const execFileAsync = promisify(execFile);
+const PACKED_RUNTIME_FILES = [
+  ["package_json", "package.json"],
+  ["server_entry", "server/index.js"],
+  ["output_schemas", "server/output-schemas.js"],
+  ["layout_extraction", "server/layout-extraction.js"],
+  ["markdown_conversion", "server/markdown-conversion.js"],
+  ["markdown_transaction", "server/markdown-output-transaction.js"],
+];
 const REQUIRED_OPTIONS = [
   "--artifact",
   "--artifact-sha256",
-  "--extension-root",
   "--manifest",
+  "--manifest-sha256",
   "--output",
   "--receipt",
+  "--receipt-sha256",
+  "--receipt-schema",
+  "--receipt-schema-sha256",
 ];
 
 export function canonicalJson(value) {
@@ -101,6 +116,33 @@ function parseJson(bytes, label) {
   } catch (error) {
     throw new Error(`${label} is not JSON: ${error.message}`);
   }
+}
+
+async function extractArtifact(artifactPath, outputRoot) {
+  const extractionRoot = await fs.mkdtemp(path.join(outputRoot, ".mcpb-extract-"));
+  await fs.chmod(extractionRoot, 0o700);
+  const options = {
+    env: { LANG: "C", LC_ALL: "C", PATH: "/usr/bin:/bin" },
+    maxBuffer: MAX_STDERR_BYTES,
+    timeout: 120000,
+  };
+  try {
+    await execFileAsync("/usr/bin/unzip", ["-tqq", artifactPath], options);
+    await execFileAsync("/usr/bin/unzip", ["-q", artifactPath, "-d", extractionRoot], options);
+    return await canonicalDirectory(extractionRoot, "fresh MCPB extraction root");
+  } catch (error) {
+    await fs.rm(extractionRoot, { recursive: true, force: true }).catch(() => {});
+    throw new Error(`MCPB extraction failed: ${error.message}`);
+  }
+}
+
+function validateReceipt(receipt, schema) {
+  const validation = new AjvJsonSchemaValidator().getValidator(schema)(receipt);
+  if (!validation.valid) throw new Error(`Docling receipt schema validation failed: ${validation.errorMessage}`);
+  const identityDigest = sha256(Buffer.from(
+    `pdf-tools.docling-macos-handoff.v1\0${canonicalJson(receipt.identity)}`,
+  ));
+  if (identityDigest !== receipt.handoff_id) throw new Error("Docling receipt identity digest is invalid");
 }
 
 export function validateFixtureBindings(manifest, receipt) {
@@ -249,81 +291,139 @@ async function writeExclusive(filename, bytes) {
 
 export async function runMarkdownBakeoff(options) {
   const artifactSha256 = options["--artifact-sha256"];
-  if (!SHA256.test(artifactSha256 ?? "")) throw new Error("artifact SHA-256 is invalid");
-  const extensionRoot = await canonicalDirectory(path.resolve(options["--extension-root"]), "extension root");
+  const manifestSha256 = options["--manifest-sha256"];
+  const receiptSha256 = options["--receipt-sha256"];
+  const receiptSchemaSha256 = options["--receipt-schema-sha256"];
+  if (![artifactSha256, manifestSha256, receiptSha256, receiptSchemaSha256].every(value => SHA256.test(value ?? ""))) {
+    throw new Error("One or more expected SHA-256 values are invalid");
+  }
   const artifactPath = path.resolve(options["--artifact"]);
   const manifestPath = path.resolve(options["--manifest"]);
   const receiptPath = path.resolve(options["--receipt"]);
+  const receiptSchemaPath = path.resolve(options["--receipt-schema"]);
   const outputPath = path.resolve(options["--output"]);
   const outputRoot = await canonicalDirectory(path.dirname(outputPath), "output parent");
-  const [artifactBytes, manifestBytes, receiptBytes, packageBytes, workerBytes] = await Promise.all([
+  const [artifactBytes, manifestBytes, receiptBytes, receiptSchemaBytes] = await Promise.all([
     stableFile(artifactPath, MAX_ARTIFACT_BYTES, "MCPB artifact"),
     stableFile(manifestPath, MAX_METADATA_BYTES, "manifest"),
     stableFile(receiptPath, MAX_METADATA_BYTES, "receipt"),
-    stableFile(path.join(extensionRoot, "package.json"), MAX_METADATA_BYTES, "packed package"),
-    stableFile(path.join(extensionRoot, "server", "markdown-output-transaction.js"), MAX_METADATA_BYTES, "packed Markdown worker"),
+    stableFile(receiptSchemaPath, MAX_METADATA_BYTES, "receipt schema"),
   ]);
+  if (sha256(artifactBytes) !== artifactSha256 || sha256(manifestBytes) !== manifestSha256
+    || sha256(receiptBytes) !== receiptSha256 || sha256(receiptSchemaBytes) !== receiptSchemaSha256) {
+    throw new Error("One or more retained inputs differ from their expected SHA-256 values");
+  }
   const manifest = parseJson(manifestBytes, "manifest");
   const receipt = parseJson(receiptBytes, "receipt");
-  const packageJson = parseJson(packageBytes, "packed package");
-  if (sha256(artifactBytes) !== artifactSha256) throw new Error("MCPB artifact differs from the expected SHA-256");
-  if (packageJson.dependencies?.["pdfjs-dist"] !== "5.4.624") throw new Error("Packed PDF.js pin differs from 5.4.624");
+  const receiptSchema = parseJson(receiptSchemaBytes, "receipt schema");
+  validateReceipt(receipt, receiptSchema);
   const bindings = validateFixtureBindings(manifest, receipt);
   const fixtureRoot = await canonicalDirectory(path.join(path.dirname(receiptPath), "fixtures"), "retained fixture root");
-  const cases = [];
+  const sourceBytesById = new Map();
   for (const binding of bindings) {
     const fixturePath = path.join(fixtureRoot, binding.retained.filename);
     const fixtureBytes = await stableFile(fixturePath, 1024 * 1024 * 1024, `fixture ${binding.fixture.id}`);
     if (fixtureBytes.length !== binding.retained.bytes || sha256(fixtureBytes) !== binding.retained.sha256) {
       throw new Error(`Retained fixture bytes differ for ${binding.fixture.id}`);
     }
-    const runs = [];
-    for (let repetition = 1; repetition <= 3; repetition += 1) {
-      const observed = await runOne({ extensionRoot, fixtureRoot, fixturePath, outputRoot, binding });
-      runs.push({
-        repetition,
-        pid: observed.pid,
-        elapsed_ms: observed.elapsed_ms,
-        result_sha256: observed.result_sha256,
-        stderr: observed.stderr,
-      });
-      if (repetition === 1) runs[0].result = observed.result;
-    }
-    if (new Set(runs.map(run => run.result_sha256)).size !== 1
-      || new Set(runs.map(run => run.pid)).size !== 3) {
-      throw new Error(`Fresh packed process evidence is invalid for ${binding.fixture.id}`);
-    }
-    cases.push({
-      case_id: binding.fixture.id,
-      category: binding.fixture.category,
-      partition: binding.fixture.partition,
-      page_count: binding.pageCount,
-      source_bytes: binding.retained.bytes,
-      source_sha256: binding.retained.sha256,
-      stable: true,
-      runs,
-    });
+    sourceBytesById.set(binding.fixture.id, fixtureBytes);
   }
-  const report = {
-    protocol: "pdf-tools.markdown-bakeoff.v1",
-    artifact: {
-      sha256: artifactSha256,
-      bytes: artifactBytes.length,
-      pdfjs_dist: packageJson.dependencies["pdfjs-dist"],
-      worker_sha256: sha256(workerBytes),
-    },
-    source_bindings: {
-      handoff_id: receipt.handoff_id,
-      receipt_sha256: sha256(receiptBytes),
-      manifest_sha256: sha256(manifestBytes),
-    },
-    runtime: { node: process.version, platform: process.platform, architecture: process.arch },
-    repetitions_per_case: 3,
-    cases,
-  };
-  const reportBytes = Buffer.from(`${canonicalJson(report)}\n`);
+  const extensionRoot = await extractArtifact(artifactPath, outputRoot);
+  let reportBytes;
+  let caseCount;
+  try {
+    const runtimeBytes = await Promise.all(PACKED_RUNTIME_FILES.map(([, relativePath]) => stableFile(
+      path.join(extensionRoot, relativePath),
+      MAX_METADATA_BYTES,
+      `packed runtime file ${relativePath}`,
+    )));
+    const packageJson = parseJson(runtimeBytes[0], "packed package");
+    if (packageJson.dependencies?.["pdfjs-dist"] !== "5.4.624") {
+      throw new Error("Packed PDF.js pin differs from 5.4.624");
+    }
+    const cases = [];
+    for (const binding of bindings) {
+      const fixturePath = path.join(fixtureRoot, binding.retained.filename);
+      const runs = [];
+      for (let repetition = 1; repetition <= 3; repetition += 1) {
+        const observed = await runOne({ extensionRoot, fixtureRoot, fixturePath, outputRoot, binding });
+        runs.push({
+          repetition,
+          pid: observed.pid,
+          elapsed_ms: observed.elapsed_ms,
+          result_sha256: observed.result_sha256,
+          stderr: observed.stderr,
+        });
+        if (repetition === 1) runs[0].result = observed.result;
+      }
+      if (new Set(runs.map(run => run.result_sha256)).size !== 1
+        || new Set(runs.map(run => run.pid)).size !== 3) {
+        throw new Error(`Fresh packed process evidence is invalid for ${binding.fixture.id}`);
+      }
+      cases.push({
+        case_id: binding.fixture.id,
+        category: binding.fixture.category,
+        partition: binding.fixture.partition,
+        page_count: binding.pageCount,
+        source_bytes: binding.retained.bytes,
+        source_sha256: binding.retained.sha256,
+        source_reopened_verified: true,
+        stable: true,
+        runs,
+      });
+    }
+    for (const binding of bindings) {
+      const reopened = await stableFile(
+        path.join(fixtureRoot, binding.retained.filename),
+        1024 * 1024 * 1024,
+        `reopened fixture ${binding.fixture.id}`,
+      );
+      if (!reopened.equals(sourceBytesById.get(binding.fixture.id))) {
+        throw new Error(`Retained fixture changed during the bakeoff: ${binding.fixture.id}`);
+      }
+    }
+    const reopenedRuntimeBytes = await Promise.all(PACKED_RUNTIME_FILES.map(([, relativePath]) => stableFile(
+      path.join(extensionRoot, relativePath),
+      MAX_METADATA_BYTES,
+      `reopened packed runtime file ${relativePath}`,
+    )));
+    const runtimeFiles = Object.fromEntries(PACKED_RUNTIME_FILES.map(([name, relativePath], index) => {
+      const before = runtimeBytes[index];
+      const after = reopenedRuntimeBytes[index];
+      if (!before.equals(after)) throw new Error(`Packed runtime file changed during the bakeoff: ${relativePath}`);
+      return [name, {
+        path: relativePath,
+        bytes: before.length,
+        sha256: sha256(before),
+        reopened_verified: true,
+      }];
+    }));
+    const report = {
+      protocol: "pdf-tools.markdown-bakeoff.v1",
+      artifact: {
+        sha256: artifactSha256,
+        bytes: artifactBytes.length,
+        extraction: { method: "/usr/bin/unzip", archive_crc_verified: true, fresh: true, cleaned: true },
+        pdfjs_dist: packageJson.dependencies["pdfjs-dist"],
+        runtime_files: runtimeFiles,
+      },
+      source_bindings: {
+        handoff_id: receipt.handoff_id,
+        receipt_sha256: receiptSha256,
+        receipt_schema_sha256: receiptSchemaSha256,
+        manifest_sha256: manifestSha256,
+      },
+      runtime: { node: process.version, platform: process.platform, architecture: process.arch },
+      repetitions_per_case: 3,
+      cases,
+    };
+    caseCount = cases.length;
+    reportBytes = Buffer.from(`${canonicalJson(report)}\n`);
+  } finally {
+    await fs.rm(extensionRoot, { recursive: true, force: true });
+  }
   await writeExclusive(outputPath, reportBytes);
-  return { output: outputPath, bytes: reportBytes.length, sha256: sha256(reportBytes), cases: cases.length };
+  return { output: outputPath, bytes: reportBytes.length, sha256: sha256(reportBytes), cases: caseCount };
 }
 
 async function main() {

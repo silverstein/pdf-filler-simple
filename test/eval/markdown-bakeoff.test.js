@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { prepareDoclingMacHandoffForTest } from "./extraction-docling-handoff.js";
 import {
   runMarkdownBakeoff,
   validateFixtureBindings,
@@ -12,9 +15,126 @@ import {
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const SOURCE_MANIFEST = path.join(REPO_ROOT, "test/fixtures/eval/extraction/manifest.v1.json");
+const RECEIPT_SCHEMA = path.join(REPO_ROOT, "test/fixtures/eval/extraction/phase1/docling-handoff.schema.json");
+const execFileAsync = promisify(execFile);
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+const FAKE_PACKED_SERVER = String.raw`import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+
+const MUTATE_SOURCE = false;
+
+function digest(bytes) {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function send(id, result) {
+  process.stdout.write(JSON.stringify({ jsonrpc: "2.0", id, result }) + "\n");
+}
+
+async function handle(message) {
+  if (!Object.hasOwn(message, "id")) return;
+  if (message.method === "initialize") {
+    send(message.id, {
+      protocolVersion: message.params.protocolVersion,
+      capabilities: { tools: {} },
+      serverInfo: { name: "packed-bakeoff-fixture", version: "1.0.0" },
+    });
+    return;
+  }
+  if (message.method === "tools/list") {
+    const tools = Array.from({ length: 38 }, (_, index) => ({
+      name: "fixture_tool_" + String(index + 1).padStart(2, "0"),
+      inputSchema: { type: "object" },
+    }));
+    tools.push({ name: "convert_pdf_to_markdown", inputSchema: { type: "object" } });
+    send(message.id, { tools });
+    return;
+  }
+  if (message.method === "tools/call" && message.params.name === "convert_pdf_to_markdown") {
+    const args = message.params.arguments;
+    const source = await fs.readFile(args.pdf_path);
+    const pageCount = args.end_page;
+    const pageBoundaries = Array.from({ length: pageCount }, (_, index) => "<!-- PDF page " + (index + 1) + " -->");
+    const markdown = pageBoundaries.join("\n\n") + "\n\nINV-1001 fixture evidence\n";
+    const value = {
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.0.0" },
+      conversion_status: "complete",
+      markdown,
+      markdown_sha256: digest(Buffer.from(markdown)),
+      markdown_bytes: Buffer.byteLength(markdown),
+      options: { include_page_boundaries: true },
+      limits: { max_markdown_bytes: 200000 },
+      pages: Array.from({ length: pageCount }, (_, index) => ({
+        page: index + 1,
+        conversion_status: "complete",
+        markdown_bytes: 1,
+        line_count: 1,
+        rendered_line_count: 1,
+        gaps: [],
+      })),
+      gaps: [],
+      limitations: [],
+      provenance: {
+        source: { file_name: path.basename(args.pdf_path), sha256: digest(source), size_bytes: source.length },
+        layout: {
+          name: "pdf-tools.extraction-ir",
+          version: "1.0.0",
+          parser_name: "pdfjs-dist",
+          parser_version: "5.4.624",
+          page_range: { start_page: 1, end_page: pageCount, total_pages: pageCount },
+        },
+      },
+      saved_output: null,
+    };
+    if (MUTATE_SOURCE) await fs.appendFile(args.pdf_path, "changed");
+    send(message.id, { content: [{ type: "text", text: "fixture" }], structuredContent: value });
+    return;
+  }
+  send(message.id, { tools: [] });
+}
+
+let pending = "";
+process.stdin.setEncoding("utf8");
+process.stdin.on("data", chunk => {
+  pending += chunk;
+  while (pending.includes("\n")) {
+    const boundary = pending.indexOf("\n");
+    const line = pending.slice(0, boundary);
+    pending = pending.slice(boundary + 1);
+    if (line) handle(JSON.parse(line)).catch(error => process.stderr.write(error.message + "\n"));
+  }
+});
+`;
+
+async function createFakeArtifact(root, label = "approved", mutateSource = false) {
+  const staging = path.join(root, `packed-staging-${label}`);
+  const server = path.join(staging, "server");
+  await fs.mkdir(server, { recursive: true, mode: 0o700 });
+  const packageJson = {
+    name: "packed-bakeoff-fixture",
+    version: "1.0.0",
+    type: "module",
+    dependencies: { "pdfjs-dist": "5.4.624" },
+  };
+  await Promise.all([
+    fs.writeFile(path.join(staging, "package.json"), `${JSON.stringify(packageJson)}\n`),
+    fs.writeFile(
+      path.join(server, "index.js"),
+      FAKE_PACKED_SERVER.replace("const MUTATE_SOURCE = false;", `const MUTATE_SOURCE = ${mutateSource};`),
+    ),
+    fs.writeFile(path.join(server, "output-schemas.js"), "export const schemas = {};\n"),
+    fs.writeFile(path.join(server, "layout-extraction.js"), "export const layout = {};\n"),
+    fs.writeFile(path.join(server, "markdown-conversion.js"), "export const markdown = {};\n"),
+    fs.writeFile(path.join(server, "markdown-output-transaction.js"), "export const transaction = {};\n"),
+  ]);
+  const artifact = path.join(root, `${label}.mcpb`);
+  await execFileAsync("/usr/bin/zip", ["-q", "-r", artifact, "."], { cwd: staging });
+  return artifact;
 }
 
 function resultFor(binding) {
@@ -60,6 +180,7 @@ function resultFor(binding) {
 describe("packed Markdown bakeoff runner", () => {
   let root;
   let bindings;
+  let fixtureRoot;
   let manifest;
   let receipt;
   let options;
@@ -67,50 +188,47 @@ describe("packed Markdown bakeoff runner", () => {
   beforeAll(async () => {
     root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-markdown-bakeoff-"));
     await fs.chmod(root, 0o700);
-    const fixtureRoot = path.join(root, "fixtures");
     const outputRoot = path.join(root, "output");
-    await Promise.all([
-      fs.mkdir(fixtureRoot, { mode: 0o700 }),
-      fs.mkdir(outputRoot, { mode: 0o700 }),
-    ]);
-
-    const sourceManifest = JSON.parse(await fs.readFile(SOURCE_MANIFEST, "utf8"));
-    manifest = structuredClone(sourceManifest);
-    const retainedFixtures = [];
-    for (const [index, fixture] of manifest.fixtures.entries()) {
-      const source = path.resolve(path.dirname(SOURCE_MANIFEST), fixture.path);
-      const sourceBytes = await fs.readFile(source);
-      const retainedName = `source-${String(index + 1).padStart(3, "0")}-${fixture.sha256.slice(0, 12)}.pdf`;
-      await fs.writeFile(path.join(fixtureRoot, retainedName), sourceBytes, { mode: 0o600, flag: "wx" });
-      retainedFixtures.push({
-        ordinal: index + 1,
-        filename: retainedName,
-        sha256: fixture.sha256,
-        bytes: sourceBytes.length,
-      });
-    }
-    receipt = {
-      protocol: "pdf-tools.docling-macos-handoff.v1",
-      handoff_id: "a".repeat(64),
-      fixtures: retainedFixtures,
-    };
+    await fs.mkdir(outputRoot, { mode: 0o700 });
+    const manifestBytes = await fs.readFile(SOURCE_MANIFEST);
+    const receiptSchemaBytes = await fs.readFile(RECEIPT_SCHEMA);
+    manifest = JSON.parse(manifestBytes.toString("utf8"));
+    const fixturePaths = manifest.fixtures.map(fixture => path.resolve(
+      path.dirname(SOURCE_MANIFEST),
+      fixture.path,
+    ));
+    const uvPath = path.join(root, "uv-test-binary");
+    const uvVersion = "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)";
+    await fs.writeFile(uvPath, `#!/bin/sh\nprintf '%s\\n' '${uvVersion}'\n`, { mode: 0o700, flag: "wx" });
+    const handoff = await prepareDoclingMacHandoffForTest({
+      cacheRoot: path.join(root, "Library/Caches/oda-pdf-tools-extraction"),
+      sidecarRoot: path.join(root, "Sites/pdf-tools-extraction-sidecars"),
+      protectedRoots: [path.join(root, "Documents"), path.join(root, "Dropbox")],
+      fixturePaths,
+      testOnlyHost: {
+        platform: "darwin",
+        architecture: "arm64",
+        os_build: "25G5065a",
+        kernel_release: "25.6.0",
+        node_version: process.version,
+      },
+      testOnlyUv: { path: uvPath, version: uvVersion },
+    });
+    receipt = handoff.receipt;
+    fixtureRoot = path.join(path.dirname(handoff.receiptPath), "fixtures");
     bindings = validateFixtureBindings(manifest, receipt);
-    const manifestPath = path.join(root, "manifest.json");
-    const receiptPath = path.join(root, "receipt.json");
-    const artifactPath = path.join(root, "approved.mcpb");
-    const artifactBytes = Buffer.from("test-only packed artifact binding\n");
-    await Promise.all([
-      fs.writeFile(manifestPath, `${JSON.stringify(manifest)}\n`, { mode: 0o600, flag: "wx" }),
-      fs.writeFile(receiptPath, `${JSON.stringify(receipt)}\n`, { mode: 0o600, flag: "wx" }),
-      fs.writeFile(artifactPath, artifactBytes, { mode: 0o600, flag: "wx" }),
-    ]);
+    const artifactPath = await createFakeArtifact(root);
+    const artifactBytes = await fs.readFile(artifactPath);
     options = {
       "--artifact": artifactPath,
       "--artifact-sha256": sha256(artifactBytes),
-      "--extension-root": REPO_ROOT,
-      "--manifest": manifestPath,
+      "--manifest": SOURCE_MANIFEST,
+      "--manifest-sha256": sha256(manifestBytes),
       "--output": path.join(outputRoot, "report.json"),
-      "--receipt": receiptPath,
+      "--receipt": handoff.receiptPath,
+      "--receipt-sha256": handoff.receipt_sha256,
+      "--receipt-schema": RECEIPT_SCHEMA,
+      "--receipt-schema-sha256": sha256(receiptSchemaBytes),
     };
   });
 
@@ -134,7 +252,19 @@ describe("packed Markdown bakeoff runner", () => {
     await expect(runMarkdownBakeoff({
       ...options,
       "--artifact-sha256": "c".repeat(64),
-    })).rejects.toThrow(/differs from the expected SHA-256/);
+    })).rejects.toThrow(/retained inputs differ/);
+  });
+
+  it("rejects a schema-valid receipt whose identity digest was replaced", async () => {
+    const forged = { ...receipt, handoff_id: "c".repeat(64) };
+    const forgedBytes = Buffer.from(`${JSON.stringify(forged)}\n`);
+    const forgedPath = path.join(root, "forged-receipt.json");
+    await fs.writeFile(forgedPath, forgedBytes, { mode: 0o600, flag: "wx" });
+    await expect(runMarkdownBakeoff({
+      ...options,
+      "--receipt": forgedPath,
+      "--receipt-sha256": sha256(forgedBytes),
+    })).rejects.toThrow(/identity digest is invalid/);
   });
 
   it("runs three distinct packed server processes and writes private canonical evidence", async () => {
@@ -148,18 +278,46 @@ describe("packed Markdown bakeoff runner", () => {
     expect(report).toMatchObject({
       protocol: "pdf-tools.markdown-bakeoff.v1",
       repetitions_per_case: 3,
-      artifact: { sha256: options["--artifact-sha256"], pdfjs_dist: "5.4.624" },
+      artifact: {
+        sha256: options["--artifact-sha256"],
+        extraction: { archive_crc_verified: true, fresh: true, cleaned: true },
+        pdfjs_dist: "5.4.624",
+        runtime_files: {
+          markdown_conversion: { path: "server/markdown-conversion.js", reopened_verified: true },
+          markdown_transaction: { path: "server/markdown-output-transaction.js", reopened_verified: true },
+          server_entry: { path: "server/index.js", reopened_verified: true },
+        },
+      },
     });
     expect(report.cases).toHaveLength(8);
     for (const reportCase of report.cases) {
+      expect(reportCase.source_reopened_verified).toBe(true);
       expect(new Set(reportCase.runs.map(run => run.pid)).size).toBe(3);
       expect(new Set(reportCase.runs.map(run => run.result_sha256)).size).toBe(1);
     }
     expect(report.cases[0].runs[0].result.markdown).toContain("INV-1001");
     expect((await fs.lstat(options["--output"])).mode & 0o777).toBe(0o600);
-    expect((await fs.readdir(path.join(root, "fixtures"))).sort()).toEqual(
+    expect((await fs.readdir(fixtureRoot)).sort()).toEqual(
       receipt.fixtures.map(item => item.filename).sort(),
     );
     expect((await fs.readdir(path.dirname(options["--output"]))).sort()).toEqual(["report.json"]);
+  }, 120000);
+
+  it("refuses evidence if an extracted server changes a retained fixture", async () => {
+    const copiedRunRoot = path.join(root, "mutating-run");
+    const mutationOutputRoot = path.join(root, "mutating-output");
+    await fs.cp(path.dirname(options["--receipt"]), copiedRunRoot, { recursive: true });
+    await fs.mkdir(mutationOutputRoot, { mode: 0o700 });
+    const artifactPath = await createFakeArtifact(root, "mutating", true);
+    const artifactBytes = await fs.readFile(artifactPath);
+    const mutationOptions = {
+      ...options,
+      "--artifact": artifactPath,
+      "--artifact-sha256": sha256(artifactBytes),
+      "--output": path.join(mutationOutputRoot, "report.json"),
+      "--receipt": path.join(copiedRunRoot, path.basename(options["--receipt"])),
+    };
+    await expect(runMarkdownBakeoff(mutationOptions)).rejects.toThrow(/evidence is invalid|changed during/);
+    await expect(fs.access(mutationOptions["--output"])).rejects.toMatchObject({ code: "ENOENT" });
   }, 120000);
 });
