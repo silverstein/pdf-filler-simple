@@ -1,0 +1,24 @@
+{
+  "name": "open-document-alliance",
+  "owner": {
+    "name": "Open Document Alliance"
+  },
+  "description": "Workflow-only plugins maintained by Open Document Alliance.",
+  "plugins": [
+    {
+      "name": "pdf-tools-workflow",
+      "source": "./plugins/pdf-tools-workflow",
+      "description": "A bounded, evidence-first PDF Tools workflow.",
+      "version": "0.1.0",
+      "author": {
+        "name": "Open Document Alliance"
+      },
+      "homepage": "https://github.com/Open-Document-Alliance/PDF-Tools",
+      "repository": "https://github.com/Open-Document-Alliance/PDF-Tools",
+      "license": "MIT",
+      "category": "Productivity",
+      "skills": "./skills/",
+      "strict": true
+    }
+  ]
+}

@@ -1,0 +1,408 @@
+{
+  "schema_version": "pdf-tools.agent-host-capabilities.v1",
+  "as_of": "2026-07-23",
+  "claim_boundary": "Documentation-backed capability inventory and static workflow prototype. A documented host capability is not proof that this exact PDF Tools artifact works in that host. No native-host workflow run, remote service, release, or benchmark is claimed.",
+  "protocol_baselines": {
+    "stable_core": {
+      "version": "2025-11-25",
+      "status": "stable",
+      "source_ids": [
+        "mcp-core-2025-11-25",
+        "mcp-core-releases"
+      ]
+    },
+    "stable_apps": {
+      "version": "2026-01-26",
+      "status": "stable_extension",
+      "source_ids": [
+        "mcp-apps-spec-2026-01-26",
+        "mcp-apps-overview"
+      ]
+    },
+    "core_watchlist": {
+      "version": "2026-07-28-rc",
+      "status": "release_candidate_not_stable",
+      "final_scheduled_for": "2026-07-28",
+      "breaking_change_areas": [
+        "stateless core",
+        "first-class extensions",
+        "Tasks extension",
+        "MCP Apps extension negotiation",
+        "authorization hardening",
+        "JSON Schema 2020-12",
+        "roots, sampling, and logging deprecations",
+        "missing-resource error code"
+      ],
+      "adoption_rule": "Do not migrate production until the final specification, stable SDK support, and exact target-host compatibility are verified.",
+      "source_ids": [
+        "mcp-core-2026-07-28-rc"
+      ]
+    }
+  },
+  "sources": [
+    {
+      "id": "mcp-core-2025-11-25",
+      "publisher": "Model Context Protocol",
+      "title": "MCP specification 2025-11-25",
+      "url": "https://modelcontextprotocol.io/specification/2025-11-25/basic",
+      "supports": [
+        "stable core protocol version",
+        "standard protocol and schema boundary"
+      ]
+    },
+    {
+      "id": "mcp-core-releases",
+      "publisher": "Model Context Protocol",
+      "title": "Model Context Protocol releases",
+      "url": "https://github.com/modelcontextprotocol/modelcontextprotocol/releases",
+      "supports": [
+        "2025-11-25 stable release status"
+      ]
+    },
+    {
+      "id": "mcp-apps-spec-2026-01-26",
+      "publisher": "Model Context Protocol",
+      "title": "MCP Apps specification 2026-01-26",
+      "url": "https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/2026-01-26/apps.mdx",
+      "supports": [
+        "stable MCP Apps extension version",
+        "app-to-host protocol boundary"
+      ]
+    },
+    {
+      "id": "mcp-apps-overview",
+      "publisher": "Model Context Protocol",
+      "title": "MCP Apps overview and client support",
+      "url": "https://modelcontextprotocol.io/extensions/apps/overview",
+      "supports": [
+        "MCP Apps is an optional extension",
+        "client support varies"
+      ]
+    },
+    {
+      "id": "mcp-core-2026-07-28-rc",
+      "publisher": "Model Context Protocol",
+      "title": "The 2026-07-28 MCP Specification Release Candidate",
+      "url": "https://blog.modelcontextprotocol.io/posts/2026-07-28-release-candidate/",
+      "supports": [
+        "release candidate status",
+        "scheduled final date",
+        "breaking change watchlist"
+      ]
+    },
+    {
+      "id": "openai-codex-skills",
+      "publisher": "OpenAI",
+      "title": "Build skills",
+      "url": "https://learn.chatgpt.com/docs/build-skills",
+      "supports": [
+        "canonical SKILL.md format",
+        "Codex skill discovery and plugin distribution"
+      ]
+    },
+    {
+      "id": "openai-plugins",
+      "publisher": "OpenAI",
+      "title": "Plugins",
+      "url": "https://learn.chatgpt.com/docs/plugins",
+      "supports": [
+        "plugin availability in ChatGPT Work and Codex surfaces",
+        "plugins may contain skills or connectors"
+      ]
+    },
+    {
+      "id": "openai-codex-mcp",
+      "publisher": "OpenAI",
+      "title": "Model Context Protocol in Codex",
+      "url": "https://learn.chatgpt.com/docs/extend/mcp?surface=cli",
+      "supports": [
+        "local Codex clients can connect to MCP servers",
+        "ChatGPT web uses remote MCP-backed tools"
+      ]
+    },
+    {
+      "id": "openai-apps-sdk",
+      "publisher": "OpenAI",
+      "title": "Apps SDK",
+      "url": "https://developers.openai.com/apps-sdk",
+      "supports": [
+        "ChatGPT MCP Apps are backed by an MCP server",
+        "apps are submitted through plugins"
+      ]
+    },
+    {
+      "id": "anthropic-claude-code-plugins",
+      "publisher": "Anthropic",
+      "title": "Create plugins",
+      "url": "https://code.claude.com/docs/en/plugins",
+      "supports": [
+        "Claude Code plugin and skill layout",
+        "plugin skills are namespaced"
+      ]
+    },
+    {
+      "id": "anthropic-claude-code-marketplaces",
+      "publisher": "Anthropic",
+      "title": "Create and distribute a plugin marketplace",
+      "url": "https://code.claude.com/docs/en/plugin-marketplaces",
+      "supports": [
+        "repository marketplace format",
+        "local plugin source paths",
+        "explicit skills path"
+      ]
+    },
+    {
+      "id": "anthropic-claude-code-mcp",
+      "publisher": "Anthropic",
+      "title": "Connect Claude Code to tools via MCP",
+      "url": "https://code.claude.com/docs/en/mcp",
+      "supports": [
+        "separately configured local stdio MCP",
+        "separately configured remote MCP"
+      ]
+    },
+    {
+      "id": "anthropic-claude-desktop-local-mcp",
+      "publisher": "Anthropic",
+      "title": "Getting Started with Local MCP Servers on Claude Desktop",
+      "url": "https://support.anthropic.com/en/articles/10949351-getting-started-with-local-mcp-servers-on-claude-desktop",
+      "supports": [
+        "Claude Desktop local extension installation",
+        "local MCP tool access"
+      ]
+    },
+    {
+      "id": "anthropic-cowork",
+      "publisher": "Anthropic",
+      "title": "Get started with Claude Cowork",
+      "url": "https://support.claude.com/en/articles/13345190-get-started-with-claude-cowork",
+      "supports": [
+        "Cowork plugins bundle skills and connectors",
+        "local file access requires a connected desktop app",
+        "remote execution and provider retention boundary"
+      ]
+    },
+    {
+      "id": "anthropic-remote-mcp",
+      "publisher": "Anthropic",
+      "title": "Getting Started with Custom Connectors Using Remote MCP",
+      "url": "https://support.anthropic.com/en/articles/11175166-about-custom-integrations-using-remote-mcp",
+      "supports": [
+        "Claude remote connector support",
+        "custom connector privacy warning"
+      ]
+    }
+  ],
+  "hosts": [
+    {
+      "id": "codex-local",
+      "label": "Codex in the ChatGPT desktop app or Codex CLI",
+      "workflow_instructions": {
+        "status": "documented",
+        "mechanism": "Codex plugin with one canonical Agent Skill",
+        "source_ids": [
+          "openai-codex-skills",
+          "openai-plugins"
+        ]
+      },
+      "pdf_tools_connection": {
+        "status": "separate_configuration_required",
+        "mechanism": "Local MCP configuration outside this workflow plugin",
+        "source_ids": [
+          "openai-codex-mcp"
+        ]
+      },
+      "rich_ui": {
+        "status": "unverified_for_exact_pdf_tools_artifact",
+        "mechanism": "Do not assume that Codex renders this MCP App",
+        "source_ids": [
+          "mcp-apps-overview",
+          "openai-codex-mcp"
+        ]
+      },
+      "filesystem_boundary": {
+        "status": "host_and_permission_dependent",
+        "mechanism": "Only paths granted to the local Codex environment",
+        "source_ids": [
+          "openai-codex-mcp"
+        ]
+      },
+      "prototype_status": "static_contract_ready_native_run_pending"
+    },
+    {
+      "id": "claude-code",
+      "label": "Claude Code",
+      "workflow_instructions": {
+        "status": "documented",
+        "mechanism": "Thin Anthropic plugin entry references the same canonical skill folder",
+        "source_ids": [
+          "anthropic-claude-code-plugins",
+          "anthropic-claude-code-marketplaces"
+        ]
+      },
+      "pdf_tools_connection": {
+        "status": "separate_configuration_required",
+        "mechanism": "Local stdio or remote MCP configured outside this workflow plugin",
+        "source_ids": [
+          "anthropic-claude-code-mcp"
+        ]
+      },
+      "rich_ui": {
+        "status": "not_claimed",
+        "mechanism": "Use structured and text results unless the exact host proves Apps support",
+        "source_ids": [
+          "mcp-apps-overview",
+          "anthropic-claude-code-mcp"
+        ]
+      },
+      "filesystem_boundary": {
+        "status": "host_and_permission_dependent",
+        "mechanism": "Project and explicitly granted directories",
+        "source_ids": [
+          "anthropic-claude-code-mcp"
+        ]
+      },
+      "prototype_status": "static_contract_ready_native_run_pending"
+    },
+    {
+      "id": "claude-desktop-chat",
+      "label": "Claude Desktop Chat",
+      "workflow_instructions": {
+        "status": "not_portably_installable_from_this_plugin",
+        "mechanism": "Use the same workflow as prompt guidance; do not claim Codex or Claude Code plugin installation",
+        "source_ids": [
+          "anthropic-claude-desktop-local-mcp",
+          "anthropic-claude-code-plugins"
+        ]
+      },
+      "pdf_tools_connection": {
+        "status": "existing_product_surface",
+        "mechanism": "Installed local PDF Tools desktop extension",
+        "source_ids": [
+          "anthropic-claude-desktop-local-mcp"
+        ]
+      },
+      "rich_ui": {
+        "status": "documented_host_capability_exact_candidate_pending",
+        "mechanism": "MCP Apps preview may supplement structured and text results",
+        "source_ids": [
+          "mcp-apps-spec-2026-01-26",
+          "mcp-apps-overview"
+        ]
+      },
+      "filesystem_boundary": {
+        "status": "local_extension_permissions",
+        "mechanism": "Only paths permitted to the installed local extension",
+        "source_ids": [
+          "anthropic-claude-desktop-local-mcp"
+        ]
+      },
+      "prototype_status": "workflow_prompt_only_native_run_pending"
+    },
+    {
+      "id": "claude-cowork",
+      "label": "Claude Cowork",
+      "workflow_instructions": {
+        "status": "host_plugins_documented_exact_marketplace_unverified",
+        "mechanism": "Cowork plugins support workflow skills, but this exact marketplace requires a native install trial",
+        "source_ids": [
+          "anthropic-cowork"
+        ]
+      },
+      "pdf_tools_connection": {
+        "status": "architecture_pending",
+        "mechanism": "Local file reach-through and remote connectors are distinct paths; this plugin bundles neither",
+        "source_ids": [
+          "anthropic-cowork",
+          "anthropic-remote-mcp"
+        ]
+      },
+      "rich_ui": {
+        "status": "unverified_for_exact_pdf_tools_artifact",
+        "mechanism": "Fall back to structured and text results",
+        "source_ids": [
+          "mcp-apps-overview",
+          "anthropic-cowork"
+        ]
+      },
+      "filesystem_boundary": {
+        "status": "remote_session_with_desktop_reach_through",
+        "mechanism": "Local files require a connected desktop app and granted folders; session data is processed by Anthropic",
+        "source_ids": [
+          "anthropic-cowork"
+        ]
+      },
+      "prototype_status": "static_contract_ready_native_run_pending"
+    },
+    {
+      "id": "chatgpt-work-web",
+      "label": "ChatGPT Work on the web",
+      "workflow_instructions": {
+        "status": "documented",
+        "mechanism": "Plugin-delivered skills on supported Work surfaces",
+        "source_ids": [
+          "openai-plugins",
+          "openai-codex-skills"
+        ]
+      },
+      "pdf_tools_connection": {
+        "status": "remote_architecture_required",
+        "mechanism": "ChatGPT web uses remote MCP-backed tools; the local PDF Tools server is not bundled or exposed remotely here",
+        "source_ids": [
+          "openai-codex-mcp",
+          "openai-apps-sdk"
+        ]
+      },
+      "rich_ui": {
+        "status": "documented_platform_capability_not_this_artifact",
+        "mechanism": "A deployed MCP App could provide rich review UI after separate architecture and privacy review",
+        "source_ids": [
+          "openai-apps-sdk",
+          "mcp-apps-spec-2026-01-26"
+        ]
+      },
+      "filesystem_boundary": {
+        "status": "no_local_server_assumed",
+        "mechanism": "Uploaded or remote-service content is subject to the selected OpenAI product boundary",
+        "source_ids": [
+          "openai-codex-mcp",
+          "openai-apps-sdk"
+        ]
+      },
+      "prototype_status": "workflow_only_remote_product_pending"
+    },
+    {
+      "id": "compatible-mcp-clients",
+      "label": "Other compatible MCP clients",
+      "workflow_instructions": {
+        "status": "manual_adapter_required",
+        "mechanism": "Reuse the six-stage vocabulary only where the host supports portable instructions",
+        "source_ids": [
+          "mcp-core-2025-11-25"
+        ]
+      },
+      "pdf_tools_connection": {
+        "status": "client_specific",
+        "mechanism": "Configure a supported local or remote transport separately",
+        "source_ids": [
+          "mcp-core-2025-11-25"
+        ]
+      },
+      "rich_ui": {
+        "status": "client_specific_optional_extension",
+        "mechanism": "Never assume MCP Apps support; structured and text fallback is mandatory",
+        "source_ids": [
+          "mcp-apps-overview"
+        ]
+      },
+      "filesystem_boundary": {
+        "status": "client_specific",
+        "mechanism": "Use only client-granted paths and state the provider boundary",
+        "source_ids": [
+          "mcp-core-2025-11-25"
+        ]
+      },
+      "prototype_status": "vocabulary_only"
+    }
+  ]
+}

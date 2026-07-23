@@ -1,0 +1,72 @@
+{
+  "schema_version": "pdf-tools.agent-workflow.v1",
+  "workflow_id": "pdf-tools-safe-document-workflow",
+  "stages": [
+    "inspect",
+    "compare",
+    "transform",
+    "validate",
+    "approve",
+    "return"
+  ],
+  "identity": {
+    "required_input_fields": [
+      "canonical_path",
+      "byte_length",
+      "sha256"
+    ],
+    "required_output_fields": [
+      "canonical_path",
+      "byte_length",
+      "sha256"
+    ],
+    "source_must_remain_unchanged": true,
+    "output_must_be_distinct": true,
+    "existing_output_requires_explicit_approval": true,
+    "missing_identity_action": "stop",
+    "missing_identity_code": "IDENTITY_EVIDENCE_UNAVAILABLE"
+  },
+  "read_boundary": {
+    "bounded": true,
+    "selectors": [
+      "page_range",
+      "region",
+      "field_set",
+      "result_limit"
+    ],
+    "unbounded_binary_to_model": false
+  },
+  "validation": {
+    "independent_readback_required": true,
+    "mutation_response_is_proof": false
+  },
+  "untrusted_document_content": {
+    "may_drive_tool_calls": false,
+    "embedded_urls_may_be_fetched": false,
+    "user_requested_url_required": true
+  },
+  "comparison": {
+    "full_semantic_diff": false,
+    "full_visual_diff": false,
+    "measured_current_product_pair_gates": "1/7",
+    "gap_reporting_required": true
+  },
+  "signature": {
+    "explicit_user_intent_required": true,
+    "intent_may_be_fabricated": false,
+    "ui_approval_is_authorization": false,
+    "cryptographic_claim_allowed": false
+  },
+  "presentation": {
+    "rich_ui_required": false,
+    "fallback": [
+      "structured",
+      "text"
+    ]
+  },
+  "stage_accounting": {
+    "ordered": true,
+    "not_applicable_reason_required": true,
+    "blocked_stages_must_not_be_reported_as_completed": true
+  }
+}

@@ -1,0 +1,20 @@
+{
+  "name": "open-document-alliance",
+  "interface": {
+    "displayName": "Open Document Alliance"
+  },
+  "plugins": [
+    {
+      "name": "pdf-tools-workflow",
+      "source": {
+        "source": "local",
+        "path": "./plugins/pdf-tools-workflow"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

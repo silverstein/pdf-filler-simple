@@ -1,0 +1,34 @@
+{
+  "name": "pdf-tools-workflow",
+  "version": "0.1.0",
+  "description": "A host-portable, evidence-first workflow for using a separately configured PDF Tools MCP connection.",
+  "author": {
+    "name": "Open Document Alliance",
+    "url": "https://github.com/Open-Document-Alliance"
+  },
+  "homepage": "https://github.com/Open-Document-Alliance/PDF-Tools",
+  "repository": "https://github.com/Open-Document-Alliance/PDF-Tools",
+  "license": "MIT",
+  "keywords": [
+    "pdf",
+    "workflow",
+    "document",
+    "mcp"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "PDF Tools Workflow",
+    "shortDescription": "Review and transform PDFs with evidence.",
+    "longDescription": "Guide an agent through bounded inspection, comparison, original-preserving transformation, independent validation, approval, and return.",
+    "developerName": "Open Document Alliance",
+    "category": "Productivity",
+    "capabilities": [
+      "Document workflows",
+      "Safety checks"
+    ],
+    "defaultPrompt": [
+      "Inspect and safely transform these PDFs.",
+      "Compare these PDFs and state every coverage gap."
+    ]
+  }
+}
