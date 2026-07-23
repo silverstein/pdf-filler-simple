@@ -268,7 +268,10 @@ function doclingPageTexts(response, expectedPages) {
     if (!grouped.has(item.page)) grouped.set(item.page, []);
     grouped.get(item.page).push(item.text);
   }
-  if (expectedPages.some(page => !grouped.has(page.page))) {
+  const expectedPageNumbers = new Set(expectedPages.map(page => page.page));
+  if (grouped.size !== expectedPageNumbers.size
+    || expectedPages.some(page => !grouped.has(page.page))
+    || [...grouped.keys()].some(page => !expectedPageNumbers.has(page))) {
     throw new Error("Docling page projection does not match fixture truth pages");
   }
   return new Map([...grouped].map(([page, texts]) => [page, texts.join("\n")]));

@@ -144,4 +144,13 @@ describe("extraction bakeoff scorer", () => {
     expect(() => scoreExtractionBakeoff({ ...inputs, sourceBindings: { manifest_sha256: "c".repeat(64) } }))
       .toThrow(/authenticated campaign binding/);
   });
+
+  it("rejects an unexpected Docling page instead of scoring around it", () => {
+    const inputs = reports();
+    inputs.doclingReport.cases[0].runs[0].response.page_texts.push({ page: 999, text: "hallucinated" });
+    expect(() => scoreExtractionBakeoff({
+      ...inputs,
+      sourceBindings: { manifest_sha256: "c".repeat(64) },
+    })).toThrow(/page projection does not match fixture truth pages/);
+  });
 });
