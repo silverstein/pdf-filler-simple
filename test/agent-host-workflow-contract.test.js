@@ -249,6 +249,12 @@ describe("cross-host PDF Tools workflow contract", () => {
     expect(schema.properties.stages.minItems).toBe(REQUIRED_STAGES.length);
     expect(schema.properties.stages.maxItems).toBe(REQUIRED_STAGES.length);
     expect(schema.properties.execution_performed.type).toBe("boolean");
+    expect(schema.properties.safety_flags.items.enum).toContain(
+      "PRE_MUTATION_AUTHORIZATION_REQUIRED",
+    );
+    expect(schema.properties.missing_inputs.items.enum).toContain(
+      "verbatim_user_intent",
+    );
   });
 
   it("binds every dated host capability to primary sources", async () => {
