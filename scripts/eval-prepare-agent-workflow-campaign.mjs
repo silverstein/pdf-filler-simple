@@ -33,6 +33,12 @@ const SKILL_ROOT = path.join(
   "pdf-tools-workflow",
 );
 const PLUGIN_ROOT = path.join(REPO_ROOT, "plugins", "pdf-tools-workflow");
+const CONTROLLER_ARTIFACTS = [
+  "scripts/eval-attest-agent-workflow-arm.mjs",
+  "scripts/eval-bind-agent-workflow-run.mjs",
+  "scripts/eval-run-codex-agent-workflow-case.mjs",
+  "scripts/eval-validate-agent-workflow-events.mjs",
+];
 const execFileAsync = promisify(execFile);
 const ARM_NAMES = [
   "claude-skill",
@@ -363,6 +369,15 @@ export async function prepareAgentWorkflowCampaign({
     participant_inventory: await inventory(participantsRoot),
     arm_attestations: armAttestations,
     explicit_case_attestations: explicitCaseAttestations,
+    controller_artifacts: Object.fromEntries(await Promise.all(
+      CONTROLLER_ARTIFACTS.map(async relative => {
+        const bytes = await fs.readFile(path.join(REPO_ROOT, relative));
+        return [relative, {
+          bytes: bytes.length,
+          sha256: sha256(bytes),
+        }];
+      }),
+    )),
     oracle_sha256: sha256(await fs.readFile(path.join(trustedRoot, "oracle.json"))),
   };
   await writePrivate(

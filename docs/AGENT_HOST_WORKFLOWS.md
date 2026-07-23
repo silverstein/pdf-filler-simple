@@ -168,78 +168,35 @@ fresh synthetic Git repository for each case. The campaign preparer emits each
 case as `codex-explicit-{skill|baseline}/cases/<case-id>/`. Transfer only one
 generated case root into each fresh runtime repository. That root contains
 `prompt.txt`, `response-schema.json`, and, only for the skill arm, the local
-skill. Never reuse a runtime repository between cases.
+skill. Never reuse a runtime repository, Codex home, or result directory
+between cases.
 
 ```bash
-: "${PDF_WORKFLOW_RESULTS_ROOT:?set this to an absolute operator-owned path outside the runtime repository}"
+: "${PDF_WORKFLOW_ARM:?set this to codex-explicit-skill or codex-explicit-baseline}"
+: "${PDF_WORKFLOW_CASE_ID:?set this to the exact case ID}"
+: "${PDF_WORKFLOW_CASE_ROOT:?set this to the fresh transferred case root}"
+: "${PDF_WORKFLOW_RESULTS_ROOT:?set this to a fresh absolute operator-owned <arm>/<case-id> path}"
+: "${PDF_WORKFLOW_CODEX_HOME:?set this to a fresh mode-0700 home containing only auth.json}"
+: "${PDF_WORKFLOW_CODEX_BIN:?set this to the absolute Codex CLI path}"
+: "${PDF_WORKFLOW_RUNNER:?set this to the separate operator-owned launcher path}"
 : "${PDF_WORKFLOW_ATTESTER:?set this to the separate operator-owned attester path}"
 : "${PDF_WORKFLOW_EXPECTED_COMMIT_SHA1:?set this from the trusted per-case attestation}"
 : "${PDF_WORKFLOW_EXPECTED_TREE_SHA1:?set this from the trusted per-case attestation}"
 : "${PDF_WORKFLOW_EXPECTED_CONTENT_TREE_SHA256:?set this from the trusted per-case attestation}"
-mkdir -p "$PDF_WORKFLOW_RESULTS_ROOT"
-export GIT_CONFIG_GLOBAL=/dev/null
-export GIT_CONFIG_NOSYSTEM=1
-export GIT_AUTHOR_NAME="PDF Workflow Eval"
-export GIT_AUTHOR_EMAIL="eval@invalid.local"
-export GIT_AUTHOR_DATE="2000-01-01T00:00:00Z"
-export GIT_COMMITTER_NAME="PDF Workflow Eval"
-export GIT_COMMITTER_EMAIL="eval@invalid.local"
-export GIT_COMMITTER_DATE="2000-01-01T00:00:00Z"
-export LC_ALL=C
-export TZ=UTC
-git init -q --object-format=sha1 --template=
-git -c core.autocrlf=false -c core.eol=lf add -A
-git -c core.autocrlf=false -c core.eol=lf -c commit.gpgsign=false \
-  commit -q -m "Synthetic participant arm"
-node "$PDF_WORKFLOW_ATTESTER" \
-  --arm-root "$PWD" \
+: "${PDF_WORKFLOW_SOURCE_COMMIT:?set this from the trusted preparation manifest}"
+node "$PDF_WORKFLOW_RUNNER" \
+  --arm "$PDF_WORKFLOW_ARM" \
+  --case-id "$PDF_WORKFLOW_CASE_ID" \
+  --case-root "$PDF_WORKFLOW_CASE_ROOT" \
+  --results-root "$PDF_WORKFLOW_RESULTS_ROOT" \
+  --codex-home "$PDF_WORKFLOW_CODEX_HOME" \
+  --codex-binary "$PDF_WORKFLOW_CODEX_BIN" \
+  --attester "$PDF_WORKFLOW_ATTESTER" \
   --expected-commit-sha1 "$PDF_WORKFLOW_EXPECTED_COMMIT_SHA1" \
   --expected-tree-sha1 "$PDF_WORKFLOW_EXPECTED_TREE_SHA1" \
   --expected-content-tree-sha256 "$PDF_WORKFLOW_EXPECTED_CONTENT_TREE_SHA256" \
-  > "$PDF_WORKFLOW_RESULTS_ROOT/pre-run-attestation.json"
-: "${PDF_WORKFLOW_CODEX_HOME:?set this to the clean trial home}"
-CODEX_HOME="$PDF_WORKFLOW_CODEX_HOME" codex exec \
-  --ephemeral \
-  --ignore-user-config \
-  --ignore-rules \
-  --sandbox read-only \
-  --model gpt-5.6-sol \
-  --output-schema response-schema.json \
-  --json \
-  --output-last-message "$PDF_WORKFLOW_RESULTS_ROOT/response.json" \
-  --disable apps \
-  --disable auth_elicitation \
-  --disable browser_use \
-  --disable browser_use_external \
-  --disable browser_use_full_cdp_access \
-  --disable code_mode \
-  --disable code_mode_host \
-  --disable computer_use \
-  --disable goals \
-  --disable hooks \
-  --disable image_generation \
-  --disable in_app_browser \
-  --disable memories \
-  --disable multi_agent \
-  --disable multi_agent_v2 \
-  --disable network_proxy \
-  --disable plugins \
-  --disable remote_plugin \
-  --disable request_permissions_tool \
-  --disable shell_tool \
-  --disable skill_mcp_dependency_install \
-  --disable tool_call_mcp_elicitation \
-  --disable tool_suggest \
-  --disable unified_exec \
-  --disable workspace_dependencies \
-  - < prompt.txt \
-  > "$PDF_WORKFLOW_RESULTS_ROOT/events.jsonl"
-node "$PDF_WORKFLOW_ATTESTER" \
-  --arm-root "$PWD" \
-  --expected-commit-sha1 "$PDF_WORKFLOW_EXPECTED_COMMIT_SHA1" \
-  --expected-tree-sha1 "$PDF_WORKFLOW_EXPECTED_TREE_SHA1" \
-  --expected-content-tree-sha256 "$PDF_WORKFLOW_EXPECTED_CONTENT_TREE_SHA256" \
-  > "$PDF_WORKFLOW_RESULTS_ROOT/post-run-attestation.json"
+  --source-commit "$PDF_WORKFLOW_SOURCE_COMMIT" \
+  --model gpt-5.6-sol
 ```
 
 The explicit skill and explicit baseline prompts are byte-identical and both
@@ -253,27 +210,40 @@ counts. Use the per-case values in
 manifest for the three expected attestation values above.
 
 Before initializing the runtime repository, copy the exact
-`scripts/eval-attest-agent-workflow-arm.mjs` controller utility to a separate
-operator-owned path on the model host. Run the pre-attestation immediately
-before `codex exec` and the post-attestation immediately after it. Both must
-pass. The attester fails unless the repository has the exact deterministic
-root commit, one parentless commit, the expected tracked-file inventory, the
-expected SHA-256 content tree, and a clean status. Because responses, events,
-and attestations are written outside the runtime repository, the post-run
-check proves Codex did not alter or contaminate that case root.
+`scripts/eval-run-codex-agent-workflow-case.mjs` and
+`scripts/eval-attest-agent-workflow-arm.mjs` controller utilities to a separate
+operator-owned path on the model host. The launcher creates the result
+directory exclusively, initializes deterministic SHA-1 Git without ambient
+configuration or templates, captures the exact argv and host versions, runs
+the pre-attestation immediately before `codex exec`, and runs the
+post-attestation immediately after it. Both attestations must pass. It captures
+`codex debug prompt-input` after execution under the same root, isolated Codex
+home, prompt, and feature policy, so the inventory observation cannot influence
+the evaluated response. All raw artifacts remain outside the runtime
+repository.
 
-After transferring raw event streams back to the controller, run:
+After transferring one complete fresh result directory back to the controller,
+bind it to the trusted preparation manifest before scoring:
 
 ```bash
-node scripts/eval-validate-agent-workflow-events.mjs \
-  "$PDF_WORKFLOW_CONTROLLER_RESULTS_ROOT"/*.events.jsonl
+node scripts/eval-bind-agent-workflow-run.mjs \
+  --run-root "$PDF_WORKFLOW_CONTROLLER_RESULTS_ROOT/$PDF_WORKFLOW_ARM/$PDF_WORKFLOW_CASE_ID" \
+  --preparation-manifest "$PDF_WORKFLOW_TRUSTED_ROOT/preparation-manifest.json" \
+  --arm "$PDF_WORKFLOW_ARM" \
+  --case-id "$PDF_WORKFLOW_CASE_ID" \
+  --output "$PDF_WORKFLOW_CONTROLLER_RESULTS_ROOT/$PDF_WORKFLOW_ARM/$PDF_WORKFLOW_CASE_ID/run-manifest.json"
 ```
 
-This validator fails closed on command execution, tool calls, unknown event
-types, malformed JSONL, reordered, duplicate, or missing lifecycle events,
-missing message identity or content, and missing token usage. Its report binds
-each decision to the raw event file's byte length and SHA-256. Apply the same
-validator to skill and baseline arms.
+The binder fails closed on command execution, tool calls, unknown event types,
+malformed JSONL, reordered, duplicate, or missing lifecycle events, missing
+message identity or token usage, an unexpected artifact inventory, failed or
+drifting attestations, command drift, prompt-input inventory drift, or any
+difference between `response.json` and the sole validated agent message. Its
+manifest binds arm, case, model, host versions, exact command, preparation
+manifest, case inventory, event stream, response, both attestations, and
+prompt-input evidence by SHA-256. Score only the `response` copied into a
+`claim_ready: true` bound run manifest. Apply the same binder to every skill
+and baseline case.
 
 Before every arm, retain a negative isolation probe showing that neither an
 oracle nor the source repository exists on the model host, plus the effective
