@@ -69,6 +69,18 @@ export function validateAgentWorkflowEvents(events) {
     errors,
     event_count: events.length,
     event_type_counts: Object.fromEntries([...counts].sort()),
+    thread_id: nonemptyString(events[0]?.thread_id)
+      ? events[0].thread_id
+      : null,
+    agent_message_item_id: nonemptyString(events[2]?.item?.id)
+      ? events[2].item.id
+      : null,
+    input_tokens: Number.isFinite(events[3]?.usage?.input_tokens)
+      ? events[3].usage.input_tokens
+      : null,
+    output_tokens: Number.isFinite(events[3]?.usage?.output_tokens)
+      ? events[3].usage.output_tokens
+      : null,
     model_callable_tool_items: events.filter(
       event => event?.type === "item.completed" && event?.item?.type !== "agent_message",
     ).length,

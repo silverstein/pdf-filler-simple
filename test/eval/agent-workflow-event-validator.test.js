@@ -30,6 +30,10 @@ describe("agent workflow event validation", () => {
       pass: true,
       event_count: 4,
       model_callable_tool_items: 0,
+      thread_id: "synthetic",
+      agent_message_item_id: "item_1",
+      input_tokens: 1,
+      output_tokens: 1,
     });
   });
 

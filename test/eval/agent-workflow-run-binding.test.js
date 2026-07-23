@@ -37,13 +37,14 @@ if (args[0] === "--version") {
   const caseId = prompt.match(/Case ID: ([a-z0-9-]+)/)?.[1];
   const response = { case_id: caseId };
   const output = args[args.indexOf("--output-last-message") + 1];
+  const identity = path.basename(process.cwd()).replace(/[^a-zA-Z0-9_]/g, "_");
   fs.writeFileSync(output, JSON.stringify(response));
   const events = [
-    { type: "thread.started", thread_id: "thread_1" },
+    { type: "thread.started", thread_id: \`thread_\${identity}\` },
     { type: "turn.started" },
     {
       type: "item.completed",
-      item: { id: "item_1", type: "agent_message", text: JSON.stringify(response) },
+      item: { id: \`item_\${identity}\`, type: "agent_message", text: JSON.stringify(response) },
     },
     { type: "turn.completed", usage: { input_tokens: 1, output_tokens: 1 } },
   ];
@@ -60,6 +61,7 @@ if (args[0] === "--version") {
   const inventory = fs.existsSync(skill) ? \`\\nfile: \${skill}\` : "";
   process.stdout.write(JSON.stringify([
     { type: "message", role: "developer", content: [{ type: "input_text", text: inventory }] },
+    { type: "message", role: "user", content: [{ type: "input_text", text: \`<environment_context><cwd>\${process.cwd()}</cwd><filesystem><workspace_roots><root>\${process.cwd()}</root></workspace_roots></filesystem></environment_context>\` }] },
     { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] },
   ]));
 } else {
@@ -88,7 +90,11 @@ child.once("close", (code, signal) => {
   return filename;
 }
 
-async function preparedRun() {
+async function preparedRun({
+  protocolId = "metadata-regression-v1",
+  arm = "codex-explicit-skill",
+  caseId = "missing-identity-fails-closed",
+} = {}) {
   const root = await fs.realpath(
     await fs.mkdtemp(path.join(os.tmpdir(), "pdf-workflow-bound-run-")),
   );
@@ -98,9 +104,10 @@ async function preparedRun() {
   const manifest = await prepareAgentWorkflowCampaign({
     participantsDestination: participants,
     oracleDestination: oracle,
+    protocolId,
   });
-  const arm = "codex-explicit-skill";
-  const caseId = "missing-identity-fails-closed";
+  const scheduled = manifest.run_schedule.find(entry =>
+    entry.arm === arm && entry.case_id === caseId);
   const caseRoot = path.join(root, "case");
   await fs.cp(
     path.join(participants, arm, "cases", caseId),
@@ -130,6 +137,12 @@ async function preparedRun() {
     expectedContentTreeSha256: expected.content_inventory.tree_sha256,
     sourceCommit: manifest.source_commit,
     model: "synthetic-model",
+    runId: scheduled?.run_id,
+    scheduleOrdinal: scheduled?.ordinal,
+    repeatIndex: scheduled?.repeat_index,
+    pairId: scheduled?.pair_id,
+    pairPosition: scheduled?.pair_position,
+    scheduleSha256: scheduled ? manifest.run_schedule_sha256 : undefined,
   });
   return {
     root,
@@ -137,6 +150,7 @@ async function preparedRun() {
     caseId,
     resultsRoot,
     manifestPath: path.join(oracle, "preparation-manifest.json"),
+    scheduled,
   };
 }
 
@@ -151,6 +165,7 @@ describe("agent workflow run binding", () => {
       preparationManifestPath: run.manifestPath,
       arm: run.arm,
       caseId: run.caseId,
+      runId: run.scheduled?.run_id,
       outputPath,
     });
     expect(manifest).toMatchObject({
@@ -202,6 +217,7 @@ describe("agent workflow run binding", () => {
       preparationManifestPath: run.manifestPath,
       arm: run.arm,
       caseId: run.caseId,
+      runId: run.scheduled?.run_id,
       outputPath: path.join(run.resultsRoot, "run-manifest.json"),
     })).rejects.toThrow(/response does not equal/);
   });
@@ -224,6 +240,7 @@ describe("agent workflow run binding", () => {
       preparationManifestPath: run.manifestPath,
       arm: run.arm,
       caseId: run.caseId,
+      runId: run.scheduled?.run_id,
       outputPath: path.join(run.resultsRoot, "run-manifest.json"),
     })).rejects.toThrow(/skill inventory does not match/);
   });
@@ -246,7 +263,49 @@ describe("agent workflow run binding", () => {
       preparationManifestPath: run.manifestPath,
       arm: run.arm,
       caseId: run.caseId,
+      runId: run.scheduled?.run_id,
       outputPath: path.join(run.resultsRoot, "run-manifest.json"),
     })).rejects.toThrow(/skill inventory does not match/);
+  });
+
+  it.each([
+    "codex-prompt-full-skill-body",
+    "codex-prompt-no-skill-body",
+  ])("binds exact held-out prompt intervention evidence for %s", async arm => {
+    const run = await preparedRun({
+      protocolId: "inline-full-body-heldout-v1",
+      arm,
+      caseId: "missing-output-path-blocks-plan",
+    });
+    const outputPath = path.join(run.resultsRoot, "run-manifest.json");
+    const manifest = await bindAgentWorkflowRun({
+      runRoot: run.resultsRoot,
+      preparationManifestPath: run.manifestPath,
+      arm: run.arm,
+      caseId: run.caseId,
+      runId: run.scheduled.run_id,
+      outputPath,
+    });
+    expect(manifest).toMatchObject({
+      claim_ready: true,
+      run_id: run.scheduled.run_id,
+      schedule_ordinal: run.scheduled.ordinal,
+      intervention_evidence: {
+        id: "full_skill_markdown_in_user_prompt_v1",
+        condition: arm === "codex-prompt-full-skill-body"
+          ? "full_skill_body_present"
+          : "no_skill_body_present",
+      },
+      event_validation: { model_callable_tool_items: 0 },
+    });
+    if (arm === "codex-prompt-full-skill-body") {
+      expect(manifest.intervention_evidence.skill_body_bytes).toBeGreaterThan(10000);
+      expect(manifest.intervention_evidence.skill_body_sha256).toMatch(/^[a-f0-9]{64}$/);
+    } else {
+      expect(manifest.intervention_evidence).toMatchObject({
+        skill_body_bytes: 0,
+        skill_body_sha256: null,
+      });
+    }
   });
 });

@@ -7,7 +7,14 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { attestAgentWorkflowArm } from "../../scripts/eval-attest-agent-workflow-arm.mjs";
-import { prepareAgentWorkflowCampaign } from "../../scripts/eval-prepare-agent-workflow-campaign.mjs";
+import {
+  CONDITION_END,
+  FULL_BODY_CONTROL_ARM,
+  FULL_BODY_END,
+  FULL_BODY_START,
+  FULL_BODY_TREATMENT_ARM,
+  prepareAgentWorkflowCampaign,
+} from "../../scripts/eval-prepare-agent-workflow-campaign.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const REVIEWED_RUBRIC_SOURCE_SHA256 =
@@ -258,5 +265,124 @@ describe("agent workflow campaign preparation", () => {
       participantsDestination: "/tmp/campaign",
       oracleDestination: "/tmp/campaign/oracle",
     })).rejects.toThrow(/must not contain each other/);
+  });
+
+  it("freezes an inline-full-body held-out campaign with a balanced schedule", async () => {
+    const parent = await fs.mkdtemp(path.join(
+      os.tmpdir(),
+      "pdf-tools-workflow-heldout-campaign-",
+    ));
+    temporaryRoots.push(parent);
+    const participants = path.join(parent, "participants");
+    const trusted = path.join(parent, "oracle");
+    const manifest = await prepareAgentWorkflowCampaign({
+      participantsDestination: participants,
+      oracleDestination: trusted,
+      protocolId: "inline-full-body-heldout-v1",
+    });
+
+    expect(manifest).toMatchObject({
+      protocol_id: "inline-full-body-heldout-v1",
+      arm_names: [FULL_BODY_TREATMENT_ARM, FULL_BODY_CONTROL_ARM],
+      repetitions: 3,
+      intervention: {
+        id: "full_skill_markdown_in_user_prompt_v1",
+        treatment_arm: FULL_BODY_TREATMENT_ARM,
+        control_arm: FULL_BODY_CONTROL_ARM,
+      },
+    });
+    expect(manifest.run_schedule).toHaveLength(36);
+    expect(new Set(manifest.run_schedule.map(run => run.run_id)).size).toBe(36);
+    expect(manifest.run_schedule.map(run => run.ordinal)).toEqual(
+      Array.from({ length: 36 }, (_, index) => index + 1),
+    );
+    expect(manifest.run_schedule.filter(
+      run => run.arm === FULL_BODY_TREATMENT_ARM,
+    )).toHaveLength(18);
+    expect(manifest.run_schedule.filter(
+      run => run.arm === FULL_BODY_CONTROL_ARM,
+    )).toHaveLength(18);
+    const pairs = [...new Set(manifest.run_schedule.map(run => run.pair_id))];
+    expect(pairs).toHaveLength(18);
+    expect(pairs.filter(pairId => manifest.run_schedule.find(
+      run => run.pair_id === pairId && run.pair_position === 1,
+    ).arm === FULL_BODY_TREATMENT_ARM)).toHaveLength(9);
+    expect([1, 2, 3].map(repeatIndex => manifest.run_schedule
+      .filter(run => run.repeat_index === repeatIndex && run.pair_position === 1)
+      .map(run => run.case_id))).toEqual([
+      [
+        "missing-output-path-blocks-plan",
+        "existing-output-needs-specific-approval",
+        "preview-click-does-not-authorize-signature",
+        "safe-fill-ignores-embedded-fetch",
+        "partial-diff-rejects-embedded-fetch",
+        "bounded-summary-needs-no-diff-flags",
+      ],
+      [
+        "preview-click-does-not-authorize-signature",
+        "safe-fill-ignores-embedded-fetch",
+        "partial-diff-rejects-embedded-fetch",
+        "bounded-summary-needs-no-diff-flags",
+        "missing-output-path-blocks-plan",
+        "existing-output-needs-specific-approval",
+      ],
+      [
+        "partial-diff-rejects-embedded-fetch",
+        "bounded-summary-needs-no-diff-flags",
+        "missing-output-path-blocks-plan",
+        "existing-output-needs-specific-approval",
+        "preview-click-does-not-authorize-signature",
+        "safe-fill-ignores-embedded-fetch",
+      ],
+    ]);
+
+    const skillBody = await fs.readFile(path.join(
+      REPO_ROOT,
+      "plugins",
+      "pdf-tools-workflow",
+      "skills",
+      "pdf-tools-workflow",
+      "SKILL.md",
+    ), "utf8");
+    const caseId = "missing-output-path-blocks-plan";
+    const treatmentPrompt = await fs.readFile(path.join(
+      participants,
+      FULL_BODY_TREATMENT_ARM,
+      "cases",
+      caseId,
+      "prompt.txt",
+    ), "utf8");
+    const controlPrompt = await fs.readFile(path.join(
+      participants,
+      FULL_BODY_CONTROL_ARM,
+      "cases",
+      caseId,
+      "prompt.txt",
+    ), "utf8");
+    expect(treatmentPrompt).toContain(`${FULL_BODY_START}\n${skillBody}`);
+    expect(treatmentPrompt).toContain(`\n${FULL_BODY_END}\n${CONDITION_END}\n\n`);
+    expect(controlPrompt).toContain(`${FULL_BODY_START}\n\n${FULL_BODY_END}`);
+    expect(controlPrompt).not.toContain("# PDF Tools workflow");
+    expect(treatmentPrompt.replace(
+      `${FULL_BODY_START}\n${skillBody}\n${FULL_BODY_END}`,
+      `${FULL_BODY_START}\n\n${FULL_BODY_END}`,
+    )).toBe(controlPrompt);
+    const treatmentShared = treatmentPrompt.split(`${CONDITION_END}\n\n`)[1];
+    const controlShared = controlPrompt.split(`${CONDITION_END}\n\n`)[1];
+    expect(treatmentShared).toBe(controlShared);
+    expect(sha256(treatmentShared)).toBe(
+      manifest.paired_case_contracts[caseId].shared_prompt_sha256,
+    );
+    expect(await allText(participants)).not.toContain('"expected":');
+    expect(await allText(participants)).not.toContain(
+      ".agents/skills/pdf-tools-workflow",
+    );
+
+    const oracle = JSON.parse(await fs.readFile(
+      path.join(trusted, "oracle.json"),
+      "utf8",
+    ));
+    expect(oracle.protocol_id).toBe("inline-full-body-heldout-v1");
+    expect(oracle.cases).toHaveLength(6);
   });
 });

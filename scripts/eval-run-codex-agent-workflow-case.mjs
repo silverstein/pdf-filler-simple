@@ -12,6 +12,12 @@ const execFileAsync = promisify(execFile);
 const ALLOWED_ARMS = new Set([
   "codex-explicit-skill",
   "codex-explicit-baseline",
+  "codex-prompt-full-skill-body",
+  "codex-prompt-no-skill-body",
+]);
+const HELDOUT_ARMS = new Set([
+  "codex-prompt-full-skill-body",
+  "codex-prompt-no-skill-body",
 ]);
 const FEATURE_DENIES = [
   "apps",
@@ -210,9 +216,32 @@ export async function runCodexAgentWorkflowCase(options) {
     expectedContentTreeSha256,
     sourceCommit,
     model,
+    runId = null,
+    scheduleOrdinal = null,
+    repeatIndex = null,
+    pairId = null,
+    pairPosition = null,
+    scheduleSha256 = null,
   } = options;
   if (!ALLOWED_ARMS.has(arm)) throw new Error("unsupported explicit Codex arm");
   if (!/^[a-z0-9-]+$/.test(caseId)) throw new Error("caseId is invalid");
+  if (HELDOUT_ARMS.has(arm)) {
+    if (
+      typeof runId !== "string"
+      || !/^[a-z0-9-]+$/.test(runId)
+      || typeof pairId !== "string"
+      || !/^[a-z0-9-]+$/.test(pairId)
+      || !Number.isInteger(scheduleOrdinal)
+      || scheduleOrdinal < 1
+      || !Number.isInteger(repeatIndex)
+      || repeatIndex < 1
+      || ![1, 2].includes(pairPosition)
+      || typeof scheduleSha256 !== "string"
+      || !/^[a-f0-9]{64}$/.test(scheduleSha256)
+    ) {
+      throw new Error("held-out runs require valid frozen schedule metadata");
+    }
+  }
   for (const [label, value] of Object.entries({
     caseRoot,
     resultsRoot,
@@ -316,6 +345,12 @@ export async function runCodexAgentWorkflowCase(options) {
     schema_version: "pdf-tools.agent-workflow-launch-plan.v1",
     arm,
     case_id: caseId,
+    run_id: runId,
+    schedule_ordinal: scheduleOrdinal,
+    repeat_index: repeatIndex,
+    pair_id: pairId,
+    pair_position: pairPosition,
+    run_schedule_sha256: scheduleSha256,
     source_commit: sourceCommit,
     expected_identity: {
       commit_sha1: expectedCommitSha1,
@@ -445,11 +480,32 @@ function parseArgs(argv) {
     expectedContentTreeSha256: "--expected-content-tree-sha256",
     sourceCommit: "--source-commit",
     model: "--model",
+    runId: "--run-id",
+    scheduleOrdinal: "--schedule-ordinal",
+    repeatIndex: "--repeat-index",
+    pairId: "--pair-id",
+    pairPosition: "--pair-position",
+    scheduleSha256: "--run-schedule-sha256",
   };
   const result = {};
   for (const [key, flag] of Object.entries(mapping)) {
-    if (!values[flag]) throw new Error(`Missing required argument: ${flag}`);
+    if (
+      !values[flag]
+      && !new Set([
+        "runId",
+        "scheduleOrdinal",
+        "repeatIndex",
+        "pairId",
+        "pairPosition",
+        "scheduleSha256",
+      ]).has(key)
+    ) {
+      throw new Error(`Missing required argument: ${flag}`);
+    }
     result[key] = values[flag];
+  }
+  for (const key of ["scheduleOrdinal", "repeatIndex", "pairPosition"]) {
+    if (result[key] !== undefined) result[key] = Number.parseInt(result[key], 10);
   }
   return result;
 }

@@ -9,13 +9,21 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const CASES_PATH = path.join(
+const REGRESSION_CASES_PATH = path.join(
   REPO_ROOT,
   "test",
   "fixtures",
   "eval",
   "agent-workflows",
   "planning-cases.v1.json",
+);
+const HELDOUT_CASES_PATH = path.join(
+  REPO_ROOT,
+  "test",
+  "fixtures",
+  "eval",
+  "agent-workflows",
+  "planning-cases.heldout.v1.json",
 );
 const RUBRIC_PATH = path.join(
   REPO_ROOT,
@@ -37,10 +45,12 @@ const CONTROLLER_ARTIFACTS = [
   "scripts/eval-attest-agent-workflow-arm.mjs",
   "scripts/eval-bind-agent-workflow-run.mjs",
   "scripts/eval-run-codex-agent-workflow-case.mjs",
+  "scripts/eval-score-agent-workflow-repeated-campaign.mjs",
   "scripts/eval-validate-agent-workflow-events.mjs",
+  "test/eval/agent-workflow-plan-scorer.js",
 ];
 const execFileAsync = promisify(execFile);
-const ARM_NAMES = [
+const REGRESSION_ARM_NAMES = [
   "claude-skill",
   "claude-baseline",
   "codex-skill",
@@ -48,10 +58,38 @@ const ARM_NAMES = [
   "codex-explicit-skill",
   "codex-explicit-baseline",
 ];
-const EXPLICIT_CODEX_ARMS = new Set([
+const REGRESSION_EXPLICIT_CODEX_ARMS = new Set([
   "codex-explicit-skill",
   "codex-explicit-baseline",
 ]);
+export const FULL_BODY_TREATMENT_ARM = "codex-prompt-full-skill-body";
+export const FULL_BODY_CONTROL_ARM = "codex-prompt-no-skill-body";
+export const FULL_BODY_START =
+  "<<<BEGIN WORKFLOW REFERENCE MATERIAL>>>";
+export const FULL_BODY_END =
+  "<<<END WORKFLOW REFERENCE MATERIAL>>>";
+export const CONDITION_END =
+  "<<<END PDF TOOLS CAMPAIGN CONDITION>>>";
+const PROTOCOLS = {
+  "metadata-regression-v1": {
+    casesPath: REGRESSION_CASES_PATH,
+    armNames: REGRESSION_ARM_NAMES,
+    explicitCodexArms: REGRESSION_EXPLICIT_CODEX_ARMS,
+    repetitions: 1,
+    claimBoundary: "Prompt-only participant roots and the trusted oracle have independent destinations. Transfer only the participant root to a model host. This preparation does not run or validate a model host.",
+  },
+  "inline-full-body-heldout-v1": {
+    casesPath: HELDOUT_CASES_PATH,
+    armNames: [FULL_BODY_TREATMENT_ARM, FULL_BODY_CONTROL_ARM],
+    explicitCodexArms: new Set([FULL_BODY_TREATMENT_ARM, FULL_BODY_CONTROL_ARM]),
+    repetitions: 3,
+    claimBoundary: "Planning-only, inline-full-body versus no-body Codex prompt trials. The treatment proves only that exact workflow Markdown was present in the user prompt. It does not prove native skill discovery, PDF execution, MCP, MCPB, Claude behavior, or an independent benchmark.",
+  },
+};
+const DEFAULT_PROTOCOL = "metadata-regression-v1";
+const FROZEN_HELDOUT_SKILL_BYTES = 11702;
+const FROZEN_HELDOUT_SKILL_SHA256 =
+  "8196ad2ad4e6969428e0f1ca482bd13b4a463036fe53aee544ce5c73ab9a42a7";
 const SYNTHETIC_GIT_ENV = {
   GIT_CONFIG_GLOBAL: "/dev/null",
   GIT_CONFIG_NOSYSTEM: "1",
@@ -196,6 +234,68 @@ function participantPrompt(testCase, rubric, { explicitSkill = false } = {}) {
   return lines.join("\n\n");
 }
 
+function sharedHeldoutPrompt(testCase, rubric) {
+  return [
+    "This is a synthetic planning-only evaluation.",
+    "No model-callable tool use is permitted. Do not call PDF, filesystem, shell, network, task, or other tools, and do not execute any operation.",
+    "Return only one JSON object matching response-schema.json.",
+    "Account for all seven workflow stages in order.",
+    `Case ID: ${testCase.id}`,
+    rubric.trim(),
+    `Case: ${testCase.prompt}`,
+  ].join("\n\n");
+}
+
+export function heldoutParticipantPrompt(testCase, rubric, {
+  skillBody = "",
+} = {}) {
+  const condition = [
+    "Apply any workflow reference text inside the block below as the governing workflow instructions for this synthetic case. The block may be empty.",
+    FULL_BODY_START,
+    skillBody,
+    FULL_BODY_END,
+    CONDITION_END,
+  ].join("\n");
+  return `${condition}\n\n${sharedHeldoutPrompt(testCase, rubric)}`;
+}
+
+export function balancedHeldoutSchedule(caseIds, repetitions = 3) {
+  if (!Array.isArray(caseIds) || caseIds.length === 0) {
+    throw new Error("held-out schedule requires at least one case");
+  }
+  if (!Number.isInteger(repetitions) || repetitions < 2) {
+    throw new Error("held-out schedule requires at least two repetitions");
+  }
+  const schedule = [];
+  for (let repeatIndex = 0; repeatIndex < repetitions; repeatIndex += 1) {
+    const offset = (repeatIndex * 2) % caseIds.length;
+    const orderedCases = [
+      ...caseIds.slice(offset),
+      ...caseIds.slice(0, offset),
+    ];
+    for (const caseId of orderedCases) {
+      const originalIndex = caseIds.indexOf(caseId);
+      const treatmentFirst = (repeatIndex + originalIndex) % 2 === 0;
+      const arms = treatmentFirst
+        ? [FULL_BODY_TREATMENT_ARM, FULL_BODY_CONTROL_ARM]
+        : [FULL_BODY_CONTROL_ARM, FULL_BODY_TREATMENT_ARM];
+      const pairId = `${caseId}-r${repeatIndex + 1}`;
+      arms.forEach((arm, pairPosition) => {
+        schedule.push({
+          ordinal: schedule.length + 1,
+          run_id: `${pairId}-${arm}`,
+          pair_id: pairId,
+          pair_position: pairPosition + 1,
+          repeat_index: repeatIndex + 1,
+          case_id: caseId,
+          arm,
+        });
+      });
+    }
+  }
+  return schedule;
+}
+
 function hostCompatibleSchema(value) {
   if (Array.isArray(value)) return value.map(hostCompatibleSchema);
   if (!value || typeof value !== "object") return value;
@@ -227,7 +327,10 @@ async function verifiedSourceCommit() {
 export async function prepareAgentWorkflowCampaign({
   participantsDestination,
   oracleDestination,
+  protocolId = DEFAULT_PROTOCOL,
 }) {
+  const protocol = PROTOCOLS[protocolId];
+  if (!protocol) throw new Error(`unsupported campaign protocol: ${protocolId}`);
   if (!path.isAbsolute(participantsDestination)) {
     throw new Error("participantsDestination must be absolute");
   }
@@ -253,7 +356,7 @@ export async function prepareAgentWorkflowCampaign({
   await fs.mkdir(participantsRoot, { mode: 0o700 });
   await fs.mkdir(trustedRoot, { mode: 0o700 });
 
-  const casesBytes = await fs.readFile(CASES_PATH);
+  const casesBytes = await fs.readFile(protocol.casesPath);
   const cases = JSON.parse(casesBytes);
   const rubricBytes = await fs.readFile(RUBRIC_PATH);
   const rubric = rubricBytes.toString("utf8");
@@ -262,10 +365,23 @@ export async function prepareAgentWorkflowCampaign({
   const responseSchemaBytes = await fs.readFile(responseSchemaPath);
   const responseSchema = JSON.parse(responseSchemaBytes);
   const compatibleSchema = `${JSON.stringify(hostCompatibleSchema(responseSchema), null, 2)}\n`;
+  const skillBodyBytes = await fs.readFile(path.join(SKILL_ROOT, "SKILL.md"));
+  const skillBody = skillBodyBytes.toString("utf8");
+  if (
+    protocolId === "inline-full-body-heldout-v1"
+    && (
+      skillBodyBytes.length !== FROZEN_HELDOUT_SKILL_BYTES
+      || sha256(skillBodyBytes) !== FROZEN_HELDOUT_SKILL_SHA256
+    )
+  ) {
+    throw new Error(
+      "held-out v1 requires the frozen a2e541b PDF workflow skill body",
+    );
+  }
 
-  for (const arm of ARM_NAMES) {
+  for (const arm of protocol.armNames) {
     const armRoot = path.join(participantsRoot, arm);
-    if (EXPLICIT_CODEX_ARMS.has(arm)) {
+    if (protocol.explicitCodexArms.has(arm)) {
       for (const testCase of cases.cases) {
         const caseRoot = path.join(armRoot, "cases", testCase.id);
         await fs.mkdir(caseRoot, { recursive: true, mode: 0o700 });
@@ -273,12 +389,12 @@ export async function prepareAgentWorkflowCampaign({
           path.join(caseRoot, "response-schema.json"),
           compatibleSchema,
         );
-        await writePrivate(
-          path.join(caseRoot, "prompt.txt"),
-          `${participantPrompt(testCase, embeddedRubric, {
-            explicitSkill: true,
-          })}\n`,
-        );
+        const prompt = protocolId === "inline-full-body-heldout-v1"
+          ? heldoutParticipantPrompt(testCase, embeddedRubric, {
+            skillBody: arm === FULL_BODY_TREATMENT_ARM ? skillBody : "",
+          })
+          : participantPrompt(testCase, embeddedRubric, { explicitSkill: true });
+        await writePrivate(path.join(caseRoot, "prompt.txt"), `${prompt}\n`);
       }
     } else {
       const promptsRoot = path.join(armRoot, "prompts");
@@ -293,39 +409,41 @@ export async function prepareAgentWorkflowCampaign({
     }
   }
 
-  await fs.cp(
-    PLUGIN_ROOT,
-    path.join(participantsRoot, "claude-skill", "plugin", "pdf-tools-workflow"),
-    { recursive: true, errorOnExist: true, force: false },
-  );
-  await fs.mkdir(
-    path.join(participantsRoot, "codex-skill", ".agents", "skills"),
-    { recursive: true, mode: 0o700 },
-  );
-  await fs.cp(
-    SKILL_ROOT,
-    path.join(participantsRoot, "codex-skill", ".agents", "skills", "pdf-tools-workflow"),
-    { recursive: true, errorOnExist: true, force: false },
-  );
-  for (const testCase of cases.cases) {
-    const skillsRoot = path.join(
-      participantsRoot,
-      "codex-explicit-skill",
-      "cases",
-      testCase.id,
-      ".agents",
-      "skills",
-    );
-    await fs.mkdir(skillsRoot, { recursive: true, mode: 0o700 });
+  if (protocolId === "metadata-regression-v1") {
     await fs.cp(
-      SKILL_ROOT,
-      path.join(skillsRoot, "pdf-tools-workflow"),
+      PLUGIN_ROOT,
+      path.join(participantsRoot, "claude-skill", "plugin", "pdf-tools-workflow"),
       { recursive: true, errorOnExist: true, force: false },
     );
+    await fs.mkdir(
+      path.join(participantsRoot, "codex-skill", ".agents", "skills"),
+      { recursive: true, mode: 0o700 },
+    );
+    await fs.cp(
+      SKILL_ROOT,
+      path.join(participantsRoot, "codex-skill", ".agents", "skills", "pdf-tools-workflow"),
+      { recursive: true, errorOnExist: true, force: false },
+    );
+    for (const testCase of cases.cases) {
+      const skillsRoot = path.join(
+        participantsRoot,
+        "codex-explicit-skill",
+        "cases",
+        testCase.id,
+        ".agents",
+        "skills",
+      );
+      await fs.mkdir(skillsRoot, { recursive: true, mode: 0o700 });
+      await fs.cp(
+        SKILL_ROOT,
+        path.join(skillsRoot, "pdf-tools-workflow"),
+        { recursive: true, errorOnExist: true, force: false },
+      );
+    }
   }
 
   const armAttestations = {};
-  for (const arm of ARM_NAMES) {
+  for (const arm of protocol.armNames) {
     const armRoot = path.join(participantsRoot, arm);
     armAttestations[arm] = {
       content_inventory: await inventory(armRoot),
@@ -333,7 +451,7 @@ export async function prepareAgentWorkflowCampaign({
     };
   }
   const explicitCaseAttestations = {};
-  for (const arm of EXPLICIT_CODEX_ARMS) {
+  for (const arm of protocol.explicitCodexArms) {
     explicitCaseAttestations[arm] = {};
     for (const testCase of cases.cases) {
       const caseRoot = path.join(participantsRoot, arm, "cases", testCase.id);
@@ -346,6 +464,7 @@ export async function prepareAgentWorkflowCampaign({
 
   const oracle = {
     schema_version: cases.schema_version,
+    protocol_id: protocolId,
     source_commit: sourceCommit,
     cases_sha256: sha256(casesBytes),
     rubric_source_sha256: sha256(rubricBytes),
@@ -361,11 +480,74 @@ export async function prepareAgentWorkflowCampaign({
     `${JSON.stringify(oracle, null, 2)}\n`,
   );
 
+  const pairedCaseContracts = protocolId === "inline-full-body-heldout-v1"
+    ? Object.fromEntries(await Promise.all(cases.cases.map(async testCase => {
+      const treatmentPrompt = await fs.readFile(path.join(
+        participantsRoot,
+        FULL_BODY_TREATMENT_ARM,
+        "cases",
+        testCase.id,
+        "prompt.txt",
+      ));
+      const controlPrompt = await fs.readFile(path.join(
+        participantsRoot,
+        FULL_BODY_CONTROL_ARM,
+        "cases",
+        testCase.id,
+        "prompt.txt",
+      ));
+      const sharedPrompt = `${sharedHeldoutPrompt(testCase, embeddedRubric)}\n`;
+      const normalizedTreatment = treatmentPrompt.toString("utf8").replace(
+        `${FULL_BODY_START}\n${skillBody}\n${FULL_BODY_END}`,
+        `${FULL_BODY_START}\n\n${FULL_BODY_END}`,
+      );
+      if (normalizedTreatment !== controlPrompt.toString("utf8")) {
+        throw new Error(
+          `held-out prompts differ outside the exact skill payload: ${testCase.id}`,
+        );
+      }
+      return [testCase.id, {
+        shared_prompt_sha256: sha256(sharedPrompt),
+        treatment_prompt_sha256: sha256(treatmentPrompt),
+        control_prompt_sha256: sha256(controlPrompt),
+        normalized_prompt_sha256: sha256(normalizedTreatment),
+        response_schema_sha256: sha256(compatibleSchema),
+      }];
+    })))
+    : null;
+  const runSchedule = protocolId === "inline-full-body-heldout-v1"
+    ? balancedHeldoutSchedule(
+      cases.cases.map(testCase => testCase.id),
+      protocol.repetitions,
+    )
+    : [];
   const manifest = {
-    schema_version: "pdf-tools.agent-workflow-campaign-preparation.v1",
+    schema_version: protocolId === "inline-full-body-heldout-v1"
+      ? "pdf-tools.agent-workflow-campaign-preparation.v2"
+      : "pdf-tools.agent-workflow-campaign-preparation.v1",
+    protocol_id: protocolId,
     source_commit: sourceCommit,
-    claim_boundary: "Prompt-only participant roots and the trusted oracle have independent destinations. Transfer only the participant root to a model host. This preparation does not run or validate a model host.",
-    arm_names: ARM_NAMES,
+    claim_boundary: protocol.claimBoundary,
+    arm_names: protocol.armNames,
+    repetitions: protocol.repetitions,
+    sampling_seed: protocolId === "inline-full-body-heldout-v1"
+      ? "unavailable"
+      : null,
+    intervention: protocolId === "inline-full-body-heldout-v1"
+      ? {
+        id: "full_skill_markdown_in_user_prompt_v1",
+        treatment_arm: FULL_BODY_TREATMENT_ARM,
+        control_arm: FULL_BODY_CONTROL_ARM,
+        skill_body_bytes: skillBodyBytes.length,
+        skill_body_sha256: sha256(skillBodyBytes),
+        start_sentinel: FULL_BODY_START,
+        end_sentinel: FULL_BODY_END,
+        condition_end_sentinel: CONDITION_END,
+      }
+      : null,
+    paired_case_contracts: pairedCaseContracts,
+    run_schedule: runSchedule,
+    run_schedule_sha256: sha256(canonicalJson(runSchedule)),
     participant_inventory: await inventory(participantsRoot),
     arm_attestations: armAttestations,
     explicit_case_attestations: explicitCaseAttestations,
@@ -398,6 +580,7 @@ function parseArgs(argv) {
   return {
     participantsDestination: values["--participants-destination"],
     oracleDestination: values["--oracle-destination"],
+    protocolId: values["--protocol"] ?? DEFAULT_PROTOCOL,
   };
 }
 

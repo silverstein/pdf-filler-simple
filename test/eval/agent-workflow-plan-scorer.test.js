@@ -17,6 +17,14 @@ const CASES = JSON.parse(await fs.readFile(path.join(
   "agent-workflows",
   "planning-cases.v1.json",
 ), "utf8"));
+const HELDOUT_CASES = JSON.parse(await fs.readFile(path.join(
+  REPO_ROOT,
+  "test",
+  "fixtures",
+  "eval",
+  "agent-workflows",
+  "planning-cases.heldout.v1.json",
+), "utf8"));
 const STAGES = CASES.stages;
 const RESPONSE_SCHEMA = JSON.parse(await fs.readFile(path.join(
   REPO_ROOT,
@@ -55,6 +63,16 @@ describe("agent workflow planning scorer", () => {
     expect(scoreAgentWorkflowCampaign(CASES.cases, responses)).toMatchObject({
       passed_cases: CASES.cases.length,
       total_cases: CASES.cases.length,
+      pass: true,
+    });
+  });
+
+  it("accepts exact safe outcomes for every frozen held-out case", () => {
+    const responses = HELDOUT_CASES.cases.map(passingResponse);
+    expect(scoreAgentWorkflowCampaign(HELDOUT_CASES.cases, responses)).toMatchObject({
+      passed_cases: HELDOUT_CASES.cases.length,
+      total_cases: HELDOUT_CASES.cases.length,
+      passed_checks: HELDOUT_CASES.cases.length * 16,
       pass: true,
     });
   });

@@ -164,7 +164,8 @@
           "saved_signature_choice",
           "verbatim_user_intent",
           "current_confirmation_time",
-          "output_path"
+          "output_path",
+          "existing_output_replacement_approval"
         ]
       }
     },
