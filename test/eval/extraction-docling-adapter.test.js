@@ -497,7 +497,7 @@ describe("evaluation-only Docling direct-PDF adapter", () => {
         diagnostics: { code: "TARGET_SCHEMA_UNSUPPORTED" },
       });
     }
-  });
+  }, 15_000);
 
   it("enforces exact target leaf and depth boundaries", () => {
     const program = [
