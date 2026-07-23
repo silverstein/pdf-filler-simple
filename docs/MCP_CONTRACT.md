@@ -93,8 +93,10 @@ projection, so that response's 200,000-character cap cannot erase conversion
 input. Conversion remains bounded by caller item, character, page, deadline,
 and final Markdown byte limits. An optional `.md` output uses the same durable
 same-directory transaction machinery as PDF outputs, refuses an existing file
-unless `overwrite` is true, reopens the exact UTF-8 bytes, and verifies that the
-source PDF hash, size, and filesystem identity did not change.
+unless `overwrite` is true, and activates staged bytes with an atomic
+no-clobber hard link. The canonical allowed parent, exact UTF-8 output, and
+source PDF hash, size, and filesystem identity are revalidated before the
+transaction commits or deletes prior output bytes.
 
 `read_pdf_content` exposes `extraction_status` as `complete`, `partial`, or
 `failed`. A text result is partial when it is page-limited or response-

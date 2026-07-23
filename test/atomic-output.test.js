@@ -22,10 +22,12 @@ function faultingFs({
   syncAt = null,
   syncCode = "EIO",
   renameAt = null,
+  beforeRename = null,
+  beforeLinkAt = null,
   unlinkAt = null,
   beforeLstatAt = null,
 } = {}) {
-  const counts = { open: 0, write: 0, sync: 0, rename: 0, unlink: 0, lstat: 0 };
+  const counts = { open: 0, write: 0, sync: 0, rename: 0, link: 0, unlink: 0, lstat: 0 };
   return {
     async open(...args) {
       counts.open += 1;
@@ -69,8 +71,14 @@ function faultingFs({
     },
     async rename(...args) {
       counts.rename += 1;
+      if (beforeRename) await beforeRename(...args);
       if (counts.rename === renameAt) throw injectedError("EIO", "rename");
       return await fs.rename(...args);
+    },
+    async link(...args) {
+      counts.link += 1;
+      if (counts.link === beforeLinkAt?.at) await beforeLinkAt.run();
+      return await fs.link(...args);
     },
     async unlink(...args) {
       counts.unlink += 1;
@@ -161,6 +169,45 @@ describe("atomic PDF output commits", () => {
     await expectNoTransactionArtifacts();
   });
 
+  it("does not clobber a target created after the final absence check", async () => {
+    const target = path.join(tempDir, "late-no-overwrite.pdf");
+    await expect(writePdfOutputAtomic(target, Buffer.from("our bytes"), {
+      overwrite: false,
+      token: "late-no-overwrite",
+      fsOps: faultingFs({
+        beforeLinkAt: {
+          at: 1,
+          run: async () => fs.writeFile(target, "external bytes"),
+        },
+      }),
+    })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_CONFLICT" });
+
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("external bytes");
+    await expectNoTransactionArtifacts();
+  });
+
+  it("preserves source bytes moved into an absent target at activation time", async () => {
+    const source = path.join(tempDir, "protected-source.pdf");
+    const target = path.join(tempDir, "late-source-alias.md");
+    const sourceBytes = Buffer.from("protected source bytes");
+    await fs.writeFile(source, sourceBytes);
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("Markdown bytes"), {
+      overwrite: true,
+      token: "late-source-alias",
+      fsOps: faultingFs({
+        beforeLinkAt: {
+          at: 1,
+          run: async () => fs.rename(source, target),
+        },
+      }),
+    })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_CONFLICT" });
+
+    await expect(fs.stat(source)).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.readFile(target)).resolves.toEqual(sourceBytes);
+    await expectNoTransactionArtifacts();
+  });
+
   it("exposes the locked initial target identity to validation before staging", async () => {
     const target = path.join(tempDir, "identity.pdf");
     await fs.writeFile(target, "original bytes");
@@ -185,6 +232,59 @@ describe("atomic PDF output commits", () => {
 
     await expect(fs.readFile(target, "utf8")).resolves.toBe("original bytes");
     await expectNoTransactionArtifacts();
+  });
+
+  it("rolls back activated output when in-transaction verification rejects it", async () => {
+    const existing = path.join(tempDir, "verify-existing.pdf");
+    const created = path.join(tempDir, "verify-created.pdf");
+    await fs.writeFile(existing, "original bytes");
+    const verificationError = new Error("verification rejected activated bytes");
+
+    await expect(writePdfOutputAtomic(existing, Buffer.from("replacement"), {
+      token: "verify-existing",
+      verifyActivatedTargets: async targets => {
+        await expect(fs.readFile(existing, "utf8")).resolves.toBe("replacement");
+        expect(targets).toEqual([{ targetPath: existing, replacedExisting: true }]);
+        throw verificationError;
+      },
+    })).rejects.toBe(verificationError);
+    await expect(fs.readFile(existing, "utf8")).resolves.toBe("original bytes");
+    await expectNoTransactionArtifacts();
+
+    await expect(writePdfOutputAtomic(created, Buffer.from("new bytes"), {
+      token: "verify-created",
+      verifyActivatedTargets: async targets => {
+        await expect(fs.readFile(created, "utf8")).resolves.toBe("new bytes");
+        expect(targets).toEqual([{ targetPath: created, replacedExisting: false }]);
+        throw verificationError;
+      },
+    })).rejects.toBe(verificationError);
+    await expect(fs.stat(created)).rejects.toMatchObject({ code: "ENOENT" });
+    await expectNoTransactionArtifacts();
+  });
+
+  it("preserves a target replaced between the last identity check and rollback move", async () => {
+    const target = path.join(tempDir, "late-existing.pdf");
+    const external = path.join(tempDir, "late-existing-external.pdf");
+    await fs.writeFile(target, "original bytes");
+    await fs.writeFile(external, "late external bytes");
+    let injected = false;
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("our replacement"), {
+      token: "late-existing",
+      fsOps: faultingFs({
+        beforeRename: async (from, to) => {
+          if (!injected && from === target && String(to).endsWith("-rollback")) {
+            injected = true;
+            await fs.rename(external, target);
+          }
+        },
+      }),
+    })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_ROLLBACK_FAILED" });
+
+    expect(injected).toBe(true);
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("late external bytes");
+    expect((await fs.readdir(tempDir)).some(name => name.endsWith("-transaction.json"))).toBe(true);
   });
 
   it("preserves an existing output when staging is denied", async () => {

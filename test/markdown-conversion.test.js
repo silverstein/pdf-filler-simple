@@ -218,8 +218,19 @@ describe("layout Markdown renderer", () => {
       items: [textItem("Body text", { top: 50 })],
     }]);
     const result = renderPdfLayoutToMarkdown(layout);
+    const savedOutput = {
+      path: "/allowed/result.md",
+      encoding: "utf-8",
+      bytes: result.markdown_bytes,
+      sha256: result.markdown_sha256,
+      commit_method: "same_directory_atomic",
+      reopened_verified: true,
+      overwritten: false,
+    };
     const cases = [
       ["markdown SHA-256", { ...result, markdown_sha256: "0".repeat(64) }],
+      ["saved output UTF-8 byte count", { ...result, saved_output: { ...savedOutput, bytes: result.markdown_bytes + 1 } }],
+      ["saved output SHA-256", { ...result, saved_output: { ...savedOutput, sha256: "0".repeat(64) } }],
       ["document conversion status", { ...result, conversion_status: "partial" }],
       ["document gaps", { ...result, gaps: [{ code: "UNKNOWN", page: 1, message: "no" }] }],
       ["unknown gap code", { ...result, pages: [{ ...result.pages[0], gaps: [{ code: "UNKNOWN", page: 1, message: "no" }] }], gaps: [{ code: "UNKNOWN", page: 1, message: "no" }], conversion_status: "partial" }],

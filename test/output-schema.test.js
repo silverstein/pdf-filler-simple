@@ -217,6 +217,32 @@ describe("live output schema contract", () => {
     }
   }, 30_000);
 
+  it("rejects saved Markdown evidence that disagrees with the inline bytes or digest", async () => {
+    const outputPath = path.join(stateRoot, "schema-bound-markdown.md");
+    const converted = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: EXAMPLE_PDF, output_path: outputPath },
+    });
+    expect(converted.isError).not.toBe(true);
+    expect(validateStructuredToolResult("convert_pdf_to_markdown", converted)).toBe(converted);
+
+    const cases = [
+      { ...converted.structuredContent.saved_output, bytes: converted.structuredContent.markdown_bytes + 1 },
+      { ...converted.structuredContent.saved_output, sha256: "0".repeat(64) },
+    ];
+    for (const savedOutput of cases) {
+      const rejected = validateStructuredToolResult("convert_pdf_to_markdown", {
+        ...converted,
+        structuredContent: {
+          ...converted.structuredContent,
+          saved_output: savedOutput,
+        },
+      });
+      expect(rejected.isError).toBe(true);
+      expect(rejected.structuredContent).toBeUndefined();
+    }
+  }, 30_000);
+
   it("keeps pre-created signature records without timestamps usable", async () => {
     const signaturesDir = path.join(stateRoot, "profiles", "signatures");
     await fs.mkdir(signaturesDir, { recursive: true });

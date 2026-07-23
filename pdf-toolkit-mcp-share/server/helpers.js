@@ -1522,7 +1522,9 @@ async function recoverAtomicJournal(fsOps, journalPath) {
         if (rollback) {
           throw atomicOutputError("ATOMIC_OUTPUT_RECOVERY_CONFLICT", `Unexpected rollback exists for a new output: ${entry.rollbackPath}`);
         }
-        if (target) await removeExpectedArtifact(fsOps, entry.targetPath, { sha256: entry.new_sha256 });
+        if (target && await sha256RegularFile(fsOps, entry.targetPath) === entry.new_sha256) {
+          await removeExpectedArtifact(fsOps, entry.targetPath, { sha256: entry.new_sha256 });
+        }
       }
       await removeExpectedArtifact(fsOps, entry.stagePath, {
         sha256: entry.new_sha256,
@@ -1880,6 +1882,7 @@ export async function writePdfOutputAtomic(targetPath, bytes, {
   onTransition,
   beforeTransaction,
   validateInitialTargets,
+  verifyActivatedTargets,
   overwrite = true,
 } = {}) {
   const [result] = await writePdfOutputsAtomic([{ targetPath, bytes, overwrite }], {
@@ -1888,6 +1891,7 @@ export async function writePdfOutputAtomic(targetPath, bytes, {
     onTransition,
     beforeTransaction,
     validateInitialTargets,
+    verifyActivatedTargets,
   });
   return result;
 }
@@ -1908,6 +1912,7 @@ export async function writePdfOutputsAtomic(entries, {
   onTransition = async () => {},
   beforeTransaction = async () => {},
   validateInitialTargets = async () => {},
+  verifyActivatedTargets = async () => {},
 } = {}) {
   if (!Array.isArray(entries) || entries.length === 0) {
     throw new TypeError("Atomic PDF output entries must be a non-empty array.");
@@ -2065,14 +2070,62 @@ export async function writePdfOutputsAtomic(entries, {
           await fsOps.rename(entry.targetPath, entry.rollbackPath);
           entry.originalMoved = true;
           await onTransition(`rollback_${entry.index}`);
+          const moved = await lstatIfPresent(fsOps, entry.rollbackPath);
+          const movedSha256 = moved
+            ? await sha256RegularFile(fsOps, entry.rollbackPath)
+            : null;
+          if (
+            recoveryIdentity(moved) !== recoveryIdentity(entry.initial)
+            || movedSha256 !== entry.initialSha256
+          ) {
+            if (moved) {
+              try {
+                await fsOps.link(entry.rollbackPath, entry.targetPath);
+                await removeExpectedArtifact(fsOps, entry.rollbackPath, {
+                  identity: recoveryIdentity(moved),
+                  sha256: movedSha256,
+                });
+                entry.originalMoved = false;
+              } catch {}
+            }
+            throw atomicOutputError(
+              "ATOMIC_OUTPUT_CONFLICT",
+              `Output changed while it was moved into rollback protection: ${entry.targetPath}`,
+            );
+          }
         }
-        await fsOps.rename(entry.stagePath, entry.targetPath);
-        entry.stagePath = null;
+        try {
+          await fsOps.link(entry.stagePath, entry.targetPath);
+        } catch (error) {
+          if (error?.code === "EEXIST") {
+            throw atomicOutputError(
+              "ATOMIC_OUTPUT_CONFLICT",
+              `Output appeared before no-clobber activation: ${entry.targetPath}`,
+              error,
+            );
+          }
+          throw error;
+        }
         entry.activated = true;
         await onTransition(`activate_${entry.index}`);
       }
       await syncAtomicOutputDirectory(fsOps, directoryPath);
       await onTransition("activation_synced");
+      await verifyActivatedTargets(targets.map(entry => ({
+        targetPath: entry.targetPath,
+        replacedExisting: entry.initial !== null,
+      })));
+      for (const entry of targets) {
+        if (!await assertExpectedArtifact(fsOps, entry.targetPath, {
+          sha256: payload.entries[entry.index].new_sha256,
+        })) {
+          throw atomicOutputError(
+            "ATOMIC_OUTPUT_CONFLICT",
+            `Verified output disappeared before commit: ${entry.targetPath}`,
+          );
+        }
+      }
+      await onTransition("activation_verified");
       payload.state = "committed";
       await writeAtomicJournal(fsOps, journalPath, payload);
       committed = true;
@@ -2105,6 +2158,14 @@ export async function writePdfOutputsAtomic(entries, {
     }
     try {
       for (const entry of targets) {
+        if (entry.stagePath) {
+          await removeExpectedArtifact(fsOps, entry.stagePath, {
+            sha256: payload.entries[entry.index].new_sha256,
+            privateMode: true,
+          });
+          entry.stagePath = null;
+          await onTransition(`stage_removed_${entry.index}`);
+        }
         if (entry.originalMoved) {
           await removeExpectedArtifact(fsOps, entry.rollbackPath, {
             identity: recoveryIdentity(entry.initial),

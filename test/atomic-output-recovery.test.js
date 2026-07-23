@@ -22,10 +22,13 @@ const PRECOMMIT_TRANSITIONS = [
   "rollback_1",
   "activate_1",
   "activation_synced",
+  "activation_verified",
 ];
 const COMMITTED_TRANSITIONS = [
   "journal_committed",
+  "stage_removed_0",
   "rollback_removed_0",
+  "stage_removed_1",
   "rollback_removed_1",
   "journal_removed",
 ];

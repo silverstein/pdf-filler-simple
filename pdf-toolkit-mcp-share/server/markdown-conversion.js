@@ -306,6 +306,10 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
   const markdownBytes = utf8Bytes(result.markdown);
   assertion(result.markdown_bytes === markdownBytes, "markdown UTF-8 byte count mismatch");
   assertion(result.markdown_sha256 === sha256(result.markdown), "markdown SHA-256 mismatch");
+  if (result.saved_output !== undefined && result.saved_output !== null) {
+    assertion(result.saved_output.bytes === markdownBytes, "saved output UTF-8 byte count mismatch");
+    assertion(result.saved_output.sha256 === result.markdown_sha256, "saved output SHA-256 mismatch");
+  }
   assertion(markdownBytes <= result.limits.max_markdown_bytes, "markdown exceeds max_markdown_bytes");
   assertion(Array.isArray(result.pages) && result.pages.length > 0, "pages must be a non-empty array");
   for (const page of result.pages) {

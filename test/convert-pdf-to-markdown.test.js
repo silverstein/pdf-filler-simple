@@ -346,6 +346,75 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     expect(await fs.readFile(hardlinkOutput)).toEqual(originalBytes);
   }, 30_000);
 
+  it.runIf(process.platform !== "win32")("binds the canonical output parent and does not follow a late outside retarget", async () => {
+    const inside = path.join(temporaryRoot, "inside-output-parent");
+    const routedParent = path.join(temporaryRoot, "routed-output-parent");
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-outside-output-"));
+    const outputPath = path.join(routedParent, "late-retarget.md");
+    await fs.mkdir(inside);
+    await fs.symlink(inside, routedParent);
+
+    try {
+      const pending = client.callTool({
+        name: "convert_pdf_to_markdown",
+        arguments: {
+          pdf_path: denseFixture,
+          output_path: outputPath,
+          max_items: 5000,
+          max_characters: 100000,
+          max_markdown_bytes: 200000,
+        },
+      });
+      await new Promise(resolve => setTimeout(resolve, 25));
+      await fs.unlink(routedParent);
+      await fs.symlink(outside, routedParent);
+
+      const result = await pending;
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent.saved_output.path).toBe(path.join(inside, "late-retarget.md"));
+      await expect(fs.readFile(path.join(inside, "late-retarget.md"), "utf8")).resolves.toBe(
+        result.structuredContent.markdown,
+      );
+      await expect(fs.access(path.join(outside, "late-retarget.md"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fs.rm(routedParent, { force: true });
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  }, 30_000);
+
+  it.runIf(process.platform !== "win32")("refuses a bound output parent replaced by an outside symlink before commit", async () => {
+    const parent = path.join(temporaryRoot, "bound-output-parent");
+    const movedParent = path.join(temporaryRoot, "bound-output-parent-moved");
+    const outside = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-outside-bound-output-"));
+    const outputPath = path.join(parent, "late-parent-swap.md");
+    await fs.mkdir(parent);
+
+    try {
+      const pending = client.callTool({
+        name: "convert_pdf_to_markdown",
+        arguments: {
+          pdf_path: denseFixture,
+          output_path: outputPath,
+          max_items: 5000,
+          max_characters: 100000,
+          max_markdown_bytes: 200000,
+        },
+      });
+      await new Promise(resolve => setTimeout(resolve, 25));
+      await fs.rename(parent, movedParent);
+      await fs.symlink(outside, parent);
+
+      const result = await pending;
+      expect(result.isError).toBe(true);
+      await expect(fs.access(path.join(movedParent, "late-parent-swap.md"))).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.access(path.join(outside, "late-parent-swap.md"))).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      await fs.rm(parent, { force: true });
+      await fs.rm(movedParent, { recursive: true, force: true });
+      await fs.rm(outside, { recursive: true, force: true });
+    }
+  }, 30_000);
+
   it("fails closed on byte limits and invalid output paths without creating files", async () => {
     const tooSmall = await client.callTool({
       name: "convert_pdf_to_markdown",
