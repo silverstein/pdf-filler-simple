@@ -12,7 +12,7 @@ Do not merge the current Dependabot pull requests as-is.
 | PR | Proposed change | Decision |
 | --- | --- | --- |
 | [#37](https://github.com/Open-Document-Alliance/PDF-Tools/pull/37) | Vitest 4.1.4 to 4.1.5 | Close or supersede; test current 4.1.10 alone. |
-| [#38](https://github.com/Open-Document-Alliance/PDF-Tools/pull/38) | ext-apps 1.7.0 to 1.7.1 | Close or supersede; test current 1.7.4 alone with real-host Apps lifecycle gates. |
+| [#38](https://github.com/Open-Document-Alliance/PDF-Tools/pull/38) | ext-apps 1.7.0 to 1.7.1 | Supersede with the isolated 1.7.4 candidate. Synthetic lifecycle, differential, and archive gates pass; native host gates remain. |
 | [#39](https://github.com/Open-Document-Alliance/PDF-Tools/pull/39) | Vite 8.0.9 to 8.0.10 | Close or supersede; 8.0.10 remains in security-affected ranges. Test 8.1.5 alone. |
 | [#40](https://github.com/Open-Document-Alliance/PDF-Tools/pull/40) | `@napi-rs/canvas` 0.1.99 to 1.0.0 | Close or defer; 1.0.0 has a Windows ARM64 packaging defect. Consider 1.0.2 only after native archive gates are strengthened. |
 | [#41](https://github.com/Open-Document-Alliance/PDF-Tools/pull/41) | PDF.js 5.4.624 to 5.7.284 | Close or defer. Keep 5.4.624 pinned exactly until an explicit Claude Desktop compatibility strategy and exact-artifact host matrix pass. |
@@ -27,7 +27,7 @@ Versions were checked against official release/specification sources on
 | PDF Tools | 0.8.6 | 0.8.6 |
 | `pdfjs-dist` | **5.4.624 exact** | [6.1.200](https://www.npmjs.com/package/pdfjs-dist) |
 | `@napi-rs/canvas` | 0.1.99 | [1.0.2](https://www.npmjs.com/package/@napi-rs/canvas) |
-| `@modelcontextprotocol/ext-apps` | 1.7.0 | [1.7.4](https://www.npmjs.com/package/@modelcontextprotocol/ext-apps) |
+| `@modelcontextprotocol/ext-apps` | **1.7.4 exact** | [1.7.4](https://www.npmjs.com/package/@modelcontextprotocol/ext-apps) |
 | `@modelcontextprotocol/sdk` | 1.29.0 | [1.29.0](https://www.npmjs.com/package/@modelcontextprotocol/sdk) |
 | `@anthropic-ai/mcpb` | 2.1.2 | [2.1.2](https://github.com/modelcontextprotocol/mcpb/releases/tag/v2.1.2) |
 | Vite | 8.0.9 | [8.1.5](https://github.com/vitejs/vite/releases/tag/v8.1.5) |
@@ -93,11 +93,17 @@ no test-runner dependencies or unexpected runtime delta.
 
 ### ext-apps 1.7.4
 
-Wrapper version does not establish host support. Test the standalone bridge and
-the exact packed MCPB in Claude Desktop on macOS and Windows. Exercise resource
-fetch, `App.connect()`, initial tool result, app-to-server calls, host context,
-theme, resize, fullscreen/display mode, close/reopen/reconnect, error
-propagation, and text-only fallback in a non-Apps host. Use the official
+The isolated 1.7.4 candidate passed the standalone bridge, exact initialize
+contract, built-browser lifecycle, delayed-operation teardown, deterministic
+viewer, candidate-versus-control full-suite differential, reproducible MCPB,
+archive-delta, and packed native-raster gates. The retained evidence is
+[ext-apps 1.7.4 isolated upgrade evidence](evidence/ext-apps-1.7.4-2026-07-23.md).
+
+Wrapper version still does not establish target-host support. Test the exact
+packed MCPB in Claude Desktop on macOS and Windows. Exercise resource fetch,
+`App.connect()`, initial tool result, app-to-server calls, host context, theme,
+resize, fullscreen/display mode, close/reopen/reconnect, signing, and error
+propagation. Prove text-only fallback in a non-Apps host. Use the official
 [MCP Apps client matrix](https://modelcontextprotocol.io/extensions/apps/overview)
 when recording support.
 
@@ -147,7 +153,8 @@ for the share artifact.
 2. Refresh vulnerable transitive lock entries without changing SDK 1.29.0.
 3. Test Vite 8.1.5 alone.
 4. Test Vitest 4.1.10 alone.
-5. Test ext-apps 1.7.4 alone.
+5. Integrate the evidence-backed ext-apps 1.7.4 candidate, then complete its
+   native macOS, Windows, and non-Apps host gates.
 6. Consider canvas 1.0.2 only after native packaging gates are strengthened.
 7. Keep PDF.js exactly at 5.4.624 pending a separate compatibility strategy.
 8. After the final July 28 specification, stable SDK support, and host adoption,
