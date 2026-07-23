@@ -93,7 +93,7 @@ async function main() {
     const tools = await client.listTools();
     const prompts = await client.listPrompts();
     const resources = await client.listResources();
-    if (tools.tools.length !== 38 || !tools.tools.some(tool => tool.name === "render_pdf_page")) {
+    if (tools.tools.length !== 39 || !tools.tools.some(tool => tool.name === "render_pdf_page")) {
       throw new Error("Packed server did not expose render_pdf_page");
     }
     if (prompts.prompts.length !== 14 || resources.resources.length !== 1) {
@@ -131,6 +131,16 @@ async function main() {
       || layout.structuredContent?.ir?.version !== "1.0.0"
       || layout.structuredContent?.source?.size_bytes !== statSync(fixturePath).size) {
       throw new Error("Packed read_pdf_layout contract smoke failed");
+    }
+    const markdown = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: fixturePath, max_markdown_bytes: 200000 },
+    });
+    if (markdown.isError
+      || markdown.structuredContent?.renderer?.version !== "1.0.0"
+      || markdown.structuredContent?.markdown_bytes !== Buffer.byteLength(markdown.structuredContent?.markdown || "", "utf8")
+      || markdown.structuredContent?.markdown_sha256 !== sha256(Buffer.from(markdown.structuredContent?.markdown || "", "utf8"))) {
+      throw new Error("Packed convert_pdf_to_markdown contract smoke failed");
     }
     const cMapLayout = await client.callTool({
       name: "read_pdf_layout",

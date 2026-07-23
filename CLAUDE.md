@@ -52,6 +52,8 @@ Password functionality for encrypted PDFs is implemented across all relevant too
 - `bulk_fill_from_csv`
 - `fill_with_profile`
 - `validate_pdf`
+- `read_pdf_layout`
+- `convert_pdf_to_markdown`
 
 Pass the optional `password` parameter when working with protected PDFs.
 
@@ -98,22 +100,23 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 11. **validate_pdf** - Check for missing required fields
 12. **read_pdf_content** - Read the PDF.js text layer; if the selected extraction contains no text, it may return a rendered page-1 image for host/model vision
 13. **read_pdf_layout** - Extract bounded local text geometry and conservative reading order without OCR or table inference
-14. **get_pdf_resource_uri** - Get resource URI for a PDF file
-15. **read_pdf_bytes** - (app-only) Chunked byte streaming for the interactive viewer
-16. **merge_pdfs** - Merge multiple PDFs into a single document
-17. **split_pdf** - Split a PDF by page ranges or at regular intervals
-18. **rotate_pdf_pages** - Rotate pages by 90, 180, or 270 degrees
-19. **reorder_pdf_pages** - Rearrange the pages of a PDF into a new order
-20. **get_pdf_info** - Get page count, file size, dimensions, form field info
-21. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
-22. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
-23. **fetch_pdf_from_url** - Download a PDF from a URL to the user's local machine (bypasses Claude's WebFetch sandbox)
-24. **create_signature** - Save a reusable typed or image signature
-25. **list_signatures** - List saved signatures
-26. **add_signature_field** - Draw a "Sign here" placeholder box (does NOT sign)
-27. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent; see Signature Architecture below)
-28. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
-29. **detect_signature_zones** - Locate signature/initials/date zones with coordinates (use BEFORE apply_signature)
+14. **convert_pdf_to_markdown** - Convert a bounded supported text-layer range to deterministic Markdown with explicit coverage gaps
+15. **get_pdf_resource_uri** - Get resource URI for a PDF file
+16. **read_pdf_bytes** - (app-only) Chunked byte streaming for the interactive viewer
+17. **merge_pdfs** - Merge multiple PDFs into a single document
+18. **split_pdf** - Split a PDF by page ranges or at regular intervals
+19. **rotate_pdf_pages** - Rotate pages by 90, 180, or 270 degrees
+20. **reorder_pdf_pages** - Rearrange the pages of a PDF into a new order
+21. **get_pdf_info** - Get page count, file size, dimensions, form field info
+22. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
+23. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
+24. **fetch_pdf_from_url** - Download a PDF from a URL to the user's local machine (bypasses Claude's WebFetch sandbox)
+25. **create_signature** - Save a reusable typed or image signature
+26. **list_signatures** - List saved signatures
+27. **add_signature_field** - Draw a "Sign here" placeholder box (does NOT sign)
+28. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent; see Signature Architecture below)
+29. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
+30. **detect_signature_zones** - Locate signature/initials/date zones with coordinates (use BEFORE apply_signature)
 
 ### Current Extraction Boundary
 
@@ -123,6 +126,11 @@ it return a rendered image of page 1 for a vision-capable host or model to
 inspect. `render_pdf_page` and `render_pdf_region` perform local rasterization;
 they do not produce recognized text. Mixed text/raster documents and raster
 pages after page 1 can therefore remain unrecognized by a broad text read.
+
+`convert_pdf_to_markdown` consumes the bounded source-validated layout IR. It
+does not run OCR, recover PDF link annotation targets, infer table topology, or
+use an external model. Unsupported visual or structural content is reported as
+typed partial coverage rather than silently represented as complete Markdown.
 
 PDF Tools performs filesystem operations and rasterization locally and does not
 upload files to a separate PDF service. Content returned through MCP can be

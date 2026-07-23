@@ -48,6 +48,7 @@ export const PHASE1_SCORER_LOCAL_SOURCE_PATHS = Object.freeze({
   layout_oracle_generator: "scripts/eval-generate-extraction-layout-oracle.mjs",
   layout_oracle_schema: "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
   manifest_schema: "test/fixtures/eval/extraction/manifest.schema.json",
+  markdown_conversion_module: "server/markdown-conversion.js",
   mcp_sdk_package: "node_modules/@modelcontextprotocol/sdk/package.json",
   oracle_schema: "test/fixtures/eval/extraction/phase1/scoring-oracle.schema.json",
   orchestration_script: "scripts/eval-score-extraction-candidates.mjs",

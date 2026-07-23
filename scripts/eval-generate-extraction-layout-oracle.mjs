@@ -28,6 +28,7 @@ const SOURCE_PATHS = Object.freeze({
   layout_evidence_module: "test/eval/extraction-phase1-layout-evidence.js",
   layout_extraction_module: "server/layout-extraction.js",
   layout_oracle_schema: "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
+  markdown_conversion_module: "server/markdown-conversion.js",
   output_schemas_module: "server/output-schemas.js",
   package_json: "package.json",
   package_lock: "package-lock.json",

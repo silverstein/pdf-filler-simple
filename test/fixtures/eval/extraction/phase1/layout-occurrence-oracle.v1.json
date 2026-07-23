@@ -37,8 +37,8 @@
     {
       "role": "generator_script",
       "path": "scripts/eval-generate-extraction-layout-oracle.mjs",
-      "bytes": 11369,
-      "sha256": "759daa08260c2c3101f4799c16b76d410ddd90018e1e2ee627f36916a58777e8"
+      "bytes": 11432,
+      "sha256": "09193e298333b8e79368783788d21d83b64f96c85ca2f8900227bbb68284b4a1"
     },
     {
       "role": "layout_evidence_module",
@@ -49,20 +49,26 @@
     {
       "role": "layout_extraction_module",
       "path": "server/layout-extraction.js",
-      "bytes": 87102,
-      "sha256": "184a76b3361398bf673b7db04a1bbe25bc749304d90dd0c040f0424efbc488aa"
+      "bytes": 88475,
+      "sha256": "3142dd0f33534b7aebfd1fce6a57f1ae913f45957911d27bbe2b76e6affff73a"
     },
     {
       "role": "layout_oracle_schema",
       "path": "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
-      "bytes": 7152,
-      "sha256": "90551926c2ff16dde99dca57806527d0a7b279b9dfc085df7c17caac4d05dbf9"
+      "bytes": 7184,
+      "sha256": "21806ca2def8f23e115498abee58db176d11c04506631ed35b0fb518e851db53"
+    },
+    {
+      "role": "markdown_conversion_module",
+      "path": "server/markdown-conversion.js",
+      "bytes": 18065,
+      "sha256": "e9380aeeceadfb50548e30fd9ce96f7c88cc1966f1c99574040208b36b53c7c7"
     },
     {
       "role": "output_schemas_module",
       "path": "server/output-schemas.js",
-      "bytes": 23213,
-      "sha256": "41f6187a8f82975c583ce6dfcfae959d45ce6afda62b5488a407b28d292e9aa4"
+      "bytes": 25876,
+      "sha256": "7f19fe70d5e156ffc4caccbe41262b5c07d88657aaa0b7f68468e16cfa1b74b9"
     },
     {
       "role": "package_json",
@@ -89,7 +95,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "fd5f130e88e87787b68623af9bf7d0b9ac83deb905e92762921473a6ba2b7b7f",
+  "validator_source_set_sha256": "fc5653f336d1a53b0462134b207996eecde84f575d54a5047f7719c0c9b4c6cf",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",

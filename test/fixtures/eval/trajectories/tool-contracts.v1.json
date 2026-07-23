@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.8.6"
   },
-  "tools_sha256": "32634ee8dda75c786362407317c38ebf1576411ce7b3a8113f01a9d9a9efe05d",
+  "tools_sha256": "b7db2ecc546a378c101e3d75c9b508a7d386656b98cb4c21c160681f08a2acef",
   "tools": [
     {
       "name": "add_signature_field",
@@ -317,6 +317,66 @@
           "csv_path",
           "output_directory"
         ]
+      }
+    },
+    {
+      "name": "convert_pdf_to_markdown",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Absolute path to the local PDF file."
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for an encrypted PDF, when required."
+          },
+          "start_page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "First page to convert, 1-indexed. Default: 1."
+          },
+          "end_page": {
+            "type": "integer",
+            "minimum": 1,
+            "description": "Last page to convert, inclusive. Default: start_page. At most 10 pages per call."
+          },
+          "max_items": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 5000,
+            "description": "Maximum retained PDF text items across the requested range. Default: 1000."
+          },
+          "max_characters": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 100000,
+            "description": "Maximum retained PDF text characters across the requested range. Default: 50000."
+          },
+          "max_markdown_bytes": {
+            "type": "integer",
+            "minimum": 256,
+            "maximum": 200000,
+            "description": "Maximum UTF-8 Markdown bytes. The conversion fails rather than cutting a line or Unicode sequence. Default: 50000."
+          },
+          "include_page_boundaries": {
+            "type": "boolean",
+            "description": "Include deterministic HTML comments marking page boundaries. Default: true."
+          },
+          "output_path": {
+            "type": "string",
+            "description": "Optional absolute .md path, or ~/ path. The file is written only after complete bytes are staged and verified."
+          },
+          "overwrite": {
+            "type": "boolean",
+            "description": "Allow replacing an existing output_path. Default: false."
+          }
+        },
+        "required": [
+          "pdf_path"
+        ],
+        "additionalProperties": false
       }
     },
     {
@@ -821,7 +881,7 @@
         "properties": {
           "pdf_path": {
             "type": "string",
-            "description": "Absolute path to the local PDF file."
+            "description": "Absolute path, or ~/ path, to the local PDF file."
           },
           "password": {
             "type": "string",

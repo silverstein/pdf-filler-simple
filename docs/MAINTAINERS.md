@@ -78,6 +78,14 @@ not recognize text in that image.
 recognized text. Mixed text/raster documents and raster pages after page 1 may
 therefore remain unrecognized by a broad text read.
 
+`convert_pdf_to_markdown` renders only the source-validated, bounded local
+layout IR. It preserves supported text and conservative order, returns typed
+gaps for incomplete coverage, and optionally commits a verified UTF-8 `.md`
+file. It does not run OCR, recover PDF link annotations, infer table topology,
+or use Docling, Python, a model, or the network. A complete status means the
+requested text-layer slice was converted under this bounded contract, not that
+the original PDF's visual or semantic structure was fully recovered.
+
 Filesystem operations and rasterization happen locally, and PDF Tools does not
 upload files to a separate PDF service. Text, images, and metadata returned
 through MCP may still be processed under the selected host or model provider's
@@ -205,7 +213,7 @@ process, so two full installed graphs and archives never coexist in one process;
 the command reports the larger child-process peak RSS as the reproducibility
 build's measured memory bound.
 
-Only the five reviewed `server/*.js` runtime files and `dist-ui/index.html` are
+Only the eight reviewed `server/*.js` runtime files and `dist-ui/index.html` are
 copied from those source directories. Symlink or special-file inputs fail the
 build. The production graph is trimmed directly before packing, including the
 unused top-level PDF.js browser/type/resource trees, while

@@ -18,7 +18,7 @@
         "layout_evidence_contract_sha256": { "$ref": "#/$defs/sha256" }
       }
     },
-    "validator_sources": { "type": "array", "minItems": 9, "maxItems": 9, "items": { "$ref": "#/$defs/sourceBinding" } },
+    "validator_sources": { "type": "array", "minItems": 10, "maxItems": 10, "items": { "$ref": "#/$defs/sourceBinding" } },
     "validator_source_set_sha256": { "$ref": "#/$defs/sha256" },
     "pdfjs_version": { "const": "5.4.624" },
     "generation_contract": {
@@ -55,7 +55,7 @@
     "sourceBinding": {
       "type": "object", "additionalProperties": false, "required": ["role", "path", "bytes", "sha256"],
       "properties": {
-        "role": { "enum": ["generator_script", "layout_evidence_module", "layout_extraction_module", "layout_oracle_schema", "output_schemas_module", "package_json", "package_lock", "pdfjs_package", "scoring_oracle_schema"] },
+        "role": { "enum": ["generator_script", "layout_evidence_module", "layout_extraction_module", "layout_oracle_schema", "markdown_conversion_module", "output_schemas_module", "package_json", "package_lock", "pdfjs_package", "scoring_oracle_schema"] },
         "path": { "type": "string", "minLength": 1 }, "bytes": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" }
       }
     },

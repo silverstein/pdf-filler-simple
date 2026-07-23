@@ -32,7 +32,8 @@ import {
   validateStructuredToolResult,
   withToolOutputSchema,
 } from "./output-schemas.js";
-import { extractPdfLayout } from "./layout-extraction.js";
+import { extractPdfLayout, extractPdfLayoutForMarkdown } from "./layout-extraction.js";
+import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
 import { readBoundedPdfFileSafely } from "./bounded-pdf-file.js";
 
 const _require = createRequire(import.meta.url);
@@ -726,6 +727,7 @@ import {
   copyPdfPagesPreservingForms,
   copyPdfDocumentMetadata,
   recoverPdfOutputTransactions,
+  writeOutputAtomic,
   writePdfOutputAtomic,
   writePdfOutputsAtomic,
 } from "./helpers.js";
@@ -2447,7 +2449,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           type: "object",
           additionalProperties: false,
           properties: {
-            pdf_path: { type: "string", description: "Absolute path to the local PDF file." },
+            pdf_path: { type: "string", description: "Absolute path, or ~/ path, to the local PDF file." },
             password: { type: "string", description: "Password for an encrypted PDF, when required." },
             start_page: { type: "integer", minimum: 1, description: "First page to extract, 1-indexed. Default: 1." },
             end_page: { type: "integer", minimum: 1, description: "Last page to extract, inclusive. Default: start_page. At most 10 pages per call." },
@@ -2461,6 +2463,34 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           title: "Read PDF Layout",
           readOnlyHint: true,
           destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "convert_pdf_to_markdown",
+        description: "Convert a bounded page range from a local PDF into deterministic Markdown using the source-validated PDF Tools Extraction IR. Preserves supported text and reading order, applies only conservative geometry-backed headings and literal list evidence, and reports partial or failed coverage explicitly. It does not run OCR, infer table topology, recover link targets, or use an external model. Optionally saves UTF-8 Markdown through the transactional output path. All paths must be absolute paths or ~/ paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            pdf_path: { type: "string", description: "Absolute path to the local PDF file." },
+            password: { type: "string", description: "Password for an encrypted PDF, when required." },
+            start_page: { type: "integer", minimum: 1, description: "First page to convert, 1-indexed. Default: 1." },
+            end_page: { type: "integer", minimum: 1, description: "Last page to convert, inclusive. Default: start_page. At most 10 pages per call." },
+            max_items: { type: "integer", minimum: 1, maximum: 5000, description: "Maximum retained PDF text items across the requested range. Default: 1000." },
+            max_characters: { type: "integer", minimum: 1, maximum: 100000, description: "Maximum retained PDF text characters across the requested range. Default: 50000." },
+            max_markdown_bytes: { type: "integer", minimum: 256, maximum: 200000, description: "Maximum UTF-8 Markdown bytes. The conversion fails rather than cutting a line or Unicode sequence. Default: 50000." },
+            include_page_boundaries: { type: "boolean", description: "Include deterministic HTML comments marking page boundaries. Default: true." },
+            output_path: { type: "string", description: "Optional absolute .md path, or ~/ path. The file is written only after complete bytes are staged and verified." },
+            overwrite: { type: "boolean", description: "Allow replacing an existing output_path. Default: false." }
+          },
+          required: ["pdf_path"]
+        },
+        annotations: {
+          title: "Convert PDF to Markdown",
+          readOnlyHint: false,
+          destructiveHint: true,
           idempotentHint: true,
           openWorldHint: false
         }
@@ -4089,6 +4119,160 @@ async function handleToolCall(request) {
               },
             } : {}),
           };
+        }
+      }
+
+      case "convert_pdf_to_markdown": {
+        const markdownArgs = requireArgumentObject(args, "convert_pdf_to_markdown");
+        const allowedArguments = new Set([
+          "pdf_path",
+          "password",
+          "start_page",
+          "end_page",
+          "max_items",
+          "max_characters",
+          "max_markdown_bytes",
+          "include_page_boundaries",
+          "output_path",
+          "overwrite",
+        ]);
+        const unknownArgument = Object.keys(markdownArgs).find(name => !allowedArguments.has(name));
+        if (unknownArgument) throw new Error(`Unknown convert_pdf_to_markdown argument: ${unknownArgument}.`);
+        const pdf_path = requireStringArgument(markdownArgs.pdf_path, "pdf_path", { maxLength: 32768 });
+        const password = optionalStringArgument(markdownArgs.password, "password", { maxLength: 4096 });
+        const outputPathArgument = optionalStringArgument(markdownArgs.output_path, "output_path", { maxLength: 32768 });
+        const includePageBoundaries = optionalBooleanArgument(markdownArgs.include_page_boundaries, "include_page_boundaries", true);
+        const overwrite = optionalBooleanArgument(markdownArgs.overwrite, "overwrite", false);
+        if (!path.isAbsolute(expandUserPath(pdf_path))) {
+          throw new Error("pdf_path must be an absolute path or begin with ~/.");
+        }
+        if (outputPathArgument !== null && !path.isAbsolute(expandUserPath(outputPathArgument))) {
+          throw new Error("output_path must be an absolute path or begin with ~/.");
+        }
+        const resolvedPath = resolvePath(pdf_path);
+        try {
+          const startPage = boundedInteger(markdownArgs.start_page, 1, { name: "start_page", minimum: 1, maximum: 1000000 });
+          const endPage = boundedInteger(markdownArgs.end_page, startPage, { name: "end_page", minimum: 1, maximum: 1000000 });
+          if (endPage < startPage) throw new Error("end_page must be greater than or equal to start_page.");
+          if (endPage - startPage + 1 > 10) throw new Error("convert_pdf_to_markdown accepts at most 10 pages per call. Request a narrower range.");
+          const maxItems = boundedInteger(markdownArgs.max_items, 1000, { name: "max_items", minimum: 1, maximum: 5000 });
+          const maxCharacters = boundedInteger(markdownArgs.max_characters, 50000, { name: "max_characters", minimum: 1, maximum: 100000 });
+          const maxMarkdownBytes = boundedInteger(markdownArgs.max_markdown_bytes, 50000, { name: "max_markdown_bytes", minimum: 256, maximum: 200000 });
+          const outputPath = outputPathArgument === null ? null : resolvePath(outputPathArgument);
+          if (outputPath && path.extname(outputPath).toLowerCase() !== ".md") {
+            throw new Error("output_path must end in .md.");
+          }
+          if (outputPath && path.resolve(outputPath) === path.resolve(resolvedPath)) {
+            throw new Error("output_path must be different from the source PDF path.");
+          }
+
+          const { bytes: pdfBytes, sizeBytes } = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
+          const sourceSha256 = createHash("sha256").update(pdfBytes).digest("hex");
+          await loadPdfjs();
+          const fileName = path.basename(resolvedPath);
+          const layout = await withSuppressedStderr(() => extractPdfLayoutForMarkdown({
+            pdfjsLib,
+            pdfBytes,
+            sourcePath: resolvedPath,
+            sourceFileName: fileName,
+            sourceSha256,
+            sourceSizeBytes: sizeBytes,
+            password,
+            requestedStartPage: startPage,
+            requestedEndPage: endPage,
+            maxItems,
+            maxCharacters,
+            maxOutputCharacters: 200000,
+          }));
+          const rendered = renderPdfLayoutToMarkdown(layout, {
+            includePageBoundaries,
+            maxMarkdownBytes,
+          });
+
+          let savedOutput = null;
+          if (outputPath) {
+            const markdownBytes = Buffer.from(rendered.markdown, "utf8");
+            let outputExisted = false;
+            await writeOutputAtomic(outputPath, markdownBytes, {
+              beforeTransaction: async () => {
+                try {
+                  await fs.lstat(outputPath);
+                  outputExisted = true;
+                  if (!overwrite) {
+                    throw new Error("output_path already exists. Choose a new .md path or set overwrite to true.");
+                  }
+                } catch (error) {
+                  if (error.code !== "ENOENT") throw error;
+                }
+                const currentSource = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
+                const currentSha256 = createHash("sha256").update(currentSource.bytes).digest("hex");
+                if (currentSource.sizeBytes !== sizeBytes || currentSha256 !== sourceSha256) {
+                  throw new Error("The source PDF changed before the Markdown transaction. No output was written.");
+                }
+              },
+            });
+            let outputHandle = null;
+            let reopened;
+            try {
+              const noFollow = fsConstants.O_NOFOLLOW ?? 0;
+              outputHandle = await fs.open(outputPath, fsConstants.O_RDONLY | noFollow);
+              const outputStats = await outputHandle.stat();
+              if (!outputStats.isFile()) throw new Error("The committed Markdown output is not a regular file.");
+              reopened = await outputHandle.readFile();
+            } finally {
+              await outputHandle?.close().catch(() => {});
+            }
+            let reopenedText;
+            try {
+              reopenedText = new TextDecoder("utf-8", { fatal: true }).decode(reopened);
+            } catch (error) {
+              throw new Error("The saved Markdown is not valid UTF-8.", { cause: error });
+            }
+            if (reopenedText !== rendered.markdown || !reopened.equals(markdownBytes)) {
+              throw new Error("The saved Markdown did not reopen as the exact UTF-8 conversion bytes.");
+            }
+            const sourceAfter = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
+            const sourceAfterSha256 = createHash("sha256").update(sourceAfter.bytes).digest("hex");
+            if (sourceAfter.sizeBytes !== sizeBytes || sourceAfterSha256 !== sourceSha256) {
+              throw new Error("The source PDF changed while the Markdown output was being verified.");
+            }
+            savedOutput = {
+              path: await fs.realpath(outputPath),
+              encoding: "utf-8",
+              bytes: reopened.length,
+              sha256: createHash("sha256").update(reopened).digest("hex"),
+              commit_method: "same_directory_atomic",
+              reopened_verified: true,
+              overwritten: outputExisted,
+            };
+          }
+
+          const payload = { ...rendered, saved_output: savedOutput };
+          const summary = [
+            `Converted pages ${layout.page_range.start_page}-${layout.page_range.end_page} of ${fileName} to deterministic Markdown.`,
+            `Status: ${rendered.conversion_status}. UTF-8 bytes: ${rendered.markdown_bytes}.`,
+            `Source SHA-256: ${sourceSha256}.`,
+            ...(savedOutput ? [`Saved and reopened exact UTF-8 output: ${savedOutput.path}`] : []),
+            ...(rendered.gaps.length > 0 ? [`Coverage gaps: ${rendered.gaps.map(gap => `page ${gap.page}: ${gap.code}`).join(", ")}.`] : []),
+            "No OCR, external model, hidden link-target recovery, or table-topology inference was performed.",
+            rendered.markdown,
+          ].join("\n\n");
+          return {
+            content: [{ type: "text", text: summary }],
+            structuredContent: payload,
+          };
+        } catch (error) {
+          if (["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"].includes(error?.code)) {
+            return {
+              isError: true,
+              content: [{ type: "text", text: `Error converting PDF to Markdown: ${error.message}` }],
+              structuredContent: {
+                status: "failed",
+                error: { error_schema_version: 1, code: error.code },
+              },
+            };
+          }
+          throw new Error(`Error converting PDF to Markdown: ${error.message}`, { cause: error });
         }
       }
 

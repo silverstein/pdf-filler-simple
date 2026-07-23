@@ -27,7 +27,7 @@ template discovery is also unsupported and deterministically returns JSON-RPC
 
 ### Tools
 
-The runtime returns 37 uniquely named tools. Every tool has an object input
+The runtime returns 39 uniquely named tools. Every tool has an object input
 schema plus `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, and
 `openWorldHint` annotations. Annotations are user-interface hints, never an
 authorization boundary; path allowlists and signature-intent checks remain the
@@ -36,7 +36,7 @@ every tool in both runtime copies. The handler evidence and classification
 rules are recorded in
 [`TOOL_ANNOTATION_AUDIT_2026-07-21.md`](TOOL_ANNOTATION_AUDIT_2026-07-21.md).
 
-The source manifest lists all 38 tools. The packed MCPB manifest lists the 37
+The source manifest lists all 39 tools. The packed MCPB manifest lists the 38
 normal model-workflow tools and omits `read_pdf_bytes`, whose runtime metadata
 marks it `ui.visibility: ["app"]`. `tools_generated: true` explicitly tells MCPB
 hosts that runtime discovery includes an additional tool. That visibility hint
@@ -45,7 +45,7 @@ a generic MCP client can still discover and call `read_pdf_bytes`. It is not an
 authorization or confidentiality boundary. Filesystem allowlists and the tool's
 bounded reads remain the enforced controls.
 
-Thirty-two tool handlers advertise strict `outputSchema` contracts and return
+Thirty-three tool handlers advertise strict `outputSchema` contracts and return
 `structuredContent`. They also return a human-readable `content` text block so
 non-Apps and older clients remain usable. Successful structured output is
 validated before it leaves the server, with separate generic and tool-specific
@@ -79,6 +79,20 @@ tool does not render, OCR, infer tables, or claim arbitrary schema extraction,
 and every item, character, or output limit is fail-closed with truncation
 metadata. Its coordinates must not be passed to `render_pdf_region` or signing
 tools.
+
+`convert_pdf_to_markdown` consumes that source-validated IR and emits bounded,
+deterministic UTF-8 Markdown. It preserves supported text and conservative
+reading order, escapes Markdown and HTML control syntax, and promotes headings
+or list markers only when the retained text and geometry support them. It does
+not run OCR, render image content, infer table topology, or recover PDF link
+annotation targets. Raster, mixed, vector, failed, truncated, invalid-geometry,
+and output-omission cases are represented as typed gaps and cannot receive a
+complete conversion status. The public layout projection is capped at 200,000
+serialized characters, so dense pages may become explicitly partial before
+Markdown rendering. An optional `.md` output uses the same durable
+same-directory transaction machinery as PDF outputs, refuses an existing file
+unless `overwrite` is true, reopens the exact UTF-8 bytes, and verifies that the
+source PDF hash and size did not change.
 
 `read_pdf_content` exposes `extraction_status` as `complete`, `partial`, or
 `failed`. A text result is partial when it is page-limited or response-

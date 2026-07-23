@@ -13,7 +13,7 @@ const REPO_ROOT = path.join(__dirname, "..");
 const SOURCE_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.json"), "utf8"));
 const MCPB_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.mcpb.json"), "utf8"));
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TOOL_CONTRACT_SHA256 = "767deb96af849ff5d491903a2684ca2d6a6c43c4de9b54db0e16a236a3f17bc2";
+const TOOL_CONTRACT_SHA256 = "63f19e27eb4c2db768c5f5498e572a9bfd7519f2ca3e54d3f821b2fad41e4c17";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -59,6 +59,7 @@ const TOOL_EFFECT_ANNOTATIONS = {
   validate_pdf: CLOSED_READ,
   read_pdf_content: CLOSED_READ,
   read_pdf_layout: CLOSED_READ,
+  convert_pdf_to_markdown: CLOSED_IDEMPOTENT_OVERWRITE,
   read_pdf_pages: CLOSED_READ,
   render_pdf_page: CLOSED_READ,
   render_pdf_region: CLOSED_READ,
@@ -212,6 +213,7 @@ describe("MCPB static declarations", () => {
       "helpers.js",
       "output-schemas.js",
       "layout-extraction.js",
+      "markdown-conversion.js",
       "resource-uri.js",
       "stderr-suppression.js",
     ]) {
@@ -258,7 +260,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(38);
+    expect(tools).toHaveLength(39);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))

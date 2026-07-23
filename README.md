@@ -153,6 +153,7 @@ improvement rather than a shipped capability.
 - "Render just the signature block on page 3 so you can inspect it visually"
 - "Read pages 8 through 10 of this contract"
 - "Search this PDF for every mention of governing law"
+- "Convert pages 1 through 6 of this PDF to Markdown and tell me about any coverage gaps"
 - "Export all the filled fields from these PDFs into a CSV"
 - "Analyze this PDF for blank pages and sideways pages"
 
@@ -166,6 +167,7 @@ improvement rather than a shipped capability.
 - `read_pdf_content`
 - `read_pdf_pages`
 - `read_pdf_layout`
+- `convert_pdf_to_markdown`
 - `render_pdf_page`
 - `render_pdf_region`
 - `search_pdf_text`

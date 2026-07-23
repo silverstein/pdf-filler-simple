@@ -1,5 +1,6 @@
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { validatePdfLayoutSemantics } from "./layout-extraction.js";
+import { validateMarkdownConversionSemantics } from "./markdown-conversion.js";
 
 const string = { type: "string" };
 const number = { type: "number" };
@@ -342,6 +343,46 @@ const layoutBlock = object({
   column_index: integer,
   line_ids: stringArray,
 });
+const markdownGapCode = enumString([
+  "PAGE_RANGE_INCOMPLETE",
+  "SOURCE_ITEM_LIMIT_REACHED",
+  "SOURCE_CHARACTER_LIMIT_REACHED",
+  "MARKDOWN_BYTE_LIMIT_REACHED",
+  "TEXT_LAYER_FAILED",
+  "TEXT_LAYER_EMPTY",
+  "OCR_NOT_PERFORMED",
+  "IMAGE_CONTENT_NOT_RENDERED",
+  "VECTOR_CONTENT_NOT_INTERPRETED",
+  "RAW_PAGE_GEOMETRY_UNAVAILABLE",
+  "INVALID_TEXT_GEOMETRY",
+  "LINK_ANNOTATIONS_UNAVAILABLE",
+  "LINK_MAPPING_AMBIGUOUS",
+  "UNSUPPORTED_LINK_TARGET",
+  "TABLE_TOPOLOGY_UNKNOWN",
+  "CONTROL_CHARACTERS_SANITIZED",
+]);
+const markdownGap = object({
+  code: markdownGapCode,
+  page: nullable(integer),
+  message: string,
+});
+const markdownPage = object({
+  page: { type: "integer", minimum: 1 },
+  conversion_status: enumString(["complete", "partial", "failed"]),
+  markdown_bytes: { type: "integer", minimum: 0 },
+  line_count: { type: "integer", minimum: 0 },
+  rendered_line_count: { type: "integer", minimum: 0 },
+  gaps: arrayOf(markdownGap),
+});
+const markdownSavedOutput = nullable(object({
+  path: string,
+  encoding: { const: "utf-8" },
+  bytes: { type: "integer", minimum: 0 },
+  sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+  commit_method: { const: "same_directory_atomic" },
+  reopened_verified: { const: true },
+  overwritten: boolean,
+}));
 const layoutPage = object({
   id: string,
   page: integer,
@@ -454,6 +495,40 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     }),
     truncation: layoutDocumentTruncation,
     limitations: stringArray,
+  }),
+  convert_pdf_to_markdown: object({
+    renderer: object({
+      name: { const: "pdf-tools.layout-markdown-renderer" },
+      version: { const: "1.0.0" },
+    }),
+    conversion_status: enumString(["complete", "partial", "failed"]),
+    markdown: string,
+    markdown_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+    markdown_bytes: { type: "integer", minimum: 0 },
+    options: object({ include_page_boundaries: boolean }),
+    limits: object({ max_markdown_bytes: { type: "integer", minimum: 1, maximum: 200000 } }),
+    pages: arrayOf(markdownPage),
+    gaps: arrayOf(markdownGap),
+    limitations: stringArray,
+    provenance: object({
+      source: object({
+        file_name: string,
+        sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+        size_bytes: integer,
+      }),
+      layout: object({
+        name: { const: "pdf-tools.extraction-ir" },
+        version: { const: "1.0.0" },
+        parser_name: { const: "pdfjs-dist" },
+        parser_version: { const: "5.4.624" },
+        page_range: object({
+          start_page: integer,
+          end_page: integer,
+          total_pages: integer,
+        }),
+      }),
+    }),
+    saved_output: markdownSavedOutput,
   }),
   render_pdf_page: object({
     pdf_path: string,
@@ -625,6 +700,7 @@ const specialErrorSchemas = {
   validate_pdf: [validationFailure],
   read_pdf_content: [contentFailure],
   read_pdf_layout: [layoutPasswordError],
+  convert_pdf_to_markdown: [layoutPasswordError],
 };
 
 export const TOOL_ERROR_OUTPUT_SCHEMAS = Object.freeze(Object.fromEntries(
@@ -660,6 +736,7 @@ const errorValidators = new Map(Object.entries(TOOL_ERROR_OUTPUT_SCHEMAS).map(
 const standardErrorValidator = validatorProvider.getValidator(standardError);
 const semanticSuccessValidators = new Map([
   ["read_pdf_layout", validatePdfLayoutSemantics],
+  ["convert_pdf_to_markdown", validateMarkdownConversionSemantics],
 ]);
 
 export function withToolOutputSchema(tool) {

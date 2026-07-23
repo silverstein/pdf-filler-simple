@@ -9,7 +9,7 @@
     "trust_registry_id": "pdf-tools.trajectory.trust.v1",
     "corpus_manifest_sha256": "f1313dc562d3466cbb0237adac6c053fafc62029d84d39ee2cb6aae317c9097b",
     "tool_contract_id": "pdf-tools.trajectory.tool-contracts.v1",
-    "tool_contract_sha256": "32634ee8dda75c786362407317c38ebf1576411ce7b3a8113f01a9d9a9efe05d",
+    "tool_contract_sha256": "b7db2ecc546a378c101e3d75c9b508a7d386656b98cb4c21c160681f08a2acef",
     "runtime_version": "0.8.6"
   },
   "jobs": [

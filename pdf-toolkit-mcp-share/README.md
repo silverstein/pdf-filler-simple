@@ -106,6 +106,7 @@ Once installed, ask Claude in Cursor:
 - **read_pdf_content** - Read the PDF.js text layer; a wholly textless selected extraction may return only page 1 as an image for host/model vision
 - **read_pdf_pages** - Read a bounded page range with page-numbered structured output
 - **read_pdf_layout** - Extract bounded local text geometry and conservative reading order without OCR or table inference
+- **convert_pdf_to_markdown** - Convert supported PDF text to deterministic Markdown with explicit partial and unsupported-content gaps
 - **render_pdf_page** - Render a page to PNG for visual inspection of scanned/image-heavy PDFs
 - **render_pdf_region** - Render a bounded PDF region to PNG for focused visual inspection
 - **search_pdf_text** - Search extracted PDF text and return page-numbered snippets

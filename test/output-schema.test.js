@@ -24,6 +24,7 @@ const STRUCTURED_TOOLS = [
   "apply_text",
   "bulk_fill_from_csv",
   "create_signature",
+  "convert_pdf_to_markdown",
   "detect_signature_zones",
   "display_pdf",
   "extract_to_csv",
@@ -74,11 +75,11 @@ function collectKeys(value, output = new Set()) {
 }
 
 describe("output schema definitions", () => {
-  it("covers the exact 32 structured tools and no text-only tool", () => {
+  it("covers the exact 33 structured tools and no text-only tool", () => {
     expect(Object.keys(TOOL_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_ERROR_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
-    expect(STRUCTURED_TOOLS).toHaveLength(32);
+    expect(STRUCTURED_TOOLS).toHaveLength(33);
     expect(TEXT_ONLY_TOOLS).toHaveLength(6);
   });
 

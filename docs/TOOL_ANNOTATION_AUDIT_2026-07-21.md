@@ -1,6 +1,6 @@
 # MCP tool-annotation audit — 2026-07-21
 
-This is the handler-by-handler evidence behind PDF Tools' 37 MCP
+This is the handler-by-handler evidence behind PDF Tools' 39 MCP
 `ToolAnnotations`. It covers the source runtime and the byte-identical share
 runtime. It is a risk declaration for host UX, not an authorization boundary.
 
@@ -55,6 +55,7 @@ not idempotent.
 | `read_pdf_content` | T | F | T | F | Reads/extracts local PDF content; renderer scratch work has no retained output. |
 | `read_pdf_pages` | T | F | T | F | Reads a bounded local page range. |
 | `read_pdf_layout` | T | F | T | F | Reads bounded local text geometry without rendering, OCR, or retained output. |
+| `convert_pdf_to_markdown` | F | T | T | F | Deterministically returns Markdown and may replace an existing local `.md` output only when `overwrite` is true. |
 | `render_pdf_page` | T | F | T | F | Reads and returns an in-memory raster; it does not retain an image file. |
 | `render_pdf_region` | T | F | T | F | Reads and returns an in-memory crop; it does not retain an image file. |
 | `search_pdf_text` | T | F | T | F | Reads and searches local PDF text. |
@@ -83,7 +84,7 @@ not idempotent.
 
 ## Regression proof
 
-`test/mcp-contract.test.js` contains the same exhaustive 37-tool matrix and
+`test/mcp-contract.test.js` contains the same exhaustive 39-tool matrix and
 compares all four effect hints for both runtime copies after live MCP
 discovery. It also binds the complete discovery payload to an updated SHA-256,
 so a title, description, schema, metadata, or annotation change requires

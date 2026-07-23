@@ -488,6 +488,7 @@ async function main() {
       "server/helpers.js",
       "server/index.js",
       "server/layout-extraction.js",
+      "server/markdown-conversion.js",
       "server/output-schemas.js",
       "server/resource-uri.js",
       "server/stderr-suppression.js",
@@ -555,7 +556,7 @@ async function main() {
     const { tools } = await client.listTools();
     const { prompts } = await client.listPrompts();
     const { resources } = await client.listResources();
-    if (tools.length !== 38 || prompts.length !== 14 || resources.length !== 1) {
+    if (tools.length !== 39 || prompts.length !== 14 || resources.length !== 1) {
       throw new Error(
         `Unexpected discovery counts: ${tools.length} tools, ${prompts.length} prompts, ${resources.length} resources`,
       );
@@ -587,6 +588,16 @@ async function main() {
       || layout.structuredContent?.ir?.version !== "1.0.0"
       || layout.structuredContent?.source?.size_bytes !== statSync(fixturePath).size) {
       throw new Error("Share read_pdf_layout contract smoke failed");
+    }
+    const markdown = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: fixturePath, max_markdown_bytes: 200000 },
+    });
+    if (markdown.isError
+      || markdown.structuredContent?.renderer?.version !== "1.0.0"
+      || markdown.structuredContent?.markdown_bytes !== Buffer.byteLength(markdown.structuredContent?.markdown || "", "utf8")
+      || markdown.structuredContent?.markdown_sha256 !== sha256(Buffer.from(markdown.structuredContent?.markdown || "", "utf8"))) {
+      throw new Error("Share convert_pdf_to_markdown contract smoke failed");
     }
     const cMapLayout = await client.callTool({
       name: "read_pdf_layout",

@@ -29,9 +29,10 @@ const textFixture = path.join(fixtureDirectory, "synthetic-text-two-page.pdf");
 const rasterFixture = path.join(fixtureDirectory, "synthetic-raster-only.pdf");
 const mutationDirectory = path.join(fixtureDirectory, "mutation-output");
 const toolNames = [];
-const EXPECTED_TOOL_CONTRACT_SHA256 = "cc150eb9f467fe5aad914b824425192e91c378edd5daf8cfd49c1d0eae3f19d9";
+const EXPECTED_TOOL_CONTRACT_SHA256 = "63f19e27eb4c2db768c5f5498e572a9bfd7519f2ca3e54d3f821b2fad41e4c17";
 let toolContractSha256;
 let structuredToolCount;
+let markdownHash;
 
 function textContent(result) {
   return (result.content || [])
@@ -67,8 +68,8 @@ let rasterHash;
 try {
   const tools = await first.client.listTools();
   toolNames.push(...tools.tools.map(tool => tool.name).sort());
-  assert(toolNames.length === 38, `Expected 38 tools, received ${toolNames.length}`);
-  assert(new Set(toolNames).size === 38, "Tool names were not unique");
+  assert(toolNames.length === 39, `Expected 39 tools, received ${toolNames.length}`);
+  assert(new Set(toolNames).size === 39, "Tool names were not unique");
   toolContractSha256 = createHash("sha256")
     .update(JSON.stringify(tools.tools))
     .digest("hex");
@@ -77,7 +78,7 @@ try {
     `Tool contract digest drifted: ${toolContractSha256}`,
   );
   structuredToolCount = tools.tools.filter(tool => tool.outputSchema).length;
-  assert(structuredToolCount === 32, `Expected 32 structured tools, received ${structuredToolCount}`);
+  assert(structuredToolCount === 33, `Expected 33 structured tools, received ${structuredToolCount}`);
 
   const listed = await first.client.callTool({
     name: "list_pdfs",
@@ -103,6 +104,19 @@ try {
   assert(
     textContent(textRead).includes("BLUEHARBOR-TEXT-20260721"),
     "Text marker was not extracted",
+  );
+
+  const markdown = await first.client.callTool({
+    name: "convert_pdf_to_markdown",
+    arguments: { pdf_path: textFixture, max_markdown_bytes: 200000 },
+  });
+  assert(!markdown.isError, "convert_pdf_to_markdown failed for the text fixture");
+  const markdownText = markdown.structuredContent?.markdown || "";
+  markdownHash = createHash("sha256").update(markdownText, "utf8").digest("hex");
+  assert(
+    markdownText.includes("BLUEHARBOR-TEXT-20260721")
+      && markdown.structuredContent?.markdown_sha256 === markdownHash,
+    "Markdown conversion did not preserve and bind the text marker",
   );
 
   const rasterRender = await first.client.callTool({
@@ -145,7 +159,7 @@ assert(mutationFiles.length === 2, `Expected two mutation outputs, received ${mu
 const fresh = await connect("fresh-session");
 try {
   const tools = await fresh.client.listTools();
-  assert(tools.tools.length === 38, "Fresh session did not discover 38 tools");
+  assert(tools.tools.length === 39, "Fresh session did not discover 39 tools");
   const info = await fresh.client.callTool({
     name: "get_pdf_info",
     arguments: { pdf_path: path.join(mutationDirectory, mutationFiles[1]) },
@@ -162,11 +176,12 @@ process.stdout.write(`${JSON.stringify({
   tool_contract_sha256: toolContractSha256,
   structured_tool_count: structuredToolCount,
   text_only_tool_count: toolNames.length - structuredToolCount,
-  same_session_calls: 6,
+  same_session_calls: 7,
   fresh_session_calls: 1,
   configured_directory_allowed: true,
   outside_directory_denied: true,
   text_marker_extracted: true,
+  markdown_sha256: markdownHash,
   raster_png_sha256: rasterHash,
   mutation_files: mutationFiles,
 }, null, 2)}\n`);

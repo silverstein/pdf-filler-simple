@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 const IR_NAME = "pdf-tools.extraction-ir";
 const IR_VERSION = "1.0.0";
 const INTERNAL_SOURCE_REPLAY = Symbol("pdf-layout-internal-source-replay");
+const INTERNAL_MARKDOWN_PROJECTION = Symbol("pdf-layout-internal-markdown-projection");
 const PDFJS_DOCUMENT_ASSETS = Object.freeze({
   cMapUrl: fileURLToPath(new URL("../node_modules/pdfjs-dist/cmaps/", import.meta.url)),
   cMapPacked: true,
@@ -580,7 +581,10 @@ function expectedViewportGeometry(view, userUnit, rotation) {
   };
 }
 
-export function validatePdfLayoutSemantics(payload, { sourceBytes = null } = {}) {
+export function validatePdfLayoutSemantics(payload, {
+  sourceBytes = null,
+  enforceOutputBudget = true,
+} = {}) {
   semanticAssertion(payload.id_scope.source_sha256 === payload.source.sha256, "ID scope source hash mismatch");
   semanticAssertion(payload.id_scope.parser_version === payload.parser.version, "ID scope parser mismatch");
   semanticAssertion(payload.id_scope.ir_version === payload.ir.version, "ID scope IR mismatch");
@@ -874,7 +878,9 @@ export function validatePdfLayoutSemantics(payload, { sourceBytes = null } = {})
   const expectedStatus = payload.pages.every(page => page.extraction_status === "complete")
     ? "complete" : payload.pages.every(page => page.extraction_status === "failed") ? "failed" : "partial";
   semanticAssertion(payload.extraction_status === expectedStatus, "document extraction status mismatch");
-  semanticAssertion(JSON.stringify(payload).length <= payload.limits.max_output_characters, "serialized output exceeds its declared limit");
+  if (enforceOutputBudget) {
+    semanticAssertion(JSON.stringify(payload).length <= payload.limits.max_output_characters, "serialized output exceeds its declared limit");
+  }
   return payload;
 }
 
@@ -948,8 +954,9 @@ export async function validatePdfLayoutSourceEvidence(payload, {
   sourceBytes,
   password = null,
   deadlineAt = Date.now() + 20000,
+  enforceOutputBudget = true,
 } = {}) {
-  validatePdfLayoutSemantics(payload, { sourceBytes });
+  validatePdfLayoutSemantics(payload, { sourceBytes, enforceOutputBudget });
   sourceEvidenceAssertion(pdfjsLib && typeof pdfjsLib.getDocument === "function", "PDF.js parser is required");
   sourceEvidenceAssertion(sourceBytes && Number.isSafeInteger(sourceBytes.length), "source bytes are required");
   sourceEvidenceAssertion(String(pdfjsLib.version || "unknown") === payload.parser.version, "parser version mismatch");
@@ -1228,7 +1235,12 @@ export async function validatePdfLayoutSourceEvidence(payload, {
     const sourceDocumentStatus = payload.pages.every(page => page.extraction_status === "complete")
       ? "complete" : payload.pages.every(page => page.extraction_status === "failed") ? "failed" : "partial";
     sourceEvidenceAssertion(payload.extraction_status === sourceDocumentStatus, "document status differs from source-verified page records");
-    if (payload.pages.some(page => page.truncation.reasons.includes("max_output_characters"))) {
+    if (!enforceOutputBudget) {
+      sourceEvidenceAssertion(
+        payload.pages.every(page => !page.truncation.reasons.includes("max_output_characters")),
+        "internal Markdown evidence contains a public output-budget omission",
+      );
+    } else if (payload.pages.some(page => page.truncation.reasons.includes("max_output_characters"))) {
       const replaySeed = await extractPdfLayout({
         pdfjsLib,
         pdfBytes: sourceBytes,
@@ -1281,6 +1293,7 @@ export async function extractPdfLayout({
   deadlineMs = 20000,
   operationDeadlineAt = null,
   sourceEvidenceValidationToken = null,
+  outputProjectionToken = null,
 }) {
   const deadlineAt = operationDeadlineAt ?? Date.now() + deadlineMs;
   let loadingTask = null;
@@ -1596,18 +1609,40 @@ export async function extractPdfLayout({
       ],
     };
     recomputeDocumentTruncation(payload);
-    const boundedPayload = validatePdfLayoutSemantics(markOutputBudget(payload, maxOutputCharacters), { sourceBytes: pdfBytes });
-    if (sourceEvidenceValidationToken === INTERNAL_SOURCE_REPLAY) return boundedPayload;
-    return await validatePdfLayoutSourceEvidence(boundedPayload, {
+    const internalMarkdownProjection = outputProjectionToken === INTERNAL_MARKDOWN_PROJECTION;
+    const projectedPayload = internalMarkdownProjection
+      ? payload
+      : markOutputBudget(payload, maxOutputCharacters);
+    const validatedPayload = validatePdfLayoutSemantics(projectedPayload, {
+      sourceBytes: pdfBytes,
+      enforceOutputBudget: !internalMarkdownProjection,
+    });
+    if (sourceEvidenceValidationToken === INTERNAL_SOURCE_REPLAY) return validatedPayload;
+    return await validatePdfLayoutSourceEvidence(validatedPayload, {
       pdfjsLib,
       sourceBytes: pdfBytes,
       password,
       deadlineAt,
+      enforceOutputBudget: !internalMarkdownProjection,
     });
   } finally {
     await document?.destroy().catch(() => {});
     await loadingTask?.destroy?.().catch(() => {});
   }
+}
+
+/**
+ * Produce source-validated bounded layout evidence for the deterministic local
+ * Markdown renderer before the public read_pdf_layout response projection can
+ * omit whole-page detail. This remains bounded by the same page, item,
+ * character, and deadline limits. It is not an MCP response payload and must
+ * be reduced by the Markdown renderer before returning to a client.
+ */
+export async function extractPdfLayoutForMarkdown(options) {
+  return extractPdfLayout({
+    ...options,
+    outputProjectionToken: INTERNAL_MARKDOWN_PROJECTION,
+  });
 }
 
 export const EXTRACTION_IR_IDENTITY = Object.freeze({ name: IR_NAME, version: IR_VERSION });

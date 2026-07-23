@@ -1888,6 +1888,11 @@ export async function writePdfOutputAtomic(targetPath, bytes, {
   });
 }
 
+// The durable transaction accepts arbitrary bytes. Keep the established PDF
+// name for compatibility while exposing a format-neutral entry point for text
+// and future non-PDF side outputs.
+export const writeOutputAtomic = writePdfOutputAtomic;
+
 /**
  * Commit a same-directory set of PDF outputs as one durable transaction. All
  * bytes are staged before any target changes. A versioned journal restores an

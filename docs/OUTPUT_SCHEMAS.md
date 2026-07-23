@@ -25,6 +25,7 @@ an `isError` result is never forced through a success schema.
 | `apply_text` | active document plus text placement |
 | `bulk_fill_from_csv` | row results and bounded record preview |
 | `create_signature` | saved signature metadata |
+| `convert_pdf_to_markdown` | deterministic Markdown, typed coverage gaps, provenance, and optional verified UTF-8 output |
 | `detect_signature_zones` | detected coordinate zones |
 | `display_pdf` | active document and form summary |
 | `extract_to_csv` | CSV counts, headers, and bounded row preview |
@@ -74,7 +75,7 @@ before loading the target PDF, writing output, or changing active-document
 state.
 
 The executable source of truth is `server/output-schemas.js`. The MCP contract
-tests assert this complete 31/6 matrix, compile every schema through the pinned
+tests assert this complete 33/6 matrix, compile every schema through the pinned
 SDK validator, reject newer unsupported JSON Schema keywords, exercise live
 success and error branches, and require byte-identical source/share runtime
 files.
