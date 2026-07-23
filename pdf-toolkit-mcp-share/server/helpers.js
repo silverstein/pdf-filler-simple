@@ -953,6 +953,10 @@ function sameBaseline(a, b, tolerance = Math.max(a.height, b.height) * 1.2) {
   return Math.abs(a.y - b.y) <= tolerance;
 }
 
+function verticalSpansOverlap(a, b) {
+  return Math.min(a.y + a.height, b.y + b.height) > Math.max(a.y, b.y);
+}
+
 function findSigningArrowMarkerToRight(item, allItems, { maxGap = 120 } = {}) {
   const itemRight = item.x + item.width;
   return allItems
@@ -1027,6 +1031,74 @@ function markerAnchoredZone(item, allItems, pat, gap, zoneHeight, rightBound) {
   };
 }
 
+function sideCaptionedSigningRowZone(item, allItems, gap, zoneHeight, rightBound, desiredWidth) {
+  // Some forms split a left-side caption across two lines while the actual
+  // signing surface occupies the rest of that same row. Keep this deliberately
+  // strict so ordinary "Signature of ..." captions retain line-above placement.
+  if (!/^Signature of\s*:?\s*$/i.test(item.text.trim())) return null;
+
+  const continuation = allItems
+    .filter(other =>
+      other !== item &&
+      Math.abs(other.x - item.x) <= 4 &&
+      other.y > item.y &&
+      other.y - item.y <= Math.max(item.height * 2, 14) &&
+      other.text.trim() &&
+      !/^(?:Sign|Here|Date|Dated)$/i.test(other.text.trim()) &&
+      !isDecorativeGlyph(other.text.trim())
+    )
+    .sort((a, b) => a.y - b.y || a.x - b.x)[0] ?? null;
+  if (!continuation) return null;
+
+  const captionRight = Math.max(
+    item.x + item.width,
+    continuation.x + continuation.width
+  );
+  const dateLabel = allItems
+    .filter(other =>
+      /^(?:Date|Dated)$/i.test(other.text.trim()) &&
+      other.x > captionRight + gap &&
+      sameBaseline(continuation, other) &&
+      verticalSpansOverlap(continuation, other)
+    )
+    .sort((a, b) => a.x - b.x)[0] ?? null;
+  if (!dateLabel) return null;
+
+  const signLabels = allItems
+    .filter(other =>
+      /^Sign$/i.test(other.text.trim()) &&
+      other.x + other.width <= item.x &&
+      item.x - (other.x + other.width) <= 80 &&
+      sameBaseline(item, other) &&
+      verticalSpansOverlap(item, other)
+    )
+    .sort((a, b) => a.x - b.x || a.y - b.y);
+
+  const hasStackedHeading = signLabels.some(signLabel =>
+    allItems.some(hereLabel =>
+      /^Here$/i.test(hereLabel.text.trim()) &&
+      hereLabel.x + hereLabel.width <= item.x &&
+      Math.abs(hereLabel.x - signLabel.x) <= 4 &&
+      hereLabel.y > signLabel.y &&
+      hereLabel.y - signLabel.y <= Math.max(signLabel.height * 2, 20) &&
+      sameBaseline(continuation, hereLabel) &&
+      verticalSpansOverlap(continuation, hereLabel)
+    )
+  );
+  if (!hasStackedHeading) return null;
+
+  const zoneX = captionRight + gap;
+  const rowRightBound = Math.min(rightBound, dateLabel.x - gap);
+  const zoneWidth = Math.min(desiredWidth, Math.max(rowRightBound - zoneX, 0));
+  if (zoneWidth < 24) return null;
+
+  return {
+    zoneX,
+    zoneY: item.y - (zoneHeight - item.height) / 2,
+    zoneWidth,
+  };
+}
+
 function hasRoomToRight(item, allItems, minPts) {
   const labelRightEdge = item.x + item.width;
   for (const other of allItems) {
@@ -1062,25 +1134,37 @@ export function scanPageForLabels(page) {
       if (markerZone) {
         ({ zoneX, zoneY, zoneWidth } = markerZone);
         zoneHeight = markerZone.zoneHeight || zoneHeight;
-      } else if (pat.placement === "above") {
-        // Line sits above the label; the zone rests on the line with its
-        // bottom roughly at the label's top edge. Shift up by (zoneHeight + 2)
-        // so the zone's bottom ≈ line's y.
-        zoneX = item.x;
-        zoneY = item.y - zoneHeight - 2;
-        // If the label is too close to the page top there's no line above —
-        // fall back to right-placement so we don't emit a zone off-page.
-        if (zoneY < 4) {
+      } else {
+        const sideCaptionedZone = sideCaptionedSigningRowZone(
+          item,
+          page.items,
+          gap,
+          zoneHeight,
+          rightBound,
+          pat.zoneWidth
+        );
+        if (sideCaptionedZone) {
+          ({ zoneX, zoneY, zoneWidth } = sideCaptionedZone);
+        } else if (pat.placement === "above") {
+          // Line sits above the label; the zone rests on the line with its
+          // bottom roughly at the label's top edge. Shift up by (zoneHeight + 2)
+          // so the zone's bottom is approximately the line's y.
+          zoneX = item.x;
+          zoneY = item.y - zoneHeight - 2;
+          // If the label is too close to the page top there's no line above.
+          // Fall back to right-placement so we don't emit a zone off-page.
+          if (zoneY < 4) {
+            zoneX = item.x + item.width + gap;
+            zoneY = item.y - (zoneHeight - item.height) / 2;
+            zoneWidth = Math.min(pat.zoneWidth, Math.max(rightBound - zoneX, 0));
+          } else {
+            zoneWidth = Math.min(pat.zoneWidth, Math.max(rightBound - zoneX, 0));
+          }
+        } else {
           zoneX = item.x + item.width + gap;
           zoneY = item.y - (zoneHeight - item.height) / 2;
           zoneWidth = Math.min(pat.zoneWidth, Math.max(rightBound - zoneX, 0));
-        } else {
-          zoneWidth = Math.min(pat.zoneWidth, Math.max(rightBound - zoneX, 0));
         }
-      } else {
-        zoneX = item.x + item.width + gap;
-        zoneY = item.y - (zoneHeight - item.height) / 2;
-        zoneWidth = Math.min(pat.zoneWidth, Math.max(rightBound - zoneX, 0));
       }
 
       if (zoneWidth < 24) break; // too squeezed — label with no room

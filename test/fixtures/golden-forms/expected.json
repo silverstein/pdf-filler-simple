@@ -76,7 +76,7 @@
         "render_pixel_size": [1389, 1798],
         "render_scale": 2.27
       },
-      "min_score": 0.5,
+      "min_score": 1,
       "expected_zones": [
         {
           "type": "signature",

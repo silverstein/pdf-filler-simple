@@ -337,6 +337,83 @@ describe("detectSignatureZones — AcroForm layer", () => {
     expect(sig.y).toBeGreaterThan(270);
   });
 
+  it("places a fully corroborated split Signature-of caption inside its signing cell", () => {
+    const zones = scanPageForLabels({
+      page: 1,
+      width: 612,
+      height: 792,
+      items: [
+        { text: "Sign", x: 36, y: 578.9, width: 21.1, height: 10 },
+        { text: "Here", x: 36, y: 588.9, width: 22.8, height: 10 },
+        { text: "Signature of", x: 76, y: 582.3, width: 40.7, height: 7 },
+        { text: "U.S. person", x: 76, y: 590.7, width: 38.8, height: 7 },
+        { text: "Date", x: 385.6, y: 590.7, width: 15.7, height: 7 },
+      ],
+    });
+    const sig = zones.find(z => z.type === "signature" && z.label === "Signature of");
+
+    expect(sig).toMatchObject({
+      x: 122.7,
+      y: 576.8,
+      width: 256.9,
+      height: 18,
+    });
+    expect(sig.x).toBeGreaterThanOrEqual(72);
+    expect(sig.y).toBeGreaterThanOrEqual(576);
+    expect(sig.x + sig.width).toBeLessThanOrEqual(384);
+    expect(sig.y + sig.height).toBeLessThanOrEqual(600);
+  });
+
+  it.each([
+    {
+      name: "the stacked Sign and Here heading is absent",
+      items: [
+        { text: "Signature of", x: 76, y: 582.3, width: 40.7, height: 7 },
+        { text: "U.S. person", x: 76, y: 590.7, width: 38.8, height: 7 },
+        { text: "Date", x: 385.6, y: 590.7, width: 15.7, height: 7 },
+      ],
+    },
+    {
+      name: "the continuation is absent",
+      items: [
+        { text: "Sign", x: 36, y: 578.9, width: 21.1, height: 10 },
+        { text: "Here", x: 36, y: 588.9, width: 22.8, height: 10 },
+        { text: "Signature of", x: 76, y: 582.3, width: 40.7, height: 7 },
+        { text: "Date", x: 385.6, y: 590.7, width: 15.7, height: 7 },
+      ],
+    },
+    {
+      name: "the Date label is absent",
+      items: [
+        { text: "Sign", x: 36, y: 578.9, width: 21.1, height: 10 },
+        { text: "Here", x: 36, y: 588.9, width: 22.8, height: 10 },
+        { text: "Signature of", x: 76, y: 582.3, width: 40.7, height: 7 },
+        { text: "U.S. person", x: 76, y: 590.7, width: 38.8, height: 7 },
+      ],
+    },
+    {
+      name: "the caption is a complete one-line label",
+      items: [
+        { text: "Sign", x: 36, y: 578.9, width: 21.1, height: 10 },
+        { text: "Here", x: 36, y: 588.9, width: 22.8, height: 10 },
+        { text: "Signature of Authorized Officer", x: 76, y: 582.3, width: 120, height: 7 },
+        { text: "Date", x: 385.6, y: 590.7, width: 15.7, height: 7 },
+      ],
+    },
+  ])("keeps line-above placement when $name", ({ items }) => {
+    const zones = scanPageForLabels({
+      page: 1,
+      width: 612,
+      height: 792,
+      items,
+    });
+    const sig = zones.find(z => z.type === "signature");
+
+    expect(sig).toBeDefined();
+    expect(sig.x).toBe(76);
+    expect(sig.y).toBe(562.3);
+  });
+
   it("detects a Date zone on IRS W-9", async () => {
     const zones = await detectSignatureZones({ pdfDoc, pdfBytes, pdfjsLib });
     const dateZones = zones.filter(z => z.type === "date");
