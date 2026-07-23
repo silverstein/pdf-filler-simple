@@ -130,6 +130,10 @@ Every user-visible PDF output follows an explicit commit policy:
   use the shared persistence lifecycle carry that exact input binding through
   parsing and reapply it to their pre-commit input recovery instead of
   rebinding to whatever the pathname identifies later.
+  These directory-continuity and per-mutation guard claims apply only to
+  input-triggered recovery and that carried shared pre-commit input recovery.
+  Output-writer recovery inside `writePdfOutputsAtomic` remains pathname-based
+  and is outside this input identity-continuity claim.
   Node does not expose portable directory-relative `openat`/`renameat`/
   `unlinkat` operations needed to make a path walk inseparable from every
   mutation. Per-mutation guards close the tested deterministic swap seams and
@@ -185,7 +189,9 @@ output lock is a private owned directory published only after its owner record
 is complete. POSIX ownership and mode are enforced where the platform exposes
 them; Windows relies on the current account and parent-directory ACL. Recovery
 never follows a symlink or accepts an escaped, reserved, case-aliased, or
-Unicode-normalization-aliased path.
+Unicode-normalization-aliased transaction entry within the recovery directory
+already selected by its caller. This entry-level rule does not itself bind
+ancestor directory identity for output-writer recovery.
 
 The durable states are `staging`, `prepared`, `activating`, and `committed`.
 Recovery rolls the first three states back to the exact prior set. A durably
