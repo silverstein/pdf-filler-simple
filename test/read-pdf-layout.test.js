@@ -1093,6 +1093,24 @@ describe("Extraction IR hostile reconstruction", () => {
     expect(columns.result.pages[0].lines).toHaveLength(6);
     expect(columns.result.pages[0].reading_order.strategy).toBe("two_column_left_to_right");
 
+    const tableLike = [
+      textItem({ text: "TITLE", x: 200, top: 60, width: 80, hasEOL: true }),
+    ];
+    for (const top of [100, 130, 160]) {
+      tableLike.push(textItem({ text: `A${top}`, x: 50, top, width: 40, hasEOL: false }));
+      tableLike.push(textItem({ text: `B${top}`, x: 250, top, width: 40, hasEOL: false }));
+      tableLike.push(textItem({ text: `C${top}`, x: 400, top, width: 40, hasEOL: true }));
+    }
+    const segmented = await runFake([{ items: tableLike }]);
+    expect(segmented.result.pages[0].reading_order).toMatchObject({
+      strategy: "source_order_fallback",
+      column_count: 1,
+    });
+    expect(segmented.result.pages[0].reading_order.limitations[0]).toMatch(/table-like or segmented content/);
+    expect(segmented.result.pages[0].flow_text).toBe(
+      "TITLE\nA100 B100 C100\nA130 B130 C130\nA160 B160 C160",
+    );
+
     const sourceFallback = await runFake([{ items: [
       textItem({ text: "A", x: 10, top: 300, width: 10, hasEOL: false, transform: [12, 2, 0, 12, 10, 480] }),
       textItem({ text: "B", x: 30, top: 100, width: 10, hasEOL: false }),

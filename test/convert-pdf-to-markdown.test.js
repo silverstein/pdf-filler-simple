@@ -166,6 +166,23 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     expect(table.isError).not.toBe(true);
     expect(table.structuredContent.limitations.join("\n")).toMatch(/Table topology is not represented/);
     expect(table.structuredContent.markdown).not.toMatch(/^\|.*\|$/m);
+    const orderedFragments = [
+      "Q3 PURCHASES",
+      "Item",
+      "Qty",
+      "Amount",
+      "Paper",
+      "2",
+      "USD 20.00",
+      "Delivery",
+      "USD 5.00",
+    ];
+    let cursor = 0;
+    for (const fragment of orderedFragments) {
+      const index = table.structuredContent.markdown.indexOf(fragment, cursor);
+      expect(index, fragment).toBeGreaterThanOrEqual(cursor);
+      cursor = index + fragment.length;
+    }
   }, 30_000);
 
   it("keeps rotated and cropped geometry bounded and deterministic", async () => {

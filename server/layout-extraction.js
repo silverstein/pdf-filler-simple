@@ -361,6 +361,21 @@ function readingOrder(lines, displayWidth, { sourceLines, forceSourceOrder = fal
   const overlap = Math.max(0, Math.min(leftSpan.bottom, rightSpan.bottom) - Math.max(leftSpan.top, rightSpan.top));
   const minimumSpan = Math.min(leftSpan.bottom - leftSpan.top, rightSpan.bottom - rightSpan.top);
   if (minimumSpan <= 0 || overlap / minimumSpan < 0.5) return defaultResult;
+  const hasSegmentedBaseline = values => values.some((line, index) => values.slice(index + 1).some(other => {
+    const centerDistance = Math.abs((line.y + line.height / 2) - (other.y + other.height / 2));
+    const tolerance = Math.max(2, Math.min(line.height, other.height) * 0.35);
+    const horizontallySeparate = line.x + line.width <= other.x || other.x + other.width <= line.x;
+    return horizontallySeparate && centerDistance <= tolerance;
+  }));
+  if (hasSegmentedBaseline(left) || hasSegmentedBaseline(right)) {
+    return {
+      ...defaultResult,
+      limitations: [
+        "A candidate column contained multiple non-overlapping lines on the same baseline, so table-like or segmented content retained source order.",
+        "Source order is parser order and is not proof of intended or visible reading order.",
+      ],
+    };
+  }
   const columnTop = Math.min(leftSpan.top, rightSpan.top);
   const columnBottom = Math.max(leftSpan.bottom, rightSpan.bottom);
   const spanningAbove = spanning.filter(line => line.y + line.height <= columnTop);
