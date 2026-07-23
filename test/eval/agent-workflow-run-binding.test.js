@@ -89,7 +89,9 @@ child.once("close", (code, signal) => {
 }
 
 async function preparedRun() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-workflow-bound-run-"));
+  const root = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), "pdf-workflow-bound-run-")),
+  );
   roots.push(root);
   const participants = path.join(root, "participants");
   const oracle = path.join(root, "oracle");

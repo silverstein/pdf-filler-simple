@@ -253,6 +253,12 @@ export async function runCodexAgentWorkflowCase(options) {
   if ((await exactDirectoryEntries(codexHome)).join("\0") !== "auth.json") {
     throw new Error("codexHome must initially contain only auth.json");
   }
+  if (
+    await fs.realpath(caseRoot) !== caseRoot
+    || await fs.realpath(codexHome) !== codexHome
+  ) {
+    throw new Error("caseRoot and codexHome must use canonical paths");
+  }
   const authStat = await fs.lstat(path.join(codexHome, "auth.json"));
   if (!authStat.isFile() || authStat.isSymbolicLink() || (authStat.mode & 0o077) !== 0) {
     throw new Error("auth.json must be a private regular file");
