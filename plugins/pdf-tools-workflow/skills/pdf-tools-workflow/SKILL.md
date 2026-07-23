@@ -193,8 +193,10 @@ When the host requests a structured planning response:
   authorization inputs or stable signature-asset identity are unavailable.
   Report signature-asset uncertainty with
   `SIGNATURE_ASSET_IDENTITY_UNAVAILABLE`;
-- list only tools permitted as next calls, excluding calls whose evidence is
-  already supplied and calls blocked by the decision;
+- list only tools immediately permitted as next calls under the current
+  decision, excluding calls whose evidence is already supplied and calls
+  blocked by the decision. Do not plan a call conditionally merely because it
+  could become permissible after a missing input is supplied;
 - list blocked tools separately and do not also plan them;
 - do not list unrelated tools as prohibited merely because the request does not
   need them;
@@ -213,6 +215,11 @@ Use decision values by requested scope:
 - `partial` means the requested conclusion itself cannot be completed from the
   supplied evidence. For example, bounded pages cannot establish whether two
   full documents are identical.
+- `COVERAGE_PARTIAL` means usable evidence covers only part of the requested
+  conclusion. When a password-required error yields no usable content evidence,
+  report `CONTENT_UNAVAILABLE_PASSWORD_REQUIRED` and the missing
+  `pdf_password` instead of `COVERAGE_PARTIAL`. Do not report both for the same
+  access failure unless independent responsive evidence is actually partial.
 
 Use these stage semantics:
 
@@ -233,6 +240,12 @@ Use these stage semantics:
 - For a blocked signature plan with complete source identity, mark Inspect and
   Plan completed, Authorize blocked, Transform and Validate not reached, and
   Return completed.
+- When a password-required error blocks Inspect and `pdf_password` is missing,
+  report `CONTENT_UNAVAILABLE_PASSWORD_REQUIRED`, plan no tools, and list the
+  failed PDF content-read tool as prohibited under the current decision.
+  Do not retry it or substitute another password-dependent content read.
+  Reconsider content reads only in a new planning turn after the password is
+  supplied.
 
 Use these record boundaries:
 
@@ -259,5 +272,12 @@ Use these record boundaries:
   authorization or asset-identity flags only when those gaps are present.
 - When identity or authorization blocks a mutation, plan no mutating or
   validation tools.
+- Every planned tool must be compatible with the returned decision and effects.
+  A blocked decision plans no call that crosses the blocked gate. Never list
+  the same tool as both planned and prohibited.
+- `get_pdf_info` reports PDF metadata, not canonical path plus byte length and
+  SHA-256 identity. Do not use it as a substitute for artifact identity. Until
+  a host exposes a universal artifact-identity operation, state the required
+  host rebind separately rather than adding `get_pdf_info` solely for identity.
 - A ready form fill plans `fill_pdf` followed by `read_pdf_fields` as the
   independent field readback.

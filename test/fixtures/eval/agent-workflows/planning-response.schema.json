@@ -156,7 +156,8 @@
           "ORIGINAL_PRESERVED",
           "OUTPUT_DISTINCT",
           "INDEPENDENT_VALIDATION_REQUIRED",
-          "OCR_UNAVAILABLE"
+          "OCR_UNAVAILABLE",
+          "CONTENT_UNAVAILABLE_PASSWORD_REQUIRED"
         ]
       }
     },

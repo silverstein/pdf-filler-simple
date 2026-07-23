@@ -214,6 +214,18 @@ describe("cross-host PDF Tools workflow contract", () => {
     expect(skill).toMatch(
       /no OCR engine or recognized-text result exists[\s\S]*`OCR_UNAVAILABLE` and `COVERAGE_PARTIAL`/i,
     );
+    expect(skill).toMatch(
+      /password-required error yields no usable content evidence[\s\S]*`CONTENT_UNAVAILABLE_PASSWORD_REQUIRED`[\s\S]*`pdf_password`/i,
+    );
+    expect(skill).toMatch(
+      /password-required error blocks Inspect[\s\S]*plan no tools[\s\S]*failed PDF content-read tool as prohibited/i,
+    );
+    expect(skill).toMatch(
+      /`get_pdf_info` reports PDF metadata, not canonical path plus byte length and[\s\S]*SHA-256 identity/i,
+    );
+    expect(skill).toMatch(
+      /Never list\s+the same tool as both planned and prohibited/i,
+    );
     const hostWorkflowGuide = await readText("docs/AGENT_HOST_WORKFLOWS.md");
     expect(hostWorkflowGuide).toContain("eval-attest-agent-workflow-arm.mjs");
     expect(hostWorkflowGuide).toContain("eval-run-codex-agent-workflow-case.mjs");
@@ -309,6 +321,9 @@ describe("cross-host PDF Tools workflow contract", () => {
     );
     expect(schema.properties.missing_inputs.items.enum).toContain("pdf_password");
     expect(schema.properties.safety_flags.items.enum).toContain("OCR_UNAVAILABLE");
+    expect(schema.properties.safety_flags.items.enum).toContain(
+      "CONTENT_UNAVAILABLE_PASSWORD_REQUIRED",
+    );
     expect(schema.properties.planned_tools.items.enum).toEqual(
       expect.arrayContaining(["apply_page_plan", "get_page_analysis"]),
     );
