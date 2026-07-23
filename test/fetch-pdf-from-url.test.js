@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "fs/promises";
 import path from "path";
+import { spawn } from "node:child_process";
 import { fileURLToPath } from "url";
 import {
   downloadPdfFromUrl,
@@ -15,6 +16,18 @@ import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
+const DOWNLOAD_WRITE_CHILD = path.join(
+  REPO_ROOT,
+  "test",
+  "helpers",
+  "pdf-download-write-child.mjs",
+);
+const OUTPUT_LOCK_HOLDER = path.join(
+  REPO_ROOT,
+  "test",
+  "helpers",
+  "atomic-output-lock-holder.mjs",
+);
 let TMP_DIR;
 
 beforeAll(async () => {
@@ -41,6 +54,134 @@ function makeFakeFetch({ body, contentType = "application/pdf", status = 200, st
     },
     arrayBuffer: async () => body ? body.buffer.slice(body.byteOffset, body.byteOffset + body.byteLength) : new ArrayBuffer(0),
   });
+}
+
+async function startDownloadWriteChild(targetPath, sourcePath, barrierPath) {
+  const child = spawn(
+    process.execPath,
+    [DOWNLOAD_WRITE_CHILD, targetPath, sourcePath, barrierPath],
+    {
+      cwd: REPO_ROOT,
+      stdio: ["ignore", "pipe", "pipe"],
+    },
+  );
+  let stdout = "";
+  let stderr = "";
+  let spawnError = null;
+  let readyResolve;
+  let readyReject;
+  const ready = new Promise((resolve, reject) => {
+    readyResolve = resolve;
+    readyReject = reject;
+  });
+  child.stdout.on("data", chunk => {
+    stdout += chunk.toString("utf8");
+    if (stdout.includes("READY\n")) readyResolve();
+  });
+  child.stderr.on("data", chunk => {
+    stderr += chunk.toString("utf8");
+  });
+  child.once("error", error => {
+    spawnError = error;
+    readyReject(error);
+  });
+  const closed = new Promise(resolve => {
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
+  let timeoutId;
+  const timeout = new Promise((_, reject) => {
+    timeoutId = setTimeout(
+      () => reject(new Error(`Timed out waiting for download child. stderr: ${stderr}`)),
+      10_000,
+    );
+  });
+  try {
+    await Promise.race([
+      ready,
+      closed.then(({ code, signal }) => {
+        throw new Error(
+          `Download child exited before ready (${code ?? signal}). stderr: ${stderr}`,
+        );
+      }),
+      timeout,
+    ]);
+  } catch (error) {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await closed;
+    throw spawnError ?? error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  const result = closed.then(({ code, signal }) => {
+    if (spawnError) throw spawnError;
+    if (code !== 0) {
+      throw new Error(`Download child exited ${code ?? signal}. stderr: ${stderr}`);
+    }
+    const resultLine = stdout.trim().split("\n").find(line => line.startsWith("{"));
+    if (!resultLine) {
+      throw new Error(`Download child returned no result. stdout: ${stdout}`);
+    }
+    return JSON.parse(resultLine);
+  });
+  return { child, closed, result };
+}
+
+async function startOutputLockHolder(directoryPath) {
+  const child = spawn(process.execPath, [OUTPUT_LOCK_HOLDER, directoryPath], {
+    cwd: REPO_ROOT,
+    stdio: ["pipe", "pipe", "pipe"],
+  });
+  let stdout = "";
+  let stderr = "";
+  let readyResolve;
+  let readyReject;
+  const ready = new Promise((resolve, reject) => {
+    readyResolve = resolve;
+    readyReject = reject;
+  });
+  child.stdout.on("data", chunk => {
+    stdout += chunk.toString("utf8");
+    if (stdout.includes("READY\n")) readyResolve();
+  });
+  child.stderr.on("data", chunk => {
+    stderr += chunk.toString("utf8");
+  });
+  child.once("error", readyReject);
+  const closed = new Promise(resolve => {
+    child.once("close", (code, signal) => resolve({ code, signal }));
+  });
+  let timeoutId;
+  try {
+    await Promise.race([
+      ready,
+      closed.then(({ code, signal }) => {
+        throw new Error(
+          `Output lock holder exited before ready (${code ?? signal}). stderr: ${stderr}`,
+        );
+      }),
+      new Promise((_, reject) => {
+        timeoutId = setTimeout(
+          () => reject(new Error(`Timed out waiting for output lock holder. stderr: ${stderr}`)),
+          10_000,
+        );
+      }),
+    ]);
+  } catch (error) {
+    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    await closed;
+    throw error;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+  return { child, closed };
+}
+
+async function killAndReapChild(state) {
+  if (!state) return;
+  if (state.child.exitCode === null && state.child.signalCode === null) {
+    state.child.kill("SIGKILL");
+  }
+  await state.closed;
 }
 
 describe("sanitizePdfFilename", () => {
@@ -148,48 +289,187 @@ describe("writePdfDownloadAtomic", () => {
     expect(writes).toBe(1);
   });
 
-  it("stops after the bounded number of locked target collisions", async () => {
+  it("waits on exact lock transients without consuming the filename-collision budget", async () => {
+    const policy = async () => {};
     const candidates = [];
     let writes = 0;
+    let now = 1_000;
+    const sleeps = [];
+    const outcomes = [
+      "ATOMIC_OUTPUT_CONCURRENT",
+      "ATOMIC_OUTPUT_LOCK_FAILED",
+      "ATOMIC_OUTPUT_TARGET_EXISTS",
+      "success",
+    ];
 
-    await expect(
-      writePdfDownloadAtomic(path.join(TMP_DIR, "bounded.pdf"), Buffer.from("%PDF-1.7"), {
-        maxAttempts: 3,
+    const result = await writePdfDownloadAtomic(
+      path.join(TMP_DIR, "contention.pdf"),
+      Buffer.from("%PDF-1.7"),
+      {
+        assertPathAllowed: policy,
+        maxFilenameCollisions: 2,
+        contentionTimeoutMs: 100,
+        nowFn: () => now,
+        sleepFn: async delayMs => {
+          sleeps.push(delayMs);
+          now += delayMs;
+        },
         findUniquePathFn: async target => {
           const candidate = `${target}.${candidates.length + 1}`;
           candidates.push(candidate);
           return candidate;
         },
-        writePdfOutputAtomicFn: async () => {
-          writes++;
-          throw Object.assign(new Error("lost candidate race"), {
-            code: "ATOMIC_OUTPUT_TARGET_EXISTS",
+        writePdfOutputAtomicFn: async (target, bytes, options) => {
+          expect(bytes.equals(Buffer.from("%PDF-1.7"))).toBe(true);
+          expect(options).toEqual({
+            assertPathAllowed: policy,
+            overwrite: false,
           });
+          const outcome = outcomes[writes++];
+          if (outcome === "success") {
+            return { targetPath: path.join(TMP_DIR, "canonical-contention.pdf") };
+          }
+          throw Object.assign(new Error(outcome), { code: outcome });
+        },
+      },
+    );
+
+    expect(result).toEqual({
+      targetPath: path.join(TMP_DIR, "canonical-contention.pdf"),
+    });
+    expect(candidates).toHaveLength(4);
+    expect(writes).toBe(4);
+    expect(sleeps).toEqual([5, 10]);
+  });
+
+  it("stops after the filename namespace's bounded locked target collisions", async () => {
+    const exhaustionDir = path.join(TMP_DIR, "collision-exhaustion");
+    await fs.mkdir(exhaustionDir);
+    const targetPath = path.join(exhaustionDir, "bounded.pdf");
+    let selections = 0;
+
+    await expect(
+      writePdfDownloadAtomic(targetPath, Buffer.from("%PDF-1.7"), {
+        maxFilenameCollisions: 1,
+        findUniquePathFn: async target => {
+          selections++;
+          await fs.writeFile(target, "competing writer");
+          return target;
         },
       }),
     ).rejects.toMatchObject({
       code: "PDF_DOWNLOAD_UNIQUE_PATH_RETRY_EXHAUSTED",
       cause: { code: "ATOMIC_OUTPUT_TARGET_EXISTS" },
     });
-    expect(candidates).toEqual([
-      `${path.join(TMP_DIR, "bounded.pdf")}.1`,
-      `${path.join(TMP_DIR, "bounded.pdf")}.2`,
-      `${path.join(TMP_DIR, "bounded.pdf")}.3`,
-    ]);
-    expect(writes).toBe(3);
+    expect(selections).toBe(1);
+    await expect(fs.readFile(targetPath, "utf8")).resolves.toBe("competing writer");
+    expect(
+      (await fs.readdir(exhaustionDir)).filter(name => name.startsWith(".pdf-tools-")),
+    ).toEqual([]);
   });
 
-  it("rejects an invalid retry bound before selecting a path", async () => {
+  it("bounds lock contention by elapsed time without busy-looping", async () => {
+    let now = 0;
+    const sleeps = [];
+    let writes = 0;
+
+    await expect(
+      writePdfDownloadAtomic(path.join(TMP_DIR, "contention-timeout.pdf"), Buffer.from("%PDF-1.7"), {
+        contentionTimeoutMs: 12,
+        nowFn: () => now,
+        sleepFn: async delayMs => {
+          sleeps.push(delayMs);
+          now += delayMs;
+        },
+        writePdfOutputAtomicFn: async () => {
+          writes++;
+          throw Object.assign(new Error("live owner"), {
+            code: "ATOMIC_OUTPUT_CONCURRENT",
+          });
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "PDF_DOWNLOAD_OUTPUT_CONTENTION_TIMEOUT",
+      cause: { code: "ATOMIC_OUTPUT_CONCURRENT" },
+    });
+    expect(writes).toBe(3);
+    expect(sleeps).toEqual([5, 7]);
+  });
+
+  it.each([
+    "EEXIST",
+    "ATOMIC_OUTPUT_CONFLICT",
+    "ATOMIC_OUTPUT_ARTIFACT_COLLISION",
+    "ATOMIC_OUTPUT_LOCK_INVALID",
+    "ATOMIC_OUTPUT_LOCK_CHANGED",
+    "ATOMIC_OUTPUT_LOCK_CLEANUP_FAILED",
+    "ATOMIC_OUTPUT_COMMITTED_CLEANUP_FAILED",
+    "PDF_RECOVERY_DIRECTORY_CHANGED",
+    "PATH_POLICY_DENIED",
+  ])("does not retry non-transient error %s", async code => {
+    let selections = 0;
+    let writes = 0;
+    const failure = Object.assign(new Error(code), { code });
+    await expect(
+      writePdfDownloadAtomic(path.join(TMP_DIR, `${code}.pdf`), Buffer.from("%PDF-1.7"), {
+        findUniquePathFn: async target => {
+          selections++;
+          return target;
+        },
+        writePdfOutputAtomicFn: async () => {
+          writes++;
+          throw failure;
+        },
+      }),
+    ).rejects.toBe(failure);
+    expect(selections).toBe(1);
+    expect(writes).toBe(1);
+  });
+
+  it("keeps overwrite mode single-shot even under lock contention", async () => {
+    let selections = 0;
+    let writes = 0;
+    const failure = Object.assign(new Error("live owner"), {
+      code: "ATOMIC_OUTPUT_CONCURRENT",
+    });
+    await expect(
+      writePdfDownloadAtomic(path.join(TMP_DIR, "overwrite-contention.pdf"), Buffer.from("%PDF-1.7"), {
+        overwrite: true,
+        findUniquePathFn: async target => {
+          selections++;
+          return target;
+        },
+        writePdfOutputAtomicFn: async () => {
+          writes++;
+          throw failure;
+        },
+      }),
+    ).rejects.toBe(failure);
+    expect(selections).toBe(0);
+    expect(writes).toBe(1);
+  });
+
+  it("rejects invalid retry bounds before selecting a path", async () => {
     let selected = false;
     await expect(
       writePdfDownloadAtomic(path.join(TMP_DIR, "invalid-bound.pdf"), Buffer.from("%PDF-1.7"), {
-        maxAttempts: 0,
+        maxFilenameCollisions: 0,
         findUniquePathFn: async target => {
           selected = true;
           return target;
         },
       }),
-    ).rejects.toThrow(/positive safe integer/);
+    ).rejects.toThrow(/maxFilenameCollisions/);
+    await expect(
+      writePdfDownloadAtomic(path.join(TMP_DIR, "invalid-timeout.pdf"), Buffer.from("%PDF-1.7"), {
+        contentionTimeoutMs: -1,
+      }),
+    ).rejects.toThrow(/contentionTimeoutMs/);
+    await expect(
+      writePdfDownloadAtomic(path.join(TMP_DIR, "oversized-bound.pdf"), Buffer.from("%PDF-1.7"), {
+        maxFilenameCollisions: 1_000,
+      }),
+    ).rejects.toThrow(/1 to 999/);
     expect(selected).toBe(false);
   });
 });
@@ -240,12 +520,24 @@ describe("downloadPdfFromUrl", () => {
   it("commits ten concurrent same-name downloads to distinct readable PDFs", async () => {
     const destinationDir = path.join(TMP_DIR, "concurrent");
     await fs.mkdir(destinationDir);
-    const fetchFn = makeFakeFetch({ body: examplePdfBuffer });
+    const distinctBodies = [];
+    for (let index = 0; index < 10; index++) {
+      const document = await PDFDocument.load(examplePdfBuffer);
+      document.setSubject(`concurrent-download-${index}`);
+      distinctBodies.push(Buffer.from(await document.save()));
+    }
+    let fetchCalls = 0;
 
     const results = await Promise.all(
-      Array.from({ length: 10 }, () => downloadPdfFromUrl(
+      distinctBodies.map(body => downloadPdfFromUrl(
         "https://example.com/concurrent.pdf",
-        { destinationDir, fetchFn },
+        {
+          destinationDir,
+          fetchFn: async (...args) => {
+            fetchCalls++;
+            return makeFakeFetch({ body })(...args);
+          },
+        },
       )),
     );
 
@@ -254,12 +546,14 @@ describe("downloadPdfFromUrl", () => {
       ...Array.from({ length: 9 }, (_, index) => `concurrent (${index + 2}).pdf`),
     ]);
     const resultNames = results.map(result => path.basename(result.path));
+    expect(fetchCalls).toBe(10);
     expect(new Set(resultNames)).toEqual(expectedNames);
     expect(new Set(results.map(result => result.path)).size).toBe(10);
 
-    for (const result of results) {
+    for (let index = 0; index < results.length; index++) {
+      const result = results[index];
       const saved = await fs.readFile(result.path);
-      expect(saved.equals(examplePdfBuffer)).toBe(true);
+      expect(saved.equals(distinctBodies[index])).toBe(true);
       const parsed = await PDFDocument.load(saved);
       expect(parsed.getPageCount()).toBeGreaterThan(0);
     }
@@ -267,6 +561,132 @@ describe("downloadPdfFromUrl", () => {
     const directoryEntries = await fs.readdir(destinationDir);
     expect(new Set(directoryEntries)).toEqual(expectedNames);
   });
+
+  it("keeps concurrent different basenames unsuffixed", async () => {
+    const destinationDir = path.join(TMP_DIR, "different-basenames");
+    await fs.mkdir(destinationDir);
+    const fetchFn = makeFakeFetch({ body: examplePdfBuffer });
+    const [alpha, beta] = await Promise.all([
+      downloadPdfFromUrl("https://example.com/alpha.pdf", { destinationDir, fetchFn }),
+      downloadPdfFromUrl("https://example.com/beta.pdf", { destinationDir, fetchFn }),
+    ]);
+    expect(path.basename(alpha.path)).toBe("alpha.pdf");
+    expect(path.basename(beta.path)).toBe("beta.pdf");
+    expect(new Set(await fs.readdir(destinationDir))).toEqual(
+      new Set(["alpha.pdf", "beta.pdf"]),
+    );
+  });
+
+  it.runIf(process.platform !== "win32")(
+    "returns the canonical committed path through a destination alias",
+    async () => {
+      const realDirectory = path.join(TMP_DIR, "canonical-real");
+      const aliasDirectory = path.join(TMP_DIR, "canonical-alias");
+      await fs.mkdir(realDirectory);
+      await fs.symlink(realDirectory, aliasDirectory);
+      const policyCalls = [];
+      const result = await downloadPdfFromUrl("https://example.com/canonical.pdf", {
+        destinationDir: aliasDirectory,
+        fetchFn: makeFakeFetch({ body: examplePdfBuffer }),
+        assertPathAllowed: async candidate => {
+          policyCalls.push(candidate);
+        },
+      });
+      expect(result.path).toBe(path.join(await fs.realpath(realDirectory), "canonical.pdf"));
+      expect(policyCalls.length).toBeGreaterThan(0);
+      await expect(fs.readFile(result.path)).resolves.toEqual(examplePdfBuffer);
+    },
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "waits for a child-owned directory lock before committing",
+    async () => {
+      const destinationDir = path.join(TMP_DIR, "child-lock-contention");
+      await fs.mkdir(destinationDir);
+      const holder = await startOutputLockHolder(destinationDir);
+      let contentionWaits = 0;
+      let released = false;
+      try {
+        const committed = await writePdfDownloadAtomic(
+          path.join(destinationDir, "download.pdf"),
+          examplePdfBuffer,
+          {
+            sleepFn: async delayMs => {
+              contentionWaits++;
+              if (!released) {
+                released = true;
+                holder.child.stdin.write("release\n");
+              }
+              await new Promise(resolve => setTimeout(resolve, delayMs));
+            },
+          },
+        );
+        expect(contentionWaits).toBeGreaterThan(0);
+        expect(committed.targetPath).toBe(path.join(destinationDir, "download.pdf"));
+        await expect(fs.readFile(committed.targetPath)).resolves.toEqual(examplePdfBuffer);
+      } finally {
+        if (
+          !released
+          && holder.child.exitCode === null
+          && holder.child.signalCode === null
+        ) {
+          holder.child.stdin.write("release\n");
+        }
+        const outcome = await holder.closed;
+        expect(outcome).toEqual({ code: 0, signal: null });
+      }
+      expect(
+        (await fs.readdir(destinationDir)).filter(name => name.startsWith(".pdf-tools-")),
+      ).toEqual([]);
+    },
+    30_000,
+  );
+
+  it.runIf(process.platform !== "win32")(
+    "resolves a same-directory child-process filename collision",
+    async () => {
+      const destinationDir = path.join(TMP_DIR, "child-process");
+      const barrierPath = path.join(TMP_DIR, "child-process-start");
+      const sourceOne = path.join(TMP_DIR, "child-source-one.pdf");
+      const sourceTwo = path.join(TMP_DIR, "child-source-two.pdf");
+      await fs.mkdir(destinationDir);
+      const documentOne = await PDFDocument.load(examplePdfBuffer);
+      documentOne.setSubject("child-one");
+      const documentTwo = await PDFDocument.load(examplePdfBuffer);
+      documentTwo.setSubject("child-two");
+      const bodyOne = Buffer.from(await documentOne.save());
+      const bodyTwo = Buffer.from(await documentTwo.save());
+      await fs.writeFile(sourceOne, bodyOne);
+      await fs.writeFile(sourceTwo, bodyTwo);
+      const targetPath = path.join(destinationDir, "child.pdf");
+
+      let one;
+      let two;
+      let results;
+      try {
+        one = await startDownloadWriteChild(targetPath, sourceOne, barrierPath);
+        two = await startDownloadWriteChild(targetPath, sourceTwo, barrierPath);
+        await fs.writeFile(barrierPath, "start");
+        results = await Promise.all([one.result, two.result]);
+      } finally {
+        await Promise.all([killAndReapChild(one), killAndReapChild(two)]);
+      }
+
+      expect(new Set(results.map(result => path.basename(result.targetPath)))).toEqual(
+        new Set(["child.pdf", "child (2).pdf"]),
+      );
+      const committedBodies = await Promise.all(
+        results.map(result => fs.readFile(result.targetPath)),
+      );
+      expect(
+        new Set(committedBodies.map(body => body.toString("base64"))),
+      ).toEqual(new Set([bodyOne.toString("base64"), bodyTwo.toString("base64")]));
+      expect(new Set(await fs.readdir(destinationDir))).toEqual(
+        new Set(["child.pdf", "child (2).pdf"]),
+      );
+    },
+    30_000,
+  );
 
   it("overwrites when overwrite=true", async () => {
     const p = path.join(TMP_DIR, "overwrite.pdf");

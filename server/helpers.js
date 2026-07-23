@@ -3084,7 +3084,21 @@ export async function findUniquePath(target) {
   throw new Error(`Could not find a unique filename for ${target}`);
 }
 
-const DEFAULT_PDF_DOWNLOAD_COMMIT_ATTEMPTS = 100;
+const PDF_DOWNLOAD_FILENAME_NAMESPACE_SIZE = 999;
+const DEFAULT_PDF_DOWNLOAD_CONTENTION_TIMEOUT_MS = 30_000;
+const PDF_DOWNLOAD_CONTENTION_INITIAL_DELAY_MS = 5;
+const PDF_DOWNLOAD_CONTENTION_MAX_DELAY_MS = 50;
+const PDF_DOWNLOAD_CONTENTION_CODES = new Set([
+  "ATOMIC_OUTPUT_CONCURRENT",
+  "ATOMIC_OUTPUT_LOCK_FAILED",
+]);
+
+function pdfDownloadRetryExhausted(code, message, cause) {
+  const error = new Error(message);
+  error.code = code;
+  error.cause = cause;
+  return error;
+}
 
 /**
  * Commit fetched PDF bytes without clobbering a concurrent download.
@@ -3097,12 +3111,24 @@ const DEFAULT_PDF_DOWNLOAD_COMMIT_ATTEMPTS = 100;
 export async function writePdfDownloadAtomic(targetPath, bytes, {
   assertPathAllowed = async () => {},
   overwrite = false,
-  maxAttempts = DEFAULT_PDF_DOWNLOAD_COMMIT_ATTEMPTS,
+  maxFilenameCollisions = PDF_DOWNLOAD_FILENAME_NAMESPACE_SIZE,
+  contentionTimeoutMs = DEFAULT_PDF_DOWNLOAD_CONTENTION_TIMEOUT_MS,
   findUniquePathFn = findUniquePath,
   writePdfOutputAtomicFn = writePdfOutputAtomic,
+  nowFn = () => performance.now(),
+  sleepFn = delayMs => new Promise(resolve => setTimeout(resolve, delayMs)),
 } = {}) {
-  if (!Number.isSafeInteger(maxAttempts) || maxAttempts < 1) {
-    throw new RangeError("maxAttempts must be a positive safe integer.");
+  if (
+    !Number.isSafeInteger(maxFilenameCollisions)
+    || maxFilenameCollisions < 1
+    || maxFilenameCollisions > PDF_DOWNLOAD_FILENAME_NAMESPACE_SIZE
+  ) {
+    throw new RangeError(
+      `maxFilenameCollisions must be an integer from 1 to ${PDF_DOWNLOAD_FILENAME_NAMESPACE_SIZE}.`,
+    );
+  }
+  if (!Number.isFinite(contentionTimeoutMs) || contentionTimeoutMs < 0) {
+    throw new RangeError("contentionTimeoutMs must be a non-negative finite number.");
   }
 
   if (overwrite) {
@@ -3112,8 +3138,10 @@ export async function writePdfDownloadAtomic(targetPath, bytes, {
     });
   }
 
-  let lastCollision = null;
-  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+  let filenameCollisions = 0;
+  let contentionWaits = 0;
+  let contentionDeadline = null;
+  while (true) {
     const candidatePath = await findUniquePathFn(targetPath);
     try {
       return await writePdfOutputAtomicFn(candidatePath, bytes, {
@@ -3121,17 +3149,38 @@ export async function writePdfDownloadAtomic(targetPath, bytes, {
         overwrite: false,
       });
     } catch (error) {
-      if (error?.code !== "ATOMIC_OUTPUT_TARGET_EXISTS") throw error;
-      lastCollision = error;
+      if (error?.code === "ATOMIC_OUTPUT_TARGET_EXISTS") {
+        filenameCollisions++;
+        if (filenameCollisions >= maxFilenameCollisions) {
+          throw pdfDownloadRetryExhausted(
+            "PDF_DOWNLOAD_UNIQUE_PATH_RETRY_EXHAUSTED",
+            `Could not commit a unique PDF filename after ${filenameCollisions} locked candidate collisions: ${targetPath}`,
+            error,
+          );
+        }
+        continue;
+      }
+      if (!PDF_DOWNLOAD_CONTENTION_CODES.has(error?.code)) throw error;
+
+      const now = nowFn();
+      contentionDeadline ??= now + contentionTimeoutMs;
+      const remainingMs = contentionDeadline - now;
+      if (remainingMs <= 0) {
+        throw pdfDownloadRetryExhausted(
+          "PDF_DOWNLOAD_OUTPUT_CONTENTION_TIMEOUT",
+          `Timed out waiting to commit a downloaded PDF in the output directory: ${path.dirname(targetPath)}`,
+          error,
+        );
+      }
+      const delayMs = Math.min(
+        remainingMs,
+        PDF_DOWNLOAD_CONTENTION_MAX_DELAY_MS,
+        PDF_DOWNLOAD_CONTENTION_INITIAL_DELAY_MS * (2 ** Math.min(contentionWaits, 4)),
+      );
+      contentionWaits++;
+      await sleepFn(delayMs);
     }
   }
-
-  const error = new Error(
-    `Could not commit a unique PDF filename after ${maxAttempts} attempts: ${targetPath}`,
-  );
-  error.code = "PDF_DOWNLOAD_UNIQUE_PATH_RETRY_EXHAUSTED";
-  error.cause = lastCollision;
-  throw error;
 }
 
 // Detect loopback, link-local, and RFC1918 private hostnames/IPs.
