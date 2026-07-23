@@ -411,6 +411,96 @@ async function assertBoundOutputParent(binding) {
   }
 }
 
+async function commitMarkdownOutputInAnchoredProcess({
+  outputBinding,
+  markdownBytes,
+  overwrite,
+  sourcePath,
+  sourceCanonicalPath,
+  sourceSha256,
+  sourceSizeBytes,
+  sourceFileIdentity,
+}) {
+  const childPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "markdown-output-transaction.js");
+  const request = {
+    protocol_version: 1,
+    target_name: path.basename(outputBinding.targetPath),
+    markdown_base64: markdownBytes.toString("base64"),
+    overwrite,
+    parent_identity: outputBinding.parentIdentity,
+    source_path: sourcePath,
+    source_canonical_path: sourceCanonicalPath,
+    source_sha256: sourceSha256,
+    source_size_bytes: sourceSizeBytes,
+    source_file_identity: sourceFileIdentity,
+    allowed_directories: ALLOWED_DIRECTORIES.map(directory => directory.canonical),
+  };
+
+  return await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [childPath], {
+      cwd: outputBinding.parentPath,
+      env: { PATH: process.env.PATH ?? "" },
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const stdout = [];
+    const stderr = [];
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let timedOut = false;
+    let settled = false;
+    const finish = (callback, value) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      callback(value);
+    };
+    const timeout = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, 60_000);
+    child.on("error", error => finish(reject, error));
+    child.stdout.on("data", chunk => {
+      stdoutBytes += chunk.length;
+      if (stdoutBytes > 1024 * 1024) {
+        child.kill("SIGKILL");
+        return;
+      }
+      stdout.push(chunk);
+    });
+    child.stderr.on("data", chunk => {
+      stderrBytes += chunk.length;
+      if (stderrBytes <= 64 * 1024) stderr.push(chunk);
+    });
+    child.on("close", code => {
+      if (settled) return;
+      if (timedOut) {
+        finish(reject, new Error("Markdown output transaction timed out after 60 seconds."));
+        return;
+      }
+      let response;
+      try {
+        response = JSON.parse(Buffer.concat(stdout).toString("utf8"));
+      } catch (error) {
+        const diagnostic = Buffer.concat(stderr).toString("utf8").trim().slice(0, 1000);
+        finish(reject, new Error(
+          `Markdown output transaction returned invalid evidence${diagnostic ? `: ${diagnostic}` : "."}`,
+          { cause: error },
+        ));
+        return;
+      }
+      if (code !== 0 || response?.ok !== true) {
+        const error = new Error(response?.error?.message ?? "Markdown output transaction failed.");
+        error.code = response?.error?.code ?? "MARKDOWN_OUTPUT_TRANSACTION_FAILED";
+        finish(reject, error);
+        return;
+      }
+      finish(resolve, response.saved_output);
+    });
+    child.stdin.on("error", () => {});
+    child.stdin.end(JSON.stringify(request));
+  });
+}
+
 const stderrSuppressor = createScopedStderrSuppressor();
 
 async function withSuppressedStderr(action) {
@@ -772,7 +862,6 @@ import {
   copyPdfPagesPreservingForms,
   copyPdfDocumentMetadata,
   recoverPdfOutputTransactions,
-  writeOutputAtomic,
   writePdfOutputAtomic,
   writePdfOutputsAtomic,
 } from "./helpers.js";
@@ -4217,6 +4306,7 @@ async function handleToolCall(request) {
           const {
             bytes: pdfBytes,
             sizeBytes,
+            canonicalPath: sourceCanonicalPath,
             fileIdentity: sourceFileIdentity,
           } = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
           const sourceSha256 = createHash("sha256").update(pdfBytes).digest("hex");
@@ -4244,82 +4334,17 @@ async function handleToolCall(request) {
           let savedOutput = null;
           if (outputBinding) {
             await assertBoundOutputParent(outputBinding);
-            const transactionOutputPath = outputBinding.targetPath;
             const markdownBytes = Buffer.from(rendered.markdown, "utf8");
-            let verifiedOutput = null;
-            const transaction = await writeOutputAtomic(transactionOutputPath, markdownBytes, {
+            savedOutput = await commitMarkdownOutputInAnchoredProcess({
+              outputBinding,
+              markdownBytes,
               overwrite,
-              validateInitialTargets: async ([target]) => {
-                await assertBoundOutputParent(outputBinding);
-                const currentSource = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
-                const currentSha256 = createHash("sha256").update(currentSource.bytes).digest("hex");
-                if (
-                  currentSource.sizeBytes !== sizeBytes
-                  || currentSha256 !== sourceSha256
-                  || !sameStableFileIdentity(currentSource.fileIdentity, sourceFileIdentity)
-                ) {
-                  throw new Error("The source PDF changed before the Markdown transaction. No output was written.");
-                }
-                if (target?.exists && sameStableFileIdentity(target.fileIdentity, sourceFileIdentity)) {
-                  throw new Error("output_path resolves to the same file as the source PDF. Choose a different .md path.");
-                }
-              },
-              verifyActivatedTargets: async ([target]) => {
-                if (target?.targetPath !== transactionOutputPath) {
-                  throw new Error("The Markdown transaction verified an unexpected output path.");
-                }
-                await assertBoundOutputParent(outputBinding);
-                let outputHandle = null;
-                let reopened;
-                try {
-                  const noFollow = fsConstants.O_NOFOLLOW ?? 0;
-                  outputHandle = await fs.open(transactionOutputPath, fsConstants.O_RDONLY | noFollow);
-                  const outputStats = await outputHandle.stat();
-                  if (!outputStats.isFile()) throw new Error("The committed Markdown output is not a regular file.");
-                  reopened = await outputHandle.readFile();
-                } finally {
-                  await outputHandle?.close().catch(() => {});
-                }
-                let reopenedText;
-                try {
-                  reopenedText = new TextDecoder("utf-8", { fatal: true }).decode(reopened);
-                } catch (error) {
-                  throw new Error("The saved Markdown is not valid UTF-8.", { cause: error });
-                }
-                if (reopenedText !== rendered.markdown || !reopened.equals(markdownBytes)) {
-                  throw new Error("The saved Markdown did not reopen as the exact UTF-8 conversion bytes.");
-                }
-                const sourceAfter = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
-                const sourceAfterSha256 = createHash("sha256").update(sourceAfter.bytes).digest("hex");
-                if (
-                  sourceAfter.sizeBytes !== sizeBytes
-                  || sourceAfterSha256 !== sourceSha256
-                  || !sameStableFileIdentity(sourceAfter.fileIdentity, sourceFileIdentity)
-                ) {
-                  throw new Error("The source PDF changed while the Markdown output was being verified.");
-                }
-                const canonicalOutputPath = await fs.realpath(transactionOutputPath);
-                assertPathAllowed(canonicalOutputPath);
-                if (canonicalOutputPath !== transactionOutputPath) {
-                  throw new Error("The committed Markdown output path changed during verification.");
-                }
-                verifiedOutput = {
-                  path: canonicalOutputPath,
-                  encoding: "utf-8",
-                  bytes: reopened.length,
-                  sha256: createHash("sha256").update(reopened).digest("hex"),
-                  commit_method: "same_directory_atomic",
-                  reopened_verified: true,
-                };
-              },
+              sourcePath: resolvedPath,
+              sourceCanonicalPath,
+              sourceSha256,
+              sourceSizeBytes: sizeBytes,
+              sourceFileIdentity,
             });
-            if (!verifiedOutput) {
-              throw new Error("The Markdown transaction committed without verified output evidence.");
-            }
-            savedOutput = {
-              ...verifiedOutput,
-              overwritten: transaction.replacedExisting,
-            };
           }
 
           const payload = { ...rendered, saved_output: savedOutput };

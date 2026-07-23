@@ -215,6 +215,7 @@ describe("MCPB static declarations", () => {
       "output-schemas.js",
       "layout-extraction.js",
       "markdown-conversion.js",
+      "markdown-output-transaction.js",
       "resource-uri.js",
       "stderr-suppression.js",
     ]) {

@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   writePdfOutputAtomic,
@@ -9,6 +11,8 @@ import {
 import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 let tempDir;
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const ANCHORED_CHILD = path.join(REPO_ROOT, "test/helpers/atomic-output-anchored-child.mjs");
 
 function injectedError(code, operation) {
   const error = new Error(`Injected ${operation} failure`);
@@ -93,6 +97,22 @@ async function expectNoTransactionArtifacts() {
   expect(entries.filter(name => name.includes(".pdf-tools-")).sort()).toEqual([]);
 }
 
+async function runAnchoredChild(original, moved, outside) {
+  return await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [ANCHORED_CHILD, original, moved, outside], {
+      cwd: original,
+      stdio: ["ignore", "ignore", "pipe"],
+    });
+    const stderr = [];
+    child.stderr.on("data", chunk => stderr.push(chunk));
+    child.on("error", reject);
+    child.on("close", code => resolve({
+      code,
+      stderr: Buffer.concat(stderr).toString("utf8"),
+    }));
+  });
+}
+
 beforeEach(async () => {
   tempDir = await createTestTempDirectory(process.cwd(), "atomic-output");
 });
@@ -171,26 +191,34 @@ describe("atomic PDF output commits", () => {
 
   it("does not clobber a target created after the final absence check", async () => {
     const target = path.join(tempDir, "late-no-overwrite.pdf");
+    let externalIdentity = null;
     await expect(writePdfOutputAtomic(target, Buffer.from("our bytes"), {
       overwrite: false,
       token: "late-no-overwrite",
       fsOps: faultingFs({
         beforeLinkAt: {
           at: 1,
-          run: async () => fs.writeFile(target, "external bytes"),
+          run: async () => {
+            await fs.writeFile(target, "our bytes");
+            const stats = await fs.lstat(target);
+            externalIdentity = { dev: stats.dev, ino: stats.ino };
+          },
         },
       }),
     })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_CONFLICT" });
 
-    await expect(fs.readFile(target, "utf8")).resolves.toBe("external bytes");
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("our bytes");
+    const retainedStats = await fs.lstat(target);
+    expect({ dev: retainedStats.dev, ino: retainedStats.ino }).toEqual(externalIdentity);
     await expectNoTransactionArtifacts();
   });
 
   it("preserves source bytes moved into an absent target at activation time", async () => {
     const source = path.join(tempDir, "protected-source.pdf");
     const target = path.join(tempDir, "late-source-alias.md");
-    const sourceBytes = Buffer.from("protected source bytes");
+    const sourceBytes = Buffer.from("Markdown bytes");
     await fs.writeFile(source, sourceBytes);
+    const sourceStats = await fs.lstat(source);
 
     await expect(writePdfOutputAtomic(target, Buffer.from("Markdown bytes"), {
       overwrite: true,
@@ -205,8 +233,29 @@ describe("atomic PDF output commits", () => {
 
     await expect(fs.stat(source)).rejects.toMatchObject({ code: "ENOENT" });
     await expect(fs.readFile(target)).resolves.toEqual(sourceBytes);
+    const retainedStats = await fs.lstat(target);
+    expect({ dev: retainedStats.dev, ino: retainedStats.ino }).toEqual({
+      dev: sourceStats.dev,
+      ino: sourceStats.ino,
+    });
     await expectNoTransactionArtifacts();
   });
+
+  it.runIf(process.platform !== "win32")("keeps every relative mutation anchored to the child cwd after a parent symlink swap", async () => {
+    const original = path.join(tempDir, "anchored-parent");
+    const moved = path.join(tempDir, "anchored-parent-moved");
+    const outside = path.join(tempDir, "anchored-outside");
+    await fs.mkdir(original);
+    await fs.mkdir(outside);
+
+    const result = await runAnchoredChild(original, moved, outside);
+    expect(result.code, result.stderr).toBe(0);
+    await expect(fs.readFile(path.join(moved, "anchored.md"), "utf8")).resolves.toBe("anchored Markdown bytes");
+    await expect(fs.access(path.join(outside, "anchored.md"))).rejects.toMatchObject({ code: "ENOENT" });
+    await expect(fs.realpath(original)).resolves.toBe(outside);
+    expect((await fs.readdir(moved)).filter(name => name.includes(".pdf-tools-"))).toEqual([]);
+    expect((await fs.readdir(outside)).filter(name => name.includes(".pdf-tools-"))).toEqual([]);
+  }, 30_000);
 
   it("exposes the locked initial target identity to validation before staging", async () => {
     const target = path.join(tempDir, "identity.pdf");

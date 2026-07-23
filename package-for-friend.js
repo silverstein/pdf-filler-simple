@@ -29,6 +29,7 @@ const SHARE_FILES = [
   "server/index.js",
   "server/layout-extraction.js",
   "server/markdown-conversion.js",
+  "server/markdown-output-transaction.js",
   "server/output-schemas.js",
   "server/resource-uri.js",
   "server/stderr-suppression.js",
@@ -343,6 +344,10 @@ async function syncSharePackage() {
     fs.copyFile(
       path.join(PROJECT_ROOT, "server", "markdown-conversion.js"),
       path.join(shareServerDir, "markdown-conversion.js"),
+    ),
+    fs.copyFile(
+      path.join(PROJECT_ROOT, "server", "markdown-output-transaction.js"),
+      path.join(shareServerDir, "markdown-output-transaction.js"),
     ),
     fs.copyFile(path.join(PROJECT_ROOT, "server", "helpers.js"), path.join(shareServerDir, "helpers.js")),
     fs.copyFile(

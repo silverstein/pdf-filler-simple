@@ -489,6 +489,7 @@ async function main() {
       "server/index.js",
       "server/layout-extraction.js",
       "server/markdown-conversion.js",
+      "server/markdown-output-transaction.js",
       "server/output-schemas.js",
       "server/resource-uri.js",
       "server/stderr-suppression.js",

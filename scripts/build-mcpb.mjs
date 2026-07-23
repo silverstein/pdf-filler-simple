@@ -47,6 +47,7 @@ const SERVER_FILES = [
   "index.js",
   "layout-extraction.js",
   "markdown-conversion.js",
+  "markdown-output-transaction.js",
   "output-schemas.js",
   "resource-uri.js",
   "stderr-suppression.js",

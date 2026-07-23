@@ -226,6 +226,24 @@ describe("durable PDF output transaction recovery", () => {
     await expectNoTransactionArtifacts(allNewCommitted);
   }, 30_000);
 
+  it("recovers a legacy v1 activating journal whose activated stage was renamed away", async () => {
+    const directoryPath = await makeTransactionDirectory("legacy-v1-activating");
+    expect((await runCrashChild(directoryPath, "activate_0")).code).toBe(86);
+    const journalName = (await fs.readdir(directoryPath)).find(name => name.endsWith("-transaction.json"));
+    expect(journalName).toEqual(expect.any(String));
+    const journalPath = path.join(directoryPath, journalName);
+    const envelope = JSON.parse(await fs.readFile(journalPath, "utf8"));
+    envelope.payload.schema_version = 1;
+    envelope.payload_sha256 = sha256(JSON.stringify(envelope.payload));
+    await fs.unlink(path.join(directoryPath, envelope.payload.entries[0].stage));
+    await fs.writeFile(journalPath, `${JSON.stringify(envelope)}\n`, { mode: 0o600 });
+
+    await recoverPdfOutputTransactions(directoryPath);
+    await expect(fs.readFile(path.join(directoryPath, "first.pdf"), "utf8")).resolves.toBe("first original");
+    await expect(fs.readFile(path.join(directoryPath, "second.pdf"), "utf8")).resolves.toBe("second original");
+    await expectNoTransactionArtifacts(directoryPath);
+  }, 30_000);
+
   it("cleans an incomplete dead-process output-lock candidate", async () => {
     const directoryPath = await makeTransactionDirectory("partial-lock-candidate");
     const deadPid = await exitedProcessId();
