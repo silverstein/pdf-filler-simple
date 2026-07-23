@@ -188,6 +188,10 @@ describe("cross-host PDF Tools workflow contract", () => {
     expect(skill).toMatch(/Reserve `NO_MUTATION` for a mutation stopped by missing required artifact/i);
     expect(skill).toMatch(/do not list unrelated tools as prohibited/i);
     expect(skill).toMatch(/ready form fill plans `fill_pdf` followed by `read_pdf_fields`/i);
+    const hostWorkflowGuide = await readText("docs/AGENT_HOST_WORKFLOWS.md");
+    expect(hostWorkflowGuide).toContain("eval-attest-agent-workflow-arm.mjs");
+    expect(hostWorkflowGuide).toContain("eval-validate-agent-workflow-events.mjs");
+    expect(hostWorkflowGuide).toMatch(/shell and unified execution remain disabled/i);
 
     expect(workflow.identity.source_must_remain_unchanged).toBe(true);
     expect(workflow.identity.output_must_be_distinct).toBe(true);
@@ -354,6 +358,8 @@ describe("cross-host PDF Tools workflow contract", () => {
       "test/fixtures/eval/agent-workflows/planning-cases.v1.json",
       "test/fixtures/eval/agent-workflows/planning-response.schema.json",
       "test/fixtures/eval/agent-workflows/planning-rubric.v1.txt",
+      "scripts/eval-attest-agent-workflow-arm.mjs",
+      "scripts/eval-validate-agent-workflow-events.mjs",
     ];
     for (const relativePath of publicArtifacts) {
       const contents = await readText(relativePath);

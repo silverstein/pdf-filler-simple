@@ -3,6 +3,7 @@
 import { createHash } from "node:crypto";
 import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
@@ -45,6 +46,11 @@ const EXPLICIT_CODEX_ARMS = new Set([
   "codex-explicit-skill",
   "codex-explicit-baseline",
 ]);
+const SYNTHETIC_GIT_ENV = {
+  GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+  GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+};
+const SYNTHETIC_GIT_MESSAGE = "Synthetic participant arm";
 
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -90,11 +96,65 @@ async function inventory(root) {
   };
 }
 
+async function syntheticGitIdentity(root) {
+  const temporaryRoot = await fs.mkdtemp(path.join(
+    os.tmpdir(),
+    "pdf-tools-agent-workflow-git-",
+  ));
+  try {
+    await execFileAsync("git", ["init", "-q", temporaryRoot]);
+    for (const entry of await fs.readdir(root)) {
+      await fs.cp(
+        path.join(root, entry),
+        path.join(temporaryRoot, entry),
+        { recursive: true },
+      );
+    }
+    await execFileAsync("git", ["add", "-A"], { cwd: temporaryRoot });
+    await execFileAsync("git", [
+      "-c",
+      "user.name=PDF Workflow Eval",
+      "-c",
+      "user.email=eval@invalid.local",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-q",
+      "-m",
+      SYNTHETIC_GIT_MESSAGE,
+    ], {
+      cwd: temporaryRoot,
+      env: { ...process.env, ...SYNTHETIC_GIT_ENV },
+    });
+    const [{ stdout: commit }, { stdout: tree }] = await Promise.all([
+      execFileAsync("git", ["rev-parse", "HEAD"], {
+        cwd: temporaryRoot,
+        encoding: "utf8",
+      }),
+      execFileAsync("git", ["rev-parse", "HEAD^{tree}"], {
+        cwd: temporaryRoot,
+        encoding: "utf8",
+      }),
+    ]);
+    return {
+      expected_commit_sha1: commit.trim(),
+      expected_tree_sha1: tree.trim(),
+      author_name: "PDF Workflow Eval",
+      author_email: "eval@invalid.local",
+      author_and_committer_date: SYNTHETIC_GIT_ENV.GIT_AUTHOR_DATE,
+      commit_message: SYNTHETIC_GIT_MESSAGE,
+      parent_count: 0,
+    };
+  } finally {
+    await fs.rm(temporaryRoot, { recursive: true, force: true });
+  }
+}
+
 function participantPrompt(testCase, rubric, { explicitSkill = false } = {}) {
   const lines = [
     "This is a synthetic planning-only evaluation.",
     explicitSkill
-      ? "The host may load only the explicitly named pdf-tools-workflow skill. Do not call PDF, network, task, or other tools, and do not execute any operation."
+      ? "The host may natively load only the exact named pdf-tools-workflow SKILL.md. No model-callable tool use is permitted. Do not call PDF, filesystem, shell, network, task, or other tools, and do not execute any operation."
       : "Do not call tools, inspect files, or execute any operation.",
     "Return only one JSON object matching response-schema.json.",
     "Account for all seven workflow stages in order.",
@@ -218,6 +278,15 @@ export async function prepareAgentWorkflowCampaign({
     { recursive: true, errorOnExist: true, force: false },
   );
 
+  const armAttestations = {};
+  for (const arm of ARM_NAMES) {
+    const armRoot = path.join(participantsRoot, arm);
+    armAttestations[arm] = {
+      content_inventory: await inventory(armRoot),
+      synthetic_git: await syntheticGitIdentity(armRoot),
+    };
+  }
+
   const oracle = {
     schema_version: cases.schema_version,
     source_commit: sourceCommit,
@@ -241,6 +310,7 @@ export async function prepareAgentWorkflowCampaign({
     claim_boundary: "Prompt-only participant roots and the trusted oracle have independent destinations. Transfer only the participant root to a model host. This preparation does not run or validate a model host.",
     arm_names: ARM_NAMES,
     participant_inventory: await inventory(participantsRoot),
+    arm_attestations: armAttestations,
     oracle_sha256: sha256(await fs.readFile(path.join(trustedRoot, "oracle.json"))),
   };
   await writePrivate(

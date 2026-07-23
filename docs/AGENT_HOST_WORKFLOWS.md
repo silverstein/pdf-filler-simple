@@ -167,8 +167,11 @@ synthetic Git repository containing only the selected participant arm:
 ```bash
 git init
 git add .
-git -c user.name="PDF Workflow Eval" \
+GIT_AUTHOR_DATE="2000-01-01T00:00:00Z" \
+  GIT_COMMITTER_DATE="2000-01-01T00:00:00Z" \
+  git -c user.name="PDF Workflow Eval" \
   -c user.email="eval@invalid.local" \
+  -c commit.gpgsign=false \
   commit -m "Synthetic participant arm"
 mkdir -p results
 : "${PDF_WORKFLOW_CODEX_HOME:?set this to the clean trial home}"
@@ -200,9 +203,11 @@ CODEX_HOME="$PDF_WORKFLOW_CODEX_HOME" codex exec \
   --disable plugins \
   --disable remote_plugin \
   --disable request_permissions_tool \
+  --disable shell_tool \
   --disable skill_mcp_dependency_install \
   --disable tool_call_mcp_elicitation \
   --disable tool_suggest \
+  --disable unified_exec \
   --disable workspace_dependencies \
   - < prompts/missing-identity-fails-closed.txt \
   > results/missing-identity-fails-closed.events.jsonl
@@ -210,12 +215,30 @@ CODEX_HOME="$PDF_WORKFLOW_CODEX_HOME" codex exec \
 
 The explicit skill and explicit baseline prompts are byte-identical and both
 contain the literal `$pdf-tools-workflow` mention. Only the skill arm contains
-that local skill. Shell and unified execution remain available solely because
-the host uses its read path for progressive skill loading. The read-only
-sandbox and participant-only root prevent mutation and oracle access. Reject a
-trial if its event stream contains a task, PDF, network, or unrelated file
-operation. Record `codex debug prompt-input` output to prove the effective skill
-inventory without inferring it from token counts.
+that local skill. Codex resolves the explicit mention through its native skill
+loader while shell and unified execution remain disabled. Require an event
+stream containing no model-callable tool item. Record `codex debug prompt-input`
+output to prove the effective skill inventory without inferring it from token
+counts.
+
+Before creating `results/`, copy the exact
+`scripts/eval-attest-agent-workflow-arm.mjs` controller utility to a separate
+operator-only path on the model host. Run it with the expected commit, Git tree,
+and content-tree values from the trusted preparation manifest. It fails unless
+the repository has the exact deterministic root commit, one parentless commit,
+the expected tracked-file inventory, the expected SHA-256 content tree, and a
+clean status. Keep the attestation with the raw arm evidence.
+
+After transferring raw event streams back to the controller, run:
+
+```bash
+node scripts/eval-validate-agent-workflow-events.mjs \
+  results/*.events.jsonl
+```
+
+This validator fails closed on command execution, tool calls, unknown event
+types, malformed JSONL, duplicate lifecycle events, or missing lifecycle
+events. Apply the same validator to skill and baseline arms.
 
 Before every arm, retain a negative isolation probe showing that neither an
 oracle nor the source repository exists on the model host, plus the effective

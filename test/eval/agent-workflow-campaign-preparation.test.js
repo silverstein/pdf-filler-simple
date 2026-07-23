@@ -1,9 +1,12 @@
 import { createHash } from "node:crypto";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
+import { attestAgentWorkflowArm } from "../../scripts/eval-attest-agent-workflow-arm.mjs";
 import { prepareAgentWorkflowCampaign } from "../../scripts/eval-prepare-agent-workflow-campaign.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -11,6 +14,7 @@ const REVIEWED_RUBRIC_SOURCE_SHA256 =
   "b0dc68aa961c8f0f2eb3ef197b96762323ffdcc4afc52bdbcd54b2373fcff642";
 const REVIEWED_RUBRIC_EMBEDDED_SHA256 =
   "c194c1817d07fb9813128f3ef4b31e7229b3b6d5e33b6a0e8c424feda070dd76";
+const execFileAsync = promisify(execFile);
 const temporaryRoots = [];
 
 function sha256(value) {
@@ -116,7 +120,8 @@ describe("agent workflow campaign preparation", () => {
       "missing-identity-fails-closed.txt",
     ), "utf8");
     expect(explicitPrompt).toContain("$pdf-tools-workflow");
-    expect(explicitPrompt).toContain("may load only the explicitly named");
+    expect(explicitPrompt).toContain("may natively load only the exact named");
+    expect(explicitPrompt).toContain("No model-callable tool use is permitted");
     expect(await fs.readFile(path.join(
       participants,
       "codex-explicit-baseline",
@@ -154,6 +159,53 @@ describe("agent workflow campaign preparation", () => {
       "codex-explicit-baseline",
       ".agents",
     ))).rejects.toMatchObject({ code: "ENOENT" });
+
+    const explicitSkillRoot = path.join(participants, "codex-explicit-skill");
+    const expectedAttestation = manifest.arm_attestations["codex-explicit-skill"];
+    await execFileAsync("git", ["init", "-q"], { cwd: explicitSkillRoot });
+    await execFileAsync("git", ["add", "-A"], { cwd: explicitSkillRoot });
+    await execFileAsync("git", [
+      "-c",
+      "user.name=PDF Workflow Eval",
+      "-c",
+      "user.email=eval@invalid.local",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-q",
+      "-m",
+      "Synthetic participant arm",
+    ], {
+      cwd: explicitSkillRoot,
+      env: {
+        ...process.env,
+        GIT_AUTHOR_DATE: "2000-01-01T00:00:00Z",
+        GIT_COMMITTER_DATE: "2000-01-01T00:00:00Z",
+      },
+    });
+    expect(await attestAgentWorkflowArm({
+      armRoot: explicitSkillRoot,
+      expectedCommitSha1: expectedAttestation.synthetic_git.expected_commit_sha1,
+      expectedTreeSha1: expectedAttestation.synthetic_git.expected_tree_sha1,
+      expectedContentTreeSha256: expectedAttestation.content_inventory.tree_sha256,
+    })).toMatchObject({
+      pass: true,
+      commit_count: 1,
+      parent_count: 0,
+      clean: true,
+    });
+
+    await fs.appendFile(path.join(
+      explicitSkillRoot,
+      "prompts",
+      "missing-identity-fails-closed.txt",
+    ), "\nchanged after attestation\n");
+    expect((await attestAgentWorkflowArm({
+      armRoot: explicitSkillRoot,
+      expectedCommitSha1: expectedAttestation.synthetic_git.expected_commit_sha1,
+      expectedTreeSha1: expectedAttestation.synthetic_git.expected_tree_sha1,
+      expectedContentTreeSha256: expectedAttestation.content_inventory.tree_sha256,
+    })).pass).toBe(false);
   });
 
   it("refuses relative, repository-contained, and nested destinations", async () => {
