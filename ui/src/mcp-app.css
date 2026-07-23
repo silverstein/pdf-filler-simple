@@ -854,6 +854,11 @@ body {
   background: rgba(217, 119, 6, 0.09);
 }
 
+.sig-zone[data-type="name"] {
+  background: rgba(5, 150, 105, 0.08);
+  border-color: #059669;
+}
+
 .sig-zone[data-type="date"] {
   border-color: #6b7280;
   background: rgba(107, 114, 128, 0.08);
@@ -867,6 +872,11 @@ body {
 .sig-zone[data-type="initials"]:hover {
   background: rgba(217, 119, 6, 0.2);
   box-shadow: 0 0 0 1px #d97706;
+}
+
+.sig-zone[data-type="name"]:hover {
+  background: rgba(5, 150, 105, 0.20);
+  box-shadow: 0 0 0 1px #059669;
 }
 
 .sig-zone[data-type="date"]:hover {
@@ -1037,6 +1047,10 @@ body {
   letter-spacing: 0.02em;
 }
 
+.sig-zone-preview-text.name {
+  font-style: normal;
+}
+
 .sig-zone-preview-image {
   position: relative;
   z-index: 1;
@@ -1139,6 +1153,7 @@ body {
 
 .sign-panel-item-type[data-type="signature"] { background: rgba(59, 130, 246, 0.15); color: #3b82f6; }
 .sign-panel-item-type[data-type="initials"]  { background: rgba(217, 119, 6, 0.15);  color: #d97706; }
+.sign-panel-item-type[data-type="name"]      { background: rgba(5, 150, 105, 0.15);  color: #059669; }
 .sign-panel-item-type[data-type="date"]      { background: rgba(107, 114, 128, 0.15); color: #6b7280; }
 
 .sign-panel-item-page {
@@ -1200,6 +1215,7 @@ body {
 
 .sign-legend-swatch.sign-legend-signature { background: rgba(59, 130, 246, 0.25); border: 1px dashed #3b82f6; }
 .sign-legend-swatch.sign-legend-initials  { background: rgba(217, 119, 6, 0.25);  border: 1px dashed #d97706; }
+.sign-legend-swatch.sign-legend-name      { background: rgba(5, 150, 105, 0.25);  border: 1px dashed #059669; }
 .sign-legend-swatch.sign-legend-date      { background: rgba(107, 114, 128, 0.25); border: 1px dashed #6b7280; }
 
 /* Signature confirm modal */

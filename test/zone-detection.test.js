@@ -1,10 +1,11 @@
 import { describe, it, expect, beforeAll } from "vitest";
-import { PDFDocument, StandardFonts } from "pdf-lib";
+import { PDFDocument, PDFName, StandardFonts } from "pdf-lib";
 import fs from "fs/promises";
 import path from "path";
 import { fileURLToPath } from "url";
 import {
   computeIoU,
+  dedupeOverlappingZones,
   extractPdfTextWithBounds,
   detectSignatureZones,
   scanPageForLabels,
@@ -80,6 +81,75 @@ describe("computeIoU", () => {
       { x: 10, y: 10, width: 10, height: 10 }
     );
     expect(iou).toBeCloseTo(0.01, 6);
+  });
+});
+
+describe("signature-zone label taxonomy", () => {
+  function scanLabels(labels) {
+    return scanPageForLabels({
+      page: 1,
+      width: 612,
+      height: 792,
+      items: labels.map((text, index) => ({
+        text,
+        x: 72,
+        y: 100 + index * 50,
+        width: Math.max(40, text.length * 6),
+        height: 10,
+      })),
+    });
+  }
+
+  it("recognizes the bounded signature, printed-name, witness, and date labels", () => {
+    const zones = scanLabels([
+      "Signatures",
+      "Print Name:",
+      "Printed Name",
+      "Witness",
+      "Authorized Signature",
+      "Borrower's Signature",
+      "Borrower’s Signature",
+      "Dated:",
+    ]);
+    expect(zones.map(zone => [zone.label, zone.type])).toEqual([
+      ["Signatures", "signature"],
+      ["Print Name:", "name"],
+      ["Printed Name", "name"],
+      ["Witness", "signature"],
+      ["Authorized Signature", "signature"],
+      ["Borrower's Signature", "signature"],
+      ["Borrower’s Signature", "signature"],
+      ["Dated:", "date"],
+    ]);
+  });
+
+  it("rejects populated values and instructional prose", () => {
+    expect(scanLabels([
+      "Print Name: Jane",
+      "Dated: 2026",
+      "Witness statements",
+      "Authorized Signature Requirements",
+      "Signature: Jane Doe",
+      "Date: July 23, 2026",
+      "Signatures are required",
+      "Borrower's Signature on file",
+    ])).toEqual([]);
+  });
+});
+
+describe("type-aware signature-zone deduplication", () => {
+  it("drops lower-confidence same-type duplicates while preserving overlapping semantic fields", () => {
+    const base = { page: 1, x: 100, y: 200, width: 200, height: 30, label: "zone", source: "text-heuristic" };
+    const zones = dedupeOverlappingZones([
+      { ...base, type: "signature", confidence: 0.90, label: "high signature" },
+      { ...base, type: "signature", confidence: 0.70, label: "low signature" },
+      { ...base, type: "date", confidence: 0.80, label: "date" },
+      { ...base, type: "name", confidence: 0.75, label: "name" },
+    ]);
+
+    expect(zones).toHaveLength(3);
+    expect(zones.map(zone => zone.type).sort()).toEqual(["date", "name", "signature"]);
+    expect(zones.find(zone => zone.type === "signature")?.label).toBe("high signature");
   });
 });
 
@@ -175,7 +245,7 @@ describe("detectSignatureZones — AcroForm layer", () => {
       expect(zone.y).toBeGreaterThanOrEqual(-5);
       expect(zone.x + zone.width).toBeLessThanOrEqual(pageW + 5);
       expect(zone.y + zone.height).toBeLessThanOrEqual(pageH + 5);
-      expect(["signature", "initials", "date"]).toContain(zone.type);
+      expect(["signature", "initials", "name", "date"]).toContain(zone.type);
       expect(zone.confidence).toBeGreaterThan(0);
       expect(zone.confidence).toBeLessThanOrEqual(1);
       expect(zone.source).toMatch(/^(acroform-|text-heuristic)/);
@@ -266,8 +336,10 @@ describe("detectSignatureZones — AcroForm layer", () => {
     for (let i = 0; i < zones.length; i++) {
       for (let j = i + 1; j < zones.length; j++) {
         if (zones[i].page !== zones[j].page) continue;
-        const iou = computeIoU(zones[i], zones[j]);
-        expect(iou).toBeLessThan(0.4);
+        if (zones[i].type === zones[j].type) {
+          const iou = computeIoU(zones[i], zones[j]);
+          expect(iou).toBeLessThan(0.4);
+        }
       }
     }
   });
@@ -320,6 +392,49 @@ describe("detectSignatureZones — synthetic AcroForm signature field", () => {
     const zones = await detectSignatureZones({ pdfDoc: reloaded, pdfBytes: bytes, pdfjsLib: null });
     expect(zones.length).toBeGreaterThanOrEqual(1);
     expect(zones[0].type).toBe("initials");
+  });
+
+  it("returns a name zone for an explicitly printed-name AcroForm field", async () => {
+    const doc = await PDFDocument.create();
+    doc.addPage([612, 792]);
+    const field = doc.getForm().createTextField("printed_name");
+    field.addToPage(doc.getPages()[0], { x: 50, y: 100, width: 180, height: 20 });
+    const bytes = await doc.save();
+    const reloaded = await PDFDocument.load(bytes);
+    const zones = await detectSignatureZones({ pdfDoc: reloaded, pdfBytes: bytes, pdfjsLib: null });
+    expect(zones).toEqual([
+      expect.objectContaining({
+        type: "name",
+        label: "printed_name",
+        page: 1,
+        source: "acroform-named-field",
+      }),
+    ]);
+  });
+
+  it("skips a widget with no resolvable page and emits only a bounded warning", async () => {
+    const doc = await PDFDocument.create();
+    const page = doc.addPage([612, 792]);
+    const field = doc.getForm().createTextField("Signature1");
+    field.addToPage(page, { x: 100, y: 100, width: 200, height: 30 });
+    const [widget] = field.acroField.getWidgets();
+    widget.dict.delete(PDFName.of("P"));
+    page.node.delete(PDFName.of("Annots"));
+
+    const warnings = [];
+    const zones = await detectSignatureZones({
+      pdfDoc: doc,
+      pdfBytes: await doc.save(),
+      pdfjsLib: null,
+      onWarning: warning => warnings.push(warning),
+    });
+
+    expect(zones).toEqual([]);
+    expect(warnings).toEqual([{
+      code: "ACROFORM_WIDGET_PAGE_UNRESOLVED",
+      message: "Skipped an AcroForm signing widget because its page could not be resolved. No page location was guessed.",
+    }]);
+    expect(JSON.stringify(warnings)).not.toContain("Signature1");
   });
 
   it("does NOT detect unrelated text fields as signatures", async () => {

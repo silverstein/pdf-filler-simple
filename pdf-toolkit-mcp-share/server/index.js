@@ -13,6 +13,7 @@ import {
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
 import {
+  EncryptedPDFError,
   PDFArray,
   PDFCatalog,
   PDFDocument,
@@ -1023,17 +1024,8 @@ function validatePdfPageTree(pdfDoc) {
   }
 }
 
-async function loadPdfBytes(pdfBytes, password = null) {
+function validateLoadedPdfStructure(pdfDoc, pdfBytes) {
   const invalidPdfMessage = "Failed to load PDF: the file is malformed, incomplete, or unsupported.";
-  let pdfDoc;
-  try {
-    pdfDoc = await PDFDocument.load(pdfBytes, password ? { password } : {});
-  } catch (error) {
-    if (error.message?.includes("password") || error.message?.includes("encrypt")) {
-      throw new Error("PDF is password-protected. Please provide the correct password using the 'password' parameter.");
-    }
-    throw new Error(invalidPdfMessage, { cause: error });
-  }
   const structureDigest = sha256Bytes(pdfBytes);
   if (validatedPdfStructureDigests.has(structureDigest)) {
     rememberValidatedPdfStructure(structureDigest);
@@ -1048,10 +1040,64 @@ async function loadPdfBytes(pdfBytes, password = null) {
   return pdfDoc;
 }
 
+async function loadPdfBytes(pdfBytes, password = null) {
+  const invalidPdfMessage = "Failed to load PDF: the file is malformed, incomplete, or unsupported.";
+  let pdfDoc;
+  try {
+    pdfDoc = await PDFDocument.load(pdfBytes, password ? { password } : {});
+  } catch (error) {
+    if (error.message?.includes("password") || error.message?.includes("encrypt")) {
+      throw new Error("PDF is password-protected. Please provide the correct password using the 'password' parameter.");
+    }
+    throw new Error(invalidPdfMessage, { cause: error });
+  }
+  return validateLoadedPdfStructure(pdfDoc, pdfBytes);
+}
+
 async function loadPdf(inputPath, password = null) {
   const { resolvedPath, pdfBytes, inputRecoveryBinding } = await readPdfInputWithRecovery(inputPath);
   const pdfDoc = await loadPdfBytes(pdfBytes, password);
   return { pdfDoc, resolvedPath, pdfBytes, inputRecoveryBinding };
+}
+
+async function loadPdfForZoneDetection(inputPath, password = null) {
+  const input = await readPdfInputWithRecovery(inputPath);
+  let pdfDoc;
+  try {
+    pdfDoc = await PDFDocument.load(input.pdfBytes, { updateMetadata: false });
+  } catch (error) {
+    if (!(error instanceof EncryptedPDFError)) {
+      throw new Error(
+        "Failed to load PDF: the file is malformed, incomplete, or unsupported.",
+        { cause: error },
+      );
+    }
+    // pdf-lib cannot authenticate encrypted content. PDF.js is the authority
+    // for password validation and text. pdf-lib is used only for exact native
+    // MediaBox geometry, with encrypted AcroForm objects deliberately skipped.
+    try {
+      pdfDoc = await PDFDocument.load(input.pdfBytes, {
+        ignoreEncryption: true,
+        updateMetadata: false,
+      });
+      validateLoadedPdfStructure(pdfDoc, input.pdfBytes);
+      return {
+        ...input,
+        pdfDoc,
+        encryptedAcroFormScanUnavailable: true,
+      };
+    } catch (error) {
+      throw new Error(
+        "Encrypted PDF zone detection could not establish native page geometry, so no actionable coordinates were returned.",
+        { cause: error },
+      );
+    }
+  }
+  return {
+    ...input,
+    pdfDoc: validateLoadedPdfStructure(pdfDoc, input.pdfBytes),
+    encryptedAcroFormScanUnavailable: false,
+  };
 }
 
 async function readCurrentPdfMutationBytes(inputPath) {
@@ -3665,7 +3711,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "detect_signature_zones",
-        description: "Find every place in a PDF where a signature, initials, or date should go. Returns a typed list of zones with coordinates (top-left origin, points). Use this BEFORE apply_signature — never guess coordinates, always apply at a returned zone. Detection layers: (1) AcroForm signature fields (confidence 0.99), (2) AcroForm fields named 'signature' / 'initials' (0.85), (3) text patterns like 'Signature of…', 'Sign Here', 'Initials:' (0.70-0.92). Each zone includes: type (signature/initials/date), label, page, x/y/width/height, confidence, source. Multi-page forms return zones for every page. If nothing is detected (flat scans, unusual forms), the agent should ask the user to pick a location in the viewer rather than guess.",
+        description: "Find places in a PDF where a signature, initials, printed name, or date should go. Returns typed zones with top-left coordinates in points. Use this before apply_signature and never guess coordinates. Apply signatures and initials with apply_signature. Apply names and dates with apply_text. Detection uses AcroForm widgets and text labels such as 'Signature', 'Witness', 'Print Name', and 'Dated'. Encrypted PDFs use the authenticated PDF.js text layer and report that AcroForm widgets were not scanned. Any widget whose page cannot be resolved is skipped with a warning instead of being assigned a fabricated location.",
         inputSchema: {
           type: "object",
           properties: {
@@ -6053,21 +6099,72 @@ async function handleToolCall(request) {
 
       case "detect_signature_zones": {
         const { pdf_path, password } = args;
-        const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
-        await loadPdfjs();
-        const zones = await detectSignatureZones({
+        const {
           pdfDoc,
           pdfBytes,
-          pdfjsLib,
-          password,
-        });
+          encryptedAcroFormScanUnavailable,
+        } = await loadPdfForZoneDetection(pdf_path, password);
+        await loadPdfjs();
+        const warningMessages = {
+          ACROFORM_WIDGET_PAGE_UNRESOLVED: "Skipped an AcroForm signing widget because its page could not be resolved. No page location was guessed.",
+          ENCRYPTED_ACROFORM_SCAN_UNAVAILABLE: "Encrypted PDF zone detection used the authenticated text layer. AcroForm widgets were not scanned.",
+          TEXT_EXTRACTION_UNAVAILABLE: "Text labels could not be scanned. No text-derived zones were returned.",
+        };
+        const warningCounts = new Map();
+        const recordWarning = code => {
+          if (!Object.hasOwn(warningMessages, code)) return;
+          warningCounts.set(code, Math.min((warningCounts.get(code) || 0) + 1, 1000000));
+        };
+        if (encryptedAcroFormScanUnavailable) {
+          recordWarning("ENCRYPTED_ACROFORM_SCAN_UNAVAILABLE");
+        }
+        let zones;
+        try {
+          zones = await detectSignatureZones({
+            pdfDoc,
+            pdfBytes,
+            pdfjsLib,
+            password,
+            onWarning: warning => recordWarning(warning?.code),
+            scanAcroForm: !encryptedAcroFormScanUnavailable,
+          });
+        } catch (error) {
+          const passwordResponses = pdfjsLib?.PasswordResponses;
+          const passwordCode = error?.name === "PasswordException" && passwordResponses
+            ? error.code === passwordResponses.NEED_PASSWORD
+              ? "PASSWORD_REQUIRED"
+              : error.code === passwordResponses.INCORRECT_PASSWORD
+                ? "PASSWORD_INCORRECT"
+                : null
+            : null;
+          if (passwordCode) {
+            const message = passwordCode === "PASSWORD_REQUIRED"
+              ? "This PDF requires a password. Provide it with the password parameter and try again."
+              : "The PDF password was not accepted. Check the password and try again.";
+            return {
+              isError: true,
+              content: [{ type: "text", text: message }],
+              structuredContent: {
+                status: "failed",
+                error: { error_schema_version: 1, code: passwordCode },
+              },
+            };
+          }
+          throw error;
+        }
+        const warnings = [...warningCounts.entries()]
+          .map(([code, occurrences]) => ({
+            code,
+            message: warningMessages[code],
+            occurrences,
+          }));
 
         const byType = zones.reduce((acc, z) => {
           acc[z.type] = (acc[z.type] || 0) + 1;
           return acc;
         }, {});
-        const summary = zones.length === 0
-          ? `No signature zones detected in ${path.basename(pdf_path)}. The form may be flat/scanned or use an unusual layout — ask the user to pick a signature location in the viewer.`
+        const resultSummary = zones.length === 0
+          ? `No signature zones detected in ${path.basename(pdf_path)}. The form may be flat, scanned, or use an unusual layout. Ask the user to pick a signature location in the viewer.`
           : `Found ${zones.length} zone(s) in ${path.basename(pdf_path)}: ` +
             Object.entries(byType).map(([t, n]) => `${n} ${t}${n === 1 ? "" : "s"}`).join(", ") +
             `.\n\nDetected zones (top-left origin, points; use these exact coordinates, do not guess):\n` +
@@ -6077,11 +6174,20 @@ async function handleToolCall(request) {
               `width=${Number(z.width).toFixed(1)} height=${Number(z.height).toFixed(1)} ` +
               `label="${z.label || ""}" confidence=${Number(z.confidence ?? 0).toFixed(2)} source=${z.source || "unknown"}`
             )).join("\n") +
-            `\n\nFor dates, use apply_text at a returned DATE zone. For signatures, use apply_signature at a returned SIGNATURE zone.`;
+            `\n\nUse apply_signature at returned SIGNATURE and INITIALS zones. Use apply_text at returned NAME and DATE zones.`;
+        const warningSummary = warnings.length === 0
+          ? ""
+          : `\n\nDetection warnings:\n${warnings.map(warning =>
+              `- ${warning.message} Occurrences: ${warning.occurrences}.`
+            ).join("\n")}`;
 
         return {
-          content: [{ type: "text", text: summary }],
-          structuredContent: { zones },
+          content: [{ type: "text", text: resultSummary + warningSummary }],
+          structuredContent: {
+            detection_status: warnings.length > 0 ? "partial" : "complete",
+            zones,
+            warnings,
+          },
         };
       }
 

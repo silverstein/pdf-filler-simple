@@ -167,7 +167,7 @@
     },
     {
       "name": "detect_signature_zones",
-      "description": "Find every place in a PDF where a signature, initials, or date should go — typed zone list with coordinates. Use BEFORE apply_signature; never guess coordinates."
+      "description": "Find places in a PDF for signatures, initials, printed names, and dates. Use apply_signature for signatures and initials, and apply_text for names and dates. Never guess coordinates."
     },
     {
       "name": "apply_text",

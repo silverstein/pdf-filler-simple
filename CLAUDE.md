@@ -116,7 +116,7 @@ No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
 27. **add_signature_field** - Draw a "Sign here" placeholder box (does NOT sign)
 28. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent; see Signature Architecture below)
 29. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
-30. **detect_signature_zones** - Locate signature/initials/date zones with coordinates (use BEFORE apply_signature)
+30. **detect_signature_zones** - Locate signature, initials, printed-name, and date zones with coordinates. Use apply_signature for signatures and initials, and apply_text for names and dates.
 
 ### Current Extraction Boundary
 

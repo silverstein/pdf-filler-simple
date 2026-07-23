@@ -65,6 +65,7 @@
       "id": "irs-fw9-2024",
       "source": "url",
       "url": "https://www.irs.gov/pub/irs-pdf/fw9.pdf",
+      "sha256": "2d420cbb4123dcf1fb82595b2359cfbb5d81f00b9df9d359fcc7af361d093f53",
       "description": "Current IRS W-9 (rev 3-2024)",
       "min_score": 0.5,
       "expected_zones": [
@@ -74,7 +75,7 @@
           "note": "Signature of U.S. person line — Part II Certification block",
           "x_min": 100, "x_max": 500,
           "y_min": 540, "y_max": 640,
-          "min_iou": 0.2
+          "min_iou": 0.25
         },
         {
           "type": "date",
@@ -82,7 +83,7 @@
           "note": "Date field to the right of the signature",
           "x_min": 380, "x_max": 570,
           "y_min": 540, "y_max": 640,
-          "min_iou": 0.15
+          "min_iou": 0.25
         }
       ]
     },
@@ -101,7 +102,7 @@
           "note": "Acknowledgement page Printed Name / Date row",
           "x_min": 380, "x_max": 505,
           "y_min": 418, "y_max": 448,
-          "min_iou": 0.2
+          "min_iou": 0.25
         },
         {
           "type": "signature",
@@ -109,7 +110,7 @@
           "note": "Acknowledgement page Signature row",
           "x_min": 25, "x_max": 290,
           "y_min": 458, "y_max": 490,
-          "min_iou": 0.2
+          "min_iou": 0.25
         },
         {
           "type": "signature",
@@ -117,7 +118,7 @@
           "note": "Home-Based Businesses acknowledgement signature row",
           "x_min": 45, "x_max": 310,
           "y_min": 705, "y_max": 735,
-          "min_iou": 0.2
+          "min_iou": 0.25
         },
         {
           "type": "date",
@@ -125,7 +126,7 @@
           "note": "Home-Based Businesses acknowledgement date row",
           "x_min": 310, "x_max": 445,
           "y_min": 705, "y_max": 735,
-          "min_iou": 0.2
+          "min_iou": 0.25
         },
         {
           "type": "signature",
@@ -133,7 +134,7 @@
           "note": "Lawful presence affidavit Applicant Signature row",
           "x_min": 40, "x_max": 300,
           "y_min": 620, "y_max": 650,
-          "min_iou": 0.2
+          "min_iou": 0.25
         },
         {
           "type": "date",
@@ -141,7 +142,7 @@
           "note": "Lawful presence affidavit Date row",
           "x_min": 365, "x_max": 500,
           "y_min": 620, "y_max": 650,
-          "min_iou": 0.2
+          "min_iou": 0.25
         },
         {
           "type": "signature",
@@ -149,7 +150,7 @@
           "note": "Private employer affidavit Signature of Authorized Officer or Agent row",
           "x_min": 25, "x_max": 305,
           "y_min": 535, "y_max": 565,
-          "min_iou": 0.2
+          "min_iou": 0.25
         }
       ]
     }

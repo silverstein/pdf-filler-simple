@@ -17,6 +17,7 @@
     "smoke:ui-sign-rotated": "node scripts/dev-ui-rotated-sign-smoke.mjs",
     "smoke:ui-inspect": "node scripts/dev-ui-inspect-smoke.mjs",
     "smoke:ui-preview-zone": "node scripts/dev-ui-preview-zone-smoke.mjs",
+    "smoke:ui-name-zone": "node scripts/dev-ui-name-zone-smoke.mjs",
     "smoke:ui-draw": "node scripts/dev-ui-draw-smoke.mjs",
     "smoke:ui-sign-polish": "node scripts/dev-ui-sign-polish-smoke.mjs",
     "smoke:mcpb": "node scripts/smoke-mcpb.mjs",

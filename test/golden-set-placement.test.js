@@ -7,7 +7,7 @@
  *   - Same type
  *   - Same page
  *   - Detected box overlaps the expected region with IoU >= expected.min_iou
- *   OR the detected box is fully contained inside the expected region
+ *   OR it is fully contained and covers at least 30% of the expected region
  *
  * Ship gate: each fixture's score must meet its `min_score` threshold
  * (hit rate = hits / expected_zones.length).
@@ -120,26 +120,61 @@ function expectedAsRect(expected) {
   };
 }
 
+function intersectionArea(a, b) {
+  const width = Math.max(0, Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x));
+  const height = Math.max(0, Math.min(a.y + a.height, b.y + b.height) - Math.max(a.y, b.y));
+  return width * height;
+}
+
 // Score one detected zone against one expected region.
-// Hit if: type matches AND page matches AND (IoU >= threshold OR fully contained).
-function scoreZone(detected, expected) {
+// Hit if type/page match and either IoU reaches the enforced floor or a fully
+// contained detection covers enough of the expected signing surface.
+export function scoreZone(detected, expected) {
   if (detected.type !== expected.type) return { hit: false, iou: 0, reason: "type mismatch" };
   if (detected.page !== expected.page) return { hit: false, iou: 0, reason: "page mismatch" };
   const rect = expectedAsRect(expected);
   const iou = computeIoU(detected, rect);
+  const expectedArea = rect.width * rect.height;
+  const containedAreaRatio = expectedArea > 0
+    ? intersectionArea(detected, rect) / expectedArea
+    : 0;
   const fullyContained =
     detected.x >= rect.x &&
     detected.y >= rect.y &&
     detected.x + detected.width <= rect.x + rect.width + 0.5 &&
     detected.y + detected.height <= rect.y + rect.height + 0.5;
-  const iouThreshold = expected.min_iou ?? 0.25;
-  const hit = iou >= iouThreshold || fullyContained;
+  const iouThreshold = Math.max(expected.min_iou ?? 0.25, 0.25);
+  const hit = iou >= iouThreshold || (fullyContained && containedAreaRatio >= 0.30);
   return {
     hit,
     iou,
     fullyContained,
-    reason: hit ? "match" : `IoU ${iou.toFixed(3)} < ${iouThreshold} and not contained`,
+    containedAreaRatio,
+    reason: hit
+      ? "match"
+      : `IoU ${iou.toFixed(3)} < ${iouThreshold}; contained expected-area ratio ${containedAreaRatio.toFixed(3)} < 0.300`,
   };
+}
+
+export function matchZonesOneToOne(zones, expectedZones) {
+  const usedDetections = new Set();
+  return expectedZones.map(expected => {
+    let bestScore = null;
+    for (let detectedIndex = 0; detectedIndex < zones.length; detectedIndex++) {
+      if (usedDetections.has(detectedIndex)) continue;
+      const detected = zones[detectedIndex];
+      const score = scoreZone(detected, expected);
+      if (
+        !bestScore ||
+        (score.hit && !bestScore.score.hit) ||
+        (score.hit === bestScore.score.hit && score.iou > bestScore.score.iou)
+      ) {
+        bestScore = { detected, detectedIndex, score };
+      }
+    }
+    if (bestScore?.score.hit) usedDetections.add(bestScore.detectedIndex);
+    return bestScore;
+  });
 }
 
 describe("Golden-set signature-zone placement", () => {
@@ -165,10 +200,11 @@ describe("Golden-set signature-zone placement", () => {
       expect(fx.source).toMatch(/^(local|url)$/);
       expect(fx.expected_zones).toBeDefined();
       for (const z of fx.expected_zones) {
-        expect(["signature", "initials", "date"]).toContain(z.type);
+        expect(["signature", "initials", "name", "date"]).toContain(z.type);
         expect(z.page).toBeGreaterThanOrEqual(1);
         expect(z.x_min).toBeLessThan(z.x_max);
         expect(z.y_min).toBeLessThan(z.y_max);
+        expect(z.min_iou ?? 0.25).toBeGreaterThanOrEqual(0.25);
       }
       if (fx.sha256) {
         expect(fx.sha256).toMatch(/^[a-f0-9]{64}$/);
@@ -180,13 +216,48 @@ describe("Golden-set signature-zone placement", () => {
         expect([0, 90, 180, 270]).toContain(fx.expected_page_geometry.rotation);
       }
       if (fx.required_detection) {
-        expect(["signature", "initials", "date"]).toContain(fx.required_detection.type);
+        expect(["signature", "initials", "name", "date"]).toContain(fx.required_detection.type);
         expect(fx.required_detection.page).toBeGreaterThanOrEqual(1);
         for (const key of ["x", "y", "width", "height"]) {
           expect(Number.isFinite(fx.required_detection[key])).toBe(true);
         }
       }
     }
+  });
+
+  it("enforces exact IoU and contained-area boundaries", () => {
+    const expectedZone = {
+      type: "signature",
+      page: 1,
+      x_min: 0,
+      x_max: 100,
+      y_min: 0,
+      y_max: 100,
+      min_iou: 0.25,
+    };
+    expect(scoreZone(
+      { type: "signature", page: 1, x: 0, y: 0, width: 24.9, height: 100 },
+      expectedZone,
+    ).hit).toBe(false);
+    expect(scoreZone(
+      { type: "signature", page: 1, x: 0, y: 0, width: 25, height: 100 },
+      expectedZone,
+    ).hit).toBe(true);
+
+    const strictIoU = { ...expectedZone, min_iou: 0.99 };
+    expect(scoreZone(
+      { type: "signature", page: 1, x: 0, y: 0, width: 29.9, height: 100 },
+      strictIoU,
+    ).hit).toBe(false);
+    expect(scoreZone(
+      { type: "signature", page: 1, x: 0, y: 0, width: 30, height: 100 },
+      strictIoU,
+    ).hit).toBe(true);
+
+    const duplicateTruths = [expectedZone, { ...expectedZone }];
+    const oneDetection = [{ type: "signature", page: 1, x: 0, y: 0, width: 100, height: 100 }];
+    expect(matchZonesOneToOne(oneDetection, duplicateTruths).filter(match => match?.score.hit))
+      .toHaveLength(1);
   });
 
   it("reproduces the synthetic rotated fixture byte for byte", async () => {
@@ -236,14 +307,10 @@ describe("Golden-set signature-zone placement", () => {
 
       let hits = 0;
       const perZone = [];
-      for (const expZone of fixture.expected_zones) {
-        let bestScore = null;
-        for (const detected of zones) {
-          const s = scoreZone(detected, expZone);
-          if (!bestScore || s.iou > bestScore.iou || (s.hit && !bestScore.hit)) {
-            bestScore = { detected, score: s };
-          }
-        }
+      const oneToOneMatches = matchZonesOneToOne(zones, fixture.expected_zones);
+      for (let expectedIndex = 0; expectedIndex < fixture.expected_zones.length; expectedIndex++) {
+        const expZone = fixture.expected_zones[expectedIndex];
+        const bestScore = oneToOneMatches[expectedIndex];
         const matched = bestScore && bestScore.score.hit;
         if (matched) hits++;
         perZone.push({

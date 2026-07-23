@@ -158,6 +158,40 @@ describe("output schema definitions", () => {
     });
     expect(malformedToolError.isError).toBe(true);
     expect(malformedToolError.structuredContent).toBeUndefined();
+
+    const nameZone = {
+      content: [{ type: "text", text: "Found a printed-name zone" }],
+      structuredContent: {
+        detection_status: "partial",
+        zones: [{
+          type: "name",
+          label: "Print Name:",
+          page: 1,
+          x: 100,
+          y: 200,
+          width: 180,
+          height: 20,
+          confidence: 0.8,
+          source: "text-heuristic",
+        }],
+        warnings: [{
+          code: "ACROFORM_WIDGET_PAGE_UNRESOLVED",
+          message: "Skipped an AcroForm signing widget because its page could not be resolved. No page location was guessed.",
+          occurrences: 1,
+        }],
+      },
+    };
+    expect(validateStructuredToolResult("detect_signature_zones", nameZone)).toBe(nameZone);
+
+    const passwordError = {
+      content: [{ type: "text", text: "A password is required" }],
+      structuredContent: {
+        status: "failed",
+        error: { error_schema_version: 1, code: "PASSWORD_REQUIRED" },
+      },
+      isError: true,
+    };
+    expect(validateStructuredToolResult("detect_signature_zones", passwordError)).toBe(passwordError);
   });
 });
 

@@ -67,7 +67,7 @@ const placement = object({
 });
 const fillError = object({ field: string, error: string });
 const signatureZone = object({
-  type: enumString(["signature", "initials", "date"]),
+  type: enumString(["signature", "initials", "name", "date"]),
   label: string,
   page: integer,
   x: number,
@@ -76,6 +76,15 @@ const signatureZone = object({
   height: number,
   confidence: number,
   source: enumString(["text-heuristic", "acroform-signature", "acroform-named-field"]),
+});
+const zoneDetectionWarning = object({
+  code: enumString([
+    "ACROFORM_WIDGET_PAGE_UNRESOLVED",
+    "ENCRYPTED_ACROFORM_SCAN_UNAVAILABLE",
+    "TEXT_EXTRACTION_UNAVAILABLE",
+  ]),
+  message: string,
+  occurrences: { type: "integer", minimum: 1 },
 });
 
 const standardError = object({
@@ -683,7 +692,11 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     height: number,
     text: string,
   }),
-  detect_signature_zones: object({ zones: arrayOf(signatureZone) }),
+  detect_signature_zones: object({
+    detection_status: enumString(["complete", "partial"]),
+    zones: arrayOf(signatureZone),
+    warnings: arrayOf(zoneDetectionWarning),
+  }),
   fetch_pdf_from_url: activeDocument({
     pdf_path: string,
     bytes: integer,
@@ -701,6 +714,7 @@ const specialErrorSchemas = {
   read_pdf_content: [contentFailure],
   read_pdf_layout: [layoutPasswordError],
   convert_pdf_to_markdown: [layoutPasswordError],
+  detect_signature_zones: [layoutPasswordError],
 };
 
 export const TOOL_ERROR_OUTPUT_SCHEMAS = Object.freeze(Object.fromEntries(

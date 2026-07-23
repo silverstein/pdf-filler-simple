@@ -79,6 +79,7 @@
             <select id="sign-modal-type">
               <option value="signature">Signature</option>
               <option value="initials">Initials</option>
+              <option value="name">Print name</option>
               <option value="date">Date</option>
             </select>
           </div>
@@ -89,7 +90,7 @@
               <label for="sign-modal-name" id="sign-modal-name-label" class="sign-modal-label">Type your full name</label>
               <input id="sign-modal-name" type="text" autocomplete="name" placeholder="Your legal name" />
             </div>
-            <div class="sign-modal-row">
+            <div id="sign-modal-existing-row" class="sign-modal-row">
               <label for="sign-modal-existing" class="sign-modal-label">Or use a saved signature</label>
               <select id="sign-modal-existing">
                 <option value="">— Create a typed signature from the name above —</option>
@@ -138,6 +139,7 @@
             <select id="region-preview-zone-type">
               <option value="signature">Signature</option>
               <option value="initials">Initials</option>
+              <option value="name">Print name</option>
               <option value="date">Date</option>
             </select>
           </div>
@@ -233,6 +235,7 @@
           <div class="sign-panel-legend">
             <span class="sign-legend-swatch sign-legend-signature"></span> Signature
             <span class="sign-legend-swatch sign-legend-initials"></span> Initials
+            <span class="sign-legend-swatch sign-legend-name"></span> Name
             <span class="sign-legend-swatch sign-legend-date"></span> Date
           </div>
         </div>

@@ -764,7 +764,7 @@ export function assertXfaMutationAllowed(pdfBytes, { forceXfa = false } = {}) {
 }
 
 // ─── Signature zone detection ────────────────────────────────────────────────
-// Finds "Sign here", initials, and date zones in a PDF so agents/viewers can
+// Finds "Sign here", initials, name, and date zones in a PDF so agents/viewers can
 // place signatures at real locations instead of guessing coordinates.
 
 // Compute intersection-over-union for two top-left-origin rectangles.
@@ -886,8 +886,18 @@ const SIGNATURE_PATTERNS = [
   // Place above by default; the existing fallback inside scanPageForLabels
   // switches to right-placement when the label is too close to the page top.
   { rx: /^Signature of\b/i,          type: "signature", confidence: 0.92, zoneWidth: 260, placement: "above" },
-  { rx: /^Signature:/i,               type: "signature", confidence: 0.88, zoneWidth: 260, placement: "right" },
-  { rx: /^Signed by\b/i,              type: "signature", confidence: 0.80, zoneWidth: 240, placement: "right" },
+  { rx: /^Signature\s*:\s*\*?\s*[_-]*$/i,
+                                        type: "signature", confidence: 0.88, zoneWidth: 260, placement: "right" },
+  { rx: /^Signatures\s*:?\s*\*?\s*[_-]*$/i,
+                                        type: "signature", confidence: 0.80, zoneWidth: 260, placement: "above", requiresRoom: 40 },
+  { rx: /^Signed by\s*:?\s*\*?\s*[_-]*$/i,
+                                        type: "signature", confidence: 0.80, zoneWidth: 240, placement: "right" },
+  { rx: /^Authorized Signature\s*:?\s*\*?\s*[_-]*$/i,
+                                        type: "signature", confidence: 0.84, zoneWidth: 240, placement: "above" },
+  { rx: /^Borrower['\u2019]s Signature\s*:?\s*\*?\s*[_-]*$/i,
+                                        type: "signature", confidence: 0.84, zoneWidth: 240, placement: "above" },
+  { rx: /^Witness\s*:?\s*\*?\s*[_-]*$/i,
+                                        type: "signature", confidence: 0.76, zoneWidth: 240, placement: "above", requiresRoom: 40 },
   { rx: /^Signature$/i,               type: "signature", confidence: 0.75, zoneWidth: 240, placement: "above", requiresRoom: 40 },
   // Qualifier + Signature — "Applicant Signature", "Employee Signature*",
   // "Borrower's Signature", "Witness Signature", "Authorized Officer Signature".
@@ -897,12 +907,21 @@ const SIGNATURE_PATTERNS = [
                                         type: "signature", confidence: 0.80, zoneWidth: 240, placement: "above" },
   { rx: /^(?:[A-Za-z][A-Za-z'0-9]*\s+){1,3}Initials?\*?$/,
                                         type: "initials",  confidence: 0.75, zoneWidth: 60,  placement: "above" },
-  { rx: /^Sign Here\b/i,              type: "signature", confidence: 0.85, zoneWidth: 260, placement: "right" },
+  { rx: /^Sign Here\s*:?\s*\*?\s*[_-]*$/i,
+                                        type: "signature", confidence: 0.85, zoneWidth: 260, placement: "right" },
   { rx: /^X[\s_]{3,}/,                type: "signature", confidence: 0.70, zoneWidth: 240, placement: "right" },
-  { rx: /^Initials?:/i,               type: "initials",  confidence: 0.78, zoneWidth: 60,  placement: "right" },
+  { rx: /^Initials?\s*:\s*\*?\s*[_-]*$/i,
+                                        type: "initials",  confidence: 0.78, zoneWidth: 60,  placement: "right" },
   { rx: /^Init\.?:?$/i,               type: "initials",  confidence: 0.75, zoneWidth: 50,  placement: "above" },
   { rx: /^Initials?$/i,               type: "initials",  confidence: 0.72, zoneWidth: 60,  placement: "above", requiresRoom: 30 },
-  { rx: /^Date:/i,                    type: "date",      confidence: 0.75, zoneWidth: 110, placement: "right" },
+  { rx: /^Print(?:ed)? Name\s*:\s*\*?\s*[_-]*$/i,
+                                        type: "name",      confidence: 0.80, zoneWidth: 220, placement: "right" },
+  { rx: /^Print(?:ed)? Name\s*\*?\s*[_-]*$/i,
+                                        type: "name",      confidence: 0.74, zoneWidth: 220, placement: "above", requiresRoom: 40 },
+  { rx: /^Dated\s*:\s*\*?\s*[_-]*$/i,
+                                        type: "date",      confidence: 0.75, zoneWidth: 110, placement: "right" },
+  { rx: /^Date\s*:\s*\*?\s*[_-]*$/i,
+                                        type: "date",      confidence: 0.75, zoneWidth: 110, placement: "right" },
   { rx: /^Date$/i,                    type: "date",      confidence: 0.65, zoneWidth: 110, placement: "above", requiresRoom: 30 },
 ];
 
@@ -981,7 +1000,7 @@ function markerAnchoredZone(item, allItems, pat, gap, zoneHeight, rightBound) {
   if (zoneWidth < 24) return null;
   const markerPointsToCaptionedLine =
     Boolean(continuationMarker) ||
-    /^(Signature|Initials?|Date)$/i.test(item.text.trim());
+    /^(Signature|Signatures|Initials?|Print(?:ed)? Name|Date|Dated|Witness):?$/i.test(item.text.trim());
   const effectiveZoneHeight = markerPointsToCaptionedLine
     ? Math.min(zoneHeight, 16)
     : zoneHeight;
@@ -1014,7 +1033,7 @@ function hasRoomToRight(item, allItems, minPts) {
   return true;
 }
 
-// Scan one page's text items for signature/initials/date labels.
+// Scan one page's text items for signature/initials/name/date labels.
 // Zone begins right after the label; width comes from the pattern config.
 export function scanPageForLabels(page) {
   const zones = [];
@@ -1078,7 +1097,12 @@ export function scanPageForLabels(page) {
 // Look up AcroForm signature-typed fields and signature-named text fields.
 // Uses pdf-lib to read field types + widget rectangles.
 // Returns zones in top-left origin.
-function scanAcroFormForZones(pdfDoc) {
+const UNRESOLVED_WIDGET_PAGE_WARNING = Object.freeze({
+  code: "ACROFORM_WIDGET_PAGE_UNRESOLVED",
+  message: "Skipped an AcroForm signing widget because its page could not be resolved. No page location was guessed.",
+});
+
+function scanAcroFormForZones(pdfDoc, { onWarning } = {}) {
   const zones = [];
   let fields;
   try {
@@ -1108,7 +1132,9 @@ function scanAcroFormForZones(pdfDoc) {
       /(^|[^a-z])(sig|signature)s?(?![a-z])/i.test(fieldName);
     const looksLikeInitials = !isSignature && typeName.includes("TextField") &&
       /(^|[^a-z])initials?(?![a-z])/i.test(fieldName);
-    if (!isSignature && !looksLikeSig && !looksLikeInitials) continue;
+    const looksLikeName = !isSignature && typeName.includes("TextField") &&
+      /(^|[^a-z])print(?:ed)?[\s_-]*name(?![a-z])/i.test(fieldName);
+    if (!isSignature && !looksLikeSig && !looksLikeInitials && !looksLikeName) continue;
 
     for (const widget of widgets) {
       let rect;
@@ -1124,23 +1150,31 @@ function scanAcroFormForZones(pdfDoc) {
         }
       } catch { /* fall through */ }
       if (pageIdx === -1) {
-        // Fallback: find which page's Annots contains this widget's ref
-        for (let i = 0; i < pages.length; i++) {
-          try {
-            const annots = pages[i].node.Annots();
-            if (!annots) continue;
-            const array = annots.array ? annots.array : annots;
-            const list = array.asArray ? array.asArray() : [];
-            if (list.some(ref => ref === widget.ref)) { pageIdx = i; break; }
-          } catch { /* skip */ }
-        }
+        // Resolve the widget's indirect reference through pdf-lib's own page
+        // annotation lookup. Reading PDFArray internals directly is brittle and
+        // can silently miss a valid page association.
+        try {
+          const widgetRef = pdfDoc.context.getObjectRef(widget.dict);
+          const widgetPage = widgetRef
+            ? pdfDoc.findPageForAnnotationRef(widgetRef)
+            : undefined;
+          pageIdx = widgetPage ? pages.indexOf(widgetPage) : -1;
+        } catch { /* fall through to the bounded warning below */ }
       }
-      if (pageIdx === -1) pageIdx = 0; // fallback — put on page 1
+      if (pageIdx === -1) {
+        onWarning?.(UNRESOLVED_WIDGET_PAGE_WARNING);
+        continue;
+      }
 
       const pageH = pageHeights[pageIdx];
+      const type = isSignature || looksLikeSig
+        ? "signature"
+        : looksLikeInitials
+          ? "initials"
+          : "name";
       const zone = {
-        type: isSignature || looksLikeSig ? "signature" : "initials",
-        label: fieldName || (isSignature ? "Signature" : "Initials"),
+        type,
+        label: fieldName || (type === "signature" ? "Signature" : type === "initials" ? "Initials" : "Print Name"),
         page: pageIdx + 1,
         x: Math.round(rect.x * 10) / 10,
         y: Math.round((pageH - rect.y - rect.height) * 10) / 10,
@@ -1155,12 +1189,17 @@ function scanAcroFormForZones(pdfDoc) {
   return zones;
 }
 
-// Remove overlapping zones — keep the higher-confidence one.
-function dedupeOverlappingZones(zones, iouThreshold = 0.4) {
+// Remove overlapping zones of the same type, keeping the higher-confidence one.
+// Different semantic fields can legitimately share rows or overlap vertically.
+export function dedupeOverlappingZones(zones, iouThreshold = 0.4) {
   const sorted = [...zones].sort((a, b) => b.confidence - a.confidence);
   const kept = [];
   for (const z of sorted) {
-    const dup = kept.some(k => k.page === z.page && computeIoU(k, z) >= iouThreshold);
+    const dup = kept.some(k =>
+      k.type === z.type &&
+      k.page === z.page &&
+      computeIoU(k, z) >= iouThreshold
+    );
     if (!dup) kept.push(z);
   }
   // Final sort: by page then by y-coordinate (top to bottom)
@@ -1170,23 +1209,44 @@ function dedupeOverlappingZones(zones, iouThreshold = 0.4) {
 
 // Main entry: returns a typed zone array for the given PDF.
 // Caller supplies the loaded pdfjs module (helpers.js stays pure-import).
-export async function detectSignatureZones({ pdfDoc, pdfBytes, pdfjsLib, password }) {
+export async function detectSignatureZones({
+  pdfDoc,
+  pdfBytes,
+  pdfjsLib,
+  password,
+  onWarning,
+  scanAcroForm = true,
+}) {
   const zones = [];
 
   // Layer 1+2: AcroForm signature fields and signature-named text fields
-  zones.push(...scanAcroFormForZones(pdfDoc));
+  if (pdfDoc && scanAcroForm) {
+    zones.push(...scanAcroFormForZones(pdfDoc, { onWarning }));
+  }
 
   // Layer 3: Text-heuristic pattern matching
   if (pdfjsLib && pdfBytes) {
     try {
-      const mediaBoxes = pdfDoc.getPages().map(page => page.getMediaBox());
+      const mediaBoxes = pdfDoc
+        ? pdfDoc.getPages().map(page => page.getMediaBox())
+        : undefined;
       const pages = await extractPdfTextWithBounds(pdfjsLib, pdfBytes, { password, mediaBoxes });
       for (const page of pages) {
         zones.push(...scanPageForLabels(page));
       }
     } catch (err) {
-      // Text extraction failure is non-fatal — return AcroForm-only zones.
-      // Surface via the zone list's metadata once we start returning a richer shape.
+      const passwordResponses = pdfjsLib?.PasswordResponses;
+      if (
+        err?.name === "PasswordException" &&
+        passwordResponses &&
+        [passwordResponses.NEED_PASSWORD, passwordResponses.INCORRECT_PASSWORD].includes(err.code)
+      ) {
+        throw err;
+      }
+      onWarning?.({
+        code: "TEXT_EXTRACTION_UNAVAILABLE",
+        message: "Text labels could not be scanned. No text-derived zones were returned.",
+      });
     }
   }
 

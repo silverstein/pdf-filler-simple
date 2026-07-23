@@ -80,7 +80,7 @@ content, so the complete workflow is not necessarily zero egress.
 
 ### Sign Mode and Local Signatures
 
-- Detect likely signature, initials, and date zones with model-readable coordinates
+- Detect likely signature, initials, printed-name, and date zones with model-readable coordinates
 - Switch to the viewer's Sign tab to place signatures, dates, or text on detected zones
 - Draw or reuse saved local signatures
 - Inspect a region, preview it, and turn it into a typed signing zone when automatic detection is not enough

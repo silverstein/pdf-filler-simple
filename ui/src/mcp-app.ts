@@ -57,7 +57,7 @@ let manageMode: ManageMode = "view";
 
 // Signature zones (Sign mode)
 interface SignatureZone {
-  type: "signature" | "initials" | "date";
+  type: "signature" | "initials" | "name" | "date";
   label: string;
   page: number;
   x: number;        // native top-left origin, points
@@ -68,11 +68,16 @@ interface SignatureZone {
   source: string;
   id?: string;      // assigned client-side for DOM linking
   applied?: boolean;
-  // For date zones, the value stamped (e.g. "2026-04-20") so the overlay
-  // badge can show the actual date instead of a generic "Signed" label.
+  // For plain-text zones, retain the stamped value for the overlay badge.
   appliedValue?: string;
 }
+interface ZoneDetectionWarning {
+  code: string;
+  message: string;
+  occurrences: number;
+}
 let signatureZones: SignatureZone[] = [];
+const zoneWarningsByPath = new Map<string, ZoneDetectionWarning[]>();
 let activeBackupPath: string | null = null;
 // Remember which zones we've stamped so page navigation / mode toggles don't
 // lose the ✓ Signed indicator. Key: `${pdfPath}|${type}|${page}|${x}|${y}`.
@@ -910,6 +915,7 @@ const signModalTypeRowEl = $("sign-modal-type-row");
 const signModalTypeEl = $("sign-modal-type") as HTMLSelectElement;
 const signModalNameEl = $("sign-modal-name") as HTMLInputElement;
 const signModalExistingEl = $("sign-modal-existing") as HTMLSelectElement;
+const signModalExistingRowEl = $("sign-modal-existing-row");
 const signModalStatementEl = $("sign-modal-statement");
 const signModalErrorEl = $("sign-modal-error");
 const signModalCancelBtn = $("sign-modal-cancel") as HTMLButtonElement;
@@ -1097,7 +1103,11 @@ async function fetchSignatureZones(force = false) {
       const text = result.content?.map((c: any) => ("text" in c ? c.text : "")).join(" ") || "Unknown error";
       throw new Error(text);
     }
-    const sc = result.structuredContent as { zones?: SignatureZone[] } | undefined;
+    const sc = result.structuredContent as {
+      zones?: SignatureZone[];
+      warnings?: ZoneDetectionWarning[];
+    } | undefined;
+    zoneWarningsByPath.set(requestedPath, sc?.warnings ?? []);
     const zones = (sc?.zones ?? []).map((z, i) => ({
       ...z,
       id: `zone-${i}`,
@@ -1112,6 +1122,7 @@ async function fetchSignatureZones(force = false) {
     console.error("[viewer] detect_signature_zones failed:", err);
     if (zoneRequests.failForCurrent(request, pdfPath, err?.message ?? String(err))) {
       signatureZones = [];
+      zoneWarningsByPath.delete(requestedPath);
     }
   } finally {
     if (zoneRequests.finishForCurrent(request, pdfPath)) {
@@ -1142,12 +1153,14 @@ function updateZonePreviewState() {
     return;
   }
 
-  if (activeModalMode === "date") {
-    const pickedDate = signModalDateInputEl.value;
-    activeZonePreview = pickedDate ? {
+  if (activeModalMode === "date" || activeModalMode === "name") {
+    const value = activeModalMode === "date"
+      ? signModalDateInputEl.value
+      : signModalNameEl.value.trim();
+    activeZonePreview = value ? {
       zoneId: activeSignZone.id || "",
       mode: activeModalMode,
-      text: pickedDate,
+      text: value,
     } : null;
     renderZoneOverlay();
     return;
@@ -1201,7 +1214,7 @@ function buildZonePreviewGhost(zone: SignatureZone) {
     const estimated = widthPx / Math.max(activeZonePreview.text.length * 0.58, 1);
     const fontSize = Math.max(
       9,
-      Math.min(activeZonePreview.mode === "date" ? 18 : 30, heightPx * 0.72, estimated)
+      Math.min(["date", "name"].includes(activeZonePreview.mode) ? 18 : 30, heightPx * 0.72, estimated)
     );
     text.style.fontSize = `${fontSize}px`;
     ghost.appendChild(text);
@@ -1323,7 +1336,7 @@ function renderZoneOverlay() {
         // For date zones, surface the actual value that was stamped; for
         // signatures/initials the canvas now shows the stamp itself, so a
         // compact "✓ Signed / Initialed" badge is the most useful hint.
-        if (z.type === "date" && z.appliedValue) {
+        if ((z.type === "date" || z.type === "name") && z.appliedValue) {
           label.textContent = `✓ ${z.appliedValue}`;
         } else if (z.type === "initials") {
           label.textContent = "✓ Initialed";
@@ -1333,7 +1346,8 @@ function renderZoneOverlay() {
         placeZoneContentInNativeBox(label, z, { fitBox: false });
       } else {
         label.textContent = z.type === "signature" ? "Sign here" :
-                            z.type === "initials"  ? "Initials" : "Date";
+                            z.type === "initials"  ? "Initials" :
+                            z.type === "name" ? "Print name" : "Date";
         placeZoneContentInNativeBox(label, z);
       }
       el.appendChild(label);
@@ -1517,7 +1531,7 @@ function onZoneLayerPointerCancel(e: PointerEvent) {
 
 // ─── Confirm modal ───────────────────────────────────────────────────────────
 
-type SignModalMode = "signature" | "initials" | "date";
+type SignModalMode = "signature" | "initials" | "name" | "date";
 
 let activeSignZone: SignatureZone | null = null;
 let activeModalMode: SignModalMode = "signature";
@@ -1530,6 +1544,7 @@ const MODAL_MODE_CONFIG: Record<SignModalMode, {
   buttonLabel: string;
   signingLabel: string;
   showIdentity: boolean;
+  showSavedSignatures: boolean;
   showDate: boolean;
   nameLabel: string;
   verb: string;
@@ -1541,6 +1556,7 @@ const MODAL_MODE_CONFIG: Record<SignModalMode, {
     buttonLabel: "Sign",
     signingLabel: "Signing…",
     showIdentity: true,
+    showSavedSignatures: true,
     showDate: false,
     nameLabel: "Type your full name",
     verb: "sign",
@@ -1552,6 +1568,7 @@ const MODAL_MODE_CONFIG: Record<SignModalMode, {
     buttonLabel: "Stamp initials",
     signingLabel: "Stamping…",
     showIdentity: true,
+    showSavedSignatures: true,
     showDate: false,
     nameLabel: "Type your full name — we'll stamp it compressed to fit the initials box. For a proper \"M.S.\"-style asset, use \"Draw signature\" first and pick it from the dropdown.",
     verb: "initial",
@@ -1563,11 +1580,24 @@ const MODAL_MODE_CONFIG: Record<SignModalMode, {
     buttonLabel: "Insert date",
     signingLabel: "Stamping…",
     showIdentity: false,
+    showSavedSignatures: false,
     showDate: true,
     nameLabel: "",
     verb: "",
     attestationHeading: "You are inserting:",
     attestationEmpty: "Pick a date above.",
+  },
+  name: {
+    title: "Insert printed name",
+    buttonLabel: "Insert name",
+    signingLabel: "Stamping…",
+    showIdentity: true,
+    showSavedSignatures: false,
+    showDate: false,
+    nameLabel: "Name to insert",
+    verb: "",
+    attestationHeading: "You are inserting:",
+    attestationEmpty: "Type the name to insert above.",
   },
 };
 
@@ -1578,6 +1608,7 @@ function modeForZoneType(type: SignatureZone["type"]): SignModalMode {
   const t = type as string;
   if (t === "signature") return "signature";
   if (t === "initials") return "initials";
+  if (t === "name") return "name";
   if (t === "date") return "date";
   throw new Error(`Unknown zone type "${t}" — viewer doesn't know how to sign it. Update modeForZoneType.`);
 }
@@ -1588,6 +1619,7 @@ function applyModalMode(mode: SignModalMode) {
   signModalConfirmBtn.textContent = cfg.buttonLabel;
   signModalNameLabelEl.textContent = cfg.nameLabel;
   signModalIdentityRowsEl.style.display = cfg.showIdentity ? "" : "none";
+  signModalExistingRowEl.style.display = cfg.showSavedSignatures ? "flex" : "none";
   signModalDateRowEl.style.display = cfg.showDate ? "flex" : "none";
   const heading = document.getElementById("sign-modal-attestation-heading");
   if (heading) heading.textContent = cfg.attestationHeading;
@@ -1629,7 +1661,7 @@ async function openSignModal(zone: SignatureZone) {
   updateStatementPreview();
 
   // Load saved signatures only when identity fields are visible
-  if (activeModalMode !== "date") {
+  if (activeModalMode === "signature" || activeModalMode === "initials") {
     await populateSavedSignatures();
   }
 
@@ -1770,6 +1802,16 @@ function updateStatementPreview() {
     updateZonePreviewState();
     return;
   }
+  if (activeModalMode === "name") {
+    const name = signModalNameEl.value.trim();
+    signModalStatementEl.textContent = name
+      ? `Stamping "${name}" at this location on ${baseName}.`
+      : cfg.attestationEmpty;
+    signModalStatementEl.classList.toggle("empty", !name);
+    signModalConfirmBtn.disabled = !name;
+    updateZonePreviewState();
+    return;
+  }
 
   // signature + initials share identity-based flow
   const name = signModalNameEl.value.trim();
@@ -1810,6 +1852,8 @@ async function onConfirmSign() {
   // Preflight validation per mode
   if (activeModalMode === "date") {
     if (!signModalDateInputEl.value) return;
+  } else if (activeModalMode === "name") {
+    if (!signModalNameEl.value.trim()) return;
   } else {
     const name = signModalNameEl.value.trim();
     if (!isMeaningfulName(name)) return;
@@ -1826,9 +1870,11 @@ async function onConfirmSign() {
     const inputForApply = pdfPath;
     const outputPath = pdfPath;
 
-    if (activeModalMode === "date") {
-      // ─── Date path → apply_text ───
-      const pickedDate = signModalDateInputEl.value; // YYYY-MM-DD
+    if (activeModalMode === "date" || activeModalMode === "name") {
+      // Plain text paths use apply_text and never invoke signature intent.
+      const textValue = activeModalMode === "date"
+        ? signModalDateInputEl.value
+        : signModalNameEl.value.trim();
       const applyResult = await app.callServerTool({
         name: "apply_text",
         arguments: {
@@ -1836,7 +1882,7 @@ async function onConfirmSign() {
           output_path: outputPath,
           page: zone.page,
           x: zone.x, y: zone.y, width: zone.width, height: zone.height,
-          text: pickedDate,
+          text: textValue,
         },
       });
       if (applyResult.isError) {
@@ -1844,7 +1890,7 @@ async function onConfirmSign() {
         throw new Error(text);
       }
       zone.applied = true;
-      zone.appliedValue = pickedDate;
+      zone.appliedValue = textValue;
       appliedZoneKeys.add(zoneKey(pdfPath, zone));
       const sc = applyResult.structuredContent as { pdf_path?: string; backup_path?: string | null } | undefined;
       activeBackupPath = sc?.backup_path ?? activeBackupPath;
@@ -1864,12 +1910,12 @@ async function onConfirmSign() {
       renderZoneOverlay();
       renderSignPanel();
       if (reloadOk) {
-        showStampToast(sc?.pdf_path ?? outputPath, "date");
+        showStampToast(sc?.pdf_path ?? outputPath, activeModalMode);
       } else {
         // Stamp IS on disk; viewer just couldn't re-render. Tell the user.
         showStampToast(
           sc?.pdf_path ?? outputPath,
-          "date",
+          activeModalMode,
           "warning",
           `Reload failed — switch modes or reopen to see it. (${reloadErr ?? "unknown error"})`,
         );
@@ -2267,6 +2313,7 @@ async function onCopyWorkingCopyPath() {
 const TOAST_TITLES: Record<string, string> = {
   signature: "✓ Signed",
   initials:  "✓ Initialed",
+  name:      "✓ Name inserted",
   date:      "✓ Date inserted",
 };
 
@@ -2363,7 +2410,9 @@ function updateRegionPreviewCreateButton() {
     ? "Create signature zone"
     : type === "initials"
       ? "Create initials zone"
-      : "Create date zone";
+      : type === "name"
+        ? "Create name zone"
+        : "Create date zone";
   regionPreviewCreateZoneBtn.textContent = label;
 }
 
@@ -2373,7 +2422,9 @@ function createCustomSignatureZoneFromPreview(preview: RegionPreviewState): Sign
     ? "Custom signature zone"
     : type === "initials"
       ? "Custom initials zone"
-      : "Custom date zone";
+      : type === "name"
+        ? "Custom name zone"
+        : "Custom date zone";
   return {
     type,
     label,
@@ -2481,7 +2532,10 @@ function renderSignPanel() {
     detectionError: zoneRequests.getError(pdfPath),
     inspectArmed: inspectRegionArmed,
   });
-  signPanelStatusEl.textContent = status.message;
+  const warnings = zoneWarningsByPath.get(pdfPath) ?? [];
+  signPanelStatusEl.textContent = warnings.length > 0
+    ? `${status.message} Warning: ${warnings.map(warning => warning.message).join(" ")}`
+    : status.message;
   signPanelStatusEl.classList.toggle("empty", status.tone === "empty");
   signPanelStatusEl.classList.toggle("error", status.tone === "error");
 
@@ -2533,7 +2587,7 @@ function renderSignPanel() {
     if (z.applied) {
       const status = document.createElement("div");
       status.className = "sign-panel-item-status";
-      status.textContent = z.type === "date" && z.appliedValue
+      status.textContent = (z.type === "date" || z.type === "name") && z.appliedValue
         ? `✓ ${z.appliedValue}`
         : z.type === "initials"
           ? "✓ Initialed"

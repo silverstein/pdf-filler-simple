@@ -1,15 +1,30 @@
 import fs from "fs/promises";
+import { createHash } from "crypto";
 import path from "path";
 import { fileURLToPath } from "url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { PDFDocument, PDFName } from "pdf-lib";
 import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
+const ENCRYPTED_ORACLE = path.join(
+  REPO_ROOT,
+  "test",
+  "fixtures",
+  "eval",
+  "extraction",
+  "oracles",
+  "layout-encrypted-qpdf-r4.pdf",
+);
+const ENCRYPTED_PROVENANCE = ENCRYPTED_ORACLE.replace(/\.pdf$/, ".provenance.json");
 let TMP_DIR;
+let encryptedPdfPath;
+let encryptedProvenance;
+let unresolvedWidgetPdfPath;
 
 function textFromToolResult(result) {
   return result.content
@@ -24,6 +39,25 @@ describe("detect_signature_zones tool result", () => {
 
   beforeAll(async () => {
     TMP_DIR = await createTestTempDirectory(REPO_ROOT, "detect-zones-tool");
+    encryptedProvenance = JSON.parse(await fs.readFile(ENCRYPTED_PROVENANCE, "utf8"));
+    const committedBytes = await fs.readFile(ENCRYPTED_ORACLE);
+    expect(createHash("sha256").update(committedBytes).digest("hex"))
+      .toBe(encryptedProvenance.encrypted_fixture.sha256);
+    const authenticatedFixture = Buffer.from(committedBytes);
+    Buffer.from("%PDF-", "ascii").copy(authenticatedFixture, 0);
+    expect(createHash("sha256").update(authenticatedFixture).digest("hex"))
+      .toBe(encryptedProvenance.encrypted_fixture.qpdf_output_sha256_before_malformed_header_oracle);
+    encryptedPdfPath = path.join(TMP_DIR, "encrypted-zone-oracle.pdf");
+    await fs.writeFile(encryptedPdfPath, authenticatedFixture, { mode: 0o600 });
+
+    const unresolvedDocument = await PDFDocument.create();
+    const unresolvedPage = unresolvedDocument.addPage([612, 792]);
+    const unresolvedField = unresolvedDocument.getForm().createTextField("Signature1");
+    unresolvedField.addToPage(unresolvedPage, { x: 100, y: 100, width: 200, height: 30 });
+    unresolvedField.acroField.getWidgets()[0].dict.delete(PDFName.of("P"));
+    unresolvedPage.node.delete(PDFName.of("Annots"));
+    unresolvedWidgetPdfPath = path.join(TMP_DIR, "unresolved-widget.pdf");
+    await fs.writeFile(unresolvedWidgetPdfPath, await unresolvedDocument.save(), { mode: 0o600 });
 
     client = new Client({ name: "pdf-tools-detect-zones-tool-test-client", version: "1.0.0" });
     transport = new StdioClientTransport({
@@ -37,6 +71,27 @@ describe("detect_signature_zones tool result", () => {
       stderr: "pipe",
     });
     await client.connect(transport);
+  }, 30_000);
+
+  it("surfaces an unresolved-widget warning without fabricating page 1", async () => {
+    const result = await client.callTool({
+      name: "detect_signature_zones",
+      arguments: { pdf_path: unresolvedWidgetPdfPath },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      detection_status: "partial",
+      zones: [],
+      warnings: [{
+        code: "ACROFORM_WIDGET_PAGE_UNRESOLVED",
+        message: "Skipped an AcroForm signing widget because its page could not be resolved. No page location was guessed.",
+        occurrences: 1,
+      }],
+    });
+    const text = textFromToolResult(result);
+    expect(text).toContain("Detection warnings:");
+    expect(text).toContain("No page location was guessed.");
+    expect(text).not.toMatch(/SIGNATURE p1/);
   }, 30_000);
 
   afterAll(async () => {
@@ -59,7 +114,11 @@ describe("detect_signature_zones tool result", () => {
     expect(text).toContain("Detected zones (top-left origin, points; use these exact coordinates, do not guess):");
     expect(text).toMatch(/SIGNATURE p1 x=130\.7 y=513\.8 width=244\.9 height=16\.0/);
     expect(text).toMatch(/DATE p1 x=410\.2 y=513\.8 width=110\.0 height=16\.0/);
-    expect(text).toContain("For dates, use apply_text at a returned DATE zone.");
+    expect(text).toContain("Use apply_text at returned NAME and DATE zones.");
+    expect(result.structuredContent).toMatchObject({
+      detection_status: "complete",
+      warnings: [],
+    });
     expect(result.structuredContent.zones).toEqual(
       expect.arrayContaining([
         expect.objectContaining({
@@ -80,5 +139,53 @@ describe("detect_signature_zones tool result", () => {
         }),
       ])
     );
+  }, 30_000);
+
+  it("uses the real password path and reports the encrypted AcroForm limitation", async () => {
+    for (const password of [
+      encryptedProvenance.passwords.user,
+      encryptedProvenance.passwords.owner,
+    ]) {
+      const result = await client.callTool({
+        name: "detect_signature_zones",
+        arguments: { pdf_path: encryptedPdfPath, password },
+      });
+      expect(result.isError).not.toBe(true);
+      expect(result.structuredContent).toMatchObject({
+        detection_status: "partial",
+        zones: expect.any(Array),
+        warnings: [{
+          code: "ENCRYPTED_ACROFORM_SCAN_UNAVAILABLE",
+          message: "Encrypted PDF zone detection used the authenticated text layer. AcroForm widgets were not scanned.",
+          occurrences: 1,
+        }],
+      });
+      const text = textFromToolResult(result);
+      expect(text).toContain("Detection warnings:");
+      expect(text).not.toContain(password);
+    }
+  }, 30_000);
+
+  it("returns typed, non-leaking errors for missing and incorrect encrypted-PDF passwords", async () => {
+    const cases = [
+      [undefined, "PASSWORD_REQUIRED"],
+      [encryptedProvenance.passwords.wrong_password_oracle, "PASSWORD_INCORRECT"],
+    ];
+    for (const [password, code] of cases) {
+      const result = await client.callTool({
+        name: "detect_signature_zones",
+        arguments: {
+          pdf_path: encryptedPdfPath,
+          ...(password ? { password } : {}),
+        },
+      });
+      expect(result.isError).toBe(true);
+      expect(result.structuredContent).toEqual({
+        status: "failed",
+        error: { error_schema_version: 1, code },
+      });
+      const text = textFromToolResult(result);
+      if (password) expect(text).not.toContain(password);
+    }
   }, 30_000);
 });
