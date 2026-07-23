@@ -12,7 +12,18 @@ import {
   ErrorCode,
   McpError,
 } from "@modelcontextprotocol/sdk/types.js";
-import { PDFDocument, StandardFonts, degrees as pdfDegrees } from "pdf-lib";
+import {
+  PDFArray,
+  PDFCatalog,
+  PDFDocument,
+  PDFName,
+  PDFNumber,
+  PDFPageLeaf,
+  PDFPageTree,
+  PDFRef,
+  StandardFonts,
+  degrees as pdfDegrees,
+} from "pdf-lib";
 import { createRequire } from "module";
 import { fileURLToPath, pathToFileURL } from "url";
 import { constants as fsConstants, existsSync, realpathSync } from "fs";
@@ -812,7 +823,88 @@ async function readPdfInputWithRecovery(inputPath) {
   return { resolvedPath, pdfBytes };
 }
 
+const MAX_VALIDATED_PDF_STRUCTURE_DIGESTS = 32;
+const validatedPdfStructureDigests = new Map();
+
+function rememberValidatedPdfStructure(digest) {
+  validatedPdfStructureDigests.delete(digest);
+  validatedPdfStructureDigests.set(digest, true);
+  while (validatedPdfStructureDigests.size > MAX_VALIDATED_PDF_STRUCTURE_DIGESTS) {
+    validatedPdfStructureDigests.delete(validatedPdfStructureDigests.keys().next().value);
+  }
+}
+
+function validatePdfPageTree(pdfDoc) {
+  if (!(pdfDoc.catalog instanceof PDFCatalog)) {
+    throw new Error("catalog is unavailable");
+  }
+  const root = pdfDoc.catalog.lookup(PDFName.of("Pages"));
+  if (!(root instanceof PDFPageTree)) {
+    throw new Error("page tree root is unavailable");
+  }
+  if (root.get(PDFName.of("Parent"), true) !== undefined) {
+    throw new Error("page tree root must not have a parent");
+  }
+
+  const seenNodes = new Set([root]);
+  const frameFor = (tree, parent) => {
+    const kids = tree.lookupMaybe(PDFName.of("Kids"), PDFArray);
+    const count = tree.lookupMaybe(PDFName.of("Count"), PDFNumber);
+    const declaredCount = count?.asNumber();
+    if (!kids || !Number.isSafeInteger(declaredCount) || declaredCount < 0) {
+      throw new Error("page tree node is incomplete");
+    }
+    return {
+      tree,
+      parent,
+      kids,
+      declaredCount,
+      nextChild: 0,
+      reachablePages: 0,
+    };
+  };
+
+  const stack = [frameFor(root, null)];
+  while (stack.length > 0) {
+    const frame = stack[stack.length - 1];
+    if (frame.nextChild >= frame.kids.size()) {
+      if (frame.reachablePages !== frame.declaredCount) {
+        throw new Error("page tree count does not match reachable pages");
+      }
+      stack.pop();
+      if (frame.parent) {
+        frame.parent.reachablePages += frame.reachablePages;
+      }
+      continue;
+    }
+
+    const childToken = frame.kids.get(frame.nextChild);
+    frame.nextChild += 1;
+    if (!(childToken instanceof PDFRef)) {
+      throw new Error("page tree children must be indirect references");
+    }
+    const child = pdfDoc.context.lookupMaybe(childToken, PDFPageTree, PDFPageLeaf);
+    if (!(child instanceof PDFPageTree) && !(child instanceof PDFPageLeaf)) {
+      throw new Error("page tree child is unavailable or has an invalid type");
+    }
+    if (seenNodes.has(child)) {
+      throw new Error("page tree contains a cycle or duplicate child");
+    }
+    seenNodes.add(child);
+    const parent = child.lookupMaybe(PDFName.of("Parent"), PDFPageTree);
+    if (parent !== frame.tree) {
+      throw new Error("page tree child has an invalid parent");
+    }
+    if (child instanceof PDFPageLeaf) {
+      frame.reachablePages += 1;
+    } else {
+      stack.push(frameFor(child, frame));
+    }
+  }
+}
+
 async function loadPdfBytes(pdfBytes, password = null) {
+  const invalidPdfMessage = "Failed to load PDF: the file is malformed, incomplete, or unsupported.";
   let pdfDoc;
   try {
     pdfDoc = await PDFDocument.load(pdfBytes, password ? { password } : {});
@@ -820,8 +912,19 @@ async function loadPdfBytes(pdfBytes, password = null) {
     if (error.message?.includes("password") || error.message?.includes("encrypt")) {
       throw new Error("PDF is password-protected. Please provide the correct password using the 'password' parameter.");
     }
-    throw new Error(`Failed to load PDF: ${error.message}`);
+    throw new Error(invalidPdfMessage, { cause: error });
   }
+  const structureDigest = sha256Bytes(pdfBytes);
+  if (validatedPdfStructureDigests.has(structureDigest)) {
+    rememberValidatedPdfStructure(structureDigest);
+    return pdfDoc;
+  }
+  try {
+    validatePdfPageTree(pdfDoc);
+  } catch (error) {
+    throw new Error(invalidPdfMessage, { cause: error });
+  }
+  rememberValidatedPdfStructure(structureDigest);
   return pdfDoc;
 }
 
