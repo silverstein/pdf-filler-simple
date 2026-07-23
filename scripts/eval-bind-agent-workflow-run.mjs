@@ -5,8 +5,10 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  CODEX_ENVIRONMENT_NAMES,
   codexExecArgs,
   codexPromptInputArgs,
+  sandboxedCodexArgs,
 } from "./eval-run-codex-agent-workflow-case.mjs";
 import {
   validateAgentWorkflowEventFile,
@@ -106,14 +108,21 @@ export async function bindAgentWorkflowRun({
   const preparation = parseJson(preparationBytes, "preparation manifest");
   const expected = preparation?.explicit_case_attestations?.[arm]?.[caseId];
   if (!expected) throw new Error("arm and case are absent from the trusted manifest");
-  const [binderBytes, eventValidatorBytes] = await Promise.all([
+  const launcherPath = fileURLToPath(new URL(
+    "./eval-run-codex-agent-workflow-case.mjs",
+    import.meta.url,
+  ));
+  const [binderBytes, eventValidatorBytes, launcherBytes] = await Promise.all([
     fs.readFile(BINDER_PATH),
     fs.readFile(EVENT_VALIDATOR_PATH),
+    fs.readFile(launcherPath),
   ]);
   if (
     sha256(binderBytes) !== preparation?.controller_artifacts?.[BINDER_ARTIFACT]?.sha256
     || sha256(eventValidatorBytes)
       !== preparation?.controller_artifacts?.[EVENT_VALIDATOR_ARTIFACT]?.sha256
+    || sha256(launcherBytes)
+      !== preparation?.controller_artifacts?.[LAUNCHER_ARTIFACT]?.sha256
   ) {
     throw new Error("controller validator code differs from the trusted preparation");
   }
@@ -184,14 +193,24 @@ export async function bindAgentWorkflowRun({
   ) {
     throw new Error("launch plan input hashes do not match the trusted case inventory");
   }
-  const expectedExecArgs = codexExecArgs({
+  const expectedCodexArgs = codexExecArgs({
     model: plan.model,
     responsePath: path.join(runRoot, "response.json"),
   });
+  const expectedExecArgs = sandboxedCodexArgs({
+    sandboxProfile: plan.isolation?.sandbox_profile,
+    codexBinary: plan.command.codex_program,
+    codexArgs: expectedCodexArgs,
+  });
   if (
-    plan.command.cwd !== plan.case_root
+    plan.isolation?.process_home_inherited !== false
+    || !path.isAbsolute(plan.isolation?.denied_user_home ?? "")
+    || plan.command.program !== plan.isolation?.sandbox_program
+    || !equalJson(plan.isolation?.environment_names, CODEX_ENVIRONMENT_NAMES)
+    || plan.command.cwd !== plan.case_root
     || plan.command.stdout !== path.join(runRoot, "events.jsonl")
     || plan.command.stderr !== path.join(runRoot, "stderr.txt")
+    || !equalJson(plan.command.codex_argv, expectedCodexArgs)
     || !equalJson(plan.command.argv, expectedExecArgs)
   ) {
     throw new Error("launch command differs from the reviewed Codex command");
@@ -207,27 +226,51 @@ export async function bindAgentWorkflowRun({
   }
 
   const promptInput = parseJson(bytesByName["prompt-input.json"], "prompt input");
-  if (!Array.isArray(promptInput)) throw new Error("prompt input must be a JSON array");
+  if (
+    !Array.isArray(promptInput)
+    || promptInput.some(item =>
+      item?.type !== "message" || !["developer", "user"].includes(item?.role))
+  ) {
+    throw new Error("prompt input must contain only developer and user messages");
+  }
   const promptInputText = canonicalJson(promptInput);
-  const capturedPrompt = outcome?.prompt_input_command?.argv?.at(-1);
+  const capturedPrompt = outcome?.prompt_input_command?.codex_argv?.at(-1);
+  const expectedPromptInputCodexArgs = codexPromptInputArgs(capturedPrompt);
+  const expectedPromptInputArgs = sandboxedCodexArgs({
+    sandboxProfile: plan.isolation.sandbox_profile,
+    codexBinary: plan.command.codex_program,
+    codexArgs: expectedPromptInputCodexArgs,
+  });
   if (
     typeof capturedPrompt !== "string"
     || sha256(capturedPrompt) !== promptEntry.sha256
-    || !equalJson(
-      outcome.prompt_input_command.argv,
-      codexPromptInputArgs(capturedPrompt),
-    )
+    || !equalJson(outcome.prompt_input_command.codex_argv, expectedPromptInputCodexArgs)
+    || !equalJson(outcome.prompt_input_command.argv, expectedPromptInputArgs)
     || outcome.prompt_input_command.cwd !== plan.case_root
     || outcome.prompt_input_command.program !== plan.command.program
+    || outcome.prompt_input_command.codex_program !== plan.command.codex_program
     || !promptInputText.includes(`Case ID: ${caseId}`)
     || !promptInputText.includes("$pdf-tools-workflow")
+    || promptInputText.includes(plan.isolation.denied_user_home)
   ) {
     throw new Error("prompt-input evidence does not match the reviewed run input");
   }
   const skillPath = `${plan.case_root}/.agents/skills/pdf-tools-workflow/SKILL.md`;
+  const systemSkillRoot = `${plan.codex_home}/skills/.system/`;
+  const skillFiles = [...promptInputText.matchAll(
+    /file:\s*([^"\s)]+\/SKILL\.md)/g,
+  )].map(match => match[1]);
+  const unexpectedSkillFiles = skillFiles.filter(filename =>
+    filename !== skillPath && !filename.startsWith(systemSkillRoot));
   if (
-    (arm === "codex-explicit-skill" && !promptInputText.includes(skillPath))
-    || (arm === "codex-explicit-baseline" && promptInputText.includes(skillPath))
+    unexpectedSkillFiles.length > 0
+    || (arm === "codex-explicit-skill"
+      && skillFiles.filter(filename => filename === skillPath).length !== 1)
+    || (arm === "codex-explicit-baseline"
+      && skillFiles.some(filename =>
+        filename.includes("pdf-tools-workflow") || filename === skillPath))
+    || /(?:AGENTS|CLAUDE)\.md/.test(promptInputText)
+    || /\.codex\/plugins|\.claude-plugin|mcpServers/.test(promptInputText)
   ) {
     throw new Error("prompt-input skill inventory does not match the bound arm");
   }

@@ -70,6 +70,24 @@ if (args[0] === "--version") {
   return filename;
 }
 
+async function fakeSandbox(root) {
+  const filename = path.join(root, "fake-sandbox.mjs");
+  await fs.writeFile(filename, `#!/usr/bin/env node
+import { spawn } from "node:child_process";
+
+const args = process.argv.slice(2);
+if (args[0] !== "-p" || args.length < 4) process.exit(2);
+const child = spawn(args[2], args.slice(3), { stdio: "inherit" });
+child.once("error", () => process.exit(2));
+child.once("close", (code, signal) => {
+  if (signal) process.kill(process.pid, signal);
+  else process.exit(code ?? 2);
+});
+`);
+  await fs.chmod(filename, 0o700);
+  return filename;
+}
+
 async function preparedRun() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-workflow-bound-run-"));
   roots.push(root);
@@ -99,6 +117,7 @@ async function preparedRun() {
     resultsRoot,
     codexHome,
     codexBinary: await fakeCodex(root),
+    sandboxBinary: await fakeSandbox(root),
     attesterPath: path.join(
       REPO_ROOT,
       "scripts",
@@ -157,6 +176,7 @@ describe("agent workflow run binding", () => {
       resultsRoot: run.resultsRoot,
       codexHome: path.join(run.root, "codex-home"),
       codexBinary: path.join(run.root, "fake-codex.mjs"),
+      sandboxBinary: path.join(run.root, "fake-sandbox.mjs"),
       attesterPath: path.join(
         REPO_ROOT,
         "scripts",

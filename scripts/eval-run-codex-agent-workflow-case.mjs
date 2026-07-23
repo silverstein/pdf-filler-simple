@@ -52,8 +52,24 @@ const SYNTHETIC_GIT_ENV = {
   LC_ALL: "C",
   TZ: "UTC",
 };
-const SENSITIVE_ENVIRONMENT_NAME = /(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)/i;
-
+export const CODEX_ENVIRONMENT_NAMES = [
+  "CODEX_HOME",
+  "GIT_AUTHOR_DATE",
+  "GIT_AUTHOR_EMAIL",
+  "GIT_AUTHOR_NAME",
+  "GIT_COMMITTER_DATE",
+  "GIT_COMMITTER_EMAIL",
+  "GIT_COMMITTER_NAME",
+  "GIT_CONFIG_GLOBAL",
+  "GIT_CONFIG_NOSYSTEM",
+  "LANG",
+  "LC_ALL",
+  "NO_COLOR",
+  "PATH",
+  "TERM",
+  "TMPDIR",
+  "TZ",
+];
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -94,6 +110,23 @@ export function codexPromptInputArgs(prompt) {
     ...featureDenyArgs(),
     prompt,
   ];
+}
+
+function sandboxString(value) {
+  return `"${value.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}"`;
+}
+
+export function codexSandboxProfile(deniedUserHome) {
+  return [
+    "(version 1)",
+    "(allow default)",
+    `(deny file-read* (subpath ${sandboxString(deniedUserHome)}))`,
+    `(deny file-write* (subpath ${sandboxString(deniedUserHome)}))`,
+  ].join("\n");
+}
+
+export function sandboxedCodexArgs({ sandboxProfile, codexBinary, codexArgs }) {
+  return ["-p", sandboxProfile, codexBinary, ...codexArgs];
 }
 
 async function writeExclusive(filename, value) {
@@ -170,6 +203,7 @@ export async function runCodexAgentWorkflowCase(options) {
     resultsRoot,
     codexHome,
     codexBinary,
+    sandboxBinary,
     attesterPath,
     expectedCommitSha1,
     expectedTreeSha1,
@@ -184,6 +218,7 @@ export async function runCodexAgentWorkflowCase(options) {
     resultsRoot,
     codexHome,
     codexBinary,
+    sandboxBinary,
     attesterPath,
   })) {
     if (!path.isAbsolute(value)) throw new Error(`${label} must be absolute`);
@@ -208,6 +243,13 @@ export async function runCodexAgentWorkflowCase(options) {
   ) {
     throw new Error("attesterPath must be operator-owned outside run roots");
   }
+  if (
+    pathInside(caseRoot, sandboxBinary)
+    || pathInside(resultsRoot, sandboxBinary)
+    || pathInside(codexHome, sandboxBinary)
+  ) {
+    throw new Error("sandboxBinary must remain outside run roots");
+  }
   if ((await exactDirectoryEntries(codexHome)).join("\0") !== "auth.json") {
     throw new Error("codexHome must initially contain only auth.json");
   }
@@ -217,14 +259,17 @@ export async function runCodexAgentWorkflowCase(options) {
   }
 
   await fs.mkdir(resultsRoot, { mode: 0o700 });
-  const environment = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) =>
-      !SENSITIVE_ENVIRONMENT_NAME.test(name)),
-  );
-  Object.assign(environment, {
+  const runtimeTemporaryRoot = path.join(codexHome, "tmp");
+  await fs.mkdir(runtimeTemporaryRoot, { mode: 0o700 });
+  const environment = {
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
+    LANG: "C.UTF-8",
+    TERM: "dumb",
+    NO_COLOR: "1",
+    TMPDIR: runtimeTemporaryRoot,
     ...SYNTHETIC_GIT_ENV,
     CODEX_HOME: codexHome,
-  });
+  };
   const attesterBytes = await fs.readFile(attesterPath);
   const launcherBytes = await fs.readFile(fileURLToPath(import.meta.url));
   const attester = await import(pathToFileURL(attesterPath).href);
@@ -253,7 +298,14 @@ export async function runCodexAgentWorkflowCase(options) {
     { encoding: "utf8", env: environment },
   );
   const responsePath = path.join(resultsRoot, "response.json");
-  const execArgs = codexExecArgs({ model, responsePath });
+  const deniedUserHome = os.userInfo().homedir;
+  const sandboxProfile = codexSandboxProfile(deniedUserHome);
+  const codexArgs = codexExecArgs({ model, responsePath });
+  const execArgs = sandboxedCodexArgs({
+    sandboxProfile,
+    codexBinary,
+    codexArgs,
+  });
   const launchPlan = {
     schema_version: "pdf-tools.agent-workflow-launch-plan.v1",
     arm,
@@ -281,9 +333,18 @@ export async function runCodexAgentWorkflowCase(options) {
     response_schema_sha256: sha256(responseSchema),
     attester_sha256: sha256(attesterBytes),
     launcher_sha256: sha256(launcherBytes),
+    isolation: {
+      process_home_inherited: false,
+      denied_user_home: deniedUserHome,
+      sandbox_program: sandboxBinary,
+      sandbox_profile: sandboxProfile,
+      environment_names: Object.keys(environment).sort(),
+    },
     command: {
-      program: codexBinary,
+      program: sandboxBinary,
       argv: execArgs,
+      codex_program: codexBinary,
+      codex_argv: codexArgs,
       cwd: caseRoot,
       stdin: "prompt.txt",
       stdin_sha256: sha256(prompt),
@@ -301,7 +362,7 @@ export async function runCodexAgentWorkflowCase(options) {
   );
 
   const startedAt = new Date().toISOString();
-  const processResult = await runCaptured(codexBinary, execArgs, {
+  const processResult = await runCaptured(sandboxBinary, execArgs, {
     cwd: caseRoot,
     env: environment,
     stdin: prompt,
@@ -316,7 +377,12 @@ export async function runCodexAgentWorkflowCase(options) {
   );
 
   const promptInputArgs = codexPromptInputArgs(prompt);
-  const promptInputResult = await runCaptured(codexBinary, promptInputArgs, {
+  const sandboxedPromptInputArgs = sandboxedCodexArgs({
+    sandboxProfile,
+    codexBinary,
+    codexArgs: promptInputArgs,
+  });
+  const promptInputResult = await runCaptured(sandboxBinary, sandboxedPromptInputArgs, {
     cwd: caseRoot,
     env: environment,
     stdoutPath: path.join(resultsRoot, "prompt-input.json"),
@@ -332,8 +398,10 @@ export async function runCodexAgentWorkflowCase(options) {
     prompt_input_exit_code: promptInputResult.code,
     prompt_input_signal: promptInputResult.signal,
     prompt_input_command: {
-      program: codexBinary,
-      argv: promptInputArgs,
+      program: sandboxBinary,
+      argv: sandboxedPromptInputArgs,
+      codex_program: codexBinary,
+      codex_argv: promptInputArgs,
       cwd: caseRoot,
       environment_policy: launchPlan.command.environment_policy,
     },
@@ -364,6 +432,7 @@ function parseArgs(argv) {
     resultsRoot: "--results-root",
     codexHome: "--codex-home",
     codexBinary: "--codex-binary",
+    sandboxBinary: "--sandbox-binary",
     attesterPath: "--attester",
     expectedCommitSha1: "--expected-commit-sha1",
     expectedTreeSha1: "--expected-tree-sha1",

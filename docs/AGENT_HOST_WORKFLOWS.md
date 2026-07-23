@@ -178,6 +178,7 @@ between cases.
 : "${PDF_WORKFLOW_RESULTS_ROOT:?set this to a fresh absolute operator-owned <arm>/<case-id> path}"
 : "${PDF_WORKFLOW_CODEX_HOME:?set this to a fresh mode-0700 home containing only auth.json}"
 : "${PDF_WORKFLOW_CODEX_BIN:?set this to the absolute Codex CLI path}"
+: "${PDF_WORKFLOW_SANDBOX_BIN:?set this to the absolute macOS sandbox-exec path}"
 : "${PDF_WORKFLOW_RUNNER:?set this to the separate operator-owned launcher path}"
 : "${PDF_WORKFLOW_ATTESTER:?set this to the separate operator-owned attester path}"
 : "${PDF_WORKFLOW_EXPECTED_COMMIT_SHA1:?set this from the trusted per-case attestation}"
@@ -191,6 +192,7 @@ node "$PDF_WORKFLOW_RUNNER" \
   --results-root "$PDF_WORKFLOW_RESULTS_ROOT" \
   --codex-home "$PDF_WORKFLOW_CODEX_HOME" \
   --codex-binary "$PDF_WORKFLOW_CODEX_BIN" \
+  --sandbox-binary "$PDF_WORKFLOW_SANDBOX_BIN" \
   --attester "$PDF_WORKFLOW_ATTESTER" \
   --expected-commit-sha1 "$PDF_WORKFLOW_EXPECTED_COMMIT_SHA1" \
   --expected-tree-sha1 "$PDF_WORKFLOW_EXPECTED_TREE_SHA1" \
