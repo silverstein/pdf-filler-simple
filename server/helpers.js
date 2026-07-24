@@ -515,10 +515,55 @@ export function validateSigningIntent({ user_intent_statement, user_confirmed_at
   return { statement, confirmedAt };
 }
 
+// CANONICAL PAGE-BOX COORDINATE CONVENTION
+//
+// Every coordinate crossing this module's public boundary — tool inputs, detected
+// zones, extracted text bounds, viewer overlays, fixtures — is expressed as
+// TOP-LEFT origin, in points, RELATIVE TO THE PAGE'S MEDIABOX. The MediaBox is
+// the canonical reference box (not the CropBox), matching `page.getSize()` and
+// the accepted rotated/cropped golden fixture.
+//
+// PDF user space is bottom-left origin AND is offset by the MediaBox origin,
+// which is nonzero for a page whose MediaBox is e.g. [40 60 652 852]. Raw
+// pdf-lib drawing calls and raw pdf.js text transforms both live in that
+// absolute user space. Converting only the y-axis flip while ignoring the
+// origin silently displaces content by (-originX, -originY): on a nonzero-origin
+// page a signature requested near the margin is drawn outside the visible area.
+//
+// Normalization therefore happens at exactly two boundaries, and nowhere else:
+//   - INPUT  (stamping): box-relative top-left -> user space, via toUserSpace()
+//   - OUTPUT (detection/extraction): user space -> box-relative top-left
+//
+// Both directions must move together. Fixing only one side would appear correct
+// on a detect-then-stamp round trip (the two errors cancel) while every
+// externally supplied or externally consumed coordinate stayed wrong.
+export function getPageBoxGeometry(pdfPage) {
+  let box = null;
+  try {
+    box = pdfPage.getMediaBox();
+  } catch {
+    box = null;
+  }
+  const size = pdfPage.getSize();
+  const originX = Number.isFinite(box?.x) ? box.x : 0;
+  const originY = Number.isFinite(box?.y) ? box.y : 0;
+  const width = Number.isFinite(box?.width) ? box.width : size.width;
+  const height = Number.isFinite(box?.height) ? box.height : size.height;
+  return { originX, originY, width, height };
+}
+
+// Convert a box-relative top-left point to absolute PDF user space.
+// `yFromBottom` is the already-flipped distance from the box's bottom edge.
+function toUserSpace({ originX, originY }, x, yFromBottom) {
+  return { x: originX + x, y: originY + yFromBottom };
+}
+
 // Stamp a saved signature onto a PDF page at the given top-left coordinates.
-// Coordinates are in PDF user-space points (72pt = 1 inch), using TOP-LEFT origin:
-//   x: distance from left edge
-//   y: distance from TOP edge (we convert to pdf-lib's bottom-left internally)
+// Coordinates are in PDF points (72pt = 1 inch), using TOP-LEFT origin relative
+// to the page MediaBox:
+//   x: distance from the MediaBox left edge
+//   y: distance from the MediaBox TOP edge
+// (converted to absolute bottom-left user space internally; see the convention note above)
 // Mutates pdfDoc in place.
 export async function stampSignatureOnPage(pdfDoc, signature, {
   page,          // 1-indexed page number
@@ -532,7 +577,8 @@ export async function stampSignatureOnPage(pdfDoc, signature, {
     throw new Error(`Page ${page} is out of range (1-${pages.length}).`);
   }
   const pdfPage = pages[page - 1];
-  const { width: pageW, height: pageH } = pdfPage.getSize();
+  const boxGeometry = getPageBoxGeometry(pdfPage);
+  const { width: pageW, height: pageH } = boxGeometry;
 
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
     throw new Error("x, y, width, height must all be finite numbers.");
@@ -548,8 +594,12 @@ export async function stampSignatureOnPage(pdfDoc, signature, {
     );
   }
 
-  // Convert top-left y to pdf-lib's bottom-left y
+  // Flip top-left y to a bottom-relative offset, then shift into absolute user
+  // space so a nonzero MediaBox origin is honored.
   const pdfY = pageH - y - height;
+  const boxOrigin = toUserSpace(boxGeometry, x, pdfY);
+  const userX = boxOrigin.x;
+  const userY = boxOrigin.y;
 
   if (signature.style === "image") {
     const imageBytes = Buffer.from(signature.image_data_b64, "base64");
@@ -563,13 +613,13 @@ export async function stampSignatureOnPage(pdfDoc, signature, {
     if (imgAspect > boxAspect) {
       drawW = width;
       drawH = width / imgAspect;
-      drawX = x;
-      drawY = pdfY + (height - drawH) / 2;
+      drawX = userX;
+      drawY = userY + (height - drawH) / 2;
     } else {
       drawH = height;
       drawW = height * imgAspect;
-      drawX = x + (width - drawW) / 2;
-      drawY = pdfY;
+      drawX = userX + (width - drawW) / 2;
+      drawY = userY;
     }
     pdfPage.drawImage(image, { x: drawX, y: drawY, width: drawW, height: drawH });
   } else if (signature.style === "typed") {
@@ -585,8 +635,8 @@ export async function stampSignatureOnPage(pdfDoc, signature, {
     }
     // Center text vertically in the box
     const textHeight = font.heightAtSize(fontSize);
-    const textX = x + (width - textWidth) / 2;
-    const textY = pdfY + (height - textHeight) / 2 + font.heightAtSize(fontSize) * 0.2;
+    const textX = userX + (width - textWidth) / 2;
+    const textY = userY + (height - textHeight) / 2 + font.heightAtSize(fontSize) * 0.2;
     pdfPage.drawText(text, {
       x: textX,
       y: textY,
@@ -602,10 +652,13 @@ export async function stampSignatureOnPage(pdfDoc, signature, {
   if (drawAuditLine && auditText) {
     const font = await pdfDoc.embedFont(StandardFonts.Helvetica);
     const auditSize = 6;
-    const lineY = pdfY - 2 - auditSize;
-    if (lineY > 2) {
+    const lineY = userY - 2 - auditSize;
+    // Keep the 2pt floor measured from the box's own bottom edge, not from
+    // absolute user-space zero, so the guard means the same thing on a
+    // nonzero-origin page.
+    if (lineY > boxGeometry.originY + 2) {
       pdfPage.drawText(auditText, {
-        x,
+        x: userX,
         y: lineY,
         size: auditSize,
         font,
@@ -631,7 +684,8 @@ export async function stampTextOnPage(pdfDoc, {
     throw new Error(`Page ${page} is out of range (1-${pages.length}).`);
   }
   const pdfPage = pages[page - 1];
-  const { width: pageW, height: pageH } = pdfPage.getSize();
+  const boxGeometry = getPageBoxGeometry(pdfPage);
+  const { width: pageW, height: pageH } = boxGeometry;
 
   if (!Number.isFinite(x) || !Number.isFinite(y) || !Number.isFinite(width) || !Number.isFinite(height)) {
     throw new Error("x, y, width, height must all be finite numbers.");
@@ -651,6 +705,7 @@ export async function stampTextOnPage(pdfDoc, {
   }
 
   const pdfY = pageH - y - height;
+  const { x: userX, y: userY } = toUserSpace(boxGeometry, x, pdfY);
   const font = await pdfDoc.embedFont(
     fontStyle === "italic" ? StandardFonts.HelveticaOblique : StandardFonts.Helvetica
   );
@@ -664,8 +719,8 @@ export async function stampTextOnPage(pdfDoc, {
     fontSize = Math.max(6, fontSize * (maxWidth / measured));
   }
   const textWidth = font.widthOfTextAtSize(safeText, fontSize);
-  const textX = x + (width - textWidth) / 2;
-  const textY = pdfY + (height - font.heightAtSize(fontSize)) / 2 + fontSize * 0.15;
+  const textX = userX + (width - textWidth) / 2;
+  const textY = userY + (height - font.heightAtSize(fontSize)) / 2 + fontSize * 0.15;
 
   pdfPage.drawText(safeText, {
     x: textX,
@@ -688,7 +743,8 @@ export async function drawSignatureFieldOnPage(pdfDoc, {
     throw new Error(`Page ${page} is out of range (1-${pages.length}).`);
   }
   const pdfPage = pages[page - 1];
-  const { width: pageW, height: pageH } = pdfPage.getSize();
+  const boxGeometry = getPageBoxGeometry(pdfPage);
+  const { width: pageW, height: pageH } = boxGeometry;
   if (x < 0 || y < 0 || x + width > pageW || y + height > pageH) {
     throw new Error(
       `Signature field (${x}, ${y}, ${width}x${height}) falls outside page bounds ` +
@@ -696,10 +752,11 @@ export async function drawSignatureFieldOnPage(pdfDoc, {
     );
   }
   const pdfY = pageH - y - height;
+  const { x: userX, y: userY } = toUserSpace(boxGeometry, x, pdfY);
 
   // Light gray dashed rectangle outline
   pdfPage.drawRectangle({
-    x, y: pdfY, width, height,
+    x: userX, y: userY, width, height,
     borderColor: rgb(0.55, 0.55, 0.6),
     borderWidth: 0.75,
     borderOpacity: 0.9,
@@ -713,8 +770,8 @@ export async function drawSignatureFieldOnPage(pdfDoc, {
   const labelSize = Math.min(height * 0.35, 10);
   const textWidth = font.widthOfTextAtSize(text, labelSize);
   pdfPage.drawText(text, {
-    x: x + (width - textWidth) / 2,
-    y: pdfY + height / 2 - labelSize * 0.35,
+    x: userX + (width - textWidth) / 2,
+    y: userY + height / 2 - labelSize * 0.35,
     size: labelSize,
     font,
     color: rgb(0.45, 0.45, 0.5),
@@ -832,6 +889,10 @@ export async function extractPdfTextWithBounds(pdfjsLib, pdfBytes, { password, m
       }
       const pageW = mediaBox.width;
       const pageH = mediaBox.height;
+      // pdf.js text transforms are absolute user space. Subtract the MediaBox
+      // origin so emitted bounds are box-relative per the canonical convention.
+      const originX = Number.isFinite(mediaBox.x) ? mediaBox.x : 0;
+      const originY = Number.isFinite(mediaBox.y) ? mediaBox.y : 0;
       const textContent = await page.getTextContent();
       const items = [];
       for (const it of textContent.items) {
@@ -847,9 +908,10 @@ export async function extractPdfTextWithBounds(pdfjsLib, pdfBytes, { password, m
         const textWidth = typeof it.width === "number" && it.width > 0 ? it.width : fontSize * str.length * 0.5;
         // PDF baseline in bottom-left origin: baselineY_bl = f
         // Top of glyph in bottom-left: f + fontSize * 0.75 (ascent)
-        // Convert to the native top-left convention used by the stamping tools.
-        const xTopLeft = e;
-        const yTopLeft = pageH - f - fontSize * 0.75;
+        // Convert to the native top-left convention used by the stamping tools,
+        // removing the MediaBox origin so both sides share one box-relative space.
+        const xTopLeft = e - originX;
+        const yTopLeft = (originY + pageH) - f - fontSize * 0.75;
         items.push({
           text: str,
           x: xTopLeft,
@@ -1202,7 +1264,10 @@ function scanAcroFormForZones(pdfDoc, { onWarning } = {}) {
     return zones;
   }
   const pages = pdfDoc.getPages();
-  const pageHeights = pages.map(p => p.getSize().height);
+  // Widget /Rect values are absolute user space, so the MediaBox origin has to
+  // come off here too — otherwise AcroForm zones and text zones would be
+  // reported in two different coordinate spaces on a nonzero-origin page.
+  const pageBoxes = pages.map(p => getPageBoxGeometry(p));
 
   for (const field of fields) {
     const typeName = field.constructor.name || "";
@@ -1257,7 +1322,8 @@ function scanAcroFormForZones(pdfDoc, { onWarning } = {}) {
         continue;
       }
 
-      const pageH = pageHeights[pageIdx];
+      const pageBox = pageBoxes[pageIdx];
+      const pageH = pageBox.height;
       const type = isSignature || looksLikeSig
         ? "signature"
         : looksLikeInitials
@@ -1267,8 +1333,8 @@ function scanAcroFormForZones(pdfDoc, { onWarning } = {}) {
         type,
         label: fieldName || (type === "signature" ? "Signature" : type === "initials" ? "Initials" : "Print Name"),
         page: pageIdx + 1,
-        x: Math.round(rect.x * 10) / 10,
-        y: Math.round((pageH - rect.y - rect.height) * 10) / 10,
+        x: Math.round((rect.x - pageBox.originX) * 10) / 10,
+        y: Math.round(((pageBox.originY + pageH) - rect.y - rect.height) * 10) / 10,
         width: Math.round(rect.width * 10) / 10,
         height: Math.round(rect.height * 10) / 10,
         confidence: isSignature ? 0.99 : 0.85,
