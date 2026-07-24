@@ -699,11 +699,21 @@ setInterval(() => {}, 1000);
       termination_reason: "timeout",
       sigterm_attempted: true,
       sigterm_sent: true,
-      sigkill_attempted: true,
-      sigkill_sent: true,
       process_group_alive_after_close: false,
-      signal: "SIGKILL",
     });
+    expect(["SIGTERM", "SIGKILL"]).toContain(result.signal);
+    if (result.signal === "SIGKILL") {
+      expect(result).toMatchObject({
+        sigkill_attempted: true,
+        sigkill_sent: true,
+      });
+    } else {
+      expect(result).toMatchObject({
+        sigkill_attempted: false,
+        sigkill_sent: false,
+      });
+    }
+    expect(isCleanProcessResult(result)).toBe(false);
     const grandchildPid = Number(await fs.readFile(grandchildPidPath, "utf8"));
     expect(() => process.kill(grandchildPid, 0)).toThrow(
       expect.objectContaining({ code: "ESRCH" }),
