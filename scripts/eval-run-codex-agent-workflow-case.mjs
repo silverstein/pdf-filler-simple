@@ -79,8 +79,13 @@ const CODEX_BASE_ENVIRONMENT_NAMES = [
 const MACOS_EFFECTIVE_ENVIRONMENT_NAMES = [
   "__CF_USER_TEXT_ENCODING",
 ];
+const DEFAULT_NON_CAMPAIGN_TIMEOUT_MS = 120_000;
+const DEFAULT_TERMINATION_GRACE_MS = 5_000;
+const MAX_PROCESS_TIMEOUT_MS = 15 * 60_000;
+const MAX_TERMINATION_GRACE_MS = 30_000;
 export const PRIVATE_CREATION_UMASK = 0o077;
 export const PRIVATE_EVIDENCE_MODE = 0o600;
+export const RUNNER_API_VERSION = "pdf-tools.agent-workflow-runner.r13-v1";
 let runnerInvocationActive = false;
 export const CODEX_ENVIRONMENT_NAMES = [
   ...CODEX_BASE_ENVIRONMENT_NAMES,
@@ -171,16 +176,65 @@ export function codexPromptInputArgs(prompt) {
   ];
 }
 
+export function codexBaseContextArgs() {
+  return [
+    "debug",
+    "prompt-input",
+    ...featureDenyArgs(),
+    "--",
+  ];
+}
+
 function sandboxString(value) {
   return `"${value.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"")}"`;
 }
 
-export function codexSandboxProfile(deniedUserHome) {
+function seatbeltSubpathRule(action, operations, root) {
+  return `(${action} ${operations} (subpath ${sandboxString(root)}))`;
+}
+
+export function codexSandboxProfile(configuration) {
+  if (typeof configuration === "string") {
+    return [
+      "(version 1)",
+      "(allow default)",
+      seatbeltSubpathRule("deny", "file-read*", configuration),
+      seatbeltSubpathRule("deny", "file-write*", configuration),
+    ].join("\n");
+  }
+  const {
+    broadDeniedRoots,
+    allowedRoots,
+    protectedDeniedRoots,
+  } = configuration ?? {};
+  for (const [label, roots] of Object.entries({
+    broadDeniedRoots,
+    allowedRoots,
+    protectedDeniedRoots,
+  })) {
+    if (
+      !Array.isArray(roots)
+      || roots.some(root => typeof root !== "string" || !path.isAbsolute(root))
+      || new Set(roots).size !== roots.length
+    ) {
+      throw new Error(`${label} must contain unique absolute paths`);
+    }
+  }
   return [
     "(version 1)",
     "(allow default)",
-    `(deny file-read* (subpath ${sandboxString(deniedUserHome)}))`,
-    `(deny file-write* (subpath ${sandboxString(deniedUserHome)}))`,
+    ...broadDeniedRoots.flatMap(root => [
+      seatbeltSubpathRule("deny", "file-read*", root),
+      seatbeltSubpathRule("deny", "file-write*", root),
+    ]),
+    ...allowedRoots.flatMap(root => [
+      seatbeltSubpathRule("allow", "file-read*", root),
+      seatbeltSubpathRule("allow", "file-write*", root),
+    ]),
+    ...protectedDeniedRoots.flatMap(root => [
+      seatbeltSubpathRule("deny", "file-read*", root),
+      seatbeltSubpathRule("deny", "file-write*", root),
+    ]),
   ].join("\n");
 }
 
@@ -351,33 +405,565 @@ async function privateFileIdentity(filename) {
   }
 }
 
-async function runCaptured(program, args, {
+async function canonicalDirectory(root, label) {
+  if (typeof root !== "string" || !path.isAbsolute(root) || root === path.parse(root).root) {
+    throw new Error(`${label} must be an absolute non-root directory`);
+  }
+  const [canonical, stat] = await Promise.all([
+    fs.realpath(root),
+    fs.lstat(root),
+  ]);
+  if (
+    canonical !== root
+    || stat.isSymbolicLink()
+    || !stat.isDirectory()
+  ) {
+    throw new Error(`${label} must be an existing canonical directory`);
+  }
+  return canonical;
+}
+
+function assertPairwiseDisjoint(roots, label) {
+  for (let left = 0; left < roots.length; left += 1) {
+    for (let right = left + 1; right < roots.length; right += 1) {
+      if (
+        pathInside(roots[left], roots[right])
+        || pathInside(roots[right], roots[left])
+      ) {
+        throw new Error(`${label} must be pairwise disjoint`);
+      }
+    }
+  }
+}
+
+function sortSeatbeltRoots(roots) {
+  return [...new Set(roots)].sort((left, right) => {
+    const depthDifference = left.split(path.sep).length - right.split(path.sep).length;
+    if (depthDifference !== 0) return depthDifference;
+    return left < right ? -1 : (left > right ? 1 : 0);
+  });
+}
+
+async function campaignSandboxProfile({
+  isolation,
+  caseRoot,
+  resultsRoot,
+  codexHome,
+  promptCaptureHome,
+}) {
+  if (
+    !isolation
+    || typeof isolation !== "object"
+    || Array.isArray(isolation)
+  ) {
+    throw new Error("held-out runs require an isolation contract");
+  }
+  if (
+    canonicalJson(Object.keys(isolation).sort())
+      !== canonicalJson(["denied_roots", "schema_version"])
+    || isolation.schema_version
+      !== "pdf-tools.agent-workflow-campaign-isolation.v1"
+    || !isolation.denied_roots
+    || typeof isolation.denied_roots !== "object"
+    || Array.isArray(isolation.denied_roots)
+  ) {
+    throw new Error("isolation has an invalid exact shape or schema version");
+  }
+  const deniedRoots = isolation.denied_roots;
+  const exactDeniedKeys = [
+    "additional_sensitive_roots",
+    "auth_sensitive_roots",
+    "campaign_evidence_control_root",
+    "operator_home",
+    "receipt_control_roots",
+    "sealed_bundle_root",
+    "source_repo_root",
+  ];
+  if (
+    canonicalJson(Object.keys(deniedRoots).sort())
+      !== canonicalJson(exactDeniedKeys)
+    || !Array.isArray(deniedRoots.receipt_control_roots)
+    || deniedRoots.receipt_control_roots.length === 0
+    || !Array.isArray(deniedRoots.auth_sensitive_roots)
+    || deniedRoots.auth_sensitive_roots.length === 0
+    || !Array.isArray(deniedRoots.additional_sensitive_roots)
+    || new Set(deniedRoots.receipt_control_roots).size
+      !== deniedRoots.receipt_control_roots.length
+    || new Set(deniedRoots.auth_sensitive_roots).size
+      !== deniedRoots.auth_sensitive_roots.length
+    || new Set(deniedRoots.additional_sensitive_roots).size
+      !== deniedRoots.additional_sensitive_roots.length
+  ) {
+    throw new Error("isolation.denied_roots has an invalid exact shape");
+  }
+  const operatorHome = await canonicalDirectory(
+    deniedRoots.operator_home,
+    "isolation.denied_roots.operator_home",
+  );
+  const actualOperatorHome = await fs.realpath(os.userInfo().homedir);
+  if (operatorHome !== actualOperatorHome) {
+    throw new Error("isolation operator_home differs from the operator home");
+  }
+  const broadDeniedRoots = await Promise.all([
+    ["campaign_evidence_control_root", deniedRoots.campaign_evidence_control_root],
+    ["sealed_bundle_root", deniedRoots.sealed_bundle_root],
+    ["source_repo_root", deniedRoots.source_repo_root],
+  ].map(async ([label, root]) =>
+    canonicalDirectory(root, `isolation.denied_roots.${label}`)));
+  broadDeniedRoots.unshift(operatorHome);
+  const protectedDeniedRoots = await Promise.all([
+    ...deniedRoots.receipt_control_roots.map((root, index) => [
+      `receipt_control_roots[${index}]`,
+      root,
+    ]),
+    ...deniedRoots.auth_sensitive_roots.map((root, index) => [
+      `auth_sensitive_roots[${index}]`,
+      root,
+    ]),
+    ...deniedRoots.additional_sensitive_roots.map((root, index) => [
+      `additional_sensitive_roots[${index}]`,
+      root,
+    ]),
+  ].map(async ([label, root]) =>
+    canonicalDirectory(root, `isolation.denied_roots.${label}`)));
+  const allowedRoots = [
+    caseRoot,
+    resultsRoot,
+    codexHome,
+    promptCaptureHome,
+  ];
+  assertPairwiseDisjoint(allowedRoots, "current attempt roots");
+  if (!pathInside(deniedRoots.campaign_evidence_control_root, resultsRoot)) {
+    throw new Error(
+      "resultsRoot must be inside isolation campaign_evidence_control_root",
+    );
+  }
+  for (const broadRoot of [
+    operatorHome,
+    broadDeniedRoots[2],
+    broadDeniedRoots[3],
+  ]) {
+    for (const allowedRoot of allowedRoots) {
+      if (
+        pathInside(broadRoot, allowedRoot)
+        || pathInside(allowedRoot, broadRoot)
+      ) {
+        throw new Error(
+          "operator, bundle, and source roots must be disjoint from the attempt",
+        );
+      }
+    }
+  }
+  if (
+    new Set(protectedDeniedRoots).size !== protectedDeniedRoots.length
+  ) {
+    throw new Error("protected denied roots must be unique");
+  }
+  for (const protectedRoot of protectedDeniedRoots) {
+    for (const allowedRoot of allowedRoots) {
+      if (
+        pathInside(protectedRoot, allowedRoot)
+        || pathInside(allowedRoot, protectedRoot)
+      ) {
+        throw new Error(
+          "receipt/control and explicit sensitive roots must be disjoint from the attempt",
+        );
+      }
+    }
+  }
+  const sortedBroadDeniedRoots = sortSeatbeltRoots(broadDeniedRoots);
+  const sortedAllowedRoots = sortSeatbeltRoots(allowedRoots);
+  const sortedProtectedDeniedRoots = sortSeatbeltRoots(protectedDeniedRoots);
+  return {
+    broad_denied_roots: sortedBroadDeniedRoots,
+    allowed_roots: sortedAllowedRoots,
+    protected_denied_roots: sortedProtectedDeniedRoots,
+    profile: codexSandboxProfile({
+      broadDeniedRoots: sortedBroadDeniedRoots,
+      allowedRoots: sortedAllowedRoots,
+      protectedDeniedRoots: sortedProtectedDeniedRoots,
+    }),
+  };
+}
+
+function validateDuration(value, label, maximum) {
+  if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
+    throw new Error(`${label} must be a positive bounded integer`);
+  }
+  return value;
+}
+
+function validateAbortSignal(signal) {
+  if (
+    signal !== null
+    && (
+      typeof signal !== "object"
+      || typeof signal.aborted !== "boolean"
+      || typeof signal.addEventListener !== "function"
+      || typeof signal.removeEventListener !== "function"
+    )
+  ) {
+    throw new Error("abortSignal must be an AbortSignal");
+  }
+}
+
+function resolveLifecycle(lifecycle, heldout) {
+  if (lifecycle === null && !heldout) {
+    return {
+      schema_version: "pdf-tools.agent-workflow-process-lifecycle.v1",
+      prompt_input_timeout_ms: DEFAULT_NON_CAMPAIGN_TIMEOUT_MS,
+      inference_timeout_ms: DEFAULT_NON_CAMPAIGN_TIMEOUT_MS,
+      termination_grace_ms: DEFAULT_TERMINATION_GRACE_MS,
+    };
+  }
+  if (
+    !lifecycle
+    || typeof lifecycle !== "object"
+    || Array.isArray(lifecycle)
+    || canonicalJson(Object.keys(lifecycle).sort()) !== canonicalJson([
+      "inference_timeout_ms",
+      "prompt_input_timeout_ms",
+      "schema_version",
+      "termination_grace_ms",
+    ])
+    || lifecycle.schema_version
+      !== "pdf-tools.agent-workflow-process-lifecycle.v1"
+  ) {
+    throw new Error("held-out runs require an exact lifecycle contract");
+  }
+  validateDuration(
+    lifecycle.prompt_input_timeout_ms,
+    "lifecycle.prompt_input_timeout_ms",
+    MAX_PROCESS_TIMEOUT_MS,
+  );
+  validateDuration(
+    lifecycle.inference_timeout_ms,
+    "lifecycle.inference_timeout_ms",
+    MAX_PROCESS_TIMEOUT_MS,
+  );
+  validateDuration(
+    lifecycle.termination_grace_ms,
+    "lifecycle.termination_grace_ms",
+    MAX_TERMINATION_GRACE_MS,
+  );
+  return lifecycle;
+}
+
+function publicProcessResult(result) {
+  return {
+    pid: result.pid,
+    process_group: result.process_group,
+    code: result.code,
+    process_signal: result.signal,
+    spawn_error: result.spawn_error,
+    stdin_error: result.stdin_error,
+    timed_out: result.timed_out,
+    aborted: result.aborted,
+    termination_reason: result.termination_reason,
+    termination_requested_at: result.termination_requested_at,
+    sigterm_attempted: result.sigterm_attempted,
+    sigterm_sent: result.sigterm_sent,
+    sigkill_attempted: result.sigkill_attempted,
+    sigkill_sent: result.sigkill_sent,
+    process_group_alive_after_close: result.process_group_alive_after_close,
+    process_group_reaped: result.process_group_alive_after_close === null
+      ? null
+      : result.process_group_alive_after_close === false,
+    timeout_ms: result.timeout_ms,
+    termination_grace_ms: result.termination_grace_ms,
+  };
+}
+
+function processFailure(message, result) {
+  const error = new Error(message);
+  error.code = result.timed_out
+    ? "CODEX_PROCESS_TIMEOUT"
+    : (result.aborted ? "CODEX_PROCESS_ABORTED" : "CODEX_PROCESS_FAILED");
+  error.process_result = publicProcessResult(result);
+  return error;
+}
+
+export function isCleanProcessResult(result) {
+  return result.code === 0
+    && result.signal === null
+    && result.spawn_error === null
+    && result.stdin_error === null
+    && result.timed_out === false
+    && result.aborted === false
+    && result.termination_reason === null
+    && result.process_group_alive_after_close !== true;
+}
+
+export function validateBaseContextCapture(bytes, {
+  forbiddenPrompt,
+  caseRoot,
+  forbiddenContextMarkers,
+}) {
+  let capture;
+  try {
+    capture = JSON.parse(Buffer.from(bytes).toString("utf8"));
+  } catch {
+    throw new Error("base-context capture is not valid JSON");
+  }
+  if (
+    !Array.isArray(capture)
+    || capture.length !== 4
+    || canonicalJson(capture.map(item => item?.role))
+      !== canonicalJson(["developer", "developer", "developer", "user"])
+  ) {
+    throw new Error("base-context capture has an unexpected message sequence");
+  }
+  if (
+    typeof forbiddenPrompt !== "string"
+    || forbiddenPrompt.length === 0
+    || !Array.isArray(forbiddenContextMarkers)
+    || forbiddenContextMarkers.length < 3
+    || new Set(forbiddenContextMarkers).size !== forbiddenContextMarkers.length
+    || forbiddenContextMarkers.some(marker =>
+      typeof marker !== "string"
+      || marker.length === 0
+      || !forbiddenPrompt.includes(marker))
+    || !forbiddenContextMarkers.includes("CASE_BODY_BEGIN")
+    || !forbiddenContextMarkers.includes("SKILL_BODY_BEGIN")
+  ) {
+    throw new Error("held-out base-context markers are incomplete");
+  }
+  const expectedContentCounts = [2, 1, 1, 1];
+  const contentEvidence = [];
+  const texts = [];
+  for (let itemIndex = 0; itemIndex < capture.length; itemIndex += 1) {
+    const item = capture[itemIndex];
+    if (
+      !item
+      || typeof item !== "object"
+      || Array.isArray(item)
+      || canonicalJson(Object.keys(item).sort())
+        !== canonicalJson([
+          "content",
+          "internal_chat_message_metadata_passthrough",
+          "role",
+          "type",
+        ])
+      || item.type !== "message"
+      || canonicalJson(item.internal_chat_message_metadata_passthrough)
+        !== canonicalJson({ turn_id: "auto-compact-0" })
+      || !Array.isArray(item.content)
+      || item.content.length !== expectedContentCounts[itemIndex]
+    ) {
+      throw new Error("base-context capture message shape differs from the pin");
+    }
+    const itemContent = [];
+    for (let contentIndex = 0; contentIndex < item.content.length; contentIndex += 1) {
+      const content = item.content[contentIndex];
+      if (
+        !content
+        || typeof content !== "object"
+        || Array.isArray(content)
+        || canonicalJson(Object.keys(content).sort())
+          !== canonicalJson(["text", "type"])
+        || content.type !== "input_text"
+        || typeof content.text !== "string"
+      ) {
+        throw new Error("base-context capture content differs from the pin");
+      }
+      texts.push(content.text);
+      itemContent.push({
+        ordinal: contentIndex + 1,
+        bytes: Buffer.byteLength(content.text),
+        sha256: sha256(content.text),
+      });
+    }
+    contentEvidence.push({
+      ordinal: itemIndex + 1,
+      role: item.role,
+      content_count: item.content.length,
+      content: itemContent,
+    });
+  }
+  const environmentText = texts.at(-1);
+  if (
+    !environmentText.trimStart().startsWith("<environment_context>")
+    || !environmentText.trimEnd().endsWith("</environment_context>")
+    || !environmentText.includes(caseRoot)
+    || texts.some(text => text.includes(forbiddenPrompt))
+    || texts.slice(0, -1).some(text =>
+      forbiddenContextMarkers.some(marker => text.includes(marker)))
+  ) {
+    throw new Error(
+      "base-context capture contains held-out material or an invalid environment",
+    );
+  }
+  const normalizedEnvironment = environmentText.replaceAll(
+    caseRoot,
+    "$CASE_ROOT",
+  );
+  return {
+    bytes: Buffer.byteLength(bytes),
+    sha256: sha256(bytes),
+    canonical_sha256: sha256(canonicalJson(capture)),
+    item_count: capture.length,
+    content_item_count: texts.length,
+    ordered_content: contentEvidence,
+    environment_context_normalized_sha256: sha256(normalizedEnvironment),
+    heldout_prompt_absent: true,
+  };
+}
+
+function signalProcess(child, processGroup, signal) {
+  if (!Number.isSafeInteger(child.pid) || child.pid < 1) return false;
+  try {
+    if (processGroup) process.kill(-child.pid, signal);
+    else child.kill(signal);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    throw error;
+  }
+}
+
+function processGroupAlive(pid) {
+  if (!Number.isSafeInteger(pid) || pid < 1) return false;
+  try {
+    process.kill(-pid, 0);
+    return true;
+  } catch (error) {
+    if (error?.code === "ESRCH") return false;
+    if (error?.code === "EPERM") return true;
+    throw error;
+  }
+}
+
+function delay(milliseconds) {
+  return new Promise(resolve => setTimeout(resolve, milliseconds));
+}
+
+export async function runCaptured(program, args, {
   cwd,
   env,
   stdin = null,
   stdoutPath,
   stderrPath,
+  timeoutMs,
+  terminationGraceMs = DEFAULT_TERMINATION_GRACE_MS,
+  abortSignal = null,
+  useProcessGroup = process.platform === "darwin",
 }) {
+  validateDuration(timeoutMs, "timeoutMs", MAX_PROCESS_TIMEOUT_MS);
+  validateDuration(
+    terminationGraceMs,
+    "terminationGraceMs",
+    MAX_TERMINATION_GRACE_MS,
+  );
+  validateAbortSignal(abortSignal);
+  if (abortSignal?.aborted) {
+    throw new Error("Codex process aborted before spawn");
+  }
   const stdout = await fs.open(stdoutPath, "wx+", 0o600);
   const stderr = await fs.open(stderrPath, "wx+", 0o600);
   try {
     const child = spawn(program, args, {
       cwd,
       env,
+      detached: useProcessGroup,
       shell: false,
       stdio: ["pipe", stdout.fd, stderr.fd],
     });
-    child.stdin.on("error", () => {});
-    const completion = new Promise((resolve, reject) => {
-      child.once("error", reject);
-      child.once("close", (code, signal) => resolve({ code, signal }));
+    let spawnError = null;
+    let stdinError = null;
+    let closed = false;
+    let timedOut = false;
+    let aborted = false;
+    let terminationReason = null;
+    let terminationRequestedAt = null;
+    let sigtermAttempted = false;
+    let sigtermSent = false;
+    let sigkillAttempted = false;
+    let sigkillSent = false;
+    let terminationPromise = null;
+    let resolveClose;
+    const completion = new Promise(resolve => {
+      resolveClose = resolve;
     });
+    child.stdin.on("error", error => {
+      stdinError = `${error.name}:${error.code ?? "unknown"}`;
+    });
+    child.once("error", error => {
+      spawnError = `${error.name}:${error.code ?? "unknown"}`;
+    });
+    child.once("close", (code, signal) => {
+      if (closed) return;
+      closed = true;
+      resolveClose({ code, signal });
+    });
+    const terminate = reason => {
+      if (terminationPromise !== null || closed) return terminationPromise;
+      terminationReason = reason;
+      terminationRequestedAt = new Date().toISOString();
+      timedOut = reason === "timeout";
+      aborted = reason === "abort";
+      terminationPromise = (async () => {
+        sigtermAttempted = true;
+        sigtermSent = signalProcess(child, useProcessGroup, "SIGTERM");
+        await Promise.race([completion, delay(terminationGraceMs)]);
+        if (!closed || (useProcessGroup && processGroupAlive(child.pid))) {
+          sigkillAttempted = true;
+          sigkillSent = signalProcess(child, useProcessGroup, "SIGKILL");
+        }
+      })();
+      return terminationPromise;
+    };
+    const timeout = setTimeout(() => {
+      void terminate("timeout");
+    }, timeoutMs);
+    timeout.unref?.();
+    const abort = () => {
+      void terminate("abort");
+    };
+    abortSignal?.addEventListener("abort", abort, { once: true });
     if (stdin === null) child.stdin.end();
     else child.stdin.end(stdin);
     const result = await completion;
+    clearTimeout(timeout);
+    abortSignal?.removeEventListener("abort", abort);
+    if (terminationPromise !== null) await terminationPromise;
+    let processGroupAliveAfterClose = null;
+    if (useProcessGroup) {
+      processGroupAliveAfterClose = processGroupAlive(child.pid);
+      if (processGroupAliveAfterClose) {
+        if (terminationReason === null) {
+          terminationReason = "process_group_reap";
+          terminationRequestedAt = new Date().toISOString();
+          sigtermAttempted = true;
+          sigtermSent = signalProcess(child, true, "SIGTERM");
+          await delay(terminationGraceMs);
+          processGroupAliveAfterClose = processGroupAlive(child.pid);
+        }
+      }
+      if (processGroupAliveAfterClose) {
+        sigkillAttempted = true;
+        sigkillSent = signalProcess(child, true, "SIGKILL") || sigkillSent;
+        await delay(Math.min(terminationGraceMs, 100));
+        processGroupAliveAfterClose = processGroupAlive(child.pid);
+      }
+    }
     await Promise.all([stdout.sync(), stderr.sync()]);
     return {
       ...result,
+      pid: child.pid ?? null,
+      process_group: useProcessGroup ? (child.pid ?? null) : null,
+      spawn_error: spawnError,
+      stdin_error: stdinError,
+      timed_out: timedOut,
+      aborted,
+      termination_reason: terminationReason,
+      termination_requested_at: terminationRequestedAt,
+      sigterm_attempted: sigtermAttempted,
+      sigterm_sent: sigtermSent,
+      sigkill_attempted: sigkillAttempted,
+      sigkill_sent: sigkillSent,
+      process_group_alive_after_close: processGroupAliveAfterClose,
+      timeout_ms: timeoutMs,
+      termination_grace_ms: terminationGraceMs,
       stdout_artifact: await artifactRecordFromHandle(stdout, {
         filename: stdoutPath,
       }),
@@ -448,10 +1034,17 @@ async function runCodexAgentWorkflowCasePrivate(options) {
     expectedAuthSha256 = null,
     onPreInferenceReady = null,
     onProcessComplete = null,
+    isolation = null,
+    lifecycle = null,
+    signal = null,
+    forbiddenContextMarkers = null,
   } = options;
   if (!ALLOWED_ARMS.has(arm)) throw new Error("unsupported explicit Codex arm");
   if (!/^[a-z0-9-]+$/.test(caseId)) throw new Error("caseId is invalid");
-  if (HELDOUT_ARMS.has(arm)) {
+  const heldout = HELDOUT_ARMS.has(arm);
+  const resolvedLifecycle = resolveLifecycle(lifecycle, heldout);
+  validateAbortSignal(signal);
+  if (heldout) {
     if (
       typeof runId !== "string"
       || !/^[a-z0-9-]+$/.test(runId)
@@ -466,6 +1059,10 @@ async function runCodexAgentWorkflowCasePrivate(options) {
       || !/^[a-f0-9]{64}$/.test(scheduleSha256)
       || typeof promptCaptureHome !== "string"
       || !path.isAbsolute(promptCaptureHome)
+      || isolation === null
+      || !Array.isArray(forbiddenContextMarkers)
+      || !forbiddenContextMarkers.includes("CASE_BODY_BEGIN")
+      || !forbiddenContextMarkers.includes("SKILL_BODY_BEGIN")
     ) {
       throw new Error("held-out runs require valid frozen schedule metadata");
     }
@@ -587,6 +1184,9 @@ async function runCodexAgentWorkflowCasePrivate(options) {
   }
 
   await fs.mkdir(resultsRoot, { mode: 0o700 });
+  if (await fs.realpath(resultsRoot) !== resultsRoot) {
+    throw new Error("resultsRoot must use a canonical path");
+  }
   const runtimeTemporaryRoot = path.join(codexHome, "tmp");
   await fs.mkdir(runtimeTemporaryRoot, { mode: 0o700 });
   const environment = codexEnvironment(codexHome);
@@ -633,15 +1233,32 @@ async function runCodexAgentWorkflowCasePrivate(options) {
     responsePath,
     Buffer.alloc(0),
   );
-  const deniedUserHome = os.userInfo().homedir;
-  const sandboxProfile = codexSandboxProfile(deniedUserHome);
+  const deniedUserHome = await fs.realpath(os.userInfo().homedir);
+  const campaignSandbox = heldout
+    ? await campaignSandboxProfile({
+      isolation,
+      caseRoot,
+      resultsRoot,
+      codexHome,
+      promptCaptureHome,
+    })
+    : null;
+  const sandboxProfile = campaignSandbox?.profile
+    ?? codexSandboxProfile(deniedUserHome);
+  const sandboxProfileSha256 = sha256(sandboxProfile);
+  const isolationSha256 = isolation === null
+    ? null
+    : sha256(canonicalJson(isolation));
+  const lifecyclePolicySha256 = sha256(canonicalJson(resolvedLifecycle));
   const codexArgs = codexExecArgs({ model, responsePath });
   const execArgs = sandboxedCodexArgs({
     sandboxProfile,
     codexBinary,
     codexArgs,
   });
-  const promptInputArgs = codexPromptInputArgs(prompt);
+  const promptInputArgs = heldout
+    ? codexBaseContextArgs()
+    : codexPromptInputArgs(prompt);
   const sandboxedPromptInputArgs = sandboxedCodexArgs({
     sandboxProfile,
     codexBinary,
@@ -649,6 +1266,7 @@ async function runCodexAgentWorkflowCasePrivate(options) {
   });
   const launchPlan = {
     schema_version: "pdf-tools.agent-workflow-launch-plan.v1",
+    runner_api_version: RUNNER_API_VERSION,
     arm,
     case_id: caseId,
     run_id: runId,
@@ -693,7 +1311,32 @@ async function runCodexAgentWorkflowCasePrivate(options) {
       denied_user_home: deniedUserHome,
       sandbox_program: sandboxBinary,
       sandbox_profile: sandboxProfile,
+      sandbox_profile_sha256: sandboxProfileSha256,
+      isolation_sha256: isolationSha256,
+      campaign: campaignSandbox === null
+        ? null
+        : {
+          schema_version: isolation.schema_version,
+          broad_denied_roots: campaignSandbox.broad_denied_roots,
+          allowed_roots: campaignSandbox.allowed_roots,
+          protected_denied_roots: campaignSandbox.protected_denied_roots,
+          ordered_rule_classes: [
+            "broad_deny",
+            "current_attempt_allow",
+            "protected_deny",
+          ],
+        },
       environment_names: Object.keys(environment).sort(),
+    },
+    lifecycle: {
+      schema_version: resolvedLifecycle.schema_version,
+      prompt_input_timeout_ms: resolvedLifecycle.prompt_input_timeout_ms,
+      inference_timeout_ms: resolvedLifecycle.inference_timeout_ms,
+      termination_grace_ms: resolvedLifecycle.termination_grace_ms,
+      lifecycle_policy_sha256: lifecyclePolicySha256,
+      signal_registered: signal !== null,
+      darwin_detached_process_group: process.platform === "darwin",
+      retry_policy: "none",
     },
     command: {
       program: sandboxBinary,
@@ -728,11 +1371,37 @@ async function runCodexAgentWorkflowCasePrivate(options) {
       env: promptCaptureEnvironment,
       stdoutPath: path.join(resultsRoot, "prompt-input.json"),
       stderrPath: path.join(resultsRoot, "prompt-input.stderr.txt"),
+      timeoutMs: resolvedLifecycle.prompt_input_timeout_ms,
+      terminationGraceMs: resolvedLifecycle.termination_grace_ms,
+      abortSignal: signal,
     },
   );
   const promptInputFinishedAt = new Date().toISOString();
-  if (promptInputResult.code !== 0 || promptInputResult.signal !== null) {
-    throw new Error("Codex prompt-input reconstruction did not exit successfully");
+  if (!isCleanProcessResult(promptInputResult)) {
+    throw processFailure(
+      heldout
+        ? "Codex base-context capture did not exit successfully"
+        : "Codex prompt-input reconstruction did not exit successfully",
+      promptInputResult,
+    );
+  }
+  let baseContextCapture = null;
+  if (heldout) {
+    const promptInputBytes = await fs.readFile(
+      path.join(resultsRoot, "prompt-input.json"),
+    );
+    baseContextCapture = validateBaseContextCapture(promptInputBytes, {
+      forbiddenPrompt: prompt,
+      caseRoot,
+      forbiddenContextMarkers,
+    });
+    if (
+      baseContextCapture.sha256
+        !== promptInputResult.stdout_artifact.sha256
+      || baseContextCapture.bytes !== promptInputResult.stdout_artifact.bytes
+    ) {
+      throw new Error("base-context capture changed after process completion");
+    }
   }
   const preAttestation = await attester.attestAgentWorkflowArm(attestationArgs);
   const preAttestationArtifact = await writeExclusive(
@@ -752,6 +1421,7 @@ async function runCodexAgentWorkflowCasePrivate(options) {
   if (typeof onPreInferenceReady === "function") {
     await onPreInferenceReady({
       schema_version: "pdf-tools.agent-workflow-pre-inference-ready.v1",
+      runner_api_version: RUNNER_API_VERSION,
       run_id: runId,
       schedule_ordinal: scheduleOrdinal,
       recorded_at: new Date().toISOString(),
@@ -759,6 +1429,14 @@ async function runCodexAgentWorkflowCasePrivate(options) {
       prompt_input_finished_at: promptInputFinishedAt,
       prompt_input_exit_code: promptInputResult.code,
       prompt_input_signal: promptInputResult.signal,
+      prompt_input_process: publicProcessResult(promptInputResult),
+      prompt_input_claim: heldout
+        ? "validated_base_context_capture_without_user_prompt"
+        : "legacy_non_campaign_prompt_reconstruction",
+      base_context_capture: baseContextCapture,
+      isolation_sha256: isolationSha256,
+      lifecycle_policy_sha256: lifecyclePolicySha256,
+      sandbox_profile_sha256: sandboxProfileSha256,
       model,
       host: launchPlan.host,
       executable_identity: launchPlan.executable_identity,
@@ -787,6 +1465,8 @@ async function runCodexAgentWorkflowCasePrivate(options) {
           ...launchPlan.command.environment_policy,
           CODEX_HOME: promptCaptureHome ?? codexHome,
         },
+        timeout_ms: resolvedLifecycle.prompt_input_timeout_ms,
+        termination_grace_ms: resolvedLifecycle.termination_grace_ms,
       },
       artifacts: {
         "response.json": preInferenceResponseArtifact,
@@ -814,6 +1494,9 @@ async function runCodexAgentWorkflowCasePrivate(options) {
     stdin: prompt,
     stdoutPath: path.join(resultsRoot, "events.jsonl"),
     stderrPath: path.join(resultsRoot, "stderr.txt"),
+    timeoutMs: resolvedLifecycle.inference_timeout_ms,
+    terminationGraceMs: resolvedLifecycle.termination_grace_ms,
+    abortSignal: signal,
   });
   const finishedAt = new Date().toISOString();
   const [postCodexExecutable, postSandboxExecutable] = await Promise.all([
@@ -867,12 +1550,17 @@ async function runCodexAgentWorkflowCasePrivate(options) {
   if (typeof onProcessComplete === "function") {
     await onProcessComplete({
       schema_version: "pdf-tools.agent-workflow-process-completion.v1",
+      runner_api_version: RUNNER_API_VERSION,
       run_id: runId,
       schedule_ordinal: scheduleOrdinal,
       started_at: startedAt,
       finished_at: finishedAt,
       process_exit_code: processResult.code,
       process_signal: processResult.signal,
+      process: publicProcessResult(processResult),
+      isolation_sha256: isolationSha256,
+      lifecycle_policy_sha256: lifecyclePolicySha256,
+      sandbox_profile_sha256: sandboxProfileSha256,
       prompt_sha256: sha256(prompt),
       model,
       host: launchPlan.host,
@@ -890,15 +1578,22 @@ async function runCodexAgentWorkflowCasePrivate(options) {
 
   const launchOutcome = {
     schema_version: "pdf-tools.agent-workflow-launch-outcome.v1",
+    runner_api_version: RUNNER_API_VERSION,
     started_at: startedAt,
     finished_at: finishedAt,
     process_exit_code: processResult.code,
     process_signal: processResult.signal,
+    process: publicProcessResult(processResult),
+    isolation_sha256: isolationSha256,
+    lifecycle_policy_sha256: lifecyclePolicySha256,
+    sandbox_profile_sha256: sandboxProfileSha256,
     post_attestation_pass: postAttestation.pass,
     prompt_input_started_at: promptInputStartedAt,
     prompt_input_finished_at: promptInputFinishedAt,
     prompt_input_exit_code: promptInputResult.code,
     prompt_input_signal: promptInputResult.signal,
+    prompt_input_process: publicProcessResult(promptInputResult),
+    base_context_capture: baseContextCapture,
     prompt_input_command: {
       program: sandboxBinary,
       argv: sandboxedPromptInputArgs,
@@ -909,17 +1604,20 @@ async function runCodexAgentWorkflowCasePrivate(options) {
         ...launchPlan.command.environment_policy,
         CODEX_HOME: promptCaptureHome ?? codexHome,
       },
+      timeout_ms: resolvedLifecycle.prompt_input_timeout_ms,
+      termination_grace_ms: resolvedLifecycle.termination_grace_ms,
     },
-    prompt_input_claim:
-      "deterministic_pre_inference_reconstruction_not_literal_inference_transport_capture",
+    prompt_input_claim: heldout
+      ? "validated_base_context_capture_without_user_prompt"
+      : "deterministic_pre_inference_reconstruction_not_literal_inference_transport_capture",
     post_executable_identity: postExecutableIdentity,
   };
   await writeExclusive(
     path.join(resultsRoot, "launch-outcome.json"),
     `${JSON.stringify(launchOutcome, null, 2)}\n`,
   );
-  if (processResult.code !== 0 || processResult.signal !== null) {
-    throw new Error("Codex execution did not exit successfully");
+  if (!isCleanProcessResult(processResult)) {
+    throw processFailure("Codex execution did not exit successfully", processResult);
   }
   if (!postAttestation.pass) throw new Error("post-run case attestation failed");
   return launchOutcome;

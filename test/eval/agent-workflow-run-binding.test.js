@@ -8,14 +8,22 @@ import {
   bindAgentWorkflowRun,
 } from "../../scripts/eval-bind-agent-workflow-run.mjs";
 import {
+  inventory as campaignInventory,
   prepareAgentWorkflowCampaign,
+  syntheticGitIdentity,
 } from "../../scripts/eval-prepare-agent-workflow-campaign.mjs";
 import {
   artifactRecordFromHandle,
   CODEX_ENVIRONMENT_NAMES,
+  codexBaseContextArgs,
   codexEnvironment,
+  codexSandboxProfile,
+  isCleanProcessResult,
   PRIVATE_CREATION_UMASK,
+  RUNNER_API_VERSION,
+  runCaptured,
   runCodexAgentWorkflowCase,
+  validateBaseContextCapture,
   withPrivateRunnerUmask,
 } from "../../scripts/eval-run-codex-agent-workflow-case.mjs";
 
@@ -63,11 +71,13 @@ describe("Codex workflow environment", () => {
 async function fakeCodex(root, writeStyle = "direct") {
   const filename = path.join(root, "fake-codex.mjs");
   const invocationPath = path.join(root, "fake-codex-invocations.txt");
+  const argvPath = path.join(root, "fake-codex-argv.jsonl");
   await fs.writeFile(filename, `#!${process.execPath}
 import fs from "node:fs";
 import path from "node:path";
 
 const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(argvPath)}, JSON.stringify(args) + "\\n");
 if (args[0] === "--version") {
   process.stdout.write("codex-cli synthetic\\n");
 } else if (args[0] === "exec") {
@@ -116,7 +126,8 @@ if (args[0] === "--version") {
   ];
   process.stdout.write(events.map(event => JSON.stringify(event)).join("\\n") + "\\n");
 } else if (args[0] === "debug" && args[1] === "prompt-input") {
-  const prompt = args.at(-1);
+  const separator = args.lastIndexOf("--");
+  const prompt = separator === -1 ? args.at(-1) : args[separator + 1];
   const skill = path.join(
     process.cwd(),
     ".agents",
@@ -125,17 +136,30 @@ if (args[0] === "--version") {
     "SKILL.md",
   );
   const inventory = fs.existsSync(skill) ? \`\\nfile: \${skill}\` : "";
-  process.stdout.write(JSON.stringify([
-    { type: "message", role: "developer", content: [{ type: "input_text", text: inventory }] },
-    { type: "message", role: "user", content: [{ type: "input_text", text: \`<environment_context><cwd>\${process.cwd()}</cwd><filesystem><workspace_roots><root>\${process.cwd()}</root></workspace_roots></filesystem></environment_context>\` }] },
-    { type: "message", role: "user", content: [{ type: "input_text", text: prompt }] },
-  ]));
+  const metadata = { turn_id: "auto-compact-0" };
+  const environment = { type: "message", role: "user", internal_chat_message_metadata_passthrough: metadata, content: [{ type: "input_text", text: \`<environment_context><cwd>\${process.cwd()}</cwd><filesystem><workspace_roots><root>\${process.cwd()}</root></workspace_roots></filesystem></environment_context>\` }] };
+  const context = prompt === undefined ? [
+    { type: "message", role: "developer", internal_chat_message_metadata_passthrough: metadata, content: [
+      { type: "input_text", text: "synthetic base policy" },
+      { type: "input_text", text: "synthetic tool policy" },
+    ] },
+    { type: "message", role: "developer", internal_chat_message_metadata_passthrough: metadata, content: [{ type: "input_text", text: "synthetic workflow policy" }] },
+    { type: "message", role: "developer", internal_chat_message_metadata_passthrough: metadata, content: [{ type: "input_text", text: "synthetic safety policy" }] },
+    environment,
+  ] : [
+    { type: "message", role: "developer", internal_chat_message_metadata_passthrough: metadata, content: [{ type: "input_text", text: inventory }] },
+    environment,
+  ];
+  if (prompt !== undefined) {
+    context.push({ type: "message", role: "user", internal_chat_message_metadata_passthrough: metadata, content: [{ type: "input_text", text: prompt }] });
+  }
+  process.stdout.write(JSON.stringify(context));
 } else {
   process.exitCode = 2;
 }
 `);
   await fs.chmod(filename, 0o700);
-  return { filename, invocationPath };
+  return { filename, invocationPath, argvPath };
 }
 
 async function fakeSandbox(root) {
@@ -152,6 +176,13 @@ child.once("close", (code, signal) => {
   else process.exit(code ?? 2);
 });
 `);
+  await fs.chmod(filename, 0o700);
+  return filename;
+}
+
+async function executableFixture(root, name, source) {
+  const filename = path.join(root, name);
+  await fs.writeFile(filename, `#!${process.execPath}\n${source}`);
   await fs.chmod(filename, 0o700);
   return filename;
 }
@@ -175,6 +206,9 @@ async function preparedRun({
     oracleDestination: oracle,
     protocolId,
   });
+  const materialArm = manifest.explicit_case_attestations[arm]
+    ? arm
+    : "codex-explicit-skill";
   const scheduled = manifest.run_schedule.find(entry =>
     entry.arm === arm && entry.case_id === caseId);
   const caseRoot = path.join(root, "case");
@@ -182,7 +216,14 @@ async function preparedRun({
     path.join(participants, arm, "cases", caseId),
     caseRoot,
     { recursive: true },
-  );
+  ).catch(async error => {
+    if (materialArm === arm) throw error;
+    await fs.cp(
+      path.join(participants, materialArm, "cases", caseId),
+      caseRoot,
+      { recursive: true },
+    );
+  });
   const codexHome = path.join(root, "codex-home");
   const promptCaptureHome = path.join(root, "prompt-capture-home");
   await fs.mkdir(codexHome, { mode: 0o700 });
@@ -194,10 +235,71 @@ async function preparedRun({
     { mode: 0o600 },
   );
   const resultsRoot = path.join(root, "results");
-  const expected = manifest.explicit_case_attestations[arm][caseId];
+  const heldout = arm.startsWith("codex-prompt-");
+  let heldoutPromptMarker = null;
+  let expected = manifest.explicit_case_attestations[materialArm][caseId];
+  if (heldout) {
+    heldoutPromptMarker = await fs.readFile(
+      path.join(caseRoot, "prompt.txt"),
+      "utf8",
+    );
+    await fs.writeFile(
+      path.join(caseRoot, "prompt.txt"),
+      [
+        "SKILL_BODY_BEGIN",
+        "synthetic held-out skill body",
+        "SKILL_BODY_END",
+        "CASE_BODY_BEGIN",
+        heldoutPromptMarker,
+        "CASE_BODY_END",
+        "",
+      ].join("\n"),
+    );
+    const [contentInventory, syntheticGit] = await Promise.all([
+      campaignInventory(caseRoot),
+      syntheticGitIdentity(caseRoot),
+    ]);
+    expected = {
+      synthetic_git: syntheticGit,
+      content_inventory: contentInventory,
+    };
+  }
   const fake = await fakeCodex(root, responseWriteStyle);
+  let isolation = null;
+  let lifecycle = null;
+  if (heldout) {
+    const sealedBundleRoot = path.join(root, "sealed-bundle");
+    const receiptControlRoot = path.join(root, "receipt-control");
+    const authSensitiveRoot = path.join(root, "auth-source");
+    const additionalSensitiveRoot = path.join(root, "other-sensitive");
+    await Promise.all([
+      fs.mkdir(sealedBundleRoot, { mode: 0o700 }),
+      fs.mkdir(receiptControlRoot, { mode: 0o700 }),
+      fs.mkdir(authSensitiveRoot, { mode: 0o700 }),
+      fs.mkdir(additionalSensitiveRoot, { mode: 0o700 }),
+    ]);
+    isolation = {
+      schema_version: "pdf-tools.agent-workflow-campaign-isolation.v1",
+      denied_roots: {
+        operator_home: await fs.realpath(os.userInfo().homedir),
+        campaign_evidence_control_root: root,
+        sealed_bundle_root: sealedBundleRoot,
+        source_repo_root: REPO_ROOT,
+        receipt_control_roots: [receiptControlRoot],
+        auth_sensitive_roots: [authSensitiveRoot],
+        additional_sensitive_roots: [additionalSensitiveRoot],
+      },
+    };
+    lifecycle = {
+      schema_version: "pdf-tools.agent-workflow-process-lifecycle.v1",
+      prompt_input_timeout_ms: 2_000,
+      inference_timeout_ms: 2_000,
+      termination_grace_ms: 50,
+    };
+  }
   let runError = null;
   let preInferenceEvidence = null;
+  let processEvidence = null;
   try {
     await runCodexAgentWorkflowCase({
       arm,
@@ -218,6 +320,11 @@ async function preparedRun({
       expectedContentTreeSha256: expected.content_inventory.tree_sha256,
       sourceCommit: manifest.source_commit,
       model: "synthetic-model",
+      isolation,
+      lifecycle,
+      forbiddenContextMarkers: heldout
+        ? [heldoutPromptMarker, "CASE_BODY_BEGIN", "SKILL_BODY_BEGIN"]
+        : null,
       onPreInferenceReady: async evidence => {
         preInferenceEvidence = structuredClone(evidence);
         if (replaceResponseInPreInferenceHook) {
@@ -226,12 +333,15 @@ async function preparedRun({
           await fs.rename(replacement, path.join(resultsRoot, "response.json"));
         }
       },
-      runId: scheduled?.run_id,
-      scheduleOrdinal: scheduled?.ordinal,
-      repeatIndex: scheduled?.repeat_index,
-      pairId: scheduled?.pair_id,
-      pairPosition: scheduled?.pair_position,
-      scheduleSha256: scheduled ? manifest.run_schedule_sha256 : undefined,
+      onProcessComplete: async evidence => {
+        processEvidence = structuredClone(evidence);
+      },
+      runId: scheduled?.run_id ?? `${caseId}-r1-${arm}`,
+      scheduleOrdinal: scheduled?.ordinal ?? 1,
+      repeatIndex: scheduled?.repeat_index ?? 1,
+      pairId: scheduled?.pair_id ?? `${caseId}-r1`,
+      pairPosition: scheduled?.pair_position ?? 1,
+      scheduleSha256: manifest.run_schedule_sha256,
     });
   } catch (error) {
     if (!expectFailure) throw error;
@@ -246,9 +356,478 @@ async function preparedRun({
     scheduled,
     runError,
     invocationPath: fake.invocationPath,
+    argvPath: fake.argvPath,
     preInferenceEvidence,
+    processEvidence,
+    isolation,
+    lifecycle,
+    heldoutPromptMarker,
   };
 }
+
+async function preparedHeldoutRunnerRun() {
+  const root = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), "pdf-workflow-heldout-runner-")),
+  );
+  roots.push(root);
+  const caseId = "source-runner-isolation";
+  const caseRoot = path.join(root, "case");
+  const resultsRoot = path.join(root, "results");
+  const codexHome = path.join(root, "codex-home");
+  const promptCaptureHome = path.join(root, "prompt-capture-home");
+  const sealedBundleRoot = path.join(root, "sealed-bundle");
+  const receiptControlRoot = path.join(root, "receipt-control");
+  const authSensitiveRoot = path.join(root, "auth-source");
+  const additionalSensitiveRoot = path.join(root, "other-sensitive");
+  await Promise.all([
+    fs.mkdir(caseRoot, { mode: 0o700 }),
+    fs.mkdir(codexHome, { mode: 0o700 }),
+    fs.mkdir(promptCaptureHome, { mode: 0o700 }),
+    fs.mkdir(sealedBundleRoot, { mode: 0o700 }),
+    fs.mkdir(receiptControlRoot, { mode: 0o700 }),
+    fs.mkdir(authSensitiveRoot, { mode: 0o700 }),
+    fs.mkdir(additionalSensitiveRoot, { mode: 0o700 }),
+  ]);
+  const casePrompt = [
+    `Case ID: ${caseId}`,
+    "Sealed case prompt sentinel: source-runner-must-not-leak-this-text.",
+    "Return the case identifier only.",
+  ].join("\n");
+  const prompt = [
+    "Planning-only synthetic held-out transport fixture.",
+    "SKILL_BODY_BEGIN",
+    "Synthetic skill body.",
+    "SKILL_BODY_END",
+    "CASE_BODY_BEGIN",
+    casePrompt,
+    "CASE_BODY_END",
+    "",
+  ].join("\n");
+  await Promise.all([
+    fs.writeFile(path.join(caseRoot, "prompt.txt"), prompt, { mode: 0o600 }),
+    fs.writeFile(
+      path.join(caseRoot, "response-schema.json"),
+      `${JSON.stringify({
+        type: "object",
+        additionalProperties: false,
+        properties: { case_id: { type: "string" } },
+        required: ["case_id"],
+      })}\n`,
+      { mode: 0o600 },
+    ),
+    fs.writeFile(path.join(codexHome, "auth.json"), "{}\n", { mode: 0o600 }),
+    fs.writeFile(
+      path.join(promptCaptureHome, "auth.json"),
+      "{}\n",
+      { mode: 0o600 },
+    ),
+  ]);
+  const [contentInventory, syntheticGit, fake, sandboxBinary] = await Promise.all([
+    campaignInventory(caseRoot),
+    syntheticGitIdentity(caseRoot),
+    fakeCodex(root),
+    fakeSandbox(root),
+  ]);
+  const isolation = {
+    schema_version: "pdf-tools.agent-workflow-campaign-isolation.v1",
+    denied_roots: {
+      operator_home: await fs.realpath(os.userInfo().homedir),
+      campaign_evidence_control_root: root,
+      sealed_bundle_root: sealedBundleRoot,
+      source_repo_root: REPO_ROOT,
+      receipt_control_roots: [receiptControlRoot],
+      auth_sensitive_roots: [authSensitiveRoot],
+      additional_sensitive_roots: [additionalSensitiveRoot],
+    },
+  };
+  const lifecycle = {
+    schema_version: "pdf-tools.agent-workflow-process-lifecycle.v1",
+    prompt_input_timeout_ms: 2_000,
+    inference_timeout_ms: 2_000,
+    termination_grace_ms: 50,
+  };
+  let preInferenceEvidence = null;
+  let processEvidence = null;
+  await runCodexAgentWorkflowCase({
+    arm: "codex-prompt-no-skill-body",
+    caseId,
+    caseRoot,
+    resultsRoot,
+    codexHome,
+    promptCaptureHome,
+    codexBinary: fake.filename,
+    sandboxBinary,
+    attesterPath: path.join(
+      REPO_ROOT,
+      "scripts",
+      "eval-attest-agent-workflow-arm.mjs",
+    ),
+    expectedCommitSha1: syntheticGit.expected_commit_sha1,
+    expectedTreeSha1: syntheticGit.expected_tree_sha1,
+    expectedContentTreeSha256: contentInventory.tree_sha256,
+    sourceCommit: "1".repeat(40),
+    model: "synthetic-model",
+    runId: `${caseId}-r1-codex-prompt-no-skill-body`,
+    scheduleOrdinal: 1,
+    repeatIndex: 1,
+    pairId: `${caseId}-r1`,
+    pairPosition: 1,
+    scheduleSha256: "2".repeat(64),
+    isolation,
+    lifecycle,
+    forbiddenContextMarkers: [
+      "CASE_BODY_BEGIN",
+      "SKILL_BODY_BEGIN",
+      casePrompt,
+    ],
+    onPreInferenceReady: async evidence => {
+      preInferenceEvidence = structuredClone(evidence);
+    },
+    onProcessComplete: async evidence => {
+      processEvidence = structuredClone(evidence);
+    },
+  });
+  return {
+    root,
+    resultsRoot,
+    heldoutPromptMarker: casePrompt,
+    argvPath: fake.argvPath,
+    preInferenceEvidence,
+    processEvidence,
+  };
+}
+
+describe("held-out campaign isolation and process lifecycle", () => {
+  it("orders the Seatbelt boundary and never places the held-out prompt in argv or receipts", async () => {
+    const run = await preparedHeldoutRunnerRun();
+    const launchPlan = JSON.parse(await fs.readFile(
+      path.join(run.resultsRoot, "launch-plan.json"),
+      "utf8",
+    ));
+    const launchOutcome = JSON.parse(await fs.readFile(
+      path.join(run.resultsRoot, "launch-outcome.json"),
+      "utf8",
+    ));
+    const profile = launchPlan.isolation.sandbox_profile;
+    const campaignDeny = profile.indexOf(
+      `(deny file-read* (subpath "${run.root}"))`,
+    );
+    const caseAllow = profile.indexOf(
+      `(allow file-read* (subpath "${path.join(run.root, "case")}"))`,
+    );
+    const receiptDeny = profile.indexOf(
+      `(deny file-read* (subpath "${path.join(run.root, "receipt-control")}"))`,
+    );
+    expect(campaignDeny).toBeGreaterThan(-1);
+    expect(caseAllow).toBeGreaterThan(campaignDeny);
+    expect(receiptDeny).toBeGreaterThan(caseAllow);
+    expect(launchPlan.isolation.campaign.ordered_rule_classes).toEqual([
+      "broad_deny",
+      "current_attempt_allow",
+      "protected_deny",
+    ]);
+    expect(launchPlan.runner_api_version).toBe(RUNNER_API_VERSION);
+    expect(run.preInferenceEvidence.runner_api_version).toBe(RUNNER_API_VERSION);
+    expect(run.processEvidence.runner_api_version).toBe(RUNNER_API_VERSION);
+    expect(launchPlan.isolation.sandbox_profile_sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(launchPlan.isolation.isolation_sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(launchPlan.lifecycle.lifecycle_policy_sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(run.preInferenceEvidence.isolation_sha256).toBe(
+      launchPlan.isolation.isolation_sha256,
+    );
+    expect(run.preInferenceEvidence.lifecycle_policy_sha256).toBe(
+      launchPlan.lifecycle.lifecycle_policy_sha256,
+    );
+    expect(run.processEvidence.isolation_sha256).toBe(
+      launchPlan.isolation.isolation_sha256,
+    );
+    expect(run.processEvidence.lifecycle_policy_sha256).toBe(
+      launchPlan.lifecycle.lifecycle_policy_sha256,
+    );
+    expect(run.preInferenceEvidence.base_context_capture).toMatchObject({
+      item_count: 4,
+      content_item_count: 5,
+      heldout_prompt_absent: true,
+      ordered_content: [
+        { role: "developer", content_count: 2 },
+        { role: "developer", content_count: 1 },
+        { role: "developer", content_count: 1 },
+        { role: "user", content_count: 1 },
+      ],
+    });
+    const promptFragments = [
+      run.heldoutPromptMarker,
+      "CASE_BODY_BEGIN",
+      "SKILL_BODY_BEGIN",
+    ];
+    const receiptStrings = [
+      JSON.stringify(launchPlan),
+      JSON.stringify(launchOutcome),
+      JSON.stringify(run.preInferenceEvidence),
+      JSON.stringify(run.processEvidence),
+    ];
+    for (const fragment of promptFragments) {
+      expect(receiptStrings.every(value => !value.includes(fragment))).toBe(true);
+    }
+    const invocations = (await fs.readFile(run.argvPath, "utf8"))
+      .trim()
+      .split("\n")
+      .map(line => JSON.parse(line));
+    const promptCapture = invocations.find(args =>
+      args[0] === "debug" && args[1] === "prompt-input");
+    expect(promptCapture).toEqual(codexBaseContextArgs());
+    expect(promptCapture.at(-1)).toBe("--");
+    for (const fragment of promptFragments) {
+      expect(JSON.stringify(invocations)).not.toContain(fragment);
+    }
+  }, 15000);
+
+  it("rejects malformed isolation and injected base-context material before inference", async () => {
+    const profile = codexSandboxProfile({
+      broadDeniedRoots: ["/private/campaign"],
+      allowedRoots: ["/private/campaign/current"],
+      protectedDeniedRoots: ["/private/campaign/receipts"],
+    });
+    expect(profile.indexOf("/private/campaign/current")).toBeGreaterThan(
+      profile.indexOf("/private/campaign"),
+    );
+    expect(profile.indexOf("/private/campaign/receipts")).toBeGreaterThan(
+      profile.indexOf("/private/campaign/current"),
+    );
+    const caseRoot = "/private/campaign/current/case";
+    const exactCapture = [
+      {
+        type: "message",
+        role: "developer",
+        internal_chat_message_metadata_passthrough: {
+          turn_id: "auto-compact-0",
+        },
+        content: [
+          { type: "input_text", text: "base policy" },
+          { type: "input_text", text: "tool policy" },
+        ],
+      },
+      {
+        type: "message",
+        role: "developer",
+        internal_chat_message_metadata_passthrough: {
+          turn_id: "auto-compact-0",
+        },
+        content: [{ type: "input_text", text: "workflow policy" }],
+      },
+      {
+        type: "message",
+        role: "developer",
+        internal_chat_message_metadata_passthrough: {
+          turn_id: "auto-compact-0",
+        },
+        content: [{ type: "input_text", text: "safety policy" }],
+      },
+      {
+        type: "message",
+        role: "user",
+        internal_chat_message_metadata_passthrough: {
+          turn_id: "auto-compact-0",
+        },
+        content: [{
+          type: "input_text",
+          text: `<environment_context><cwd>${caseRoot}</cwd></environment_context>`,
+        }],
+      },
+    ];
+    const options = {
+      forbiddenPrompt: [
+        "SKILL_BODY_BEGIN",
+        "CASE_BODY_BEGIN",
+        "sealed case prompt sentinel",
+      ].join("\n"),
+      caseRoot,
+      forbiddenContextMarkers: [
+        "SKILL_BODY_BEGIN",
+        "CASE_BODY_BEGIN",
+        "sealed case prompt sentinel",
+      ],
+    };
+    const evidence = validateBaseContextCapture(
+      Buffer.from(JSON.stringify(exactCapture)),
+      options,
+    );
+    expect(evidence.ordered_content.flatMap(item => item.content)).toHaveLength(5);
+    const injected = structuredClone(exactCapture);
+    injected[1].content[0].text = "sealed case prompt sentinel";
+    expect(() => validateBaseContextCapture(
+      Buffer.from(JSON.stringify(injected)),
+      options,
+    )).toThrow(/held-out material/);
+    const extraItem = structuredClone(exactCapture);
+    extraItem.push(structuredClone(exactCapture[3]));
+    expect(() => validateBaseContextCapture(
+      Buffer.from(JSON.stringify(extraItem)),
+      options,
+    )).toThrow(/unexpected message sequence/);
+  });
+
+  it("times out and reaps a detached process group including an ignoring grandchild", async () => {
+    const root = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "runner-timeout-group-")),
+    );
+    roots.push(root);
+    const grandchildPidPath = path.join(root, "grandchild.pid");
+    const program = await executableFixture(root, "group-parent.mjs", `
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+process.on("SIGTERM", () => {});
+const grandchild = spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], {
+  detached: false,
+  stdio: "ignore",
+});
+fs.writeFileSync(${JSON.stringify(grandchildPidPath)}, String(grandchild.pid));
+setInterval(() => {}, 1000);
+`);
+    const result = await runCaptured(program, [], {
+      cwd: root,
+      env: process.env,
+      stdoutPath: path.join(root, "stdout.txt"),
+      stderrPath: path.join(root, "stderr.txt"),
+      timeoutMs: 100,
+      terminationGraceMs: 25,
+      useProcessGroup: true,
+    });
+    expect(result).toMatchObject({
+      timed_out: true,
+      aborted: false,
+      termination_reason: "timeout",
+      sigterm_attempted: true,
+      sigterm_sent: true,
+      sigkill_attempted: true,
+      sigkill_sent: true,
+      process_group_alive_after_close: false,
+      signal: "SIGKILL",
+    });
+    const grandchildPid = Number(await fs.readFile(grandchildPidPath, "utf8"));
+    expect(() => process.kill(grandchildPid, 0)).toThrow(
+      expect.objectContaining({ code: "ESRCH" }),
+    );
+  }, 5000);
+
+  it("reaps but rejects a leaked descendant after the direct child exits", async () => {
+    const root = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "runner-leaked-group-")),
+    );
+    roots.push(root);
+    const grandchildPidPath = path.join(root, "leaked-grandchild.pid");
+    const grandchildReadyPath = path.join(root, "leaked-grandchild.ready");
+    const program = await executableFixture(root, "leaking-parent.mjs", `
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+const grandchild = spawn(process.execPath, ["-e", ${JSON.stringify(
+  `const fs=require("node:fs");process.on("SIGTERM",()=>{});fs.writeFileSync(${JSON.stringify(
+    grandchildReadyPath,
+  )},"ready");setInterval(()=>{},1000);`,
+)}], {
+  detached: false,
+  stdio: "ignore",
+});
+while (!fs.existsSync(${JSON.stringify(grandchildReadyPath)})) {
+  await new Promise(resolve => setTimeout(resolve, 5));
+}
+fs.writeFileSync(${JSON.stringify(grandchildPidPath)}, String(grandchild.pid));
+grandchild.unref();
+`);
+    const result = await runCaptured(program, [], {
+      cwd: root,
+      env: process.env,
+      stdoutPath: path.join(root, "stdout.txt"),
+      stderrPath: path.join(root, "stderr.txt"),
+      timeoutMs: 1_000,
+      terminationGraceMs: 25,
+      useProcessGroup: true,
+    });
+    expect(result).toMatchObject({
+      code: 0,
+      signal: null,
+      timed_out: false,
+      aborted: false,
+      termination_reason: "process_group_reap",
+      sigterm_attempted: true,
+      sigkill_attempted: true,
+      process_group_alive_after_close: false,
+    });
+    expect(isCleanProcessResult(result)).toBe(false);
+    const grandchildPid = Number(await fs.readFile(grandchildPidPath, "utf8"));
+    expect(() => process.kill(grandchildPid, 0)).toThrow(
+      expect.objectContaining({ code: "ESRCH" }),
+    );
+  }, 5000);
+
+  it("distinguishes abort and spawn failure without hanging or double-settling", async () => {
+    const root = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "runner-abort-spawn-")),
+    );
+    roots.push(root);
+    const program = await executableFixture(root, "waiting.mjs", `
+setInterval(() => {}, 1000);
+`);
+    const controller = new AbortController();
+    setTimeout(() => controller.abort(), 25);
+    const aborted = await runCaptured(program, [], {
+      cwd: root,
+      env: process.env,
+      stdoutPath: path.join(root, "abort.stdout.txt"),
+      stderrPath: path.join(root, "abort.stderr.txt"),
+      timeoutMs: 1_000,
+      terminationGraceMs: 25,
+      abortSignal: controller.signal,
+    });
+    expect(aborted).toMatchObject({
+      timed_out: false,
+      aborted: true,
+      termination_reason: "abort",
+      sigterm_attempted: true,
+      sigterm_sent: true,
+      signal: "SIGTERM",
+    });
+    const spawnFailure = await runCaptured(
+      path.join(root, "does-not-exist"),
+      [],
+      {
+        cwd: root,
+        env: process.env,
+        stdoutPath: path.join(root, "spawn.stdout.txt"),
+        stderrPath: path.join(root, "spawn.stderr.txt"),
+        timeoutMs: 1_000,
+        terminationGraceMs: 25,
+      },
+    );
+    expect(spawnFailure.spawn_error).toMatch(/^Error:ENOENT$/);
+    expect(spawnFailure).toMatchObject({
+      code: -2,
+      signal: null,
+      timed_out: false,
+      aborted: false,
+    });
+    expect(isCleanProcessResult(spawnFailure)).toBe(false);
+    const truncatedInput = await runCaptured(
+      process.execPath,
+      ["-e", "process.stdin.destroy();setTimeout(()=>process.exit(0),50)"],
+      {
+        cwd: root,
+        env: process.env,
+        stdin: "x".repeat(16 * 1024 * 1024),
+        stdoutPath: path.join(root, "stdin.stdout.txt"),
+        stderrPath: path.join(root, "stdin.stderr.txt"),
+        timeoutMs: 1_000,
+        terminationGraceMs: 25,
+      },
+    );
+    expect(truncatedInput).toMatchObject({
+      code: 0,
+      signal: null,
+      stdin_error: "Error:EPIPE",
+    });
+    expect(isCleanProcessResult(truncatedInput)).toBe(false);
+  }, 5000);
+});
 
 describe("agent workflow run binding", () => {
   it("creates direct and rename-style responses privately and restores umask", async () => {
