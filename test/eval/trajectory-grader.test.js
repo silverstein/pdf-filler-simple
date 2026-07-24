@@ -372,13 +372,13 @@ describe("agent trajectory grader v4 integrity contract", () => {
     }
   });
 
-  it("regenerates the version-pinned tool contract from real MCP discovery byte-for-byte", async () => {
+  it("regenerates the current version-pinned tool contract from real MCP discovery byte-for-byte", async () => {
     const directory = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-tool-contract-"));
     temporaryDirectories.push(directory);
     const outputPath = path.join(directory, "tool-contracts.json");
     await captureTrajectoryToolContracts({ outputPath });
     const committed = path.join(
-      REPO_ROOT, "test", "fixtures", "eval", "trajectories", "tool-contracts.v2.json"
+      REPO_ROOT, "test", "fixtures", "eval", "trajectories", "tool-contracts.v3.json"
     );
     expect(await fs.readFile(outputPath, "utf8")).toBe(await fs.readFile(committed, "utf8"));
   });

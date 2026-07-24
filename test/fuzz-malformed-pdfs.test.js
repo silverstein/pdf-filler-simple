@@ -384,6 +384,28 @@ function expectedPrimaryOutput(toolName, {
   return outputPath;
 }
 
+async function exactReplacementArguments(toolName, outputPath) {
+  const [canonicalPath, bytes, stats] = await Promise.all([
+    fs.realpath(outputPath),
+    fs.readFile(outputPath),
+    fs.stat(outputPath),
+  ]);
+  const identity = {
+    canonical_path: canonicalPath,
+    size_bytes: stats.size,
+    sha256: sha256(bytes),
+  };
+  if (toolName === "bulk_fill_from_csv" || toolName === "split_pdf") {
+    return {
+      expected_output_identities: [{
+        output_path: outputPath,
+        ...identity,
+      }],
+    };
+  }
+  return { expected_output_identity: identity };
+}
+
 function activeDocumentIdentity(result) {
   return {
     active_path: result.structuredContent?.active_path ?? null,
@@ -880,16 +902,22 @@ describe.each(RUNTIMES)("$name malformed PDF containment", ({ root }) => {
             { mode: 0o600 },
           );
           const before = await snapshotTree(caseDirectory);
+          const replacementArguments = targetMode === "preexisting"
+            ? await exactReplacementArguments(tool.name, expectedOutput)
+            : {};
 
           const result = await callToolBounded(client, {
             name: tool.name,
-            arguments: tool.argumentsFor({
-              inputPath,
-              outputPath,
-              outputDirectory,
-              csvPath,
-              validControlPath,
-            }),
+            arguments: {
+              ...tool.argumentsFor({
+                inputPath,
+                outputPath,
+                outputDirectory,
+                csvPath,
+                validControlPath,
+              }),
+              ...replacementArguments,
+            },
           });
 
           expectCleanToolError(
@@ -926,11 +954,15 @@ describe.each(RUNTIMES)("$name malformed PDF containment", ({ root }) => {
           await fs.writeFile(modeOutputPath, "preexisting merge sentinel", { mode: 0o600 });
         }
         const mergeBefore = await snapshotTree(modeDirectory);
+        const replacementArguments = targetMode === "preexisting"
+          ? await exactReplacementArguments("merge_pdfs", modeOutputPath)
+          : {};
         const mergeSecondResult = await callToolBounded(client, {
           name: "merge_pdfs",
           arguments: {
             input_paths: [validControlPath, modeInputPath],
             output_path: modeOutputPath,
+            ...replacementArguments,
           },
         });
         expectCleanToolError(

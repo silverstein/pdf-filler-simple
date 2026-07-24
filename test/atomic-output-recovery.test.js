@@ -42,6 +42,15 @@ function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
 
+async function expectedIdentityForBytes(targetPath, value) {
+  const bytes = Buffer.from(value);
+  return {
+    canonicalPath: path.join(await fs.realpath(path.dirname(targetPath)), path.basename(targetPath)),
+    sizeBytes: bytes.length,
+    sha256: sha256(bytes),
+  };
+}
+
 async function makeTransactionDirectory(label) {
   const directoryPath = await createTestTempDirectory(REPO_ROOT, `atomic-recovery-${label.replaceAll("_", "-")}`);
   tempDirectories.push(directoryPath);
@@ -314,6 +323,11 @@ describe("durable PDF output transaction recovery", () => {
       path.join(directoryPath, "first.pdf"),
       Buffer.from("must not commit"),
       {
+        overwrite: true,
+        expectedExistingIdentity: await expectedIdentityForBytes(
+          path.join(directoryPath, "first.pdf"),
+          "first original",
+        ),
         async beforeTransaction() {
           await expect(fs.readFile(path.join(directoryPath, "first.pdf"), "utf8")).resolves.toBe("first original");
           await expect(fs.readFile(path.join(directoryPath, "second.pdf"), "utf8")).resolves.toBe("second original");

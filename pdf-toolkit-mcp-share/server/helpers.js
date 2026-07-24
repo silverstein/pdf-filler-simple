@@ -2705,9 +2705,15 @@ export async function writePdfOutputAtomic(targetPath, bytes, {
   validateInitialTargets,
   verifyActivatedTargets,
   anchoredDirectory = false,
-  overwrite = true,
+  overwrite = false,
+  expectedExistingIdentity = null,
 } = {}) {
-  const [result] = await writePdfOutputsAtomic([{ targetPath, bytes, overwrite }], {
+  const [result] = await writePdfOutputsAtomic([{
+    targetPath,
+    bytes,
+    overwrite,
+    expectedExistingIdentity,
+  }], {
     fsOps,
     token,
     onTransition,
@@ -2774,7 +2780,8 @@ export async function writePdfOutputsAtomic(entries, {
       reportedTargetPath: targetPath,
       bytes: entry.bytes,
       produceBytes: entry.produceBytes,
-      overwrite: entry.overwrite !== false,
+      overwrite: entry.overwrite === true,
+      expectedExistingIdentity: entry.expectedExistingIdentity ?? null,
       index,
       initial: null,
       stagePath: atomicSiblingPath(targetPath, tokenId, "stage", index),
@@ -2783,6 +2790,14 @@ export async function writePdfOutputsAtomic(entries, {
       activated: false,
     };
   });
+  for (const entry of targets) {
+    if (entry.overwrite !== (entry.expectedExistingIdentity !== null)) {
+      throw atomicOutputError(
+        "ATOMIC_OUTPUT_EXPECTED_IDENTITY_REQUIRED",
+        `Replacing an existing output requires an exact expected identity: ${entry.targetPath}`,
+      );
+    }
+  }
   const uniqueTargets = new Set(targets.map(entry => (
     path.join(path.dirname(entry.targetPath), portableOutputNameKey(path.basename(entry.targetPath)))
   )));
@@ -2871,6 +2886,40 @@ export async function writePdfOutputsAtomic(entries, {
         entry.initialSha256 = entry.initial
           ? await sha256RegularFile(fsOps, entry.targetPath)
           : null;
+        if (entry.expectedExistingIdentity !== null) {
+          const expected = entry.expectedExistingIdentity;
+          if (
+            !entry.overwrite
+            || !expected
+            || typeof expected !== "object"
+            || Array.isArray(expected)
+            || typeof expected.canonicalPath !== "string"
+            || !Number.isSafeInteger(expected.sizeBytes)
+            || expected.sizeBytes < 0
+            || !/^[a-f0-9]{64}$/.test(expected.sha256 ?? "")
+          ) {
+            throw atomicOutputError(
+              "ATOMIC_OUTPUT_EXPECTED_IDENTITY_INVALID",
+              `Expected output identity is invalid: ${entry.targetPath}`,
+            );
+          }
+          if (!entry.initial) {
+            throw atomicOutputError(
+              "ATOMIC_OUTPUT_EXPECTED_TARGET_MISSING",
+              `The approved output target no longer exists: ${entry.targetPath}`,
+            );
+          }
+          if (
+            expected.canonicalPath !== path.resolve(entry.reportedTargetPath)
+            || expected.sizeBytes !== entry.initial.size
+            || expected.sha256 !== entry.initialSha256
+          ) {
+            throw atomicOutputError(
+              "ATOMIC_OUTPUT_EXPECTED_IDENTITY_CHANGED",
+              `The output target no longer matches the approved identity: ${entry.targetPath}`,
+            );
+          }
+        }
         if (outputIdentity(await lstatIfPresent(fsOps, entry.targetPath)) !== outputIdentity(entry.initial)) {
           throw atomicOutputError(
             "ATOMIC_OUTPUT_CONFLICT",
@@ -2893,6 +2942,8 @@ export async function writePdfOutputsAtomic(entries, {
       await validateInitialTargets(targets.map(entry => ({
         targetPath: entry.reportedTargetPath,
         exists: entry.initial !== null,
+        sizeBytes: entry.initial ? Number(entry.initial.size) : null,
+        sha256: entry.initialSha256,
         fileIdentity: entry.initial ? {
           device: String(entry.initial.dev),
           inode: String(entry.initial.ino),
@@ -3262,6 +3313,7 @@ function pdfDownloadRetryExhausted(code, message, cause) {
 export async function writePdfDownloadAtomic(targetPath, bytes, {
   assertPathAllowed = async () => {},
   overwrite = false,
+  expectedExistingIdentity = null,
   maxFilenameCollisions = PDF_DOWNLOAD_FILENAME_NAMESPACE_SIZE,
   contentionTimeoutMs = DEFAULT_PDF_DOWNLOAD_CONTENTION_TIMEOUT_MS,
   findUniquePathFn = findUniquePath,
@@ -3286,7 +3338,13 @@ export async function writePdfDownloadAtomic(targetPath, bytes, {
     return writePdfOutputAtomicFn(targetPath, bytes, {
       assertPathAllowed,
       overwrite: true,
+      expectedExistingIdentity,
     });
+  }
+  if (expectedExistingIdentity !== null) {
+    throw new Error(
+      "expectedExistingIdentity requires overwrite=true for a PDF download.",
+    );
   }
 
   let filenameCollisions = 0;
@@ -3381,6 +3439,7 @@ export async function downloadPdfFromUrl(url, {
   filename = null,
   destinationDir = null,
   overwrite = false,
+  expectedOutputIdentity = null,
   maxSizeMb = 100,
   headers = {},
   allowPrivateHosts = false,
@@ -3471,6 +3530,7 @@ export async function downloadPdfFromUrl(url, {
   const committed = await writePdfDownloadAtomic(target, buffer, {
     assertPathAllowed,
     overwrite,
+    expectedExistingIdentity: expectedOutputIdentity,
   });
   target = committed.targetPath;
   return {

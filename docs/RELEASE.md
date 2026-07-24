@@ -66,6 +66,11 @@ transcript, screenshots, and relevant logs for every required host lane.
 - `detect_signature_zones` must show exact coordinates in visible text, not only `structuredContent`.
 - In Claude Desktop, verify W-9 page 1 signature/date zones sit on the blank signing/date row, not on the printed labels.
 - Verify same-path fill/sign mutates the active PDF in place and creates exactly one backup.
+- Verify legacy `overwrite=true` remains a no-op for a new destination or same-path text/signature call, but cannot replace a distinct existing output without exact identity.
+- Verify a stale same-path `expected_output_identity` leaves PDF bytes, backup inventory, pending records, and active-document state unchanged.
+- Verify a distinct existing PDF output is unchanged when no `expected_output_identity` is supplied, when any identity field is stale, and when the destination is a hardlink alias to an input.
+- Verify a matching exact output identity permits the intended replacement and that mixed new and approved batch outputs remain all-or-nothing.
+- Verify `fetch_pdf_from_url` and `convert_pdf_to_markdown` also reject blind existing-output replacement.
 - Verify page-management output becomes the active document before any follow-up fill/sign/text operation.
 - Verify inspect-region, preview-to-zone, draw-signature, and rotated-page signature overlays in a real browser. If `agent-browser` is flaky, use Playwright MCP and record the evidence in the durable test ledger.
 - Retest an XFA `force_xfa=true` fill output in the embedded viewer; do not ship if the viewer says "Invalid PDF structure" for an otherwise usable output.

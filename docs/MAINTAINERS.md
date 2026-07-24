@@ -165,29 +165,52 @@ Every user-visible PDF output follows an explicit commit policy:
   mutations additionally require the immutable-original backup record,
   per-document lock, input identity recheck, and pending/committed journal.
 - `merge_pdfs`, `rotate_pdf_pages`, `reorder_pdf_pages`, and `apply_page_plan`
-  completely write and fsync a private same-directory stage before replacing an
-  existing output. A write, permission, rename, or directory-sync failure rolls
-  the replacement back and does not advance active-document state. Filesystems
-  that explicitly report directory fsync as unsupported retain atomic rename
-  semantics without claiming the unavailable crash-durability signal.
+  completely write and fsync a private same-directory stage before commit. A
+  distinct existing output is replaced only when `expected_output_identity`
+  exactly matches its canonical path, byte length, and SHA-256 under the output
+  lock. A write, permission, identity, alias, rename, or directory-sync failure
+  rolls the replacement back and does not advance active-document state.
+  Filesystems that explicitly report directory fsync as unsupported retain
+  atomic rename semantics without claiming the unavailable crash-durability
+  signal.
+- `apply_text` and `apply_signature` accept their deprecated
+  `overwrite=true` field as a no-op when the destination is absent or
+  identifies the same canonical document. A distinct existing output still
+  requires `expected_output_identity`. Caller-supplied same-document identity
+  is checked under the mutation lock before backup creation or pending-record
+  publication.
 - `split_pdf` and `bulk_fill_from_csv` generate and stage the entire declared
   output set before changing any destination. Batch producers generate, fsync,
-  and release one PDF at a time to keep peak memory bounded. Existing outputs
-  are held in private same-directory rollback entries during commit. A failure
-  restores the full prior set and removes any newly activated outputs.
-  Bulk-derived output filenames must be unique; duplicate names fail before
-  commit. One transaction cannot span multiple directories.
+  and release one PDF at a time to keep peak memory bounded. Every existing
+  destination requires exactly one current entry in
+  `expected_output_identities`; absent destinations require none. A stale,
+  missing, duplicate, unrelated, or incomplete manifest aborts the whole
+  batch. Approved existing outputs are held in private same-directory rollback
+  entries during commit. A failure restores the full prior set and removes any
+  newly activated outputs. Bulk-derived output filenames must be unique;
+  duplicate names fail before commit. One transaction cannot span multiple
+  directories.
 - `fetch_pdf_from_url` uses the same single-output staged commit. Its default
-  `overwrite=false` policy selects a unique filename. With `overwrite=true`, it
-  atomically replaces the selected existing target.
+  `overwrite=false` policy selects a unique filename. `overwrite=true` requires
+  the exact current `expected_output_identity` and atomically replaces only
+  that selected identity.
+- `convert_pdf_to_markdown` uses the same replacement precondition through its
+  canonical-parent transaction worker. `overwrite=true` without the exact
+  current `expected_output_identity` fails before commit.
 
 Successful handlers report paths and update lifecycle state only after commit.
 Existing output entries must be regular files; symlinks, directories, and other
 special files are rejected instead of being followed or silently replaced.
+Existing destinations that share a device and inode with any protected PDF,
+CSV, or template input are rejected under the output lock. Two existing batch
+destinations that alias the same file are also rejected. Exact output identity
+is a stale-state and clobber-resistance precondition; it does not prove human
+approval. Host and workflow layers remain responsible for approval.
 The focused fault matrix in `test/atomic-output.test.js` injects permission,
 disk-full, sync, rename, collision, and concurrent-replacement failures. The
 tool-level matrix in `test/atomic-tool-output.test.js` verifies split and bulk
-all-or-nothing behavior plus active-state gating.
+all-or-nothing behavior, exact replacement identities, protected-input
+hardlinks, and active-state gating.
 
 Every staged commit also uses a versioned, SHA-256-bound journal and a
 same-directory interprocess lock. Journals contain basenames only; stage and

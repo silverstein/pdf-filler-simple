@@ -11,6 +11,7 @@ const MAX_REQUEST_BYTES = 1024 * 1024;
 const MAX_SOURCE_BYTES = 250 * 1024 * 1024;
 const REQUEST_KEYS = [
   "allowed_directories",
+  "expected_output_identity",
   "markdown_base64",
   "overwrite",
   "parent_identity",
@@ -52,8 +53,31 @@ function validateRequest(request) {
   if (Object.keys(request).sort().join(",") !== REQUEST_KEYS.join(",")) {
     throw new Error("Markdown output transaction request has unexpected properties.");
   }
-  if (request.protocol_version !== 1 || typeof request.overwrite !== "boolean") {
+  if (request.protocol_version !== 2 || typeof request.overwrite !== "boolean") {
     throw new Error("Markdown output transaction protocol or overwrite flag is invalid.");
+  }
+  const expected = request.expected_output_identity;
+  if (
+    request.overwrite !== (expected !== null)
+    || (
+      expected !== null
+      && (
+        !expected
+        || typeof expected !== "object"
+        || Array.isArray(expected)
+        || Object.keys(expected).sort().join(",") !== "canonical_path,sha256,size_bytes"
+        || typeof expected.canonical_path !== "string"
+        || !path.isAbsolute(expected.canonical_path)
+        || path.resolve(expected.canonical_path) !== expected.canonical_path
+        || !Number.isSafeInteger(expected.size_bytes)
+        || expected.size_bytes < 0
+        || !/^[a-f0-9]{64}$/.test(expected.sha256 ?? "")
+      )
+    )
+  ) {
+    throw new Error(
+      "Markdown output replacement requires one exact expected_output_identity.",
+    );
   }
   if (
     typeof request.target_name !== "string"
@@ -172,6 +196,13 @@ async function main() {
       }
     },
     overwrite: request.overwrite,
+    expectedExistingIdentity: request.expected_output_identity === null
+      ? null
+      : {
+          canonicalPath: request.expected_output_identity.canonical_path,
+          sizeBytes: request.expected_output_identity.size_bytes,
+          sha256: request.expected_output_identity.sha256,
+        },
     validateInitialTargets: async ([target]) => {
       await assertCurrentDirectoryAllowed();
       await readSource();

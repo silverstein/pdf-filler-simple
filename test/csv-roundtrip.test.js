@@ -46,12 +46,13 @@ describe("CSV form workflows", () => {
   });
 
   it("preserves quoted commas through bulk_fill_from_csv and extract_to_csv", async () => {
+    const outputDirectory = path.join(TMP_DIR, "quoted-commas-output");
     const bulk = await client.callTool({
       name: "bulk_fill_from_csv",
       arguments: {
         pdf_path: pdfPath,
         csv_path: CSV_FIXTURE,
-        output_directory: TMP_DIR,
+        output_directory: outputDirectory,
         force_xfa: true,
       },
     });
@@ -66,7 +67,7 @@ describe("CSV form workflows", () => {
     const extracted = await client.callTool({
       name: "extract_to_csv",
       arguments: {
-        pdf_paths: [path.join(TMP_DIR, "filled_1.pdf")],
+        pdf_paths: [path.join(outputDirectory, "filled_1.pdf")],
         output_csv: extractedPath,
       },
     });
@@ -85,6 +86,7 @@ describe("CSV form workflows", () => {
 
   it("handles CRLF and escaped quotes in CSV input and output", async () => {
     const csvPath = path.join(TMP_DIR, "quoted-crlf.csv");
+    const outputDirectory = path.join(TMP_DIR, "quoted-crlf-output");
     await fs.writeFile(
       csvPath,
       [
@@ -98,7 +100,7 @@ describe("CSV form workflows", () => {
       arguments: {
         pdf_path: pdfPath,
         csv_path: csvPath,
-        output_directory: TMP_DIR,
+        output_directory: outputDirectory,
         force_xfa: true,
       },
     });
@@ -110,7 +112,7 @@ describe("CSV form workflows", () => {
     await client.callTool({
       name: "extract_to_csv",
       arguments: {
-        pdf_paths: [path.join(TMP_DIR, "filled_1.pdf")],
+        pdf_paths: [path.join(outputDirectory, "filled_1.pdf")],
         output_csv: extractedPath,
       },
     });

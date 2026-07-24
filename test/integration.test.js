@@ -39,7 +39,6 @@ describe.skipIf(OFFLINE)("v0.8.0 end-to-end: fetch → fill → sign → verify"
     const fetchResult = await downloadPdfFromUrl(IRS_W9_URL, {
       destinationDir: TMP_DIR,
       filename: "fw9-integration.pdf",
-      overwrite: true,
     });
     expect(fetchResult.bytes).toBeGreaterThan(50_000);
     expect(fetchResult.contentType).toContain("pdf");
@@ -125,7 +124,6 @@ describe.skipIf(OFFLINE)("v0.8.0 end-to-end: fetch → fill → sign → verify"
     const result = await downloadPdfFromUrl(SANDY_URL, {
       destinationDir: TMP_DIR,
       filename: "sandy-springs-integration.pdf",
-      overwrite: true,
     });
     expect(result.bytes).toBeGreaterThan(100_000);
     expect(result.contentType).toContain("pdf");

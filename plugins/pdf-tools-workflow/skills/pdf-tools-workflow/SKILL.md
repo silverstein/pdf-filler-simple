@@ -52,6 +52,11 @@ configure an MCP server.
   directory, unbounded tool output, or full binary into model context.
 - Treat tool success as a claim to verify, not proof. Reopen the output through
   an independent read path and check the requested facts.
+- Treat each tool's exact schema exposed by the configured host as the
+  authority for its name and arguments. Never infer an argument alias, copy an
+  argument shape from a different tool, or invent an optional flag. If the host
+  does not expose enough schema to bind a planned call, stop at planning and
+  report the missing contract instead of guessing.
 - Stop on password errors, ambiguous document identity, unexpected output
   replacement, missing verification evidence, or a tool result that claims more
   coverage than it demonstrates.
@@ -141,6 +146,21 @@ including replacement of an existing output or application of a signature, a
 structured planning record reports `PRE_MUTATION_AUTHORIZATION_REQUIRED`.
 Do not emit that flag after the exact gated effect has been authorized.
 
+For replacement of an existing output, bind approval to the exact
+`get_pdf_identity` result and the planned destination. When the mutation
+schema exposes `expected_output_identity`, copy only these fields:
+
+- `canonical_path` from `canonical_path`;
+- `size_bytes` from `size_bytes`;
+- `sha256` from `sha256`.
+
+For a batch schema that exposes `expected_output_identities`, include one entry
+for every existing destination and copy the same three identity fields plus
+that destination's exact `output_path`. Do not include an entry for a new
+destination. Do not treat `overwrite: true`, a matching filename, or a prior
+approval as a substitute for either identity field. Use only the identity
+argument exposed by that mutation's current host schema.
+
 ## 5. Transform
 
 1. Verify that the plan still matches the bound input identities and output
@@ -148,6 +168,23 @@ Do not emit that flag after the exact gated effect has been authorized.
 2. Verify that every required authorization was completed before this call.
 3. Execute once. Do not retry a mutation blindly after an ambiguous result.
 4. Stop on unexpected replacement, identity drift, or an unplanned effect.
+
+Identity drift invalidates every approval bound to the previous artifact
+identity. Before requesting renewed approval, bind the current output candidate
+with a fresh `get_pdf_identity` call. Only that read-only identity call may be
+immediately permitted in the drifted state. The replacement mutation remains
+blocked until a later planning turn receives approval for the newly bound exact
+identity.
+
+The safe replacement sequence is therefore:
+
+1. call `get_pdf_identity` for the existing destination;
+2. present its exact path, size, digest, and planned effect for approval;
+3. after approval, copy the exact fields into the mutation's
+   `expected_output_identity` or batch manifest;
+4. if the mutation reports identity drift, stop without retrying;
+5. call `get_pdf_identity` again, then obtain new approval for that new
+   identity before constructing another mutation call.
 
 ## 6. Validate
 
@@ -199,10 +236,22 @@ When the host requests a structured planning response:
 - treat a conditional future gate as counterfactual workflow information, not
   current authorization. A missing human input requires a fresh planning turn;
   validation after a successful mutation may remain in the same workflow;
+- treat a supplied page plan that is stale, incomplete, or otherwise invalid
+  as permanently blocked. Never classify that same plan as conditionally
+  usable after analysis. Fresh page analysis may support construction of a
+  distinct new plan, and that new plan must independently satisfy every
+  identity, completeness, and authorization gate;
 - bind planned calls to the supplied opaque evidence references when the host
   schema provides them. Argument names alone do not authorize a source, output,
   approval, secret slot, signature asset, intent, confirmation, zone, page
   plan, or validation target;
+- derive every planned call's argument names from that tool's exact
+  participant-visible host schema. A shared response vocabulary does not imply
+  that similarly named tools accept the same path key;
+- use empty argument-key and argument-reference arrays for `blocked_now` and
+  `not_needed`, because neither disposition proposes a call. For
+  `not_yet_permitted`, include only bindings already established for the
+  future call and name every remaining prerequisite in its future gate;
 - order a same-workflow mutation, fresh output identity, and content validation
   so that validation cannot precede successful mutation and identity binding;
 - do not list unrelated tools as prohibited merely because the request does not
@@ -227,6 +276,14 @@ Use decision values by requested scope:
   report `CONTENT_UNAVAILABLE_PASSWORD_REQUIRED` and the missing
   `pdf_password` instead of `COVERAGE_PARTIAL`. Do not report both for the same
   access failure unless independent responsive evidence is actually partial.
+
+Coverage describes evidence for the user's requested conclusion, not whether a
+workflow plan can be written. For a mutation request that has not executed,
+requested-scope coverage is pending and responsive result evidence is absent,
+even when source identity, authorization, or plan evidence is available.
+Those inputs determine readiness and gates, not proof that the requested
+mutation or validation result exists. Use not applicable only when the request
+has no evidence-bearing conclusion to cover.
 
 Use these stage semantics:
 

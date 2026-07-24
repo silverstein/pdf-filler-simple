@@ -94,7 +94,6 @@ async function resolveFixturePath(fixture) {
     const result = await downloadPdfFromUrl(fixture.url, {
       destinationDir: CACHE_DIR,
       filename: `${fixture.id}.pdf`,
-      overwrite: true,
     });
     return result.path;
   }

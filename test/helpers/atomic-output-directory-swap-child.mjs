@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createHash } from "node:crypto";
 import { writePdfOutputAtomic } from "../../server/helpers.js";
 
 const [
@@ -21,10 +22,22 @@ if (
 
 let swapped = false;
 try {
+  const targetPath = path.join(outputDirectory, "first.pdf");
+  const [canonicalPath, targetBytes, targetStats] = await Promise.all([
+    fs.realpath(targetPath),
+    fs.readFile(targetPath),
+    fs.stat(targetPath),
+  ]);
   await writePdfOutputAtomic(
-    path.join(outputDirectory, "first.pdf"),
+    targetPath,
     Buffer.from("first replacement"),
     {
+      overwrite: true,
+      expectedExistingIdentity: {
+        canonicalPath,
+        sizeBytes: targetStats.size,
+        sha256: createHash("sha256").update(targetBytes).digest("hex"),
+      },
       token: `directory-swap-${swapPhase}`,
       async beforeDirectoryGuard(phase) {
         if (swapped || phase !== swapPhase) return;

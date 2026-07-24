@@ -60,17 +60,36 @@ decrypt the PDF, so an encrypted document can be identified before a password
 is available. Structured failures distinguish path denial, unavailable files,
 invalid PDF headers, oversized inputs, and retryable identity races.
 
-The trajectory harness preserves `tool-contracts.v1.json` as the historical
-39-tool projection used by frozen comparison evidence. Current trajectory
-grading uses `jobs.v2.json` and binds to `tool-contracts.v2.json`, the reviewed
-40-tool projection that includes `get_pdf_identity`. The grader selects the
-allowlisted contract and trust registry declared by each suite, so the earlier
-v1 evidence remains valid under its original stack and is not silently
-rescored. The six current trajectory jobs validate their invoked calls against
-that 40-tool contract; they do not constitute behavioral trajectory coverage
-of all 40 tools. `get_pdf_identity` is covered by its contract, handler,
-filesystem-race, and agent-workflow tests rather than by those six retained
-jobs.
+The trajectory harness preserves `tool-contracts.v1.json` and
+`tool-contracts.v2.json` for their frozen evidence. The v2 jobs remain bound to
+the reviewed v2 40-tool projection that introduced `get_pdf_identity`.
+`tool-contracts.v3.json` is the current runtime projection and includes the
+exact-output-identity preconditions. New evaluation suites must bind v3
+explicitly. The grader selects the allowlisted contract and trust registry
+declared by each suite, so historical evidence remains valid under its original
+stack and is not silently rescored. The six existing trajectory jobs do not
+constitute behavioral trajectory coverage of all 40 tools.
+`get_pdf_identity` is covered by its contract, handler, filesystem-race, and
+agent-workflow tests rather than by those six retained jobs.
+
+Existing output replacement is fail-closed. The twelve PDF-producing mutators
+create an absent destination without an identity. A distinct existing
+destination is replaced only when `expected_output_identity` exactly matches
+its canonical path, byte length, and SHA-256 while the output-directory lock is
+held. `bulk_fill_from_csv` and `split_pdf` use the bounded
+`expected_output_identities` manifest and abort the entire batch on a missing,
+stale, duplicate, unrelated, or aliased entry. Existing destinations that are
+hardlink aliases to protected inputs are rejected even when their content and
+supplied identity match. Same-document fill, signature, and text operations
+retain their separate immutable-backup lifecycle and internally bind the
+already loaded input identity. `apply_text` and `apply_signature` retain their
+deprecated `overwrite: true` field as a compatibility no-op when the
+destination is absent or identifies that same canonical document. It never
+authorizes replacing a distinct existing output. Caller-supplied same-document
+identity is checked under the document mutation lock before an original backup
+or pending mutation record is created. The exact identity is a server
+precondition, not proof that a person approved the replacement. The workflow
+or host must still obtain that approval.
 
 #### Extraction and page-analysis truthfulness
 
@@ -114,8 +133,9 @@ projection, so that response's 200,000-character cap cannot erase conversion
 input. Conversion remains bounded by caller item, character, page, deadline,
 and final Markdown byte limits. An optional `.md` output uses the same durable
 same-directory transaction machinery as PDF outputs, refuses an existing file
-unless `overwrite` is true, and activates staged bytes with an atomic
-no-clobber hard link. A local Node transaction worker starts with its current
+unless `overwrite` is true and `expected_output_identity` exactly matches its
+current canonical path, byte length, and SHA-256, and activates staged bytes
+with an atomic no-clobber hard link. A local Node transaction worker starts with its current
 directory bound to the canonical allowed parent and uses only relative mutation
 paths, so later parent renames or symlink replacements cannot redirect writes.
 The bound directory identity, exact UTF-8 output, and source PDF hash, size, and

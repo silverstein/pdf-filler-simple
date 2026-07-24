@@ -59,6 +59,19 @@ async function makeGeometryFixture(targetPath) {
   await fs.writeFile(targetPath, await document.save({ useObjectStreams: false }));
 }
 
+async function expectedOutputIdentity(filePath) {
+  const [canonicalPath, bytes, stats] = await Promise.all([
+    fs.realpath(filePath),
+    fs.readFile(filePath),
+    fs.stat(filePath),
+  ]);
+  return {
+    canonical_path: canonicalPath,
+    size_bytes: stats.size,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
 describe("convert_pdf_to_markdown MCP tool", () => {
   let client;
   let transport;
@@ -303,9 +316,10 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     });
     expect(first.isError).not.toBe(true);
     const saved = await fs.readFile(outputPath);
+    const canonicalOutputPath = await fs.realpath(outputPath);
     expect(saved.toString("utf8")).toBe(first.structuredContent.markdown);
     expect(first.structuredContent.saved_output).toEqual({
-      path: outputPath,
+      path: canonicalOutputPath,
       encoding: "utf-8",
       bytes: saved.length,
       sha256: createHash("sha256").update(saved).digest("hex"),
@@ -325,7 +339,12 @@ describe("convert_pdf_to_markdown MCP tool", () => {
 
     const replaced = await client.callTool({
       name: "convert_pdf_to_markdown",
-      arguments: { pdf_path: structureFixture, output_path: outputPath, overwrite: true },
+      arguments: {
+        pdf_path: structureFixture,
+        output_path: outputPath,
+        overwrite: true,
+        expected_output_identity: await expectedOutputIdentity(outputPath),
+      },
     });
     expect(replaced.isError).not.toBe(true);
     expect(replaced.structuredContent.saved_output.overwritten).toBe(true);
@@ -341,7 +360,12 @@ describe("convert_pdf_to_markdown MCP tool", () => {
 
     const symlinkResult = await client.callTool({
       name: "convert_pdf_to_markdown",
-      arguments: { pdf_path: symlinkSource, output_path: symlinkTarget, overwrite: true },
+      arguments: {
+        pdf_path: symlinkSource,
+        output_path: symlinkTarget,
+        overwrite: true,
+        expected_output_identity: await expectedOutputIdentity(symlinkTarget),
+      },
     });
     expect(symlinkResult.isError).toBe(true);
     expect(symlinkResult.content[0].text).toContain("output_path resolves to the same file as the source PDF");
@@ -355,7 +379,12 @@ describe("convert_pdf_to_markdown MCP tool", () => {
 
     const hardlinkResult = await client.callTool({
       name: "convert_pdf_to_markdown",
-      arguments: { pdf_path: hardlinkSource, output_path: hardlinkOutput, overwrite: true },
+      arguments: {
+        pdf_path: hardlinkSource,
+        output_path: hardlinkOutput,
+        overwrite: true,
+        expected_output_identity: await expectedOutputIdentity(hardlinkOutput),
+      },
     });
     expect(hardlinkResult.isError).toBe(true);
     expect(hardlinkResult.content[0].text).toContain("output_path resolves to the same file as the source PDF");
@@ -388,7 +417,9 @@ describe("convert_pdf_to_markdown MCP tool", () => {
 
       const result = await pending;
       expect(result.isError).not.toBe(true);
-      expect(result.structuredContent.saved_output.path).toBe(path.join(inside, "late-retarget.md"));
+      expect(result.structuredContent.saved_output.path).toBe(
+        path.join(await fs.realpath(inside), "late-retarget.md"),
+      );
       await expect(fs.readFile(path.join(inside, "late-retarget.md"), "utf8")).resolves.toBe(
         result.structuredContent.markdown,
       );
@@ -457,7 +488,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     await fs.symlink(protectedTarget, symlinkOutput);
     const symlinkResult = await client.callTool({
       name: "convert_pdf_to_markdown",
-      arguments: { pdf_path: structureFixture, output_path: symlinkOutput, overwrite: true },
+      arguments: { pdf_path: structureFixture, output_path: symlinkOutput },
     });
     expect(symlinkResult.isError).toBe(true);
     await expect(fs.readFile(protectedTarget, "utf8")).resolves.toBe("keep me");
@@ -466,14 +497,14 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     await fs.mkdir(directoryOutput);
     const directoryResult = await client.callTool({
       name: "convert_pdf_to_markdown",
-      arguments: { pdf_path: structureFixture, output_path: directoryOutput, overwrite: true },
+      arguments: { pdf_path: structureFixture, output_path: directoryOutput },
     });
     expect(directoryResult.isError).toBe(true);
 
     const reservedOutput = path.join(temporaryRoot, ".pdf-tools-user.md");
     const reservedResult = await client.callTool({
       name: "convert_pdf_to_markdown",
-      arguments: { pdf_path: structureFixture, output_path: reservedOutput, overwrite: true },
+      arguments: { pdf_path: structureFixture, output_path: reservedOutput },
     });
     expect(reservedResult.isError).toBe(true);
     await expect(fs.access(reservedOutput)).rejects.toMatchObject({ code: "ENOENT" });

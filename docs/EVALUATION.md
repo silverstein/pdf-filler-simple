@@ -204,10 +204,12 @@ required tool counts only after a successful call with its required arguments
 and a non-null, hashed retained MCP result. An observed source must also appear
 in that call's path arguments. Every trajectory call is validated against the
 actual schemas returned by the suite-selected, allowlisted contract. Historical
-v1 runs bind `tool-contracts.v1.json`; current v2 runs bind
-`tool-contracts.v2.json`. Each suite pins the runtime version and contract
-digest, and the grader selects the matching trust registry and tool schemas from
-that policy rather than silently applying the newest contract.
+v1 runs bind `tool-contracts.v1.json`; v2 runs bind
+`tool-contracts.v2.json`. The current runtime projection is
+`tool-contracts.v3.json`; future runs against the exact-output-identity schemas
+must bind v3 explicitly. Each suite pins the runtime version and contract
+digest, and the grader selects the matching trust registry and tool schemas
+from that policy rather than silently applying the newest contract.
 Regenerate and verify that contract directly from the running MCP server with:
 
 ```bash

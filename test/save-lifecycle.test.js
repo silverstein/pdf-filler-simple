@@ -52,6 +52,26 @@ async function topLevelPdfs() {
   return entries.filter(entry => entry.endsWith(".pdf")).sort();
 }
 
+async function snapshotBackupState() {
+  const backupsDirectory = path.join(PROFILE_DIR, "backups");
+  let names;
+  try {
+    names = await fs.readdir(backupsDirectory);
+  } catch (error) {
+    if (error?.code === "ENOENT") return [];
+    throw error;
+  }
+  return await Promise.all(names.sort().map(async name => {
+    const entryPath = path.join(backupsDirectory, name);
+    const stats = await fs.lstat(entryPath);
+    if (stats.isSymbolicLink()) {
+      return { name, type: "symlink", target: await fs.readlink(entryPath) };
+    }
+    if (stats.isDirectory()) return { name, type: "directory" };
+    return { name, type: "file", sha256: await sha256(entryPath) };
+  }));
+}
+
 async function runSingleOutputCrash(targetPath, replacementPath, transition) {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [SINGLE_CRASH_CHILD, targetPath, replacementPath, transition], {
@@ -177,6 +197,211 @@ describe("canonical save lifecycle", () => {
     });
 
     expect(await topLevelPdfs()).toEqual(["w9-managed-source.pdf", "w9-working.pdf"]);
+  }, 30_000);
+
+  it("preserves legacy overwrite=true as a no-op for same-document text stamping", async () => {
+    const pdfPath = path.join(TMP_DIR, "w9-working.pdf");
+    const originalHash = await sha256(pdfPath);
+
+    const stamped = await client.callTool({
+      name: "apply_text",
+      arguments: {
+        pdf_path: pdfPath,
+        output_path: pdfPath,
+        page: 1,
+        x: 90,
+        y: 720,
+        width: 120,
+        height: 24,
+        text: "Legacy compatibility",
+        overwrite: true,
+      },
+    });
+
+    expect(stamped.isError).not.toBe(true);
+    expect(stamped.structuredContent).toMatchObject({
+      pdfPath,
+      active_path: pdfPath,
+      last_mutation_tool: "apply_text",
+    });
+    expect(stamped.structuredContent.backup_path).toBeTruthy();
+    expect(await sha256(pdfPath)).not.toBe(originalHash);
+    expect(await sha256(stamped.structuredContent.backup_path)).toBe(originalHash);
+  }, 30_000);
+
+  it("preserves legacy overwrite=true as a no-op for a distinct new output", async () => {
+    const inputPath = path.join(TMP_DIR, "w9-working.pdf");
+    const outputPath = path.join(TMP_DIR, "legacy-new-output.pdf");
+    const originalHash = await sha256(inputPath);
+
+    const stamped = await client.callTool({
+      name: "apply_text",
+      arguments: {
+        pdf_path: inputPath,
+        output_path: outputPath,
+        page: 1,
+        x: 90,
+        y: 720,
+        width: 120,
+        height: 24,
+        text: "Legacy new output",
+        overwrite: true,
+      },
+    });
+
+    expect(stamped.isError).not.toBe(true);
+    expect(stamped.structuredContent).toMatchObject({
+      pdfPath: outputPath,
+      active_path: outputPath,
+      backup_path: null,
+      last_mutation_tool: "apply_text",
+    });
+    await expect(sha256(inputPath)).resolves.toBe(originalHash);
+    await expect(fs.stat(outputPath)).resolves.toBeTruthy();
+  }, 30_000);
+
+  it("keeps legacy signature overwrite compatible without authorizing a distinct replacement", async () => {
+    const inputPath = path.join(TMP_DIR, "w9-working.pdf");
+    const distinctOutputPath = path.join(TMP_DIR, "w9-managed-source.pdf");
+    await client.callTool({
+      name: "create_signature",
+      arguments: {
+        name: "legacy-overwrite-signature",
+        display_name: "Legacy Signer",
+      },
+    });
+
+    const canonicalAlias = `${TMP_DIR}${path.sep}not-created${path.sep}..${path.sep}w9-working.pdf`;
+    const sameDocument = await client.callTool({
+      name: "apply_signature",
+      arguments: {
+        pdf_path: inputPath,
+        output_path: canonicalAlias,
+        signature_name: "legacy-overwrite-signature",
+        page: 1,
+        x: 90,
+        y: 690,
+        width: 180,
+        height: 28,
+        force_xfa: true,
+        overwrite: true,
+        user_intent_statement: "I, Legacy Signer, sign this compatibility-test PDF.",
+        user_confirmed_at: new Date().toISOString(),
+      },
+    });
+    expect(sameDocument.isError).not.toBe(true);
+    expect(sameDocument.structuredContent).toMatchObject({
+      active_path: inputPath,
+      last_mutation_tool: "apply_signature",
+    });
+
+    const distinctBefore = await sha256(distinctOutputPath);
+    const distinctReplacement = await client.callTool({
+      name: "apply_signature",
+      arguments: {
+        pdf_path: inputPath,
+        output_path: distinctOutputPath,
+        signature_name: "legacy-overwrite-signature",
+        page: 1,
+        x: 90,
+        y: 650,
+        width: 180,
+        height: 28,
+        force_xfa: true,
+        overwrite: true,
+        user_intent_statement: "I, Legacy Signer, sign this compatibility-test PDF.",
+        user_confirmed_at: new Date().toISOString(),
+      },
+    });
+    expect(distinctReplacement.isError).toBe(true);
+    expect(distinctReplacement.content?.[0]?.text).toContain(
+      "OUTPUT_IDENTITY_REQUIRED",
+    );
+    await expect(sha256(distinctOutputPath)).resolves.toBe(distinctBefore);
+  }, 30_000);
+
+  it("does not let legacy overwrite=true replace a distinct existing output", async () => {
+    const inputPath = path.join(TMP_DIR, "w9-working.pdf");
+    const outputPath = path.join(TMP_DIR, "w9-managed-source.pdf");
+    await client.callTool({
+      name: "set_active_document",
+      arguments: { pdf_path: outputPath },
+    });
+    const [inputHash, outputHash, backupsBefore, activeBefore] = await Promise.all([
+      sha256(inputPath),
+      sha256(outputPath),
+      snapshotBackupState(),
+      client.callTool({ name: "get_active_document", arguments: {} }),
+    ]);
+
+    const result = await client.callTool({
+      name: "apply_text",
+      arguments: {
+        pdf_path: inputPath,
+        output_path: outputPath,
+        page: 1,
+        x: 90,
+        y: 720,
+        width: 120,
+        height: 24,
+        text: "Must not commit",
+        overwrite: true,
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toContain("OUTPUT_IDENTITY_REQUIRED");
+    await expect(sha256(inputPath)).resolves.toBe(inputHash);
+    await expect(sha256(outputPath)).resolves.toBe(outputHash);
+    await expect(snapshotBackupState()).resolves.toEqual(backupsBefore);
+    const activeAfter = await client.callTool({ name: "get_active_document", arguments: {} });
+    expect(activeAfter.structuredContent).toEqual(activeBefore.structuredContent);
+  }, 30_000);
+
+  it("rejects a stale same-document identity before backup or active-state side effects", async () => {
+    const pdfPath = path.join(TMP_DIR, "w9-working.pdf");
+    const otherPath = path.join(TMP_DIR, "w9-managed-source.pdf");
+    await client.callTool({
+      name: "set_active_document",
+      arguments: { pdf_path: otherPath },
+    });
+    const identity = await client.callTool({
+      name: "get_pdf_identity",
+      arguments: { pdf_path: pdfPath },
+    });
+    const [pdfHash, backupsBefore, activeBefore] = await Promise.all([
+      sha256(pdfPath),
+      snapshotBackupState(),
+      client.callTool({ name: "get_active_document", arguments: {} }),
+    ]);
+
+    const result = await client.callTool({
+      name: "apply_text",
+      arguments: {
+        pdf_path: pdfPath,
+        output_path: pdfPath,
+        page: 1,
+        x: 90,
+        y: 720,
+        width: 120,
+        height: 24,
+        text: "Must not commit",
+        expected_output_identity: {
+          canonical_path: identity.structuredContent.canonical_path,
+          size_bytes: identity.structuredContent.size_bytes,
+          sha256: "0".repeat(64),
+        },
+      },
+    });
+
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toContain(
+      "ATOMIC_OUTPUT_EXPECTED_IDENTITY_CHANGED",
+    );
+    await expect(sha256(pdfPath)).resolves.toBe(pdfHash);
+    await expect(snapshotBackupState()).resolves.toEqual(backupsBefore);
+    const activeAfter = await client.callTool({ name: "get_active_document", arguments: {} });
+    expect(activeAfter.structuredContent).toEqual(activeBefore.structuredContent);
   }, 30_000);
 
   it("fails closed when the recorded original backup disappears", async () => {

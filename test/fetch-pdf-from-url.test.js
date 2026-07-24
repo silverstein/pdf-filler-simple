@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll } from "vitest";
 import fs from "fs/promises";
 import path from "path";
+import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "url";
 import {
@@ -29,6 +30,19 @@ const OUTPUT_LOCK_HOLDER = path.join(
   "atomic-output-lock-holder.mjs",
 );
 let TMP_DIR;
+
+async function expectedOutputIdentity(targetPath) {
+  const [canonicalPath, bytes, stat] = await Promise.all([
+    fs.realpath(targetPath),
+    fs.readFile(targetPath),
+    fs.stat(targetPath),
+  ]);
+  return {
+    canonicalPath,
+    sizeBytes: stat.size,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
 
 beforeAll(async () => {
   TMP_DIR = await createTestTempDirectory(REPO_ROOT, "fetch");
@@ -435,6 +449,11 @@ describe("writePdfDownloadAtomic", () => {
     await expect(
       writePdfDownloadAtomic(path.join(TMP_DIR, "overwrite-contention.pdf"), Buffer.from("%PDF-1.7"), {
         overwrite: true,
+        expectedExistingIdentity: {
+          canonicalPath: path.join(TMP_DIR, "overwrite-contention.pdf"),
+          sizeBytes: 1,
+          sha256: "0".repeat(64),
+        },
         findUniquePathFn: async target => {
           selections++;
           return target;
@@ -560,7 +579,7 @@ describe("downloadPdfFromUrl", () => {
 
     const directoryEntries = await fs.readdir(destinationDir);
     expect(new Set(directoryEntries)).toEqual(expectedNames);
-  });
+  }, 30_000);
 
   it("keeps concurrent different basenames unsuffixed", async () => {
     const destinationDir = path.join(TMP_DIR, "different-basenames");
@@ -694,6 +713,7 @@ describe("downloadPdfFromUrl", () => {
     const result = await downloadPdfFromUrl("https://example.com/overwrite.pdf", {
       destinationDir: TMP_DIR,
       overwrite: true,
+      expectedOutputIdentity: await expectedOutputIdentity(p),
       fetchFn: makeFakeFetch({ body: examplePdfBuffer }),
     });
     expect(result.path).toBe(p);
@@ -892,7 +912,6 @@ describe("downloadPdfFromUrl — redirect SSRF protection", () => {
     const result = await downloadPdfFromUrl("https://short.example.com/fw9", {
       destinationDir: TMP_DIR,
       filename: "redirected.pdf",
-      overwrite: true,
       fetchFn,
     });
     expect(result.bytes).toBe(examplePdfBuffer.length);
@@ -923,7 +942,6 @@ describe("downloadPdfFromUrl — redirect SSRF protection", () => {
     const result = await downloadPdfFromUrl("https://example.com/old/x.pdf", {
       destinationDir: TMP_DIR,
       filename: "relative.pdf",
-      overwrite: true,
       fetchFn,
     });
     expect(result.finalUrl).toBe("https://example.com/new/x.pdf");

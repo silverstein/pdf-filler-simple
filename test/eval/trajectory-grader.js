@@ -53,6 +53,7 @@ const TRUST_REGISTRIES = new Map([
 const TOOL_CONTRACTS = new Map([
   "tool-contracts.v1.json",
   "tool-contracts.v2.json",
+  "tool-contracts.v3.json",
 ].map(filename => {
   const contract = loadVersionedJson(filename);
   return [contract.contract_id, contract];

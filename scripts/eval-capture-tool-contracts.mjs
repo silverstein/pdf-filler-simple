@@ -10,7 +10,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_OUTPUT = path.join(
-  REPO_ROOT, "test", "fixtures", "eval", "trajectories", "tool-contracts.v2.json"
+  REPO_ROOT, "test", "fixtures", "eval", "trajectories", "tool-contracts.v3.json"
 );
 
 function canonicalJson(value) {
@@ -47,7 +47,7 @@ export async function captureTrajectoryToolContracts({ outputPath = DEFAULT_OUTP
     const serverVersion = client.getServerVersion();
     const contract = {
       contract_schema_version: 1,
-      contract_id: "pdf-tools.trajectory.tool-contracts.v2",
+      contract_id: "pdf-tools.trajectory.tool-contracts.v3",
       runtime: {
         name: serverVersion?.name,
         version: serverVersion?.version,

@@ -113,6 +113,36 @@ async function expectNoTransactionArtifacts() {
   expect(entries.filter(name => name.includes(".pdf-tools-")).sort()).toEqual([]);
 }
 
+async function expectedExistingIdentity(targetPath) {
+  const [canonicalPath, bytes, stats] = await Promise.all([
+    fs.realpath(targetPath),
+    fs.readFile(targetPath),
+    fs.stat(targetPath),
+  ]);
+  return {
+    canonicalPath,
+    sizeBytes: stats.size,
+    sha256: createHash("sha256").update(bytes).digest("hex"),
+  };
+}
+
+async function replacementOptions(targetPath, options = {}) {
+  return {
+    overwrite: true,
+    expectedExistingIdentity: await expectedExistingIdentity(targetPath),
+    ...options,
+  };
+}
+
+async function replacementEntry(targetPath, entry = {}) {
+  return {
+    targetPath,
+    overwrite: true,
+    expectedExistingIdentity: await expectedExistingIdentity(targetPath),
+    ...entry,
+  };
+}
+
 async function runAnchoredChild(original, moved, outside) {
   return await new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [ANCHORED_CHILD, original, moved, outside], {
@@ -315,6 +345,7 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(target, "original bytes");
 
     await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      ...await replacementOptions(target),
       fsOps: faultingFs({ writeAt: 3 }),
       token: "disk-full",
     })).rejects.toMatchObject({ code: "ENOSPC" });
@@ -337,12 +368,69 @@ describe("atomic PDF output commits", () => {
     })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_TARGET_EXISTS" });
     await expect(fs.readFile(target, "utf8")).resolves.toBe("first");
 
+    const replacementIdentity = await expectedExistingIdentity(target);
     const replaced = await writePdfOutputAtomic(target, Buffer.from("third"), {
       overwrite: true,
+      expectedExistingIdentity: replacementIdentity,
       token: "conditional-replace",
     });
     expect(replaced).toEqual({ targetPath: target, replacedExisting: true });
     await expect(fs.readFile(target, "utf8")).resolves.toBe("third");
+    await expectNoTransactionArtifacts();
+  });
+
+  it("rejects blind replacement and binds replacement to path, size, and SHA-256", async () => {
+    const target = path.join(tempDir, "identity-bound.pdf");
+    await fs.writeFile(target, "approved bytes");
+    const identity = await expectedExistingIdentity(target);
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("blind"), {
+      overwrite: true,
+    })).rejects.toMatchObject({
+      code: "ATOMIC_OUTPUT_EXPECTED_IDENTITY_REQUIRED",
+    });
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("approved bytes");
+
+    for (const changed of [
+      { ...identity, canonicalPath: path.join(tempDir, "other.pdf") },
+      { ...identity, sizeBytes: identity.sizeBytes + 1 },
+      { ...identity, sha256: "0".repeat(64) },
+    ]) {
+      await expect(writePdfOutputAtomic(target, Buffer.from("stale"), {
+        overwrite: true,
+        expectedExistingIdentity: changed,
+      })).rejects.toMatchObject({
+        code: "ATOMIC_OUTPUT_EXPECTED_IDENTITY_CHANGED",
+      });
+      await expect(fs.readFile(target, "utf8")).resolves.toBe("approved bytes");
+      await expectNoTransactionArtifacts();
+    }
+
+    const committed = await writePdfOutputAtomic(
+      target,
+      Buffer.from("replacement"),
+      {
+        overwrite: true,
+        expectedExistingIdentity: identity,
+      },
+    );
+    expect(committed).toEqual({ targetPath: target, replacedExisting: true });
+    await expect(fs.readFile(target, "utf8")).resolves.toBe("replacement");
+  });
+
+  it("does not turn a disappeared approved replacement into file creation", async () => {
+    const target = path.join(tempDir, "disappeared.pdf");
+    await fs.writeFile(target, "approved bytes");
+    const identity = await expectedExistingIdentity(target);
+    await fs.unlink(target);
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      overwrite: true,
+      expectedExistingIdentity: identity,
+    })).rejects.toMatchObject({
+      code: "ATOMIC_OUTPUT_EXPECTED_TARGET_MISSING",
+    });
+    await expect(fs.stat(target)).rejects.toMatchObject({ code: "ENOENT" });
     await expectNoTransactionArtifacts();
   });
 
@@ -391,7 +479,6 @@ describe("atomic PDF output commits", () => {
     const sourceStats = await fs.lstat(source);
 
     await expect(writePdfOutputAtomic(target, Buffer.from("Markdown bytes"), {
-      overwrite: true,
       token: "late-source-alias",
       fsOps: faultingFs({
         beforeLinkAt: {
@@ -472,13 +559,17 @@ describe("atomic PDF output commits", () => {
     const stats = await fs.lstat(target);
     const validationError = new Error("target aliases protected input");
 
+    const identity = await expectedExistingIdentity(target);
     await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
       overwrite: true,
+      expectedExistingIdentity: identity,
       token: "identity-validation",
       validateInitialTargets: async targets => {
         expect(targets).toEqual([{
           targetPath: target,
           exists: true,
+          sizeBytes: stats.size,
+          sha256: identity.sha256,
           fileIdentity: {
             device: String(stats.dev),
             inode: String(stats.ino),
@@ -499,6 +590,7 @@ describe("atomic PDF output commits", () => {
     const verificationError = new Error("verification rejected activated bytes");
 
     await expect(writePdfOutputAtomic(existing, Buffer.from("replacement"), {
+      ...await replacementOptions(existing),
       token: "verify-existing",
       verifyActivatedTargets: async targets => {
         await expect(fs.readFile(existing, "utf8")).resolves.toBe("replacement");
@@ -527,6 +619,7 @@ describe("atomic PDF output commits", () => {
     let substitutedIdentity = null;
 
     await expect(writePdfOutputAtomic(target, Buffer.from("replacement bytes"), {
+      ...await replacementOptions(target),
       verifyActivatedTargets: async () => {
         await fs.unlink(target);
         await fs.writeFile(target, "replacement bytes");
@@ -547,6 +640,7 @@ describe("atomic PDF output commits", () => {
     let substitutedIdentity = null;
 
     await expect(writePdfOutputAtomic(target, Buffer.from("replacement bytes"), {
+      ...await replacementOptions(target),
       async onTransition(transition) {
         if (transition !== "rollback_removed_0") return;
         const journalName = (await fs.readdir(tempDir))
@@ -572,6 +666,7 @@ describe("atomic PDF output commits", () => {
     let substitutedIdentity = null;
 
     await expect(writePdfOutputAtomic(target, Buffer.from("replacement bytes"), {
+      ...await replacementOptions(target),
       async onTransition(transition) {
         if (transition !== "journal_staging") return;
         const journalName = (await fs.readdir(tempDir))
@@ -597,12 +692,11 @@ describe("atomic PDF output commits", () => {
     let substitutedJournal = null;
     let substitutedIdentity = null;
 
-    await expect(writePdfOutputsAtomic([{
-      targetPath: target,
+    await expect(writePdfOutputsAtomic([await replacementEntry(target, {
       produceBytes: async () => {
         throw producerError;
       },
-    }], {
+    })], {
       async onTransition(transition) {
         if (transition !== "journal_staging") return;
         const journalName = (await fs.readdir(tempDir))
@@ -633,6 +727,7 @@ describe("atomic PDF output commits", () => {
     let injected = false;
 
     await expect(writePdfOutputAtomic(target, Buffer.from("our replacement"), {
+      ...await replacementOptions(target),
       token: "late-existing",
       fsOps: faultingFs({
         beforeRename: async (from, to) => {
@@ -654,6 +749,7 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(target, "original bytes");
 
     await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      ...await replacementOptions(target),
       fsOps: faultingFs({ openAt: 4 }),
       token: "permission",
     })).rejects.toMatchObject({ code: "EACCES" });
@@ -667,6 +763,7 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(target, "original bytes");
 
     await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      ...await replacementOptions(target),
       fsOps: faultingFs({ syncAt: 10 }),
       token: "directory-sync",
     })).rejects.toMatchObject({ code: "EIO" });
@@ -682,6 +779,7 @@ describe("atomic PDF output commits", () => {
     let injected = false;
 
     await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      ...await replacementOptions(target),
       token: "published-journal-sync-failure",
       fsOps: faultingFs({
         beforeSync: async ({ path: openedPath }) => {
@@ -709,6 +807,7 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(target, "original bytes");
 
     await writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      ...await replacementOptions(target),
       fsOps: faultingFs({ syncAt: 10, syncCode: "ENOTSUP" }),
       token: "unsupported-directory-sync",
     });
@@ -724,8 +823,8 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(second, "second original");
 
     await expect(writePdfOutputsAtomic([
-      { targetPath: first, bytes: Buffer.from("first replacement") },
-      { targetPath: second, bytes: Buffer.from("second replacement") },
+      await replacementEntry(first, { bytes: Buffer.from("first replacement") }),
+      await replacementEntry(second, { bytes: Buffer.from("second replacement") }),
     ], {
       fsOps: faultingFs({ renameAt: 7 }),
       token: "mid-rename",
@@ -743,8 +842,8 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(second, "second original");
 
     await expect(writePdfOutputsAtomic([
-      { targetPath: first, bytes: Buffer.from("first replacement") },
-      { targetPath: second, bytes: Buffer.from("second replacement") },
+      await replacementEntry(first, { bytes: Buffer.from("first replacement") }),
+      await replacementEntry(second, { bytes: Buffer.from("second replacement") }),
     ], {
       fsOps: faultingFs({ writeAt: 4 }),
       token: "second-stage",
@@ -762,13 +861,14 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(second, "second original");
 
     await expect(writePdfOutputsAtomic([
-      { targetPath: first, produceBytes: async () => Buffer.from("first replacement") },
-      {
-        targetPath: second,
+      await replacementEntry(first, {
+        produceBytes: async () => Buffer.from("first replacement"),
+      }),
+      await replacementEntry(second, {
         produceBytes: async () => {
           throw injectedError("PDF_GENERATION_FAILED", "producer");
         },
-      },
+      }),
     ], { token: "producer-failure" })).rejects.toMatchObject({ code: "PDF_GENERATION_FAILED" });
 
     await expect(fs.readFile(first, "utf8")).resolves.toBe("first original");
@@ -781,6 +881,7 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(target, "original bytes");
 
     await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      ...await replacementOptions(target),
       fsOps: faultingFs({ writeAt: 3, unlinkAt: 1 }),
       token: "cleanup-retry",
     })).rejects.toMatchObject({ code: "ENOSPC" });
@@ -811,6 +912,7 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(target, "original bytes");
 
     await expect(writePdfOutputAtomic(target, Buffer.from("our replacement"), {
+      ...await replacementOptions(target),
       token: "conflict",
       async onTransition(observed) {
         if (observed === "stage_0") {
@@ -829,6 +931,7 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(target, "original bytes");
 
     await expect(writePdfOutputAtomic(target, Buffer.from("our replacement"), {
+      ...await replacementOptions(target),
       token: "late-conflict",
       async onTransition(observed) {
         if (observed === "journal_activating") {
@@ -850,8 +953,8 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(second, "second original");
 
     await expect(writePdfOutputsAtomic([
-      { targetPath: first, bytes: Buffer.from("first replacement") },
-      { targetPath: second, bytes: Buffer.from("second replacement") },
+      await replacementEntry(first, { bytes: Buffer.from("first replacement") }),
+      await replacementEntry(second, { bytes: Buffer.from("second replacement") }),
     ], {
       token: "between-activation-conflict",
       async onTransition(observed) {
@@ -872,7 +975,7 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(first, "first original");
 
     await writePdfOutputsAtomic([
-      { targetPath: first, bytes: Buffer.from("first replacement") },
+      await replacementEntry(first, { bytes: Buffer.from("first replacement") }),
       { targetPath: second, bytes: Buffer.from("second replacement") },
     ], { token: "success" });
 
@@ -932,6 +1035,7 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(collision, "unrelated artifact");
 
     await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      ...await replacementOptions(target),
       token: "collision",
     })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_ARTIFACT_COLLISION" });
 
@@ -947,6 +1051,7 @@ describe("atomic PDF output commits", () => {
     await fs.writeFile(collision, "unrelated stage artifact", { mode: 0o600 });
 
     await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      ...await replacementOptions(target),
       token: "stage-collision",
     })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_ARTIFACT_COLLISION" });
 

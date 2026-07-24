@@ -492,6 +492,7 @@ async function commitMarkdownOutputInAnchoredProcess({
   outputBinding,
   markdownBytes,
   overwrite,
+  expectedOutputIdentity,
   sourcePath,
   sourceCanonicalPath,
   sourceSha256,
@@ -500,10 +501,17 @@ async function commitMarkdownOutputInAnchoredProcess({
 }) {
   const childPath = path.join(path.dirname(fileURLToPath(import.meta.url)), "markdown-output-transaction.js");
   const request = {
-    protocol_version: 1,
+    protocol_version: 2,
     target_name: path.basename(outputBinding.targetPath),
     markdown_base64: markdownBytes.toString("base64"),
     overwrite,
+    expected_output_identity: expectedOutputIdentity === null
+      ? null
+      : {
+          canonical_path: expectedOutputIdentity.canonicalPath,
+          size_bytes: expectedOutputIdentity.sizeBytes,
+          sha256: expectedOutputIdentity.sha256,
+        },
     parent_identity: outputBinding.parentIdentity,
     source_path: sourcePath,
     source_canonical_path: sourceCanonicalPath,
@@ -934,6 +942,9 @@ async function readPdfInputWithRecovery(inputPath, {
   ) {
     throw new Error("Bounded PDF input reader returned invalid bytes.");
   }
+  inputRecoveryBinding.inputFileIdentity = boundedInput.fileIdentity;
+  inputRecoveryBinding.inputCanonicalPath = boundedInput.canonicalPath;
+  inputRecoveryBinding.inputSizeBytes = boundedInput.sizeBytes;
   return {
     resolvedPath,
     pdfBytes: boundedInput.bytes,
@@ -1055,9 +1066,20 @@ async function loadPdfBytes(pdfBytes, password = null) {
 }
 
 async function loadPdf(inputPath, password = null) {
-  const { resolvedPath, pdfBytes, inputRecoveryBinding } = await readPdfInputWithRecovery(inputPath);
+  const {
+    resolvedPath,
+    pdfBytes,
+    fileIdentity,
+    inputRecoveryBinding,
+  } = await readPdfInputWithRecovery(inputPath);
   const pdfDoc = await loadPdfBytes(pdfBytes, password);
-  return { pdfDoc, resolvedPath, pdfBytes, inputRecoveryBinding };
+  return {
+    pdfDoc,
+    resolvedPath,
+    pdfBytes,
+    fileIdentity,
+    inputRecoveryBinding,
+  };
 }
 
 async function loadPdfForZoneDetection(inputPath, password = null) {
@@ -1313,6 +1335,115 @@ function optionalBooleanArgument(value, name, fallback = false) {
   return value;
 }
 
+function normalizeExpectedOutputIdentity(value, name = "expected_output_identity") {
+  if (value === undefined || value === null) return null;
+  const identity = requireArgumentObject(value, name);
+  const keys = Object.keys(identity).sort();
+  if (keys.join(",") !== "canonical_path,sha256,size_bytes") {
+    throw new Error(
+      `'${name}' must contain exactly canonical_path, size_bytes, and sha256.`,
+    );
+  }
+  const canonicalPath = requireStringArgument(
+    identity.canonical_path,
+    `${name}.canonical_path`,
+  );
+  if (!path.isAbsolute(canonicalPath) || path.resolve(canonicalPath) !== canonicalPath) {
+    throw new Error(`'${name}.canonical_path' must be an absolute normalized path.`);
+  }
+  const sizeBytes = requireIntegerArgument(
+    identity.size_bytes,
+    `${name}.size_bytes`,
+    { min: 0 },
+  );
+  const sha256 = requireStringArgument(identity.sha256, `${name}.sha256`);
+  if (!/^[a-f0-9]{64}$/.test(sha256)) {
+    throw new Error(`'${name}.sha256' must be a lowercase SHA-256 digest.`);
+  }
+  return { canonicalPath, sizeBytes, sha256 };
+}
+
+const EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA = Object.freeze({
+  type: "object",
+  additionalProperties: false,
+  description:
+    "Exact current identity returned by get_pdf_identity. Required when replacing a distinct existing output_path, optional for the separately guarded same-document backup workflow, and omitted for a new destination.",
+  properties: {
+    canonical_path: {
+      type: "string",
+      description: "Exact canonical_path returned by get_pdf_identity for the existing destination.",
+    },
+    size_bytes: {
+      type: "integer",
+      minimum: 0,
+      description: "Exact size_bytes returned by get_pdf_identity for the existing destination.",
+    },
+    sha256: {
+      type: "string",
+      pattern: "^[a-f0-9]{64}$",
+      description: "Exact SHA-256 returned by get_pdf_identity for the existing destination.",
+    },
+  },
+  required: ["canonical_path", "size_bytes", "sha256"],
+});
+
+const EXPECTED_OUTPUT_IDENTITIES_INPUT_SCHEMA = Object.freeze({
+  type: "array",
+  maxItems: 1000,
+  description:
+    "Exact identities for generated batch destinations that already exist. Omit new destinations. Any stale, duplicate, unrelated, or missing entry aborts the whole batch.",
+  items: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      output_path: {
+        type: "string",
+        description: "Computed absolute output path this identity authorizes replacing.",
+      },
+      ...EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA.properties,
+    },
+    required: ["output_path", "canonical_path", "size_bytes", "sha256"],
+  },
+});
+
+function normalizeExpectedOutputIdentities(value) {
+  if (value === undefined || value === null) return new Map();
+  if (!Array.isArray(value) || value.length > 1000) {
+    throw new Error("'expected_output_identities' must be an array of at most 1000 identities.");
+  }
+  const identities = new Map();
+  for (const [index, item] of value.entries()) {
+    const entry = requireArgumentObject(
+      item,
+      `expected_output_identities[${index}]`,
+    );
+    const keys = Object.keys(entry).sort();
+    if (keys.join(",") !== "canonical_path,output_path,sha256,size_bytes") {
+      throw new Error(
+        `'expected_output_identities[${index}]' has unexpected properties.`,
+      );
+    }
+    const outputPath = requireStringArgument(
+      entry.output_path,
+      `expected_output_identities[${index}].output_path`,
+    );
+    if (!path.isAbsolute(outputPath) || path.resolve(outputPath) !== outputPath) {
+      throw new Error(
+        `'expected_output_identities[${index}].output_path' must be an absolute normalized path.`,
+      );
+    }
+    if (identities.has(outputPath)) {
+      throw new Error(`Duplicate expected output identity for: ${outputPath}`);
+    }
+    identities.set(outputPath, normalizeExpectedOutputIdentity({
+      canonical_path: entry.canonical_path,
+      size_bytes: entry.size_bytes,
+      sha256: entry.sha256,
+    }, `expected_output_identities[${index}]`));
+  }
+  return identities;
+}
+
 function requireIntegerArgument(value, name, { min = null } = {}) {
   if (!Number.isInteger(value) || (min !== null && value < min)) {
     const suffix = min === null ? "an integer" : `an integer >= ${min}`;
@@ -1351,6 +1482,9 @@ function normalizeMutationArguments(value, toolName) {
     allow_resign: optionalBooleanArgument(args.allow_resign, "allow_resign"),
     force_xfa: optionalBooleanArgument(args.force_xfa, "force_xfa"),
     password: optionalStringArgument(args.password, "password"),
+    expected_output_identity: normalizeExpectedOutputIdentity(
+      args.expected_output_identity,
+    ),
     ...normalizePlacementArguments(args),
   };
 }
@@ -1376,8 +1510,13 @@ function normalizeApplyTextArguments(value) {
   if (!["normal", "italic"].includes(fontStyle)) {
     throw new Error("'font_style' must be 'normal' or 'italic'.");
   }
-  optionalBooleanArgument(args.overwrite, "overwrite");
-  return { ...normalized, text, font_style: fontStyle };
+  const legacyOverwrite = optionalBooleanArgument(args.overwrite, "overwrite");
+  return {
+    ...normalized,
+    text,
+    font_style: fontStyle,
+    legacy_overwrite: legacyOverwrite,
+  };
 }
 
 function normalizeApplySignatureArguments(value) {
@@ -1387,7 +1526,7 @@ function normalizeApplySignatureArguments(value) {
   if (!["signature", "initials"].includes(signingMode)) {
     throw new Error("'signing_mode' must be 'signature' or 'initials'.");
   }
-  optionalBooleanArgument(args.overwrite, "overwrite");
+  const legacyOverwrite = optionalBooleanArgument(args.overwrite, "overwrite");
   return {
     ...normalized,
     signature_name: requireStringArgument(args.signature_name, "signature_name"),
@@ -1395,6 +1534,7 @@ function normalizeApplySignatureArguments(value) {
     user_confirmed_at: requireStringArgument(args.user_confirmed_at, "user_confirmed_at"),
     draw_audit_line: optionalBooleanArgument(args.draw_audit_line, "draw_audit_line"),
     signing_mode: signingMode,
+    legacy_overwrite: legacyOverwrite,
   };
 }
 
@@ -1428,6 +1568,9 @@ function normalizePrepareSigningPacketArguments(value) {
     allow_resign: optionalBooleanArgument(args.allow_resign, "allow_resign"),
     force_xfa: optionalBooleanArgument(args.force_xfa, "force_xfa"),
     password: optionalStringArgument(args.password, "password"),
+    expected_output_identity: normalizeExpectedOutputIdentity(
+      args.expected_output_identity,
+    ),
   };
 }
 
@@ -2222,12 +2365,64 @@ async function buildNewOutputDocumentPayload(outputPath, toolName, initialPage =
   return await buildActiveDocumentPayload(outputPath, initialPage, extra);
 }
 
+function rejectOutputAliasesToProtectedInputs(protectedIdentities) {
+  const protectedKeys = new Set((protectedIdentities ?? [])
+    .filter(identity =>
+      identity
+      && typeof identity.device === "string"
+      && typeof identity.inode === "string")
+    .map(identity => `${identity.device}\0${identity.inode}`));
+  return async targets => {
+    const outputKeys = new Set();
+    for (const target of targets) {
+      if (!target.exists || !target.fileIdentity) continue;
+      const targetKey =
+        `${target.fileIdentity.device}\0${target.fileIdentity.inode}`;
+      if (protectedKeys.has(targetKey)) {
+        const error = new Error(
+          `OUTPUT_ALIASES_INPUT: Refusing to replace an output that is another name for a protected input: ${target.targetPath}`,
+        );
+        error.code = "OUTPUT_ALIASES_INPUT";
+        throw error;
+      }
+      if (outputKeys.has(targetKey)) {
+        const error = new Error(
+          `OUTPUT_TARGETS_ALIAS: Refusing a batch whose existing destinations are names for the same file: ${target.targetPath}`,
+        );
+        error.code = "OUTPUT_TARGETS_ALIAS";
+        throw error;
+      }
+      outputKeys.add(targetKey);
+    }
+  };
+}
+
+function bindExpectedOutputIdentityManifest(entries, expectedIdentities) {
+  const outputPaths = new Set(entries.map(entry => path.resolve(entry.targetPath)));
+  for (const expectedPath of expectedIdentities.keys()) {
+    if (!outputPaths.has(expectedPath)) {
+      throw new Error(
+        `OUTPUT_BATCH_IDENTITY_MISMATCH: Identity supplied for an output this batch will not create: ${expectedPath}`,
+      );
+    }
+  }
+  for (const entry of entries) {
+    const outputPath = path.resolve(entry.targetPath);
+    const expected = expectedIdentities.get(outputPath) ?? null;
+    entry.overwrite = expected !== null;
+    entry.expectedExistingIdentity = expected;
+  }
+  return entries;
+}
+
 async function persistPdfMutation({
   pdfDoc,
   inputPath,
   outputPath,
   toolName,
   expectedInputSha256,
+  expectedOutputIdentity = null,
+  legacyOverwrite = false,
   inputRecoveryBinding,
   initialPage = 1,
   extraPayload = {},
@@ -2238,6 +2433,24 @@ async function persistPdfMutation({
   let outputCanonical = null;
   try { outputCanonical = await fs.realpath(resolvedOutputPath); } catch {}
   const sameDocument = inputCanonical === outputCanonical;
+  if (
+    legacyOverwrite
+    && outputCanonical !== null
+    && !sameDocument
+    && expectedOutputIdentity === null
+  ) {
+    throw backupIdentityError(
+      "OUTPUT_IDENTITY_REQUIRED",
+      "overwrite=true cannot authorize replacement of a distinct existing output. Supply its exact current expected_output_identity.",
+    );
+  }
+  const committedTargetIdentity = sameDocument
+    ? expectedOutputIdentity ?? {
+        canonicalPath: inputCanonical,
+        sizeBytes: inputRecoveryBinding.inputSizeBytes,
+        sha256: expectedInputSha256,
+      }
+    : expectedOutputIdentity;
   if (
     !inputRecoveryBinding?.recoveryDirectory
     || inputRecoveryBinding.recoveryDirectory.canonicalPath !== path.dirname(inputCanonical)
@@ -2283,6 +2496,19 @@ async function persistPdfMutation({
       if (currentSha256 !== expectedInputSha256) {
         throw backupIdentityError("CONCURRENT_MODIFICATION", "The PDF changed after this mutation loaded its input. Reload the current document and retry.");
       }
+      if (
+        expectedOutputIdentity !== null
+        && (
+          expectedOutputIdentity.canonicalPath !== inputCanonical
+          || expectedOutputIdentity.sizeBytes !== currentBytes.length
+          || expectedOutputIdentity.sha256 !== currentSha256
+        )
+      ) {
+        throw backupIdentityError(
+          "ATOMIC_OUTPUT_EXPECTED_IDENTITY_CHANGED",
+          "The same-document output no longer matches the approved identity. Capture its current identity and obtain fresh approval before retrying.",
+        );
+      }
       backupPath = await ensureBackupForCanonicalPath(inputCanonical, currentBytes, currentSha256);
       record = await readBackupRecord(inputCanonical);
       if (!record) throw backupIdentityError("BACKUP_RECORD_MISSING", "The immutable original identity record disappeared before commit.");
@@ -2315,14 +2541,21 @@ async function persistPdfMutation({
       sameDocument ? inputCanonical : resolvedOutputPath,
       bytes,
       {
-      assertPathAllowed,
-      beforeTransaction: sameDocument
-        ? async () => {
-            if (sha256Bytes(await readCurrentPdfMutationBytes(inputCanonical)) !== commitInputSha256) {
-              throw backupIdentityError("CONCURRENT_MODIFICATION", "The PDF changed while this mutation was preparing to activate. Reload the current document and retry.");
+        assertPathAllowed,
+        overwrite: committedTargetIdentity !== null,
+        expectedExistingIdentity: committedTargetIdentity,
+        validateInitialTargets: sameDocument
+          ? undefined
+          : rejectOutputAliasesToProtectedInputs([
+              inputRecoveryBinding.inputFileIdentity,
+            ]),
+        beforeTransaction: sameDocument
+          ? async () => {
+              if (sha256Bytes(await readCurrentPdfMutationBytes(inputCanonical)) !== commitInputSha256) {
+                throw backupIdentityError("CONCURRENT_MODIFICATION", "The PDF changed while this mutation was preparing to activate. Reload the current document and retry.");
+              }
             }
-          }
-        : undefined,
+          : undefined,
       },
     );
     const committedOutputPath = committedOutput.targetPath;
@@ -2604,7 +2837,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             force_xfa: {
               type: "boolean",
               description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped by pdf-lib."
-            }
+            },
+            expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path", "output_path", "field_data"]
         },
@@ -2618,7 +2852,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "bulk_fill_from_csv",
-        description: "Fill multiple PDFs using data from a CSV file. Output filenames must be unique. Existing outputs are replaced only if the complete batch commits; any failure rolls the whole batch back.",
+        description: "Fill multiple PDFs using data from a CSV file. Output filenames must be unique. New outputs need no identity; every existing destination requires one exact entry in expected_output_identities. Any missing, stale, unrelated, or duplicate identity or any row failure aborts the whole batch.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2645,7 +2879,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             force_xfa: {
               type: "boolean",
               description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped by pdf-lib."
-            }
+            },
+            expected_output_identities: EXPECTED_OUTPUT_IDENTITIES_INPUT_SCHEMA
           },
           required: ["pdf_path", "csv_path", "output_directory"]
         },
@@ -2743,7 +2978,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             password: {
               type: "string",
               description: "Password for encrypted PDFs (optional)"
-            }
+            },
+            expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path", "output_path", "profile_name"]
         },
@@ -2918,7 +3154,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             max_markdown_bytes: { type: "integer", minimum: 256, maximum: 200000, description: "Maximum UTF-8 Markdown bytes. The conversion fails rather than cutting a line or Unicode sequence. Default: 50000." },
             include_page_boundaries: { type: "boolean", description: "Include deterministic HTML comments marking page boundaries. Default: true." },
             output_path: { type: "string", description: "Optional absolute .md path, or ~/ path. The file is written only after complete bytes are staged and verified." },
-            overwrite: { type: "boolean", description: "Allow replacing an existing output_path. Default: false." }
+            overwrite: { type: "boolean", description: "Replace an existing output_path only when its exact expected_output_identity is also supplied. Default: false." },
+            expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path"]
         },
@@ -3242,7 +3479,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "merge_pdfs",
-        description: "Merge multiple PDF files into a single PDF. A complete staged PDF atomically replaces any existing output. All paths must be absolute paths on the user's local machine.",
+        description: "Merge multiple PDF files into a single PDF. New outputs commit atomically. Replacing a distinct existing output requires its exact current expected_output_identity. All paths must be absolute paths on the user's local machine.",
         inputSchema: {
           type: "object",
           properties: {
@@ -3258,7 +3495,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             password: {
               type: "string",
               description: "Password for encrypted PDFs (optional, applied to all inputs)"
-            }
+            },
+            expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["input_paths", "output_path"]
         },
@@ -3277,7 +3515,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "split_pdf",
-        description: "Split a PDF into multiple files by page ranges (e.g. '1-5,6-10') or at regular intervals (e.g. 'every 5'). Existing outputs are replaced only if the complete split set commits; any failure rolls the whole set back. All paths must be absolute paths on the user's local machine.",
+        description: "Split a PDF into multiple files by page ranges (e.g. '1-5,6-10') or at regular intervals (e.g. 'every 5'). New outputs need no identity; every existing destination requires one exact entry in expected_output_identities. Any identity or output failure aborts the whole split set. All paths must be absolute paths on the user's local machine.",
         inputSchema: {
           type: "object",
           properties: {
@@ -3296,7 +3534,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             password: {
               type: "string",
               description: "Password for encrypted PDFs (optional)"
-            }
+            },
+            expected_output_identities: EXPECTED_OUTPUT_IDENTITIES_INPUT_SCHEMA
           },
           required: ["input_path", "page_ranges", "output_directory"]
         },
@@ -3310,7 +3549,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "rotate_pdf_pages",
-        description: "Rotate pages in a PDF by 90, 180, or 270 degrees. A complete staged PDF atomically replaces any existing output. All paths must be absolute paths on the user's local machine.",
+        description: "Rotate pages in a PDF by 90, 180, or 270 degrees. New outputs commit atomically. Replacing a distinct existing output requires its exact current expected_output_identity. All paths must be absolute paths on the user's local machine.",
         inputSchema: {
           type: "object",
           properties: {
@@ -3334,7 +3573,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             password: {
               type: "string",
               description: "Password for encrypted PDFs (optional)"
-            }
+            },
+            expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["input_path", "output_path", "degrees"]
         },
@@ -3353,7 +3593,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "reorder_pdf_pages",
-        description: "Rearrange the pages of a PDF in a new order. All pages must be included exactly once (strict permutation). A complete staged PDF atomically replaces any existing output. All paths must be absolute paths on the user's local machine.",
+        description: "Rearrange the pages of a PDF in a new order. All pages must be included exactly once (strict permutation). New outputs commit atomically. Replacing a distinct existing output requires its exact current expected_output_identity. All paths must be absolute paths on the user's local machine.",
         inputSchema: {
           type: "object",
           properties: {
@@ -3373,7 +3613,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             password: {
               type: "string",
               description: "Password for encrypted PDFs (optional)"
-            }
+            },
+            expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["input_path", "output_path", "page_order"]
         },
@@ -3417,7 +3658,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "apply_page_plan",
-        description: "Apply a page plan to a PDF: reorder, rotate, and delete pages in one pass. Pages not listed in page_order are excluded (deleted). A complete staged PDF atomically replaces any existing output; the source is never modified. All paths must be absolute.",
+        description: "Apply a page plan to a PDF: reorder, rotate, and delete pages in one pass. Pages not listed in page_order are excluded (deleted). The source is never modified. Replacing a distinct existing output requires its exact current expected_output_identity. All paths must be absolute.",
         inputSchema: {
           type: "object",
           properties: {
@@ -3453,7 +3694,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             force_xfa: {
               type: "boolean",
               description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped by pdf-lib."
-            }
+            },
+            expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["input_path", "output_path", "plan"]
         },
@@ -3582,7 +3824,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               description: "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures."
             },
             password: { type: "string", description: "Password for encrypted PDFs (optional)" },
-            force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA data will be stripped by pdf-lib." }
+            force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA data will be stripped by pdf-lib." },
+            expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path", "output_path", "page", "x", "y", "width", "height"]
         },
@@ -3643,9 +3886,10 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             overwrite: {
               type: "boolean",
-              description: "Legacy no-op. Same-path in-place signing is allowed and creates a backup on the first mutation."
+              description: "Deprecated compatibility field. true is accepted as a no-op when the destination does not exist or output_path identifies the same canonical document as pdf_path. It never authorizes replacing a distinct existing output; that requires expected_output_identity."
             },
-            password: { type: "string", description: "Password for encrypted PDFs (optional)" }
+            password: { type: "string", description: "Password for encrypted PDFs (optional)" },
+            expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path", "output_path", "signature_name", "page", "x", "y", "width", "height", "user_intent_statement", "user_confirmed_at"]
         },
@@ -3691,7 +3935,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               description: "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures."
             },
             password: { type: "string", description: "Password for encrypted PDFs (optional)" },
-            force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped." }
+            force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped." },
+            expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path", "output_path"]
         },
@@ -3722,9 +3967,10 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false — the XFA layer will be stripped)" },
             overwrite: {
               type: "boolean",
-              description: "Legacy no-op. Same-path in-place stamping is allowed and creates a backup on the first mutation."
+              description: "Deprecated compatibility field. true is accepted as a no-op when the destination does not exist or output_path identifies the same canonical document as pdf_path. It never authorizes replacing a distinct existing output; that requires expected_output_identity."
             },
-            password: { type: "string", description: "Password for encrypted PDFs (optional)" }
+            password: { type: "string", description: "Password for encrypted PDFs (optional)" },
+            expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path", "output_path", "page", "x", "y", "width", "height", "text"]
         },
@@ -3775,8 +4021,9 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             overwrite: {
               type: "boolean",
-              description: "Overwrite if a file with the same name exists (default: false — appends ' (2)', ' (3)', etc.)"
+              description: "Replace the named file only when its exact expected_output_identity is also supplied. Default: false, which appends ' (2)', ' (3)', etc."
             },
+            expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA,
             max_size_mb: {
               type: "number",
               description: "Maximum download size in MB (default: 100). Raise for larger PDFs."
@@ -3904,7 +4151,14 @@ async function handleToolCall(request) {
       }
 
       case "fill_pdf": {
-        const { pdf_path, output_path, field_data, password, force_xfa = false } = args;
+        const {
+          pdf_path,
+          output_path,
+          field_data,
+          password,
+          force_xfa = false,
+          expected_output_identity,
+        } = args;
         const resolvedPdfPath = resolvePath(pdf_path);
         const resolvedOutputPath = resolvePath(output_path);
         const {
@@ -3919,6 +4173,9 @@ async function handleToolCall(request) {
           outputPath: resolvedOutputPath,
           toolName: "fill_pdf",
           expectedInputSha256: sha256Bytes(rawPdfBytes),
+          expectedOutputIdentity: normalizeExpectedOutputIdentity(
+            expected_output_identity,
+          ),
           inputRecoveryBinding,
           extraPayload: {
             filled_fields: filledFields,
@@ -3945,14 +4202,36 @@ async function handleToolCall(request) {
       }
 
       case "bulk_fill_from_csv": {
-        const { pdf_path, csv_path, output_directory, filename_column, password, force_xfa = false } = args;
+        const {
+          pdf_path,
+          csv_path,
+          output_directory,
+          filename_column,
+          password,
+          force_xfa = false,
+          expected_output_identities,
+        } = args;
         const resolvedPdfPath = resolvePath(pdf_path);
         const resolvedCsvPath = resolvePath(csv_path);
         const resolvedOutputDir = resolvePath(output_directory);
-        const { pdfBytes: rawPdfBytes } = await readPdfInputWithRecovery(resolvedPdfPath);
+        const expectedOutputIdentities = normalizeExpectedOutputIdentities(
+          expected_output_identities,
+        );
+        const {
+          pdfBytes: rawPdfBytes,
+          fileIdentity: templateFileIdentity,
+        } = await readPdfInputWithRecovery(resolvedPdfPath);
         assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
         
         // Read CSV
+        const csvStats = await fs.lstat(resolvedCsvPath, { bigint: true });
+        if (!csvStats.isFile() || csvStats.isSymbolicLink()) {
+          throw new Error("csv_path must identify a regular file.");
+        }
+        const csvFileIdentity = {
+          device: String(csvStats.dev),
+          inode: String(csvStats.ino),
+        };
         const csvContent = await fs.readFile(resolvedCsvPath, 'utf8');
         const records = parseCSV(csvContent);
         
@@ -3997,10 +4276,20 @@ async function handleToolCall(request) {
           });
         }
 
+        bindExpectedOutputIdentityManifest(
+          pendingOutputs,
+          expectedOutputIdentities,
+        );
         if (pendingOutputs.length > 0) {
           const committedOutputs = await writePdfOutputsAtomic(
             pendingOutputs,
-            { assertPathAllowed },
+            {
+              assertPathAllowed,
+              validateInitialTargets: rejectOutputAliasesToProtectedInputs([
+                templateFileIdentity,
+                csvFileIdentity,
+              ]),
+            },
           );
           committedOutputs.forEach((committed, index) => {
             results[index].output_path = committed.targetPath;
@@ -4073,7 +4362,14 @@ async function handleToolCall(request) {
       }
 
       case "fill_with_profile": {
-        const { pdf_path, output_path, profile_name, additional_data = {}, password } = args;
+        const {
+          pdf_path,
+          output_path,
+          profile_name,
+          additional_data = {},
+          password,
+          expected_output_identity,
+        } = args;
         validateProfileName(profile_name);
         const resolvedPdfPath = resolvePath(pdf_path);
         const resolvedOutputPath = resolvePath(output_path);
@@ -4095,6 +4391,9 @@ async function handleToolCall(request) {
           outputPath: resolvedOutputPath,
           toolName: "fill_with_profile",
           expectedInputSha256: sha256Bytes(rawPdfBytes),
+          expectedOutputIdentity: normalizeExpectedOutputIdentity(
+            expected_output_identity,
+          ),
           inputRecoveryBinding,
           extraPayload: {
             profile_name,
@@ -4610,6 +4909,7 @@ async function handleToolCall(request) {
           "include_page_boundaries",
           "output_path",
           "overwrite",
+          "expected_output_identity",
         ]);
         const unknownArgument = Object.keys(markdownArgs).find(name => !allowedArguments.has(name));
         if (unknownArgument) throw new Error(`Unknown convert_pdf_to_markdown argument: ${unknownArgument}.`);
@@ -4618,6 +4918,14 @@ async function handleToolCall(request) {
         const outputPathArgument = optionalStringArgument(markdownArgs.output_path, "output_path", { maxLength: 32768 });
         const includePageBoundaries = optionalBooleanArgument(markdownArgs.include_page_boundaries, "include_page_boundaries", true);
         const overwrite = optionalBooleanArgument(markdownArgs.overwrite, "overwrite", false);
+        const expectedOutputIdentity = normalizeExpectedOutputIdentity(
+          markdownArgs.expected_output_identity,
+        );
+        if (overwrite !== (expectedOutputIdentity !== null)) {
+          throw new Error(
+            "OUTPUT_IDENTITY_REQUIRED: overwrite=true requires the exact current expected_output_identity, and an expected identity requires overwrite=true.",
+          );
+        }
         if (!path.isAbsolute(expandUserPath(pdf_path))) {
           throw new Error("pdf_path must be an absolute path or begin with ~/.");
         }
@@ -4680,6 +4988,7 @@ async function handleToolCall(request) {
               outputBinding,
               markdownBytes,
               overwrite,
+              expectedOutputIdentity,
               sourcePath: resolvedPath,
               sourceCanonicalPath,
               sourceSha256,
@@ -5230,11 +5539,19 @@ async function handleToolCall(request) {
       }
 
       case "merge_pdfs": {
-        const { input_paths, output_path, password } = args;
+        const {
+          input_paths,
+          output_path,
+          password,
+          expected_output_identity,
+        } = args;
         if (!input_paths || input_paths.length === 0) {
           throw new Error("input_paths must be a non-empty array of PDF file paths.");
         }
         const resolvedOutputPath = resolvePath(output_path);
+        const expectedOutputIdentity = normalizeExpectedOutputIdentity(
+          expected_output_identity,
+        );
 
         // Check no input path equals output path
         const resolvedInputPaths = input_paths.map(p => resolvePath(p));
@@ -5286,7 +5603,14 @@ async function handleToolCall(request) {
         const committedOutput = await writePdfOutputAtomic(
           resolvedOutputPath,
           mergedBytes,
-          { assertPathAllowed },
+          {
+            assertPathAllowed,
+            overwrite: expectedOutputIdentity !== null,
+            expectedExistingIdentity: expectedOutputIdentity,
+            validateInitialTargets: rejectOutputAliasesToProtectedInputs(
+              retainedInputs.map(input => input.fileIdentity),
+            ),
+          },
         );
         const committedOutputPath = committedOutput.targetPath;
         const outputStats = await fs.stat(committedOutputPath);
@@ -5308,9 +5632,22 @@ async function handleToolCall(request) {
       }
 
       case "split_pdf": {
-        const { input_path, page_ranges, output_directory, password } = args;
-        const { pdfDoc, resolvedPath: resolvedInputPath } = await loadPdf(input_path, password);
+        const {
+          input_path,
+          page_ranges,
+          output_directory,
+          password,
+          expected_output_identities,
+        } = args;
+        const {
+          pdfDoc,
+          resolvedPath: resolvedInputPath,
+          fileIdentity,
+        } = await loadPdf(input_path, password);
         const resolvedOutputDir = resolvePath(output_directory);
+        const expectedOutputIdentities = normalizeExpectedOutputIdentities(
+          expected_output_identities,
+        );
         await fs.mkdir(resolvedOutputDir, { recursive: true });
 
         const totalPages = pdfDoc.getPageCount();
@@ -5338,7 +5675,16 @@ async function handleToolCall(request) {
           results.push(`${filename} (${end - start + 1} pages)`);
         }
 
-        await writePdfOutputsAtomic(pendingOutputs, { assertPathAllowed });
+        bindExpectedOutputIdentityManifest(
+          pendingOutputs,
+          expectedOutputIdentities,
+        );
+        await writePdfOutputsAtomic(pendingOutputs, {
+          assertPathAllowed,
+          validateInitialTargets: rejectOutputAliasesToProtectedInputs([
+            fileIdentity,
+          ]),
+        });
 
         return {
           content: [{
@@ -5349,17 +5695,27 @@ async function handleToolCall(request) {
       }
 
       case "rotate_pdf_pages": {
-        const { input_path, output_path, pages, degrees, password } = args;
+        const {
+          input_path,
+          output_path,
+          pages,
+          degrees,
+          password,
+          expected_output_identity,
+        } = args;
         if (![90, 180, 270].includes(degrees)) {
           throw new Error(`Invalid rotation angle: ${degrees}. Must be 90, 180, or 270.`);
         }
         const resolvedInputPath = resolvePath(input_path);
         const resolvedOutputPath = resolvePath(output_path);
+        const expectedOutputIdentity = normalizeExpectedOutputIdentity(
+          expected_output_identity,
+        );
         if (resolvedInputPath === resolvedOutputPath) {
           throw new Error("output_path must be different from input_path to prevent file corruption.");
         }
 
-        const { pdfDoc } = await loadPdf(input_path, password);
+        const { pdfDoc, fileIdentity } = await loadPdf(input_path, password);
         const allPages = pdfDoc.getPages();
         const totalPages = allPages.length;
 
@@ -5380,7 +5736,14 @@ async function handleToolCall(request) {
         const committedOutput = await writePdfOutputAtomic(
           resolvedOutputPath,
           rotatedBytes,
-          { assertPathAllowed },
+          {
+            assertPathAllowed,
+            overwrite: expectedOutputIdentity !== null,
+            expectedExistingIdentity: expectedOutputIdentity,
+            validateInitialTargets: rejectOutputAliasesToProtectedInputs([
+              fileIdentity,
+            ]),
+          },
         );
         const committedOutputPath = committedOutput.targetPath;
         const outputStats = await fs.stat(committedOutputPath);
@@ -5403,17 +5766,26 @@ async function handleToolCall(request) {
       }
 
       case "reorder_pdf_pages": {
-        const { input_path, output_path, page_order, password } = args;
+        const {
+          input_path,
+          output_path,
+          page_order,
+          password,
+          expected_output_identity,
+        } = args;
         if (!page_order || page_order.length === 0) {
           throw new Error("page_order must be a non-empty array of page numbers.");
         }
         const resolvedInputPath = resolvePath(input_path);
         const resolvedOutputPath = resolvePath(output_path);
+        const expectedOutputIdentity = normalizeExpectedOutputIdentity(
+          expected_output_identity,
+        );
         if (resolvedInputPath === resolvedOutputPath) {
           throw new Error("output_path must be different from input_path to prevent file corruption.");
         }
 
-        const { pdfDoc } = await loadPdf(input_path, password);
+        const { pdfDoc, fileIdentity } = await loadPdf(input_path, password);
         const totalPages = pdfDoc.getPageCount();
 
         // Validate strict permutation
@@ -5432,7 +5804,14 @@ async function handleToolCall(request) {
         const committedOutput = await writePdfOutputAtomic(
           resolvedOutputPath,
           reorderedBytes,
-          { assertPathAllowed },
+          {
+            assertPathAllowed,
+            overwrite: expectedOutputIdentity !== null,
+            expectedExistingIdentity: expectedOutputIdentity,
+            validateInitialTargets: rejectOutputAliasesToProtectedInputs([
+              fileIdentity,
+            ]),
+          },
         );
         const committedOutputPath = committedOutput.targetPath;
         const outputStats = await fs.stat(committedOutputPath);
@@ -5510,7 +5889,14 @@ async function handleToolCall(request) {
       }
 
       case "apply_page_plan": {
-        const { input_path, output_path, plan, password, force_xfa = false } = args;
+        const {
+          input_path,
+          output_path,
+          plan,
+          password,
+          force_xfa = false,
+          expected_output_identity,
+        } = args;
         const { page_order, rotations = {} } = plan;
 
         if (!page_order || page_order.length === 0) {
@@ -5519,11 +5905,17 @@ async function handleToolCall(request) {
 
         const resolvedInputPath = resolvePath(input_path);
         const resolvedOutputPath = resolvePath(output_path);
+        const expectedOutputIdentity = normalizeExpectedOutputIdentity(
+          expected_output_identity,
+        );
         if (resolvedInputPath === resolvedOutputPath) {
           throw new Error("output_path must be different from input_path to prevent file corruption.");
         }
 
-        const { pdfBytes: rawPdfBytes } = await readPdfInputWithRecovery(resolvedInputPath);
+        const {
+          pdfBytes: rawPdfBytes,
+          fileIdentity,
+        } = await readPdfInputWithRecovery(resolvedInputPath);
         assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
         const pdfDoc = await loadPdfBytes(rawPdfBytes, password);
         const totalPages = pdfDoc.getPageCount();
@@ -5570,7 +5962,14 @@ async function handleToolCall(request) {
           const committedOutput = await writePdfOutputAtomic(
             resolvedOutputPath,
             newBytes,
-            { assertPathAllowed },
+            {
+              assertPathAllowed,
+              overwrite: expectedOutputIdentity !== null,
+              expectedExistingIdentity: expectedOutputIdentity,
+              validateInitialTargets: rejectOutputAliasesToProtectedInputs([
+                fileIdentity,
+              ]),
+            },
           );
           committedOutputPath = committedOutput.targetPath;
           outputStats = await fs.stat(committedOutputPath);
@@ -5837,7 +6236,7 @@ async function handleToolCall(request) {
       case "add_signature_field": {
         const {
           pdf_path, output_path, page, x, y, width, height, label,
-          allow_resign, password, force_xfa,
+          allow_resign, password, force_xfa, expected_output_identity,
         } = normalizeAddSignatureFieldArguments(args);
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
@@ -5858,6 +6257,7 @@ async function handleToolCall(request) {
           outputPath: resolvedOutput,
           toolName: "add_signature_field",
           expectedInputSha256: sha256Bytes(pdfBytes),
+          expectedOutputIdentity: expected_output_identity,
           inputRecoveryBinding,
           initialPage: page,
         });
@@ -5893,6 +6293,8 @@ async function handleToolCall(request) {
           allow_resign,
           force_xfa,
           password,
+          expected_output_identity,
+          legacy_overwrite,
         } = normalizeApplySignatureArguments(args);
 
         const resolvedOutput = resolvePath(output_path);
@@ -5967,6 +6369,8 @@ async function handleToolCall(request) {
           outputPath: resolvedOutput,
           toolName: "apply_signature",
           expectedInputSha256: sha256Bytes(pdfBytes),
+          expectedOutputIdentity: expected_output_identity,
+          legacyOverwrite: legacy_overwrite,
           inputRecoveryBinding,
           initialPage: page,
         });
@@ -5999,7 +6403,7 @@ async function handleToolCall(request) {
       case "prepare_signing_packet": {
         const {
           pdf_path, output_path, field_values, signature_locations,
-          allow_resign, password, force_xfa,
+          allow_resign, password, force_xfa, expected_output_identity,
         } = normalizePrepareSigningPacketArguments(args);
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
@@ -6066,6 +6470,7 @@ async function handleToolCall(request) {
           outputPath: resolvedOutput,
           toolName: "prepare_signing_packet",
           expectedInputSha256: sha256Bytes(pdfBytes),
+          expectedOutputIdentity: expected_output_identity,
           inputRecoveryBinding,
           initialPage: manifest[0]?.page || 1,
           extraPayload: {
@@ -6107,6 +6512,8 @@ async function handleToolCall(request) {
           allow_resign,
           force_xfa,
           password,
+          expected_output_identity,
+          legacy_overwrite,
         } = normalizeApplyTextArguments(args);
 
         const resolvedOutput = resolvePath(output_path);
@@ -6139,6 +6546,8 @@ async function handleToolCall(request) {
           outputPath: resolvedOutput,
           toolName: "apply_text",
           expectedInputSha256: sha256Bytes(pdfBytes),
+          expectedOutputIdentity: expected_output_identity,
+          legacyOverwrite: legacy_overwrite,
           inputRecoveryBinding,
           initialPage: page,
         });
@@ -6260,6 +6669,7 @@ async function handleToolCall(request) {
           filename,
           destination_dir,
           overwrite = false,
+          expected_output_identity,
           max_size_mb = 100,
           headers,
           allow_private_hosts = false,
@@ -6267,6 +6677,14 @@ async function handleToolCall(request) {
 
         if (!url || typeof url !== "string") {
           throw new Error("'url' is required and must be a string.");
+        }
+        const expectedOutputIdentity = normalizeExpectedOutputIdentity(
+          expected_output_identity,
+        );
+        if (overwrite !== (expectedOutputIdentity !== null)) {
+          throw new Error(
+            "OUTPUT_IDENTITY_REQUIRED: overwrite=true requires the exact current expected_output_identity, and an expected identity requires overwrite=true.",
+          );
         }
 
         // Destination directory priority:
@@ -6279,6 +6697,7 @@ async function handleToolCall(request) {
           filename,
           destinationDir: resolvedDestDir,
           overwrite,
+          expectedOutputIdentity,
           maxSizeMb: max_size_mb,
           headers: headers || {},
           allowPrivateHosts: allow_private_hosts,
