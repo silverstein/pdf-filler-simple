@@ -58,7 +58,7 @@ const SYNTHETIC_GIT_ENV = {
   LC_ALL: "C",
   TZ: "UTC",
 };
-export const CODEX_ENVIRONMENT_NAMES = [
+const CODEX_BASE_ENVIRONMENT_NAMES = [
   "CODEX_HOME",
   "GIT_AUTHOR_DATE",
   "GIT_AUTHOR_EMAIL",
@@ -76,8 +76,49 @@ export const CODEX_ENVIRONMENT_NAMES = [
   "TMPDIR",
   "TZ",
 ];
+const MACOS_EFFECTIVE_ENVIRONMENT_NAMES = [
+  "__CF_USER_TEXT_ENCODING",
+];
+export const CODEX_ENVIRONMENT_NAMES = [
+  ...CODEX_BASE_ENVIRONMENT_NAMES,
+  ...(process.platform === "darwin" ? MACOS_EFFECTIVE_ENVIRONMENT_NAMES : []),
+];
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function macosUserTextEncoding() {
+  if (process.platform !== "darwin") return {};
+  const uid = process.getuid?.();
+  if (!Number.isSafeInteger(uid) || uid < 0) {
+    throw new Error("macOS Codex environment requires a stable numeric uid");
+  }
+  return {
+    // CoreFoundation injects this value even when child_process receives a
+    // minimal env. Supplying and binding the deterministic value makes the
+    // effective environment explicit instead of silently host-dependent.
+    __CF_USER_TEXT_ENCODING: `0x${uid.toString(16).toUpperCase()}:0x0:0x0`,
+  };
+}
+
+export function codexEnvironment(codexHome) {
+  const environment = {
+    PATH: "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
+    LANG: "C.UTF-8",
+    TERM: "dumb",
+    NO_COLOR: "1",
+    TMPDIR: path.join(codexHome, "tmp"),
+    ...SYNTHETIC_GIT_ENV,
+    ...macosUserTextEncoding(),
+    CODEX_HOME: codexHome,
+  };
+  if (
+    canonicalJson(Object.keys(environment).sort())
+      !== canonicalJson(CODEX_ENVIRONMENT_NAMES)
+  ) {
+    throw new Error("Codex environment differs from the sealed allowlist");
+  }
+  return environment;
 }
 
 function canonicalJson(value) {
@@ -464,15 +505,10 @@ export async function runCodexAgentWorkflowCase(options) {
   await fs.mkdir(resultsRoot, { mode: 0o700 });
   const runtimeTemporaryRoot = path.join(codexHome, "tmp");
   await fs.mkdir(runtimeTemporaryRoot, { mode: 0o700 });
-  const environment = {
-    PATH: "/usr/bin:/bin:/usr/sbin:/sbin:/opt/homebrew/bin",
-    LANG: "C.UTF-8",
-    TERM: "dumb",
-    NO_COLOR: "1",
-    TMPDIR: runtimeTemporaryRoot,
-    ...SYNTHETIC_GIT_ENV,
-    CODEX_HOME: codexHome,
-  };
+  const environment = codexEnvironment(codexHome);
+  if (environment.TMPDIR !== runtimeTemporaryRoot) {
+    throw new Error("Codex temporary root differs from the sealed environment");
+  }
   const promptCaptureTemporaryRoot = promptCaptureHome === null
     ? runtimeTemporaryRoot
     : path.join(promptCaptureHome, "tmp");

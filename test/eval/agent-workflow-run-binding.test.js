@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -10,6 +11,8 @@ import {
   prepareAgentWorkflowCampaign,
 } from "../../scripts/eval-prepare-agent-workflow-campaign.mjs";
 import {
+  CODEX_ENVIRONMENT_NAMES,
+  codexEnvironment,
   runCodexAgentWorkflowCase,
 } from "../../scripts/eval-run-codex-agent-workflow-case.mjs";
 
@@ -19,6 +22,39 @@ const roots = [];
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root =>
     fs.rm(root, { recursive: true, force: true })));
+});
+
+describe("Codex workflow environment", () => {
+  it("binds the platform-effective minimal environment", () => {
+    const codexHome = path.join(os.tmpdir(), "sealed-codex-home");
+    const environment = codexEnvironment(codexHome);
+
+    expect(Object.keys(environment).sort()).toEqual(CODEX_ENVIRONMENT_NAMES);
+    expect(environment.CODEX_HOME).toBe(codexHome);
+    expect(environment.TMPDIR).toBe(path.join(codexHome, "tmp"));
+    expect(environment).not.toHaveProperty("HOME");
+
+    if (process.platform === "darwin") {
+      expect(environment.__CF_USER_TEXT_ENCODING).toBe(
+        `0x${process.getuid().toString(16).toUpperCase()}:0x0:0x0`,
+      );
+      const effectiveEnvironment = JSON.parse(execFileSync(
+        process.execPath,
+        [
+          "--input-type=module",
+          "-e",
+          "process.stdout.write(JSON.stringify(process.env))",
+        ],
+        {
+          encoding: "utf8",
+          env: environment,
+        },
+      ));
+      expect(effectiveEnvironment).toEqual(environment);
+    } else {
+      expect(environment).not.toHaveProperty("__CF_USER_TEXT_ENCODING");
+    }
+  });
 });
 
 async function fakeCodex(root) {
