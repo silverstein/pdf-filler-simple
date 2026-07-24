@@ -1,0 +1,30 @@
+{
+  "schema_version": 1,
+  "benchmark_id": "pdf-tools.comparison.v1",
+  "benchmark_version": "v0.1.0",
+  "claim_boundary": "Identity of the Linux renderer that produced the frozen v1 raw-RGBA truth anchors. Other renderers may run compatibility checks but may not replace or claim these exact anchors.",
+  "renderer_fingerprint_sha256": "c2dd1a1d44aac6b47b58a18b9b578e2e863bb0b75cfd8dbf95346e841b4eace8",
+  "corpus_manifest_sha256": "d37ef12e1e760a16a92a009514d9e90ea68dbe00ea89610319273d3d669c0ac2",
+  "platform": {
+    "os": "linux",
+    "arch": "x64",
+    "node": "v22.22.3",
+    "napi": "10"
+  },
+  "installed": {
+    "pdfjs_dist": "5.4.624",
+    "canvas": "0.1.99"
+  },
+  "historical_report_hosts": {
+    "shared_library": "silvercloud-vm",
+    "current_product": "silvercloud-vm-stdio"
+  },
+  "provenance": {
+    "source_revision": "fca097509b3ad353deef5cd416829d933cb6b452",
+    "run_index": "docs/evidence/comparison-v1/run-index.v1.json",
+    "shared_library_report": "docs/evidence/comparison-v1/shared-library-report.v1.json",
+    "native_canvas_binary_sha256": null,
+    "standard_font_tree_sha256": null,
+    "limitation": "The published v1 evidence did not retain native canvas binary or standard-font tree digests. Exact admission therefore remains bound to the frozen renderer fingerprint, recorded runtime, and complete frozen output score; future benchmark versions must retain the additional byte-level provenance."
+  }
+}

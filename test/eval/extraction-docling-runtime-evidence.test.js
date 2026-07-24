@@ -127,12 +127,14 @@ describe("Docling runtime evidence", () => {
     const groupWritableManagedPython = structuredClone(evidence);
     groupWritableManagedPython.before.records.find(record => record.path === "managed_python/bin/python3.12").mode = 0o771;
     expect(() => assertSchema(groupWritableManagedPython, EVIDENCE_SCHEMA, "Docling three-process evidence")).toThrow();
-    const observedPrivateSymlinks = structuredClone(evidence);
-    for (const inventory of [observedPrivateSymlinks.before, ...observedPrivateSymlinks.after]) {
-      for (const record of inventory.records.filter(item => item.type === "symlink")) record.mode = 0o700;
+    for (const mode of [0o700, 0o755]) {
+      const observedPortableSymlinks = structuredClone(evidence);
+      for (const inventory of [observedPortableSymlinks.before, ...observedPortableSymlinks.after]) {
+        for (const record of inventory.records.filter(item => item.type === "symlink")) record.mode = mode;
+      }
+      expect(() => assertSchema(observedPortableSymlinks, EVIDENCE_SCHEMA, "Docling three-process evidence")).not.toThrow();
     }
-    expect(() => assertSchema(observedPrivateSymlinks, EVIDENCE_SCHEMA, "Docling three-process evidence")).not.toThrow();
-    for (const mode of [0o755, 0o711, 0o733]) {
+    for (const mode of [0o000, 0o705, 0o711, 0o733, 0o775]) {
       const unsafeSymlinkMode = structuredClone(evidence);
       unsafeSymlinkMode.before.records.find(record => record.path === "managed_python/bin/python-link").mode = mode;
       expect(() => assertSchema(unsafeSymlinkMode, EVIDENCE_SCHEMA, "Docling three-process evidence")).toThrow();
@@ -259,23 +261,30 @@ describe("Docling runtime evidence", () => {
     }
   });
 
-  it("accepts and retains observed mode-0700 or mode-0777 only for managed Python and venv symlinks", async () => {
+  it("accepts and retains portable observed symlink modes only for managed Python and venv symlinks", async () => {
     const value = await fixture();
     const ordinary = await captureDoclingRuntimeInventory(value.receipt, boundFinalization(value.receipt));
-    expect(ordinary.records).toContainEqual(expect.objectContaining({ path: "managed_python/bin/python-link", type: "symlink", mode: 0o777 }));
-    expect(ordinary.records).toContainEqual(expect.objectContaining({ path: "venv/bin/python", type: "symlink", mode: 0o777 }));
+    const observedManagedMode = (await fs.lstat(value.managedSymlink)).mode & 0o777;
+    const observedVenvMode = (await fs.lstat(value.venvSymlink)).mode & 0o777;
+    expect([0o755, 0o777]).toContain(observedManagedMode);
+    expect([0o755, 0o777]).toContain(observedVenvMode);
+    expect(ordinary.records).toContainEqual(expect.objectContaining({ path: "managed_python/bin/python-link", type: "symlink", mode: observedManagedMode, target: value.managedExecutable }));
+    expect(ordinary.records).toContainEqual(expect.objectContaining({ path: "venv/bin/python", type: "symlink", mode: observedVenvMode, target: value.managedExecutable }));
 
-    const privateMode = await captureWithObservedSymlinkMode(value.receipt, [value.managedSymlink, value.venvSymlink], 0o700);
-    expect(privateMode.records).toContainEqual(expect.objectContaining({ path: "managed_python/bin/python-link", type: "symlink", mode: 0o700 }));
-    expect(privateMode.records).toContainEqual(expect.objectContaining({ path: "venv/bin/python", type: "symlink", mode: 0o700 }));
-    expect((await fs.lstat(value.managedSymlink)).mode & 0o777).toBe(0o777);
-    expect((await fs.lstat(value.venvSymlink)).mode & 0o777).toBe(0o777);
+    for (const mode of [0o700, 0o755, 0o777]) {
+      const portableMode = await captureWithObservedSymlinkMode(value.receipt, [value.managedSymlink, value.venvSymlink], mode);
+      expect(portableMode.records).toContainEqual(expect.objectContaining({ path: "managed_python/bin/python-link", type: "symlink", mode }));
+      expect(portableMode.records).toContainEqual(expect.objectContaining({ path: "venv/bin/python", type: "symlink", mode }));
+    }
 
-    for (const mode of [0o755, 0o711, 0o733]) {
+    for (const mode of [0o000, 0o705, 0o711, 0o733, 0o775]) {
       const forged = structuredClone(ordinary);
       forged.records.find(record => record.path === "managed_python/bin/python-link").mode = mode;
       expect(() => validateDoclingRuntimeInventory(resignInventory(forged))).toThrow(/symlink record/);
     }
+    const forgedLinks = structuredClone(ordinary);
+    forgedLinks.records.find(record => record.path === "managed_python/bin/python-link").links = 2;
+    expect(() => validateDoclingRuntimeInventory(resignInventory(forgedLinks))).toThrow(/symlink record/);
     const forgedModel = structuredClone(ordinary);
     forgedModel.records.find(record => record.path === "managed_python/bin/python-link").path = "models/python-link";
     expect(() => validateDoclingRuntimeInventory(resignInventory(forgedModel))).toThrow(/symlink record/);
@@ -286,7 +295,7 @@ describe("Docling runtime evidence", () => {
     }
   });
 
-  it.each([0o755, 0o711, 0o733])("rejects observed symlink mode %s", async mode => {
+  it.each([0o000, 0o705, 0o711, 0o733, 0o775])("rejects unsupported observed symlink mode %s", async mode => {
     const value = await fixture();
     await expect(captureWithObservedSymlinkMode(value.receipt, [value.venvSymlink], mode)).rejects.toThrow(/symlink violates/);
   });
@@ -295,6 +304,16 @@ describe("Docling runtime evidence", () => {
     const modelCase = await fixture();
     await fs.symlink(path.join(modelCase.models, "weight.bin"), path.join(modelCase.models, "weight-link"));
     await expect(captureDoclingRuntimeInventory(modelCase.receipt, boundFinalization(modelCase.receipt))).rejects.toThrow(/symlink violates/);
+
+    const managedToModels = await fixture();
+    await fs.rm(managedToModels.managedSymlink);
+    await fs.symlink(path.join(managedToModels.models, "weight.bin"), managedToModels.managedSymlink);
+    await expect(captureDoclingRuntimeInventory(managedToModels.receipt, boundFinalization(managedToModels.receipt))).rejects.toThrow(/symlink violates/);
+
+    const venvToModels = await fixture();
+    await fs.rm(venvToModels.venvSymlink);
+    await fs.symlink(path.join(venvToModels.models, "weight.bin"), venvToModels.venvSymlink);
+    await expect(captureDoclingRuntimeInventory(venvToModels.receipt, boundFinalization(venvToModels.receipt))).rejects.toThrow(/symlink violates/);
 
     const escapeCase = await fixture();
     const outside = path.join(escapeCase.root, "outside-runtime");

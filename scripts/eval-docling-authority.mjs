@@ -14,6 +14,7 @@ const MAX_INPUT_BYTES = 128 * 1024 * 1024;
 const MAX_TREE_ENTRIES = 50000;
 const MAX_TREE_FILE_BYTES = 512 * 1024 * 1024;
 const MAX_TREE_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
+const PORTABLE_RUNTIME_SYMLINK_MODES = Object.freeze([0o700, 0o755, 0o777]);
 const DOCLING_BOOTSTRAP_V1_SHA256 = "9921055c8883627b062c4edfa8996c49ec37e6a7262374cdff27fc3ec7067b6f";
 const UV_VERSION = /^uv [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?(?: \([a-f0-9]{7,40} ([0-9]{4})-([0-9]{2})-([0-9]{2}) [a-z0-9_]+(?:-[a-z0-9_]+){2,4}\))?$(?![\s\S])/;
 const NODE_VERSION = /^v[0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?$/;
@@ -594,7 +595,8 @@ async function digestTree(root, allowedRoots, { strictPrivate = false } = {}) {
       if (metadata.isSymbolicLink()) {
         const target = await fs.readlink(filename);
         const resolved = path.resolve(path.dirname(filename), target);
-        if (strictPrivate || metadata.nlink !== 1 || ![0o700, 0o777].includes(mode) || !allowedRoots.some(allowed => within(allowed, resolved))) {
+        if (strictPrivate || metadata.nlink !== 1 || !PORTABLE_RUNTIME_SYMLINK_MODES.includes(mode)
+          || !allowedRoots.some(allowed => within(allowed, resolved))) {
           throw new Error(`Finalized tree contains an unsafe symbolic link: ${relative_path}`);
         }
         records.push({ relative_path, type: "symlink", mode, links: metadata.nlink, target });
@@ -643,11 +645,12 @@ async function finalizeSetup(context, receiptPath, receiptSha) {
   if (distributionsResult.code !== 0) throw new Error("Installed distribution capture failed");
   const lockPath = path.join(snapshot, "requirements.lock");
   const lockBytes = await readStable(lockPath, 16 * 1024 * 1024, null, true);
-  const allowedRuntimeRoots = [receipt.roots.models, receipt.roots.uv_python_install, path.join(snapshot, "venv")];
+  const managedPythonRoot = receipt.roots.uv_python_install;
+  const venvRoot = path.join(snapshot, "venv");
   const [modelFiles, managedPythonFiles, venvFiles] = await Promise.all([
-    digestTree(receipt.roots.models, allowedRuntimeRoots, { strictPrivate: true }),
-    digestTree(receipt.roots.uv_python_install, allowedRuntimeRoots),
-    digestTree(path.join(snapshot, "venv"), allowedRuntimeRoots),
+    digestTree(receipt.roots.models, [], { strictPrivate: true }),
+    digestTree(managedPythonRoot, [managedPythonRoot]),
+    digestTree(venvRoot, [venvRoot, managedPythonRoot]),
   ]);
   const rootPolicy = {};
   for (const [name, value] of Object.entries(receipt.roots).filter(([, value]) => typeof value === "string" && value.startsWith("/"))) {
@@ -711,7 +714,7 @@ export function validateFinalizationSchemaMirror(value) {
     || value.installed_distributions.some(item => !Array.isArray(item) || item.length !== 2 || item.some(part => !boundedString(part)))) {
     throw new Error("Finalization distribution inventory violates its retained schema mirror");
   }
-  const validateTree = (tree, { allowOwnerExecuteOnly = false, allowPrivateSymlinkMode = false } = {}) => {
+  const validateTree = (tree, { allowOwnerExecuteOnly = false, allowedSymlinkModes = [] } = {}) => {
     if (!Array.isArray(tree) || tree.length < 1 || tree.length > MAX_TREE_ENTRIES) throw new Error("Finalization tree inventory violates its retained schema mirror");
     for (const entry of tree) {
       if (!isCanonicalSlashRelativePath(entry?.relative_path) || entry.relative_path.length > 4096 || !integer(entry.links, 1)) throw new Error("Finalization tree record violates its retained schema mirror");
@@ -722,15 +725,14 @@ export function validateFinalizationSchemaMirror(value) {
       } else if (entry.type === "directory") {
         if (!exactKeys(entry, ["relative_path", "type", "mode", "links"]) || ![0o700, 0o755].includes(entry.mode)) throw new Error("Finalization directory record violates its retained schema mirror");
       } else if (entry.type === "symlink") {
-        const allowedModes = allowPrivateSymlinkMode ? [0o700, 0o777] : [0o777];
-        if (!exactKeys(entry, ["relative_path", "type", "mode", "links", "target"]) || !allowedModes.includes(entry.mode) || entry.links !== 1
+        if (!exactKeys(entry, ["relative_path", "type", "mode", "links", "target"]) || !allowedSymlinkModes.includes(entry.mode) || entry.links !== 1
           || !boundedString(entry.target, 4096)) throw new Error("Finalization symlink record violates its retained schema mirror");
       } else throw new Error("Finalization tree record type violates its retained schema mirror");
     }
   };
   validateTree(value.model_files);
-  validateTree(value.managed_python_files, { allowOwnerExecuteOnly: true, allowPrivateSymlinkMode: true });
-  validateTree(value.venv_files, { allowOwnerExecuteOnly: true, allowPrivateSymlinkMode: true });
+  validateTree(value.managed_python_files, { allowOwnerExecuteOnly: true, allowedSymlinkModes: PORTABLE_RUNTIME_SYMLINK_MODES });
+  validateTree(value.venv_files, { allowOwnerExecuteOnly: true, allowedSymlinkModes: PORTABLE_RUNTIME_SYMLINK_MODES });
   const rootNames = ["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp", "hf_cache"];
   if (!exactKeys(value.root_policy, rootNames)) throw new Error("Finalization root policy violates its retained schema mirror");
   for (const root of Object.values(value.root_policy)) {
@@ -783,11 +785,12 @@ async function verifyFinalization(context, finalizationPath, expectedFinalizatio
     || canonicalJson(value.installed_distributions) !== canonicalJson(JSON.parse(distributionsResult.stdout))) {
     throw new Error("Finalized Python environment has drifted");
   }
-  const allowedRuntimeRoots = [context.receipt.roots.models, context.receipt.roots.uv_python_install, path.join(context.receipt.roots.sidecar_snapshot, "venv")];
+  const managedPythonRoot = context.receipt.roots.uv_python_install;
+  const venvRoot = path.join(context.receipt.roots.sidecar_snapshot, "venv");
   const current = await Promise.all([
-    digestTree(context.receipt.roots.models, allowedRuntimeRoots, { strictPrivate: true }),
-    digestTree(context.receipt.roots.uv_python_install, allowedRuntimeRoots),
-    digestTree(path.join(context.receipt.roots.sidecar_snapshot, "venv"), allowedRuntimeRoots),
+    digestTree(context.receipt.roots.models, [], { strictPrivate: true }),
+    digestTree(managedPythonRoot, [managedPythonRoot]),
+    digestTree(venvRoot, [venvRoot, managedPythonRoot]),
   ]);
   if (canonicalJson(current[0]) !== canonicalJson(value.model_files) || canonicalJson(current[1]) !== canonicalJson(value.managed_python_files)
     || canonicalJson(current[2]) !== canonicalJson(value.venv_files)) throw new Error("Finalized runtime has drifted");

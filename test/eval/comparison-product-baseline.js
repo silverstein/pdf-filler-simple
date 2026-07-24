@@ -128,7 +128,11 @@ export async function buildProductPrimitiveReport({
   pairs,
   repositoryRoot,
   allowedDirectory = path.dirname(pairs[0].beforePath),
+  host,
 }) {
+  if (typeof host !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(host)) {
+    throw new Error("Product report requires an explicit public-safe host label");
+  }
   const client = new Client({ name: "pdf-tools-comparison-product-baseline", version: "1.0.0" });
   const transport = new StdioClientTransport({
     command: process.execPath,
@@ -207,14 +211,14 @@ export async function buildProductPrimitiveReport({
     benchmark_id: benchmarkId,
     benchmark_version: benchmarkVersion,
     mode: "default_material",
-    claim_boundary: "Deterministic inspection through the current published PDF Tools MCP read/field/render primitives on Linux; no model, metadata-value tool, annotation-enumeration tool, or native Claude Desktop host.",
+    claim_boundary: "Deterministic inspection through the current published PDF Tools MCP read/field/render primitives on the recorded host; no model, metadata-value tool, annotation-enumeration tool, or native Claude Desktop host.",
     benchmark_claim_ready: false,
     engine: {
       id: "pdf-tools-current-published-primitives",
       kind: "pdf_tools_mcp",
       version: packageJson.version,
       license: packageJson.license ?? "MIT",
-      provenance: "repository server/index.js; candidate MCPB SHA-256 b586221595cc3095d43f73daf3b66c6cc9695bddcd98365f46c445a597d9a1b4 not executed in this Linux lane",
+      provenance: "repository server/index.js; candidate MCPB SHA-256 b586221595cc3095d43f73daf3b66c6cc9695bddcd98365f46c445a597d9a1b4 not executed in this lane",
       bundle_increment_bytes: 0,
       native_targets: [`${process.platform}-${process.arch}`],
       network_requests: 0,
@@ -225,7 +229,7 @@ export async function buildProductPrimitiveReport({
       os: process.platform,
       arch: process.arch,
       node: process.version,
-      host: "silvercloud-vm-stdio",
+      host,
       model: "none",
       model_cost_usd: 0,
     },

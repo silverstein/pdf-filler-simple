@@ -15,6 +15,14 @@ import { buildProductPrimitiveReport } from "../test/eval/comparison-product-bas
 import { buildPopplerComparisonSensor } from "../test/eval/comparison-poppler-baseline.js";
 import { buildControllerObservationRegistry } from "../test/eval/comparison-observation-registry.js";
 import { rendererFingerprint } from "../test/eval/comparison-observations.js";
+import {
+  assertComparisonBenchmarkBinding,
+  assertComparisonManifestBinding,
+  assertExactComparisonReferenceRenderer,
+  assertFrozenComparisonReferenceScore,
+  loadComparisonReferenceRenderer,
+  requireComparisonReportHostLabel,
+} from "../test/eval/comparison-reference-renderer.js";
 import { createComparisonAjv } from "../test/eval/comparison-schema-ajv.js";
 import { scoreComparisonReport, validateComparisonReport } from "../test/eval/comparison-scorer.js";
 
@@ -49,6 +57,11 @@ async function writeJson(filePath, value) {
 }
 
 const manifest = await loadComparisonManifest(MANIFEST_PATH);
+const referenceRenderer = await loadComparisonReferenceRenderer();
+assertComparisonBenchmarkBinding(manifest, referenceRenderer);
+await assertComparisonManifestBinding(MANIFEST_PATH, referenceRenderer);
+assertExactComparisonReferenceRenderer(manifest.canonical_renderer, referenceRenderer);
+const reportHost = requireComparisonReportHostLabel();
 const ajv = createComparisonAjv();
 const manifestSchema = JSON.parse(await fs.readFile(path.join(
   REPO_ROOT, "test", "fixtures", "eval", "comparison", "manifest.schema.json"
@@ -90,6 +103,7 @@ try {
     benchmarkId: manifest.benchmark_id,
     benchmarkVersion: manifest.benchmark_version,
     renderer: manifest.canonical_renderer,
+    host: reportHost,
     pairs,
   });
   if (!validateReportSchema(rawReport)) {
@@ -107,6 +121,7 @@ try {
   });
   const scoredReport = scoreComparisonReport(manifest, rawReport, sharedRegistry);
   if (!scoredReport.valid) throw new Error("Generated report did not pass scorer validation");
+  assertFrozenComparisonReferenceScore(scoredReport);
   const productReport = await buildProductPrimitiveReport({
     benchmarkId: manifest.benchmark_id,
     benchmarkVersion: manifest.benchmark_version,
@@ -114,6 +129,7 @@ try {
     pairs,
     repositoryRoot: REPO_ROOT,
     allowedDirectory: isolatedDirectory,
+    host: `${reportHost}-stdio`,
   });
   if (!validateReportSchema(productReport)) {
     throw new Error(`Product report JSON Schema validation failed: ${JSON.stringify(validateReportSchema.errors)}`);

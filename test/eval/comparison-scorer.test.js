@@ -92,6 +92,22 @@ describe("comparison scorer hostile reports", () => {
     expect(validateComparisonReport(manifest, wrongSource).some(error => error.includes("exact pair inputs"))).toBe(true);
   });
 
+  it("keeps a hostile visual-pixel digest mutation from matching frozen truth", async () => {
+    const manifest = await loadComparisonManifest(MANIFEST_PATH);
+    const report = mutate(buildOracleCalibrationReport(manifest), copy => {
+      const target = reportPair(copy, "visual_status");
+      target.observations.find(observation => observation.channel === "visual").value_sha256
+        = "0".repeat(64);
+    });
+    expect(validateComparisonReport(manifest, report)).toEqual([]);
+    const scored = scoreReport(manifest, report);
+    const target = scored.pairs.find(pair => pair.role === "visual_only");
+    expect(scored.valid).toBe(true);
+    expect(target.passed).toBe(false);
+    expect(target.channel_metrics.visual).toMatchObject({ tp: 0, fp: 1, fn: 1 });
+    expect(target.hard_gates.evidence_complete).toBe(false);
+  });
+
   it("scores a partial multi-facet event as both an event miss and a semantic facet false negative", async () => {
     const manifest = await loadComparisonManifest(MANIFEST_PATH);
     const report = mutate(buildOracleCalibrationReport(manifest), copy => {

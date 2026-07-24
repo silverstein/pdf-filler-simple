@@ -7,6 +7,7 @@ import path from "node:path";
 const MAX_ENTRIES = 50000;
 const MAX_FILE_BYTES = 512 * 1024 * 1024;
 const MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024;
+const PORTABLE_RUNTIME_SYMLINK_MODES = Object.freeze([0o700, 0o755, 0o777]);
 const SHA256 = /^[a-f0-9]{64}$/;
 
 export function canonicalJson(value) {
@@ -123,7 +124,7 @@ async function walk(label, root, allowedRoots, records, state, bytecodeAuthority
       const target = await fs.readlink(child);
       const resolved = path.resolve(path.dirname(child), target);
       const symlinkMode = childMetadata.mode & 0o777;
-      if (!allowPrivateRuntimeModes || childMetadata.nlink !== 1 || ![0o700, 0o777].includes(symlinkMode)
+      if (!allowPrivateRuntimeModes || childMetadata.nlink !== 1 || !PORTABLE_RUNTIME_SYMLINK_MODES.includes(symlinkMode)
         || !allowedRoots.some(rootPath => within(rootPath, resolved))) {
         throw new Error(`Runtime symlink violates link/containment policy: ${recordPath}`);
       }
@@ -168,7 +169,7 @@ export function validateDoclingRuntimeInventory(inventory) {
     else if (record.type === "symlink") {
       const [inventoryRoot, ...relativeParts] = record.path.split("/");
       if (canonicalJson(Object.keys(record).sort()) !== canonicalJson(["links", "mode", "path", "target", "type"])
-        || relativeParts.length < 1 || !["managed_python", "venv"].includes(inventoryRoot) || ![0o700, 0o777].includes(record.mode)
+        || relativeParts.length < 1 || !["managed_python", "venv"].includes(inventoryRoot) || !PORTABLE_RUNTIME_SYMLINK_MODES.includes(record.mode)
         || record.links !== 1 || typeof record.target !== "string" || !record.target) throw new Error("Runtime symlink record is invalid");
     }
   }
@@ -181,10 +182,15 @@ export async function captureDoclingRuntimeInventory(receipt, finalization) {
   const bytecodeAuthority = buildFinalizedBytecodeAuthority(receipt, finalization);
   const observedBytecode = new Set();
   const roots = { managed_python: receipt.roots.uv_python_install, venv: path.join(receipt.roots.sidecar_snapshot, "venv"), models: receipt.roots.models };
-  const allowedRoots = Object.values(roots).map(value => path.resolve(value));
+  const resolvedRoots = Object.fromEntries(Object.entries(roots).map(([label, value]) => [label, path.resolve(value)]));
+  const allowedRoots = {
+    managed_python: [resolvedRoots.managed_python],
+    venv: [resolvedRoots.venv, resolvedRoots.managed_python],
+    models: [],
+  };
   const records = []; const state = { entries: 0, bytes: 0 };
-  for (const [label, root] of Object.entries(roots)) {
-    await walk(label, path.resolve(root), allowedRoots, records, state, bytecodeAuthority, observedBytecode, "", label === "managed_python" || label === "venv");
+  for (const [label, root] of Object.entries(resolvedRoots)) {
+    await walk(label, root, allowedRoots[label], records, state, bytecodeAuthority, observedBytecode, "", label === "managed_python" || label === "venv");
   }
   if (observedBytecode.size !== bytecodeAuthority.size) throw new Error("Finalized Python bytecode is missing from the runtime environment");
   for (const [filename, recordPath] of [[path.join(receipt.roots.sidecar_snapshot, "requirements.lock"), "requirements.lock"], [receipt.toolchain.uv.path, "toolchain/uv"]]) {

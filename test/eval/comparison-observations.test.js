@@ -11,6 +11,12 @@ import {
   inspectComparisonDocument,
   rendererFingerprint,
 } from "./comparison-observations.js";
+import {
+  assertComparisonBenchmarkBinding,
+  assertComparisonManifestBinding,
+  classifyComparisonRenderer,
+  loadComparisonReferenceRenderer,
+} from "./comparison-reference-renderer.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MANIFEST_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "comparison", "manifest.v1.json");
@@ -23,20 +29,35 @@ function intersects(left, right) {
 describe("canonical comparison observations", () => {
   let manifest;
   let documents;
+  let referenceRenderer;
+  let rendererClassification;
 
   beforeAll(async () => {
     manifest = await loadComparisonManifest(MANIFEST_PATH);
+    referenceRenderer = await loadComparisonReferenceRenderer();
+    assertComparisonBenchmarkBinding(manifest, referenceRenderer);
+    await assertComparisonManifestBinding(MANIFEST_PATH, referenceRenderer);
+    rendererClassification = classifyComparisonRenderer(
+      manifest.canonical_renderer,
+      referenceRenderer,
+    );
     documents = new Map();
     for (const document of manifest.documents) {
-      documents.set(document.id, await inspectComparisonDocument(
+      const inspected = await inspectComparisonDocument(
         resolveComparisonDocumentPath(MANIFEST_PATH, document),
         manifest.canonical_renderer
-      ));
+      );
+      expect(inspected.sha256, document.id).toBe(document.sha256);
+      documents.set(document.id, inspected);
     }
   }, 30_000);
 
-  it("binds the literal canonical renderer profile", () => {
+  it("binds the literal renderer profile and classifies the current host", () => {
     expect(rendererFingerprint(manifest.canonical_renderer)).toMatch(/^[a-f0-9]{64}$/);
+    expect(rendererClassification.actual.renderer_fingerprint_sha256)
+      .toBe(rendererFingerprint(manifest.canonical_renderer));
+    expect(rendererClassification.exact_reference)
+      .toBe(rendererClassification.mismatches.length === 0);
     expect(manifest.canonical_renderer).toMatchObject({
       pdfjs_dist: "5.4.624",
       canvas: "0.1.99",
@@ -85,7 +106,8 @@ describe("canonical comparison observations", () => {
     })]);
   });
 
-  it("reproduces every truth-bound visual crop digest from raw RGBA", () => {
+  it("keeps frozen raw-RGBA truth digests exclusive to the reference renderer", () => {
+    const observations = [];
     for (const pair of manifest.pairs) {
       const before = documents.get(pair.before_document_id);
       const after = documents.get(pair.after_document_id);
@@ -97,11 +119,26 @@ describe("canonical comparison observations", () => {
           const afterDigest = facet.after ? cropComparisonRgba(
             after.renders[facet.after.page - 1], facet.after.region, manifest.canonical_renderer
           ).rgba_sha256 : null;
-          expect(beforeDigest, `${event.id} before`).toBe(facet.before?.value_sha256 ?? null);
-          expect(afterDigest, `${event.id} after`).toBe(facet.after?.value_sha256 ?? null);
+          observations.push({
+            label: `${event.id} before`,
+            actual: beforeDigest,
+            frozen: facet.before?.value_sha256 ?? null,
+          }, {
+            label: `${event.id} after`,
+            actual: afterDigest,
+            frozen: facet.after?.value_sha256 ?? null,
+          });
         }
       }
     }
+    const present = observations.filter(item => item.actual !== null || item.frozen !== null);
+    if (rendererClassification.exact_reference) {
+      for (const item of present) expect(item.actual, item.label).toBe(item.frozen);
+      return;
+    }
+    expect(rendererClassification.mismatches).toContain("renderer_fingerprint_sha256");
+    expect(present.some(item => item.actual !== item.frozen)).toBe(true);
+    expect(present.every(item => item.actual === item.frozen)).toBe(false);
   });
 
   it("extracts page alignment, form, annotation, and metadata independently", () => {

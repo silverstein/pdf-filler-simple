@@ -199,6 +199,21 @@ function caseFold(value) {
   return value.normalize("NFC").toLowerCase();
 }
 
+export function registerPortableArtifactPathIdentity(identities, value) {
+  if (!(identities instanceof Map)) throw new TypeError("Portable artifact path identities must be a Map");
+  if (typeof value !== "string" || value !== value.normalize("NFC")) {
+    throw new Error(`Artifact path is not NFC: ${value}`);
+  }
+  portableRelative(value);
+  const folded = caseFold(value);
+  const prior = identities.get(folded);
+  if (prior !== undefined) {
+    throw new Error(`Artifact paths have a Unicode or case-fold collision: ${prior} and ${value}`);
+  }
+  identities.set(folded, value);
+  return folded;
+}
+
 async function resolveAllowedSymlink(rootPath, relativePath, allowSymlinks) {
   let current = relativePath;
   const chain = [];
@@ -311,7 +326,7 @@ export async function buildCandidateCommandEvidence(candidate, config, inventory
   };
 }
 
-async function collectRoot(rootSpec) {
+async function collectRoot(rootSpec, directoryReader) {
   const rootPath = path.resolve(rootSpec.path);
   let rootLstat;
   try {
@@ -323,20 +338,16 @@ async function collectRoot(rootSpec) {
   if (rootLstat.isSymbolicLink() || !rootLstat.isDirectory()) throw new Error(`Trusted artifact root must be a real directory: ${rootSpec.root_role}`);
   const rootReal = await fs.realpath(rootPath);
   const artifacts = [];
-  const names = new Set();
+  const names = new Map();
   const walk = async (absolute, prefix = "") => {
     const directoryBefore = await fs.lstat(absolute, { bigint: true });
     if (!directoryBefore.isDirectory() || directoryBefore.isSymbolicLink()) throw new Error(`Artifact directory identity is unsafe: ${prefix || rootSpec.root_role}`);
-    const entries = await fs.readdir(absolute, { withFileTypes: true });
+    const entries = await directoryReader(absolute, { withFileTypes: true });
     entries.sort((a, b) => compareUnicodeCodePoints(a.name, b.name));
     const entryNamesBefore = entries.map(entry => entry.name);
     for (const entry of entries) {
-      if (entry.name !== entry.name.normalize("NFC")) throw new Error(`Artifact filename is not NFC: ${entry.name}`);
       const relative = prefix ? `${prefix}/${entry.name}` : entry.name;
-      portableRelative(relative);
-      const folded = caseFold(relative);
-      if (names.has(folded)) throw new Error(`Artifact path has a Unicode or case-fold collision: ${relative}`);
-      names.add(folded);
+      registerPortableArtifactPathIdentity(names, relative);
       const itemPath = path.join(absolute, entry.name);
       const linkStat = await fs.lstat(itemPath);
       if (linkStat.isDirectory()) {
@@ -446,8 +457,12 @@ function digestInventory(inventory) {
   return withDigests;
 }
 
-export async function buildArtifactInventory(config, { trustedCandidateIds } = {}) {
+export async function buildArtifactInventory(config, {
+  trustedCandidateIds,
+  directoryReader = fs.readdir,
+} = {}) {
   if (!Array.isArray(trustedCandidateIds) || trustedCandidateIds.length === 0) throw new Error("Artifact inventory requires an explicit trusted candidate ID set");
+  if (typeof directoryReader !== "function") throw new Error("Artifact inventory directory reader must be callable");
   const { components, licenses } = validateArtifactConfiguration(config, trustedCandidateIds);
   if (!config.configured) {
     return digestInventory({
@@ -455,7 +470,7 @@ export async function buildArtifactInventory(config, { trustedCandidateIds } = {
       state: "not_applicable", role_dispositions: structuredClone(config.role_dispositions), roots: [], components: [], licenses: [], artifacts: [], logical_bytes: 0, unique_content_bytes: 0,
     });
   }
-  const collected = await Promise.all(config.root_specs.map(collectRoot));
+  const collected = await Promise.all(config.root_specs.map(rootSpec => collectRoot(rootSpec, directoryReader)));
   const roots = collected.map(item => item.root).filter(Boolean);
   const artifacts = collected.flatMap(item => item.artifacts);
   artifacts.sort((a, b) => sortBy(a, b, ["artifact_role", "root_role", "relative_path"]));

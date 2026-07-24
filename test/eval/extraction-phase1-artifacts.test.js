@@ -7,6 +7,7 @@ import {
   PHASE1_ARTIFACT_ROLES,
   attestArtifactImmutability,
   buildArtifactInventory,
+  registerPortableArtifactPathIdentity,
   validateArtifactConfiguration,
   verifyArtifactInventory,
 } from "./extraction-phase1-artifacts.js";
@@ -149,13 +150,39 @@ describe("Phase 1 candidate artifact attestation", () => {
     expect(() => validateArtifactConfiguration(config, TRUSTED)).toThrow(/ownership/);
   });
 
-  it("rejects Unicode and case collisions, unsafe symlinks, hardlinks, and special files", async () => {
+  it("rejects case collisions and non-NFC paths at the portable metadata boundary", () => {
+    const identities = new Map();
+    expect(registerPortableArtifactPathIdentity(identities, "NAME")).toBe("name");
+    expect(() => registerPortableArtifactPathIdentity(identities, "name")).toThrow(/NAME and name/);
+    const unicode = new Map();
+    registerPortableArtifactPathIdentity(unicode, "caf\u00e9.pdf");
+    expect(() => registerPortableArtifactPathIdentity(unicode, "cafe\u0301.pdf")).toThrow(/not NFC/);
+
+    const nested = new Map();
+    registerPortableArtifactPathIdentity(nested, "A/x");
+    expect(() => registerPortableArtifactPathIdentity(nested, "a/x")).toThrow(/collision/);
+    const distinctNested = new Map();
+    registerPortableArtifactPathIdentity(distinctNested, "A/x");
+    expect(() => registerPortableArtifactPathIdentity(distinctNested, "a/y")).not.toThrow();
+    expect(() => registerPortableArtifactPathIdentity(new Map(), "\u03b1/\u03b2.pdf")).not.toThrow();
+  });
+
+  it("routes collected directory metadata through the portable collision policy", async () => {
     const { config, directories } = await fixture();
     await fs.writeFile(path.join(directories.adapter, "NAME"), "one", { mode: 0o600 });
-    await fs.writeFile(path.join(directories.adapter, "name"), "two", { mode: 0o600 });
-    await expect(buildArtifactInventory(config, { trustedCandidateIds: TRUSTED })).rejects.toThrow(/collision/);
-    await Promise.all([fs.rm(path.join(directories.adapter, "NAME")), fs.rm(path.join(directories.adapter, "name"))]);
+    const directoryReader = async (directory, options) => {
+      const entries = await fs.readdir(directory, options);
+      if (directory === directories.adapter) entries.push({ name: "name" });
+      return entries;
+    };
+    await expect(buildArtifactInventory(config, {
+      trustedCandidateIds: TRUSTED,
+      directoryReader,
+    })).rejects.toThrow(/NAME and name/);
+  });
 
+  it("rejects unsafe symlinks, hardlinks, and special files", async () => {
+    const { config, directories } = await fixture();
     const source = path.join(directories.adapter, "adapter.mjs");
     await fs.symlink("adapter.mjs", path.join(directories.adapter, "link.mjs"));
     await expect(buildArtifactInventory(config, { trustedCandidateIds: TRUSTED })).rejects.toThrow(/not runner-allowlisted/);

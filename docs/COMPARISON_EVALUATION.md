@@ -297,6 +297,24 @@ page raster hashes. The scorer fails closed if any setting or fingerprint
 differs. If the canonical renderer is unavailable, the channel is unavailable;
 it never silently switches.
 
+A frozen reference-renderer profile identifies the Linux runtime that produced
+the v1 raw-RGBA truth anchors. Exact raw hashes remain reference-renderer
+identity checks. A different operating system, architecture, Node runtime, or
+native canvas build may exercise source binding, text, structure, form,
+annotation, metadata, identical-page, localization, and bounded-delta controls,
+but it may not replace the v1 hashes or claim a canonical benchmark result.
+The evidence generation command fails before rendering unless the frozen
+reference identity and manifest digest match. It also requires an explicit
+public-safe host label and refuses to write unless the generated shared report
+reproduces the complete frozen event, anchor, two-sided-facet, and pair score.
+Non-reference compatibility captures, when added, must use a separate output
+directory and receipt.
+
+The published v1 evidence did not retain native canvas binary or PDF.js
+standard-font tree digests. The companion profile records that limitation
+instead of inventing provenance. A future benchmark version must retain those
+byte-level identities before it can supersede the v1 reference profile.
+
 A documented channel threshold, bounded anti-aliasing-mask dilation,
 changed-pixel fraction inside expected regions, and unexpected-change fraction
 outside allowed regions are calibrated from identical and layout-noise controls

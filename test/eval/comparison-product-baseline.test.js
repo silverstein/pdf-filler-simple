@@ -18,6 +18,7 @@ describe("current published PDF Tools primitive baseline", () => {
       benchmarkVersion: manifest.benchmark_version,
       renderer: manifest.canonical_renderer,
       repositoryRoot: REPO_ROOT,
+      host: "local-test-host-stdio",
       pairs: manifest.pairs.map(pair => ({
         pairId: pair.id,
         beforePath: resolveComparisonDocumentPath(MANIFEST_PATH, documents.get(pair.before_document_id)),
@@ -42,5 +43,6 @@ describe("current published PDF Tools primitive baseline", () => {
     expect(report.pairs.every(pair => pair.peak_rss_bytes === null
       && pair.resource_measurement_status === "unavailable")).toBe(true);
     expect(report.engine.provenance).toContain("not executed");
+    expect(report.platform.host).toBe("local-test-host-stdio");
   }, 120_000);
 });

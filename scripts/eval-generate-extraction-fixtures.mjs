@@ -1,15 +1,26 @@
 #!/usr/bin/env node
 
+import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createCanvas } from "@napi-rs/canvas";
 import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_OUTPUT_DIR = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction", "synthetic");
+const RASTER_SOURCE_DIR = path.join(REPO_ROOT, "test", "fixtures", "eval", "extraction", "source-images");
 const FIXED_DATE = new Date("2026-07-22T00:00:00.000Z");
 const PAGE = [612, 792];
+const RASTER_SOURCES = Object.freeze({
+  clean: {
+    filename: "raster-clean.png",
+    sha256: "82fa870df9c515554c9f2a22db017b94e8d2d022cef95a4b1842b99bc0538413",
+  },
+  degraded: {
+    filename: "raster-degraded.png",
+    sha256: "f0a79f7ee2b009f85b10b28582dad6258bb0544055bb99c7377f71ce34aec4d1",
+  },
+});
 
 function configureMetadata(pdf, title) {
   pdf.setTitle(title);
@@ -117,37 +128,20 @@ async function mergedBlankTable() {
   });
 }
 
-function rasterTruthPng({ degraded = false } = {}) {
-  const width = degraded ? 306 : 1224;
-  const height = degraded ? 396 : 1584;
-  const canvas = createCanvas(width, height);
-  const context = canvas.getContext("2d");
-  context.fillStyle = degraded ? "#dedbd2" : "#ffffff";
-  context.fillRect(0, 0, width, height);
-  const scale = width / 612;
-  context.fillStyle = degraded ? "#77736b" : "#111111";
-  context.font = `${Math.round(22 * scale)}px sans-serif`;
-  context.fillText("SYNTHETIC RASTER RECEIPT", 72 * scale, 120 * scale);
-  context.font = `${Math.round(16 * scale)}px sans-serif`;
-  context.fillText("Receipt ID: R-550", 72 * scale, 190 * scale);
-  context.fillText("Merchant: Cedar Cafe", 72 * scale, 235 * scale);
-  context.fillText("Total: USD 18.75", 72 * scale, 280 * scale);
-  if (degraded) {
-    context.strokeStyle = "rgba(90, 85, 75, 0.18)";
-    for (let i = -height; i < width; i += 17) {
-      context.beginPath();
-      context.moveTo(i, 0);
-      context.lineTo(i + height, height);
-      context.stroke();
-    }
+async function rasterTruthPng({ degraded = false } = {}) {
+  const source = RASTER_SOURCES[degraded ? "degraded" : "clean"];
+  const bytes = await fs.readFile(path.join(RASTER_SOURCE_DIR, source.filename));
+  const observed = createHash("sha256").update(bytes).digest("hex");
+  if (observed !== source.sha256) {
+    throw new Error(`Raster source image differs from its fixed identity: ${source.filename}`);
   }
-  return canvas.toBuffer("image/png");
+  return bytes;
 }
 
 async function rasterReceipt(degraded) {
   return createTextPdf(`Extraction fixture: ${degraded ? "degraded" : "clean"} raster receipt`, async (pdf) => {
     const page = pdf.addPage(PAGE);
-    const image = await pdf.embedPng(rasterTruthPng({ degraded }));
+    const image = await pdf.embedPng(await rasterTruthPng({ degraded }));
     page.drawImage(image, { x: 0, y: 0, width: PAGE[0], height: PAGE[1] });
   });
 }
@@ -158,7 +152,7 @@ async function mixedDocument() {
     first.drawText("MIXED DOCUMENT", { x: 72, y: 720, size: 22, font: fonts.bold });
     drawLines(first, fonts.regular, ["Packet ID: MIX-77", "Page one is born digital."]);
     const second = pdf.addPage(PAGE);
-    const image = await pdf.embedPng(rasterTruthPng());
+    const image = await pdf.embedPng(await rasterTruthPng());
     second.drawImage(image, { x: 0, y: 0, width: PAGE[0], height: PAGE[1] });
   });
 }

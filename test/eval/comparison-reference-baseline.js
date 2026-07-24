@@ -379,7 +379,11 @@ export async function buildSharedLibraryReferenceReport({
   benchmarkVersion,
   renderer,
   pairs,
+  host,
 }) {
+  if (typeof host !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(host)) {
+    throw new Error("Shared-library report requires an explicit public-safe host label");
+  }
   const pairReports = [];
   const controllerRecords = [];
   for (const pair of pairs) {
@@ -410,7 +414,7 @@ export async function buildSharedLibraryReferenceReport({
       os: process.platform,
       arch: process.arch,
       node: process.version,
-      host: "silvercloud-vm",
+      host,
       model: "none",
       model_cost_usd: 0,
     },
