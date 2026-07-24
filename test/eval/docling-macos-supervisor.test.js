@@ -27,6 +27,7 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
   let production;
   let testing;
   let candidate;
+  let attemptRoot;
   let recordValidator;
 
   beforeAll(async () => {
@@ -34,6 +35,8 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-supervisor-")),
     );
     await fs.chmod(root, 0o700);
+    attemptRoot = path.join(root, "attempt");
+    await fs.mkdir(attemptRoot, { mode: 0o700 });
     production = await compileDoclingMacosSupervisor({
       sourcePath: SOURCE,
       outputPath: path.join(root, "supervisor"),
@@ -47,7 +50,7 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
     const architecture = process.arch === "x64" ? "x86_64" : process.arch;
     const result = spawnSync(production.compiler.path, [
       "-std=c17", "-Os", "-Wall", "-Wextra", "-Werror", "-Wconversion",
-      "-Wsign-conversion", "-mmacosx-version-min=13.0", "-Wl,-no_uuid",
+      "-Wsign-conversion", "-mmacosx-version-min=13.0",
       "-arch", architecture, "-isysroot", production.sdk.path,
       "-o", candidate, CANDIDATE_SOURCE,
     ], {
@@ -73,10 +76,12 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
     return {
       binaryPath: production.binary.path,
       expectedBinary: production.binary,
+      cwd: attemptRoot,
       command: [candidate, mode, ...args.map(String)],
       stdin: Buffer.from("{}\n"),
       environment: { PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C" },
       deadlineMs: 2000,
+      leaderExitGraceMs: 1000,
       sampleIntervalMs: 5,
       stdoutMaxBytes: 1024,
       stderrMaxBytes: 1024,
@@ -137,6 +142,12 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
         escaped_session_detected: false,
       },
     });
+    expect(result.cwd).toMatchObject({
+      path: attemptRoot,
+      mode: 0o700,
+    });
+    expect(result.cwd.dev).toMatch(/^[0-9]+$/);
+    expect(result.cwd.ino).toMatch(/^[0-9]+$/);
     expect(parseCanonicalCandidateJson(result.stdout, 1024)).toEqual({ ok: true });
     expect(() => validateSupervisorLease({
       ...result.lease,
@@ -225,7 +236,9 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
 
   it("rejects a successful leader that leaves a live descendant", async () => {
     const sentinel = path.join(root, "leader-exit-sentinel");
-    const result = await run("leader-exit-live-descendant", [sentinel]);
+    const result = await run("leader-exit-live-descendant", [sentinel], {
+      leaderExitGraceMs: 0,
+    });
     expect(result.evidence).toMatchObject({
       controller_accepted: false,
       controller_failure: "live_descendants",
@@ -426,6 +439,29 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       ...options("success"),
       expectedBinary: null,
     })).rejects.toThrow(/required expected identity/);
+  });
+
+  it("requires a canonical private working directory and rejects identity substitution", async () => {
+    await expect(runSupervisedCandidate({
+      ...options("success"),
+      cwd: `${attemptRoot}/.`,
+    })).rejects.toThrow(/canonical absolute path/);
+
+    const mutable = path.join(root, "mutable-attempt");
+    const moved = path.join(root, "mutable-attempt-moved");
+    await fs.mkdir(mutable, { mode: 0o700 });
+    const sentinel = path.join(root, "cwd-mutation-started");
+    const promise = runSupervisedCandidate({
+      ...options("signal-and-sleep", [sentinel, 250]),
+      cwd: mutable,
+    });
+    await waitForFile(sentinel);
+    await fs.rename(mutable, moved);
+    await fs.mkdir(mutable, { mode: 0o700 });
+    await expect(promise).rejects.toMatchObject({
+      code: "SUPERVISOR_CWD_MUTATED",
+      evidence: { observations: { original_process_group_empty: true } },
+    });
   });
 
   it("rejects a same-path binary mutation before spawning", async () => {

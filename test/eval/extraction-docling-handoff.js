@@ -14,6 +14,17 @@ const MAX_FIXTURE_TOTAL_BYTES = 8 * 1024 * 1024;
 const MAX_TOOL_BYTES = 128 * 1024 * 1024;
 const TEST_CAPABILITY = Symbol("docling-handoff-test-capability");
 const UV_VERSION = /^uv [0-9]+\.[0-9]+\.[0-9]+(?:[-+][A-Za-z0-9.-]+)?(?: \([a-f0-9]{7,40} ([0-9]{4})-([0-9]{2})-([0-9]{2}) [a-z0-9_]+(?:-[a-z0-9_]+){2,4}\))?$(?![\s\S])/;
+export const DOCLING_SUPERVISOR_POLICY_V1 = Object.freeze({
+  protocol: "pdf-tools.docling-macos-supervisor-policy.v1",
+  calibration_attestation_sha256: "8a532eea6c54ebbdc7d1509296efb763a6cda6ca0756b34970cbe8bad934f778",
+  sample_interval_ms: 50,
+  leader_exit_grace_ms: 2000,
+  sampled_group_physical_footprint_max_bytes: 4 * 1024 * 1024 * 1024,
+  address_space_bytes: 1024 * 1024 * 1024 * 1024,
+  cpu_seconds: 120,
+  file_size_bytes: 512 * 1024 * 1024,
+  nofile: 1024,
+});
 export const DOCLING_BOOTSTRAP_V1 = [
   "set -eu",
   "umask 077",
@@ -227,6 +238,7 @@ async function prepareDoclingMacHandoffCore({
   testOnlyHost = null,
   testOnlyUv = null,
   testOnlyBootstrapRoot = null,
+  testOnlySupervisorBuild = null,
   testCapability = null,
 } = {}) {
   if (!cacheRoot || !sidecarRoot || !Array.isArray(protectedRoots) || protectedRoots.length < 1
@@ -245,8 +257,10 @@ async function prepareDoclingMacHandoffCore({
   if (within(resolvedCache, resolvedSidecar) || within(resolvedSidecar, resolvedCache)) {
     throw new Error("Docling cache and sidecar roots must not contain one another");
   }
+  await Promise.all([secureDirectory(resolvedCache), secureDirectory(resolvedSidecar)]);
 
   if (testOnlyBootstrapRoot !== null && testCapability !== TEST_CAPABILITY) throw new Error("Docling bootstrap root override requires the private test capability");
+  if (testOnlySupervisorBuild !== null && testCapability !== TEST_CAPABILITY) throw new Error("Docling supervisor build override requires the private test capability");
   const bootstrapRoot = testOnlyBootstrapRoot === null ? repoRoot : path.resolve(testOnlyBootstrapRoot);
   const sourceSpecs = [
     ["adapter_entrypoint", "test/eval/candidates/docling/adapter.py"],
@@ -262,7 +276,11 @@ async function prepareDoclingMacHandoffCore({
     ["handoff_authority", "scripts/eval-docling-authority.mjs"],
     ["handoff_verifier_cli", "scripts/eval-verify-docling-macos-handoff.mjs", path.join(bootstrapRoot, "scripts/eval-verify-docling-macos-handoff.mjs")],
     ["finalization_schema", "test/fixtures/eval/extraction/phase1/docling-finalization.schema.json"],
-    ["three_process_schema", "test/fixtures/eval/extraction/phase1/docling-three-process-evidence.schema.json"],
+    ["supervisor_source", "test/eval/native/docling-macos-supervisor.c"],
+    ["supervisor_controller", "test/eval/docling-macos-supervisor.js"],
+    ["supervisor_evidence_schema", "test/fixtures/eval/extraction/phase1/docling-macos-supervisor-evidence.schema.json"],
+    ["supervisor_calibration_attestation", "test/fixtures/eval/extraction/phase1/docling-supervisor-calibration-attestation.v1.json"],
+    ["bakeoff_capture_source", "scripts/eval-capture-docling-bakeoff.mjs"],
   ];
   const sourceInputs = [];
   for (const [role, relativePath, overridePath] of sourceSpecs) {
@@ -279,6 +297,102 @@ async function prepareDoclingMacHandoffCore({
     .map(item => `${item.name === "docling-slim" ? config.install_requirement : `${item.name}==${item.version}`} --hash=sha256:${item.wheel_sha256}`)
     .sort().join("\n")}\n`);
   sourceInputs.push({ role: "direct_requirements", relativePath: "direct-requirements.in", bytes: requirementsBytes, sha256: sha256(requirementsBytes) });
+
+  const supervisorSource = sourceInputs.find(item => item.role === "supervisor_source");
+  const supervisorController = sourceInputs.find(item => item.role === "supervisor_controller");
+  const calibrationAttestationInput = sourceInputs.find(
+    item => item.role === "supervisor_calibration_attestation",
+  );
+  const calibrationAttestation = JSON.parse(calibrationAttestationInput.bytes);
+  const calibrationIdentity = { ...calibrationAttestation };
+  delete calibrationIdentity.attestation_id;
+  if (calibrationAttestation.protocol !== "pdf-tools.docling-macos-supervisor-calibration-attestation.v1"
+    || calibrationAttestation.attestation_id
+      !== sha256(Buffer.from(`${calibrationAttestation.protocol}\0${canonicalJson(calibrationIdentity)}`))
+    || calibrationAttestationInput.sha256 !== DOCLING_SUPERVISOR_POLICY_V1.calibration_attestation_sha256
+    || canonicalJson(calibrationAttestation.confirmed_policy)
+      !== canonicalJson(Object.fromEntries(
+        Object.entries(DOCLING_SUPERVISOR_POLICY_V1)
+          .filter(([key]) => key !== "calibration_attestation_sha256"),
+      ))
+    || calibrationAttestation.supervisor?.source?.sha256 !== supervisorSource.sha256
+    || calibrationAttestation.supervisor?.source?.bytes !== supervisorSource.bytes.length
+    || calibrationAttestation.supervisor?.controller?.sha256 !== supervisorController.sha256
+    || calibrationAttestation.supervisor?.controller?.bytes !== supervisorController.bytes.length
+    || !/^[a-f0-9]{64}$/.test(calibrationAttestation.calibration_source?.sha256 ?? "")
+    || !Number.isInteger(calibrationAttestation.calibration_source?.bytes)
+    || calibrationAttestation.calibration_source.bytes < 1) {
+    throw new Error("Docling supervisor policy lacks its exact reviewed calibration attestation");
+  }
+  let observedSupervisorBuild;
+  let supervisorBinaryBytes;
+  if (testOnlySupervisorBuild !== null) {
+    supervisorBinaryBytes = Buffer.from(testOnlySupervisorBuild.binaryBytes);
+    if (supervisorBinaryBytes.length < 1 || supervisorBinaryBytes.length > 4 * 1024 * 1024) {
+      throw new Error("Test supervisor binary bytes are invalid");
+    }
+    const compilerBytes = Buffer.from("test-only-apple-clang");
+    observedSupervisorBuild = {
+      protocol: "pdf-tools.macos-eval-supervisor-build.v1",
+      platform: {
+        operating_system: "macos", architecture: "arm64",
+        os_build: host.os_build, kernel_release: host.kernel_release,
+      },
+      source: {
+        path: "/private/test/docling-macos-supervisor.c",
+        bytes: supervisorSource.bytes.length, sha256: supervisorSource.sha256,
+        mode: 0o600, links: 1,
+      },
+      compiler: {
+        path: "/usr/bin/clang", bytes: compilerBytes.length, sha256: sha256(compilerBytes),
+        mode: 0o755, links: 1, version: "Apple clang version 21.0.0 (test-only)",
+      },
+      sdk: { path: "/Applications/Xcode.app/SDKs/MacOSX.sdk", version: "26.5" },
+      command: ["/usr/bin/clang", "-std=c17", "-arch", "arm64", "-isysroot", "$SDKROOT", "-o", "$OUTPUT", "$SOURCE"],
+      testing: false,
+      binary: {
+        path: "/private/test/docling-macos-supervisor",
+        bytes: supervisorBinaryBytes.length, sha256: sha256(supervisorBinaryBytes),
+        mode: 0o700, links: 1,
+      },
+    };
+  } else {
+    const presealRoot = await fs.mkdtemp(path.join(resolvedCache, ".docling-supervisor-preseal-"));
+    await fs.chmod(presealRoot, 0o700);
+    try {
+      const sourcePath = path.join(presealRoot, "docling-macos-supervisor.c");
+      const binaryPath = path.join(presealRoot, "docling-macos-supervisor");
+      await writeExclusive(sourcePath, supervisorSource.bytes);
+      const controllerModule = await import(
+        `data:text/javascript;base64,${supervisorController.bytes.toString("base64")}`,
+      );
+      if (typeof controllerModule.compileDoclingMacosSupervisor !== "function") {
+        throw new Error("Retained supervisor controller lacks its build export");
+      }
+      observedSupervisorBuild = await controllerModule.compileDoclingMacosSupervisor({
+        sourcePath,
+        outputPath: binaryPath,
+        architecture: "arm64",
+      });
+      supervisorBinaryBytes = await readStableRegularFile(binaryPath, 4 * 1024 * 1024);
+      if (observedSupervisorBuild.source.sha256 !== supervisorSource.sha256
+        || observedSupervisorBuild.source.bytes !== supervisorSource.bytes.length
+        || observedSupervisorBuild.source.mode !== 0o600
+        || observedSupervisorBuild.binary.sha256 !== sha256(supervisorBinaryBytes)
+        || observedSupervisorBuild.binary.bytes !== supervisorBinaryBytes.length
+        || observedSupervisorBuild.testing !== false) {
+        throw new Error("Pre-seal supervisor build differs from retained source or binary bytes");
+      }
+    } finally {
+      await fs.rm(presealRoot, { recursive: true, force: false });
+    }
+  }
+  const normalizedSupervisorBuild = {
+    ...observedSupervisorBuild,
+    source: { ...observedSupervisorBuild.source, path: "$SUPERVISOR_SOURCE" },
+    sdk: { ...observedSupervisorBuild.sdk, path: "$SDKROOT" },
+    binary: { ...observedSupervisorBuild.binary, path: "$SUPERVISOR_BINARY" },
+  };
 
   const normalizedBootstrapPrefix = [
     "/bin/sh", "-c", DOCLING_BOOTSTRAP_V1, "pdf-tools-docling-bootstrap.v1",
@@ -313,8 +427,12 @@ async function prepareDoclingMacHandoffCore({
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
         HF_HOME: "$HF_CACHE_ROOT", UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
-      authority_command: [...normalizedBootstrapPrefix, "--action", "execute", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256", "--protected-roots-json", "$OUT_OF_BAND_PROTECTED_ROOTS_JSON", "--finalization", "$FINALIZATION", "--expected-finalization-sha256", "$OUT_OF_BAND_FINALIZATION_SHA256"],
+      candidate_execution: "retained_bakeoff_capture_only",
       adapter_command: ["$PYTHON", "-I", "-B", "$ADAPTER", "--config", "$CONFIG", "--artifacts-path", "$MODELS_ROOT", "--receipt", "$RECEIPT", "--expected-receipt-sha256", "$OUT_OF_BAND_RECEIPT_SHA256"],
+      supervisor: {
+        policy: DOCLING_SUPERVISOR_POLICY_V1,
+        build: normalizedSupervisorBuild,
+      },
     },
   };
 
@@ -343,7 +461,6 @@ async function prepareDoclingMacHandoffCore({
   };
   const handoffId = computeDoclingHandoffId(handoffIdentity);
 
-  await Promise.all([secureDirectory(resolvedCache), secureDirectory(resolvedSidecar)]);
   const uvRoot = await secureDirectory(path.join(resolvedCache, "uv"));
   const uvPythonInstallRoot = await secureDirectory(path.join(uvRoot, `python-${sha256(Buffer.from("cpython-3.12.13-macos-aarch64-none")).slice(0, 16)}`));
   const modelsParent = await secureDirectory(path.join(resolvedCache, "models"));
@@ -397,8 +514,13 @@ async function prepareDoclingMacHandoffCore({
   const configSha256 = retainedInputs.find(item => item.role === "candidate_config").sha256;
   const receiptPath = path.join(runRoot, "docling-handoff.v1.json");
   const finalizationPath = path.join(runRoot, "docling-finalization.v1.json");
+  const supervisorBinaryPath = path.join(runRoot, "docling-macos-supervisor");
+  await writeExclusive(supervisorBinaryPath, supervisorBinaryBytes, 0o700);
+  const retainedSupervisorSourcePath = path.join(
+    snapshotRoot,
+    retainedInputs.find(item => item.role === "supervisor_source").filename,
+  );
   const receiptShaPlaceholder = "$OUT_OF_BAND_RECEIPT_SHA256";
-  const finalizationShaPlaceholder = "$OUT_OF_BAND_FINALIZATION_SHA256";
   const protectedRootsPlaceholder = "$OUT_OF_BAND_PROTECTED_ROOTS_JSON";
   const bootstrapPrefix = [
     "/bin/sh", "-c", DOCLING_BOOTSTRAP_V1, "pdf-tools-docling-bootstrap.v1",
@@ -408,7 +530,6 @@ async function prepareDoclingMacHandoffCore({
     runRoot, authorityHome, authorityTmp,
   ];
   const setupAuthorityCommand = [...bootstrapPrefix, "--action", "setup", "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder, "--protected-roots-json", protectedRootsPlaceholder];
-  const executionAuthorityCommand = [...bootstrapPrefix, "--action", "execute", "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder, "--protected-roots-json", protectedRootsPlaceholder, "--finalization", finalizationPath, "--expected-finalization-sha256", finalizationShaPlaceholder];
   const pythonPath = path.join(venvRoot, "bin", "python");
   const baseEnvironment = {
     HOME: authorityHome, TMPDIR: authorityTmp, PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
@@ -464,8 +585,16 @@ async function prepareDoclingMacHandoffCore({
         ...baseEnvironment,
         HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1",
       },
-      command_template: executionAuthorityCommand,
+      candidate_execution: "retained_bakeoff_capture_only",
       adapter_command: [pythonPath, "-I", "-B", adapterPath, "--config", configPath, "--artifacts-path", modelsRoot, "--receipt", receiptPath, "--expected-receipt-sha256", receiptShaPlaceholder],
+      supervisor: {
+        policy: DOCLING_SUPERVISOR_POLICY_V1,
+        build: {
+          ...observedSupervisorBuild,
+          source: { ...observedSupervisorBuild.source, path: retainedSupervisorSourcePath },
+          binary: { ...observedSupervisorBuild.binary, path: supervisorBinaryPath },
+        },
+      },
       fixture_presentation: "Runner stages each retained PDF as source.pdf and does not expose this receipt or Phase 0 truth to the candidate request.",
     },
     claim_boundary: "Unexecuted private evaluation handoff only. No benchmark, package, product, redistribution, or release claim is authorized.",
@@ -485,7 +614,8 @@ async function prepareDoclingMacHandoffCore({
 }
 
 export async function prepareDoclingMacHandoff(options = {}) {
-  if ("testOnlyHost" in options || "testOnlyUv" in options || "testOnlyBootstrapRoot" in options || "testCapability" in options) {
+  if ("testOnlyHost" in options || "testOnlyUv" in options || "testOnlyBootstrapRoot" in options
+    || "testOnlySupervisorBuild" in options || "testCapability" in options) {
     throw new Error("Production handoff API does not accept injected host or toolchain facts");
   }
   return prepareDoclingMacHandoffCore(options);

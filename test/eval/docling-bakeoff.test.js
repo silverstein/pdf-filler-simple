@@ -43,6 +43,18 @@ function receiptFixture() {
 }
 
 describe("Docling bakeoff evidence validators", () => {
+  it("uses a fresh exact working directory for every scored repetition", async () => {
+    const source = await fs.readFile(
+      path.resolve("scripts/eval-capture-docling-bakeoff.mjs"),
+      "utf8",
+    );
+    expect(source).toContain("freshAttemptDirectory");
+    expect(source).toContain("removeExactAttemptDirectory");
+    expect(source).toContain("Scored attempt retained unexpected writable state");
+    expect(source).toContain("cwd: attemptDir");
+    expect(source).not.toContain("cwd: stagedDir");
+  });
+
   it("requires the handoff identity to bind both retained inventories", () => {
     const receipt = receiptFixture();
     expect(validateReceipt(receipt, PERMISSIVE_OBJECT_SCHEMA)).toBe(receipt);
@@ -98,7 +110,9 @@ describe("Docling bakeoff evidence validators", () => {
   });
 
   it("uses the receipt-bound launcher to execute a private sealed authority", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-bakeoff-authority-"));
+    const root = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-bakeoff-authority-")),
+    );
     try {
       const fixturePath = path.join(root, "fixture.pdf");
       const uvPath = path.join(root, "uv-test-binary");
@@ -118,6 +132,9 @@ describe("Docling bakeoff evidence validators", () => {
           os_build: "25G5065a",
           kernel_release: "25.6.0",
           node_version: process.version,
+        },
+        testOnlySupervisorBuild: {
+          binaryBytes: Buffer.from("pdf-tools-test-only-supervisor-binary\n"),
         },
         testOnlyUv: { path: uvPath, version: uvVersion },
       });

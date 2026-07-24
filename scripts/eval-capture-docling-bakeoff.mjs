@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
@@ -9,6 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 
 const SHA256 = /^[a-f0-9]{64}$/;
+const SELF = fileURLToPath(import.meta.url);
 const MAX_METADATA_BYTES = 16 * 1024 * 1024;
 const REQUIRED_OPTIONS = [
   "--finalization",
@@ -161,6 +161,20 @@ async function importRetainedModule(receipt, role) {
   };
 }
 
+async function importExactRetainedModule(receipt, role, requiredExports) {
+  const record = recordByRole(receipt, role);
+  const filename = path.join(receipt.roots.sidecar_snapshot, record.filename);
+  const bytes = await stableFile(filename, record.bytes, `retained ${role}`, 0o600);
+  if (bytes.length !== record.bytes || sha256(bytes) !== record.sha256) {
+    throw new Error(`Retained ${role} differs from its receipt identity`);
+  }
+  const module = await import(`data:text/javascript;base64,${bytes.toString("base64")}`);
+  if (requiredExports.some(name => typeof module[name] !== "function")) {
+    throw new Error(`Retained ${role} exports are invalid`);
+  }
+  return { module, record, filename, bytes };
+}
+
 export async function createRetainedAuthorityVerifier({
   receipt,
   receiptPath,
@@ -251,59 +265,6 @@ function adapterCommand(receipt, receiptSha256) {
   return command.map(value => value === "$OUT_OF_BAND_RECEIPT_SHA256" ? receiptSha256 : value);
 }
 
-async function spawnCaptured({ command, cwd, environment, stdin, stdoutLimit, stderrLimit, deadlineMs }) {
-  const child = spawn(command[0], command.slice(1), {
-    cwd,
-    detached: process.platform !== "win32",
-    env: { ...environment },
-    shell: false,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
-  const stdout = [];
-  const stderr = [];
-  let stdoutBytes = 0;
-  let stderrBytes = 0;
-  let exceeded = false;
-  let timedOut = false;
-  const startedAt = process.hrtime.bigint();
-  const stop = () => {
-    try {
-      if (process.platform !== "win32" && Number.isSafeInteger(child.pid)) process.kill(-child.pid, "SIGKILL");
-      else child.kill("SIGKILL");
-    } catch {}
-  };
-  child.stdout.on("data", chunk => {
-    stdoutBytes += chunk.length;
-    if (stdoutBytes <= stdoutLimit) stdout.push(chunk);
-    else { exceeded = true; stop(); }
-  });
-  child.stderr.on("data", chunk => {
-    stderrBytes += chunk.length;
-    if (stderrBytes <= stderrLimit) stderr.push(chunk);
-    else { exceeded = true; stop(); }
-  });
-  const timer = setTimeout(() => { timedOut = true; stop(); }, deadlineMs);
-  child.stdin.end(stdin);
-  const exit = await new Promise((resolve, reject) => {
-    child.once("error", reject);
-    child.once("close", (code, signal) => resolve({ code, signal }));
-  });
-  clearTimeout(timer);
-  const elapsedMs = Number(process.hrtime.bigint() - startedAt) / 1e6;
-  if (exceeded || timedOut || exit.code !== 0 || exit.signal !== null) {
-    const diagnostic = Buffer.concat(stderr).toString("utf8").slice(0, 500);
-    throw new Error(`Docling adapter process failed (${exit.code}, ${exit.signal}): ${diagnostic}`);
-  }
-  return {
-    pid: child.pid,
-    elapsed_ms: elapsedMs,
-    stdout: Buffer.concat(stdout),
-    stderr: Buffer.concat(stderr),
-    stdout_bytes: stdoutBytes,
-    stderr_bytes: stderrBytes,
-  };
-}
-
 function parseCanonicalResponse(stdout, request, schema) {
   const response = parseJson(stdout, "Docling response", { canonical: true });
   return validateCandidateResponse(response, request, schema);
@@ -339,6 +300,45 @@ async function writeExclusive(filename, bytes) {
   if (!metadata.isFile() || metadata.isSymbolicLink() || metadata.nlink !== 1 || (metadata.mode & 0o777) !== 0o600) {
     throw new Error("Docling bakeoff output violates its private regular-file contract");
   }
+}
+
+async function freshAttemptDirectory({
+  runRoot,
+  suffix,
+  repetition,
+  requestBytes,
+  sourceBytes,
+}) {
+  const directory = path.join(
+    runRoot,
+    `scored-${suffix}-repetition-${String(repetition).padStart(2, "0")}`,
+  );
+  await fs.mkdir(directory, { mode: 0o700 });
+  await canonicalDirectory(directory, "fresh scored attempt", 0o700);
+  await Promise.all([
+    writeExclusive(path.join(directory, "request.json"), requestBytes),
+    writeExclusive(path.join(directory, "source.pdf"), sourceBytes),
+  ]);
+  return directory;
+}
+
+async function removeExactAttemptDirectory(directory, requestBytes, sourceBytes) {
+  const entries = (await fs.readdir(directory)).sort();
+  if (canonicalJson(entries) !== canonicalJson(["request.json", "source.pdf"])) {
+    throw new Error("Scored attempt retained unexpected writable state");
+  }
+  const [requestAfter, sourceAfter] = await Promise.all([
+    stableFile(path.join(directory, "request.json"), requestBytes.length, "reopened scored request", 0o600),
+    stableFile(path.join(directory, "source.pdf"), sourceBytes.length, "reopened scored source", 0o600),
+  ]);
+  if (!requestAfter.equals(requestBytes) || !sourceAfter.equals(sourceBytes)) {
+    throw new Error("Scored attempt input changed during execution");
+  }
+  await Promise.all([
+    fs.unlink(path.join(directory, "request.json")),
+    fs.unlink(path.join(directory, "source.pdf")),
+  ]);
+  await fs.rmdir(directory);
 }
 
 export async function captureDoclingBakeoff(options) {
@@ -408,6 +408,49 @@ export async function captureDoclingBakeoff(options) {
   if (authorityBytes.length !== authorityRecord.bytes || sha256(authorityBytes) !== authorityRecord.sha256) {
     throw new Error("Retained handoff authority differs from its receipt identity");
   }
+  const captureRecord = recordByRole(receipt, "bakeoff_capture_source");
+  const captureBytes = await stableFile(SELF, captureRecord.bytes, "executed bakeoff capture source");
+  if (captureBytes.length !== captureRecord.bytes || sha256(captureBytes) !== captureRecord.sha256) {
+    throw new Error("Executed bakeoff capture source differs from its receipt identity");
+  }
+  const supervisorController = await importExactRetainedModule(
+    receipt,
+    "supervisor_controller",
+    ["runSupervisedCandidate", "verifyDoclingMacosSupervisorBuild"],
+  );
+  const supervisorEvidenceRecord = recordByRole(receipt, "supervisor_evidence_schema");
+  const supervisorEvidenceSchemaBytes = await stableFile(
+    path.join(receipt.roots.sidecar_snapshot, supervisorEvidenceRecord.filename),
+    supervisorEvidenceRecord.bytes,
+    "retained supervisor evidence schema",
+    0o600,
+  );
+  if (sha256(supervisorEvidenceSchemaBytes) !== supervisorEvidenceRecord.sha256) {
+    throw new Error("Retained supervisor evidence schema differs from its receipt identity");
+  }
+  const supervisorEvidenceSchema = parseJson(
+    supervisorEvidenceSchemaBytes,
+    "supervisor evidence schema",
+  );
+  const verifySupervisorBuild = async () => {
+    const sourceRecord = recordByRole(receipt, "supervisor_source");
+    const sourcePath = path.join(receipt.roots.sidecar_snapshot, sourceRecord.filename);
+    const verified = await supervisorController.module.verifyDoclingMacosSupervisorBuild(
+      finalization.supervisor_build,
+      {
+        sourcePath,
+        binaryPath: receipt.execution.supervisor.build.binary.path,
+        architecture: "arm64",
+        testing: false,
+      },
+    );
+    if (canonicalJson(verified) !== canonicalJson(receipt.execution.supervisor.build)
+      || canonicalJson(verified) !== canonicalJson(finalization.supervisor_build)) {
+      throw new Error("Supervisor build differs across receipt, finalization, and live verification");
+    }
+    return verified;
+  };
+  await verifySupervisorBuild();
   const runtimeSource = await importRetainedModule(receipt, "runtime_evidence_source");
   if (typeof runtimeSource.module.captureDoclingRuntimeInventory !== "function") {
     throw new Error("Retained runtime evidence module exports are invalid");
@@ -442,9 +485,9 @@ export async function captureDoclingBakeoff(options) {
   const command = adapterCommand(receipt, receiptSha256);
   const cases = [];
   for (const binding of bindings) {
-    const attemptDir = await canonicalDirectory(path.join(runRoot, `probe-${binding.suffix}`), `attempt ${binding.fixture.id}`, 0o700);
-    const requestPath = path.join(attemptDir, "request.json");
-    const sourcePath = path.join(attemptDir, "source.pdf");
+    const stagedDir = await canonicalDirectory(path.join(runRoot, `probe-${binding.suffix}`), `staged source ${binding.fixture.id}`, 0o700);
+    const requestPath = path.join(stagedDir, "request.json");
+    const sourcePath = path.join(stagedDir, "source.pdf");
     const [requestBytes, sourceBytes] = await Promise.all([
       stableFile(requestPath, 16 * 1024 * 1024, `request ${binding.fixture.id}`, 0o600),
       stableFile(sourcePath, 1024 * 1024 * 1024, `source ${binding.fixture.id}`, 0o600),
@@ -458,24 +501,62 @@ export async function captureDoclingBakeoff(options) {
     }
     const runs = [];
     for (let repetition = 1; repetition <= 3; repetition += 1) {
+      const attemptDir = await freshAttemptDirectory({
+        runRoot,
+        suffix: binding.suffix,
+        repetition,
+        requestBytes,
+        sourceBytes,
+      });
       await verifyAuthority();
       await verifyFinalizationFile();
       const before = await captureInventory();
       if (before.inventory_sha256 !== baselineInventory.inventory_sha256) {
         throw new Error(`Docling runtime drifted before ${binding.fixture.id} repetition ${repetition}`);
       }
-      const observed = await spawnCaptured({
-        command,
+      await verifySupervisorBuild();
+      const policy = receipt.execution.supervisor.policy;
+      const observed = await supervisorController.module.runSupervisedCandidate({
+        binaryPath: finalization.supervisor_build.binary.path,
+        expectedBinary: finalization.supervisor_build.binary,
         cwd: attemptDir,
+        command,
         environment: receipt.execution.environment,
         stdin: requestBytes,
-        stdoutLimit: request.limits.max_stdout_bytes,
-        stderrLimit: request.limits.max_stderr_bytes,
+        stdoutMaxBytes: request.limits.max_stdout_bytes,
+        stderrMaxBytes: request.limits.max_stderr_bytes,
         deadlineMs: request.limits.deadline_ms,
+        leaderExitGraceMs: policy.leader_exit_grace_ms,
+        sampleIntervalMs: policy.sample_interval_ms,
+        physicalFootprintMaxBytes: policy.sampled_group_physical_footprint_max_bytes,
+        addressSpaceBytes: policy.address_space_bytes,
+        cpuSeconds: policy.cpu_seconds,
+        fileSizeBytes: policy.file_size_bytes,
+        nofile: policy.nofile,
       });
+      if (observed.lease === null) throw new Error("Supervisor accepted no parent lease");
+      validateSchema(observed.lease, supervisorEvidenceSchema, "supervisor lease");
+      validateSchema(observed.evidence, supervisorEvidenceSchema, "supervisor evidence");
+      if (!observed.evidence.controller_accepted
+        || observed.evidence.controller_failure !== "none"
+        || observed.evidence.leader.exit_code !== 0
+        || observed.evidence.leader.signal !== null
+        || !observed.evidence.observations.original_process_group_empty
+        || observed.evidence.observations.escaped_session_detected
+        || observed.exit.code !== 0 || observed.exit.signal !== null
+        || observed.evidence.capture.stdout_retained_bytes !== observed.stdout.length
+        || observed.cwd?.path !== attemptDir
+        || observed.cwd?.mode !== 0o700
+        || !/^[0-9]+$/.test(observed.cwd?.dev ?? "")
+        || !/^[0-9]+$/.test(observed.cwd?.ino ?? "")
+        || !Number.isInteger(observed.cwd?.links)
+        || observed.cwd.links < 1) {
+        throw new Error(`Supervisor rejected ${binding.fixture.id} repetition ${repetition}`);
+      }
       const response = parseCanonicalResponse(observed.stdout, request, responseSchema);
       await verifyAuthority();
       await verifyFinalizationFile();
+      await verifySupervisorBuild();
       const after = await captureInventory();
       if (after.inventory_sha256 !== baselineInventory.inventory_sha256) {
         throw new Error(`Docling runtime drifted after ${binding.fixture.id} repetition ${repetition}`);
@@ -489,15 +570,28 @@ export async function captureDoclingBakeoff(options) {
       }
       runs.push({
         repetition,
-        pid: observed.pid,
-        elapsed_ms: observed.elapsed_ms,
+        pid: observed.lease.leader_pid,
+        elapsed_ms: observed.evidence.observations.elapsed_continuous_ns / 1e6,
         response_sha256: sha256(Buffer.from(canonicalJson(response))),
-        stdout_bytes: observed.stdout_bytes,
-        stderr: { bytes: observed.stderr_bytes, sha256: sha256(observed.stderr) },
+        stdout_bytes: observed.evidence.capture.stdout_observed_bytes,
+        stderr: {
+          observed_bytes: observed.evidence.capture.stderr_observed_bytes,
+          retained_bytes: observed.evidence.capture.stderr_retained_bytes,
+          content_sha256: null,
+          content_unavailable_reason: "native_supervisor_does_not_publish_candidate_stderr",
+        },
+        supervisor: {
+          binary: observed.binary,
+          cwd: observed.cwd,
+          lease: observed.lease,
+          evidence: observed.evidence,
+          exit: observed.exit,
+        },
         runtime_before_sha256: before.inventory_sha256,
         runtime_after_sha256: after.inventory_sha256,
       });
       if (repetition === 1) runs[0].response = response;
+      await removeExactAttemptDirectory(attemptDir, requestBytes, sourceBytes);
     }
     if (new Set(runs.map(run => run.pid)).size !== 3
       || new Set(runs.map(run => run.response_sha256)).size !== 1) {
@@ -519,11 +613,12 @@ export async function captureDoclingBakeoff(options) {
   }
   await verifyAuthority();
   await verifyFinalizationFile();
+  await verifySupervisorBuild();
   const finalInventory = await captureInventory();
   if (canonicalJson(finalInventory) !== canonicalJson(baselineInventory)) {
     throw new Error("Docling runtime inventory changed across the campaign");
   }
-  const [receiptAfter, finalizationAfter, authorityAfter, verifierAfter, launcherAfter, runtimeAfter] = await Promise.all([
+  const [receiptAfter, finalizationAfter, authorityAfter, verifierAfter, launcherAfter, runtimeAfter, captureAfter, supervisorControllerAfter, supervisorEvidenceSchemaAfter] = await Promise.all([
     stableFile(receiptPath, receiptBytes.length, "reopened receipt", 0o600),
     stableFile(finalizationPath, finalizationBytes.length, "reopened finalization", 0o600),
     stableFile(authorityPath, authorityBytes.length, "reopened authority", 0o600),
@@ -535,12 +630,23 @@ export async function captureDoclingBakeoff(options) {
     ),
     stableFile(authorityVerifier.launcherPath, authorityVerifier.launcherBytes.length, "reopened authority launcher", 0o600),
     stableFile(path.join(receipt.roots.sidecar_snapshot, runtimeSource.record.filename), runtimeSource.bytes.length, "reopened runtime evidence source", 0o600),
+    stableFile(SELF, captureBytes.length, "reopened bakeoff capture source"),
+    stableFile(supervisorController.filename, supervisorController.bytes.length, "reopened supervisor controller", 0o600),
+    stableFile(
+      path.join(receipt.roots.sidecar_snapshot, supervisorEvidenceRecord.filename),
+      supervisorEvidenceSchemaBytes.length,
+      "reopened supervisor evidence schema",
+      0o600,
+    ),
   ]);
   if (!receiptAfter.equals(receiptBytes) || !finalizationAfter.equals(finalizationBytes)
     || !authorityAfter.equals(authorityBytes)
     || !verifierAfter.equals(authorityVerifier.verifierSource.bytes)
     || !launcherAfter.equals(authorityVerifier.launcherBytes)
-    || !runtimeAfter.equals(runtimeSource.bytes)) {
+    || !runtimeAfter.equals(runtimeSource.bytes)
+    || !captureAfter.equals(captureBytes)
+    || !supervisorControllerAfter.equals(supervisorController.bytes)
+    || !supervisorEvidenceSchemaAfter.equals(supervisorEvidenceSchemaBytes)) {
     throw new Error("Docling retained authority changed across the campaign");
   }
   const report = {
@@ -557,8 +663,18 @@ export async function captureDoclingBakeoff(options) {
       authority_verifier_sha256: authorityVerifier.verifierSource.record.sha256,
       authority_launcher_sha256: authorityVerifier.launcherRecord.sha256,
       runtime_evidence_source_sha256: runtimeSource.record.sha256,
+      bakeoff_capture_source_sha256: captureRecord.sha256,
+      supervisor_controller_sha256: supervisorController.record.sha256,
+      supervisor_source_sha256: recordByRole(receipt, "supervisor_source").sha256,
+      supervisor_evidence_schema_sha256: supervisorEvidenceRecord.sha256,
       request_schema_sha256: requestSchemaSource.sha256,
       response_schema_sha256: responseSchemaSource.sha256,
+    },
+    supervisor: {
+      policy: receipt.execution.supervisor.policy,
+      build: finalization.supervisor_build,
+      candidate_environment_sha256: sha256(Buffer.from(canonicalJson(receipt.execution.environment))),
+      claim_boundary: "Sampled resource observations and inherited per-process limits only. No production sandbox claim.",
     },
     runtime: {
       platform: receipt.platform,

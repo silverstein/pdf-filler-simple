@@ -12,6 +12,8 @@ const PHASE1_EVALUATION_ASSETS = [
   "scripts/eval-score-extraction-candidates.mjs",
   "scripts/eval-generate-extraction-layout-oracle.mjs",
   "scripts/eval-prepare-docling-macos-handoff.mjs",
+  "scripts/eval-capture-docling-bakeoff.mjs",
+  "scripts/eval-calibrate-docling-supervisor.mjs",
   "scripts/eval-docling-authority.mjs",
   "scripts/eval-verify-docling-macos-handoff.mjs",
   "test/eval/candidates/docling/adapter.py",
@@ -23,6 +25,11 @@ const PHASE1_EVALUATION_ASSETS = [
   "test/eval/extraction-docling-handoff-verifier.js",
   "test/eval/extraction-docling-runtime-evidence.js",
   "test/eval/extraction-docling-runtime-evidence.test.js",
+  "test/eval/docling-macos-supervisor.js",
+  "test/eval/docling-macos-supervisor.test.js",
+  "test/eval/docling-supervisor-calibration.test.js",
+  "test/eval/native/docling-macos-supervisor.c",
+  "test/eval/native/docling-macos-supervisor-candidate.c",
   "test/eval/extraction-docling-model-helper.test.js",
   "test/eval/extraction-phase1-corpus.js",
   "test/eval/extraction-phase1-corpus.test.js",
@@ -71,7 +78,8 @@ const PHASE1_EVALUATION_ASSETS = [
   "test/fixtures/eval/extraction/phase1/docling-export.adapter-projection.schema.json",
   "test/fixtures/eval/extraction/phase1/docling-handoff.schema.json",
   "test/fixtures/eval/extraction/phase1/docling-finalization.schema.json",
-  "test/fixtures/eval/extraction/phase1/docling-three-process-evidence.schema.json",
+  "test/fixtures/eval/extraction/phase1/docling-macos-supervisor-evidence.schema.json",
+  "test/fixtures/eval/extraction/phase1/docling-supervisor-calibration-attestation.v1.json",
   "test/fixtures/eval/extraction/phase1/mock-candidate.mjs"
 ];
 

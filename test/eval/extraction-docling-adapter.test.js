@@ -62,7 +62,9 @@ function requestFor(source, overrides = {}) {
 }
 
 async function runAdapter({ request, source, exported = EXPORT_FIXTURE, environment = {}, extraArgs = [], mutateSnapshot = null, requestBytes = null }) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-adapter-"));
+  const root = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-adapter-")),
+  );
   temporaryRoots.push(root);
   const sourcePath = path.join(root, "source.pdf");
   const uvPath = path.join(root, "uv-test-binary");
@@ -77,6 +79,9 @@ async function runAdapter({ request, source, exported = EXPORT_FIXTURE, environm
     protectedRoots: [path.join(root, "Documents"), path.join(root, "Dropbox"), path.join(root, "Library/Mobile Documents")],
     fixturePaths: [sourcePath],
     testOnlyHost: { platform: "darwin", architecture: "arm64", os_build: "25G88", kernel_release: "25.6.0", node_version: process.version },
+    testOnlySupervisorBuild: {
+      binaryBytes: Buffer.from("pdf-tools-test-only-supervisor-binary\n"),
+    },
     testOnlyUv: { path: uvPath, version: "uv 0.8.15" },
   });
   const snapshot = handoff.receipt.roots.sidecar_snapshot;

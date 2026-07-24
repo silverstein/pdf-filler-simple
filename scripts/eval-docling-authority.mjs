@@ -22,7 +22,9 @@ const EXPECTED_ROLES = new Set([
   "adapter_entrypoint", "model_setup_helper", "candidate_config", "candidate_config_schema",
   "candidate_request_schema", "candidate_response_schema", "handoff_schema", "handoff_generator_source",
   "handoff_verifier_source", "runtime_evidence_source", "handoff_authority", "handoff_verifier_cli",
-  "finalization_schema", "three_process_schema", "direct_requirements",
+  "finalization_schema", "supervisor_source", "supervisor_controller",
+  "supervisor_evidence_schema", "supervisor_calibration_attestation",
+  "bakeoff_capture_source", "direct_requirements",
 ]);
 
 export function canonicalJson(value) {
@@ -203,7 +205,6 @@ function assertRealizedRecipe(receipt, receiptPath) {
   const finalization = path.join(path.dirname(receiptPath), "docling-finalization.v1.json");
   const receiptDigestPlaceholder = "$OUT_OF_BAND_RECEIPT_SHA256";
   const protectedRootsPlaceholder = "$OUT_OF_BAND_PROTECTED_ROOTS_JSON";
-  const finalizationDigestPlaceholder = "$OUT_OF_BAND_FINALIZATION_SHA256";
   const authorityCommand = receipt.setup?.authority_command;
   const bootstrapScript = authorityCommand?.[2];
   if (authorityCommand?.[0] !== "/bin/sh" || authorityCommand[1] !== "-c"
@@ -255,11 +256,24 @@ function assertRealizedRecipe(receipt, receiptPath) {
     ...bootstrapPrefix, "--action", "setup", "--receipt", receiptPath, "--expected-receipt-sha256", receiptDigestPlaceholder,
     "--protected-roots-json", protectedRootsPlaceholder,
   ];
-  const expectedExecuteAuthority = [
-    ...bootstrapPrefix, "--action", "execute", "--receipt", receiptPath, "--expected-receipt-sha256", receiptDigestPlaceholder,
-    "--protected-roots-json", protectedRootsPlaceholder, "--finalization", finalization,
-    "--expected-finalization-sha256", finalizationDigestPlaceholder,
-  ];
+  const actualSupervisorBuild = receipt.execution?.supervisor?.build;
+  const expectedSupervisorPolicy = {
+    protocol: "pdf-tools.docling-macos-supervisor-policy.v1",
+    calibration_attestation_sha256: "8a532eea6c54ebbdc7d1509296efb763a6cda6ca0756b34970cbe8bad934f778",
+    sample_interval_ms: 50,
+    leader_exit_grace_ms: 2000,
+    sampled_group_physical_footprint_max_bytes: 4294967296,
+    address_space_bytes: 1099511627776,
+    cpu_seconds: 120,
+    file_size_bytes: 536870912,
+    nofile: 1024,
+  };
+  const normalizedSupervisorBuild = actualSupervisorBuild && {
+    ...actualSupervisorBuild,
+    source: { ...actualSupervisorBuild.source, path: "$SUPERVISOR_SOURCE" },
+    sdk: { ...actualSupervisorBuild.sdk, path: "$SDKROOT" },
+    binary: { ...actualSupervisorBuild.binary, path: "$SUPERVISOR_BINARY" },
+  };
   const expectedNormalizedRecipe = {
     setup: {
       network_required: true,
@@ -284,8 +298,12 @@ function assertRealizedRecipe(receipt, receiptPath) {
         HOME: "$AUTHORITY_HOME", TMPDIR: "$AUTHORITY_TMP", PATH: "/usr/bin:/bin", LANG: "C", LC_ALL: "C",
         HF_HOME: "$HF_CACHE_ROOT", UV_CACHE_DIR: "$UV_CACHE_ROOT", UV_PYTHON_INSTALL_DIR: "$UV_PYTHON_INSTALL_ROOT", PYTHONDONTWRITEBYTECODE: "1",
       },
-      authority_command: ["/bin/sh", "-c", bootstrapScript, "pdf-tools-docling-bootstrap.v1", "$NODE", "$NODE_SHA256", "$NODE_BYTES", "$NODE_MODE", "$NODE_LINKS", "$LAUNCHER", "$LAUNCHER_SHA256", "$LAUNCHER_BYTES", "$LAUNCHER_MODE", "$LAUNCHER_LINKS", "$VERIFIER", "$VERIFIER_SHA256", "$VERIFIER_BYTES", "$VERIFIER_MODE", "$VERIFIER_LINKS", "$RUN_ROOT", "$AUTHORITY_HOME", "$AUTHORITY_TMP", "--action", "execute", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder, "--protected-roots-json", protectedRootsPlaceholder, "--finalization", "$FINALIZATION", "--expected-finalization-sha256", finalizationDigestPlaceholder],
+      candidate_execution: "retained_bakeoff_capture_only",
       adapter_command: ["$PYTHON", "-I", "-B", "$ADAPTER", "--config", "$CONFIG", "--artifacts-path", "$MODELS_ROOT", "--receipt", "$RECEIPT", "--expected-receipt-sha256", receiptDigestPlaceholder],
+      supervisor: {
+        policy: expectedSupervisorPolicy,
+        build: normalizedSupervisorBuild,
+      },
     },
   };
   if (canonicalJson(receipt.identity.recipe) !== canonicalJson(expectedNormalizedRecipe)
@@ -295,8 +313,13 @@ function assertRealizedRecipe(receipt, receiptPath) {
     || canonicalJson(receipt.setup.finalization) !== canonicalJson({ protocol: "pdf-tools.docling-finalization.v1", path: finalization, out_of_band_sha256_required: true })
     || receipt.execution?.offline_intent !== true || receipt.execution.network_isolation_enforced !== false
     || canonicalJson(receipt.execution.environment) !== canonicalJson({ ...baseEnvironment, HF_HUB_OFFLINE: "1", TRANSFORMERS_OFFLINE: "1", HF_DATASETS_OFFLINE: "1" })
-    || canonicalJson(receipt.execution.command_template) !== canonicalJson(expectedExecuteAuthority)
-    || canonicalJson(receipt.execution.adapter_command) !== canonicalJson(expectedAdapterCommand)) {
+    || receipt.execution.candidate_execution !== "retained_bakeoff_capture_only"
+    || canonicalJson(receipt.execution.adapter_command) !== canonicalJson(expectedAdapterCommand)
+    || canonicalJson(receipt.execution.supervisor?.policy) !== canonicalJson(expectedSupervisorPolicy)
+    || actualSupervisorBuild?.source?.path !== rolePath("supervisor_source")
+    || actualSupervisorBuild?.binary?.path !== path.join(path.dirname(receiptPath), "docling-macos-supervisor")
+    || typeof actualSupervisorBuild?.sdk?.path !== "string"
+    || path.resolve(actualSupervisorBuild.sdk.path) !== actualSupervisorBuild.sdk.path) {
     throw new Error("Receipt does not realize the retained authority recipe");
   }
   return { launcherPath, launcherMode, verifierPath, verifierMode };
@@ -362,6 +385,18 @@ export async function verifyHandoffAuthority({ receiptPath, expectedReceiptSha25
     await assertNoLinkAncestors(filename);
     const bytes = await readStable(filename, MAX_INPUT_BYTES, 0o600);
     if (bytes.length !== item.bytes || sha256(bytes) !== item.sha256) throw new Error(`Retained input mismatch: ${item.role}`);
+  }
+  const supervisorBuild = receipt.execution.supervisor.build;
+  const supervisorBinary = await readStable(
+    supervisorBuild.binary.path,
+    4 * 1024 * 1024,
+    0o700,
+  );
+  if (supervisorBuild.binary.path !== path.join(path.dirname(receiptPath), "docling-macos-supervisor")
+    || supervisorBinary.length !== supervisorBuild.binary.bytes
+    || sha256(supervisorBinary) !== supervisorBuild.binary.sha256
+    || supervisorBuild.binary.links !== 1) {
+    throw new Error("Receipt-bound supervisor binary differs from its pre-seal identity");
   }
   const authorityRecord = recordByRole(receipt, "handoff_authority");
   await assertNoLinkAncestors(SELF);
@@ -629,6 +664,22 @@ async function writeExclusive(filename, bytes) {
   try { await handle.writeFile(bytes); await handle.sync(); } finally { await handle.close(); }
 }
 
+async function retainedSupervisorController(receipt) {
+  const controllerRecord = recordByRole(receipt, "supervisor_controller");
+  const controllerPath = path.join(receipt.roots.sidecar_snapshot, controllerRecord.filename);
+  const controllerBytes = await readStable(controllerPath, controllerRecord.bytes, 0o600);
+  if (controllerBytes.length !== controllerRecord.bytes
+    || sha256(controllerBytes) !== controllerRecord.sha256) {
+    throw new Error("Retained supervisor controller differs from its receipt identity");
+  }
+  const module = await import(`data:text/javascript;base64,${controllerBytes.toString("base64")}`);
+  if (typeof module.compileDoclingMacosSupervisor !== "function"
+    || typeof module.verifyDoclingMacosSupervisorBuild !== "function") {
+    throw new Error("Retained supervisor controller exports are invalid");
+  }
+  return { module, controllerPath, controllerRecord, controllerBytes };
+}
+
 async function finalizeSetup(context, receiptPath, receiptSha) {
   const { receipt } = context;
   const snapshot = receipt.roots.sidecar_snapshot;
@@ -645,6 +696,27 @@ async function finalizeSetup(context, receiptPath, receiptSha) {
   if (distributionsResult.code !== 0) throw new Error("Installed distribution capture failed");
   const lockPath = path.join(snapshot, "requirements.lock");
   const lockBytes = await readStable(lockPath, 16 * 1024 * 1024, null, true);
+  const supervisorSourceRecord = recordByRole(receipt, "supervisor_source");
+  const supervisorSourcePath = path.join(snapshot, supervisorSourceRecord.filename);
+  const supervisorSourceBytes = await readStable(
+    supervisorSourcePath,
+    supervisorSourceRecord.bytes,
+    0o600,
+  );
+  if (supervisorSourceBytes.length !== supervisorSourceRecord.bytes
+    || sha256(supervisorSourceBytes) !== supervisorSourceRecord.sha256) {
+    throw new Error("Retained supervisor source differs from its receipt identity");
+  }
+  const supervisorController = await retainedSupervisorController(receipt);
+  const supervisorBuild = await supervisorController.module.verifyDoclingMacosSupervisorBuild(
+    receipt.execution.supervisor.build,
+    {
+      sourcePath: supervisorSourcePath,
+      binaryPath: receipt.execution.supervisor.build.binary.path,
+      architecture: "arm64",
+      testing: false,
+    },
+  );
   const managedPythonRoot = receipt.roots.uv_python_install;
   const venvRoot = path.join(snapshot, "venv");
   const [modelFiles, managedPythonFiles, venvFiles] = await Promise.all([
@@ -665,6 +737,7 @@ async function finalizeSetup(context, receiptPath, receiptSha) {
     toolchain: receipt.toolchain,
     lock: { bytes: lockBytes.length, sha256: sha256(lockBytes) },
     python: { path: pythonReal, bytes: pythonBytes.length, sha256: sha256(pythonBytes), version: versionResult.stdout.toString().trim() || versionResult.stderr.toString().trim() },
+    supervisor_build: supervisorBuild,
     installed_distributions: JSON.parse(distributionsResult.stdout),
     model_files: modelFiles,
     managed_python_files: managedPythonFiles,
@@ -686,7 +759,7 @@ export function validateFinalizationSchemaMirror(value) {
   const absolutePath = candidate => typeof candidate === "string" && candidate.length >= 2 && candidate.length <= 4096 && candidate.startsWith("/");
   const boundedString = (candidate, maximum = Infinity) => typeof candidate === "string" && candidate.length >= 1 && candidate.length <= maximum;
   const integer = (candidate, minimum, maximum = Infinity) => Number.isInteger(candidate) && candidate >= minimum && candidate <= maximum;
-  const topKeys = ["protocol", "handoff_id", "receipt_sha256", "platform", "toolchain", "lock", "python", "installed_distributions", "model_files", "managed_python_files", "venv_files", "root_policy", "network_isolation_enforced", "execution_state", "finalization_id"];
+  const topKeys = ["protocol", "handoff_id", "receipt_sha256", "platform", "toolchain", "lock", "python", "supervisor_build", "installed_distributions", "model_files", "managed_python_files", "venv_files", "root_policy", "network_isolation_enforced", "execution_state", "finalization_id"];
   if (!exactKeys(value, topKeys) || value.protocol !== "pdf-tools.docling-finalization.v1" || !SHA256.test(value.handoff_id ?? "")
     || !SHA256.test(value.receipt_sha256 ?? "") || !SHA256.test(value.finalization_id ?? "")
     || value.network_isolation_enforced !== false || value.execution_state !== "setup_complete_not_executed") {
@@ -709,6 +782,28 @@ export function validateFinalizationSchemaMirror(value) {
     || !exactKeys(value.python, ["path", "bytes", "sha256", "version"]) || !absolutePath(value.python.path)
     || !integer(value.python.bytes, 1, 134217728) || !SHA256.test(value.python.sha256 ?? "") || value.python.version !== "Python 3.12.13") {
     throw new Error("Finalization lock or Python identity violates its retained schema mirror");
+  }
+  const build = value.supervisor_build;
+  const buildFile = (candidate, { executable = false } = {}) => exactKeys(candidate, ["path", "bytes", "sha256", "mode", "links"])
+    && absolutePath(candidate.path) && integer(candidate.bytes, 1, executable ? 4194304 : 134217728)
+    && SHA256.test(candidate.sha256 ?? "") && candidate.links === 1
+    && (executable ? candidate.mode === 0o700 : [0o600, 0o644].includes(candidate.mode));
+  if (!exactKeys(build, ["protocol", "platform", "source", "compiler", "sdk", "command", "testing", "binary"])
+    || build.protocol !== "pdf-tools.macos-eval-supervisor-build.v1" || build.testing !== false
+    || !exactKeys(build.platform, ["operating_system", "architecture", "os_build", "kernel_release"])
+    || build.platform.operating_system !== "macos" || build.platform.architecture !== "arm64"
+    || !boundedString(build.platform.os_build, 128) || !boundedString(build.platform.kernel_release, 128)
+    || !buildFile(build.source)
+    || !exactKeys(build.compiler, ["path", "bytes", "sha256", "mode", "links", "version"])
+    || !absolutePath(build.compiler.path) || !integer(build.compiler.bytes, 1, 268435456)
+    || !SHA256.test(build.compiler.sha256 ?? "") || build.compiler.mode !== 0o755
+    || build.compiler.links !== 1 || !boundedString(build.compiler.version, 4096)
+    || !exactKeys(build.sdk, ["path", "version"]) || !absolutePath(build.sdk.path)
+    || !boundedString(build.sdk.version, 128)
+    || !Array.isArray(build.command) || build.command.length < 2 || build.command.length > 64
+    || build.command.some(part => !boundedString(part, 8192))
+    || !buildFile(build.binary, { executable: true })) {
+    throw new Error("Finalization supervisor build violates its retained schema mirror");
   }
   if (!Array.isArray(value.installed_distributions) || value.installed_distributions.length < 1 || value.installed_distributions.length > 10000
     || value.installed_distributions.some(item => !Array.isArray(item) || item.length !== 2 || item.some(part => !boundedString(part)))) {
@@ -785,6 +880,24 @@ async function verifyFinalization(context, finalizationPath, expectedFinalizatio
     || canonicalJson(value.installed_distributions) !== canonicalJson(JSON.parse(distributionsResult.stdout))) {
     throw new Error("Finalized Python environment has drifted");
   }
+  const supervisorSourceRecord = recordByRole(context.receipt, "supervisor_source");
+  const supervisorSourcePath = path.join(snapshot, supervisorSourceRecord.filename);
+  if (canonicalJson(value.supervisor_build) !== canonicalJson(context.receipt.execution.supervisor.build)) {
+    throw new Error("Finalized supervisor build differs from the receipt-bound build");
+  }
+  const supervisorController = await retainedSupervisorController(context.receipt);
+  const verifiedSupervisorBuild = await supervisorController.module.verifyDoclingMacosSupervisorBuild(
+    value.supervisor_build,
+    {
+      sourcePath: supervisorSourcePath,
+      binaryPath: context.receipt.execution.supervisor.build.binary.path,
+      architecture: "arm64",
+      testing: false,
+    },
+  );
+  if (canonicalJson(verifiedSupervisorBuild) !== canonicalJson(value.supervisor_build)) {
+    throw new Error("Finalized supervisor build has drifted");
+  }
   const managedPythonRoot = context.receipt.roots.uv_python_install;
   const venvRoot = path.join(context.receipt.roots.sidecar_snapshot, "venv");
   const current = await Promise.all([
@@ -831,56 +944,7 @@ async function main() {
     process.stdout.write(`${JSON.stringify({ setup_complete: true, handoff_id: context.receipt.handoff_id, finalization_path: finalized.finalizationPath, finalization_sha256: finalized.finalizationSha256 })}\n`);
     return;
   }
-  if (action === "execute") {
-    const finalizationPath = path.resolve(option(argv, "--finalization"));
-    const expectedFinalizationSha256 = option(argv, "--expected-finalization-sha256");
-    await verifyFinalization(context, finalizationPath, expectedFinalizationSha256);
-    const request = await new Promise((resolve, reject) => {
-      const chunks = []; let bytes = 0;
-      process.stdin.on("data", chunk => { bytes += chunk.length; if (bytes > 16 * 1024 * 1024) reject(new Error("Authority stdin exceeds its ceiling")); else chunks.push(chunk); });
-      process.stdin.on("end", () => resolve(Buffer.concat(chunks))); process.stdin.on("error", reject);
-    });
-    const command = context.receipt.execution.adapter_command.map(value => value === "$OUT_OF_BAND_RECEIPT_SHA256" ? expectedReceiptSha256
-      : value === "$OUT_OF_BAND_FINALIZATION_SHA256" ? expectedFinalizationSha256 : value);
-    const result = await spawnBound(command, { environment: context.receipt.execution.environment, cwd: context.receipt.roots.authority_tmp, isolationRoots: [context.receipt.roots.authority_home, context.receipt.roots.authority_tmp, context.receipt.roots.hf_cache], stdin: request });
-    context = await verifyHandoffAuthority({ receiptPath, expectedReceiptSha256, protectedRootsJson });
-    await verifyFinalization(context, finalizationPath, expectedFinalizationSha256);
-    if (result.code !== 0) throw new Error(`Adapter command failed: ${result.stderr.toString().slice(0, 500)}`);
-    process.stdout.write(result.stdout); process.stderr.write(result.stderr);
-    return;
-  }
-  if (action === "probe") {
-    const finalizationPath = path.resolve(option(argv, "--finalization"));
-    const expectedFinalizationSha256 = option(argv, "--expected-finalization-sha256");
-    const attemptDir = path.resolve(option(argv, "--attempt-dir"));
-    const requestPath = path.resolve(option(argv, "--request"));
-    await assertDirectory(attemptDir);
-    const finalization = await verifyFinalization(context, finalizationPath, expectedFinalizationSha256);
-    const requestBytes = await readStable(requestPath, 16 * 1024 * 1024, 0o600);
-    const request = JSON.parse(requestBytes);
-    if (!Number.isInteger(request?.limits?.max_stdout_bytes) || request.limits.max_stdout_bytes < 1) throw new Error("Probe request lacks a bounded stdout limit");
-    const sourcePath = path.join(attemptDir, "source.pdf");
-    await readStable(sourcePath, request.limits.max_source_bytes, null);
-    const runtimeRecord = recordByRole(context.receipt, "runtime_evidence_source");
-    const runtimePath = path.join(context.receipt.roots.sidecar_snapshot, runtimeRecord.filename);
-    const runtime = await import(`${pathToFileURL(runtimePath).href}?sha256=${runtimeRecord.sha256}`);
-    const command = context.receipt.execution.adapter_command.map(value => value === "$OUT_OF_BAND_RECEIPT_SHA256" ? expectedReceiptSha256 : value);
-    const reverify = async () => {
-      context = await verifyHandoffAuthority({ receiptPath, expectedReceiptSha256, protectedRootsJson });
-      await verifyFinalization(context, finalizationPath, expectedFinalizationSha256);
-    };
-    await reverify();
-    const evidence = await runtime.runThreeFreshProcessEvidence({
-      receipt: context.receipt, finalization, command, cwd: attemptDir, environment: context.receipt.execution.environment,
-      requestBytes, sourcePath, maxStdoutBytes: request.limits.max_stdout_bytes, beforeEach: reverify, afterEach: reverify,
-    });
-    const evidenceBytes = Buffer.from(`${canonicalJson(evidence)}\n`);
-    const evidencePath = path.join(path.dirname(receiptPath), "docling-three-process-evidence.v1.json");
-    await writeExclusive(evidencePath, evidenceBytes);
-    process.stdout.write(`${JSON.stringify({ probe_complete: true, handoff_id: context.receipt.handoff_id, evidence_path: evidencePath, evidence_sha256: sha256(evidenceBytes) })}\n`);
-    return;
-  }
-  throw new Error("Action must be verify, setup, execute, or probe");
+  throw new Error("Action must be verify or setup; candidate execution is retained-bakeoff-capture-only");
 }
 
 if (path.resolve(process.argv[1] ?? "") === SELF) {

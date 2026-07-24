@@ -19,30 +19,18 @@ function option(name, required = true) {
   return process.argv[index + 1];
 }
 
-async function boundedStdin(maxBytes) {
-  const chunks = []; let total = 0;
-  for await (const chunk of process.stdin) {
-    total += chunk.length;
-    if (total > maxBytes) throw new Error("Docling launcher stdin exceeds its ceiling");
-    chunks.push(chunk);
-  }
-  return Buffer.concat(chunks);
-}
-
 async function main() {
   const action = option("--action", false) ?? "verify";
-  const additionalArgs = [];
-  for (const name of action === "execute" ? ["--finalization", "--expected-finalization-sha256"]
-    : action === "probe" ? ["--finalization", "--expected-finalization-sha256", "--attempt-dir", "--request"] : []) {
-    additionalArgs.push(name, option(name));
+  if (!["verify", "setup"].includes(action)) {
+    throw new Error("Candidate execution is retained-bakeoff-capture-only");
   }
   const result = await runDoclingAuthority({
     receiptPath: option("--receipt"),
     expectedReceiptSha256: option("--expected-receipt-sha256"),
     protectedRootsJson: option("--protected-roots-json"),
     action,
-    additionalArgs,
-    input: action === "execute" ? await boundedStdin(16 * 1024 * 1024) : null,
+    additionalArgs: [],
+    input: null,
     launcherPath: fileURLToPath(import.meta.url),
   });
   process.stdout.write(result.stdout);

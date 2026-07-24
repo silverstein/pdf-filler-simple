@@ -64,7 +64,10 @@ HANDOFF_INPUT_ROLES = {
     "candidate_request_schema", "candidate_response_schema", "handoff_schema",
     "handoff_generator_source", "handoff_verifier_source", "runtime_evidence_source",
     "handoff_authority", "handoff_verifier_cli", "finalization_schema",
-    "three_process_schema", "direct_requirements",
+    "supervisor_source", "supervisor_controller",
+    "supervisor_evidence_schema", "supervisor_calibration_attestation",
+    "bakeoff_capture_source",
+    "direct_requirements",
 }
 
 

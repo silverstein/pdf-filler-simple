@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { spawn } from "node:child_process";
 import { constants as fsConstants } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
@@ -205,62 +204,4 @@ export async function captureDoclingRuntimeInventory(receipt, finalization) {
     entry_count: records.length, total_file_bytes: state.bytes, uv_version: receipt.toolchain.uv.version, platform: receipt.platform,
   };
   return validateDoclingRuntimeInventory({ ...core, inventory_sha256: sha256(Buffer.from(`pdf-tools.docling-runtime-inventory.v1\0${canonicalJson(core)}`)) });
-}
-
-async function spawnCaptured({ command, cwd, environment, stdin, maxStdoutBytes }) {
-  const child = spawn(command[0], command.slice(1), { cwd, env: { ...environment }, stdio: ["pipe", "pipe", "pipe"] });
-  const stdout = []; const stderr = []; let stdoutBytes = 0; let stderrBytes = 0;
-  child.stdout.on("data", chunk => { stdoutBytes += chunk.length; if (stdoutBytes <= maxStdoutBytes) stdout.push(chunk); else child.kill("SIGKILL"); });
-  child.stderr.on("data", chunk => { stderrBytes += chunk.length; if (stderrBytes <= 4 * 1024 * 1024) stderr.push(chunk); else child.kill("SIGKILL"); });
-  child.stdin.end(stdin);
-  const exit = await new Promise((resolve, reject) => { child.once("error", reject); child.once("close", (code, signal) => resolve({ code, signal })); });
-  if (stdoutBytes > maxStdoutBytes || stderrBytes > 4 * 1024 * 1024) throw new Error("Fresh process exceeded its capture ceiling");
-  return { pid: child.pid, exit_code: exit.code, signal: exit.signal, stdout: Buffer.concat(stdout), stderr: Buffer.concat(stderr), stdout_bytes: stdoutBytes, stderr_bytes: stderrBytes };
-}
-
-export async function runThreeFreshProcessEvidence({ receipt, finalization, command, cwd, environment, requestBytes, sourcePath, maxStdoutBytes, beforeEach = null, afterEach = null }) {
-  if (!Array.isArray(command) || command.length < 1 || !Buffer.isBuffer(requestBytes) || !Number.isInteger(maxStdoutBytes) || maxStdoutBytes < 1) throw new Error("Fresh-process runner arguments are invalid");
-  const sourceBytes = (await stableFileSnapshot(sourcePath, "source.pdf")).bytes;
-  const before = await captureDoclingRuntimeInventory(receipt, finalization);
-  const after = []; const processes = [];
-  for (let repetition = 1; repetition <= 3; repetition += 1) {
-    if (beforeEach) await beforeEach(repetition);
-    const observed = await spawnCaptured({ command, cwd, environment, stdin: requestBytes, maxStdoutBytes });
-    if (observed.exit_code !== 0) throw new Error(`Fresh process ${repetition} failed: ${observed.stderr.toString().slice(0, 500)}`);
-    const response = JSON.parse(observed.stdout);
-    processes.push({
-      repetition, pid: observed.pid, exit_code: observed.exit_code, signal: observed.signal,
-      stdin_bytes: requestBytes.length, request_sha256: sha256(requestBytes), source_bytes: sourceBytes.length,
-      source_sha256: sha256(sourceBytes), stdout_bytes: observed.stdout_bytes, response_sha256: sha256(Buffer.from(canonicalJson(response))),
-    });
-    after.push(await captureDoclingRuntimeInventory(receipt, finalization));
-    if (afterEach) await afterEach(repetition);
-  }
-  return validateThreeFreshProcessEvidence({
-    protocol: "pdf-tools.docling-three-process-evidence.v1", handoff_id: receipt.handoff_id,
-    before, after, processes, stable: true,
-  });
-}
-
-export function validateThreeFreshProcessEvidence(evidence) {
-  if (!evidence || canonicalJson(Object.keys(evidence).sort()) !== canonicalJson(["after", "before", "handoff_id", "processes", "protocol", "stable"])
-    || evidence.protocol !== "pdf-tools.docling-three-process-evidence.v1" || evidence.stable !== true
-    || !SHA256.test(evidence.handoff_id ?? "") || !Array.isArray(evidence.after) || evidence.after.length !== 3
-    || !Array.isArray(evidence.processes) || evidence.processes.length !== 3) throw new Error("Three-process evidence shape is invalid");
-  const before = validateDoclingRuntimeInventory(evidence.before);
-  if (before.handoff_id !== evidence.handoff_id) throw new Error("Three-process evidence handoff binding is invalid");
-  const after = evidence.after.map(validateDoclingRuntimeInventory);
-  if (after.some(item => item.handoff_id !== evidence.handoff_id || item.inventory_sha256 !== before.inventory_sha256)) throw new Error("Runtime inventory drifted across fresh processes");
-  const pids = new Set(); const requests = new Set(); const requestBytes = new Set(); const sources = new Set(); const sourceBytes = new Set(); const responses = new Set();
-  for (const [index, process] of evidence.processes.entries()) {
-    if (!process || canonicalJson(Object.keys(process).sort()) !== canonicalJson(["exit_code", "pid", "repetition", "request_sha256", "response_sha256", "signal", "source_bytes", "source_sha256", "stdin_bytes", "stdout_bytes"])
-      || process.repetition !== index + 1 || !Number.isInteger(process.pid) || process.pid < 1 || pids.has(process.pid) || process.exit_code !== 0 || process.signal !== null
-      || !Number.isInteger(process.stdin_bytes) || process.stdin_bytes < 1 || !Number.isInteger(process.source_bytes) || process.source_bytes < 1
-      || !Number.isInteger(process.stdout_bytes) || process.stdout_bytes < 1
-      || ![process.request_sha256, process.source_sha256, process.response_sha256].every(value => SHA256.test(value ?? ""))) throw new Error("Runner-owned process record is invalid");
-    pids.add(process.pid); requests.add(process.request_sha256); requestBytes.add(process.stdin_bytes);
-    sources.add(process.source_sha256); sourceBytes.add(process.source_bytes); responses.add(process.response_sha256);
-  }
-  if (requests.size !== 1 || requestBytes.size !== 1 || sources.size !== 1 || sourceBytes.size !== 1 || responses.size !== 1) throw new Error("Fresh processes were not deterministic for one identical request and source");
-  return evidence;
 }

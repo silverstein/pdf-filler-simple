@@ -2,40 +2,34 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   canonicalJson,
   captureDoclingRuntimeInventory,
-  runThreeFreshProcessEvidence,
   validateDoclingRuntimeInventory,
-  validateThreeFreshProcessEvidence,
 } from "./extraction-docling-runtime-evidence.js";
-import { assertSchema } from "./extraction-phase1-protocol.js";
 
 const roots = [];
 const SHA = "a".repeat(64);
 const digest = value => createHash("sha256").update(value).digest("hex");
-const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
-const EVIDENCE_SCHEMA = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "test/fixtures/eval/extraction/phase1/docling-three-process-evidence.schema.json"), "utf8"));
 
 async function fixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-runtime-")); roots.push(root);
-  const snapshot = path.join(root, "snapshot"); const managed = path.join(root, "managed"); const models = path.join(root, "models"); const uv = path.join(root, "uv"); const attempt = path.join(root, "attempt");
+  const snapshot = path.join(root, "snapshot"); const managed = path.join(root, "managed"); const models = path.join(root, "models"); const uv = path.join(root, "uv");
   const managedExecutable = path.join(managed, "bin/python3.12");
   const venvExecutable = path.join(snapshot, "venv/bin/docling");
   const managedSymlink = path.join(managed, "bin/python-link");
   const venvSymlink = path.join(snapshot, "venv/bin/python");
-  await Promise.all([fs.mkdir(path.join(snapshot, "venv/bin"), { recursive: true }), fs.mkdir(path.join(managed, "bin"), { recursive: true }), fs.mkdir(models), fs.mkdir(attempt)]);
+  await Promise.all([fs.mkdir(path.join(snapshot, "venv/bin"), { recursive: true }), fs.mkdir(path.join(managed, "bin"), { recursive: true }), fs.mkdir(models)]);
   await Promise.all([
     fs.writeFile(managedExecutable, "python"), fs.symlink(managedExecutable, managedSymlink), fs.symlink(managedExecutable, venvSymlink),
     fs.writeFile(venvExecutable, "docling"),
     fs.writeFile(path.join(snapshot, "venv/empty.marker"), ""), fs.writeFile(path.join(snapshot, "requirements.lock"), "locked"),
-    fs.writeFile(path.join(models, "weight.bin"), "weight"), fs.writeFile(uv, "uv"), fs.writeFile(path.join(attempt, "source.pdf"), "%PDF-source"),
+    fs.writeFile(path.join(models, "weight.bin"), "weight"), fs.writeFile(uv, "uv"),
   ]);
   await Promise.all([fs.chmod(managedExecutable, 0o711), fs.chmod(venvExecutable, 0o711)]);
   const receipt = { handoff_id: SHA, roots: { sidecar_snapshot: snapshot, uv_python_install: managed, models }, toolchain: { uv: { path: uv, version: "uv 0.8.15", bytes: 2, sha256: digest("uv") } }, platform: { interpreter: "cpython-3.12.13-macos-aarch64-none", operating_system: "macos", architecture: "arm64", os_build: "25G88", kernel_release: "25.6.0", node_version: "v24.4.1" } };
-  return { root, receipt, snapshot, managedExecutable, venvExecutable, managedSymlink, venvSymlink, models, attempt };
+  return { root, receipt, snapshot, managedExecutable, venvExecutable, managedSymlink, venvSymlink, models };
 }
 
 function resignInventory(inventory) {
@@ -111,50 +105,6 @@ afterEach(async () => {
 });
 
 describe("Docling runtime evidence", () => {
-  it("owns three real child processes and recomputes unchanged inventories and deterministic responses", async () => {
-    const { receipt, attempt } = await fixture();
-    const requestBytes = Buffer.from('{"request_id":"probe"}\n');
-    const evidence = await runThreeFreshProcessEvidence({
-      receipt, finalization: boundFinalization(receipt), command: [process.execPath, "-e", "let b='';process.stdin.setEncoding('utf8');process.stdin.on('data',c=>b+=c);process.stdin.on('end',()=>process.stdout.write(JSON.stringify({ok:true,input:b.length})+'\\n'))"],
-      cwd: attempt, environment: { PATH: process.env.PATH }, requestBytes, sourcePath: path.join(attempt, "source.pdf"), maxStdoutBytes: 4096,
-    });
-    expect(new Set(evidence.processes.map(item => item.pid)).size).toBe(3);
-    expect(evidence.after.every(item => item.inventory_sha256 === evidence.before.inventory_sha256)).toBe(true);
-    expect(() => assertSchema(evidence, EVIDENCE_SCHEMA, "Docling three-process evidence")).not.toThrow();
-    const ownerExecuteOnlyModel = structuredClone(evidence);
-    ownerExecuteOnlyModel.before.records.find(record => record.path === "models/weight.bin").mode = 0o711;
-    expect(() => assertSchema(ownerExecuteOnlyModel, EVIDENCE_SCHEMA, "Docling three-process evidence")).toThrow();
-    const groupWritableManagedPython = structuredClone(evidence);
-    groupWritableManagedPython.before.records.find(record => record.path === "managed_python/bin/python3.12").mode = 0o771;
-    expect(() => assertSchema(groupWritableManagedPython, EVIDENCE_SCHEMA, "Docling three-process evidence")).toThrow();
-    for (const mode of [0o700, 0o755]) {
-      const observedPortableSymlinks = structuredClone(evidence);
-      for (const inventory of [observedPortableSymlinks.before, ...observedPortableSymlinks.after]) {
-        for (const record of inventory.records.filter(item => item.type === "symlink")) record.mode = mode;
-      }
-      expect(() => assertSchema(observedPortableSymlinks, EVIDENCE_SCHEMA, "Docling three-process evidence")).not.toThrow();
-    }
-    for (const mode of [0o000, 0o705, 0o711, 0o733, 0o775]) {
-      const unsafeSymlinkMode = structuredClone(evidence);
-      unsafeSymlinkMode.before.records.find(record => record.path === "managed_python/bin/python-link").mode = mode;
-      expect(() => assertSchema(unsafeSymlinkMode, EVIDENCE_SCHEMA, "Docling three-process evidence")).toThrow();
-    }
-    const modelSymlink = structuredClone(evidence);
-    const modelAlias = modelSymlink.before.records.find(record => record.path === "managed_python/bin/python-link");
-    modelAlias.path = "models/python-link";
-    expect(() => assertSchema(modelSymlink, EVIDENCE_SCHEMA, "Docling three-process evidence")).toThrow();
-    for (const forgedPath of ["managed_python/../models/weight.bin", "venv/../models/weight.bin"]) {
-      const traversalAlias = structuredClone(evidence);
-      const aliasedModel = traversalAlias.before.records.find(record => record.path === "models/weight.bin");
-      aliasedModel.path = forgedPath;
-      aliasedModel.mode = 0o711;
-      expect(() => assertSchema(traversalAlias, EVIDENCE_SCHEMA, "Docling three-process evidence")).toThrow();
-    }
-    const forged = structuredClone(evidence);
-    forged.before.inventory_sha256 = "0".repeat(64);
-    expect(() => validateThreeFreshProcessEvidence(forged)).toThrow(/digest/);
-  });
-
   it("requires a valid receipt-bound finalization while accepting empty marker files", async () => {
     const { receipt } = await fixture();
     await expect(captureDoclingRuntimeInventory(receipt)).rejects.toThrow(/finalization/);
@@ -208,24 +158,6 @@ describe("Docling runtime evidence", () => {
     const relative_path = "lib/python3.12/encodings/__pycache__/missing.cpython-312.pyc";
     const missing = { relative_path, type: "file", mode: 0o600, links: 1, bytes: 4, sha256: digest("miss") };
     await expect(captureDoclingRuntimeInventory(receipt, boundFinalization(receipt, { managed_python_files: [missing] }))).rejects.toThrow(/missing/);
-  });
-
-  it("rejects bytecode newly appearing after the three-process baseline", async () => {
-    const { receipt, snapshot, attempt } = await fixture();
-    const requestBytes = Buffer.from('{"request_id":"probe"}\n');
-    await expect(runThreeFreshProcessEvidence({
-      receipt,
-      finalization: boundFinalization(receipt),
-      command: [process.execPath, "-e", "process.stdin.resume();process.stdin.on('end',()=>process.stdout.write('{\"ok\":true}\\n'))"],
-      cwd: attempt,
-      environment: { PATH: process.env.PATH },
-      requestBytes,
-      sourcePath: path.join(attempt, "source.pdf"),
-      maxStdoutBytes: 4096,
-      beforeEach: async repetition => {
-        if (repetition === 1) await fs.writeFile(path.join(snapshot, "venv/new-after-baseline.pyc"), "new-bytecode");
-      },
-    })).rejects.toThrow(/bytecode differs/);
   });
 
   it("never authorizes Python bytecode in the models role", async () => {

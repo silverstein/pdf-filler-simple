@@ -187,7 +187,9 @@ describe("packed Markdown bakeoff runner", () => {
   let options;
 
   beforeAll(async () => {
-    root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-markdown-bakeoff-"));
+    root = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-markdown-bakeoff-")),
+    );
     await fs.chmod(root, 0o700);
     const outputRoot = path.join(root, "output");
     await fs.mkdir(outputRoot, { mode: 0o700 });
@@ -212,6 +214,9 @@ describe("packed Markdown bakeoff runner", () => {
         os_build: "25G5065a",
         kernel_release: "25.6.0",
         node_version: process.version,
+      },
+      testOnlySupervisorBuild: {
+        binaryBytes: Buffer.from("pdf-tools-test-only-supervisor-binary\n"),
       },
       testOnlyUv: { path: uvPath, version: uvVersion },
     });

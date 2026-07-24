@@ -47,6 +47,7 @@ enum {
 
 typedef struct {
   uint64_t deadline_ms;
+  uint64_t leader_exit_grace_ms;
   uint64_t sample_ms;
   uint64_t stdout_max_bytes;
   uint64_t stderr_max_bytes;
@@ -161,7 +162,7 @@ static void usage(void) {
   const char *message =
       "usage:\n"
       "  docling-macos-supervisor run"
-      " --deadline-ms N --sample-ms N"
+      " --deadline-ms N --leader-exit-grace-ms N --sample-ms N"
       " --stdout-max-bytes N --stderr-max-bytes N"
       " --physical-footprint-max-bytes N"
       " --rlimit-as-bytes N --rlimit-cpu-seconds N"
@@ -243,6 +244,7 @@ static bool parse_run_config(int argc, char **argv, run_config *config) {
   config->evidence_fd = -1;
   config->lease_fd = -1;
   bool seen_deadline = false;
+  bool seen_leader_exit_grace = false;
   bool seen_sample = false;
   bool seen_stdout = false;
   bool seen_stderr = false;
@@ -271,6 +273,11 @@ static bool parse_run_config(int argc, char **argv, run_config *config) {
       seen_deadline =
           parse_u64(value, 1, 600000, &config->deadline_ms);
       if (!seen_deadline) return false;
+    } else if (strcmp(argv[index - 1], "--leader-exit-grace-ms") == 0 &&
+               !seen_leader_exit_grace) {
+      seen_leader_exit_grace =
+          parse_u64(value, 0, 5000, &config->leader_exit_grace_ms);
+      if (!seen_leader_exit_grace) return false;
     } else if (strcmp(argv[index - 1], "--sample-ms") == 0 && !seen_sample) {
       seen_sample = parse_u64(value, 1, 1000, &config->sample_ms);
       if (!seen_sample) return false;
@@ -324,7 +331,8 @@ static bool parse_run_config(int argc, char **argv, run_config *config) {
     }
   }
 
-  return seen_deadline && seen_sample && seen_stdout && seen_stderr &&
+  return seen_deadline && seen_leader_exit_grace && seen_sample &&
+         seen_stdout && seen_stderr &&
          seen_footprint && seen_as && seen_cpu && seen_fsize && seen_nofile &&
          seen_evidence && seen_lease && config->command != NULL &&
          config->evidence_fd != config->lease_fd;
@@ -1160,7 +1168,9 @@ static bool emit_evidence(int fd, bool controller_accepted,
       "},"
       "\"limits\":{\"address_space_bytes\":%" PRIu64
       ",\"core_bytes\":0,\"cpu_seconds\":%" PRIu64
-      ",\"deadline_ms\":%" PRIu64 ",\"file_size_bytes\":%" PRIu64
+      ",\"deadline_ms\":%" PRIu64
+      ",\"file_size_bytes\":%" PRIu64
+      ",\"leader_exit_grace_ms\":%" PRIu64
       ",\"nofile\":%" PRIu64 ",\"sample_interval_ms\":%" PRIu64
       ",\"sampled_group_physical_footprint_max_bytes\":%" PRIu64
       ",\"stderr_max_bytes\":%" PRIu64 ",\"stdout_max_bytes\":%" PRIu64
@@ -1183,7 +1193,8 @@ static bool emit_evidence(int fd, bool controller_accepted,
       controller_accepted ? "true" : "false", failure->error_number,
       failure_name(failure->code), exit_code, leader, pgid, signal_code,
       leader_start, config->address_space_bytes, config->cpu_seconds,
-      config->deadline_ms, config->file_size_bytes, config->nofile,
+      config->deadline_ms, config->file_size_bytes,
+      config->leader_exit_grace_ms, config->nofile,
       config->sample_ms, config->physical_footprint_max_bytes,
       config->stderr_max_bytes, config->stdout_max_bytes,
       elapsed_continuous_ns,
@@ -1247,6 +1258,7 @@ static int run_supervisor(const run_config *config) {
   bounded_buffer stderr_buffer = {.limit = config->stderr_max_bytes};
   bool leader_reaped = false;
   bool leader_exited = false;
+  uint64_t leader_exited_ns = 0;
   int leader_status = 0;
   pid_t pgid = -1;
   uint64_t leader_start = 0;
@@ -1424,19 +1436,32 @@ static int run_supervisor(const run_config *config) {
       }
     }
 
-    if (!leader_exited && failure.code == FAILURE_NONE &&
-        !leader_has_exited(leader, &leader_exited)) {
-      if (errno != EINTR) {
-        set_failure(&failure, FAILURE_INTERNAL, errno);
+    bool leader_grace_pending = false;
+    if (!leader_exited && failure.code == FAILURE_NONE) {
+      if (!leader_has_exited(leader, &leader_exited)) {
+        if (errno != EINTR) {
+          set_failure(&failure, FAILURE_INTERNAL, errno);
+        }
+      } else if (leader_exited) {
+        leader_exited_ns = elapsed;
       }
     }
     if (leader_exited && failure.code == FAILURE_NONE && pgid > 0 &&
         group_has_live_descendant(pgid, leader, &failure)) {
-      set_failure(&failure, FAILURE_LIVE_DESCENDANTS, 0);
+      uint64_t grace_ns =
+          config->leader_exit_grace_ms > UINT64_MAX / UINT64_C(1000000)
+              ? UINT64_MAX
+              : config->leader_exit_grace_ms * UINT64_C(1000000);
+      if (elapsed < saturating_add(leader_exited_ns, grace_ns)) {
+        leader_grace_pending = true;
+      } else {
+        set_failure(&failure, FAILURE_LIVE_DESCENDANTS, 0);
+      }
     }
 
     if (!termination_started &&
-        (failure.code != FAILURE_NONE || leader_exited)) {
+        (failure.code != FAILURE_NONE ||
+         (leader_exited && !leader_grace_pending))) {
       /*
        * Keep the leader waitable and unreaped while signalling its process
        * group. Its reserved PID prevents another process from creating a new

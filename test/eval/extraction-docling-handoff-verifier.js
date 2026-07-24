@@ -103,7 +103,7 @@ async function writeSealedAuthority(bytes, runRoot) {
 export async function runDoclingAuthority({ receiptPath, expectedReceiptSha256, protectedRootsJson, action = "verify", additionalArgs = [], input = null, launcherPath = null }) {
   assertCleanNodeStartup();
   if (typeof protectedRootsJson !== "string" || !protectedRootsJson) throw new Error("Out-of-band protected roots JSON is required");
-  if (!new Set(["verify", "setup", "execute", "probe"]).has(action) || !Array.isArray(additionalArgs)) throw new Error("Docling authority launcher action is invalid");
+  if (!new Set(["verify", "setup"]).has(action) || !Array.isArray(additionalArgs)) throw new Error("Docling authority launcher action is invalid");
   const receipt = await readReceiptAnchor(receiptPath, expectedReceiptSha256);
   await verifyBoundFile(SELF, recordByRole(receipt, "handoff_verifier_source"), "Trusted Docling launcher module");
   if (launcherPath !== null) await verifyBoundFile(launcherPath, recordByRole(receipt, "handoff_verifier_cli"), "Trusted Docling launcher CLI");

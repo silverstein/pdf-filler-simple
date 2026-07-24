@@ -43,13 +43,14 @@
             },
             "execution": {
               "type": "object", "additionalProperties": false,
-              "required": ["offline_intent", "network_isolation_enforced", "environment", "authority_command", "adapter_command"],
+              "required": ["offline_intent", "network_isolation_enforced", "environment", "candidate_execution", "adapter_command", "supervisor"],
               "properties": {
                 "offline_intent": { "const": true },
                 "network_isolation_enforced": { "const": false },
                 "environment": { "$ref": "#/$defs/normalized_execution_environment" },
-                "authority_command": { "$ref": "#/$defs/command" },
-                "adapter_command": { "$ref": "#/$defs/command" }
+                "candidate_execution": { "const": "retained_bakeoff_capture_only" },
+                "adapter_command": { "$ref": "#/$defs/command" },
+                "supervisor": { "$ref": "#/$defs/normalized_supervisor" }
               }
             }
           }
@@ -105,13 +106,14 @@
     },
     "execution": {
       "type": "object", "additionalProperties": false,
-      "required": ["offline_intent", "network_isolation_enforced", "environment", "command_template", "adapter_command", "fixture_presentation"],
+      "required": ["offline_intent", "network_isolation_enforced", "environment", "candidate_execution", "adapter_command", "supervisor", "fixture_presentation"],
       "properties": {
         "offline_intent": { "const": true },
         "network_isolation_enforced": { "const": false },
         "environment": { "$ref": "#/$defs/execution_environment" },
-        "command_template": { "$ref": "#/$defs/command" },
+        "candidate_execution": { "const": "retained_bakeoff_capture_only" },
         "adapter_command": { "$ref": "#/$defs/command" },
+        "supervisor": { "$ref": "#/$defs/supervisor" },
         "fixture_presentation": { "type": "string", "minLength": 1, "maxLength": 512 }
       }
     },
@@ -149,13 +151,13 @@
       "type": "object", "additionalProperties": false,
       "required": ["role", "filename", "bytes", "sha256"],
       "properties": {
-        "role": { "enum": ["adapter_entrypoint", "model_setup_helper", "candidate_config", "candidate_config_schema", "candidate_request_schema", "candidate_response_schema", "handoff_schema", "handoff_generator_source", "handoff_verifier_source", "runtime_evidence_source", "handoff_authority", "handoff_verifier_cli", "finalization_schema", "three_process_schema", "direct_requirements"] },
+        "role": { "enum": ["adapter_entrypoint", "model_setup_helper", "candidate_config", "candidate_config_schema", "candidate_request_schema", "candidate_response_schema", "handoff_schema", "handoff_generator_source", "handoff_verifier_source", "runtime_evidence_source", "handoff_authority", "handoff_verifier_cli", "finalization_schema", "supervisor_source", "supervisor_controller", "supervisor_evidence_schema", "supervisor_calibration_attestation", "bakeoff_capture_source", "direct_requirements"] },
         "filename": { "type": "string", "pattern": "^[A-Za-z0-9._-]+$", "maxLength": 255 },
         "bytes": { "type": "integer", "minimum": 1, "maximum": 16777216 },
         "sha256": { "$ref": "#/$defs/sha256" }
       }
     },
-    "input_inventory": { "type": "array", "minItems": 15, "maxItems": 15, "items": { "$ref": "#/$defs/input_record" } },
+    "input_inventory": { "type": "array", "minItems": 19, "maxItems": 19, "items": { "$ref": "#/$defs/input_record" } },
     "fixture_record": {
       "type": "object", "additionalProperties": false,
       "required": ["ordinal", "filename", "bytes", "sha256"],
@@ -195,6 +197,89 @@
         "HOME": { "const": "$AUTHORITY_HOME" }, "TMPDIR": { "const": "$AUTHORITY_TMP" }, "PATH": { "const": "/usr/bin:/bin" }, "LANG": { "const": "C" }, "LC_ALL": { "const": "C" },
         "HF_HOME": { "const": "$HF_CACHE_ROOT" },
         "UV_CACHE_DIR": { "const": "$UV_CACHE_ROOT" }, "UV_PYTHON_INSTALL_DIR": { "const": "$UV_PYTHON_INSTALL_ROOT" }, "PYTHONDONTWRITEBYTECODE": { "const": "1" }
+      }
+    },
+    "supervisor_policy": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocol", "calibration_attestation_sha256", "sample_interval_ms", "leader_exit_grace_ms", "sampled_group_physical_footprint_max_bytes", "address_space_bytes", "cpu_seconds", "file_size_bytes", "nofile"],
+      "properties": {
+        "protocol": { "const": "pdf-tools.docling-macos-supervisor-policy.v1" },
+        "calibration_attestation_sha256": { "const": "8a532eea6c54ebbdc7d1509296efb763a6cda6ca0756b34970cbe8bad934f778" },
+        "sample_interval_ms": { "const": 50 },
+        "leader_exit_grace_ms": { "const": 2000 },
+        "sampled_group_physical_footprint_max_bytes": { "const": 4294967296 },
+        "address_space_bytes": { "const": 1099511627776 },
+        "cpu_seconds": { "const": 120 },
+        "file_size_bytes": { "const": 536870912 },
+        "nofile": { "const": 1024 }
+      }
+    },
+    "supervisor_file_identity": {
+      "type": "object", "additionalProperties": false,
+      "required": ["path", "bytes", "sha256", "mode", "links"],
+      "properties": {
+        "path": { "type": "string", "minLength": 2, "maxLength": 4096 },
+        "bytes": { "type": "integer", "minimum": 1, "maximum": 268435456 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "mode": { "enum": [384, 448, 493] },
+        "links": { "const": 1 }
+      }
+    },
+    "supervisor_build": {
+      "type": "object", "additionalProperties": false,
+      "required": ["protocol", "platform", "source", "compiler", "sdk", "command", "testing", "binary"],
+      "properties": {
+        "protocol": { "const": "pdf-tools.macos-eval-supervisor-build.v1" },
+        "platform": {
+          "type": "object", "additionalProperties": false,
+          "required": ["operating_system", "architecture", "os_build", "kernel_release"],
+          "properties": {
+            "operating_system": { "const": "macos" },
+            "architecture": { "const": "arm64" },
+            "os_build": { "type": "string", "minLength": 1, "maxLength": 128 },
+            "kernel_release": { "type": "string", "minLength": 1, "maxLength": 128 }
+          }
+        },
+        "source": { "$ref": "#/$defs/supervisor_file_identity" },
+        "compiler": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "bytes", "sha256", "mode", "links", "version"],
+          "properties": {
+            "path": { "$ref": "#/$defs/absolute_path" },
+            "bytes": { "type": "integer", "minimum": 1, "maximum": 268435456 },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "mode": { "const": 493 },
+            "links": { "const": 1 },
+            "version": { "type": "string", "minLength": 1, "maxLength": 4096 }
+          }
+        },
+        "sdk": {
+          "type": "object", "additionalProperties": false,
+          "required": ["path", "version"],
+          "properties": {
+            "path": { "type": "string", "minLength": 2, "maxLength": 4096 },
+            "version": { "type": "string", "minLength": 1, "maxLength": 128 }
+          }
+        },
+        "command": { "type": "array", "minItems": 2, "maxItems": 64, "items": { "type": "string", "minLength": 1, "maxLength": 8192 } },
+        "testing": { "const": false },
+        "binary": { "$ref": "#/$defs/supervisor_file_identity" }
+      }
+    },
+    "normalized_supervisor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["policy", "build"],
+      "properties": {
+        "policy": { "$ref": "#/$defs/supervisor_policy" },
+        "build": { "$ref": "#/$defs/supervisor_build" }
+      }
+    },
+    "supervisor": {
+      "type": "object", "additionalProperties": false,
+      "required": ["policy", "build"],
+      "properties": {
+        "policy": { "$ref": "#/$defs/supervisor_policy" },
+        "build": { "$ref": "#/$defs/supervisor_build" }
       }
     }
   }

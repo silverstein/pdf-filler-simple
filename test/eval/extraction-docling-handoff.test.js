@@ -38,7 +38,7 @@ const HOSTILE_UV_VERSIONS = [
 ];
 
 async function temporaryRoot(prefix) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), prefix)));
   roots.push(root);
   await fs.chmod(root, 0o700);
   return root;
@@ -102,6 +102,9 @@ printf '%s\\n' '${shellVersion}'
     fixturePaths,
     testOnlyHost: DARWIN_ARM64,
     testOnlyUv: { path: uvPath, version: uvVersion },
+    testOnlySupervisorBuild: {
+      binaryBytes: Buffer.from("pdf-tools-test-only-supervisor-binary\n"),
+    },
   };
 }
 
@@ -212,11 +215,23 @@ describe("Docling macOS handoff", () => {
     const nodeTool = { path: "/private/node", version: "v24.4.1", bytes: 1, sha256: sha, mode: 0o755, links: 1 };
     const tree = [{ relative_path: "file", type: "file", mode: 0o600, links: 1, bytes: 1, sha256: sha }];
     const rootRecord = { path: "/private/root", real_path: "/private/root", mode: 0o700, links: 1 };
+    const supervisorFile = { path: "/private/supervisor", bytes: 1, sha256: sha, mode: 0o700, links: 1 };
+    const supervisorBuild = {
+      protocol: "pdf-tools.macos-eval-supervisor-build.v1",
+      platform: { operating_system: "macos", architecture: "arm64", os_build: "25G88", kernel_release: "25.6.0" },
+      source: { ...supervisorFile, path: "/private/source.c", mode: 0o600 },
+      compiler: { ...supervisorFile, path: "/private/clang", mode: 0o755, version: "Apple clang version 21.0.0" },
+      sdk: { path: "/private/MacOSX.sdk", version: "26.5" },
+      command: ["/private/clang", "-o", "$OUTPUT", "$SOURCE"],
+      testing: false,
+      binary: supervisorFile,
+    };
     const value = {
       protocol: "pdf-tools.docling-finalization.v1", handoff_id: sha, receipt_sha256: sha,
       platform: { interpreter: "cpython-3.12.13-macos-aarch64-none", operating_system: "macos", architecture: "arm64", os_build: "25G88", kernel_release: "25.6.0", node_version: "v24.4.1" },
       toolchain: { uv: uvTool, node: nodeTool }, lock: { bytes: 0, sha256: sha },
       python: { path: "/private/python", bytes: 1, sha256: sha, version: "Python 3.12.13" },
+      supervisor_build: supervisorBuild,
       installed_distributions: [["docling-slim", "2.114.0"]], model_files: tree, managed_python_files: tree, venv_files: tree,
       root_policy: Object.fromEntries(["uv", "uv_python_install", "models", "runs", "sidecar_snapshot", "authority_home", "authority_tmp", "hf_cache"].map(name => [name, rootRecord])),
       network_isolation_enforced: false, execution_state: "setup_complete_not_executed", finalization_id: sha,
@@ -360,6 +375,12 @@ describe("Docling macOS handoff", () => {
     expect(result.receipt.execution.adapter_command.slice(0, 3)).toEqual([path.join(result.receipt.roots.sidecar_snapshot, "venv/bin/python"), "-I", "-B"]);
     expect(result.receipt.handoff_id).toMatch(/^[a-f0-9]{64}$/);
     expect(result.receipt_sha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(result.receipt.execution.supervisor.policy.calibration_attestation_sha256)
+      .toBe("8a532eea6c54ebbdc7d1509296efb763a6cda6ca0756b34970cbe8bad934f778");
+    expect(result.receipt.inputs).toContainEqual(expect.objectContaining({
+      role: "supervisor_calibration_attestation",
+      sha256: "8a532eea6c54ebbdc7d1509296efb763a6cda6ca0756b34970cbe8bad934f778",
+    }));
     const cleanVerify = runCleanVerify(result);
     expect(cleanVerify.status, cleanVerify.stderr).toBe(0);
     expect(JSON.parse(cleanVerify.stdout)).toMatchObject({ verified: true, handoff_id: result.receipt.handoff_id });
@@ -466,6 +487,20 @@ describe("Docling macOS handoff", () => {
     const inputVerification = runCleanVerify(inputCase.result);
     expect(inputVerification.status).not.toBe(0);
     expect(inputVerification.stderr).toMatch(/input mismatch/i);
+  });
+
+  it("rejects a retained supervisor calibration attestation mutation", async () => {
+    const attestationCase = await mutationCase("calibration-attestation");
+    const attestation = attestationCase.result.receipt.inputs.find(
+      item => item.role === "supervisor_calibration_attestation",
+    );
+    await fs.appendFile(
+      path.join(attestationCase.result.receipt.roots.sidecar_snapshot, attestation.filename),
+      " ",
+    );
+    const verification = runCleanVerify(attestationCase.result);
+    expect(verification.status).not.toBe(0);
+    expect(verification.stderr).toMatch(/input mismatch/i);
   });
 
   it("rejects mismatched authority bytes before executing them", async () => {

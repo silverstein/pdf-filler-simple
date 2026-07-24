@@ -45,7 +45,6 @@ const COMPILE_FLAGS = Object.freeze([
   "-Wconversion",
   "-Wsign-conversion",
   "-mmacosx-version-min=13.0",
-  "-Wl,-no_uuid",
 ]);
 
 export function canonicalJson(value) {
@@ -78,6 +77,33 @@ async function noLinkAncestors(filename) {
     if (parent === cursor) return;
     cursor = parent;
   }
+}
+
+async function privateDirectoryIdentity(filename) {
+  const resolved = path.resolve(filename);
+  if (resolved !== filename) throw new Error("Supervisor cwd must be a canonical absolute path");
+  await noLinkAncestors(filename);
+  const metadata = await fs.lstat(filename, { bigint: true });
+  if (!metadata.isDirectory() || metadata.isSymbolicLink() || metadata.nlink < 1n
+    || Number(metadata.mode & 0o777n) !== 0o700
+    || await fs.realpath(filename) !== filename) {
+    throw new Error("Supervisor cwd must be a real mode-0700 directory");
+  }
+  return Object.freeze({
+    path: filename,
+    dev: String(metadata.dev),
+    ino: String(metadata.ino),
+    mode: Number(metadata.mode & 0o777n),
+    links: Number(metadata.nlink),
+  });
+}
+
+async function verifyPrivateDirectoryIdentity(expected) {
+  const observed = await privateDirectoryIdentity(expected.path);
+  if (canonicalJson(observed) !== canonicalJson(expected)) {
+    throw new Error("Supervisor cwd identity changed during execution");
+  }
+  return observed;
 }
 
 async function stableRegularFile(filename, maximumBytes = MAX_METADATA_BYTES, allowedModes = null) {
@@ -218,8 +244,8 @@ export async function compileDoclingMacosSupervisor({
   const compiler = await fileIdentity(compilerPath, MAX_METADATA_BYTES, [0o755]);
   const buildRoot = await fs.mkdtemp(path.join(outputParent, ".docling-supervisor-build-"));
   await fs.chmod(buildRoot, 0o700);
-  const first = path.join(buildRoot, "supervisor-1");
-  const second = path.join(buildRoot, "supervisor-2");
+  const artifact = path.join(buildRoot, "supervisor");
+  const firstCopy = path.join(buildRoot, "supervisor-first-build");
   const archFlag = architecture === "x64" ? "x86_64" : architecture;
   const compile = destination => [
     ...COMPILE_FLAGS,
@@ -230,8 +256,9 @@ export async function compileDoclingMacosSupervisor({
     source.path,
   ];
   try {
-    for (const destination of [first, second]) {
-      const result = spawnSync(compilerPath, compile(destination), {
+    let firstIdentity;
+    for (let buildNumber = 1; buildNumber <= 2; buildNumber += 1) {
+      const result = spawnSync(compilerPath, compile(artifact), {
         cwd: buildRoot,
         env: compileEnvironment(buildRoot),
         encoding: "utf8",
@@ -241,14 +268,15 @@ export async function compileDoclingMacosSupervisor({
       if (result.error || result.status !== 0 || result.signal !== null || result.stdout !== "") {
         throw new Error(`Supervisor compiler rejected the source: ${(result.stderr || result.error?.message || "unknown").slice(0, 1000)}`);
       }
-      await fs.chmod(destination, 0o700);
+      await fs.chmod(artifact, 0o700);
+      if (buildNumber === 1) {
+        await exclusiveCopy(artifact, firstCopy, 0o700);
+        firstIdentity = await fileIdentity(firstCopy, 4 * 1024 * 1024, [0o700]);
+      }
     }
-    const [firstIdentity, secondIdentity] = await Promise.all([
-      fileIdentity(first, 4 * 1024 * 1024, [0o700]),
-      fileIdentity(second, 4 * 1024 * 1024, [0o700]),
-    ]);
+    const secondIdentity = await fileIdentity(artifact, 4 * 1024 * 1024, [0o700]);
     if (firstIdentity.bytes !== secondIdentity.bytes || firstIdentity.sha256 !== secondIdentity.sha256) {
-      throw new Error("Two isolated native supervisor builds are not byte-reproducible");
+      throw new Error("Two same-path native supervisor builds are not byte-reproducible");
     }
     const [sourceAfter, compilerAfter] = await Promise.all([
       fileIdentity(source.path, 4 * 1024 * 1024, [0o600, 0o644]),
@@ -258,7 +286,7 @@ export async function compileDoclingMacosSupervisor({
       || canonicalJson(compilerAfter) !== canonicalJson(compiler)) {
       throw new Error("Supervisor source or compiler changed during the reproducibility build");
     }
-    await exclusiveCopy(first, outputPath, 0o700);
+    await exclusiveCopy(artifact, outputPath, 0o700);
     const binary = await fileIdentity(outputPath, 4 * 1024 * 1024, [0o700]);
     if (binary.bytes !== firstIdentity.bytes || binary.sha256 !== firstIdentity.sha256) {
       throw new Error("Published supervisor binary differs from its verified build");
@@ -268,7 +296,7 @@ export async function compileDoclingMacosSupervisor({
       if (value === sdkPath) return "$SDKROOT";
       return value;
     });
-    return Object.freeze({
+    const build = {
       protocol: "pdf-tools.macos-eval-supervisor-build.v1",
       platform: Object.freeze({
         operating_system: "macos",
@@ -282,10 +310,103 @@ export async function compileDoclingMacosSupervisor({
       command: Object.freeze([compilerPath, ...normalizedCommand]),
       testing,
       binary: Object.freeze(binary),
+    };
+    return verifyDoclingMacosSupervisorBuild(build, {
+      sourcePath: source.path,
+      binaryPath: outputPath,
+      architecture,
+      testing,
     });
   } finally {
     await fs.rm(buildRoot, { recursive: true, force: false });
   }
+}
+
+export async function verifyDoclingMacosSupervisorBuild(build, {
+  sourcePath,
+  binaryPath,
+  architecture = process.arch,
+  testing = false,
+} = {}) {
+  if (process.platform !== "darwin" || !["arm64", "x64"].includes(architecture)
+    || !exactKeys(build, [
+      "binary", "command", "compiler", "platform", "protocol", "sdk", "source", "testing",
+    ])
+    || build.protocol !== "pdf-tools.macos-eval-supervisor-build.v1"
+    || build.testing !== testing
+    || !exactKeys(build.platform, [
+      "architecture", "kernel_release", "operating_system", "os_build",
+    ])
+    || build.platform.operating_system !== "macos"
+    || build.platform.architecture !== architecture
+    || typeof build.platform.os_build !== "string" || !build.platform.os_build
+    || typeof build.platform.kernel_release !== "string" || !build.platform.kernel_release
+    || !exactKeys(build.source, ["bytes", "links", "mode", "path", "sha256"])
+    || !exactKeys(build.compiler, ["bytes", "links", "mode", "path", "sha256", "version"])
+    || !exactKeys(build.sdk, ["path", "version"])
+    || !exactKeys(build.binary, ["bytes", "links", "mode", "path", "sha256"])
+    || !Array.isArray(build.command) || build.command.length < 2
+    || build.command.some(value => typeof value !== "string" || !value)) {
+    throw new Error("Supervisor build receipt is invalid");
+  }
+  const resolvedSource = path.resolve(sourcePath);
+  const resolvedBinary = path.resolve(binaryPath);
+  if (build.source.path !== resolvedSource || build.binary.path !== resolvedBinary
+    || ![0o600, 0o644].includes(build.source.mode) || build.source.links !== 1
+    || build.binary.mode !== 0o700 || build.binary.links !== 1
+    || build.compiler.mode !== 0o755 || build.compiler.links !== 1
+    || !SHA256.test(build.source.sha256 ?? "")
+    || !SHA256.test(build.compiler.sha256 ?? "")
+    || !SHA256.test(build.binary.sha256 ?? "")) {
+    throw new Error("Supervisor build receipt paths or identities are invalid");
+  }
+  const buildRoot = path.dirname(resolvedBinary);
+  const environment = compileEnvironment(buildRoot);
+  const compilerPath = await fs.realpath(
+    commandOutput("/usr/bin/xcrun", ["--sdk", "macosx", "--find", "clang"], environment),
+  );
+  const sdkPath = await fs.realpath(
+    commandOutput("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-path"], environment),
+  );
+  const compilerVersion = commandOutput(compilerPath, ["--version"], environment);
+  const sdkVersion = commandOutput("/usr/bin/xcrun", ["--sdk", "macosx", "--show-sdk-version"], environment);
+  const expectedCommand = [
+    compilerPath,
+    ...COMPILE_FLAGS,
+    "-arch", architecture === "x64" ? "x86_64" : architecture,
+    "-isysroot", "$SDKROOT",
+    ...(testing ? ["-DPDF_TOOLS_SUPERVISOR_TESTING=1"] : []),
+    "-o", "$OUTPUT",
+    "$SOURCE",
+  ];
+  if (build.compiler.path !== compilerPath
+    || build.compiler.version !== compilerVersion
+    || build.sdk.path !== sdkPath
+    || build.sdk.version !== sdkVersion
+    || canonicalJson(build.command) !== canonicalJson(expectedCommand)
+    || build.platform.os_build !== commandOutput("/usr/bin/sw_vers", ["-buildVersion"], environment)
+    || build.platform.kernel_release !== os.release()) {
+    throw new Error("Supervisor build toolchain differs from its receipt");
+  }
+  const [source, compiler, binary] = await Promise.all([
+    fileIdentity(resolvedSource, 4 * 1024 * 1024, [0o600, 0o644]),
+    fileIdentity(compilerPath, MAX_METADATA_BYTES, [0o755]),
+    fileIdentity(resolvedBinary, 4 * 1024 * 1024, [0o700]),
+  ]);
+  if (canonicalJson(source) !== canonicalJson(build.source)
+    || canonicalJson({ ...compiler, version: compilerVersion }) !== canonicalJson(build.compiler)
+    || canonicalJson(binary) !== canonicalJson(build.binary)) {
+    throw new Error("Supervisor source, compiler, or binary differs from its build receipt");
+  }
+  return Object.freeze({
+    ...build,
+    platform: Object.freeze({ ...build.platform }),
+    source: Object.freeze({ ...build.source }),
+    compiler: Object.freeze({ ...build.compiler }),
+    sdk: Object.freeze({ ...build.sdk }),
+    command: Object.freeze([...build.command]),
+    binary: Object.freeze({ ...build.binary }),
+  });
 }
 
 function parseCanonicalRecord(bytes, label, maximumBytes = MAX_EVIDENCE_BYTES) {
@@ -340,7 +461,7 @@ function validateLeader(value, lease) {
 function validateLimits(value, expected) {
   if (!exactKeys(value, [
     "address_space_bytes", "core_bytes", "cpu_seconds", "deadline_ms",
-    "file_size_bytes", "nofile", "sample_interval_ms",
+    "file_size_bytes", "leader_exit_grace_ms", "nofile", "sample_interval_ms",
     "sampled_group_physical_footprint_max_bytes", "stderr_max_bytes",
     "stdout_max_bytes",
   ]) || value.core_bytes !== 0
@@ -348,6 +469,7 @@ function validateLimits(value, expected) {
     || value.cpu_seconds !== expected.cpuSeconds
     || value.deadline_ms !== expected.deadlineMs
     || value.file_size_bytes !== expected.fileSizeBytes
+    || value.leader_exit_grace_ms !== expected.leaderExitGraceMs
     || value.nofile !== expected.nofile
     || value.sample_interval_ms !== expected.sampleIntervalMs
     || value.sampled_group_physical_footprint_max_bytes !== expected.physicalFootprintMaxBytes
@@ -470,6 +592,7 @@ function waitForClose(child) {
 function validateRunOptions(options) {
   const expected = [
     ["deadlineMs", 1, 600000],
+    ["leaderExitGraceMs", 0, 5000],
     ["sampleIntervalMs", 1, 1000],
     ["stdoutMaxBytes", 1, 16777216],
     ["stderrMaxBytes", 1, 16777216],
@@ -481,6 +604,9 @@ function validateRunOptions(options) {
   ];
   for (const [key, minimum, maximum] of expected) {
     if (!integer(options[key], minimum, maximum)) throw new Error(`Invalid supervisor option: ${key}`);
+  }
+  if (typeof options.cwd !== "string" || path.resolve(options.cwd) !== options.cwd) {
+    throw new Error("Supervisor cwd must be a canonical absolute path");
   }
   if (!Array.isArray(options.command) || options.command.length < 1
     || options.command.length > 512
@@ -503,6 +629,7 @@ function runArguments(options) {
   return [
     "run",
     "--deadline-ms", String(options.deadlineMs),
+    "--leader-exit-grace-ms", String(options.leaderExitGraceMs),
     "--sample-ms", String(options.sampleIntervalMs),
     "--stdout-max-bytes", String(options.stdoutMaxBytes),
     "--stderr-max-bytes", String(options.stderrMaxBytes),
@@ -565,10 +692,12 @@ async function cleanupFromLease({
 async function runSupervisedCandidateCore({
   binaryPath,
   expectedBinary = null,
+  cwd,
   command,
   stdin,
   environment,
   deadlineMs,
+  leaderExitGraceMs,
   sampleIntervalMs,
   stdoutMaxBytes,
   stderrMaxBytes,
@@ -580,12 +709,13 @@ async function runSupervisedCandidateCore({
   testingFault = null,
 }) {
   const options = {
+    cwd: typeof cwd === "string" ? cwd : "",
     command: Array.isArray(command) ? [...command] : command,
     stdin: Buffer.isBuffer(stdin) ? Buffer.from(stdin) : stdin,
     environment: environment && typeof environment === "object" && !Array.isArray(environment)
       ? { ...environment }
       : environment,
-    deadlineMs, sampleIntervalMs, stdoutMaxBytes,
+    deadlineMs, leaderExitGraceMs, sampleIntervalMs, stdoutMaxBytes,
     stderrMaxBytes, physicalFootprintMaxBytes, addressSpaceBytes, cpuSeconds,
     fileSizeBytes, nofile,
   };
@@ -593,12 +723,14 @@ async function runSupervisedCandidateCore({
     ? { ...expectedBinary }
     : expectedBinary;
   validateRunOptions(options);
+  const cwdIdentity = await privateDirectoryIdentity(options.cwd);
   const resolvedBinary = path.resolve(binaryPath);
   const observedBinary = await verifiedBinaryIdentity(resolvedBinary, requiredBinary);
   const childEnvironment = testingFault === null
     ? SUPERVISOR_ENVIRONMENT
     : { ...SUPERVISOR_ENVIRONMENT, PDF_TOOLS_SUPERVISOR_FAULT: testingFault };
   const child = spawn(resolvedBinary, runArguments(options), {
+    cwd: cwdIdentity.path,
     env: childEnvironment,
     shell: false,
     stdio: ["pipe", "pipe", "pipe", "pipe", "pipe"],
@@ -642,6 +774,12 @@ async function runSupervisedCandidateCore({
     await verifiedBinaryIdentity(resolvedBinary, requiredBinary);
   } catch (cause) {
     binaryMutation = cause;
+  }
+  let cwdMutation = null;
+  try {
+    await verifyPrivateDirectoryIdentity(cwdIdentity);
+  } catch (cause) {
+    cwdMutation = cause;
   }
   if (evidenceResult.buffer.length === 0) {
     if (parsedLease === null) {
@@ -728,6 +866,15 @@ async function runSupervisedCandidateCore({
       exit,
     });
   }
+  if (cwdMutation !== null) {
+    throw Object.assign(new Error("Supervisor cwd changed during execution; otherwise complete evidence was rejected", {
+      cause: cwdMutation,
+    }), {
+      code: "SUPERVISOR_CWD_MUTATED",
+      evidence: parsedEvidence,
+      exit,
+    });
+  }
   if (outerFailure !== null) throw outerFailure;
   if (parsedEvidence.controller_accepted
     && parsedEvidence.capture.stdout_retained_bytes !== stdoutResult.buffer.length) {
@@ -742,6 +889,7 @@ async function runSupervisedCandidateCore({
   }
   return Object.freeze({
     binary: Object.freeze(observedBinary),
+    cwd: cwdIdentity,
     lease: parsedLease === null ? null : Object.freeze(parsedLease),
     evidence: Object.freeze(parsedEvidence),
     stdout: stdoutResult.buffer,
