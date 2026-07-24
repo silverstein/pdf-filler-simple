@@ -1,0 +1,309 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/Open-Document-Alliance/PDF-Tools/test/fixtures/eval/extraction/phase1/docling-macos-supervisor-evidence.schema.json",
+  "title": "PDF Tools parent-owned native macOS evaluation supervisor records v1",
+  "oneOf": [
+    { "$ref": "#/$defs/run_evidence" },
+    { "$ref": "#/$defs/lease" },
+    { "$ref": "#/$defs/cleanup" }
+  ],
+  "$defs": {
+    "safe_integer": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9007199254740991
+    },
+    "positive_safe_integer": {
+      "type": "integer",
+      "minimum": 1,
+      "maximum": 9007199254740991
+    },
+    "lease": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "leader_pid",
+        "leader_start_abstime",
+        "process_group_id",
+        "protocol"
+      ],
+      "properties": {
+        "leader_pid": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 2147483647
+        },
+        "leader_start_abstime": { "$ref": "#/$defs/positive_safe_integer" },
+        "process_group_id": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 2147483647
+        },
+        "protocol": {
+          "const": "pdf-tools.macos-eval-supervisor-lease.v1"
+        }
+      }
+    },
+    "capture": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "stderr_limit_exceeded",
+        "stderr_observed_bytes",
+        "stderr_retained_bytes",
+        "stdout_limit_exceeded",
+        "stdout_observed_bytes",
+        "stdout_retained_bytes"
+      ],
+      "properties": {
+        "stderr_limit_exceeded": { "type": "boolean" },
+        "stderr_observed_bytes": { "$ref": "#/$defs/safe_integer" },
+        "stderr_retained_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777216
+        },
+        "stdout_limit_exceeded": { "type": "boolean" },
+        "stdout_observed_bytes": { "$ref": "#/$defs/safe_integer" },
+        "stdout_retained_bytes": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 16777216
+        }
+      }
+    },
+    "leader": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "exit_code",
+        "pid",
+        "process_group_id",
+        "signal",
+        "start_abstime"
+      ],
+      "properties": {
+        "exit_code": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "integer", "minimum": 0, "maximum": 255 }
+          ]
+        },
+        "pid": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 2147483647
+        },
+        "process_group_id": {
+          "type": "integer",
+          "minimum": -1,
+          "maximum": 2147483647
+        },
+        "signal": {
+          "oneOf": [
+            { "type": "null" },
+            { "type": "integer", "minimum": 1, "maximum": 64 }
+          ]
+        },
+        "start_abstime": { "$ref": "#/$defs/safe_integer" }
+      }
+    },
+    "limits": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "address_space_bytes",
+        "core_bytes",
+        "cpu_seconds",
+        "deadline_ms",
+        "file_size_bytes",
+        "nofile",
+        "sample_interval_ms",
+        "sampled_group_physical_footprint_max_bytes",
+        "stderr_max_bytes",
+        "stdout_max_bytes"
+      ],
+      "properties": {
+        "address_space_bytes": {
+          "type": "integer",
+          "minimum": 1073741824,
+          "maximum": 1099511627776
+        },
+        "core_bytes": { "const": 0 },
+        "cpu_seconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 3600
+        },
+        "deadline_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 600000
+        },
+        "file_size_bytes": {
+          "type": "integer",
+          "minimum": 1048576,
+          "maximum": 1073741824
+        },
+        "nofile": {
+          "type": "integer",
+          "minimum": 32,
+          "maximum": 4096
+        },
+        "sample_interval_ms": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 1000
+        },
+        "sampled_group_physical_footprint_max_bytes": {
+          "type": "integer",
+          "minimum": 16777216,
+          "maximum": 549755813888
+        },
+        "stderr_max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        },
+        "stdout_max_bytes": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 16777216
+        }
+      }
+    },
+    "observations": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "elapsed_continuous_ns",
+        "escaped_session_detected",
+        "max_group_members",
+        "max_sampled_group_cpu_ns",
+        "max_sampled_group_physical_footprint_bytes",
+        "max_sampled_group_rss_bytes",
+        "max_sampled_group_virtual_bytes",
+        "observed_process_identity_count",
+        "original_process_group_empty",
+        "sample_count",
+        "sample_race_count"
+      ],
+      "properties": {
+        "elapsed_continuous_ns": { "$ref": "#/$defs/safe_integer" },
+        "escaped_session_detected": { "type": "boolean" },
+        "max_group_members": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4096
+        },
+        "max_sampled_group_cpu_ns": { "$ref": "#/$defs/safe_integer" },
+        "max_sampled_group_physical_footprint_bytes": {
+          "$ref": "#/$defs/safe_integer"
+        },
+        "max_sampled_group_rss_bytes": { "$ref": "#/$defs/safe_integer" },
+        "max_sampled_group_virtual_bytes": {
+          "$ref": "#/$defs/safe_integer"
+        },
+        "observed_process_identity_count": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 8192
+        },
+        "original_process_group_empty": { "type": "boolean" },
+        "sample_count": { "$ref": "#/$defs/safe_integer" },
+        "sample_race_count": { "$ref": "#/$defs/safe_integer" }
+      }
+    },
+    "run_evidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "capture",
+        "child_setup_stage",
+        "claim_boundary",
+        "controller_accepted",
+        "controller_errno",
+        "controller_failure",
+        "leader",
+        "limits",
+        "observations",
+        "protocol"
+      ],
+      "properties": {
+        "capture": { "$ref": "#/$defs/capture" },
+        "child_setup_stage": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 10
+        },
+        "claim_boundary": {
+          "const": "Sampled resource observations and inherited per-process limits only. No zero-overshoot, escaped-session containment, cgroup-equivalent isolation, filesystem isolation, network isolation, or hostile-code safety claim."
+        },
+        "controller_accepted": { "type": "boolean" },
+        "controller_errno": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "controller_failure": {
+          "enum": [
+            "none",
+            "configuration",
+            "child_setup",
+            "exec",
+            "deadline",
+            "stdout_limit",
+            "stderr_limit",
+            "physical_footprint_limit",
+            "enumeration",
+            "pid_reuse",
+            "escaped_session",
+            "live_descendants",
+            "leader_exit",
+            "cleanup",
+            "lease",
+            "internal"
+          ]
+        },
+        "leader": { "$ref": "#/$defs/leader" },
+        "limits": { "$ref": "#/$defs/limits" },
+        "observations": { "$ref": "#/$defs/observations" },
+        "protocol": { "const": "pdf-tools.macos-eval-supervisor.v1" }
+      }
+    },
+    "cleanup": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "claim_boundary",
+        "identity_matched",
+        "leader_pid",
+        "leader_start_abstime",
+        "original_process_group_empty",
+        "process_group_id",
+        "protocol"
+      ],
+      "properties": {
+        "claim_boundary": {
+          "const": "Crash recovery kills only a still-live leader whose PID, process group, and start-time identity match the parent-owned lease. A missing leader leaves containment unproven."
+        },
+        "identity_matched": { "type": "boolean" },
+        "leader_pid": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 2147483647
+        },
+        "leader_start_abstime": { "$ref": "#/$defs/positive_safe_integer" },
+        "original_process_group_empty": { "type": "boolean" },
+        "process_group_id": {
+          "type": "integer",
+          "minimum": 2,
+          "maximum": 2147483647
+        },
+        "protocol": {
+          "const": "pdf-tools.macos-eval-supervisor-cleanup.v1"
+        }
+      }
+    }
+  }
+}
