@@ -673,24 +673,35 @@ describe("held-out campaign isolation and process lifecycle", () => {
     );
     roots.push(root);
     const grandchildPidPath = path.join(root, "grandchild.pid");
+    const grandchildReadyPath = path.join(root, "grandchild.ready");
+    const parentReadyPath = path.join(root, "parent.ready");
     const program = await executableFixture(root, "group-parent.mjs", `
 import { spawn } from "node:child_process";
 import fs from "node:fs";
 process.on("SIGTERM", () => {});
-const grandchild = spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], {
+const grandchild = spawn(process.execPath, ["-e", ${JSON.stringify(
+  `const fs=require("node:fs");process.on("SIGTERM",()=>{});fs.writeFileSync(${JSON.stringify(
+    grandchildReadyPath,
+  )},"ready");setInterval(()=>{},1000);`,
+)}], {
   detached: false,
   stdio: "ignore",
 });
+while (!fs.existsSync(${JSON.stringify(grandchildReadyPath)})) {
+  await new Promise(resolve => setTimeout(resolve, 5));
+}
 fs.writeFileSync(${JSON.stringify(grandchildPidPath)}, String(grandchild.pid));
+fs.writeFileSync(${JSON.stringify(parentReadyPath)}, "ready");
 setInterval(() => {}, 1000);
 `);
+    const timeoutMs = process.platform === "darwin" ? 2_000 : 300;
     const result = await runCaptured(program, [], {
       cwd: root,
       env: process.env,
       stdoutPath: path.join(root, "stdout.txt"),
       stderrPath: path.join(root, "stderr.txt"),
-      timeoutMs: 100,
-      terminationGraceMs: 25,
+      timeoutMs,
+      terminationGraceMs: process.platform === "darwin" ? 100 : 25,
       useProcessGroup: true,
     });
     expect(result).toMatchObject({
@@ -714,10 +725,14 @@ setInterval(() => {}, 1000);
       });
     }
     expect(isCleanProcessResult(result)).toBe(false);
+    expect(await fs.readFile(parentReadyPath, "utf8")).toBe("ready");
+    expect(await fs.readFile(grandchildReadyPath, "utf8")).toBe("ready");
     const grandchildPid = Number(await fs.readFile(grandchildPidPath, "utf8"));
-    expect(() => process.kill(grandchildPid, 0)).toThrow(
-      expect.objectContaining({ code: "ESRCH" }),
-    );
+    for (const pid of [result.pid, grandchildPid]) {
+      expect(() => process.kill(pid, 0)).toThrow(
+        expect.objectContaining({ code: "ESRCH" }),
+      );
+    }
   }, 5000);
 
   it("reaps but rejects a leaked descendant after the direct child exits", async () => {
