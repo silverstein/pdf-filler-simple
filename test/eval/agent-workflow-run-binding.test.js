@@ -14,6 +14,8 @@ import {
 } from "../../scripts/eval-prepare-agent-workflow-campaign.mjs";
 import {
   artifactRecordFromHandle,
+  CAMPAIGN_ISOLATION_SCHEMA_VERSION,
+  campaignTraversalMetadataRoots,
   CODEX_ENVIRONMENT_NAMES,
   codexBaseContextArgs,
   codexEnvironment,
@@ -29,6 +31,7 @@ import {
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
 const roots = [];
+const darwinIt = process.platform === "darwin" ? it : it.skip;
 
 afterEach(async () => {
   await Promise.all(roots.splice(0).map(root =>
@@ -37,6 +40,12 @@ afterEach(async () => {
 
 describe("Codex workflow environment", () => {
   it("binds the platform-effective minimal environment", () => {
+    expect(RUNNER_API_VERSION).toBe(
+      "pdf-tools.agent-workflow-runner.r14-v1",
+    );
+    expect(CAMPAIGN_ISOLATION_SCHEMA_VERSION).toBe(
+      "pdf-tools.agent-workflow-campaign-isolation.v2-r14",
+    );
     const codexHome = path.join(os.tmpdir(), "sealed-codex-home");
     const environment = codexEnvironment(codexHome);
 
@@ -268,10 +277,13 @@ async function preparedRun({
   let isolation = null;
   let lifecycle = null;
   if (heldout) {
+    const controlRoot = `${root}.control`;
+    roots.push(controlRoot);
     const sealedBundleRoot = path.join(root, "sealed-bundle");
-    const receiptControlRoot = path.join(root, "receipt-control");
-    const authSensitiveRoot = path.join(root, "auth-source");
-    const additionalSensitiveRoot = path.join(root, "other-sensitive");
+    const receiptControlRoot = path.join(controlRoot, "receipt-control");
+    const authSensitiveRoot = path.join(controlRoot, "auth-source");
+    const additionalSensitiveRoot = path.join(controlRoot, "other-sensitive");
+    await fs.mkdir(controlRoot, { mode: 0o700 });
     await Promise.all([
       fs.mkdir(sealedBundleRoot, { mode: 0o700 }),
       fs.mkdir(receiptControlRoot, { mode: 0o700 }),
@@ -279,7 +291,7 @@ async function preparedRun({
       fs.mkdir(additionalSensitiveRoot, { mode: 0o700 }),
     ]);
     isolation = {
-      schema_version: "pdf-tools.agent-workflow-campaign-isolation.v1",
+      schema_version: CAMPAIGN_ISOLATION_SCHEMA_VERSION,
       denied_roots: {
         operator_home: await fs.realpath(os.userInfo().homedir),
         campaign_evidence_control_root: root,
@@ -370,15 +382,18 @@ async function preparedHeldoutRunnerRun() {
     await fs.mkdtemp(path.join(os.tmpdir(), "pdf-workflow-heldout-runner-")),
   );
   roots.push(root);
+  const controlRoot = `${root}.control`;
+  roots.push(controlRoot);
   const caseId = "source-runner-isolation";
   const caseRoot = path.join(root, "case");
   const resultsRoot = path.join(root, "results");
   const codexHome = path.join(root, "codex-home");
   const promptCaptureHome = path.join(root, "prompt-capture-home");
   const sealedBundleRoot = path.join(root, "sealed-bundle");
-  const receiptControlRoot = path.join(root, "receipt-control");
-  const authSensitiveRoot = path.join(root, "auth-source");
-  const additionalSensitiveRoot = path.join(root, "other-sensitive");
+  const receiptControlRoot = path.join(controlRoot, "receipt-control");
+  const authSensitiveRoot = path.join(controlRoot, "auth-source");
+  const additionalSensitiveRoot = path.join(controlRoot, "other-sensitive");
+  await fs.mkdir(controlRoot, { mode: 0o700 });
   await Promise.all([
     fs.mkdir(caseRoot, { mode: 0o700 }),
     fs.mkdir(codexHome, { mode: 0o700 }),
@@ -429,7 +444,7 @@ async function preparedHeldoutRunnerRun() {
     fakeSandbox(root),
   ]);
   const isolation = {
-    schema_version: "pdf-tools.agent-workflow-campaign-isolation.v1",
+    schema_version: CAMPAIGN_ISOLATION_SCHEMA_VERSION,
     denied_roots: {
       operator_home: await fs.realpath(os.userInfo().homedir),
       campaign_evidence_control_root: root,
@@ -498,6 +513,20 @@ async function preparedHeldoutRunnerRun() {
 }
 
 describe("held-out campaign isolation and process lifecycle", () => {
+  it("derives only the two production traversal ancestors", () => {
+    const outputRoot = "/private/var/tmp/oda-r14-canary";
+    const runRoot = path.join(outputRoot, "run");
+    expect(campaignTraversalMetadataRoots({
+      campaignEvidenceControlRoot: outputRoot,
+      allowedRoots: [
+        path.join(runRoot, "case"),
+        path.join(runRoot, "results"),
+        path.join(runRoot, "codex-home"),
+        path.join(runRoot, "prompt-capture-home"),
+      ],
+    })).toEqual([outputRoot, runRoot]);
+  });
+
   it("orders the Seatbelt boundary and never places the held-out prompt in argv or receipts", async () => {
     const run = await preparedHeldoutRunnerRun();
     const launchPlan = JSON.parse(await fs.readFile(
@@ -515,14 +544,26 @@ describe("held-out campaign isolation and process lifecycle", () => {
     const caseAllow = profile.indexOf(
       `(allow file-read* (subpath "${path.join(run.root, "case")}"))`,
     );
+    const traversalAllow = profile.indexOf(
+      `(allow file-read-metadata (literal "${run.root}"))`,
+    );
     const receiptDeny = profile.indexOf(
-      `(deny file-read* (subpath "${path.join(run.root, "receipt-control")}"))`,
+      `(deny file-read* (subpath "${path.join(
+        `${run.root}.control`,
+        "receipt-control",
+      )}"))`,
     );
     expect(campaignDeny).toBeGreaterThan(-1);
+    expect(traversalAllow).toBeGreaterThan(campaignDeny);
     expect(caseAllow).toBeGreaterThan(campaignDeny);
+    expect(caseAllow).toBeGreaterThan(traversalAllow);
     expect(receiptDeny).toBeGreaterThan(caseAllow);
+    expect(launchPlan.isolation.campaign.metadata_allowed_roots).toEqual([
+      run.root,
+    ]);
     expect(launchPlan.isolation.campaign.ordered_rule_classes).toEqual([
       "broad_deny",
+      "current_attempt_traversal_allow",
       "current_attempt_allow",
       "protected_deny",
     ]);
@@ -582,17 +623,166 @@ describe("held-out campaign isolation and process lifecycle", () => {
     }
   }, 15000);
 
+  darwinIt("allows exact runtime-root traversal without exposing broad or sibling data", async () => {
+    const outputRoot = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "pdf-workflow-r14-seatbelt-")),
+    );
+    roots.push(outputRoot);
+    const controlRoot = `${outputRoot}.control`;
+    roots.push(controlRoot);
+    const runRoot = path.join(outputRoot, "run");
+    const allowedRoots = [
+      path.join(runRoot, "case"),
+      path.join(runRoot, "results"),
+      path.join(runRoot, "codex-home"),
+      path.join(runRoot, "prompt-capture-home"),
+    ];
+    const siblingRoot = path.join(runRoot, "future-attempt");
+    const protectedRoot = path.join(controlRoot, "receipts");
+    await fs.mkdir(controlRoot, { mode: 0o700 });
+    await fs.mkdir(runRoot, { mode: 0o700 });
+    await Promise.all([
+      ...allowedRoots.map(root => fs.mkdir(root, { mode: 0o700 })),
+      fs.mkdir(siblingRoot, { mode: 0o700 }),
+      fs.mkdir(protectedRoot, { mode: 0o700 }),
+    ]);
+    const broadSentinel = path.join(outputRoot, "broad-sentinel.txt");
+    const siblingSentinel = path.join(siblingRoot, "sibling-sentinel.txt");
+    const protectedSentinel = path.join(
+      protectedRoot,
+      "protected-sentinel.txt",
+    );
+    const deniedCreatePath = path.join(
+      siblingRoot,
+      ".r14-denied-create",
+    );
+    await Promise.all([
+      fs.writeFile(broadSentinel, "broad", { mode: 0o600 }),
+      fs.writeFile(siblingSentinel, "sibling", { mode: 0o600 }),
+      fs.writeFile(protectedSentinel, "protected", { mode: 0o600 }),
+    ]);
+    const profile = codexSandboxProfile({
+      broadDeniedRoots: [outputRoot],
+      metadataAllowedRoots: campaignTraversalMetadataRoots({
+        campaignEvidenceControlRoot: outputRoot,
+        allowedRoots,
+      }),
+      allowedRoots,
+      protectedDeniedRoots: [protectedRoot],
+    });
+    const allowedScript = [
+      "const fs=require('node:fs');",
+      "const path=require('node:path');",
+      "for(const root of JSON.parse(process.argv[1])){",
+      " if(fs.realpathSync(root)!==root)throw new Error('noncanonical');",
+      " const fd=fs.openSync(root,fs.constants.O_RDONLY",
+      "  |fs.constants.O_DIRECTORY|fs.constants.O_NOFOLLOW);",
+      " fs.closeSync(fd);fs.readdirSync(root);",
+      " const f=path.join(root,'.r14-runtime-probe');",
+      " fs.writeFileSync(f,'r14',{flag:'wx',mode:0o600});",
+      " if(fs.readFileSync(f,'utf8')!=='r14')throw new Error('readback');",
+      " fs.unlinkSync(f);",
+      "}",
+      "process.stdout.write('allowed');",
+    ].join("");
+    expect(execFileSync(
+      "/usr/bin/sandbox-exec",
+      [
+        "-p",
+        profile,
+        process.execPath,
+        "-e",
+        allowedScript,
+        JSON.stringify(allowedRoots),
+      ],
+      { encoding: "utf8" },
+    )).toBe("allowed");
+
+    const operationScript = [
+      "const fs=require('node:fs');",
+      "const path=require('node:path');",
+      "const op=process.argv[1],target=process.argv[2];",
+      "try{",
+      " if(op==='realpath')fs.realpathSync(target);",
+      " else if(op==='readdir')fs.readdirSync(target);",
+      " else if(op==='read')fs.readFileSync(target);",
+      " else if(op==='write'){const fd=fs.openSync(target,",
+      "  fs.constants.O_WRONLY|fs.constants.O_NOFOLLOW);fs.closeSync(fd);}",
+      " else if(op==='create'){const f=path.join(target,'.r14-denied-create');",
+      "  fs.writeFileSync(f,'created',{flag:'wx',mode:0o600});fs.unlinkSync(f);}",
+      " else throw new Error('unknown operation');",
+      " process.stdout.write(JSON.stringify({ok:true,code:null}));",
+      "}catch(e){process.stdout.write(JSON.stringify({ok:false,code:e.code||null}));}",
+    ].join("");
+    const deniedTargets = [
+      { op: "readdir", path: outputRoot },
+      { op: "readdir", path: runRoot },
+      { op: "realpath", path: siblingRoot },
+      { op: "read", path: broadSentinel },
+      { op: "write", path: broadSentinel },
+      { op: "read", path: siblingSentinel },
+      { op: "write", path: siblingSentinel },
+      { op: "create", path: siblingRoot },
+      { op: "realpath", path: protectedRoot },
+      { op: "read", path: protectedSentinel },
+      { op: "write", path: protectedSentinel },
+    ];
+    for (const target of deniedTargets) {
+      expect(JSON.parse(execFileSync(
+        process.execPath,
+        ["-e", operationScript, target.op, target.path],
+        { encoding: "utf8" },
+      ))).toEqual({ ok: true, code: null });
+      const sandboxed = JSON.parse(execFileSync(
+        "/usr/bin/sandbox-exec",
+        [
+          "-p",
+          profile,
+          process.execPath,
+          "-e",
+          operationScript,
+          target.op,
+          target.path,
+        ],
+        { encoding: "utf8" },
+      ));
+      expect(sandboxed.ok).toBe(false);
+      expect(["EACCES", "EPERM"]).toContain(sandboxed.code);
+    }
+    await expect(fs.readFile(broadSentinel, "utf8")).resolves.toBe("broad");
+    await expect(fs.readFile(siblingSentinel, "utf8")).resolves.toBe(
+      "sibling",
+    );
+    await expect(fs.readFile(protectedSentinel, "utf8")).resolves.toBe(
+      "protected",
+    );
+    await expect(fs.stat(deniedCreatePath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }, 15000);
+
   it("rejects malformed isolation and injected base-context material before inference", async () => {
     const profile = codexSandboxProfile({
       broadDeniedRoots: ["/private/campaign"],
-      allowedRoots: ["/private/campaign/current"],
-      protectedDeniedRoots: ["/private/campaign/receipts"],
+      metadataAllowedRoots: [
+        "/private/campaign",
+        "/private/campaign/run",
+      ],
+      allowedRoots: ["/private/campaign/run/current"],
+      protectedDeniedRoots: ["/private/campaign.control/receipts"],
     });
-    expect(profile.indexOf("/private/campaign/current")).toBeGreaterThan(
-      profile.indexOf("/private/campaign"),
+    expect(profile.indexOf(
+      `(allow file-read-metadata (literal "/private/campaign"))`,
+    )).toBeGreaterThan(profile.indexOf(
+      `(deny file-write* (subpath "/private/campaign"))`,
+    ));
+    expect(profile.indexOf("/private/campaign/run/current")).toBeGreaterThan(
+      profile.indexOf(
+        `(allow file-read-metadata (literal "/private/campaign/run"))`,
+      ),
     );
-    expect(profile.indexOf("/private/campaign/receipts")).toBeGreaterThan(
-      profile.indexOf("/private/campaign/current"),
+    expect(profile.indexOf("/private/campaign.control/receipts")).toBeGreaterThan(
+      profile.indexOf("/private/campaign/run/current"),
     );
     const caseRoot = "/private/campaign/current/case";
     const exactCapture = [

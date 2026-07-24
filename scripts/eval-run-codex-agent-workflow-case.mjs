@@ -85,7 +85,9 @@ const MAX_PROCESS_TIMEOUT_MS = 15 * 60_000;
 const MAX_TERMINATION_GRACE_MS = 30_000;
 export const PRIVATE_CREATION_UMASK = 0o077;
 export const PRIVATE_EVIDENCE_MODE = 0o600;
-export const RUNNER_API_VERSION = "pdf-tools.agent-workflow-runner.r13-v1";
+export const RUNNER_API_VERSION = "pdf-tools.agent-workflow-runner.r14-v1";
+export const CAMPAIGN_ISOLATION_SCHEMA_VERSION =
+  "pdf-tools.agent-workflow-campaign-isolation.v2-r14";
 let runnerInvocationActive = false;
 export const CODEX_ENVIRONMENT_NAMES = [
   ...CODEX_BASE_ENVIRONMENT_NAMES,
@@ -193,6 +195,10 @@ function seatbeltSubpathRule(action, operations, root) {
   return `(${action} ${operations} (subpath ${sandboxString(root)}))`;
 }
 
+function seatbeltLiteralRule(action, operations, root) {
+  return `(${action} ${operations} (literal ${sandboxString(root)}))`;
+}
+
 export function codexSandboxProfile(configuration) {
   if (typeof configuration === "string") {
     return [
@@ -204,11 +210,13 @@ export function codexSandboxProfile(configuration) {
   }
   const {
     broadDeniedRoots,
+    metadataAllowedRoots = [],
     allowedRoots,
     protectedDeniedRoots,
   } = configuration ?? {};
   for (const [label, roots] of Object.entries({
     broadDeniedRoots,
+    metadataAllowedRoots,
     allowedRoots,
     protectedDeniedRoots,
   })) {
@@ -220,6 +228,24 @@ export function codexSandboxProfile(configuration) {
       throw new Error(`${label} must contain unique absolute paths`);
     }
   }
+  for (const metadataRoot of metadataAllowedRoots) {
+    const traversesAllowedRoot = allowedRoots.some(allowedRoot =>
+      metadataRoot !== allowedRoot && pathInside(metadataRoot, allowedRoot));
+    const staysInsideBroadBoundary = broadDeniedRoots.some(broadRoot =>
+      pathInside(broadRoot, metadataRoot));
+    const overlapsProtectedRoot = protectedDeniedRoots.some(protectedRoot =>
+      pathInside(protectedRoot, metadataRoot)
+      || pathInside(metadataRoot, protectedRoot));
+    if (
+      !traversesAllowedRoot
+      || !staysInsideBroadBoundary
+      || overlapsProtectedRoot
+    ) {
+      throw new Error(
+        "metadataAllowedRoots must be broad-boundary ancestors of allowed roots",
+      );
+    }
+  }
   return [
     "(version 1)",
     "(allow default)",
@@ -227,6 +253,8 @@ export function codexSandboxProfile(configuration) {
       seatbeltSubpathRule("deny", "file-read*", root),
       seatbeltSubpathRule("deny", "file-write*", root),
     ]),
+    ...metadataAllowedRoots.map(root =>
+      seatbeltLiteralRule("allow", "file-read-metadata", root)),
     ...allowedRoots.flatMap(root => [
       seatbeltSubpathRule("allow", "file-read*", root),
       seatbeltSubpathRule("allow", "file-write*", root),
@@ -444,6 +472,45 @@ function sortSeatbeltRoots(roots) {
   });
 }
 
+export function campaignTraversalMetadataRoots({
+  campaignEvidenceControlRoot,
+  allowedRoots,
+}) {
+  if (
+    typeof campaignEvidenceControlRoot !== "string"
+    || !path.isAbsolute(campaignEvidenceControlRoot)
+    || !Array.isArray(allowedRoots)
+    || allowedRoots.length === 0
+    || allowedRoots.some(root =>
+      typeof root !== "string" || !path.isAbsolute(root))
+  ) {
+    throw new Error("campaign traversal roots require absolute paths");
+  }
+  const metadataAllowedRoots = sortSeatbeltRoots([
+    ...new Set(allowedRoots.flatMap(root => {
+      const ancestors = [];
+      let current = path.dirname(root);
+      while (pathInside(campaignEvidenceControlRoot, current)) {
+        ancestors.push(current);
+        if (current === campaignEvidenceControlRoot) break;
+        current = path.dirname(current);
+      }
+      return ancestors;
+    })),
+  ]);
+  if (
+    !metadataAllowedRoots.includes(campaignEvidenceControlRoot)
+    || allowedRoots.some(root =>
+      !pathInside(campaignEvidenceControlRoot, root)
+      || root === campaignEvidenceControlRoot)
+  ) {
+    throw new Error(
+      "current attempt roots must traverse the campaign evidence root",
+    );
+  }
+  return metadataAllowedRoots;
+}
+
 async function campaignSandboxProfile({
   isolation,
   caseRoot,
@@ -461,8 +528,7 @@ async function campaignSandboxProfile({
   if (
     canonicalJson(Object.keys(isolation).sort())
       !== canonicalJson(["denied_roots", "schema_version"])
-    || isolation.schema_version
-      !== "pdf-tools.agent-workflow-campaign-isolation.v1"
+    || isolation.schema_version !== CAMPAIGN_ISOLATION_SCHEMA_VERSION
     || !isolation.denied_roots
     || typeof isolation.denied_roots !== "object"
     || Array.isArray(isolation.denied_roots)
@@ -572,14 +638,21 @@ async function campaignSandboxProfile({
     }
   }
   const sortedBroadDeniedRoots = sortSeatbeltRoots(broadDeniedRoots);
+  const metadataAllowedRoots = campaignTraversalMetadataRoots({
+    campaignEvidenceControlRoot:
+      deniedRoots.campaign_evidence_control_root,
+    allowedRoots,
+  });
   const sortedAllowedRoots = sortSeatbeltRoots(allowedRoots);
   const sortedProtectedDeniedRoots = sortSeatbeltRoots(protectedDeniedRoots);
   return {
     broad_denied_roots: sortedBroadDeniedRoots,
+    metadata_allowed_roots: metadataAllowedRoots,
     allowed_roots: sortedAllowedRoots,
     protected_denied_roots: sortedProtectedDeniedRoots,
     profile: codexSandboxProfile({
       broadDeniedRoots: sortedBroadDeniedRoots,
+      metadataAllowedRoots,
       allowedRoots: sortedAllowedRoots,
       protectedDeniedRoots: sortedProtectedDeniedRoots,
     }),
@@ -1373,10 +1446,12 @@ async function runCodexAgentWorkflowCasePrivate(options) {
         : {
           schema_version: isolation.schema_version,
           broad_denied_roots: campaignSandbox.broad_denied_roots,
+          metadata_allowed_roots: campaignSandbox.metadata_allowed_roots,
           allowed_roots: campaignSandbox.allowed_roots,
           protected_denied_roots: campaignSandbox.protected_denied_roots,
           ordered_rule_classes: [
             "broad_deny",
+            "current_attempt_traversal_allow",
             "current_attempt_allow",
             "protected_deny",
           ],
