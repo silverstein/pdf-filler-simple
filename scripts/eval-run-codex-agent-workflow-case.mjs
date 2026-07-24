@@ -79,6 +79,9 @@ const CODEX_BASE_ENVIRONMENT_NAMES = [
 const MACOS_EFFECTIVE_ENVIRONMENT_NAMES = [
   "__CF_USER_TEXT_ENCODING",
 ];
+export const PRIVATE_CREATION_UMASK = 0o077;
+export const PRIVATE_EVIDENCE_MODE = 0o600;
+let runnerInvocationActive = false;
 export const CODEX_ENVIRONMENT_NAMES = [
   ...CODEX_BASE_ENVIRONMENT_NAMES,
   ...(process.platform === "darwin" ? MACOS_EFFECTIVE_ENVIRONMENT_NAMES : []),
@@ -190,23 +193,46 @@ async function writeExclusive(filename, value) {
   try {
     await handle.writeFile(value);
     await handle.sync();
-    return await artifactRecordFromHandle(handle);
+    return await artifactRecordFromHandle(handle, { filename });
   } finally {
     await handle.close();
   }
 }
 
-async function artifactRecordFromHandle(handle, {
+function sameFileIdentity(left, right) {
+  return left.dev === right.dev
+    && left.ino === right.ino
+    && left.mode === right.mode
+    && left.nlink === right.nlink
+    && left.size === right.size
+    && left.ctimeMs === right.ctimeMs
+    && left.mtimeMs === right.mtimeMs;
+}
+
+export async function artifactRecordFromHandle(handle, {
+  filename = null,
   requirePrivate = true,
   requireSingleLink = true,
 } = {}) {
   const stat = await handle.stat();
+  if (filename !== null) {
+    const initialPathStat = await fs.lstat(filename);
+    if (
+      initialPathStat.isSymbolicLink()
+      || !initialPathStat.isFile()
+      || !sameFileIdentity(stat, initialPathStat)
+    ) {
+      throw new Error("evidence path identity differs from the opened handle");
+    }
+  }
   if (
     !stat.isFile()
     || (requireSingleLink && stat.nlink !== 1)
-    || (requirePrivate && (stat.mode & 0o077) !== 0)
+    || (requirePrivate && (stat.mode & 0o777) !== PRIVATE_EVIDENCE_MODE)
   ) {
-    throw new Error("evidence artifact must be a private single-link regular file");
+    throw new Error(
+      "evidence artifact must be a mode-0600 single-link regular file",
+    );
   }
   const hash = createHash("sha256");
   const buffer = Buffer.allocUnsafe(64 * 1024);
@@ -222,14 +248,67 @@ async function artifactRecordFromHandle(handle, {
     hash.update(buffer.subarray(0, bytesRead));
     position += bytesRead;
   }
+  const finalStat = await handle.stat();
+  if (!sameFileIdentity(stat, finalStat)) {
+    throw new Error("evidence artifact changed while being hashed");
+  }
+  let symbolicLink = false;
+  if (filename !== null) {
+    const pathStat = await fs.lstat(filename);
+    symbolicLink = pathStat.isSymbolicLink();
+    if (
+      symbolicLink
+      || !pathStat.isFile()
+      || !sameFileIdentity(finalStat, pathStat)
+    ) {
+      throw new Error("evidence path identity differs from the opened handle");
+    }
+  }
   return {
-    bytes: stat.size,
+    bytes: finalStat.size,
     sha256: hash.digest("hex"),
-    mode: stat.mode & 0o777,
-    nlink: stat.nlink,
-    device: stat.dev,
-    inode: stat.ino,
+    mode: finalStat.mode & 0o777,
+    nlink: finalStat.nlink,
+    device: finalStat.dev,
+    inode: finalStat.ino,
+    ctime_ms: finalStat.ctimeMs,
+    mtime_ms: finalStat.mtimeMs,
+    file_type: "regular",
+    symbolic_link: symbolicLink,
   };
+}
+
+export async function inspectPrivateEvidenceFile(filename) {
+  const handle = await fs.open(
+    filename,
+    fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+  );
+  try {
+    return await artifactRecordFromHandle(handle, { filename });
+  } finally {
+    await handle.close();
+  }
+}
+
+export async function withPrivateRunnerUmask(callback) {
+  if (runnerInvocationActive) {
+    throw new Error("concurrent workflow runner invocation is forbidden");
+  }
+  runnerInvocationActive = true;
+  let previousUmask;
+  try {
+    previousUmask = process.umask(PRIVATE_CREATION_UMASK);
+    if (process.umask() !== PRIVATE_CREATION_UMASK) {
+      throw new Error("workflow runner failed to install private creation umask");
+    }
+    return await callback();
+  } finally {
+    try {
+      if (previousUmask !== undefined) process.umask(previousUmask);
+    } finally {
+      runnerInvocationActive = false;
+    }
+  }
 }
 
 async function executableIdentity(filename) {
@@ -250,6 +329,7 @@ async function executableIdentity(filename) {
     return {
       canonical_path: canonicalPath,
       ...await artifactRecordFromHandle(handle, {
+        filename: canonicalPath,
         requirePrivate: false,
         requireSingleLink: false,
       }),
@@ -265,7 +345,7 @@ async function privateFileIdentity(filename) {
     fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
   );
   try {
-    return await artifactRecordFromHandle(handle);
+    return await artifactRecordFromHandle(handle, { filename });
   } finally {
     await handle.close();
   }
@@ -298,8 +378,12 @@ async function runCaptured(program, args, {
     await Promise.all([stdout.sync(), stderr.sync()]);
     return {
       ...result,
-      stdout_artifact: await artifactRecordFromHandle(stdout),
-      stderr_artifact: await artifactRecordFromHandle(stderr),
+      stdout_artifact: await artifactRecordFromHandle(stdout, {
+        filename: stdoutPath,
+      }),
+      stderr_artifact: await artifactRecordFromHandle(stderr, {
+        filename: stderrPath,
+      }),
     };
   } finally {
     await Promise.all([stdout.close(), stderr.close()]);
@@ -339,7 +423,7 @@ async function exactDirectoryEntries(root) {
   return (await fs.readdir(root)).sort();
 }
 
-export async function runCodexAgentWorkflowCase(options) {
+async function runCodexAgentWorkflowCasePrivate(options) {
   const {
     arm,
     caseId,
@@ -545,6 +629,10 @@ export async function runCodexAgentWorkflowCase(options) {
     executableIdentity(sandboxBinary),
   ]);
   const responsePath = path.join(resultsRoot, "response.json");
+  const precreatedResponseArtifact = await writeExclusive(
+    responsePath,
+    Buffer.alloc(0),
+  );
   const deniedUserHome = os.userInfo().homedir;
   const sandboxProfile = codexSandboxProfile(deniedUserHome);
   const codexArgs = codexExecArgs({ model, responsePath });
@@ -600,6 +688,8 @@ export async function runCodexAgentWorkflowCase(options) {
     launcher_sha256: sha256(launcherBytes),
     isolation: {
       process_home_inherited: false,
+      private_creation_umask: PRIVATE_CREATION_UMASK,
+      response_precreated_mode: PRIVATE_EVIDENCE_MODE,
       denied_user_home: deniedUserHome,
       sandbox_program: sandboxBinary,
       sandbox_profile: sandboxProfile,
@@ -619,6 +709,9 @@ export async function runCodexAgentWorkflowCase(options) {
         CODEX_HOME: codexHome,
         feature_denies: FEATURE_DENIES,
       },
+    },
+    pre_inference_artifacts: {
+      "response.json": precreatedResponseArtifact,
     },
   };
   const launchPlanArtifact = await writeExclusive(
@@ -647,6 +740,15 @@ export async function runCodexAgentWorkflowCase(options) {
     `${JSON.stringify(preAttestation, null, 2)}\n`,
   );
   if (!preAttestation.pass) throw new Error("pre-run case attestation failed");
+  const preInferenceResponseArtifact = await inspectPrivateEvidenceFile(
+    responsePath,
+  );
+  if (
+    canonicalJson(preInferenceResponseArtifact)
+      !== canonicalJson(precreatedResponseArtifact)
+  ) {
+    throw new Error("precreated response.json changed before inference");
+  }
   if (typeof onPreInferenceReady === "function") {
     await onPreInferenceReady({
       schema_version: "pdf-tools.agent-workflow-pre-inference-ready.v1",
@@ -687,6 +789,7 @@ export async function runCodexAgentWorkflowCase(options) {
         },
       },
       artifacts: {
+        "response.json": preInferenceResponseArtifact,
         "launch-plan.json": launchPlanArtifact,
         "prompt-input.json": promptInputResult.stdout_artifact,
         "prompt-input.stderr.txt": promptInputResult.stderr_artifact,
@@ -696,6 +799,15 @@ export async function runCodexAgentWorkflowCase(options) {
   }
 
   const startedAt = new Date().toISOString();
+  const launchResponseArtifact = await inspectPrivateEvidenceFile(responsePath);
+  if (
+    canonicalJson(launchResponseArtifact)
+      !== canonicalJson(precreatedResponseArtifact)
+  ) {
+    throw new Error(
+      "precreated response.json changed after pre-inference hook",
+    );
+  }
   const processResult = await runCaptured(sandboxBinary, execArgs, {
     cwd: caseRoot,
     env: environment,
@@ -720,6 +832,8 @@ export async function runCodexAgentWorkflowCase(options) {
     nlink: null,
     device: null,
     inode: null,
+    file_type: null,
+    symbolic_link: null,
   };
   try {
     const responseHandle = await fs.open(
@@ -727,10 +841,11 @@ export async function runCodexAgentWorkflowCase(options) {
       fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
     );
     try {
-      await responseHandle.chmod(0o600);
       responseArtifact = {
         present: true,
-        ...await artifactRecordFromHandle(responseHandle),
+        ...await artifactRecordFromHandle(responseHandle, {
+          filename: responsePath,
+        }),
       };
     } finally {
       await responseHandle.close();
@@ -808,6 +923,12 @@ export async function runCodexAgentWorkflowCase(options) {
   }
   if (!postAttestation.pass) throw new Error("post-run case attestation failed");
   return launchOutcome;
+}
+
+export async function runCodexAgentWorkflowCase(options) {
+  return withPrivateRunnerUmask(
+    () => runCodexAgentWorkflowCasePrivate(options),
+  );
 }
 
 function parseArgs(argv) {

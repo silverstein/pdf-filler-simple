@@ -11,9 +11,12 @@ import {
   prepareAgentWorkflowCampaign,
 } from "../../scripts/eval-prepare-agent-workflow-campaign.mjs";
 import {
+  artifactRecordFromHandle,
   CODEX_ENVIRONMENT_NAMES,
   codexEnvironment,
+  PRIVATE_CREATION_UMASK,
   runCodexAgentWorkflowCase,
+  withPrivateRunnerUmask,
 } from "../../scripts/eval-run-codex-agent-workflow-case.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
@@ -57,8 +60,9 @@ describe("Codex workflow environment", () => {
   });
 });
 
-async function fakeCodex(root) {
+async function fakeCodex(root, writeStyle = "direct") {
   const filename = path.join(root, "fake-codex.mjs");
+  const invocationPath = path.join(root, "fake-codex-invocations.txt");
   await fs.writeFile(filename, `#!${process.execPath}
 import fs from "node:fs";
 import path from "node:path";
@@ -67,6 +71,11 @@ const args = process.argv.slice(2);
 if (args[0] === "--version") {
   process.stdout.write("codex-cli synthetic\\n");
 } else if (args[0] === "exec") {
+  const invocationPath = ${JSON.stringify(invocationPath)};
+  const prior = fs.existsSync(invocationPath)
+    ? Number.parseInt(fs.readFileSync(invocationPath, "utf8"), 10)
+    : 0;
+  fs.writeFileSync(invocationPath, String(prior + 1));
   let prompt = "";
   process.stdin.setEncoding("utf8");
   for await (const chunk of process.stdin) prompt += chunk;
@@ -74,7 +83,28 @@ if (args[0] === "--version") {
   const response = { case_id: caseId };
   const output = args[args.indexOf("--output-last-message") + 1];
   const identity = path.basename(process.cwd()).replace(/[^a-zA-Z0-9_]/g, "_");
-  fs.writeFileSync(output, JSON.stringify(response));
+  const body = JSON.stringify(response);
+  const writeStyle = ${JSON.stringify(writeStyle)};
+  if (writeStyle === "rename") {
+    const temporary = output + ".replacement";
+    fs.writeFileSync(temporary, body);
+    fs.renameSync(temporary, output);
+  } else if (writeStyle === "unsafe-mode") {
+    fs.writeFileSync(output, body);
+    fs.chmodSync(output, 0o644);
+  } else if (writeStyle === "symlink") {
+    const target = output + ".target";
+    fs.writeFileSync(target, body);
+    fs.unlinkSync(output);
+    fs.symlinkSync(target, output);
+  } else if (writeStyle === "hardlink") {
+    const target = output + ".target";
+    fs.writeFileSync(target, body);
+    fs.unlinkSync(output);
+    fs.linkSync(target, output);
+  } else {
+    fs.writeFileSync(output, body);
+  }
   const events = [
     { type: "thread.started", thread_id: \`thread_\${identity}\` },
     { type: "turn.started" },
@@ -105,7 +135,7 @@ if (args[0] === "--version") {
 }
 `);
   await fs.chmod(filename, 0o700);
-  return filename;
+  return { filename, invocationPath };
 }
 
 async function fakeSandbox(root) {
@@ -130,6 +160,9 @@ async function preparedRun({
   protocolId = "metadata-regression-v1",
   arm = "codex-explicit-skill",
   caseId = "missing-identity-fails-closed",
+  responseWriteStyle = "direct",
+  replaceResponseInPreInferenceHook = false,
+  expectFailure = false,
 } = {}) {
   const root = await fs.realpath(
     await fs.mkdtemp(path.join(os.tmpdir(), "pdf-workflow-bound-run-")),
@@ -162,32 +195,48 @@ async function preparedRun({
   );
   const resultsRoot = path.join(root, "results");
   const expected = manifest.explicit_case_attestations[arm][caseId];
-  await runCodexAgentWorkflowCase({
-    arm,
-    caseId,
-    caseRoot,
-    resultsRoot,
-    codexHome,
-    promptCaptureHome,
-    codexBinary: await fakeCodex(root),
-    sandboxBinary: await fakeSandbox(root),
-    attesterPath: path.join(
-      REPO_ROOT,
-      "scripts",
-      "eval-attest-agent-workflow-arm.mjs",
-    ),
-    expectedCommitSha1: expected.synthetic_git.expected_commit_sha1,
-    expectedTreeSha1: expected.synthetic_git.expected_tree_sha1,
-    expectedContentTreeSha256: expected.content_inventory.tree_sha256,
-    sourceCommit: manifest.source_commit,
-    model: "synthetic-model",
-    runId: scheduled?.run_id,
-    scheduleOrdinal: scheduled?.ordinal,
-    repeatIndex: scheduled?.repeat_index,
-    pairId: scheduled?.pair_id,
-    pairPosition: scheduled?.pair_position,
-    scheduleSha256: scheduled ? manifest.run_schedule_sha256 : undefined,
-  });
+  const fake = await fakeCodex(root, responseWriteStyle);
+  let runError = null;
+  let preInferenceEvidence = null;
+  try {
+    await runCodexAgentWorkflowCase({
+      arm,
+      caseId,
+      caseRoot,
+      resultsRoot,
+      codexHome,
+      promptCaptureHome,
+      codexBinary: fake.filename,
+      sandboxBinary: await fakeSandbox(root),
+      attesterPath: path.join(
+        REPO_ROOT,
+        "scripts",
+        "eval-attest-agent-workflow-arm.mjs",
+      ),
+      expectedCommitSha1: expected.synthetic_git.expected_commit_sha1,
+      expectedTreeSha1: expected.synthetic_git.expected_tree_sha1,
+      expectedContentTreeSha256: expected.content_inventory.tree_sha256,
+      sourceCommit: manifest.source_commit,
+      model: "synthetic-model",
+      onPreInferenceReady: async evidence => {
+        preInferenceEvidence = structuredClone(evidence);
+        if (replaceResponseInPreInferenceHook) {
+          const replacement = path.join(resultsRoot, "response.replacement");
+          await fs.writeFile(replacement, Buffer.alloc(0), { mode: 0o600 });
+          await fs.rename(replacement, path.join(resultsRoot, "response.json"));
+        }
+      },
+      runId: scheduled?.run_id,
+      scheduleOrdinal: scheduled?.ordinal,
+      repeatIndex: scheduled?.repeat_index,
+      pairId: scheduled?.pair_id,
+      pairPosition: scheduled?.pair_position,
+      scheduleSha256: scheduled ? manifest.run_schedule_sha256 : undefined,
+    });
+  } catch (error) {
+    if (!expectFailure) throw error;
+    runError = error;
+  }
   return {
     root,
     arm,
@@ -195,10 +244,138 @@ async function preparedRun({
     resultsRoot,
     manifestPath: path.join(oracle, "preparation-manifest.json"),
     scheduled,
+    runError,
+    invocationPath: fake.invocationPath,
+    preInferenceEvidence,
   };
 }
 
 describe("agent workflow run binding", () => {
+  it("creates direct and rename-style responses privately and restores umask", async () => {
+    const previous = process.umask(0o022);
+    try {
+      for (const responseWriteStyle of ["direct", "rename"]) {
+        const run = await preparedRun({ responseWriteStyle });
+        const stat = await fs.lstat(
+          path.join(run.resultsRoot, "response.json"),
+        );
+        expect(stat.mode & 0o777).toBe(0o600);
+        expect(stat.nlink).toBe(1);
+        expect(stat.isFile()).toBe(true);
+        expect(stat.isSymbolicLink()).toBe(false);
+        expect(process.umask()).toBe(0o022);
+      }
+    } finally {
+      process.umask(previous);
+    }
+  }, 30000);
+
+  it("binds the zero-byte precreated response before inference", async () => {
+    const run = await preparedRun();
+    const launchPlan = JSON.parse(await fs.readFile(
+      path.join(run.resultsRoot, "launch-plan.json"),
+      "utf8",
+    ));
+    const expected = {
+      bytes: 0,
+      sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      mode: 0o600,
+      nlink: 1,
+      file_type: "regular",
+      symbolic_link: false,
+    };
+    expect(launchPlan.pre_inference_artifacts["response.json"]).toMatchObject(
+      expected,
+    );
+    expect(run.preInferenceEvidence.artifacts["response.json"]).toEqual(
+      launchPlan.pre_inference_artifacts["response.json"],
+    );
+    expect(run.preInferenceEvidence.artifacts["response.json"]).toMatchObject({
+      ...expected,
+      device: expect.any(Number),
+      inode: expect.any(Number),
+      ctime_ms: expect.any(Number),
+      mtime_ms: expect.any(Number),
+    });
+  }, 15000);
+
+  it("rejects an empty private inode replacement by the pre-inference hook before Codex exec", async () => {
+    const run = await preparedRun({
+      replaceResponseInPreInferenceHook: true,
+      expectFailure: true,
+    });
+    expect(run.runError).toBeTruthy();
+    expect(run.runError.message).toMatch(
+      /changed after pre-inference hook/,
+    );
+    await expect(fs.access(run.invocationPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  }, 15000);
+
+  it("rejects unsafe mode, symlink, and hardlink responses without retry or repair", async () => {
+    for (const responseWriteStyle of ["unsafe-mode", "symlink", "hardlink"]) {
+      const run = await preparedRun({
+        responseWriteStyle,
+        expectFailure: true,
+      });
+      expect(run.runError).toBeTruthy();
+      expect(await fs.readFile(run.invocationPath, "utf8")).toBe("1");
+      const responsePath = path.join(run.resultsRoot, "response.json");
+      const stat = await fs.lstat(responsePath);
+      if (responseWriteStyle === "unsafe-mode") {
+        expect(stat.mode & 0o777).toBe(0o644);
+      } else if (responseWriteStyle === "symlink") {
+        expect(stat.isSymbolicLink()).toBe(true);
+      } else {
+        expect(stat.nlink).toBe(2);
+      }
+    }
+  }, 30000);
+
+  it("rejects replacement between the opened response handle and final path check", async () => {
+    const root = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "runner-replacement-drift-")),
+    );
+    roots.push(root);
+    const responsePath = path.join(root, "response.json");
+    await fs.writeFile(responsePath, "{}\n", { mode: 0o600 });
+    const handle = await fs.open(
+      responsePath,
+      fs.constants.O_RDONLY | (fs.constants.O_NOFOLLOW ?? 0),
+    );
+    try {
+      const replacement = path.join(root, "replacement.json");
+      await fs.writeFile(replacement, "{}\n", { mode: 0o600 });
+      await fs.rename(replacement, responsePath);
+      await expect(artifactRecordFromHandle(handle, {
+        filename: responsePath,
+      })).rejects.toThrow(/path identity differs/);
+    } finally {
+      await handle.close();
+    }
+  });
+
+  it("forbids concurrent runner umask scopes and restores the caller value", async () => {
+    const previous = process.umask(0o022);
+    let release;
+    try {
+      const first = withPrivateRunnerUmask(() => new Promise(resolve => {
+        release = resolve;
+      }));
+      await Promise.resolve();
+      expect(process.umask()).toBe(PRIVATE_CREATION_UMASK);
+      await expect(
+        withPrivateRunnerUmask(async () => {}),
+      ).rejects.toThrow(/concurrent workflow runner invocation/);
+      release();
+      await first;
+      expect(process.umask()).toBe(0o022);
+    } finally {
+      process.umask(previous);
+    }
+  });
+
   it("binds the scored response to the validated event and every run artifact", async () => {
     const run = await preparedRun();
     const controllerRunRoot = path.join(run.root, "controller-results");
