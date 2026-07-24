@@ -785,6 +785,70 @@ grandchild.unref();
     );
   }, 5000);
 
+  it("does not lose an abort during listener registration before launch", async () => {
+    const root = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "runner-registration-abort-")),
+    );
+    roots.push(root);
+    const invokedPath = path.join(root, "invoked.pid");
+    const program = await executableFixture(root, "must-not-launch.mjs", `
+import fs from "node:fs";
+fs.writeFileSync(${JSON.stringify(invokedPath)}, String(process.pid));
+setInterval(() => {}, 1000);
+`);
+    let aborted = false;
+    let addCount = 0;
+    let removeCount = 0;
+    const activeListeners = new Set();
+    const registrationWindowSignal = {
+      get aborted() {
+        return aborted;
+      },
+      addEventListener(type, listener) {
+        expect(type).toBe("abort");
+        addCount += 1;
+        activeListeners.add(listener);
+        aborted = true;
+        listener();
+      },
+      removeEventListener(type, listener) {
+        expect(type).toBe("abort");
+        removeCount += 1;
+        activeListeners.delete(listener);
+      },
+    };
+    await expect(runCaptured(program, [], {
+      cwd: root,
+      env: process.env,
+      stdoutPath: path.join(root, "stdout.txt"),
+      stderrPath: path.join(root, "stderr.txt"),
+      timeoutMs: 1_000,
+      terminationGraceMs: 25,
+      abortSignal: registrationWindowSignal,
+    })).rejects.toMatchObject({
+      code: "CODEX_PROCESS_ABORTED",
+      process_result: {
+        pid: null,
+        aborted: true,
+        termination_reason: "abort_before_spawn",
+        sigterm_attempted: false,
+        sigkill_attempted: false,
+      },
+    });
+    expect(addCount).toBe(1);
+    expect(removeCount).toBe(1);
+    expect(activeListeners.size).toBe(0);
+    await expect(fs.access(invokedPath)).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(fs.access(path.join(root, "stdout.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+    await expect(fs.access(path.join(root, "stderr.txt"))).rejects.toMatchObject({
+      code: "ENOENT",
+    });
+  });
+
   it("distinguishes abort and spawn failure without hanging or double-settling", async () => {
     const root = await fs.realpath(
       await fs.mkdtemp(path.join(os.tmpdir(), "runner-abort-spawn-")),
@@ -794,6 +858,24 @@ grandchild.unref();
 setInterval(() => {}, 1000);
 `);
     const controller = new AbortController();
+    let addCount = 0;
+    let removeCount = 0;
+    const activeListeners = new Set();
+    const trackedSignal = {
+      get aborted() {
+        return controller.signal.aborted;
+      },
+      addEventListener(type, listener, options) {
+        addCount += 1;
+        activeListeners.add(listener);
+        controller.signal.addEventListener(type, listener, options);
+      },
+      removeEventListener(type, listener) {
+        removeCount += 1;
+        activeListeners.delete(listener);
+        controller.signal.removeEventListener(type, listener);
+      },
+    };
     setTimeout(() => controller.abort(), 25);
     const aborted = await runCaptured(program, [], {
       cwd: root,
@@ -802,7 +884,7 @@ setInterval(() => {}, 1000);
       stderrPath: path.join(root, "abort.stderr.txt"),
       timeoutMs: 1_000,
       terminationGraceMs: 25,
-      abortSignal: controller.signal,
+      abortSignal: trackedSignal,
     });
     expect(aborted).toMatchObject({
       timed_out: false,
@@ -812,6 +894,9 @@ setInterval(() => {}, 1000);
       sigterm_sent: true,
       signal: "SIGTERM",
     });
+    expect(addCount).toBe(1);
+    expect(removeCount).toBe(1);
+    expect(activeListeners.size).toBe(0);
     const spawnFailure = await runCaptured(
       path.join(root, "does-not-exist"),
       [],

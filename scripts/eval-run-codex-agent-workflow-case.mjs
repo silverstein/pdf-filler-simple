@@ -837,6 +837,35 @@ function delay(milliseconds) {
   return new Promise(resolve => setTimeout(resolve, milliseconds));
 }
 
+function abortedBeforeSpawnError({
+  timeoutMs,
+  terminationGraceMs,
+}) {
+  const error = new Error("Codex process aborted before spawn");
+  error.code = "CODEX_PROCESS_ABORTED";
+  error.process_result = {
+    pid: null,
+    process_group: null,
+    code: null,
+    process_signal: null,
+    spawn_error: null,
+    stdin_error: null,
+    timed_out: false,
+    aborted: true,
+    termination_reason: "abort_before_spawn",
+    termination_requested_at: new Date().toISOString(),
+    sigterm_attempted: false,
+    sigterm_sent: false,
+    sigkill_attempted: false,
+    sigkill_sent: false,
+    process_group_alive_after_close: null,
+    process_group_reaped: null,
+    timeout_ms: timeoutMs,
+    termination_grace_ms: terminationGraceMs,
+  };
+  return error;
+}
+
 export async function runCaptured(program, args, {
   cwd,
   env,
@@ -855,12 +884,31 @@ export async function runCaptured(program, args, {
     MAX_TERMINATION_GRACE_MS,
   );
   validateAbortSignal(abortSignal);
-  if (abortSignal?.aborted) {
-    throw new Error("Codex process aborted before spawn");
-  }
-  const stdout = await fs.open(stdoutPath, "wx+", 0o600);
-  const stderr = await fs.open(stderrPath, "wx+", 0o600);
+  let stdout = null;
+  let stderr = null;
+  let abortRequested = false;
+  let terminateActiveChild = null;
+  let timeout = null;
+  const abort = () => {
+    abortRequested = true;
+    if (terminateActiveChild !== null) {
+      void terminateActiveChild("abort");
+    }
+  };
+  abortSignal?.addEventListener("abort", abort, { once: true });
+  if (abortSignal?.aborted) abortRequested = true;
   try {
+    if (abortRequested) {
+      throw abortedBeforeSpawnError({ timeoutMs, terminationGraceMs });
+    }
+    stdout = await fs.open(stdoutPath, "wx+", 0o600);
+    if (abortRequested || abortSignal?.aborted) {
+      throw abortedBeforeSpawnError({ timeoutMs, terminationGraceMs });
+    }
+    stderr = await fs.open(stderrPath, "wx+", 0o600);
+    if (abortRequested || abortSignal?.aborted) {
+      throw abortedBeforeSpawnError({ timeoutMs, terminationGraceMs });
+    }
     const child = spawn(program, args, {
       cwd,
       env,
@@ -912,19 +960,20 @@ export async function runCaptured(program, args, {
       })();
       return terminationPromise;
     };
-    const timeout = setTimeout(() => {
+    terminateActiveChild = terminate;
+    if (abortRequested || abortSignal?.aborted) {
+      abortRequested = true;
+      void terminate("abort");
+    }
+    timeout = setTimeout(() => {
       void terminate("timeout");
     }, timeoutMs);
     timeout.unref?.();
-    const abort = () => {
-      void terminate("abort");
-    };
-    abortSignal?.addEventListener("abort", abort, { once: true });
     if (stdin === null) child.stdin.end();
     else child.stdin.end(stdin);
     const result = await completion;
     clearTimeout(timeout);
-    abortSignal?.removeEventListener("abort", abort);
+    timeout = null;
     if (terminationPromise !== null) await terminationPromise;
     let processGroupAliveAfterClose = null;
     if (useProcessGroup) {
@@ -972,7 +1021,13 @@ export async function runCaptured(program, args, {
       }),
     };
   } finally {
-    await Promise.all([stdout.close(), stderr.close()]);
+    if (timeout !== null) clearTimeout(timeout);
+    abortSignal?.removeEventListener("abort", abort);
+    await Promise.all(
+      [stdout, stderr]
+        .filter(handle => handle !== null)
+        .map(handle => handle.close()),
+    );
   }
 }
 
