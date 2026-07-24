@@ -24,6 +24,7 @@ function injectedError(code, operation) {
 
 function faultingFs({
   openAt = null,
+  aroundOpen = null,
   writeAt = null,
   beforeWriteAt = null,
   syncAt = null,
@@ -42,7 +43,14 @@ function faultingFs({
       counts.open += 1;
       if (counts.open === openAt) throw injectedError("EACCES", "open");
       const openedPath = args[0];
-      const handle = await fs.open(...args);
+      const handle = aroundOpen
+        ? await aroundOpen({
+            count: counts.open,
+            openedPath,
+            open: async () => await fs.open(...args),
+            openPath: async alternatePath => await fs.open(alternatePath, ...args.slice(1)),
+          })
+        : await fs.open(...args);
       return {
         async writeFile(...writeArgs) {
           counts.write += 1;
@@ -418,6 +426,42 @@ describe("atomic PDF output commits", () => {
     await expect(fs.readFile(target, "utf8")).resolves.toBe("replacement");
   });
 
+  it("binds an approved digest to the exact pathname inode opened for hashing", async () => {
+    const target = path.join(tempDir, "descriptor-bound-target.pdf");
+    const approvedAlternate = path.join(tempDir, "descriptor-bound-approved.pdf");
+    const unapprovedBytes = Buffer.alloc(64, 0x41);
+    const approvedBytes = Buffer.alloc(64, 0x42);
+    await fs.writeFile(target, unapprovedBytes);
+    await fs.writeFile(approvedAlternate, approvedBytes);
+    const identity = {
+      canonicalPath: target,
+      sizeBytes: approvedBytes.length,
+      sha256: createHash("sha256").update(approvedBytes).digest("hex"),
+    };
+    const transitions = [];
+    const fsOps = faultingFs({
+      aroundOpen: async ({ openedPath, open, openPath }) => {
+        if (openedPath !== target && !String(openedPath).endsWith("-rollback")) {
+          return await open();
+        }
+        return await openPath(approvedAlternate);
+      },
+    });
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("replacement"), {
+      overwrite: true,
+      expectedExistingIdentity: identity,
+      fsOps,
+      token: "descriptor-bound-initial-hash",
+      onTransition: async transition => transitions.push(transition),
+    })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_ARTIFACT_CHANGED" });
+
+    expect(transitions).toEqual(["lock_acquired"]);
+    await expect(fs.readFile(target)).resolves.toEqual(unapprovedBytes);
+    await expect(fs.readFile(approvedAlternate)).resolves.toEqual(approvedBytes);
+    await expectNoTransactionArtifacts();
+  });
+
   it("does not turn a disappeared approved replacement into file creation", async () => {
     const target = path.join(tempDir, "disappeared.pdf");
     await fs.writeFile(target, "approved bytes");
@@ -741,6 +785,48 @@ describe("atomic PDF output commits", () => {
 
     expect(injected).toBe(true);
     await expect(fs.readFile(target, "utf8")).resolves.toBe("late external bytes");
+    expect((await fs.readdir(tempDir)).some(name => name.endsWith("-transaction.json"))).toBe(true);
+  });
+
+  it("does not accept an approved digest from a different inode while verifying rollback", async () => {
+    const target = path.join(tempDir, "rollback-descriptor-target.pdf");
+    const approvedSpare = path.join(tempDir, "rollback-descriptor-approved.pdf");
+    const approvedBytes = Buffer.alloc(64, 0x43);
+    const unapprovedBytes = Buffer.alloc(64, 0x44);
+    await fs.writeFile(target, approvedBytes);
+    await fs.writeFile(approvedSpare, approvedBytes);
+    const fixedTime = new Date("2026-07-24T05:00:00.000Z");
+    await fs.utimes(target, fixedTime, fixedTime);
+    const initialStats = await fs.lstat(target);
+    const identity = await expectedExistingIdentity(target);
+    let substituted = false;
+
+    await expect(writePdfOutputAtomic(target, Buffer.from("our replacement"), {
+      overwrite: true,
+      expectedExistingIdentity: identity,
+      token: "rollback-descriptor-binding",
+      fsOps: faultingFs({
+        beforeRename: async (from, to) => {
+          if (substituted || from !== target || !String(to).endsWith("-rollback")) return;
+          substituted = true;
+          await fs.writeFile(target, unapprovedBytes);
+          await fs.utimes(target, fixedTime, fixedTime);
+          const mutatedStats = await fs.lstat(target);
+          expect({ dev: mutatedStats.dev, ino: mutatedStats.ino }).toEqual({
+            dev: initialStats.dev,
+            ino: initialStats.ino,
+          });
+        },
+        aroundOpen: async ({ openedPath, open, openPath }) => {
+          if (!String(openedPath).endsWith("-rollback")) return await open();
+          return await openPath(approvedSpare);
+        },
+      }),
+    })).rejects.toMatchObject({ code: "ATOMIC_OUTPUT_ROLLBACK_FAILED" });
+
+    expect(substituted).toBe(true);
+    await expect(fs.readFile(target)).resolves.toEqual(unapprovedBytes);
+    await expect(fs.readFile(approvedSpare)).resolves.toEqual(approvedBytes);
     expect((await fs.readdir(tempDir)).some(name => name.endsWith("-transaction.json"))).toBe(true);
   });
 

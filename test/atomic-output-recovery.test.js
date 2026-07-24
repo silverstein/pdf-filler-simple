@@ -190,6 +190,43 @@ describe("durable PDF output transaction recovery", () => {
     await expect(fs.readlink(journalPath)).resolves.toBe(externalPath);
   });
 
+  it("binds recovered journal bytes to the exact pathname inode opened for reading", async () => {
+    const directoryPath = await makeTransactionDirectory("journal-descriptor-binding");
+    expect((await runCrashChild(directoryPath, "journal_prepared")).code).toBe(86);
+    const journalName = (await fs.readdir(directoryPath))
+      .find(name => name.endsWith("-transaction.json"));
+    const journalPath = path.join(directoryPath, journalName);
+    const alternatePath = path.join(directoryPath, "alternate-journal.json");
+    await fs.copyFile(journalPath, alternatePath);
+    await fs.chmod(alternatePath, 0o600);
+    const withoutOutputLock = snapshot => snapshot.filter(
+      entry => !entry.path.startsWith(".pdf-tools-output-transaction.lock"),
+    );
+    const before = withoutOutputLock(await snapshotDirectoryTree(directoryPath));
+    let substituted = false;
+    const substitutingFs = new Proxy(fs, {
+      get(target, property) {
+        if (property !== "open") return target[property];
+        return async (openedPath, ...args) => {
+          if (substituted || openedPath !== journalPath) {
+            return await fs.open(openedPath, ...args);
+          }
+          substituted = true;
+          return await fs.open(alternatePath, ...args);
+        };
+      },
+    });
+
+    await expect(recoverPdfOutputTransactions(directoryPath, {
+      fsOps: substitutingFs,
+    })).rejects.toMatchObject({
+      code: "ATOMIC_OUTPUT_JOURNAL_CHANGED",
+    });
+
+    expect(substituted).toBe(true);
+    expect(withoutOutputLock(await snapshotDirectoryTree(directoryPath))).toEqual(before);
+  });
+
   const guardedSwapPhases = [
     "recovery_entry",
     "before_lock_candidate_create",

@@ -1589,31 +1589,55 @@ function assertOwnedRegularArtifact(artifactPath, stat, { privateMode = false, r
     );
   }
 }
-async function sha256RegularFile(fsOps, filePath) {
-  const before = await lstatIfPresent(fsOps, filePath);
-  assertOwnedRegularArtifact(filePath, before);
+async function consumeVerifiedRegularFile(
+  fsOps,
+  filePath,
+  {
+    privateMode = false,
+    changedCode = "ATOMIC_OUTPUT_ARTIFACT_CHANGED",
+    changedMessage = `Transaction artifact changed while it was read: ${filePath}`,
+    missingError = null,
+  } = {},
+  consume,
+) {
+  const pathBefore = await lstatIfPresent(fsOps, filePath);
+  if (!pathBefore && typeof missingError === "function") throw missingError();
+  assertOwnedRegularArtifact(filePath, pathBefore, { privateMode });
   const handle = await fsOps.open(filePath, NOFOLLOW_READ_FLAGS);
-  const hash = createHash("sha256");
-  const buffer = Buffer.allocUnsafe(1024 * 1024);
-  let position = 0;
   try {
+    const descriptorBefore = await handle.stat();
+    assertOwnedRegularArtifact(filePath, descriptorBefore, { privateMode });
+    if (outputIdentity(descriptorBefore) !== outputIdentity(pathBefore)) {
+      throw atomicOutputError(changedCode, changedMessage);
+    }
+    const value = await consume(handle);
+    const descriptorAfter = await handle.stat();
+    const pathAfter = await lstatIfPresent(fsOps, filePath);
+    if (
+      outputIdentity(descriptorAfter) !== outputIdentity(descriptorBefore)
+      || outputIdentity(pathAfter) !== outputIdentity(descriptorAfter)
+    ) {
+      throw atomicOutputError(changedCode, changedMessage);
+    }
+    return { value, stat: descriptorAfter };
+  } finally {
+    await handle.close();
+  }
+}
+async function sha256RegularFile(fsOps, filePath) {
+  const { value } = await consumeVerifiedRegularFile(fsOps, filePath, {}, async handle => {
+    const hash = createHash("sha256");
+    const buffer = Buffer.allocUnsafe(1024 * 1024);
+    let position = 0;
     while (true) {
       const { bytesRead } = await handle.read(buffer, 0, buffer.length, position);
       if (bytesRead === 0) break;
       hash.update(buffer.subarray(0, bytesRead));
       position += bytesRead;
     }
-  } finally {
-    await handle.close();
-  }
-  const after = await lstatIfPresent(fsOps, filePath);
-  if (outputIdentity(after) !== outputIdentity(before)) {
-    throw atomicOutputError(
-      "ATOMIC_OUTPUT_ARTIFACT_CHANGED",
-      `Transaction artifact changed while it was read: ${filePath}`,
-    );
-  }
-  return hash.digest("hex");
+    return hash.digest("hex");
+  });
+  return value;
 }
 function journalEnvelope(payload) {
   const serializedPayload = JSON.stringify(payload);
@@ -1835,19 +1859,16 @@ async function readAtomicJournal(fsOps, journalPath) {
   if (!match) {
     throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_PATH_INVALID", `Transaction journal name is invalid: ${journalPath}`);
   }
-  const before = await lstatIfPresent(fsOps, journalPath);
-  assertOwnedRegularArtifact(journalPath, before, { privateMode: true });
-  const handle = await fsOps.open(journalPath, NOFOLLOW_READ_FLAGS);
-  let raw;
-  try {
-    raw = await handle.readFile("utf8");
-  } finally {
-    await handle.close();
-  }
-  const after = await lstatIfPresent(fsOps, journalPath);
-  if (outputIdentity(after) !== outputIdentity(before)) {
-    throw atomicOutputError("ATOMIC_OUTPUT_JOURNAL_CHANGED", `Transaction journal changed while it was read: ${journalPath}`);
-  }
+  const { value: raw, stat } = await consumeVerifiedRegularFile(
+    fsOps,
+    journalPath,
+    {
+      privateMode: true,
+      changedCode: "ATOMIC_OUTPUT_JOURNAL_CHANGED",
+      changedMessage: `Transaction journal changed while it was read: ${journalPath}`,
+    },
+    async handle => await handle.readFile("utf8"),
+  );
   let envelope;
   try {
     envelope = JSON.parse(raw);
@@ -1866,7 +1887,7 @@ async function readAtomicJournal(fsOps, journalPath) {
   }
   return {
     payload: validateJournalPayload(envelope.payload, path.dirname(journalPath), match[1]),
-    identity: recoveryIdentity(before),
+    identity: recoveryIdentity(stat),
     sha256: sha256Value(Buffer.from(raw)),
   };
 }
@@ -2320,33 +2341,24 @@ function processAppearsAlive(pid) {
   }
 }
 async function readPrivateJsonArtifact(fsOps, artifactPath) {
-  const before = await lstatIfPresent(fsOps, artifactPath);
-  if (!before) {
-    const error = new Error(`Private transaction artifact disappeared: ${artifactPath}`);
-    error.code = "ENOENT";
-    throw error;
-  }
-  assertOwnedRegularArtifact(artifactPath, before, { privateMode: true });
-  const handle = await fsOps.open(artifactPath, NOFOLLOW_READ_FLAGS);
-  let raw;
-  try {
-    raw = await handle.readFile("utf8");
-  } finally {
-    await handle.close();
-  }
-  const after = await lstatIfPresent(fsOps, artifactPath);
-  if (!after) {
-    const error = new Error(`Private transaction artifact disappeared: ${artifactPath}`);
-    error.code = "ENOENT";
-    throw error;
-  }
-  if (outputIdentity(after) !== outputIdentity(before)) {
-    throw atomicOutputError("ATOMIC_OUTPUT_ARTIFACT_CHANGED", `Private transaction artifact changed while it was read: ${artifactPath}`);
-  }
+  const { value: raw, stat } = await consumeVerifiedRegularFile(
+    fsOps,
+    artifactPath,
+    {
+      privateMode: true,
+      changedMessage: `Private transaction artifact changed while it was read: ${artifactPath}`,
+      missingError: () => {
+        const error = new Error(`Private transaction artifact disappeared: ${artifactPath}`);
+        error.code = "ENOENT";
+        return error;
+      },
+    },
+    async handle => await handle.readFile("utf8"),
+  );
   try {
     return {
       value: JSON.parse(raw),
-      identity: recoveryIdentity(before),
+      identity: recoveryIdentity(stat),
       sha256: sha256Value(Buffer.from(raw)),
     };
   } catch (error) {
@@ -3038,10 +3050,18 @@ export async function writePdfOutputsAtomic(entries, {
           entry.originalMoved = true;
           await onTransition(`rollback_${entry.index}`);
           const moved = await lstatIfPresent(fsOps, entry.rollbackPath);
-          const movedSha256 = moved
-            ? await sha256RegularFile(fsOps, entry.rollbackPath)
-            : null;
+          let movedSha256 = null;
+          let movedDigestError = null;
+          if (moved) {
+            try {
+              movedSha256 = await sha256RegularFile(fsOps, entry.rollbackPath);
+            } catch (error) {
+              movedDigestError = error;
+            }
+          }
           if (
+            movedDigestError
+            ||
             recoveryIdentity(moved) !== recoveryIdentity(entry.initial)
             || movedSha256 !== entry.initialSha256
           ) {
@@ -3054,7 +3074,7 @@ export async function writePdfOutputsAtomic(entries, {
                 await fsOps.link(entry.rollbackPath, entry.targetPath);
                 if (!await assertExpectedArtifact(fsOps, entry.targetPath, {
                   identity: recoveryIdentity(moved),
-                  sha256: movedSha256,
+                  sha256: movedDigestError ? null : movedSha256,
                 })) {
                   throw atomicOutputError(
                     "ATOMIC_OUTPUT_CONFLICT",
@@ -3063,7 +3083,7 @@ export async function writePdfOutputsAtomic(entries, {
                 }
                 await removeExpectedArtifact(fsOps, entry.rollbackPath, {
                   identity: recoveryIdentity(moved),
-                  sha256: movedSha256,
+                  sha256: movedDigestError ? null : movedSha256,
                 }, recoveryDirectoryGuard);
                 entry.originalMoved = false;
               } catch (repairError) {
@@ -3073,6 +3093,7 @@ export async function writePdfOutputsAtomic(entries, {
             throw atomicOutputError(
               "ATOMIC_OUTPUT_CONFLICT",
               `Output changed while it was moved into rollback protection: ${entry.targetPath}`,
+              movedDigestError,
             );
           }
         }
