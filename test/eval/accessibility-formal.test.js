@@ -8,6 +8,7 @@ import { fetchFormalAccessibilityCorpus } from "../../scripts/eval-fetch-accessi
 import {
   MUTABLE_PATH_DIRECTORIES,
   buildFormalRunnerEnvironment,
+  computeInstalledTreeDigest,
   loadFormalAccessibilityContract,
   parseVeraPdfEvidence,
   runFormalAccessibilityEvaluation,
@@ -147,6 +148,11 @@ process.exit(defective ? 1 : 0);
   contract.validator.installed_cli_jar_sha256 = sha256(Buffer.from("pinned cli jar"));
   contract.runtime.archive_sha256 = sha256(Buffer.from("pinned runtime archive"));
   contract.runtime.java_binary_sha256 = sha256(Buffer.from("pinned java binary"));
+  // Re-pin the tree bindings to this stub install, exactly as the artifact
+  // hashes above are re-pinned. Computed after every stub file is written so
+  // the digests describe the tree the runner will actually see.
+  contract.validator.installed_tree_sha256 = (await computeInstalledTreeDigest(validatorRoot)).digest;
+  contract.runtime.installed_tree_sha256 = (await computeInstalledTreeDigest(javaHome)).digest;
   contract.fixtures = [
     {
       id: "fake.pass",
@@ -180,6 +186,80 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(directory =>
     fs.rm(directory, { recursive: true, force: true })
   ));
+});
+
+describe("installed toolchain tree binding", () => {
+  const roots = [];
+
+  async function makeTree() {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-tree-"));
+    roots.push(root);
+    await fs.mkdir(path.join(root, "bin"), { recursive: true });
+    await fs.mkdir(path.join(root, "config"), { recursive: true });
+    await fs.writeFile(path.join(root, "wrapper"), "#!/bin/sh\nexec java\n");
+    await fs.writeFile(path.join(root, "bin", "cli.jar"), "pinned cli jar");
+    await fs.writeFile(path.join(root, "config", "validator.xml"), "<profile/>");
+    // A legitimate relative symlink, as the pinned JRE has 145 of under legal/.
+    await fs.symlink("../config/validator.xml", path.join(root, "bin", "profile.xml"));
+    return root;
+  }
+
+  afterEach(async () => {
+    while (roots.length) await fs.rm(roots.pop(), { recursive: true, force: true });
+  });
+
+  it("produces a stable digest for identical trees", async () => {
+    const a = await computeInstalledTreeDigest(await makeTree());
+    const b = await computeInstalledTreeDigest(await makeTree());
+    expect(a.digest).toBe(b.digest);
+    expect(a.file_count).toBe(3);
+    expect(a.symlink_count).toBe(1);
+  });
+
+  it("detects a file added beside a pinned artifact", async () => {
+    // The attack the five-hash pinning missed entirely: every pinned file still
+    // matches, but an extra jar is now sitting on the classpath.
+    const root = await makeTree();
+    const before = await computeInstalledTreeDigest(root);
+    await fs.writeFile(path.join(root, "bin", "extra.jar"), "attacker jar");
+    expect((await computeInstalledTreeDigest(root)).digest).not.toBe(before.digest);
+  });
+
+  it("detects a removed file", async () => {
+    const root = await makeTree();
+    const before = await computeInstalledTreeDigest(root);
+    await fs.rm(path.join(root, "config", "validator.xml"));
+    expect((await computeInstalledTreeDigest(root)).digest).not.toBe(before.digest);
+  });
+
+  it("detects edited content in an unpinned file", async () => {
+    // Editing the validation profile changes what "compliant" means without
+    // touching any pinned artifact.
+    const root = await makeTree();
+    const before = await computeInstalledTreeDigest(root);
+    await fs.writeFile(path.join(root, "config", "validator.xml"), "<profile tampered=\"1\"/>");
+    expect((await computeInstalledTreeDigest(root)).digest).not.toBe(before.digest);
+  });
+
+  it("detects a retargeted symlink without following it", async () => {
+    const root = await makeTree();
+    const before = await computeInstalledTreeDigest(root);
+    await fs.rm(path.join(root, "bin", "profile.xml"));
+    await fs.symlink("../wrapper", path.join(root, "bin", "profile.xml"));
+    expect((await computeInstalledTreeDigest(root)).digest).not.toBe(before.digest);
+  });
+
+  it("rejects an absolute symlink target", async () => {
+    const root = await makeTree();
+    await fs.symlink("/etc/passwd", path.join(root, "bin", "escape"));
+    await expect(computeInstalledTreeDigest(root)).rejects.toThrow(/must not use an absolute target/);
+  });
+
+  it("rejects a relative symlink that escapes the tree", async () => {
+    const root = await makeTree();
+    await fs.symlink("../../../etc/passwd", path.join(root, "bin", "escape"));
+    await expect(computeInstalledTreeDigest(root)).rejects.toThrow(/escapes the tree/);
+  });
 });
 
 describe("formal runner environment", () => {

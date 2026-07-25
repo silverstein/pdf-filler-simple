@@ -177,7 +177,75 @@ node scripts/eval-fetch-accessibility-formal-corpus.mjs \
   --output-dir /external/cache/pdfua-corpus
 ```
 
-After separately obtaining and installing the pinned artifacts, run:
+### Reproducing the pinned toolchain
+
+The runner does not install anything. Obtain the pinned artifacts yourself and
+verify each digest against `formal-corpus.v1.json` before use. The pinned
+runtime is a **Linux x64** JRE, so the evaluation reproduces on a Linux x64
+host; another platform needs a different archive and therefore different
+`runtime` digests in the contract.
+
+```bash
+INSTALL=/external/pdf-tools-accessibility
+mkdir -p "$INSTALL/dl" && cd "$INSTALL/dl"
+
+curl -sSL -o jre.tar.gz \
+  "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.11%2B10/OpenJDK21U-jre_x64_linux_hotspot_21.0.11_10.tar.gz"
+sha256sum jre.tar.gz   # must equal runtime.archive_sha256
+tar xzf jre.tar.gz -C "$INSTALL"
+sha256sum "$INSTALL/jdk-21.0.11+10-jre/bin/java"   # must equal runtime.java_binary_sha256
+
+curl -sSL -o verapdf-installer.zip \
+  "https://software.verapdf.org/releases/1.30/verapdf-greenfield-1.30.2-installer.zip"
+sha256sum verapdf-installer.zip   # must equal validator.installer_sha256
+unzip -q verapdf-installer.zip
+```
+
+veraPDF ships an IzPack installer. Install it headlessly with an automation
+descriptor that selects the CLI and sets the target directory, then verify:
+
+```bash
+"$INSTALL/jdk-21.0.11+10-jre/bin/java" \
+  -jar verapdf-greenfield-1.30.2/verapdf-izpack-installer-1.30.2.jar auto.xml
+sha256sum "$INSTALL/verapdf/verapdf"              # validator.installed_wrapper_sha256
+sha256sum "$INSTALL/verapdf/bin/cli-1.30.2.jar"   # validator.installed_cli_jar_sha256
+```
+
+The release signature is recorded in the contract but is **not** verified,
+because no trusted veraPDF public key is established for this project. That
+remains an open gate and the evidence says so explicitly.
+
+### Installed tree binding
+
+Pinning the installer, wrapper, CLI JAR, runtime archive, and `java` binary
+proves those five files are the reviewed ones. It says nothing about the other
+files beside them. An attacker able to write into the install directory does not
+need to touch a pinned file: adding a JAR next to the pinned one, or editing the
+validation profile XML that decides what "compliant" means, changes the evidence
+while every pinned hash still matches.
+
+`validator.installed_tree_sha256` and `runtime.installed_tree_sha256` therefore
+bind the **complete** listing of both trees: every file by content hash, every
+directory, and every symlink by its raw target, walked without following links.
+An addition, deletion, edit, type change, or retargeted symlink all change the
+digest. Absolute symlink targets and relative targets escaping the tree are
+rejected outright rather than folded into the digest, since a link pointing
+outside is an evasion of the binding rather than part of it. The pinned JRE
+legitimately contains 145 relative symlinks under `legal/`, so rejecting
+symlinks wholesale is not an option.
+
+Regenerate the digests after any deliberate toolchain change:
+
+```bash
+node -e '
+import("./test/eval/accessibility-formal.js").then(async m => {
+  for (const root of process.argv.slice(1)) {
+    console.log(root, (await m.computeInstalledTreeDigest(root)).digest);
+  }
+});' "$INSTALL/verapdf" "$INSTALL/jdk-21.0.11+10-jre"
+```
+
+After installing and verifying the pinned artifacts, run:
 
 ```bash
 node scripts/eval-run-accessibility-formal.mjs \

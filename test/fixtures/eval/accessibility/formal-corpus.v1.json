@@ -20,14 +20,16 @@
     "expected_exit_codes": {
       "compliant": 0,
       "non_compliant": 1
-    }
+    },
+    "installed_tree_sha256": "1913b10b5c221183bb77bb607359cc7ab454e11d05fcea2d5e34e7d294fd7c6c"
   },
   "runtime": {
     "name": "Eclipse Temurin JRE",
     "version": "21.0.11+10",
     "source_url": "https://github.com/adoptium/temurin21-binaries/releases/download/jdk-21.0.11%2B10/OpenJDK21U-jre_x64_linux_hotspot_21.0.11_10.tar.gz",
     "archive_sha256": "e5038aae3ca9ff670bc696496b0728dbd23d280026bad30291cb919221ecfdcb",
-    "java_binary_sha256": "fd85538801d8ca61d3558c87a57a600e1868d8ac9e918d0860dd64281b548643"
+    "java_binary_sha256": "fd85538801d8ca61d3558c87a57a600e1868d8ac9e918d0860dd64281b548643",
+    "installed_tree_sha256": "2007f90798f2de64526e2e6f31a4cc43afab042477f1cacc643cbf13d00372d4"
   },
   "corpus": {
     "name": "veraPDF PDF/UA-1 atomic test corpus",
@@ -60,7 +62,9 @@
       "sha256": "33d9008d84746cb8cf7cf11f50d8e67a97b3640978d845050e18ee47bfb95310",
       "size": 38394,
       "expected_machine_compliant": false,
-      "expected_failed_rule_keys": ["ISO 14289-1:2014#5#1"],
+      "expected_failed_rule_keys": [
+        "ISO 14289-1:2014#5#1"
+      ],
       "rule_family": "version_identification"
     }
   ],
