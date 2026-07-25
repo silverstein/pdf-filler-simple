@@ -169,17 +169,32 @@ node scripts/claude-extension-identity.mjs
 ```
 
 It prints the derived current identity, every installed directory belonging to
-this project, each one classified as `current`, `legacy`, or `unrecognized`, and
-a summary whose `clean` flag is false whenever more than one identity is
-present. Discovery is deliberate: anything whose final segment matches the
-manifest name is reported, so an identity scheme we have not seen surfaces
-rather than hides.
+this project, each classified as `current`, `legacy`, or `unrecognized`, each
+with its host enablement flag, and a summary. Discovery is deliberate: anything
+whose final segment matches the manifest name is reported, so an identity scheme
+we have not seen surfaces rather than hides.
+
+Presence and liveness are separate questions and the summary keeps them apart:
+
+- `duplicate_identities` is about what exists on disk.
+- `live_duplicate` is about what the host is actually running, which is what
+  decides whether two copies announce tools and whether host evidence can be
+  trusted.
+- `disabled_residue_count` is installs still on disk but switched off. That is
+  cleanup at leisure, not a correctness problem.
+- `clean` follows the live question. Enablement that cannot be read counts as
+  live, because assuming a copy is dormant is the assumption that yields a false
+  clean result.
 
 ### Migrating a user or a test host
 
 1. Run the check above and record what is actually installed.
 2. Disable the legacy entry in Claude Desktop settings, or remove it with
-   `./scripts/reinstall.sh --remove-legacy`.
+   `./scripts/reinstall.sh --remove-legacy`. Disabling is preferred: it is a
+   single reversible flag in
+   `~/Library/Application Support/Claude/Claude Extensions Settings/<id>.json`,
+   it destroys nothing, and it is what the in-app toggle does. Restart Claude
+   Desktop afterwards so the change takes effect.
 3. Reinstall the current build with `./scripts/reinstall.sh`.
 4. Re-run the check and confirm `clean` is true with exactly one `current`
    install.

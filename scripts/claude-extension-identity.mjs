@@ -34,6 +34,33 @@ export function claudeExtensionsDirectory(home = os.homedir()) {
   return path.join(home, "Library", "Application Support", "Claude", "Claude Extensions");
 }
 
+/** Host directory holding per-extension settings, including enablement. */
+export function claudeExtensionSettingsDirectory(home = os.homedir()) {
+  return path.join(home, "Library", "Application Support", "Claude", "Claude Extensions Settings");
+}
+
+/**
+ * Whether the host has this extension enabled.
+ *
+ * Presence on disk and being live are different things, and only the second
+ * decides whether a second copy announces tools. A legacy install that has been
+ * disabled is residue to clean up at leisure; an enabled one is actively
+ * competing with the current extension right now.
+ *
+ * Returns null when the state cannot be read, which is reported rather than
+ * assumed either way.
+ */
+export async function readExtensionEnabled(id, settingsDirectory) {
+  const root = settingsDirectory ?? claudeExtensionSettingsDirectory();
+  try {
+    const raw = await fs.readFile(path.join(root, `${id}.json`), "utf8");
+    const parsed = JSON.parse(raw);
+    return typeof parsed?.isEnabled === "boolean" ? parsed.isEnabled : null;
+  } catch {
+    return null;
+  }
+}
+
 /**
  * Slugify an author name the way the observed local install ID does.
  * "Open Document Alliance" -> "open-document-alliance"
@@ -107,7 +134,7 @@ export function classifyInstall(directoryName, manifest) {
  * must decide what to do about extras rather than being handed only the one it
  * expected.
  */
-export async function discoverInstalls({ manifest, extensionsDirectory } = {}) {
+export async function discoverInstalls({ manifest, extensionsDirectory, settingsDirectory } = {}) {
   const root = extensionsDirectory ?? claudeExtensionsDirectory();
   let entries;
   try {
@@ -116,34 +143,49 @@ export async function discoverInstalls({ manifest, extensionsDirectory } = {}) {
     if (error.code === "ENOENT") return { extensions_directory: root, present: false, installs: [] };
     throw error;
   }
-  const installs = entries
+  const candidates = entries
     .filter(entry => entry.isDirectory() && belongsToProject(entry.name, manifest))
-    .map(entry => ({
-      id: entry.name,
-      path: path.join(root, entry.name),
-      classification: classifyInstall(entry.name, manifest),
-    }))
-    .sort((a, b) => (a.id < b.id ? -1 : 1));
+    .sort((a, b) => (a.name < b.name ? -1 : 1));
+  const installs = await Promise.all(candidates.map(async entry => ({
+    id: entry.name,
+    path: path.join(root, entry.name),
+    classification: classifyInstall(entry.name, manifest),
+    enabled: await readExtensionEnabled(entry.name, settingsDirectory),
+  })));
   return { extensions_directory: root, present: true, installs };
 }
 
 /**
  * Is this a clean single-identity state?
  *
- * False whenever a legacy or unrecognized install coexists with the current
- * one, which is precisely the condition that must not be reported as a
- * successful upgrade.
+ * Two different questions live here and conflating them is misleading.
+ *
+ * `duplicate_identities` asks what exists on disk. `live_duplicate` asks what
+ * the host is actually running, which is the one that decides whether two
+ * copies announce tools and whether host evidence is trustworthy. A legacy
+ * install that has been disabled is residue to remove at leisure; an enabled
+ * one is competing with the current extension right now.
+ *
+ * `clean` follows the live question. Enablement that cannot be read is treated
+ * as live, because assuming a copy is dormant is the assumption that produces a
+ * false clean result.
  */
 export function summarizeUpgradeState(installs) {
   const current = installs.filter(i => i.classification === "current");
   const legacy = installs.filter(i => i.classification === "legacy");
   const unrecognized = installs.filter(i => i.classification === "unrecognized");
+  const live = installs.filter(i => i.enabled !== false);
+  const liveNonCurrent = live.filter(i => i.classification !== "current");
   return {
     current_count: current.length,
     legacy_count: legacy.length,
     unrecognized_count: unrecognized.length,
     duplicate_identities: installs.length > 1,
-    clean: installs.length <= 1 && legacy.length === 0 && unrecognized.length === 0,
+    live_count: live.length,
+    live_duplicate: live.length > 1,
+    disabled_residue_count: installs.length - live.length,
+    unknown_enablement_count: installs.filter(i => i.enabled === null).length,
+    clean: live.length <= 1 && liveNonCurrent.length === 0,
   };
 }
 
