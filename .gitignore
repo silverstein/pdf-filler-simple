@@ -1,5 +1,10 @@
-# Node modules
-node_modules/
+# Node modules.
+# No trailing slash: agents and maintainers commonly symlink node_modules into
+# an isolated worktree instead of installing a second copy, and a trailing
+# slash matches directories only. The symlink then shows as untracked, which
+# makes the eval campaign gates fail closed on a "dirty" worktree for a reason
+# that has nothing to do with the campaign.
+node_modules
 
 # Build output
 dist/
