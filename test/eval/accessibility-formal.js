@@ -102,7 +102,7 @@ function validateContract(contract) {
   if (!contract?.validator?.version || contract.validator.profile !== "ua1") {
     errors.push("validator version and ua1 profile must be explicit");
   }
-  for (const field of ["installer_sha256", "installed_wrapper_sha256", "installed_cli_jar_sha256"]) {
+  for (const field of ["installer_sha256", "installed_wrapper_sha256", "installed_cli_jar_sha256", "installed_tree_sha256"]) {
     if (!SHA256.test(contract?.validator?.[field] ?? "")) errors.push(`validator.${field} must be SHA-256`);
   }
   if (!SHA256.test(contract?.validator?.signature_sha256 ?? "")
@@ -114,7 +114,7 @@ function validateContract(contract) {
     || contract?.validator?.expected_exit_codes?.non_compliant !== 1) {
     errors.push("validator exit semantics must pin compliant=0 and non_compliant=1");
   }
-  for (const field of ["archive_sha256", "java_binary_sha256"]) {
+  for (const field of ["archive_sha256", "java_binary_sha256", "installed_tree_sha256"]) {
     if (!SHA256.test(contract?.runtime?.[field] ?? "")) errors.push(`runtime.${field} must be SHA-256`);
   }
   if (contract?.corpus?.license_spdx_id !== "CC-BY-4.0"
@@ -276,6 +276,74 @@ function formalConfusion(results) {
 }
 
 /**
+ * Canonical digest over every entry in an installed toolchain tree.
+ *
+ * Hash-pinning a handful of artifacts (the installer, the wrapper, the CLI jar,
+ * the runtime archive, the java binary) proves those five files are the
+ * reviewed ones. It says nothing about the other 120 files sitting beside them.
+ * An attacker who can write into the install directory does not need to modify
+ * a pinned file: adding a jar next to the pinned one, or editing the validation
+ * profile XML that decides what "compliant" means, is enough to change the
+ * evidence while every pinned hash still matches.
+ *
+ * This walks the tree without following symlinks and produces one digest over
+ * the complete listing, so an addition, deletion, edit, type change, or
+ * retargeted symlink all change the result. Symlinks are recorded by their raw
+ * target rather than resolved, and any link escaping the tree is rejected
+ * outright, because a link pointing outside is an evasion of the binding rather
+ * than a legitimate part of it.
+ *
+ * The pinned Temurin JRE legitimately contains 145 relative symlinks under
+ * legal/, so rejecting symlinks wholesale is not an option.
+ */
+function resolvedJavaHomeForTree(javaHome) {
+  return path.resolve(javaHome);
+}
+
+export async function computeInstalledTreeDigest(root) {
+  const resolvedRoot = await fs.realpath(root);
+  const entries = [];
+
+  async function walk(directory) {
+    const contents = await fs.readdir(directory, { withFileTypes: true });
+    for (const entry of contents.sort((a, b) => (a.name < b.name ? -1 : 1))) {
+      const absolute = path.join(directory, entry.name);
+      const relative = path.relative(resolvedRoot, absolute).split(path.sep).join("/");
+      if (entry.isDirectory()) {
+        entries.push({ path: relative, type: "directory" });
+        await walk(absolute);
+      } else if (entry.isSymbolicLink()) {
+        const target = await fs.readlink(absolute);
+        if (path.isAbsolute(target)) {
+          throw new Error(`Installed tree symlink ${relative} must not use an absolute target`);
+        }
+        const resolvedTarget = path.resolve(path.dirname(absolute), target);
+        if (resolvedTarget !== resolvedRoot && !resolvedTarget.startsWith(`${resolvedRoot}${path.sep}`)) {
+          throw new Error(`Installed tree symlink ${relative} escapes the tree`);
+        }
+        entries.push({ path: relative, type: "symlink", target: target.split(path.sep).join("/") });
+      } else if (entry.isFile()) {
+        entries.push({ path: relative, type: "file", sha256: sha256(await fs.readFile(absolute)) });
+      } else {
+        throw new Error(`Installed tree entry ${relative} is neither a regular file, directory, nor symlink`);
+      }
+    }
+  }
+
+  await walk(resolvedRoot);
+  entries.sort((a, b) => (a.path < b.path ? -1 : a.path > b.path ? 1 : 0));
+  const canonical = entries
+    .map(entry => JSON.stringify([entry.path, entry.type, entry.sha256 ?? entry.target ?? ""]))
+    .join("\n");
+  return {
+    digest: sha256(Buffer.from(canonical, "utf8")),
+    entry_count: entries.length,
+    file_count: entries.filter(entry => entry.type === "file").length,
+    symlink_count: entries.filter(entry => entry.type === "symlink").length,
+  };
+}
+
+/**
  * Directories that must never appear on the formal validator's PATH.
  *
  * The veraPDF entry point is a shell wrapper, so every directory on its PATH is
@@ -345,6 +413,22 @@ export async function runFormalAccessibilityEvaluation({
     && sha256(await fs.readFile(runtimeArchive)) === contract.runtime.archive_sha256
     && sha256(await fs.readFile(java)) === contract.runtime.java_binary_sha256;
   if (!pinnedArtifactsMatch) throw new Error("Formal validator/runtime artifact hash mismatch");
+
+  // The five hashes above prove those five files are the reviewed ones. Bind
+  // the rest of both trees too, so an added jar or an edited validation profile
+  // beside a pinned artifact cannot silently change what this evidence means.
+  const validatorTree = await computeInstalledTreeDigest(path.dirname(validator));
+  if (validatorTree.digest !== contract.validator.installed_tree_sha256) {
+    throw new Error(
+      `Installed validator tree digest mismatch (expected ${contract.validator.installed_tree_sha256}, got ${validatorTree.digest})`
+    );
+  }
+  const runtimeTree = await computeInstalledTreeDigest(resolvedJavaHomeForTree(javaHome));
+  if (runtimeTree.digest !== contract.runtime.installed_tree_sha256) {
+    throw new Error(
+      `Installed runtime tree digest mismatch (expected ${contract.runtime.installed_tree_sha256}, got ${runtimeTree.digest})`
+    );
+  }
 
   await fs.mkdir(reportDirectory, { recursive: true });
   if ((await fs.lstat(reportDirectory)).isSymbolicLink()) {
@@ -421,6 +505,21 @@ export async function runFormalAccessibilityEvaluation({
         profile: contract.validator.profile,
         installer_sha256: contract.validator.installer_sha256,
         signature_verification: contract.validator.signature_verification,
+      },
+      installed_trees: {
+        validator: {
+          digest_sha256: validatorTree.digest,
+          entry_count: validatorTree.entry_count,
+          file_count: validatorTree.file_count,
+          symlink_count: validatorTree.symlink_count,
+        },
+        runtime: {
+          digest_sha256: runtimeTree.digest,
+          entry_count: runtimeTree.entry_count,
+          file_count: runtimeTree.file_count,
+          symlink_count: runtimeTree.symlink_count,
+        },
+        binding: "complete_tree_listing_including_symlink_targets",
       },
       passed: results.every(result => result.expectation_met),
       rule_family_confusion: formalConfusion(results),
