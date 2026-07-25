@@ -101,6 +101,61 @@ stable and in sync across:
 - README tool list
 - Actual tool registrations in `server/index.js`
 
+## Extension identity and the legacy migration path
+
+Claude Desktop, not this project, assigns the directory name an installed
+extension lives under. Two forms have been observed on a real macOS host:
+
+| Form | Example | Origin |
+|---|---|---|
+| `local.mcpb.<author-slug>.<manifest-name>` | `local.mcpb.open-document-alliance.pdf-toolkit` | Installing a local `.mcpb` |
+| `ant.dir.gh.<publisher>.<listing-name>` | `ant.dir.gh.silverstein.pdf-filler-simple` | The Extensions Directory listing |
+
+**Installing the current MCPB does not replace the Directory install.** It
+creates a second extension beside it, and both are announced to the host until
+the legacy one is disabled in settings. The observable result is two copies of
+this project live at once, which is easy to mistake for a working upgrade and
+is a plausible contributor to the tool-exposure confusion in issue #47.
+
+The identity also moves whenever `manifest.json`'s `author.name` or `name`
+changes. It has already moved once: an earlier local install was
+`local.mcpb.mat-silverstein.pdf-toolkit`, and `scripts/reinstall.sh` hard-coded
+that path until 2026-07-25. Because the directory no longer existed, the
+script's removal step silently did nothing and printed "clean install" while
+the real extension stayed in place.
+
+### Checking the current state
+
+```bash
+node scripts/claude-extension-identity.mjs
+```
+
+It prints the derived current identity, every installed directory belonging to
+this project, each one classified as `current`, `legacy`, or `unrecognized`, and
+a summary whose `clean` flag is false whenever more than one identity is
+present. Discovery is deliberate: anything whose final segment matches the
+manifest name is reported, so an identity scheme we have not seen surfaces
+rather than hides.
+
+### Migrating a user or a test host
+
+1. Run the check above and record what is actually installed.
+2. Disable the legacy entry in Claude Desktop settings, or remove it with
+   `./scripts/reinstall.sh --remove-legacy`.
+3. Reinstall the current build with `./scripts/reinstall.sh`.
+4. Re-run the check and confirm `clean` is true with exactly one `current`
+   install.
+
+**Do not run host validation against a duplicate state.** Tool announcements,
+tool-name collisions, and log output are all ambiguous while two copies are
+live, so evidence gathered then cannot support a release claim. Record the
+identity state alongside any host evidence.
+
+When `author.name` or `name` changes, the identity changes with it. Add the
+previous value to `KNOWN_LEGACY_EXTENSION_IDS` in
+`scripts/claude-extension-identity.mjs` so the old install is still discovered
+and classified rather than silently orphaned.
+
 ## Display name and tool-identifier budget
 
 Claude Desktop generates a namespaced identifier for every tool from the
