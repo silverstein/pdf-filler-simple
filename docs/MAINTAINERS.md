@@ -405,6 +405,39 @@ node server/index.js
 Use a local MCP host (Claude Desktop or Cursor) and point it at
 `server/index.js`.
 
+### Viewer smoke lanes
+
+The `smoke:ui-*` scripts drive the built viewer in a real browser through
+`agent-browser`, against a temporary Vite dev server. Build the UI first, since
+they serve `dist-ui`:
+
+```bash
+npm run build:ui
+npm run smoke:ui-sign
+npm run smoke:ui-sign-rotated
+npm run smoke:ui-preview-zone
+npm run smoke:ui-name-zone
+```
+
+On Linux hosts that disable unprivileged user namespaces (Ubuntu 23.10+ and
+anything with the matching AppArmor profile, including most containers and
+VMs), Chrome exits immediately with `No usable sandbox!` before it ever prints
+a DevTools URL. Pass the flag through the environment for that run rather than
+editing the scripts:
+
+```bash
+AGENT_BROWSER_ARGS="--no-sandbox" npm run smoke:ui-sign
+```
+
+Keep it out of the committed scripts. macOS hosts do not need it, and baking it
+in would silently drop the sandbox for everyone.
+
+**These lanes do not cover page-box geometry.** Their fixtures come from
+`example-fw9.pdf` with at most a rotation applied, so every one of them has a
+MediaBox origin of `(0,0)` and no CropBox. See the zone-coordinate section
+above: `test/viewer-page-box.test.ts` is the gate for that class, and a green
+smoke run says nothing about it.
+
 ## Packaging and release flow
 
 ### Claude Desktop (.mcpb)
