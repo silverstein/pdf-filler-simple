@@ -275,6 +275,52 @@ function formalConfusion(results) {
   return byFamily;
 }
 
+/**
+ * Directories that must never appear on the formal validator's PATH.
+ *
+ * The veraPDF entry point is a shell wrapper, so every directory on its PATH is
+ * a place an attacker who can write there gets to supply a binary the run may
+ * execute. On macOS `/usr/local/bin` is group-writable by admin users without
+ * sudo, and on many Linux setups it is similarly loose, so it is exactly the
+ * kind of location that must not sit in front of a run whose output we treat as
+ * formal machine evidence. Nothing about veraPDF requires it: the wrapper needs
+ * a shell, a handful of coreutils, and the pinned JRE, all of which live in
+ * `/usr/bin`, `/bin`, and the hash-verified `JAVA_HOME`.
+ */
+export const MUTABLE_PATH_DIRECTORIES = Object.freeze([
+  "/usr/local/bin",
+  "/usr/local/sbin",
+  "/opt/homebrew/bin",
+  "/opt/homebrew/sbin",
+]);
+
+/**
+ * Build the sealed environment for a formal validator run.
+ *
+ * Exported separately from the runner so the trust properties can be asserted
+ * directly, without a veraPDF or JRE install present.
+ */
+export function buildFormalRunnerEnvironment({ javaHome, runtimeHome }) {
+  const resolvedJavaHome = path.resolve(javaHome);
+  const searchPath = [path.join(resolvedJavaHome, "bin"), "/usr/bin", "/bin"];
+  for (const directory of searchPath) {
+    if (MUTABLE_PATH_DIRECTORIES.includes(directory)) {
+      throw new Error(`Formal runner PATH must exclude mutable directory ${directory}`);
+    }
+  }
+  return {
+    HOME: runtimeHome,
+    XDG_CACHE_HOME: path.join(runtimeHome, "cache"),
+    XDG_CONFIG_HOME: path.join(runtimeHome, "config"),
+    TMPDIR: path.join(runtimeHome, "tmp"),
+    JAVA_HOME: resolvedJavaHome,
+    PATH: searchPath.join(":"),
+    LANG: "C.UTF-8",
+    LC_ALL: "C.UTF-8",
+    TZ: "UTC",
+  };
+}
+
 export async function runFormalAccessibilityEvaluation({
   contractPath,
   corpusDirectory,
@@ -307,17 +353,7 @@ export async function runFormalAccessibilityEvaluation({
   const reportsRoot = await fs.realpath(reportDirectory);
   const runtimeHome = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-verapdf-home-"));
   const resolvedJavaHome = path.resolve(javaHome);
-  const environment = {
-    HOME: runtimeHome,
-    XDG_CACHE_HOME: path.join(runtimeHome, "cache"),
-    XDG_CONFIG_HOME: path.join(runtimeHome, "config"),
-    TMPDIR: path.join(runtimeHome, "tmp"),
-    JAVA_HOME: resolvedJavaHome,
-    PATH: `${path.join(resolvedJavaHome, "bin")}:/usr/local/bin:/usr/bin:/bin`,
-    LANG: "C.UTF-8",
-    LC_ALL: "C.UTF-8",
-    TZ: "UTC",
-  };
+  const environment = buildFormalRunnerEnvironment({ javaHome: resolvedJavaHome, runtimeHome });
   await Promise.all([
     fs.mkdir(environment.XDG_CACHE_HOME),
     fs.mkdir(environment.XDG_CONFIG_HOME),
