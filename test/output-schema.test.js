@@ -180,6 +180,10 @@ describe("output schema definitions", () => {
           message: "Skipped an AcroForm signing widget because its page could not be resolved. No page location was guessed.",
           occurrences: 1,
         }],
+        // Required so a renderer can place zones against the MediaBox they are
+        // measured from. A nonzero origin is used here deliberately: it is the
+        // case a consumer cannot reconstruct from PDF.js alone.
+        page_geometry: [{ page: 1, origin_x: 20, origin_y: 24, width: 480, height: 360 }],
       },
     };
     expect(validateStructuredToolResult("detect_signature_zones", nameZone)).toBe(nameZone);

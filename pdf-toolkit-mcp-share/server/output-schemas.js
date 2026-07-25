@@ -718,6 +718,17 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     detection_status: enumString(["complete", "partial"]),
     zones: arrayOf(signatureZone),
     warnings: arrayOf(zoneDetectionWarning),
+    // Zone coordinates are top-left origin relative to the page MediaBox.
+    // PDF.js exposes only the view (CropBox intersected with MediaBox), so a
+    // renderer cannot derive the MediaBox on its own and would misplace every
+    // overlay on a page where those boxes differ.
+    page_geometry: arrayOf(object({
+      page: integer,
+      origin_x: number,
+      origin_y: number,
+      width: number,
+      height: number,
+    })),
   }),
   fetch_pdf_from_url: activeDocument({
     pdf_path: string,

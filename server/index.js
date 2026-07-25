@@ -1143,6 +1143,7 @@ import {
   stampSignatureOnPage,
   stampTextOnPage,
   drawSignatureFieldOnPage,
+  getPageBoxGeometry,
   formatSigningAuditLine,
   detectExistingSignatures,
   detectXfaForm,
@@ -6653,12 +6654,30 @@ async function handleToolCall(request) {
               `- ${warning.message} Occurrences: ${warning.occurrences}.`
             ).join("\n")}`;
 
+        // Zone coordinates are top-left origin relative to each page's
+        // MediaBox. A consumer that renders them has to know that box, and
+        // PDF.js only exposes the view (CropBox intersected with MediaBox), so
+        // it cannot derive the MediaBox itself. Without this, an overlay drawn
+        // on a page whose CropBox differs from its MediaBox is displaced by the
+        // difference between the two boxes.
+        const pageGeometry = pdfDoc.getPages().map((page, index) => {
+          const box = getPageBoxGeometry(page);
+          return {
+            page: index + 1,
+            origin_x: box.originX,
+            origin_y: box.originY,
+            width: box.width,
+            height: box.height,
+          };
+        });
+
         return {
           content: [{ type: "text", text: resultSummary + warningSummary }],
           structuredContent: {
             detection_status: warnings.length > 0 ? "partial" : "complete",
             zones,
             warnings,
+            page_geometry: pageGeometry,
           },
         };
       }

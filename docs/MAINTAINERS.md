@@ -101,6 +101,44 @@ stable and in sync across:
 - README tool list
 - Actual tool registrations in `server/index.js`
 
+## Zone coordinates and the viewer page box
+
+Every zone coordinate that crosses the MCP boundary is top-left origin, in
+points, **relative to the page MediaBox**. The server normalizes at exactly two
+boundaries (see the convention note in `server/helpers.js`), and the viewer has
+to use the same box or overlays land in the wrong place.
+
+The catch is that PDF.js never exposes the MediaBox. `viewport.viewBox` is the
+*view*: the CropBox intersected with the MediaBox. On a page where those differ,
+a viewer working from `viewBox` alone is wrong in two ways at once, using the
+cropped height and ignoring the box origin. On the accepted rotated/cropped
+golden fixture (MediaBox `[0 0 480 360]`, CropBox `[20 24 430 300]`) that is 84
+points of vertical displacement plus a 20-point horizontal inset.
+
+`detect_signature_zones` therefore returns `page_geometry`, one entry per page
+with `origin_x`, `origin_y`, `width`, and `height` taken from the MediaBox. It
+is required output, so a renderer can always rely on it. `ui/src/page-box.ts`
+holds the conversions:
+
+- `zoneToPdfRect` maps a box-relative zone to the absolute rectangle
+  `convertToViewportRectangle` expects.
+- `pdfPointToZonePoint` maps an absolute point from `convertToPdfPoint` back to
+  zone space, for zones the user drags out by hand.
+
+**These are exact inverses and must change together.** Fixing one direction
+alone leaves drawing and pointer reading disagreeing while a detect-then-place
+round trip still looks correct, which is the same trap the server-side
+normalization hit.
+
+The `viewBox` fallback in `resolvePageBox` exists only for early-load states
+before geometry arrives, and is correct only when the two boxes coincide.
+
+**The browser smoke lanes do not cover this.** They build their fixtures from
+`example-fw9.pdf` with at most a rotation applied, so the MediaBox origin is
+`(0,0)` and there is no CropBox. Reverting the fix produces byte-identical smoke
+output. `test/viewer-page-box.test.ts` is the real gate; treat the smoke lanes
+as regression cover for everything else.
+
 ## Extension identity and the legacy migration path
 
 Claude Desktop, not this project, assigns the directory name an installed

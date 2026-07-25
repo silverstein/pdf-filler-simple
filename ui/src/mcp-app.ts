@@ -16,6 +16,12 @@ import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
 import * as pdfjsLib from "pdfjs-dist";
 import { TextLayer } from "pdfjs-dist";
 import "./mcp-app.css";
+import {
+  type PageBox,
+  pdfPointToZonePoint,
+  resolvePageBox,
+  zoneToPdfRect,
+} from "./page-box.js";
 import { buildManagedPdfPath, getHostBaseName } from "./path-utils";
 import {
   LatestPathRequestState,
@@ -76,8 +82,20 @@ interface ZoneDetectionWarning {
   message: string;
   occurrences: number;
 }
+// The page box zone coordinates are measured against. PDF.js exposes only the
+// view (CropBox intersected with MediaBox), so the server sends this alongside
+// the zones; without it, overlays are displaced on any page where the two
+// boxes differ.
+interface PageGeometry {
+  page: number;
+  origin_x: number;
+  origin_y: number;
+  width: number;
+  height: number;
+}
 let signatureZones: SignatureZone[] = [];
 const zoneWarningsByPath = new Map<string, ZoneDetectionWarning[]>();
+const pageGeometryByPage = new Map<number, PageGeometry>();
 let activeBackupPath: string | null = null;
 // Remember which zones we've stamped so page navigation / mode toggles don't
 // lose the ✓ Signed indicator. Key: `${pdfPath}|${type}|${page}|${x}|${y}`.
@@ -1205,8 +1223,15 @@ async function fetchSignatureZones(force = false) {
     const sc = result.structuredContent as {
       zones?: SignatureZone[];
       warnings?: ZoneDetectionWarning[];
+      page_geometry?: PageGeometry[];
     } | undefined;
     zoneWarningsByPath.set(requestedPath, sc?.warnings ?? []);
+    // Zones are measured against each page's MediaBox, which PDF.js does not
+    // expose, so retain the geometry that came with them.
+    pageGeometryByPage.clear();
+    for (const geometry of sc?.page_geometry ?? []) {
+      pageGeometryByPage.set(geometry.page, geometry);
+    }
     const zones = (sc?.zones ?? []).map((z, i) => ({
       ...z,
       id: `zone-${i}`,
@@ -1324,12 +1349,29 @@ function buildZonePreviewGhost(zone: SignatureZone) {
   return null;
 }
 
+/**
+ * The page box zone coordinates are measured against.
+ *
+ * Zones arrive as top-left origin points relative to the page MediaBox. PDF.js
+ * exposes only the view (CropBox intersected with MediaBox) through
+ * viewport.viewBox, so on a page whose CropBox differs from its MediaBox the
+ * viewer cannot reconstruct the right box on its own. The server therefore
+ * sends page_geometry with detect_signature_zones and it is preferred here.
+ *
+ * The viewBox fallback covers early-load states before geometry has arrived.
+ * It is correct only when the two boxes coincide, which is why it is a fallback
+ * rather than the source of truth.
+ */
+function currentPageBox(): PageBox {
+  return resolvePageBox(
+    pageGeometryByPage.get(currentPage),
+    currentViewport?.viewBox,
+    canvasEl.height / (window.devicePixelRatio || 1) / scale,
+  );
+}
+
 function currentNativePageHeight(): number {
-  const viewBox = currentViewport?.viewBox;
-  if (Array.isArray(viewBox) && viewBox.length >= 4) {
-    return Math.abs(viewBox[3] - viewBox[1]);
-  }
-  return canvasEl.height / (window.devicePixelRatio || 1) / scale;
+  return currentPageBox().height;
 }
 
 function currentPageRotation(): number {
@@ -1347,13 +1389,10 @@ function nativeRectToViewportRect(rect: Pick<SignatureZone, "x" | "y" | "width" 
     };
   }
 
-  const pageH = currentNativePageHeight();
-  const pdfRect = [
-    rect.x,
-    pageH - rect.y - rect.height,
-    rect.x + rect.width,
-    pageH - rect.y,
-  ];
+  // convertToViewportRectangle expects ABSOLUTE user-space coordinates, so the
+  // page box origin has to be added back after the top-left flip. Omitting it
+  // displaced every overlay by the box origin.
+  const pdfRect = zoneToPdfRect(rect, currentPageBox());
   const viewportRect = currentViewport.convertToViewportRectangle(pdfRect);
   const [x1, y1, x2, y2] = viewportRect;
   return {
@@ -1523,9 +1562,12 @@ function getZoneLayerPointerPoints(e: PointerEvent): [number, number] {
   const x = e.clientX - rect.left;
   const y = e.clientY - rect.top;
   if (currentViewport?.convertToPdfPoint && currentViewportPage === currentPage) {
+    // convertToPdfPoint returns ABSOLUTE user space, so the origin has to come
+    // back off to land in the box-relative space zones are expressed in. This
+    // is the inverse of nativeRectToViewportRect and must move with it: fixing
+    // only one direction leaves drawing and reading disagreeing.
     const [pdfX, pdfY] = currentViewport.convertToPdfPoint(x, y);
-    const pageH = currentNativePageHeight();
-    return [pdfX, pageH - pdfY];
+    return pdfPointToZonePoint(pdfX, pdfY, currentPageBox());
   }
   // Fallback for early-load states before PDF.js exposes a viewport.
   return [x / scale, y / scale];

@@ -21,7 +21,12 @@ const REPO_ROOT = path.join(__dirname, "..");
 const SOURCE_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.json"), "utf8"));
 const MCPB_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.mcpb.json"), "utf8"));
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
-const TOOL_CONTRACT_SHA256 = "0c54c7a34f13d9da6579a6caade7fa1c1ce8c43f0c792c5307adac2f0dbba347";
+// Drift detector for the live tool contract. Update it only alongside a
+// deliberate, reviewed contract change, and say what changed.
+// 2026-07-25: detect_signature_zones gained required page_geometry so a
+// renderer can place zones against the MediaBox they are measured from.
+// Previously 0c54c7a34f13d9da6579a6caade7fa1c1ce8c43f0c792c5307adac2f0dbba347.
+const TOOL_CONTRACT_SHA256 = "c584f853d0a8eb0a9d518f47cb4e1d1254ff82f3aefb6e62a495e548775a73c5";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
