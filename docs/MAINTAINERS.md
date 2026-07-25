@@ -101,6 +101,49 @@ stable and in sync across:
 - README tool list
 - Actual tool registrations in `server/index.js`
 
+## Display name and tool-identifier budget
+
+Claude Desktop generates a namespaced identifier for every tool from the
+extension's human-facing `display_name`, not from the machine `name`:
+
+```
+mcp__<display_name, spaces underscored, non [A-Za-z0-9_-] stripped>__<tool_name>
+```
+
+Identifiers over **64 characters** fail in the host. This shipped as a real
+defect (issue #44): the original benefit-led directory title
+`PDF Tools - Fill, Sign, Merge, Split, Extract` normalizes to 41 characters and
+pushes 13 of the current 40 tool identifiers past the ceiling.
+
+The naming strategy is therefore **dual**:
+
+| Surface | Value | Why |
+|---|---|---|
+| Packaged runtime `display_name` | `PDF Tools` | Short brand; keeps every identifier well inside the limit |
+| Public directory card | Benefit-led title | Discovery value, where the platform supports a separate field |
+| Single-field fallback | `PDF Tools: Fill, Sign & Edit` | Used only if the submission form forces one shared value |
+
+Budgets are computed by `scripts/tool-identifier-budget.mjs` and gated in
+`test/mcp-contract.test.js`. Current margins against the longest tool name
+(`convert_pdf_to_markdown`, 23 characters):
+
+- `PDF Tools` — longest identifier 39, headroom 25
+- `PDF Tools: Fill, Sign & Edit` — longest identifier 55, headroom 9
+- Original long title — longest identifier 71, 13 identifiers over the limit
+
+**The trap when adding a tool.** The shipped short brand has generous headroom,
+so a new long tool name will not break it and every host-facing check stays
+green — while quietly eating the fallback title's much smaller margin. A
+30-character tool name drops the fallback from 9 characters of headroom to 2.
+The `MIN_FALLBACK_HEADROOM` gate exists to fail that case loudly. If it fires,
+either shorten the new tool name or make an explicit, recorded decision to
+retire the single-field fallback.
+
+Naming is an ODA product decision and needs no Lumin-channel approval. The one
+open external question is whether the directory submission form accepts a
+listing title separate from the packaged manifest value; until that is
+confirmed, keep the fallback viable.
+
 ## PDF output commit policy
 
 Every user-visible PDF output follows an explicit commit policy:

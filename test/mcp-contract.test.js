@@ -7,6 +7,14 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { pathToPdfResourceUri } from "../server/resource-uri.js";
+import {
+  DISPLAY_NAME_CANDIDATES,
+  MAX_TOOL_IDENTIFIER_LENGTH,
+  MIN_FALLBACK_HEADROOM,
+  computeToolIdentifierBudget,
+  generateToolIdentifier,
+  normalizeDisplayName,
+} from "../scripts/tool-identifier-budget.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
@@ -163,19 +171,54 @@ async function startRuntime(runtime) {
 }
 
 describe("MCPB static declarations", () => {
+  // Every tool name the host could ever namespace, across both distributions.
+  const allDeclaredToolNames = () => [
+    ...new Set([...names(SOURCE_MANIFEST.tools), ...names(MCPB_MANIFEST.tools)]),
+  ];
+
   it("keeps the runtime brand short enough for Claude-generated tool identifiers", () => {
-    expect(SOURCE_MANIFEST.display_name).toBe("PDF Tools");
+    expect(SOURCE_MANIFEST.display_name).toBe(DISPLAY_NAME_CANDIDATES.shipped);
     expect(MCPB_MANIFEST.display_name).toBe(SOURCE_MANIFEST.display_name);
 
-    const normalizedDisplayName = SOURCE_MANIFEST.display_name
-      .replaceAll(" ", "_")
-      .replace(/[^a-zA-Z0-9_-]/g, "");
-    const generatedToolIds = names(SOURCE_MANIFEST.tools).map(
-      toolName => `mcp__${normalizedDisplayName}__${toolName}`,
+    const budget = computeToolIdentifierBudget(
+      SOURCE_MANIFEST.display_name,
+      allDeclaredToolNames(),
     );
-    expect(
-      Math.max(...generatedToolIds.map(identifier => identifier.length)),
-    ).toBeLessThanOrEqual(64);
+    expect(budget.overLimit).toEqual([]);
+    expect(budget.longestIdentifierLength).toBeLessThanOrEqual(MAX_TOOL_IDENTIFIER_LENGTH);
+  });
+
+  // The shipped short brand has generous headroom, so a newly added long tool
+  // name cannot break it — but it can silently consume the single-field
+  // fallback title's much smaller margin while every other test stays green.
+  // That is the actual recurrence path for issue #44, so it is gated here.
+  it("preserves headroom for the documented single-field directory title", () => {
+    const budget = computeToolIdentifierBudget(
+      DISPLAY_NAME_CANDIDATES.fallback,
+      allDeclaredToolNames(),
+    );
+    expect(budget.overLimit).toEqual([]);
+    expect(budget.headroom).toBeGreaterThanOrEqual(MIN_FALLBACK_HEADROOM);
+  });
+
+  // Proves the budget math measures something real: the original benefit-led
+  // title must still be computed as breaking the host limit. If this ever
+  // passes, the generation rule or the tool set changed and the naming
+  // decision needs to be revisited rather than silently inherited.
+  it("still reproduces the original title's tool-identifier breakage", () => {
+    const budget = computeToolIdentifierBudget(
+      DISPLAY_NAME_CANDIDATES.rejected,
+      allDeclaredToolNames(),
+    );
+    expect(budget.fits).toBe(false);
+    expect(budget.overLimit.length).toBeGreaterThan(0);
+  });
+
+  it("generates identifiers with the host's documented namespace rule", () => {
+    expect(generateToolIdentifier("PDF Tools", "fill_pdf")).toBe("mcp__PDF_Tools__fill_pdf");
+    // Punctuation is dropped, not replaced, which is why a comma-rich title
+    // is shorter than it looks but still expensive.
+    expect(normalizeDisplayName("PDF Tools: Fill, Sign & Edit")).toBe("PDF_Tools_Fill_Sign__Edit");
   });
 
   it("keeps source and packed prompt declarations identical", () => {
