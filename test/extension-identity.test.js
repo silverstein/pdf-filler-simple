@@ -25,6 +25,7 @@ import {
   classifyInstall,
   discoverInstalls,
   expectedLocalExtensionId,
+  readExtensionEnabled,
   summarizeUpgradeState,
 } from "../scripts/claude-extension-identity.mjs";
 
@@ -152,5 +153,83 @@ describe("reinstall helper", () => {
     expect(script).not.toMatch(/Claude Extensions\/local\.mcpb\.mat-silverstein/);
     expect(script).not.toMatch(/PDF Tools - View, Analyze, Extract, Fill/);
     expect(script).toContain("claude-extension-identity.mjs");
+  });
+});
+
+describe("enablement state", () => {
+  async function makeSettingsDirectory(entries) {
+    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-ext-settings-"));
+    temporaryRoots.push(root);
+    for (const [id, value] of Object.entries(entries)) {
+      await fs.writeFile(path.join(root, `${id}.json`), JSON.stringify(value));
+    }
+    return root;
+  }
+
+  it("reads the host enablement flag", async () => {
+    const settings = await makeSettingsDirectory({
+      "ant.dir.gh.silverstein.pdf-filler-simple": { isEnabled: false },
+      "local.mcpb.open-document-alliance.pdf-toolkit": { isEnabled: true },
+    });
+    expect(await readExtensionEnabled("ant.dir.gh.silverstein.pdf-filler-simple", settings)).toBe(false);
+    expect(await readExtensionEnabled("local.mcpb.open-document-alliance.pdf-toolkit", settings)).toBe(true);
+  });
+
+  it("reports unknown rather than guessing when the flag is absent", async () => {
+    const settings = await makeSettingsDirectory({ "some.ext": { other: 1 } });
+    expect(await readExtensionEnabled("some.ext", settings)).toBe(null);
+    expect(await readExtensionEnabled("never.written", settings)).toBe(null);
+  });
+
+  it("treats a disabled legacy install as clean residue, not a live duplicate", async () => {
+    // The maintainer Mac's state after disabling the legacy Directory install:
+    // still present on disk, no longer competing for tool announcements.
+    const root = await makeExtensionsDirectory([
+      "ant.dir.gh.silverstein.pdf-filler-simple",
+      "local.mcpb.open-document-alliance.pdf-toolkit",
+    ]);
+    const settings = await makeSettingsDirectory({
+      "ant.dir.gh.silverstein.pdf-filler-simple": { isEnabled: false },
+      "local.mcpb.open-document-alliance.pdf-toolkit": { isEnabled: true },
+    });
+    const { installs } = await discoverInstalls({
+      manifest: MANIFEST, extensionsDirectory: root, settingsDirectory: settings,
+    });
+    expect(summarizeUpgradeState(installs)).toMatchObject({
+      duplicate_identities: true,
+      live_duplicate: false,
+      disabled_residue_count: 1,
+      clean: true,
+    });
+  });
+
+  it("still reports a live duplicate when both are enabled", async () => {
+    const root = await makeExtensionsDirectory([
+      "ant.dir.gh.silverstein.pdf-filler-simple",
+      "local.mcpb.open-document-alliance.pdf-toolkit",
+    ]);
+    const settings = await makeSettingsDirectory({
+      "ant.dir.gh.silverstein.pdf-filler-simple": { isEnabled: true },
+      "local.mcpb.open-document-alliance.pdf-toolkit": { isEnabled: true },
+    });
+    const { installs } = await discoverInstalls({
+      manifest: MANIFEST, extensionsDirectory: root, settingsDirectory: settings,
+    });
+    expect(summarizeUpgradeState(installs)).toMatchObject({ live_duplicate: true, clean: false });
+  });
+
+  it("treats unreadable enablement as live rather than assuming dormant", async () => {
+    // Assuming a copy is dormant is the assumption that produces a false clean.
+    const root = await makeExtensionsDirectory([
+      "ant.dir.gh.silverstein.pdf-filler-simple",
+      "local.mcpb.open-document-alliance.pdf-toolkit",
+    ]);
+    const settings = await makeSettingsDirectory({});
+    const { installs } = await discoverInstalls({
+      manifest: MANIFEST, extensionsDirectory: root, settingsDirectory: settings,
+    });
+    expect(summarizeUpgradeState(installs)).toMatchObject({
+      unknown_enablement_count: 2, live_duplicate: true, clean: false,
+    });
   });
 });
