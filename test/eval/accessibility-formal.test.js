@@ -6,6 +6,8 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { fetchFormalAccessibilityCorpus } from "../../scripts/eval-fetch-accessibility-formal-corpus.mjs";
 import {
+  MUTABLE_PATH_DIRECTORIES,
+  buildFormalRunnerEnvironment,
   loadFormalAccessibilityContract,
   parseVeraPdfEvidence,
   runFormalAccessibilityEvaluation,
@@ -102,12 +104,17 @@ async function fakeFormalEnvironment({ misclassifyKnownGood = false } = {}) {
   await fs.writeFile(java, "pinned java binary");
 
   const validator = path.join(validatorRoot, "verapdf");
-  const validatorSource = `#!/usr/bin/env node
+  // Absolute interpreter path on purpose. `#!/usr/bin/env node` would resolve
+  // through the very PATH this runner deliberately restricts, so the stub would
+  // silently depend on a mutable directory being present.
+  const validatorSource = `#!${process.execPath}
 const fs = require("node:fs");
 const args = process.argv.slice(2);
 const forbiddenEnvironment = ["JAVA_TOOL_OPTIONS", "JDK_JAVA_OPTIONS", "_JAVA_OPTIONS", "CLASSPATH"];
 if (forbiddenEnvironment.some(name => process.env[name])) process.exit(9);
 if (process.env.LC_ALL !== "C.UTF-8" || process.env.TZ !== "UTC") process.exit(10);
+const mutablePathDirectories = ["/usr/local/bin", "/usr/local/sbin", "/opt/homebrew/bin", "/opt/homebrew/sbin"];
+if ((process.env.PATH || "").split(":").some(entry => mutablePathDirectories.includes(entry))) process.exit(11);
 if (args.includes("--version")) {
   process.stdout.write("veraPDF 1.30.2\\n");
   process.exit(0);
@@ -173,6 +180,51 @@ afterEach(async () => {
   await Promise.all(temporaryDirectories.splice(0).map(directory =>
     fs.rm(directory, { recursive: true, force: true })
   ));
+});
+
+describe("formal runner environment", () => {
+  const environment = () => buildFormalRunnerEnvironment({
+    javaHome: "/pinned/jre",
+    runtimeHome: "/tmp/pinned-home",
+  });
+
+  it("excludes admin-writable directories from the validator PATH", () => {
+    // The veraPDF entry point is a shell wrapper, so anything on its PATH is a
+    // place a non-root attacker could plant a binary that a formal evidence run
+    // would then execute.
+    const entries = environment().PATH.split(":");
+    for (const mutable of MUTABLE_PATH_DIRECTORIES) {
+      expect(entries).not.toContain(mutable);
+    }
+  });
+
+  it("searches the pinned runtime before any system directory", () => {
+    // JAVA_HOME is hash-verified against the contract, so it must win any
+    // name collision with a system binary.
+    expect(environment().PATH.split(":")).toEqual(["/pinned/jre/bin", "/usr/bin", "/bin"]);
+  });
+
+  it("keeps the run's caches and temp inside the disposable runtime home", () => {
+    const built = environment();
+    for (const key of ["HOME", "XDG_CACHE_HOME", "XDG_CONFIG_HOME", "TMPDIR"]) {
+      expect(built[key].startsWith("/tmp/pinned-home")).toBe(true);
+    }
+  });
+
+  it("pins locale and timezone so report bytes stay comparable", () => {
+    const built = environment();
+    expect(built).toMatchObject({ LANG: "C.UTF-8", LC_ALL: "C.UTF-8", TZ: "UTC" });
+  });
+
+  it("refuses to build an environment whose PATH would include a mutable directory", () => {
+    // Guards the constant itself: if someone adds a mutable directory back to
+    // the search path, construction fails rather than silently weakening the
+    // trust boundary.
+    expect(() => buildFormalRunnerEnvironment({
+      javaHome: "/usr/local",
+      runtimeHome: "/tmp/pinned-home",
+    })).toThrow(/must exclude mutable directory/);
+  });
 });
 
 describe("formal accessibility machine-evidence pilot", () => {
