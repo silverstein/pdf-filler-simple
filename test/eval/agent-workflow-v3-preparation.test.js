@@ -77,7 +77,12 @@ describe("agent workflow v3 preparation", () => {
     );
   });
 
-  it("separates prompt-only participants from both independent oracles", async () => {
+  // Retired with v3 itself. This exercises prepareAgentWorkflowCampaignV3,
+  // which fails closed on the frozen skill digest, and that digest no longer
+  // matches the pinned SKILL.md. Making it pass would require re-pointing the
+  // freeze at a body the sealed campaign never measured. See
+  // agent-workflow-v3-retirement.js.
+  it.skip("separates prompt-only participants from both independent oracles", async () => {
     const root = await fs.realpath(
       await fs.mkdtemp(path.join(os.tmpdir(), "pdf-workflow-v3-prepare-")),
     );

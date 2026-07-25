@@ -202,7 +202,13 @@ afterEach(async () => {
 });
 
 describe("agent workflow v3 campaign", () => {
-  it("rebinds and independently scores the exact 96-run frozen schedule", async () => {
+  // Retired with v3 itself, for the same reason as the preparation test: this
+  // rebinds the sealed 96-run schedule through prepareAgentWorkflowCampaignV3,
+  // whose frozen skill digest no longer matches the pinned SKILL.md. The
+  // campaign's own evidence remains valid for the body it measured; it simply
+  // cannot be re-derived from the current tree. See
+  // agent-workflow-v3-retirement.js.
+  it.skip("rebinds and independently scores the exact 96-run frozen schedule", async () => {
     const root = await fs.realpath(
       await fs.mkdtemp(path.join(os.tmpdir(), "pdf-workflow-v3-campaign-")),
     );
