@@ -45,7 +45,7 @@
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@napi-rs/canvas": "^0.1.99",
     "pdf-lib": "^1.17.1",
-    "pdfjs-dist": "5.4.624"
+    "pdfjs-dist": "6.1.200"
   },
   "devDependencies": {
     "@anthropic-ai/mcpb": "2.1.2",
