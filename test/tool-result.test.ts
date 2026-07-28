@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  getDisplayPdfTextFileName,
   getPdfToolInputData,
   getPdfToolLoadData,
   isDisplayPdfTextResult,
@@ -213,9 +214,11 @@ describe("getPdfToolInputData", () => {
 
 describe("isDisplayPdfTextResult", () => {
   it("recognizes the server's stable display_pdf text fallback", () => {
-    expect(isDisplayPdfTextResult({
+    const result = {
       content: [{ type: "text", text: "Displaying: agreement.pdf (48 KB)" }],
-    } as any)).toBe(true);
+    } as any;
+    expect(isDisplayPdfTextResult(result)).toBe(true);
+    expect(getDisplayPdfTextFileName(result)).toBe("agreement.pdf");
   });
 
   it("does not classify mutation or error text as a display result", () => {
@@ -223,8 +226,20 @@ describe("isDisplayPdfTextResult", () => {
       content: [{ type: "text", text: "Saved signed PDF to /tmp/output.pdf" }],
     } as any)).toBe(false);
     expect(isDisplayPdfTextResult({
-      content: [{ type: "text", text: "Displaying failed" }],
+      content: [{ type: "text", text: "Displaying: agreement.pdf (48 KB)" }],
       isError: true,
     } as any)).toBe(false);
+  });
+
+  it.each([
+    "Displaying failed",
+    "Displaying: agreement.pdf",
+    "Displaying: agreement.pdf (48.5 KB)",
+    "Displaying: agreement.pdf (48 MB)",
+    "Prefix Displaying: agreement.pdf (48 KB)",
+  ])("rejects ambiguous fallback text: %s", text => {
+    expect(getDisplayPdfTextFileName({
+      content: [{ type: "text", text }],
+    } as any)).toBeNull();
   });
 });

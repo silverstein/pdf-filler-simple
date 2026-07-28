@@ -33,9 +33,9 @@ import {
 import {
   type PdfToolLoadData,
   type PdfToolInputData,
+  getDisplayPdfTextFileName,
   getPdfToolInputData,
   getToolResultText,
-  isDisplayPdfTextResult,
   parsePdfToolLoadData,
 } from "./tool-result";
 
@@ -254,12 +254,15 @@ let isTearingDown = false;
 let teardownPromise: Promise<Record<string, never>> | null = null;
 let viewerLifecycleEpoch = 0;
 let latestToolInput: PdfToolInputData | null = null;
+let hasReceivedToolInput = false;
+let toolInputConflict = false;
 let connectTimeout: ReturnType<typeof setTimeout> | null = null;
 let toolResultTimeout: ReturnType<typeof setTimeout> | null = null;
 let hasReceivedToolResult = false;
 let authoritativePayloadVersion = 0;
+let lastRecoveredDisplayResultText = "";
 let fallbackLoad:
-  | { key: string; promise: Promise<boolean> }
+  | { key: string; pdfPath: string; promise: Promise<boolean> }
   | null = null;
 
 // ─── UI State ────────────────────────────────────────────────────────────────
@@ -3492,8 +3495,15 @@ fieldFilterEl.addEventListener("input", () => {
 
 app.ontoolinput = params => {
   if (isTearingDown) return;
-  latestToolInput = getPdfToolInputData(params);
   console.log("[viewer] Tool input:", params);
+  if (hasReceivedToolResult || hasReceivedToolInput) {
+    toolInputConflict = true;
+    latestToolInput = null;
+    console.error("[viewer] Refusing duplicate, late, or interleaved tool input.");
+    return;
+  }
+  hasReceivedToolInput = true;
+  latestToolInput = getPdfToolInputData(params);
   startToolResultTimeout();
 };
 
@@ -3542,7 +3552,7 @@ function recoverDisplayPdfFromToolInput(
       // pending is authoritative. Do not race it with the fallback load.
       if (payloadVersion !== authoritativePayloadVersion) return true;
 
-      return loadPdfFromToolResult({
+      const loaded = await loadPdfFromToolResult({
         content: originalResult.content || [],
         structuredContent: {
           pdfPath: input.pdfPath,
@@ -3553,6 +3563,10 @@ function recoverDisplayPdfFromToolInput(
           hasFormFields: false,
         },
       } as CallToolResult);
+      if (loaded && pdfDocument) {
+        lastRecoveredDisplayResultText = getToolResultText(originalResult);
+      }
+      return loaded;
     } catch (err: any) {
       if (isViewerLifecycleEnded(err)) return true;
       console.error("[viewer] Failed to recover PDF viewer metadata:", err);
@@ -3565,7 +3579,7 @@ function recoverDisplayPdfFromToolInput(
     }
   })();
 
-  fallbackLoad = { key, promise };
+  fallbackLoad = { key, pdfPath: input.pdfPath, promise };
   void promise.finally(() => {
     if (fallbackLoad?.promise === promise) fallbackLoad = null;
   });
@@ -3576,6 +3590,8 @@ app.ontoolresult = async (result: CallToolResult) => {
   if (isTearingDown) return;
   const lifecycle = captureViewerLifecycle();
   console.log("[viewer] Tool result:", result);
+  const inputForResult = toolInputConflict ? null : latestToolInput;
+  latestToolInput = null;
   hasReceivedToolResult = true;
   clearToolResultTimeout();
 
@@ -3592,6 +3608,15 @@ app.ontoolresult = async (result: CallToolResult) => {
     return;
   }
   if (!isViewerLifecycleCurrent(lifecycle)) return;
+  const displayFileName = getDisplayPdfTextFileName(result);
+  if (
+    pdfDocument &&
+    displayFileName &&
+    getHostBaseName(pdfPath) === displayFileName &&
+    getToolResultText(result) === lastRecoveredDisplayResultText
+  ) {
+    return;
+  }
 
   // Claude Desktop versions that project only the text content of display_pdf
   // omit the structured load payload. Stable MCP Apps still guarantees the
@@ -3599,14 +3624,26 @@ app.ontoolresult = async (result: CallToolResult) => {
   // read-only display_pdf result. Never apply this fallback to mutation results.
   if (
     (parsedLoadData.kind === "missing" || parsedLoadData.kind === "incomplete") &&
-    latestToolInput &&
-    isDisplayPdfTextResult(result) &&
+    displayFileName &&
+    fallbackLoad &&
+    !toolInputConflict &&
+    !inputForResult &&
+    getHostBaseName(fallbackLoad.pdfPath) === displayFileName
+  ) {
+    await fallbackLoad.promise;
+    return;
+  }
+  if (
+    (parsedLoadData.kind === "missing" || parsedLoadData.kind === "incomplete") &&
+    inputForResult &&
+    displayFileName &&
+    getHostBaseName(inputForResult.pdfPath) === displayFileName &&
     (
       !parsedLoadData.recoverablePdfPath ||
-      parsedLoadData.recoverablePdfPath === latestToolInput.pdfPath
+      parsedLoadData.recoverablePdfPath === inputForResult.pdfPath
     )
   ) {
-    await recoverDisplayPdfFromToolInput(latestToolInput, result, lifecycle);
+    await recoverDisplayPdfFromToolInput(inputForResult, result, lifecycle);
     return;
   }
 

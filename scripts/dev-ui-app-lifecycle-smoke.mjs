@@ -137,17 +137,33 @@ function hostHtml() {
       async function sendInitialToolResult() {
         const bytes = await fixturePromise;
         if (initialDeliveryMode !== "content-only-no-input") {
+          const inputPdfPath = initialDeliveryMode === "stale-input-mismatch"
+            ? "/fixtures/stale-artifact.pdf"
+            : "/fixtures/lifecycle.pdf";
           state.initialToolInputs++;
           send({
             jsonrpc: "2.0",
             method: "ui/notifications/tool-input",
             params: {
               arguments: {
-                pdf_path: "/fixtures/lifecycle.pdf",
+                pdf_path: inputPdfPath,
                 page: 1,
               },
             },
           });
+          if (initialDeliveryMode === "interleaved-input-result") {
+            state.initialToolInputs++;
+            send({
+              jsonrpc: "2.0",
+              method: "ui/notifications/tool-input",
+              params: {
+                arguments: {
+                  pdf_path: "/fixtures/interleaved-artifact.pdf",
+                  page: 1,
+                },
+              },
+            });
+          }
         }
         state.initialToolResults++;
         const content = [{
@@ -211,7 +227,9 @@ function hostHtml() {
         if (
           initialDeliveryMode === "content-only" ||
           initialDeliveryMode === "content-only-no-input" ||
-          initialDeliveryMode === "content-only-duplicate"
+          initialDeliveryMode === "content-only-duplicate" ||
+          initialDeliveryMode === "stale-input-mismatch" ||
+          initialDeliveryMode === "interleaved-input-result"
         ) {
           send({
             jsonrpc: "2.0",
@@ -623,6 +641,8 @@ function hostHtml() {
           "content-only",
           "content-only-no-input",
           "content-only-duplicate",
+          "stale-input-mismatch",
+          "interleaved-input-result",
           "error",
           "unrecognized",
           "conflict",
@@ -1048,6 +1068,8 @@ async function main() {
       ["unrecognized", "complete load metadata"],
       ["conflict", "conflicting PDF viewer metadata"],
       ["partial-mismatch", "complete load metadata"],
+      ["stale-input-mismatch", "complete load metadata"],
+      ["interleaved-input-result", "complete load metadata"],
     ]) {
       const before = await evalJson(
         runAgentBrowser,

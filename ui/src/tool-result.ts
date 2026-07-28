@@ -305,6 +305,16 @@ export function getToolResultText(result: CallToolResult | null | undefined) {
     .trim() || "";
 }
 
+export function getDisplayPdfTextFileName(
+  result: CallToolResult | null | undefined,
+) {
+  if (result?.isError) return null;
+  const match = getToolResultText(result).match(
+    /^Displaying:\s+([^\r\n]+?)\s+\(\d+\s+KB\)(?:\r?\n|$)/u,
+  );
+  return match?.[1]?.trim() || null;
+}
+
 export function isDisplayPdfTextResult(result: CallToolResult | null | undefined) {
-  return !result?.isError && /^Displaying:\s/u.test(getToolResultText(result));
+  return getDisplayPdfTextFileName(result) !== null;
 }
