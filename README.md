@@ -1,5 +1,7 @@
 # PDF Tools for Claude Desktop and Local MCP Hosts
 
+[![MCP Toplist](https://mcptoplist.com/badge/glama%2FOpen-Document-Alliance%2FPDF-Tools.svg)](https://mcptoplist.com/server/glama%2FOpen-Document-Alliance%2FPDF-Tools)
+
 The local PDF workflow for Claude Desktop and MCP hosts: fill, sign, merge,
 split, extract, render, and analyze PDFs with local file operations.
 
