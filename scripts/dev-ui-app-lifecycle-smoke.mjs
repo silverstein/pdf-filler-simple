@@ -136,48 +136,125 @@ function hostHtml() {
 
       async function sendInitialToolResult() {
         const bytes = await fixturePromise;
-        state.initialToolInputs++;
-        send({
-          jsonrpc: "2.0",
-          method: "ui/notifications/tool-input",
-          params: {
-            arguments: {
-              pdf_path: "/fixtures/lifecycle.pdf",
-              page: 1,
+        if (initialDeliveryMode !== "content-only-no-input") {
+          state.initialToolInputs++;
+          send({
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-input",
+            params: {
+              arguments: {
+                pdf_path: "/fixtures/lifecycle.pdf",
+                page: 1,
+              },
             },
-          },
-        });
+          });
+        }
         state.initialToolResults++;
         const content = [{
           type: "text",
           text: "Displaying: lifecycle.pdf (" + Math.ceil(bytes.length / 1024) + " KB)",
         }];
-        if (initialDeliveryMode === "content-only") {
+        if (initialDeliveryMode === "error") {
+          send({
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-result",
+            params: {
+              content: [{ type: "text", text: "The requested PDF could not be opened." }],
+              isError: true,
+            },
+          });
+          return;
+        }
+        if (initialDeliveryMode === "unrecognized") {
+          send({
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-result",
+            params: {
+              content: [{ type: "text", text: "Saved a new PDF file." }],
+            },
+          });
+          return;
+        }
+        if (initialDeliveryMode === "conflict") {
+          send({
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-result",
+            params: {
+              content,
+              structuredContent: {
+                pdfPath: "/fixtures/lifecycle.pdf",
+                totalBytes: bytes.length,
+                initialPage: 1,
+              },
+              _meta: {
+                pdfPath: "/fixtures/conflicting.pdf",
+                totalBytes: bytes.length + 1,
+                initialPage: 1,
+              },
+            },
+          });
+          return;
+        }
+        if (initialDeliveryMode === "partial-mismatch") {
+          send({
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-result",
+            params: {
+              content,
+              _meta: {
+                pdfPath: "/fixtures/conflicting.pdf",
+              },
+            },
+          });
+          return;
+        }
+        if (
+          initialDeliveryMode === "content-only" ||
+          initialDeliveryMode === "content-only-no-input" ||
+          initialDeliveryMode === "content-only-duplicate"
+        ) {
           send({
             jsonrpc: "2.0",
             method: "ui/notifications/tool-result",
             params: { content },
           });
+          if (initialDeliveryMode === "content-only-duplicate") {
+            state.initialToolResults++;
+            send({
+              jsonrpc: "2.0",
+              method: "ui/notifications/tool-result",
+              params: { content },
+            });
+          }
           return;
         }
+        const params = {
+          content,
+          structuredContent: {
+            pdfPath: "/fixtures/lifecycle.pdf",
+            totalBytes: bytes.length,
+            initialPage: 1,
+          },
+          _meta: {
+            ui: { resourceUri: "ui://pdf-toolkit/viewer" },
+            pdfPath: "/fixtures/lifecycle.pdf",
+            totalBytes: bytes.length,
+            initialPage: 1,
+          },
+        };
         send({
           jsonrpc: "2.0",
           method: "ui/notifications/tool-result",
-          params: {
-            content,
-            structuredContent: {
-              pdfPath: "/fixtures/lifecycle.pdf",
-              totalBytes: bytes.length,
-              initialPage: 1,
-            },
-            _meta: {
-              ui: { resourceUri: "ui://pdf-toolkit/viewer" },
-              pdfPath: "/fixtures/lifecycle.pdf",
-              totalBytes: bytes.length,
-              initialPage: 1,
-            },
-          },
+          params,
         });
+        if (initialDeliveryMode === "full-duplicate") {
+          state.initialToolResults++;
+          send({
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-result",
+            params,
+          });
+        }
       }
 
       async function replyToReadRequest(message) {
@@ -540,10 +617,34 @@ function hostHtml() {
       }
 
       function setInitialDeliveryMode(mode) {
-        if (mode !== "full" && mode !== "content-only") {
+        if (![
+          "full",
+          "full-duplicate",
+          "content-only",
+          "content-only-no-input",
+          "content-only-duplicate",
+          "error",
+          "unrecognized",
+          "conflict",
+          "partial-mismatch",
+        ].includes(mode)) {
           throw new Error("Unsupported initial delivery mode: " + mode);
         }
         initialDeliveryMode = mode;
+        return mode;
+      }
+
+      async function openDeliveryMode(mode) {
+        monitorPostAckMessages = false;
+        await teardown();
+        frame?.remove();
+        frame = null;
+        setInitialDeliveryMode(mode);
+        holdReads = false;
+        holdApplyText = false;
+        holdCreateSignature = false;
+        await new Promise(resolve => setTimeout(resolve, 50));
+        createFrame();
         return mode;
       }
 
@@ -604,6 +705,7 @@ function hostHtml() {
         releaseHeldCreateSignature,
         sendProtocolError,
         setInitialDeliveryMode,
+        openDeliveryMode,
       };
       createFrame();
     })();
@@ -939,15 +1041,90 @@ async function main() {
       "The delayed create_signature continuation mutated viewer state after teardown acknowledgment.",
     );
 
+    const adversarialFailures = {};
+    for (const [mode, expectedText] of [
+      ["content-only-no-input", "complete load metadata"],
+      ["error", "could not open"],
+      ["unrecognized", "complete load metadata"],
+      ["conflict", "conflicting PDF viewer metadata"],
+      ["partial-mismatch", "complete load metadata"],
+    ]) {
+      const before = await evalJson(
+        runAgentBrowser,
+        "JSON.stringify(window.__hostApi.snapshot())",
+      );
+      await runAgentBrowser(["eval", `window.__hostApi.openDeliveryMode(${JSON.stringify(mode)})`]);
+      const viewer = await waitFor(async () => {
+        const snapshot = await evalJson(
+          runAgentBrowser,
+          "JSON.stringify(window.__hostApi.viewerSnapshot())",
+        );
+        return snapshot.errorVisible ? snapshot : null;
+      }, `The ${mode} bridge case did not fail visibly`);
+      const after = await evalJson(
+        runAgentBrowser,
+        "JSON.stringify(window.__hostApi.snapshot())",
+      );
+      assert(
+        viewer.errorText.includes(expectedText),
+        `The ${mode} bridge case showed an unexpected error: ${viewer.errorText}`,
+      );
+      assert(!viewer.viewerVisible, `The ${mode} bridge case exposed the viewer shell.`);
+      assert(
+        after.readBytesCalls === before.readBytesCalls,
+        `The ${mode} bridge case made ${after.readBytesCalls - before.readBytesCalls} byte call(s).`,
+      );
+      adversarialFailures[mode] = viewer;
+    }
+
+    const duplicateReceipts = {};
+    for (const [mode, maximumReadDelta] of [
+      ["content-only-duplicate", 2],
+      ["full-duplicate", 1],
+    ]) {
+      const before = await evalJson(
+        runAgentBrowser,
+        "JSON.stringify(window.__hostApi.snapshot())",
+      );
+      await runAgentBrowser(["eval", `window.__hostApi.openDeliveryMode(${JSON.stringify(mode)})`]);
+      const viewer = await waitFor(async () => {
+        const snapshot = await evalJson(
+          runAgentBrowser,
+          "JSON.stringify(window.__hostApi.viewerSnapshot())",
+        );
+        return snapshot.viewerVisible &&
+          snapshot.totalPagesText === "of 2" &&
+          snapshot.textLayerText.includes("BLUEHARBOR-TEXT-20260721")
+          ? snapshot
+          : null;
+      }, `The ${mode} bridge case did not render exactly once`);
+      const after = await evalJson(
+        runAgentBrowser,
+        "JSON.stringify(window.__hostApi.snapshot())",
+      );
+      const readDelta = after.readBytesCalls - before.readBytesCalls;
+      assert(
+        readDelta > 0 && readDelta <= maximumReadDelta,
+        `The ${mode} bridge case made an unexpected ${readDelta} byte call(s).`,
+      );
+      assert(!viewer.errorVisible, `The ${mode} bridge case showed an error: ${viewer.errorText}`);
+      duplicateReceipts[mode] = { readDelta, viewer };
+    }
+
     console.log(JSON.stringify({
       status: "pass",
       host: process.platform,
-      lifecycle: quickFinalState,
+      lifecycle: await evalJson(
+        runAgentBrowser,
+        "JSON.stringify(window.__hostApi.snapshot())",
+      ),
       firstViewer,
       darkViewer,
       errorViewer,
       dateViewerAfterAck,
       quickViewerAfterAck,
+      adversarialFailures,
+      duplicateReceipts,
     }, null, 2));
   } finally {
     await closeBrowserSession();
