@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import http from "node:http";
 import path from "node:path";
+import { PDFDocument, StandardFonts, rgb } from "pdf-lib";
 import {
   createAgentBrowserSessionRunner,
   evalJson,
@@ -12,7 +13,35 @@ let origin = "";
 const session = `pdf-tools-app-lifecycle-${Date.now()}`;
 const runAgentBrowser = createAgentBrowserSessionRunner(session);
 const viewerHtml = await fs.readFile(path.join(repoRoot, "dist-ui", "index.html"));
-const fixtureBytes = await fs.readFile(path.join(repoRoot, "example-fw9.pdf"));
+
+async function createLifecycleFixture() {
+  const document = await PDFDocument.create();
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  const firstPage = document.addPage([612, 792]);
+  firstPage.drawText("Synthetic text fixture marker: BLUEHARBOR-TEXT-20260721", {
+    x: 72,
+    y: 680,
+    size: 18,
+    font,
+    color: rgb(0.05, 0.2, 0.65),
+  });
+  firstPage.drawText("PDF Tools built-viewer lifecycle qualification", {
+    x: 72,
+    y: 640,
+    size: 14,
+    font,
+  });
+  const secondPage = document.addPage([612, 792]);
+  secondPage.drawText("Marker: BLUEHARBOR-PAGE-TWO", {
+    x: 72,
+    y: 680,
+    size: 18,
+    font,
+  });
+  return Buffer.from(await document.save({ useObjectStreams: false }));
+}
+
+const fixtureBytes = await createLifecycleFixture();
 
 function hostHtml() {
   return `<!doctype html>
@@ -34,8 +63,11 @@ function hostHtml() {
         initializeCount: 0,
         initializeContractErrors: [],
         initializedCount: 0,
+        initialToolInputs: 0,
         initialToolResults: 0,
         readBytesCalls: 0,
+        invalidReadBytesCalls: 0,
+        maxReadByteCount: 0,
         setActiveDocumentCalls: 0,
         modelContextCalls: 0,
         sizeChanges: [],
@@ -69,6 +101,7 @@ function hostHtml() {
       let holdCreateSignature = false;
       let detectedZoneType = "date";
       let monitorPostAckMessages = false;
+      let initialDeliveryMode = "content-only";
 
       const fixturePromise = fetch("/fixture.pdf")
         .then(response => {
@@ -103,15 +136,35 @@ function hostHtml() {
 
       async function sendInitialToolResult() {
         const bytes = await fixturePromise;
+        state.initialToolInputs++;
+        send({
+          jsonrpc: "2.0",
+          method: "ui/notifications/tool-input",
+          params: {
+            arguments: {
+              pdf_path: "/fixtures/lifecycle.pdf",
+              page: 1,
+            },
+          },
+        });
         state.initialToolResults++;
+        const content = [{
+          type: "text",
+          text: "Displaying: lifecycle.pdf (" + Math.ceil(bytes.length / 1024) + " KB)",
+        }];
+        if (initialDeliveryMode === "content-only") {
+          send({
+            jsonrpc: "2.0",
+            method: "ui/notifications/tool-result",
+            params: { content },
+          });
+          return;
+        }
         send({
           jsonrpc: "2.0",
           method: "ui/notifications/tool-result",
           params: {
-            content: [{
-              type: "text",
-              text: "Opening lifecycle.pdf in the PDF Tools viewer.",
-            }],
+            content,
             structuredContent: {
               pdfPath: "/fixtures/lifecycle.pdf",
               totalBytes: bytes.length,
@@ -130,6 +183,21 @@ function hostHtml() {
       async function replyToReadRequest(message) {
         const bytes = await fixturePromise;
         const args = message.params.arguments || {};
+        const requestedOffset = Number(args.offset);
+        const requestedByteCount = Number(args.byteCount);
+        if (
+          !Number.isSafeInteger(requestedOffset) ||
+          requestedOffset < 0 ||
+          !Number.isSafeInteger(requestedByteCount) ||
+          requestedByteCount <= 0 ||
+          requestedByteCount > 524288
+        ) {
+          state.invalidReadBytesCalls++;
+        }
+        state.maxReadByteCount = Math.max(
+          state.maxReadByteCount,
+          Number.isFinite(requestedByteCount) ? requestedByteCount : 0,
+        );
         const begin = Math.max(0, Number(args.offset) || 0);
         const end = Math.min(bytes.length, begin + Math.max(0, Number(args.byteCount) || 0));
         state.readBytesCalls++;
@@ -471,10 +539,30 @@ function hostHtml() {
         send({ jsonrpc: "2.0", method: 42, params: {} });
       }
 
+      function setInitialDeliveryMode(mode) {
+        if (mode !== "full" && mode !== "content-only") {
+          throw new Error("Unsupported initial delivery mode: " + mode);
+        }
+        initialDeliveryMode = mode;
+        return mode;
+      }
+
       function viewerSnapshot() {
         const doc = frame?.contentDocument;
         const canvas = doc?.getElementById("pdf-canvas");
         const error = doc?.getElementById("error");
+        let paintedSampleCount = 0;
+        if (canvas?.width > 0 && canvas?.height > 0) {
+          const context = canvas.getContext("2d");
+          const pixels = context?.getImageData(0, 0, canvas.width, canvas.height).data;
+          if (pixels) {
+            for (let offset = 0; offset < pixels.length; offset += 400) {
+              const alpha = pixels[offset + 3];
+              const rgbTotal = pixels[offset] + pixels[offset + 1] + pixels[offset + 2];
+              if (alpha > 0 && rgbTotal < 735) paintedSampleCount++;
+            }
+          }
+        }
         return {
           readyState: doc?.readyState || null,
           theme: doc?.documentElement.getAttribute("data-theme") || null,
@@ -482,6 +570,10 @@ function hostHtml() {
           title: doc?.getElementById("pdf-title")?.textContent || null,
           canvasWidth: canvas?.width || 0,
           canvasHeight: canvas?.height || 0,
+          paintedSampleCount,
+          viewerVisible: doc?.getElementById("viewer")?.style.display === "flex",
+          totalPagesText: doc?.getElementById("total-pages")?.textContent || "",
+          textLayerText: doc?.getElementById("text-layer")?.textContent || "",
           errorVisible: error?.style.display === "block",
           errorText: doc?.getElementById("error-message")?.textContent || "",
           signItemCount: doc?.querySelectorAll(".sign-panel-item").length || 0,
@@ -511,6 +603,7 @@ function hostHtml() {
         releaseHeldApplyText,
         releaseHeldCreateSignature,
         sendProtocolError,
+        setInitialDeliveryMode,
       };
       createFrame();
     })();
@@ -593,6 +686,7 @@ async function main() {
       const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");
       return state.initializeCount === 1 &&
         state.initializedCount === 1 &&
+        state.initialToolInputs === 1 &&
         state.initialToolResults === 1 &&
         state.readBytesCalls > 0 &&
         state.setActiveDocumentCalls > 0 &&
@@ -622,6 +716,29 @@ async function main() {
       firstViewer.canvasWidth > 0 && firstViewer.canvasHeight > 0,
       "The built viewer did not produce a nonzero PDF canvas.",
     );
+    assert(firstViewer.viewerVisible, "The built viewer did not enter its loaded state.");
+    assert(
+      firstViewer.totalPagesText === "of 2",
+      `The built viewer reported the wrong page count: ${firstViewer.totalPagesText}`,
+    );
+    assert(
+      firstViewer.textLayerText.includes("BLUEHARBOR-TEXT-20260721"),
+      "The built viewer did not render the synthetic text marker.",
+    );
+    assert(
+      firstViewer.paintedSampleCount > 0,
+      "The built viewer produced a sized but materially unpainted canvas.",
+    );
+    assert(
+      firstState.invalidReadBytesCalls === 0 &&
+        firstState.maxReadByteCount <= 524288 &&
+        firstState.readBytesCalls <= 20,
+      `The viewer made invalid or unbounded byte reads: ${JSON.stringify({
+        calls: firstState.readBytesCalls,
+        invalid: firstState.invalidReadBytesCalls,
+        max: firstState.maxReadByteCount,
+      })}`,
+    );
     assert(!firstViewer.errorVisible, `The built viewer showed an error: ${firstViewer.errorText}`);
 
     await runAgentBrowser(["eval", "window.__hostApi.clickFullscreen()"]);
@@ -643,6 +760,7 @@ async function main() {
       "Changed host style variables were not applied.",
     );
 
+    await runAgentBrowser(["eval", "window.__hostApi.setInitialDeliveryMode('full')"]);
     await runAgentBrowser(["eval", "window.__hostApi.reopen()"]);
     await waitFor(async () => {
       const state = await evalJson(runAgentBrowser, "JSON.stringify(window.__hostApi.snapshot())");

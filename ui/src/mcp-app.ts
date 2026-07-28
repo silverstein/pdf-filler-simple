@@ -30,7 +30,14 @@ import {
   getWrappedFocusIndex,
   getZoneDescriptorKey,
 } from "./sign-mode-utils";
-import { getPdfToolLoadData } from "./tool-result";
+import {
+  type PdfToolLoadData,
+  type PdfToolInputData,
+  getPdfToolInputData,
+  getToolResultText,
+  isDisplayPdfTextResult,
+  parsePdfToolLoadData,
+} from "./tool-result";
 
 // PDF.js worker — inline as blob URL for single-file build
 import PdfWorker from "pdfjs-dist/build/pdf.worker.mjs?url";
@@ -41,6 +48,8 @@ const MAX_MODEL_CONTEXT_LENGTH = 15000;
 const MAX_ZOOM = 3.0;
 const MIN_ZOOM = 0.5;
 const ZOOM_STEP = 0.25;
+const BRIDGE_CONNECT_TIMEOUT_MS = 15000;
+const BRIDGE_RESULT_TIMEOUT_MS = 90000;
 
 // ─── State ───────────────────────────────────────────────────────────────────
 
@@ -184,6 +193,7 @@ let fieldMatches: { fieldName: string; fieldIndex: number }[] = [];
 let preloadPaused = false;
 let pagesLoaded = 0;
 let lastLoadedResultKey = "";
+let pendingLoadResultKey = "";
 // Bumped whenever the underlying pdfDocument is replaced so an in-flight
 // preloader from a previous generation aborts instead of polluting caches
 // belonging to the new doc.
@@ -243,6 +253,14 @@ const app = new App(
 let isTearingDown = false;
 let teardownPromise: Promise<Record<string, never>> | null = null;
 let viewerLifecycleEpoch = 0;
+let latestToolInput: PdfToolInputData | null = null;
+let connectTimeout: ReturnType<typeof setTimeout> | null = null;
+let toolResultTimeout: ReturnType<typeof setTimeout> | null = null;
+let hasReceivedToolResult = false;
+let authoritativePayloadVersion = 0;
+let fallbackLoad:
+  | { key: string; promise: Promise<boolean> }
+  | null = null;
 
 // ─── UI State ────────────────────────────────────────────────────────────────
 
@@ -264,6 +282,32 @@ function showViewer() {
   loadingEl.style.display = "none";
   errorEl.style.display = "none";
   viewerEl.style.display = "flex";
+}
+
+function clearConnectTimeout() {
+  if (connectTimeout) {
+    clearTimeout(connectTimeout);
+    connectTimeout = null;
+  }
+}
+
+function clearToolResultTimeout() {
+  if (toolResultTimeout) {
+    clearTimeout(toolResultTimeout);
+    toolResultTimeout = null;
+  }
+}
+
+function startToolResultTimeout() {
+  clearToolResultTimeout();
+  const lifecycle = viewerLifecycleEpoch;
+  toolResultTimeout = setTimeout(() => {
+    toolResultTimeout = null;
+    if (!isViewerLifecycleCurrent(lifecycle) || pdfDocument) return;
+    showError(
+      "Claude did not deliver the completed PDF tool result to the viewer. Retry opening the PDF.",
+    );
+  }, BRIDGE_RESULT_TIMEOUT_MS);
 }
 
 function updateControls() {
@@ -3446,67 +3490,142 @@ fieldFilterEl.addEventListener("input", () => {
 
 // ─── Tool Result Handler ─────────────────────────────────────────────────────
 
+app.ontoolinput = params => {
+  if (isTearingDown) return;
+  latestToolInput = getPdfToolInputData(params);
+  console.log("[viewer] Tool input:", params);
+  startToolResultTimeout();
+};
+
+function applyLegacyFieldResult(result: CallToolResult) {
+  const textContent = result.content?.find((content: any) => content.type === "text");
+  if (!textContent) return false;
+  const jsonMatch = ((textContent as any).text as string).match(/\[[\s\S]*\]/);
+  if (!jsonMatch) return false;
+
+  const parsedFields = JSON.parse(jsonMatch[0]);
+  if (!Array.isArray(parsedFields)) return false;
+  fields = parsedFields;
+  renderFields();
+  showSidebar();
+  sidebarToggleBtn.style.display = "";
+  return true;
+}
+
+function recoverDisplayPdfFromToolInput(
+  input: PdfToolInputData,
+  originalResult: CallToolResult,
+  lifecycle: number,
+) {
+  const key = `${input.pdfPath}:${input.initialPage}`;
+  if (fallbackLoad?.key === key) return fallbackLoad.promise;
+  const payloadVersion = authoritativePayloadVersion;
+
+  const promise = (async () => {
+    showLoading("Recovering PDF viewer metadata...");
+    try {
+      const probe = await callServerToolDuringLifecycle({
+        name: "read_pdf_bytes",
+        arguments: { pdf_path: input.pdfPath, offset: 0, byteCount: 1 },
+      }, lifecycle);
+      assertViewerLifecycle(lifecycle);
+
+      if (probe.isError) {
+        throw new Error(getToolResultText(probe) || "The PDF byte proxy rejected the file.");
+      }
+      const probeData = probe.structuredContent as any;
+      if (!Number.isSafeInteger(probeData?.totalBytes) || probeData.totalBytes <= 0) {
+        throw new Error("The PDF byte proxy did not return a valid file length.");
+      }
+
+      // A complete result that arrived while the compatibility probe was
+      // pending is authoritative. Do not race it with the fallback load.
+      if (payloadVersion !== authoritativePayloadVersion) return true;
+
+      return loadPdfFromToolResult({
+        content: originalResult.content || [],
+        structuredContent: {
+          pdfPath: input.pdfPath,
+          totalBytes: probeData.totalBytes,
+          initialPage: input.initialPage,
+          fields: [],
+          fieldCount: 0,
+          hasFormFields: false,
+        },
+      } as CallToolResult);
+    } catch (err: any) {
+      if (isViewerLifecycleEnded(err)) return true;
+      console.error("[viewer] Failed to recover PDF viewer metadata:", err);
+      showError(
+        `Claude did not provide complete PDF viewer metadata, and recovery failed: ${
+          err?.message || String(err)
+        }`,
+      );
+      return true;
+    }
+  })();
+
+  fallbackLoad = { key, promise };
+  void promise.finally(() => {
+    if (fallbackLoad?.promise === promise) fallbackLoad = null;
+  });
+  return promise;
+}
+
 app.ontoolresult = async (result: CallToolResult) => {
   if (isTearingDown) return;
   const lifecycle = captureViewerLifecycle();
   console.log("[viewer] Tool result:", result);
+  hasReceivedToolResult = true;
+  clearToolResultTimeout();
 
-  if (await loadPdfFromToolResult(result)) {
+  if (result.isError) {
+    const detail = getToolResultText(result);
+    showError(detail ? `PDF Toolkit could not open this PDF: ${detail}` : "PDF Toolkit could not open this PDF.");
+    return;
+  }
+
+  const parsedLoadData = parsePdfToolLoadData(result);
+  if (parsedLoadData.ok) {
+    authoritativePayloadVersion++;
+    await loadPdfFromToolResult(result, parsedLoadData.data);
     return;
   }
   if (!isViewerLifecycleCurrent(lifecycle)) return;
 
-  // Otherwise, try to parse as read_pdf_fields result (has field JSON in text)
+  // Claude Desktop versions that project only the text content of display_pdf
+  // omit the structured load payload. Stable MCP Apps still guarantees the
+  // complete tool input first, so use that exact path only for the distinctive,
+  // read-only display_pdf result. Never apply this fallback to mutation results.
+  if (
+    (parsedLoadData.kind === "missing" || parsedLoadData.kind === "incomplete") &&
+    latestToolInput &&
+    isDisplayPdfTextResult(result) &&
+    (
+      !parsedLoadData.recoverablePdfPath ||
+      parsedLoadData.recoverablePdfPath === latestToolInput.pdfPath
+    )
+  ) {
+    await recoverDisplayPdfFromToolInput(latestToolInput, result, lifecycle);
+    return;
+  }
+
+  if (parsedLoadData.kind === "conflict" || parsedLoadData.kind === "invalid") {
+    showError(parsedLoadData.message);
+    return;
+  }
+
+  // Retain legacy field-only responses only when a document is already loaded.
+  // They may enrich the sidebar, but must never expose an uninitialized viewer.
   try {
-    const textContent = result.content?.find((c: any) => c.type === "text");
-    if (textContent) {
-      const jsonMatch = ((textContent as any).text as string).match(/\[[\s\S]*\]/);
-      if (jsonMatch) {
-        fields = JSON.parse(jsonMatch[0]);
-        renderFields();
-        showSidebar();
-        sidebarToggleBtn.style.display = "";
-      }
+    const appliedFields = applyLegacyFieldResult(result);
+    if (pdfDocument) {
+      if (appliedFields) updatePageContext();
+      return;
     }
-
-    // If we got a pdfPath in _meta, load the PDF for viewing alongside fields
-    const meta = result._meta as any;
-    if (meta?.pdfPath && !pdfDocument) {
-      pdfPath = meta.pdfPath;
-      viewUUID = meta.viewUUID ? String(meta.viewUUID) : undefined;
-
-      // Probe file size with a 1-byte read
-      try {
-        const probe = await callServerToolDuringLifecycle({
-          name: "read_pdf_bytes",
-          arguments: { pdf_path: pdfPath, offset: 0, byteCount: 1 },
-        }, lifecycle);
-        assertViewerLifecycle(lifecycle);
-        const probeSc = probe.structuredContent as any;
-        if (probeSc?.totalBytes && !isTearingDown) {
-          const loadGeneration = ++pdfGeneration;
-          showLoading("Loading PDF...");
-          pdfDocument = await loadPdfProgressively(pdfPath, probeSc.totalBytes, loadGeneration);
-          assertViewerLifecycle(lifecycle);
-          totalPages = pdfDocument.numPages;
-          currentPage = 1;
-          pagesLoaded = 0;
-          pageTextCache.clear();
-          showViewer();
-          renderPage();
-          syncActiveDocumentState();
-          startPreloading();
-        }
-      } catch (err: any) {
-        if (isTearingDown) return;
-        console.error("[viewer] Failed to load PDF for field view:", err);
-        showViewer();
-      }
-    } else if (!pdfDocument) {
-      showViewer();
-    }
-
-    updatePageContext();
+    showError(
+      "Claude did not provide the PDF viewer with complete load metadata. Retry opening the PDF.",
+    );
   } catch (err: any) {
     if (isTearingDown) return;
     console.error("[viewer] Error processing tool result:", err);
@@ -3514,15 +3633,21 @@ app.ontoolresult = async (result: CallToolResult) => {
   }
 };
 
-async function loadPdfFromToolResult(result: CallToolResult) {
+async function loadPdfFromToolResult(
+  result: CallToolResult,
+  parsedPayload?: PdfToolLoadData,
+) {
   if (isTearingDown) return true;
   const lifecycle = captureViewerLifecycle();
-  const payload = getPdfToolLoadData(result);
-  if (!payload) return false;
+  const parsed = parsedPayload ? { ok: true as const, data: parsedPayload } : parsePdfToolLoadData(result);
+  if (!parsed.ok) return false;
+  const payload = parsed.data;
   const nextPdfPath = payload.activePath || payload.pdfPath;
   if (payload.key === lastLoadedResultKey && pdfDocument && pdfPath === nextPdfPath) return true;
+  if (payload.key === pendingLoadResultKey) return true;
 
   lastLoadedResultKey = payload.key;
+  pendingLoadResultKey = payload.key;
   pdfPath = nextPdfPath;
   viewUUID = payload.viewUUID;
   activeBackupPath = payload.backupPath ?? null;
@@ -3581,6 +3706,8 @@ async function loadPdfFromToolResult(result: CallToolResult) {
     lastLoadedResultKey = "";
     console.error("[viewer] Load error:", err);
     showError(err.message || "Failed to load PDF");
+  } finally {
+    if (pendingLoadResultKey === payload.key) pendingLoadResultKey = "";
   }
 
   return true;
@@ -3597,6 +3724,9 @@ async function teardownViewer(): Promise<Record<string, never>> {
   viewerLifecycleEpoch++;
   inspectPreviewRequestSeq++;
   zoneRequests.clear();
+  clearConnectTimeout();
+  clearToolResultTimeout();
+  fallbackLoad = null;
 
   // Stop asynchronous render and preload work before acknowledging teardown.
   // The host may remove the iframe immediately after the response.
@@ -3657,16 +3787,27 @@ app.onhostcontextchanged = handleHostContext;
 
 // ─── Connect ─────────────────────────────────────────────────────────────────
 
+connectTimeout = setTimeout(() => {
+  connectTimeout = null;
+  if (!isTearingDown) {
+    showError("Claude did not initialize the PDF viewer connection. Retry opening the PDF.");
+  }
+}, BRIDGE_CONNECT_TIMEOUT_MS);
+
 app.connect()
   .then(() => {
+    clearConnectTimeout();
     console.log("[viewer] Connected");
     const ctx = app.getHostContext();
     if (ctx) handleHostContext(ctx);
     if (pdfPath) {
       syncActiveDocumentState();
     }
+    if (!hasReceivedToolResult) startToolResultTimeout();
   })
   .catch((err: unknown) => {
+    clearConnectTimeout();
+    clearToolResultTimeout();
     console.error("[viewer] Connection failed:", err);
     if (!isTearingDown) {
       showError(err instanceof Error ? err.message : String(err));
