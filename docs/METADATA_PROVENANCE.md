@@ -6,9 +6,10 @@ The bead asked whether PDF Tools should preserve per-input document metadata
 through `merge_pdfs` and recover it when splitting source-aligned ranges, and
 required the standards, privacy, and interoperability options to be researched
 before any implementation. This is that evaluation and the resulting decision.
-No behavior changed with this document.
+The default correctness portion was implemented in
+`pdf-toolkit-mcp-igr.17.1` on 2026-07-28.
 
-## What the tools do today, measured
+## What the tools did before correction, measured
 
 Built two documents with distinct Info dictionaries, merged them, then split the
 merged file back along the original source boundaries, all through the MCP
@@ -112,6 +113,23 @@ and form validation refuses to claim whole-form readiness it cannot support.
 
 Both are off by default, because moving metadata between documents belonging to
 different parties is a disclosure, and a disclosure must be a choice.
+
+## Implemented default behavior
+
+For a merge with two or more inputs, `Title`, `Author`, `Subject`, and
+`Keywords` are evaluated independently. A field is preserved only when every
+input positively asserts the exact same value. A disagreement, a value missing
+from any input, or an invalid value causes that field to be omitted. The tool
+result lists the fields it omitted so the loss is visible rather than silent.
+
+A single-input merge retains the source Info dictionary. Splitting an ordinary
+unmerged document also retains its document metadata. This preserves the
+unambiguous cases while ensuring that a later split of output from a conflicting
+merge cannot reassert one input's author as the author of another input's pages.
+
+No source `Creator`, creation timestamp, private page dictionary, or source XMP
+block is copied into a multi-input merge. The output keeps truthful
+output-creation metadata written by the PDF library.
 
 ## Privacy boundary
 

@@ -23,10 +23,9 @@ const MCPB_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifes
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // Drift detector for the live tool contract. Update it only alongside a
 // deliberate, reviewed contract change, and say what changed.
-// 2026-07-25: detect_signature_zones gained required page_geometry so a
-// renderer can place zones against the MediaBox they are measured from.
-// Previously 0c54c7a34f13d9da6579a6caade7fa1c1ce8c43f0c792c5307adac2f0dbba347.
-const TOOL_CONTRACT_SHA256 = "c584f853d0a8eb0a9d518f47cb4e1d1254ff82f3aefb6e62a495e548775a73c5";
+// 2026-07-28: merge_pdfs now documents its field-wise metadata consensus
+// contract. Previously c584f853d0a8eb0a9d518f47cb4e1d1254ff82f3aefb6e62a495e548775a73c5.
+const TOOL_CONTRACT_SHA256 = "0cb0c12a3b06f41d3b54ec251dca6df1d8b5e37d6c06d2edece3e17fbcf16035";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

@@ -1163,6 +1163,8 @@ import {
   failedPdfFormValidation,
   copyPdfPagesPreservingForms,
   copyPdfDocumentMetadata,
+  captureMergeDescriptiveMetadata,
+  applyMergeDescriptiveMetadataConsensus,
   recoverPdfOutputTransactions,
   writePdfOutputAtomic,
   writePdfOutputsAtomic,
@@ -3480,7 +3482,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "merge_pdfs",
-        description: "Merge multiple PDF files into a single PDF. New outputs commit atomically. Replacing a distinct existing output requires its exact current expected_output_identity. All paths must be absolute paths on the user's local machine.",
+        description: "Merge multiple PDF files into a single PDF. For multi-input merges, descriptive metadata is preserved only when every input asserts the same value; conflicting, partial, or invalid Title, Author, Subject, and Keywords claims are omitted rather than misattributed. New outputs commit atomically. Replacing a distinct existing output requires its exact current expected_output_identity. All paths must be absolute paths on the user's local machine.",
         inputSchema: {
           type: "object",
           properties: {
@@ -5579,6 +5581,8 @@ async function handleToolCall(request) {
         );
 
         const mergedDoc = await PDFDocument.create();
+        const isMultiInputMerge = retainedInputs.length > 1;
+        const sourceMetadata = [];
         let totalPageCount = 0;
         for (let fi = 0; fi < retainedInputs.length; fi++) {
           const rp = resolvedInputPaths[fi];
@@ -5592,7 +5596,11 @@ async function handleToolCall(request) {
           }
           const pageIndices = srcDoc.getPageIndices();
           try {
-            if (fi === 0) copyPdfDocumentMetadata(mergedDoc, srcDoc);
+            if (isMultiInputMerge) {
+              sourceMetadata.push(captureMergeDescriptiveMetadata(srcDoc));
+            } else {
+              copyPdfDocumentMetadata(mergedDoc, srcDoc);
+            }
             await copyPdfPagesPreservingForms(mergedDoc, srcDoc, pageIndices);
           } finally {
             retainedInput.pdfBytes = null;
@@ -5600,6 +5608,9 @@ async function handleToolCall(request) {
           totalPageCount += pageIndices.length;
         }
 
+        const metadataConsensus = isMultiInputMerge
+          ? applyMergeDescriptiveMetadataConsensus(mergedDoc, sourceMetadata)
+          : { preservedFields: [], omittedFields: [] };
         const mergedBytes = await mergedDoc.save();
         const committedOutput = await writePdfOutputAtomic(
           resolvedOutputPath,
@@ -5617,12 +5628,16 @@ async function handleToolCall(request) {
         const outputStats = await fs.stat(committedOutputPath);
         const payload = await buildNewOutputDocumentPayload(committedOutputPath, "merge_pdfs", 1, {
           total_pages: totalPageCount,
+          metadata_fields_omitted: metadataConsensus.omittedFields,
         });
+        const metadataNotice = metadataConsensus.omittedFields.length > 0
+          ? `\nOmitted unverified metadata: ${metadataConsensus.omittedFields.join(", ")}`
+          : "";
 
         return {
           content: [{
             type: "text",
-            text: `Merged ${input_paths.length} PDFs into: ${output_path}\nTotal pages: ${totalPageCount}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`
+            text: `Merged ${input_paths.length} PDFs into: ${output_path}\nTotal pages: ${totalPageCount}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB${metadataNotice}`
           }],
           structuredContent: payload,
           _meta: {

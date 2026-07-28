@@ -29,6 +29,28 @@ const UNSUPPORTED_DIRECTORY_FSYNC_ERRORS = new Set([
 
 const PRODUCER = PDFName.of("Producer");
 const MOD_DATE = PDFName.of("ModDate");
+const MERGE_DESCRIPTIVE_METADATA_FIELDS = [
+  {
+    name: "title",
+    read: document => document.getTitle(),
+    write: (document, value) => document.setTitle(value),
+  },
+  {
+    name: "author",
+    read: document => document.getAuthor(),
+    write: (document, value) => document.setAuthor(value),
+  },
+  {
+    name: "subject",
+    read: document => document.getSubject(),
+    write: (document, value) => document.setSubject(value),
+  },
+  {
+    name: "keywords",
+    read: document => document.getKeywords(),
+    write: (document, value) => document.setKeywords([value]),
+  },
+];
 const ACROFORM_DEFAULT_KEYS = ["DA", "DR", "Q", "NeedAppearances", "SigFlags"]
   .map(PDFName.of);
 
@@ -142,6 +164,63 @@ export function copyPdfDocumentMetadata(targetDoc, sourceDoc) {
     if (key === PRODUCER || key === MOD_DATE) continue;
     targetInfo.set(key, copier.copy(sourceInfo.get(key)));
   }
+}
+
+/**
+ * Capture only document-level descriptive claims that may truthfully survive a
+ * multi-input merge. Invalid Info values are kept distinct from absent values:
+ * malformed source metadata must be omitted rather than accidentally treated
+ * as unanimous absence.
+ */
+export function captureMergeDescriptiveMetadata(document) {
+  return Object.fromEntries(MERGE_DESCRIPTIVE_METADATA_FIELDS.map(field => {
+    try {
+      const value = field.read(document);
+      return [
+        field.name,
+        value === undefined
+          ? { state: "absent" }
+          : { state: "value", value },
+      ];
+    } catch {
+      return [field.name, { state: "invalid" }];
+    }
+  }));
+}
+
+/**
+ * Apply field-wise consensus metadata to a newly-created multi-input document.
+ *
+ * A field is preserved only when every source positively asserts the exact
+ * same value. A present value versus absence, an invalid value, or any value
+ * disagreement means the merged artifact cannot truthfully make that claim.
+ */
+export function applyMergeDescriptiveMetadataConsensus(targetDoc, sourceMetadata) {
+  if (!Array.isArray(sourceMetadata) || sourceMetadata.length < 2) {
+    throw new Error("Multi-input metadata consensus requires at least two sources.");
+  }
+
+  const preservedFields = [];
+  const omittedFields = [];
+  for (const field of MERGE_DESCRIPTIVE_METADATA_FIELDS) {
+    const observations = sourceMetadata.map(metadata =>
+      metadata?.[field.name] ?? { state: "invalid" });
+    const first = observations[0];
+    const unanimousValue = first.state === "value" &&
+      observations.every(observation =>
+        observation.state === "value" && observation.value === first.value);
+
+    if (unanimousValue) {
+      field.write(targetDoc, first.value);
+      preservedFields.push(field.name);
+      continue;
+    }
+    if (observations.some(observation => observation.state !== "absent")) {
+      omittedFields.push(field.name);
+    }
+  }
+
+  return { preservedFields, omittedFields };
 }
 
 function classifyPdfField(field) {
