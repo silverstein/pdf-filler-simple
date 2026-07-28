@@ -628,7 +628,10 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     totalBytes: integer,
     hasMore: boolean,
   }),
-  merge_pdfs: activeDocument({ total_pages: integer }),
+  merge_pdfs: activeDocument({
+    total_pages: integer,
+    metadata_fields_omitted: stringArray,
+  }),
   rotate_pdf_pages: activeDocument({
     rotated_pages: integer,
     degrees: { type: "number", enum: [90, 180, 270] },

@@ -1,26 +1,25 @@
 /**
  * Metadata provenance through merge and split (bead pdf-toolkit-mcp-igr.17).
  *
- * These tests pin the CURRENT contract, including a behavior the decision
- * record in docs/METADATA_PROVENANCE.md identifies as wrong and slates for
- * change. They exist so the behavior is measured rather than assumed, and so
- * the fix in pdf-toolkit-mcp-igr.17.1 has a precise starting point.
+ * These tests enforce the omission-over-misattribution contract selected in
+ * docs/METADATA_PROVENANCE.md.
  *
- * The important case is the last one. Splitting a merged document stamps the
- * merged file's Info onto every output, so a range consisting entirely of the
- * second input's pages positively asserts the first input's author. That is
+ * The motivating case is splitting a merged document whose old Info dictionary
+ * described only its first input. A range consisting entirely of the second
+ * input's pages then positively asserted the first input's author. That is
  * misattribution, not merely lost metadata, and it matters for a tool used on
  * contracts and forms.
  *
- * When igr.17.1 lands, the assertions marked CURRENT are expected to change.
- * Read the decision record before editing them.
+ * Single-source operations remain lossless. Multi-input merge metadata is
+ * field-wise: a descriptive claim survives only when every input asserts the
+ * exact same value.
  */
 
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFName, PDFNumber } from "pdf-lib";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import {
@@ -31,7 +30,7 @@ import {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const CALL_TIMEOUT_MS = 20_000;
 
-async function writeTaggedPdf(directory, tag, pageCount) {
+async function writeTaggedPdf(directory, tag, pageCount, filename = tag) {
   const doc = await PDFDocument.create();
   for (let i = 0; i < pageCount; i += 1) doc.addPage([200, 200]);
   doc.setTitle(`Title ${tag}`);
@@ -39,7 +38,25 @@ async function writeTaggedPdf(directory, tag, pageCount) {
   doc.setSubject(`Subject ${tag}`);
   doc.setKeywords([`kw-${tag}`]);
   doc.setCreator(`Creator ${tag}`);
-  const target = path.join(directory, `${tag}.pdf`);
+  const target = path.join(directory, `${filename}.pdf`);
+  await fs.writeFile(target, await doc.save(), { mode: 0o600 });
+  return target;
+}
+
+async function writeUntaggedPdf(directory, filename, pageCount = 1) {
+  const doc = await PDFDocument.create();
+  for (let i = 0; i < pageCount; i += 1) doc.addPage([200, 200]);
+  const target = path.join(directory, `${filename}.pdf`);
+  await fs.writeFile(target, await doc.save(), { mode: 0o600 });
+  return target;
+}
+
+async function writeMalformedTitlePdf(directory, filename) {
+  const doc = await PDFDocument.create();
+  doc.addPage([200, 200]);
+  const info = doc.context.lookup(doc.context.trailerInfo.Info);
+  info.set(PDFName.Title, PDFNumber.of(42));
+  const target = path.join(directory, `${filename}.pdf`);
   await fs.writeFile(target, await doc.save(), { mode: 0o600 });
   return target;
 }
@@ -52,6 +69,7 @@ async function readInfo(file) {
     author: doc.getAuthor(),
     subject: doc.getSubject(),
     keywords: doc.getKeywords(),
+    creator: doc.getCreator(),
   };
 }
 
@@ -62,6 +80,7 @@ describe("document metadata through merge and split", () => {
   let inputA;
   let inputB;
   let mergedPath;
+  let mergeResult;
 
   beforeAll(async () => {
     stateRoot = await createTestTempDirectory(REPO_ROOT, "metadata-provenance");
@@ -84,12 +103,12 @@ describe("document metadata through merge and split", () => {
     client = new Client({ name: "pdf-tools-metadata-provenance", version: "1.0.0" });
     await client.connect(transport);
 
-    const merge = await client.callTool(
+    mergeResult = await client.callTool(
       { name: "merge_pdfs", arguments: { input_paths: [inputA, inputB], output_path: mergedPath } },
       undefined,
       { timeout: CALL_TIMEOUT_MS, maxTotalTimeout: CALL_TIMEOUT_MS },
     );
-    expect(merge.isError).not.toBe(true);
+    expect(mergeResult.isError).not.toBe(true);
   }, 60_000);
 
   afterAll(async () => {
@@ -103,19 +122,27 @@ describe("document metadata through merge and split", () => {
     expect(merged.pages).toBe(4);
   });
 
-  it("CURRENT: merge inherits the first input's Info and discards the rest", async () => {
-    // Slated to change in igr.17.1: where inputs disagree the field should be
-    // omitted rather than resolved in favour of whichever was listed first.
+  it("omits descriptive claims that disagree across merge inputs", async () => {
     const merged = await readInfo(mergedPath);
-    expect(merged.title).toBe("Title A");
-    expect(merged.author).toBe("Author A");
-    expect(merged.subject).toBe("Subject A");
-    expect(merged.keywords).toBe("kw-A");
+    expect(merged.title).toBeUndefined();
+    expect(merged.author).toBeUndefined();
+    expect(merged.subject).toBeUndefined();
+    expect(merged.keywords).toBeUndefined();
+    expect(merged.creator).not.toBe("Creator A");
+    expect(merged.creator).not.toBe("Creator B");
+
+    expect(mergeResult.structuredContent.metadata_fields_omitted.sort()).toEqual([
+      "author",
+      "keywords",
+      "subject",
+      "title",
+    ]);
+    expect(mergeResult.content[0].text).toContain(
+      "Omitted unverified metadata: title, author, subject, keywords",
+    );
   });
 
-  it("CURRENT: split misattributes authorship of pages that came from another document", async () => {
-    // The measured defect. pages 3-4 are entirely input B's, yet the output
-    // asserts input A's author. Absence would be honest; this is a false claim.
+  it("does not reintroduce a discarded claim when splitting merged output", async () => {
     const outputDirectory = path.join(stateRoot, "split");
     await fs.mkdir(outputDirectory, { recursive: true });
     const split = await client.callTool(
@@ -133,9 +160,119 @@ describe("document metadata through merge and split", () => {
     const secondRange = await readInfo(path.join(outputDirectory, produced[1]));
 
     expect(secondRange.pages).toBe(2);
-    // Pages sourced from B...
-    expect(secondRange.author).toBe("Author A"); // ...labelled as A.
+    expect(secondRange.title).toBeUndefined();
+    expect(secondRange.author).toBeUndefined();
+    expect(secondRange.subject).toBeUndefined();
+    expect(secondRange.keywords).toBeUndefined();
     expect(secondRange.author).not.toBe("Author B");
+  });
+
+  it("preserves all ordinary Info metadata for a single-input merge", async () => {
+    const outputPath = path.join(stateRoot, "single-input-merge.pdf");
+    const result = await client.callTool(
+      { name: "merge_pdfs", arguments: { input_paths: [inputA], output_path: outputPath } },
+      undefined,
+      { timeout: CALL_TIMEOUT_MS, maxTotalTimeout: CALL_TIMEOUT_MS },
+    );
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent.metadata_fields_omitted).toEqual([]);
+    expect(await readInfo(outputPath)).toMatchObject({
+      pages: 2,
+      title: "Title A",
+      author: "Author A",
+      subject: "Subject A",
+      keywords: "kw-A",
+    });
+  });
+
+  it("preserves metadata when splitting an ordinary unmerged document", async () => {
+    const outputDirectory = path.join(stateRoot, "ordinary-split");
+    await fs.mkdir(outputDirectory, { recursive: true });
+    const result = await client.callTool(
+      {
+        name: "split_pdf",
+        arguments: {
+          input_path: inputB,
+          page_ranges: "1",
+          output_directory: outputDirectory,
+        },
+      },
+      undefined,
+      { timeout: CALL_TIMEOUT_MS, maxTotalTimeout: CALL_TIMEOUT_MS },
+    );
+    expect(result.isError).not.toBe(true);
+    const [filename] = await fs.readdir(outputDirectory);
+    expect(await readInfo(path.join(outputDirectory, filename))).toMatchObject({
+      pages: 1,
+      title: "Title B",
+      author: "Author B",
+      subject: "Subject B",
+      keywords: "kw-B",
+    });
+  });
+
+  it("preserves a claim asserted identically by every merge input", async () => {
+    const sameA = await writeTaggedPdf(stateRoot, "SAME", 1, "same-a");
+    const sameB = await writeTaggedPdf(stateRoot, "SAME", 1, "same-b");
+    const outputPath = path.join(stateRoot, "same-metadata.pdf");
+    const result = await client.callTool(
+      {
+        name: "merge_pdfs",
+        arguments: { input_paths: [sameA, sameB], output_path: outputPath },
+      },
+      undefined,
+      { timeout: CALL_TIMEOUT_MS, maxTotalTimeout: CALL_TIMEOUT_MS },
+    );
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent.metadata_fields_omitted).toEqual([]);
+    expect(await readInfo(outputPath)).toMatchObject({
+      title: "Title SAME",
+      author: "Author SAME",
+      subject: "Subject SAME",
+      keywords: "kw-SAME",
+    });
+  });
+
+  it("treats a present claim versus absence as unverified", async () => {
+    const untagged = await writeUntaggedPdf(stateRoot, "untagged");
+    const outputPath = path.join(stateRoot, "partial-metadata.pdf");
+    const result = await client.callTool(
+      {
+        name: "merge_pdfs",
+        arguments: { input_paths: [inputA, untagged], output_path: outputPath },
+      },
+      undefined,
+      { timeout: CALL_TIMEOUT_MS, maxTotalTimeout: CALL_TIMEOUT_MS },
+    );
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent.metadata_fields_omitted.sort()).toEqual([
+      "author",
+      "keywords",
+      "subject",
+      "title",
+    ]);
+    expect(await readInfo(outputPath)).toMatchObject({
+      title: undefined,
+      author: undefined,
+      subject: undefined,
+      keywords: undefined,
+    });
+  });
+
+  it("omits malformed descriptive metadata without failing the merge", async () => {
+    const malformed = await writeMalformedTitlePdf(stateRoot, "malformed-title");
+    const outputPath = path.join(stateRoot, "malformed-metadata.pdf");
+    const result = await client.callTool(
+      {
+        name: "merge_pdfs",
+        arguments: { input_paths: [malformed, malformed], output_path: outputPath },
+      },
+      undefined,
+      { timeout: CALL_TIMEOUT_MS, maxTotalTimeout: CALL_TIMEOUT_MS },
+    );
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent.metadata_fields_omitted).toContain("title");
+    expect((await readInfo(outputPath)).title).toBeUndefined();
   });
 
   it("adds no private page-piece dictionaries to merged output", async () => {
