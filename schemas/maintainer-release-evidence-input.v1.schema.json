@@ -1,0 +1,136 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-document-alliance.org/schemas/pdf-tools/maintainer-release-evidence-input.v1.schema.json",
+  "title": "PDF Tools maintainer release evidence input v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "evidence_id",
+    "candidate",
+    "receipts",
+    "known_limitations",
+    "maintainer_approval_ref"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "evidence_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "candidate": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "sha256",
+        "source_commit",
+        "package_version",
+        "inventory_sha256",
+        "sbom_sha256"
+      ],
+      "properties": {
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "source_commit": {
+          "$ref": "#/$defs/gitOid"
+        },
+        "package_version": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "inventory_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "sbom_sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "receipts": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "receipt_id",
+          "kind",
+          "status",
+          "artifact_sha256",
+          "source_commit",
+          "evidence_sha256",
+          "receipt_path",
+          "receipt_sha256"
+        ],
+        "properties": {
+          "receipt_id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+          },
+          "kind": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+          },
+          "status": {
+            "enum": [
+              "pass",
+              "fail",
+              "unavailable"
+            ]
+          },
+          "artifact_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "source_commit": {
+            "$ref": "#/$defs/gitOid"
+          },
+          "evidence_sha256": {
+            "$ref": "#/$defs/sha256"
+          },
+          "receipt_path": {
+            "type": "string",
+            "pattern": "^(?!/)(?!.*(?:^/)\\.\\.(?:/|$))[A-Za-z0-9._/-]{1,500}$"
+          },
+          "receipt_sha256": {
+            "$ref": "#/$defs/sha256"
+          }
+        }
+      }
+    },
+    "known_limitations": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    },
+    "maintainer_approval_ref": {
+      "oneOf": [
+        {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 500
+        },
+        {
+          "type": "null"
+        }
+      ]
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "gitOid": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    }
+  }
+}

@@ -1,0 +1,189 @@
+{
+  "config_id": "oda-pdf-tools.maintainer-review.v1",
+  "cadence": {
+    "routine": "weekly",
+    "event_triggers": [
+      "final MCP specification publication",
+      "MCPB or MCP SDK stable release",
+      "new supported-host regression",
+      "release-candidate preparation",
+      "evaluation or harness failure"
+    ]
+  },
+  "limits": {
+    "command_timeout_ms": 30000,
+    "evaluation_timeout_ms": 120000,
+    "max_command_output_bytes": 1048576,
+    "remote_timeout_ms": 12000,
+    "max_remote_bytes": 2097152,
+    "max_aggregate_remote_bytes": 4194304,
+    "max_previous_report_bytes": 4194304,
+    "max_release_evidence_bytes": 4194304,
+    "max_candidate_bytes": 268435456,
+    "max_receipt_bytes": 4194304,
+    "max_aggregate_receipt_bytes": 16777216,
+    "max_github_pages": 5,
+    "max_total_runtime_ms": 180000
+  },
+  "remote_sources": [
+    {
+      "id": "frontier.mcp-spec-releases",
+      "area": "mcp",
+      "kind": "github_releases",
+      "required": true,
+      "url": "https://api.github.com/repos/modelcontextprotocol/modelcontextprotocol/releases?per_page=5"
+    },
+    {
+      "id": "frontier.mcpb-releases",
+      "area": "mcpb",
+      "kind": "github_releases",
+      "required": true,
+      "url": "https://api.github.com/repos/modelcontextprotocol/mcpb/releases?per_page=5"
+    },
+    {
+      "id": "frontier.sdk-v1",
+      "area": "mcp",
+      "kind": "npm_latest",
+      "package": "@modelcontextprotocol/sdk",
+      "required": true,
+      "url": "https://registry.npmjs.org/@modelcontextprotocol%2Fsdk/latest"
+    },
+    {
+      "id": "frontier.sdk-server-v2",
+      "area": "mcp",
+      "kind": "npm_latest",
+      "package": "@modelcontextprotocol/server",
+      "required": true,
+      "url": "https://registry.npmjs.org/@modelcontextprotocol%2Fserver/latest"
+    },
+    {
+      "id": "frontier.sdk-client-v2",
+      "area": "mcp",
+      "kind": "npm_latest",
+      "package": "@modelcontextprotocol/client",
+      "required": true,
+      "url": "https://registry.npmjs.org/@modelcontextprotocol%2Fclient/latest"
+    },
+    {
+      "id": "frontier.ext-apps",
+      "area": "mcp-apps",
+      "kind": "npm_latest",
+      "package": "@modelcontextprotocol/ext-apps",
+      "required": true,
+      "url": "https://registry.npmjs.org/@modelcontextprotocol%2Fext-apps/latest"
+    },
+    {
+      "id": "frontier.mcpb-cli",
+      "area": "mcpb",
+      "kind": "npm_latest",
+      "package": "@anthropic-ai/mcpb",
+      "required": true,
+      "url": "https://registry.npmjs.org/@anthropic-ai%2Fmcpb/latest"
+    },
+    {
+      "id": "frontier.pdfjs",
+      "area": "pdf-engine",
+      "kind": "npm_latest",
+      "package": "pdfjs-dist",
+      "required": false,
+      "url": "https://registry.npmjs.org/pdfjs-dist/latest"
+    },
+    {
+      "id": "frontier.pdf-lib",
+      "area": "pdf-engine",
+      "kind": "npm_latest",
+      "package": "pdf-lib",
+      "required": false,
+      "url": "https://registry.npmjs.org/pdf-lib/latest"
+    },
+    {
+      "id": "frontier.canvas",
+      "area": "pdf-engine",
+      "kind": "npm_latest",
+      "package": "@napi-rs/canvas",
+      "required": false,
+      "url": "https://registry.npmjs.org/@napi-rs%2Fcanvas/latest"
+    }
+  ],
+  "dependency_policies": {
+    "pdfjs-dist": {
+      "policy": "protected_exact_pin",
+      "reason": "Viewer compatibility with Claude Desktop Electron must be proven before upgrade."
+    },
+    "@napi-rs/canvas": {
+      "policy": "host_validation_required",
+      "reason": "Native optional packages and auxiliary assets require packed host proof."
+    },
+    "@modelcontextprotocol/sdk": {
+      "policy": "migration_review_required",
+      "reason": "SDK v2 is a package and bootstrap migration, not an in-place version bump."
+    }
+  },
+  "github": {
+    "repository": "Open-Document-Alliance/PDF-Tools",
+    "max_items": 500,
+    "discussions_required": false,
+    "issues_url": "https://api.github.com/repos/Open-Document-Alliance/PDF-Tools/issues",
+    "pulls_url": "https://api.github.com/repos/Open-Document-Alliance/PDF-Tools/pulls"
+  },
+  "evaluation": {
+    "slice_id": "maintainer-health.v1",
+    "contract_command": [
+      "node_modules/.bin/vitest",
+      "run",
+      "--maxWorkers=1",
+      "test/mcp-contract.test.js",
+      "test/eval/agent-workflow-v3-retirement.test.js",
+      "test/eval/extraction-phase1-packaging.test.js"
+    ],
+    "score_command": [
+      "node",
+      "scripts/eval-run.mjs",
+      "--partition",
+      "development"
+    ]
+  },
+  "release_evidence": {
+    "required_receipt_kinds": [
+      "unit_protocol_corpus",
+      "artifact_inventory",
+      "sbom_licenses",
+      "secret_scan",
+      "native_host_macos_arm64",
+      "native_host_windows_x64",
+      "agent_workflow_scorecard"
+    ]
+  },
+  "human_gates": [
+    {
+      "id": "public-communication",
+      "state": "standing",
+      "description": "Posting GitHub, Slack, release, or community-facing language"
+    },
+    {
+      "id": "release",
+      "state": "standing",
+      "description": "Publishing, replacing, rolling back, or announcing a release"
+    },
+    {
+      "id": "signature",
+      "state": "standing",
+      "description": "Signature intent, cryptographic signing, or external document sharing"
+    },
+    {
+      "id": "spend",
+      "state": "standing",
+      "description": "Paid inference, services, or materially increased build and hosting cost"
+    },
+    {
+      "id": "host-access",
+      "state": "standing",
+      "description": "CUA permissions, Screen Recording, or unavailable supported-host access"
+    },
+    {
+      "id": "product-policy",
+      "state": "standing",
+      "description": "Ambiguous alternatives that materially change user experience or scope"
+    }
+  ]
+}

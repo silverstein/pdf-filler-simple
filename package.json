@@ -28,6 +28,7 @@
     "qpdf-wasm:verify": "node vendor/qpdf-wasm/verify-reproducible.mjs",
     "test:layout-encrypted-oracle": "node scripts/generate-layout-encrypted-oracle.mjs",
     "test:contract:share": "node scripts/test-share-contract.mjs",
+    "review:maintainer": "node scripts/maintainer-review.mjs",
     "build:ui": "vite build",
     "build:mcpb": "node scripts/build-mcpb.mjs",
     "test": "vitest run",

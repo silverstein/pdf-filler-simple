@@ -1,0 +1,70 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-document-alliance.org/schemas/pdf-tools/maintainer-release-receipt.v1.schema.json",
+  "title": "PDF Tools retained release receipt v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "receipt_id",
+    "kind",
+    "status",
+    "artifact_sha256",
+    "source_commit",
+    "evidence_sha256",
+    "observed_at",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "receipt_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "kind": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "status": {
+      "enum": [
+        "pass",
+        "fail",
+        "unavailable"
+      ]
+    },
+    "artifact_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "source_commit": {
+      "$ref": "#/$defs/gitOid"
+    },
+    "evidence_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "observed_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "limitations": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "minLength": 1,
+        "maxLength": 500
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "gitOid": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-f]{40}|[0-9a-f]{64})$"
+    }
+  }
+}
