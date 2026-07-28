@@ -5,3 +5,24 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    ignore:
+      # pdfjs-dist is pinned to an exact version on purpose. The interactive
+      # viewer runs inside Claude Desktop's Electron sandbox, which ships an
+      # older Chromium, and an upgrade to a newer PDF.js API family broke page
+      # rendering there while the Node side stayed green. The regression is
+      # invisible without installing a packaged build in the host, so minor and
+      # major bumps must be evaluated deliberately rather than offered weekly.
+      # See CLAUDE.md for the upgrade checklist. Patch releases still surface,
+      # and security advisories are unaffected by this rule.
+      - dependency-name: "pdfjs-dist"
+        update-types:
+          - "version-update:semver-minor"
+          - "version-update:semver-major"
+      # @napi-rs/canvas sits underneath PDF.js in the rendering path and ships
+      # fixed native binaries for five platform targets. The 1.0 line has a
+      # Windows ARM64 auxiliary-file defect, and a nested second canvas
+      # implementation is a real rasterization risk, so a major bump needs
+      # per-platform validation rather than a green CI run.
+      - dependency-name: "@napi-rs/canvas"
+        update-types:
+          - "version-update:semver-major"
