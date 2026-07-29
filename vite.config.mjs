@@ -4,6 +4,7 @@ import { defineConfig } from "vite";
 import { viteSingleFile } from "vite-plugin-singlefile";
 import { configDefaults } from "vitest/config";
 import { NODE_TEST_FILES } from "./scripts/node-test-files.mjs";
+import { SOURCE_IDENTITY_TEST_FILES } from "./scripts/test-suite-classification.mjs";
 import { createMcpBridgePlugin } from "./ui/dev/bridge-plugin.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -26,6 +27,40 @@ export default defineConfig(({ command, mode }) => ({
     exclude: [
       ...configDefaults.exclude,
       ...NODE_TEST_FILES,
+    ],
+    projects: [
+      {
+        extends: true,
+        test: {
+          name: "ordinary",
+          root: ".",
+          exclude: [
+            ...configDefaults.exclude,
+            ...NODE_TEST_FILES,
+            ...SOURCE_IDENTITY_TEST_FILES,
+          ],
+          pool: "forks",
+          isolate: true,
+          sequence: { groupOrder: 0 },
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "source-identity",
+          root: ".",
+          include: SOURCE_IDENTITY_TEST_FILES,
+          exclude: [
+            ...configDefaults.exclude,
+            ...NODE_TEST_FILES,
+          ],
+          pool: "forks",
+          isolate: true,
+          fileParallelism: false,
+          maxWorkers: 1,
+          sequence: { groupOrder: 1 },
+        },
+      },
     ],
   },
   build: {
