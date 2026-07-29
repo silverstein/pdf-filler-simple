@@ -15,13 +15,17 @@ import {
 } from "../scripts/node-test-files.mjs";
 import {
   controlledVitestEnvironment,
+  RunnerExitError,
   runAllTestSuites,
   validateAggregateArguments,
   validateAggregateExitCode,
 } from "../scripts/run-all-test-suites.mjs";
 import { parseNodeTestArguments } from "../scripts/run-node-test-suites.mjs";
 import {
+  CHECKOUT_LOCAL_MUTATING_TEST_SUITES,
+  NON_EXECUTABLE_SOURCE_IDENTITY_REFERENCES,
   REAL_CHECKOUT_SOURCE_IDENTITY_BINDERS,
+  REVIEWED_COMPUTED_MODULE_LOADS,
   SOURCE_IDENTITY_TEST_FILES,
   SOURCE_IDENTITY_TEST_SUITES,
   SOURCE_IDENTITY_TRANSITIVE_MODULES,
@@ -68,8 +72,25 @@ async function findNodeTestFiles(directory = path.join(repoRoot, "test")) {
   return matches.sort();
 }
 
-const executableLocalImportPattern =
-  /(?:\bfrom\s*|\bimport\s*\(\s*|\brequire\s*\(\s*)(["'])(\.\.?\/[^"'`]+)\1/g;
+const relativeStringReferencePattern = /(["'`])(\.\.?\/[^"'`\r\n]+)\1/g;
+const computedDynamicImportPattern =
+  /(?:^|[^\w.])import\s*\(\s*(?!["'])/g;
+const sourceExtensions = Object.freeze([
+  ".js",
+  ".mjs",
+  ".cjs",
+  ".jsx",
+  ".ts",
+  ".mts",
+  ".cts",
+  ".tsx",
+]);
+
+function relativeSourceReferences(source) {
+  return [...source.matchAll(relativeStringReferencePattern)]
+    .filter(match => match[1] !== "`" || !match[2].includes("${"))
+    .map(match => match[2]);
+}
 
 async function findJavaScriptSourceFiles(directory) {
   const matches = [];
@@ -105,14 +126,38 @@ async function findJavaScriptSourceFiles(directory) {
 
 async function localImportGraph(sourceFiles) {
   const graph = new Map(sourceFiles.map(file => [file, new Set()]));
+  const sourceFileSet = new Set(sourceFiles);
+  const nonExecutableReferences = new Set(
+    NON_EXECUTABLE_SOURCE_IDENTITY_REFERENCES.map(entry =>
+      `${entry.file}\0${entry.target}`),
+  );
   for (const file of sourceFiles) {
     const source = await fs.readFile(path.join(repoRoot, file), "utf8");
-    for (const match of source.matchAll(executableLocalImportPattern)) {
-      const target = path.relative(
+    for (const reference of relativeSourceReferences(source)) {
+      const specifier = reference.split(/[?#]/, 1)[0];
+      const unresolved = path.relative(
         repoRoot,
-        path.resolve(path.dirname(path.join(repoRoot, file)), match[2]),
+        path.resolve(path.dirname(path.join(repoRoot, file)), specifier),
       ).split(path.sep).join("/");
-      if (graph.has(target)) graph.get(file).add(target);
+      const extension = path.posix.extname(unresolved);
+      const candidates = extension
+        ? [unresolved]
+        : [
+            unresolved,
+            ...sourceExtensions.map(suffix => `${unresolved}${suffix}`),
+            ...sourceExtensions.map(suffix => `${unresolved}/index${suffix}`),
+          ];
+      const targets = candidates.filter(candidate => sourceFileSet.has(candidate));
+      if (targets.length > 1) {
+        throw new Error(`ambiguous local source reference in ${file}: ${reference}`);
+      }
+      const [target] = targets;
+      if (
+        target
+        && !nonExecutableReferences.has(`${file}\0${target}`)
+      ) {
+        graph.get(file).add(target);
+      }
     }
   }
   return graph;
@@ -132,6 +177,38 @@ function graphReachesAny(graph, start, targets) {
 }
 
 describe("aggregate test-runner contract", () => {
+  it("recognizes every supported literal module edge conservatively", () => {
+    const source = [
+      'import "./side-effect.mjs";',
+      'export * from "./reexport.mjs";',
+      'import * as sourceState from "./source-worktree-state.mjs";',
+      'const dynamic = import("./dynamic.mjs?proof=1");',
+      'const commonjs = require("./commonjs.cjs");',
+      'const readOnly = new URL("./read-as-data.mjs", import.meta.url);',
+    ].join("\n");
+    expect(relativeSourceReferences(source)).toEqual([
+      "./side-effect.mjs",
+      "./reexport.mjs",
+      "./source-worktree-state.mjs",
+      "./dynamic.mjs?proof=1",
+      "./commonjs.cjs",
+      "./read-as-data.mjs",
+    ]);
+    expect([...source.matchAll(computedDynamicImportPattern)]).toHaveLength(0);
+    expect([
+      ...'import(moduleUrl); import(`./local-${name}.mjs`);'
+        .matchAll(computedDynamicImportPattern),
+    ]).toHaveLength(2);
+
+    const graph = new Map([
+      ["suite", new Set(["helper"])],
+      ["helper", new Set(["reexport"])],
+      ["reexport", new Set(["binder"])],
+      ["binder", new Set()],
+    ]);
+    expect(graphReachesAny(graph, "suite", new Set(["binder"]))).toBe(true);
+  });
+
   it("classifies the complete reviewed import closure to every real-checkout source binder", async () => {
     const nativeFiles = new Set(NODE_TEST_FILES);
     const discoveredVitestFiles = [];
@@ -174,14 +251,21 @@ describe("aggregate test-runner contract", () => {
       graphReachesAny(graph, file, binderSet))).toBe(true);
     expect(SOURCE_IDENTITY_TRANSITIVE_MODULES.every(entry =>
       graphReachesAny(graph, entry.file, binderSet))).toBe(true);
+    expect(graph.get("test/eval/agent-workflow-v3-retirement.test.js")?.has(
+      "scripts/eval-prepare-agent-workflow-campaign-v3.mjs",
+    )).toBe(false);
+    expect(SOURCE_IDENTITY_TEST_FILES).not.toContain(
+      "test/eval/agent-workflow-v3-retirement.test.js",
+    );
+    expect(graphReachesAny(
+      graph,
+      "test/source-worktree-state.test.js",
+      binderSet,
+    )).toBe(false);
 
-    const genericCheckerImporters = [];
-    for (const file of allSourceFiles) {
-      const source = await fs.readFile(path.join(repoRoot, file), "utf8");
-      if (/import\s*\{[^}]*\bverifiedCleanSourceCommit\b[^}]*\}\s*from\s*(["'])[^"']*source-worktree-state\.mjs\1/s.test(source)) {
-        genericCheckerImporters.push(file);
-      }
-    }
+    const genericCheckerModule = "scripts/source-worktree-state.mjs";
+    const genericCheckerImporters = allSourceFiles.filter(file =>
+      graph.get(file)?.has(genericCheckerModule));
     expect(genericCheckerImporters.sort()).toEqual([
       ...binderFiles,
       ...SYNTHETIC_SOURCE_IDENTITY_IMPORTERS.map(entry => entry.file),
@@ -190,6 +274,9 @@ describe("aggregate test-runner contract", () => {
     expect(Object.isFrozen(SOURCE_IDENTITY_TEST_SUITES)).toBe(true);
     expect(Object.isFrozen(SOURCE_IDENTITY_TEST_FILES)).toBe(true);
     expect(Object.isFrozen(REAL_CHECKOUT_SOURCE_IDENTITY_BINDERS)).toBe(true);
+    expect(Object.isFrozen(NON_EXECUTABLE_SOURCE_IDENTITY_REFERENCES)).toBe(true);
+    expect(Object.isFrozen(CHECKOUT_LOCAL_MUTATING_TEST_SUITES)).toBe(true);
+    expect(Object.isFrozen(REVIEWED_COMPUTED_MODULE_LOADS)).toBe(true);
     expect(Object.isFrozen(SOURCE_IDENTITY_TRANSITIVE_MODULES)).toBe(true);
     expect(Object.isFrozen(SYNTHETIC_SOURCE_IDENTITY_IMPORTERS)).toBe(true);
     expect(new Set(SOURCE_IDENTITY_TEST_FILES).size).toBe(SOURCE_IDENTITY_TEST_FILES.length);
@@ -197,6 +284,23 @@ describe("aggregate test-runner contract", () => {
       suite => suite.reason.length > 0 && discoveredVitestFiles.includes(suite.file),
     )).toBe(true);
     expect(SOURCE_IDENTITY_TEST_FILES.every(file => !nativeFiles.has(file))).toBe(true);
+
+    const allocatorModule = "test/helpers/temp-directory.js";
+    const discoveredMutatingTests = discoveredVitestFiles.filter(file =>
+      graphReachesAny(graph, file, new Set([allocatorModule])));
+    expect(discoveredMutatingTests.sort()).toEqual(
+      [...CHECKOUT_LOCAL_MUTATING_TEST_SUITES].sort(),
+    );
+
+    const discoveredComputedLoads = [];
+    for (const file of allSourceFiles) {
+      const source = await fs.readFile(path.join(repoRoot, file), "utf8");
+      const count = [...source.matchAll(computedDynamicImportPattern)].length;
+      if (count > 0) discoveredComputedLoads.push({ file, count });
+    }
+    expect(discoveredComputedLoads).toEqual(
+      REVIEWED_COMPUTED_MODULE_LOADS.map(({ file, count }) => ({ file, count })),
+    );
   });
 
   it("classifies every node:test suite exactly once", async () => {
@@ -309,6 +413,7 @@ describe("aggregate test-runner contract", () => {
       VITEST_MAX_WORKERS: "8",
       VITEST_POOL_ID: "fixture-pool",
       VITEST_WORKER_ID: "fixture-worker",
+      vitest_max_workers: "4",
     })).toEqual({
       OFFLINE: "0",
       PATH: "fixture-path",
@@ -547,6 +652,52 @@ describe("aggregate test-runner contract", () => {
     }
     expect(caught).toBeInstanceOf(AggregateError);
     expect(caught.errors).toEqual([nativeRunnerError, sourceError]);
+  });
+
+  it("preserves valid nonzero runner exits when the source barrier also fails", async () => {
+    for (const exitCode of [1, 143]) {
+      let verificationCount = 0;
+      let caught;
+      try {
+        await runAllTestSuites([], {
+          verifyNodeVersion: () => {},
+          verifySourceState: async () => {
+            verificationCount += 1;
+            if (verificationCount === 1) return HEAD_A;
+            throw new Error("fixture source failure");
+          },
+          runVitest: async () => exitCode,
+          runNative: async () => 0,
+        });
+      } catch (error) {
+        caught = error;
+      }
+      expect(caught).toBeInstanceOf(AggregateError);
+      expect(caught.errors[0]).toBeInstanceOf(RunnerExitError);
+      expect(caught.errors[0]).toMatchObject({ exitCode });
+      expect(caught.errors[1].message).toBe("fixture source failure");
+    }
+
+    let verificationCount = 0;
+    let caught;
+    try {
+      await runAllTestSuites([], {
+        verifyNodeVersion: () => {},
+        verifySourceState: async () => {
+          verificationCount += 1;
+          if (verificationCount < 3) return HEAD_A;
+          throw new Error("fixture native source failure");
+        },
+        runVitest: async () => 0,
+        runNative: async () => 7,
+      });
+    } catch (error) {
+      caught = error;
+    }
+    expect(caught).toBeInstanceOf(AggregateError);
+    expect(caught.errors[0]).toBeInstanceOf(RunnerExitError);
+    expect(caught.errors[0]).toMatchObject({ exitCode: 7 });
+    expect(caught.errors[1].message).toBe("fixture native source failure");
   });
 
   it("resolves Windows tree termination through the system directory", () => {

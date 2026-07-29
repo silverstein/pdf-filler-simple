@@ -143,6 +143,7 @@ describe("source worktree identity", () => {
       GIT_CONFIG_KEY_0: "core.excludesFile",
       GIT_CONFIG_VALUE_0: "/alternate/excludes",
       GIT_OBJECT_DIRECTORY: "/alternate/objects",
+      git_work_tree: "/mixed-case/alternate",
     };
     const sanitized = sanitizedGitEnvironment(environment);
     expect(sanitized.PATH).toBe(environment.PATH);
@@ -152,6 +153,7 @@ describe("source worktree identity", () => {
     expect(sanitized).toMatchObject({
       GIT_ATTR_NOSYSTEM: "1",
       GIT_CONFIG_NOSYSTEM: "1",
+      GIT_NO_REPLACE_OBJECTS: "1",
       GIT_OPTIONAL_LOCKS: "0",
       GIT_TERMINAL_PROMPT: "0",
     });
@@ -257,6 +259,29 @@ describe("source worktree identity", () => {
     await expect(snapshot.verifyUnchanged()).rejects.toThrow(
       "source worktree changed after its commit snapshot was opened",
     );
+  });
+
+  it("disables repository replacement refs for commit-object reads", async () => {
+    const repoRoot = await createSyntheticRepository("commit-a\n");
+    const { stdout: commitAOutput } = await git(repoRoot, "rev-parse", "HEAD");
+    const commitA = commitAOutput.trim();
+    await fs.writeFile(path.join(repoRoot, "tracked.txt"), "commit-b\n");
+    await git(repoRoot, "add", "--", "tracked.txt");
+    await git(repoRoot, "commit", "--quiet", "-m", "replacement target");
+    const { stdout: commitBOutput } = await git(repoRoot, "rev-parse", "HEAD");
+    const commitB = commitBOutput.trim();
+
+    await git(repoRoot, "update-ref", "HEAD", commitA);
+    await fs.writeFile(path.join(repoRoot, "tracked.txt"), "commit-a\n");
+    await git(repoRoot, "add", "--", "tracked.txt");
+    await git(repoRoot, "replace", commitA, commitB);
+
+    const snapshot = await openVerifiedSourceSnapshot(repoRoot);
+    expect(snapshot.commit).toBe(commitA);
+    await expect(snapshot.readFile("tracked.txt")).resolves.toEqual(
+      Buffer.from("commit-a\n"),
+    );
+    await expect(snapshot.verifyUnchanged()).resolves.toBe(commitA);
   });
 
   it("rejects unsafe snapshot paths, missing blobs, and unsupported limits", async () => {

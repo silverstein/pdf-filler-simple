@@ -83,14 +83,23 @@ describe("agent workflow campaign preparation", () => {
     const oracle = JSON.parse(await fs.readFile(path.join(trusted, "oracle.json"), "utf8"));
     expect(oracle.cases).toHaveLength(5);
     expect(oracle.cases.every(testCase => testCase.expected)).toBe(true);
-    const rubricBytes = await fs.readFile(path.join(
-      REPO_ROOT,
-      "test",
-      "fixtures",
-      "eval",
-      "agent-workflows",
-      "planning-rubric.v1.txt",
-    ));
+    const { stdout: rubricBytes } = await execFileAsync(
+      "git",
+      [
+        "-C",
+        REPO_ROOT,
+        "cat-file",
+        "blob",
+        `${manifest.source_commit}:test/fixtures/eval/agent-workflows/planning-rubric.v1.txt`,
+      ],
+      {
+        encoding: null,
+        env: {
+          ...SYNTHETIC_GIT_ENV,
+          GIT_NO_REPLACE_OBJECTS: "1",
+        },
+      },
+    );
     const embeddedRubric = rubricBytes.toString("utf8").trim();
     expect(oracle.rubric_source_sha256).toBe(sha256(rubricBytes));
     expect(oracle.rubric_embedded_sha256).toBe(sha256(embeddedRubric));

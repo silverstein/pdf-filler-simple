@@ -28,9 +28,14 @@ export function controlledVitestEnvironment(environment = process.env) {
     ...environment,
     OFFLINE: environment.OFFLINE ?? "1",
   };
-  delete controlled.VITEST_MAX_WORKERS;
-  delete controlled.VITEST_POOL_ID;
-  delete controlled.VITEST_WORKER_ID;
+  const deniedNames = new Set([
+    "VITEST_MAX_WORKERS",
+    "VITEST_POOL_ID",
+    "VITEST_WORKER_ID",
+  ]);
+  for (const name of Object.keys(controlled)) {
+    if (deniedNames.has(name.toUpperCase())) delete controlled[name];
+  }
   return controlled;
 }
 
@@ -51,8 +56,19 @@ export function validateAggregateExitCode(value, label) {
   return value;
 }
 
+export class RunnerExitError extends Error {
+  constructor(label, exitCode) {
+    super(`${label} exited with code ${exitCode}`);
+    this.name = "RunnerExitError";
+    this.exitCode = exitCode;
+  }
+}
+
 function validateSourceCommit(value, phase) {
-  if (!/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value)) {
+  if (
+    typeof value !== "string"
+    || !/^(?:[0-9a-f]{40}|[0-9a-f]{64})$/.test(value)
+  ) {
     throw new Error(`test:all source verification ${phase} returned an invalid commit`);
   }
   return value;
@@ -95,6 +111,12 @@ async function runPartitionWithPostCheck({
   if (runnerError && sourceError) {
     throw new AggregateError(
       [runnerError, sourceError],
+      `${label} and its post-run source verification both failed`,
+    );
+  }
+  if (runnerResult !== 0 && sourceError) {
+    throw new AggregateError(
+      [new RunnerExitError(label, runnerResult), sourceError],
       `${label} and its post-run source verification both failed`,
     );
   }

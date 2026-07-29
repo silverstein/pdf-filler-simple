@@ -165,7 +165,7 @@ async function materializeCommitTree(entries, destination) {
     });
     await fs.writeFile(destinationPath, entry.bytes, {
       flag: "wx",
-      mode: 0o600,
+      mode: entry.mode === "100755" ? 0o700 : 0o600,
     });
   }
 }

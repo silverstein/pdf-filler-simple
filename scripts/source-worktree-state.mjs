@@ -14,7 +14,7 @@ const FULL_OBJECT_ID = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
 export function sanitizedGitEnvironment(environment = process.env) {
   const sanitized = { ...environment };
   for (const name of Object.keys(sanitized)) {
-    if (name.startsWith("GIT_")) delete sanitized[name];
+    if (name.toUpperCase().startsWith("GIT_")) delete sanitized[name];
   }
   return {
     ...sanitized,
@@ -22,6 +22,7 @@ export function sanitizedGitEnvironment(environment = process.env) {
     GIT_CONFIG_GLOBAL: os.devNull,
     GIT_CONFIG_NOSYSTEM: "1",
     GIT_CONFIG_SYSTEM: os.devNull,
+    GIT_NO_REPLACE_OBJECTS: "1",
     GIT_OPTIONAL_LOCKS: "0",
     GIT_TERMINAL_PROMPT: "0",
   };

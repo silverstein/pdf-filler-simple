@@ -12,19 +12,25 @@ const projectsByName = new Map(
 );
 const invertOrder =
   process.env.PDF_TOOLS_VITEST_ORDER_CONTROL === "source-first";
+const overlap =
+  process.env.PDF_TOOLS_VITEST_ORDER_CONTROL === "overlap";
 
 function retargetProject(name, include) {
   const project = projectsByName.get(name);
   if (!project) throw new Error(`missing live Vitest project: ${name}`);
-  const groupOrder = invertOrder
-    ? (name === "ordinary" ? 2 : 1)
-    : project.test.sequence.groupOrder;
+  const groupOrder = overlap
+    ? 1
+    : invertOrder
+      ? (name === "ordinary" ? 2 : 1)
+      : project.test.sequence.groupOrder;
   return {
     ...project,
     test: {
       ...project.test,
       root: repoRoot,
       include: [include],
+      // Vitest excludes fixture directories by default. Clear only that
+      // selection constraint so these non-production modules can execute.
       exclude: [],
       sequence: {
         ...project.test.sequence,

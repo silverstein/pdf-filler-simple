@@ -1,10 +1,26 @@
 import fs from "node:fs";
+import fsPromises from "node:fs/promises";
 import path from "node:path";
 import { expect, it } from "vitest";
+import { verifiedCleanSourceCommit } from "../../../scripts/source-worktree-state.mjs";
 
 const stateRoot = process.env.PDF_TOOLS_VITEST_ORDER_STATE;
+const repositoryRoot = process.env.PDF_TOOLS_VITEST_ORDER_REPOSITORY;
 if (!stateRoot || !path.isAbsolute(stateRoot)) {
   throw new Error("PDF_TOOLS_VITEST_ORDER_STATE must be an absolute path");
+}
+if (!repositoryRoot || !path.isAbsolute(repositoryRoot)) {
+  throw new Error("PDF_TOOLS_VITEST_ORDER_REPOSITORY must be an absolute path");
+}
+const control = process.env.PDF_TOOLS_VITEST_ORDER_CONTROL;
+if (control === "overlap") {
+  const deadline = Date.now() + 5_000;
+  while (!fs.existsSync(path.join(stateRoot, "ordinary-active"))) {
+    if (Date.now() >= deadline) {
+      throw new Error("ordinary overlap fixture did not become active");
+    }
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
 }
 
 const observation = {
@@ -23,6 +39,29 @@ fs.writeFileSync(
   `${JSON.stringify(observation)}\n`,
   { flag: "wx" },
 );
+
+let sourceVerificationError = null;
+try {
+  await verifiedCleanSourceCommit(repositoryRoot, {
+    label: "overlap synthetic source worktree",
+  });
+} catch (error) {
+  sourceVerificationError = error;
+}
+if (control === "overlap") {
+  await fsPromises.writeFile(
+    path.join(stateRoot, "source-check-complete"),
+    "complete\n",
+    { flag: "wx" },
+  );
+  if (!sourceVerificationError?.message.includes(
+    "overlap synthetic source worktree must be clean at its exact HEAD",
+  )) {
+    throw new Error("VITEST_OVERLAP_CONTROL_DID_NOT_REPRODUCE");
+  }
+  throw new Error("EXPECTED_GIT_VISIBLE_INTERFERENCE");
+}
+if (sourceVerificationError) throw sourceVerificationError;
 
 if (
   !observation.completeAtStart
