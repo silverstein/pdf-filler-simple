@@ -76,7 +76,7 @@ async function readRequest() {
     || request.expanded_bytes > 16 << 20
     || !Number.isSafeInteger(request.call_timeout_ms)
     || request.call_timeout_ms < 1000
-    || request.call_timeout_ms > 25_000) {
+    || request.call_timeout_ms > 60_000) {
     throw new Error("Campaign row request violates its exact schema");
   }
   return Object.freeze(request);
@@ -140,6 +140,28 @@ function responseSummary(response) {
   if (serialized.length > MAX_RESPONSE_CANONICAL_BYTES) {
     throw new Error("Product response exceeds the campaign response ceiling");
   }
+  const structuredError = response?.structuredContent;
+  const structuredErrorSummary = structuredError
+    && typeof structuredError === "object"
+    && !Array.isArray(structuredError)
+    && exactKeys(structuredError, ["error", "status"])
+    && structuredError.status === "failed"
+    && structuredError.error
+    && typeof structuredError.error === "object"
+    && !Array.isArray(structuredError.error)
+    && exactKeys(structuredError.error, ["code", "error_schema_version"])
+    ? {
+        status: structuredError.status,
+        error_schema_version: Number.isSafeInteger(
+          structuredError.error.error_schema_version,
+        )
+          ? structuredError.error.error_schema_version
+          : null,
+        code: typeof structuredError.error.code === "string"
+          ? structuredError.error.code
+          : null,
+      }
+    : null;
   const content = Array.isArray(response?.content) ? response.content : [];
   const contentSummary = content.map(item => {
     const serializedItem = Buffer.from(canonicalJson(item), "utf8");
@@ -155,6 +177,7 @@ function responseSummary(response) {
     canonical_bytes: serialized.length,
     sha256: sha256(serialized),
     is_error: response?.isError === true,
+    structured_error: structuredErrorSummary,
     content: contentSummary,
     raw_internal_leak: contentSummary.some(item => item.raw_internal_leak),
   };

@@ -123,7 +123,7 @@ function validateRequest(request) {
     && ["get_pdf_info", "read_pdf_content", "get_page_analysis", "render_pdf_page"]
       .includes(request.tool)
     && integer(request.expanded_bytes, 1024, 16 << 20)
-    && integer(request.call_timeout_ms, 1000, 25_000);
+    && integer(request.call_timeout_ms, 1000, 60_000);
 }
 
 function validateLimits(limits) {
@@ -247,6 +247,12 @@ function acceptedRowAssertions(record, request) {
       && record?.baseline_canary?.response?.raw_internal_leak === false,
     product_completed: record?.product?.outcome === "response",
     product_is_error: record?.product?.response?.is_error ?? null,
+    product_structured_error: record?.product?.response?.structured_error ?? null,
+    product_resource_limit_error:
+      record?.product?.response?.structured_error?.status === "failed"
+      && record?.product?.response?.structured_error?.error_schema_version === 1
+      && record?.product?.response?.structured_error?.code
+        === "PDF_RESOURCE_LIMIT_EXCEEDED",
     product_raw_internal_leak: productLeak,
     post_canary_ok: record?.same_server_canary?.outcome === "response"
       && record?.same_server_canary?.response?.is_error === false
@@ -255,12 +261,18 @@ function acceptedRowAssertions(record, request) {
   };
 }
 
-function productPass(assertions) {
+function productPass(assertions, evidence) {
   return assertions !== null
+    && evidence?.controller_accepted === true
+    && evidence?.controller_failure === "none"
+    && evidence?.observations?.original_process_group_empty === true
+    && evidence?.observations?.escaped_session_detected === false
     && assertions.protocol_ok
     && assertions.request_ok
     && assertions.baseline_ok
     && assertions.product_completed
+    && assertions.product_is_error === true
+    && assertions.product_resource_limit_error === true
     && assertions.product_raw_internal_leak === false
     && assertions.post_canary_ok
     && assertions.filesystem_unchanged;
@@ -347,7 +359,9 @@ async function runCampaign(plan, planIdentity) {
         },
         assertions,
         harness_valid: harnessValid(result.evidence),
-        product_pass: productPass(assertions),
+        product_boundary_owned: result.evidence?.controller_accepted === true
+          && result.evidence?.controller_failure === "none",
+        product_pass: productPass(assertions, result.evidence),
       });
     }
   }
