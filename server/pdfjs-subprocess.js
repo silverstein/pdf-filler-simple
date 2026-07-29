@@ -16,7 +16,6 @@ const DEFAULT_MAX_OLD_SPACE_MB = 384;
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_QUEUED_OPERATIONS = 8;
 const TERMINATION_GRACE_MS = 250;
-const CLEANUP_GRACE_MS = 50;
 const PDFJS_OPERATIONS = new Set([
   "analyze_pages",
   "detect_signature_zones",
@@ -189,56 +188,13 @@ function boundedCollector(maximumBytes, onOverflow) {
   };
 }
 
-function signalChildTree(child, platform, signal, killProcess) {
+function signalChild(child, signal) {
   if (!child?.pid) return false;
   try {
-    if (platform !== "win32") {
-      killProcess(-child.pid, signal);
-    } else {
-      child.kill(signal);
-    }
-    return true;
-  } catch (error) {
-    if (error?.code === "ESRCH") return false;
-    try {
-      child.kill(signal);
-      return true;
-    } catch {
-      return false;
-    }
+    return child.kill(signal);
+  } catch {
+    return false;
   }
-}
-
-function posixProcessGroupExists(processId, killProcess) {
-  try {
-    killProcess(-processId, 0);
-    return true;
-  } catch (error) {
-    return error?.code !== "ESRCH";
-  }
-}
-
-async function wait(milliseconds) {
-  await new Promise(resolve => setTimeout(resolve, milliseconds));
-}
-
-async function cleanupPosixProcessGroup(processId, killProcess) {
-  if (!processId || !posixProcessGroupExists(processId, killProcess)) return true;
-  try {
-    killProcess(-processId, "SIGTERM");
-  } catch (error) {
-    if (error?.code !== "ESRCH") return false;
-  }
-  await wait(CLEANUP_GRACE_MS);
-  if (posixProcessGroupExists(processId, killProcess)) {
-    try {
-      killProcess(-processId, "SIGKILL");
-    } catch (error) {
-      if (error?.code !== "ESRCH") return false;
-    }
-    await wait(CLEANUP_GRACE_MS);
-  }
-  return !posixProcessGroupExists(processId, killProcess);
 }
 
 function parseWorkerResponse(bytes, operation) {
@@ -398,7 +354,6 @@ async function acquireOperationSlot(deadlineAt, signal) {
 async function runSpawnedWorker({
   environment,
   executable,
-  killProcess,
   maxBinaryBytes,
   maxOldSpaceMb,
   maxResultBytes,
@@ -423,7 +378,6 @@ async function runSpawnedWorker({
     let spawnError = null;
     let exitCode = null;
     let exitSignal = null;
-    let spawned = false;
     let activeEntry = null;
 
     const terminate = reason => {
@@ -431,9 +385,9 @@ async function runSpawnedWorker({
       terminationStarted = true;
       if (reason === "timeout") timedOut = true;
       if (reason === "abort") aborted = true;
-      signalChildTree(child, platform, "SIGTERM", killProcess);
+      signalChild(child, "SIGTERM");
       terminationTimer = setTimeout(() => {
-        signalChildTree(child, platform, "SIGKILL", killProcess);
+        signalChild(child, "SIGKILL");
       }, TERMINATION_GRACE_MS);
       terminationTimer.unref();
     };
@@ -453,14 +407,6 @@ async function runSpawnedWorker({
       const stdoutResult = stdout.result();
       const stderrResult = stderr.result();
       const binaryResult = binary.result();
-      const processGroupClean = platform === "win32" || !spawned
-        ? true
-        : await cleanupPosixProcessGroup(child.pid, killProcess);
-
-      if (!processGroupClean) {
-        reject(resourceLimitError("child_cleanup_unproven"));
-        return;
-      }
       if (spawnError) {
         reject(subprocessFailure("The isolated PDF worker could not be started.", spawnError));
         return;
@@ -509,7 +455,9 @@ async function runSpawnedWorker({
         [`--max-old-space-size=${maxOldSpaceMb}`, workerPath],
         {
           cwd: operationDirectory,
-          detached: platform !== "win32",
+          // Stay in the enclosing host's process session. A detached worker can
+          // evade host-level lifecycle and resource supervision on POSIX.
+          detached: false,
           env: childEnvironment(environment, platform, operationDirectory),
           shell: false,
           stdio: ["pipe", "pipe", "pipe", "pipe"],
@@ -523,8 +471,7 @@ async function runSpawnedWorker({
     }
 
     child.once("spawn", () => {
-      spawned = true;
-      activeEntry = { child, killProcess, platform };
+      activeEntry = { child };
       activeChildren.add(activeEntry);
     });
     child.once("error", error => {
@@ -566,7 +513,6 @@ export async function runPdfjsSubprocess(request, {
   environment = process.env,
   platform = process.platform,
   spawnProcess = spawn,
-  killProcess = process.kill.bind(process),
   signal = null,
 } = {}) {
   const requestBytes = validateRequest(request);
@@ -592,7 +538,6 @@ export async function runPdfjsSubprocess(request, {
     result = await runSpawnedWorker({
       environment,
       executable,
-      killProcess,
       maxBinaryBytes,
       maxOldSpaceMb,
       maxResultBytes,
@@ -646,7 +591,7 @@ export function createPdfjsSubprocessRequest({
 }
 
 export function terminateAllPdfjsSubprocesses() {
-  for (const { child, killProcess, platform } of activeChildren) {
-    signalChildTree(child, platform, "SIGKILL", killProcess);
+  for (const { child } of activeChildren) {
+    signalChild(child, "SIGKILL");
   }
 }

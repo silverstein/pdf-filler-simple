@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
+import { spawn } from "node:child_process";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -140,28 +141,21 @@ setInterval(() => {}, 1000);
     });
   });
 
-  it("reaps an ignoring descendant even after the direct worker exits", async () => {
-    if (process.platform === "win32") return;
-    const root = await fs.realpath(
-      await fs.mkdtemp(path.join(os.tmpdir(), "pdfjs-descendant-test-")),
-    );
-    roots.push(root);
-    const pidPath = path.join(root, "grandchild.pid");
+  it("keeps the worker inside the enclosing host process session", async () => {
+    let observedOptions = null;
     const workerPath = await fixtureWorker(`
-import { spawn } from "node:child_process";
-import { writeFileSync } from "node:fs";
 await new Promise(resolve => process.stdin.on("end", resolve).resume());
-const child = spawn(process.execPath, ["-e", "process.on('SIGTERM',()=>{});setInterval(()=>{},1000)"], {
-  stdio: "ignore",
-});
-writeFileSync(${JSON.stringify(pidPath)}, String(child.pid));
-child.unref();
 process.stdout.write(${JSON.stringify(success())});
 `);
-    const result = await runPdfjsSubprocess(request(), { workerPath });
+    const result = await runPdfjsSubprocess(request(), {
+      spawnProcess(executable, args, options) {
+        observedOptions = options;
+        return spawn(executable, args, options);
+      },
+      workerPath,
+    });
     expect(result).toEqual({ value: "ok" });
-    const pid = Number(await fs.readFile(pidPath, "utf8"));
-    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    expect(observedOptions).toMatchObject({ detached: false, shell: false });
   });
 
   it("does not inherit Node injection flags or unrelated secrets", async () => {
