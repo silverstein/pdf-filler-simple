@@ -466,14 +466,8 @@ describe("structured extraction Phase 1 pure scorer", () => {
       executionGenerationPath,
       generationRoot: path.join(REPO_ROOT, "forbidden-score-generation"),
     })).rejects.toThrow(/outside the repository/);
-    const repoExecutionRoot = await fs.mkdtemp(path.join(REPO_ROOT, ".phase1-score-input-test-"));
-    temporaryRoots.push(repoExecutionRoot);
-    const repoExecutionPath = path.join(repoExecutionRoot, "copied-generation");
-    await fs.cp(executionGenerationPath, repoExecutionPath, { recursive: true, preserveTimestamps: true });
-    await fs.chmod(repoExecutionPath, 0o700);
-    await Promise.all((await fs.readdir(repoExecutionPath)).map(filename => fs.chmod(path.join(repoExecutionPath, filename), 0o600)));
     await expect(scoreExtractionCandidateReport({
-      executionGenerationPath: repoExecutionPath,
+      executionGenerationPath: PHASE1_ROOT,
       generationRoot: path.join(root, "forbidden-input-score"),
     })).rejects.toThrow(/input generations must remain outside/);
     await expect(scoreExtractionCandidateReport({ reportPath: path.join(root, "legacy.json"), scorePath: path.join(root, "legacy-score.json") })).rejects.toThrow(/executionGenerationPath/);
