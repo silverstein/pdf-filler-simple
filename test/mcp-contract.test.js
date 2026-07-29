@@ -25,7 +25,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // deliberate, reviewed contract change, and say what changed.
 // 2026-07-28: merge_pdfs now documents its field-wise metadata consensus
 // contract. Previously c584f853d0a8eb0a9d518f47cb4e1d1254ff82f3aefb6e62a495e548775a73c5.
-const TOOL_CONTRACT_SHA256 = "0cb0c12a3b06f41d3b54ec251dca6df1d8b5e37d6c06d2edece3e17fbcf16035";
+const TOOL_CONTRACT_SHA256 = "3a1710d4500a330f04cb1527031d6cbebd8f0193d7d6b4716081120f3ea629af";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

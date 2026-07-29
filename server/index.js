@@ -1288,6 +1288,7 @@ async function bindPdfjsSubprocessSource(resolvedPath) {
     {
       assertPathAllowed,
       createSizeLimitError: pdfMutationFileLimitError,
+      requirePdfHeader: false,
     },
   );
   return {
@@ -1313,6 +1314,15 @@ async function runPdfjsOperation(resolvedPath, {
     allowedDirectories: ALLOWED_DIRECTORIES.map(directory => directory.canonical),
   }), { timeoutMs });
   return { result, source };
+}
+
+function pdfjsRendererPolicy() {
+  const forced = process.env.PDF_TOOLS_FORCE_SYSTEM_RENDERER === "1";
+  const disabled = process.env.PDF_TOOLS_DISABLE_SYSTEM_RENDERER === "1";
+  if (forced && (disabled || process.platform !== "darwin")) return "forced_unavailable";
+  if (forced) return "system";
+  if (disabled || process.platform !== "darwin") return "native";
+  return "native_with_system_fallback";
 }
 
 process.once("exit", terminateAllPdfjsSubprocesses);
@@ -4096,6 +4106,7 @@ async function handleToolCall(request) {
                 options: {
                   page: 1,
                   max_dimension_px: null,
+                  renderer_policy: pdfjsRendererPolicy(),
                   scale_override: scaleFactor,
                 },
               });
@@ -4487,6 +4498,7 @@ async function handleToolCall(request) {
             options: {
               page: targetPage,
               max_dimension_px: Number(max_dimension_px) || 1800,
+              renderer_policy: pdfjsRendererPolicy(),
               scale_override: null,
             },
           });
@@ -4566,6 +4578,7 @@ async function handleToolCall(request) {
             options: {
               page: targetPage,
               max_dimension_px: Number(max_dimension_px) || 1400,
+              renderer_policy: pdfjsRendererPolicy(),
               ...region,
             },
           });

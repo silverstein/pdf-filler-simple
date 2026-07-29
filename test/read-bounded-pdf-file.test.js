@@ -269,6 +269,18 @@ describe("readBoundedPdfFileSafely", () => {
     expect(state.closeCount).toBe(1);
   });
 
+  it("can bind parser-authoritative encrypted fixtures without a visible PDF header", async () => {
+    const bytes = Buffer.from("xxxxx1.7\nsynthetic parser-authoritative bytes");
+    await fs.writeFile(pdfPath, bytes);
+    const result = await hashBoundedPdfFileSafely(pdfPath, 1024, {
+      assertPathAllowed: pathPolicy,
+      requirePdfHeader: false,
+      chunkBytes: 7,
+    });
+    expect(result.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
+    expect(result.sizeBytes).toBe(bytes.length);
+  });
+
   it("stops a large non-PDF identity read after the 1,024-byte header window", async () => {
     await fs.writeFile(pdfPath, Buffer.alloc(1024 * 1024, 0x58));
     const { fileSystem, state } = createRaceFileSystem();

@@ -601,6 +601,7 @@ export async function hashBoundedPdfFileSafely(resolvedPath, maxBytes, {
   assertPathAllowed,
   createSizeLimitError = () => new Error(PDF_TOO_LARGE_MESSAGE),
   chunkBytes = PDF_HASH_CHUNK_BYTES,
+  requirePdfHeader = true,
 } = {}) {
   if (
     !Number.isSafeInteger(chunkBytes)
@@ -610,6 +611,9 @@ export async function hashBoundedPdfFileSafely(resolvedPath, maxBytes, {
     throw new TypeError(
       `chunkBytes must be a positive safe integer no greater than ${PDF_HASH_MAX_CHUNK_BYTES}.`,
     );
+  }
+  if (typeof requirePdfHeader !== "boolean") {
+    throw new TypeError("requirePdfHeader must be a boolean.");
   }
   const { headerValid, ...identity } = await consumeBoundedPdfFileSafely(resolvedPath, maxBytes, {
     fileSystem,
@@ -640,6 +644,8 @@ export async function hashBoundedPdfFileSafely(resolvedPath, maxBytes, {
       hash.update(buffer.subarray(0, bytesRead));
       offset += bytesRead;
       if (
+        requirePdfHeader
+        &&
         headerBytes === headerWindow.length
         && headerWindow.indexOf(PDF_HEADER_MAGIC) < 0
       ) {
@@ -649,10 +655,10 @@ export async function hashBoundedPdfFileSafely(resolvedPath, maxBytes, {
 
     return {
       sha256: hash.digest("hex"),
-      headerValid: true,
+      headerValid: headerWindow.indexOf(PDF_HEADER_MAGIC) >= 0,
     };
   });
-  if (!headerValid) throw pdfInvalidHeaderError();
+  if (requirePdfHeader && !headerValid) throw pdfInvalidHeaderError();
   return identity;
 }
 

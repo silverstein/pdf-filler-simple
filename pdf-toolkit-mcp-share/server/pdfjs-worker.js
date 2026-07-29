@@ -1,6 +1,8 @@
 import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
+import { spawn } from "node:child_process";
 import { closeSync, existsSync, writeSync } from "node:fs";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { PDFDocument } from "pdf-lib";
@@ -57,8 +59,14 @@ const OPERATION_OPTION_KEYS = new Map([
   ],
   ["read_content", ["max_pages"]],
   ["read_pages", ["end_page", "max_chars_per_page", "start_page"]],
-  ["render_page", ["max_dimension_px", "page", "scale_override"]],
-  ["render_region", ["height", "max_dimension_px", "page", "width", "x", "y"]],
+  [
+    "render_page",
+    ["max_dimension_px", "page", "renderer_policy", "scale_override"],
+  ],
+  [
+    "render_region",
+    ["height", "max_dimension_px", "page", "renderer_policy", "width", "x", "y"],
+  ],
   ["search_text", ["context_chars", "max_results", "query"]],
 ]);
 
@@ -92,6 +100,18 @@ function boundedInteger(value, label, minimum, maximum, { nullable = false } = {
 function boundedNumber(value, label, minimum, maximum) {
   if (!Number.isFinite(value) || value < minimum || value > maximum) {
     throw new TypeError(`${label} must be a finite number from ${minimum} to ${maximum}.`);
+  }
+  return value;
+}
+
+function rendererPolicy(value) {
+  if (![
+    "forced_unavailable",
+    "native",
+    "native_with_system_fallback",
+    "system",
+  ].includes(value)) {
+    throw new TypeError("renderer_policy is invalid.");
   }
   return value;
 }
@@ -131,6 +151,7 @@ function validateOptions(operation, options) {
       break;
     case "render_page":
       boundedInteger(options.page, "page", 1, 1_000_000);
+      rendererPolicy(options.renderer_policy);
       boundedInteger(
         options.max_dimension_px,
         "max_dimension_px",
@@ -149,6 +170,7 @@ function validateOptions(operation, options) {
       break;
     case "render_region":
       boundedInteger(options.page, "page", 1, 1_000_000);
+      rendererPolicy(options.renderer_policy);
       boundedInteger(options.max_dimension_px, "max_dimension_px", 64, 8192);
       boundedNumber(options.x, "x", 0, 10_000_000);
       boundedNumber(options.y, "y", 0, 10_000_000);
@@ -685,7 +707,141 @@ function pngResult(buffer, result) {
   return { binary: buffer, result };
 }
 
-async function renderPage(bytes, password, options) {
+function pngDimensions(buffer) {
+  if (
+    !Buffer.isBuffer(buffer)
+    || buffer.length < 24
+    || buffer[0] !== 0x89
+    || buffer.subarray(1, 4).toString("ascii") !== "PNG"
+  ) {
+    throw new Error("The system PDF renderer returned invalid PNG bytes.");
+  }
+  return {
+    width: buffer.readUInt32BE(16),
+    height: buffer.readUInt32BE(20),
+  };
+}
+
+function errorChain(error, maximumDepth = 6) {
+  const messages = [];
+  let current = error;
+  for (let depth = 0; current && depth < maximumDepth; depth += 1) {
+    messages.push(`${current.name || "Error"}: ${current.message || String(current)}`);
+    current = current.cause;
+  }
+  return messages.join(" <- ");
+}
+
+function canvasDependencyError(error) {
+  const message = errorChain(error);
+  return message.includes("Canvas dependency")
+    || message.includes("Cannot find native binding")
+    || message.includes("ERR_DLOPEN_FAILED")
+    || message.includes("different Team IDs");
+}
+
+async function runSystemCommand(command, args) {
+  await new Promise((resolve, reject) => {
+    const child = spawn(command, args, {
+      cwd: process.cwd(),
+      env: {
+        PATH: process.env.PATH ?? "",
+        HOME: process.env.HOME ?? "",
+        LANG: process.env.LANG ?? "",
+        TMPDIR: process.cwd(),
+      },
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", chunk => {
+      stdoutBytes += chunk.length;
+      if (stdoutBytes <= 64 * 1024) stdout.push(Buffer.from(chunk));
+      else child.kill("SIGKILL");
+    });
+    child.stderr.on("data", chunk => {
+      stderrBytes += chunk.length;
+      if (stderrBytes <= 64 * 1024) stderr.push(Buffer.from(chunk));
+      else child.kill("SIGKILL");
+    });
+    child.once("error", reject);
+    child.once("close", code => {
+      if (stdoutBytes > 64 * 1024 || stderrBytes > 64 * 1024) {
+        reject(resourceLimitError("system_renderer_output_limit"));
+      } else if (code !== 0) {
+        reject(new Error("The macOS system PDF renderer could not render this page."));
+      } else {
+        resolve();
+      }
+    });
+  });
+}
+
+async function writeSinglePagePdf(bytes, pageNumber, password, targetPath) {
+  const source = await PDFDocument.load(bytes, password ? { password } : {});
+  const target = await PDFDocument.create();
+  const [page] = await target.copyPages(source, [pageNumber - 1]);
+  target.addPage(page);
+  await writeFile(targetPath, await target.save());
+}
+
+async function systemRenderPage(bytes, password, options) {
+  if (process.platform !== "darwin") {
+    throw new Error("The macOS system PDF renderer is unavailable on this platform.");
+  }
+  const geometryDocument = await PDFDocument.load(bytes, password ? { password } : {});
+  if (options.page > geometryDocument.getPageCount()) {
+    throw new Error(
+      `Page ${options.page} is out of range (1-${geometryDocument.getPageCount()}).`,
+    );
+  }
+  const geometry = geometryDocument.getPages()[options.page - 1].getSize();
+  const scale = options.scale_override ?? getPageRenderScale({
+    width: geometry.width,
+    height: geometry.height,
+    maxDimensionPx: options.max_dimension_px,
+  });
+  validateCanvasDimensions(geometry.width * scale, geometry.height * scale);
+  const sourcePath = path.join(process.cwd(), "system-page.pdf");
+  const basePath = path.join(process.cwd(), "system-page-base.png");
+  const outputPath = path.join(process.cwd(), "system-page.png");
+  try {
+    await writeSinglePagePdf(bytes, options.page, password, sourcePath);
+    await runSystemCommand("/usr/bin/sips", [
+      "-s", "format", "png", sourcePath, "--out", basePath,
+    ]);
+    const maximumDimension = Math.max(
+      1,
+      Math.round(Math.max(geometry.width, geometry.height) * scale),
+    );
+    await runSystemCommand("/usr/bin/sips", [
+      "-Z", String(maximumDimension), basePath, "--out", outputPath,
+    ]);
+    const buffer = await readFile(outputPath);
+    const pixels = pngDimensions(buffer);
+    validateCanvasDimensions(pixels.width, pixels.height);
+    return pngResult(buffer, {
+      height: pixels.height,
+      height_points: geometry.height,
+      renderer: "macos-sips",
+      scale,
+      total_pages: geometryDocument.getPageCount(),
+      width: pixels.width,
+      width_points: geometry.width,
+    });
+  } finally {
+    await Promise.all([
+      rm(sourcePath, { force: true }),
+      rm(basePath, { force: true }),
+      rm(outputPath, { force: true }),
+    ]);
+  }
+}
+
+async function nativeRenderPage(bytes, password, options) {
   const geometryDocument = await PDFDocument.load(bytes, password ? { password } : {});
   if (options.page > geometryDocument.getPageCount()) {
     throw new Error(
@@ -727,7 +883,28 @@ async function renderPage(bytes, password, options) {
   }, { render: true });
 }
 
-async function renderRegion(bytes, password, options) {
+async function renderPage(bytes, password, options) {
+  if (options.renderer_policy === "forced_unavailable") {
+    throw new Error("The requested system PDF renderer is unavailable.");
+  }
+  if (options.renderer_policy === "system") {
+    return await systemRenderPage(bytes, password, options);
+  }
+  try {
+    return await nativeRenderPage(bytes, password, options);
+  } catch (error) {
+    if (
+      options.renderer_policy === "native_with_system_fallback"
+      && error?.code !== PDF_RESOURCE_LIMIT_CODE
+      && canvasDependencyError(error)
+    ) {
+      return await systemRenderPage(bytes, password, options);
+    }
+    throw error;
+  }
+}
+
+async function nativeRenderRegion(bytes, password, options) {
   const geometryDocument = await PDFDocument.load(bytes, password ? { password } : {});
   if (options.page > geometryDocument.getPageCount()) {
     throw new Error(
@@ -805,6 +982,73 @@ async function renderRegion(bytes, password, options) {
       page.cleanup();
     }
   }, { render: true });
+}
+
+async function systemRenderRegion(bytes, password, options) {
+  const page = await systemRenderPage(bytes, password, {
+    page: options.page,
+    max_dimension_px: null,
+    renderer_policy: "system",
+    scale_override: getPageRenderScale({
+      width: options.width,
+      height: options.height,
+      maxDimensionPx: options.max_dimension_px,
+      minScale: 0.1,
+      maxScale: 4,
+    }),
+  });
+  const fullPath = path.join(process.cwd(), "system-region-full.png");
+  const cropPath = path.join(process.cwd(), "system-region.png");
+  const crop = {
+    height: Math.max(1, Math.round(options.height * page.result.scale)),
+    left: Math.round(options.x * page.result.scale),
+    top: Math.round(options.y * page.result.scale),
+    width: Math.max(1, Math.round(options.width * page.result.scale)),
+  };
+  validateCanvasDimensions(crop.width, crop.height);
+  try {
+    await writeFile(fullPath, page.binary);
+    await runSystemCommand("/usr/bin/sips", [
+      "-c", String(crop.height), String(crop.width),
+      "--cropOffset", String(crop.top), String(crop.left),
+      fullPath, "--out", cropPath,
+    ]);
+    const buffer = await readFile(cropPath);
+    const pixels = pngDimensions(buffer);
+    return pngResult(buffer, {
+      height: pixels.height,
+      renderer: "macos-sips",
+      scale: page.result.scale,
+      total_pages: page.result.total_pages,
+      width: pixels.width,
+    });
+  } finally {
+    await Promise.all([
+      rm(fullPath, { force: true }),
+      rm(cropPath, { force: true }),
+    ]);
+  }
+}
+
+async function renderRegion(bytes, password, options) {
+  if (options.renderer_policy === "forced_unavailable") {
+    throw new Error("The requested system PDF renderer is unavailable.");
+  }
+  if (options.renderer_policy === "system") {
+    return await systemRenderRegion(bytes, password, options);
+  }
+  try {
+    return await nativeRenderRegion(bytes, password, options);
+  } catch (error) {
+    if (
+      options.renderer_policy === "native_with_system_fallback"
+      && error?.code !== PDF_RESOURCE_LIMIT_CODE
+      && canvasDependencyError(error)
+    ) {
+      return await systemRenderRegion(bytes, password, options);
+    }
+    throw error;
+  }
 }
 
 async function analyzePages(bytes, password, options) {

@@ -94,6 +94,7 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
     const page = await run("render_page", {
       page: 1,
       max_dimension_px: 256,
+      renderer_policy: "native",
       scale_override: null,
     });
     expect(Buffer.isBuffer(page.binary)).toBe(true);
@@ -114,6 +115,7 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
       width: 72,
       height: 72,
       max_dimension_px: 144,
+      renderer_policy: "native",
     });
     expect(Buffer.isBuffer(region.binary)).toBe(true);
     expect(region.width).toBeLessThanOrEqual(144);
