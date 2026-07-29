@@ -58,6 +58,7 @@ import {
 import {
   PDF_RESOURCE_LIMIT_CODE,
   createPdfjsSubprocessRequest,
+  forceTerminateAllPdfjsSubprocesses,
   runPdfjsSubprocess,
   terminateAllPdfjsSubprocesses,
 } from "./pdfjs-subprocess.js";
@@ -1325,7 +1326,19 @@ function pdfjsRendererPolicy() {
   return "native_with_system_fallback";
 }
 
-process.once("exit", terminateAllPdfjsSubprocesses);
+let pdfjsShutdown = null;
+for (const [signal, exitCode] of new Map([
+  ["SIGHUP", 129],
+  ["SIGINT", 130],
+  ["SIGTERM", 143],
+])) {
+  process.once(signal, () => {
+    if (pdfjsShutdown !== null) return;
+    pdfjsShutdown = terminateAllPdfjsSubprocesses();
+    void pdfjsShutdown.finally(() => process.exit(exitCode));
+  });
+}
+process.once("exit", forceTerminateAllPdfjsSubprocesses);
 
 const backupPathByCanonical = new Map();
 const backupOperationByCanonical = new Map();

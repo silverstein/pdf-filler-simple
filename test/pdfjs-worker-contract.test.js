@@ -1,7 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
+import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { promises as fs } from "node:fs";
+import os from "node:os";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   hashBoundedPdfFileSafely,
 } from "../server/bounded-pdf-file.js";
@@ -9,9 +12,76 @@ import {
   createPdfjsSubprocessRequest,
   runPdfjsSubprocess,
 } from "../server/pdfjs-subprocess.js";
+import {
+  runRendererPolicy,
+  runSystemCommand,
+} from "../server/pdfjs-worker.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
+const roots = [];
+const hosts = new Set();
+
+async function fixtureScript(body) {
+  const root = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), "pdfjs-system-child-test-")),
+  );
+  roots.push(root);
+  const filename = path.join(root, "fixture.mjs");
+  await fs.writeFile(filename, body, { mode: 0o600 });
+  return { root, filename };
+}
+
+async function waitForFile(filename, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    try {
+      return await fs.readFile(filename, "utf8");
+    } catch (error) {
+      if (error?.code !== "ENOENT" || Date.now() >= deadline) throw error;
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+  }
+}
+
+async function stubbornSystemRenderer() {
+  const { root, filename } = await fixtureScript(`
+import fs from "node:fs";
+fs.writeFileSync(process.argv[2], String(process.pid));
+setTimeout(() => fs.writeFileSync(process.argv[3], "escaped"), 500);
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1000);
+`);
+  const pidPath = path.join(root, "renderer.pid");
+  const sentinelPath = path.join(root, "renderer-escaped.txt");
+  let calls = 0;
+  return {
+    pidPath,
+    sentinelPath,
+    calls: () => calls,
+    renderer: async () => {
+      calls += 1;
+      return await runSystemCommand(
+        process.execPath,
+        [filename, pidPath, sentinelPath],
+        { timeoutMs: 150 },
+      );
+    },
+  };
+}
+
+afterEach(async () => {
+  await Promise.all([...hosts].map(async host => {
+    if (host.exitCode !== null || host.signalCode !== null) return;
+    const closed = once(host, "close");
+    host.kill("SIGKILL");
+    await closed;
+  }));
+  hosts.clear();
+  await Promise.all(
+    roots.splice(0).map(root => fs.rm(root, { force: true, recursive: true })),
+  );
+});
 
 async function sourceBinding(pdfPath = EXAMPLE_PDF) {
   const source = await hashBoundedPdfFileSafely(pdfPath, 250 * 1024 * 1024, {
@@ -120,6 +190,17 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
     expect(Buffer.isBuffer(region.binary)).toBe(true);
     expect(region.width).toBeLessThanOrEqual(144);
     expect(region.height).toBeLessThanOrEqual(144);
+
+    if (process.platform === "darwin") {
+      const systemPage = await run("render_page", {
+        page: 1,
+        max_dimension_px: 256,
+        renderer_policy: "system",
+        scale_override: null,
+      });
+      expect(Buffer.isBuffer(systemPage.binary)).toBe(true);
+      expect(systemPage.renderer).toBe("macos-sips");
+    }
   });
 
   it("runs page operators and signature text heuristics inside the worker", async () => {
@@ -135,6 +216,93 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
       warning_counts: expect.any(Array),
       page_geometry: expect.any(Array),
     });
+  });
+
+  it("kills and reaps a timed-out system renderer child before rejecting", async () => {
+    const { root, filename } = await fixtureScript(`
+import fs from "node:fs";
+fs.writeFileSync(process.argv[2], String(process.pid));
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1000);
+`);
+    const pidPath = path.join(root, "renderer.pid");
+    await expect(runSystemCommand(process.execPath, [filename, pidPath], {
+      timeoutMs: 150,
+    })).rejects.toMatchObject({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "system_renderer_timeout",
+    });
+    const pid = Number(await fs.readFile(pidPath, "utf8"));
+    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+  });
+
+  it("kills and reaps an active system renderer before the worker exits on SIGTERM", async () => {
+    if (process.platform === "win32") return;
+    const { root, filename: rendererPath } = await fixtureScript(`
+import fs from "node:fs";
+fs.writeFileSync(process.argv[2], String(process.pid));
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1000);
+`);
+    const pidPath = path.join(root, "renderer.pid");
+    const hostPath = path.join(root, "host.mjs");
+    const workerModule = pathToFileURL(
+      path.join(REPO_ROOT, "server", "pdfjs-worker.js"),
+    ).href;
+    await fs.writeFile(hostPath, `
+import {
+  installSystemChildTerminationHandlers,
+  runSystemCommand,
+} from ${JSON.stringify(workerModule)};
+installSystemChildTerminationHandlers();
+await runSystemCommand(process.execPath, [
+  ${JSON.stringify(rendererPath)},
+  ${JSON.stringify(pidPath)},
+], { timeoutMs: 30000 });
+`, { mode: 0o600 });
+    const host = spawn(process.execPath, [hostPath], {
+      cwd: root,
+      env: { HOME: root, LANG: "C", PATH: process.env.PATH ?? "" },
+      stdio: "ignore",
+    });
+    hosts.add(host);
+    const rendererPid = Number((await waitForFile(pidPath)).trim());
+    const closed = once(host, "close");
+    expect(host.kill("SIGTERM")).toBe(true);
+    const [exitCode, exitSignal] = await closed;
+    hosts.delete(host);
+    expect({ exitCode, exitSignal }).toEqual({ exitCode: 143, exitSignal: null });
+    expect(() => process.kill(rendererPid, 0)).toThrow(
+      expect.objectContaining({ code: "ESRCH" }),
+    );
+  });
+
+  it.each([
+    ["forced system", "system", 0],
+    ["native-to-system fallback", "native_with_system_fallback", 1],
+  ])("reaps a stubborn child reached through the %s route", async (
+    _label,
+    policy,
+    expectedNativeCalls,
+  ) => {
+    const system = await stubbornSystemRenderer();
+    let nativeCalls = 0;
+    await expect(runRendererPolicy(policy, {
+      nativeRenderer: async () => {
+        nativeCalls += 1;
+        throw new Error("Canvas dependency: Cannot find native binding");
+      },
+      systemRenderer: system.renderer,
+    })).rejects.toMatchObject({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "system_renderer_timeout",
+    });
+    expect(nativeCalls).toBe(expectedNativeCalls);
+    expect(system.calls()).toBe(1);
+    const pid = Number(await fs.readFile(system.pidPath, "utf8"));
+    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    await new Promise(resolve => setTimeout(resolve, 500));
+    await expect(fs.access(system.sentinelPath)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("rejects a mismatched byte binding before semantic evaluation", async () => {

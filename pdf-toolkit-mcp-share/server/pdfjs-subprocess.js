@@ -15,7 +15,7 @@ const DEFAULT_MAX_STDERR_BYTES = 64 * 1024;
 const DEFAULT_MAX_OLD_SPACE_MB = 384;
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_QUEUED_OPERATIONS = 8;
-const TERMINATION_GRACE_MS = 250;
+const TERMINATION_GRACE_MS = 1000;
 const PDFJS_OPERATIONS = new Set([
   "analyze_pages",
   "detect_signature_zones",
@@ -470,10 +470,8 @@ async function runSpawnedWorker({
       return;
     }
 
-    child.once("spawn", () => {
-      activeEntry = { child };
-      activeChildren.add(activeEntry);
-    });
+    activeEntry = { child };
+    activeChildren.add(activeEntry);
     child.once("error", error => {
       spawnError = error;
       if (!child.pid) queueMicrotask(() => void finish());
@@ -590,7 +588,21 @@ export function createPdfjsSubprocessRequest({
   return request;
 }
 
-export function terminateAllPdfjsSubprocesses() {
+export async function terminateAllPdfjsSubprocesses() {
+  await Promise.all([...activeChildren].map(async ({ child }) => {
+    const closed = new Promise(resolve => child.once("close", resolve));
+    signalChild(child, "SIGTERM");
+    const escalation = setTimeout(
+      () => signalChild(child, "SIGKILL"),
+      TERMINATION_GRACE_MS,
+    );
+    escalation.unref();
+    await closed;
+    clearTimeout(escalation);
+  }));
+}
+
+export function forceTerminateAllPdfjsSubprocesses() {
   for (const { child } of activeChildren) {
     signalChild(child, "SIGKILL");
   }

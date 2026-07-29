@@ -27,8 +27,12 @@ const MAX_BINARY_BYTES = 16 * 1024 * 1024;
 const MAX_CANVAS_AXIS_PX = 8192;
 const MAX_CANVAS_PIXELS = 16 * 1024 * 1024;
 const MAX_PASSWORD_CHARACTERS = 4096;
+const SYSTEM_COMMAND_TIMEOUT_MS = 15_000;
 const PDF_RESOURCE_LIMIT_CODE = "PDF_RESOURCE_LIMIT_EXCEEDED";
 const _require = createRequire(import.meta.url);
+const activeSystemChildren = new Set();
+let systemChildTermination = null;
+let systemChildTerminationHandlersInstalled = false;
 
 const OPERATION_OPTION_KEYS = new Map([
   ["analyze_pages", ["max_pages"]],
@@ -740,9 +744,59 @@ function canvasDependencyError(error) {
     || message.includes("different Team IDs");
 }
 
-async function runSystemCommand(command, args) {
+function waitForChildClose(child) {
+  return new Promise(resolve => child.once("close", resolve));
+}
+
+function killSystemChild(child) {
+  try {
+    return child.kill("SIGKILL");
+  } catch {
+    return false;
+  }
+}
+
+async function terminateActiveSystemChildren() {
+  const children = [...activeSystemChildren];
+  await Promise.all(children.map(async child => {
+    const closed = waitForChildClose(child);
+    killSystemChild(child);
+    await closed;
+  }));
+}
+
+export function installSystemChildTerminationHandlers() {
+  if (systemChildTerminationHandlersInstalled) return;
+  systemChildTerminationHandlersInstalled = true;
+  const exitCodes = new Map([
+    ["SIGHUP", 129],
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+  ]);
+  for (const [signal, exitCode] of exitCodes) {
+    process.once(signal, () => {
+      if (systemChildTermination !== null) return;
+      systemChildTermination = terminateActiveSystemChildren();
+      void systemChildTermination.finally(() => process.exit(exitCode));
+    });
+  }
+}
+
+export async function runSystemCommand(command, args, {
+  spawnProcess = spawn,
+  timeoutMs = SYSTEM_COMMAND_TIMEOUT_MS,
+} = {}) {
+  boundedString(command, "system command", 32_768);
+  boundedInteger(timeoutMs, "system command timeout", 100, 30_000);
+  if (
+    !Array.isArray(args)
+    || args.length > 128
+    || args.some(argument => typeof argument !== "string" || argument.length > 32_768)
+  ) {
+    throw new TypeError("system command arguments are invalid.");
+  }
   await new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
+    const child = spawnProcess(command, args, {
       cwd: process.cwd(),
       env: {
         PATH: process.env.PATH ?? "",
@@ -753,30 +807,59 @@ async function runSystemCommand(command, args) {
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
     });
+    activeSystemChildren.add(child);
     let stdoutBytes = 0;
     let stderrBytes = 0;
-    const stdout = [];
-    const stderr = [];
+    let outputOverflow = false;
+    let timedOut = false;
+    let settled = false;
+    let deadline = null;
+    let childError = null;
+    const finish = error => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadline);
+      activeSystemChildren.delete(child);
+      if (error) reject(error);
+      else resolve();
+    };
     child.stdout.on("data", chunk => {
       stdoutBytes += chunk.length;
-      if (stdoutBytes <= 64 * 1024) stdout.push(Buffer.from(chunk));
-      else child.kill("SIGKILL");
+      if (stdoutBytes > 64 * 1024) {
+        outputOverflow = true;
+        killSystemChild(child);
+      }
     });
     child.stderr.on("data", chunk => {
       stderrBytes += chunk.length;
-      if (stderrBytes <= 64 * 1024) stderr.push(Buffer.from(chunk));
-      else child.kill("SIGKILL");
-    });
-    child.once("error", reject);
-    child.once("close", code => {
-      if (stdoutBytes > 64 * 1024 || stderrBytes > 64 * 1024) {
-        reject(resourceLimitError("system_renderer_output_limit"));
-      } else if (code !== 0) {
-        reject(new Error("The macOS system PDF renderer could not render this page."));
-      } else {
-        resolve();
+      if (stderrBytes > 64 * 1024) {
+        outputOverflow = true;
+        killSystemChild(child);
       }
     });
+    child.once("error", error => {
+      childError = error;
+      if (!child.pid) finish(error);
+      else killSystemChild(child);
+    });
+    child.once("close", (code, signal) => {
+      if (childError) {
+        finish(childError);
+      } else if (timedOut) {
+        finish(resourceLimitError("system_renderer_timeout"));
+      } else if (outputOverflow) {
+        finish(resourceLimitError("system_renderer_output_limit"));
+      } else if (code !== 0 || signal !== null) {
+        finish(new Error("The macOS system PDF renderer could not render this page."));
+      } else {
+        finish(null);
+      }
+    });
+    deadline = setTimeout(() => {
+      timedOut = true;
+      killSystemChild(child);
+    }, timeoutMs);
+    deadline.unref();
   });
 }
 
@@ -883,25 +966,39 @@ async function nativeRenderPage(bytes, password, options) {
   }, { render: true });
 }
 
-async function renderPage(bytes, password, options) {
-  if (options.renderer_policy === "forced_unavailable") {
+export async function runRendererPolicy(policy, {
+  nativeRenderer,
+  systemRenderer,
+}) {
+  rendererPolicy(policy);
+  if (typeof nativeRenderer !== "function" || typeof systemRenderer !== "function") {
+    throw new TypeError("renderer implementations must be functions.");
+  }
+  if (policy === "forced_unavailable") {
     throw new Error("The requested system PDF renderer is unavailable.");
   }
-  if (options.renderer_policy === "system") {
-    return await systemRenderPage(bytes, password, options);
+  if (policy === "system") {
+    return await systemRenderer();
   }
   try {
-    return await nativeRenderPage(bytes, password, options);
+    return await nativeRenderer();
   } catch (error) {
     if (
-      options.renderer_policy === "native_with_system_fallback"
+      policy === "native_with_system_fallback"
       && error?.code !== PDF_RESOURCE_LIMIT_CODE
       && canvasDependencyError(error)
     ) {
-      return await systemRenderPage(bytes, password, options);
+      return await systemRenderer();
     }
     throw error;
   }
+}
+
+async function renderPage(bytes, password, options) {
+  return await runRendererPolicy(options.renderer_policy, {
+    nativeRenderer: async () => await nativeRenderPage(bytes, password, options),
+    systemRenderer: async () => await systemRenderPage(bytes, password, options),
+  });
 }
 
 async function nativeRenderRegion(bytes, password, options) {
@@ -1031,24 +1128,10 @@ async function systemRenderRegion(bytes, password, options) {
 }
 
 async function renderRegion(bytes, password, options) {
-  if (options.renderer_policy === "forced_unavailable") {
-    throw new Error("The requested system PDF renderer is unavailable.");
-  }
-  if (options.renderer_policy === "system") {
-    return await systemRenderRegion(bytes, password, options);
-  }
-  try {
-    return await nativeRenderRegion(bytes, password, options);
-  } catch (error) {
-    if (
-      options.renderer_policy === "native_with_system_fallback"
-      && error?.code !== PDF_RESOURCE_LIMIT_CODE
-      && canvasDependencyError(error)
-    ) {
-      return await systemRenderRegion(bytes, password, options);
-    }
-    throw error;
-  }
+  return await runRendererPolicy(options.renderer_policy, {
+    nativeRenderer: async () => await nativeRenderRegion(bytes, password, options),
+    systemRenderer: async () => await systemRenderRegion(bytes, password, options),
+  });
 }
 
 async function analyzePages(bytes, password, options) {
@@ -1274,5 +1357,6 @@ async function main() {
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  installSystemChildTerminationHandlers();
   await main();
 }
