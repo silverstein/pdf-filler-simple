@@ -1,0 +1,214 @@
+/**
+ * Resource-isolated deep malformed PDF campaign (bead pdf-toolkit-mcp-33l).
+ *
+ * The fast matrix in fuzz-malformed-pdfs.test.js proves structural containment
+ * with cheap inputs. This campaign covers the expensive classes it omits, where
+ * a small file provokes disproportionate work: deep nesting, sparse object
+ * spaces, decompression bombs, and extreme declared geometry.
+ *
+ * The property under test is not "the tool rejects these". A tool is free to
+ * succeed. The property is that the server stays bounded and honest:
+ *
+ *   1. it survives, and remains responsive to a following control call;
+ *   2. it never leaves a partial or corrupt output artifact behind;
+ *   3. it answers within a wall-clock bound rather than hanging;
+ *   4. its peak resident memory stays bounded even when a fixture asks for a
+ *      512 MiB inflate from 522 KiB of input.
+ *
+ * Point 4 is measured, not assumed. On Linux /proc/<pid>/status VmHWM reports
+ * the true high-water mark of the child, so the assertion is against observed
+ * peak RSS rather than a proxy. Where that file is unavailable the memory
+ * assertion is skipped explicitly instead of silently passing.
+ *
+ * Cost control: the default run uses the quick corpus against the mutating
+ * tools most likely to allocate. Set DEEP_FUZZ=1 for the full-scale corpus,
+ * which includes the 512 MiB inflate and the 50,000-deep nesting fixtures.
+ */
+
+import fs from "node:fs/promises";
+import fsSync from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { PDFDocument } from "pdf-lib";
+import {
+  createTestTempDirectory,
+  removeTestTempDirectory,
+} from "./helpers/temp-directory.js";
+import {
+  DEEP_FIXTURE_CLASSES,
+  makeDeepMalformedFixtures,
+} from "./helpers/deep-malformed-fixtures.js";
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const FULL_SCALE = process.env.DEEP_FUZZ === "1";
+const SCALE = FULL_SCALE ? "full" : "quick";
+
+// Generous enough that a slow machine does not produce a false failure, tight
+// enough that an unbounded parse is still caught rather than waited out.
+const CALL_TIMEOUT_MS = FULL_SCALE ? 30_000 : 15_000;
+// The largest fixture asks for a 512 MiB inflate. A server that honors it
+// naively lands well above this; one that bounds decoding stays far below.
+const PEAK_RSS_LIMIT_BYTES = 1_536 * 1024 * 1024;
+
+/** Tools that read an arbitrary input path and are most likely to allocate. */
+const PROBE_TOOLS = [
+  { name: "get_pdf_info", args: p => ({ pdf_path: p }) },
+  { name: "read_pdf_fields", args: p => ({ pdf_path: p }) },
+  { name: "read_pdf_content", args: p => ({ pdf_path: p }) },
+  { name: "get_page_analysis", args: p => ({ pdf_path: p }) },
+  { name: "rotate_pdf_pages", args: (p, out) => ({ input_path: p, output_path: out, degrees: 90 }) },
+  {
+    name: "split_pdf",
+    args: (p, out) => ({ input_path: p, page_ranges: "1", output_directory: path.dirname(out) }),
+    // split writes its own filenames into the directory, so there is no single
+    // predictable output path to inspect.
+    producesNamedOutput: false,
+  },
+];
+
+function readPeakRssBytes(pid) {
+  try {
+    const status = fsSync.readFileSync(`/proc/${pid}/status`, "utf8");
+    const match = status.match(/^VmHWM:\s+(\d+)\s+kB$/m);
+    return match ? Number(match[1]) * 1024 : null;
+  } catch {
+    return null;
+  }
+}
+
+describe(`deep malformed campaign (${SCALE} scale)`, () => {
+  let stateRoot;
+  let client;
+  let transport;
+  let serverPid;
+  let serverClosedUnexpectedly = false;
+  let closingTransport = false;
+  let controlPdfPath;
+  const fixtures = makeDeepMalformedFixtures({ scale: SCALE });
+
+  beforeAll(async () => {
+    stateRoot = await createTestTempDirectory(REPO_ROOT, "deep-malformed");
+    const profilesDirectory = path.join(stateRoot, "profiles");
+    await fs.mkdir(profilesDirectory, { recursive: true });
+
+    // A known-good document, used to prove the server is still healthy after
+    // each adversary rather than merely still running.
+    controlPdfPath = path.join(stateRoot, "control.pdf");
+    const control = await PDFDocument.create();
+    control.addPage([200, 200]);
+    await fs.writeFile(controlPdfPath, await control.save(), { mode: 0o600 });
+
+    for (const fixture of fixtures) {
+      await fs.writeFile(path.join(stateRoot, `${fixture.name}.pdf`), fixture.bytes, { mode: 0o600 });
+    }
+
+    transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [path.join(REPO_ROOT, "server", "index.js")],
+      cwd: REPO_ROOT,
+      env: {
+        ALLOWED_DIRECTORIES: stateRoot,
+        DEFAULT_PDF_DIR: stateRoot,
+        DEFAULT_DOWNLOAD_DIR: stateRoot,
+        DEFAULT_PROFILES_DIR: profilesDirectory,
+      },
+      stderr: "pipe",
+    });
+    transport.onclose = () => {
+      if (!closingTransport) serverClosedUnexpectedly = true;
+    };
+    client = new Client({ name: "pdf-tools-deep-malformed", version: "1.0.0" });
+    await client.connect(transport);
+    serverPid = transport.pid;
+    expect(serverPid).toEqual(expect.any(Number));
+  }, 180_000);
+
+  afterAll(async () => {
+    closingTransport = true;
+    await client?.close().catch(() => {});
+    await transport?.close().catch(() => {});
+    await removeTestTempDirectory(stateRoot);
+  });
+
+  it("covers every declared adversary class", () => {
+    const classes = new Set(fixtures.map(f => f.klass));
+    for (const klass of DEEP_FIXTURE_CLASSES) expect(classes).toContain(klass);
+    // Distinct bytes, so no fixture is silently duplicated.
+    expect(new Set(fixtures.map(f => f.bytes.toString("latin1"))).size).toBe(fixtures.length);
+  });
+
+  it("keeps every deep fixture small enough to pass the input size limits", () => {
+    // The whole premise: these are cheap to accept and expensive to honor, so
+    // input-size limits alone cannot defend against them.
+    for (const fixture of fixtures) {
+      expect(fixture.bytes.length).toBeLessThan(250 * 1024 * 1024);
+    }
+  });
+
+  for (const fixture of makeDeepMalformedFixtures({ scale: SCALE })) {
+    for (const tool of PROBE_TOOLS) {
+      it(`${tool.name} stays bounded on ${fixture.name}`, async () => {
+        const inputPath = path.join(stateRoot, `${fixture.name}.pdf`);
+        const outputPath = path.join(stateRoot, `out-${tool.name}-${fixture.name}.pdf`);
+        const before = Date.now();
+
+        let threw = null;
+        try {
+          await client.callTool(
+            { name: tool.name, arguments: tool.args(inputPath, outputPath) },
+            undefined,
+            { timeout: CALL_TIMEOUT_MS, maxTotalTimeout: CALL_TIMEOUT_MS },
+          );
+        } catch (error) {
+          // A transport-level rejection is an acceptable fail-closed outcome.
+          // A timeout is not: that means the call never bounded itself.
+          threw = error;
+        }
+        const elapsed = Date.now() - before;
+
+        expect(serverClosedUnexpectedly, "server process died").toBe(false);
+        expect(elapsed, "call exceeded its wall-clock bound").toBeLessThan(CALL_TIMEOUT_MS);
+        if (threw) {
+          expect(String(threw.message ?? threw)).not.toMatch(/timed out|timeout/i);
+        }
+
+        // No partial artifact may survive a rejected operation.
+        const written = tool.producesNamedOutput === false
+          ? null
+          : await fs.readFile(outputPath).catch(() => null);
+        if (written !== null) {
+          // If a tool did produce output it must be a loadable document, not a
+          // truncated husk.
+          await expect(
+            PDFDocument.load(written, { ignoreEncryption: true }),
+          ).resolves.toBeTruthy();
+        }
+
+        // The server must still answer correctly afterwards.
+        const control = await client.callTool(
+          { name: "get_pdf_info", arguments: { pdf_path: controlPdfPath } },
+          undefined,
+          { timeout: CALL_TIMEOUT_MS, maxTotalTimeout: CALL_TIMEOUT_MS },
+        );
+        expect(control.isError).not.toBe(true);
+      }, CALL_TIMEOUT_MS + 20_000);
+    }
+  }
+
+  it("holds peak resident memory within bounds across the whole campaign", () => {
+    const peak = readPeakRssBytes(serverPid);
+    if (peak === null) {
+      // Explicit rather than a silent pass on platforms without /proc.
+      expect(process.platform).not.toBe("linux");
+      return;
+    }
+    expect(
+      peak,
+      `peak RSS ${(peak / 1024 / 1024).toFixed(0)} MiB exceeded the bound; ` +
+        "a fixture's declared expansion was likely honored unbounded",
+    ).toBeLessThan(PEAK_RSS_LIMIT_BYTES);
+  });
+});
