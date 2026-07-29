@@ -7,6 +7,11 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
+import {
+  openVerifiedSourceSnapshot,
+  validateRepositoryRelativePath,
+  verifiedCleanSourceCommit,
+} from "./source-worktree-state.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const REGRESSION_CASES_PATH = path.join(
@@ -142,6 +147,27 @@ function canonicalJson(value) {
 
 export async function writePrivate(filename, value) {
   await fs.writeFile(filename, value, { encoding: "utf8", mode: 0o600, flag: "wx" });
+}
+
+function repositoryRelativePath(absolutePath) {
+  return validateRepositoryRelativePath(
+    path.relative(REPO_ROOT, absolutePath).split(path.sep).join("/"),
+    "campaign source path",
+  );
+}
+
+async function materializeCommitTree(entries, destination) {
+  for (const entry of entries) {
+    const destinationPath = path.join(destination, ...entry.path.split("/"));
+    await fs.mkdir(path.dirname(destinationPath), {
+      recursive: true,
+      mode: 0o700,
+    });
+    await fs.writeFile(destinationPath, entry.bytes, {
+      flag: "wx",
+      mode: 0o600,
+    });
+  }
 }
 
 async function listFiles(root, relativeRoot = "") {
@@ -341,18 +367,9 @@ function pathInside(parent, child) {
 }
 
 export async function verifiedSourceCommit() {
-  const [{ stdout: sourceCommit }, { stdout: status }] = await Promise.all([
-    execFileAsync("git", ["-C", REPO_ROOT, "rev-parse", "HEAD"], { encoding: "utf8" }),
-    execFileAsync(
-      "git",
-      ["-C", REPO_ROOT, "status", "--porcelain", "--untracked-files=all"],
-      { encoding: "utf8" },
-    ),
-  ]);
-  if (status.trim()) {
-    throw new Error("campaign source worktree must be clean at its exact HEAD");
-  }
-  return sourceCommit.trim();
+  return verifiedCleanSourceCommit(REPO_ROOT, {
+    label: "campaign source worktree",
+  });
 }
 
 export async function prepareAgentWorkflowCampaign({
@@ -382,20 +399,34 @@ export async function prepareAgentWorkflowCampaign({
     throw new Error("participant and oracle destinations must not contain each other");
   }
 
-  const sourceCommit = await verifiedSourceCommit();
+  const sourceSnapshot = await openVerifiedSourceSnapshot(REPO_ROOT, {
+    label: "campaign source worktree",
+  });
+  const sourceCommit = sourceSnapshot.commit;
   const participantsRoot = participantsDestination;
   const trustedRoot = oracleDestination;
 
-  const casesBytes = await fs.readFile(protocol.casesPath);
+  const casesBytes = await sourceSnapshot.readFile(
+    repositoryRelativePath(protocol.casesPath),
+  );
   const cases = JSON.parse(casesBytes);
-  const rubricBytes = await fs.readFile(RUBRIC_PATH);
+  const rubricBytes = await sourceSnapshot.readFile(
+    repositoryRelativePath(RUBRIC_PATH),
+  );
   const rubric = rubricBytes.toString("utf8");
   const embeddedRubric = rubric.trim();
-  const responseSchemaPath = path.join(REPO_ROOT, cases.response_schema);
-  const responseSchemaBytes = await fs.readFile(responseSchemaPath);
+  const responseSchemaRelativePath = validateRepositoryRelativePath(
+    cases.response_schema,
+    "campaign response schema",
+  );
+  const responseSchemaBytes = await sourceSnapshot.readFile(
+    responseSchemaRelativePath,
+  );
   const responseSchema = JSON.parse(responseSchemaBytes);
   const compatibleSchema = `${JSON.stringify(hostCompatibleSchema(responseSchema), null, 2)}\n`;
-  const skillBodyBytes = await fs.readFile(path.join(SKILL_ROOT, "SKILL.md"));
+  const skillBodyBytes = await sourceSnapshot.readFile(
+    repositoryRelativePath(path.join(SKILL_ROOT, "SKILL.md")),
+  );
   const skillBody = skillBodyBytes.toString("utf8");
   if (
     isHeldout
@@ -408,6 +439,27 @@ export async function prepareAgentWorkflowCampaign({
       `${protocolId} requires its exact frozen PDF workflow skill body`,
     );
   }
+  const pluginTree = protocolId === "metadata-regression-v1"
+    ? await sourceSnapshot.readTree(repositoryRelativePath(PLUGIN_ROOT))
+    : null;
+  const skillTreePrefix = "skills/pdf-tools-workflow/";
+  const skillTree = pluginTree?.filter(entry =>
+    entry.path.startsWith(skillTreePrefix)).map(entry => Object.freeze({
+    ...entry,
+    path: entry.path.slice(skillTreePrefix.length),
+  }));
+  if (pluginTree && (!skillTree || skillTree.length === 0)) {
+    throw new Error("campaign commit snapshot is missing its PDF workflow skill tree");
+  }
+  const controllerArtifacts = Object.fromEntries(await Promise.all(
+    CONTROLLER_ARTIFACTS.map(async relative => {
+      const bytes = await sourceSnapshot.readFile(relative);
+      return [relative, {
+        bytes: bytes.length,
+        sha256: sha256(bytes),
+      }];
+    }),
+  ));
 
   await fs.mkdir(participantsRoot, { mode: 0o700 });
   await fs.mkdir(trustedRoot, { mode: 0o700 });
@@ -443,19 +495,17 @@ export async function prepareAgentWorkflowCampaign({
   }
 
   if (protocolId === "metadata-regression-v1") {
-    await fs.cp(
-      PLUGIN_ROOT,
+    await materializeCommitTree(
+      pluginTree,
       path.join(participantsRoot, "claude-skill", "plugin", "pdf-tools-workflow"),
-      { recursive: true, errorOnExist: true, force: false },
     );
     await fs.mkdir(
       path.join(participantsRoot, "codex-skill", ".agents", "skills"),
       { recursive: true, mode: 0o700 },
     );
-    await fs.cp(
-      SKILL_ROOT,
+    await materializeCommitTree(
+      skillTree,
       path.join(participantsRoot, "codex-skill", ".agents", "skills", "pdf-tools-workflow"),
-      { recursive: true, errorOnExist: true, force: false },
     );
     for (const testCase of cases.cases) {
       const skillsRoot = path.join(
@@ -467,10 +517,9 @@ export async function prepareAgentWorkflowCampaign({
         "skills",
       );
       await fs.mkdir(skillsRoot, { recursive: true, mode: 0o700 });
-      await fs.cp(
-        SKILL_ROOT,
+      await materializeCommitTree(
+        skillTree,
         path.join(skillsRoot, "pdf-tools-workflow"),
-        { recursive: true, errorOnExist: true, force: false },
       );
     }
   }
@@ -508,10 +557,7 @@ export async function prepareAgentWorkflowCampaign({
       expected: testCase.expected,
     })),
   };
-  await writePrivate(
-    path.join(trustedRoot, "oracle.json"),
-    `${JSON.stringify(oracle, null, 2)}\n`,
-  );
+  const oracleBytes = `${JSON.stringify(oracle, null, 2)}\n`;
 
   const pairedCaseContracts = isHeldout
     ? Object.fromEntries(await Promise.all(cases.cases.map(async testCase => {
@@ -584,17 +630,14 @@ export async function prepareAgentWorkflowCampaign({
     participant_inventory: await inventory(participantsRoot),
     arm_attestations: armAttestations,
     explicit_case_attestations: explicitCaseAttestations,
-    controller_artifacts: Object.fromEntries(await Promise.all(
-      CONTROLLER_ARTIFACTS.map(async relative => {
-        const bytes = await fs.readFile(path.join(REPO_ROOT, relative));
-        return [relative, {
-          bytes: bytes.length,
-          sha256: sha256(bytes),
-        }];
-      }),
-    )),
-    oracle_sha256: sha256(await fs.readFile(path.join(trustedRoot, "oracle.json"))),
+    controller_artifacts: controllerArtifacts,
+    oracle_sha256: sha256(oracleBytes),
   };
+  await sourceSnapshot.verifyUnchanged();
+  await writePrivate(
+    path.join(trustedRoot, "oracle.json"),
+    oracleBytes,
+  );
   await writePrivate(
     path.join(trustedRoot, "preparation-manifest.json"),
     `${JSON.stringify(manifest, null, 2)}\n`,
