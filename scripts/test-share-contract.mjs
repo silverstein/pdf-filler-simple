@@ -492,6 +492,8 @@ async function main() {
       "server/markdown-conversion.js",
       "server/markdown-output-transaction.js",
       "server/output-schemas.js",
+      "server/pdfjs-subprocess.js",
+      "server/pdfjs-worker.js",
       "server/resource-uri.js",
       "server/stderr-suppression.js",
       "dist-ui/index.html",

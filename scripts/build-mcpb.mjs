@@ -49,6 +49,8 @@ const SERVER_FILES = [
   "markdown-conversion.js",
   "markdown-output-transaction.js",
   "output-schemas.js",
+  "pdfjs-subprocess.js",
+  "pdfjs-worker.js",
   "resource-uri.js",
   "stderr-suppression.js",
 ];

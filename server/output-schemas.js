@@ -101,6 +101,13 @@ const layoutPasswordError = object({
     code: enumString(["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"]),
   }),
 });
+const pdfResourceLimitError = object({
+  status: { const: "failed" },
+  error: object({
+    error_schema_version: { const: 1 },
+    code: { const: "PDF_RESOURCE_LIMIT_EXCEEDED" },
+  }),
+});
 const pdfIdentityError = object({
   status: { const: "failed" },
   error: object({
@@ -748,10 +755,15 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
 const specialErrorSchemas = {
   get_pdf_identity: [pdfIdentityError],
   validate_pdf: [validationFailure],
-  read_pdf_content: [contentFailure],
-  read_pdf_layout: [layoutPasswordError],
-  convert_pdf_to_markdown: [layoutPasswordError],
-  detect_signature_zones: [layoutPasswordError],
+  read_pdf_content: [contentFailure, pdfResourceLimitError],
+  read_pdf_pages: [pdfResourceLimitError],
+  read_pdf_layout: [layoutPasswordError, pdfResourceLimitError],
+  convert_pdf_to_markdown: [layoutPasswordError, pdfResourceLimitError],
+  render_pdf_page: [pdfResourceLimitError],
+  render_pdf_region: [pdfResourceLimitError],
+  search_pdf_text: [pdfResourceLimitError],
+  get_page_analysis: [pdfResourceLimitError],
+  detect_signature_zones: [layoutPasswordError, pdfResourceLimitError],
 };
 
 export const TOOL_ERROR_OUTPUT_SCHEMAS = Object.freeze(Object.fromEntries(

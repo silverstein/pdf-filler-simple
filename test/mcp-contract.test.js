@@ -264,6 +264,8 @@ describe("MCPB static declarations", () => {
       "layout-extraction.js",
       "markdown-conversion.js",
       "markdown-output-transaction.js",
+      "pdfjs-subprocess.js",
+      "pdfjs-worker.js",
       "resource-uri.js",
       "stderr-suppression.js",
     ]) {

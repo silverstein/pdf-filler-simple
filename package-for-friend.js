@@ -31,6 +31,8 @@ const SHARE_FILES = [
   "server/markdown-conversion.js",
   "server/markdown-output-transaction.js",
   "server/output-schemas.js",
+  "server/pdfjs-subprocess.js",
+  "server/pdfjs-worker.js",
   "server/resource-uri.js",
   "server/stderr-suppression.js",
   "smart-install.sh",
@@ -353,6 +355,14 @@ async function syncSharePackage() {
     fs.copyFile(
       path.join(PROJECT_ROOT, "server", "output-schemas.js"),
       path.join(shareServerDir, "output-schemas.js"),
+    ),
+    fs.copyFile(
+      path.join(PROJECT_ROOT, "server", "pdfjs-subprocess.js"),
+      path.join(shareServerDir, "pdfjs-subprocess.js"),
+    ),
+    fs.copyFile(
+      path.join(PROJECT_ROOT, "server", "pdfjs-worker.js"),
+      path.join(shareServerDir, "pdfjs-worker.js"),
     ),
     fs.copyFile(path.join(PROJECT_ROOT, "server", "resource-uri.js"), path.join(shareServerDir, "resource-uri.js")),
     fs.copyFile(

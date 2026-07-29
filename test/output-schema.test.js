@@ -76,6 +76,39 @@ function collectKeys(value, output = new Set()) {
 }
 
 describe("output schema definitions", () => {
+  it("advertises the exact resource-limit error only on PDF.js semantic tools", () => {
+    const affectedTools = [
+      "convert_pdf_to_markdown",
+      "detect_signature_zones",
+      "get_page_analysis",
+      "read_pdf_content",
+      "read_pdf_layout",
+      "read_pdf_pages",
+      "render_pdf_page",
+      "render_pdf_region",
+      "search_pdf_text",
+    ];
+    const resourceFailure = {
+      content: [{ type: "text", text: "The isolated worker was stopped." }],
+      structuredContent: {
+        status: "failed",
+        error: {
+          error_schema_version: 1,
+          code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        },
+      },
+      isError: true,
+    };
+    for (const toolName of affectedTools) {
+      expect(validateStructuredToolResult(toolName, resourceFailure), toolName).toBe(
+        resourceFailure,
+      );
+    }
+    const rejected = validateStructuredToolResult("get_active_document", resourceFailure);
+    expect(rejected.isError).toBe(true);
+    expect(rejected.structuredContent).toBeUndefined();
+  });
+
   it("covers the exact 34 structured tools and no text-only tool", () => {
     expect(Object.keys(TOOL_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_ERROR_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);

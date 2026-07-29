@@ -19,6 +19,7 @@ import {
   preflightPdfMutationInputsWithinMergeLimit,
   readBoundedPdfFileSafely,
   readPdfMutationInputsWithinMergeLimit,
+  withBoundedPdfFileSafely,
 } from "../server/bounded-pdf-file.js";
 
 const CHANGED_MESSAGE = "PDF changed while it was being read. Retry the request.";
@@ -152,6 +153,32 @@ describe("readBoundedPdfFileSafely", () => {
     if (Number.isInteger(fsConstants.O_NOFOLLOW)) {
       expect(state.openFlags[0] & fsConstants.O_NOFOLLOW).toBe(fsConstants.O_NOFOLLOW);
     }
+  });
+
+  it("keeps the no-follow descriptor open through semantic work and rejects in-place mutation", async () => {
+    const { fileSystem, state } = createRaceFileSystem();
+    let callbackRan = false;
+    await expectChanged(withBoundedPdfFileSafely(
+      pdfPath,
+      1024,
+      {
+        fileSystem,
+        constants: fsConstants,
+        assertPathAllowed: pathPolicy,
+      },
+      async source => {
+        callbackRan = true;
+        expect(state.closeCount).toBe(0);
+        expect(source.bytes.toString("utf8")).toBe("%PDF-stable-fixture");
+        expect(source.sha256).toBe(
+          createHash("sha256").update(source.bytes).digest("hex"),
+        );
+        await fs.writeFile(pdfPath, Buffer.from("%PDF-mutated-fixture"));
+        return "must-not-be-accepted";
+      },
+    ));
+    expect(callbackRan).toBe(true);
+    expect(state.closeCount).toBe(1);
   });
 
   it("assembles an exact stable result across deterministic partial descriptor reads", async () => {

@@ -494,6 +494,50 @@ export async function readBoundedPdfFileSafely(resolvedPath, maxBytes, {
   });
 }
 
+/**
+ * Consume one bounded PDF while its read-only, no-follow descriptor remains
+ * open. The callback receives the exact bytes and digest authorized by the
+ * race-aware pathname/descriptor checks. Identity is checked again only after
+ * the callback completes, so semantic parsers can never silently switch to a
+ * replacement pathname during one operation.
+ */
+export async function withBoundedPdfFileSafely(resolvedPath, maxBytes, {
+  fileSystem = defaultFileSystem,
+  constants = defaultFsConstants,
+  assertPathAllowed,
+  createSizeLimitError = () => new Error(PDF_TOO_LARGE_MESSAGE),
+} = {}, consume) {
+  if (typeof consume !== "function") {
+    throw new TypeError("consume must be a function.");
+  }
+  return await consumeBoundedPdfFileSafely(resolvedPath, maxBytes, {
+    fileSystem,
+    constants,
+    assertPathAllowed,
+    createSizeLimitError,
+  }, async (handle, sizeBytes, sourceIdentity) => {
+    const bytes = Buffer.allocUnsafe(sizeBytes);
+    const hash = createHash("sha256");
+    let offset = 0;
+    while (offset < bytes.length) {
+      const { bytesRead } = await raceAware(
+        () => handle.read(bytes, offset, bytes.length - offset, offset),
+      );
+      if (bytesRead === 0) throw pdfChangedError();
+      hash.update(bytes.subarray(offset, offset + bytesRead));
+      offset += bytesRead;
+    }
+    return {
+      value: await consume({
+        ...sourceIdentity,
+        bytes,
+        sha256: hash.digest("hex"),
+        sizeBytes,
+      }),
+    };
+  }).then(({ value }) => value);
+}
+
 async function consumeBoundedPdfFileSafely(
   resolvedPath,
   maxBytes,
@@ -519,7 +563,10 @@ async function consumeBoundedPdfFileSafely(
     if (!sameFileIdentity(pathBefore, before)) throw pdfChangedError();
 
     const sizeBytes = boundedFileSize(before, maxBytes, createSizeLimitError);
-    const consumed = await consume(handle, sizeBytes);
+    const consumed = await consume(handle, sizeBytes, {
+      canonicalPath,
+      fileIdentity: stableFileIdentity(before),
+    });
 
     const after = await raceAware(() => handle.stat({ bigint: true }));
     if (!sameFileIdentity(before, after)) throw pdfChangedError();

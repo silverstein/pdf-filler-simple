@@ -1,0 +1,1034 @@
+import { createRequire } from "node:module";
+import { createHash } from "node:crypto";
+import { closeSync, existsSync, writeSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { PDFDocument } from "pdf-lib";
+import {
+  analyzePdfPages,
+  detectSignatureZones,
+  getPageBoxGeometry,
+  getPageRenderScale,
+  isPdfLibEncryptedError,
+  validatePdfRegionBox,
+} from "./helpers.js";
+import {
+  extractPdfLayout,
+  extractPdfLayoutForMarkdown,
+} from "./layout-extraction.js";
+import { withBoundedPdfFileSafely } from "./bounded-pdf-file.js";
+
+const PROTOCOL_VERSION = 1;
+const MAX_REQUEST_BYTES = 64 * 1024;
+const MAX_RESPONSE_BYTES = 24 * 1024 * 1024;
+const MAX_BINARY_BYTES = 16 * 1024 * 1024;
+const MAX_CANVAS_AXIS_PX = 8192;
+const MAX_CANVAS_PIXELS = 16 * 1024 * 1024;
+const MAX_PASSWORD_CHARACTERS = 4096;
+const PDF_RESOURCE_LIMIT_CODE = "PDF_RESOURCE_LIMIT_EXCEEDED";
+const _require = createRequire(import.meta.url);
+
+const OPERATION_OPTION_KEYS = new Map([
+  ["analyze_pages", ["max_pages"]],
+  ["detect_signature_zones", []],
+  [
+    "extract_layout",
+    [
+      "end_page",
+      "max_characters",
+      "max_items",
+      "max_output_characters",
+      "source_file_name",
+      "source_path",
+      "start_page",
+    ],
+  ],
+  [
+    "extract_layout_for_markdown",
+    [
+      "end_page",
+      "max_characters",
+      "max_items",
+      "max_output_characters",
+      "source_file_name",
+      "source_path",
+      "start_page",
+    ],
+  ],
+  ["read_content", ["max_pages"]],
+  ["read_pages", ["end_page", "max_chars_per_page", "start_page"]],
+  ["render_page", ["max_dimension_px", "page", "scale_override"]],
+  ["render_region", ["height", "max_dimension_px", "page", "width", "x", "y"]],
+  ["search_text", ["context_chars", "max_results", "query"]],
+]);
+
+function exactKeys(value, expected, label) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${label} must be an object.`);
+  }
+  const actual = Object.keys(value).sort();
+  const wanted = [...expected].sort();
+  if (actual.length !== wanted.length || actual.some((key, index) => key !== wanted[index])) {
+    throw new TypeError(`${label} has an invalid shape.`);
+  }
+}
+
+function boundedString(value, label, maximum, { nullable = false } = {}) {
+  if (nullable && value === null) return value;
+  if (typeof value !== "string" || value.length === 0 || value.length > maximum) {
+    throw new TypeError(`${label} must be a non-empty string of at most ${maximum} characters.`);
+  }
+  return value;
+}
+
+function boundedInteger(value, label, minimum, maximum, { nullable = false } = {}) {
+  if (nullable && value === null) return value;
+  if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
+    throw new TypeError(`${label} must be an integer from ${minimum} to ${maximum}.`);
+  }
+  return value;
+}
+
+function boundedNumber(value, label, minimum, maximum) {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) {
+    throw new TypeError(`${label} must be a finite number from ${minimum} to ${maximum}.`);
+  }
+  return value;
+}
+
+function validateOptions(operation, options) {
+  const expected = OPERATION_OPTION_KEYS.get(operation);
+  if (!expected) throw new TypeError(`Unsupported PDF.js operation: ${operation}.`);
+  exactKeys(options, expected, `${operation} options`);
+  switch (operation) {
+    case "read_content":
+      boundedInteger(options.max_pages, "max_pages", 1, 1_000_000, { nullable: true });
+      break;
+    case "read_pages":
+      boundedInteger(options.start_page, "start_page", 1, 1_000_000);
+      boundedInteger(options.end_page, "end_page", options.start_page, 1_000_000);
+      boundedInteger(options.max_chars_per_page, "max_chars_per_page", 1, 20_000);
+      break;
+    case "search_text":
+      boundedString(options.query, "query", 4096);
+      boundedInteger(options.max_results, "max_results", 1, 100);
+      boundedInteger(options.context_chars, "context_chars", 10, 2000);
+      break;
+    case "extract_layout":
+    case "extract_layout_for_markdown":
+      boundedString(options.source_path, "source_path", 32_768);
+      boundedString(options.source_file_name, "source_file_name", 4096);
+      boundedInteger(options.start_page, "start_page", 1, 1_000_000);
+      boundedInteger(options.end_page, "end_page", options.start_page, 1_000_000);
+      boundedInteger(options.max_items, "max_items", 1, 5000);
+      boundedInteger(options.max_characters, "max_characters", 1, 100_000);
+      boundedInteger(
+        options.max_output_characters,
+        "max_output_characters",
+        20_000,
+        200_000,
+      );
+      break;
+    case "render_page":
+      boundedInteger(options.page, "page", 1, 1_000_000);
+      boundedInteger(
+        options.max_dimension_px,
+        "max_dimension_px",
+        64,
+        8192,
+        { nullable: true },
+      );
+      if (options.scale_override !== null) {
+        boundedNumber(options.scale_override, "scale_override", 0.01, 4);
+      }
+      if ((options.max_dimension_px === null) === (options.scale_override === null)) {
+        throw new TypeError(
+          "render_page requires exactly one of max_dimension_px or scale_override.",
+        );
+      }
+      break;
+    case "render_region":
+      boundedInteger(options.page, "page", 1, 1_000_000);
+      boundedInteger(options.max_dimension_px, "max_dimension_px", 64, 8192);
+      boundedNumber(options.x, "x", 0, 10_000_000);
+      boundedNumber(options.y, "y", 0, 10_000_000);
+      boundedNumber(options.width, "width", 0.001, 10_000_000);
+      boundedNumber(options.height, "height", 0.001, 10_000_000);
+      break;
+    case "analyze_pages":
+      boundedInteger(options.max_pages, "max_pages", 1, 200);
+      break;
+    case "detect_signature_zones":
+      break;
+  }
+}
+
+function validateRequest(request) {
+  exactKeys(
+    request,
+    [
+      "allowed_directories",
+      "operation",
+      "options",
+      "password",
+      "protocol_version",
+      "source",
+    ],
+    "PDF.js worker request",
+  );
+  if (request.protocol_version !== PROTOCOL_VERSION) {
+    throw new TypeError(`protocol_version must be ${PROTOCOL_VERSION}.`);
+  }
+  if (!OPERATION_OPTION_KEYS.has(request.operation)) {
+    throw new TypeError(`Unsupported PDF.js operation: ${request.operation}.`);
+  }
+  exactKeys(
+    request.source,
+    ["canonical_path", "file_identity", "sha256", "size_bytes"],
+    "source",
+  );
+  boundedString(request.source.canonical_path, "source.canonical_path", 32_768);
+  boundedInteger(request.source.size_bytes, "source.size_bytes", 1, 250 * 1024 * 1024);
+  if (!/^[a-f0-9]{64}$/.test(request.source.sha256)) {
+    throw new TypeError("source.sha256 must be a lowercase SHA-256 digest.");
+  }
+  exactKeys(request.source.file_identity, ["device", "inode"], "source.file_identity");
+  boundedString(request.source.file_identity.device, "source.file_identity.device", 128);
+  boundedString(request.source.file_identity.inode, "source.file_identity.inode", 128);
+  if (
+    !Array.isArray(request.allowed_directories)
+    || request.allowed_directories.length < 1
+    || request.allowed_directories.length > 64
+  ) {
+    throw new TypeError("allowed_directories has an invalid shape.");
+  }
+  request.allowed_directories.forEach((directory, index) => {
+    boundedString(directory, `allowed_directories[${index}]`, 32_768);
+  });
+  boundedString(
+    request.password,
+    "password",
+    MAX_PASSWORD_CHARACTERS,
+    { nullable: true },
+  );
+  validateOptions(request.operation, request.options);
+  return request;
+}
+
+async function readRequest() {
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of process.stdin) {
+    bytes += chunk.length;
+    if (bytes > MAX_REQUEST_BYTES) {
+      throw resourceLimitError("worker_request_limit");
+    }
+    chunks.push(Buffer.from(chunk));
+  }
+  const encoded = Buffer.concat(chunks).toString("utf8");
+  if (encoded.length === 0 || encoded.trim() !== encoded) {
+    throw new TypeError("The PDF.js worker request frame is invalid.");
+  }
+  return validateRequest(JSON.parse(encoded));
+}
+
+function isPathInsideDirectory(candidatePath, directoryPath) {
+  const relative = path.relative(directoryPath, candidatePath);
+  return relative === "" || (!relative.startsWith("..") && !path.isAbsolute(relative));
+}
+
+function createPathPolicy(request) {
+  const allowedDirectories = request.allowed_directories.map(directory => path.resolve(directory));
+  return candidate => {
+    const resolved = path.resolve(candidate);
+    if (!allowedDirectories.some(directory => isPathInsideDirectory(resolved, directory))) {
+      const error = new Error("The PDF source is outside the configured allowed directories.");
+      error.code = "path_policy_denied";
+      throw error;
+    }
+    return resolved;
+  };
+}
+
+function sameSourceBinding(actual, expected) {
+  return actual.canonicalPath === expected.canonical_path
+    && actual.sizeBytes === expected.size_bytes
+    && actual.sha256 === expected.sha256
+    && actual.fileIdentity.device === expected.file_identity.device
+    && actual.fileIdentity.inode === expected.file_identity.inode;
+}
+
+function sourceChangedError() {
+  const error = new Error("The PDF source changed before isolated processing began. Retry the call.");
+  error.code = "PDF_CHANGED_DURING_READ";
+  return error;
+}
+
+function resourceLimitError(reason) {
+  const error = new Error(
+    "PDF processing exceeded its isolated resource budget. Try a narrower page range, "
+    + "smaller render size, or a simpler PDF.",
+  );
+  error.name = "PdfResourceLimitError";
+  error.code = PDF_RESOURCE_LIMIT_CODE;
+  error.reason = reason;
+  return error;
+}
+
+function installBrowserPolyfills() {
+  if (typeof globalThis.DOMMatrix === "undefined") {
+    globalThis.DOMMatrix = class DOMMatrix {
+      constructor(init) {
+        const value = Array.isArray(init) ? init : [1, 0, 0, 1, 0, 0];
+        [this.a, this.b, this.c, this.d, this.e, this.f] = value;
+        this.is2D = true;
+        this.isIdentity = value[0] === 1 && value[1] === 0 && value[2] === 0
+          && value[3] === 1 && value[4] === 0 && value[5] === 0;
+      }
+      multiplySelf() { return this; }
+      preMultiplySelf() { return this; }
+      translateSelf() { return this; }
+      scaleSelf() { return this; }
+      rotateSelf() { return this; }
+      invertSelf() { return this; }
+      static fromMatrix(value) {
+        return new DOMMatrix([value.a, value.b, value.c, value.d, value.e, value.f]);
+      }
+      static fromFloat32Array(value) { return new DOMMatrix(Array.from(value)); }
+      static fromFloat64Array(value) { return new DOMMatrix(Array.from(value)); }
+    };
+  }
+  if (typeof globalThis.Path2D === "undefined") {
+    globalThis.Path2D = class Path2D {
+      addPath() {}
+      closePath() {}
+      moveTo() {}
+      lineTo() {}
+      bezierCurveTo() {}
+      quadraticCurveTo() {}
+      arc() {}
+      arcTo() {}
+      ellipse() {}
+      rect() {}
+    };
+  }
+  if (typeof globalThis.ImageData === "undefined") {
+    globalThis.ImageData = class ImageData {
+      constructor(width, height) {
+        const pixels = validateCanvasDimensions(width, height);
+        this.width = pixels.width;
+        this.height = pixels.height;
+        this.data = new Uint8ClampedArray(pixels.rgbaBytes);
+      }
+    };
+  }
+}
+
+let pdfjsLib = null;
+let createCanvas = null;
+
+async function loadPdfjs() {
+  if (pdfjsLib) return pdfjsLib;
+  installBrowserPolyfills();
+  const imported = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  pdfjsLib = imported.default || imported;
+  pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(
+    _require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs"),
+  ).href;
+  pdfjsLib.GlobalWorkerOptions.isEvalSupported = false;
+  return pdfjsLib;
+}
+
+function nativeCanvasBindingCandidate() {
+  const packageByPlatform = {
+    "darwin-arm64": "@napi-rs/canvas-darwin-arm64",
+    "darwin-x64": "@napi-rs/canvas-darwin-x64",
+    "win32-arm64": "@napi-rs/canvas-win32-arm64-msvc",
+    "win32-x64": "@napi-rs/canvas-win32-x64-msvc",
+    "linux-arm64": "@napi-rs/canvas-linux-arm64-gnu",
+    "linux-x64": "@napi-rs/canvas-linux-x64-gnu",
+  };
+  const packageName = packageByPlatform[`${process.platform}-${process.arch}`];
+  if (!packageName) return null;
+  try {
+    return _require.resolve(packageName);
+  } catch {
+    try {
+      const canvasDirectory = path.dirname(_require.resolve("@napi-rs/canvas/package.json"));
+      const packageDirectory = path.dirname(canvasDirectory);
+      const nativeFile = packageName.split("/").pop().replace("canvas-", "skia.") + ".node";
+      const candidate = path.join(
+        packageDirectory,
+        packageName.split("/").pop(),
+        nativeFile,
+      );
+      return existsSync(candidate) ? candidate : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+async function loadCanvas() {
+  await loadPdfjs();
+  if (createCanvas) return createCanvas;
+  const candidate = nativeCanvasBindingCandidate();
+  if (candidate) process.env.NAPI_RS_NATIVE_LIBRARY_PATH = candidate;
+  try {
+    const canvas = await import("@napi-rs/canvas");
+    createCanvas = canvas.createCanvas;
+    if (canvas.DOMMatrix) globalThis.DOMMatrix = canvas.DOMMatrix;
+    if (canvas.Path2D) globalThis.Path2D = canvas.Path2D;
+    if (canvas.ImageData) globalThis.ImageData = canvas.ImageData;
+    return createCanvas;
+  } finally {
+    delete process.env.NAPI_RS_NATIVE_LIBRARY_PATH;
+  }
+}
+
+function validateCanvasDimensions(rawWidth, rawHeight) {
+  if (
+    !Number.isFinite(rawWidth)
+    || !Number.isFinite(rawHeight)
+    || rawWidth <= 0
+    || rawHeight <= 0
+  ) {
+    throw resourceLimitError("invalid_canvas_dimensions");
+  }
+  const width = Math.ceil(rawWidth);
+  const height = Math.ceil(rawHeight);
+  if (
+    !Number.isSafeInteger(width)
+    || !Number.isSafeInteger(height)
+    || width > MAX_CANVAS_AXIS_PX
+    || height > MAX_CANVAS_AXIS_PX
+  ) {
+    throw resourceLimitError("canvas_axis_limit");
+  }
+  const pixels = width * height;
+  const rgbaBytes = pixels * 4;
+  if (
+    !Number.isSafeInteger(pixels)
+    || !Number.isSafeInteger(rgbaBytes)
+    || pixels > MAX_CANVAS_PIXELS
+  ) {
+    throw resourceLimitError("canvas_pixel_limit");
+  }
+  return { height, pixels, rgbaBytes, width };
+}
+
+class PdfToolsCanvasFactory {
+  create(width, height) {
+    const pixels = validateCanvasDimensions(width, height);
+    const canvas = createCanvas(pixels.width, pixels.height);
+    return {
+      canvas,
+      context: canvas.getContext("2d", { willReadFrequently: true }),
+    };
+  }
+
+  reset(canvasAndContext, width, height) {
+    if (!canvasAndContext.canvas) throw new Error("Canvas is not specified.");
+    const pixels = validateCanvasDimensions(width, height);
+    canvasAndContext.canvas.width = pixels.width;
+    canvasAndContext.canvas.height = pixels.height;
+  }
+
+  destroy(canvasAndContext) {
+    if (!canvasAndContext.canvas) throw new Error("Canvas is not specified.");
+    canvasAndContext.canvas.width = 0;
+    canvasAndContext.canvas.height = 0;
+    canvasAndContext.canvas = null;
+    canvasAndContext.context = null;
+  }
+}
+
+class PdfToolsFilterFactory {
+  addFilter() { return "none"; }
+  addHCMFilter() { return "none"; }
+  addAlphaFilter() { return "none"; }
+  addLuminosityFilter() { return "none"; }
+  addHighlightHCMFilter() { return "none"; }
+  destroy() {}
+}
+
+function nodeRenderingOptions() {
+  return {
+    CanvasFactory: PdfToolsCanvasFactory,
+    FilterFactory: PdfToolsFilterFactory,
+    isOffscreenCanvasSupported: false,
+    isImageDecoderSupported: false,
+  };
+}
+
+function pdfjsDocumentOptions(bytes, password, { render = false } = {}) {
+  return {
+    data: new Uint8Array(bytes),
+    password: password || undefined,
+    ...(render ? nodeRenderingOptions() : {}),
+    useSystemFonts: true,
+    disableFontFace: true,
+    disableAutoFetch: true,
+    useWorkerFetch: false,
+    isEvalSupported: false,
+    verbosity: 0,
+  };
+}
+
+function normalizeText(value) {
+  return String(value ?? "")
+    .replace(/\r\n/g, "\n")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+async function pageText(page) {
+  const content = await page.getTextContent();
+  return content.items.map(item => item.str).join("");
+}
+
+async function withPdfjsDocument(bytes, password, action, { render = false } = {}) {
+  const pdfjs = await loadPdfjs();
+  if (render) await loadCanvas();
+  const loadingTask = pdfjs.getDocument(pdfjsDocumentOptions(bytes, password, { render }));
+  let document = null;
+  try {
+    document = await loadingTask.promise;
+    return await action(document, pdfjs);
+  } finally {
+    try {
+      await document?.destroy();
+    } catch {}
+    try {
+      await loadingTask.destroy();
+    } catch {}
+  }
+}
+
+async function readContent(bytes, password, options) {
+  return await withPdfjsDocument(bytes, password, async document => {
+    const pagesRead = options.max_pages === null
+      ? document.numPages
+      : Math.min(options.max_pages, document.numPages);
+    let sourceLength = 0;
+    let prefix = "";
+    let textFound = false;
+    let previewRemaining = 12_000;
+    let previewTruncated = false;
+    const pagePreviews = [];
+    for (let pageNumber = 1; pageNumber <= pagesRead; pageNumber += 1) {
+      const page = await document.getPage(pageNumber);
+      try {
+        const rawText = await pageText(page);
+        if (pageNumber > 1) {
+          sourceLength += 2;
+          if (prefix.length < 50_000) prefix += "\n\n".slice(0, 50_000 - prefix.length);
+        }
+        sourceLength += rawText.length;
+        if (prefix.length < 50_000) prefix += rawText.slice(0, 50_000 - prefix.length);
+        if (rawText.trim().length > 0) textFound = true;
+
+        const normalized = normalizeText(rawText);
+        const available = Math.max(Math.min(previewRemaining, 2000), 0);
+        const returned = normalized.slice(0, available);
+        const truncated = returned.length < normalized.length;
+        previewTruncated ||= truncated;
+        pagePreviews.push({
+          page: pageNumber,
+          char_count: normalized.length,
+          returned_chars: returned.length,
+          truncated,
+          text: returned,
+        });
+        previewRemaining -= returned.length;
+      } finally {
+        page.cleanup();
+      }
+    }
+    return {
+      output_text: prefix,
+      page_previews: pagePreviews,
+      pages_read: pagesRead,
+      preview_truncated: previewTruncated,
+      source_length: sourceLength,
+      text_found: textFound,
+      text_truncated: sourceLength > 50_000,
+      total_pages: document.numPages,
+    };
+  });
+}
+
+async function readPages(bytes, password, options) {
+  return await withPdfjsDocument(bytes, password, async document => {
+    if (options.start_page > document.numPages || options.end_page > document.numPages) {
+      throw new Error(
+        `Requested pages ${options.start_page}-${options.end_page} are out of range `
+        + `(1-${document.numPages}).`,
+      );
+    }
+    const pages = [];
+    let remaining = 16_000;
+    let truncated = false;
+    for (
+      let pageNumber = options.start_page;
+      pageNumber <= options.end_page;
+      pageNumber += 1
+    ) {
+      const page = await document.getPage(pageNumber);
+      try {
+        const normalized = normalizeText(await pageText(page));
+        const available = Math.max(Math.min(remaining, options.max_chars_per_page), 0);
+        const returned = normalized.slice(0, available);
+        const pageTruncated = returned.length < normalized.length;
+        truncated ||= pageTruncated;
+        pages.push({
+          page: pageNumber,
+          char_count: normalized.length,
+          returned_chars: returned.length,
+          truncated: pageTruncated,
+          text: returned,
+        });
+        remaining -= returned.length;
+      } finally {
+        page.cleanup();
+      }
+    }
+    return {
+      pages,
+      text_found: pages.some(page => page.text.trim().length > 0),
+      total_pages: document.numPages,
+      truncated,
+    };
+  });
+}
+
+function matchSnippet(text, matchIndex, matchLength, contextCharacters) {
+  const start = Math.max(0, matchIndex - contextCharacters);
+  const end = Math.min(text.length, matchIndex + matchLength + contextCharacters);
+  let snippet = text.slice(start, end).replace(/\s+/g, " ").trim();
+  if (start > 0) snippet = `...${snippet}`;
+  if (end < text.length) snippet = `${snippet}...`;
+  return snippet;
+}
+
+async function searchText(bytes, password, options) {
+  return await withPdfjsDocument(bytes, password, async document => {
+    const normalizedQuery = options.query.trim();
+    const loweredQuery = normalizedQuery.toLowerCase();
+    const matches = [];
+    for (
+      let pageNumber = 1;
+      pageNumber <= document.numPages && matches.length < options.max_results;
+      pageNumber += 1
+    ) {
+      const page = await document.getPage(pageNumber);
+      try {
+        const text = normalizeText(await pageText(page));
+        const lowered = text.toLowerCase();
+        let fromIndex = 0;
+        while (matches.length < options.max_results) {
+          const matchIndex = lowered.indexOf(loweredQuery, fromIndex);
+          if (matchIndex < 0) break;
+          matches.push({
+            page: pageNumber,
+            char_index: matchIndex,
+            match_text: text.slice(matchIndex, matchIndex + normalizedQuery.length),
+            snippet: matchSnippet(
+              text,
+              matchIndex,
+              normalizedQuery.length,
+              options.context_chars,
+            ),
+          });
+          fromIndex = matchIndex + normalizedQuery.length;
+        }
+      } finally {
+        page.cleanup();
+      }
+    }
+    return {
+      match_count: matches.length,
+      matches,
+      query: normalizedQuery,
+      total_pages: document.numPages,
+      truncated: matches.length >= options.max_results,
+    };
+  });
+}
+
+async function layoutOperation(bytes, source, password, options, forMarkdown) {
+  const pdfjs = await loadPdfjs();
+  const extractor = forMarkdown ? extractPdfLayoutForMarkdown : extractPdfLayout;
+  return {
+    layout: await extractor({
+      pdfjsLib: pdfjs,
+      pdfBytes: bytes,
+      sourcePath: options.source_path,
+      sourceFileName: options.source_file_name,
+      sourceSha256: source.sha256,
+      sourceSizeBytes: source.size_bytes,
+      password,
+      requestedStartPage: options.start_page,
+      requestedEndPage: options.end_page,
+      maxItems: options.max_items,
+      maxCharacters: options.max_characters,
+      maxOutputCharacters: options.max_output_characters,
+    }),
+  };
+}
+
+function pngResult(buffer, result) {
+  if (!Buffer.isBuffer(buffer) || buffer.length < 24 || buffer.length > MAX_BINARY_BYTES) {
+    throw resourceLimitError("png_output_limit");
+  }
+  return { binary: buffer, result };
+}
+
+async function renderPage(bytes, password, options) {
+  const geometryDocument = await PDFDocument.load(bytes, password ? { password } : {});
+  if (options.page > geometryDocument.getPageCount()) {
+    throw new Error(
+      `Page ${options.page} is out of range (1-${geometryDocument.getPageCount()}).`,
+    );
+  }
+  const geometry = geometryDocument.getPages()[options.page - 1].getSize();
+  const scale = options.scale_override ?? getPageRenderScale({
+    width: geometry.width,
+    height: geometry.height,
+    maxDimensionPx: options.max_dimension_px,
+  });
+  return await withPdfjsDocument(bytes, password, async document => {
+    if (options.page > document.numPages) {
+      throw new Error(`Page ${options.page} is out of range (1-${document.numPages}).`);
+    }
+    const page = await document.getPage(options.page);
+    try {
+      const viewport = page.getViewport({ scale });
+      const pixels = validateCanvasDimensions(viewport.width, viewport.height);
+      const canvas = createCanvas(pixels.width, pixels.height);
+      const context = canvas.getContext("2d");
+      context.fillStyle = "white";
+      context.fillRect(0, 0, pixels.width, pixels.height);
+      await page.render({ canvasContext: context, viewport }).promise;
+      const buffer = canvas.toBuffer("image/png");
+      return pngResult(buffer, {
+        height: pixels.height,
+        height_points: geometry.height,
+        renderer: "native-canvas",
+        scale,
+        total_pages: document.numPages,
+        width: pixels.width,
+        width_points: geometry.width,
+      });
+    } finally {
+      page.cleanup();
+    }
+  }, { render: true });
+}
+
+async function renderRegion(bytes, password, options) {
+  const geometryDocument = await PDFDocument.load(bytes, password ? { password } : {});
+  if (options.page > geometryDocument.getPageCount()) {
+    throw new Error(
+      `Page ${options.page} is out of range (1-${geometryDocument.getPageCount()}).`,
+    );
+  }
+  const pageSize = geometryDocument.getPages()[options.page - 1].getSize();
+  validatePdfRegionBox({
+    pageWidth: pageSize.width,
+    pageHeight: pageSize.height,
+    x: options.x,
+    y: options.y,
+    width: options.width,
+    height: options.height,
+  });
+  const scale = getPageRenderScale({
+    width: options.width,
+    height: options.height,
+    maxDimensionPx: options.max_dimension_px,
+    minScale: 0.1,
+    maxScale: 4,
+  });
+  return await withPdfjsDocument(bytes, password, async document => {
+    if (options.page > document.numPages) {
+      throw new Error(`Page ${options.page} is out of range (1-${document.numPages}).`);
+    }
+    const page = await document.getPage(options.page);
+    try {
+      const viewport = page.getViewport({ scale, rotation: 0 });
+      const crop = {
+        height: Math.max(1, Math.round(options.height * scale)),
+        left: Math.round(options.x * scale),
+        top: Math.round(options.y * scale),
+        width: Math.max(1, Math.round(options.width * scale)),
+      };
+      if (
+        !Number.isFinite(viewport.width)
+        || !Number.isFinite(viewport.height)
+        || viewport.width <= 0
+        || viewport.height <= 0
+        || viewport.width > 10_000_000
+        || viewport.height > 10_000_000
+      ) {
+        throw resourceLimitError("invalid_page_viewport");
+      }
+      const fullWidth = Math.ceil(viewport.width);
+      const fullHeight = Math.ceil(viewport.height);
+      const cropPixels = validateCanvasDimensions(crop.width, crop.height);
+      if (
+        crop.left < 0
+        || crop.top < 0
+        || crop.left + cropPixels.width > fullWidth
+        || crop.top + cropPixels.height > fullHeight
+      ) {
+        throw new Error("The requested render region falls outside the page.");
+      }
+      const canvas = createCanvas(cropPixels.width, cropPixels.height);
+      const context = canvas.getContext("2d");
+      context.fillStyle = "white";
+      context.fillRect(0, 0, cropPixels.width, cropPixels.height);
+      await page.render({
+        canvasContext: context,
+        transform: [1, 0, 0, 1, -crop.left, -crop.top],
+        viewport,
+      }).promise;
+      const buffer = canvas.toBuffer("image/png");
+      return pngResult(buffer, {
+        height: cropPixels.height,
+        renderer: "native-canvas",
+        scale,
+        total_pages: document.numPages,
+        width: cropPixels.width,
+      });
+    } finally {
+      page.cleanup();
+    }
+  }, { render: true });
+}
+
+async function analyzePages(bytes, password, options) {
+  const pdfjs = await loadPdfjs();
+  const pdfDocument = await PDFDocument.load(bytes, password ? { password } : {});
+  return {
+    analysis: await analyzePdfPages({
+      pdfLibPages: pdfDocument.getPages(),
+      pdfBytes: bytes,
+      pdfjsLib: pdfjs,
+      password,
+      maxPages: options.max_pages,
+    }),
+  };
+}
+
+async function signatureZones(bytes, password) {
+  const pdfjs = await loadPdfjs();
+  let pdfDocument;
+  let scanAcroForm = true;
+  const warningCounts = new Map();
+  const recordWarning = warning => {
+    const code = warning?.code;
+    if (typeof code !== "string") return;
+    warningCounts.set(code, Math.min((warningCounts.get(code) || 0) + 1, 1_000_000));
+  };
+  try {
+    pdfDocument = await PDFDocument.load(bytes, { updateMetadata: false });
+  } catch (error) {
+    if (!isPdfLibEncryptedError(error)) throw error;
+    pdfDocument = await PDFDocument.load(bytes, {
+      ignoreEncryption: true,
+      updateMetadata: false,
+    });
+    scanAcroForm = false;
+    recordWarning({ code: "ENCRYPTED_ACROFORM_SCAN_UNAVAILABLE" });
+  }
+  const zones = await detectSignatureZones({
+    pdfDoc: pdfDocument,
+    pdfBytes: bytes,
+    pdfjsLib: pdfjs,
+    password,
+    onWarning: recordWarning,
+    scanAcroForm,
+  });
+  return {
+    page_geometry: pdfDocument.getPages().map((page, index) => {
+      const box = getPageBoxGeometry(page);
+      return {
+        height: box.height,
+        origin_x: box.originX,
+        origin_y: box.originY,
+        page: index + 1,
+        width: box.width,
+      };
+    }),
+    warning_counts: [...warningCounts.entries()].map(([code, occurrences]) => ({
+      code,
+      occurrences,
+    })),
+    zones,
+  };
+}
+
+async function performOperation(request, sourceBytes) {
+  switch (request.operation) {
+    case "read_content":
+      return { binary: null, result: await readContent(
+        sourceBytes,
+        request.password,
+        request.options,
+      ) };
+    case "read_pages":
+      return { binary: null, result: await readPages(
+        sourceBytes,
+        request.password,
+        request.options,
+      ) };
+    case "search_text":
+      return { binary: null, result: await searchText(
+        sourceBytes,
+        request.password,
+        request.options,
+      ) };
+    case "extract_layout":
+      return { binary: null, result: await layoutOperation(
+        sourceBytes,
+        request.source,
+        request.password,
+        request.options,
+        false,
+      ) };
+    case "extract_layout_for_markdown":
+      return { binary: null, result: await layoutOperation(
+        sourceBytes,
+        request.source,
+        request.password,
+        request.options,
+        true,
+      ) };
+    case "render_page":
+      return await renderPage(sourceBytes, request.password, request.options);
+    case "render_region":
+      return await renderRegion(sourceBytes, request.password, request.options);
+    case "analyze_pages":
+      return { binary: null, result: await analyzePages(
+        sourceBytes,
+        request.password,
+        request.options,
+      ) };
+    case "detect_signature_zones":
+      return { binary: null, result: await signatureZones(
+        sourceBytes,
+        request.password,
+      ) };
+  }
+  throw new TypeError(`Unsupported PDF.js operation: ${request.operation}.`);
+}
+
+function passwordError(error, pdfjs) {
+  if (error?.name !== "PasswordException" || !pdfjs?.PasswordResponses) return null;
+  if (error.code === pdfjs.PasswordResponses.NEED_PASSWORD) {
+    const mapped = new Error(
+      "This PDF requires a password. Provide it with the password parameter and try again.",
+    );
+    mapped.code = "PASSWORD_REQUIRED";
+    return mapped;
+  }
+  if (error.code === pdfjs.PasswordResponses.INCORRECT_PASSWORD) {
+    const mapped = new Error(
+      "The PDF password was not accepted. Check the password and try again.",
+    );
+    mapped.code = "PASSWORD_INCORRECT";
+    return mapped;
+  }
+  return null;
+}
+
+async function writeStream(stream, bytes) {
+  await new Promise((resolve, reject) => {
+    stream.write(bytes, error => error ? reject(error) : resolve());
+  });
+}
+
+function writeBinary(bytes) {
+  let offset = 0;
+  while (offset < bytes.length) {
+    offset += writeSync(3, bytes, offset, bytes.length - offset);
+  }
+  closeSync(3);
+}
+
+async function writeSuccess(operation, operationResult) {
+  const binary = operationResult.binary;
+  const descriptor = binary === null
+    ? null
+    : {
+        bytes: binary.length,
+        mime_type: "image/png",
+        sha256: createHash("sha256").update(binary).digest("hex"),
+      };
+  const encoded = Buffer.from(JSON.stringify({
+    status: "ok",
+    protocol_version: PROTOCOL_VERSION,
+    operation,
+    result: operationResult.result,
+    binary: descriptor,
+  }), "utf8");
+  if (encoded.length > MAX_RESPONSE_BYTES) {
+    throw resourceLimitError("worker_response_limit");
+  }
+  await writeStream(process.stdout, encoded);
+  if (binary !== null) writeBinary(binary);
+}
+
+async function writeError(operation, inputError) {
+  const mappedPasswordError = passwordError(inputError, pdfjsLib);
+  const error = mappedPasswordError || inputError;
+  const code = typeof error?.code === "string" && error.code.length <= 256
+    ? error.code
+    : null;
+  const message = typeof error?.message === "string" && error.message.length <= 4096
+    ? error.message
+    : "The isolated PDF parser could not complete this operation.";
+  const encoded = Buffer.from(JSON.stringify({
+    status: "error",
+    protocol_version: PROTOCOL_VERSION,
+    operation,
+    error: {
+      name: typeof error?.name === "string" && error.name.length <= 256
+        ? error.name
+        : "Error",
+      code,
+      message,
+    },
+  }), "utf8");
+  await writeStream(process.stdout, encoded);
+}
+
+async function main() {
+  let operation = "unknown";
+  try {
+    const request = await readRequest();
+    operation = request.operation;
+    const assertPathAllowed = createPathPolicy(request);
+    assertPathAllowed(request.source.canonical_path);
+    const operationResult = await withBoundedPdfFileSafely(
+      request.source.canonical_path,
+      request.source.size_bytes,
+      {
+        assertPathAllowed,
+        createSizeLimitError: () => sourceChangedError(),
+      },
+      async actualSource => {
+        if (!sameSourceBinding(actualSource, request.source)) throw sourceChangedError();
+        return await performOperation(request, actualSource.bytes);
+      },
+    );
+    await writeSuccess(operation, operationResult);
+  } catch (error) {
+    await writeError(operation, error);
+  }
+}
+
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  await main();
+}

@@ -24,15 +24,13 @@ import {
   StandardFonts,
   degrees as pdfDegrees,
 } from "pdf-lib";
-import { createRequire } from "module";
-import { fileURLToPath, pathToFileURL } from "url";
+import { fileURLToPath } from "url";
 import { constants as fsConstants, existsSync, realpathSync } from "fs";
 import fs from "fs/promises";
 import path from "path";
-import { homedir, platform as osPlatform, tmpdir } from "os";
+import { homedir, platform as osPlatform } from "os";
 import { spawn } from "child_process";
 import { createHash, randomUUID } from "crypto";
-import { createScopedStderrSuppressor } from "./stderr-suppression.js";
 import {
   isUnavailableResourceError,
   pathToPdfResourceUri,
@@ -43,7 +41,6 @@ import {
   validateStructuredToolResult,
   withToolOutputSchema,
 } from "./output-schemas.js";
-import { extractPdfLayout, extractPdfLayoutForMarkdown } from "./layout-extraction.js";
 import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
 import {
   PDF_MUTATION_MAX_FILE_BYTES,
@@ -58,84 +55,12 @@ import {
   readBoundedPdfFileSafely,
   readPdfMutationInputsWithinMergeLimit,
 } from "./bounded-pdf-file.js";
-
-const _require = createRequire(import.meta.url);
-
-// Polyfill browser globals that pdfjs-dist v5 expects but Node.js lacks
-if (typeof globalThis.DOMMatrix === "undefined") {
-  globalThis.DOMMatrix = class DOMMatrix {
-    constructor(init) {
-      const v = Array.isArray(init) ? init : [1, 0, 0, 1, 0, 0];
-      this.a = v[0]; this.b = v[1]; this.c = v[2];
-      this.d = v[3]; this.e = v[4]; this.f = v[5];
-      this.is2D = true; this.isIdentity = v[0] === 1 && v[1] === 0 && v[2] === 0 && v[3] === 1 && v[4] === 0 && v[5] === 0;
-    }
-    multiplySelf() { return this; }
-    preMultiplySelf() { return this; }
-    translateSelf() { return this; }
-    scaleSelf() { return this; }
-    rotateSelf() { return this; }
-    invertSelf() { return this; }
-    static fromMatrix(m) { return new DOMMatrix([m.a, m.b, m.c, m.d, m.e, m.f]); }
-    static fromFloat32Array(a) { return new DOMMatrix(Array.from(a)); }
-    static fromFloat64Array(a) { return new DOMMatrix(Array.from(a)); }
-  };
-}
-if (typeof globalThis.Path2D === "undefined") {
-  globalThis.Path2D = class Path2D { constructor() {} addPath() {} closePath() {} moveTo() {} lineTo() {} bezierCurveTo() {} quadraticCurveTo() {} arc() {} arcTo() {} ellipse() {} rect() {} };
-}
-if (typeof globalThis.ImageData === "undefined") {
-  globalThis.ImageData = class ImageData { constructor(w, h) { this.width = w; this.height = h; this.data = new Uint8ClampedArray(w * h * 4); } };
-}
-
-// Lazy load heavy dependencies only when needed
-let pdfjsLib = null;
-let createCanvas = null;
-let _pdfjsLoading = null;
-let nativeCanvasUnavailable = false;
-
-function getCanvasNativeBindingCandidate() {
-  const platformArch = `${process.platform}-${process.arch}`;
-  const packageByPlatform = {
-    "darwin-arm64": "@napi-rs/canvas-darwin-arm64",
-    "darwin-x64": "@napi-rs/canvas-darwin-x64",
-    "win32-arm64": "@napi-rs/canvas-win32-arm64-msvc",
-    "win32-x64": "@napi-rs/canvas-win32-x64-msvc",
-    "linux-arm64": "@napi-rs/canvas-linux-arm64-gnu",
-    "linux-x64": "@napi-rs/canvas-linux-x64-gnu",
-  };
-  const packageName = packageByPlatform[platformArch];
-  if (!packageName) return null;
-
-  try {
-    return _require.resolve(packageName);
-  } catch {
-    try {
-      const canvasPackageDir = path.dirname(_require.resolve("@napi-rs/canvas/package.json"));
-      const scopedPackagesDir = path.dirname(canvasPackageDir);
-      const nativeFile = packageName.split("/").pop().replace("canvas-", "skia.") + ".node";
-      const candidate = path.join(scopedPackagesDir, packageName.split("/").pop(), nativeFile);
-      return existsSync(candidate) ? candidate : null;
-    } catch {
-      return null;
-    }
-  }
-}
-
-function formatErrorChain(error, maxDepth = 6) {
-  const messages = [];
-  let current = error;
-  let depth = 0;
-  while (current && depth < maxDepth) {
-    const code = current.code ? ` ${current.code}` : "";
-    const message = current.message || String(current);
-    messages.push(`${current.name || "Error"}${code}: ${message}`);
-    current = current.cause;
-    depth += 1;
-  }
-  if (current) messages.push("...");
-  return messages.join(" <- caused by ");
-}
+import {
+  PDF_RESOURCE_LIMIT_CODE,
+  createPdfjsSubprocessRequest,
+  runPdfjsSubprocess,
+  terminateAllPdfjsSubprocesses,
+} from "./pdfjs-subprocess.js";
 
 function boundedInteger(value, fallback, { name, minimum, maximum }) {
   const candidate = value === undefined || value === null ? fallback : value;
@@ -210,180 +135,6 @@ function sameStableFileIdentity(left, right) {
     && left.device === right.device
     && left.inode === right.inode,
   );
-}
-
-function shouldUseSystemPdfRenderer() {
-  return process.platform === "darwin" && process.env.PDF_TOOLS_DISABLE_SYSTEM_RENDERER !== "1";
-}
-
-function shouldForceSystemPdfRenderer() {
-  return process.env.PDF_TOOLS_FORCE_SYSTEM_RENDERER === "1";
-}
-
-function isCanvasDependencyError(error) {
-  const message = formatErrorChain(error);
-  return message.includes("Canvas dependency") ||
-    message.includes("Cannot find native binding") ||
-    message.includes("ERR_DLOPEN_FAILED") ||
-    message.includes("different Team IDs");
-}
-
-async function runCommand(command, args, { timeoutMs = 30_000 } = {}) {
-  return await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: ["ignore", "pipe", "pipe"] });
-    const stdout = [];
-    const stderr = [];
-    let settled = false;
-    let timedOut = false;
-    let hardKillTimeout = null;
-    const timeout = setTimeout(() => {
-      timedOut = true;
-      child.kill("SIGTERM");
-      hardKillTimeout = setTimeout(() => {
-        child.kill("SIGKILL");
-      }, 2_000);
-    }, timeoutMs);
-
-    child.stdout.on("data", chunk => stdout.push(chunk));
-    child.stderr.on("data", chunk => stderr.push(chunk));
-    child.on("error", error => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      reject(error);
-    });
-    child.on("close", code => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timeout);
-      if (hardKillTimeout) clearTimeout(hardKillTimeout);
-      const out = Buffer.concat(stdout).toString("utf8");
-      const err = Buffer.concat(stderr).toString("utf8");
-      if (timedOut) {
-        reject(new Error(`${path.basename(command)} timed out after ${timeoutMs}ms: ${err || out}`.trim()));
-        return;
-      }
-      if (code === 0) {
-        resolve({ stdout: out, stderr: err });
-      } else {
-        reject(new Error(`${path.basename(command)} exited with code ${code}: ${err || out}`.trim()));
-      }
-    });
-  });
-}
-
-// Load pdfjs-dist only (for text extraction — no canvas needed)
-async function loadPdfjs() {
-  if (pdfjsLib) return;
-  if (_pdfjsLoading) return _pdfjsLoading;
-  _pdfjsLoading = (async () => {
-    try {
-      const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
-      pdfjsLib = pdfjs.default || pdfjs;
-      // Disable worker threads — not needed for server-side, avoids spawn issues
-      pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(
-        _require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs")
-      ).href;
-      pdfjsLib.GlobalWorkerOptions.isEvalSupported = false;
-      console.error("[PDF Tools] pdfjs-dist loaded successfully");
-    } catch (error) {
-      _pdfjsLoading = null;
-      console.error("[PDF Tools] Failed to load pdfjs-dist:", error.message);
-      throw new Error("PDF text extraction is not available: " + error.message);
-    }
-  })();
-  return _pdfjsLoading;
-}
-
-// Load pdfjs-dist + canvas (for image/raster fallback)
-async function loadImageDependencies() {
-  await loadPdfjs();
-  if (createCanvas) return;
-  const previousNativeLibraryPath = process.env.NAPI_RS_NATIVE_LIBRARY_PATH;
-  const nativeBindingCandidate = previousNativeLibraryPath ? null : getCanvasNativeBindingCandidate();
-  if (nativeBindingCandidate) {
-    process.env.NAPI_RS_NATIVE_LIBRARY_PATH = nativeBindingCandidate;
-  }
-  try {
-    const canvas = await import("@napi-rs/canvas");
-    createCanvas = canvas.createCanvas;
-    // When native canvas bindings are available, prefer their DOM-like types
-    // over our minimal JS fallbacks so pdfjs rendering can hand real Path2D /
-    // ImageData objects to the rasterizer.
-    if (canvas.DOMMatrix) globalThis.DOMMatrix = canvas.DOMMatrix;
-    if (canvas.Path2D) globalThis.Path2D = canvas.Path2D;
-    if (canvas.ImageData) globalThis.ImageData = canvas.ImageData;
-    console.error("[PDF Tools] Canvas loaded successfully");
-  } catch (error) {
-    nativeCanvasUnavailable = true;
-    const details = formatErrorChain(error);
-    console.error("[PDF Tools] Failed to load canvas:", details);
-    throw new Error("Image extraction is not available. Canvas dependency could not be loaded: " + details);
-  } finally {
-    if (nativeBindingCandidate) {
-      if (previousNativeLibraryPath) {
-        process.env.NAPI_RS_NATIVE_LIBRARY_PATH = previousNativeLibraryPath;
-      } else {
-        delete process.env.NAPI_RS_NATIVE_LIBRARY_PATH;
-      }
-    }
-  }
-}
-
-// pdf.js classifies Electron utility processes as browser contexts. Claude
-// Desktop runs MCPB servers in that shape on Windows, where the default DOM
-// factories then call document.createElement despite there being no document.
-// Supply the small Node factory contracts explicitly for every raster load.
-class PdfToolsCanvasFactory {
-  create(width, height) {
-    if (width <= 0 || height <= 0) {
-      throw new Error("Invalid canvas size");
-    }
-    const canvas = createCanvas(width, height);
-    return {
-      canvas,
-      context: canvas.getContext("2d", { willReadFrequently: true }),
-    };
-  }
-
-  reset(canvasAndContext, width, height) {
-    if (!canvasAndContext.canvas) {
-      throw new Error("Canvas is not specified");
-    }
-    if (width <= 0 || height <= 0) {
-      throw new Error("Invalid canvas size");
-    }
-    canvasAndContext.canvas.width = width;
-    canvasAndContext.canvas.height = height;
-  }
-
-  destroy(canvasAndContext) {
-    if (!canvasAndContext.canvas) {
-      throw new Error("Canvas is not specified");
-    }
-    canvasAndContext.canvas.width = 0;
-    canvasAndContext.canvas.height = 0;
-    canvasAndContext.canvas = null;
-    canvasAndContext.context = null;
-  }
-}
-
-class PdfToolsFilterFactory {
-  addFilter() { return "none"; }
-  addHCMFilter() { return "none"; }
-  addAlphaFilter() { return "none"; }
-  addLuminosityFilter() { return "none"; }
-  addHighlightHCMFilter() { return "none"; }
-  destroy() {}
-}
-
-function pdfJsNodeRenderingOptions() {
-  return {
-    CanvasFactory: PdfToolsCanvasFactory,
-    FilterFactory: PdfToolsFilterFactory,
-    isOffscreenCanvasSupported: false,
-    isImageDecoderSupported: false,
-  };
 }
 
 function expandUserPath(inputPath) {
@@ -584,297 +335,6 @@ async function commitMarkdownOutputInAnchoredProcess({
     child.stdin.on("error", () => {});
     child.stdin.end(JSON.stringify(request));
   });
-}
-
-const stderrSuppressor = createScopedStderrSuppressor();
-
-async function withSuppressedStderr(action) {
-  return await stderrSuppressor.run(action);
-}
-
-async function writeSinglePagePdf(pdfBuffer, pageNumber, outputPath, password = null) {
-  const sourceDoc = await PDFDocument.load(pdfBuffer, password ? { password } : {});
-  const pageIndex = pageNumber - 1;
-  const singlePageDoc = await PDFDocument.create();
-  const [copiedPage] = await singlePageDoc.copyPages(sourceDoc, [pageIndex]);
-  singlePageDoc.addPage(copiedPage);
-  await fs.writeFile(outputPath, await singlePageDoc.save());
-}
-
-async function renderSinglePagePdfWithSips(pdfBuffer, {
-  pageNumber = 1,
-  scale = 1.0,
-  password = null,
-}) {
-  const tempDir = await fs.mkdtemp(path.join(tmpdir(), "pdf-tools-render-"));
-  const singlePagePath = path.join(tempDir, "page.pdf");
-  const basePngPath = path.join(tempDir, "page.png");
-  const scaledPngPath = path.join(tempDir, "page-scaled.png");
-
-  try {
-    await writeSinglePagePdf(pdfBuffer, pageNumber, singlePagePath, password);
-    await runCommand("/usr/bin/sips", [
-      "-s", "format", "png",
-      singlePagePath,
-      "--out", basePngPath,
-    ]);
-
-    if (Math.abs(scale - 1) > 0.01) {
-      const pageDoc = await PDFDocument.load(pdfBuffer, password ? { password } : {});
-      const page = pageDoc.getPages()[pageNumber - 1];
-      const { width, height } = page.getSize();
-      const targetMaxDimension = Math.max(1, Math.round(Math.max(width, height) * scale));
-      await runCommand("/usr/bin/sips", [
-        "-Z", String(targetMaxDimension),
-        basePngPath,
-        "--out", scaledPngPath,
-      ]);
-      return await fs.readFile(scaledPngPath);
-    }
-
-    return await fs.readFile(basePngPath);
-  } finally {
-    await fs.rm(tempDir, { recursive: true, force: true });
-  }
-}
-
-async function renderPdfPageWithSystemRenderer(pdfBuffer, pageNumber = 1, scale = 1.0, password = null) {
-  if (!shouldUseSystemPdfRenderer()) {
-    throw new Error("System PDF renderer is only available on macOS.");
-  }
-  return {
-    buffer: await renderSinglePagePdfWithSips(pdfBuffer, { pageNumber, scale, password }),
-    renderer: "macos-sips",
-  };
-}
-
-async function renderPdfRegionWithSystemRenderer(pdfBuffer, {
-  pageNumber = 1,
-  scale = 1.0,
-  x,
-  y,
-  width,
-  height,
-  password = null,
-}) {
-  if (!shouldUseSystemPdfRenderer()) {
-    throw new Error("System PDF renderer is only available on macOS.");
-  }
-
-  const tempDir = await fs.mkdtemp(path.join(tmpdir(), "pdf-tools-region-"));
-  const fullPngPath = path.join(tempDir, "full.png");
-  const cropPngPath = path.join(tempDir, "crop.png");
-
-  try {
-    const fullImage = await renderSinglePagePdfWithSips(pdfBuffer, { pageNumber, scale, password });
-    await fs.writeFile(fullPngPath, fullImage);
-    const crop = getRegionPixelRect({ x, y, width, height, scale });
-    await runCommand("/usr/bin/sips", [
-      "-c", String(crop.height), String(crop.width),
-      "--cropOffset", String(crop.top), String(crop.left),
-      fullPngPath,
-      "--out", cropPngPath,
-    ]);
-    return {
-      buffer: await fs.readFile(cropPngPath),
-      renderer: "macos-sips",
-    };
-  } finally {
-    await fs.rm(tempDir, { recursive: true, force: true });
-  }
-}
-
-// Helper function to convert PDF page to image
-async function convertPdfPageToImage(pdfBuffer, pageNumber = 1, scale = 1.0, password = null) {
-  if (shouldForceSystemPdfRenderer() && !shouldUseSystemPdfRenderer()) {
-    throw new Error("System PDF renderer was forced but is only available on macOS.");
-  }
-  if (shouldUseSystemPdfRenderer() && (shouldForceSystemPdfRenderer() || nativeCanvasUnavailable)) {
-    return await renderPdfPageWithSystemRenderer(pdfBuffer, pageNumber, scale, password);
-  }
-
-  try {
-    return await withSuppressedStderr(async () => {
-      // Load dependencies only when needed
-      await loadImageDependencies();
-      // Load the PDF
-      const loadingTask = pdfjsLib.getDocument({
-        data: new Uint8Array(pdfBuffer),
-        password: password || undefined,
-        ...pdfJsNodeRenderingOptions(),
-        useSystemFonts: true,
-        disableFontFace: true,
-        disableAutoFetch: true,
-        useWorkerFetch: false,
-        isEvalSupported: false,
-        verbosity: 0
-      });
-      const pdfDocument = await loadingTask.promise;
-      
-      // Validate page number
-      const numPages = pdfDocument.numPages;
-      if (pageNumber < 1 || pageNumber > numPages) {
-        throw new Error(`Invalid page number. PDF has ${numPages} pages.`);
-      }
-      
-      // Get the page
-      const page = await pdfDocument.getPage(pageNumber);
-      
-      // Set up the canvas with proper dimensions
-      const viewport = page.getViewport({ scale });
-      const canvas = createCanvas(viewport.width, viewport.height);
-      const context = canvas.getContext('2d');
-      
-      // Set white background
-      context.fillStyle = 'white';
-      context.fillRect(0, 0, viewport.width, viewport.height);
-      
-      // Render the page
-      await page.render({
-        canvasContext: context,
-        viewport: viewport
-      }).promise;
-      
-      // Cleanup
-      await pdfDocument.destroy();
-      
-      // Return as PNG buffer
-      return {
-        buffer: canvas.toBuffer('image/png'),
-        renderer: "native-canvas",
-      };
-    });
-  } catch (error) {
-    if (shouldUseSystemPdfRenderer() && isCanvasDependencyError(error)) {
-      nativeCanvasUnavailable = true;
-      console.error("[PDF Tools] Falling back to macOS system PDF renderer:", formatErrorChain(error));
-      return await renderPdfPageWithSystemRenderer(pdfBuffer, pageNumber, scale, password);
-    }
-    console.error('Error converting PDF to image:', error);
-    throw error;
-  }
-}
-
-async function convertPdfRegionToImage(pdfBuffer, {
-  pageNumber = 1,
-  scale = 1.0,
-  x,
-  y,
-  width,
-  height,
-  password = null,
-}) {
-  if (shouldForceSystemPdfRenderer() && !shouldUseSystemPdfRenderer()) {
-    throw new Error("System PDF renderer was forced but is only available on macOS.");
-  }
-  if (shouldUseSystemPdfRenderer() && (shouldForceSystemPdfRenderer() || nativeCanvasUnavailable)) {
-    return await renderPdfRegionWithSystemRenderer(pdfBuffer, {
-      pageNumber,
-      scale,
-      x,
-      y,
-      width,
-      height,
-      password,
-    });
-  }
-
-  try {
-    return await withSuppressedStderr(async () => {
-      await loadImageDependencies();
-      const loadingTask = pdfjsLib.getDocument({
-        data: new Uint8Array(pdfBuffer),
-        password: password || undefined,
-        ...pdfJsNodeRenderingOptions(),
-        useSystemFonts: true,
-        disableFontFace: true,
-        disableAutoFetch: true,
-        useWorkerFetch: false,
-        isEvalSupported: false,
-        verbosity: 0
-      });
-      const pdfDocument = await loadingTask.promise;
-      const numPages = pdfDocument.numPages;
-      if (pageNumber < 1 || pageNumber > numPages) {
-        throw new Error(`Invalid page number. PDF has ${numPages} pages.`);
-      }
-
-      const page = await pdfDocument.getPage(pageNumber);
-      // render_pdf_region uses the toolkit's native top-left PDF coordinate
-      // system, which matches signing / zone-detection math before any page
-      // rotation is applied. Force rotation=0 so cropping stays aligned.
-      const viewport = page.getViewport({ scale, rotation: 0 });
-      const fullCanvas = createCanvas(viewport.width, viewport.height);
-      const fullContext = fullCanvas.getContext("2d");
-      fullContext.fillStyle = "white";
-      fullContext.fillRect(0, 0, viewport.width, viewport.height);
-      await page.render({
-        canvasContext: fullContext,
-        viewport,
-      }).promise;
-
-      const crop = getRegionPixelRect({ x, y, width, height, scale });
-      const cropCanvas = createCanvas(crop.width, crop.height);
-      const cropContext = cropCanvas.getContext("2d");
-      cropContext.fillStyle = "white";
-      cropContext.fillRect(0, 0, crop.width, crop.height);
-      cropContext.drawImage(
-        fullCanvas,
-        crop.left, crop.top, crop.width, crop.height,
-        0, 0, crop.width, crop.height
-      );
-
-      await pdfDocument.destroy();
-      return {
-        buffer: cropCanvas.toBuffer("image/png"),
-        renderer: "native-canvas",
-      };
-    });
-  } catch (error) {
-    if (shouldUseSystemPdfRenderer() && isCanvasDependencyError(error)) {
-      nativeCanvasUnavailable = true;
-      console.error("[PDF Tools] Falling back to macOS system PDF renderer:", formatErrorChain(error));
-      return await renderPdfRegionWithSystemRenderer(pdfBuffer, {
-        pageNumber,
-        scale,
-        x,
-        y,
-        width,
-        height,
-        password,
-      });
-    }
-    console.error("Error converting PDF region to image:", error);
-    throw error;
-  }
-}
-
-// Extract text from all pages of a PDF using pdfjs-dist
-async function extractPdfText(pdfBuffer, maxPages) {
-  await loadPdfjs();
-  const doc = await pdfjsLib.getDocument({
-    data: new Uint8Array(pdfBuffer),
-    useSystemFonts: true,
-    disableFontFace: true,
-    verbosity: 0
-  }).promise;
-
-  const totalPages = doc.numPages;
-  const pagesToRead = maxPages ? Math.min(maxPages, totalPages) : totalPages;
-  const pages = [];
-  for (let i = 1; i <= pagesToRead; i++) {
-    const page = await doc.getPage(i);
-    const content = await page.getTextContent();
-    const text = content.items.map(item => item.str).join("");
-    pages.push({ page: i, text });
-  }
-  await doc.destroy();
-  return {
-    text: pages.map(page => page.text).join("\n\n"),
-    pages,
-    pagesRead: pagesToRead,
-    totalPages,
-  };
 }
 
 // Helper: load a PDF from disk with password support and clear error messages
@@ -1082,46 +542,6 @@ async function loadPdf(inputPath, password = null) {
   };
 }
 
-async function loadPdfForZoneDetection(inputPath, password = null) {
-  const input = await readPdfInputWithRecovery(inputPath);
-  let pdfDoc;
-  try {
-    pdfDoc = await PDFDocument.load(input.pdfBytes, { updateMetadata: false });
-  } catch (error) {
-    if (!isPdfLibEncryptedError(error)) {
-      throw new Error(
-        "Failed to load PDF: the file is malformed, incomplete, or unsupported.",
-        { cause: error },
-      );
-    }
-    // pdf-lib cannot authenticate encrypted content. PDF.js is the authority
-    // for password validation and text. pdf-lib is used only for exact native
-    // MediaBox geometry, with encrypted AcroForm objects deliberately skipped.
-    try {
-      pdfDoc = await PDFDocument.load(input.pdfBytes, {
-        ignoreEncryption: true,
-        updateMetadata: false,
-      });
-      validateLoadedPdfStructure(pdfDoc, input.pdfBytes);
-      return {
-        ...input,
-        pdfDoc,
-        encryptedAcroFormScanUnavailable: true,
-      };
-    } catch (error) {
-      throw new Error(
-        "Encrypted PDF zone detection could not establish native page geometry, so no actionable coordinates were returned.",
-        { cause: error },
-      );
-    }
-  }
-  return {
-    ...input,
-    pdfDoc: validateLoadedPdfStructure(pdfDoc, input.pdfBytes),
-    encryptedAcroFormScanUnavailable: false,
-  };
-}
-
 async function readCurrentPdfMutationBytes(inputPath) {
   const { bytes } = await readBoundedPdfFile(
     inputPath,
@@ -1133,7 +553,6 @@ async function readCurrentPdfMutationBytes(inputPath) {
 
 // Import helpers extracted for testability
 import {
-  isPdfLibEncryptedError,
   parsePageRanges,
   downloadPdfFromUrl,
   findUniquePath,
@@ -1143,22 +562,13 @@ import {
   stampSignatureOnPage,
   stampTextOnPage,
   drawSignatureFieldOnPage,
-  getPageBoxGeometry,
   formatSigningAuditLine,
   detectExistingSignatures,
   detectXfaForm,
   assertXfaMutationAllowed,
-  detectSignatureZones,
   computeIoU,
-  extractPdfTextWithBounds,
-  preparePdfTextResponse,
-  buildPageTextSegments,
-  getPageRenderScale,
   getRegionPixelRect,
-  searchPageTexts,
-  validatePdfRegionBox,
   parseAllowedDirectoryArgs,
-  analyzePdfPages,
   validatePdfFormFields,
   failedPdfFormValidation,
   copyPdfPagesPreservingForms,
@@ -1859,6 +1269,53 @@ function buildAllowedDirectories() {
 }
 
 const ALLOWED_DIRECTORIES = buildAllowedDirectories();
+const PDFJS_TOOL_NAMES = new Set([
+  "convert_pdf_to_markdown",
+  "detect_signature_zones",
+  "get_page_analysis",
+  "read_pdf_content",
+  "read_pdf_layout",
+  "read_pdf_pages",
+  "render_pdf_page",
+  "render_pdf_region",
+  "search_pdf_text",
+]);
+
+async function bindPdfjsSubprocessSource(resolvedPath) {
+  const source = await hashBoundedPdfFileSafely(
+    resolvedPath,
+    PDF_MUTATION_MAX_FILE_BYTES,
+    {
+      assertPathAllowed,
+      createSizeLimitError: pdfMutationFileLimitError,
+    },
+  );
+  return {
+    canonical_path: source.canonicalPath,
+    file_identity: source.fileIdentity,
+    sha256: source.sha256,
+    size_bytes: source.sizeBytes,
+  };
+}
+
+async function runPdfjsOperation(resolvedPath, {
+  operation,
+  options,
+  password = null,
+  timeoutMs = 30_000,
+}) {
+  const source = await bindPdfjsSubprocessSource(resolvedPath);
+  const result = await runPdfjsSubprocess(createPdfjsSubprocessRequest({
+    operation,
+    source,
+    options,
+    password,
+    allowedDirectories: ALLOWED_DIRECTORIES.map(directory => directory.canonical),
+  }), { timeoutMs });
+  return { result, source };
+}
+
+process.once("exit", terminateAllPdfjsSubprocesses);
 
 const backupPathByCanonical = new Map();
 const backupOperationByCanonical = new Map();
@@ -4572,36 +4029,25 @@ async function handleToolCall(request) {
       }
 
       case "read_pdf_content": {
-        const { pdf_path, max_pages } = args;
+        const { pdf_path, max_pages = null } = args;
         const resolvedPath = resolvePath(pdf_path);
         const MAX_CHARS = 50000;
-        const PREVIEW_MAX_CHARS = 12000;
 
         try {
-          // Verify the file exists
-          await fs.access(resolvedPath);
-
-          // Get file info
-          const stats = await fs.stat(resolvedPath);
-          const fileName = path.basename(resolvedPath);
-          const fileSizeKB = (stats.size / 1024).toFixed(2);
-
-          // Read the PDF buffer
-          const pdfBuffer = await fs.readFile(resolvedPath);
-
-          // Extract text content using pdfjs-dist
-          const result = await withSuppressedStderr(() => extractPdfText(pdfBuffer, max_pages));
-          const textResponse = preparePdfTextResponse(result.text, { maxChars: MAX_CHARS });
-          const textFound = textResponse.textFound;
-          const extractedText = textResponse.outputText;
-          const pageCount = result.totalPages;
-          const pagesRead = result.pagesRead;
-          const pagePreview = buildPageTextSegments(result.pages, {
-            startPage: 1,
-            endPage: pagesRead,
-            maxCharsPerPage: 2000,
-            maxTotalChars: PREVIEW_MAX_CHARS,
+          const { result, source } = await runPdfjsOperation(resolvedPath, {
+            operation: "read_content",
+            options: {
+              max_pages: max_pages === undefined || max_pages === null
+                ? null
+                : Number(max_pages),
+            },
           });
+          const fileName = path.basename(resolvedPath);
+          const fileSizeKB = (source.size_bytes / 1024).toFixed(2);
+          const textFound = result.text_found;
+          const extractedText = result.output_text;
+          const pageCount = result.total_pages;
+          const pagesRead = result.pages_read;
 
           // Prepare the response
           let response = `PDF Content Extracted Successfully!\n\n`;
@@ -4612,10 +4058,10 @@ async function handleToolCall(request) {
             response += ` (extracted ${pagesRead} of ${pageCount})`;
           }
           response += `\n`;
-          response += `Text Length: ${textResponse.sourceLength} characters\n`;
+          response += `Text Length: ${result.source_length} characters\n`;
 
           // Truncate if too large for context window
-          const truncated = textResponse.truncated;
+          const truncated = result.text_truncated;
           if (truncated) {
             response += `\n⚠️ Output truncated to ${MAX_CHARS} characters. Use max_pages to limit extraction scope.\n`;
           }
@@ -4645,8 +4091,15 @@ async function handleToolCall(request) {
               const scaleFactor = Math.min(1.5, Math.sqrt(targetSizeKB / parseFloat(fileSizeKB)));
               
               // Convert first page to image
-              const renderedImage = await convertPdfPageToImage(pdfBuffer, 1, scaleFactor);
-              const imageBuffer = renderedImage.buffer;
+              const { result: renderedImage } = await runPdfjsOperation(resolvedPath, {
+                operation: "render_page",
+                options: {
+                  page: 1,
+                  max_dimension_px: null,
+                  scale_override: scaleFactor,
+                },
+              });
+              const imageBuffer = renderedImage.binary;
               const imageSizeKB = (imageBuffer.length / 1024).toFixed(2);
               
               response += `\nPage 1 extracted as image (${imageSizeKB} KB, scale: ${scaleFactor.toFixed(2)})\n`;
@@ -4671,8 +4124,8 @@ async function handleToolCall(request) {
                   text_found: textFound,
                   content_available: true,
                   extraction_status: "partial",
-                  page_previews: pagePreview.pages,
-                  preview_truncated: pagePreview.truncated,
+                  page_previews: result.page_previews,
+                  preview_truncated: result.preview_truncated,
                   extraction_mode: "image-fallback",
                   image_renderer: renderedImage.renderer,
                   error_codes: [],
@@ -4681,6 +4134,7 @@ async function handleToolCall(request) {
                 },
               };
             } catch (imageError) {
+              if (imageError?.code === PDF_RESOURCE_LIMIT_CODE) throw imageError;
               console.error("[read_pdf_content] Image fallback failed:", imageError.message);
               response = `Error: PDF content extraction failed: no text was found and the page-image fallback was unavailable.\n`;
               response += `Do not assume this PDF is empty or complete. Check PDF access/password, retry, and use render_pdf_page to diagnose page 1 before relying on the document contents.\n`;
@@ -4695,13 +4149,13 @@ async function handleToolCall(request) {
                   file_name: fileName,
                   total_pages: pageCount,
                   pages_read: pagesRead,
-                  text_length: result.text.length,
+                  text_length: result.source_length,
                   text_truncated: false,
                   text_found: textFound,
                   content_available: false,
                   extraction_status: "failed",
-                  page_previews: pagePreview.pages,
-                  preview_truncated: pagePreview.truncated,
+                  page_previews: result.page_previews,
+                  preview_truncated: result.preview_truncated,
                   extraction_mode: "none",
                   error_codes: ["NO_EXTRACTABLE_TEXT", "IMAGE_FALLBACK_FAILED"],
                   retry_guidance:
@@ -4723,13 +4177,13 @@ async function handleToolCall(request) {
               file_name: fileName,
               total_pages: pageCount,
               pages_read: pagesRead,
-              text_length: textResponse.sourceLength,
+              text_length: result.source_length,
               text_truncated: truncated,
               text_found: textFound,
               content_available: textFound,
               extraction_status: extractionPartial ? "partial" : "complete",
-              page_previews: pagePreview.pages,
-              preview_truncated: pagePreview.truncated,
+              page_previews: result.page_previews,
+              preview_truncated: result.preview_truncated,
               extraction_mode: "text",
               error_codes: [],
               retry_guidance: extractionPartial
@@ -4738,6 +4192,7 @@ async function handleToolCall(request) {
             },
           };
         } catch (error) {
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
           return {
             isError: true,
             content: [{
@@ -4758,46 +4213,35 @@ async function handleToolCall(request) {
         const resolvedPath = resolvePath(pdf_path);
 
         try {
-          await fs.access(resolvedPath);
-
-          const stats = await fs.stat(resolvedPath);
-          const fileName = path.basename(resolvedPath);
-          const fileSizeKB = (stats.size / 1024).toFixed(2);
-          const pdfBuffer = await fs.readFile(resolvedPath);
           const requestedStart = Math.max(1, Number(start_page) || 1);
           const requestedEnd = Math.max(requestedStart, Number(end_page) || requestedStart);
-
-          const result = await withSuppressedStderr(() => extractPdfText(pdfBuffer, requestedEnd));
-          if (requestedStart > result.totalPages) {
-            throw new Error(`start_page ${requestedStart} is out of range (1-${result.totalPages}).`);
-          }
-          if (requestedEnd > result.totalPages) {
-            throw new Error(`end_page ${requestedEnd} is out of range (1-${result.totalPages}).`);
-          }
-
-          const segments = buildPageTextSegments(result.pages, {
-            startPage: requestedStart,
-            endPage: requestedEnd,
-            maxCharsPerPage: Number(max_chars_per_page) || 4000,
-            maxTotalChars: 16000,
+          const { result, source } = await runPdfjsOperation(resolvedPath, {
+            operation: "read_pages",
+            options: {
+              start_page: requestedStart,
+              end_page: requestedEnd,
+              max_chars_per_page: Number(max_chars_per_page) || 4000,
+            },
           });
+          const fileName = path.basename(resolvedPath);
+          const fileSizeKB = (source.size_bytes / 1024).toFixed(2);
 
           let response =
             `Read pages ${requestedStart}-${requestedEnd} from ${fileName}\n` +
             `Size: ${fileSizeKB} KB\n` +
-            `Document pages: ${result.totalPages}\n` +
-            `Returned pages: ${segments.pages.length}\n`;
+            `Document pages: ${result.total_pages}\n` +
+            `Returned pages: ${result.pages.length}\n`;
 
-          if (segments.truncated) {
+          if (result.truncated) {
             response += `\nSome page text was truncated to keep the result bounded. Use a narrower page range if you need more detail.\n`;
           }
 
-          const nonEmptyPages = segments.pages.filter(page => page.text.trim().length > 0);
+          const nonEmptyPages = result.pages.filter(page => page.text.trim().length > 0);
           if (nonEmptyPages.length === 0) {
             response += `\nNo extractable text was found on the requested pages. The document may be scanned or image-only.`;
           } else {
             response += `\n`;
-            for (const page of segments.pages) {
+            for (const page of result.pages) {
               response += `\n${"=".repeat(20)} PAGE ${page.page} ${"=".repeat(20)}\n`;
               response += page.text || "[No extractable text]";
               if (page.truncated) {
@@ -4815,15 +4259,16 @@ async function handleToolCall(request) {
             structuredContent: {
               pdf_path: resolvedPath,
               file_name: fileName,
-              total_pages: result.totalPages,
+              total_pages: result.total_pages,
               start_page: requestedStart,
               end_page: requestedEnd,
-              pages: segments.pages,
+              pages: result.pages,
               text_found: nonEmptyPages.length > 0,
-              truncated: segments.truncated,
+              truncated: result.truncated,
             },
           };
         } catch (error) {
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
           return {
             isError: true,
             content: [{
@@ -4845,23 +4290,21 @@ async function handleToolCall(request) {
           const maxItems = boundedInteger(args.max_items, 1000, { name: "max_items", minimum: 1, maximum: 5000 });
           const maxCharacters = boundedInteger(args.max_characters, 50000, { name: "max_characters", minimum: 1, maximum: 100000 });
           const maxOutputCharacters = boundedInteger(args.max_output_characters, 50000, { name: "max_output_characters", minimum: 20000, maximum: 200000 });
-          const { bytes: pdfBytes, sizeBytes } = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
-          await loadPdfjs();
           const fileName = path.basename(resolvedPath);
-          const payload = await withSuppressedStderr(() => extractPdfLayout({
-            pdfjsLib,
-            pdfBytes,
-            sourcePath: resolvedPath,
-            sourceFileName: fileName,
-            sourceSha256: createHash("sha256").update(pdfBytes).digest("hex"),
-            sourceSizeBytes: sizeBytes,
+          const { result } = await runPdfjsOperation(resolvedPath, {
+            operation: "extract_layout",
             password,
-            requestedStartPage: startPage,
-            requestedEndPage: endPage,
-            maxItems,
-            maxCharacters,
-            maxOutputCharacters,
-          }));
+            options: {
+              source_path: resolvedPath,
+              source_file_name: fileName,
+              start_page: startPage,
+              end_page: endPage,
+              max_items: maxItems,
+              max_characters: maxCharacters,
+              max_output_characters: maxOutputCharacters,
+            },
+          });
+          const payload = result.layout;
           const summary = [
             `Extracted PDF layout IR ${payload.ir.version} from pages ${payload.page_range.start_page}-${payload.page_range.end_page} of ${fileName}.`,
             `Status: ${payload.extraction_status}. Parser: ${payload.parser.name} ${payload.parser.version}.`,
@@ -4880,6 +4323,7 @@ async function handleToolCall(request) {
             structuredContent: payload,
           };
         } catch (error) {
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
           const passwordCode = ["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"].includes(error?.code)
             ? error.code
             : null;
@@ -4955,29 +4399,25 @@ async function handleToolCall(request) {
             ? await bindOutputPathForTransaction(outputPath)
             : null;
 
-          const {
-            bytes: pdfBytes,
-            sizeBytes,
-            canonicalPath: sourceCanonicalPath,
-            fileIdentity: sourceFileIdentity,
-          } = await readBoundedPdfFile(resolvedPath, 250 * 1024 * 1024);
-          const sourceSha256 = createHash("sha256").update(pdfBytes).digest("hex");
-          await loadPdfjs();
           const fileName = path.basename(resolvedPath);
-          const layout = await withSuppressedStderr(() => extractPdfLayoutForMarkdown({
-            pdfjsLib,
-            pdfBytes,
-            sourcePath: resolvedPath,
-            sourceFileName: fileName,
-            sourceSha256,
-            sourceSizeBytes: sizeBytes,
+          const { result, source } = await runPdfjsOperation(resolvedPath, {
+            operation: "extract_layout_for_markdown",
             password,
-            requestedStartPage: startPage,
-            requestedEndPage: endPage,
-            maxItems,
-            maxCharacters,
-            maxOutputCharacters: 200000,
-          }));
+            options: {
+              source_path: resolvedPath,
+              source_file_name: fileName,
+              start_page: startPage,
+              end_page: endPage,
+              max_items: maxItems,
+              max_characters: maxCharacters,
+              max_output_characters: 200000,
+            },
+          });
+          const layout = result.layout;
+          const sourceCanonicalPath = source.canonical_path;
+          const sourceFileIdentity = source.file_identity;
+          const sourceSha256 = source.sha256;
+          const sizeBytes = source.size_bytes;
           const rendered = renderPdfLayoutToMarkdown(layout, {
             includePageBoundaries,
             maxMarkdownBytes,
@@ -5015,6 +4455,7 @@ async function handleToolCall(request) {
             structuredContent: payload,
           };
         } catch (error) {
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
           if (["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"].includes(error?.code)) {
             return {
               isError: true,
@@ -5039,24 +4480,21 @@ async function handleToolCall(request) {
         const resolvedPath = resolvePath(pdf_path);
 
         try {
-          await fs.access(resolvedPath);
-
-          const { pdfDoc, pdfBytes } = await loadPdf(resolvedPath, password);
-          const totalPages = pdfDoc.getPageCount();
           const targetPage = Math.max(1, Number(page) || 1);
-          if (targetPage > totalPages) {
-            throw new Error(`Page ${targetPage} is out of range (1-${totalPages}).`);
-          }
-
-          const targetPdfPage = pdfDoc.getPages()[targetPage - 1];
-          const { width, height } = targetPdfPage.getSize();
-          const scale = getPageRenderScale({
-            width,
-            height,
-            maxDimensionPx: Number(max_dimension_px) || 1800,
+          const { result: renderedImage } = await runPdfjsOperation(resolvedPath, {
+            operation: "render_page",
+            password,
+            options: {
+              page: targetPage,
+              max_dimension_px: Number(max_dimension_px) || 1800,
+              scale_override: null,
+            },
           });
-          const renderedImage = await convertPdfPageToImage(pdfBytes, targetPage, scale, password);
-          const imageBuffer = renderedImage.buffer;
+          const imageBuffer = renderedImage.binary;
+          const width = renderedImage.width_points;
+          const height = renderedImage.height_points;
+          const scale = renderedImage.scale;
+          const totalPages = renderedImage.total_pages;
           const renderedWidth = Math.round(width * scale);
           const renderedHeight = Math.round(height * scale);
           const fileName = path.basename(resolvedPath);
@@ -5090,6 +4528,7 @@ async function handleToolCall(request) {
             },
           };
         } catch (error) {
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
           return {
             isError: true,
             content: [{
@@ -5114,47 +4553,29 @@ async function handleToolCall(request) {
         const resolvedPath = resolvePath(pdf_path);
 
         try {
-          await fs.access(resolvedPath);
-
-          const { pdfDoc, pdfBytes } = await loadPdf(resolvedPath, password);
-          const totalPages = pdfDoc.getPageCount();
           const targetPage = Math.max(1, Number(page) || 1);
-          if (targetPage > totalPages) {
-            throw new Error(`Page ${targetPage} is out of range (1-${totalPages}).`);
-          }
-
-          const targetPdfPage = pdfDoc.getPages()[targetPage - 1];
-          const { width: pageWidth, height: pageHeight } = targetPdfPage.getSize();
           const region = {
             x: Number(x),
             y: Number(y),
             width: Number(width),
             height: Number(height),
           };
-          validatePdfRegionBox({
-            pageWidth,
-            pageHeight,
-            ...region,
+          const { result: renderedImage } = await runPdfjsOperation(resolvedPath, {
+            operation: "render_region",
+            password,
+            options: {
+              page: targetPage,
+              max_dimension_px: Number(max_dimension_px) || 1400,
+              ...region,
+            },
           });
-
-          const scale = getPageRenderScale({
-            width: region.width,
-            height: region.height,
-            maxDimensionPx: Number(max_dimension_px) || 1400,
-            minScale: 0.1,
-            maxScale: 4,
-          });
+          const scale = renderedImage.scale;
           const crop = getRegionPixelRect({
             ...region,
             scale,
           });
-          const renderedImage = await convertPdfRegionToImage(pdfBytes, {
-            pageNumber: targetPage,
-            scale,
-            ...region,
-            password,
-          });
-          const imageBuffer = renderedImage.buffer;
+          const imageBuffer = renderedImage.binary;
+          const totalPages = renderedImage.total_pages;
           const fileName = path.basename(resolvedPath);
 
           return {
@@ -5185,6 +4606,7 @@ async function handleToolCall(request) {
             },
           };
         } catch (error) {
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
           return {
             isError: true,
             content: [{
@@ -5205,33 +4627,31 @@ async function handleToolCall(request) {
         const resolvedPath = resolvePath(pdf_path);
 
         try {
-          await fs.access(resolvedPath);
-
-          const stats = await fs.stat(resolvedPath);
-          const fileName = path.basename(resolvedPath);
-          const fileSizeKB = (stats.size / 1024).toFixed(2);
-          const pdfBuffer = await fs.readFile(resolvedPath);
-
-          const result = await withSuppressedStderr(() => extractPdfText(pdfBuffer));
-          const matches = searchPageTexts(result.pages, query, {
-            maxResults: Number(max_results) || 10,
-            contextChars: Number(context_chars) || 160,
+          const { result, source } = await runPdfjsOperation(resolvedPath, {
+            operation: "search_text",
+            options: {
+              query: String(query ?? ""),
+              max_results: Number(max_results) || 10,
+              context_chars: Number(context_chars) || 160,
+            },
           });
+          const fileName = path.basename(resolvedPath);
+          const fileSizeKB = (source.size_bytes / 1024).toFixed(2);
 
           let response =
-            `Search results for "${matches.query}" in ${fileName}\n` +
+            `Search results for "${result.query}" in ${fileName}\n` +
             `Size: ${fileSizeKB} KB\n` +
-            `Document pages: ${result.totalPages}\n` +
-            `Matches returned: ${matches.matchCount}\n`;
+            `Document pages: ${result.total_pages}\n` +
+            `Matches returned: ${result.match_count}\n`;
 
-          if (matches.matchCount === 0) {
+          if (result.match_count === 0) {
             response += `\nNo matches found.`;
           } else {
-            if (matches.truncated) {
-              response += `\nShowing the first ${matches.matchCount} matches. Narrow the query or increase max_results for more.\n`;
+            if (result.truncated) {
+              response += `\nShowing the first ${result.match_count} matches. Narrow the query or increase max_results for more.\n`;
             }
             response += `\n`;
-            for (const match of matches.matches) {
+            for (const match of result.matches) {
               response += `\n- Page ${match.page}: ${match.snippet}\n`;
             }
           }
@@ -5244,14 +4664,15 @@ async function handleToolCall(request) {
             structuredContent: {
               pdf_path: resolvedPath,
               file_name: fileName,
-              total_pages: result.totalPages,
-              query: matches.query,
-              match_count: matches.matchCount,
-              truncated: matches.truncated,
-              matches: matches.matches,
+              total_pages: result.total_pages,
+              query: result.query,
+              match_count: result.match_count,
+              truncated: result.truncated,
+              matches: result.matches,
             },
           };
         } catch (error) {
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
           return {
             isError: true,
             content: [{
@@ -6017,30 +5438,15 @@ async function handleToolCall(request) {
 
       case "get_page_analysis": {
         const { pdf_path, password } = args;
-        // Use pdf-lib for fast dimension extraction, keep pdfBytes for pdfjs-dist reuse
-        const { pdfDoc, pdfBytes } = await loadPdf(pdf_path, password);
-        const pdfLibPages = pdfDoc.getPages();
-        const totalPages = pdfLibPages.length;
-
-        let analysisPdfjs = null;
-        let unavailableCode = "PDFJS_UNAVAILABLE";
-        try {
-          await loadPdfjs();
-          analysisPdfjs = pdfjsLib;
-        } catch (textErr) {
-          unavailableCode = "PDFJS_LOAD_FAILED";
-          console.error("[get_page_analysis] Text extraction failed:", textErr.message);
-        }
-
-        const analysis = await analyzePdfPages({
-          pdfLibPages,
-          pdfBytes,
-          pdfjsLib: analysisPdfjs,
+        const resolvedPath = resolvePath(pdf_path);
+        const { result } = await runPdfjsOperation(resolvedPath, {
+          operation: "analyze_pages",
           password,
-          maxPages: 200,
-          unavailableCode,
+          options: { max_pages: 200 },
         });
+        const analysis = result.analysis;
         const pageMeta = analysis.pages;
+        const totalPages = analysis.total_pages;
 
         // Compute majority orientation for detecting sideways pages
         const orientationCounts = { portrait: 0, landscape: 0 };
@@ -6587,43 +5993,31 @@ async function handleToolCall(request) {
 
       case "detect_signature_zones": {
         const { pdf_path, password } = args;
-        const {
-          pdfDoc,
-          pdfBytes,
-          encryptedAcroFormScanUnavailable,
-        } = await loadPdfForZoneDetection(pdf_path, password);
-        await loadPdfjs();
+        const resolvedPath = resolvePath(pdf_path);
         const warningMessages = {
           ACROFORM_WIDGET_PAGE_UNRESOLVED: "Skipped an AcroForm signing widget because its page could not be resolved. No page location was guessed.",
           ENCRYPTED_ACROFORM_SCAN_UNAVAILABLE: "Encrypted PDF zone detection used the authenticated text layer. AcroForm widgets were not scanned.",
           TEXT_EXTRACTION_UNAVAILABLE: "Text labels could not be scanned. No text-derived zones were returned.",
         };
         const warningCounts = new Map();
-        const recordWarning = code => {
-          if (!Object.hasOwn(warningMessages, code)) return;
-          warningCounts.set(code, Math.min((warningCounts.get(code) || 0) + 1, 1000000));
+        const recordWarningOccurrences = (code, occurrences) => {
+          if (!Object.hasOwn(warningMessages, code) || !Number.isSafeInteger(occurrences)) return;
+          warningCounts.set(
+            code,
+            Math.min((warningCounts.get(code) || 0) + Math.max(0, occurrences), 1000000),
+          );
         };
-        if (encryptedAcroFormScanUnavailable) {
-          recordWarning("ENCRYPTED_ACROFORM_SCAN_UNAVAILABLE");
-        }
-        let zones;
+        let workerResult;
         try {
-          zones = await detectSignatureZones({
-            pdfDoc,
-            pdfBytes,
-            pdfjsLib,
+          ({ result: workerResult } = await runPdfjsOperation(resolvedPath, {
+            operation: "detect_signature_zones",
             password,
-            onWarning: warning => recordWarning(warning?.code),
-            scanAcroForm: !encryptedAcroFormScanUnavailable,
-          });
+            options: {},
+          }));
         } catch (error) {
-          const passwordResponses = pdfjsLib?.PasswordResponses;
-          const passwordCode = error?.name === "PasswordException" && passwordResponses
-            ? error.code === passwordResponses.NEED_PASSWORD
-              ? "PASSWORD_REQUIRED"
-              : error.code === passwordResponses.INCORRECT_PASSWORD
-                ? "PASSWORD_INCORRECT"
-                : null
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
+          const passwordCode = ["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"].includes(error?.code)
+            ? error.code
             : null;
           if (passwordCode) {
             const message = passwordCode === "PASSWORD_REQUIRED"
@@ -6639,6 +6033,10 @@ async function handleToolCall(request) {
             };
           }
           throw error;
+        }
+        const zones = workerResult.zones;
+        for (const warning of workerResult.warning_counts) {
+          recordWarningOccurrences(warning.code, warning.occurrences);
         }
         const warnings = [...warningCounts.entries()]
           .map(([code, occurrences]) => ({
@@ -6675,16 +6073,7 @@ async function handleToolCall(request) {
         // it cannot derive the MediaBox itself. Without this, an overlay drawn
         // on a page whose CropBox differs from its MediaBox is displaced by the
         // difference between the two boxes.
-        const pageGeometry = pdfDoc.getPages().map((page, index) => {
-          const box = getPageBoxGeometry(page);
-          return {
-            page: index + 1,
-            origin_x: box.originX,
-            origin_y: box.originY,
-            width: box.width,
-            height: box.height,
-          };
-        });
+        const pageGeometry = workerResult.page_geometry;
 
         return {
           content: [{ type: "text", text: resultSummary + warningSummary }],
@@ -6807,6 +6196,12 @@ async function handleToolCall(request) {
     let errorCode = error?.code === "path_policy_denied"
       ? "path_policy_denied"
       : "tool_execution_failed";
+    if (
+      error?.code === PDF_RESOURCE_LIMIT_CODE
+      && PDFJS_TOOL_NAMES.has(name)
+    ) {
+      errorCode = PDF_RESOURCE_LIMIT_CODE;
+    }
     if (name === "get_pdf_identity") {
       if ([
         "PDF_CHANGED_DURING_READ",
