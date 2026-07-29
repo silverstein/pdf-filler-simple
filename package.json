@@ -46,7 +46,7 @@
     "url": "https://github.com/Open-Document-Alliance/PDF-Tools/issues"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@napi-rs/canvas": "^0.1.99",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "5.4.624"
