@@ -16,6 +16,10 @@ import {
 import { validateAggregateArguments } from "../scripts/run-all-test-suites.mjs";
 import { parseNodeTestArguments } from "../scripts/run-node-test-suites.mjs";
 import {
+  SOURCE_IDENTITY_TEST_FILES,
+  SOURCE_IDENTITY_TEST_SUITES,
+} from "../scripts/test-suite-classification.mjs";
+import {
   terminateWindowsTree,
   windowsTaskkillPath,
 } from "../scripts/test-process-control.mjs";
@@ -55,6 +59,32 @@ async function findNodeTestFiles(directory = path.join(repoRoot, "test")) {
 }
 
 describe("aggregate test-runner contract", () => {
+  it("classifies every source-identity suite in the Vitest partition", async () => {
+    const nativeFiles = new Set(NODE_TEST_FILES);
+    const discoveredVitestFiles = [];
+    const visit = async directory => {
+      for (const entry of await fs.readdir(directory, { withFileTypes: true })) {
+        const absolutePath = path.join(directory, entry.name);
+        if (entry.isDirectory()) {
+          await visit(absolutePath);
+          continue;
+        }
+        if (!entry.isFile() || !/\.test\.(?:[cm]?[jt]s)$/.test(entry.name)) continue;
+        const relativePath = path.relative(repoRoot, absolutePath).split(path.sep).join("/");
+        if (!nativeFiles.has(relativePath)) discoveredVitestFiles.push(relativePath);
+      }
+    };
+    await visit(path.join(repoRoot, "test"));
+
+    expect(Object.isFrozen(SOURCE_IDENTITY_TEST_SUITES)).toBe(true);
+    expect(Object.isFrozen(SOURCE_IDENTITY_TEST_FILES)).toBe(true);
+    expect(new Set(SOURCE_IDENTITY_TEST_FILES).size).toBe(SOURCE_IDENTITY_TEST_FILES.length);
+    expect(SOURCE_IDENTITY_TEST_SUITES.every(
+      suite => suite.reason.length > 0 && discoveredVitestFiles.includes(suite.file),
+    )).toBe(true);
+    expect(SOURCE_IDENTITY_TEST_FILES.every(file => !nativeFiles.has(file))).toBe(true);
+  });
+
   it("classifies every node:test suite exactly once", async () => {
     expect([...NODE_TEST_FILES].sort()).toEqual(await findNodeTestFiles());
     expect(new Set(NODE_TEST_FILES).size).toBe(NODE_TEST_FILES.length);
@@ -97,12 +127,36 @@ describe("aggregate test-runner contract", () => {
     );
   });
 
-  it("excludes only the classified native suites in addition to Vitest defaults", () => {
+  it("runs ordinary tests before an exclusive source-identity project", () => {
     const config = viteConfigFactory({ command: "build", mode: "test" });
     expect(config.test.exclude).toEqual([
       ...configDefaults.exclude,
       ...NODE_TEST_FILES,
     ]);
+    const projects = config.test.projects ?? [];
+    expect(projects.map(project => project.test?.name)).toEqual([
+      "ordinary",
+      "source-identity",
+    ]);
+    expect(projects.every(project => project.extends === true)).toBe(true);
+    expect(projects[0]?.test).toMatchObject({
+      pool: "forks",
+      isolate: true,
+      sequence: { groupOrder: 0 },
+    });
+    expect(projects[0]?.test?.exclude).toEqual([
+      ...configDefaults.exclude,
+      ...NODE_TEST_FILES,
+      ...SOURCE_IDENTITY_TEST_FILES,
+    ]);
+    expect(projects[1]?.test).toMatchObject({
+      include: SOURCE_IDENTITY_TEST_FILES,
+      pool: "forks",
+      isolate: true,
+      fileParallelism: false,
+      maxWorkers: 1,
+      sequence: { groupOrder: 1 },
+    });
   });
 
   it("exposes explicit aggregate and native runner scripts", async () => {
