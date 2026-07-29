@@ -27,16 +27,19 @@ import zlib from "node:zlib";
 /** Serialize numbered objects into a minimal, correctly cross-referenced PDF. */
 export function buildPdf(objects, rootObjectNumber, trailerExtra = "") {
   const chunks = ["%PDF-1.7\n"];
+  let serializedBytes = Buffer.byteLength(chunks[0], "latin1");
   const offsets = [0];
   const byNumber = new Map(objects);
   const maxNumber = Math.max(...byNumber.keys());
   for (let n = 1; n <= maxNumber; n += 1) {
     const body = byNumber.get(n);
     if (body === undefined) continue;
-    offsets[n] = Buffer.byteLength(chunks.join(""), "latin1");
-    chunks.push(`${n} 0 obj\n${body}\nendobj\n`);
+    const serialized = `${n} 0 obj\n${body}\nendobj\n`;
+    offsets[n] = serializedBytes;
+    chunks.push(serialized);
+    serializedBytes += Buffer.byteLength(serialized, "latin1");
   }
-  const xrefOffset = Buffer.byteLength(chunks.join(""), "latin1");
+  const xrefOffset = serializedBytes;
   const entries = ["0000000000 65535 f "];
   for (let n = 1; n <= maxNumber; n += 1) {
     entries.push(offsets[n] === undefined
@@ -51,14 +54,76 @@ export function buildPdf(objects, rootObjectNumber, trailerExtra = "") {
   return Buffer.from(chunks.join(""), "latin1");
 }
 
-/** A deterministic FlateDecode stream object that inflates to `expandedBytes`. */
-function flateStreamObject(expandedBytes, fillByte = 0x41) {
-  const raw = Buffer.alloc(expandedBytes, fillByte);
+/** A deterministic FlateDecode stream object that inflates to a repeated pattern. */
+function flatePatternStreamObject(expandedBytes, pattern) {
+  if (!Number.isSafeInteger(expandedBytes) || expandedBytes < 1) {
+    throw new Error("expandedBytes must be a positive safe integer");
+  }
+  const patternBytes = Buffer.isBuffer(pattern) ? pattern : Buffer.from(pattern, "latin1");
+  if (patternBytes.length < 1 || expandedBytes % patternBytes.length !== 0) {
+    throw new Error("expandedBytes must be an exact multiple of the non-empty pattern");
+  }
+  const raw = Buffer.allocUnsafe(expandedBytes);
+  for (let offset = 0; offset < raw.length; offset += patternBytes.length) {
+    patternBytes.copy(raw, offset);
+  }
   const deflated = zlib.deflateSync(raw, { level: 9 });
   return {
     body: `<< /Length ${deflated.length} /Filter /FlateDecode >>\nstream\n${deflated.toString("latin1")}\nendstream`,
     compressedLength: deflated.length,
     expandedLength: expandedBytes,
+  };
+}
+
+/** A deterministic FlateDecode stream object that inflates to `expandedBytes`. */
+function flateStreamObject(expandedBytes, fillByte = 0x41) {
+  return flatePatternStreamObject(expandedBytes, Buffer.from([fillByte]));
+}
+
+/**
+ * Build one targeted compressed content-stream fixture without materializing
+ * the rest of the campaign corpus. The hard ceiling protects the measuring
+ * process itself; product behavior beyond this range belongs behind an
+ * external supervisor, not in an ordinary test generator.
+ */
+export function makeCompressedContentFixture({
+  name,
+  expandedBytes,
+  pattern,
+  filterForm = "name",
+  note,
+} = {}) {
+  if (typeof name !== "string" || !/^[a-z0-9-]{1,80}$/.test(name)) {
+    throw new Error("Compressed fixture name must be a short kebab-case identifier");
+  }
+  if (!Number.isSafeInteger(expandedBytes) || expandedBytes < 1 || expandedBytes > 16 << 20) {
+    throw new Error("Targeted compressed fixtures are limited to 16 MiB expanded");
+  }
+  if (!["name", "array"].includes(filterForm)) {
+    throw new Error("filterForm must be name or array");
+  }
+  const patternBytes = Buffer.isBuffer(pattern) ? pattern : Buffer.from(pattern ?? "", "latin1");
+  if (patternBytes.length < 1 || patternBytes.length > 32) {
+    throw new Error("Compressed fixture pattern must contain 1 to 32 bytes");
+  }
+  const stream = flatePatternStreamObject(expandedBytes, patternBytes);
+  const filterDeclaration = filterForm === "name" ? "/FlateDecode" : "[/FlateDecode]";
+  const body = stream.body.replace("/Filter /FlateDecode", `/Filter ${filterDeclaration}`);
+  return {
+    name,
+    klass: "compressed",
+    note: typeof note === "string" && note ? note : "Targeted compressed content-stream fixture.",
+    filterForm,
+    pattern: patternBytes.toString("latin1"),
+    expansionRatio: stream.expandedLength / stream.compressedLength,
+    compressedLength: stream.compressedLength,
+    expandedLength: stream.expandedLength,
+    bytes: buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> /Contents 4 0 R >>"],
+      [4, body],
+    ], 1),
   };
 }
 
@@ -178,12 +243,121 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
 
   // --- compressed -----------------------------------------------------------
   {
+    // Causal attribution pair. The compressed payload, page graph, object
+    // numbers, and every other byte are identical after normalizing this one
+    // dictionary token. The prior campaign compared a name-form filter against
+    // a multi-filter array with different expanded sizes, so it could not
+    // identify whether declaration form itself caused the resource outlier.
+    const stream = flateStreamObject(1 << 20, 0x44);
+    const objects = filterDeclaration => [
+      [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> /Contents 4 0 R >>"],
+      [4, stream.body.replace("/Filter /FlateDecode", `/Filter ${filterDeclaration}`)],
+    ];
+    fixtures.push({
+      name: "compressed-single-filter-name",
+      klass: "compressed",
+      note: "Attribution control: one FlateDecode declared as a name.",
+      attributionPair: "single-filter-declaration-form",
+      filterForm: "name",
+      compressedLength: stream.compressedLength,
+      expandedLength: stream.expandedLength,
+      bytes: buildPdf(objects("/FlateDecode"), 1),
+    });
+    fixtures.push({
+      name: "compressed-single-filter-array",
+      klass: "compressed",
+      note: "Attribution treatment: the identical FlateDecode payload declared as a one-element array.",
+      attributionPair: "single-filter-declaration-form",
+      filterForm: "array",
+      compressedLength: stream.compressedLength,
+      expandedLength: stream.expandedLength,
+      bytes: buildPdf(objects("[/FlateDecode]"), 1),
+    });
+  }
+
+  {
     const stream = flateStreamObject(inflateBytes);
     fixtures.push({
       name: "compressed-inflate-bomb",
       klass: "compressed",
-      note: `${stream.compressedLength} compressed bytes inflate to ${stream.expandedLength}.`,
+      note: `${stream.compressedLength} compressed bytes inflate to ${stream.expandedLength} invalid operator bytes.`,
       expansionRatio: stream.expandedLength / stream.compressedLength,
+      compressedLength: stream.compressedLength,
+      expandedLength: stream.expandedLength,
+      expandedFillByte: 0x41,
+      bytes: buildPdf([
+        [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+        [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+        [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> /Contents 4 0 R >>"],
+        [4, stream.body],
+      ], 1),
+    });
+  }
+
+  {
+    // PDF.js recovers each contiguous "B" byte as the valid zero-argument
+    // fill-and-stroke operator while it rejects a contiguous "A" token after
+    // 128 bytes. Contiguous B bytes are not claimed to be a strictly
+    // conforming token sequence; the delimited arm below tests that separately.
+    // This arm uses one ordinary name-form FlateDecode, just like
+    // compressed-inflate-bomb above.
+    const stream = flateStreamObject(inflateBytes, 0x42);
+    fixtures.push({
+      name: "compressed-valid-operator-bomb",
+      klass: "compressed",
+      note: `${stream.compressedLength} compressed bytes inflate to ${stream.expandedLength} contiguous B bytes recovered by PDF.js as paint operators.`,
+      expansionRatio: stream.expandedLength / stream.compressedLength,
+      compressedLength: stream.compressedLength,
+      expandedLength: stream.expandedLength,
+      expandedFillByte: 0x42,
+      operatorPattern: "B",
+      operatorCount: stream.expandedLength,
+      bytes: buildPdf([
+        [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+        [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+        [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> /Contents 4 0 R >>"],
+        [4, stream.body],
+      ], 1),
+    });
+  }
+
+  {
+    const pattern = Buffer.from("B\n", "latin1");
+    const expandedLength = Math.floor(inflateBytes / pattern.length) * pattern.length;
+    const stream = flatePatternStreamObject(expandedLength, pattern);
+    fixtures.push({
+      name: "compressed-delimited-paint-operators",
+      klass: "compressed",
+      note: `${stream.compressedLength} compressed bytes inflate to ${stream.expandedLength} bytes containing ${stream.expandedLength / pattern.length} whitespace-delimited B operators.`,
+      expansionRatio: stream.expandedLength / stream.compressedLength,
+      compressedLength: stream.compressedLength,
+      expandedLength: stream.expandedLength,
+      operatorPattern: "B\\n",
+      operatorCount: stream.expandedLength / pattern.length,
+      bytes: buildPdf([
+        [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+        [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+        [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> /Contents 4 0 R >>"],
+        [4, stream.body],
+      ], 1),
+    });
+  }
+
+  {
+    const pattern = Buffer.from("BX\n", "latin1");
+    const expandedLength = Math.floor(inflateBytes / pattern.length) * pattern.length;
+    const stream = flatePatternStreamObject(expandedLength, pattern);
+    fixtures.push({
+      name: "compressed-discarded-compatibility-operators",
+      klass: "compressed",
+      note: `${stream.compressedLength} compressed bytes inflate to ${stream.expandedLength} bytes containing ${stream.expandedLength / pattern.length} recognized compatibility operators that PDF.js does not retain in the operator list.`,
+      expansionRatio: stream.expandedLength / stream.compressedLength,
+      compressedLength: stream.compressedLength,
+      expandedLength: stream.expandedLength,
+      operatorPattern: "BX\\n",
+      operatorCount: stream.expandedLength / pattern.length,
       bytes: buildPdf([
         [1, "<< /Type /Catalog /Pages 2 0 R >>"],
         [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],

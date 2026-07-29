@@ -29,6 +29,7 @@ import fs from "node:fs/promises";
 import fsSync from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import zlib from "node:zlib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -145,6 +146,76 @@ describe(`deep malformed campaign (${SCALE} scale)`, () => {
     // input-size limits alone cannot defend against them.
     for (const fixture of fixtures) {
       expect(fixture.bytes.length).toBeLessThan(250 * 1024 * 1024);
+    }
+  });
+
+  it("isolates single-filter declaration form as a causal attribution pair", () => {
+    const pair = fixtures
+      .filter(fixture => fixture.attributionPair === "single-filter-declaration-form")
+      .sort((left, right) => left.filterForm.localeCompare(right.filterForm));
+    expect(pair.map(fixture => fixture.filterForm)).toEqual(["array", "name"]);
+    expect(new Set(pair.map(fixture => fixture.compressedLength)).size).toBe(1);
+    expect(new Set(pair.map(fixture => fixture.expandedLength)).size).toBe(1);
+
+    const beforeXref = fixture => fixture.bytes
+      .toString("latin1")
+      .split("\nxref\n", 1)[0]
+      .replace("/Filter [/FlateDecode]", "/Filter /FlateDecode");
+    expect(beforeXref(pair[0])).toBe(beforeXref(pair[1]));
+  });
+
+  it("isolates expanded operator semantics from Flate decoder depth", () => {
+    const invalid = fixtures.find(fixture => fixture.name === "compressed-inflate-bomb");
+    const valid = fixtures.find(fixture => fixture.name === "compressed-valid-operator-bomb");
+    const delimited = fixtures.find(fixture => fixture.name === "compressed-delimited-paint-operators");
+    const discarded = fixtures.find(
+      fixture => fixture.name === "compressed-discarded-compatibility-operators",
+    );
+    expect(invalid).toBeTruthy();
+    expect(valid).toBeTruthy();
+    expect(delimited).toBeTruthy();
+    expect(discarded).toBeTruthy();
+    expect(invalid.compressedLength).toBe(valid.compressedLength);
+    expect(invalid.expandedLength).toBe(valid.expandedLength);
+    expect([invalid.expandedFillByte, valid.expandedFillByte]).toEqual([0x41, 0x42]);
+    expect([valid.operatorPattern, delimited.operatorPattern, discarded.operatorPattern])
+      .toEqual(["B", "B\\n", "BX\\n"]);
+
+    const parts = fixture => {
+      const startMarker = Buffer.from("stream\n", "latin1");
+      const endMarker = Buffer.from("\nendstream", "latin1");
+      const start = fixture.bytes.indexOf(startMarker) + startMarker.length;
+      const end = fixture.bytes.indexOf(endMarker, start);
+      expect(start).toBeGreaterThan(startMarker.length - 1);
+      expect(end).toBeGreaterThan(start);
+      return {
+        prefix: fixture.bytes.subarray(0, start),
+        payload: fixture.bytes.subarray(start, end),
+        suffix: fixture.bytes.subarray(end),
+      };
+    };
+    const invalidParts = parts(invalid);
+    const validParts = parts(valid);
+    expect(invalidParts.prefix).toEqual(validParts.prefix);
+    expect(invalidParts.suffix).toEqual(validParts.suffix);
+
+    const invalidExpanded = zlib.inflateSync(invalidParts.payload);
+    const validExpanded = zlib.inflateSync(validParts.payload);
+    expect(new Set(invalidExpanded)).toEqual(new Set([0x41]));
+    expect(new Set(validExpanded)).toEqual(new Set([0x42]));
+    expect(invalidExpanded.length).toBe(validExpanded.length);
+
+    for (const fixture of [delimited, discarded]) {
+      const expanded = zlib.inflateSync(parts(fixture).payload);
+      const pattern = Buffer.from(fixture.operatorPattern.replace("\\n", "\n"), "latin1");
+      expect(expanded.length).toBe(fixture.expandedLength);
+      expect(expanded.length % pattern.length).toBe(0);
+      const expected = Buffer.allocUnsafe(expanded.length);
+      for (let offset = 0; offset < expected.length; offset += pattern.length) {
+        pattern.copy(expected, offset);
+      }
+      expect(expanded.equals(expected)).toBe(true);
+      expect(fixture.operatorCount).toBe(expanded.length / pattern.length);
     }
   });
 
