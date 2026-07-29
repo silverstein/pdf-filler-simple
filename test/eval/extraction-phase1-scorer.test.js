@@ -228,6 +228,13 @@ describe("structured extraction Phase 1 pure scorer", () => {
     expect(exactEditDistance(hostile, "x")).toBe(999_999);
   }, 5_000);
 
+  it("rejects a repository-contained input generation without creating source scratch", async () => {
+    await expect(scoreExtractionCandidateReport({
+      executionGenerationPath: PHASE1_ROOT,
+      generationRoot: path.join(os.tmpdir(), "unused-phase1-score-output"),
+    })).rejects.toThrow(/input generations must remain outside/);
+  });
+
   it("executes, persists, reloads, and independently rescores the all-not-run report", async () => {
     const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-phase1-score-cli-"));
     temporaryRoots.push(root);
@@ -466,10 +473,6 @@ describe("structured extraction Phase 1 pure scorer", () => {
       executionGenerationPath,
       generationRoot: path.join(REPO_ROOT, "forbidden-score-generation"),
     })).rejects.toThrow(/outside the repository/);
-    await expect(scoreExtractionCandidateReport({
-      executionGenerationPath: PHASE1_ROOT,
-      generationRoot: path.join(root, "forbidden-input-score"),
-    })).rejects.toThrow(/input generations must remain outside/);
     await expect(scoreExtractionCandidateReport({ reportPath: path.join(root, "legacy.json"), scorePath: path.join(root, "legacy-score.json") })).rejects.toThrow(/executionGenerationPath/);
 
     const privateExecutionRoot = path.join(root, "private-executions");
