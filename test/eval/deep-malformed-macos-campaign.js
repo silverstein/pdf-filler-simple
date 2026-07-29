@@ -392,7 +392,20 @@ async function main() {
   const result = await runCampaign(plan, identity);
   const output = Buffer.from(`${canonicalJson(result)}\n`, "utf8");
   if (output.length > MAX_RESULT_BYTES) throw new Error("Campaign result exceeds its byte ceiling");
-  process.stdout.write(output);
+  const receiptPath = path.join(plan.attempt_root, "receipt.json");
+  const handle = await fs.open(receiptPath, "wx", 0o600);
+  try {
+    await handle.writeFile(output);
+    await handle.sync();
+  } finally {
+    await handle.close();
+  }
+  const receipt = (await stableRegularFile(receiptPath, MAX_RESULT_BYTES)).identity;
+  process.stdout.write(`${canonicalJson({
+    protocol: "pdf-tools.deep-malformed-macos-campaign-receipt-written.v1",
+    receipt,
+    summary: result.summary,
+  })}\n`);
 }
 
 main().catch(error => {
