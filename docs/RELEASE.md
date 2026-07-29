@@ -14,7 +14,7 @@ Update these files together:
 
 ```
 npm ci
-npm test
+npm run test:all
 npm run build:mcpb
 npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb
 node package-for-friend.js

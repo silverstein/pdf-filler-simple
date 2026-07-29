@@ -40,6 +40,8 @@ import {
 } from "./helpers/temp-directory.js";
 import {
   DEEP_FIXTURE_CLASSES,
+  DEEP_FIXTURE_NAMES,
+  makeDeepMalformedFixture,
   makeDeepMalformedFixtures,
 } from "./helpers/deep-malformed-fixtures.js";
 
@@ -139,6 +141,20 @@ describe(`deep malformed campaign (${SCALE} scale)`, () => {
     for (const klass of DEEP_FIXTURE_CLASSES) expect(classes).toContain(klass);
     // Distinct bytes, so no fixture is silently duplicated.
     expect(new Set(fixtures.map(f => f.bytes.toString("latin1"))).size).toBe(fixtures.length);
+  });
+
+  it("keeps targeted supervised-row generation identical to the campaign corpus", () => {
+    expect(fixtures.map(fixture => fixture.name)).toEqual(DEEP_FIXTURE_NAMES);
+    for (const fixture of fixtures) {
+      const targeted = makeDeepMalformedFixture({
+        scale: SCALE,
+        name: fixture.name,
+      });
+      expect(targeted.name).toBe(fixture.name);
+      expect(targeted.klass).toBe(fixture.klass);
+      expect(targeted.note).toBe(fixture.note);
+      expect(targeted.bytes).toEqual(fixture.bytes);
+    }
   });
 
   it("keeps every deep fixture small enough to pass the input size limits", () => {

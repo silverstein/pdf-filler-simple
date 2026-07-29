@@ -467,7 +467,6 @@ function expectCleanToolError(
   const message = result.content?.[0]?.text;
   expect(typeof message, `${fixtureName}/${toolName} error text type`).toBe("string");
   expect(message, `${fixtureName}/${toolName} error prefix`).toMatch(/^Error: \S/);
-  expect(message, `${fixtureName}/${toolName} must reach PDF loading`).toContain("Failed to load PDF");
   expect(message.length, `${fixtureName}/${toolName} bounded error`).toBeLessThanOrEqual(2_000);
   expect(message, `${fixtureName}/${toolName} must not disclose the private case path`).not.toContain(
     prohibitedAbsolutePath,
@@ -480,7 +479,9 @@ function expectCleanToolError(
       status: "failed",
       error: {
         error_schema_version: 1,
-        code: "tool_execution_failed",
+        code: expect.stringMatching(
+          /^(?:PDF_RESOURCE_LIMIT_EXCEEDED|tool_execution_failed)$/,
+        ),
       },
     });
   } else {

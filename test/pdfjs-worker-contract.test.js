@@ -219,21 +219,27 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
   });
 
   it("kills and reaps a timed-out system renderer child before rejecting", async () => {
-    const { root, filename } = await fixtureScript(`
-import fs from "node:fs";
-fs.writeFileSync(process.argv[2], String(process.pid));
+    const { filename } = await fixtureScript(`
 process.on("SIGTERM", () => {});
 setInterval(() => {}, 1000);
 `);
-    const pidPath = path.join(root, "renderer.pid");
-    await expect(runSystemCommand(process.execPath, [filename, pidPath], {
+    let rendererPid = null;
+    const spawnFixture = (command, args, options) => {
+      const child = spawn(command, args, options);
+      rendererPid = child.pid;
+      return child;
+    };
+    await expect(runSystemCommand(process.execPath, [filename], {
+      spawnProcess: spawnFixture,
       timeoutMs: 150,
     })).rejects.toMatchObject({
       code: "PDF_RESOURCE_LIMIT_EXCEEDED",
       reason: "system_renderer_timeout",
     });
-    const pid = Number(await fs.readFile(pidPath, "utf8"));
-    expect(() => process.kill(pid, 0)).toThrow(expect.objectContaining({ code: "ESRCH" }));
+    expect(Number.isSafeInteger(rendererPid)).toBe(true);
+    expect(() => process.kill(rendererPid, 0)).toThrow(
+      expect.objectContaining({ code: "ESRCH" }),
+    );
   });
 
   it("kills and reaps an active system renderer before the worker exits on SIGTERM", async () => {

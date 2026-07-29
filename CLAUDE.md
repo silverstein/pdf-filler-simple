@@ -75,7 +75,10 @@ node package-for-friend.js
 ```
 
 ### Testing
-No automated test suite yet. Perform manual runs against `example-fw9.pdf`:
+Run focused Vitest checks with `npm test -- <paths>`. Run
+`npm run test:node-native` for the explicit platform partition of native
+Node suites, and use the unfiltered `npm run test:all` aggregate for release
+qualification. Then perform manual host runs against `example-fw9.pdf`:
 1. `list_pdfs` against a local directory
 2. `read_pdf_fields` on example-fw9.pdf
 3. `fill_pdf` with test data

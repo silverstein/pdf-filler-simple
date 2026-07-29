@@ -15,8 +15,9 @@ up with upstream MCP changes.
 ## Maintainer quickstart
 
 Contributor installs, tests, and UI/MCPB builds require Node.js 20.19+ or
-22.12+. The range is declared in `package.json`; `npm test`, `npm run build:ui`,
-and `npm run build:mcpb` also fail early when the active Node version is outside
+22.12+. The range is declared in `package.json`; `npm test`,
+`npm run test:node-native`, `npm run test:all`, `npm run build:ui`, and
+`npm run build:mcpb` also fail early when the active Node version is outside
 that range. Run `npm ci` again after changing Node versions.
 
 This is the repository tooling floor imposed by Vite and Vitest. It does not
@@ -32,6 +33,24 @@ node package-for-friend.js
 
 Use a local MCP host (Claude Desktop or Cursor) to validate tools. Run the
 manual checklist before publishing (see below).
+
+`npm test` runs the Vitest suites only. `npm run test:node-native` runs the
+explicit platform partition of suites that use Node's native test runner.
+Every release qualification must use `npm run test:all`, which runs both
+partitions without filtering or sharding. The native command accepts only an
+optional `--reporter=dot|junit|spec|tap`; run a focused `node --test` command
+directly for local diagnosis.
+
+On Windows, the native partition explicitly omits the three frozen historical
+mechanism suites because they exercise FIFO and POSIX process-group primitives.
+It runs a current portable successor against the same canonical-JSON and
+response-scanner implementation, including planned Windows paths, leak
+rejection, path relocation, volatile UUID and timestamp rules, own
+`__proto__` evidence, typed errors, token collisions, cycles, stack safety, and
+evidence ceilings. Product filesystem behavior remains covered by the Vitest
+input-validation and lifecycle suites. This partitioning prevents an
+unsupported primitive from hiding portable Windows coverage; it does not
+replace the release checklist's exact Windows-host qualification.
 
 Use `docs/EVALUATION.md` for the evidence layers, corpus contract, agent-task
 scoring, native-host matrix, and release evidence bundle. A direct stdio pass is

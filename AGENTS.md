@@ -17,6 +17,11 @@
 - `node package-for-friend.js`: regenerate `pdf-toolkit-mcp.zip`; requires the `zip` CLI and ensures shareable installers stay current.
 - `npm run build:mcpb`: build the UI, create a clean production bundle with the locked macOS/Windows native canvas packages, and verify the `.mcpb` contents.
 - `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb`: start the extracted artifact and require tool discovery plus native page rendering on each release platform.
+- `npm test`: run the Vitest partition only.
+- `npm run test:node-native`: run the explicit platform partition of Node
+  native-test suites.
+- `npm run test:all`: run the unfiltered Vitest and native partitions; use
+  this aggregate gate for release qualification.
 
 ## Coding Style & Naming Conventions
 - Use 2-space indentation, `const`/`let` semantics, and double-quoted strings to match `server/index.js` and shipped bundles.
@@ -24,7 +29,10 @@
 - Tool names stay snake_case (`list_pdfs`, `fill_pdf`); new tools should follow that pattern and return structured text blocks.
 
 ## Testing Guidelines
-- No automated test suite yet; perform manual runs against `example-fw9.pdf` via the MCP host. Exercise `list_pdfs`, `read_pdf_fields`, `fill_pdf`, and one profile flow.
+- Run the narrowest relevant automated tests first, then `npm run test:all`
+  for release qualification. Automated stdio evidence does not replace manual
+  host runs against `example-fw9.pdf`; exercise `list_pdfs`,
+  `read_pdf_fields`, `fill_pdf`, and one profile flow.
 - Validate CSV workflows with a two-row fixture before publishing; include a value with a comma to catch CSV parsing regressions.
 - Smoke-test new tools: `extract_to_csv` on two PDFs, `validate_pdf` on a partially filled form, `read_pdf_content` on a text-layer PDF and a textless scanned PDF to verify its page-1 image fallback, and `get_pdf_resource_uri` with a local file path.
 

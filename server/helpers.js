@@ -12,6 +12,7 @@ import {
   PDFDocument,
   PDFName,
   PDFObjectCopier,
+  PDFPage,
   PDFRef,
   StandardFonts,
   rgb,
@@ -65,7 +66,42 @@ function indirectRef(context, object) {
   return context.getObjectRef(resolved) ?? context.register(resolved);
 }
 
-function repairCopiedFormFields(targetDoc, copiedPages, sourceDoc) {
+function recordCopiedSpecNullTargets(
+  copier,
+  sourceDoc,
+  targetDoc,
+  specNullTargetProvenance,
+  sourceAuthorityLabel,
+) {
+  if (!(specNullTargetProvenance instanceof Map)) return;
+  for (const [sourceObject, targetObject] of copier.traversedObjects) {
+    if (!(sourceObject instanceof PDFRef) || !(targetObject instanceof PDFRef)
+        || sourceDoc.context.lookup(sourceObject) !== undefined) {
+      continue;
+    }
+    if (targetDoc.context.lookup(targetObject) !== undefined) {
+      throw new Error("Copied null-reference target unexpectedly resolves.");
+    }
+    const target = targetObject.toString();
+    const authority = {
+      source_authority: sourceAuthorityLabel,
+      source_ref: sourceObject.toString(),
+    };
+    const prior = specNullTargetProvenance.get(target);
+    if (prior && JSON.stringify(prior) !== JSON.stringify(authority)) {
+      throw new Error(`Copied null-reference provenance collides at ${target}.`);
+    }
+    specNullTargetProvenance.set(target, authority);
+  }
+}
+
+function repairCopiedFormFields(
+  targetDoc,
+  copiedPages,
+  sourceDoc,
+  specNullTargetProvenance,
+  sourceAuthorityLabel,
+) {
   const fieldNodes = new Map();
   const fieldChildren = new Map();
   const rootRefs = new Map();
@@ -132,6 +168,13 @@ function repairCopiedFormFields(targetDoc, copiedPages, sourceDoc) {
     const value = sourceAcroForm.dict.get(key);
     if (value && !targetAcroForm.dict.has(key)) targetAcroForm.dict.set(key, copier.copy(value));
   }
+  recordCopiedSpecNullTargets(
+    copier,
+    sourceDoc,
+    targetDoc,
+    specNullTargetProvenance,
+    sourceAuthorityLabel,
+  );
 }
 
 /**
@@ -140,21 +183,54 @@ function repairCopiedFormFields(targetDoc, copiedPages, sourceDoc) {
  * and field Kids arrays are rebound only to pages actually present in the
  * destination document.
  */
-export async function copyPdfPagesPreservingForms(targetDoc, sourceDoc, pageIndices, { mutatePage } = {}) {
-  const copiedPages = await targetDoc.copyPages(sourceDoc, pageIndices);
+export async function copyPdfPagesPreservingForms(targetDoc, sourceDoc, pageIndices, {
+  mutatePage,
+  sourceAuthorityLabel = null,
+  specNullTargetProvenance = null,
+  registerRebuiltSpecNullAuthority = null,
+} = {}) {
+  await sourceDoc.flush();
+  const copier = PDFObjectCopier.for(sourceDoc.context, targetDoc.context);
+  const sourcePages = sourceDoc.getPages();
+  const copiedPages = pageIndices.map(index => {
+    const node = copier.copy(sourcePages[index].node);
+    const ref = targetDoc.context.register(node);
+    return PDFPage.of(node, ref, targetDoc);
+  });
+  for (const page of copiedPages) targetDoc.addPage(page);
+  recordCopiedSpecNullTargets(
+    copier,
+    sourceDoc,
+    targetDoc,
+    specNullTargetProvenance,
+    sourceAuthorityLabel,
+  );
+  repairCopiedFormFields(
+    targetDoc,
+    copiedPages,
+    sourceDoc,
+    specNullTargetProvenance,
+    sourceAuthorityLabel,
+  );
+  registerRebuiltSpecNullAuthority?.();
   for (const [index, page] of copiedPages.entries()) {
     await mutatePage?.(page, index);
-    targetDoc.addPage(page);
   }
-  repairCopiedFormFields(targetDoc, copiedPages, sourceDoc);
   return copiedPages;
 }
 
 /** Preserve source Info entries except producer and modification timestamp. */
-export function copyPdfDocumentMetadata(targetDoc, sourceDoc) {
+export function copyPdfDocumentMetadata(targetDoc, sourceDoc, {
+  sourceAuthorityLabel = null,
+  specNullTargetProvenance = null,
+  registerRebuiltSpecNullAuthority = null,
+} = {}) {
   const sourceInfo = sourceDoc.context.lookupMaybe(sourceDoc.context.trailerInfo.Info, PDFDict);
   const targetInfo = targetDoc.context.lookupMaybe(targetDoc.context.trailerInfo.Info, PDFDict);
-  if (!sourceInfo || !targetInfo) return;
+  if (!sourceInfo || !targetInfo) {
+    registerRebuiltSpecNullAuthority?.();
+    return;
+  }
   const copier = PDFObjectCopier.for(sourceDoc.context, targetDoc.context);
   const sourceKeys = new Set(sourceInfo.keys().map(key => key.toString()));
   for (const key of targetInfo.keys()) {
@@ -164,6 +240,14 @@ export function copyPdfDocumentMetadata(targetDoc, sourceDoc) {
     if (key === PRODUCER || key === MOD_DATE) continue;
     targetInfo.set(key, copier.copy(sourceInfo.get(key)));
   }
+  recordCopiedSpecNullTargets(
+    copier,
+    sourceDoc,
+    targetDoc,
+    specNullTargetProvenance,
+    sourceAuthorityLabel,
+  );
+  registerRebuiltSpecNullAuthority?.();
 }
 
 /**
@@ -2864,10 +2948,12 @@ export async function writePdfOutputAtomic(targetPath, bytes, {
   anchoredDirectory = false,
   overwrite = false,
   expectedExistingIdentity = null,
+  produceBytes,
 } = {}) {
   const [result] = await writePdfOutputsAtomic([{
     targetPath,
     bytes,
+    produceBytes,
     overwrite,
     expectedExistingIdentity,
   }], {

@@ -2,6 +2,8 @@ import path from "path";
 import { fileURLToPath } from "url";
 import { defineConfig } from "vite";
 import { viteSingleFile } from "vite-plugin-singlefile";
+import { configDefaults } from "vitest/config";
+import { NODE_TEST_FILES } from "./scripts/node-test-files.mjs";
 import { createMcpBridgePlugin } from "./ui/dev/bridge-plugin.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -21,6 +23,10 @@ export default defineConfig(({ command, mode }) => ({
   root: "ui",
   test: {
     root: ".",
+    exclude: [
+      ...configDefaults.exclude,
+      ...NODE_TEST_FILES,
+    ],
   },
   build: {
     outDir: "../dist-ui",

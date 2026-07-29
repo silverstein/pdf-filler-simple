@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <inttypes.h>
 #include <libproc.h>
+#include <limits.h>
 #include <mach/mach_time.h>
 #include <poll.h>
 #include <signal.h>
@@ -20,6 +21,7 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 
 enum {
@@ -29,6 +31,10 @@ enum {
   MAX_ENVIRONMENT_BYTES = 65536,
   MAX_JSON_BYTES = 16384,
   DRAIN_BUDGET_BYTES = 262144,
+  SAMPLE_REVALIDATION_BUDGET_NS = 20000000,
+  SAMPLE_REVALIDATION_POLL_NS = 1000000,
+  TEST_CONTROL_FD = 15,
+  TEST_FEEDBACK_FD = 16,
   CONTROL_MAGIC = 0x50444653,
   CONTROL_READY = 1,
   CONTROL_EXEC_FAILED = 2,
@@ -89,7 +95,11 @@ typedef struct {
 typedef struct {
   pid_t pid;
   uint64_t start_abstime;
+  uint64_t last_group_sample;
   bool escaped;
+  bool final_frozen;
+  bool final_in_group;
+  bool destructive_boundary_failed;
 } process_identity;
 
 typedef struct {
@@ -131,8 +141,28 @@ typedef struct {
   int error_number;
 } first_failure;
 
+typedef enum {
+  SAMPLE_DETAIL_INSPECTED = 0,
+  SAMPLE_DETAIL_PROVABLY_VANISHED,
+  SAMPLE_DETAIL_PROVABLY_TERMINAL,
+  SAMPLE_DETAIL_BLOCKED,
+} sample_detail_result;
+
+typedef enum {
+  SAMPLE_SOURCE_GROUP = 0,
+  SAMPLE_SOURCE_CHILDREN,
+} sample_source;
+
+typedef enum {
+  VANISH_PROOF_UNRESOLVED = 0,
+  VANISH_PROOF_CONFIRMED,
+  VANISH_PROOF_ERROR,
+} vanish_proof_result;
+
 static volatile sig_atomic_t active_pgid = -1;
 static volatile sig_atomic_t active_leader = -1;
+
+static bool leader_has_exited(pid_t leader, bool *exited);
 
 static void emergency_terminate(int signal_number) {
   (void)signal_number;
@@ -569,11 +599,20 @@ static bool install_limit(int resource, uint64_t value) {
 static void child_main(const run_config *config, int stdout_write,
                        int stderr_write, int control_write, int gate_read,
                        int stdout_read, int stderr_read, int control_read,
-                       int gate_write) {
+                       int gate_write, int testing_control_read,
+                       int testing_control_parent_write,
+                       int testing_feedback_parent_read,
+                       int testing_feedback_write) {
   (void)close(stdout_read);
   (void)close(stderr_read);
   (void)close(control_read);
   (void)close(gate_write);
+  if (testing_control_parent_write >= 0) {
+    (void)close(testing_control_parent_write);
+  }
+  if (testing_feedback_parent_read >= 0) {
+    (void)close(testing_feedback_parent_read);
+  }
   (void)close(config->evidence_fd);
   (void)close(config->lease_fd);
 
@@ -600,6 +639,34 @@ static void child_main(const run_config *config, int stdout_write,
   }
   (void)close(stdout_write);
   (void)close(stderr_write);
+
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+  if (testing_control_read < 0 ||
+      (testing_control_read != TEST_CONTROL_FD &&
+       dup2(testing_control_read, TEST_CONTROL_FD) < 0)) {
+    message.error_number = errno == 0 ? EBADF : errno;
+    message.reserved = CHILD_STAGE_STDIO;
+    (void)write_all(control_write, &message, sizeof(message));
+    _exit(121);
+  }
+  if (testing_control_read != TEST_CONTROL_FD) {
+    (void)close(testing_control_read);
+  }
+  if (testing_feedback_write < 0 ||
+      (testing_feedback_write != TEST_FEEDBACK_FD &&
+       dup2(testing_feedback_write, TEST_FEEDBACK_FD) < 0)) {
+    message.error_number = errno == 0 ? EBADF : errno;
+    message.reserved = CHILD_STAGE_STDIO;
+    (void)write_all(control_write, &message, sizeof(message));
+    _exit(121);
+  }
+  if (testing_feedback_write != TEST_FEEDBACK_FD) {
+    (void)close(testing_feedback_write);
+  }
+#else
+  (void)testing_control_read;
+  (void)testing_feedback_write;
+#endif
 
   const int resources[] = {
       RLIMIT_CORE, RLIMIT_CPU, RLIMIT_FSIZE, RLIMIT_NOFILE, RLIMIT_AS,
@@ -747,6 +814,157 @@ static bool process_details(pid_t pid, struct rusage_info_v4 *usage,
   return process_details_with_fault(pid, usage, all, NULL);
 }
 
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+typedef struct {
+  pid_t pid;
+  unsigned calls;
+} sample_fault_counter;
+
+static sample_fault_counter sample_fault_counters[64];
+static size_t sample_fault_counter_count = 0;
+static bool testing_vanish_source_enumeration = false;
+static bool testing_shared_budget_armed = false;
+static bool testing_final_pass_active = false;
+static int testing_control_write = -1;
+static int testing_feedback_read = -1;
+
+static unsigned increment_sample_fault_counter(pid_t pid) {
+  for (size_t index = 0; index < sample_fault_counter_count; index += 1) {
+    if (sample_fault_counters[index].pid == pid) {
+      sample_fault_counters[index].calls += 1;
+      return sample_fault_counters[index].calls;
+    }
+  }
+  if (sample_fault_counter_count >=
+      sizeof(sample_fault_counters) / sizeof(sample_fault_counters[0])) {
+    return UINT_MAX;
+  }
+  sample_fault_counters[sample_fault_counter_count] =
+      (sample_fault_counter){.pid = pid, .calls = 1};
+  sample_fault_counter_count += 1;
+  return 1;
+}
+
+static bool send_testing_control(unsigned char signal) {
+  if (testing_control_write < 0) {
+    errno = EBADF;
+    return false;
+  }
+  return write_all(testing_control_write, &signal, 1);
+}
+
+static bool receive_testing_feedback(unsigned char expected) {
+  if (testing_feedback_read < 0) {
+    errno = EBADF;
+    return false;
+  }
+  struct pollfd descriptor = {
+      .fd = testing_feedback_read,
+      .events = POLLIN | POLLHUP,
+  };
+  int ready;
+  do {
+    ready = poll(&descriptor, 1, 2000);
+  } while (ready < 0 && errno == EINTR);
+  if (ready <= 0) {
+    errno = ready == 0 ? ETIMEDOUT : errno;
+    return false;
+  }
+  unsigned char observed = 0;
+  return read_exact(testing_feedback_read, &observed, 1) &&
+         observed == expected;
+}
+#endif
+
+static bool sample_process_details(pid_t pid, pid_t pgid,
+                                   struct rusage_info_v4 *usage,
+                                   struct proc_taskallinfo *all) {
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+  const char *fault = getenv("PDF_TOOLS_SUPERVISOR_FAULT");
+  if (pid == pgid && fault != NULL &&
+      strcmp(fault, "sampling_terminal_leader") == 0) {
+    static bool notified = false;
+    if (!notified && !send_testing_control('T')) {
+      return false;
+    }
+    notified = true;
+    struct timespec delay = {.tv_sec = 0, .tv_nsec = 20000000};
+    while (nanosleep(&delay, &delay) != 0 && errno == EINTR) {
+    }
+    errno = ESRCH;
+    return false;
+  }
+  if (pid != pgid && fault != NULL) {
+    if (!testing_final_pass_active &&
+        strcmp(fault, "final_escape_resource_tree") == 0) {
+      if (!process_details(pid, usage, all)) {
+        return false;
+      }
+      static bool notified = false;
+      if (!notified && !send_testing_control('E')) {
+        return false;
+      }
+      notified = true;
+      all->pbsd.pbi_pgid = (uint32_t)pgid;
+      return true;
+    }
+    if (!testing_final_pass_active &&
+        (strcmp(fault, "final_identity_query_race") == 0 ||
+         strcmp(fault, "final_post_stop_query_failure") == 0 ||
+         strcmp(fault, "final_pre_signal_race") == 0)) {
+      if (!process_details(pid, usage, all)) {
+        return false;
+      }
+      all->pbsd.pbi_pgid = (uint32_t)pgid;
+      return true;
+    }
+    if (strcmp(fault, "sampling_child_source_reenumeration_failure") ==
+        0) {
+      if (!process_details(pid, usage, all)) {
+        return false;
+      }
+      if ((pid_t)all->pbsd.pbi_pgid == pgid) {
+        static bool notified = false;
+        if (!notified && !send_testing_control('C')) {
+          return false;
+        }
+        notified = true;
+        return true;
+      }
+      errno = EPERM;
+      return false;
+    }
+    if (strcmp(fault, "sampling_transient_eperm") == 0) {
+      static pid_t target = -1;
+      if (target < 0) {
+        target = pid;
+      }
+      if (pid == target && increment_sample_fault_counter(pid) <= 3) {
+        errno = EPERM;
+        return false;
+      }
+    } else if (strcmp(fault, "sampling_persistent_eperm") == 0 ||
+               strcmp(fault, "sampling_vanish_eperm") == 0 ||
+               strcmp(fault, "sampling_escape_eperm") == 0 ||
+               strcmp(fault, "sampling_outer_deadline_eperm") == 0) {
+      errno = EPERM;
+      return false;
+    } else if (strcmp(fault, "sampling_false_esrch") == 0) {
+      errno = ESRCH;
+      return false;
+    } else if (strcmp(fault, "sampling_shared_budget_eperm") == 0 &&
+               testing_shared_budget_armed &&
+               increment_sample_fault_counter(pid) <= 4) {
+      errno = EPERM;
+      return false;
+    }
+  }
+#else
+  (void)pgid;
+#endif
+  return process_details(pid, usage, all);
+}
+
 static process_identity *find_identity(observations *state, pid_t pid) {
   for (size_t index = 0; index < state->identity_count; index += 1) {
     if (state->identities[index].pid == pid) {
@@ -775,8 +993,19 @@ static bool remember_identity(observations *state, pid_t pid,
   state->identities[state->identity_count++] =
       (process_identity){.pid = pid,
                          .start_abstime = start_abstime,
-                         .escaped = escaped};
+                         .last_group_sample = 0,
+                         .escaped = escaped,
+                         .final_frozen = false,
+                         .final_in_group = false,
+                         .destructive_boundary_failed = false};
   return true;
+}
+
+static void mark_identity_sampled(observations *state, pid_t pid) {
+  process_identity *identity = find_identity(state, pid);
+  if (identity != NULL) {
+    identity->last_group_sample = state->sample_count;
+  }
 }
 
 static bool remember_escaped_pid(observations *state, pid_t pid) {
@@ -818,21 +1047,256 @@ static int list_group(pid_t pgid, pid_t pids[MAX_PIDS]) {
   return count;
 }
 
+static int list_children(pid_t parent, pid_t pids[MAX_PIDS]) {
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+  const char *fault = getenv("PDF_TOOLS_SUPERVISOR_FAULT");
+  if (testing_vanish_source_enumeration && fault != NULL &&
+      strcmp(fault, "sampling_child_source_reenumeration_failure") ==
+          0) {
+    errno = EIO;
+    return -1;
+  }
+#endif
+  int count =
+      proc_listchildpids(parent, pids, (int)(MAX_PIDS * sizeof(pid_t)));
+  if (count < 0 || count >= MAX_PIDS) {
+    errno = count >= MAX_PIDS ? EOVERFLOW : errno;
+    return -1;
+  }
+  return count;
+}
+
+static int source_contains_pid(sample_source source, pid_t source_pid,
+                               pid_t pid) {
+  pid_t pids[MAX_PIDS];
+  int count = source == SAMPLE_SOURCE_GROUP
+                  ? list_group(source_pid, pids)
+                  : list_children(source_pid, pids);
+  if (count < 0) {
+    return -1;
+  }
+  for (int index = 0; index < count; index += 1) {
+    if (pids[index] == pid) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
+static vanish_proof_result prove_process_vanished(sample_source source,
+                                                  pid_t source_pid, pid_t pid,
+                                                  int *error_number) {
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+  const char *fault = getenv("PDF_TOOLS_SUPERVISOR_FAULT");
+  if (fault != NULL &&
+      strcmp(fault, "sampling_outer_deadline_eperm") == 0) {
+    *error_number = EFAULT;
+    return VANISH_PROOF_ERROR;
+  }
+#endif
+  /*
+   * Source absence alone is not proof: a live child may have left its process
+   * group or been reparented. Bracket a fresh source enumeration with two
+   * signal probes so only a PID that stays nonexistent is accepted.
+   */
+  if (kill(pid, 0) == 0) {
+    return VANISH_PROOF_UNRESOLVED;
+  }
+  if (errno == EPERM) {
+    return VANISH_PROOF_UNRESOLVED;
+  }
+  if (errno != ESRCH) {
+    *error_number = errno;
+    return VANISH_PROOF_ERROR;
+  }
+
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+  testing_vanish_source_enumeration = true;
+#endif
+  int contains = source_contains_pid(source, source_pid, pid);
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+  testing_vanish_source_enumeration = false;
+#endif
+  if (contains < 0) {
+    *error_number = errno;
+    return VANISH_PROOF_ERROR;
+  }
+  if (contains != 0) {
+    return VANISH_PROOF_UNRESOLVED;
+  }
+
+  if (kill(pid, 0) == 0) {
+    return VANISH_PROOF_UNRESOLVED;
+  }
+  if (errno == EPERM) {
+    return VANISH_PROOF_UNRESOLVED;
+  }
+  if (errno != ESRCH) {
+    *error_number = errno;
+    return VANISH_PROOF_ERROR;
+  }
+  return VANISH_PROOF_CONFIRMED;
+}
+
+static bool sleep_for_ns(uint64_t nanoseconds) {
+  struct timespec requested = {
+      .tv_sec = (time_t)(nanoseconds / UINT64_C(1000000000)),
+      .tv_nsec = (long)(nanoseconds % UINT64_C(1000000000)),
+  };
+  while (nanosleep(&requested, &requested) != 0) {
+    if (errno != EINTR) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static sample_detail_result sample_process_details_revalidated(
+    pid_t pid, pid_t pgid, sample_source source, pid_t source_pid,
+    uint64_t campaign_started, uint64_t campaign_deadline_ns,
+    uint64_t *shared_revalidation_deadline_ns, observations *state,
+    struct rusage_info_v4 *usage, struct proc_taskallinfo *all,
+    int *error_number) {
+  if (sample_process_details(pid, pgid, usage, all)) {
+    return SAMPLE_DETAIL_INSPECTED;
+  }
+
+  int initial_error = errno;
+  int current_error = initial_error;
+  if (initial_error != EPERM && initial_error != ESRCH) {
+    *error_number = initial_error;
+    return SAMPLE_DETAIL_BLOCKED;
+  }
+  state->sample_race_count =
+      saturating_add(state->sample_race_count, UINT64_C(1));
+
+  uint64_t elapsed = elapsed_ns(campaign_started, continuous_now());
+  if (elapsed == UINT64_MAX) {
+    *error_number = EOVERFLOW;
+    return SAMPLE_DETAIL_BLOCKED;
+  }
+  if (*shared_revalidation_deadline_ns == 0) {
+    /* One common budget per sample prevents a hostile PID set multiplying it. */
+    uint64_t retry_deadline =
+        saturating_add(elapsed, (uint64_t)SAMPLE_REVALIDATION_BUDGET_NS);
+    *shared_revalidation_deadline_ns =
+        retry_deadline < campaign_deadline_ns ? retry_deadline
+                                             : campaign_deadline_ns;
+  }
+
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+  const char *fault = getenv("PDF_TOOLS_SUPERVISOR_FAULT");
+  if (fault != NULL &&
+      strcmp(fault, "sampling_outer_deadline_eperm") == 0 &&
+      elapsed < campaign_deadline_ns) {
+    uint64_t delay = saturating_add(campaign_deadline_ns - elapsed,
+                                    (uint64_t)SAMPLE_REVALIDATION_POLL_NS);
+    if (!sleep_for_ns(delay)) {
+      *error_number = errno;
+      return SAMPLE_DETAIL_BLOCKED;
+    }
+  }
+#endif
+
+  for (;;) {
+    elapsed = elapsed_ns(campaign_started, continuous_now());
+    if (elapsed == UINT64_MAX) {
+      *error_number = EOVERFLOW;
+      return SAMPLE_DETAIL_BLOCKED;
+    }
+    if (elapsed >= *shared_revalidation_deadline_ns) {
+      *error_number = initial_error;
+      return SAMPLE_DETAIL_BLOCKED;
+    }
+
+    if (pid == pgid && current_error == ESRCH) {
+      /*
+       * The supervisor deliberately keeps its direct child waitable so its PID
+       * cannot be reused before process-group cleanup. Such an exited leader is
+       * not signal-absent, but WNOWAIT proves this exact reserved child is no
+       * longer running. A false ESRCH on a live leader therefore still blocks.
+       */
+      bool terminal = false;
+      if (!leader_has_exited(pid, &terminal)) {
+        *error_number = errno;
+        return SAMPLE_DETAIL_BLOCKED;
+      }
+      if (terminal) {
+        elapsed = elapsed_ns(campaign_started, continuous_now());
+        if (elapsed == UINT64_MAX ||
+            elapsed >= *shared_revalidation_deadline_ns) {
+          *error_number =
+              elapsed == UINT64_MAX ? EOVERFLOW : initial_error;
+          return SAMPLE_DETAIL_BLOCKED;
+        }
+        return SAMPLE_DETAIL_PROVABLY_TERMINAL;
+      }
+    }
+
+    int proof_error = 0;
+    vanish_proof_result proof =
+        prove_process_vanished(source, source_pid, pid, &proof_error);
+    if (proof == VANISH_PROOF_ERROR) {
+      *error_number = proof_error;
+      return SAMPLE_DETAIL_BLOCKED;
+    }
+
+    elapsed = elapsed_ns(campaign_started, continuous_now());
+    if (elapsed == UINT64_MAX) {
+      *error_number = EOVERFLOW;
+      return SAMPLE_DETAIL_BLOCKED;
+    }
+    if (elapsed >= *shared_revalidation_deadline_ns) {
+      *error_number = initial_error;
+      return SAMPLE_DETAIL_BLOCKED;
+    }
+    if (proof == VANISH_PROOF_CONFIRMED) {
+      return SAMPLE_DETAIL_PROVABLY_VANISHED;
+    }
+    uint64_t remaining = *shared_revalidation_deadline_ns - elapsed;
+    uint64_t delay =
+        remaining < (uint64_t)SAMPLE_REVALIDATION_POLL_NS
+            ? remaining
+            : (uint64_t)SAMPLE_REVALIDATION_POLL_NS;
+    if (!sleep_for_ns(delay)) {
+      *error_number = errno;
+      return SAMPLE_DETAIL_BLOCKED;
+    }
+
+    elapsed = elapsed_ns(campaign_started, continuous_now());
+    if (elapsed == UINT64_MAX) {
+      *error_number = EOVERFLOW;
+      return SAMPLE_DETAIL_BLOCKED;
+    }
+    if (elapsed >= *shared_revalidation_deadline_ns) {
+      *error_number = initial_error;
+      return SAMPLE_DETAIL_BLOCKED;
+    }
+    if (sample_process_details(pid, pgid, usage, all)) {
+      return SAMPLE_DETAIL_INSPECTED;
+    }
+    current_error = errno;
+    if (current_error != EPERM && current_error != ESRCH) {
+      *error_number = current_error;
+      return SAMPLE_DETAIL_BLOCKED;
+    }
+  }
+}
+
 static bool sample_children(pid_t parent, pid_t pgid, observations *state,
+                            uint64_t campaign_started,
+                            uint64_t campaign_deadline_ns,
+                            uint64_t *shared_revalidation_deadline_ns,
                             first_failure *failure) {
   pid_t children[MAX_PIDS];
-  int count =
-      proc_listchildpids(parent, children, (int)(MAX_PIDS * sizeof(pid_t)));
+  int count = list_children(parent, children);
   if (count < 0) {
     if (errno == ESRCH) {
-      state->sample_race_count += 1;
+      state->sample_race_count =
+          saturating_add(state->sample_race_count, UINT64_C(1));
       return true;
     }
     set_failure(failure, FAILURE_ENUMERATION, errno);
-    return false;
-  }
-  if (count >= MAX_PIDS) {
-    set_failure(failure, FAILURE_ENUMERATION, EOVERFLOW);
     return false;
   }
   for (int index = 0; index < count; index += 1) {
@@ -842,12 +1306,18 @@ static bool sample_children(pid_t parent, pid_t pgid, observations *state,
     }
     struct rusage_info_v4 usage;
     struct proc_taskallinfo all;
-    if (!process_details(pid, &usage, &all)) {
-      if (errno == ESRCH) {
-        state->sample_race_count += 1;
-        continue;
-      }
-      set_failure(failure, FAILURE_ENUMERATION, errno);
+    int detail_error = 0;
+    sample_detail_result detail = sample_process_details_revalidated(
+        pid, pgid, SAMPLE_SOURCE_CHILDREN, parent, campaign_started,
+        campaign_deadline_ns, shared_revalidation_deadline_ns, state, &usage,
+        &all, &detail_error);
+    if (detail == SAMPLE_DETAIL_PROVABLY_VANISHED ||
+        detail == SAMPLE_DETAIL_PROVABLY_TERMINAL) {
+      mark_identity_sampled(state, pid);
+      continue;
+    }
+    if (detail == SAMPLE_DETAIL_BLOCKED) {
+      set_failure(failure, FAILURE_ENUMERATION, detail_error);
       return false;
     }
     bool escaped = (pid_t)all.pbsd.pbi_pgid != pgid;
@@ -855,6 +1325,7 @@ static bool sample_children(pid_t parent, pid_t pgid, observations *state,
                            failure)) {
       return false;
     }
+    mark_identity_sampled(state, pid);
     if (escaped) {
       state->escaped_session_detected = true;
       if (!remember_escaped_pid(state, pid)) {
@@ -867,23 +1338,77 @@ static bool sample_children(pid_t parent, pid_t pgid, observations *state,
   return true;
 }
 
+static int known_parent_contains_pid(const observations *state, pid_t pid) {
+  for (size_t index = 0; index < state->identity_count; index += 1) {
+    const process_identity *parent = &state->identities[index];
+    if (parent->pid == pid) {
+      continue;
+    }
+    struct rusage_info_v4 usage;
+    struct proc_taskallinfo all;
+    if (!process_details(parent->pid, &usage, &all)) {
+      if (errno == ESRCH) {
+        continue;
+      }
+      return -1;
+    }
+    if (usage.ri_proc_start_abstime != parent->start_abstime) {
+      errno = ESTALE;
+      return -1;
+    }
+
+    pid_t children[MAX_PIDS];
+    int child_count = list_children(parent->pid, children);
+    if (child_count < 0) {
+      return -1;
+    }
+
+    if (!process_details(parent->pid, &usage, &all) ||
+        usage.ri_proc_start_abstime != parent->start_abstime) {
+      errno = errno == 0 ? ESTALE : errno;
+      return -1;
+    }
+    for (int child_index = 0; child_index < child_count; child_index += 1) {
+      if (children[child_index] == pid) {
+        return 1;
+      }
+    }
+  }
+  return 0;
+}
+
 static bool sample_group(pid_t pgid, observations *state,
-                         uint64_t footprint_limit, first_failure *failure) {
+                         uint64_t footprint_limit, uint64_t campaign_started,
+                         uint64_t campaign_deadline_ns,
+                         first_failure *failure) {
   pid_t pids[MAX_PIDS];
   int count = list_group(pgid, pids);
   if (count < 0) {
     set_failure(failure, FAILURE_ENUMERATION, errno);
     return false;
   }
+  if (state->sample_count == UINT64_MAX) {
+    set_failure(failure, FAILURE_ENUMERATION, EOVERFLOW);
+    return false;
+  }
   state->sample_count += 1;
   if ((uint64_t)count > state->max_group_members) {
     state->max_group_members = (uint64_t)count;
   }
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+  const char *sample_fault = getenv("PDF_TOOLS_SUPERVISOR_FAULT");
+  if (sample_fault != NULL &&
+      strcmp(sample_fault, "sampling_shared_budget_eperm") == 0 &&
+      count == 33) {
+    testing_shared_budget_armed = true;
+  }
+#endif
 
   uint64_t physical = 0;
   uint64_t rss = 0;
   uint64_t virtual_bytes = 0;
   uint64_t cpu_ns = 0;
+  uint64_t shared_revalidation_deadline_ns = 0;
   for (int index = 0; index < count; index += 1) {
     pid_t pid = pids[index];
     if (pid <= 0) {
@@ -891,17 +1416,60 @@ static bool sample_group(pid_t pgid, observations *state,
     }
     struct rusage_info_v4 usage;
     struct proc_taskallinfo all;
-    if (!process_details(pid, &usage, &all)) {
-      if (errno == ESRCH) {
-        state->sample_race_count += 1;
-        continue;
-      }
-      set_failure(failure, FAILURE_ENUMERATION, errno);
+    int detail_error = 0;
+    sample_detail_result detail = sample_process_details_revalidated(
+        pid, pgid, SAMPLE_SOURCE_GROUP, pgid, campaign_started,
+        campaign_deadline_ns, &shared_revalidation_deadline_ns, state, &usage,
+        &all, &detail_error);
+    if (detail == SAMPLE_DETAIL_PROVABLY_VANISHED ||
+        detail == SAMPLE_DETAIL_PROVABLY_TERMINAL) {
+      mark_identity_sampled(state, pid);
+      continue;
+    }
+    if (detail == SAMPLE_DETAIL_BLOCKED) {
+      set_failure(failure, FAILURE_ENUMERATION, detail_error);
       return false;
     }
     if ((pid_t)all.pbsd.pbi_pgid != pgid) {
-      set_failure(failure, FAILURE_ENUMERATION, EPROTO);
-      return false;
+      process_identity *existing = find_identity(state, pid);
+      if (existing == NULL) {
+        /*
+         * A descendant may leave the group after the group snapshot but before
+         * inspection. Establish its direct ancestry with a fresh,
+         * identity-sandwiched child enumeration before remembering it; an
+         * unrelated or unresolved PID still fails closed and is never signaled.
+         */
+        int related = known_parent_contains_pid(state, pid);
+        if (related < 0) {
+          set_failure(failure,
+                      errno == ESTALE ? FAILURE_PID_REUSE
+                                     : FAILURE_ENUMERATION,
+                      errno);
+          return false;
+        }
+        if (related == 0 ||
+            !remember_identity(state, pid, usage.ri_proc_start_abstime, true,
+                               failure)) {
+          if (related == 0) {
+            set_failure(failure, FAILURE_ENUMERATION, EPROTO);
+          }
+          return false;
+        }
+        existing = find_identity(state, pid);
+      }
+      if (existing->start_abstime != usage.ri_proc_start_abstime) {
+        set_failure(failure, FAILURE_PID_REUSE, 0);
+        return false;
+      }
+      existing->escaped = true;
+      existing->last_group_sample = state->sample_count;
+      state->escaped_session_detected = true;
+      if (!remember_escaped_pid(state, pid)) {
+        set_failure(failure, FAILURE_ENUMERATION, EOVERFLOW);
+        return false;
+      }
+      set_failure(failure, FAILURE_ESCAPED_SESSION, 0);
+      continue;
     }
     uint64_t observed_start = usage.ri_proc_start_abstime;
 #if defined(PDF_TOOLS_SUPERVISOR_TESTING)
@@ -914,16 +1482,67 @@ static bool sample_group(pid_t pgid, observations *state,
     if (!remember_identity(state, pid, observed_start, false, failure)) {
       return false;
     }
+    mark_identity_sampled(state, pid);
     physical = saturating_add(physical, usage.ri_phys_footprint);
     rss = saturating_add(rss, usage.ri_resident_size);
     virtual_bytes =
         saturating_add(virtual_bytes, all.ptinfo.pti_virtual_size);
     cpu_ns = saturating_add(
         cpu_ns, saturating_add(usage.ri_user_time, usage.ri_system_time));
-    if (!sample_children(pid, pgid, state, failure)) {
+    if (!sample_children(pid, pgid, state, campaign_started,
+                         campaign_deadline_ns,
+                         &shared_revalidation_deadline_ns, failure)) {
       return false;
     }
   }
+
+  /*
+   * A descendant remembered in an earlier group snapshot may leave the pgid
+   * after its leader exits. Re-inspect every known identity not resolved in
+   * this snapshot so group absence cannot hide a live setsid() escape.
+   */
+  for (size_t index = 0; index < state->identity_count; index += 1) {
+    process_identity *identity = &state->identities[index];
+    if (identity->last_group_sample == state->sample_count) {
+      continue;
+    }
+    struct rusage_info_v4 usage;
+    struct proc_taskallinfo all;
+    int detail_error = 0;
+    sample_detail_result detail = sample_process_details_revalidated(
+        identity->pid, pgid, SAMPLE_SOURCE_GROUP, pgid, campaign_started,
+        campaign_deadline_ns, &shared_revalidation_deadline_ns, state, &usage,
+        &all, &detail_error);
+    if (detail == SAMPLE_DETAIL_PROVABLY_VANISHED ||
+        detail == SAMPLE_DETAIL_PROVABLY_TERMINAL) {
+      identity->last_group_sample = state->sample_count;
+      continue;
+    }
+    if (detail == SAMPLE_DETAIL_BLOCKED) {
+      set_failure(failure, FAILURE_ENUMERATION, detail_error);
+      return false;
+    }
+    if (usage.ri_proc_start_abstime != identity->start_abstime) {
+      set_failure(failure, FAILURE_PID_REUSE, 0);
+      return false;
+    }
+    identity->last_group_sample = state->sample_count;
+    bool escaped = (pid_t)all.pbsd.pbi_pgid != pgid;
+    identity->escaped = identity->escaped || escaped;
+    if (escaped) {
+      state->escaped_session_detected = true;
+      if (!remember_escaped_pid(state, identity->pid)) {
+        set_failure(failure, FAILURE_ENUMERATION, EOVERFLOW);
+        return false;
+      }
+      set_failure(failure, FAILURE_ESCAPED_SESSION, 0);
+    } else if (!sample_children(identity->pid, pgid, state,
+                                campaign_started, campaign_deadline_ns,
+                                &shared_revalidation_deadline_ns, failure)) {
+      return false;
+    }
+  }
+
   if (physical > state->max_group_physical_footprint) {
     state->max_group_physical_footprint = physical;
   }
@@ -1033,10 +1652,268 @@ static bool leader_has_exited(pid_t leader, bool *exited) {
   }
 }
 
-static void terminate_known_processes(pid_t pgid, pid_t leader,
-                                      const observations *state) {
+static void force_cleanup_failure(first_failure *failure, int error_number) {
+  failure->code = FAILURE_CLEANUP;
+  failure->error_number = error_number == 0 ? EIO : error_number;
+}
+
+static bool group_contains_no_pid_other_than_leader(pid_t pgid,
+                                                    pid_t leader) {
+  pid_t pids[MAX_PIDS];
+  int count = list_group(pgid, pids);
+  if (count < 0) {
+    return false;
+  }
+  for (int index = 0; index < count; index += 1) {
+    if (pids[index] > 0 && pids[index] != leader) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool group_contains_only_terminal_leader(pid_t pgid, pid_t leader) {
+  if (!group_contains_no_pid_other_than_leader(pgid, leader)) {
+    return false;
+  }
+  bool terminal = false;
+  return leader_has_exited(leader, &terminal) && terminal;
+}
+
+static bool register_escaped_identity(observations *state,
+                                      process_identity *identity,
+                                      first_failure *failure) {
+  identity->escaped = true;
+  state->escaped_session_detected = true;
+  if (!remember_escaped_pid(state, identity->pid)) {
+    set_failure(failure, FAILURE_ENUMERATION, EOVERFLOW);
+    return false;
+  }
+  set_failure(failure, FAILURE_ESCAPED_SESSION, 0);
+  return true;
+}
+
+static bool final_containment_pass(pid_t pgid, pid_t leader,
+                                   observations *state,
+                                   first_failure *failure) {
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+  testing_final_pass_active = true;
+  const char *final_fault = getenv("PDF_TOOLS_SUPERVISOR_FAULT");
+  if (final_fault != NULL &&
+      strcmp(final_fault, "final_escape_resource_tree") == 0 &&
+      !receive_testing_feedback('R')) {
+    set_failure(failure, FAILURE_CLEANUP, errno);
+    return false;
+  }
+#endif
+  if (pgid <= 0) {
+    set_failure(failure, FAILURE_CLEANUP, EINVAL);
+    return false;
+  }
+
+  if (kill(-pgid, SIGSTOP) != 0 && errno != ESRCH) {
+    int stop_error = errno;
+    if (!group_contains_only_terminal_leader(pgid, leader)) {
+      set_failure(failure, FAILURE_CLEANUP, stop_error);
+      return false;
+    }
+  }
+
+  for (;;) {
+    size_t identities_before = state->identity_count;
+    for (size_t index = 0; index < state->identity_count; index += 1) {
+      state->identities[index].final_in_group = false;
+    }
+    pid_t group_pids[MAX_PIDS];
+    int group_count = list_group(pgid, group_pids);
+    if (group_count < 0) {
+      set_failure(failure, FAILURE_ENUMERATION, errno);
+      return false;
+    }
+    for (int group_index = 0; group_index < group_count; group_index += 1) {
+      pid_t pid = group_pids[group_index];
+      if (pid <= 0) {
+        continue;
+      }
+      struct rusage_info_v4 usage;
+      struct proc_taskallinfo all;
+      if (!process_details(pid, &usage, &all)) {
+        if (pid == leader && errno == ESRCH) {
+          bool terminal = false;
+          if (leader_has_exited(leader, &terminal) && terminal) {
+            continue;
+          }
+        }
+        if (errno == ESRCH) {
+          continue;
+        }
+        set_failure(failure, FAILURE_ENUMERATION, errno);
+        return false;
+      }
+      if (!remember_identity(state, pid, usage.ri_proc_start_abstime,
+                             (pid_t)all.pbsd.pbi_pgid != pgid, failure)) {
+        return false;
+      }
+      process_identity *listed = find_identity(state, pid);
+      if (listed != NULL) {
+        listed->final_in_group = true;
+      }
+    }
+
+    for (size_t index = 0; index < state->identity_count; index += 1) {
+      process_identity *identity = &state->identities[index];
+      if (identity->pid == leader) {
+        bool terminal = false;
+        if (!leader_has_exited(leader, &terminal)) {
+          set_failure(failure, FAILURE_CLEANUP, errno);
+          return false;
+        }
+        if (terminal) {
+          continue;
+        }
+      }
+
+      struct rusage_info_v4 usage;
+      struct proc_taskallinfo all;
+      if (!process_details(identity->pid, &usage, &all)) {
+        if (errno == ESRCH) {
+          continue;
+        }
+        set_failure(failure, FAILURE_CLEANUP, errno);
+        return false;
+      }
+      if (usage.ri_proc_start_abstime != identity->start_abstime) {
+        set_failure(failure, FAILURE_PID_REUSE, 0);
+        return false;
+      }
+      if (all.pbsd.pbi_status == SZOMB) {
+        continue;
+      }
+
+      bool escaped_before_freeze =
+          !identity->final_in_group ||
+          (pid_t)all.pbsd.pbi_pgid != pgid;
+      if (escaped_before_freeze &&
+          !register_escaped_identity(state, identity, failure)) {
+        return false;
+      }
+
+      if (!identity->final_frozen) {
+        bool introduced_stop = false;
+        if (!freeze_verified_process(
+                identity->pid, identity->start_abstime, 0,
+                "final_identity_query_race",
+                "final_post_stop_query_failure",
+                "final_pre_signal_race", &introduced_stop)) {
+          int freeze_error = errno;
+          identity->destructive_boundary_failed = true;
+          if (!process_details(identity->pid, &usage, &all) &&
+              errno == ESRCH) {
+            continue;
+          }
+          force_cleanup_failure(failure, freeze_error);
+          return false;
+        }
+        identity->final_frozen = true;
+      }
+
+      if (!process_details(identity->pid, &usage, &all) ||
+          usage.ri_proc_start_abstime != identity->start_abstime ||
+          all.pbsd.pbi_status != SSTOP) {
+        set_failure(failure, FAILURE_CLEANUP,
+                    errno == 0 ? ESTALE : errno);
+        return false;
+      }
+      bool escaped = !identity->final_in_group ||
+                     (pid_t)all.pbsd.pbi_pgid != pgid;
+      if (escaped &&
+          !register_escaped_identity(state, identity, failure)) {
+        return false;
+      }
+
+      pid_t children[MAX_PIDS];
+      int child_count = list_children(identity->pid, children);
+      if (child_count < 0) {
+        set_failure(failure, FAILURE_ENUMERATION, errno);
+        return false;
+      }
+      for (int child_index = 0; child_index < child_count; child_index += 1) {
+        pid_t child = children[child_index];
+        if (child <= 0) {
+          continue;
+        }
+        if (!process_details(child, &usage, &all)) {
+          if (errno == ESRCH) {
+            continue;
+          }
+          set_failure(failure, FAILURE_ENUMERATION, errno);
+          return false;
+        }
+        if (!remember_identity(state, child, usage.ri_proc_start_abstime,
+                               (pid_t)all.pbsd.pbi_pgid != pgid, failure)) {
+          return false;
+        }
+      }
+    }
+
+    if (state->identity_count == identities_before) {
+      break;
+    }
+  }
+
+  pid_t final_group[MAX_PIDS];
+  int final_count = list_group(pgid, final_group);
+  if (final_count < 0) {
+    set_failure(failure, FAILURE_ENUMERATION, errno);
+    return false;
+  }
+  for (int index = 0; index < final_count; index += 1) {
+    if (final_group[index] > 0 && final_group[index] != leader) {
+      set_failure(failure, FAILURE_LIVE_DESCENDANTS, 0);
+      return false;
+    }
+  }
+  return failure->code == FAILURE_NONE;
+}
+
+static bool identity_gone_or_terminal(const process_identity *identity) {
+  struct rusage_info_v4 usage;
+  struct proc_taskallinfo all;
+  if (!process_details(identity->pid, &usage, &all)) {
+    return errno == ESRCH;
+  }
+  return usage.ri_proc_start_abstime != identity->start_abstime ||
+         all.pbsd.pbi_status == SZOMB;
+}
+
+static bool known_identities_terminal(const observations *state,
+                                      pid_t leader) {
+  for (size_t index = 0; index < state->identity_count; index += 1) {
+    const process_identity *identity = &state->identities[index];
+    if (identity->pid != leader && !identity_gone_or_terminal(identity)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+static bool terminate_known_processes(pid_t pgid, pid_t leader,
+                                      const observations *state,
+                                      first_failure *failure) {
+  bool actions_succeeded = true;
   if (pgid > 0) {
-    (void)kill(-pgid, SIGSTOP);
+    if (kill(-pgid, SIGSTOP) != 0 && errno != ESRCH) {
+      int group_error = errno;
+      if (group_contains_no_pid_other_than_leader(pgid, leader)) {
+        if (kill(leader, SIGSTOP) != 0 && errno != ESRCH) {
+          force_cleanup_failure(failure, errno);
+          actions_succeeded = false;
+        }
+      } else {
+        force_cleanup_failure(failure, group_error);
+        actions_succeeded = false;
+      }
+    }
   }
   for (size_t index = 0; index < state->escaped_count; index += 1) {
     process_identity *identity = NULL;
@@ -1048,6 +1925,11 @@ static void terminate_known_processes(pid_t pgid, pid_t leader,
       }
     }
     if (identity != NULL) {
+      if (identity->destructive_boundary_failed) {
+        force_cleanup_failure(failure, ESTALE);
+        actions_succeeded = false;
+        continue;
+      }
       bool introduced_stop = false;
       if (freeze_verified_process(
               identity->pid, identity->start_abstime, 0,
@@ -1055,19 +1937,47 @@ static void terminate_known_processes(pid_t pgid, pid_t leader,
               "escaped_post_stop_query_failure",
               "escaped_pre_signal_race",
               &introduced_stop)) {
-        if (kill(identity->pid, SIGKILL) != 0 && introduced_stop) {
-          (void)resume_matching_process(identity->pid,
-                                        identity->start_abstime);
+        if (kill(identity->pid, SIGKILL) != 0) {
+          int kill_error = errno;
+          if (!identity_gone_or_terminal(identity)) {
+            if (introduced_stop) {
+              (void)resume_matching_process(identity->pid,
+                                            identity->start_abstime);
+            }
+            force_cleanup_failure(failure, kill_error);
+            actions_succeeded = false;
+          }
+        }
+      } else {
+        int freeze_error = errno;
+        if (!identity_gone_or_terminal(identity)) {
+          force_cleanup_failure(failure, freeze_error);
+          actions_succeeded = false;
         }
       }
     }
   }
   if (pgid > 0) {
-    (void)kill(-pgid, SIGKILL);
+    if (kill(-pgid, SIGKILL) != 0 && errno != ESRCH) {
+      int group_error = errno;
+      if (group_contains_no_pid_other_than_leader(pgid, leader)) {
+        if (kill(leader, SIGKILL) != 0 && errno != ESRCH) {
+          force_cleanup_failure(failure, errno);
+          actions_succeeded = false;
+        }
+      } else {
+        force_cleanup_failure(failure, group_error);
+        actions_succeeded = false;
+      }
+    }
   }
   if (pgid <= 0 && leader > 0) {
-    (void)kill(leader, SIGKILL);
+    if (kill(leader, SIGKILL) != 0 && errno != ESRCH) {
+      force_cleanup_failure(failure, errno);
+      actions_succeeded = false;
+    }
   }
+  return actions_succeeded;
 }
 
 static bool group_empty(pid_t pgid) {
@@ -1219,8 +2129,15 @@ static int run_supervisor(const run_config *config) {
   int stderr_pipe[2];
   int control_pipe[2];
   int gate_pipe[2];
+  int testing_control_pipe[2] = {-1, -1};
+  int testing_feedback_pipe[2] = {-1, -1};
   if (pipe(stdout_pipe) != 0 || pipe(stderr_pipe) != 0 ||
-      pipe(control_pipe) != 0 || pipe(gate_pipe) != 0) {
+      pipe(control_pipe) != 0 || pipe(gate_pipe) != 0
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+      || pipe(testing_control_pipe) != 0 ||
+      pipe(testing_feedback_pipe) != 0
+#endif
+  ) {
     return 65;
   }
   if (!set_cloexec(control_pipe[1]) || !set_cloexec(gate_pipe[0])) {
@@ -1240,7 +2157,9 @@ static int run_supervisor(const run_config *config) {
   if (leader == 0) {
     child_main(config, stdout_pipe[1], stderr_pipe[1], control_pipe[1],
                gate_pipe[0], stdout_pipe[0], stderr_pipe[0], control_pipe[0],
-               gate_pipe[1]);
+               gate_pipe[1], testing_control_pipe[0],
+               testing_control_pipe[1], testing_feedback_pipe[0],
+               testing_feedback_pipe[1]);
   }
 
   active_leader = leader;
@@ -1248,6 +2167,12 @@ static int run_supervisor(const run_config *config) {
   (void)close(stderr_pipe[1]);
   (void)close(control_pipe[1]);
   (void)close(gate_pipe[0]);
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+  (void)close(testing_control_pipe[0]);
+  testing_control_write = testing_control_pipe[1];
+  (void)close(testing_feedback_pipe[1]);
+  testing_feedback_read = testing_feedback_pipe[0];
+#endif
 
   control_message ready;
   memset(&ready, 0, sizeof(ready));
@@ -1366,22 +2291,35 @@ static int run_supervisor(const run_config *config) {
   uint64_t next_sample_ns = 0;
   unsigned empty_streak = 0;
   bool original_group_empty = false;
+  bool known_cleanup_proven = true;
   unsigned char control_bytes[sizeof(control_message)];
   size_t control_length = 0;
 
   for (;;) {
     uint64_t now = continuous_now();
     uint64_t elapsed = elapsed_ns(started, now);
+    bool leader_grace_pending = false;
     if (elapsed == UINT64_MAX) {
       set_failure(&failure, FAILURE_INTERNAL, EOVERFLOW);
     } else if (!termination_started && elapsed >= deadline_ns) {
       set_failure(&failure, FAILURE_DEADLINE, ETIMEDOUT);
     }
 
+    if (!leader_exited && failure.code == FAILURE_NONE) {
+      if (!leader_has_exited(leader, &leader_exited)) {
+        if (errno != EINTR) {
+          set_failure(&failure, FAILURE_INTERNAL, errno);
+        }
+      } else if (leader_exited) {
+        leader_exited_ns = elapsed;
+      }
+    }
+
     if (gate_opened && pgid > 0 && !termination_started &&
         (state.sample_count == 0 || elapsed >= next_sample_ns)) {
       (void)sample_group(pgid, &state,
-                         config->physical_footprint_max_bytes, &failure);
+                         config->physical_footprint_max_bytes, started,
+                         deadline_ns, &failure);
       next_sample_ns =
           saturating_add(elapsed, config->sample_ms * UINT64_C(1000000));
     }
@@ -1436,16 +2374,6 @@ static int run_supervisor(const run_config *config) {
       }
     }
 
-    bool leader_grace_pending = false;
-    if (!leader_exited && failure.code == FAILURE_NONE) {
-      if (!leader_has_exited(leader, &leader_exited)) {
-        if (errno != EINTR) {
-          set_failure(&failure, FAILURE_INTERNAL, errno);
-        }
-      } else if (leader_exited) {
-        leader_exited_ns = elapsed;
-      }
-    }
     if (leader_exited && failure.code == FAILURE_NONE && pgid > 0 &&
         group_has_live_descendant(pgid, leader, &failure)) {
       uint64_t grace_ns =
@@ -1459,6 +2387,17 @@ static int run_supervisor(const run_config *config) {
       }
     }
 
+    if (!termination_started && failure.code == FAILURE_NONE &&
+        leader_exited && !leader_grace_pending) {
+      /*
+       * Close the last-sample/acceptance gap. Stop the original group, then
+       * identity-sandwich and stop every remembered process before deciding
+       * that no same-start descendant escaped between the final sample and
+       * the live-descendant check.
+       */
+      (void)final_containment_pass(pgid, leader, &state, &failure);
+    }
+
     if (!termination_started &&
         (failure.code != FAILURE_NONE ||
          (leader_exited && !leader_grace_pending))) {
@@ -1467,7 +2406,7 @@ static int run_supervisor(const run_config *config) {
        * group. Its reserved PID prevents another process from creating a new
        * group with the same identifier between observation and killpg.
        */
-      terminate_known_processes(pgid, leader, &state);
+      (void)terminate_known_processes(pgid, leader, &state, &failure);
       termination_started = true;
       termination_started_ns = elapsed;
     }
@@ -1484,6 +2423,7 @@ static int run_supervisor(const run_config *config) {
       } else {
         empty_streak = 0;
       }
+      known_cleanup_proven = known_identities_terminal(&state, leader);
       if (!leader_reaped) {
         pid_t waited = waitpid(leader, &leader_status, WNOHANG);
         if (waited == leader) {
@@ -1500,14 +2440,23 @@ static int run_supervisor(const run_config *config) {
       if (elapsed != UINT64_MAX &&
           elapsed > saturating_add(termination_started_ns,
                                    UINT64_C(2000000000)) &&
-          (!original_group_empty || !leader_reaped)) {
-        set_failure(&failure, FAILURE_CLEANUP, ETIMEDOUT);
+          (!original_group_empty || !leader_reaped ||
+           !known_cleanup_proven)) {
+        force_cleanup_failure(&failure, ETIMEDOUT);
+        if (!known_cleanup_proven) {
+          /*
+           * The original pgid may be empty while a remembered same-start
+           * identity remains live outside it. Keep the existing containment
+           * gate false so the parent cannot treat this as normal evidence.
+           */
+          original_group_empty = false;
+        }
         break;
       }
     }
 
     if (termination_started && original_group_empty && leader_reaped &&
-        stdout_eof && stderr_eof) {
+        known_cleanup_proven && stdout_eof && stderr_eof) {
       break;
     }
 
@@ -1526,6 +2475,16 @@ static int run_supervisor(const run_config *config) {
   (void)close(stdout_pipe[0]);
   (void)close(stderr_pipe[0]);
   (void)close(control_pipe[0]);
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+  if (testing_control_write >= 0) {
+    (void)close(testing_control_write);
+    testing_control_write = -1;
+  }
+  if (testing_feedback_read >= 0) {
+    (void)close(testing_feedback_read);
+    testing_feedback_read = -1;
+  }
+#endif
   active_pgid = -1;
   active_leader = -1;
 
@@ -1535,12 +2494,32 @@ static int run_supervisor(const run_config *config) {
       WEXITSTATUS(leader_status) == 0;
   bool accepted = failure.code == FAILURE_NONE && lease_written &&
                   gate_opened && leader_success && original_group_empty &&
+                  known_cleanup_proven &&
                   !stdout_buffer.exceeded && !stderr_buffer.exceeded;
 
-  if (accepted &&
-      !write_all(STDOUT_FILENO, stdout_buffer.bytes, stdout_buffer.length)) {
-    set_failure(&failure, FAILURE_INTERNAL, errno);
-    accepted = false;
+#if defined(PDF_TOOLS_SUPERVISOR_TESTING)
+  bool inject_partial_output_failure =
+      fault != NULL &&
+      strcmp(fault, "partial_output_evidence_write_failure") == 0;
+  bool inject_evidence_write_failure =
+      fault != NULL &&
+      (strcmp(fault, "post_cleanup_evidence_write_failure") == 0 ||
+       inject_partial_output_failure);
+#else
+  bool inject_partial_output_failure = false;
+  bool inject_evidence_write_failure = false;
+#endif
+  if (accepted) {
+    size_t output_length =
+        inject_partial_output_failure ? stdout_buffer.length / 2
+                                      : stdout_buffer.length;
+    if (!write_all(STDOUT_FILENO, stdout_buffer.bytes, output_length)) {
+      set_failure(&failure, FAILURE_INTERNAL, errno);
+      accepted = false;
+    }
+  }
+  if (accepted && inject_evidence_write_failure) {
+    (void)close(config->evidence_fd);
   }
   bool evidence_written =
       emit_evidence(config->evidence_fd, accepted, config, leader, pgid,

@@ -1667,8 +1667,22 @@ describe("Extraction IR hostile reconstruction", () => {
         content: [{ type: "text", text: "mutant" }],
         structuredContent: boundaryMutant,
       });
-      expect(rejected).toMatchObject({ isError: true });
-      expect(rejected.structuredContent).toBeUndefined();
+      expect(rejected).toEqual({
+        content: [{
+          type: "text",
+          text:
+            "Internal output validation failed for read_pdf_layout. "
+            + "No unvalidated structured result was returned.",
+        }],
+        structuredContent: {
+          status: "failed",
+          error: {
+            error_schema_version: 1,
+            code: "internal_validation_error",
+          },
+        },
+        isError: true,
+      });
     }
   });
 

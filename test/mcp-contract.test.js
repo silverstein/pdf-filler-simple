@@ -23,9 +23,10 @@ const MCPB_MANIFEST = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifes
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // Drift detector for the live tool contract. Update it only alongside a
 // deliberate, reviewed contract change, and say what changed.
-// 2026-07-28: merge_pdfs now documents its field-wise metadata consensus
-// contract. Previously c584f853d0a8eb0a9d518f47cb4e1d1254ff82f3aefb6e62a495e548775a73c5.
-const TOOL_CONTRACT_SHA256 = "3a1710d4500a330f04cb1527031d6cbebd8f0193d7d6b4716081120f3ea629af";
+// 2026-07-29: split_pdf now advertises structured success/error output and all
+// structured tools advertise universal typed errors. Previously
+// 3a1710d4500a330f04cb1527031d6cbebd8f0193d7d6b4716081120f3ea629af.
+const TOOL_CONTRACT_SHA256 = "28e11cbbd1db8d8ac2590741e31c1cd4785ff6cbf6c235b6978a72e4b0ad2221";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -264,6 +265,8 @@ describe("MCPB static declarations", () => {
       "layout-extraction.js",
       "markdown-conversion.js",
       "markdown-output-transaction.js",
+      "pdf-lib-subprocess.js",
+      "pdf-lib-worker.js",
       "pdfjs-subprocess.js",
       "pdfjs-worker.js",
       "resource-uri.js",
@@ -682,7 +685,13 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
       arguments: { pdf_path: path.join(path.parse(REPO_ROOT).root, "outside.pdf") },
     });
     expect(deniedInfo.isError).toBe(true);
-    expect(deniedInfo.structuredContent).toBeUndefined();
+    expect(deniedInfo.structuredContent).toEqual({
+      status: "failed",
+      error: {
+        error_schema_version: 1,
+        code: "path_policy_denied",
+      },
+    });
     expect(deniedInfo.content?.[0]).toMatchObject({
       type: "text",
       text: expect.stringMatching(/^Error:/),

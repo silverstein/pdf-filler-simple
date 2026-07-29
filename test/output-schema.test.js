@@ -12,6 +12,7 @@ import {
   TOOL_SUCCESS_OUTPUT_SCHEMAS,
   validateStructuredToolResult,
 } from "../server/output-schemas.js";
+import { makeDeepMalformedFixture } from "./helpers/deep-malformed-fixtures.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
@@ -51,6 +52,7 @@ const STRUCTURED_TOOLS = [
   "rotate_pdf_pages",
   "search_pdf_text",
   "set_active_document",
+  "split_pdf",
   "validate_pdf",
 ].sort();
 const TEXT_ONLY_TOOLS = [
@@ -59,7 +61,6 @@ const TEXT_ONLY_TOOLS = [
   "list_profiles",
   "load_profile",
   "save_profile",
-  "split_pdf",
 ].sort();
 
 function collectKeys(value, output = new Set()) {
@@ -76,17 +77,46 @@ function collectKeys(value, output = new Set()) {
 }
 
 describe("output schema definitions", () => {
-  it("advertises the exact resource-limit error only on PDF.js semantic tools", () => {
+  it("does not leave intentional text-only error literals in the server", async () => {
+    const source = await fs.readFile(path.join(REPO_ROOT, "server", "index.js"), "utf8");
+    const readContent = source.slice(
+      source.indexOf('case "read_pdf_content"'),
+      source.indexOf('case "read_pdf_pages"'),
+    );
+    expect(readContent).toContain("return createTypedToolError({");
+    const lines = source.split("\n");
+    const literalErrorRows = lines
+      .map((line, index) => line.includes("isError: true") ? index : -1)
+      .filter(index => index >= 0);
+    expect(literalErrorRows.length).toBeGreaterThan(0);
+    for (const row of literalErrorRows) {
+      expect(lines.slice(Math.max(0, row - 12), row + 13).join("\n")).toContain("structuredContent");
+    }
+  });
+
+  it("advertises the exact resource-limit error on isolated semantic and mutation tools", () => {
     const affectedTools = [
+      "add_signature_field",
+      "apply_page_plan",
+      "apply_signature",
+      "apply_text",
+      "bulk_fill_from_csv",
       "convert_pdf_to_markdown",
       "detect_signature_zones",
+      "fill_pdf",
+      "fill_with_profile",
       "get_page_analysis",
+      "merge_pdfs",
+      "prepare_signing_packet",
       "read_pdf_content",
       "read_pdf_layout",
       "read_pdf_pages",
+      "reorder_pdf_pages",
       "render_pdf_page",
       "render_pdf_region",
+      "rotate_pdf_pages",
       "search_pdf_text",
+      "split_pdf",
     ];
     const resourceFailure = {
       content: [{ type: "text", text: "The isolated worker was stopped." }],
@@ -106,15 +136,15 @@ describe("output schema definitions", () => {
     }
     const rejected = validateStructuredToolResult("get_active_document", resourceFailure);
     expect(rejected.isError).toBe(true);
-    expect(rejected.structuredContent).toBeUndefined();
+    expect(rejected.structuredContent.error.code).toBe("internal_validation_error");
   });
 
-  it("covers the exact 34 structured tools and no text-only tool", () => {
+  it("covers the exact 35 structured tools and no text-only tool", () => {
     expect(Object.keys(TOOL_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_ERROR_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
-    expect(STRUCTURED_TOOLS).toHaveLength(34);
-    expect(TEXT_ONLY_TOOLS).toHaveLength(6);
+    expect(STRUCTURED_TOOLS).toHaveLength(35);
+    expect(TEXT_ONLY_TOOLS).toHaveLength(5);
   });
 
   it("uses current-host-compatible object schemas that compile with the pinned SDK", () => {
@@ -160,9 +190,15 @@ describe("output schema definitions", () => {
         type: "text",
         text: "Internal output validation failed for get_active_document. No unvalidated structured result was returned.",
       }],
+      structuredContent: {
+        status: "failed",
+        error: {
+          error_schema_version: 1,
+          code: "internal_validation_error",
+        },
+      },
       isError: true,
     });
-    expect(invalidSuccess.structuredContent).toBeUndefined();
 
     const omitted = validateStructuredToolResult("get_active_document", {
       content: [{ type: "text", text: "bad" }],
@@ -191,7 +227,7 @@ describe("output schema definitions", () => {
       isError: true,
     });
     expect(malformedToolError.isError).toBe(true);
-    expect(malformedToolError.structuredContent).toBeUndefined();
+    expect(malformedToolError.structuredContent.error.code).toBe("internal_validation_error");
 
     const nameZone = {
       content: [{ type: "text", text: "Found a printed-name zone" }],
@@ -230,6 +266,7 @@ describe("output schema definitions", () => {
       isError: true,
     };
     expect(validateStructuredToolResult("detect_signature_zones", passwordError)).toBe(passwordError);
+
   });
 });
 
@@ -311,7 +348,7 @@ describe("live output schema contract", () => {
         },
       });
       expect(rejected.isError).toBe(true);
-      expect(rejected.structuredContent).toBeUndefined();
+      expect(rejected.structuredContent.error.code).toBe("internal_validation_error");
     }
   }, 30_000);
 
@@ -379,13 +416,37 @@ describe("live output schema contract", () => {
     });
   });
 
+  it("preserves its rich typed failure for an empty malformed content read", async () => {
+    const fixture = makeDeepMalformedFixture({
+      scale: "full",
+      name: "sparse-xref-range-overflow",
+    });
+    const fixturePath = path.join(stateRoot, `${fixture.name}.pdf`);
+    await fs.writeFile(fixturePath, fixture.bytes, { mode: 0o600 });
+
+    const result = await client.callTool({
+      name: "read_pdf_content",
+      arguments: { pdf_path: fixturePath },
+    });
+    expect(result).toMatchObject({
+      isError: true,
+      structuredContent: {
+        content_available: false,
+        extraction_status: "failed",
+        extraction_mode: "none",
+        text_found: false,
+        error_codes: ["NO_EXTRACTABLE_TEXT", "IMAGE_FALLBACK_FAILED"],
+      },
+    });
+  }, 30_000);
+
   it("does not attach undeclared structured content to text-only tool errors", async () => {
     const result = await client.callTool({
       name: "list_pdfs",
       arguments: { directory: path.join(stateRoot, "missing-directory") },
     });
     expect(result.isError).toBe(true);
-    expect(result.structuredContent).toBeUndefined();
+    expect(result.structuredContent.error.code).toBe("tool_execution_failed");
     expect(result.content).toEqual([expect.objectContaining({
       type: "text",
       text: expect.stringMatching(/^Error:/),

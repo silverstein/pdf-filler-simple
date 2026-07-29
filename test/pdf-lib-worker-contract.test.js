@@ -1,0 +1,1531 @@
+import { afterEach, describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import { createRequire } from "node:module";
+import os from "node:os";
+import path from "node:path";
+import zlib from "node:zlib";
+import { fileURLToPath } from "node:url";
+import {
+  PDFArray,
+  PDFDocument,
+  PDFInvalidObject,
+  PDFName,
+  PDFRawStream,
+  PDFRef,
+} from "pdf-lib";
+import {
+  __testOnlyCopyPdfPagesForRebuiltOutput,
+  assertBoundedPdfStructure,
+  assertSafeParsedPdfComplexity,
+  assertSafeParsedPdfDecodeChains,
+  enforceSafeParsedPdfGraph,
+  executePdfLibMutationRequest,
+  isExpectedMalformedStreamDecodeError,
+  loadPdfForMutation,
+  savePdfDocumentSafely,
+} from "../server/pdf-lib-worker.js";
+import {
+  buildPdf,
+  makeDeepMalformedFixtures,
+} from "./helpers/deep-malformed-fixtures.js";
+
+const roots = [];
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const STRUCTURE_BOUNDARY_BYTES = 1024 * 1024;
+const PDF_LIB_FLATE_CJS_SHA256 =
+  "e5e279bd3642c8fd52582605f61514162cdff563523ae0963664a7aa05ff4f03";
+const PDF_LIB_OBJECT_COPIER_CJS_SHA256 =
+  "5945e1d9bd61e763b540b5fc9ef3feb4bdc08349bafcb7fbebb04bc95f0a248a";
+const typedSlot = (...segments) => segments
+  .map(([kind, value = null]) => JSON.stringify([kind, value]))
+  .join("\n")
+  + (segments.length > 0 ? "\n" : "");
+
+function sparseDeclarationAcrossBoundary(prefix, suffix) {
+  const header = Buffer.from("%PDF-1.7\n", "ascii");
+  const declarationPrefix = Buffer.from(prefix, "ascii");
+  const padding = Buffer.alloc(
+    STRUCTURE_BOUNDARY_BYTES - header.length - declarationPrefix.length,
+    0x20,
+  );
+  return Buffer.concat([
+    header,
+    padding,
+    declarationPrefix,
+    Buffer.alloc(8193, 0x20),
+    Buffer.from(`${suffix}\n%%EOF\n`, "ascii"),
+  ]);
+}
+
+function parsedStreamPdf(filterDeclaration = null, {
+  payload = "q Q",
+  extraObjects = [],
+} = {}) {
+  const filter = filterDeclaration === null
+    ? ""
+    : ` /Filter ${filterDeclaration}`;
+  return buildPdf([
+    [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+    [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+    [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+      + "/Resources <<>> /Contents 4 0 R >>"],
+    [4, `<< /Length ${Buffer.byteLength(payload, "latin1")}${filter} >>`
+      + `\nstream\n${payload}\nendstream`],
+    ...extraObjects,
+  ], 1);
+}
+
+function flateContentPdf(expandedBytes) {
+  const payload = zlib.deflateSync(Buffer.alloc(expandedBytes, 0x41), { level: 9 });
+  return buildPdf([
+    [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+    [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+    [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+      + "/Resources <<>> /Contents 4 0 R >>"],
+    [4, `<< /Length ${payload.length} /Filter /FlateDecode >>`
+      + `\nstream\n${payload.toString("latin1")}\nendstream`],
+  ], 1);
+}
+
+async function requestFor(bytes) {
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "pdflib-worker-contract-")));
+  roots.push(root);
+  const sourcePath = path.join(root, "source.pdf");
+  const stageDirectory = path.join(root, "stage");
+  await fs.writeFile(sourcePath, bytes, { mode: 0o600 });
+  await fs.mkdir(stageDirectory, { mode: 0o700 });
+  const stats = await fs.lstat(sourcePath, { bigint: true });
+  return {
+    stageDirectory,
+    request: {
+      protocol_version: 1,
+      operation: "rotate_pdf_pages",
+      sources: [{
+        canonical_path: sourcePath,
+        file_identity: { device: String(stats.dev), inode: String(stats.ino) },
+        size_bytes: bytes.length,
+        sha256: createHash("sha256").update(bytes).digest("hex"),
+      }],
+      password: null,
+      options: { pages: [], degrees: 90 },
+      stage_directory: stageDirectory,
+    },
+  };
+}
+
+afterEach(async () => {
+  await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })));
+});
+
+describe("pdf-lib mutation worker contract", () => {
+  it.each([
+    "sparse-high-object-numbers",
+    "sparse-xref-range-overflow",
+    "sparse-enormous-declared-size",
+  ])("rejects %s before pdf-lib parsing", name => {
+    const fixture = makeDeepMalformedFixtures({ scale: "quick" }).find(item => item.name === name);
+    expect(() => assertBoundedPdfStructure(fixture.bytes)).toThrow(
+      expect.objectContaining({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "sparse_pdf_structure",
+      }),
+    );
+  });
+
+  it("rejects a sparse object declaration in the middle of a large PDF", () => {
+    const padding = Buffer.alloc(9 * 1024 * 1024, 0x20);
+    const bytes = Buffer.concat([
+      Buffer.from("%PDF-1.7\n", "ascii"),
+      padding,
+      Buffer.from("\n9999999 0 obj\n<<>>\nendobj\n", "ascii"),
+      padding,
+      Buffer.from("\n%%EOF\n", "ascii"),
+    ]);
+    expect(() => assertBoundedPdfStructure(bytes)).toThrow(
+      expect.objectContaining({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "sparse_pdf_structure",
+      }),
+    );
+  });
+
+  it.each([
+    ["object number", "9999999", "0 obj"],
+    ["object reference", "9999999", "0 R "],
+    ["trailer Size", "/Size", "9999999"],
+    ["xref range", "xref", "9999999 1"],
+    ["xref-stream Index", "/Index", "[9999999 1]"],
+  ])("rejects a sparse %s split at the scan boundary by more than the old overlap", (
+    _kind,
+    prefix,
+    suffix,
+  ) => {
+    expect(() => assertBoundedPdfStructure(
+      sparseDeclarationAcrossBoundary(prefix, suffix),
+    )).toThrow(expect.objectContaining({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "sparse_pdf_structure",
+    }));
+  });
+
+  it("rejects a hostile later classic-xref subsection when the first subsection and Size are safe", () => {
+    const bytes = Buffer.from(`%PDF-1.7
+xref
+0 1
+0000000000 65535 f
+9999999 1
+0000000009 00000 n
+trailer
+<< /Size 2 >>
+startxref
+0
+%%EOF
+`, "ascii");
+    expect(() => assertBoundedPdfStructure(bytes)).toThrow(expect.objectContaining({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "sparse_pdf_structure",
+    }));
+  });
+
+  it("accepts multiple bounded classic-xref subsections", () => {
+    const bytes = Buffer.from(`%PDF-1.7
+xref
+0 1
+0000000000 65535 f
+2 1
+0000000009 00000 n
+trailer
+<< /Size 3 >>
+startxref
+0
+%%EOF
+`, "ascii");
+    expect(() => assertBoundedPdfStructure(bytes)).not.toThrow();
+  });
+
+  it("retains classic-xref subsection state across a chunk split, long whitespace, and a comment", () => {
+    const prefix = Buffer.from(`%PDF-1.7
+xref
+0 1
+0000000000 65535 f
+`, "ascii");
+    const bytes = Buffer.concat([
+      prefix,
+      Buffer.alloc(STRUCTURE_BOUNDARY_BYTES - prefix.length - 1, 0x20),
+      Buffer.from(`%${"c".repeat(8193)}
+`, "ascii"),
+      Buffer.from("9999999", "ascii"),
+      Buffer.alloc(8193, 0x20),
+      Buffer.from(`1
+0000000009 00000 n
+trailer
+<< /Size 2 >>
+startxref
+0
+%%EOF
+`, "ascii"),
+    ]);
+    expect(() => assertBoundedPdfStructure(bytes)).toThrow(expect.objectContaining({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "sparse_pdf_structure",
+    }));
+  });
+
+  it("does not interpret sparse structural spellings inside comments or string objects", () => {
+    const bytes = Buffer.from(`%PDF-1.7
+% 9999999 0 obj 9999999 0 R /Size 9999999 xref 9999999 1 /Index [9999999 1]
+(outer (9999999 0 obj) \\) /Size 9999999 xref 9999999 1 /Index [9999999 1])
+<2f53697a652039393939393939>
+1 0 obj
+<< /Size 2 >>
+endobj
+%%EOF
+`, "ascii");
+    expect(() => assertBoundedPdfStructure(bytes)).not.toThrow();
+  });
+
+  it("inspects parsed stream dictionaries, not comments, strings, or raw payload spellings", async () => {
+    const filters = Array.from({ length: 12 }, () => "/FlateDecode").join(" ");
+    const bytes = parsedStreamPdf(null, {
+      payload: `q\n% /Filter [${filters}]\n(${filters})\nQ`,
+      extraObjects: [[5, `(${filters})`]],
+    });
+    const document = await PDFDocument.load(bytes);
+    expect(() => assertSafeParsedPdfDecodeChains(document)).not.toThrow();
+  });
+
+  it("allows a common parsed decoder chain and resolves an indirect Filter name", async () => {
+    const direct = await PDFDocument.load(
+      parsedStreamPdf("[/ASCII85Decode /FlateDecode]"),
+    );
+    expect(() => assertSafeParsedPdfDecodeChains(direct)).not.toThrow();
+
+    const expandingBoundary = await PDFDocument.load(
+      parsedStreamPdf("[/FlateDecode /LZWDecode]"),
+    );
+    expect(() => assertSafeParsedPdfDecodeChains(expandingBoundary)).not.toThrow();
+
+    const indirect = await PDFDocument.load(parsedStreamPdf("5 0 R", {
+      extraObjects: [[5, "/FlateDecode"]],
+    }));
+    expect(() => assertSafeParsedPdfDecodeChains(indirect)).not.toThrow();
+  });
+
+  it("rejects excess expanding stages, long indirect chains, and malformed parsed Filter values", async () => {
+    const aliases = await PDFDocument.load(
+      parsedStreamPdf("[/Fl /FlateDecode /F#6CateDecode]"),
+    );
+    expect(() => assertSafeParsedPdfDecodeChains(aliases)).toThrow(
+      expect.objectContaining({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "unsafe_decode_chain",
+      }),
+    );
+
+    const distinct = await PDFDocument.load(
+      parsedStreamPdf("[/FlateDecode /DCTDecode /LZWDecode]"),
+    );
+    expect(() => assertSafeParsedPdfDecodeChains(distinct)).toThrow(
+      expect.objectContaining({ reason: "unsafe_decode_chain" }),
+    );
+
+    const filters = Array.from({ length: 12 }, () => "/FlateDecode").join(" ");
+    const indirect = await PDFDocument.load(parsedStreamPdf("5 0 R", {
+      extraObjects: [[5, `[${filters}]`]],
+    }));
+    expect(() => assertSafeParsedPdfDecodeChains(indirect)).toThrow(
+      expect.objectContaining({ reason: "unsafe_decode_chain" }),
+    );
+
+    const malformed = await PDFDocument.load(parsedStreamPdf("5"));
+    expect(() => assertSafeParsedPdfDecodeChains(malformed)).toThrow(
+      expect.objectContaining({ reason: "unsafe_decode_chain" }),
+    );
+  });
+
+  it("rejects excessive direct object depth while preserving a realistic bounded depth", async () => {
+    const safe = await PDFDocument.load(buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>"],
+      [4, `${"[".repeat(128)}0${"]".repeat(128)}`],
+    ], 1));
+    expect(() => assertSafeParsedPdfComplexity(safe)).not.toThrow();
+
+    const hostile = makeDeepMalformedFixtures({ scale: "quick" })
+      .find(item => item.name === "deep-nested-arrays");
+    const hostileDocument = await PDFDocument.load(hostile.bytes);
+    expect(() => assertSafeParsedPdfComplexity(hostileDocument)).toThrow(
+      expect.objectContaining({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "unsafe_pdf_complexity",
+      }),
+    );
+  });
+
+  it.each([
+    "deep-nested-arrays",
+    "deep-nested-dictionaries",
+  ])("prunes full-scale unreachable %s recovered as an opaque invalid object", async name => {
+    const hostile = makeDeepMalformedFixtures({
+      scale: "full",
+      only: name,
+    })[0];
+    const hostileDocument = await PDFDocument.load(hostile.bytes);
+    expect(
+      hostileDocument.context.enumerateIndirectObjects()
+        .some(([, object]) => object instanceof PDFInvalidObject),
+    ).toBe(true);
+    expect(enforceSafeParsedPdfGraph(hostileDocument)).toMatchObject({
+      removed_tainted_orphan_objects: 1,
+    });
+    expect(
+      hostileDocument.context.enumerateIndirectObjects()
+        .some(([, object]) => object instanceof PDFInvalidObject),
+    ).toBe(false);
+  });
+
+  it("prunes an unreachable opaque invalid object instead of serializing it", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    document.context.assign(
+      document.context.nextRef(),
+      PDFInvalidObject.of(new Uint8Array(16 * 1024)),
+    );
+    expect(enforceSafeParsedPdfGraph(document)).toMatchObject({
+      removed_tainted_orphan_objects: 1,
+    });
+    const bytes = await savePdfDocumentSafely(document, {
+      expectedPageCount: 1,
+      expectedPageRotations: [0],
+    });
+    const verified = await PDFDocument.load(bytes, { updateMetadata: false });
+    expect(
+      verified.context.enumerateIndirectObjects()
+        .some(([, object]) => object instanceof PDFInvalidObject),
+    ).toBe(false);
+  });
+
+  it.each([
+    "catalog",
+    "page-resources",
+    "acroform",
+    "info",
+    "stream-dictionary",
+    "multi-hop",
+  ])("rejects an opaque invalid object reachable through %s", async location => {
+    const document = await PDFDocument.create();
+    const page = document.addPage([100, 100]);
+    const invalidRef = document.context.nextRef();
+    document.context.assign(
+      invalidRef,
+      PDFInvalidObject.of(new Uint8Array([0x5b, 0x5d])),
+    );
+    if (location === "catalog") {
+      document.catalog.set(PDFName.of("PrivateBad"), invalidRef);
+    } else if (location === "page-resources") {
+      page.node.set(
+        PDFName.of("Resources"),
+        document.context.obj({ PrivateBad: invalidRef }),
+      );
+    } else if (location === "acroform") {
+      document.catalog.set(
+        PDFName.of("AcroForm"),
+        document.context.obj({ PrivateBad: invalidRef }),
+      );
+    } else if (location === "info") {
+      document.context.trailerInfo.Info = invalidRef;
+    } else if (location === "stream-dictionary") {
+      const stream = document.context.flateStream(Buffer.from("safe"));
+      stream.dict.set(PDFName.of("PrivateBad"), invalidRef);
+      document.catalog.set(
+        PDFName.of("PrivateStream"),
+        document.context.register(stream),
+      );
+    } else {
+      const middle = document.context.obj({
+        Next: document.context.obj([invalidRef]),
+      });
+      document.catalog.set(
+        PDFName.of("PrivateMiddle"),
+        document.context.register(middle),
+      );
+    }
+    expect(() => enforceSafeParsedPdfGraph(document)).toThrow(
+      expect.objectContaining({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "unsafe_pdf_integrity",
+      }),
+    );
+  });
+
+  it("removes the complete tainted orphan predecessor closure", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const invalidRef = document.context.nextRef();
+    document.context.assign(
+      invalidRef,
+      PDFInvalidObject.of(new Uint8Array([0x5b, 0x5d])),
+    );
+    const predecessorRef = document.context.register(
+      document.context.obj({ PrivateBad: invalidRef }),
+    );
+    const result = enforceSafeParsedPdfGraph(document);
+    expect(result.removed_tainted_orphan_objects).toBe(2);
+    const retained = new Set(
+      document.context.enumerateIndirectObjects()
+        .map(([ref]) => ref.toString()),
+    );
+    expect(retained.has(invalidRef.toString())).toBe(false);
+    expect(retained.has(predecessorRef.toString())).toBe(false);
+  });
+
+  it("retains an orphan reference to an undefined object as standards-defined null", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const missing = document.context.nextRef();
+    const predecessorRef = document.context.register(
+      document.context.obj({ PrivateMissing: missing }),
+    );
+    const result = enforceSafeParsedPdfGraph(document);
+    expect(result).toMatchObject({
+      removed_tainted_orphan_objects: 0,
+      spec_null_reference_edges: 1,
+      spec_null_reachable_edges: 0,
+      spec_null_orphan_edges: 1,
+      spec_null_trailer_edges: 0,
+      spec_null_reference_slot_encoding: "typed-json-sequence.v1",
+      spec_null_reference_samples_truncated: false,
+      spec_null_reference_sample: [{
+        owner: predecessorRef.toString(),
+        slot: typedSlot(["dict_key", "PrivateMissing"]),
+        target: missing.toString(),
+        reachability: "orphan",
+        container_kind: "dict",
+      }],
+    });
+    expect(
+      document.context.enumerateIndirectObjects()
+        .some(([ref]) => ref.toString() === predecessorRef.toString()),
+    ).toBe(true);
+  });
+
+  it("accepts a reachable reference to an undefined object as standards-defined null", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const missing = document.context.nextRef();
+    document.catalog.set(PDFName.of("PrivateMissing"), missing);
+    expect(enforceSafeParsedPdfGraph(document, {
+      pruneUnreachableInvalid: false,
+    })).toMatchObject({
+      removed_tainted_orphan_objects: 0,
+      spec_null_reference_edges: 1,
+      spec_null_reachable_edges: 1,
+      spec_null_orphan_edges: 0,
+      spec_null_trailer_edges: 0,
+      spec_null_reference_slot_encoding: "typed-json-sequence.v1",
+      spec_null_reference_samples_truncated: false,
+      spec_null_reference_sample: [{
+        owner: document.context.trailerInfo.Root.toString(),
+        slot: typedSlot(["dict_key", "PrivateMissing"]),
+        target: missing.toString(),
+        reachability: "reachable",
+        container_kind: "dict",
+      }],
+    });
+  });
+
+  it("audits trailer, array, repeated, and generation-mismatched null references", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const missing = document.context.nextRef();
+    const generationMismatch = PDFRef.of(
+      document.context.trailerInfo.Root.objectNumber,
+      document.context.trailerInfo.Root.generationNumber + 1,
+    );
+    document.context.trailerInfo.Info = missing;
+    document.catalog.set(
+      PDFName.of("PrivateArray"),
+      document.context.obj([missing, missing, generationMismatch]),
+    );
+    const result = enforceSafeParsedPdfGraph(document);
+    expect(result).toMatchObject({
+      removed_tainted_orphan_objects: 0,
+      spec_null_reference_edges: 4,
+      spec_null_reachable_edges: 3,
+      spec_null_orphan_edges: 0,
+      spec_null_trailer_edges: 1,
+      spec_null_reference_slot_encoding: "typed-json-sequence.v1",
+      spec_null_reference_samples_truncated: false,
+    });
+    expect(result.spec_null_reference_sample).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          owner: "trailer",
+          slot: typedSlot(["trailer_field", "Info"]),
+          target: missing.toString(),
+          reachability: "trailer",
+          container_kind: "trailer",
+        }),
+        expect.objectContaining({
+          slot: typedSlot(
+            ["dict_key", "PrivateArray"],
+            ["array_index", 0],
+          ),
+          target: missing.toString(),
+          reachability: "reachable",
+          container_kind: "array",
+        }),
+        expect.objectContaining({
+          slot: typedSlot(
+            ["dict_key", "PrivateArray"],
+            ["array_index", 1],
+          ),
+          target: missing.toString(),
+          reachability: "reachable",
+          container_kind: "array",
+        }),
+        expect.objectContaining({
+          slot: typedSlot(
+            ["dict_key", "PrivateArray"],
+            ["array_index", 2],
+          ),
+          target: generationMismatch.toString(),
+          reachability: "reachable",
+          container_kind: "array",
+        }),
+      ]),
+    );
+  });
+
+  it("still removes an orphan predecessor that also points to an opaque invalid object", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const missing = document.context.nextRef();
+    const invalidRef = document.context.nextRef();
+    document.context.assign(
+      invalidRef,
+      PDFInvalidObject.of(new Uint8Array([0x5b, 0x5d])),
+    );
+    const predecessorRef = document.context.register(
+      document.context.obj({
+        PrivateMissing: missing,
+        PrivateBad: invalidRef,
+      }),
+    );
+    const result = enforceSafeParsedPdfGraph(document);
+    expect(result).toMatchObject({
+      removed_tainted_orphan_objects: 2,
+      spec_null_reference_edges: 0,
+    });
+    const retained = new Set(
+      document.context.enumerateIndirectObjects()
+        .map(([ref]) => ref.toString()),
+    );
+    expect(retained.has(invalidRef.toString())).toBe(false);
+    expect(retained.has(predecessorRef.toString())).toBe(false);
+  });
+
+  it("preserves a loaded source null-reference inventory and rejects mutation of it", async () => {
+    const source = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R /PrivateMissing 9 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>"],
+    ], 1);
+    const unchanged = await loadPdfForMutation(source);
+    const unchangedBytes = await savePdfDocumentSafely(unchanged, {
+      expectedPageCount: 1,
+      expectedPageRotations: [0],
+    });
+    const verified = await PDFDocument.load(unchangedBytes, {
+      updateMetadata: false,
+    });
+    expect(enforceSafeParsedPdfGraph(verified)).toMatchObject({
+      spec_null_reference_edges: 1,
+    });
+
+    const altered = await loadPdfForMutation(source);
+    altered.catalog.set(PDFName.of("PrivateMissing"), PDFRef.of(10, 0));
+    await expect(savePdfDocumentSafely(altered, {
+      expectedPageCount: 1,
+      expectedPageRotations: [0],
+    })).rejects.toMatchObject({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "unsafe_pdf_integrity",
+    });
+  });
+
+  it("rejects a null reference in a rebuilt output without mapped source provenance", async () => {
+    const target = await PDFDocument.create();
+    target.addPage([100, 100]);
+    target.catalog.set(
+      PDFName.of("PrivateMissing"),
+      target.context.nextRef(),
+    );
+    await expect(savePdfDocumentSafely(target, {
+      expectedPageCount: 1,
+      expectedPageRotations: [0],
+    })).rejects.toMatchObject({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "unsafe_pdf_integrity",
+    });
+  });
+
+  it("uses injective typed slots and rejects equal-count relocation", async () => {
+    const source = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R /A#2FB 9 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>"],
+    ], 1);
+    const document = await loadPdfForMutation(source);
+    const directPolicy = enforceSafeParsedPdfGraph(document);
+    document.catalog.delete(PDFName.of("A/B"));
+    document.catalog.set(
+      PDFName.of("A"),
+      document.context.obj({ B: PDFRef.of(9, 0) }),
+    );
+    const nestedPolicy = enforceSafeParsedPdfGraph(document);
+    expect(directPolicy.spec_null_reference_edges).toBe(1);
+    expect(nestedPolicy.spec_null_reference_edges).toBe(1);
+    expect(directPolicy.spec_null_reference_inventory_sha256)
+      .not.toBe(nestedPolicy.spec_null_reference_inventory_sha256);
+    await expect(savePdfDocumentSafely(document, {
+      expectedPageCount: 1,
+      expectedPageRotations: [0],
+    })).rejects.toMatchObject({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "unsafe_pdf_integrity",
+    });
+  });
+
+  it("counts each serialized occurrence of a shared direct container", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const missing = document.context.nextRef();
+    const shared = document.context.obj([missing]);
+    document.catalog.set(PDFName.of("A"), shared);
+    document.catalog.set(PDFName.of("B"), shared);
+    const policy = enforceSafeParsedPdfGraph(document);
+    expect(policy.spec_null_reference_edges).toBe(2);
+    expect(policy.spec_null_reference_sample).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          slot: typedSlot(["dict_key", "A"], ["array_index", 0]),
+        }),
+        expect.objectContaining({
+          slot: typedSlot(["dict_key", "B"], ["array_index", 0]),
+        }),
+      ]),
+    );
+  });
+
+  it("canonicalizes dictionary insertion order without losing duplicate occurrences", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const missing = document.context.nextRef();
+    document.catalog.set(PDFName.of("Z"), missing);
+    document.catalog.set(PDFName.of("A"), missing);
+    const first = enforceSafeParsedPdfGraph(document);
+    document.catalog.delete(PDFName.of("Z"));
+    document.catalog.delete(PDFName.of("A"));
+    document.catalog.set(PDFName.of("A"), missing);
+    document.catalog.set(PDFName.of("Z"), missing);
+    const second = enforceSafeParsedPdfGraph(document);
+    expect(first.spec_null_reference_edges).toBe(2);
+    expect(second.spec_null_reference_edges).toBe(2);
+    expect(second.spec_null_reference_inventory_sha256)
+      .toBe(first.spec_null_reference_inventory_sha256);
+  });
+
+  it("preserves loaded authority across a dictionary-order-only mutation", async () => {
+    const source = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R /Z 9 0 R /A 10 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>"],
+    ], 1);
+    const document = await loadPdfForMutation(source);
+    const a = document.catalog.get(PDFName.of("A"));
+    const z = document.catalog.get(PDFName.of("Z"));
+    document.catalog.delete(PDFName.of("A"));
+    document.catalog.delete(PDFName.of("Z"));
+    document.catalog.set(PDFName.of("Z"), z);
+    document.catalog.set(PDFName.of("A"), a);
+    await expect(savePdfDocumentSafely(document, {
+      expectedPageCount: 1,
+      expectedPageRotations: [0],
+    })).resolves.toBeInstanceOf(Uint8Array);
+  });
+
+  it("classifies a missing reference directly in a stream dictionary", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const missing = document.context.nextRef();
+    const stream = document.context.flateStream(Buffer.from("safe"));
+    stream.dict.set(PDFName.of("PrivateMissing"), missing);
+    const streamRef = document.context.register(stream);
+    document.catalog.set(PDFName.of("PrivateStream"), streamRef);
+    const policy = enforceSafeParsedPdfGraph(document);
+    expect(policy.spec_null_reference_sample).toContainEqual(
+      expect.objectContaining({
+        owner: streamRef.toString(),
+        slot: typedSlot(
+          ["stream_dict", null],
+          ["dict_key", "PrivateMissing"],
+        ),
+        target: missing.toString(),
+        container_kind: "stream_dict",
+      }),
+    );
+  });
+
+  it("bounds samples at 32 while hashing every repeated null-reference edge deterministically", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const missing = document.context.nextRef();
+    document.catalog.set(
+      PDFName.of("PrivateMany"),
+      document.context.obj(Array.from({ length: 40 }, () => missing)),
+    );
+    const first = enforceSafeParsedPdfGraph(document);
+    const second = enforceSafeParsedPdfGraph(document);
+    expect(first.spec_null_reference_edges).toBe(40);
+    expect(first.spec_null_reference_sample).toHaveLength(32);
+    expect(first.spec_null_reference_samples_truncated).toBe(true);
+    expect(second.spec_null_reference_inventory_sha256)
+      .toBe(first.spec_null_reference_inventory_sha256);
+  });
+
+  it("accepts spec-null but rejects an orphan opaque invalid object when pruning is disabled", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    document.catalog.set(PDFName.of("PrivateMissing"), document.context.nextRef());
+    document.context.assign(
+      document.context.nextRef(),
+      PDFInvalidObject.of(new Uint8Array([0x5b, 0x5d])),
+    );
+    expect(() => enforceSafeParsedPdfGraph(document, {
+      pruneUnreachableInvalid: false,
+    })).toThrow(
+      expect.objectContaining({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "unsafe_pdf_integrity",
+      }),
+    );
+  });
+
+  it("keeps an undefined array reference in position across save and reparse", async () => {
+    const source = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R /PrivateArray [9 0 R /Marker] >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>"],
+    ], 1);
+    const document = await loadPdfForMutation(source);
+    const bytes = await savePdfDocumentSafely(document, {
+      expectedPageCount: 1,
+      expectedPageRotations: [0],
+    });
+    const verified = await PDFDocument.load(bytes, { updateMetadata: false });
+    const array = verified.catalog.lookup(PDFName.of("PrivateArray"), PDFArray);
+    expect(array.size()).toBe(2);
+    expect(array.get(0)).toEqual(PDFRef.of(9, 0));
+    expect(verified.context.lookup(array.get(0))).toBeUndefined();
+    expect(array.get(1).decodeText()).toBe("Marker");
+  });
+
+  it("accepts omitted, explicit-null, and undefined optional catalog entries", async () => {
+    const omitted = await PDFDocument.create();
+    omitted.addPage([100, 100]);
+    const explicitNull = await PDFDocument.create();
+    explicitNull.addPage([100, 100]);
+    explicitNull.catalog.set(
+      PDFName.of("PrivateOptional"),
+      explicitNull.context.obj(null),
+    );
+    const undefinedRef = await PDFDocument.create();
+    undefinedRef.addPage([100, 100]);
+    const missing = undefinedRef.context.nextRef();
+    undefinedRef.catalog.set(PDFName.of("PrivateOptional"), missing);
+
+    expect(enforceSafeParsedPdfGraph(omitted)).toMatchObject({
+      spec_null_reference_edges: 0,
+    });
+    expect(enforceSafeParsedPdfGraph(explicitNull)).toMatchObject({
+      spec_null_reference_edges: 0,
+    });
+    expect(enforceSafeParsedPdfGraph(undefinedRef)).toMatchObject({
+      spec_null_reference_edges: 1,
+    });
+    expect(undefinedRef.context.lookup(missing)).toBeUndefined();
+  });
+
+  it("keeps Root and page-tree references strict despite generic null semantics", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    document.context.trailerInfo.Root = document.context.nextRef();
+    expect(() => enforceSafeParsedPdfGraph(document)).toThrow(
+      expect.objectContaining({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "unsafe_pdf_integrity",
+      }),
+    );
+
+    const danglingPage = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+      [2, "<< /Type /Pages /Kids [9 0 R] /Count 1 >>"],
+    ], 1);
+    const { request, stageDirectory } = await requestFor(danglingPage);
+    await expect(executePdfLibMutationRequest(request)).rejects.toThrow(
+      /malformed|incomplete|unsupported/i,
+    );
+    expect(await fs.readdir(stageDirectory)).toEqual([]);
+  });
+
+  it("fails a signature-placement operation with no output when its required page is absent", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const { request, stageDirectory } = await requestFor(
+      await document.save({ useObjectStreams: false }),
+    );
+    request.operation = "add_signature_field";
+    request.options = {
+      allow_resign: false,
+      placement: {
+        page: 2,
+        x: 10,
+        y: 10,
+        width: 40,
+        height: 20,
+        label: "Sign here",
+      },
+    };
+    await expect(executePdfLibMutationRequest(request)).rejects.toThrow(
+      /out of range/i,
+    );
+    expect(await fs.readdir(stageDirectory)).toEqual([]);
+  });
+
+  it("materializes deferred font resources before graph provenance verification", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([400, 500]);
+    const { request, stageDirectory } = await requestFor(
+      await document.save(),
+    );
+    request.operation = "add_signature_field";
+    request.options = {
+      allow_resign: false,
+      placement: {
+        page: 1,
+        x: 72,
+        y: 72,
+        width: 160,
+        height: 40,
+        label: "Sign here",
+      },
+    };
+    const response = await executePdfLibMutationRequest(request);
+    expect(response.status).toBe("ok");
+    expect(response.manifest).toHaveLength(1);
+    const output = await PDFDocument.load(
+      await fs.readFile(path.join(stageDirectory, response.manifest[0].filename)),
+      { updateMetadata: false },
+    );
+    expect(enforceSafeParsedPdfGraph(output, {
+      pruneUnreachableInvalid: false,
+    })).toMatchObject({
+      spec_null_reference_edges: 0,
+    });
+  });
+
+  it.each([
+    ["merge_pdfs", {}],
+    ["split_pdf", { page_ranges: "1-1" }],
+    ["reorder_pdf_pages", { page_order: [1], rotations: {} }],
+    ["apply_page_plan", { page_order: [1], rotations: {} }],
+  ])("emits no unproven null references from the %s rebuild path", async (
+    operation,
+    options,
+  ) => {
+    const source = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R /PrivateMissing 9 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>"],
+    ], 1);
+    const { request, stageDirectory } = await requestFor(source);
+    request.operation = operation;
+    request.options = options;
+    const response = await executePdfLibMutationRequest(request);
+    expect(response.status).toBe("ok");
+    expect(response.manifest).toHaveLength(1);
+    const output = await PDFDocument.load(
+      await fs.readFile(path.join(stageDirectory, response.manifest[0].filename)),
+      { updateMetadata: false },
+    );
+    expect(enforceSafeParsedPdfGraph(output, {
+      pruneUnreachableInvalid: false,
+    })).toMatchObject({
+      spec_null_reference_edges: 0,
+    });
+  });
+
+  it.each([
+    ["merge_pdfs", {}],
+    ["split_pdf", { page_ranges: "1-1" }],
+    ["reorder_pdf_pages", { page_order: [1], rotations: {} }],
+    ["apply_page_plan", { page_order: [1], rotations: {} }],
+  ])("maps selected-page null-target provenance through the %s rebuild path", async (
+    operation,
+    options,
+  ) => {
+    const source = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /PrivateMissing 9 0 R "
+        + "/MediaBox [0 0 100 100] /Resources <<>> >>"],
+    ], 1);
+    const { request, stageDirectory } = await requestFor(source);
+    request.operation = operation;
+    request.options = options;
+    const response = await executePdfLibMutationRequest(request);
+    expect(response.status).toBe("ok");
+    expect(response.manifest).toHaveLength(1);
+    const output = await PDFDocument.load(
+      await fs.readFile(path.join(stageDirectory, response.manifest[0].filename)),
+      { updateMetadata: false },
+    );
+    expect(enforceSafeParsedPdfGraph(output, {
+      pruneUnreachableInvalid: false,
+    })).toMatchObject({
+      spec_null_reference_edges: 1,
+      spec_null_reachable_edges: 1,
+    });
+  });
+
+  it("maps same-number null targets independently across a multi-source merge", async () => {
+    const source = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /PrivateMissing 9 0 R "
+        + "/MediaBox [0 0 100 100] /Resources <<>> >>"],
+    ], 1);
+    const first = await requestFor(source);
+    const second = await requestFor(source);
+    first.request.operation = "merge_pdfs";
+    first.request.options = {};
+    first.request.sources.push(second.request.sources[0]);
+    const response = await executePdfLibMutationRequest(first.request);
+    expect(response.status).toBe("ok");
+    expect(response.manifest).toHaveLength(1);
+    const output = await PDFDocument.load(
+      await fs.readFile(path.join(
+        first.stageDirectory,
+        response.manifest[0].filename,
+      )),
+      { updateMetadata: false },
+    );
+    expect(output.getPageCount()).toBe(2);
+    expect(enforceSafeParsedPdfGraph(output, {
+      pruneUnreachableInvalid: false,
+    })).toMatchObject({
+      spec_null_reference_edges: 2,
+      spec_null_reachable_edges: 2,
+    });
+  });
+
+  it("maps a null target copied from the single-source Info dictionary", async () => {
+    const source = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R "
+        + "/MediaBox [0 0 100 100] /Resources <<>> >>"],
+      [4, "<< /Title (Info provenance) /PrivateMissing 9 0 R >>"],
+    ], 1, " /Info 4 0 R");
+    const { request, stageDirectory } = await requestFor(source);
+    request.operation = "merge_pdfs";
+    request.options = {};
+    const response = await executePdfLibMutationRequest(request);
+    expect(response.status).toBe("ok");
+    const output = await PDFDocument.load(
+      await fs.readFile(path.join(stageDirectory, response.manifest[0].filename)),
+      { updateMetadata: false },
+    );
+    expect(output.getTitle()).toBe("Info provenance");
+    expect(enforceSafeParsedPdfGraph(output, {
+      pruneUnreachableInvalid: false,
+    })).toMatchObject({
+      spec_null_reference_edges: 1,
+      spec_null_reachable_edges: 1,
+    });
+  });
+
+  it("maps a null target copied from an AcroForm default during field repair", async () => {
+    const source = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R /AcroForm 5 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /Annots [4 0 R] "
+        + "/MediaBox [0 0 100 100] /Resources <<>> >>"],
+      [4, "<< /Type /Annot /Subtype /Widget /FT /Tx /T (Field1) "
+        + "/Rect [10 10 80 30] /P 3 0 R >>"],
+      [5, "<< /Fields [4 0 R] /Q 9 0 R >>"],
+    ], 1);
+    const { request, stageDirectory } = await requestFor(source);
+    request.operation = "merge_pdfs";
+    request.options = {};
+    const response = await executePdfLibMutationRequest(request);
+    expect(response.status).toBe("ok");
+    expect(response.result.form_info.fields).toHaveLength(1);
+    const output = await PDFDocument.load(
+      await fs.readFile(path.join(stageDirectory, response.manifest[0].filename)),
+      { updateMetadata: false },
+    );
+    expect(enforceSafeParsedPdfGraph(output, {
+      pruneUnreachableInvalid: false,
+    })).toMatchObject({
+      spec_null_reference_edges: 1,
+      spec_null_reachable_edges: 1,
+    });
+  });
+
+  it.each([
+    ["1", 1],
+    ["2", 0],
+  ])("maps only null targets from the selected split subset %s", async (
+    pageRanges,
+    expectedEdges,
+  ) => {
+    const source = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R 4 0 R] /Count 2 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /PrivateMissing 9 0 R "
+        + "/MediaBox [0 0 100 100] /Resources <<>> >>"],
+      [4, "<< /Type /Page /Parent 2 0 R "
+        + "/MediaBox [0 0 100 100] /Resources <<>> >>"],
+    ], 1);
+    const { request, stageDirectory } = await requestFor(source);
+    request.operation = "split_pdf";
+    request.options = { page_ranges: pageRanges };
+    const response = await executePdfLibMutationRequest(request);
+    expect(response.status).toBe("ok");
+    const output = await PDFDocument.load(
+      await fs.readFile(path.join(stageDirectory, response.manifest[0].filename)),
+      { updateMetadata: false },
+    );
+    expect(output.getPageCount()).toBe(1);
+    expect(enforceSafeParsedPdfGraph(output, {
+      pruneUnreachableInvalid: false,
+    })).toMatchObject({
+      spec_null_reference_edges: expectedEdges,
+    });
+  });
+
+  it("rejects a second destination occurrence reusing a sanctioned null target", async () => {
+    const sourceBytes = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /PrivateMissing 9 0 R "
+        + "/MediaBox [0 0 100 100] /Resources <<>> >>"],
+    ], 1);
+    const source = await loadPdfForMutation(sourceBytes);
+    const target = await PDFDocument.create();
+    const [copiedPage] = await __testOnlyCopyPdfPagesForRebuiltOutput(
+      target,
+      source,
+      [0],
+      {
+        sourceAuthorityLabel: createHash("sha256").update(sourceBytes).digest("hex"),
+      },
+    );
+    const copiedMissing = copiedPage.node.get(PDFName.of("PrivateMissing"));
+    expect(copiedMissing).toBeInstanceOf(PDFRef);
+    target.catalog.set(PDFName.of("PrivateReuse"), copiedMissing);
+    await expect(savePdfDocumentSafely(target, {
+      expectedPageCount: 1,
+      expectedPageRotations: [0],
+    })).rejects.toMatchObject({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "unsafe_pdf_integrity",
+    });
+  });
+
+  it("rejects a sanctioned null target removed from every destination occurrence", async () => {
+    const sourceBytes = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /PrivateMissing 9 0 R "
+        + "/MediaBox [0 0 100 100] /Resources <<>> >>"],
+    ], 1);
+    const source = await loadPdfForMutation(sourceBytes);
+    const target = await PDFDocument.create();
+    const [copiedPage] = await __testOnlyCopyPdfPagesForRebuiltOutput(
+      target,
+      source,
+      [0],
+      {
+        sourceAuthorityLabel: createHash("sha256").update(sourceBytes).digest("hex"),
+      },
+    );
+    copiedPage.node.delete(PDFName.of("PrivateMissing"));
+    await expect(savePdfDocumentSafely(target, {
+      expectedPageCount: 1,
+      expectedPageRotations: [0],
+    })).rejects.toMatchObject({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "unsafe_pdf_integrity",
+    });
+  });
+
+  it("rejects equal-count relocation of a sanctioned null target", async () => {
+    const sourceBytes = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R /PrivateMissing 9 0 R "
+        + "/MediaBox [0 0 100 100] /Resources <<>> >>"],
+    ], 1);
+    const source = await loadPdfForMutation(sourceBytes);
+    const target = await PDFDocument.create();
+    const [copiedPage] = await __testOnlyCopyPdfPagesForRebuiltOutput(
+      target,
+      source,
+      [0],
+      {
+        sourceAuthorityLabel: createHash("sha256").update(sourceBytes).digest("hex"),
+      },
+    );
+    const copiedMissing = copiedPage.node.get(PDFName.of("PrivateMissing"));
+    copiedPage.node.delete(PDFName.of("PrivateMissing"));
+    target.catalog.set(PDFName.of("PrivateRelocated"), copiedMissing);
+    await expect(savePdfDocumentSafely(target, {
+      expectedPageCount: 1,
+      expectedPageRotations: [0],
+    })).rejects.toMatchObject({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "unsafe_pdf_integrity",
+    });
+  });
+
+  it("rejects a rebuilt copier label that does not match its loaded source bytes", async () => {
+    const sourceBytes = buildPdf([
+      [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+      [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+      [3, "<< /Type /Page /Parent 2 0 R "
+        + "/MediaBox [0 0 100 100] /Resources <<>> >>"],
+    ], 1);
+    const source = await loadPdfForMutation(sourceBytes);
+    const target = await PDFDocument.create();
+    await expect(__testOnlyCopyPdfPagesForRebuiltOutput(
+      target,
+      source,
+      [0],
+      { sourceAuthorityLabel: "a".repeat(64) },
+    )).rejects.toMatchObject({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "unsafe_pdf_integrity",
+    });
+    expect(target.getPageCount()).toBe(0);
+  });
+
+  it("rejects caller-supplied provenance that was not captured by a sanctioned copier", async () => {
+    const target = await PDFDocument.create();
+    target.addPage([100, 100]);
+    const missing = target.context.nextRef();
+    target.catalog.set(PDFName.of("PrivateMissing"), missing);
+    await expect(savePdfDocumentSafely(target, {
+      rebuiltSpecNullTargetProvenance: new Map([[
+        missing.toString(),
+        {
+          source_authority: "a".repeat(64),
+          source_ref: "9 0 R",
+        },
+      ]]),
+      expectedPageCount: 1,
+      expectedPageRotations: [0],
+    })).rejects.toThrow(/unknown authority/i);
+  });
+
+  it("bounds direct-container DAG amplification during occurrence-complete audit", {
+    timeout: 30_000,
+  }, async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const missing = document.context.nextRef();
+    let shared = document.context.obj([missing]);
+    for (let depth = 0; depth < 20; depth += 1) {
+      shared = document.context.obj([shared, shared]);
+    }
+    document.catalog.set(PDFName.of("PrivateDag"), shared);
+    expect(() => enforceSafeParsedPdfGraph(document)).toThrow(
+      expect.objectContaining({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "unsafe_pdf_integrity",
+      }),
+    );
+  });
+
+  it("fails closed on a direct-container cycle", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([100, 100]);
+    const cycle = document.context.obj({});
+    cycle.set(PDFName.of("Self"), cycle);
+    document.catalog.set(PDFName.of("PrivateCycle"), cycle);
+    expect(() => enforceSafeParsedPdfGraph(document)).toThrow(
+      expect.objectContaining({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "unsafe_pdf_integrity",
+      }),
+    );
+  });
+
+  it("bounds supported decoded stream expansion before mutation or save", async () => {
+    const safe = await PDFDocument.load(flateContentPdf(4 * 1024 * 1024));
+    expect(() => assertSafeParsedPdfComplexity(safe)).not.toThrow();
+
+    const hostile = await PDFDocument.load(flateContentPdf(20 * 1024 * 1024));
+    expect(() => assertSafeParsedPdfComplexity(hostile)).toThrow(
+      expect.objectContaining({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "unsafe_stream_expansion",
+      }),
+    );
+  });
+
+  it("decodes standard abbreviations and indirect Filter names through canonical clones", async () => {
+    const payload = zlib.deflateSync(Buffer.alloc(1024 * 1024, 0x41))
+      .toString("latin1");
+    const abbreviated = await PDFDocument.load(
+      parsedStreamPdf("/Fl", { payload }),
+    );
+    expect(() => assertSafeParsedPdfComplexity(abbreviated)).not.toThrow();
+
+    const indirect = await PDFDocument.load(
+      parsedStreamPdf("5 0 R", {
+        payload,
+        extraObjects: [[5, "/Fl"]],
+      }),
+    );
+    expect(() => assertSafeParsedPdfComplexity(indirect)).not.toThrow();
+  });
+
+  it("leaves mixed unsupported decoder chains to topology and worker controls", async () => {
+    const payload = zlib.deflateSync(Buffer.alloc(1024 * 1024, 0x41))
+      .toString("latin1");
+    const document = await PDFDocument.load(
+      parsedStreamPdf("[/FlateDecode /DCTDecode]", { payload }),
+    );
+    expect(() => assertSafeParsedPdfDecodeChains(document)).not.toThrow();
+    expect(assertSafeParsedPdfComplexity(document)).toMatchObject({
+      expansion_probe: "indeterminate",
+      indeterminate_streams: 1,
+    });
+  });
+
+  it("checks every supported stream without an ordering-dependent aggregate cap", async () => {
+    const payload = zlib.deflateSync(Buffer.alloc(1024 * 1024, 0x41))
+      .toString("latin1");
+    const extraObjects = Array.from({ length: 129 }, (_, index) => [
+      index + 10,
+      `<< /Length ${Buffer.byteLength(payload, "latin1")} `
+        + `/Filter /FlateDecode >>\nstream\n${payload}\nendstream`,
+    ]);
+    const document = await PDFDocument.load(
+      parsedStreamPdf(null, { extraObjects }),
+    );
+    expect(assertSafeParsedPdfComplexity(document)).toMatchObject({
+      expansion_probe: "within_bound",
+      indeterminate_streams: 0,
+      decoded_inspection_bytes: 129 * 1024 * 1024,
+    });
+  });
+
+  it.each(["first", "last"])(
+    "rejects an over-expanding supported stream when ordered %s",
+    async position => {
+      const safe = zlib.deflateSync(Buffer.alloc(1024 * 1024, 0x41))
+        .toString("latin1");
+      const bomb = zlib.deflateSync(Buffer.alloc(20 * 1024 * 1024, 0x42))
+        .toString("latin1");
+      const body = payload => (
+        `<< /Length ${Buffer.byteLength(payload, "latin1")} `
+        + `/Filter /FlateDecode >>\nstream\n${payload}\nendstream`
+      );
+      const payloads = [
+        ...Array.from({ length: 128 }, () => safe),
+        bomb,
+      ];
+      if (position === "first") {
+        payloads.unshift(payloads.pop());
+      }
+      const document = await PDFDocument.load(
+        parsedStreamPdf(null, {
+          extraObjects: payloads.map((payload, index) => [
+            index + 10,
+            body(payload),
+          ]),
+        }),
+      );
+      expect(() => assertSafeParsedPdfComplexity(document)).toThrow(
+        expect.objectContaining({
+          code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+          reason: "unsafe_stream_expansion",
+        }),
+      );
+    },
+  );
+
+  it("treats a bounded decoder exception as indeterminate", async () => {
+    const document = await PDFDocument.load(
+      parsedStreamPdf("/FlateDecode", { payload: "not-a-flate-stream" }),
+    );
+    expect(assertSafeParsedPdfComplexity(document)).toMatchObject({
+      expansion_probe: "indeterminate",
+      indeterminate_streams: 1,
+    });
+  });
+
+  it("classifies only exact known malformed-input decoder failures as indeterminate", async () => {
+    for (const message of [
+      "Invalid header in flate stream: 120, -1",
+      "Unknown compression method in flate stream: 229, 58",
+      "Bad FCHECK in flate stream: 120, 193",
+      "FDICT bit set in flate stream: 104, 98",
+      "Bad block header in flate stream",
+      "Bad uncompressed block length in flate stream",
+      "Unknown block type in flate stream",
+      "Bad encoding in flate stream",
+    ]) {
+      expect(isExpectedMalformedStreamDecodeError(new Error(message))).toBe(true);
+    }
+    class DecoderSubclassError extends Error {}
+    for (const error of [
+      new TypeError("Bad encoding in flate stream"),
+      new DecoderSubclassError("Bad encoding in flate stream"),
+      new Error("Bad encoding in flate stream\n"),
+      new Error("prefix Bad encoding in flate stream"),
+      new Error("Bad encoding in flate stream suffix"),
+      new Error("FDICT bit set in flate stream: 256, 0"),
+      new Error("Bad FCHECK in flate stream: 01, 2"),
+      new Error("Invalid header in flate stream: -2, 120"),
+      new Error("Invalid header in flate stream: 0, 0"),
+      new Error("Unknown compression method in flate stream: 120, 0"),
+      new Error("Bad FCHECK in flate stream: 120, 156"),
+      new Error("FDICT bit set in flate stream: 120, 156"),
+      new Error("Unexpected decoder invariant"),
+      "Bad encoding in flate stream",
+    ]) {
+      expect(isExpectedMalformedStreamDecodeError(error)).toBe(false);
+    }
+  });
+
+  it("binds malformed-Flate classification to the exact dependency authority", async () => {
+    const require = createRequire(import.meta.url);
+    const pdfLibPackage = require.resolve("pdf-lib/package.json");
+    const flateCjs = path.join(
+      path.dirname(pdfLibPackage),
+      "cjs/core/streams/FlateStream.js",
+    );
+    const objectCopierCjs = path.join(
+      path.dirname(pdfLibPackage),
+      "cjs/core/PDFObjectCopier.js",
+    );
+    const installedManifest = JSON.parse(
+      await fs.readFile(pdfLibPackage, "utf8"),
+    );
+    expect(installedManifest).toMatchObject({
+      name: "pdf-lib",
+      version: "1.17.1",
+      main: "cjs/index.js",
+    });
+    expect(require.resolve("pdf-lib")).toBe(
+      path.join(path.dirname(pdfLibPackage), "cjs/index.js"),
+    );
+    expect(createHash("sha256").update(await fs.readFile(flateCjs)).digest("hex"))
+      .toBe(PDF_LIB_FLATE_CJS_SHA256);
+    expect(
+      createHash("sha256")
+        .update(await fs.readFile(objectCopierCjs))
+        .digest("hex"),
+    ).toBe(PDF_LIB_OBJECT_COPIER_CJS_SHA256);
+    for (const prefix of ["", "pdf-toolkit-mcp-share/"]) {
+      const manifest = JSON.parse(
+        await fs.readFile(path.join(REPO_ROOT, prefix, "package.json"), "utf8"),
+      );
+      const lock = JSON.parse(
+        await fs.readFile(path.join(REPO_ROOT, prefix, "package-lock.json"), "utf8"),
+      );
+      expect(manifest.dependencies["pdf-lib"]).toBe("1.17.1");
+      expect(lock.packages[""].dependencies["pdf-lib"]).toBe("1.17.1");
+      expect(lock.packages["node_modules/pdf-lib"]).toMatchObject({
+        version: "1.17.1",
+        integrity:
+          "sha512-V/mpyJAoTsN4cnP31vc0wfNA1+p20evqqnap0KLoRUN0Yk/p3wN52DOEsL4oBFcLdb76hlpKPtzJIgo67j/XLw==",
+      });
+    }
+  });
+
+  it("propagates an unexpected decoder implementation failure", async () => {
+    const document = await PDFDocument.load(
+      parsedStreamPdf("/FlateDecode", {
+        payload: zlib.deflateSync(Buffer.from("safe")).toString("latin1"),
+      }),
+    );
+    const unexpected = new TypeError("Unexpected decoder invariant");
+    expect(() => assertSafeParsedPdfComplexity(document, {
+      decodeStream() {
+        throw unexpected;
+      },
+    })).toThrow(unexpected);
+  });
+
+  it.each([
+    ["deep direct objects", () => makeDeepMalformedFixtures({ scale: "quick" })
+      .find(item => item.name === "deep-nested-dictionaries").bytes],
+    ["compressed expansion", () => flateContentPdf(20 * 1024 * 1024)],
+  ])("returns a typed error without staging output for %s", async (_label, fixture) => {
+    const { request, stageDirectory } = await requestFor(fixture());
+    await expect(executePdfLibMutationRequest(request)).rejects.toMatchObject({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+    });
+    expect(await fs.readdir(stageDirectory)).toEqual([]);
+  });
+
+  it.each([
+    "deep-nested-arrays",
+    "deep-nested-dictionaries",
+  ])("removes unreachable opaque %s before producing a verified mutation", async name => {
+    const fixture = makeDeepMalformedFixtures({
+      scale: "full",
+      only: name,
+    })[0];
+    const { request, stageDirectory } = await requestFor(fixture.bytes);
+    await expect(executePdfLibMutationRequest(request)).resolves.toBeDefined();
+    const staged = await fs.readdir(stageDirectory);
+    expect(staged).toHaveLength(1);
+    const output = await PDFDocument.load(
+      await fs.readFile(path.join(stageDirectory, staged[0])),
+      { updateMetadata: false },
+    );
+    expect(output.getPageCount()).toBe(1);
+    expect(output.getPage(0).getRotation().angle).toBe(90);
+    expect(
+      output.context.enumerateIndirectObjects()
+        .some(([, object]) => object instanceof PDFInvalidObject),
+    ).toBe(false);
+  });
+
+  it("rechecks a mutated output context immediately before save", async () => {
+    const document = await PDFDocument.load(parsedStreamPdf());
+    expect(() => assertSafeParsedPdfDecodeChains(document)).not.toThrow();
+    const stream = document.context.enumerateIndirectObjects()
+      .find(([, object]) => object instanceof PDFRawStream)?.[1];
+    expect(stream).toBeInstanceOf(PDFRawStream);
+    stream.dict.set(
+      PDFName.of("Filter"),
+      document.context.obj([
+        PDFName.of("FlateDecode"),
+        PDFName.of("DCTDecode"),
+        PDFName.of("LZWDecode"),
+      ]),
+    );
+    await expect(savePdfDocumentSafely(document, {
+      expectedPageCount: 1,
+      expectedPageRotations: [0],
+    })).rejects.toMatchObject({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "unsafe_decode_chain",
+    });
+  });
+
+  it("returns a typed error before output for a campaign-shaped 12x Flate chain", async () => {
+    const filters = Array.from({ length: 12 }, () => "/FlateDecode").join(" ");
+    const { request, stageDirectory } = await requestFor(
+      parsedStreamPdf(`[${filters}]`),
+    );
+    await expect(executePdfLibMutationRequest(request)).rejects.toMatchObject({
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      reason: "unsafe_decode_chain",
+    });
+    expect(await fs.readdir(stageDirectory)).toEqual([]);
+  });
+
+  it("rejects a valid zero-page source without staging a default page", async () => {
+    const document = await PDFDocument.create();
+    const bytes = await document.save({ addDefaultPage: false });
+    const { request, stageDirectory } = await requestFor(bytes);
+    await expect(executePdfLibMutationRequest(request)).rejects.toThrow(/zero pages/i);
+    expect(await fs.readdir(stageDirectory)).toEqual([]);
+  });
+
+  it("keeps stored signature pdf-lib renderability probes out of the parent", async () => {
+    const source = await fs.readFile(path.join(REPO_ROOT, "server", "index.js"), "utf8");
+    const normalizer = source.slice(
+      source.indexOf("async function normalizeStoredSignatureRecord"),
+      source.indexOf("async function normalizeStoredSignatureSummary"),
+    );
+    const applySignature = source.slice(
+      source.indexOf('case "apply_signature"'),
+      source.indexOf('case "prepare_signing_packet"'),
+    );
+    expect(normalizer).not.toMatch(/PDFDocument\.create|embedPng|embedJpg|embedFont/);
+    expect(applySignature).toContain('operation: "apply_signature"');
+    expect(applySignature).not.toMatch(/PDFDocument\.create|embedPng|embedJpg|embedFont/);
+  });
+});

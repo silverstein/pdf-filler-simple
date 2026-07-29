@@ -167,6 +167,23 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
     }, result.lease, options("success"))).toThrow(/observation/);
   });
 
+  it("accepts only after sampling proves the reserved leader became terminal", async () => {
+    const result = await runFault(
+      "sampling_terminal_leader",
+      "terminal-during-sampling",
+      [15],
+      { sampleIntervalMs: 1 },
+    );
+    expect(result.evidence).toMatchObject({
+      controller_accepted: true,
+      controller_failure: "none",
+      leader: { exit_code: 0, signal: null },
+      observations: { original_process_group_empty: true },
+    });
+    expect(result.evidence.observations.sample_count).toBeGreaterThan(0);
+    expect(result.evidence.observations.sample_race_count).toBeGreaterThan(0);
+  });
+
   it("proves every installed hard limit cannot be raised", async () => {
     const result = await run("raise-limits");
     expect(result.evidence.controller_accepted).toBe(true);
@@ -234,6 +251,159 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
     expect(shortLived.evidence.claim_boundary).toContain("Sampled resource observations");
   });
 
+  it("revalidates a transient sampling EPERM only after the child becomes inspectable", async () => {
+    const result = await runFault(
+      "sampling_transient_eperm",
+      "multiple-children",
+      [1, 250],
+      { sampleIntervalMs: 1 },
+    );
+    expect(result.evidence).toMatchObject({
+      controller_accepted: true,
+      controller_failure: "none",
+      observations: { original_process_group_empty: true },
+    });
+    expect(result.evidence.observations.sample_race_count).toBeGreaterThan(0);
+    expect(result.evidence.observations.observed_process_identity_count).toBeGreaterThan(1);
+  });
+
+  it("rejects a persistently inaccessible live child after the bounded sampling window", async () => {
+    const result = await runFault(
+      "sampling_persistent_eperm",
+      "multiple-children",
+      [1, 1000],
+      { sampleIntervalMs: 1 },
+    );
+    expect(result.stdout).toHaveLength(0);
+    expect(result.evidence).toMatchObject({
+      controller_accepted: false,
+      controller_errno: 1,
+      controller_failure: "enumeration",
+      observations: { original_process_group_empty: true },
+    });
+    expect(result.evidence.observations.sample_race_count).toBeGreaterThan(0);
+  });
+
+  it("does not accept an injected ESRCH while the sampled child remains live", async () => {
+    const result = await runFault(
+      "sampling_false_esrch",
+      "multiple-children",
+      [1, 1000],
+      { sampleIntervalMs: 1 },
+    );
+    expect(result.stdout).toHaveLength(0);
+    expect(result.evidence).toMatchObject({
+      controller_accepted: false,
+      controller_errno: 3,
+      controller_failure: "enumeration",
+      observations: { original_process_group_empty: true },
+    });
+  });
+
+  it("accepts sampling EPERM only after the real child is absent between two ESRCH probes", async () => {
+    const result = await runFault(
+      "sampling_vanish_eperm",
+      "multiple-children",
+      [1, 8],
+      { sampleIntervalMs: 1 },
+    );
+    expect(result.evidence).toMatchObject({
+      controller_accepted: true,
+      controller_failure: "none",
+      observations: { original_process_group_empty: true },
+    });
+    expect(result.evidence.observations.max_group_members).toBeGreaterThan(1);
+    expect(result.evidence.observations.sample_race_count).toBeGreaterThan(0);
+  });
+
+  it("blocks when child-source re-enumeration fails inside disappearance proof", async () => {
+    const result = await runFault(
+      "sampling_child_source_reenumeration_failure",
+      "child-source-short-lived-escape",
+      [15],
+      { deadlineMs: 3000, sampleIntervalMs: 1 },
+    );
+    expect(result.stdout).toHaveLength(0);
+    expect(result.evidence).toMatchObject({
+      controller_accepted: false,
+      controller_errno: 5,
+      controller_failure: "enumeration",
+      observations: { original_process_group_empty: true },
+    });
+    expect(result.evidence.observations.sample_race_count).toBeGreaterThan(0);
+  });
+
+  it("does not mistake an inaccessible child leaving the group for disappearance", async () => {
+    const sentinel = path.join(root, "sampling-escape-eperm-sentinel");
+    const result = await runFault(
+      "sampling_escape_eperm",
+      "delayed-escaped-session",
+      [sentinel],
+      { sampleIntervalMs: 1 },
+    );
+    expect(result.stdout).toHaveLength(0);
+    expect(result.evidence).toMatchObject({
+      controller_accepted: false,
+      controller_errno: 1,
+      controller_failure: "enumeration",
+      observations: { original_process_group_empty: true },
+    });
+    expect(result.evidence.observations.max_group_members).toBeGreaterThan(1);
+    await waitForFile(sentinel, 2500);
+  });
+
+  it("shares one monotonic retry budget across multiple inaccessible PIDs", async () => {
+    const result = await runFault(
+      "sampling_shared_budget_eperm",
+      "barrier-children",
+      [32, 1000],
+      { deadlineMs: 3000, sampleIntervalMs: 1 },
+    );
+    expect(result.stdout).toHaveLength(0);
+    expect(result.evidence).toMatchObject({
+      controller_accepted: false,
+      controller_errno: 1,
+      controller_failure: "enumeration",
+      observations: { original_process_group_empty: true },
+    });
+    expect(result.evidence.observations.max_group_members).toBe(33);
+    expect(result.evidence.observations.sample_race_count).toBeGreaterThan(2);
+    expect(result.evidence.observations.elapsed_continuous_ns)
+      .toBeLessThan(500 * 1e6);
+  });
+
+  it("blocks before disappearance proof when sampling reaches the outer deadline", async () => {
+    const result = await runFault(
+      "sampling_outer_deadline_eperm",
+      "multiple-children",
+      [1, 1000],
+      { deadlineMs: 100, sampleIntervalMs: 1 },
+    );
+    expect(result.stdout).toHaveLength(0);
+    expect(result.evidence).toMatchObject({
+      controller_accepted: false,
+      controller_errno: 1,
+      controller_failure: "enumeration",
+      observations: { original_process_group_empty: true },
+    });
+    expect(result.evidence.observations.elapsed_continuous_ns)
+      .toBeGreaterThanOrEqual(100 * 1e6);
+  });
+
+  it("survives repeated real /bin/ps exec windows on the release host", async () => {
+    const result = await run("repeated-ps", [256], {
+      deadlineMs: 15000,
+      sampleIntervalMs: 1,
+    });
+    expect(result.evidence).toMatchObject({
+      controller_accepted: true,
+      controller_failure: "none",
+      observations: { original_process_group_empty: true },
+    });
+    expect(result.evidence.observations.max_group_members).toBeGreaterThan(1);
+    expect(result.evidence.observations.sample_race_count).toBeGreaterThan(0);
+  }, 30000);
+
   it("rejects a successful leader that leaves a live descendant", async () => {
     const sentinel = path.join(root, "leader-exit-sentinel");
     const result = await run("leader-exit-live-descendant", [sentinel], {
@@ -245,6 +415,121 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       observations: { original_process_group_empty: true },
     });
     await new Promise(resolve => setTimeout(resolve, 1000));
+    await expect(fs.access(sentinel)).rejects.toThrow();
+  });
+
+  it("enforces physical footprint limits during leader-exit grace", async () => {
+    const result = await run(
+      "leader-exit-memory-descendant",
+      [128 * 1024 * 1024],
+      {
+        deadlineMs: 3000,
+        leaderExitGraceMs: 1000,
+        physicalFootprintMaxBytes: 64 * 1024 * 1024,
+        sampleIntervalMs: 5,
+      },
+    );
+    expect(result.stdout).toHaveLength(0);
+    expect(result.evidence).toMatchObject({
+      controller_accepted: false,
+      controller_failure: "physical_footprint_limit",
+      observations: {
+        max_group_members: 2,
+        original_process_group_empty: true,
+      },
+    });
+    expect(result.evidence.observations.observed_process_identity_count)
+      .toBeGreaterThan(1);
+    expect(result.evidence.observations.max_sampled_group_physical_footprint_bytes)
+      .toBeGreaterThan(64 * 1024 * 1024);
+  });
+
+  it("continues sampling through leader-exit grace and kills a delayed escape", async () => {
+    const sentinel = path.join(root, "leader-exit-delayed-escape-sentinel");
+    const result = await run("leader-exit-delayed-escape", [sentinel], {
+      deadlineMs: 3000,
+      leaderExitGraceMs: 1000,
+      sampleIntervalMs: 5,
+    });
+    expect(result.stdout).toHaveLength(0);
+    expect(result.evidence).toMatchObject({
+      controller_accepted: false,
+      controller_failure: "escaped_session",
+      observations: {
+        escaped_session_detected: true,
+        original_process_group_empty: true,
+      },
+    });
+    expect(result.evidence.observations.max_group_members).toBe(2);
+    expect(result.evidence.observations.observed_process_identity_count)
+      .toBeGreaterThan(1);
+    await new Promise(resolve => setTimeout(resolve, 1500));
+    await expect(fs.access(sentinel)).rejects.toThrow();
+  });
+
+  it.each([
+    "final_identity_query_race",
+    "final_post_stop_query_failure",
+    "final_pre_signal_race",
+  ])("returns containment-unproven while a closed-stdio escape remains live after final-pass %s", async fault => {
+    const sentinel = path.join(root, `${fault}-sentinel`);
+    let observed;
+    try {
+      await runFault(
+        fault,
+        "leader-exit-closed-fd-delayed-escape",
+        [sentinel],
+        {
+          deadlineMs: 5000,
+          leaderExitGraceMs: 1000,
+          sampleIntervalMs: 5,
+        },
+      );
+    } catch (error) {
+      observed = error;
+    }
+    expect(observed).toMatchObject({
+      code: "SUPERVISOR_CONTAINMENT_UNPROVEN",
+      evidence: {
+        controller_accepted: false,
+        controller_failure: "cleanup",
+        observations: {
+          escaped_session_detected: true,
+          original_process_group_empty: false,
+        },
+      },
+    });
+    expect(observed).not.toHaveProperty("stdout");
+    expect(observed.evidence.observations.elapsed_continuous_ns)
+      .toBeGreaterThanOrEqual(2 * 1e9);
+    await waitForFile(sentinel, 4500);
+  });
+
+  it("recursively freezes and cleans a remembered escaped resource tree before rejecting output", async () => {
+    const sentinel = path.join(root, "escaped-resource-tree-sentinel");
+    const result = await runFault(
+      "final_escape_resource_tree",
+      "leader-exit-escaped-resource-tree",
+      [15, 16, sentinel, 128 * 1024 * 1024],
+      {
+        deadlineMs: 3000,
+        leaderExitGraceMs: 1000,
+        sampleIntervalMs: 5,
+        physicalFootprintMaxBytes: 64 * 1024 * 1024,
+      },
+    );
+    expect(result.stdout).toHaveLength(0);
+    expect(result.evidence).toMatchObject({
+      controller_accepted: false,
+      controller_failure: "escaped_session",
+      observations: {
+        escaped_session_detected: true,
+        original_process_group_empty: true,
+      },
+    });
+    expect(result.evidence.observations.observed_process_identity_count)
+      .toBeGreaterThanOrEqual(3);
+    await new Promise(resolve => setTimeout(resolve, 1500));
     await expect(fs.access(sentinel)).rejects.toThrow();
   });
 
@@ -267,12 +552,12 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
     "escaped_identity_query_race",
     "escaped_post_stop_query_failure",
     "escaped_pre_signal_race",
-  ])("does not kill an escaped PID after the %s identity boundary changes", async fault => {
+  ])("reports cleanup failure without killing an escaped PID after the %s identity boundary changes", async fault => {
     const sentinel = path.join(root, `${fault}-sentinel`);
     const result = await runFault(fault, "escaped-session", [sentinel]);
     expect(result.evidence).toMatchObject({
       controller_accepted: false,
-      controller_failure: "escaped_session",
+      controller_failure: "cleanup",
       observations: {
         escaped_session_detected: true,
         original_process_group_empty: true,
@@ -331,6 +616,27 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       exit: { code: 99, signal: null },
     });
     expect(recordValidator(observed.cleanup)).toMatchObject({ valid: true });
+  });
+
+  it.each([
+    ["post_cleanup_evidence_write_failure", 12],
+    ["partial_output_evidence_write_failure", 6],
+  ])("discards %s native stdout unless valid accepted evidence commits it", async (fault, discardedBytes) => {
+    let observed;
+    try {
+      await runFault(fault, "success", []);
+    } catch (error) {
+      observed = error;
+    }
+    expect(observed).toMatchObject({
+      code: "SUPERVISOR_CONTAINMENT_UNPROVEN",
+      transport: {
+        candidate_stdout_committed_bytes: 0,
+        discarded_candidate_stdout_bytes: discardedBytes,
+      },
+    });
+    expect(observed).not.toHaveProperty("stdout");
+    expect(observed).not.toHaveProperty("evidence");
   });
 
   it.each([

@@ -198,6 +198,43 @@ static int spawn_sleeping_children(uint64_t count, uint64_t milliseconds,
   return 0;
 }
 
+static int spawn_repeated_ps(uint64_t count) {
+  char target[32];
+  int target_length =
+      snprintf(target, sizeof(target), "%ld", (long)getpid());
+  if (target_length <= 0 || (size_t)target_length >= sizeof(target)) {
+    return 1;
+  }
+  for (uint64_t index = 0; index < count; index += 1) {
+    pid_t child = fork();
+    if (child < 0) {
+      return 1;
+    }
+    if (child == 0) {
+      int null_fd = open("/dev/null", O_RDWR);
+      if (null_fd < 0 || dup2(null_fd, STDIN_FILENO) < 0 ||
+          dup2(null_fd, STDOUT_FILENO) < 0 ||
+          dup2(null_fd, STDERR_FILENO) < 0) {
+        _exit(126);
+      }
+      if (null_fd > STDERR_FILENO) {
+        (void)close(null_fd);
+      }
+      execl("/bin/ps", "ps", "-o", "pid=", "-p", target, (char *)NULL);
+      _exit(127);
+    }
+    int status = 0;
+    pid_t waited;
+    do {
+      waited = waitpid(child, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited != child || !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+      return 1;
+    }
+  }
+  return 0;
+}
+
 static int write_sentinel_after(const char *filename, uint64_t milliseconds) {
   sleep_ms(milliseconds);
   int fd = open(filename, O_WRONLY | O_CREAT | O_EXCL, 0600);
@@ -219,6 +256,22 @@ static int create_sentinel(const char *filename) {
   bool written = write_all(fd, bytes, sizeof(bytes) - 1);
   (void)close(fd);
   return written ? 0 : 1;
+}
+
+static bool wait_for_control_signal(int fd, unsigned char expected) {
+  unsigned char observed = 0;
+  for (;;) {
+    ssize_t count = read(fd, &observed, 1);
+    if (count == 1) {
+      return observed == expected;
+    }
+    if (count == 0) {
+      return false;
+    }
+    if (errno != EINTR) {
+      return false;
+    }
+  }
 }
 
 int main(int argc, char **argv) {
@@ -281,6 +334,14 @@ int main(int argc, char **argv) {
     sleep_ms(milliseconds);
     return emit_success(NULL);
   }
+  if (strcmp(mode, "terminal-during-sampling") == 0) {
+    uint64_t control_fd = 0;
+    if (argc != 3 || !parse_u64(argv[2], 3, 127, &control_fd) ||
+        !wait_for_control_signal((int)control_fd, 'T')) {
+      return 64;
+    }
+    return emit_success(NULL);
+  }
   if (strcmp(mode, "sentinel-after") == 0) {
     uint64_t milliseconds = 0;
     if (argc != 4 || !parse_u64(argv[3], 1, 10000, &milliseconds)) {
@@ -336,6 +397,24 @@ int main(int argc, char **argv) {
     }
     return emit_success(NULL);
   }
+  if (strcmp(mode, "barrier-children") == 0) {
+    uint64_t count = 0;
+    uint64_t milliseconds = 0;
+    if (argc != 4 || !parse_u64(argv[2], 1, 64, &count) ||
+        !parse_u64(argv[3], 1, 10000, &milliseconds) ||
+        spawn_sleeping_children(count, milliseconds, true) != 0) {
+      return 64;
+    }
+    return emit_success(NULL);
+  }
+  if (strcmp(mode, "repeated-ps") == 0) {
+    uint64_t count = 0;
+    if (argc != 3 || !parse_u64(argv[2], 1, 4096, &count) ||
+        spawn_repeated_ps(count) != 0) {
+      return 64;
+    }
+    return emit_success(NULL);
+  }
   if (strcmp(mode, "leader-exit-live-descendant") == 0) {
     if (argc != 3) {
       return 64;
@@ -349,6 +428,31 @@ int main(int argc, char **argv) {
       signal(SIGTERM, SIG_IGN);
       signal(SIGHUP, SIG_IGN);
       _exit(write_sentinel_after(argv[2], 750));
+    }
+    return emit_success(NULL);
+  }
+  if (strcmp(mode, "leader-exit-memory-descendant") == 0) {
+    uint64_t bytes = 0;
+    if (argc != 3 ||
+        !parse_u64(argv[2], 4096, UINT64_C(1073741824), &bytes) ||
+        bytes > SIZE_MAX) {
+      return 64;
+    }
+    pid_t child = fork();
+    if (child < 0) {
+      return 1;
+    }
+    if (child == 0) {
+      volatile unsigned char *memory = malloc((size_t)bytes);
+      if (memory == NULL) {
+        _exit(3);
+      }
+      for (size_t offset = 0; offset < (size_t)bytes; offset += 4096) {
+        memory[offset] = (unsigned char)(offset & 0xff);
+      }
+      sleep_ms(3000);
+      free((void *)memory);
+      _exit(0);
     }
     return emit_success(NULL);
   }
@@ -370,6 +474,155 @@ int main(int argc, char **argv) {
       _exit(write_sentinel_after(argv[2], 1000));
     }
     sleep_ms(3000);
+    return emit_success(NULL);
+  }
+  if (strcmp(mode, "delayed-escaped-session") == 0) {
+    if (argc != 3) {
+      return 64;
+    }
+    pid_t child = fork();
+    if (child < 0) {
+      return 1;
+    }
+    if (child == 0) {
+      sleep_ms(10);
+      if (setsid() < 0) {
+        _exit(2);
+      }
+      signal(SIGINT, SIG_IGN);
+      signal(SIGTERM, SIG_IGN);
+      signal(SIGHUP, SIG_IGN);
+      _exit(write_sentinel_after(argv[2], 1000));
+    }
+    sleep_ms(3000);
+    return emit_success(NULL);
+  }
+  if (strcmp(mode, "leader-exit-delayed-escape") == 0) {
+    if (argc != 3) {
+      return 64;
+    }
+    pid_t child = fork();
+    if (child < 0) {
+      return 1;
+    }
+    if (child == 0) {
+      sleep_ms(200);
+      if (setsid() < 0) {
+        _exit(2);
+      }
+      signal(SIGINT, SIG_IGN);
+      signal(SIGTERM, SIG_IGN);
+      signal(SIGHUP, SIG_IGN);
+      _exit(write_sentinel_after(argv[2], 1000));
+    }
+    return emit_success(NULL);
+  }
+  if (strcmp(mode, "leader-exit-closed-fd-delayed-escape") == 0) {
+    if (argc != 3) {
+      return 64;
+    }
+    pid_t child = fork();
+    if (child < 0) {
+      return 1;
+    }
+    if (child == 0) {
+      sleep_ms(200);
+      if (setsid() < 0) {
+        _exit(2);
+      }
+      (void)close(STDOUT_FILENO);
+      (void)close(STDERR_FILENO);
+      signal(SIGINT, SIG_IGN);
+      signal(SIGTERM, SIG_IGN);
+      signal(SIGHUP, SIG_IGN);
+      _exit(write_sentinel_after(argv[2], 3000));
+    }
+    return emit_success(NULL);
+  }
+  if (strcmp(mode, "leader-exit-escaped-resource-tree") == 0) {
+    uint64_t control_fd = 0;
+    uint64_t feedback_fd = 0;
+    uint64_t bytes = 0;
+    if (argc != 6 || !parse_u64(argv[2], 3, 127, &control_fd) ||
+        !parse_u64(argv[3], 3, 127, &feedback_fd) ||
+        !parse_u64(argv[5], 4096, UINT64_C(1073741824), &bytes) ||
+        bytes > SIZE_MAX) {
+      return 64;
+    }
+    pid_t child = fork();
+    if (child < 0) {
+      return 1;
+    }
+    if (child == 0) {
+      if (!wait_for_control_signal((int)control_fd, 'E') || setsid() < 0) {
+        _exit(2);
+      }
+      volatile unsigned char *memory = malloc((size_t)bytes);
+      if (memory == NULL) {
+        _exit(3);
+      }
+      for (size_t offset = 0; offset < (size_t)bytes; offset += 4096) {
+        memory[offset] = (unsigned char)(offset & 0xff);
+      }
+      pid_t descendant = fork();
+      if (descendant < 0) {
+        _exit(4);
+      }
+      if (descendant == 0) {
+        signal(SIGINT, SIG_IGN);
+        signal(SIGTERM, SIG_IGN);
+        signal(SIGHUP, SIG_IGN);
+        _exit(write_sentinel_after(argv[4], 1000));
+      }
+      signal(SIGINT, SIG_IGN);
+      signal(SIGTERM, SIG_IGN);
+      signal(SIGHUP, SIG_IGN);
+      const unsigned char ready = 'R';
+      if (!write_all((int)feedback_fd, &ready, 1)) {
+        _exit(5);
+      }
+      sleep_ms(5000);
+      free((void *)memory);
+      _exit(0);
+    }
+    return emit_success(NULL);
+  }
+  if (strcmp(mode, "child-source-short-lived-escape") == 0) {
+    uint64_t control_fd = 0;
+    if (argc != 3 || !parse_u64(argv[2], 3, 127, &control_fd)) {
+      return 64;
+    }
+    pid_t worker = fork();
+    if (worker < 0) {
+      return 1;
+    }
+    if (worker == 0) {
+      if (!wait_for_control_signal((int)control_fd, 'C')) {
+        _exit(2);
+      }
+      pid_t escaped = fork();
+      if (escaped < 0) {
+        _exit(3);
+      }
+      if (escaped == 0) {
+        if (setsid() < 0) {
+          _exit(4);
+        }
+        sleep_ms(10);
+        _exit(0);
+      }
+      int status = 0;
+      if (waitpid(escaped, &status, 0) != escaped ||
+          !WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        _exit(5);
+      }
+      _exit(0);
+    }
+    int status = 0;
+    if (waitpid(worker, &status, 0) != worker || !WIFEXITED(status) ||
+        WEXITSTATUS(status) != 0) {
+      return 6;
+    }
     return emit_success(NULL);
   }
   if (strcmp(mode, "short-lived-cpu-children") == 0) {

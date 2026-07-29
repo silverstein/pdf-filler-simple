@@ -166,6 +166,55 @@ Send the handoff through Agent Mail using the Bead ID as the thread ID. Update t
 Bead only from the canonical integration checkout to avoid concurrent JSONL merge
 conflicts.
 
+## Deep-malformed qpdf oracle containment
+
+The v4 deep-malformed macOS campaign treats qpdf as an untrusted oracle rather
+than as part of the Node product process. Every PDF-dependent qpdf route
+(`--check`, page count, object-stream projection, and JSON graph extraction)
+must execute through the receipt-bound native launcher
+`test/eval/native/qpdf-macos-budget-exec.c`. The launcher is exec-only: it
+inherits and verifies its direct row-runner parent, both processes' process
+group, and their `getsid(2)` equality; measures its pre-limit macOS VM-map size;
+applies a checked 1.5 GiB headroom as an absolute `RLIMIT_AS`; reads back every
+qpdf-only rlimit and remeasures its post-limit VM-map size; emits those values
+in a fixed-endian READY or ERROR frame on fd 3; marks fd 3
+close-on-exec; and replaces itself with qpdf. READY followed by fd 3 EOF is the
+required exec proof.
+
+The active successor entrypoints are
+`prepare-deep-malformed-macos-campaign-v4.js`,
+`deep-malformed-macos-campaign-v4.js`,
+`deep-malformed-row-runner-v4.js`, and
+`compare-deep-malformed-macos-campaign-v4.js`. The v2 and v3 files remain
+frozen because historical plans and receipts bind their paths, protocols, and
+byte identities. The v4 campaign deliberately reuses only the separately
+frozen v2 corpus provisioning protocol; it does not reuse a v2 or v3 row or
+campaign protocol.
+
+The v4 response scanner retains the raw response identity and computes a
+separate semantic digest. It may normalize only one generated
+`/_meta/viewUUID` from a successful `read_pdf_fields` call, or the two
+byte-equal `last_mutation_at` values at
+`/structuredContent/last_mutation_at` and `/_meta/last_mutation_at` from a
+successful `rotate_pdf_pages` call. Each value must match its exact generated
+format and fall within the captured call wall-clock interval, with the
+receipt-bound one-second skew policy. Same-named values at every other path
+remain in the semantic digest.
+
+The initial uncalibrated policy is a 1.5 GiB address-space headroom above the
+launcher's measured pre-exec VM-map size, a 256 MiB output file, CPU soft/hard
+limits of 8/9 seconds, 64 open files, zero core bytes, and a 10-second wall
+deadline. This is an absolute address-space cap derived from launcher state,
+not a claim that qpdf has exactly 1.5 GiB of usable memory after `execve(2)`.
+Its `calibration_required` field remains true until repeated exact-host qpdf
+post-exec measurements, a paired under-limit mapping success and controlled
+over-limit mapping denial, benign-corpus headroom, and retained-hostile
+containment have been reviewed. A failed qpdf
+check short-circuits page count and fingerprint routes. No v4 result may
+qualify if launcher authority, exact-limit proof, exec proof,
+process-group/session inheritance, executable stability, or the route result
+is missing.
+
 ## Active-tranche exit conditions
 
 An autonomous run stops only when:

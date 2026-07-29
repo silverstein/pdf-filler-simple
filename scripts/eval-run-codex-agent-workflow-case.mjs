@@ -882,22 +882,70 @@ export function validateBaseContextCapture(bytes, {
   };
 }
 
-function signalProcess(child, processGroup, signal) {
-  if (!Number.isSafeInteger(child.pid) || child.pid < 1) return false;
-  try {
-    if (processGroup) process.kill(-child.pid, signal);
-    else child.kill(signal);
-    return true;
-  } catch (error) {
-    if (error?.code === "ESRCH") return false;
-    throw error;
+function signalProcess(
+  child,
+  processGroup,
+  signal,
+  {
+    killProcess = process.kill,
+  } = {},
+) {
+  const pid = child.pid;
+  const outcome = {
+    signal,
+    target: processGroup ? "process_group" : "process",
+    pid: Number.isSafeInteger(pid) && pid > 0 ? pid : null,
+    target_sent: false,
+    target_error: null,
+    sent: false,
+  };
+  if (outcome.pid === null) {
+    outcome.target_error = "INVALID_PID";
+    return outcome;
   }
+  try {
+    killProcess(processGroup ? -pid : pid, signal);
+    outcome.target_sent = true;
+    outcome.sent = true;
+    return outcome;
+  } catch (error) {
+    if (error?.code !== "ESRCH" && error?.code !== "EPERM") throw error;
+    outcome.target_error = error.code;
+  }
+  return outcome;
 }
 
-function processGroupAlive(pid) {
+function unverifiableTerminationError({
+  child,
+  processGroup,
+  terminationReason,
+  terminationRequestedAt,
+  signalOutcomes,
+}) {
+  const attempts = signalOutcomes.map(outcome =>
+    `${outcome.target}:${outcome.signal}:${
+      outcome.target_sent ? "sent" : (outcome.target_error ?? "unsent")
+    }`);
+  const error = new Error(
+    `Process termination remained unverifiable after bounded cleanup (${attempts.join(", ")})`,
+  );
+  error.code = "CODEX_PROCESS_TERMINATION_UNVERIFIABLE";
+  error.process_result = {
+    pid: child.pid ?? null,
+    process_group: processGroup ? (child.pid ?? null) : null,
+    child_closed: false,
+    termination_reason: terminationReason,
+    termination_requested_at: terminationRequestedAt,
+    termination_failed_at: new Date().toISOString(),
+    signal_outcomes: signalOutcomes.map(outcome => ({ ...outcome })),
+  };
+  return error;
+}
+
+function processGroupAlive(pid, killProcess = process.kill) {
   if (!Number.isSafeInteger(pid) || pid < 1) return false;
   try {
-    process.kill(-pid, 0);
+    killProcess(-pid, 0);
     return true;
   } catch (error) {
     if (error?.code === "ESRCH") return false;
@@ -949,6 +997,7 @@ export async function runCaptured(program, args, {
   terminationGraceMs = DEFAULT_TERMINATION_GRACE_MS,
   abortSignal = null,
   useProcessGroup = process.platform === "darwin",
+  killProcess = process.kill,
 }) {
   validateDuration(timeoutMs, "timeoutMs", MAX_PROCESS_TIMEOUT_MS);
   validateDuration(
@@ -957,6 +1006,9 @@ export async function runCaptured(program, args, {
     MAX_TERMINATION_GRACE_MS,
   );
   validateAbortSignal(abortSignal);
+  if (typeof killProcess !== "function") {
+    throw new TypeError("killProcess must be a function");
+  }
   let stdout = null;
   let stderr = null;
   let abortRequested = false;
@@ -1000,7 +1052,13 @@ export async function runCaptured(program, args, {
     let sigtermSent = false;
     let sigkillAttempted = false;
     let sigkillSent = false;
+    const signalOutcomes = [];
     let terminationPromise = null;
+    let terminationFailureReported = false;
+    let rejectTerminationFailure;
+    const terminationFailure = new Promise((_, reject) => {
+      rejectTerminationFailure = reject;
+    });
     let resolveClose;
     const completion = new Promise(resolve => {
       resolveClose = resolve;
@@ -1016,6 +1074,20 @@ export async function runCaptured(program, args, {
       closed = true;
       resolveClose({ code, signal });
     });
+    const attemptSignal = signal => {
+      const outcome = signalProcess(child, useProcessGroup, signal, {
+        killProcess,
+      });
+      signalOutcomes.push(outcome);
+      return outcome;
+    };
+    const reportTerminationFailure = error => {
+      if (terminationFailureReported) return;
+      terminationFailureReported = true;
+      child.stdin.destroy();
+      child.unref();
+      rejectTerminationFailure(error);
+    };
     const terminate = reason => {
       if (terminationPromise !== null || closed) return terminationPromise;
       terminationReason = reason;
@@ -1024,48 +1096,77 @@ export async function runCaptured(program, args, {
       aborted = reason === "abort";
       terminationPromise = (async () => {
         sigtermAttempted = true;
-        sigtermSent = signalProcess(child, useProcessGroup, "SIGTERM");
+        sigtermSent = attemptSignal("SIGTERM").sent;
         await Promise.race([completion, delay(terminationGraceMs)]);
-        if (!closed || (useProcessGroup && processGroupAlive(child.pid))) {
+        if (
+          !closed
+          || (useProcessGroup && processGroupAlive(child.pid, killProcess))
+        ) {
           sigkillAttempted = true;
-          sigkillSent = signalProcess(child, useProcessGroup, "SIGKILL");
+          sigkillSent = attemptSignal("SIGKILL").sent;
+          if (!closed) {
+            const closeDeadlineMs = Math.min(
+              Math.max(terminationGraceMs, 100),
+              1_000,
+            );
+            await Promise.race([completion, delay(closeDeadlineMs)]);
+            if (!closed) {
+              throw unverifiableTerminationError({
+                child,
+                processGroup: useProcessGroup,
+                terminationReason,
+                terminationRequestedAt,
+                signalOutcomes,
+              });
+            }
+          }
         }
       })();
       return terminationPromise;
     };
-    terminateActiveChild = terminate;
+    terminateActiveChild = reason => {
+      const pending = terminate(reason);
+      void pending?.catch(reportTerminationFailure);
+      return pending;
+    };
     if (abortRequested || abortSignal?.aborted) {
       abortRequested = true;
-      void terminate("abort");
+      void terminateActiveChild("abort");
     }
     timeout = setTimeout(() => {
-      void terminate("timeout");
+      void terminateActiveChild("timeout");
     }, timeoutMs);
     timeout.unref?.();
     if (stdin === null) child.stdin.end();
     else child.stdin.end(stdin);
-    const result = await completion;
+    const result = await Promise.race([completion, terminationFailure]);
     clearTimeout(timeout);
     timeout = null;
     if (terminationPromise !== null) await terminationPromise;
     let processGroupAliveAfterClose = null;
     if (useProcessGroup) {
-      processGroupAliveAfterClose = processGroupAlive(child.pid);
+      processGroupAliveAfterClose = processGroupAlive(child.pid, killProcess);
       if (processGroupAliveAfterClose) {
         if (terminationReason === null) {
           terminationReason = "process_group_reap";
           terminationRequestedAt = new Date().toISOString();
           sigtermAttempted = true;
-          sigtermSent = signalProcess(child, true, "SIGTERM");
+          sigtermSent = attemptSignal("SIGTERM").sent;
           await delay(terminationGraceMs);
-          processGroupAliveAfterClose = processGroupAlive(child.pid);
+          processGroupAliveAfterClose = processGroupAlive(
+            child.pid,
+            killProcess,
+          );
         }
       }
       if (processGroupAliveAfterClose) {
         sigkillAttempted = true;
-        sigkillSent = signalProcess(child, true, "SIGKILL") || sigkillSent;
+        sigkillSent = attemptSignal("SIGKILL").sent || sigkillSent;
         await delay(Math.min(terminationGraceMs, 100));
-        processGroupAliveAfterClose = processGroupAlive(child.pid);
+        processGroupAliveAfterClose = processGroupAlive(
+          child.pid,
+          killProcess,
+        );
       }
     }
     await Promise.all([stdout.sync(), stderr.sync()]);
@@ -1083,6 +1184,7 @@ export async function runCaptured(program, args, {
       sigterm_sent: sigtermSent,
       sigkill_attempted: sigkillAttempted,
       sigkill_sent: sigkillSent,
+      signal_outcomes: signalOutcomes,
       process_group_alive_after_close: processGroupAliveAfterClose,
       timeout_ms: timeoutMs,
       termination_grace_ms: terminationGraceMs,

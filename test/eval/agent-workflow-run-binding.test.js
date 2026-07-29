@@ -975,6 +975,218 @@ grandchild.unref();
     );
   }, 5000);
 
+  it("records a post-close EPERM race without crashing cleanup", async () => {
+    const root = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "runner-eperm-group-")),
+    );
+    roots.push(root);
+    const grandchildReadyPath = path.join(root, "grandchild.ready");
+    const program = await executableFixture(root, "eperm-parent.mjs", `
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+const grandchild = spawn(process.execPath, ["-e", ${JSON.stringify(
+  `const fs=require("node:fs");process.on("SIGTERM",()=>{});fs.writeFileSync(${JSON.stringify(
+    grandchildReadyPath,
+  )},"ready");setInterval(()=>{},1000);`,
+)}], {
+  detached: false,
+  stdio: "ignore",
+});
+while (!fs.existsSync(${JSON.stringify(grandchildReadyPath)})) {
+  await new Promise(resolve => setTimeout(resolve, 5));
+}
+grandchild.unref();
+`);
+    let injected = false;
+    const killProcess = (pid, signal) => {
+      if (!injected && pid < 0 && signal === "SIGKILL") {
+        process.kill(pid, signal);
+        injected = true;
+        const error = new Error("injected post-close process-group race");
+        error.code = "EPERM";
+        throw error;
+      }
+      return process.kill(pid, signal);
+    };
+    const result = await runCaptured(program, [], {
+      cwd: root,
+      env: process.env,
+      stdoutPath: path.join(root, "stdout.txt"),
+      stderrPath: path.join(root, "stderr.txt"),
+      timeoutMs: 1_000,
+      terminationGraceMs: process.platform === "darwin" ? 100 : 25,
+      useProcessGroup: true,
+      killProcess,
+    });
+    expect(injected).toBe(true);
+    expect(result).toMatchObject({
+      code: 0,
+      signal: null,
+      timed_out: false,
+      aborted: false,
+      termination_reason: "process_group_reap",
+      sigterm_attempted: true,
+      sigterm_sent: true,
+      sigkill_attempted: true,
+      sigkill_sent: false,
+      process_group_alive_after_close: false,
+      signal_outcomes: [
+        {
+          signal: "SIGTERM",
+          target: "process_group",
+          target_sent: true,
+          target_error: null,
+          sent: true,
+        },
+        {
+          signal: "SIGKILL",
+          target: "process_group",
+          target_sent: false,
+          target_error: "EPERM",
+          sent: false,
+        },
+      ],
+    });
+    expect(isCleanProcessResult(result)).toBe(false);
+  }, 5000);
+
+  it("rejects boundedly when pre-close termination is unverifiable", async () => {
+    const root = await fs.realpath(
+      await fs.mkdtemp(path.join(os.tmpdir(), "runner-persistent-eperm-")),
+    );
+    roots.push(root);
+    const parentPidPath = path.join(root, "parent.pid");
+    const grandchildPidPath = path.join(root, "grandchild.pid");
+    const grandchildReadyPath = path.join(root, "grandchild.ready");
+    const program = await executableFixture(root, "persistent-eperm-parent.mjs", `
+import { spawn } from "node:child_process";
+import fs from "node:fs";
+fs.writeFileSync(${JSON.stringify(parentPidPath)}, String(process.pid));
+process.on("SIGTERM", () => {});
+const grandchild = spawn(process.execPath, ["-e", ${JSON.stringify(
+  `const fs=require("node:fs");process.on("SIGTERM",()=>{});fs.writeFileSync(${JSON.stringify(
+    grandchildReadyPath,
+  )},"ready");setInterval(()=>{},1000);`,
+)}], {
+  detached: false,
+  stdio: "ignore",
+});
+while (!fs.existsSync(${JSON.stringify(grandchildReadyPath)})) {
+  await new Promise(resolve => setTimeout(resolve, 5));
+}
+fs.writeFileSync(${JSON.stringify(grandchildPidPath)}, String(grandchild.pid));
+setInterval(() => {}, 1000);
+`);
+    const killProcess = (pid, signal) => {
+      if (signal === 0) return process.kill(pid, signal);
+      const error = new Error("injected persistent process-group denial");
+      error.code = "EPERM";
+      throw error;
+    };
+    let watchdog = null;
+    let caught = null;
+    let parentPid = null;
+    let grandchildPid = null;
+    const startedAt = Date.now();
+    try {
+      await Promise.race([
+        runCaptured(program, [], {
+          cwd: root,
+          env: process.env,
+          stdoutPath: path.join(root, "stdout.txt"),
+          stderrPath: path.join(root, "stderr.txt"),
+          timeoutMs: process.platform === "darwin" ? 300 : 150,
+          terminationGraceMs: 25,
+          useProcessGroup: true,
+          killProcess,
+        }),
+        new Promise((_, reject) => {
+          watchdog = setTimeout(
+            () => reject(new Error("persistent EPERM test watchdog expired")),
+            5_000,
+          );
+        }),
+      ]);
+    } catch (error) {
+      caught = error;
+    } finally {
+      if (watchdog !== null) clearTimeout(watchdog);
+      const readFixturePid = async filename => {
+        try {
+          const value = Number(await fs.readFile(filename, "utf8"));
+          return Number.isSafeInteger(value) && value > 0 ? value : null;
+        } catch (error) {
+          if (error?.code === "ENOENT") return null;
+          throw error;
+        }
+      };
+      const reportedPid = caught?.process_result?.pid;
+      parentPid = Number.isSafeInteger(reportedPid) && reportedPid > 0
+        ? reportedPid
+        : await readFixturePid(parentPidPath);
+      grandchildPid = await readFixturePid(grandchildPidPath);
+      if (parentPid !== null) {
+        try {
+          process.kill(-parentPid, "SIGKILL");
+        } catch (error) {
+          if (error?.code !== "ESRCH") throw error;
+        }
+      }
+      const processTargets = [
+        parentPid === null ? null : -parentPid,
+        parentPid,
+        grandchildPid,
+      ].filter(pid => pid !== null);
+      for (let attempt = 0; attempt < 100; attempt += 1) {
+        let alive = false;
+        for (const pid of processTargets) {
+          try {
+            process.kill(pid, 0);
+            alive = true;
+          } catch (error) {
+            if (error?.code === "EPERM") alive = true;
+            else if (error?.code !== "ESRCH") throw error;
+          }
+        }
+        if (!alive) break;
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
+    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    expect(caught).toMatchObject({
+      code: "CODEX_PROCESS_TERMINATION_UNVERIFIABLE",
+      process_result: {
+        pid: parentPid,
+        process_group: parentPid,
+        child_closed: false,
+        termination_reason: "timeout",
+        signal_outcomes: [
+          {
+            signal: "SIGTERM",
+            target: "process_group",
+            target_sent: false,
+            target_error: "EPERM",
+            sent: false,
+          },
+          {
+            signal: "SIGKILL",
+            target: "process_group",
+            target_sent: false,
+            target_error: "EPERM",
+            sent: false,
+          },
+        ],
+      },
+    });
+    expect(parentPid).not.toBeNull();
+    expect(grandchildPid).not.toBeNull();
+    for (const pid of [-parentPid, parentPid, grandchildPid]) {
+      expect(() => process.kill(pid, 0)).toThrow(
+        expect.objectContaining({ code: "ESRCH" }),
+      );
+    }
+  }, 7000);
+
   it("does not lose an abort during listener registration before launch", async () => {
     const root = await fs.realpath(
       await fs.mkdtemp(path.join(os.tmpdir(), "runner-registration-abort-")),

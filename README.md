@@ -261,9 +261,15 @@ npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb
 npm run build:ui
 npm run build:mcpb
 npm test
+npm run test:node-native
+npm run test:all
 node server/index.js
 node package-for-friend.js
 ```
+
+`npm test` runs the Vitest partition. Release qualification uses
+`npm run test:all` so the explicitly classified Node native-test suites cannot
+be silently omitted.
 
 ### Viewer Dev Mode
 

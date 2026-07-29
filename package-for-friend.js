@@ -31,12 +31,23 @@ const SHARE_FILES = [
   "server/markdown-conversion.js",
   "server/markdown-output-transaction.js",
   "server/output-schemas.js",
+  "server/pdf-lib-rss-monitor.js",
+  "server/pdf-lib-subprocess.js",
+  "server/pdf-lib-worker.js",
   "server/pdfjs-subprocess.js",
   "server/pdfjs-worker.js",
   "server/resource-uri.js",
   "server/stderr-suppression.js",
   "smart-install.sh",
 ];
+const EXECUTABLE_SHARE_FILES = new Set([
+  "configure-cursor.sh",
+  "install-transactional.sh",
+  "install.command",
+  "install.sh",
+  "server/index.js",
+  "smart-install.sh",
+]);
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -44,6 +55,10 @@ function sha256(bytes) {
 
 function compareCodePoints(left, right) {
   return left < right ? -1 : left > right ? 1 : 0;
+}
+
+function canonicalArchiveMode(relativePath) {
+  return EXECUTABLE_SHARE_FILES.has(relativePath) ? 0o755 : 0o644;
 }
 
 function canonicalize(value) {
@@ -357,6 +372,18 @@ async function syncSharePackage() {
       path.join(shareServerDir, "output-schemas.js"),
     ),
     fs.copyFile(
+      path.join(PROJECT_ROOT, "server", "pdf-lib-rss-monitor.js"),
+      path.join(shareServerDir, "pdf-lib-rss-monitor.js"),
+    ),
+    fs.copyFile(
+      path.join(PROJECT_ROOT, "server", "pdf-lib-subprocess.js"),
+      path.join(shareServerDir, "pdf-lib-subprocess.js"),
+    ),
+    fs.copyFile(
+      path.join(PROJECT_ROOT, "server", "pdf-lib-worker.js"),
+      path.join(shareServerDir, "pdf-lib-worker.js"),
+    ),
+    fs.copyFile(
       path.join(PROJECT_ROOT, "server", "pdfjs-subprocess.js"),
       path.join(shareServerDir, "pdfjs-subprocess.js"),
     ),
@@ -405,13 +432,14 @@ async function stageSharePackage(stageRoot, sharePackage, shareLock) {
     if (!sourceStat.isFile()) throw new Error(`Expected a regular share-package file: ${relativePath}`);
     await fs.mkdir(path.dirname(targetPath), { recursive: true });
     await fs.copyFile(sourcePath, targetPath);
-    await fs.chmod(targetPath, sourceStat.mode & 0o777);
+    await fs.chmod(targetPath, canonicalArchiveMode(relativePath));
     fileHashes[relativePath] = sha256(await fs.readFile(targetPath));
   }
 
   const sbom = generateCycloneDxSbom(shareLock, sharePackage);
   const sbomPath = path.join(stagedPackageRoot, SBOM_FILENAME);
   await fs.writeFile(sbomPath, `${JSON.stringify(sbom, null, 2)}\n`);
+  await fs.chmod(sbomPath, 0o644);
   const sbomBytes = await fs.readFile(sbomPath);
   fileHashes[SBOM_FILENAME] = sha256(sbomBytes);
 
@@ -435,6 +463,7 @@ async function stageSharePackage(stageRoot, sharePackage, shareLock) {
   };
   const provenancePath = path.join(stagedPackageRoot, PROVENANCE_FILENAME);
   await fs.writeFile(provenancePath, `${JSON.stringify(provenance, null, 2)}\n`);
+  await fs.chmod(provenancePath, 0o644);
 
   const archiveFiles = [...SHARE_FILES, SBOM_FILENAME, PROVENANCE_FILENAME]
     .map(relativePath => `${SOURCE_DIRNAME}/${relativePath}`)

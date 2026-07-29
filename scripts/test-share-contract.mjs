@@ -6,6 +6,7 @@ import {
   cpSync,
   copyFileSync,
   existsSync,
+  lstatSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -22,6 +23,7 @@ import { fileURLToPath, pathToFileURL } from "url";
 import { spawnSync } from "child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { readCentralDirectory } from "./mcpb-archive.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -36,6 +38,14 @@ const PROTECTED_DIRECT_DEPENDENCIES = {
   "pdf-lib": "1.17.1",
   "pdfjs-dist": "5.4.624",
 };
+const EXPECTED_SHARE_EXECUTABLES = new Set([
+  "configure-cursor.sh",
+  "install-transactional.sh",
+  "install.command",
+  "install.sh",
+  "server/index.js",
+  "smart-install.sh",
+]);
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -81,6 +91,154 @@ function walkFiles(root, relativeRoot = "") {
     else throw new Error(`Unexpected non-file archive entry at ${relativePath}`);
   }
   return files;
+}
+
+function regularTreeFingerprint(root, relativeRoot = "") {
+  const files = [];
+  for (const entry of readdirSync(path.join(root, relativeRoot)).sort()) {
+    const relativePath = path.posix.join(
+      relativeRoot.split(path.sep).join(path.posix.sep),
+      entry,
+    );
+    const filename = path.join(root, ...relativePath.split("/"));
+    const stat = lstatSync(filename);
+    if (stat.isDirectory()) {
+      files.push(...regularTreeFingerprint(root, relativePath));
+    } else if (stat.isFile() && stat.nlink === 1) {
+      files.push({
+        path: relativePath,
+        executable: process.platform === "win32"
+          ? null
+          : (stat.mode & 0o111) !== 0,
+        bytes: stat.size,
+        sha256: sha256(readFileSync(filename)),
+      });
+    } else {
+      throw new Error(
+        `Reviewed share source contains a non-regular or multiply-linked entry: ${relativePath}`,
+      );
+    }
+  }
+  return files;
+}
+
+function populatePackageBuildRoot(buildRoot) {
+  mkdirSync(buildRoot, { recursive: true });
+  for (const filename of ["package-for-friend.js", "package.json", "package-lock.json"]) {
+    copyFileSync(path.join(REPO_ROOT, filename), path.join(buildRoot, filename));
+  }
+  for (const directory of ["server", "dist-ui", "pdf-toolkit-mcp-share"]) {
+    cpSync(path.join(REPO_ROOT, directory), path.join(buildRoot, directory), { recursive: true });
+  }
+}
+
+function forceTreeModeProfile(root, {
+  directoryMode,
+  executableMode,
+  regularMode,
+}) {
+  const visit = directory => {
+    for (const entry of readdirSync(directory).sort()) {
+      const filename = path.join(directory, entry);
+      const stat = lstatSync(filename);
+      if (stat.isDirectory()) {
+        visit(filename);
+        chmodSync(filename, directoryMode);
+      } else if (stat.isFile() && stat.nlink === 1) {
+        chmodSync(
+          filename,
+          (stat.mode & 0o111) !== 0 ? executableMode : regularMode,
+        );
+      } else {
+        throw new Error(
+          `Package build root contains a non-regular or multiply-linked entry: ${filename}`,
+        );
+      }
+    }
+  };
+  visit(root);
+  chmodSync(root, directoryMode);
+}
+
+function assertShareModeProfile(root, {
+  directoryMode,
+  executableMode,
+  regularMode,
+}) {
+  const visit = (directory, relativeRoot = "") => {
+    assertEqual(
+      lstatSync(directory).mode & 0o777,
+      directoryMode,
+      `Reviewed source directory mode drifted for ${relativeRoot || "."}`,
+    );
+    for (const entry of readdirSync(directory).sort()) {
+      const relativePath = path.posix.join(
+        relativeRoot.split(path.sep).join(path.posix.sep),
+        entry,
+      );
+      const filename = path.join(directory, entry);
+      const stat = lstatSync(filename);
+      if (stat.isDirectory()) {
+        visit(filename, relativePath);
+        continue;
+      }
+      if (!stat.isFile() || stat.nlink !== 1) {
+        throw new Error(
+          `Reviewed share source contains a non-regular or multiply-linked entry: ${relativePath}`,
+        );
+      }
+      const expectedExecutable = EXPECTED_SHARE_EXECUTABLES.has(relativePath);
+      assertEqual(
+        (stat.mode & 0o111) !== 0,
+        expectedExecutable,
+        `Reviewed executable classification drifted for ${relativePath}`,
+      );
+      assertEqual(
+        stat.mode & 0o777,
+        expectedExecutable ? executableMode : regularMode,
+        `Reviewed source mode drifted for ${relativePath}`,
+      );
+    }
+  };
+  visit(root);
+}
+
+function runPackager(buildRoot, invocationUmask) {
+  if (process.platform === "win32") {
+    return run(process.execPath, ["package-for-friend.js"], buildRoot);
+  }
+  const previousUmask = process.umask(invocationUmask);
+  try {
+    return run(process.execPath, ["package-for-friend.js"], buildRoot);
+  } finally {
+    process.umask(previousUmask);
+  }
+}
+
+function assertCanonicalArchiveModes(bytes) {
+  if (process.platform === "win32") return;
+  const prefix = "pdf-toolkit-mcp-share/";
+  const entries = readCentralDirectory(bytes);
+  for (const entry of entries) {
+    if (!entry.path.startsWith(prefix)) {
+      throw new Error(`Share ZIP contains an unexpected path: ${entry.path}`);
+    }
+    const relativePath = entry.path.slice(prefix.length);
+    const expectedMode = EXPECTED_SHARE_EXECUTABLES.has(relativePath)
+      ? 0o755
+      : 0o644;
+    assertEqual(entry.os, 3, `Share ZIP host metadata drifted for ${relativePath}`);
+    assertEqual(
+      entry.unixMode,
+      0o100000 | expectedMode,
+      `Share ZIP Unix mode drifted for ${relativePath}`,
+    );
+    assertEqual(
+      entry.mode,
+      expectedMode,
+      `Share ZIP permission mode drifted for ${relativePath}`,
+    );
+  }
 }
 
 function assertEqual(actual, expected, message) {
@@ -308,8 +466,10 @@ async function expectMcpError(operation, code) {
 async function main() {
   const tempRoot = mkdtempSync(path.join(tmpdir(), "pdf-tools-share-contract-"));
   const buildRoot = path.join(tempRoot, "package-build");
+  const restrictiveBuildRoot = path.join(tempRoot, "package-build-umask-077");
   const extractedRoot = path.join(tempRoot, "extracted");
   const archivePath = path.join(buildRoot, "pdf-toolkit-mcp.zip");
+  const restrictiveArchivePath = path.join(restrictiveBuildRoot, "pdf-toolkit-mcp.zip");
   const sourcePackageRoot = path.join(extractedRoot, "pdf-toolkit-mcp-share");
   const installHome = path.join(tempRoot, "real-install-home");
   let packageRoot = sourcePackageRoot;
@@ -320,17 +480,93 @@ async function main() {
   let transport;
 
   try {
-    mkdirSync(buildRoot, { recursive: true });
-    for (const filename of ["package-for-friend.js", "package.json", "package-lock.json"]) {
-      copyFileSync(path.join(REPO_ROOT, filename), path.join(buildRoot, filename));
-    }
-    for (const directory of ["server", "dist-ui", "pdf-toolkit-mcp-share"]) {
-      cpSync(path.join(REPO_ROOT, directory), path.join(buildRoot, directory), { recursive: true });
+    populatePackageBuildRoot(buildRoot);
+    if (process.platform !== "win32") {
+      populatePackageBuildRoot(restrictiveBuildRoot);
+      forceTreeModeProfile(buildRoot, {
+        directoryMode: 0o755,
+        executableMode: 0o755,
+        regularMode: 0o644,
+      });
+      forceTreeModeProfile(restrictiveBuildRoot, {
+        directoryMode: 0o700,
+        executableMode: 0o700,
+        regularMode: 0o600,
+      });
+      assertShareModeProfile(path.join(buildRoot, "pdf-toolkit-mcp-share"), {
+        directoryMode: 0o755,
+        executableMode: 0o755,
+        regularMode: 0o644,
+      });
+      assertShareModeProfile(
+        path.join(restrictiveBuildRoot, "pdf-toolkit-mcp-share"),
+        {
+          directoryMode: 0o700,
+          executableMode: 0o700,
+          regularMode: 0o600,
+        },
+      );
     }
 
-    run(process.execPath, ["package-for-friend.js"], buildRoot);
+    const shareTreeBeforeBuild = JSON.stringify(
+      regularTreeFingerprint(path.join(buildRoot, "pdf-toolkit-mcp-share")),
+    );
+    runPackager(buildRoot, 0o022);
+    assertEqual(
+      JSON.stringify(regularTreeFingerprint(path.join(buildRoot, "pdf-toolkit-mcp-share"))),
+      shareTreeBeforeBuild,
+      "Share package generation mutated its reviewed source tree",
+    );
+    if (process.platform !== "win32") {
+      assertShareModeProfile(path.join(buildRoot, "pdf-toolkit-mcp-share"), {
+        directoryMode: 0o755,
+        executableMode: 0o755,
+        regularMode: 0o644,
+      });
+    }
     const firstArchiveBytes = readFileSync(archivePath);
-    run(process.execPath, ["package-for-friend.js"], buildRoot);
+    assertCanonicalArchiveModes(firstArchiveBytes);
+    if (process.platform !== "win32") {
+      const restrictiveShareTreeBeforeBuild = JSON.stringify(
+        regularTreeFingerprint(path.join(restrictiveBuildRoot, "pdf-toolkit-mcp-share")),
+      );
+      runPackager(restrictiveBuildRoot, 0o077);
+      assertEqual(
+        JSON.stringify(regularTreeFingerprint(
+          path.join(restrictiveBuildRoot, "pdf-toolkit-mcp-share"),
+        )),
+        restrictiveShareTreeBeforeBuild,
+        "Restrictive-umask package generation mutated its reviewed source tree",
+      );
+      assertShareModeProfile(
+        path.join(restrictiveBuildRoot, "pdf-toolkit-mcp-share"),
+        {
+          directoryMode: 0o700,
+          executableMode: 0o700,
+          regularMode: 0o600,
+        },
+      );
+      const restrictiveArchiveBytes = readFileSync(restrictiveArchivePath);
+      assertCanonicalArchiveModes(restrictiveArchiveBytes);
+      assertEqual(
+        sha256(restrictiveArchiveBytes),
+        sha256(firstArchiveBytes),
+        "Share ZIP differs between explicit 0644/0755 and 0600/0700 source trees",
+      );
+    }
+    runPackager(buildRoot, 0o022);
+    assertEqual(
+      JSON.stringify(regularTreeFingerprint(path.join(buildRoot, "pdf-toolkit-mcp-share"))),
+      shareTreeBeforeBuild,
+      "Repeated share package generation mutated its reviewed source tree",
+    );
+    if (process.platform !== "win32") {
+      assertShareModeProfile(path.join(buildRoot, "pdf-toolkit-mcp-share"), {
+        directoryMode: 0o755,
+        executableMode: 0o755,
+        regularMode: 0o644,
+      });
+    }
     const secondArchiveBytes = readFileSync(archivePath);
     const archiveSha256 = sha256(secondArchiveBytes);
     assertEqual(sha256(firstArchiveBytes), archiveSha256, "Share ZIP is not byte-reproducible");
@@ -492,6 +728,9 @@ async function main() {
       "server/markdown-conversion.js",
       "server/markdown-output-transaction.js",
       "server/output-schemas.js",
+      "server/pdf-lib-rss-monitor.js",
+      "server/pdf-lib-subprocess.js",
+      "server/pdf-lib-worker.js",
       "server/pdfjs-subprocess.js",
       "server/pdfjs-worker.js",
       "server/resource-uri.js",

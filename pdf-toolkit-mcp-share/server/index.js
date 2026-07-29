@@ -21,7 +21,6 @@ import {
   PDFPageLeaf,
   PDFPageTree,
   PDFRef,
-  StandardFonts,
   degrees as pdfDegrees,
 } from "pdf-lib";
 import { fileURLToPath } from "url";
@@ -37,7 +36,7 @@ import {
   pdfResourceUriToPath,
 } from "./resource-uri.js";
 import {
-  hasToolOutputSchema,
+  createTypedToolError,
   validateStructuredToolResult,
   withToolOutputSchema,
 } from "./output-schemas.js";
@@ -62,6 +61,12 @@ import {
   runPdfjsSubprocess,
   terminateAllPdfjsSubprocesses,
 } from "./pdfjs-subprocess.js";
+import {
+  PDF_LIB_MUTATION_TOOL_NAMES,
+  forceTerminateAllPdfLibMutations,
+  runPdfLibMutation,
+  terminateAllPdfLibMutations,
+} from "./pdf-lib-subprocess.js";
 
 function boundedInteger(value, fallback, { name, minimum, maximum }) {
   const candidate = value === undefined || value === null ? fallback : value;
@@ -552,6 +557,24 @@ async function readCurrentPdfMutationBytes(inputPath) {
   return bytes;
 }
 
+function bindRecoveredMutationSource(input, pdfBytes = input.pdfBytes) {
+  if (
+    !input?.canonicalPath
+    || !input?.fileIdentity
+    || !Number.isSafeInteger(input.sizeBytes)
+    || !Buffer.isBuffer(pdfBytes)
+    || pdfBytes.length !== input.sizeBytes
+  ) {
+    throw new TypeError("A complete recovered PDF source binding is required.");
+  }
+  return {
+    canonical_path: input.canonicalPath,
+    file_identity: input.fileIdentity,
+    sha256: sha256Bytes(pdfBytes),
+    size_bytes: input.sizeBytes,
+  };
+}
+
 // Import helpers extracted for testability
 import {
   parsePageRanges,
@@ -631,10 +654,14 @@ function normalizeStoredSignatureMetadata(record) {
 }
 
 function decodeStoredSignatureImage(record, mime) {
+  const maximumImageBytes = 10 * 1024 * 1024;
   if (typeof record.image_data_b64 !== "string" || !record.image_data_b64.trim()) {
     throw new Error("Stored image signature is missing image_data_b64.");
   }
   const encoded = record.image_data_b64.replace(/\s+/g, "");
+  if (encoded.length > 4 * Math.ceil(maximumImageBytes / 3)) {
+    throw new Error("Stored image signature is too large (>10 MiB).");
+  }
   const canonicalBase64 = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
   if (encoded.length % 4 !== 0 || !canonicalBase64.test(encoded)) {
     throw new Error("Stored image signature contains invalid base64 data.");
@@ -643,10 +670,20 @@ function decodeStoredSignatureImage(record, mime) {
   if (bytes.length === 0 || bytes.toString("base64") !== encoded) {
     throw new Error("Stored image signature contains invalid base64 data.");
   }
+  if (bytes.length > maximumImageBytes) {
+    throw new Error("Stored image signature is too large (>10 MiB).");
+  }
   const isPng = bytes.subarray(0, 8).toString("hex") === "89504e470d0a1a0a";
   const isJpeg = bytes.subarray(0, 3).toString("hex") === "ffd8ff";
   if ((mime === "image/png" && !isPng) || (mime === "image/jpeg" && !isJpeg)) {
     throw new Error(`Stored image signature bytes do not match ${mime}.`);
+  }
+  const hasPngTerminator = bytes.length >= 20
+    && bytes.subarray(bytes.length - 12).toString("hex") === "0000000049454e44ae426082";
+  const hasJpegTerminator = bytes.length >= 4
+    && bytes.subarray(bytes.length - 2).toString("hex") === "ffd9";
+  if ((mime === "image/png" && !hasPngTerminator) || (mime === "image/jpeg" && !hasJpegTerminator)) {
+    throw new Error(`Stored image signature contains incomplete ${mime} image data.`);
   }
   return { bytes, encoded };
 }
@@ -662,11 +699,19 @@ async function normalizeStoredSignatureRecord(record, expectedName = null) {
     if (!metadata.display_name) {
       throw new Error("Stored typed signature is missing a valid display_name.");
     }
-    try {
-      const probeDocument = await PDFDocument.create();
-      const probeFont = await probeDocument.embedFont(StandardFonts.HelveticaOblique);
-      probeFont.widthOfTextAtSize(metadata.display_name, 12);
-    } catch {
+    const winAnsiExtras = new Set([
+      0x0152, 0x0153, 0x0160, 0x0161, 0x0178, 0x017d, 0x017e, 0x0192,
+      0x02c6, 0x02dc, 0x2013, 0x2014, 0x2018, 0x2019, 0x201a, 0x201c,
+      0x201d, 0x201e, 0x2020, 0x2021, 0x2022, 0x2026, 0x2030, 0x2039,
+      0x203a, 0x20ac, 0x2122,
+    ]);
+    const renderable = [...metadata.display_name].every(character => {
+      const codePoint = character.codePointAt(0);
+      return (codePoint >= 0x20 && codePoint <= 0x7e)
+        || (codePoint >= 0xa0 && codePoint <= 0xff)
+        || winAnsiExtras.has(codePoint);
+    });
+    if (!renderable) {
       throw new Error("Stored typed signature display_name cannot be rendered by the signature font.");
     }
     return metadata;
@@ -681,17 +726,7 @@ async function normalizeStoredSignatureRecord(record, expectedName = null) {
   if (mime !== "image/png" && mime !== "image/jpeg") {
     throw new Error("Stored image signature image_mime must be image/png or image/jpeg.");
   }
-  const { bytes, encoded } = decodeStoredSignatureImage(record, mime);
-
-  // Probe the exact decoder used during stamping before the target PDF is loaded.
-  // Header-only checks are insufficient: corrupt PNG/JPEG payloads can have valid magic bytes.
-  try {
-    const probeDocument = await PDFDocument.create();
-    if (mime === "image/png") await probeDocument.embedPng(bytes);
-    else await probeDocument.embedJpg(bytes);
-  } catch {
-    throw new Error(`Stored image signature contains invalid ${mime} image data.`);
-  }
+  const { encoded } = decodeStoredSignatureImage(record, mime);
 
   let sourcePath;
   if (record.source_path !== undefined && record.source_path !== null) {
@@ -1326,19 +1361,25 @@ function pdfjsRendererPolicy() {
   return "native_with_system_fallback";
 }
 
-let pdfjsShutdown = null;
+let workerShutdown = null;
 for (const [signal, exitCode] of new Map([
   ["SIGHUP", 129],
   ["SIGINT", 130],
   ["SIGTERM", 143],
 ])) {
   process.once(signal, () => {
-    if (pdfjsShutdown !== null) return;
-    pdfjsShutdown = terminateAllPdfjsSubprocesses();
-    void pdfjsShutdown.finally(() => process.exit(exitCode));
+    if (workerShutdown !== null) return;
+    workerShutdown = Promise.all([
+      terminateAllPdfjsSubprocesses(),
+      terminateAllPdfLibMutations(),
+    ]);
+    void workerShutdown.finally(() => process.exit(exitCode));
   });
 }
-process.once("exit", forceTerminateAllPdfjsSubprocesses);
+process.once("exit", () => {
+  forceTerminateAllPdfjsSubprocesses();
+  forceTerminateAllPdfLibMutations();
+});
 
 const backupPathByCanonical = new Map();
 const backupOperationByCanonical = new Map();
@@ -1899,7 +1940,8 @@ function bindExpectedOutputIdentityManifest(entries, expectedIdentities) {
 }
 
 async function persistPdfMutation({
-  pdfDoc,
+  mutationOutput,
+  formInfo,
   inputPath,
   outputPath,
   toolName,
@@ -1967,8 +2009,14 @@ async function persistPdfMutation({
     let backupPath = backupPathByCanonical.get(inputCanonical) || null;
     let record = null;
     let commitInputSha256 = null;
-    const bytes = Buffer.from(await pdfDoc.save());
-    const pendingSha256 = sha256Bytes(bytes);
+    if (
+      !mutationOutput
+      || typeof mutationOutput.readBytes !== "function"
+      || !/^[a-f0-9]{64}$/.test(mutationOutput.sha256 ?? "")
+    ) {
+      throw new TypeError("A validated staged mutation output is required.");
+    }
+    const pendingSha256 = mutationOutput.sha256;
     if (sameDocument) {
       if (!/^[a-f0-9]{64}$/.test(expectedInputSha256 ?? "")) {
         throw backupIdentityError("MUTATION_INPUT_IDENTITY_REQUIRED", "Same-document mutations require the SHA-256 captured when the input was loaded.");
@@ -2022,8 +2070,10 @@ async function persistPdfMutation({
 
     const committedOutput = await writePdfOutputAtomic(
       sameDocument ? inputCanonical : resolvedOutputPath,
-      bytes,
+      null,
       {
+        produceBytes: mutationOutput.readBytes,
+        onTransition: mutationOutput.atomicTransition,
         assertPathAllowed,
         overwrite: committedTargetIdentity !== null,
         expectedExistingIdentity: committedTargetIdentity,
@@ -2054,7 +2104,7 @@ async function persistPdfMutation({
     activeDocumentState.lastMutationAt = new Date().toISOString();
 
     const payload = await buildActiveDocumentPayload(committedOutputPath, initialPage, {
-      ...getFormFieldInfo(pdfDoc),
+      ...formInfo,
       ...extraPayload,
     });
     return { payload, backupPath };
@@ -3644,26 +3694,32 @@ async function handleToolCall(request) {
         } = args;
         const resolvedPdfPath = resolvePath(pdf_path);
         const resolvedOutputPath = resolvePath(output_path);
+        const recoveredInput = await readPdfInputWithRecovery(resolvedPdfPath);
         const {
           pdfBytes: rawPdfBytes,
           inputRecoveryBinding,
-        } = await readPdfInputWithRecovery(resolvedPdfPath);
+        } = recoveredInput;
         assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
-        const { pdfDoc, filledFields, errors } = await fillPdfBytes(rawPdfBytes, field_data, password);
-        const { payload, backupPath } = await persistPdfMutation({
-          pdfDoc,
-          inputPath: resolvedPdfPath,
-          outputPath: resolvedOutputPath,
-          toolName: "fill_pdf",
-          expectedInputSha256: sha256Bytes(rawPdfBytes),
-          expectedOutputIdentity: normalizeExpectedOutputIdentity(
-            expected_output_identity,
-          ),
-          inputRecoveryBinding,
-          extraPayload: {
-            filled_fields: filledFields,
-            fill_errors: errors,
-          },
+        const { payload, backupPath, filledFields, errors } = await runPdfLibMutation({
+          operation: "fill_pdf",
+          sources: [bindRecoveredMutationSource(recoveredInput)],
+          password,
+          options: { field_data },
+        }, async ({ result, outputs, atomicTransition }) => {
+          const filledFields = result.filledFields;
+          const errors = result.errors;
+          const committed = await persistPdfMutation({
+            mutationOutput: { ...outputs[0], atomicTransition },
+            formInfo: result.form_info,
+            inputPath: resolvedPdfPath,
+            outputPath: resolvedOutputPath,
+            toolName: "fill_pdf",
+            expectedInputSha256: sha256Bytes(rawPdfBytes),
+            expectedOutputIdentity: normalizeExpectedOutputIdentity(expected_output_identity),
+            inputRecoveryBinding,
+            extraPayload: { filled_fields: filledFields, fill_errors: errors },
+          });
+          return { ...committed, filledFields, errors };
         });
         
         let message = `PDF filled successfully and saved to: ${output_path}\n`;
@@ -3700,10 +3756,11 @@ async function handleToolCall(request) {
         const expectedOutputIdentities = normalizeExpectedOutputIdentities(
           expected_output_identities,
         );
+        const recoveredInput = await readPdfInputWithRecovery(resolvedPdfPath);
         const {
           pdfBytes: rawPdfBytes,
           fileIdentity: templateFileIdentity,
-        } = await readPdfInputWithRecovery(resolvedPdfPath);
+        } = recoveredInput;
         assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
         
         // Read CSV
@@ -3721,7 +3778,6 @@ async function handleToolCall(request) {
         // Ensure output directory exists
         await fs.mkdir(resolvedOutputDir, { recursive: true });
         
-        const results = [];
         const pendingOutputs = [];
         const outputPaths = new Set();
         for (let i = 0; i < records.length; i++) {
@@ -3738,46 +3794,43 @@ async function handleToolCall(request) {
           }
           outputPaths.add(outputPath);
 
-          pendingOutputs.push({
-            targetPath: outputPath,
-            async produceBytes() {
-              try {
-                const { pdfDoc, filledFields, errors } = await fillPdfBytes(rawPdfBytes, record, password);
-                const filledPdfBytes = await pdfDoc.save();
-                results.push({
-                  filename,
-                  output_path: outputPath,
-                  fields_filled: filledFields.length,
-                  errors,
-                  status: errors.length > 0 ? "warning" : "ok",
-                });
-                return filledPdfBytes;
-              } catch (e) {
-                throw new Error(`Bulk fill aborted at row ${i + 1} (${filename}): ${e.message}. No PDF outputs were committed.`);
-              }
-            },
-          });
+          pendingOutputs.push({ targetPath: outputPath, filename });
         }
 
         bindExpectedOutputIdentityManifest(
           pendingOutputs,
           expectedOutputIdentities,
         );
-        if (pendingOutputs.length > 0) {
-          const committedOutputs = await writePdfOutputsAtomic(
-            pendingOutputs,
-            {
+        const results = await runPdfLibMutation({
+          operation: "bulk_fill_from_csv",
+          sources: [bindRecoveredMutationSource(recoveredInput)],
+          password,
+          options: { records },
+        }, async ({ result, outputs, atomicTransition }) => {
+          if (outputs.length !== pendingOutputs.length || result.rows.length !== pendingOutputs.length) {
+            throw new Error("Bulk fill worker returned an incomplete batch.");
+          }
+          if (pendingOutputs.length === 0) return [];
+          const atomicEntries = pendingOutputs.map((entry, index) => ({
+            ...entry,
+            produceBytes: outputs[index].readBytes,
+          }));
+          const committedOutputs = await writePdfOutputsAtomic(atomicEntries, {
+              onTransition: atomicTransition,
               assertPathAllowed,
               validateInitialTargets: rejectOutputAliasesToProtectedInputs([
                 templateFileIdentity,
                 csvFileIdentity,
               ]),
-            },
-          );
-          committedOutputs.forEach((committed, index) => {
-            results[index].output_path = committed.targetPath;
           });
-        }
+          return committedOutputs.map((committed, index) => ({
+            filename: pendingOutputs[index].filename,
+            output_path: committed.targetPath,
+            fields_filled: result.rows[index].filledFields.length,
+            errors: result.rows[index].errors,
+            status: result.rows[index].errors.length > 0 ? "warning" : "ok",
+          }));
+        });
 
         const resultLines = results.map(result => {
           const marker = result.status === "error" ? "✗" : result.status === "warning" ? "!" : "✓";
@@ -3863,26 +3916,30 @@ async function handleToolCall(request) {
         
         // Merge profile data with additional data
         const mergedData = { ...profileData, ...additional_data };
-        const {
-          pdfBytes: rawPdfBytes,
-          inputRecoveryBinding,
-        } = await readPdfInputWithRecovery(resolvedPdfPath);
-        const { pdfDoc, filledFields, errors } = await fillPdfBytes(rawPdfBytes, mergedData, password);
-        const { payload, backupPath } = await persistPdfMutation({
-          pdfDoc,
-          inputPath: resolvedPdfPath,
-          outputPath: resolvedOutputPath,
-          toolName: "fill_with_profile",
-          expectedInputSha256: sha256Bytes(rawPdfBytes),
-          expectedOutputIdentity: normalizeExpectedOutputIdentity(
-            expected_output_identity,
-          ),
-          inputRecoveryBinding,
-          extraPayload: {
-            profile_name,
-            filled_fields: filledFields,
-            fill_errors: errors,
-          },
+        const recoveredInput = await readPdfInputWithRecovery(resolvedPdfPath);
+        const { pdfBytes: rawPdfBytes, inputRecoveryBinding } = recoveredInput;
+        const { payload, backupPath, filledFields } = await runPdfLibMutation({
+          operation: "fill_with_profile",
+          sources: [bindRecoveredMutationSource(recoveredInput)],
+          password,
+          options: { field_data: mergedData },
+        }, async ({ result, outputs, atomicTransition }) => {
+          const committed = await persistPdfMutation({
+            mutationOutput: { ...outputs[0], atomicTransition },
+            formInfo: result.form_info,
+            inputPath: resolvedPdfPath,
+            outputPath: resolvedOutputPath,
+            toolName: "fill_with_profile",
+            expectedInputSha256: sha256Bytes(rawPdfBytes),
+            expectedOutputIdentity: normalizeExpectedOutputIdentity(expected_output_identity),
+            inputRecoveryBinding,
+            extraPayload: {
+              profile_name,
+              filled_fields: result.filledFields,
+              fill_errors: result.errors,
+            },
+          });
+          return { ...committed, filledFields: result.filledFields };
         });
         
         return {
@@ -4162,8 +4219,8 @@ async function handleToolCall(request) {
               console.error("[read_pdf_content] Image fallback failed:", imageError.message);
               response = `Error: PDF content extraction failed: no text was found and the page-image fallback was unavailable.\n`;
               response += `Do not assume this PDF is empty or complete. Check PDF access/password, retry, and use render_pdf_page to diagnose page 1 before relying on the document contents.\n`;
-              return {
-                isError: true,
+              return createTypedToolError({
+                message: response,
                 content: [{
                   type: "text",
                   text: response,
@@ -4185,7 +4242,7 @@ async function handleToolCall(request) {
                   retry_guidance:
                     "Do not treat this PDF as empty. Check PDF access/password and renderer availability, then retry read_pdf_content or render_pdf_page.",
                 },
-              };
+              });
             }
           }
 
@@ -4217,13 +4274,13 @@ async function handleToolCall(request) {
           };
         } catch (error) {
           if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
-          return {
-            isError: true,
+          return createTypedToolError({
+            message: `Error reading PDF file: ${error.message}`,
             content: [{
               type: "text",
               text: `Error reading PDF file: ${error.message}\n\nPlease ensure the file path is correct and the file exists.`
             }],
-          };
+          });
         }
       }
 
@@ -4293,13 +4350,9 @@ async function handleToolCall(request) {
           };
         } catch (error) {
           if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
-          return {
-            isError: true,
-            content: [{
-              type: "text",
-              text: `Error reading PDF pages: ${error.message}\n\nPlease ensure the file path is correct and the requested page range is valid.`
-            }],
-          };
+          return createTypedToolError({
+            message: `Error reading PDF pages: ${error.message}\n\nPlease ensure the file path is correct and the requested page range is valid.`,
+          });
         }
       }
 
@@ -4351,19 +4404,10 @@ async function handleToolCall(request) {
           const passwordCode = ["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"].includes(error?.code)
             ? error.code
             : null;
-          return {
-            isError: true,
-            content: [{
-              type: "text",
-              text: `Error reading PDF layout: ${error.message}\n\nUse a valid local PDF up to 250 MiB, a page range of at most 10 pages, and narrower limits if the document is large.`,
-            }],
-            ...(passwordCode ? {
-              structuredContent: {
-                status: "failed",
-                error: { error_schema_version: 1, code: passwordCode },
-              },
-            } : {}),
-          };
+          const message = `Error reading PDF layout: ${error.message}\n\nUse a valid local PDF up to 250 MiB, a page range of at most 10 pages, and narrower limits if the document is large.`;
+          return passwordCode
+            ? createTypedToolError({ message, code: passwordCode })
+            : createTypedToolError({ message });
         }
       }
 
@@ -4554,13 +4598,9 @@ async function handleToolCall(request) {
           };
         } catch (error) {
           if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
-          return {
-            isError: true,
-            content: [{
-              type: "text",
-              text: `Error rendering PDF page: ${error.message}\n\nPlease ensure the file path is correct and the requested page can be rendered.`
-            }],
-          };
+          return createTypedToolError({
+            message: `Error rendering PDF page: ${error.message}\n\nPlease ensure the file path is correct and the requested page can be rendered.`,
+          });
         }
       }
 
@@ -4633,13 +4673,9 @@ async function handleToolCall(request) {
           };
         } catch (error) {
           if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
-          return {
-            isError: true,
-            content: [{
-              type: "text",
-              text: `Error rendering PDF region: ${error.message}\n\nPlease ensure the file path, page, and region coordinates are valid.`
-            }],
-          };
+          return createTypedToolError({
+            message: `Error rendering PDF region: ${error.message}\n\nPlease ensure the file path, page, and region coordinates are valid.`,
+          });
         }
       }
 
@@ -4699,13 +4735,9 @@ async function handleToolCall(request) {
           };
         } catch (error) {
           if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
-          return {
-            isError: true,
-            content: [{
-              type: "text",
-              text: `Error searching PDF text: ${error.message}\n\nPlease ensure the file path is correct and the query is valid.`
-            }],
-          };
+          return createTypedToolError({
+            message: `Error searching PDF text: ${error.message}\n\nPlease ensure the file path is correct and the query is valid.`,
+          });
         }
       }
 
@@ -4738,13 +4770,9 @@ async function handleToolCall(request) {
             },
           };
         } catch (error) {
-          return {
-            content: [{
-              type: "text",
-              text: `Error accessing PDF file: ${error.message}\n\nPlease ensure the file path is correct and the file exists.`
-            }],
-            isError: true,
-          };
+          return createTypedToolError({
+            message: `Error accessing PDF file: ${error.message}\n\nPlease ensure the file path is correct and the file exists.`,
+          });
         }
       }
 
@@ -4793,10 +4821,9 @@ async function handleToolCall(request) {
         const stats = await fs.stat(resolvedPath);
 
         if (stats.size > MAX_FILE_SIZE) {
-          return {
-            content: [{ type: "text", text: `PDF exceeds 100MB limit (${(stats.size / 1024 / 1024).toFixed(1)}MB). Use read_pdf_content for text extraction instead.` }],
-            isError: true,
-          };
+          return createTypedToolError({
+            message: `PDF exceeds 100MB limit (${(stats.size / 1024 / 1024).toFixed(1)}MB). Use read_pdf_content for text extraction instead.`,
+          });
         }
 
         const fileName = path.basename(resolvedPath);
@@ -4979,10 +5006,7 @@ async function handleToolCall(request) {
             },
           };
         } catch (err) {
-          return {
-            content: [{ type: "text", text: `Error opening file: ${err.message}` }],
-            isError: true,
-          };
+          return createTypedToolError({ message: `Error opening file: ${err.message}` });
         } finally {
           await fileHandle?.close().catch(() => {});
         }
@@ -5027,64 +5051,40 @@ async function handleToolCall(request) {
           },
         );
 
-        const mergedDoc = await PDFDocument.create();
-        const isMultiInputMerge = retainedInputs.length > 1;
-        const sourceMetadata = [];
-        let totalPageCount = 0;
-        for (let fi = 0; fi < retainedInputs.length; fi++) {
-          const rp = resolvedInputPaths[fi];
-          const retainedInput = retainedInputs[fi];
-          let srcDoc;
-          try {
-            srcDoc = await loadPdfBytes(retainedInput.pdfBytes, password);
-          } catch (err) {
-            retainedInput.pdfBytes = null;
-            throw new Error(`File ${fi + 1} (${path.basename(rp)}): ${err.message}`);
-          }
-          const pageIndices = srcDoc.getPageIndices();
-          try {
-            if (isMultiInputMerge) {
-              sourceMetadata.push(captureMergeDescriptiveMetadata(srcDoc));
-            } else {
-              copyPdfDocumentMetadata(mergedDoc, srcDoc);
-            }
-            await copyPdfPagesPreservingForms(mergedDoc, srcDoc, pageIndices);
-          } finally {
-            retainedInput.pdfBytes = null;
-          }
-          totalPageCount += pageIndices.length;
-        }
-
-        const metadataConsensus = isMultiInputMerge
-          ? applyMergeDescriptiveMetadataConsensus(mergedDoc, sourceMetadata)
-          : { preservedFields: [], omittedFields: [] };
-        const mergedBytes = await mergedDoc.save();
-        const committedOutput = await writePdfOutputAtomic(
-          resolvedOutputPath,
-          mergedBytes,
-          {
+        const mergeResult = await runPdfLibMutation({
+          operation: "merge_pdfs",
+          sources: retainedInputs.map(input => bindRecoveredMutationSource(input)),
+          password,
+          options: {},
+        }, async ({ result, outputs, atomicTransition }) => {
+          const committedOutput = await writePdfOutputAtomic(resolvedOutputPath, null, {
+            produceBytes: outputs[0].readBytes,
+            onTransition: atomicTransition,
             assertPathAllowed,
             overwrite: expectedOutputIdentity !== null,
             expectedExistingIdentity: expectedOutputIdentity,
             validateInitialTargets: rejectOutputAliasesToProtectedInputs(
               retainedInputs.map(input => input.fileIdentity),
             ),
-          },
-        );
+          });
+          return { committedOutput, result };
+        });
+        const { committedOutput, result: workerResult } = mergeResult;
         const committedOutputPath = committedOutput.targetPath;
         const outputStats = await fs.stat(committedOutputPath);
         const payload = await buildNewOutputDocumentPayload(committedOutputPath, "merge_pdfs", 1, {
-          total_pages: totalPageCount,
-          metadata_fields_omitted: metadataConsensus.omittedFields,
+          ...workerResult.form_info,
+          total_pages: workerResult.total_pages,
+          metadata_fields_omitted: workerResult.omitted_fields,
         });
-        const metadataNotice = metadataConsensus.omittedFields.length > 0
-          ? `\nOmitted unverified metadata: ${metadataConsensus.omittedFields.join(", ")}`
+        const metadataNotice = workerResult.omitted_fields.length > 0
+          ? `\nOmitted unverified metadata: ${workerResult.omitted_fields.join(", ")}`
           : "";
 
         return {
           content: [{
             type: "text",
-            text: `Merged ${input_paths.length} PDFs into: ${output_path}\nTotal pages: ${totalPageCount}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB${metadataNotice}`
+            text: `Merged ${input_paths.length} PDFs into: ${output_path}\nTotal pages: ${workerResult.total_pages}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB${metadataNotice}`
           }],
           structuredContent: payload,
           _meta: {
@@ -5102,58 +5102,63 @@ async function handleToolCall(request) {
           password,
           expected_output_identities,
         } = args;
+        const recoveredInput = await readPdfInputWithRecovery(input_path);
         const {
-          pdfDoc,
           resolvedPath: resolvedInputPath,
           fileIdentity,
-        } = await loadPdf(input_path, password);
+        } = recoveredInput;
         const resolvedOutputDir = resolvePath(output_directory);
         const expectedOutputIdentities = normalizeExpectedOutputIdentities(
           expected_output_identities,
         );
-        await fs.mkdir(resolvedOutputDir, { recursive: true });
-
-        const totalPages = pdfDoc.getPageCount();
-        const ranges = parsePageRanges(page_ranges, totalPages);
         const baseName = path.basename(resolvedInputPath, ".pdf");
-
-        const results = [];
-        const pendingOutputs = [];
-        for (let ri = 0; ri < ranges.length; ri++) {
-          const [start, end] = ranges[ri];
-          const suffix = ranges.length > 1 ? `_${ri + 1}` : "";
-          const filename = `${baseName}_pages_${start}-${end}${suffix}.pdf`;
-          const outputPath = path.join(resolvedOutputDir, filename);
-          pendingOutputs.push({
-            targetPath: outputPath,
-            async produceBytes() {
-              const newDoc = await PDFDocument.create();
-              const pageIndices = [];
-              for (let i = start - 1; i <= end - 1; i++) pageIndices.push(i);
-              copyPdfDocumentMetadata(newDoc, pdfDoc);
-              await copyPdfPagesPreservingForms(newDoc, pdfDoc, pageIndices);
-              return await newDoc.save();
-            },
+        const split = await runPdfLibMutation({
+          operation: "split_pdf",
+          sources: [bindRecoveredMutationSource(recoveredInput)],
+          password,
+          options: { page_ranges },
+        }, async ({ result, outputs, atomicTransition }) => {
+          await fs.mkdir(resolvedOutputDir, { recursive: true });
+          const pendingOutputs = result.ranges.map(([start, end], index) => {
+            const suffix = result.ranges.length > 1 ? `_${index + 1}` : "";
+            const filename = `${baseName}_pages_${start}-${end}${suffix}.pdf`;
+            return {
+              filename, start, end,
+              targetPath: path.join(resolvedOutputDir, filename),
+              produceBytes: outputs[index]?.readBytes,
+            };
           });
-          results.push(`${filename} (${end - start + 1} pages)`);
-        }
-
-        bindExpectedOutputIdentityManifest(
-          pendingOutputs,
-          expectedOutputIdentities,
-        );
-        await writePdfOutputsAtomic(pendingOutputs, {
-          assertPathAllowed,
-          validateInitialTargets: rejectOutputAliasesToProtectedInputs([
-            fileIdentity,
-          ]),
+          if (outputs.length !== pendingOutputs.length) throw new Error("Split worker returned an incomplete batch.");
+          bindExpectedOutputIdentityManifest(pendingOutputs, expectedOutputIdentities);
+          const committed = await writePdfOutputsAtomic(pendingOutputs, {
+            onTransition: atomicTransition,
+            assertPathAllowed,
+            validateInitialTargets: rejectOutputAliasesToProtectedInputs([fileIdentity]),
+          });
+          return {
+            ranges: result.ranges,
+            files: pendingOutputs.map((entry, index) => ({
+              filename: entry.filename,
+              output_path: committed[index].targetPath,
+              start_page: entry.start,
+              end_page: entry.end,
+              page_count: entry.end - entry.start + 1,
+            })),
+          };
         });
+        const results = split.files.map(file => `${file.filename} (${file.page_count} pages)`);
 
         return {
           content: [{
             type: "text",
             text: `Split ${path.basename(resolvedInputPath)} into ${results.length} files:\n${results.join("\n")}\nSaved to: ${output_directory}`
           }],
+          structuredContent: {
+            input_path: resolvedInputPath,
+            output_directory: resolvedOutputDir,
+            file_count: split.files.length,
+            files: split.files,
+          },
         };
       }
 
@@ -5178,47 +5183,36 @@ async function handleToolCall(request) {
           throw new Error("output_path must be different from input_path to prevent file corruption.");
         }
 
-        const { pdfDoc, fileIdentity } = await loadPdf(input_path, password);
-        const allPages = pdfDoc.getPages();
-        const totalPages = allPages.length;
-
-        // Determine which pages to rotate
-        const targetPages = (!pages || pages.length === 0)
-          ? allPages
-          : pages.map(p => {
-              if (p < 1 || p > totalPages) throw new Error(`Page ${p} is out of range (1-${totalPages}).`);
-              return allPages[p - 1];
-            });
-
-        for (const page of targetPages) {
-          const currentRotation = page.getRotation().angle;
-          page.setRotation(pdfDegrees((currentRotation + degrees) % 360));
-        }
-
-        const rotatedBytes = await pdfDoc.save();
-        const committedOutput = await writePdfOutputAtomic(
-          resolvedOutputPath,
-          rotatedBytes,
-          {
+        const recoveredInput = await readPdfInputWithRecovery(input_path);
+        const rotate = await runPdfLibMutation({
+          operation: "rotate_pdf_pages",
+          sources: [bindRecoveredMutationSource(recoveredInput)],
+          password,
+          options: { pages: pages ?? [], degrees },
+        }, async ({ result, outputs, atomicTransition }) => {
+          const committedOutput = await writePdfOutputAtomic(resolvedOutputPath, null, {
+            produceBytes: outputs[0].readBytes,
+            onTransition: atomicTransition,
             assertPathAllowed,
             overwrite: expectedOutputIdentity !== null,
             expectedExistingIdentity: expectedOutputIdentity,
-            validateInitialTargets: rejectOutputAliasesToProtectedInputs([
-              fileIdentity,
-            ]),
-          },
-        );
+            validateInitialTargets: rejectOutputAliasesToProtectedInputs([recoveredInput.fileIdentity]),
+          });
+          return { result, committedOutput };
+        });
+        const { result: workerResult, committedOutput } = rotate;
         const committedOutputPath = committedOutput.targetPath;
         const outputStats = await fs.stat(committedOutputPath);
         const payload = await buildNewOutputDocumentPayload(committedOutputPath, "rotate_pdf_pages", 1, {
-          rotated_pages: targetPages.length,
+          ...workerResult.form_info,
+          rotated_pages: workerResult.rotated_pages,
           degrees,
         });
 
         return {
           content: [{
             type: "text",
-            text: `Rotated ${targetPages.length} page(s) by ${degrees}° and saved to: ${output_path}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`
+            text: `Rotated ${workerResult.rotated_pages} page(s) by ${degrees}° and saved to: ${output_path}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`
           }],
           structuredContent: payload,
           _meta: {
@@ -5248,44 +5242,35 @@ async function handleToolCall(request) {
           throw new Error("output_path must be different from input_path to prevent file corruption.");
         }
 
-        const { pdfDoc, fileIdentity } = await loadPdf(input_path, password);
-        const totalPages = pdfDoc.getPageCount();
-
-        // Validate strict permutation
-        const sorted = [...page_order].sort((a, b) => a - b);
-        const expected = Array.from({ length: totalPages }, (_, i) => i + 1);
-        if (sorted.length !== expected.length || !sorted.every((v, i) => v === expected[i])) {
-          throw new Error(`page_order must be a permutation of all pages (1-${totalPages}). Got: [${page_order.join(", ")}]`);
-        }
-
-        const newDoc = await PDFDocument.create();
-        const pageIndices = page_order.map(p => p - 1);
-        copyPdfDocumentMetadata(newDoc, pdfDoc);
-        await copyPdfPagesPreservingForms(newDoc, pdfDoc, pageIndices);
-
-        const reorderedBytes = await newDoc.save();
-        const committedOutput = await writePdfOutputAtomic(
-          resolvedOutputPath,
-          reorderedBytes,
-          {
+        const recoveredInput = await readPdfInputWithRecovery(input_path);
+        const reordered = await runPdfLibMutation({
+          operation: "reorder_pdf_pages",
+          sources: [bindRecoveredMutationSource(recoveredInput)],
+          password,
+          options: { page_order, rotations: {} },
+        }, async ({ result, outputs, atomicTransition }) => {
+          const committedOutput = await writePdfOutputAtomic(resolvedOutputPath, null, {
+            produceBytes: outputs[0].readBytes,
+            onTransition: atomicTransition,
             assertPathAllowed,
             overwrite: expectedOutputIdentity !== null,
             expectedExistingIdentity: expectedOutputIdentity,
-            validateInitialTargets: rejectOutputAliasesToProtectedInputs([
-              fileIdentity,
-            ]),
-          },
-        );
+            validateInitialTargets: rejectOutputAliasesToProtectedInputs([recoveredInput.fileIdentity]),
+          });
+          return { result, committedOutput };
+        });
+        const { result: workerResult, committedOutput } = reordered;
         const committedOutputPath = committedOutput.targetPath;
         const outputStats = await fs.stat(committedOutputPath);
         const payload = await buildNewOutputDocumentPayload(committedOutputPath, "reorder_pdf_pages", 1, {
+          ...workerResult.form_info,
           page_order,
         });
 
         return {
           content: [{
             type: "text",
-            text: `Reordered ${totalPages} pages and saved to: ${output_path}\nNew order: [${page_order.join(", ")}]\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`
+            text: `Reordered ${workerResult.total_pages} pages and saved to: ${output_path}\nNew order: [${page_order.join(", ")}]\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`
           }],
           structuredContent: payload,
           _meta: {
@@ -5375,26 +5360,12 @@ async function handleToolCall(request) {
           throw new Error("output_path must be different from input_path to prevent file corruption.");
         }
 
+        const recoveredInput = await readPdfInputWithRecovery(resolvedInputPath);
         const {
           pdfBytes: rawPdfBytes,
           fileIdentity,
-        } = await readPdfInputWithRecovery(resolvedInputPath);
+        } = recoveredInput;
         assertXfaMutationAllowed(rawPdfBytes, { forceXfa: force_xfa });
-        const pdfDoc = await loadPdfBytes(rawPdfBytes, password);
-        const totalPages = pdfDoc.getPageCount();
-
-        // Validate page numbers
-        const seen = new Set();
-        for (const p of page_order) {
-          if (!Number.isInteger(p) || p < 1 || p > totalPages) {
-            throw new Error(`Page ${p} is invalid (must be integer 1-${totalPages}).`);
-          }
-          if (seen.has(p)) {
-            throw new Error(`Duplicate page number in page_order: ${p}`);
-          }
-          seen.add(p);
-        }
-
         // Validate rotation degrees
         const validDegrees = [0, 90, 180, 270];
         for (const [pageStr, deg] of Object.entries(rotations)) {
@@ -5403,49 +5374,43 @@ async function handleToolCall(request) {
           }
         }
 
-        // Build the new PDF
-        const newDoc = await PDFDocument.create();
-        const pageIndices = page_order.map(p => p - 1);
-        copyPdfDocumentMetadata(newDoc, pdfDoc);
-        await copyPdfPagesPreservingForms(newDoc, pdfDoc, pageIndices, {
-          mutatePage(page, index) {
-            const originalPageNum = page_order[index];
-            const rotationDeg = rotations[String(originalPageNum)];
-            if (rotationDeg) {
-              const currentRotation = page.getRotation().angle;
-              page.setRotation(pdfDegrees((currentRotation + rotationDeg) % 360));
-            }
-          },
-        });
-
-        const newBytes = await newDoc.save();
         let outputStats;
         let committedOutputPath;
+        let workerResult;
         try {
-          const committedOutput = await writePdfOutputAtomic(
-            resolvedOutputPath,
-            newBytes,
-            {
+          const applied = await runPdfLibMutation({
+            operation: "apply_page_plan",
+            sources: [bindRecoveredMutationSource(recoveredInput)],
+            password,
+            options: { page_order, rotations },
+          }, async ({ result, outputs, atomicTransition }) => {
+            const committedOutput = await writePdfOutputAtomic(resolvedOutputPath, null, {
+              produceBytes: outputs[0].readBytes,
+              onTransition: atomicTransition,
               assertPathAllowed,
               overwrite: expectedOutputIdentity !== null,
               expectedExistingIdentity: expectedOutputIdentity,
               validateInitialTargets: rejectOutputAliasesToProtectedInputs([
                 fileIdentity,
               ]),
-            },
-          );
+            });
+            return { result, committedOutput };
+          });
+          workerResult = applied.result;
+          const committedOutput = applied.committedOutput;
           committedOutputPath = committedOutput.targetPath;
           outputStats = await fs.stat(committedOutputPath);
         } catch (writeErr) {
           throw new Error(`Failed to save PDF: ${writeErr.message}. Check that the output directory exists and is writable.`);
         }
 
-        const deletedCount = totalPages - page_order.length;
-        const rotatedCount = Object.keys(rotations).filter(k => seen.has(Number(k))).length;
+        const deletedCount = workerResult.deleted_pages;
+        const rotatedCount = workerResult.rotated_pages;
         let summary = `Saved ${page_order.length}-page PDF to: ${output_path}\nFile size: ${(outputStats.size / 1024).toFixed(0)} KB`;
         if (deletedCount > 0) summary += `\n${deletedCount} page(s) removed`;
         if (rotatedCount > 0) summary += `\n${rotatedCount} page(s) rotated`;
         const payload = await buildNewOutputDocumentPayload(committedOutputPath, "apply_page_plan", 1, {
+          ...workerResult.form_info,
           deleted_pages: deletedCount,
           rotated_pages: rotatedCount,
           page_order,
@@ -5688,27 +5653,28 @@ async function handleToolCall(request) {
         } = normalizeAddSignatureFieldArguments(args);
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
-        const { pdfDoc, pdfBytes, inputRecoveryBinding } = await loadPdf(pdf_path, password);
-        const existingSigs = detectExistingSignatures(pdfDoc);
-        if (existingSigs.present && !allow_resign) {
-          throw new Error(
-            `This PDF already contains ${existingSigs.fieldNames.length} cryptographic signature field(s) ` +
-            `(${existingSigs.fieldNames.slice(0, 3).join(", ")}${existingSigs.fieldNames.length > 3 ? "..." : ""}). ` +
-            `Saving would invalidate those signatures. Pass allow_resign=true if you intend to modify a signed PDF.`
-          );
-        }
+        const recoveredInput = await readPdfInputWithRecovery(pdf_path);
+        const { pdfBytes, inputRecoveryBinding } = recoveredInput;
         assertXfaMutationAllowed(pdfBytes, { forceXfa: force_xfa });
-        await drawSignatureFieldOnPage(pdfDoc, { page, x, y, width, height, label });
-        const { payload, backupPath } = await persistPdfMutation({
-          pdfDoc,
-          inputPath: resolvedInput,
-          outputPath: resolvedOutput,
-          toolName: "add_signature_field",
-          expectedInputSha256: sha256Bytes(pdfBytes),
-          expectedOutputIdentity: expected_output_identity,
-          inputRecoveryBinding,
-          initialPage: page,
-        });
+        const { payload, backupPath } = await runPdfLibMutation({
+          operation: "add_signature_field",
+          sources: [bindRecoveredMutationSource(recoveredInput)],
+          password,
+          options: {
+            placement: { page, x, y, width, height, label },
+            allow_resign,
+          },
+        }, ({ result, outputs, atomicTransition }) => persistPdfMutation({
+            mutationOutput: { ...outputs[0], atomicTransition },
+            formInfo: result.form_info,
+            inputPath: resolvedInput,
+            outputPath: resolvedOutput,
+            toolName: "add_signature_field",
+            expectedInputSha256: sha256Bytes(pdfBytes),
+            expectedOutputIdentity: expected_output_identity,
+            inputRecoveryBinding,
+            initialPage: page,
+          }));
         return {
           content: [{
             type: "text",
@@ -5766,19 +5732,9 @@ async function handleToolCall(request) {
         }
         signatureRecord = await normalizeStoredSignatureRecord(signatureRecord, cleanSigName);
 
-        // 3. Load the PDF
-        const { pdfDoc, pdfBytes, inputRecoveryBinding } = await loadPdf(pdf_path, password);
-
-        // 3a. Refuse to invalidate existing cryptographic signatures (pdf-lib
-        // round-trip breaks them). Users opt in with allow_resign=true.
-        const existingSigs = detectExistingSignatures(pdfDoc);
-        if (existingSigs.present && !allow_resign) {
-          throw new Error(
-            `This PDF already contains ${existingSigs.fieldNames.length} cryptographic signature field(s) ` +
-            `(${existingSigs.fieldNames.slice(0, 3).join(", ")}${existingSigs.fieldNames.length > 3 ? "..." : ""}). ` +
-            `Saving would invalidate those signatures. Pass allow_resign=true if you intend to re-sign.`
-          );
-        }
+        // 3. Bind the PDF without parsing it in the long-lived server.
+        const recoveredInput = await readPdfInputWithRecovery(pdf_path);
+        const { pdfBytes, inputRecoveryBinding } = recoveredInput;
 
         // 3b. Refuse to silently strip XFA data.
         assertXfaMutationAllowed(pdfBytes, { forceXfa: force_xfa });
@@ -5790,38 +5746,38 @@ async function handleToolCall(request) {
         const auditText = draw_audit_line
           ? `${auditVerb} by ${displayName} at ${confirmedAt.toISOString()}`
           : "";
-        await stampSignatureOnPage(pdfDoc, signatureRecord, {
-          page, x, y, width, height,
-          drawAuditLine: draw_audit_line,
-          auditText,
-        });
-
-        // 5. Write audit trail into PDF metadata (Keywords)
         const auditLine = formatSigningAuditLine({
           display_name: displayName,
           statement,
           confirmedAt,
           action: auditAction,
         });
-        const existingKeywords = pdfDoc.getKeywords() || "";
-        const mergedKeywords = existingKeywords
-          ? `${existingKeywords}\n${auditLine}`
-          : auditLine;
-        pdfDoc.setKeywords([mergedKeywords]);
-        pdfDoc.setModificationDate(new Date());
-
-        // 6. Save
-        const { payload, backupPath } = await persistPdfMutation({
-          pdfDoc,
-          inputPath: resolvedInput,
-          outputPath: resolvedOutput,
-          toolName: "apply_signature",
-          expectedInputSha256: sha256Bytes(pdfBytes),
-          expectedOutputIdentity: expected_output_identity,
-          legacyOverwrite: legacy_overwrite,
-          inputRecoveryBinding,
-          initialPage: page,
-        });
+        const modificationAt = new Date().toISOString();
+        const { payload, backupPath } = await runPdfLibMutation({
+          operation: "apply_signature",
+          sources: [bindRecoveredMutationSource(recoveredInput)],
+          password,
+          options: {
+            signature: signatureRecord,
+            placement: { page, x, y, width, height },
+            draw_audit_line,
+            audit_text: auditText,
+            audit_line: auditLine,
+            modification_at: modificationAt,
+            allow_resign,
+          },
+        }, ({ result, outputs, atomicTransition }) => persistPdfMutation({
+            mutationOutput: { ...outputs[0], atomicTransition },
+            formInfo: result.form_info,
+            inputPath: resolvedInput,
+            outputPath: resolvedOutput,
+            toolName: "apply_signature",
+            expectedInputSha256: sha256Bytes(pdfBytes),
+            expectedOutputIdentity: expected_output_identity,
+            legacyOverwrite: legacy_overwrite,
+            inputRecoveryBinding,
+            initialPage: page,
+          }));
 
         return {
           content: [{
@@ -5856,77 +5812,37 @@ async function handleToolCall(request) {
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
 
-        const { pdfDoc, pdfBytes, inputRecoveryBinding } = await loadPdf(pdf_path, password);
-        const existingSigs = detectExistingSignatures(pdfDoc);
-        if (existingSigs.present && !allow_resign) {
-          throw new Error(
-            `This PDF already contains ${existingSigs.fieldNames.length} cryptographic signature field(s) ` +
-            `(${existingSigs.fieldNames.slice(0, 3).join(", ")}${existingSigs.fieldNames.length > 3 ? "..." : ""}). ` +
-            `Saving would invalidate those signatures. Pass allow_resign=true if you intend to modify a signed PDF.`
-          );
-        }
+        const recoveredInput = await readPdfInputWithRecovery(pdf_path);
+        const { pdfBytes, inputRecoveryBinding } = recoveredInput;
         assertXfaMutationAllowed(pdfBytes, { forceXfa: force_xfa });
-
-        // 1. Fill form fields if provided
-        let filledCount = 0;
-        const fillErrors = [];
-        if (field_values && typeof field_values === "object") {
-          const form = pdfDoc.getForm();
-          for (const [fieldName, value] of Object.entries(field_values)) {
-            try {
-              const field = form.getField(fieldName);
-              const typeName = field.constructor.name;
-              if (typeName.includes("TextField")) {
-                field.setText(String(value ?? ""));
-              } else if (typeName.includes("CheckBox")) {
-                if (value === true || value === "true" || value === 1 || value === "1" || value === "yes") field.check();
-                else field.uncheck();
-              } else if (typeName.includes("RadioGroup")) {
-                field.select(String(value));
-              } else if (typeName.includes("Dropdown") || typeName.includes("OptionList")) {
-                field.select(String(value));
-              }
-              filledCount++;
-            } catch (err) {
-              fillErrors.push({ field: fieldName, error: err.message });
-            }
-          }
-        }
-
-        // 2. Add signature fields
-        const manifest = [];
-        for (const loc of signature_locations) {
-          await drawSignatureFieldOnPage(pdfDoc, {
-            page: loc.page,
-            x: loc.x,
-            y: loc.y,
-            width: loc.width,
-            height: loc.height,
-            label: loc.label,
+        const manifest = signature_locations.map(loc => ({ ...loc }));
+        const prepared = await runPdfLibMutation({
+          operation: "prepare_signing_packet",
+          sources: [bindRecoveredMutationSource(recoveredInput)],
+          password,
+          options: { field_values: field_values ?? {}, signature_locations: manifest, allow_resign },
+        }, async ({ result, outputs, atomicTransition }) => {
+          const committed = await persistPdfMutation({
+            mutationOutput: { ...outputs[0], atomicTransition },
+            formInfo: result.form_info,
+            inputPath: resolvedInput,
+            outputPath: resolvedOutput,
+            toolName: "prepare_signing_packet",
+            expectedInputSha256: sha256Bytes(pdfBytes),
+            expectedOutputIdentity: expected_output_identity,
+            inputRecoveryBinding,
+            initialPage: manifest[0]?.page || 1,
+            extraPayload: {
+              pending_signatures: manifest,
+              filled_count: result.filled_count,
+              fill_errors: result.fill_errors,
+            },
           });
-          manifest.push({
-            label: loc.label,
-            page: loc.page,
-            x: loc.x, y: loc.y,
-            width: loc.width, height: loc.height,
-          });
-        }
-
-        const { payload, backupPath } = await persistPdfMutation({
-          pdfDoc,
-          inputPath: resolvedInput,
-          outputPath: resolvedOutput,
-          toolName: "prepare_signing_packet",
-          expectedInputSha256: sha256Bytes(pdfBytes),
-          expectedOutputIdentity: expected_output_identity,
-          inputRecoveryBinding,
-          initialPage: manifest[0]?.page || 1,
-          extraPayload: {
-            pending_signatures: manifest,
-            filled_count: filledCount,
-            fill_errors: fillErrors,
-          },
+          return { ...committed, filledCount: result.filled_count, fillErrors: result.fill_errors };
         });
+        const {
+          payload, backupPath, filledCount, fillErrors,
+        } = prepared;
 
         const summary =
           `Prepared signing packet: ${path.basename(resolvedOutput)}\n` +
@@ -5967,38 +5883,37 @@ async function handleToolCall(request) {
         const resolvedOutput = resolvePath(output_path);
         const resolvedInput = resolvePath(pdf_path);
 
-        const { pdfDoc, pdfBytes, inputRecoveryBinding } = await loadPdf(pdf_path, password);
-
-        // Same safety rails as apply_signature: refuse to invalidate existing
-        // crypto sigs or strip XFA data silently.
-        const existingSigs = detectExistingSignatures(pdfDoc);
-        if (existingSigs.present && !allow_resign) {
-          throw new Error(
-            `This PDF already contains ${existingSigs.fieldNames.length} cryptographic signature field(s). ` +
-            `Saving would invalidate them. Pass allow_resign=true if you intend to modify a signed PDF.`
-          );
-        }
+        const recoveredInput = await readPdfInputWithRecovery(pdf_path);
+        const { pdfBytes, inputRecoveryBinding } = recoveredInput;
         assertXfaMutationAllowed(pdfBytes, { forceXfa: force_xfa });
 
-        await stampTextOnPage(pdfDoc, { page, x, y, width, height, text, fontStyle: font_style });
-
         // Short audit line so filling dates/initials shows up in Keywords.
-        const auditLine = `stamped text via pdf-toolkit; text="${String(text).replace(/\s+/g, " ").slice(0, 80)}"; at=${new Date().toISOString()}; page=${page}`;
-        const existingKeywords = pdfDoc.getKeywords() || "";
-        pdfDoc.setKeywords([existingKeywords ? `${existingKeywords}\n${auditLine}` : auditLine]);
-        pdfDoc.setModificationDate(new Date());
-
-        const { payload, backupPath } = await persistPdfMutation({
-          pdfDoc,
-          inputPath: resolvedInput,
-          outputPath: resolvedOutput,
-          toolName: "apply_text",
-          expectedInputSha256: sha256Bytes(pdfBytes),
-          expectedOutputIdentity: expected_output_identity,
-          legacyOverwrite: legacy_overwrite,
-          inputRecoveryBinding,
-          initialPage: page,
-        });
+        const modificationAt = new Date().toISOString();
+        const auditLine = `stamped text via pdf-toolkit; text="${String(text).replace(/\s+/g, " ").slice(0, 80)}"; at=${modificationAt}; page=${page}`;
+        const { payload, backupPath } = await runPdfLibMutation({
+          operation: "apply_text",
+          sources: [bindRecoveredMutationSource(recoveredInput)],
+          password,
+          options: {
+            placement: { page, x, y, width, height },
+            text,
+            font_style,
+            audit_line: auditLine,
+            modification_at: modificationAt,
+            allow_resign,
+          },
+        }, ({ result, outputs, atomicTransition }) => persistPdfMutation({
+            mutationOutput: { ...outputs[0], atomicTransition },
+            formInfo: result.form_info,
+            inputPath: resolvedInput,
+            outputPath: resolvedOutput,
+            toolName: "apply_text",
+            expectedInputSha256: sha256Bytes(pdfBytes),
+            expectedOutputIdentity: expected_output_identity,
+            legacyOverwrite: legacy_overwrite,
+            inputRecoveryBinding,
+            initialPage: page,
+          }));
 
         return {
           content: [{
@@ -6224,7 +6139,7 @@ async function handleToolCall(request) {
       : "tool_execution_failed";
     if (
       error?.code === PDF_RESOURCE_LIMIT_CODE
-      && PDFJS_TOOL_NAMES.has(name)
+      && (PDFJS_TOOL_NAMES.has(name) || PDF_LIB_MUTATION_TOOL_NAMES.has(name))
     ) {
       errorCode = PDF_RESOURCE_LIMIT_CODE;
     }
@@ -6239,24 +6154,10 @@ async function handleToolCall(request) {
         errorCode = "PDF_UNAVAILABLE";
       }
     }
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Error: ${error.message}`
-        }
-      ],
-      ...(hasToolOutputSchema(name) ? {
-        structuredContent: {
-          status: "failed",
-          error: {
-            error_schema_version: 1,
-            code: errorCode,
-          },
-        },
-      } : {}),
-      isError: true,
-    };
+    return createTypedToolError({
+      message: `Error: ${error.message}`,
+      code: errorCode,
+    });
   }
 }
 

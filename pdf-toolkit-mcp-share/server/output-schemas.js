@@ -91,7 +91,11 @@ const standardError = object({
   status: { const: "failed" },
   error: object({
     error_schema_version: { const: 1 },
-    code: enumString(["path_policy_denied", "tool_execution_failed"]),
+    code: enumString([
+      "internal_validation_error",
+      "path_policy_denied",
+      "tool_execution_failed",
+    ]),
   }),
 });
 const layoutPasswordError = object({
@@ -639,6 +643,18 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     total_pages: integer,
     metadata_fields_omitted: stringArray,
   }),
+  split_pdf: object({
+    input_path: string,
+    output_directory: string,
+    file_count: integer,
+    files: arrayOf(object({
+      filename: string,
+      output_path: string,
+      start_page: integer,
+      end_page: integer,
+      page_count: integer,
+    })),
+  }),
   rotate_pdf_pages: activeDocument({
     rotated_pages: integer,
     degrees: { type: "number", enum: [90, 180, 270] },
@@ -765,6 +781,25 @@ const specialErrorSchemas = {
   get_page_analysis: [pdfResourceLimitError],
   detect_signature_zones: [layoutPasswordError, pdfResourceLimitError],
 };
+for (const toolName of [
+  "add_signature_field",
+  "apply_page_plan",
+  "apply_signature",
+  "apply_text",
+  "bulk_fill_from_csv",
+  "fill_pdf",
+  "fill_with_profile",
+  "merge_pdfs",
+  "prepare_signing_packet",
+  "reorder_pdf_pages",
+  "rotate_pdf_pages",
+  "split_pdf",
+]) {
+  specialErrorSchemas[toolName] = [
+    ...(specialErrorSchemas[toolName] ?? []),
+    pdfResourceLimitError,
+  ];
+}
 
 export const TOOL_ERROR_OUTPUT_SCHEMAS = Object.freeze(Object.fromEntries(
   Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).map(name => [
@@ -811,9 +846,36 @@ export function hasToolOutputSchema(toolName) {
   return Object.prototype.hasOwnProperty.call(TOOL_OUTPUT_SCHEMAS, toolName);
 }
 
+export function createTypedToolError({
+  message,
+  code = "tool_execution_failed",
+  content = null,
+  structuredContent = null,
+}) {
+  if (typeof message !== "string" || message.length === 0) {
+    throw new TypeError("Typed tool errors require a non-empty message.");
+  }
+  if (typeof code !== "string" || code.length === 0) {
+    throw new TypeError("Typed tool errors require a non-empty code.");
+  }
+  return {
+    content: content ?? [{ type: "text", text: message }],
+    structuredContent: structuredContent ?? {
+      status: "failed",
+      error: {
+        error_schema_version: 1,
+        code,
+      },
+    },
+    isError: true,
+  };
+}
+
 export function validateStructuredToolResult(toolName, result) {
   if (result?.isError === true) {
-    if (result.structuredContent === undefined) return result;
+    if (result.structuredContent === undefined) {
+      return internalValidationError(toolName, "the error result omitted required structured content");
+    }
     const validation = (errorValidators.get(toolName) || standardErrorValidator)(result.structuredContent);
     if (!validation.valid) {
       return internalValidationError(toolName, `invalid structured error: ${validation.errorMessage}`);
@@ -847,11 +909,10 @@ export function validateStructuredToolResult(toolName, result) {
 
 function internalValidationError(toolName, detail) {
   console.error(`[PDF Tools] Output validation failed for ${toolName}: ${detail}`);
-  return {
-    content: [{
-      type: "text",
-      text: `Internal output validation failed for ${toolName}. No unvalidated structured result was returned.`,
-    }],
-    isError: true,
-  };
+  return createTypedToolError({
+    message:
+      `Internal output validation failed for ${toolName}. `
+      + "No unvalidated structured result was returned.",
+    code: "internal_validation_error",
+  });
 }

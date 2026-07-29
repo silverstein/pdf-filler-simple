@@ -149,7 +149,61 @@ const PAGE_LEAF = "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resourc
  * cheap default gate and the full campaign. Keep every fixture small on disk;
  * the danger is what it asks the parser to do, not what it costs to store.
  */
-export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
+export const DEEP_FIXTURE_CATALOG = Object.freeze([
+  Object.freeze({ name: "deep-nested-arrays", klass: "deep" }),
+  Object.freeze({ name: "deep-nested-dictionaries", klass: "deep" }),
+  Object.freeze({ name: "deep-linear-page-tree", klass: "deep" }),
+  Object.freeze({ name: "sparse-enormous-declared-size", klass: "sparse" }),
+  Object.freeze({ name: "sparse-high-object-numbers", klass: "sparse" }),
+  Object.freeze({ name: "sparse-xref-range-overflow", klass: "sparse" }),
+  Object.freeze({ name: "compressed-single-filter-name", klass: "compressed" }),
+  Object.freeze({ name: "compressed-single-filter-array", klass: "compressed" }),
+  Object.freeze({ name: "compressed-inflate-bomb", klass: "compressed" }),
+  Object.freeze({ name: "compressed-valid-operator-bomb", klass: "compressed" }),
+  Object.freeze({ name: "compressed-delimited-paint-operators", klass: "compressed" }),
+  Object.freeze({
+    name: "compressed-discarded-compatibility-operators",
+    klass: "compressed",
+  }),
+  Object.freeze({ name: "compressed-nested-filter-chain", klass: "compressed" }),
+  Object.freeze({ name: "compressed-length-understates-stream", klass: "compressed" }),
+  Object.freeze({ name: "extreme-declared-page-count", klass: "extreme" }),
+  Object.freeze({ name: "extreme-media-box-dimensions", klass: "extreme" }),
+  Object.freeze({ name: "extreme-long-name-token", klass: "extreme" }),
+  Object.freeze({ name: "extreme-wide-page-tree", klass: "extreme" }),
+]);
+
+export const DEEP_FIXTURE_NAMES = Object.freeze(
+  DEEP_FIXTURE_CATALOG.map(entry => entry.name),
+);
+
+// Frozen expensive campaign base conceived before the later causal-attribution
+// and operator-semantics controls were added. The native v2 qualification runs
+// this exact 13-fixture set; widening it requires a new protocol version.
+export const DEEP_FULL_SCALE_BASE_FIXTURE_NAMES = Object.freeze([
+  "deep-nested-arrays",
+  "deep-nested-dictionaries",
+  "deep-linear-page-tree",
+  "sparse-enormous-declared-size",
+  "sparse-high-object-numbers",
+  "sparse-xref-range-overflow",
+  "compressed-inflate-bomb",
+  "compressed-nested-filter-chain",
+  "compressed-length-understates-stream",
+  "extreme-declared-page-count",
+  "extreme-media-box-dimensions",
+  "extreme-long-name-token",
+  "extreme-wide-page-tree",
+]);
+
+export function makeDeepMalformedFixtures({ scale = "full", only = null } = {}) {
+  if (!["quick", "full"].includes(scale)) {
+    throw new Error("Deep malformed fixture scale must be quick or full");
+  }
+  if (only !== null && !DEEP_FIXTURE_NAMES.includes(only)) {
+    throw new Error("Unknown deep malformed fixture name");
+  }
+  const wanted = name => only === null || only === name;
   const deepDepth = scale === "quick" ? 2_000 : 50_000;
   const pageTreeDepth = scale === "quick" ? 500 : 5_000;
   const inflateBytes = scale === "quick" ? 4 << 20 : 512 << 20;
@@ -158,7 +212,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
   const fixtures = [];
 
   // --- deep -----------------------------------------------------------------
-  fixtures.push({
+  if (wanted("deep-nested-arrays")) fixtures.push({
     name: "deep-nested-arrays",
     klass: "deep",
     note: "Recursive descent over a single deeply nested array must not exhaust the stack.",
@@ -170,7 +224,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     ], 1),
   });
 
-  fixtures.push({
+  if (wanted("deep-nested-dictionaries")) fixtures.push({
     name: "deep-nested-dictionaries",
     klass: "deep",
     note: "Same as above through dictionary nesting, which uses a different parse path.",
@@ -182,7 +236,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     ], 1),
   });
 
-  {
+  if (wanted("deep-linear-page-tree")) {
     // A page tree that is a linear chain rather than a broad tree. Walking it
     // recursively is the natural implementation and the one that breaks.
     const objects = [[1, "<< /Type /Catalog /Pages 2 0 R >>"]];
@@ -202,7 +256,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
   }
 
   // --- sparse ---------------------------------------------------------------
-  fixtures.push({
+  if (wanted("sparse-enormous-declared-size")) fixtures.push({
     name: "sparse-enormous-declared-size",
     klass: "sparse",
     note: "Trailer declares 100,000,000 objects; allocating an xref table for that is the trap.",
@@ -215,7 +269,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     ),
   });
 
-  fixtures.push({
+  if (wanted("sparse-high-object-numbers")) fixtures.push({
     name: "sparse-high-object-numbers",
     klass: "sparse",
     note: "Three real objects at very high numbers; a dense index would be enormous.",
@@ -228,7 +282,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     ),
   });
 
-  fixtures.push({
+  if (wanted("sparse-xref-range-overflow")) fixtures.push({
     name: "sparse-xref-range-overflow",
     klass: "sparse",
     note: "xref subsection header claims a range far larger than the entries that follow.",
@@ -242,7 +296,8 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
   });
 
   // --- compressed -----------------------------------------------------------
-  {
+  if (wanted("compressed-single-filter-name")
+    || wanted("compressed-single-filter-array")) {
     // Causal attribution pair. The compressed payload, page graph, object
     // numbers, and every other byte are identical after normalizing this one
     // dictionary token. The prior campaign compared a name-form filter against
@@ -255,7 +310,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
       [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> /Contents 4 0 R >>"],
       [4, stream.body.replace("/Filter /FlateDecode", `/Filter ${filterDeclaration}`)],
     ];
-    fixtures.push({
+    if (wanted("compressed-single-filter-name")) fixtures.push({
       name: "compressed-single-filter-name",
       klass: "compressed",
       note: "Attribution control: one FlateDecode declared as a name.",
@@ -265,7 +320,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
       expandedLength: stream.expandedLength,
       bytes: buildPdf(objects("/FlateDecode"), 1),
     });
-    fixtures.push({
+    if (wanted("compressed-single-filter-array")) fixtures.push({
       name: "compressed-single-filter-array",
       klass: "compressed",
       note: "Attribution treatment: the identical FlateDecode payload declared as a one-element array.",
@@ -277,7 +332,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     });
   }
 
-  {
+  if (wanted("compressed-inflate-bomb")) {
     const stream = flateStreamObject(inflateBytes);
     fixtures.push({
       name: "compressed-inflate-bomb",
@@ -296,7 +351,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     });
   }
 
-  {
+  if (wanted("compressed-valid-operator-bomb")) {
     // PDF.js recovers each contiguous "B" byte as the valid zero-argument
     // fill-and-stroke operator while it rejects a contiguous "A" token after
     // 128 bytes. Contiguous B bytes are not claimed to be a strictly
@@ -323,7 +378,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     });
   }
 
-  {
+  if (wanted("compressed-delimited-paint-operators")) {
     const pattern = Buffer.from("B\n", "latin1");
     const expandedLength = Math.floor(inflateBytes / pattern.length) * pattern.length;
     const stream = flatePatternStreamObject(expandedLength, pattern);
@@ -345,7 +400,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     });
   }
 
-  {
+  if (wanted("compressed-discarded-compatibility-operators")) {
     const pattern = Buffer.from("BX\n", "latin1");
     const expandedLength = Math.floor(inflateBytes / pattern.length) * pattern.length;
     const stream = flatePatternStreamObject(expandedLength, pattern);
@@ -367,7 +422,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     });
   }
 
-  {
+  if (wanted("compressed-nested-filter-chain")) {
     const stream = nestedFlateStreamObject(inflateBytes, nestedDepth);
     fixtures.push({
       name: "compressed-nested-filter-chain",
@@ -382,7 +437,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     });
   }
 
-  fixtures.push({
+  if (wanted("compressed-length-understates-stream")) fixtures.push({
     name: "compressed-length-understates-stream",
     klass: "compressed",
     note: "Declared /Length is far shorter than the actual deflate payload.",
@@ -398,7 +453,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
   });
 
   // --- extreme --------------------------------------------------------------
-  fixtures.push({
+  if (wanted("extreme-declared-page-count")) fixtures.push({
     name: "extreme-declared-page-count",
     klass: "extreme",
     note: "Page tree declares 100,000,000 pages while holding one.",
@@ -409,7 +464,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     ], 1),
   });
 
-  fixtures.push({
+  if (wanted("extreme-media-box-dimensions")) fixtures.push({
     name: "extreme-media-box-dimensions",
     klass: "extreme",
     note: "MediaBox spans 1e9 x 1e9 points; naive rasterization would allocate absurdly.",
@@ -420,7 +475,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     ], 1),
   });
 
-  fixtures.push({
+  if (wanted("extreme-long-name-token")) fixtures.push({
     name: "extreme-long-name-token",
     klass: "extreme",
     note: "A single name token of 1,000,000 characters.",
@@ -431,7 +486,7 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
     ], 1),
   });
 
-  fixtures.push({
+  if (wanted("extreme-wide-page-tree")) fixtures.push({
     name: "extreme-wide-page-tree",
     klass: "extreme",
     note: "One /Pages node referencing 100,000 dangling children.",
@@ -448,3 +503,9 @@ export function makeDeepMalformedFixtures({ scale = "full" } = {}) {
 }
 
 export const DEEP_FIXTURE_CLASSES = Object.freeze(["deep", "sparse", "compressed", "extreme"]);
+
+export function makeDeepMalformedFixture({ scale = "full", name } = {}) {
+  const fixtures = makeDeepMalformedFixtures({ scale, only: name });
+  if (fixtures.length !== 1) throw new Error("Deep malformed fixture selection was not unique");
+  return fixtures[0];
+}

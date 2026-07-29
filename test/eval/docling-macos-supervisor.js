@@ -763,6 +763,10 @@ async function runSupervisedCandidateCore({
   const stderrResult = stderr();
   const evidenceResult = evidence();
   const leaseResult = lease();
+  const discardedStdoutTransport = Object.freeze({
+    candidate_stdout_committed_bytes: 0,
+    discarded_candidate_stdout_bytes: stdoutResult.buffer.length,
+  });
   if ([stdoutResult, stderrResult, evidenceResult, leaseResult].some(result => result.exceeded)) {
     throw outerFailure ?? new Error("Supervisor parent capture ceiling failed");
   }
@@ -786,6 +790,7 @@ async function runSupervisedCandidateCore({
       throw Object.assign(new Error("Supervisor exited before its pre-exec lease and final evidence"), {
         code: "SUPERVISOR_PRELEASE_FAILURE",
         exit,
+        transport: discardedStdoutTransport,
       });
     }
     if (binaryMutation !== null) {
@@ -795,6 +800,7 @@ async function runSupervisedCandidateCore({
         code: "SUPERVISOR_CONTAINMENT_UNPROVEN",
         exit,
         lease: parsedLease,
+        transport: discardedStdoutTransport,
       });
     }
     let cleanup;
@@ -810,12 +816,14 @@ async function runSupervisedCandidateCore({
         code: "SUPERVISOR_CONTAINMENT_UNPROVEN",
         exit,
         lease: parsedLease,
+        transport: discardedStdoutTransport,
       });
     }
     throw Object.assign(new Error("Supervisor exited without final evidence; identity-bound cleanup passed"), {
       code: "SUPERVISOR_EVIDENCE_MISSING",
       cleanup,
       exit,
+      transport: discardedStdoutTransport,
     });
   }
   const parsedEvidence = validateSupervisorEvidence(
@@ -880,10 +888,18 @@ async function runSupervisedCandidateCore({
     && parsedEvidence.capture.stdout_retained_bytes !== stdoutResult.buffer.length) {
     throw new Error("Supervisor stdout differs from its parent evidence");
   }
+  let committedStdout = Buffer.alloc(0);
   if (parsedEvidence.controller_accepted) {
     if (parsedLease === null || exit.code !== 0 || exit.signal !== null) {
       throw new Error("Accepted supervisor evidence has a failing process exit or no lease");
     }
+    /*
+     * Native stdout is an uncommitted transport until the process exit,
+     * lease, evidence schema, acceptance envelope, and byte count all agree.
+     * Evidence failures discard buffered bytes; they never become a candidate
+     * response returned by this API.
+     */
+    committedStdout = Buffer.from(stdoutResult.buffer);
   } else if (exit.code !== 1 || exit.signal !== null || stdoutResult.buffer.length !== 0) {
     throw new Error("Rejected supervisor evidence has an invalid process result");
   }
@@ -892,7 +908,7 @@ async function runSupervisedCandidateCore({
     cwd: cwdIdentity,
     lease: parsedLease === null ? null : Object.freeze(parsedLease),
     evidence: Object.freeze(parsedEvidence),
-    stdout: stdoutResult.buffer,
+    stdout: committedStdout,
     supervisor_stderr: stderrResult.buffer,
     exit: Object.freeze(exit),
   });

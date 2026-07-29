@@ -32,6 +32,9 @@
     "build:ui": "vite build",
     "build:mcpb": "node scripts/build-mcpb.mjs",
     "test": "vitest run",
+    "test:all": "node scripts/run-all-test-suites.mjs",
+    "test:pdf-lib-worker": "vitest run test/pdf-lib-subprocess-boundary.test.js test/pdf-lib-worker-contract.test.js test/output-schema.test.js test/input-validation.test.js test/save-lifecycle.test.js",
+    "test:node-native": "node scripts/run-node-test-suites.mjs",
     "test:concurrent": "node scripts/test-concurrent-suites.mjs"
   },
   "repository": {
@@ -45,7 +48,7 @@
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.29.0",
     "@napi-rs/canvas": "^0.1.99",
-    "pdf-lib": "^1.17.1",
+    "pdf-lib": "1.17.1",
     "pdfjs-dist": "5.4.624"
   },
   "devDependencies": {
