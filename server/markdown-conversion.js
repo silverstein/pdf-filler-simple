@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.1.0",
+  version: "1.2.0",
 });
 
 // Bounded geometric table inference. A run of adjacent lines is treated as a
@@ -321,6 +321,19 @@ function planPageLinks(rows, links, excludedLineIds) {
     if (!contiguous
       || excludedLineIds.has(row.line.id)
       || !offsetsByLine.has(row.line.id)) {
+      ambiguous = true;
+      continue;
+    }
+    // renderLine emits line.text.trim(), so a line carrying leading or
+    // trailing content cannot be spliced without changing structure depending
+    // on whether a link happened to resolve. A label containing LF or CR would
+    // also break the inline-link grammar. Both fail closed.
+    const offsets = offsetsByLine.get(row.line.id);
+    const label = row.line.text.slice(
+      offsets[indexes[0]].start,
+      offsets[indexes[indexes.length - 1]].end,
+    );
+    if (row.line.text !== row.line.text.trim() || /[\r\n]/u.test(label)) {
       ambiguous = true;
       continue;
     }

@@ -460,6 +460,58 @@ describe("layout Markdown renderer", () => {
     })).rejects.toThrow(/available link evidence that was not independently reparsed/u);
   });
 
+  it("refuses to splice a link whose source item carries LF or CR", async () => {
+    // The IR normalizes line.text (LF becomes a space), so the item text is no
+    // longer locatable verbatim and the offsets proof rejects the line. The
+    // label newline guard sits behind that as defense in depth.
+    for (const newline of ["\n", "\r"]) {
+      const result = await renderLinks(
+        [linkAnnotation([89, 727, 121, 740], { url: "https://example.com/nl" })],
+        [
+          textItem("Open", { ...LINE_ONE, left: 50, eol: false }),
+          textItem(`do${newline}cs`, { ...LINE_ONE, left: 90 }),
+        ],
+      );
+      expect(result.markdown).not.toContain("](https://example.com/nl)");
+      expect(result.markdown).not.toMatch(/\]\(/u);
+      expect(codesOf(result)).toContain("LINK_MAPPING_AMBIGUOUS");
+    }
+  });
+
+  it("refuses to splice a link whose source item is not locatable in line text", async () => {
+    // The item carries a leading space that line.text does not preserve, so no
+    // provable offset exists and the line fails closed rather than emitting a
+    // link against a reconstructed label.
+    const result = await renderLinks(
+      [linkAnnotation([49, 727, 81, 740], { url: "https://example.com/trim" })],
+      [
+        textItem(" Open", { ...LINE_ONE, left: 50, eol: false }),
+        textItem("docs", { ...LINE_ONE, left: 90 }),
+      ],
+    );
+    expect(result.markdown).not.toContain("](https://example.com/trim)");
+    expect(result.markdown).not.toMatch(/\]\(/u);
+    expect(codesOf(result)).toContain("LINK_MAPPING_AMBIGUOUS");
+  });
+
+  it("neutralizes a blockquote marker at every physical line start", async () => {
+    // ">" is neutralized by HTML escaping rather than by the block guard, and
+    // blockquote markers do not require a following space. Lock both in.
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        textItem("safe\n>quote", { top: 50 }),
+        textItem("safe\r>quote", { top: 80 }),
+        textItem(">quote", { top: 110 }),
+      ],
+    }]);
+    const { markdown } = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    const body = markdown.split(/\n## /u)[0];
+    for (const physicalLine of body.split(/\r\n|\r|\n/u)) {
+      expect(physicalLine).not.toMatch(/^[^\S\r\n]*>/u);
+    }
+    expect(body).toContain("&gt;quote");
+  });
+
   it("fails closed against the exact UTF-8 Markdown byte limit", async () => {
     const layout = await validatedSyntheticLayout([{
       items: [textItem("Unicode 🙂 café", { top: 50 })],
