@@ -5,7 +5,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { PDFDocument, PDFName, PDFNumber, StandardFonts, degrees } from "pdf-lib";
+import { PDFDocument, PDFName, PDFNumber, PDFString, StandardFonts, degrees } from "pdf-lib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TOOL_OUTPUT_SCHEMAS } from "../server/output-schemas.js";
 
@@ -87,6 +87,76 @@ async function makeDelimiterTableFixture(targetPath) {
   await fs.writeFile(targetPath, await document.save({ useObjectStreams: false }));
 }
 
+async function makeLinkFixture(targetPath, { rotation = 0, url = "https://example.com/report", crop = false } = {}) {
+  const document = await PDFDocument.create();
+  const page = document.addPage([612, 792]);
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  if (crop) page.setCropBox(20, 30, 500, 700);
+  page.setRotation(degrees(rotation));
+  page.drawText("Open", { x: 72, y: 700, size: 12, font });
+  page.drawText("report", { x: 104, y: 700, size: 12, font });
+  page.drawText("Tail", { x: 72, y: 660, size: 12, font });
+  const annotation = document.context.obj({
+    Type: PDFName.of("Annot"),
+    Subtype: PDFName.of("Link"),
+    Rect: document.context.obj([70, 697, 145, 714]),
+    Border: document.context.obj([0, 0, 0]),
+    A: document.context.obj({
+      Type: PDFName.of("Action"),
+      S: PDFName.of("URI"),
+      URI: PDFString.of(url),
+    }),
+  });
+  page.node.set(PDFName.of("Annots"), document.context.obj([
+    document.context.register(annotation),
+  ]));
+  await fs.writeFile(targetPath, await document.save({ useObjectStreams: false }));
+}
+
+function invertAffine([a, b, c, d, e, f]) {
+  const determinant = a * d - b * c;
+  return [
+    d / determinant,
+    -b / determinant,
+    -c / determinant,
+    a / determinant,
+    (c * f - d * e) / determinant,
+    (b * e - a * f) / determinant,
+  ];
+}
+
+function applyAffine([a, b, c, d, e, f], x, y) {
+  return [a * x + c * y + e, b * x + d * y + f];
+}
+
+async function writeRotatedTextPdf(targetPath, { rotation, annotationRect = null }) {
+  const document = await PDFDocument.create();
+  const page = document.addPage([612, 792]);
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  page.setCropBox(20, 30, 500, 700);
+  page.setRotation(degrees(rotation));
+  page.drawText("Open", { x: 72, y: 400, size: 12, font });
+  page.drawText("report", { x: 104, y: 400, size: 12, font });
+  page.drawText("Tail", { x: 72, y: 360, size: 12, font });
+  if (annotationRect !== null) {
+    const annotation = document.context.obj({
+      Type: PDFName.of("Annot"),
+      Subtype: PDFName.of("Link"),
+      Rect: document.context.obj(annotationRect),
+      Border: document.context.obj([0, 0, 0]),
+      A: document.context.obj({
+        Type: PDFName.of("Action"),
+        S: PDFName.of("URI"),
+        URI: PDFString.of("https://example.com/rotated"),
+      }),
+    });
+    page.node.set(PDFName.of("Annots"), document.context.obj([
+      document.context.register(annotation),
+    ]));
+  }
+  await fs.writeFile(targetPath, await document.save({ useObjectStreams: false }));
+}
+
 async function makeProseFixture(targetPath) {
   const document = await PDFDocument.create();
   const page = document.addPage([612, 792]);
@@ -161,6 +231,9 @@ describe("convert_pdf_to_markdown MCP tool", () => {
   let delimiterTableFixture;
   let proseFixture;
   let doubleEmbedFixture;
+  let linkFixture;
+  let rotatedLinkFixture;
+  let hostileLinkFixture;
 
   beforeAll(async () => {
     temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-markdown-"));
@@ -172,6 +245,9 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     delimiterTableFixture = path.join(temporaryRoot, "delimiter-table.pdf");
     proseFixture = path.join(temporaryRoot, "prose.pdf");
     doubleEmbedFixture = path.join(temporaryRoot, "double-embed-grid.pdf");
+    linkFixture = path.join(temporaryRoot, "link.pdf");
+    rotatedLinkFixture = path.join(temporaryRoot, "link-rotated.pdf");
+    hostileLinkFixture = path.join(temporaryRoot, "link-hostile.pdf");
     await makeStructureFixture(structureFixture);
     await makeDenseFixture(denseFixture);
     await makeGeometryFixture(geometryFixture);
@@ -180,6 +256,9 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     await makeDelimiterTableFixture(delimiterTableFixture);
     await makeProseFixture(proseFixture);
     await makeDoubleEmbedGridFixture(doubleEmbedFixture);
+    await makeLinkFixture(linkFixture);
+    await makeLinkFixture(rotatedLinkFixture, { rotation: 90, crop: true });
+    await makeLinkFixture(hostileLinkFixture, { url: "https://example.com/a(b)c" });
     transport = new StdioClientTransport({
       command: process.execPath,
       args: [path.join(REPO_ROOT, "server/index.js")],
@@ -229,7 +308,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       conversion_status: "complete",
       saved_output: null,
       provenance: {
-        layout: { name: "pdf-tools.extraction-ir", version: "1.0.0", parser_version: "5.4.624" },
+        layout: { name: "pdf-tools.extraction-ir", version: "1.1.0", parser_version: "5.4.624" },
       },
     });
     const { markdown } = first.structuredContent;
@@ -322,6 +401,98 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     expect(result.structuredContent.markdown).not.toMatch(/^\|.*\|$/m);
     expect(result.structuredContent.gaps.map(gap => gap.code))
       .not.toContain("TABLE_TOPOLOGY_UNKNOWN");
+  }, 30_000);
+
+  it("emits a source-validated link end to end", async () => {
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: linkFixture, max_markdown_bytes: 100000 },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent.markdown).toContain("[Open report](https://example.com/report)");
+    expect(result.structuredContent.markdown).toContain("Tail");
+  }, 30_000);
+
+  it("maps link geometry through rotation and CropBox", async () => {
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: rotatedLinkFixture, max_markdown_bytes: 100000 },
+    });
+    expect(result.isError).not.toBe(true);
+    const { markdown, gaps } = result.structuredContent;
+    // Either the rect still resolves under the rotated CropBox viewport, or it
+    // fails closed with a typed gap. It must never emit a wrong label.
+    const emitted = markdown.includes("](https://example.com/report)");
+    if (emitted) expect(markdown).toContain("[Open report](https://example.com/report)");
+    else expect(gaps.map(gap => gap.code)).toContain("LINK_MAPPING_AMBIGUOUS");
+  }, 30_000);
+
+  it("percent-encodes a hostile destination end to end", async () => {
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: hostileLinkFixture, max_markdown_bytes: 100000 },
+    });
+    expect(result.isError).not.toBe(true);
+    const { markdown } = result.structuredContent;
+    if (markdown.includes("](")) {
+      expect(markdown).toContain("%28b%29");
+      expect(markdown).not.toContain("(https://example.com/a(b)c)");
+    }
+  }, 30_000);
+
+  it("emits exactly once for a rotated, cropped page when the rect is source-space correct", async () => {
+    for (const rotation of [90, 180]) {
+      const probePath = path.join(temporaryRoot, `rot-${rotation}-probe.pdf`);
+      await writeRotatedTextPdf(probePath, { rotation });
+      const layout = await client.callTool({
+        name: "read_pdf_layout",
+        arguments: { pdf_path: probePath },
+      });
+      expect(layout.isError, `rotation ${rotation}`).not.toBe(true);
+      const page = layout.structuredContent.pages[0];
+      const wanted = page.raw_items.filter(item => item.text === "report");
+      expect(wanted.length, `rotation ${rotation}`).toBe(1);
+      // The item box in display space, mapped back to user space through the
+      // inverse viewport transform, so the rect is genuinely the source-space
+      // region covering exactly that label under rotation and CropBox.
+      const minX = Math.min(...wanted.map(item => item.bbox.x)) - 1;
+      const minY = Math.min(...wanted.map(item => item.bbox.y)) - 1;
+      const maxX = Math.max(...wanted.map(item => item.bbox.x + item.bbox.width)) + 1;
+      const maxY = Math.max(...wanted.map(item => item.bbox.y + item.bbox.height)) + 1;
+      const inverse = invertAffine(page.geometry.viewport_transform);
+      const corners = [[minX, minY], [maxX, minY], [maxX, maxY], [minX, maxY]]
+        .map(([x, y]) => applyAffine(inverse, x, y));
+      const rect = [
+        Math.min(...corners.map(corner => corner[0])),
+        Math.min(...corners.map(corner => corner[1])),
+        Math.max(...corners.map(corner => corner[0])),
+        Math.max(...corners.map(corner => corner[1])),
+      ];
+      const linkedPath = path.join(temporaryRoot, `rot-${rotation}-linked.pdf`);
+      await writeRotatedTextPdf(linkedPath, { rotation, annotationRect: rect });
+      const result = await client.callTool({
+        name: "convert_pdf_to_markdown",
+        arguments: { pdf_path: linkedPath, max_markdown_bytes: 100000 },
+      });
+      expect(result.isError, `rotation ${rotation}`).not.toBe(true);
+      const { markdown, gaps } = result.structuredContent;
+      expect(markdown, `rotation ${rotation}`).toContain("[report](https://example.com/rotated)");
+      expect(markdown.match(/\]\(https:\/\/example\.com\/rotated\)/gu).length, `rotation ${rotation}`).toBe(1);
+      expect(gaps.map(gap => gap.code), `rotation ${rotation}`).not.toContain("LINK_MAPPING_AMBIGUOUS");
+      expect(markdown, `rotation ${rotation}`).toContain("Tail");
+    }
+  }, 60_000);
+
+  it("fails closed for a rotated page whose rect lands out of bounds", async () => {
+    const outOfBounds = path.join(temporaryRoot, "rot-out-of-bounds.pdf");
+    await writeRotatedTextPdf(outOfBounds, { rotation: 90, annotationRect: [4000, 4000, 4100, 4100] });
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: outOfBounds, max_markdown_bytes: 100000 },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent.markdown).not.toContain("](https://example.com/rotated)");
+    expect(result.structuredContent.gaps.map(gap => gap.code)).toContain("LINK_MAPPING_AMBIGUOUS");
   }, 30_000);
 
   it("reports mixed, raster-only, and table-like visual structure without OCR or topology claims", async () => {

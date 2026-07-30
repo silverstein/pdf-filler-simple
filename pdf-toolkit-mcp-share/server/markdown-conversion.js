@@ -46,7 +46,7 @@ const GAP_CODES = new Set([
 const LIMITATIONS = Object.freeze([
   "Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
-  "Explicit links are not emitted because source-validated PDF annotation targets are not represented by this layout IR; common URL-looking source text is escaped to resist host autolinking.",
+  "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
   "Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.",
   "OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.",
   "Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.",
@@ -176,6 +176,16 @@ function headingLevels(page) {
   return new Map(candidates.map(({ line, height }) => [line.id, Math.min(6, levels.indexOf(height) + 1)]));
 }
 
+/**
+ * Whether renderLine rewrites this line's structure (bullet or ordered marker).
+ * Such lines cannot carry a spliced inline link.
+ */
+function rewritesLineStructure(line) {
+  const text = line.text.trim();
+  return /^[\u2022\u2023\u25e6\u2043\u2219]\s+(.+)$/u.test(text)
+    || /^(\d{1,3})([.)])\s+(.+)$/u.test(text);
+}
+
 function renderLine(line, headingLevel) {
   const text = line.text.trim();
   if (headingLevel) return `${"#".repeat(headingLevel)} ${escapePlainMarkdown(text)}`;
@@ -184,6 +194,181 @@ function renderLine(line, headingLevel) {
   const ordered = text.match(/^(\d{1,3})([.)])\s+(.+)$/u);
   if (ordered) return `${ordered[1]}${ordered[2]} ${escapePlainMarkdown(ordered[3])}`;
   return escapePlainMarkdown(text);
+}
+
+// A link rect must contain essentially all of a text item's box for that item
+// to count as labelled by the link. Anything partially covered is ambiguous.
+const LINK_ITEM_CONTAINMENT = 0.95;
+
+function itemBox(item) {
+  if (item.bbox
+    && Number.isFinite(item.bbox.x) && Number.isFinite(item.bbox.y)
+    && Number.isFinite(item.bbox.width) && Number.isFinite(item.bbox.height)) {
+    return item.bbox;
+  }
+  return null;
+}
+
+function coveredFraction(box, rect) {
+  const overlapWidth = Math.min(box.x + box.width, rect.x + rect.width) - Math.max(box.x, rect.x);
+  const overlapHeight = Math.min(box.y + box.height, rect.y + rect.height) - Math.max(box.y, rect.y);
+  if (overlapWidth <= 0 || overlapHeight <= 0) return 0;
+  const area = box.width * box.height;
+  if (!(area > 0)) return 0;
+  return (overlapWidth * overlapHeight) / area;
+}
+
+/**
+ * Percent-encode the characters that would otherwise terminate or reshape a
+ * Markdown inline-link destination. The IR already guarantees an absolute
+ * http/https href with no whitespace or control characters.
+ */
+function encodeLinkDestination(href) {
+  return href.replace(/[()<>\\]/gu, character => (
+    `%${character.codePointAt(0).toString(16).toUpperCase().padStart(2, "0")}`
+  ));
+}
+
+/**
+ * Prove where each retained item sits inside the line's exact text. Offsets are
+ * recovered by scanning line.text forward, so a label can later be spliced from
+ * the original string rather than rebuilt from item fragments. Returns null if
+ * any item cannot be located, which fails the line closed.
+ */
+function itemOffsets(line, items) {
+  const offsets = [];
+  let cursor = 0;
+  for (const item of items) {
+    if (typeof item.text !== "string" || item.text.length === 0) return null;
+    const index = line.text.indexOf(item.text, cursor);
+    if (index === -1) return null;
+    offsets.push({ start: index, end: index + item.text.length });
+    cursor = index + item.text.length;
+  }
+  return offsets;
+}
+
+/**
+ * Build one page-global plan for every link annotation.
+ *
+ * Fail-closed. A link is rendered only when it covers items on exactly one
+ * eligible line, those items form one contiguous run, no item is partially
+ * covered, no other annotation of any kind touches them, and the label offsets
+ * are provable against the line's exact text. Every other outcome degrades to
+ * escaped text plus a typed gap, so a rect spanning two lines can never emit
+ * two links.
+ *
+ * Every annotation contributes a footprint, including unsupported and
+ * ambiguous ones, so an unsupported target overlapping a supported label
+ * suppresses that label instead of being silently ignored.
+ */
+function planPageLinks(rows, links, excludedLineIds) {
+  const spansByLine = new Map();
+  const offsetsByLine = new Map();
+  let ambiguous = false;
+  let unsupportedTarget = false;
+
+  for (const row of rows) {
+    const offsets = itemOffsets(row.line, row.cells);
+    if (offsets !== null) offsetsByLine.set(row.line.id, offsets);
+  }
+
+  const footprints = [];
+  const candidates = [];
+  for (const link of links) {
+    const supported = link.target_kind === "http";
+    if (!supported) unsupportedTarget = true;
+    if (link.rect === null) {
+      if (supported) ambiguous = true;
+      continue;
+    }
+    const touched = new Map();
+    let partial = false;
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex += 1) {
+      const row = rows[rowIndex];
+      for (let itemIndex = 0; itemIndex < row.cells.length; itemIndex += 1) {
+        const box = itemBox(row.cells[itemIndex]);
+        if (box === null) continue;
+        const fraction = coveredFraction(box, link.rect);
+        if (fraction <= 0) continue;
+        if (!touched.has(rowIndex)) touched.set(rowIndex, { contained: [], any: [] });
+        touched.get(rowIndex).any.push(itemIndex);
+        if (fraction >= LINK_ITEM_CONTAINMENT) touched.get(rowIndex).contained.push(itemIndex);
+        else partial = true;
+      }
+    }
+    // Footprints cover every item this annotation overlaps at all.
+    for (const [rowIndex, entry] of touched) {
+      footprints.push({
+        link,
+        lineId: rows[rowIndex].line.id,
+        start: Math.min(...entry.any),
+        end: Math.max(...entry.any),
+      });
+    }
+    if (!supported) continue;
+    if (touched.size !== 1 || partial) {
+      ambiguous = true;
+      continue;
+    }
+    const [rowIndex, entry] = [...touched.entries()][0];
+    const row = rows[rowIndex];
+    const indexes = entry.contained;
+    const contiguous = indexes.length > 0
+      && indexes[indexes.length - 1] - indexes[0] + 1 === indexes.length;
+    // A heading or list line is rewritten structurally by renderLine, so a
+    // link landing there cannot be spliced and must be reported, not dropped.
+    if (!contiguous
+      || excludedLineIds.has(row.line.id)
+      || !offsetsByLine.has(row.line.id)) {
+      ambiguous = true;
+      continue;
+    }
+    candidates.push({
+      link,
+      lineId: row.line.id,
+      start: indexes[0],
+      end: indexes[indexes.length - 1],
+      url: link.url,
+    });
+  }
+
+  // Drop any candidate whose items are also touched by a different annotation.
+  const kept = candidates.filter(candidate => !footprints.some(other => (
+    other.link !== candidate.link
+    && other.lineId === candidate.lineId
+    && other.start <= candidate.end
+    && candidate.start <= other.end
+  )));
+  if (kept.length !== candidates.length) ambiguous = true;
+
+  for (const span of kept) {
+    if (!spansByLine.has(span.lineId)) spansByLine.set(span.lineId, []);
+    spansByLine.get(span.lineId).push(span);
+  }
+  for (const spans of spansByLine.values()) {
+    spans.sort((left, right) => left.start - right.start);
+  }
+  return { spansByLine, offsetsByLine, ambiguous, unsupportedTarget };
+}
+
+/**
+ * Splice links into the line's exact source text. Text outside a link is taken
+ * verbatim from line.text, so spacing, punctuation, and scripts without word
+ * separators are preserved.
+ */
+function renderLinkedLine(line, offsets, spans) {
+  let cursor = 0;
+  let rendered = "";
+  for (const span of spans) {
+    const from = offsets[span.start].start;
+    const to = offsets[span.end].end;
+    if (from < cursor) return null;
+    rendered += escapePlainMarkdown(line.text.slice(cursor, from));
+    rendered += `[${escapePlainMarkdown(line.text.slice(from, to))}](${encodeLinkDestination(span.url)})`;
+    cursor = to;
+  }
+  return rendered + escapePlainMarkdown(line.text.slice(cursor));
 }
 
 function itemStartX(item) {
@@ -352,9 +537,50 @@ function renderTable(grid) {
   return lines;
 }
 
-function pageGaps(page, analysis) {
+/**
+ * Resolve every link annotation on the page against the rendered lines.
+ * Table runs cannot carry inline links in this renderer, so their lines are
+ * excluded from the plan and any link landing there degrades to a typed gap.
+ */
+function analyzePageLinks(page, analysis, headings) {
+  const links = page.link_annotations;
+  if (!links || links.status !== "available") {
+    return {
+      spansByLine: new Map(),
+      offsetsByLine: new Map(),
+      unavailable: true,
+      ambiguous: false,
+      unsupportedTarget: false,
+    };
+  }
+  const rows = analysis.segments.flatMap(segment => (
+    segment.kind === "table" ? [] : segment.rows
+  ));
+  const excluded = new Set(rows
+    .filter(row => headings.get(row.line.id) || rewritesLineStructure(row.line))
+    .map(row => row.line.id));
+  const plan = planPageLinks(rows, links.items ?? [], excluded);
+  return {
+    spansByLine: plan.spansByLine,
+    offsetsByLine: plan.offsetsByLine,
+    unavailable: links.truncated === true,
+    ambiguous: plan.ambiguous,
+    unsupportedTarget: plan.unsupportedTarget,
+  };
+}
+
+function pageGaps(page, analysis, linkState) {
   const gaps = [];
   const add = (code, message) => gaps.push({ code, page: page.page, message });
+  if (linkState?.unavailable) {
+    add("LINK_ANNOTATIONS_UNAVAILABLE", "Link annotation evidence was unavailable or truncated for this page, so no explicit links were emitted.");
+  }
+  if (linkState?.unsupportedTarget) {
+    add("UNSUPPORTED_LINK_TARGET", "At least one link targets an internal destination, an action, or an unsupported scheme, so it remains escaped text.");
+  }
+  if (linkState?.ambiguous) {
+    add("LINK_MAPPING_AMBIGUOUS", "At least one link could not be mapped to exactly one contiguous run of source text, so it remains escaped text.");
+  }
   if (analysis?.tableReason === "topology") {
     add("TABLE_TOPOLOGY_UNKNOWN", "Table-like content was detected but its column topology could not be reconstructed, so it remains reading-order text.");
   }
@@ -409,15 +635,24 @@ function pageStatus(page, gaps) {
 function renderPage(page) {
   const headings = headingLevels(page);
   const analysis = segmentPageLines(page);
+  const linkState = analyzePageLinks(page, analysis, headings);
   const lines = analysis.segments.flatMap(segment => (
     segment.kind === "table"
       ? renderTable(segment.grid)
-      : segment.rows.map(({ line }) => renderLine(line, headings.get(line.id)))
+      : segment.rows.map(({ line }) => {
+        const spans = linkState.spansByLine.get(line.id);
+        const offsets = linkState.offsetsByLine.get(line.id);
+        if (spans && spans.length > 0 && offsets && !headings.get(line.id)) {
+          const linked = renderLinkedLine(line, offsets, spans);
+          if (linked !== null) return linked;
+        }
+        return renderLine(line, headings.get(line.id));
+      })
   ));
   const markdown = lines.length > 0
     ? lines.join("\n")
     : "[No source-backed text was available on this page.]";
-  const gaps = pageGaps(page, analysis);
+  const gaps = pageGaps(page, analysis, linkState);
   return {
     page: page.page,
     conversion_status: pageStatus(page, gaps),

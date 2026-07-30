@@ -26,7 +26,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-07-29: split_pdf now advertises structured success/error output and all
 // structured tools advertise universal typed errors. Previously
 // 3a1710d4500a330f04cb1527031d6cbebd8f0193d7d6b4716081120f3ea629af.
-const TOOL_CONTRACT_SHA256 = "dd9309560d8ef32b63127c94228fd44535492193817e988e5ec2f1341302149c";
+const TOOL_CONTRACT_SHA256 = "942cb650fa28c0c2482efb8fde8130d5793abc73d431071b46aa41906f7c619d";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -371,7 +371,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.0.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.1.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       page_range: { start_page: 1, end_page: 1 },
     });

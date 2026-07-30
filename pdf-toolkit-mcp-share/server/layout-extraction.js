@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const IR_NAME = "pdf-tools.extraction-ir";
-const IR_VERSION = "1.0.0";
+const IR_VERSION = "1.1.0";
 const INTERNAL_SOURCE_REPLAY = Symbol("pdf-layout-internal-source-replay");
 const INTERNAL_MARKDOWN_PROJECTION = Symbol("pdf-layout-internal-markdown-projection");
 const PDFJS_DOCUMENT_ASSETS = Object.freeze({
@@ -78,6 +78,117 @@ export function pageGeometry(pdfLibPage, pdfjsPage, viewport, pageNumber) {
     item_space: { ...ITEM_SPACE },
   };
 }
+
+const MAX_LINK_ANNOTATIONS = 200;
+const SUPPORTED_LINK_PROTOCOLS = new Set(["http:", "https:"]);
+
+/**
+ * Resolve a link annotation to a supported target.
+ *
+ * Trust boundary: the only target string ever resolved is PDF.js's sanitized
+ * `url`. The raw `unsafeUrl` is used solely as a typeof presence signal when
+ * classifying the target class, and its content is never read, parsed, or
+ * emitted. The value returned is the normalized `parsed.href`, not the
+ * original string.
+ */
+function supportedLinkUrl(annotation) {
+  const url = typeof annotation?.url === "string" ? annotation.url : null;
+  if (url === null || url.length === 0 || url.length > 2048) return null;
+  if (/[\u0000-\u0020\u007f-\u009f]/u.test(url)) return null;
+  let parsed = null;
+  try {
+    parsed = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!SUPPORTED_LINK_PROTOCOLS.has(parsed.protocol)) return null;
+  if (parsed.href.length > 2048) return null;
+  if (/[\u0000-\u0020\u007f-\u009f]/u.test(parsed.href)) return null;
+  return parsed.href;
+}
+
+/**
+ * Which target classes the annotation declares. Presence only: `unsafeUrl` is
+ * counted by type, never by content.
+ */
+function linkTargetClasses(annotation) {
+  const classes = [];
+  if (typeof annotation?.url === "string" || typeof annotation?.unsafeUrl === "string") {
+    classes.push("url");
+  }
+  if (annotation?.dest !== undefined && annotation?.dest !== null) classes.push("destination");
+  if (annotation?.action !== undefined && annotation?.action !== null) classes.push("action");
+  return classes;
+}
+
+function linkTargetKind(annotation) {
+  const classes = linkTargetClasses(annotation);
+  // A safe url must not win over a co-declared destination or action. More
+  // than one declared class is ambiguous and degrades to escaped text.
+  if (classes.length === 0) return "none";
+  if (classes.length > 1) return "ambiguous_target";
+  if (classes[0] === "destination") return "internal_destination";
+  if (classes[0] === "action") return "action";
+  return supportedLinkUrl(annotation) !== null ? "http" : "unsupported_scheme";
+}
+
+function applyViewportPoint(transform, x, y) {
+  return [
+    transform[0] * x + transform[2] * y + transform[4],
+    transform[1] * x + transform[3] * y + transform[5],
+  ];
+}
+
+/**
+ * Project an annotation rect from PDF user space into the same display
+ * viewport the text items use, so rotation and CropBox origin are already
+ * folded in by the viewport transform.
+ */
+function linkRectGeometry(viewportTransform, rect) {
+  if (!Array.isArray(viewportTransform) || viewportTransform.length !== 6) return null;
+  if (!viewportTransform.every(Number.isFinite)) return null;
+  if (!Array.isArray(rect) || rect.length !== 4 || !rect.every(Number.isFinite)) return null;
+  const [x1, y1, x2, y2] = rect;
+  const corners = [[x1, y1], [x2, y1], [x2, y2], [x1, y2]]
+    .map(([x, y]) => applyViewportPoint(viewportTransform, x, y));
+  const xs = corners.map(corner => corner[0]);
+  const ys = corners.map(corner => corner[1]);
+  if (![...xs, ...ys].every(Number.isFinite)) return null;
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  return {
+    x: round(x),
+    y: round(y),
+    width: round(Math.max(...xs) - x),
+    height: round(Math.max(...ys) - y),
+  };
+}
+
+function collectLinkAnnotations(annotations, viewportTransform, pageNumber) {
+  const items = [];
+  let truncated = false;
+  for (const annotation of Array.isArray(annotations) ? annotations : []) {
+    if (annotation?.subtype !== "Link") continue;
+    if (items.length >= MAX_LINK_ANNOTATIONS) {
+      truncated = true;
+      break;
+    }
+    const targetKind = linkTargetKind(annotation);
+    items.push({
+      id: `p${String(pageNumber).padStart(4, "0")}-link${String(items.length + 1).padStart(4, "0")}`,
+      rect: linkRectGeometry(viewportTransform, annotation.rect),
+      target_kind: targetKind,
+      url: targetKind === "http" ? supportedLinkUrl(annotation) : null,
+    });
+  }
+  return { status: "available", truncated, items };
+}
+
+const UNAVAILABLE_LINK_ANNOTATIONS = Object.freeze({
+  status: "unavailable",
+  truncated: false,
+  items: [],
+});
 
 function multiplyTransforms(left, right) {
   return [
@@ -503,6 +614,9 @@ function markOutputBudget(payload, maxOutputCharacters) {
     page.raw_items = [];
     page.lines = [];
     page.blocks = [];
+    // Link items are page detail too. Leaving them would keep a link-heavy
+    // page over budget and turn a bounded partial into a whole-call error.
+    page.link_annotations = { status: "unavailable", truncated: true, items: [] };
     page.flow_text = "";
     page.spatial_text = "";
     page.reading_order = {
@@ -632,6 +746,60 @@ export function validatePdfLayoutSemantics(payload, {
     const page = payload.pages[pageOffset];
     const expectedPage = payload.page_range.start_page + pageOffset;
     const pagePrefix = `p${String(expectedPage).padStart(4, "0")}`;
+    const links = page.link_annotations;
+    semanticAssertion(links && typeof links === "object" && !Array.isArray(links),
+      `page ${page.page} link annotations are malformed`);
+    semanticAssertion(["available", "unavailable"].includes(links.status),
+      `page ${page.page} link annotation status is invalid`);
+    semanticAssertion(typeof links.truncated === "boolean",
+      `page ${page.page} link annotation truncation flag is invalid`);
+    semanticAssertion(Array.isArray(links.items) && links.items.length <= MAX_LINK_ANNOTATIONS,
+      `page ${page.page} link annotation list is invalid`);
+    semanticAssertion(links.status === "available" || links.items.length === 0,
+      `page ${page.page} reports unavailable link annotations with retained items`);
+    // An unavailable link state is only legitimate when the page carries an
+    // annotations-stage error or had its detail omitted for the output budget.
+    // Without this, downgrading available evidence to unavailable would pass.
+    const linkAnnotationError = page.errors.some(
+      error => error.stage === "annotations" || error.stage === "page",
+    );
+    const linkBudgetOmitted = page.truncation.reasons.includes("max_output_characters");
+    if (links.status === "unavailable") {
+      semanticAssertion(linkAnnotationError || linkBudgetOmitted,
+        `page ${page.page} reports unavailable link annotations without supporting evidence`);
+      semanticAssertion(!linkBudgetOmitted || links.truncated === true,
+        `page ${page.page} omitted link detail for the output budget without recording truncation`);
+    }
+    for (let linkIndex = 0; linkIndex < links.items.length; linkIndex += 1) {
+      const link = links.items[linkIndex];
+      semanticAssertion(link.id === `${pagePrefix}-link${String(linkIndex + 1).padStart(4, "0")}`,
+        `page ${page.page} link ${link.id} is out of order`);
+      semanticAssertion([
+        "http",
+        "internal_destination",
+        "action",
+        "unsupported_scheme",
+        "ambiguous_target",
+        "none",
+      ].includes(link.target_kind), `page ${page.page} link ${link.id} target kind is invalid`);
+      // Only an http target may carry a URL, and it must already be exactly
+      // the normalized absolute form the resolver would produce.
+      if (link.target_kind === "http") {
+        semanticAssertion(typeof link.url === "string"
+          && link.url === supportedLinkUrl({ url: link.url }),
+        `page ${page.page} link ${link.id} url is not a normalized supported target`);
+      } else {
+        semanticAssertion(link.url === null,
+          `page ${page.page} link ${link.id} retains a url for a non-http target`);
+      }
+      semanticAssertion(!documentIds.has(link.id), `duplicate ID ${link.id}`);
+      documentIds.add(link.id);
+      semanticAssertion(link.rect === null || (
+        Number.isFinite(link.rect.x) && Number.isFinite(link.rect.y)
+        && Number.isFinite(link.rect.width) && Number.isFinite(link.rect.height)
+        && link.rect.width >= 0 && link.rect.height >= 0
+      ), `page ${page.page} link ${link.id} rect is invalid`);
+    }
     semanticAssertion(page.page === expectedPage && page.id === pagePrefix, `page ${expectedPage} identity mismatch`);
     semanticAssertion(page.geometry.page === page.page, `page ${page.page} geometry identity mismatch`);
     semanticAssertion(page.geometry.rotation_matches_raw === (page.geometry.display_rotation === null || page.geometry.raw_pdf_rotation === null
@@ -860,9 +1028,13 @@ export function validatePdfLayoutSemantics(payload, {
     semanticAssertion(page.modality_hint === expectedModality, `page ${page.page} modality mismatch`);
     const hasInvalidGeometry = page.raw_items.some(item => !item.geometry_valid);
     const hasRawGeometryGap = page.errors.some(error => error.code === "RAW_PAGE_GEOMETRY_UNAVAILABLE");
+    const hasAnnotationError = page.errors.some(error => error.stage === "annotations");
+    // Degraded link evidence, including a hit 200-link cap, is partial evidence.
+    const hasDegradedLinks = page.link_annotations.status !== "available"
+      || page.link_annotations.truncated === true;
     const expectedExtraction = expectedTextLayerStatus === "failed"
       ? "failed"
-      : page.truncation.truncated || hasInvalidGeometry || hasRawGeometryGap || expectedImageStatus === "failed" || expectedModality !== "text-layer-candidate"
+      : page.truncation.truncated || hasInvalidGeometry || hasRawGeometryGap || expectedImageStatus === "failed" || expectedModality !== "text-layer-candidate" || hasAnnotationError || hasDegradedLinks
         ? "partial" : "complete";
     semanticAssertion(page.extraction_status === expectedExtraction, `page ${page.page} extraction status mismatch`);
     semanticAssertion(page.needs_visual_inspection === (expectedExtraction !== "complete" || expectedModality !== "text-layer-candidate"), `page ${page.page} visual-inspection status mismatch`);
@@ -873,10 +1045,12 @@ export function validatePdfLayoutSemantics(payload, {
         && !page.needs_visual_inspection
         && !page.truncation.truncated
         && page.errors.length === 0
+        && page.link_annotations.status === "available"
+        && page.link_annotations.truncated === false
         && page.raw_items.every(item => item.geometry_valid), `page ${page.page} complete status overclaims evidence`);
     }
     if (page.text_layer_status === "failed") semanticAssertion(page.extraction_status === "failed", `page ${page.page} failed text status mismatch`);
-    semanticAssertion(page.errors.every(error => ["page", "text", "operators", "geometry"].includes(error.stage)
+    semanticAssertion(page.errors.every(error => ["page", "text", "operators", "geometry", "annotations"].includes(error.stage)
       && typeof error.code === "string" && error.code.length > 0 && error.code.length <= 100
       && typeof error.message === "string" && error.message.length > 0 && error.message.length <= 500), `page ${page.page} invalid error record`);
   }
@@ -928,6 +1102,7 @@ function replayOutputBudgetIndependently(seedPayload, maxOutputCharacters) {
     page.raw_items = [];
     page.lines = [];
     page.blocks = [];
+    page.link_annotations = { status: "unavailable", truncated: true, items: [] };
     page.flow_text = "";
     page.spatial_text = "";
     page.reading_order = {
@@ -1021,6 +1196,28 @@ export async function validatePdfLayoutSourceEvidence(payload, {
           if (isFatalParserResourceError(error)) throw error;
           sourcePageError = error;
         }
+        // Independently re-derive link annotation evidence from the reparsed
+        // source. Annotations enter the IR as a trust-boundary crossing, so
+        // they are re-read here rather than accepted from the product loop.
+        let replayLinks = UNAVAILABLE_LINK_ANNOTATIONS;
+        let replayLinksRead = false;
+        if (sourcePage !== null && typeof sourcePage.getAnnotations === "function") {
+          try {
+            const sourceAnnotations = await withDeadline(
+              sourcePage.getAnnotations({ intent: "display" }),
+              deadlineAt,
+            );
+            replayLinks = collectLinkAnnotations(
+              sourceAnnotations,
+              sourceViewport?.transform ?? null,
+              outputPage.page,
+            );
+            replayLinksRead = true;
+          } catch (error) {
+            if (isFatalParserResourceError(error) || error?.code === "LAYOUT_DEADLINE") throw error;
+            replayLinks = UNAVAILABLE_LINK_ANNOTATIONS;
+          }
+        }
         const sourceGeometry = pageGeometry(
           pdfLibPages?.[outputPage.page - 1] ?? null,
           sourcePage,
@@ -1110,6 +1307,37 @@ export async function validatePdfLayoutSourceEvidence(payload, {
             `page ${outputPage.page} ordinary page failure differs from reparsed source`,
           );
           continue;
+        }
+
+        // Link-annotation evidence. Placed after the replay's own page-failure
+        // handling so a genuine page or deadline failure is reported on its own
+        // terms rather than as a link mismatch.
+        if (outputPage.link_annotations.status === "available") {
+          // An available claim must be authenticated by a successful
+          // independent read. A missing getAnnotations or a failed replay read
+          // can never authenticate link evidence.
+          sourceEvidenceAssertion(
+            replayLinksRead,
+            `page ${outputPage.page} claims available link evidence that was not independently reparsed`,
+          );
+          sourceEvidenceAssertion(
+            JSON.stringify(outputPage.link_annotations) === JSON.stringify(replayLinks),
+            `page ${outputPage.page} link annotations differ from independently reparsed source`,
+          );
+        } else {
+          const linkBudgetOmitted = outputPage.truncation.reasons.includes("max_output_characters");
+          const linkReadFailed = outputPage.errors.some(
+            error => error.stage === "annotations" || error.stage === "page",
+          );
+          sourceEvidenceAssertion(
+            linkBudgetOmitted || linkReadFailed,
+            `page ${outputPage.page} reports unavailable link evidence without supporting evidence`,
+          );
+          sourceEvidenceAssertion(
+            outputPage.link_annotations.items.length === 0
+              && (!linkBudgetOmitted || outputPage.link_annotations.truncated === true),
+            `page ${outputPage.page} unavailable link evidence is malformed`,
+          );
         }
 
         let textContent = null;
@@ -1365,9 +1593,27 @@ export async function extractPdfLayout({
       let hasVectorPaintOperations = null;
       let pdfjsPage = null;
       let viewport = null;
+      let linkAnnotations = UNAVAILABLE_LINK_ANNOTATIONS;
       try {
         pdfjsPage = await withDeadline(document.getPage(pageNumber), deadlineAt);
         viewport = pdfjsPage.getViewport({ scale: 1 });
+        try {
+          if (typeof pdfjsPage.getAnnotations !== "function") {
+            throw new Error("Parser does not expose annotation evidence.");
+          }
+          const annotations = await withDeadline(
+            pdfjsPage.getAnnotations({ intent: "display" }),
+            deadlineAt,
+          );
+          linkAnnotations = collectLinkAnnotations(
+            annotations,
+            viewport?.transform ?? null,
+            pageNumber,
+          );
+        } catch (error) {
+          if (isFatalParserResourceError(error)) throw error;
+          errors.push(errorRecord("annotations", error));
+        }
         try {
           textContent = await withDeadline(pdfjsPage.getTextContent({ includeMarkedContent: false, disableNormalization: false }), deadlineAt);
         } catch (error) {
@@ -1527,7 +1773,7 @@ export async function extractPdfLayout({
       const pageTruncated = firstOmittedSourceIndex !== null;
       let extractionStatus = "complete";
       if (textLayerStatus === "failed") extractionStatus = "failed";
-      else if (pageTruncated || invalidGeometry || !pdfLibPages || imageDetectionStatus === "failed" || modalityHint !== "text-layer-candidate") extractionStatus = "partial";
+      else if (pageTruncated || invalidGeometry || !pdfLibPages || imageDetectionStatus === "failed" || modalityHint !== "text-layer-candidate" || errors.some(error => error.stage === "annotations") || linkAnnotations.truncated === true) extractionStatus = "partial";
       const needsVisualInspection = extractionStatus !== "complete" || modalityHint !== "text-layer-candidate";
       if (hasImageOperations) limitations.push("Image paint operations were detected, but no image was rendered or OCRed; this is not raster-content proof.");
       if (hasVectorPaintOperations) limitations.push("Vector paint operations were detected but not interpreted.");
@@ -1548,6 +1794,7 @@ export async function extractPdfLayout({
         geometry,
         has_image_operations: hasImageOperations,
         has_vector_paint_operations: hasVectorPaintOperations,
+        link_annotations: linkAnnotations,
         raw_items: rawItems,
         lines: ordered.lines,
         blocks: buildBlocks(ordered.lines, pageNumber, ordered.column_count),

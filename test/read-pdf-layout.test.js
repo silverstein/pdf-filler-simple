@@ -85,6 +85,10 @@ function fakePdfjs(pageConfigs, { requiredPassword = null, neverLoad = false } =
       if (config.operatorError) throw config.operatorError;
       return { fnArray: config.operations ?? [] };
     },
+    getAnnotations: async () => {
+      if (config.annotationError) throw config.annotationError;
+      return config.annotations ?? [];
+    },
     cleanup: () => { state.page_cleanups += 1; },
   }));
   const pdfjs = {
@@ -248,14 +252,14 @@ describe("read_pdf_layout MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(JSON.stringify(first.structuredContent)).toBe(JSON.stringify(second.structuredContent));
     expect(first.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.0.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.1.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       source: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
       id_scope: {
         kind: "source_parser_ir_options",
         source_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         parser_version: "5.4.624",
-        ir_version: "1.0.0",
+        ir_version: "1.1.0",
         max_output_characters: 200000,
       },
       page_range: { requested_start_page: 1, requested_end_page: 1, start_page: 1, end_page: 1, total_pages: 1 },
@@ -1205,6 +1209,7 @@ describe("Extraction IR hostile reconstruction", () => {
             rotate: 0,
             getViewport: () => ({ width: 612, height: 792, transform: [1, 0, 0, -1, 0, 792] }),
             getTextContent: () => new Promise(() => {}),
+            getAnnotations: async () => [],
             cleanup: () => { cleanup.page += 1; },
           }),
           destroy: async () => { cleanup.document += 1; },
@@ -1237,6 +1242,7 @@ describe("Extraction IR hostile reconstruction", () => {
               rotate: 0,
               getViewport: () => ({ width: 612, height: 792, transform: [1, 0, 0, -1, 0, 792] }),
               getTextContent: async () => { throw fatalError; },
+              getAnnotations: async () => [],
               cleanup: () => { fatalCleanup.page += 1; },
             }),
             destroy: async () => { fatalCleanup.document += 1; },
@@ -1284,6 +1290,7 @@ describe("Extraction IR hostile reconstruction", () => {
               rotate: 0,
               getViewport: () => ({ width: 612, height: 792, transform: [1, 0, 0, -1, 0, 792] }),
               getTextContent: async () => ({ items: [], styles: {} }),
+              getAnnotations: async () => [],
               getOperatorList: testCase.kind === "deadline"
                 ? () => new Promise(() => {})
                 : async () => { throw testCase.error; },

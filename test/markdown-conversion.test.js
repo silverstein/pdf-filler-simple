@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
-import { extractPdfLayout } from "../server/layout-extraction.js";
+import {
+  extractPdfLayout,
+  validatePdfLayoutSemantics,
+  validatePdfLayoutSourceEvidence,
+} from "../server/layout-extraction.js";
 import {
   renderPdfLayoutToMarkdown,
   validateMarkdownConversionSemantics,
@@ -18,15 +22,15 @@ function multiply(left, right) {
   ];
 }
 
-function textItem(text, { top, fontSize = 12 } = {}) {
+function textItem(text, { top, fontSize = 12, left = 50, eol = true } = {}) {
   return {
     str: text,
     dir: "ltr",
     width: Math.max(20, text.length * fontSize * 0.5),
     height: fontSize,
-    transform: [fontSize, 0, 0, fontSize, 50, 792 - top - fontSize],
+    transform: [fontSize, 0, 0, fontSize, left, 792 - top - fontSize],
     fontName: "f1",
-    hasEOL: true,
+    hasEOL: eol,
   };
 }
 
@@ -44,6 +48,10 @@ function fakePdfjs(pageConfigs) {
       };
     },
     getOperatorList: async () => ({ fnArray: config.operations ?? [] }),
+    getAnnotations: async () => {
+      if (config.annotationError) throw config.annotationError;
+      return config.annotations ?? [];
+    },
     cleanup: () => {},
   }));
   return {
@@ -173,7 +181,7 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).toContain("## Conversion gaps");
     expect(result.markdown).toContain("OCR is not performed");
     expect(result.limitations.some(value => value.includes("Ruling lines and merged or spanning cells are not interpreted"))).toBe(true);
-    expect(result.limitations.some(value => value.includes("links are not emitted"))).toBe(true);
+    expect(result.limitations.some(value => value.includes("Links are emitted only for source-validated http or https annotation targets"))).toBe(true);
   });
 
   it("escapes block syntax at every physical line start, not just the first", async () => {
@@ -189,7 +197,7 @@ describe("layout Markdown renderer", () => {
         operations: [],
       }]);
       const { markdown } = renderPdfLayoutToMarkdown(layout);
-      const body = markdown.split("## Conversion limitations")[0];
+      const body = markdown.split(/\n## /u)[0];
       for (const physicalLine of body.split(/\r\n|\r|\n/u)) {
         expect(physicalLine, `${label} ${physicalLine}`).not.toMatch(/^[^\S\r\n]*#\s/u);
         expect(physicalLine, `${label} ${physicalLine}`).not.toMatch(/^[^\S\r\n]*>\s/u);
@@ -199,6 +207,257 @@ describe("layout Markdown renderer", () => {
       }
       expect(body).toContain("injected heading");
     }
+  });
+
+  // Viewport transform is [1,0,0,-1,0,792], so a PDF-space rect [x1,y1,x2,y2]
+  // maps to viewport y = 792 - y. Line one items occupy viewport y 52.4..64.4,
+  // i.e. PDF y 727.6..739.6, at x 50..74 ("Open"), 90..114 ("docs"),
+  // 140..160 ("now").
+  const LINE_ONE = { top: 50 };
+  const linkPage = (annotations, items) => ({
+    items: items ?? [
+      textItem("Open", { ...LINE_ONE, left: 50, eol: false }),
+      textItem("docs", { ...LINE_ONE, left: 90, eol: false }),
+      textItem("now", { ...LINE_ONE, left: 140 }),
+      textItem("Second line here", { top: 90, left: 50 }),
+    ],
+    annotations,
+  });
+  const linkAnnotation = (rect, extra = {}) => ({ subtype: "Link", rect, ...extra });
+  const renderLinks = async (annotations, items) => renderPdfLayoutToMarkdown(
+    await validatedSyntheticLayout([linkPage(annotations, items)]),
+    { includePageBoundaries: false },
+  );
+  const codesOf = result => result.gaps.map(gap => gap.code);
+
+  it("emits a link only for a supported target mapped to one contiguous run", async () => {
+    const result = await renderLinks([
+      linkAnnotation([49, 727, 115, 740], { url: "https://example.com/docs" }),
+    ]);
+    expect(result.markdown).toContain("[Open docs](https://example.com/docs)");
+    expect(codesOf(result)).not.toContain("LINK_MAPPING_AMBIGUOUS");
+    expect(codesOf(result)).not.toContain("UNSUPPORTED_LINK_TARGET");
+    expect(codesOf(result)).not.toContain("LINK_ANNOTATIONS_UNAVAILABLE");
+  });
+
+  it("refuses a rect spanning two lines instead of emitting twice", async () => {
+    const result = await renderLinks([
+      linkAnnotation([49, 687, 115, 740], { url: "https://example.com/span" }),
+    ]);
+    expect(result.markdown).not.toContain("](https://example.com/span)");
+    expect(result.markdown.match(/\]\(/gu)).toBeNull();
+    expect(codesOf(result)).toContain("LINK_MAPPING_AMBIGUOUS");
+  });
+
+  it("refuses a rect that only partially covers a text item", async () => {
+    // Covers "Open" fully but clips "docs" well below full containment.
+    const result = await renderLinks([
+      linkAnnotation([49, 727, 100, 740], { url: "https://example.com/partial" }),
+    ]);
+    expect(result.markdown).not.toContain("](https://example.com/partial)");
+    expect(codesOf(result)).toContain("LINK_MAPPING_AMBIGUOUS");
+  });
+
+  it("refuses two supported links claiming the same text", async () => {
+    const result = await renderLinks([
+      linkAnnotation([49, 727, 75, 740], { url: "https://example.com/one" }),
+      linkAnnotation([49, 727, 75, 740], { url: "https://example.com/two" }),
+    ]);
+    expect(result.markdown).not.toContain("](https://example.com/one)");
+    expect(result.markdown).not.toContain("](https://example.com/two)");
+    expect(codesOf(result)).toContain("LINK_MAPPING_AMBIGUOUS");
+  });
+
+  it("lets an unsupported annotation suppress an overlapping supported one", async () => {
+    const result = await renderLinks([
+      linkAnnotation([49, 727, 75, 740], { url: "https://example.com/safe" }),
+      linkAnnotation([49, 727, 75, 740], { dest: ["XYZ"] }),
+    ]);
+    expect(result.markdown).not.toContain("](https://example.com/safe)");
+    expect(codesOf(result)).toContain("UNSUPPORTED_LINK_TARGET");
+    expect(codesOf(result)).toContain("LINK_MAPPING_AMBIGUOUS");
+  });
+
+  it("reports a supported link that maps to no text at all", async () => {
+    const result = await renderLinks([
+      linkAnnotation([500, 100, 560, 130], { url: "https://example.com/orphan" }),
+    ]);
+    expect(result.markdown).not.toContain("](https://example.com/orphan)");
+    expect(codesOf(result)).toContain("LINK_MAPPING_AMBIGUOUS");
+  });
+
+  it("refuses internal destinations, actions, foreign schemes, and mixed targets", async () => {
+    for (const extra of [
+      { dest: ["XYZ"] },
+      { action: "NextPage" },
+      { url: "javascript:alert(1)" },
+      { url: "file:///etc/passwd" },
+      { unsafeUrl: "javascript:alert(1)" },
+      { url: "https://example.com/ok", dest: ["XYZ"] },
+    ]) {
+      const result = await renderLinks([linkAnnotation([49, 727, 115, 740], extra)]);
+      expect(result.markdown, JSON.stringify(extra)).not.toMatch(/\]\(/u);
+      expect(codesOf(result), JSON.stringify(extra)).toContain("UNSUPPORTED_LINK_TARGET");
+    }
+  });
+
+  it("preserves punctuation and scripts without word separators outside the link", async () => {
+    const result = await renderLinks(
+      [linkAnnotation([89, 727, 115, 740], { url: "https://example.com/jp" })],
+      [
+        textItem("契約書、", { ...LINE_ONE, left: 50, eol: false }),
+        textItem("詳細", { ...LINE_ONE, left: 90 }),
+      ],
+    );
+    expect(result.markdown).toContain("契約書、 [詳細](https://example.com/jp)");
+  });
+
+  it("percent-encodes destination characters that would break link grammar", async () => {
+    const result = await renderLinks([
+      linkAnnotation([49, 727, 75, 740], { url: "https://example.com/a(b)c" }),
+    ]);
+    expect(result.markdown).toContain("[Open](https://example.com/a%28b%29c)");
+    expect(result.markdown).not.toContain("(https://example.com/a(b)c)");
+  });
+
+  it("reports unavailable link evidence when annotations cannot be read", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [textItem("Text", { top: 50 })],
+      annotationError: new Error("annotations unavailable"),
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(codesOf(result)).toContain("LINK_ANNOTATIONS_UNAVAILABLE");
+    expect(result.conversion_status).toBe("partial");
+  });
+
+  it("omits link items with page detail under the output budget", async () => {
+    const annotations = Array.from({ length: 400 }, (unused, index) => ({
+      subtype: "Link",
+      rect: [49, 727, 115, 740],
+      url: `https://example.com/${"padding".repeat(8)}/${index}`,
+    }));
+    const document = await PDFDocument.create();
+    document.addPage([612, 792]);
+    const bytes = await document.save({ useObjectStreams: false });
+    const layout = await extractPdfLayout({
+      pdfjsLib: fakePdfjs([{
+        items: [textItem("Open", { top: 50 })],
+        annotations,
+      }]),
+      pdfBytes: bytes,
+      sourcePath: "/validated/source.pdf",
+      sourceFileName: "source.pdf",
+      sourceSha256: createHash("sha256").update(bytes).digest("hex"),
+      sourceSizeBytes: bytes.length,
+      requestedStartPage: 1,
+      requestedEndPage: 1,
+      maxOutputCharacters: 20000,
+    });
+    expect(JSON.stringify(layout).length).toBeLessThanOrEqual(20000);
+    expect(layout.pages[0].link_annotations.items).toEqual([]);
+    expect(layout.pages[0].link_annotations.status).toBe("unavailable");
+    expect(layout.pages[0].link_annotations.truncated).toBe(true);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.gaps.map(gap => gap.code)).toContain("LINK_ANNOTATIONS_UNAVAILABLE");
+  });
+
+  it("keeps the per-page link cap source-bound", async () => {
+    const annotations = Array.from({ length: 260 }, () => ({
+      subtype: "Link",
+      rect: [49, 727, 115, 740],
+      url: "https://example.com/x",
+    }));
+    const layout = await validatedSyntheticLayout([{
+      items: [textItem("Open", { top: 50 })],
+      annotations,
+    }]);
+    expect(layout.pages[0].link_annotations.items.length).toBe(200);
+    expect(layout.pages[0].link_annotations.truncated).toBe(true);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.gaps.map(gap => gap.code)).toContain("LINK_ANNOTATIONS_UNAVAILABLE");
+  });
+
+  it("rejects downgrading available link evidence to unavailable", async () => {
+    const layout = await validatedSyntheticLayout([linkPage([
+      linkAnnotation([49, 727, 115, 740], { url: "https://example.com/docs" }),
+    ])]);
+    expect(layout.pages[0].link_annotations.status).toBe("available");
+    const mutated = JSON.parse(JSON.stringify(layout));
+    mutated.pages[0].link_annotations = { status: "unavailable", truncated: false, items: [] };
+    expect(() => validatePdfLayoutSemantics(mutated))
+      .toThrow(/unavailable link annotations without supporting evidence/u);
+  });
+
+  it("rejects a complete page whose link evidence hit the cap", async () => {
+    const layout = await validatedSyntheticLayout([linkPage([
+      linkAnnotation([49, 727, 115, 740], { url: "https://example.com/docs" }),
+    ])]);
+    const mutated = JSON.parse(JSON.stringify(layout));
+    mutated.pages[0].link_annotations.truncated = true;
+    expect(mutated.pages[0].extraction_status).toBe("complete");
+    expect(() => validatePdfLayoutSemantics(mutated))
+      .toThrow(/extraction status mismatch/u);
+  });
+
+  it("demotes a page whose link annotations hit the per-page cap", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [textItem("Open", { top: 50 })],
+      annotations: Array.from({ length: 260 }, () => ({
+        subtype: "Link",
+        rect: [49, 727, 115, 740],
+        url: "https://example.com/x",
+      })),
+    }]);
+    expect(layout.pages[0].link_annotations.truncated).toBe(true);
+    expect(layout.pages[0].extraction_status).toBe("partial");
+  });
+
+  it("refuses to authenticate available link evidence a replay could not read", async () => {
+    const configs = [linkPage([
+      linkAnnotation([49, 727, 115, 740], { url: "https://example.com/docs" }),
+    ])];
+    const document = await PDFDocument.create();
+    document.addPage([612, 792]);
+    const bytes = await document.save({ useObjectStreams: false });
+    const layout = await extractPdfLayout({
+      pdfjsLib: fakePdfjs(configs),
+      pdfBytes: bytes,
+      sourcePath: "/validated/source.pdf",
+      sourceFileName: "source.pdf",
+      sourceSha256: createHash("sha256").update(bytes).digest("hex"),
+      sourceSizeBytes: bytes.length,
+      requestedStartPage: 1,
+      requestedEndPage: 1,
+      maxOutputCharacters: 200000,
+    });
+    expect(layout.pages[0].link_annotations.items.length).toBe(1);
+
+    // Replay parser cannot read annotations at all.
+    const missing = fakePdfjs(configs);
+    const withoutAnnotations = { ...missing };
+    const innerMissing = missing.getDocument();
+    withoutAnnotations.getDocument = () => ({
+      promise: innerMissing.promise.then(document_ => ({
+        ...document_,
+        getPage: async pageNumber => {
+          const page = await document_.getPage(pageNumber);
+          const { getAnnotations, ...rest } = page;
+          return rest;
+        },
+      })),
+      destroy: async () => {},
+    });
+    await expect(validatePdfLayoutSourceEvidence(layout, {
+      pdfjsLib: withoutAnnotations,
+      sourceBytes: bytes,
+    })).rejects.toThrow(/available link evidence that was not independently reparsed/u);
+
+    // Replay parser throws while reading annotations.
+    const throwing = fakePdfjs([{ ...configs[0], annotationError: new Error("no annotations") }]);
+    await expect(validatePdfLayoutSourceEvidence(layout, {
+      pdfjsLib: throwing,
+      sourceBytes: bytes,
+    })).rejects.toThrow(/available link evidence that was not independently reparsed/u);
   });
 
   it("fails closed against the exact UTF-8 Markdown byte limit", async () => {

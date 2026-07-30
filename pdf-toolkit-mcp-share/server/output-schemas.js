@@ -426,6 +426,28 @@ const layoutPage = object({
   geometry: layoutGeometry,
   has_image_operations: nullable(boolean),
   has_vector_paint_operations: nullable(boolean),
+  link_annotations: object({
+    status: enumString(["available", "unavailable"]),
+    truncated: boolean,
+    items: arrayOf(object({
+      id: string,
+      rect: nullable(object({
+        x: number,
+        y: number,
+        width: number,
+        height: number,
+      })),
+      target_kind: enumString([
+        "http",
+        "internal_destination",
+        "action",
+        "unsupported_scheme",
+        "ambiguous_target",
+        "none",
+      ]),
+      url: nullable(string),
+    })),
+  }),
   raw_items: arrayOf(layoutRawItem),
   lines: arrayOf(layoutLine),
   blocks: arrayOf(layoutBlock),
@@ -491,7 +513,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     truncated: boolean,
   }),
   read_pdf_layout: object({
-    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.0.0" } }),
+    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.1.0" } }),
     parser: object({ name: { const: "pdfjs-dist" }, version: { const: "5.4.624" } }),
     source: object({
       pdf_path: string,
@@ -503,7 +525,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       kind: { const: "source_parser_ir_options" },
       source_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       parser_version: { const: "5.4.624" },
-      ir_version: { const: "1.0.0" },
+      ir_version: { const: "1.1.0" },
       requested_start_page: integer,
       requested_end_page: integer,
       max_items: integer,
@@ -550,7 +572,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       }),
       layout: object({
         name: { const: "pdf-tools.extraction-ir" },
-        version: { const: "1.0.0" },
+        version: { const: "1.1.0" },
         parser_name: { const: "pdfjs-dist" },
         parser_version: { const: "5.4.624" },
         page_range: object({
