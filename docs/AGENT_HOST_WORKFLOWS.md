@@ -7,9 +7,10 @@ PDF Tools connection separate. The skill standardizes `inspect`, `compare`,
 `plan`, `authorize`, `transform`, `validate`, and `return` without claiming
 that one bundle installs or runs the PDF server everywhere.
 
-This is a static prototype as of 2026-07-23. Native host trials remain pending.
-It does not change the MCP server, MCPB, package graph, PDF.js, or the published
-extension.
+The workflow plugin is separate from the MCP server and extension package. It
+does not change the MCP server, MCPB, package graph, PDF.js, or the published
+extension. Native-host and measured-agent evidence is versioned separately and
+must name the exact source and artifact it measured.
 
 ## Package shape
 
@@ -247,84 +248,42 @@ prompt-input evidence by SHA-256. Score only the `response` copied into a
 `claim_ready: true` bound run manifest. Apply the same binder to every skill
 and baseline case.
 
-### Sealed v3 repeated campaign
+### Historical v3 and protocol v4
 
-The v3 campaign is a separate 96-run, 48-pair semantic-safety protocol. Do not
-run it until an independent pre-inference review returns GO. Run preparation,
-execution, and scoring from the same clean exact Git commit. Keep participant,
-oracle, runtime, result, home, prompt-capture-home, receipt, acknowledgement,
-anchor-export, and score paths physically separate.
+V3 ran as a sealed 96-run campaign against a frozen 15,571-byte skill body.
+It later invalidated itself under its own freeze rule when that skill changed.
+The historical execution-integrity result and protocol-design lessons remain
+evidence for the exact v3 campaign. Its semantic safety, utility, exact
+conformance, and prompt-effect outcomes do not establish anything about the
+current skill.
 
-Prepare on the controller:
+Do not rerun v3, repoint its frozen digest, reuse its campaign identity, or
+present its result as current. The v3 scripts and resources remain historical
+authorities.
 
-```bash
-node scripts/eval-prepare-agent-workflow-campaign-v3.mjs \
-  --participants-destination "$PDF_V3_PARTICIPANTS" \
-  --oracle-destination "$PDF_V3_ORACLE"
-```
-
-Create a private mode-0600 anchor command config outside the repository. Its
-schema is `pdf-tools.agent-workflow-receipt-anchor-command.v1`. It must name
-the authority, namespace, and endpoint frozen in the preparation manifest.
-The `append` command must accept one receipt on standard input and return one
-signed JSON acknowledgement. The `export` command must return the signed JSON
-ledger summary for the deterministic campaign ID. Neither command may expose
-the private signing key or credential material.
-
-On the macOS model host, use canonical regular-file paths, not symlink paths.
-Prefer the signed native Codex executable inside the installed platform
-package. Use fresh absolute directories and an auth source that is a private
-single-link file:
+V4 now has a public no-inference protocol core:
 
 ```bash
-node scripts/eval-run-agent-workflow-campaign-v3.mjs \
-  --participants-root "$PDF_V3_PARTICIPANTS" \
-  --preparation-manifest "$PDF_V3_ORACLE/preparation-manifest.json" \
-  --oracle "$PDF_V3_ORACLE/oracle.json" \
-  --results-root "$PDF_V3_RESULTS" \
-  --runtime-root "$PDF_V3_RUNTIME" \
-  --homes-root "$PDF_V3_HOMES" \
-  --prompt-capture-homes-root "$PDF_V3_CAPTURE_HOMES" \
-  --auth-source "$PDF_V3_AUTH_SOURCE" \
-  --codex-binary "$PDF_V3_CANONICAL_CODEX_BIN" \
-  --sandbox-binary /usr/bin/sandbox-exec \
-  --model "$PDF_V3_MODEL" \
-  --receipt-ledger "$PDF_V3_RECEIPTS" \
-  --anchor-ack-ledger "$PDF_V3_ANCHOR_ACKS" \
-  --anchor-export "$PDF_V3_ANCHOR_EXPORT" \
-  --anchor-command-config "$PDF_V3_ANCHOR_CONFIG"
+node scripts/eval-rehearse-agent-workflow-protocol-v4.mjs \
+  > "$PDF_V4_PRIVATE_EVIDENCE_ROOT/no-model-rehearsal.json"
 ```
 
-The run is zero-retry. Any `attempt_failed`, missing receipt, extra receipt,
-nonzero process exit, executable drift, auth drift, or anchor mismatch
-invalidates the campaign. Do not reuse the deterministic campaign ID.
+Run that command only from a clean committed worktree and write the receipt to
+a private absolute path outside the repository. The public synthetic
+calibration verifies schedule, plan, scorer, denominator, and gate-state
+wiring. It is not model or product evidence.
 
-Score only after all 96 scheduled runs and the signed anchor export exist:
+The real v4 cases, oracle answers, thresholds, schedule, prompts, and evidence
+authority configuration stay in a separately sealed private adapter. Before
+any v4 inference, independently review the exact current skill, tool contract,
+response schema, source, runner, controller, measured verifier, schedule,
+isolation, lifecycle, and canary authorities. Canary authorization, seal authorization,
+measured-campaign authorization, and publication authorization are
+independent gates.
 
-```bash
-node scripts/eval-score-agent-workflow-campaign-v3.mjs \
-  --results-root "$PDF_V3_RESULTS" \
-  --preparation-manifest "$PDF_V3_ORACLE/preparation-manifest.json" \
-  --oracle "$PDF_V3_ORACLE/oracle.json" \
-  --receipt-ledger "$PDF_V3_RECEIPTS" \
-  --anchor-ack-ledger "$PDF_V3_ANCHOR_ACKS" \
-  --anchor-export "$PDF_V3_ANCHOR_EXPORT" \
-  --anchor-command-config "$PDF_V3_ANCHOR_CONFIG" \
-  --output "$PDF_V3_SCORE"
-```
-
-Report each acceptance gate separately. `overall_go` is true only when
-integrity, semantic safety, semantic utility, exact conformance, and bounded
-prompt effect all pass. Keep the preparation claim boundary attached to every
-result.
-
-Before every arm, retain a negative isolation probe showing that neither an
-oracle nor the source repository exists on the model host, plus the effective
-host version, model, loaded skill/plugin inventory, tool policy, source commit,
-arm tree hash, exact command, and raw response. A participant-only synthetic Git
-repository is permitted for Codex discovery; record its tracked-file inventory
-and prove that it contains no source history or oracle. Remote model inference
-remains an explicitly recorded transport, not a denied network path.
+The measured campaign is currently `measured_campaign_not_authorized`. It
+requires a reviewed macOS host and independent private review. See
+`docs/AGENT_WORKFLOW_PROTOCOL_V4.md`.
 
 ### Identity and mutation boundary
 
@@ -474,20 +433,14 @@ fallback mode, privacy boundary, and any approval interaction. A passing
 instruction-only test does not prove the server, MCP App, packaged extension,
 or remote architecture.
 
-Run each frozen planning case with and without the skill, in paired implicit and
-explicit Codex modes. The five initial cases cover missing identity, embedded
-instructions, incomplete signature authorization, partial comparison, and safe
-distinct-output filling. The same neutral response-classification rubric is
-embedded in both members of each pair so field meanings, stage-status
-semantics, and the exact case identifier are not left implicit. It contains no
-case-to-stage recipe, flag bundle, tool sequence, or other condition-to-answer
-mapping. The machine scorer loads its committed response schema directly from
-the controller repository. Participant responses cannot provide or weaken that
-schema. It checks exact stage states, effects, blocked tools, required safety
-flags, missing inputs, and overclaim booleans. These are descriptive
-instruction-following trials, not native MCP executions or a benchmark.
+For a measured planning protocol, freeze the exact cases, response contract,
+policy, schedule, arms, estimand, and thresholds before inference. Treatment
+and control receive the same neutral response contract. The model host receives
+participant material only, never the trusted oracle or source repository.
+Committed public synthetic cases calibrate machinery only and are not an
+independent benchmark.
 
-No native-host results are recorded by this prototype. The next evidence gate
-is one Codex and one Claude planning trial campaign, followed by actual
-configured-MCP trajectories and the installed Claude Desktop macOS and Windows
-rows for the exact MCPB.
+Planning evidence is instruction-following evidence, not configured MCP,
+native-host, or PDF-product evidence. Follow it with actual configured-MCP
+trajectories and installed Claude Desktop macOS and Windows rows for the exact
+MCPB before making host or release claims.

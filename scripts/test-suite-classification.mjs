@@ -35,6 +35,10 @@ export const SYNTHETIC_SOURCE_IDENTITY_IMPORTERS = Object.freeze([
 
 export const SOURCE_IDENTITY_TRANSITIVE_MODULES = Object.freeze([
   Object.freeze({
+    file: "scripts/eval-rehearse-agent-workflow-protocol-v4.mjs",
+    reason: "The v4 no-model rehearsal delegates clean source identity to the real-checkout campaign binder.",
+  }),
+  Object.freeze({
     file: "scripts/eval-prepare-agent-workflow-campaign-v3.mjs",
     reason: "Retired v3 preparation delegates source identity to the real-checkout campaign binder.",
   }),
