@@ -31,6 +31,83 @@ async function makeStructureFixture(targetPath) {
   await fs.writeFile(targetPath, await document.save({ useObjectStreams: false }));
 }
 
+const GRID_COLUMNS = [72, 220, 360, 480];
+const GRID_ROWS = [
+  ["Region", "Q1", "Q2", "Q3"],
+  ["North", "1200", "1450", "1610"],
+  ["South", "980", "1020", "1190"],
+  ["West", "1500", "1380", "1720"],
+];
+
+async function drawGrid(targetPath, { headerSize, separateHeaderResource }) {
+  const document = await PDFDocument.create();
+  const page = document.addPage([612, 792]);
+  const body = await document.embedFont(StandardFonts.Helvetica);
+  // Embedding the same visible font twice yields a different font_name id but
+  // no visible distinction. That must not authorize a header.
+  const header = separateHeaderResource
+    ? await document.embedFont(StandardFonts.Helvetica)
+    : body;
+  GRID_ROWS.forEach((row, rowIndex) => row.forEach((cell, columnIndex) => {
+    page.drawText(cell, {
+      x: GRID_COLUMNS[columnIndex],
+      y: 660 - rowIndex * 32,
+      size: rowIndex === 0 ? headerSize : 11,
+      font: rowIndex === 0 ? header : body,
+    });
+  }));
+  await fs.writeFile(targetPath, await document.save({ useObjectStreams: false }));
+}
+
+// Header row is materially larger, which is real source-visible evidence.
+const makeGridTableFixture = target => drawGrid(target, { headerSize: 16, separateHeaderResource: false });
+// Identical size on every row, so no header is evidenced.
+const makeUniformGridFixture = target => drawGrid(target, { headerSize: 11, separateHeaderResource: false });
+// Identical size, but the header uses a second embed of the same visible font.
+const makeDoubleEmbedGridFixture = target => drawGrid(target, { headerSize: 11, separateHeaderResource: true });
+
+async function makeDelimiterTableFixture(targetPath) {
+  const document = await PDFDocument.create();
+  const page = document.addPage([612, 792]);
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  const columns = GRID_COLUMNS;
+  const rows = [
+    ["Symbol", "Meaning", "Note", "Code"],
+    ["a|b", "pipe", "alpha", "1"],
+    ["c\\d", "backslash", "beta", "2"],
+  ];
+  rows.forEach((row, rowIndex) => row.forEach((cell, columnIndex) => {
+    page.drawText(cell, {
+      x: columns[columnIndex],
+      y: 660 - rowIndex * 32,
+      size: rowIndex === 0 ? 16 : 11,
+      font,
+    });
+  }));
+  await fs.writeFile(targetPath, await document.save({ useObjectStreams: false }));
+}
+
+async function makeProseFixture(targetPath) {
+  const document = await PDFDocument.create();
+  const page = document.addPage([612, 792]);
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  // Ordinary left-aligned prose, drawn word by word so every line yields many
+  // text items at irregular x positions.
+  const paragraph = [
+    "The quarterly review covers every operating region",
+    "and summarises the revenue recorded during the period",
+    "alongside commentary from each regional director",
+  ];
+  paragraph.forEach((line, lineIndex) => {
+    let x = 72;
+    for (const word of line.split(" ")) {
+      page.drawText(word, { x, y: 660 - lineIndex * 28, size: 11, font });
+      x += font.widthOfTextAtSize(`${word} `, 11);
+    }
+  });
+  await fs.writeFile(targetPath, await document.save({ useObjectStreams: false }));
+}
+
 async function makeDenseFixture(targetPath) {
   const document = await PDFDocument.create();
   const page = document.addPage([612, 792]);
@@ -79,15 +156,30 @@ describe("convert_pdf_to_markdown MCP tool", () => {
   let structureFixture;
   let denseFixture;
   let geometryFixture;
+  let gridTableFixture;
+  let uniformGridFixture;
+  let delimiterTableFixture;
+  let proseFixture;
+  let doubleEmbedFixture;
 
   beforeAll(async () => {
     temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-markdown-"));
     structureFixture = path.join(temporaryRoot, "structure.pdf");
     denseFixture = path.join(temporaryRoot, "dense.pdf");
     geometryFixture = path.join(temporaryRoot, "geometry.pdf");
+    gridTableFixture = path.join(temporaryRoot, "grid-table.pdf");
+    uniformGridFixture = path.join(temporaryRoot, "uniform-grid.pdf");
+    delimiterTableFixture = path.join(temporaryRoot, "delimiter-table.pdf");
+    proseFixture = path.join(temporaryRoot, "prose.pdf");
+    doubleEmbedFixture = path.join(temporaryRoot, "double-embed-grid.pdf");
     await makeStructureFixture(structureFixture);
     await makeDenseFixture(denseFixture);
     await makeGeometryFixture(geometryFixture);
+    await makeGridTableFixture(gridTableFixture);
+    await makeUniformGridFixture(uniformGridFixture);
+    await makeDelimiterTableFixture(delimiterTableFixture);
+    await makeProseFixture(proseFixture);
+    await makeDoubleEmbedGridFixture(doubleEmbedFixture);
     transport = new StdioClientTransport({
       command: process.execPath,
       args: [path.join(REPO_ROOT, "server/index.js")],
@@ -133,7 +225,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(second.structuredContent).toEqual(first.structuredContent);
     expect(first.structuredContent).toMatchObject({
-      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.0.0" },
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.1.0" },
       conversion_status: "complete",
       saved_output: null,
       provenance: {
@@ -154,6 +246,84 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     );
   }, 30_000);
 
+  it("reconstructs an unambiguous column grid as a Markdown table without a topology gap", async () => {
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: gridTableFixture, max_markdown_bytes: 100000 },
+    });
+    expect(result.isError).not.toBe(true);
+    const { markdown } = result.structuredContent;
+    expect(markdown).toMatch(/^\| Region \| Q1 \| Q2 \| Q3 \|$/m);
+    expect(markdown).toMatch(/^\| --- \| --- \| --- \| --- \|$/m);
+    expect(markdown).toMatch(/^\| North \| 1200 \| 1450 \| 1610 \|$/m);
+    expect(markdown).toMatch(/^\| West \| 1500 \| 1380 \| 1720 \|$/m);
+    // Every row filled every detected column, so this is a reconstruction, not
+    // a degraded flatten: no topology gap may be reported.
+    expect(result.structuredContent.gaps.map(gap => gap.code))
+      .not.toContain("TABLE_TOPOLOGY_UNKNOWN");
+    expect(result.structuredContent.conversion_status).toBe("complete");
+  }, 30_000);
+
+  it("does not invent a header for a uniform grid and reports it as a typed gap", async () => {
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: uniformGridFixture, max_markdown_bytes: 100000 },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(result.structuredContent.gaps.map(gap => gap.code))
+      .toContain("TABLE_TOPOLOGY_UNKNOWN");
+    expect(result.structuredContent.gaps.map(gap => gap.message).join("\n"))
+      .toMatch(/no source evidence distinguishes a header row/);
+    expect(result.structuredContent.conversion_status).toBe("partial");
+  }, 30_000);
+
+  it("treats a differing font resource id alone as no header evidence", async () => {
+    // Same visible font, embedded twice, so header and body carry different
+    // font_name ids with no visible distinction. That must not promote a
+    // header row.
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: doubleEmbedFixture, max_markdown_bytes: 100000 },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(result.structuredContent.gaps.map(gap => gap.code))
+      .toContain("TABLE_TOPOLOGY_UNKNOWN");
+    expect(result.structuredContent.conversion_status).toBe("partial");
+  }, 30_000);
+
+  it("escapes a table cell delimiter exactly once", async () => {
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: delimiterTableFixture, max_markdown_bytes: 100000 },
+    });
+    expect(result.isError).not.toBe(true);
+    const { markdown } = result.structuredContent;
+    const row = markdown.split("\n").find(line => line.includes("pipe"));
+    expect(row).toBeDefined();
+    // Exactly one backslash before the literal pipe: "\|" and never "\\|",
+    // which would be an escaped backslash plus a live cell delimiter.
+    expect(row).toContain("a\\|b");
+    expect(row).not.toContain("a\\\\|b");
+    // Splitting on unescaped delimiters must yield exactly the declared column
+    // count, proving the escaped pipe was not treated as a delimiter.
+    expect(row.split(/(?<!\\)\|/u).length - 2).toBe(4);
+    const backslashRow = markdown.split("\n").find(line => line.includes("backslash"));
+    expect(backslashRow).toContain("c\\\\d");
+  }, 30_000);
+
+  it("does not report ordinary aligned prose as table-like", async () => {
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: proseFixture, max_markdown_bytes: 100000 },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(result.structuredContent.gaps.map(gap => gap.code))
+      .not.toContain("TABLE_TOPOLOGY_UNKNOWN");
+  }, 30_000);
+
   it("reports mixed, raster-only, and table-like visual structure without OCR or topology claims", async () => {
     const cases = [
       [MIXED, { end_page: 2 }, ["OCR_NOT_PERFORMED", "IMAGE_CONTENT_NOT_RENDERED"]],
@@ -169,7 +339,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       const codes = result.structuredContent.gaps.map(gap => gap.code);
       expect(codes, pdfPath).toEqual(expect.arrayContaining(expectedCodes));
       expect(result.structuredContent.limitations.join("\n")).toMatch(/OCR is not performed/);
-      expect(result.structuredContent.limitations.join("\n")).toMatch(/Table topology is not represented/);
+      expect(result.structuredContent.limitations.join("\n")).toMatch(/Ruling lines and merged or spanning cells are not interpreted/);
     }
 
     const table = await client.callTool({
@@ -177,8 +347,14 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       arguments: { pdf_path: TABLE, max_markdown_bytes: 100000 },
     });
     expect(table.isError).not.toBe(true);
-    expect(table.structuredContent.limitations.join("\n")).toMatch(/Table topology is not represented/);
+    expect(table.structuredContent.limitations.join("\n")).toMatch(/Ruling lines and merged or spanning cells are not interpreted/);
+    // This fixture has a merged/blank cell, so no row fills every detected
+    // column. It must degrade to reading-order text and report typed partial
+    // coverage rather than inventing a topology.
     expect(table.structuredContent.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(table.structuredContent.gaps.map(gap => gap.code))
+      .toContain("TABLE_TOPOLOGY_UNKNOWN");
+    expect(table.structuredContent.conversion_status).toBe("partial");
     const orderedFragments = [
       "Q3 PURCHASES",
       "Item",

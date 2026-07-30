@@ -26,7 +26,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-07-29: split_pdf now advertises structured success/error output and all
 // structured tools advertise universal typed errors. Previously
 // 3a1710d4500a330f04cb1527031d6cbebd8f0193d7d6b4716081120f3ea629af.
-const TOOL_CONTRACT_SHA256 = "28e11cbbd1db8d8ac2590741e31c1cd4785ff6cbf6c235b6978a72e4b0ad2221";
+const TOOL_CONTRACT_SHA256 = "dd9309560d8ef32b63127c94228fd44535492193817e988e5ec2f1341302149c";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

@@ -6,8 +6,22 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.0.0",
+  version: "1.1.0",
 });
+
+// Bounded geometric table inference. A run of adjacent lines is treated as a
+// table only when every row fills every detected column, so ragged or
+// ambiguous candidates degrade to reading-order text plus a typed gap rather
+// than to an invented topology.
+const TABLE_MIN_ROWS = 2;
+const TABLE_MIN_COLUMNS = 2;
+const TABLE_COLUMN_TOLERANCE_POINTS = 3;
+// A column must recur on at least this many lines to count as structure, and
+// this fraction of a run's text items must sit in those columns.
+const TABLE_MIN_COLUMN_ROWS = 2;
+const TABLE_COLUMNAR_COVERAGE = 0.8;
+// How much taller the first row must be to evidence a header row.
+const HEADER_HEIGHT_RATIO = 1.15;
 
 const MAX_MARKDOWN_BYTES_LIMIT = 200_000;
 const GAP_CODES = new Set([
@@ -33,7 +47,7 @@ const LIMITATIONS = Object.freeze([
   "Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Explicit links are not emitted because source-validated PDF annotation targets are not represented by this layout IR; common URL-looking source text is escaped to resist host autolinking.",
-  "Table topology is not represented by this layout IR, so table-like content remains escaped reading-order text rather than a Markdown table.",
+  "Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.",
   "OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.",
   "Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.",
 ]);
@@ -114,11 +128,16 @@ function escapePlainMarkdown(value) {
     .replace(/https?:/giu, match => `${match.slice(0, -1)}&#58;`)
     .replace(/\b(?:[\p{L}\p{N}-]+\.)+[\p{L}]{2,}\b/giu, domain => domain.replace(".", "&#46;"))
     .replace(/@(?=[\p{L}\p{N}.-]+&#46;[\p{L}]{2,})/giu, "&#64;");
+  // A source text item may itself contain LF or CR, which sanitizeUnsafeText
+  // deliberately preserves. Every physical line start must therefore be
+  // guarded, not just the start of the string, or embedded block syntax stays
+  // live. Leading whitespace is matched horizontally so "^" cannot consume the
+  // newline that defines the next line.
   return escaped
-    .replace(/^(\s*)([=-]+)(\s*)$/u, "$1\\$2$3")
-    .replace(/^(\s*)(~{3,})(.*)$/u, "$1\\$2$3")
-    .replace(/^(\s*)([#>+\-=])(?=\s|$)/, "$1\\$2")
-    .replace(/^(\s*)(\d{1,9})([.)])(?=\s)/, "$1$2\\$3");
+    .replace(/^([^\S\r\n]*)([=-]+)([^\S\r\n]*)$/gmu, "$1\\$2$3")
+    .replace(/^([^\S\r\n]*)(~{3,})(.*)$/gmu, "$1\\$2$3")
+    .replace(/^([^\S\r\n]*)([#>+\-=])(?=[^\S\r\n]|$)/gmu, "$1\\$2")
+    .replace(/^([^\S\r\n]*)(\d{1,9})([.)])(?=[^\S\r\n])/gmu, "$1$2\\$3");
 }
 
 function lineFontEvidence(page) {
@@ -167,9 +186,181 @@ function renderLine(line, headingLevel) {
   return escapePlainMarkdown(text);
 }
 
-function pageGaps(page) {
+function itemStartX(item) {
+  if (item.bbox && Number.isFinite(item.bbox.x)) return item.bbox.x;
+  return Number.isFinite(item.x) ? item.x : NaN;
+}
+
+function lineCells(line, itemById) {
+  return line.item_ids
+    .map(id => itemById.get(id))
+    .filter(item => item
+      && item.is_whitespace !== true
+      && typeof item.text === "string"
+      && item.text.trim().length > 0
+      && Number.isFinite(itemStartX(item)));
+}
+
+function columnAnchors(rows) {
+  const xs = rows
+    .flatMap(row => row.cells.map(itemStartX))
+    .sort((left, right) => left - right);
+  const clusters = [];
+  for (const x of xs) {
+    const last = clusters[clusters.length - 1];
+    if (last && x - last.anchor <= TABLE_COLUMN_TOLERANCE_POINTS) {
+      last.values.push(x);
+    } else {
+      clusters.push({ anchor: x, values: [x] });
+    }
+  }
+  return clusters.map(cluster => median(cluster.values));
+}
+
+function nearestAnchor(anchors, x) {
+  let best = -1;
+  for (let index = 0; index < anchors.length; index += 1) {
+    const distance = Math.abs(anchors[index] - x);
+    if (distance > TABLE_COLUMN_TOLERANCE_POINTS) continue;
+    if (best === -1 || distance < Math.abs(anchors[best] - x)) best = index;
+  }
+  return best;
+}
+
+/**
+ * Keep only anchors that recur down the run. A column that appears in a single
+ * line is word placement, not table structure; requiring recurrence is what
+ * stops ordinary prose from being read as a failed table.
+ */
+function columnarAnalysis(run) {
+  const anchors = columnAnchors(run);
+  const rowsPerAnchor = anchors.map(() => new Set());
+  run.forEach((row, rowIndex) => {
+    for (const item of row.cells) {
+      const index = nearestAnchor(anchors, itemStartX(item));
+      if (index !== -1) rowsPerAnchor[index].add(rowIndex);
+    }
+  });
+  const columnar = anchors.filter(
+    (_anchor, index) => rowsPerAnchor[index].size >= TABLE_MIN_COLUMN_ROWS,
+  );
+  const totalCells = run.reduce((total, row) => total + row.cells.length, 0);
+  const covered = run.reduce((total, row) => total + row.cells.filter(
+    item => nearestAnchor(columnar, itemStartX(item)) !== -1,
+  ).length, 0);
+  const coverage = totalCells === 0 ? 0 : covered / totalCells;
+  return {
+    columnar,
+    tableLike: columnar.length >= TABLE_MIN_COLUMNS
+      && coverage >= TABLE_COLUMNAR_COVERAGE,
+  };
+}
+
+function rowHeight(row) {
+  const heights = row.cells.map(item => item.line_height).filter(Number.isFinite);
+  return heights.length > 0 ? median(heights) : null;
+}
+
+/**
+ * A GFM table necessarily promotes its first row to header semantics, so a
+ * geometrically complete grid is not sufficient: emitting one without source
+ * evidence would invent a header.
+ *
+ * Deliberately not evidence: a differing font_name. That field is a synthetic
+ * per-document resource identity, and the same visible font subset or embedded
+ * twice yields different ids, so a difference there does not imply any visible
+ * distinction. Line height is the one stable visual metric this IR exposes.
+ */
+function hasHeaderEvidence(run) {
+  const [header, ...body] = run;
+  if (body.length === 0) return false;
+  const headerHeight = rowHeight(header);
+  const bodyHeights = body.map(rowHeight).filter(Number.isFinite);
+  if (headerHeight === null || bodyHeights.length === 0) return false;
+  const bodyHeight = median(bodyHeights);
+  return bodyHeight > 0 && headerHeight >= bodyHeight * HEADER_HEIGHT_RATIO;
+}
+
+function assignRowToColumns(row, anchors) {
+  const assigned = new Map();
+  for (const item of row.cells) {
+    const index = nearestAnchor(anchors, itemStartX(item));
+    if (index === -1 || assigned.has(index)) return null;
+    const text = item.text.trim();
+    // A newline inside a cell would terminate the row and break the grid.
+    // Such a run is not eligible for table emission.
+    if (/[\r\n]/u.test(text)) return null;
+    assigned.set(index, text);
+  }
+  if (assigned.size !== anchors.length) return null;
+  return anchors.map((_anchor, index) => assigned.get(index));
+}
+
+/**
+ * Partition a page's lines into reading-order segments. Each segment is either
+ * a confidently reconstructed table or a run of ordinary lines. Table-like runs
+ * that cannot be reconstructed are returned as text with tableReason set, so
+ * the caller can report typed partial coverage instead of silently flattening.
+ */
+function segmentPageLines(page) {
+  const itemById = new Map(page.raw_items.map(item => [item.id, item]));
+  const rows = page.lines.map(line => ({ line, cells: lineCells(line, itemById) }));
+  const segments = [];
+  let tableReason = null;
+  let index = 0;
+  while (index < rows.length) {
+    let end = index;
+    while (end < rows.length && rows[end].cells.length >= TABLE_MIN_COLUMNS) end += 1;
+    const run = rows.slice(index, end);
+    if (run.length < TABLE_MIN_ROWS) {
+      segments.push({ kind: "text", rows: rows.slice(index, Math.max(end, index + 1)) });
+      index = Math.max(end, index + 1);
+      continue;
+    }
+    const { columnar, tableLike } = columnarAnalysis(run);
+    const grid = tableLike ? run.map(row => assignRowToColumns(row, columnar)) : null;
+    if (grid && grid.every(Boolean) && hasHeaderEvidence(run)) {
+      segments.push({ kind: "table", rows: run, grid });
+    } else {
+      // Only report a topology gap for runs that actually look columnar.
+      // Ordinary prose that happens to share a left margin must not be
+      // reported as an unreconstructed table.
+      if (tableLike) {
+        tableReason = grid && grid.every(Boolean) ? "header" : "topology";
+      }
+      segments.push({ kind: "text", rows: run });
+    }
+    index = end;
+  }
+  return { segments, tableReason };
+}
+
+// escapePlainMarkdown already escapes "|" (and backslashes before it), so a
+// second pass here would emit "\\|", which is an escaped backslash followed by
+// a live cell delimiter. Reuse the single existing escape.
+function escapeTableCell(value) {
+  return escapePlainMarkdown(value);
+}
+
+function renderTable(grid) {
+  const [header, ...body] = grid;
+  const lines = [
+    `| ${header.map(escapeTableCell).join(" | ")} |`,
+    `| ${header.map(() => "---").join(" | ")} |`,
+    ...body.map(row => `| ${row.map(escapeTableCell).join(" | ")} |`),
+  ];
+  return lines;
+}
+
+function pageGaps(page, analysis) {
   const gaps = [];
   const add = (code, message) => gaps.push({ code, page: page.page, message });
+  if (analysis?.tableReason === "topology") {
+    add("TABLE_TOPOLOGY_UNKNOWN", "Table-like content was detected but its column topology could not be reconstructed, so it remains reading-order text.");
+  }
+  if (analysis?.tableReason === "header") {
+    add("TABLE_TOPOLOGY_UNKNOWN", "A column grid was detected but no source evidence distinguishes a header row, and a Markdown table would impose one, so it remains reading-order text.");
+  }
   if (page.extraction_status === "failed") {
     add("TEXT_LAYER_FAILED", "The page text-layer extraction failed.");
   }
@@ -217,11 +408,16 @@ function pageStatus(page, gaps) {
 
 function renderPage(page) {
   const headings = headingLevels(page);
-  const lines = page.lines.map(line => renderLine(line, headings.get(line.id)));
+  const analysis = segmentPageLines(page);
+  const lines = analysis.segments.flatMap(segment => (
+    segment.kind === "table"
+      ? renderTable(segment.grid)
+      : segment.rows.map(({ line }) => renderLine(line, headings.get(line.id)))
+  ));
   const markdown = lines.length > 0
     ? lines.join("\n")
     : "[No source-backed text was available on this page.]";
-  const gaps = pageGaps(page);
+  const gaps = pageGaps(page, analysis);
   return {
     page: page.page,
     conversion_status: pageStatus(page, gaps),
@@ -359,7 +555,9 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
 /**
  * Render an already source-validated PDF Tools layout IR to deterministic
  * Markdown. This function rechecks IR semantics but deliberately performs no
- * I/O, PDF parsing, rendering, OCR, table inference, or annotation lookup.
+ * I/O, PDF parsing, rendering, OCR, or annotation lookup. Table reconstruction
+ * is bounded to the layout IR's own text-item column geometry; it reads no
+ * ruling lines and infers no merged or spanning cells.
  */
 export function renderPdfLayoutToMarkdown(layout, {
   includePageBoundaries = true,

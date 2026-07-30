@@ -172,8 +172,33 @@ describe("layout Markdown renderer", () => {
     expect(result.pages[2].gaps.map(gap => gap.code)).toEqual(["VECTOR_CONTENT_NOT_INTERPRETED"]);
     expect(result.markdown).toContain("## Conversion gaps");
     expect(result.markdown).toContain("OCR is not performed");
-    expect(result.limitations.some(value => value.includes("Table topology is not represented"))).toBe(true);
+    expect(result.limitations.some(value => value.includes("Ruling lines and merged or spanning cells are not interpreted"))).toBe(true);
     expect(result.limitations.some(value => value.includes("links are not emitted"))).toBe(true);
+  });
+
+  it("escapes block syntax at every physical line start, not just the first", async () => {
+    for (const [label, newline] of [["LF", "\n"], ["CR", "\r"]]) {
+      const layout = await validatedSyntheticLayout([{
+        items: [
+          textItem(`safe${newline}# injected heading`, { top: 50 }),
+          textItem(`safe${newline}> injected quote`, { top: 80 }),
+          textItem(`safe${newline}- injected item`, { top: 110 }),
+          textItem(`safe${newline}~~~ injected fence`, { top: 140 }),
+          textItem(`safe${newline}1. injected ordered`, { top: 170 }),
+        ],
+        operations: [],
+      }]);
+      const { markdown } = renderPdfLayoutToMarkdown(layout);
+      const body = markdown.split("## Conversion limitations")[0];
+      for (const physicalLine of body.split(/\r\n|\r|\n/u)) {
+        expect(physicalLine, `${label} ${physicalLine}`).not.toMatch(/^[^\S\r\n]*#\s/u);
+        expect(physicalLine, `${label} ${physicalLine}`).not.toMatch(/^[^\S\r\n]*>\s/u);
+        expect(physicalLine, `${label} ${physicalLine}`).not.toMatch(/^[^\S\r\n]*-\s/u);
+        expect(physicalLine, `${label} ${physicalLine}`).not.toMatch(/^[^\S\r\n]*~{3,}/u);
+        expect(physicalLine, `${label} ${physicalLine}`).not.toMatch(/^[^\S\r\n]*\d{1,9}[.)]\s/u);
+      }
+      expect(body).toContain("injected heading");
+    }
   });
 
   it("fails closed against the exact UTF-8 Markdown byte limit", async () => {
