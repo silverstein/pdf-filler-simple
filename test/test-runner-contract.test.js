@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
 import { configDefaults } from "vitest/config";
 import viteConfigFactory from "../vite.config.mjs";
+import { extractModuleLoadEvidence } from "../scripts/javascript-module-load-evidence.mjs";
 import {
   NODE_TEST_FILES,
   NODE_TEST_SUITES,
@@ -72,9 +73,6 @@ async function findNodeTestFiles(directory = path.join(repoRoot, "test")) {
   return matches.sort();
 }
 
-const relativeStringReferencePattern = /(["'`])(\.\.?\/[^"'`\r\n]+)\1/g;
-const computedDynamicImportPattern =
-  /(?:^|[^\w.])import\s*\(\s*(?!["'])/g;
 const sourceExtensions = Object.freeze([
   ".js",
   ".mjs",
@@ -85,12 +83,6 @@ const sourceExtensions = Object.freeze([
   ".cts",
   ".tsx",
 ]);
-
-function relativeSourceReferences(source) {
-  return [...source.matchAll(relativeStringReferencePattern)]
-    .filter(match => match[1] !== "`" || !match[2].includes("${"))
-    .map(match => match[2]);
-}
 
 async function findJavaScriptSourceFiles(directory) {
   const matches = [];
@@ -133,7 +125,9 @@ async function localImportGraph(sourceFiles) {
   );
   for (const file of sourceFiles) {
     const source = await fs.readFile(path.join(repoRoot, file), "utf8");
-    for (const reference of relativeSourceReferences(source)) {
+    const evidence = extractModuleLoadEvidence(source, { filename: file });
+    for (const reference of evidence.stringValues.filter(value =>
+      value.startsWith("./") || value.startsWith("../"))) {
       const specifier = reference.split(/[?#]/, 1)[0];
       const unresolved = path.relative(
         repoRoot,
@@ -152,15 +146,25 @@ async function localImportGraph(sourceFiles) {
         throw new Error(`ambiguous local source reference in ${file}: ${reference}`);
       }
       const [target] = targets;
-      if (
-        target
-        && !nonExecutableReferences.has(`${file}\0${target}`)
-      ) {
+      if (target && nonExecutableReferences.has(`${file}\0${target}`)) {
+        if (!exactNewUrlReference(source, file, target)) {
+          throw new Error(
+            `reviewed non-executable source reference changed syntax in ${file}`,
+          );
+        }
+        continue;
+      }
+      if (target) {
         graph.get(file).add(target);
       }
     }
   }
   return graph;
+}
+
+function exactNewUrlReference(source, file, target) {
+  const expectedReference = path.posix.relative(path.posix.dirname(file), target);
+  return source.includes(`new URL("${expectedReference}", import.meta.url)`);
 }
 
 function graphReachesAny(graph, start, targets) {
@@ -178,27 +182,65 @@ function graphReachesAny(graph, start, targets) {
 
 describe("aggregate test-runner contract", () => {
   it("recognizes every supported literal module edge conservatively", () => {
+    const checkerSpecifier = "./source-worktree-" + "state.mjs";
     const source = [
       'import "./side-effect.mjs";',
       'export * from "./reexport.mjs";',
-      'import * as sourceState from "./source-worktree-state.mjs";',
+      `import * as sourceState from "${checkerSpecifier}";`,
       'const dynamic = import("./dynamic.mjs?proof=1");',
       'const commonjs = require("./commonjs.cjs");',
       'const readOnly = new URL("./read-as-data.mjs", import.meta.url);',
     ].join("\n");
-    expect(relativeSourceReferences(source)).toEqual([
+    const evidence = extractModuleLoadEvidence(source);
+    expect(evidence.stringValues.filter(value => value.startsWith("."))).toEqual([
       "./side-effect.mjs",
       "./reexport.mjs",
-      "./source-worktree-state.mjs",
+      checkerSpecifier,
       "./dynamic.mjs?proof=1",
       "./commonjs.cjs",
       "./read-as-data.mjs",
     ]);
-    expect([...source.matchAll(computedDynamicImportPattern)]).toHaveLength(0);
-    expect([
-      ...'import(moduleUrl); import(`./local-${name}.mjs`);'
-        .matchAll(computedDynamicImportPattern),
-    ]).toHaveLength(2);
+    expect(evidence.dynamicImports).toHaveLength(1);
+    expect(evidence.dynamicImports[0]).toMatchObject({
+      literal: "./dynamic.mjs?proof=1",
+    });
+
+    const escapedCheckerSpecifier = ".\\/" + "source-worktree-" + "state.mjs";
+    const adversarial = extractModuleLoadEvidence([
+      'import("./" + moduleName);',
+      'import("." + "/source-worktree-" + "state.mjs");',
+      `import * as escaped from "${escapedCheckerSpecifier}";`,
+      'import(`./local-${name}.mjs`);',
+    ].join("\n"));
+    expect(adversarial.dynamicImports.map(entry => entry.literal)).toEqual([
+      null,
+      null,
+      null,
+    ]);
+    expect(adversarial.dynamicImports.map(entry => entry.fingerprint))
+      .toHaveLength(3);
+    expect(adversarial.stringValues).toContain(checkerSpecifier);
+    expect(extractModuleLoadEvidence(
+      'const nested = `proof:${import(moduleUrl)}`;',
+    ).dynamicImports).toHaveLength(1);
+    expect(extractModuleLoadEvidence(
+      'const decoy = `proof:${"import(moduleUrl)"}`;',
+    ).dynamicImports).toHaveLength(0);
+    expect(extractModuleLoadEvidence("import(firstUrl)").dynamicImports[0]
+      .fingerprint).not.toBe(
+      extractModuleLoadEvidence("import(secondUrl)").dynamicImports[0]
+        .fingerprint,
+    );
+    expect(exactNewUrlReference(
+      'const source = new URL("./source.mjs", import.meta.url);',
+      "test/reader.test.js",
+      "test/source.mjs",
+    )).toBe(true);
+    expect(exactNewUrlReference(
+      'const source = import("./source.mjs");',
+      "test/reader.test.js",
+      "test/source.mjs",
+    )).toBe(false);
 
     const graph = new Map([
       ["suite", new Set(["helper"])],
@@ -263,7 +305,10 @@ describe("aggregate test-runner contract", () => {
       binderSet,
     )).toBe(false);
 
-    const genericCheckerModule = "scripts/source-worktree-state.mjs";
+    const genericCheckerModule = [
+      "scripts/source-worktree-",
+      "state.mjs",
+    ].join("");
     const genericCheckerImporters = allSourceFiles.filter(file =>
       graph.get(file)?.has(genericCheckerModule));
     expect(genericCheckerImporters.sort()).toEqual([
@@ -279,6 +324,11 @@ describe("aggregate test-runner contract", () => {
     expect(Object.isFrozen(REVIEWED_COMPUTED_MODULE_LOADS)).toBe(true);
     expect(Object.isFrozen(SOURCE_IDENTITY_TRANSITIVE_MODULES)).toBe(true);
     expect(Object.isFrozen(SYNTHETIC_SOURCE_IDENTITY_IMPORTERS)).toBe(true);
+    expect(REVIEWED_COMPUTED_MODULE_LOADS.every(entry =>
+      Object.isFrozen(entry)
+      && Object.isFrozen(entry.fingerprints)
+      && entry.fingerprints.length === entry.count
+      && entry.reason.length > 0)).toBe(true);
     expect(new Set(SOURCE_IDENTITY_TEST_FILES).size).toBe(SOURCE_IDENTITY_TEST_FILES.length);
     expect(SOURCE_IDENTITY_TEST_SUITES.every(
       suite => suite.reason.length > 0 && discoveredVitestFiles.includes(suite.file),
@@ -295,11 +345,24 @@ describe("aggregate test-runner contract", () => {
     const discoveredComputedLoads = [];
     for (const file of allSourceFiles) {
       const source = await fs.readFile(path.join(repoRoot, file), "utf8");
-      const count = [...source.matchAll(computedDynamicImportPattern)].length;
-      if (count > 0) discoveredComputedLoads.push({ file, count });
+      const computed = extractModuleLoadEvidence(source, { filename: file })
+        .dynamicImports.filter(entry => entry.literal === null);
+      if (computed.length > 0) {
+        discoveredComputedLoads.push({
+          file,
+          count: computed.length,
+          fingerprints: computed.map(entry => entry.fingerprint),
+        });
+      }
     }
     expect(discoveredComputedLoads).toEqual(
-      REVIEWED_COMPUTED_MODULE_LOADS.map(({ file, count }) => ({ file, count })),
+      REVIEWED_COMPUTED_MODULE_LOADS.map(
+        ({ file, count, fingerprints }) => ({
+          file,
+          count,
+          fingerprints: [...fingerprints],
+        }),
+      ),
     );
   });
 
@@ -809,5 +872,6 @@ describe("aggregate test-runner contract", () => {
         await fs.rm(root, { recursive: true, force: true });
       }
     },
+    15_000,
   );
 });
