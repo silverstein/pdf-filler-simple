@@ -557,7 +557,10 @@ function renderTable(grid) {
  */
 function analyzePageLinks(page, analysis, headings) {
   const links = page.link_annotations;
-  if (!links || links.status !== "available") {
+  // A truncated annotation list cannot prove that an omitted annotation does
+  // not overlap a retained label. Suppress the whole page's explicit-link
+  // projection so the overlap rule remains fail-closed.
+  if (!links || links.status !== "available" || links.truncated === true) {
     return {
       spansByLine: new Map(),
       offsetsByLine: new Map(),
@@ -576,7 +579,7 @@ function analyzePageLinks(page, analysis, headings) {
   return {
     spansByLine: plan.spansByLine,
     offsetsByLine: plan.offsetsByLine,
-    unavailable: links.truncated === true,
+    unavailable: false,
     ambiguous: plan.ambiguous,
     unsupportedTarget: plan.unsupportedTarget,
   };

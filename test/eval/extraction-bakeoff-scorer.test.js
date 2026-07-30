@@ -325,4 +325,3 @@ describe("Markdown table projection", () => {
     expect(score.topology_exact).toBe(false);
   });
 });
-

@@ -377,6 +377,26 @@ describe("layout Markdown renderer", () => {
     expect(result.gaps.map(gap => gap.code)).toContain("LINK_ANNOTATIONS_UNAVAILABLE");
   });
 
+  it("suppresses retained links when omitted annotations could overlap them", async () => {
+    const annotations = [
+      linkAnnotation([49, 727, 75, 740], { url: "https://example.com/retained" }),
+      ...Array.from({ length: 199 }, (_unused, index) => (
+        linkAnnotation([500, 100, 560, 130], { url: `https://example.com/orphan-${index}` })
+      )),
+      // This unsupported overlap falls beyond the retained 200-item prefix.
+      // Emitting the first link would therefore evade the overlap rule.
+      linkAnnotation([49, 727, 75, 740], { dest: ["XYZ"] }),
+    ];
+    const layout = await validatedSyntheticLayout([linkPage(annotations)]);
+    expect(layout.pages[0].link_annotations.items).toHaveLength(200);
+    expect(layout.pages[0].link_annotations.truncated).toBe(true);
+
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown).not.toContain("](https://example.com/retained)");
+    expect(result.markdown).not.toMatch(/\]\(/u);
+    expect(codesOf(result)).toContain("LINK_ANNOTATIONS_UNAVAILABLE");
+  });
+
   it("rejects downgrading available link evidence to unavailable", async () => {
     const layout = await validatedSyntheticLayout([linkPage([
       linkAnnotation([49, 727, 115, 740], { url: "https://example.com/docs" }),

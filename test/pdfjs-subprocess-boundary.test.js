@@ -358,8 +358,12 @@ parentPort.postMessage({
 setInterval(() => {}, 1000);
 `);
     let rendererPid = null;
-    const operation = expect(runPdfjsSubprocess(request(), {
+    const operation = runPdfjsSubprocess(request(), {
       isolationMode: "worker_thread",
+      // The production command allowlist is intentionally macOS-only. This
+      // fixture substitutes the child executable, so pin the injected platform
+      // to the boundary under test instead of inheriting the test host.
+      platform: "darwin",
       spawnProcess(_command, _args, options) {
         const child = spawn(process.execPath, [rendererPath], options);
         rendererPid = child.pid;
@@ -367,16 +371,19 @@ setInterval(() => {}, 1000);
       },
       timeoutMs: 500,
       workerPath,
-    })).rejects.toMatchObject({
-      code: PDF_RESOURCE_LIMIT_CODE,
-      reason: "wall_timeout",
     });
+    // Observe the rejection immediately while delaying the assertion until the
+    // fixture has captured the nested child PID.
+    void operation.catch(() => {});
     const deadline = Date.now() + 2000;
     while (rendererPid === null && Date.now() < deadline) {
       await new Promise(resolve => setTimeout(resolve, 20));
     }
     expect(rendererPid).not.toBeNull();
-    await operation;
+    await expect(operation).rejects.toMatchObject({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason: "wall_timeout",
+    });
     expect(() => process.kill(rendererPid, 0)).toThrow(
       expect.objectContaining({ code: "ESRCH" }),
     );
