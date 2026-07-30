@@ -163,7 +163,8 @@ async function localImportGraph(sourceFiles) {
 }
 
 function exactNewUrlReference(source, file, target) {
-  const expectedReference = path.posix.relative(path.posix.dirname(file), target);
+  const relative = path.posix.relative(path.posix.dirname(file), target);
+  const expectedReference = relative.startsWith(".") ? relative : `./${relative}`;
   return source.includes(`new URL("${expectedReference}", import.meta.url)`);
 }
 
