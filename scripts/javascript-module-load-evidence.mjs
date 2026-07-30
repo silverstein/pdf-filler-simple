@@ -26,6 +26,12 @@ function regexCanStart(source, start) {
   let index = start - 1;
   while (index >= 0 && /\s/.test(source[index])) index -= 1;
   if (index < 0) return true;
+  if (
+    (source[index] === "+" || source[index] === "-")
+    && source[index - 1] === source[index]
+  ) {
+    return false;
+  }
   if ("([{:;,=!?&|+-*%^~<>".includes(source[index])) return true;
   if (!isIdentifierCharacter(source[index])) return false;
   const end = index + 1;
@@ -203,7 +209,10 @@ function readTemplateLiteral(source, start, filename) {
       interpolated = true;
       const expressionStart = index + 2;
       index = skipBracedTemplateExpression(source, expressionStart, filename);
-      interpolations.push(source.slice(expressionStart, index - 1));
+      interpolations.push(Object.freeze({
+        source: source.slice(expressionStart, index - 1),
+        start: expressionStart,
+      }));
       continue;
     }
     index += 1;
@@ -239,9 +248,12 @@ function readParenthesizedExpression(source, start, filename) {
     if (source[index] === ")") {
       depth -= 1;
       if (depth === 0) {
+        const rawExpression = source.slice(start + 1, index);
         return {
           end: index + 1,
-          expression: source.slice(start + 1, index).trim(),
+          expression: rawExpression.trim(),
+          expressionStart: start + 1,
+          rawExpression,
         };
       }
     }
@@ -261,15 +273,46 @@ function completeLiteralValue(expression, filename) {
   return end === expression.length ? literal.value : null;
 }
 
+function completeImportMetaUrlReference(expression, filename) {
+  let index = skipTrivia(expression, 0, filename);
+  if (!["'", '"', "`"].includes(expression[index])) return null;
+  const literalStart = index;
+  const literal = expression[index] === "`"
+    ? readTemplateLiteral(expression, index, filename)
+    : readQuotedLiteral(expression, index, filename);
+  if (literal.value === null) return null;
+  index = skipTrivia(expression, literal.end, filename);
+  if (expression[index] !== ",") return null;
+  index = skipTrivia(expression, index + 1, filename);
+  const authority = "import.meta.url";
+  if (!expression.startsWith(authority, index)) return null;
+  index = skipTrivia(expression, index + authority.length, filename);
+  return index === expression.length
+    ? Object.freeze({
+        end: literal.end,
+        literal: literal.value,
+        start: literalStart,
+      })
+    : null;
+}
+
 export function extractModuleLoadEvidence(
   source,
-  { filename = "JavaScript source" } = {},
+  {
+    filename = "JavaScript source",
+    sourceOffset = 0,
+  } = {},
 ) {
   if (typeof source !== "string") {
     throw new TypeError("module-load evidence source must be a string");
   }
+  if (!Number.isSafeInteger(sourceOffset) || sourceOffset < 0) {
+    throw new TypeError("module-load evidence sourceOffset must be a nonnegative integer");
+  }
   const stringValues = [];
+  const stringLiterals = [];
   const dynamicImports = [];
+  const newUrlReferences = [];
   let index = 0;
   while (index < source.length) {
     if (source.startsWith("//", index)) {
@@ -287,19 +330,85 @@ export function extractModuleLoadEvidence(
     if (source[index] === "'" || source[index] === '"') {
       const literal = readQuotedLiteral(source, index, filename);
       stringValues.push(literal.value);
+      stringLiterals.push(Object.freeze({
+        end: sourceOffset + literal.end,
+        start: sourceOffset + index,
+        value: literal.value,
+      }));
       index = literal.end;
       continue;
     }
     if (source[index] === "`") {
       const literal = readTemplateLiteral(source, index, filename);
-      if (literal.value !== null) stringValues.push(literal.value);
+      if (literal.value !== null) {
+        stringValues.push(literal.value);
+        stringLiterals.push(Object.freeze({
+          end: sourceOffset + literal.end,
+          start: sourceOffset + index,
+          value: literal.value,
+        }));
+      }
       for (const interpolation of literal.interpolations) {
-        const nested = extractModuleLoadEvidence(interpolation, { filename });
+        const nested = extractModuleLoadEvidence(interpolation.source, {
+          filename,
+          sourceOffset: sourceOffset + interpolation.start,
+        });
         stringValues.push(...nested.stringValues);
+        stringLiterals.push(...nested.stringLiterals);
         dynamicImports.push(...nested.dynamicImports);
+        newUrlReferences.push(...nested.newUrlReferences);
       }
       index = literal.end;
       continue;
+    }
+    if (
+      source.startsWith("new", index)
+      && !isIdentifierCharacter(source[index - 1])
+      && source[index - 1] !== "."
+      && !isIdentifierCharacter(source[index + 3])
+    ) {
+      const urlStart = skipTrivia(source, index + 3, filename);
+      if (
+        source.startsWith("URL", urlStart)
+        && !isIdentifierCharacter(source[urlStart - 1])
+        && !isIdentifierCharacter(source[urlStart + 3])
+      ) {
+        const parenthesis = skipTrivia(source, urlStart + 3, filename);
+        if (source[parenthesis] === "(") {
+          const loaded = readParenthesizedExpression(
+            source,
+            parenthesis,
+            filename,
+          );
+          const nested = extractModuleLoadEvidence(loaded.rawExpression, {
+            filename,
+            sourceOffset: sourceOffset + loaded.expressionStart,
+          });
+          stringValues.push(...nested.stringValues);
+          stringLiterals.push(...nested.stringLiterals);
+          dynamicImports.push(...nested.dynamicImports);
+          newUrlReferences.push(...nested.newUrlReferences);
+          const reference = completeImportMetaUrlReference(
+            loaded.rawExpression,
+            filename,
+          );
+          if (reference !== null) {
+            newUrlReferences.push(Object.freeze({
+              expression: loaded.expression,
+              end: sourceOffset + loaded.end,
+              kind: "new-url-import-meta",
+              literal: reference.literal,
+              referenceEnd:
+                sourceOffset + loaded.expressionStart + reference.end,
+              referenceStart:
+                sourceOffset + loaded.expressionStart + reference.start,
+              start: sourceOffset + index,
+            }));
+          }
+          index = loaded.end;
+          continue;
+        }
+      }
     }
     if (
       source.startsWith("import", index)
@@ -315,16 +424,22 @@ export function extractModuleLoadEvidence(
           filename,
         );
         const literal = completeLiteralValue(loaded.expression, filename);
-        const nested = extractModuleLoadEvidence(loaded.expression, {
+        const nested = extractModuleLoadEvidence(loaded.rawExpression, {
           filename,
+          sourceOffset: sourceOffset + loaded.expressionStart,
         });
         stringValues.push(...nested.stringValues);
+        stringLiterals.push(...nested.stringLiterals);
         dynamicImports.push(Object.freeze({
+          end: sourceOffset + loaded.end,
           expression: loaded.expression,
           fingerprint: sha256(loaded.expression),
+          kind: "dynamic-import",
           literal,
+          start: sourceOffset + index,
         }));
         dynamicImports.push(...nested.dynamicImports);
+        newUrlReferences.push(...nested.newUrlReferences);
         index = loaded.end;
         continue;
       }
@@ -333,6 +448,8 @@ export function extractModuleLoadEvidence(
   }
   return Object.freeze({
     dynamicImports: Object.freeze(dynamicImports),
+    newUrlReferences: Object.freeze(newUrlReferences),
+    stringLiterals: Object.freeze(stringLiterals),
     stringValues: Object.freeze(stringValues),
   });
 }

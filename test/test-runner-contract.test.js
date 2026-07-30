@@ -116,6 +116,59 @@ async function findJavaScriptSourceFiles(directory) {
   return matches;
 }
 
+function relativeModuleSpecifier(file, target) {
+  const relative = path.posix.relative(path.posix.dirname(file), target);
+  return relative.startsWith(".") ? relative : `./${relative}`;
+}
+
+function localImportTargets({
+  evidence,
+  file,
+  nonExecutableReferences,
+  sourceFileSet,
+}) {
+  const targetsForFile = new Set();
+  for (const occurrence of evidence.stringLiterals.filter(entry =>
+    entry.value.startsWith("./") || entry.value.startsWith("../"))) {
+    const reference = occurrence.value;
+    const specifier = reference.split(/[?#]/, 1)[0];
+    const unresolved = path.relative(
+      repoRoot,
+      path.resolve(path.dirname(path.join(repoRoot, file)), specifier),
+    ).split(path.sep).join("/");
+    const extension = path.posix.extname(unresolved);
+    const candidates = extension
+      ? [unresolved]
+      : [
+          unresolved,
+          ...sourceExtensions.map(suffix => `${unresolved}${suffix}`),
+          ...sourceExtensions.map(suffix => `${unresolved}/index${suffix}`),
+        ];
+    const targets = candidates.filter(candidate => sourceFileSet.has(candidate));
+    if (targets.length > 1) {
+      throw new Error(`ambiguous local source reference in ${file}: ${reference}`);
+    }
+    const [target] = targets;
+    if (!target) continue;
+    const exemptionKey = `${file}\0${target}`;
+    if (nonExecutableReferences.has(exemptionKey)) {
+      const expectedReference = relativeModuleSpecifier(file, target);
+      const exactDataReads = evidence.newUrlReferences.filter(
+        entry => entry.literal === expectedReference,
+      );
+      if (
+        exactDataReads.length === 1
+        && occurrence.start === exactDataReads[0].referenceStart
+        && occurrence.end === exactDataReads[0].referenceEnd
+      ) {
+        continue;
+      }
+    }
+    targetsForFile.add(target);
+  }
+  return targetsForFile;
+}
+
 async function localImportGraph(sourceFiles) {
   const graph = new Map(sourceFiles.map(file => [file, new Set()]));
   const sourceFileSet = new Set(sourceFiles);
@@ -126,46 +179,14 @@ async function localImportGraph(sourceFiles) {
   for (const file of sourceFiles) {
     const source = await fs.readFile(path.join(repoRoot, file), "utf8");
     const evidence = extractModuleLoadEvidence(source, { filename: file });
-    for (const reference of evidence.stringValues.filter(value =>
-      value.startsWith("./") || value.startsWith("../"))) {
-      const specifier = reference.split(/[?#]/, 1)[0];
-      const unresolved = path.relative(
-        repoRoot,
-        path.resolve(path.dirname(path.join(repoRoot, file)), specifier),
-      ).split(path.sep).join("/");
-      const extension = path.posix.extname(unresolved);
-      const candidates = extension
-        ? [unresolved]
-        : [
-            unresolved,
-            ...sourceExtensions.map(suffix => `${unresolved}${suffix}`),
-            ...sourceExtensions.map(suffix => `${unresolved}/index${suffix}`),
-          ];
-      const targets = candidates.filter(candidate => sourceFileSet.has(candidate));
-      if (targets.length > 1) {
-        throw new Error(`ambiguous local source reference in ${file}: ${reference}`);
-      }
-      const [target] = targets;
-      if (target && nonExecutableReferences.has(`${file}\0${target}`)) {
-        if (!exactNewUrlReference(source, file, target)) {
-          throw new Error(
-            `reviewed non-executable source reference changed syntax in ${file}`,
-          );
-        }
-        continue;
-      }
-      if (target) {
-        graph.get(file).add(target);
-      }
-    }
+    graph.set(file, localImportTargets({
+      evidence,
+      file,
+      nonExecutableReferences,
+      sourceFileSet,
+    }));
   }
   return graph;
-}
-
-function exactNewUrlReference(source, file, target) {
-  const relative = path.posix.relative(path.posix.dirname(file), target);
-  const expectedReference = relative.startsWith(".") ? relative : `./${relative}`;
-  return source.includes(`new URL("${expectedReference}", import.meta.url)`);
 }
 
 function graphReachesAny(graph, start, targets) {
@@ -232,16 +253,42 @@ describe("aggregate test-runner contract", () => {
       extractModuleLoadEvidence("import(secondUrl)").dynamicImports[0]
         .fingerprint,
     );
-    expect(exactNewUrlReference(
+    expect(extractModuleLoadEvidence(
+      "counter++ / import(moduleUrl) / divisor;",
+    ).dynamicImports).toHaveLength(1);
+    expect(extractModuleLoadEvidence(
+      "counter-- / import(otherUrl) / divisor;",
+    ).dynamicImports).toHaveLength(1);
+    expect(extractModuleLoadEvidence(
+      "const decoy = / import(decoyUrl) /;",
+    ).dynamicImports).toHaveLength(0);
+    expect(extractModuleLoadEvidence(
+      'const nested = `outer:${`inner:${import(nestedUrl)}`}`;',
+    ).dynamicImports).toHaveLength(1);
+
+    const readerFile = "test/reader.test.js";
+    const readerTarget = "test/source.mjs";
+    const sourceFileSet = new Set([readerFile, readerTarget]);
+    const nonExecutableReferences = new Set([
+      `${readerFile}\0${readerTarget}`,
+    ]);
+    const targetsFor = source => localImportTargets({
+      evidence: extractModuleLoadEvidence(source),
+      file: readerFile,
+      nonExecutableReferences,
+      sourceFileSet,
+    });
+    expect(targetsFor(
       'const source = new URL("./source.mjs", import.meta.url);',
-      "test/reader.test.js",
-      "test/source.mjs",
-    )).toBe(true);
-    expect(exactNewUrlReference(
-      'const source = import("./source.mjs");',
-      "test/reader.test.js",
-      "test/source.mjs",
-    )).toBe(false);
+    )).toEqual(new Set());
+    expect(targetsFor([
+      'const source = new URL("./source.mjs", import.meta.url);',
+      'await import("./source.mjs");',
+    ].join("\n"))).toEqual(new Set([readerTarget]));
+    expect(targetsFor([
+      '// const source = new URL("./source.mjs", import.meta.url);',
+      'await import("./source.mjs");',
+    ].join("\n"))).toEqual(new Set([readerTarget]));
 
     const graph = new Map([
       ["suite", new Set(["helper"])],
