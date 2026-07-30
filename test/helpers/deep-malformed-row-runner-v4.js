@@ -51,7 +51,7 @@ const NORMALIZED_STRING_PROTOCOL =
 const CALL_CLOCK_SKEW_MS = 1_000;
 const MAX_REQUEST_BYTES = 256 * 1024;
 const RAW_INTERNAL_PATTERN =
-  /(?:node_modules[\\/]|node:internal[\\/]|(?:file|webpack):\/\/|\/Users\/|\/home\/|\/private\/var\/|[A-Za-z]:\\|at\s+\S+\s+\([^)]*:\d+:\d+\)|at\s+(?:processTicksAndRejections|runMicrotasks)\b|\b(?:TypeError|ReferenceError|SyntaxError|RangeError|EvalError|URIError|AggregateError|AssertionError):)/;
+  /(?:node_modules[\\/]|node:internal[\\/]|(?:file|webpack):\/\/|\/Users\/|\/home\/|\/private\/var\/|\/var\/folders\/|[A-Za-z]:\\|at\s+\S+\s+\([^)]*:\d+:\d+\)|at\s+(?:processTicksAndRejections|runMicrotasks)\b|\b(?:TypeError|ReferenceError|SyntaxError|RangeError|EvalError|URIError|AggregateError|AssertionError):)/;
 const SHA256 = /^[a-f0-9]{64}$/;
 const CONTROL_PDF_BYTES = 728;
 const CONTROL_PDF_SHA256 =
