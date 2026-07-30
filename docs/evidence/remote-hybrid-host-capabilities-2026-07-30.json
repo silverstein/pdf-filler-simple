@@ -1,0 +1,497 @@
+{
+  "schema_version": "pdf-tools.remote-hybrid-host-capabilities.v1",
+  "as_of": "2026-07-30",
+  "claim_boundary": "Dated official-documentation inventory. A documented host capability is not evidence that this exact PDF Tools source, MCPB, a future remote service, or any workflow works in that host. Rows marked unverified remain unverified.",
+  "source_policy": "Technical capability claims use first-party OpenAI, Anthropic, or Model Context Protocol documentation retrieved on 2026-07-30.",
+  "retrieval_receipt": {
+    "checked_at": "2026-07-30T02:09:44Z",
+    "method": "Live HTTPS retrieval with redirect following plus bounded manual review of the named sections.",
+    "observed_final_url_status": "18_of_18_http_200",
+    "limitation": "Live status and manual review bind this dated ledger but do not make mutable web documentation immutable or automate source truth."
+  },
+  "manual_review_receipts": [
+    {
+      "source_id": "mcp-2026-07-28-transport-overview",
+      "relevant_sections": ["Messages", "Request Metadata", "Backward Compatibility"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "mcp-2026-07-28-streamable-http",
+      "relevant_sections": ["Security & Endpoint", "Sending Messages", "Request Metadata", "Server Validation"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "mcp-2026-07-28-authorization",
+      "relevant_sections": ["Overview", "Authorization Response Validation", "Access Token Usage"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "mcp-2026-07-28-auth-security",
+      "relevant_sections": ["Security Considerations"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "mcp-2026-07-28-discovery",
+      "relevant_sections": ["Server Discovery"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "mcp-tasks-overview",
+      "relevant_sections": ["How Tasks work", "Client support", "Specification"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "mcp-tasks-draft-pinned",
+      "relevant_sections": ["Draft", "Tasks"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "mcp-apps-overview",
+      "relevant_sections": ["How MCP Apps work", "Security model", "Client support"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "anthropic-remote-connectors",
+      "relevant_sections": ["Network requirements", "Security and privacy considerations"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "anthropic-cowork-architecture",
+      "relevant_sections": ["Remote session architecture", "Local session architecture"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "anthropic-cowork-surfaces",
+      "relevant_sections": ["What's available on each surface", "What requires the desktop app"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "anthropic-messages-mcp-connector",
+      "relevant_sections": ["Key features", "Limitations"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "anthropic-api-retention",
+      "relevant_sections": ["Feature eligibility"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "openai-codex-mcp",
+      "relevant_sections": ["Supported MCP features", "Use MCP-backed tools in ChatGPT web"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "openai-plugin-mcp-server",
+      "relevant_sections": ["Authenticate and authorize requests", "Deploy the endpoint"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "openai-plugin-auth",
+      "relevant_sections": ["Custom auth with OAuth 2.1", "Implementing token verification"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "openai-mcp-apps-ui",
+      "relevant_sections": ["Start with MCP Apps", "Layer on ChatGPT extensions"],
+      "verdict": "supports_bounded_claims"
+    },
+    {
+      "source_id": "openai-codex-cloud-environment",
+      "relevant_sections": ["How Codex cloud chats run", "Internet access and network proxy"],
+      "verdict": "supports_bounded_claims"
+    }
+  ],
+  "sources": [
+    {
+      "id": "mcp-2026-07-28-transport-overview",
+      "publisher": "Model Context Protocol",
+      "title": "Transports overview, specification 2026-07-28",
+      "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/transports",
+      "supports": [
+        "stdio and Streamable HTTP are standard bindings",
+        "each Streamable HTTP message is an independent POST",
+        "protocol metadata travels per request",
+        "earlier revisions use a different session era"
+      ]
+    },
+    {
+      "id": "mcp-2026-07-28-streamable-http",
+      "publisher": "Model Context Protocol",
+      "title": "Streamable HTTP, specification 2026-07-28",
+      "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/transports/streamable-http",
+      "supports": [
+        "single POST endpoint",
+        "protocol sessions and GET stream endpoint removed",
+        "Origin validation on incoming connections, with HTTP 403 required when a present Origin is invalid",
+        "Accept must include application/json and text/event-stream",
+        "per-request body metadata is authoritative",
+        "MCP-Protocol-Version and Mcp-Method header requirements",
+        "Mcp-Name conditional header requirement",
+        "header and body mismatch rejection",
+        "backward compatibility behavior"
+      ]
+    },
+    {
+      "id": "mcp-2026-07-28-authorization",
+      "publisher": "Model Context Protocol",
+      "title": "Authorization, specification 2026-07-28",
+      "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization",
+      "supports": [
+        "OAuth 2.1 resource server model for HTTP",
+        "protected resource and authorization server metadata",
+        "issuer response validation",
+        "least-privilege and step-up scope behavior",
+        "resource audience binding",
+        "bearer token on every HTTP request and never in a URI"
+      ]
+    },
+    {
+      "id": "mcp-2026-07-28-auth-security",
+      "publisher": "Model Context Protocol",
+      "title": "Authorization security considerations, specification 2026-07-28",
+      "url": "https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization/security-considerations",
+      "supports": [
+        "authorization threat boundary",
+        "token and client security requirements"
+      ]
+    },
+    {
+      "id": "mcp-2026-07-28-discovery",
+      "publisher": "Model Context Protocol",
+      "title": "Server discovery, specification 2026-07-28",
+      "url": "https://modelcontextprotocol.io/specification/2026-07-28/server/discover",
+      "supports": [
+        "server/discover replaces connection-scoped bootstrap for current protocol clients",
+        "server capabilities are explicitly discoverable"
+      ]
+    },
+    {
+      "id": "mcp-tasks-overview",
+      "publisher": "Model Context Protocol",
+      "title": "MCP Tasks overview",
+      "url": "https://modelcontextprotocol.io/extensions/tasks/overview",
+      "supports": [
+        "Tasks is an optional negotiated extension",
+        "server must not return a task to a client that did not advertise support",
+        "task creation is durable before handle return",
+        "tasks/get, tasks/update, and tasks/cancel lifecycle",
+        "cancellation is cooperative"
+      ]
+    },
+    {
+      "id": "mcp-tasks-draft-pinned",
+      "publisher": "Model Context Protocol",
+      "title": "MCP Tasks extension draft pinned on 2026-07-30",
+      "url": "https://tasks.extensions.modelcontextprotocol.io/specification/draft/tasks",
+      "lifecycle_status": "experimental_draft",
+      "git_commit": "2c1425d9a288b9b1f489430fe1e00bb392b47e48",
+      "retrieved_content_sha256": "47323a5cce67ffd0e366cf53cf4462260c647c05d850a30a9a6cec9a37b44a20",
+      "supports": [
+        "Tasks extension is a draft experimental surface",
+        "extension identifier is io.modelcontextprotocol/tasks",
+        "current draft has tasks/get, tasks/update, and tasks/cancel",
+        "task support is signaled in per-request capabilities"
+      ]
+    },
+    {
+      "id": "mcp-apps-overview",
+      "publisher": "Model Context Protocol",
+      "title": "MCP Apps overview",
+      "url": "https://modelcontextprotocol.io/extensions/apps/overview",
+      "supports": [
+        "MCP Apps is an optional extension with host-varying support",
+        "sandboxed iframe and postMessage security boundary",
+        "PDF review and approval are suitable rich UI workflows",
+        "capabilities remain host controlled"
+      ]
+    },
+    {
+      "id": "anthropic-remote-connectors",
+      "publisher": "Anthropic",
+      "title": "Get started with custom connectors using remote MCP",
+      "url": "https://support.claude.com/en/articles/11175166-get-started-with-custom-connectors-using-remote-mcp",
+      "supports": [
+        "remote custom connectors are available across Claude clients",
+        "connections originate in Anthropic cloud infrastructure",
+        "server must be publicly reachable from Anthropic infrastructure",
+        "local Claude Desktop MCP is a separate mechanism",
+        "local MCP is not available in Cowork or claude.ai through this connector mechanism",
+        "OAuth and per-conversation enablement behavior"
+      ]
+    },
+    {
+      "id": "anthropic-cowork-architecture",
+      "publisher": "Anthropic",
+      "title": "Claude Cowork architecture overview",
+      "url": "https://support.claude.com/en/articles/14479288-claude-cowork-architecture-overview",
+      "supports": [
+        "Cowork sessions are remote by default with a separate existing local mode",
+        "remote sandbox is temporary and network restricted",
+        "connector authorization tokens remain server side",
+        "connected local files are processed on Anthropic servers in remote sessions",
+        "local MCP servers run in local sessions and do not run in remote sessions",
+        "remote folder bridge requires Claude Desktop online and bounded folder permission"
+      ]
+    },
+    {
+      "id": "anthropic-cowork-surfaces",
+      "publisher": "Anthropic",
+      "title": "Use Claude Cowork on web, desktop, and mobile",
+      "url": "https://support.claude.com/en/articles/15520349-use-claude-cowork-on-web-desktop-and-mobile",
+      "supports": [
+        "remote sessions follow the Claude account across surfaces",
+        "desktop bridge is required for remote access to connected local folders",
+        "local connectors and plugins containing local MCP work through the desktop app",
+        "host capabilities differ by surface and rollout"
+      ]
+    },
+    {
+      "id": "anthropic-messages-mcp-connector",
+      "publisher": "Anthropic",
+      "title": "MCP connector, Claude Platform",
+      "url": "https://platform.claude.com/docs/en/agents-and-tools/mcp-connector",
+      "supports": [
+        "Messages API can call remote MCP tools",
+        "remote server must be public HTTP",
+        "local stdio cannot connect directly",
+        "only tool calls from the MCP feature set are currently supported",
+        "feature is not eligible for Zero Data Retention"
+      ]
+    },
+    {
+      "id": "anthropic-api-retention",
+      "publisher": "Anthropic",
+      "title": "API and data retention",
+      "url": "https://platform.claude.com/docs/en/manage-claude/api-and-data-retention",
+      "supports": [
+        "MCP connector is not eligible for Zero Data Retention",
+        "MCP connector data is retained under the standard policy"
+      ]
+    },
+    {
+      "id": "openai-codex-mcp",
+      "publisher": "OpenAI",
+      "title": "Model Context Protocol",
+      "url": "https://learn.chatgpt.com/docs/extend/mcp",
+      "supports": [
+        "local Codex hosts support stdio and Streamable HTTP",
+        "Streamable HTTP supports bearer token and OAuth authentication",
+        "ChatGPT desktop app, Codex CLI, and IDE share local host configuration",
+        "hosted ChatGPT Work chats use plugin remote MCP tools and not local Codex configuration",
+        "tool approval policy is host configurable"
+      ]
+    },
+    {
+      "id": "openai-plugin-mcp-server",
+      "publisher": "OpenAI",
+      "title": "Build an MCP server",
+      "url": "https://developers.openai.com/plugins/build/mcp-server",
+      "supports": [
+        "published plugin endpoint is stable publicly reachable HTTPS",
+        "authorization must be enforced by the server for every request",
+        "tool annotations do not replace authorization or confirmation",
+        "public submission requires Streamable HTTP",
+        "document content and credentials must be excluded from logs",
+        "ChatGPT developer mode is not public submission evidence"
+      ]
+    },
+    {
+      "id": "openai-plugin-auth",
+      "publisher": "OpenAI",
+      "title": "Authentication",
+      "url": "https://developers.openai.com/plugins/build/auth",
+      "supports": [
+        "ChatGPT and Codex use the MCP authorization contract",
+        "OAuth 2.1 authorization code with PKCE",
+        "protected resource metadata and authorization server discovery",
+        "issuer, audience, expiration, scope, and signature validation on every request",
+        "mTLS can identify ChatGPT as client but OAuth identifies and authorizes the end user"
+      ]
+    },
+    {
+      "id": "openai-mcp-apps-ui",
+      "publisher": "OpenAI",
+      "title": "Add UI to your MCP server",
+      "url": "https://developers.openai.com/plugins/build/chatgpt-ui",
+      "supports": [
+        "ChatGPT implements the MCP Apps bridge",
+        "tools should remain useful without UI",
+        "portable MCP Apps methods should precede ChatGPT-specific extensions",
+        "file selection, upload, and download APIs are ChatGPT-specific extensions that require feature detection"
+      ]
+    },
+    {
+      "id": "openai-codex-cloud-environment",
+      "publisher": "OpenAI",
+      "title": "Cloud environments",
+      "url": "https://learn.chatgpt.com/docs/environments/cloud-environment",
+      "supports": [
+        "Codex cloud checks out a repository into an isolated managed container",
+        "agent internet access is off by default and policy controlled",
+        "cloud secrets are removed before the agent phase",
+        "cloud environment is not the user's ambient local filesystem"
+      ]
+    }
+  ],
+  "hosts": [
+    {
+      "id": "claude-desktop-local-chat",
+      "connection": "local_stdio_mcpb",
+      "document_custody": "local_device_under_existing_pdf_tools_controls",
+      "status": "current_product_surface",
+      "exact_pdf_tools_evidence": "existing_release_and_project_evidence_only_not_refreshed_by_this_ledger",
+      "source_ids": [
+        "anthropic-remote-connectors",
+        "anthropic-cowork-architecture"
+      ]
+    },
+    {
+      "id": "claude-cowork-remote-session",
+      "connection": "remote_connector_or_desktop_brokered_folder_or_local_connector_tools",
+      "document_custody": "anthropic_remote_processing_for_any_opened_connected_file",
+      "local_mcp_directly_in_session": false,
+      "local_mcp_inside_remote_sandbox": false,
+      "desktop_folder_bridge": "documented_when_desktop_online_and_folder_connected",
+      "desktop_brokered_local_connector_or_plugin_mcp": "documented_host_path_exact_pdf_tools_mcpb_requires_native_host_proof",
+      "status": "documented_host_capability_exact_pdf_tools_unverified",
+      "source_ids": [
+        "anthropic-remote-connectors",
+        "anthropic-cowork-architecture",
+        "anthropic-cowork-surfaces"
+      ]
+    },
+    {
+      "id": "claude-cowork-existing-local-session",
+      "connection": "desktop_local_session_with_local_plugin_mcp",
+      "document_custody": "local_device_for_local_tool_execution_with_provider_conversation_processing_boundary",
+      "status": "documented_existing_mode_rollout_and_exact_pdf_tools_unverified",
+      "source_ids": [
+        "anthropic-cowork-architecture",
+        "anthropic-cowork-surfaces"
+      ]
+    },
+    {
+      "id": "claude-custom-remote-connector",
+      "connection": "public_http_remote_mcp",
+      "document_custody": "service_defined_plus_anthropic_processing",
+      "status": "documented_tools_only_exact_pdf_tools_unverified",
+      "constraints": [
+        "publicly reachable from Anthropic infrastructure",
+        "OAuth recommended for private data or actions",
+        "Messages API MCP connector currently supports tool calls only",
+        "Messages API MCP connector is not Zero Data Retention eligible"
+      ],
+      "source_ids": [
+        "anthropic-remote-connectors",
+        "anthropic-messages-mcp-connector",
+        "anthropic-api-retention"
+      ]
+    },
+    {
+      "id": "chatgpt-web-work",
+      "connection": "hosted_plugin_remote_mcp",
+      "document_custody": "service_defined_plus_openai_processing",
+      "local_codex_config_available": false,
+      "status": "documented_remote_plugin_surface_exact_pdf_tools_unverified",
+      "source_ids": [
+        "openai-codex-mcp",
+        "openai-plugin-mcp-server",
+        "openai-plugin-auth"
+      ]
+    },
+    {
+      "id": "codex-local-host",
+      "connection": "stdio_or_streamable_http",
+      "document_custody": "local_for_stdio_or_service_defined_for_remote_http",
+      "status": "documented_connection_surface_exact_pdf_tools_unverified",
+      "source_ids": [
+        "openai-codex-mcp"
+      ]
+    },
+    {
+      "id": "codex-cloud",
+      "connection": "repository_in_managed_cloud_environment",
+      "document_custody": "cloud_checkout_and_environment_not_ambient_user_filesystem",
+      "remote_mcp_for_exact_pdf_tools": "not_established_by_current_sources",
+      "status": "workflow_adapter_candidate_not_remote_pdf_tools_compatibility_evidence",
+      "source_ids": [
+        "openai-codex-cloud-environment"
+      ]
+    },
+    {
+      "id": "generic_mcp-2026-07-28-remote-client",
+      "connection": "streamable_http",
+      "document_custody": "application_defined",
+      "status": "protocol_contract_not_host_compatibility",
+      "constraints": [
+        "per-request protocol and client metadata",
+        "required header and body validation",
+        "no protocol-level HTTP sessions",
+        "Tasks and Apps require separate host capability evidence"
+      ],
+      "source_ids": [
+        "mcp-2026-07-28-streamable-http",
+        "mcp-2026-07-28-authorization",
+        "mcp-tasks-overview",
+        "mcp-apps-overview"
+      ]
+    }
+  ],
+  "cross_host_conclusions": [
+    {
+      "id": "C01",
+      "conclusion": "The current local MCPB and a future remote service are sibling surfaces with different custody, authentication, deployment, and evidence boundaries.",
+      "source_ids": [
+        "anthropic-remote-connectors",
+        "openai-codex-mcp",
+        "mcp-2026-07-28-streamable-http"
+      ]
+    },
+    {
+      "id": "C02",
+      "conclusion": "A remote Cowork session's connected-folder bridge is an Anthropic host feature, not a mechanism by which a remote MCP server invokes the local PDF Tools MCPB.",
+      "source_ids": [
+        "anthropic-cowork-architecture",
+        "anthropic-cowork-surfaces"
+      ]
+    },
+    {
+      "id": "C03",
+      "conclusion": "MCP Apps and Tasks must be capability detected and independently qualified per host; neither is a universal portability claim.",
+      "source_ids": [
+        "mcp-apps-overview",
+        "mcp-tasks-overview",
+        "openai-mcp-apps-ui"
+      ]
+    },
+    {
+      "id": "C04",
+      "conclusion": "Production remote document processing requires explicit upload consent and server-enforced user, tenant, object, action, retention, and deletion controls beyond host approvals.",
+      "source_ids": [
+        "mcp-2026-07-28-authorization",
+        "openai-plugin-mcp-server",
+        "openai-plugin-auth",
+        "anthropic-remote-connectors"
+      ]
+    },
+    {
+      "id": "C05",
+      "conclusion": "Current sources do not establish exact PDF Tools compatibility with Cowork, ChatGPT, Codex cloud, Tasks, or cross-host MCP Apps.",
+      "source_ids": [
+        "anthropic-cowork-architecture",
+        "openai-codex-mcp",
+        "openai-codex-cloud-environment",
+        "mcp-apps-overview",
+        "mcp-tasks-overview"
+      ]
+    },
+    {
+      "id": "C06",
+      "conclusion": "Remote Cowork may reach a local connector or plugin MCP through the online Claude Desktop broker while the local MCP still executes outside the remote sandbox; exact PDF Tools MCPB behavior remains unverified.",
+      "source_ids": [
+        "anthropic-cowork-architecture",
+        "anthropic-cowork-surfaces"
+      ]
+    }
+  ]
+}
