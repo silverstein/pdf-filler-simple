@@ -515,7 +515,7 @@ copied from those source directories. Symlink or special-file inputs fail the
 build. The production graph is trimmed directly before packing, including the
 unused top-level PDF.js browser/type/resource trees, while
 `pdfjs-dist/legacy/build/` is required to remain present. Archive verification
-requires exact stage/archive path and byte parity, all five native bindings,
+requires exact stage/archive path and byte parity, all five native packages,
 safe unique paths, normalized metadata, required runtime files, absence of
 development/trimmed entries, exact canonical-byte re-encoding, and successful
 `info` plus `unpack` consumption by pinned MCPB 2.1.2. If the host has an
@@ -526,6 +526,38 @@ source examples do not create noisy false positives. The command prints the
 reproducible SHA-256. Do not release an
 artifact produced by a plain host-local `mcpb pack`: npm normally installs
 only the native optional dependency for the build machine.
+
+#### Canvas archive policy
+
+The production package remains pinned to `@napi-rs/canvas@0.1.99`. The
+canonical build accepts only that implementation version and exactly these
+reviewed runtime assets:
+
+| Target package | Required runtime assets |
+|---|---|
+| `@napi-rs/canvas-darwin-arm64` | `skia.darwin-arm64.node` |
+| `@napi-rs/canvas-darwin-x64` | `skia.darwin-x64.node` |
+| `@napi-rs/canvas-linux-x64-gnu` | `skia.linux-x64-gnu.node` |
+| `@napi-rs/canvas-win32-arm64-msvc` | `skia.win32-arm64-msvc.node` |
+| `@napi-rs/canvas-win32-x64-msvc` | `skia.win32-x64-msvc.node`, `icudtl.dat` |
+
+Public registry inventory for candidate `1.0.2` shows `icudtl.dat` in both
+Windows target packages. That observation is inventory-only evidence.
+Version `1.0.2` remains unevaluated and unauthorized for the production
+package. It must not enter the canonical build policy until the dependency,
+native execution, extracted-artifact, and supported-host gates are separately
+qualified.
+
+The static archive verifier binds the root lock declaration, one canonical
+implementation, exact native package identities and platform metadata,
+registry tarball sources, SRI records, canonical case-safe paths, package
+placement, and exact nonempty runtime asset bytes. It rejects aliases,
+duplicate or nested Canvas trees, case-fold path collisions, policy
+asset substitutions, and missing or unexpected native assets.
+
+Static archive conformance does not load a binary. It performs no `dlopen`,
+cross-architecture execution, extracted native smoke, clean-install
+qualification, or Claude Desktop run. Treat those as distinct evidence gates.
 
 Run `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb` on each release host. It
 extracts the finished artifact to a temporary clean directory, starts the
@@ -620,7 +652,7 @@ Run these after any tool or packaging change:
 - `get_pdf_info` on a non-form PDF — returns "none" for form fields
 - `npm test` — all parsePageRanges tests pass
 - `npm run build:ui` produces single-file HTML in `dist-ui/`
-- `npm run build:mcpb` builds successfully and reports all five native canvas bindings
+- `npm run build:mcpb` builds successfully and reports the statically verified packaged native asset paths
 - `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb` passes on macOS ARM64 and Windows x64
 - Inspect the reported SHA-256 and retain it with the release evidence
 

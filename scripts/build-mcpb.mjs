@@ -22,10 +22,12 @@ import { fileURLToPath } from "url";
 import { spawnSync } from "child_process";
 import { verifyInstalledBuildToolchain } from "./build-toolchain.mjs";
 import {
+  assertSafeArchivePath,
   buildExpectedFileManifest,
   activateCanonicalCandidateAtomic,
   createCanonicalZip,
   McpbPostActivationDurabilityError,
+  sha256Bytes,
   verifyCanonicalZip,
   writeCanonicalBytesAtomic,
 } from "./mcpb-archive.mjs";
@@ -65,12 +67,70 @@ const FIRST_PARTY_TEXT_FILES = [
   "manifest.mcpb.json",
 ];
 const NATIVE_TARGETS = [
-  { packageName: "@napi-rs/canvas-darwin-arm64", binary: "skia.darwin-arm64.node" },
-  { packageName: "@napi-rs/canvas-darwin-x64", binary: "skia.darwin-x64.node" },
-  { packageName: "@napi-rs/canvas-linux-x64-gnu", binary: "skia.linux-x64-gnu.node" },
-  { packageName: "@napi-rs/canvas-win32-arm64-msvc", binary: "skia.win32-arm64-msvc.node" },
-  { packageName: "@napi-rs/canvas-win32-x64-msvc", binary: "skia.win32-x64-msvc.node" },
+  {
+    packageName: "@napi-rs/canvas-darwin-arm64",
+    binary: "skia.darwin-arm64.node",
+    cpu: "arm64",
+    os: "darwin",
+  },
+  {
+    packageName: "@napi-rs/canvas-darwin-x64",
+    binary: "skia.darwin-x64.node",
+    cpu: "x64",
+    os: "darwin",
+  },
+  {
+    packageName: "@napi-rs/canvas-linux-x64-gnu",
+    binary: "skia.linux-x64-gnu.node",
+    cpu: "x64",
+    os: "linux",
+  },
+  {
+    packageName: "@napi-rs/canvas-win32-arm64-msvc",
+    binary: "skia.win32-arm64-msvc.node",
+    cpu: "arm64",
+    os: "win32",
+  },
+  {
+    packageName: "@napi-rs/canvas-win32-x64-msvc",
+    binary: "skia.win32-x64-msvc.node",
+    cpu: "x64",
+    os: "win32",
+  },
 ];
+const CANVAS_PRODUCTION_NATIVE_ASSET_CONTRACTS = Object.freeze({
+  "0.1.99": Object.freeze({
+    auxiliaryAssets: Object.freeze({
+      "@napi-rs/canvas-win32-x64-msvc": Object.freeze(["icudtl.dat"]),
+    }),
+    metadataFiles: Object.freeze({
+      "@napi-rs/canvas-win32-arm64-msvc": Object.freeze([
+        "package.json",
+      ]),
+    }),
+  }),
+});
+const CANVAS_CANDIDATE_REGISTRY_ASSET_INVENTORIES = Object.freeze({
+  "1.0.2": Object.freeze({
+    compatibilityEvaluated: false,
+    evidenceClassification:
+      "PUBLIC_REGISTRY_ASSET_INVENTORY_ONLY_NOT_COMPATIBILITY_EVIDENCE",
+    packages: Object.freeze(NATIVE_TARGETS.map(target => Object.freeze({
+      packageName: target.packageName,
+      assets: Object.freeze([
+        target.binary,
+        ...(target.os === "win32" ? ["icudtl.dat"] : []),
+      ]),
+    }))),
+    productionAuthorized: false,
+  }),
+});
+const STATIC_ARCHIVE_EVIDENCE_CLASSIFICATION =
+  "STATIC_ARCHIVE_CONFORMANCE_NOT_NATIVE_EXECUTION_OR_HOST_EVIDENCE";
+const DEFAULT_CANVAS_NATIVE_PACKAGE_METADATA_FILES = Object.freeze([
+  "README.md",
+  "package.json",
+]);
 const PDFJS_EXCLUDED_DIRECTORIES = [
   "build",
   "web",
@@ -202,25 +262,536 @@ export function verifyLockedTooling(repoRoot = REPO_ROOT) {
   if (lock.packages?.[""]?.dependencies?.["pdfjs-dist"] !== PROTECTED_PDFJS_VERSION) {
     throw new Error(`pdfjs-dist must remain exactly ${PROTECTED_PDFJS_VERSION}`);
   }
+  verifyCanvasLockGraph(lock);
+}
+
+function exactStringArray(value, expected) {
+  return Array.isArray(value)
+    && JSON.stringify(value) === JSON.stringify(expected);
+}
+
+function nonEmptyString(value) {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function validSha512Integrity(value) {
+  if (!nonEmptyString(value)) return false;
+  const match = /^sha512-([A-Za-z0-9+/]+={0,2})$/.exec(value);
+  if (!match) return false;
+  const digest = Buffer.from(match[1], "base64");
+  return digest.length === 64
+    && digest.toString("base64") === match[1];
+}
+
+function expectedRegistryTarball(packageName, version) {
+  const basename = packageName.split("/").at(-1);
+  return `https://registry.npmjs.org/${packageName}/-/${basename}-${version}.tgz`;
+}
+
+function assertCanonicalCaseUniquePaths(paths, label) {
+  const foldedPaths = new Map();
+  for (const relativePath of paths) {
+    assertSafeArchivePath(relativePath);
+    const folded = relativePath.toLowerCase();
+    const previous = foldedPaths.get(folded);
+    if (previous !== undefined && previous !== relativePath) {
+      throw new Error(
+        `${label} contains an ASCII case-fold path collision: ${previous}, ${relativePath}`,
+      );
+    }
+    foldedPaths.set(folded, relativePath);
+  }
+}
+
+function expectedCanvasPackagePaths() {
+  return new Map([
+    ["@napi-rs/canvas", "node_modules/@napi-rs/canvas"],
+    ...NATIVE_TARGETS.map(target => [
+      target.packageName,
+      `node_modules/${target.packageName}`,
+    ]),
+  ]);
+}
+
+function verifyCanvasPackageIdentities(lockPackages) {
+  const expectedPaths = expectedCanvasPackagePaths();
+  const expectedByFoldedName = new Map(
+    [...expectedPaths].map(([name, packagePath]) => [
+      name.toLowerCase(),
+      { name, packagePath },
+    ]),
+  );
+  assertCanonicalCaseUniquePaths(
+    Object.keys(lockPackages).filter(Boolean),
+    "package-lock.json",
+  );
+  for (const [packagePath, entry] of Object.entries(lockPackages)) {
+    if (!entry || typeof entry !== "object") continue;
+    if (nonEmptyString(entry.name)) {
+      const expected = expectedByFoldedName.get(entry.name.toLowerCase());
+      if (
+        expected
+        && (
+          entry.name !== expected.name
+          || packagePath !== expected.packagePath
+        )
+      ) {
+        throw new Error(
+          `package-lock.json contains an aliased or noncanonical canvas package identity at ${packagePath}`,
+        );
+      }
+    }
+    for (const dependencyField of [
+      "dependencies",
+      "optionalDependencies",
+      "peerDependencies",
+      "devDependencies",
+    ]) {
+      const dependencies = entry[dependencyField];
+      if (!dependencies || typeof dependencies !== "object") continue;
+      for (const specification of Object.values(dependencies)) {
+        if (
+          typeof specification === "string"
+          && /^npm:@napi-rs\/canvas(?:@|-)/i.test(specification)
+        ) {
+          throw new Error(
+            "package-lock.json contains an npm alias to a canvas implementation or native package",
+          );
+        }
+      }
+    }
+  }
+  for (const [name, packagePath] of expectedPaths) {
+    const foldedPath = packagePath.toLowerCase();
+    for (const candidatePath of Object.keys(lockPackages)) {
+      if (
+        candidatePath.toLowerCase() === foldedPath
+        && candidatePath !== packagePath
+      ) {
+        throw new Error(
+          `package-lock.json contains a noncanonical path for ${name}`,
+        );
+      }
+    }
+  }
+}
+
+function nativeAssets(version, target) {
+  const contract = CANVAS_PRODUCTION_NATIVE_ASSET_CONTRACTS[version];
+  if (!contract) {
+    throw new Error(
+      `@napi-rs/canvas ${version || "(missing)"} production native asset contract is not reviewed`,
+    );
+  }
+  return [
+    target.binary,
+    ...(contract.auxiliaryAssets[target.packageName] ?? []),
+  ];
+}
+
+function nativePackageFiles(version, target) {
+  const contract = CANVAS_PRODUCTION_NATIVE_ASSET_CONTRACTS[version];
+  if (!contract) {
+    throw new Error(
+      `@napi-rs/canvas ${version || "(missing)"} production native package contract is not reviewed`,
+    );
+  }
+  return [
+    ...(contract.metadataFiles[target.packageName]
+      ?? DEFAULT_CANVAS_NATIVE_PACKAGE_METADATA_FILES),
+    ...nativeAssets(version, target),
+  ];
+}
+
+export function canvasCandidateRegistryAssetInventory(version) {
+  const inventory = CANVAS_CANDIDATE_REGISTRY_ASSET_INVENTORIES[version];
+  if (!inventory) {
+    throw new Error(
+      `@napi-rs/canvas ${version || "(missing)"} has no candidate registry asset inventory`,
+    );
+  }
+  return inventory;
+}
+
+export function staticArchiveConformanceEvidence(packagedNativeAssetPaths) {
+  if (
+    !Array.isArray(packagedNativeAssetPaths)
+    || packagedNativeAssetPaths.some(value => !nonEmptyString(value))
+  ) {
+    throw new Error("Packaged native asset paths are invalid");
+  }
+  return {
+    evidenceClassification: STATIC_ARCHIVE_EVIDENCE_CLASSIFICATION,
+    packagedNativeAssetPaths: [...packagedNativeAssetPaths],
+    nativeExecutionPerformed: false,
+    crossArchitectureExecutionPerformed: false,
+    claudeDesktopTested: false,
+  };
+}
+
+function validateCanvasPolicy(policy) {
+  if (
+    !policy
+    || typeof policy !== "object"
+    || !nonEmptyString(policy.implementationVersion)
+    || !Array.isArray(policy.packages)
+    || policy.packages.length !== NATIVE_TARGETS.length
+  ) {
+    throw new Error("Native canvas policy is incomplete");
+  }
+  const packagesByName = new Map();
+  for (const entry of policy.packages) {
+    if (
+      !entry
+      || typeof entry !== "object"
+      || !nonEmptyString(entry.packageName)
+      || packagesByName.has(entry.packageName)
+    ) {
+      throw new Error("Native canvas policy has duplicate or invalid targets");
+    }
+    packagesByName.set(entry.packageName, entry);
+  }
+  for (const target of NATIVE_TARGETS) {
+    const entry = packagesByName.get(target.packageName);
+    const expectedAssets = nativeAssets(policy.implementationVersion, target);
+    if (
+      !entry
+      || entry.binary !== target.binary
+      || entry.os !== target.os
+      || entry.cpu !== target.cpu
+      || entry.version !== policy.implementationVersion
+      || entry.resolved
+        !== expectedRegistryTarball(target.packageName, entry.version)
+      || !validSha512Integrity(entry.integrity)
+      || !exactStringArray(entry.assets, expectedAssets)
+    ) {
+      throw new Error(
+        `${target.packageName} native canvas policy does not match the reviewed contract`,
+      );
+    }
+  }
+  return policy;
+}
+
+export function verifyCanvasLockGraph(lock) {
+  const lockPackages = lock?.packages;
+  if (!lockPackages || typeof lockPackages !== "object") {
+    throw new Error("package-lock.json does not contain a package graph");
+  }
+  verifyCanvasPackageIdentities(lockPackages);
+  const packagePaths = Object.keys(lockPackages);
+  const implementationPaths = packagePaths.filter(relativePath =>
+    /(?:^|\/)node_modules\/@napi-rs\/canvas$/i.test(relativePath),
+  );
+  if (
+    implementationPaths.length !== 1
+    || implementationPaths[0] !== "node_modules/@napi-rs/canvas"
+  ) {
+    throw new Error(
+      "package-lock.json must resolve exactly one canvas implementation at the root",
+    );
+  }
+  const nestedCanvasPaths = packagePaths.filter(relativePath =>
+    /\/node_modules\/@napi-rs\/canvas(?:$|-)/i.test(relativePath),
+  );
+  if (nestedCanvasPaths.length > 0) {
+    throw new Error(
+      `package-lock.json contains a nested canvas package: ${nestedCanvasPaths.join(", ")}`,
+    );
+  }
+  const canvas = lockPackages[implementationPaths[0]];
+  const rootDeclaration =
+    lockPackages[""]?.dependencies?.["@napi-rs/canvas"];
+  if (
+    !nonEmptyString(canvas?.version)
+    || !nonEmptyString(canvas.resolved)
+    || !validSha512Integrity(canvas.integrity)
+    || !canvas.optionalDependencies
+    || !nonEmptyString(rootDeclaration)
+  ) {
+    throw new Error(
+      "package-lock.json does not contain complete locked canvas metadata",
+    );
+  }
+  const contract = CANVAS_PRODUCTION_NATIVE_ASSET_CONTRACTS[canvas.version];
+  if (!contract) {
+    throw new Error(
+      `@napi-rs/canvas ${canvas.version} production native asset contract is not reviewed`,
+    );
+  }
+  if (
+    canvas.resolved
+      !== expectedRegistryTarball("@napi-rs/canvas", canvas.version)
+  ) {
+    throw new Error(
+      "package-lock.json canvas implementation has a noncanonical registry source",
+    );
+  }
+  if (
+    ![
+      canvas.version,
+      `^${canvas.version}`,
+      `~${canvas.version}`,
+    ].includes(rootDeclaration)
+  ) {
+    throw new Error(
+      "package-lock.json root canvas declaration does not permit the reviewed implementation",
+    );
+  }
+  const packages = NATIVE_TARGETS.map(target => {
+    const entry = lockPackages[`node_modules/${target.packageName}`];
+    const expectedVersion = canvas.optionalDependencies[target.packageName];
+    if (
+      !nonEmptyString(entry?.version)
+      || !nonEmptyString(entry.resolved)
+      || !validSha512Integrity(entry.integrity)
+      || !nonEmptyString(expectedVersion)
+    ) {
+      throw new Error(`package-lock.json is missing complete metadata for ${target.packageName}`);
+    }
+    if (
+      entry.resolved
+        !== expectedRegistryTarball(target.packageName, entry.version)
+    ) {
+      throw new Error(
+        `${target.packageName} has a noncanonical registry source`,
+      );
+    }
+    if (
+      entry.version !== expectedVersion
+      || entry.version !== canvas.version
+    ) {
+      throw new Error(`${target.packageName} lock mismatch: ${entry.version} != ${expectedVersion}`);
+    }
+    if (
+      entry.optional !== true
+      || !exactStringArray(entry.os, [target.os])
+      || !exactStringArray(entry.cpu, [target.cpu])
+    ) {
+      throw new Error(
+        `${target.packageName} lock metadata has the wrong optional or platform disposition`,
+      );
+    }
+    return {
+      ...target,
+      version: entry.version,
+      resolved: entry.resolved,
+      integrity: entry.integrity,
+      assets: nativeAssets(canvas.version, target),
+    };
+  });
+  return validateCanvasPolicy({
+    implementationVersion: canvas.version,
+    packages,
+  });
+}
+
+function parseManifestPackageJson(file, label) {
+  if (!file || file.size < 1 || !file.bytes) {
+    throw new Error(`Staged native canvas package is missing ${label}`);
+  }
+  try {
+    return JSON.parse(Buffer.from(file.bytes).toString("utf8"));
+  } catch {
+    throw new Error(`Staged native canvas package has invalid ${label}`);
+  }
+}
+
+function verifyStagedCanvasPackageIdentities(files) {
+  const expectedPaths = expectedCanvasPackagePaths();
+  const expectedByFoldedName = new Map(
+    [...expectedPaths].map(([name, packagePath]) => [
+      name.toLowerCase(),
+      { name, packageJsonPath: `${packagePath}/package.json` },
+    ]),
+  );
+  const expectedByFoldedPath = new Map(
+    [...expectedByFoldedName.values()].map(expected => [
+      expected.packageJsonPath.toLowerCase(),
+      expected,
+    ]),
+  );
+  for (const file of files) {
+    if (
+      !/(?:^|\/)node_modules\/.+\/package\.json$/.test(file.path)
+    ) {
+      continue;
+    }
+    const packageJson = parseManifestPackageJson(
+      file,
+      `${file.path} package identity`,
+    );
+    const pathExpectation =
+      expectedByFoldedPath.get(file.path.toLowerCase());
+    if (
+      pathExpectation
+      && file.path !== pathExpectation.packageJsonPath
+    ) {
+      throw new Error(
+        `Staged archive contains a noncanonical canvas package path: ${file.path}`,
+      );
+    }
+    if (nonEmptyString(packageJson.name)) {
+      const identityExpectation =
+        expectedByFoldedName.get(packageJson.name.toLowerCase());
+      if (
+        identityExpectation
+        && (
+          packageJson.name !== identityExpectation.name
+          || file.path !== identityExpectation.packageJsonPath
+        )
+      ) {
+        throw new Error(
+          `Staged archive contains an aliased or noncanonical canvas package identity at ${file.path}`,
+        );
+      }
+    }
+  }
+}
+
+export function verifyCanvasNativeStageManifest(files, policy) {
+  if (!Array.isArray(files)) {
+    throw new Error("Staged native canvas manifest or policy is invalid");
+  }
+  const validatedPolicy = validateCanvasPolicy(policy);
+  const byPath = new Map();
+  for (const file of files) {
+    if (
+      !file
+      || typeof file.path !== "string"
+      || !(Buffer.isBuffer(file.bytes) || file.bytes instanceof Uint8Array)
+      || !Number.isSafeInteger(file.size)
+      || file.size !== file.bytes.byteLength
+      || (
+        file.sha256 !== undefined
+        && file.sha256 !== sha256Bytes(file.bytes)
+      )
+      || byPath.has(file.path)
+    ) {
+      throw new Error(
+        "Staged native canvas manifest contains invalid bytes, metadata, or duplicate paths",
+      );
+    }
+    byPath.set(file.path, file);
+  }
+  const paths = [...byPath.keys()];
+  assertCanonicalCaseUniquePaths(paths, "Staged native canvas manifest");
+  verifyStagedCanvasPackageIdentities(files);
+  const implementationPackageJsonPaths = paths.filter(relativePath =>
+    /(?:^|\/)node_modules\/@napi-rs\/canvas\/package\.json$/i.test(relativePath),
+  );
+  if (
+    implementationPackageJsonPaths.length !== 1
+    || implementationPackageJsonPaths[0]
+      !== "node_modules/@napi-rs/canvas/package.json"
+  ) {
+    throw new Error(
+      "Staged archive must contain exactly one canvas implementation at the root",
+    );
+  }
+  const nestedCanvasPaths = paths.filter(relativePath =>
+    /\/node_modules\/@napi-rs\/canvas(?:\/|-)/i.test(relativePath),
+  );
+  if (nestedCanvasPaths.length > 0) {
+    throw new Error(
+      `Staged archive contains a nested canvas package: ${nestedCanvasPaths.join(", ")}`,
+    );
+  }
+  const stagedNativePackageNames = [...new Set(paths.flatMap(relativePath => {
+    const match =
+      /^node_modules\/@napi-rs\/(canvas-[^/]+)\//i.exec(relativePath);
+    return match ? [`@napi-rs/${match[1]}`] : [];
+  }))].sort();
+  const expectedNativePackageNames = validatedPolicy.packages
+    .map(target => target.packageName)
+    .sort();
+  if (
+    JSON.stringify(stagedNativePackageNames)
+      !== JSON.stringify(expectedNativePackageNames)
+  ) {
+    throw new Error(
+      `Staged archive native canvas package inventory does not match the reviewed contract: ${stagedNativePackageNames.join(", ")}`,
+    );
+  }
+  const implementationPackage = parseManifestPackageJson(
+    byPath.get(implementationPackageJsonPaths[0]),
+    "implementation package.json",
+  );
+  if (
+    implementationPackage.name !== "@napi-rs/canvas"
+    || implementationPackage.version !== validatedPolicy.implementationVersion
+  ) {
+    throw new Error(
+      "Staged canvas implementation package identity does not match the lock",
+    );
+  }
+  for (const target of validatedPolicy.packages) {
+    const prefix = `node_modules/${target.packageName}/`;
+    const packageJson = parseManifestPackageJson(
+      byPath.get(`${prefix}package.json`),
+      `${target.packageName} package.json`,
+    );
+    if (
+      packageJson.name !== target.packageName
+      || packageJson.version !== target.version
+      || !exactStringArray(packageJson.os, [target.os])
+      || !exactStringArray(packageJson.cpu, [target.cpu])
+    ) {
+      throw new Error(
+        `${target.packageName} package identity or platform metadata does not match the lock`,
+      );
+    }
+    const packageFiles = paths
+      .filter(relativePath => relativePath.startsWith(prefix))
+      .map(relativePath => relativePath.slice(prefix.length))
+      .sort();
+    const expectedPackageFiles = nativePackageFiles(
+      validatedPolicy.implementationVersion,
+      target,
+    ).sort();
+    if (
+      JSON.stringify(packageFiles)
+        !== JSON.stringify(expectedPackageFiles)
+    ) {
+      const unexpected = packageFiles.filter(filename =>
+        !expectedPackageFiles.includes(filename),
+      );
+      if (unexpected.length > 0) {
+        throw new Error(
+          `${target.packageName} has an unexpected native canvas package payload: ${unexpected.join(", ")}`,
+        );
+      }
+      throw new Error(
+        `${target.packageName} is missing a required native canvas package file`,
+      );
+    }
+    for (const asset of target.assets) {
+      const file = byPath.get(`${prefix}${asset}`);
+      if (!file) {
+        throw new Error(
+          `${target.packageName} is missing a required native canvas asset: ${asset}`,
+        );
+      }
+      if (!Number.isSafeInteger(file.size) || file.size < 1) {
+        throw new Error(
+          `${target.packageName} has an empty native canvas asset: ${asset}`,
+        );
+      }
+    }
+  }
+  return true;
+}
+
+function lockedCanvasPolicy() {
+  const lock = JSON.parse(readFileSync(
+    path.join(REPO_ROOT, "package-lock.json"),
+    "utf8",
+  ));
+  return verifyCanvasLockGraph(lock);
 }
 
 function lockedNativePackages() {
-  const lock = JSON.parse(readFileSync(path.join(REPO_ROOT, "package-lock.json"), "utf8"));
-  const canvas = lock.packages?.["node_modules/@napi-rs/canvas"];
-  if (!canvas?.version || !canvas.optionalDependencies) {
-    throw new Error("package-lock.json does not contain the locked @napi-rs/canvas package");
-  }
-  return NATIVE_TARGETS.map(target => {
-    const entry = lock.packages?.[`node_modules/${target.packageName}`];
-    const expectedVersion = canvas.optionalDependencies[target.packageName];
-    if (!entry?.version || !entry.resolved || !entry.integrity || !expectedVersion) {
-      throw new Error(`package-lock.json is missing complete metadata for ${target.packageName}`);
-    }
-    if (entry.version !== expectedVersion) {
-      throw new Error(`${target.packageName} lock mismatch: ${entry.version} != ${expectedVersion}`);
-    }
-    return { ...target, ...entry };
-  });
+  return lockedCanvasPolicy().packages;
 }
 
 function removeHostSelectedNativePackages(stagingDir) {
@@ -325,12 +896,18 @@ function verifyStagedProductionGraph(stagingDir, packages) {
       throw new Error(`Staged MCPB contains development-only metadata: ${filename}`);
     }
   }
-  const nativePaths = packages.map(target =>
-    `node_modules/${target.packageName}/${target.binary}`,
+  const packagedNativeAssetPaths = packages.flatMap(target =>
+    target.assets.map(asset =>
+      `node_modules/${target.packageName}/${asset}`,
+    ),
   );
-  for (const nativePath of nativePaths) {
-    const file = expected.find(entry => entry.path === nativePath);
-    if (!file || file.size === 0) throw new Error(`Required native binding is missing or empty: ${nativePath}`);
+  for (const nativeAssetPath of packagedNativeAssetPaths) {
+    const file = expected.find(entry => entry.path === nativeAssetPath);
+    if (!file || file.size === 0) {
+      throw new Error(
+        `Required packaged native asset is missing or empty: ${nativeAssetPath}`,
+      );
+    }
   }
   const stagedNativePackages = readdirSync(path.join(stagingDir, "node_modules", "@napi-rs"))
     .filter(name => name.startsWith("canvas-"))
@@ -340,11 +917,15 @@ function verifyStagedProductionGraph(stagingDir, packages) {
   if (JSON.stringify(stagedNativePackages) !== JSON.stringify(intendedNativePackages)) {
     throw new Error(`Unexpected native canvas package inventory: ${stagedNativePackages.join(", ")}`);
   }
+  verifyCanvasNativeStageManifest(expected, {
+    implementationVersion: packages[0]?.version,
+    packages,
+  });
   const runtimePackage = JSON.parse(readFileSync(path.join(stagingDir, "package.json"), "utf8"));
   if (runtimePackage.dependencies?.["pdfjs-dist"] !== PROTECTED_PDFJS_VERSION) {
     throw new Error(`Staged pdfjs-dist must remain exactly ${PROTECTED_PDFJS_VERSION}`);
   }
-  return { expected, nativePaths };
+  return { expected, packagedNativeAssetPaths };
 }
 
 function prepareCleanStage() {
@@ -408,7 +989,9 @@ function runSingleBuild(candidatePath) {
     const evidence = {
       ...result,
       files: fileCount,
-      nativePaths: build.nativePaths,
+      ...staticArchiveConformanceEvidence(
+        build.packagedNativeAssetPaths,
+      ),
       peakRssKiB: process.resourceUsage().maxRSS,
     };
     console.log(`MCPB_BUILD_RESULT ${JSON.stringify(evidence)}`);
@@ -440,17 +1023,26 @@ function verifyCandidateWithPinnedMcpb(candidatePath) {
   const unpacked = path.join(unpackRoot, "extension");
   try {
     run(mcpbCommand, ["unpack", candidatePath, unpacked], { capture: true });
+    const canvasPolicy = lockedCanvasPolicy();
     for (const required of [
       "manifest.json",
       "server/index.js",
       "dist-ui/index.html",
-      ...NATIVE_TARGETS.map(target => `node_modules/${target.packageName}/${target.binary}`),
+      ...canvasPolicy.packages.flatMap(target =>
+        target.assets.map(asset =>
+          `node_modules/${target.packageName}/${asset}`,
+        ),
+      ),
     ]) {
       const filename = path.join(unpacked, ...required.split("/"));
       if (!existsSync(filename) || !lstatSync(filename).isFile()) {
         throw new Error(`Pinned MCPB unpack is missing required file: ${required}`);
       }
     }
+    verifyCanvasNativeStageManifest(
+      buildExpectedFileManifest(unpacked),
+      canvasPolicy,
+    );
   } finally {
     rmSync(unpackRoot, { recursive: true, force: true });
   }
@@ -486,6 +1078,14 @@ async function main() {
       first.sha256 !== second.sha256 ||
       first.bytes !== second.bytes ||
       first.files !== second.files ||
+      first.evidenceClassification !== STATIC_ARCHIVE_EVIDENCE_CLASSIFICATION ||
+      second.evidenceClassification !== STATIC_ARCHIVE_EVIDENCE_CLASSIFICATION ||
+      first.nativeExecutionPerformed !== false ||
+      second.nativeExecutionPerformed !== false ||
+      first.claudeDesktopTested !== false ||
+      second.claudeDesktopTested !== false ||
+      JSON.stringify(first.packagedNativeAssetPaths)
+        !== JSON.stringify(second.packagedNativeAssetPaths) ||
       !filesAreByteIdentical(candidatePaths[0], candidatePaths[1])
     ) {
       throw new Error(`Clean MCPB builds were not byte-identical: ${first.sha256} != ${second.sha256}`);
@@ -509,8 +1109,12 @@ async function main() {
       );
     }
     activated = true;
-    console.log("\nVerified native bindings:");
-    for (const nativePath of second.nativePaths) console.log(`- ${nativePath}`);
+    console.log(
+      "\nVerified packaged native asset paths (static; not executed):",
+    );
+    for (const nativeAssetPath of second.packagedNativeAssetPaths) {
+      console.log(`- ${nativeAssetPath}`);
+    }
     console.log(`\nArtifact: ${outputPath}`);
     console.log(`Files: ${second.files}`);
     console.log(`Bytes: ${result.bytes}`);

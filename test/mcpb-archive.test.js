@@ -328,11 +328,10 @@ describe("canonical MCPB archive", () => {
     const root = temporaryRoot();
     mkdirSync(path.join(root, "node_modules", "@anthropic-ai", "mcpb"), { recursive: true });
     mkdirSync(path.join(root, "node_modules", "fflate"), { recursive: true });
-    writeFileSync(path.join(root, "package-lock.json"), JSON.stringify({ packages: {
-      "": { dependencies: { "pdfjs-dist": "5.4.624" } },
-      "node_modules/@anthropic-ai/mcpb": { version: "2.1.2" },
-      "node_modules/fflate": { version: "0.8.3" },
-    } }));
+    writeFileSync(
+      path.join(root, "package-lock.json"),
+      readFileSync(path.resolve("package-lock.json")),
+    );
     writeFileSync(path.join(root, "node_modules", "@anthropic-ai", "mcpb", "package.json"), JSON.stringify({
       version: "2.1.2",
       dependencies: { fflate: "^0.8.2" },

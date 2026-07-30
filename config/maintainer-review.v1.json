@@ -133,6 +133,7 @@
       "run",
       "--maxWorkers=1",
       "test/mcp-contract.test.js",
+      "test/canvas-packaging-policy.test.js",
       "test/eval/agent-workflow-v3-retirement.test.js",
       "test/eval/agent-workflow-v4-protocol.test.js",
       "test/eval/extraction-phase1-packaging.test.js"
