@@ -1297,7 +1297,10 @@ export async function stageVerifiedFixture(corpusDirectory, runtimeFixtureDirect
     fixture.size,
     true
   );
-  const stagedBasename = `${fixture.id}.pdf`;
+  // Preserve the reviewed basename because parseVeraPdfEvidence binds the
+  // validator report's item identity to fixture.filename. The private runtime
+  // directory, not a renamed basename, supplies isolation from the source path.
+  const stagedBasename = fixture.filename;
   if (!safePrivateBasename(stagedBasename)) {
     fail("PRIVATE_BASENAME_INVALID", "staged fixture basename is unsafe");
   }
