@@ -77,6 +77,19 @@ function argumentExpression(node, source, filename) {
   return source.slice(firstSpan.start, secondSpan.end).trim();
 }
 
+function callExpression(node, source, filename) {
+  const nodeSpan = boundedNodeSpan(node, source, filename);
+  if (source[nodeSpan.end - 1] !== ")") {
+    throw new Error(`${filename}: parser returned an invalid call expression`);
+  }
+  if (node.arguments.length === 0) return "";
+  const firstSpan = boundedNodeSpan(node.arguments[0], source, filename);
+  if (firstSpan.start >= nodeSpan.end - 1) {
+    throw new Error(`${filename}: parser returned invalid call argument spans`);
+  }
+  return source.slice(firstSpan.start, nodeSpan.end - 1).trim();
+}
+
 function walkAst(value, visit) {
   if (!value || typeof value !== "object") return;
   if (typeof value.type === "string") visit(value);
@@ -108,6 +121,7 @@ export function extractModuleLoadEvidence(
     preserveParens: true,
     sourceType: "unambiguous",
   }, filename);
+  const commonJsRequires = [];
   const dynamicImports = [];
   const newUrlReferences = [];
   const stringLiterals = [];
@@ -132,6 +146,25 @@ export function extractModuleLoadEvidence(
         fingerprint: sha256(expression),
         kind: "dynamic-import",
         literal: staticStringValue(node.source),
+        start: sourceOffset + start,
+      }));
+    }
+
+    if (
+      node.type === "CallExpression"
+      && node.callee?.type === "Identifier"
+      && node.callee.name === "require"
+    ) {
+      const { end, start } = boundedNodeSpan(node, source, filename);
+      const expression = callExpression(node, source, filename);
+      commonJsRequires.push(Object.freeze({
+        end: sourceOffset + end,
+        expression,
+        fingerprint: sha256(expression),
+        kind: "commonjs-require",
+        literal: node.arguments.length === 1
+          ? staticStringValue(node.arguments[0])
+          : null,
         start: sourceOffset + start,
       }));
     }
@@ -163,9 +196,14 @@ export function extractModuleLoadEvidence(
 
   stringLiterals.sort((left, right) => left.start - right.start);
   dynamicImports.sort((left, right) => left.start - right.start);
+  commonJsRequires.sort((left, right) => left.start - right.start);
   newUrlReferences.sort((left, right) => left.start - right.start);
+  const moduleLoads = [...dynamicImports, ...commonJsRequires]
+    .sort((left, right) => left.start - right.start);
   return Object.freeze({
+    commonJsRequires: Object.freeze(commonJsRequires),
     dynamicImports: Object.freeze(dynamicImports),
+    moduleLoads: Object.freeze(moduleLoads),
     newUrlReferences: Object.freeze(newUrlReferences),
     stringLiterals: Object.freeze(stringLiterals),
     stringValues: Object.freeze(stringLiterals.map(entry => entry.value)),

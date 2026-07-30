@@ -226,6 +226,11 @@ describe("aggregate test-runner contract", () => {
     expect(evidence.dynamicImports[0]).toMatchObject({
       literal: "./dynamic.mjs?proof=1",
     });
+    expect(evidence.commonJsRequires).toHaveLength(1);
+    expect(evidence.commonJsRequires[0]).toMatchObject({
+      kind: "commonjs-require",
+      literal: "./commonjs.cjs",
+    });
 
     const escapedCheckerSpecifier = ".\\/" + "source-worktree-" + "state.mjs";
     const adversarial = extractModuleLoadEvidence([
@@ -242,6 +247,20 @@ describe("aggregate test-runner contract", () => {
     expect(adversarial.dynamicImports.map(entry => entry.fingerprint))
       .toHaveLength(3);
     expect(adversarial.stringValues).toContain(checkerSpecifier);
+    const adversarialCommonJs = extractModuleLoadEvidence([
+      'require("./" + moduleName);',
+      'require("." + "/source-worktree-" + "state.mjs");',
+      'require(`./local-${name}.cjs`);',
+    ].join("\n"));
+    expect(adversarialCommonJs.commonJsRequires.map(
+      entry => entry.literal,
+    )).toEqual([null, null, null]);
+    expect(adversarialCommonJs.commonJsRequires.map(
+      entry => entry.fingerprint,
+    )).toHaveLength(3);
+    expect(adversarialCommonJs.moduleLoads.every(
+      entry => entry.kind === "commonjs-require",
+    )).toBe(true);
     expect(extractModuleLoadEvidence(
       'const nested = `proof:${import(moduleUrl)}`;',
     ).dynamicImports).toHaveLength(1);
@@ -410,7 +429,7 @@ describe("aggregate test-runner contract", () => {
     for (const file of allSourceFiles) {
       const source = await fs.readFile(path.join(repoRoot, file), "utf8");
       const computed = extractModuleLoadEvidence(source, { filename: file })
-        .dynamicImports.filter(entry => entry.literal === null);
+        .moduleLoads.filter(entry => entry.literal === null);
       if (computed.length > 0) {
         discoveredComputedLoads.push({
           file,
