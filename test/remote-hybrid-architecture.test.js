@@ -147,11 +147,11 @@ describe("remote and hybrid architecture contract", () => {
       source_truth_automated: false,
       authority_digests: {
         contract:
-          "416fc9302bbc852f34593dadb58d68d5306f5fdf0e9ed1735f09eb2e58c8c7f0",
+          "3783deb63beeb1fe48aa545ca58db861864ccb794a2c8fcc156f06a5b3999627",
         ledger:
           "ec610ad00ceabcee3625ba5483e676a55320001cec098f307e2dc078fc34b03e",
         architecture:
-          "640b4450b631150e46c07ac1f8fdc89ed4d1bd21539ad19bccacabde20dcb55b",
+          "8be4894f05ad8bdeeb0fac1ed23d8aaf3801166bb0e8bbb5b6d2165122c6b46f",
       },
       negative_claims: {
         deployed_service: false,

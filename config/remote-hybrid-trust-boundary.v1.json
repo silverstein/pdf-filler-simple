@@ -555,8 +555,32 @@
         ]
       },
       {
+        "id": "tenant_a_collaborator",
+        "verified_actor_id": "synthetic_actor_b",
+        "tenant_id": "synthetic_tenant_a",
+        "scopes": [
+          "workspace:create",
+          "document:register",
+          "document:mutate",
+          "document:read",
+          "document:delete"
+        ]
+      },
+      {
         "id": "tenant_b_owner",
         "verified_actor_id": "synthetic_actor_b",
+        "tenant_id": "synthetic_tenant_b",
+        "scopes": [
+          "workspace:create",
+          "document:register",
+          "document:mutate",
+          "document:read",
+          "document:delete"
+        ]
+      },
+      {
+        "id": "tenant_b_same_actor",
+        "verified_actor_id": "synthetic_actor_a",
         "tenant_id": "synthetic_tenant_b",
         "scopes": [
           "workspace:create",

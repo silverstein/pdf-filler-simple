@@ -22,7 +22,7 @@ This is an architecture result. It is not a deployed service, a native host
 result, a privacy certification, or evidence that the current MCPB works in
 Cowork, ChatGPT, Codex cloud, Tasks, or every MCP Apps host.
 
-Normative contract authority digest: `sha256:416fc9302bbc852f34593dadb58d68d5306f5fdf0e9ed1735f09eb2e58c8c7f0`.
+Normative contract authority digest: `sha256:3783deb63beeb1fe48aa545ca58db861864ccb794a2c8fcc156f06a5b3999627`.
 
 ## Why this boundary is necessary
 
@@ -428,8 +428,8 @@ to the mock's developer:
   `Accept` media types, protocol version, method, synthetic harness identity,
   conditional name, optional validated `Origin`, and authoritative per-request
   body metadata;
-- four synthetic auth contexts: anonymous, tenant A owner, tenant B owner, and
-  a revoked tenant A actor;
+- six synthetic auth contexts: anonymous; two active actors, each represented
+  in both tenant A and tenant B; and a revoked tenant A actor;
 - exact workspace, document, immutable version, authorization event, operation,
   receipt, and lifecycle records;
 - exact lifecycle transitions from absent through active, tombstoned,
