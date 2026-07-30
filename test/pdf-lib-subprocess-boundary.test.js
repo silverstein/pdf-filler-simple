@@ -394,7 +394,11 @@ setInterval(() => {}, 1000);
 
   it.each([
     ["malformed control output", `process.stdout.write("{");`, "malformed_control_output"],
-    ["wall timeout", `process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);`, "timeout"],
+    [
+      "wall timeout",
+      `process.on("SIGTERM", () => {}); await new Promise(() => {});`,
+      "timeout",
+    ],
   ])("fails closed on %s", async (_label, statement, reason) => {
     const fixture = await worker(`
 for await (const _chunk of process.stdin) {}
@@ -407,7 +411,10 @@ ${statement}
       options: OPTIONS.rotate_pdf_pages,
     }, async () => {
       throw new Error("must not consume");
-    }, { timeoutMs: 150, workerPath: fixture.workerPath })).rejects.toMatchObject({
+    // Leave enough headroom for the separately supervised RSS monitor to
+    // become ready on supported Intel Macs. This test is for the worker's
+    // post-activation failure, not for monitor-startup timeout behavior.
+    }, { timeoutMs: 1000, workerPath: fixture.workerPath })).rejects.toMatchObject({
       code: PDF_RESOURCE_LIMIT_CODE,
       reason,
     });
