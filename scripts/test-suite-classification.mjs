@@ -84,6 +84,7 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
   Object.freeze({
     file: "scripts/eval-calibrate-docling-supervisor.mjs",
     count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
     fingerprints: Object.freeze([
       "324f1dd7563934fcad8a67004e19120e5af1400a0be377800f8771b38e40ed70",
     ]),
@@ -92,6 +93,7 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
   Object.freeze({
     file: "scripts/eval-capture-docling-bakeoff.mjs",
     count: 2,
+    kinds: Object.freeze(["dynamic-import", "dynamic-import"]),
     fingerprints: Object.freeze([
       "945966b799328d11c93c9092bf8ba3029bc9496a4cf6da1323ee15dde065f230",
       "28c892e64238554d2b4b0426118f566882828acc8202adb6efe269e839faf56d",
@@ -101,6 +103,7 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
   Object.freeze({
     file: "scripts/eval-docling-authority.mjs",
     count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
     fingerprints: Object.freeze([
       "ecb3e1f7bccf05bdaf8abffd775a3c4f8b5357f631bdc97bba82f5a651278634",
     ]),
@@ -109,6 +112,7 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
   Object.freeze({
     file: "scripts/eval-run-codex-agent-workflow-case.mjs",
     count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
     fingerprints: Object.freeze([
       "adf648f59f6851e234fc181440c721c622db54d6cd58b921e61bab3e06348184",
     ]),
@@ -117,6 +121,7 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
   Object.freeze({
     file: "scripts/eval-verify-docling-macos-handoff.mjs",
     count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
     fingerprints: Object.freeze([
       "43a13fd31dedbfd235c2cc0626c6dc7a6e07db3b3a5bf743139342c8f8c88104",
     ]),
@@ -125,6 +130,7 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
   Object.freeze({
     file: "scripts/generate-layout-encrypted-oracle.mjs",
     count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
     fingerprints: Object.freeze([
       "f180d903a09ac300faa7afdd76e0afee1781676c3b3a34adbf56aafb5c5d486c",
     ]),
@@ -133,6 +139,7 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
   Object.freeze({
     file: "scripts/macos-claude-installed-smoke.mjs",
     count: 2,
+    kinds: Object.freeze(["dynamic-import", "dynamic-import"]),
     fingerprints: Object.freeze([
       "0bea25bcef085af91e6d4364375bbdde843149fa1d65f834db34ae52fcae5ef7",
       "28c033735ea9fb0f4f12abf4ed9d905107b81abef289f9e5315316809b5440c7",
@@ -142,6 +149,7 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
   Object.freeze({
     file: "scripts/test-share-contract.mjs",
     count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
     fingerprints: Object.freeze([
       "955c0c9874d8a7293b769d2b9597a728fcd373c87f16a826b40e90d556ad6717",
     ]),
@@ -150,6 +158,7 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
   Object.freeze({
     file: "test/eval/extraction-docling-handoff.js",
     count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
     fingerprints: Object.freeze([
       "bfb22ac97868fe7bb9a1d7da4651099c672c2ac8fec83b6b51340bbeb36dd305",
     ]),
@@ -158,6 +167,7 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
   Object.freeze({
     file: "vendor/qpdf-wasm/smoke.mjs",
     count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
     fingerprints: Object.freeze([
       "4fa1d4b65418c62e010fe6b642b227915884e8f4259a918c583e6d8c7a752cce",
     ]),

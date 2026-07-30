@@ -262,6 +262,23 @@ describe("aggregate test-runner contract", () => {
       entry => entry.kind === "commonjs-require",
     )).toBe(true);
     expect(extractModuleLoadEvidence(
+      "import(moduleUrl)",
+    ).moduleLoads[0]).toMatchObject({
+      kind: "dynamic-import",
+    });
+    expect(extractModuleLoadEvidence(
+      "require(moduleUrl)",
+    ).moduleLoads[0]).toMatchObject({
+      kind: "commonjs-require",
+    });
+    expect(extractModuleLoadEvidence(
+      "import(moduleUrl)",
+    ).moduleLoads[0].kind).not.toBe(
+      extractModuleLoadEvidence(
+        "require(moduleUrl)",
+      ).moduleLoads[0].kind,
+    );
+    expect(extractModuleLoadEvidence(
       'const nested = `proof:${import(moduleUrl)}`;',
     ).dynamicImports).toHaveLength(1);
     expect(extractModuleLoadEvidence(
@@ -409,7 +426,9 @@ describe("aggregate test-runner contract", () => {
     expect(Object.isFrozen(SYNTHETIC_SOURCE_IDENTITY_IMPORTERS)).toBe(true);
     expect(REVIEWED_COMPUTED_MODULE_LOADS.every(entry =>
       Object.isFrozen(entry)
+      && Object.isFrozen(entry.kinds)
       && Object.isFrozen(entry.fingerprints)
+      && entry.kinds.length === entry.count
       && entry.fingerprints.length === entry.count
       && entry.reason.length > 0)).toBe(true);
     expect(new Set(SOURCE_IDENTITY_TEST_FILES).size).toBe(SOURCE_IDENTITY_TEST_FILES.length);
@@ -434,15 +453,17 @@ describe("aggregate test-runner contract", () => {
         discoveredComputedLoads.push({
           file,
           count: computed.length,
+          kinds: computed.map(entry => entry.kind),
           fingerprints: computed.map(entry => entry.fingerprint),
         });
       }
     }
     expect(discoveredComputedLoads).toEqual(
       REVIEWED_COMPUTED_MODULE_LOADS.map(
-        ({ file, count, fingerprints }) => ({
+        ({ file, count, kinds, fingerprints }) => ({
           file,
           count,
+          kinds: [...kinds],
           fingerprints: [...fingerprints],
         }),
       ),
