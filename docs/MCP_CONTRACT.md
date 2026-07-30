@@ -123,10 +123,16 @@ tools.
 `convert_pdf_to_markdown` consumes that source-validated IR and emits bounded,
 deterministic UTF-8 Markdown. It preserves supported text and conservative
 reading order, escapes Markdown and HTML control syntax, and promotes headings
-or list markers only when the retained text and geometry support them. It does
-not run OCR, render image content, infer table topology, or recover PDF link
-annotation targets. Raster, mixed, vector, failed, caller-limit-truncated,
-invalid-geometry, and output-omission cases are represented as typed gaps and
+or list markers only when the retained text and geometry support them. It
+reconstructs a table only when every row fills every recurring detected column
+and the first row carries real header evidence, and it emits a link only for a
+source-validated external http or https annotation target that maps to exactly
+one contiguous run of text on one line. Ruling lines, merged or spanning cells,
+internal destinations, actions, other URL schemes, and ambiguous or partially
+covered labels stay escaped text and are reported as typed gaps. It does not
+run OCR, render image content, or use an external model. Raster, mixed,
+vector, failed, caller-limit-truncated, invalid-geometry, and output-omission
+cases are represented as typed gaps and
 cannot receive a complete conversion status. The converter consumes
 source-validated evidence before the public `read_pdf_layout` response
 projection, so that response's 200,000-character cap cannot erase conversion

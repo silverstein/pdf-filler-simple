@@ -100,9 +100,14 @@ therefore remain unrecognized by a broad text read.
 `convert_pdf_to_markdown` renders only the source-validated, bounded local
 layout IR. It preserves supported text and conservative order, returns typed
 gaps for incomplete coverage, and optionally commits a verified UTF-8 `.md`
-file. It does not run OCR, recover PDF link annotations, infer table topology,
-or use Docling, Python, a model, or the network. A complete status means the
-requested text-layer slice was converted under this bounded contract, not that
+file. It reconstructs evidence-complete recurring-column tables that carry real
+header evidence, and emits source-validated external http or https link
+annotations that map to exactly one contiguous run of text. Unsupported table
+structures and link targets, including ruling lines, merged or spanning cells,
+internal destinations, actions, other URL schemes, and ambiguous labels, stay
+escaped text reported as a typed gap. It does not run OCR or use Docling,
+Python, a model, or the network. A complete status means the requested
+text-layer slice was converted under this bounded contract, not that
 the original PDF's visual or semantic structure was fully recovered.
 
 Filesystem operations and rasterization happen locally, and PDF Tools does not

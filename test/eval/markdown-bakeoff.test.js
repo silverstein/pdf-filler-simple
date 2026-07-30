@@ -63,7 +63,7 @@ async function handle(message) {
     const pageBoundaries = Array.from({ length: pageCount }, (_, index) => "<!-- PDF page " + (index + 1) + " -->");
     const markdown = pageBoundaries.join("\n\n") + "\n\nINV-1001 fixture evidence\n";
     const value = {
-      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.0.0" },
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.2.0" },
       conversion_status: "complete",
       markdown,
       markdown_sha256: digest(Buffer.from(markdown)),
@@ -142,7 +142,7 @@ function resultFor(binding) {
   const markdown = "<!-- PDF page 1 -->\n\nFixture text\n";
   return {
     structuredContent: {
-      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.0.0" },
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.2.0" },
       conversion_status: "complete",
       markdown,
       markdown_sha256: sha256(Buffer.from(markdown)),
@@ -177,6 +177,66 @@ function resultFor(binding) {
     },
   };
 }
+
+// Independent of the Docling handoff setup below, so a blocked or skipped
+// packed bakeoff can never again hide a stale renderer version pin. Runs
+// standalone with -t "renderer version".
+describe("Markdown bakeoff renderer version binding", () => {
+  const markdown = "# Title\n";
+  const sourceBytes = Buffer.from("%PDF-1.7\n", "utf8");
+  const binding = {
+    fixture: { id: "renderer-version-guard" },
+    retained: {
+      filename: "guard.pdf",
+      sha256: createHash("sha256").update(sourceBytes).digest("hex"),
+      bytes: sourceBytes.length,
+    },
+    pageCount: 1,
+  };
+  const resultFor = version => ({
+    isError: false,
+    structuredContent: {
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version },
+      options: { include_page_boundaries: true },
+      limits: { max_markdown_bytes: 200000 },
+      provenance: {
+        source: {
+          file_name: binding.retained.filename,
+          sha256: binding.retained.sha256,
+          size_bytes: binding.retained.bytes,
+        },
+        layout: {
+          parser_name: "pdfjs-dist",
+          parser_version: "5.4.624",
+          page_range: { start_page: 1, end_page: 1, total_pages: 1 },
+        },
+      },
+      saved_output: null,
+      markdown,
+      markdown_bytes: Buffer.byteLength(markdown, "utf8"),
+      markdown_sha256: createHash("sha256").update(Buffer.from(markdown, "utf8")).digest("hex"),
+      conversion_status: "complete",
+      pages: [{
+        page: 1,
+        conversion_status: "complete",
+        markdown_bytes: Buffer.byteLength(markdown, "utf8"),
+        line_count: 1,
+        rendered_line_count: 1,
+        gaps: [],
+      }],
+      gaps: [],
+      limitations: [],
+    },
+  });
+
+  it("accepts the current renderer version and rejects the superseded one", () => {
+    expect(validateMarkdownResult(resultFor("1.2.0"), binding).renderer.version).toBe("1.2.0");
+    for (const stale of ["1.0.0", "1.1.0"]) {
+      expect(() => validateMarkdownResult(resultFor(stale), binding), stale)
+        .toThrow(/Markdown result evidence is invalid/u);
+    }
+  });
+});
 
 describe("packed Markdown bakeoff runner", () => {
   let root;

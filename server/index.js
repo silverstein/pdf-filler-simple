@@ -2673,7 +2673,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "convert_pdf_to_markdown",
-        description: "Convert a bounded page range from a local PDF into deterministic Markdown using the source-validated PDF Tools Extraction IR. Preserves supported text and reading order, applies only conservative geometry-backed headings and literal list evidence, and reports partial or failed coverage explicitly. It does not run OCR, infer table topology, recover link targets, or use an external model. Optionally saves UTF-8 Markdown through the transactional output path. All paths must be absolute paths or ~/ paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Convert a bounded page range of a local PDF into deterministic Markdown from the source-validated PDF Tools Extraction IR. Headings and lists require geometry or literal marker evidence. A table is reconstructed only when every row fills every recurring detected column and the first row carries real header evidence. A link is emitted only for a source-validated external http or https annotation target covering one contiguous run of text on one line. Unsupported table structures and link targets, including merged cells, internal destinations, actions, and other schemes, stay escaped text reported as typed coverage gaps. No OCR and no external model. Optionally saves UTF-8 Markdown through the transactional output path. Use absolute or ~/ paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           additionalProperties: false,

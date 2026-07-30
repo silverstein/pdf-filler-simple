@@ -167,7 +167,7 @@ improvement rather than a shipped capability.
 - `read_pdf_content`
 - `read_pdf_pages`
 - `read_pdf_layout`
-- `convert_pdf_to_markdown`
+- `convert_pdf_to_markdown` (reconstructs evidence-backed tables and source-validated external http or https links; unsupported, ambiguous, internal, and action links stay escaped text reported as typed gaps)
 - `render_pdf_page`
 - `render_pdf_region`
 - `search_pdf_text`

@@ -131,8 +131,13 @@ they do not produce recognized text. Mixed text/raster documents and raster
 pages after page 1 can therefore remain unrecognized by a broad text read.
 
 `convert_pdf_to_markdown` consumes the bounded source-validated layout IR. It
-does not run OCR, recover PDF link annotation targets, infer table topology, or
-use an external model. Unsupported visual or structural content is reported as
+reconstructs a table only from recurring column geometry when every row fills
+every detected column and the first row carries real header evidence, and emits
+a link only for a source-validated external http or https annotation target
+that maps to exactly one contiguous run of text on one line. Ruling lines,
+merged or spanning cells, internal destinations, actions, other URL schemes,
+and ambiguous labels stay escaped text. It does not run OCR or use an external
+model. Unsupported visual or structural content is reported as
 typed partial coverage rather than silently represented as complete Markdown.
 
 PDF Tools performs filesystem operations and rasterization locally and does not
