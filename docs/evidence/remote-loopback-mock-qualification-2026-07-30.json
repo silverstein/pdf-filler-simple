@@ -1,0 +1,164 @@
+{
+  "schema_version": "pdf-tools.remote-loopback-mock-qualification.v1",
+  "as_of": "2026-07-30",
+  "evidence_classification": "SYNTHETIC_LOOPBACK_CONTRACT_MOCK_AND_STATIC_ARCHIVE_CONFORMANCE_WITH_DARWIN_ARM64_PACKED_PRODUCT_SMOKE",
+  "claim_boundary": {
+    "repository_synthetic_pdf_used": true,
+    "user_customer_confidential_or_production_pdf_used": false,
+    "production_remote_service_deployed": false,
+    "oauth_or_real_authentication_tested": false,
+    "provider_account_or_storage_mutated": false,
+    "claude_desktop_remote_compatibility_tested": false,
+    "extension_installed": false,
+    "release_tag_or_deployment_created": false,
+    "production_verdict": "WAIT"
+  },
+  "implementation": {
+    "commit": "7c72e10d6d0d22409e802cf292734cae21773658",
+    "tree": "45c4dfb3d5f71da987cd7f63eeb553eaf0ae3181",
+    "public_parent_commit": "e6e3b18d9e2bb22e77439846e9c3f1594ad51b35",
+    "aggregate_exact_candidate_commit": "7c72e10d6d0d22409e802cf292734cae21773658",
+    "history_shape": "one independently qualifying implementation commit followed by one evidence and tracker commit"
+  },
+  "authorities": {
+    "loopback_mock_config_sha256": "621a862f1aa3bfba144becd73b73a4eb25d2b00d888b647606ebb1b0c6b4a1d9",
+    "remote_hybrid_contract_sha256": "3783deb63beeb1fe48aa545ca58db861864ccb794a2c8fcc156f06a5b3999627",
+    "remote_hybrid_machine_file_sha256": "44678af373a64debf7df3f3f4934be5b70c3ed5bc13e099e72fa4782e9d35ce7",
+    "architecture_record_sha256": "8be4894f05ad8bdeeb0fac1ed23d8aaf3801166bb0e8bbb5b6d2165122c6b46f",
+    "synthetic_pdf_fixture": {
+      "repository_path": "test/fixtures/eval/comparison/synthetic/comparison-base.pdf",
+      "bytes": 3981,
+      "sha256": "83228dc849486ef78b8be0f663e9daa8a7641a9d0cc7c6af9a5f443ae5fcc4dc"
+    }
+  },
+  "host": {
+    "class": "designated_apple_silicon_mac",
+    "os": "macOS 26.6",
+    "architecture": "arm64",
+    "node": "26.3.1"
+  },
+  "commands": [
+    {
+      "id": "architecture_self_test",
+      "command": "node scripts/verify-remote-hybrid-architecture.mjs --self-test",
+      "exact_commit": "7c72e10d6d0d22409e802cf292734cae21773658",
+      "result": {
+        "verdict": "GO_ARCHITECTURE_WAIT_PRODUCTION",
+        "adversarial_mutants_rejected": 30,
+        "result_json_sha256": "c024f3ab5ae6d0e11f8508d57c28f7bd98dd7c05759dc8c40fa06082b2e71088"
+      }
+    },
+    {
+      "id": "final_focused_bank",
+      "command": "npx vitest run test/remote-hybrid-architecture.test.js test/remote-loopback-mock-transport.test.js test/remote-loopback-mock-state.test.js test/remote-loopback-mock-wire-state.test.js test/remote-loopback-mock-no-egress.test.js test/remote-loopback-mock-bounds-cleanup.test.js test/mcpb-archive.test.js test/test-runner-contract.test.js",
+      "exact_commit": "7c72e10d6d0d22409e802cf292734cae21773658",
+      "result": {
+        "files_passed": 8,
+        "files_failed": 0,
+        "tests_passed": 153,
+        "tests_failed": 0
+      }
+    },
+    {
+      "id": "public_parent_aggregate",
+      "command": "npm test",
+      "exact_commit": "e6e3b18d9e2bb22e77439846e9c3f1594ad51b35",
+      "result": {
+        "files_passed": 95,
+        "files_failed": 14,
+        "files_skipped": 1,
+        "tests_passed": 1594,
+        "tests_failed": 101,
+        "tests_skipped": 13,
+        "tests_total": 1708,
+        "duration_seconds": 300.47,
+        "raw_log_sha256": "8a79ad0015d2fab7e98c57e1789a1d5bc16df93e43a92949568cbc3dfb9d4aa7",
+        "normalized_failure_heading_lines": 102,
+        "normalized_failure_headings_sha256": "f1defd674f9f22e0c443a71cf2212cea9c5e3afc6855a39b3ba877c0a91370fb"
+      }
+    },
+    {
+      "id": "executable_candidate_aggregate",
+      "command": "npm test",
+      "exact_commit": "7c72e10d6d0d22409e802cf292734cae21773658",
+      "result": {
+        "files_passed": 100,
+        "files_failed": 14,
+        "files_skipped": 1,
+        "tests_passed": 1687,
+        "tests_failed": 101,
+        "tests_skipped": 13,
+        "tests_total": 1801,
+        "duration_seconds": 300.4,
+        "raw_log_sha256": "3647bdfeb54984ae5f7249510a13b8fba4b0a823c633d954a0c8b49eb58eeb09",
+        "normalized_failure_heading_lines": 102,
+        "normalized_failure_headings_sha256": "f1defd674f9f22e0c443a71cf2212cea9c5e3afc6855a39b3ba877c0a91370fb",
+        "candidate_only_normalized_failure_headings": 0
+      }
+    },
+    {
+      "id": "canonical_mcpb_build",
+      "command": "npm run build:mcpb",
+      "exact_commit": "7c72e10d6d0d22409e802cf292734cae21773658",
+      "result": {
+        "clean_isolated_builds": 2,
+        "byte_identical": true,
+        "artifact_sha256": "22669c81950d7141d1b80b6387f9667f37100d16e666839f9002c6b95ca22364",
+        "artifact_bytes": 73592352,
+        "archive_entries": 2999,
+        "larger_peak_rss_kib": 868672,
+        "pinned_mcpb_info_passed": true,
+        "pinned_mcpb_unpack_passed": true,
+        "native_execution_performed_by_builder": false,
+        "claude_desktop_tested_by_builder": false
+      }
+    },
+    {
+      "id": "packed_darwin_arm64_smoke",
+      "command": "npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb",
+      "exact_commit": "7c72e10d6d0d22409e802cf292734cae21773658",
+      "result": {
+        "tools": 40,
+        "prompts": 14,
+        "canonical_resources": true,
+        "native_raster_image": true
+      }
+    },
+    {
+      "id": "first_party_mock_archive_exclusion",
+      "command": "unzip -Z1 pdf-toolkit-mcp.mcpb | rg '^(test|scripts)/|^config/remote-loopback-mock\\.v1\\.json$|remote-loopback/'",
+      "exact_commit": "7c72e10d6d0d22409e802cf292734cae21773658",
+      "result": {
+        "matching_entries": 0
+      }
+    }
+  ],
+  "runtime_calibrations": {
+    "concealed_module_loader_probes_denied": 3,
+    "product_path_operations": 9,
+    "exact_loopback_sockets": 9,
+    "forbidden_telemetry_counts": {
+      "external_socket": 0,
+      "dns": 0,
+      "fetch": 0,
+      "tls": 0,
+      "udp": 0,
+      "subprocess": 0,
+      "unreviewed_loader": 0
+    },
+    "assigned_nonloopback_interface_result": "ECONNREFUSED"
+  },
+  "review": {
+    "class": "separate_adversarial_maintainer_review_lanes",
+    "lanes": 3,
+    "verdicts": {
+      "GO": 3
+    },
+    "findings": {
+      "P0": 0,
+      "P1": 0,
+      "P2": 0
+    },
+    "external_or_third_party_assurance": false
+  }
+}
