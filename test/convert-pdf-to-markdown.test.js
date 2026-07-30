@@ -8,6 +8,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { PDFDocument, PDFName, PDFNumber, PDFString, StandardFonts, degrees } from "pdf-lib";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { TOOL_OUTPUT_SCHEMAS } from "../server/output-schemas.js";
+import { projectMarkdownTable, scoreTable } from "./eval/extraction-bakeoff-scorer.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const MIXED = path.join(REPO_ROOT, "test/fixtures/eval/extraction/synthetic/mixed-text-raster.pdf");
@@ -341,6 +342,37 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     expect(result.structuredContent.gaps.map(gap => gap.code))
       .not.toContain("TABLE_TOPOLOGY_UNKNOWN");
     expect(result.structuredContent.conversion_status).toBe("complete");
+  }, 30_000);
+
+  it("round-trips a reconstructed table back through the bakeoff projection", async () => {
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: gridTableFixture, max_markdown_bytes: 100000 },
+    });
+    expect(result.isError).not.toBe(true);
+    // The renderer's own output must be projectable by the scorer, otherwise
+    // the bakeoff scores a real reconstruction as a miss.
+    const candidate = projectMarkdownTable(result.structuredContent.markdown, 1);
+    expect(candidate).not.toBeNull();
+    expect(candidate.row_count).toBe(4);
+    expect(candidate.column_count).toBe(4);
+    const expected = {
+      page: 1,
+      row_count: 4,
+      column_count: 4,
+      merged_cells: [],
+      cells: GRID_ROWS.flatMap((row, rowIndex) => row.map((value, columnIndex) => ({
+        row: rowIndex + 1,
+        column: columnIndex + 1,
+        value,
+      }))),
+    };
+    const score = scoreTable(expected, candidate);
+    expect(score.present).toBe(true);
+    expect(score.dimensions_exact).toBe(true);
+    expect(score.cells_exact).toBe(true);
+    expect(score.topology_exact).toBe(true);
+    expect(score.exact_cells).toBe(16);
   }, 30_000);
 
   it("does not invent a header for a uniform grid and reports it as a typed gap", async () => {
