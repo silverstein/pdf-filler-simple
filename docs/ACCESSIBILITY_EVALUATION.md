@@ -295,6 +295,79 @@ signing key was established in the disposable environment. HTTPS plus recorded
 hashes prevents unnoticed drift after this observation but does not replace a
 trusted signature chain.
 
+## Version 2 installer provenance candidate
+
+Version 1 and its recorded trial remain frozen evidence. The separately
+versioned `formal-corpus.v2.json` adds an installer-authenticity precondition
+without changing the two-file corpus or widening its PDF/UA-1 scope.
+
+The official [veraPDF installation documentation](https://docs.verapdf.org/install/)
+publishes the full primary OpenPGP fingerprint
+`13DD102B4DD69354D12DE5A83184863278B17FE7` and links the public key at
+`https://software.verapdf.org/keys/KEY`. Version 2 pins that URL, the exact
+5,613-byte key, its SHA-256, the detached signature and installer SHA-256
+values, and the exact `/usr/bin/gpgv` executable identity used by the evidence
+host. The key, detached signature, installer, verifier, validator, runtime, and
+corpus stay outside the repository and outside the extension.
+
+A candidate v2 run uses only an isolated binary keyring decoded from the pinned
+ASCII-armored key. It supplies a disposable home and a minimal environment to
+`gpgv`, requires one exact status sequence, and checks the complete primary
+fingerprint, signature timestamp, public-key algorithm, digest algorithm, and
+signature class. Any malformed, missing, duplicate, fatal, or unexpected status
+fails closed. Installer authenticity must pass before the runner creates an
+evidence generation or invokes veraPDF.
+
+Prepare a private, owner-only generation root and run:
+
+```bash
+mkdir -m 700 /external/evidence/accessibility-v2
+node scripts/eval-run-accessibility-formal-v2.mjs \
+  --corpus-dir /external/cache/pdfua-corpus \
+  --public-key /external/cache/verapdf-KEY \
+  --signature /external/cache/verapdf-greenfield-1.30.2-installer.zip.asc \
+  --verifier /usr/bin/gpgv \
+  --validator /external/verapdf/verapdf \
+  --validator-artifact /external/cache/verapdf-greenfield-1.30.2-installer.zip \
+  --runtime-archive /external/cache/OpenJDK21U-jre_x64_linux_hotspot_21.0.11_10.tar.gz \
+  --java-home /external/temurin-jre \
+  --generation-root /external/evidence/accessibility-v2
+```
+
+The CLI writes only the whitelisted, non-publishable public projection to
+standard output. Raw signature status, signature diagnostics, validator
+reports, and the qualification index remain in a new mode-0700 private
+generation. Files are created mode 0600 with no-follow and exclusive flags,
+synced, closed, reopened, rehashed, and bound by an index written last. A
+partial generation without that final index is not qualified evidence.
+
+The runner launches each external executable in a dedicated process group.
+Timeout or output-limit termination applies to the complete group. A surviving
+or ambiguously inspected descendant fails qualification. It checks every pinned
+input and both complete installed-tree digests before signature verification,
+after signature verification, after validator preflight, after each fixture,
+and before the index is written.
+
+A qualifying v2 run permits only this bounded statement:
+
+> The pinned veraPDF installer signature was verified against the exact OpenPGP key and fingerprint published by veraPDF's official installation documentation.
+
+This statement is anchored to the key and fingerprint served by veraPDF's
+official HTTPS documentation. It is not an independently certified public-key
+infrastructure chain. The offline run does not refresh key revocation state.
+The pinned `gpgv` executable is exact, but the Linux loader and dynamic
+libraries remain part of the evidence host's trusted computing base.
+Pre-run and post-run hashes detect persistent drift, but do not resist a
+same-user actor able to substitute and restore bytes during execution.
+
+Signature verification authenticates the pinned installer only. It does not
+establish validator correctness, complete machine-rule coverage, PDF/UA
+conformance, WCAG conformance, legal compliance, certification, or document
+accessibility. The v2 pilot still covers only two PDF/UA-1
+version-identification files and no human-verifiable requirement. Its public
+projection therefore carries `publication_authorized: false`, and every
+conformance, compliance, and certification state remains `not_established`.
+
 ## Required next evidence layers
 
 A future conformance lane should be added only as separately reviewed,
