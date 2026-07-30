@@ -263,6 +263,22 @@ describe("aggregate test-runner contract", () => {
       "const decoy = / import(decoyUrl) /;",
     ).dynamicImports).toHaveLength(0);
     expect(extractModuleLoadEvidence(
+      "value! / import(moduleUrl) / divisor;",
+      { filename: "postfix-non-null.ts" },
+    ).dynamicImports).toHaveLength(1);
+    expect(extractModuleLoadEvidence(
+      "! /import(decoyUrl)/.test(text);",
+      { filename: "prefix-not-regex.ts" },
+    ).dynamicImports).toHaveLength(0);
+    expect(extractModuleLoadEvidence(
+      "<Component /> / import(moduleUrl) / divisor;",
+      { filename: "element-division.jsx" },
+    ).dynamicImports).toHaveLength(1);
+    expect(extractModuleLoadEvidence(
+      "value > /import(decoyUrl)/.test(text);",
+      { filename: "comparison-regex.jsx" },
+    ).dynamicImports).toHaveLength(0);
+    expect(extractModuleLoadEvidence(
       'const nested = `outer:${`inner:${import(nestedUrl)}`}`;',
     ).dynamicImports).toHaveLength(1);
 
