@@ -371,10 +371,36 @@ function installBrowserPolyfills() {
 let pdfjsLib = null;
 let createCanvas = null;
 
+async function importPdfjsForNodeCompatibleElectronHost() {
+  const electronDescriptor = Object.getOwnPropertyDescriptor(
+    process.versions,
+    "electron",
+  );
+  const requiresNodeCompatibilityImport = typeof electronDescriptor?.value === "string"
+    && process.type
+    && process.type !== "browser";
+  if (!requiresNodeCompatibilityImport) {
+    return await import("pdfjs-dist/legacy/build/pdf.mjs");
+  }
+  if (!electronDescriptor.configurable) {
+    const error = new Error(
+      "The embedded PDF host cannot safely disable PDF.js Web Worker detection.",
+    );
+    error.code = "PDFJS_EMBEDDED_HOST_UNSUPPORTED";
+    throw error;
+  }
+  delete process.versions.electron;
+  try {
+    return await import("pdfjs-dist/legacy/build/pdf.mjs");
+  } finally {
+    Object.defineProperty(process.versions, "electron", electronDescriptor);
+  }
+}
+
 async function loadPdfjs() {
   if (pdfjsLib) return pdfjsLib;
   installBrowserPolyfills();
-  const imported = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  const imported = await importPdfjsForNodeCompatibleElectronHost();
   pdfjsLib = imported.default || imported;
   pdfjsLib.GlobalWorkerOptions.workerSrc = pathToFileURL(
     _require.resolve("pdfjs-dist/legacy/build/pdf.worker.mjs"),
@@ -839,6 +865,14 @@ async function terminateActiveSystemChildren() {
     killSystemChild(child);
     await closed;
   }));
+}
+
+export async function terminateAllPdfjsWorkerSystemChildren() {
+  await terminateActiveSystemChildren();
+}
+
+export function forceTerminateAllPdfjsWorkerSystemChildren() {
+  for (const child of activeSystemChildren) killSystemChild(child);
 }
 
 export function installSystemChildTerminationHandlers() {

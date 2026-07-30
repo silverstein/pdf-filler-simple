@@ -142,31 +142,125 @@ describe.sequential("PDF.js subprocess boundary", () => {
       processType: "utility",
       hasElectronParentPort: true,
       executable: "/Applications/Claude.app/Contents/MacOS/Claude",
-    })).toBe("worker_thread");
+    })).toBe("in_process");
     expect(selectPdfjsIsolationMode({
       electronVersion: "39.0.0",
       processType: "browser",
       hasElectronParentPort: false,
       executable: "/Applications/Claude.app/Contents/MacOS/Claude",
-    })).toBe("worker_thread");
+    })).toBe("in_process");
     expect(selectPdfjsIsolationMode({
       electronVersion: null,
       processType: null,
       hasElectronParentPort: true,
       executable: "/Applications/Claude.app/Contents/Frameworks/Claude Helper (Plugin)",
-    })).toBe("worker_thread");
+    })).toBe("in_process");
     expect(selectPdfjsIsolationMode({
       electronVersion: null,
       processType: null,
       hasElectronParentPort: false,
       executable: "/Applications/Claude.app/Contents/Frameworks/Claude Helper (Plugin)",
-    })).toBe("worker_thread");
+    })).toBe("in_process");
+    expect(selectPdfjsIsolationMode({
+      electronVersion: null,
+      processType: null,
+      hasElectronParentPort: false,
+      executable: "/Applications/Claude.app/Contents/MacOS/Claude",
+    })).toBe("in_process");
+    expect(selectPdfjsIsolationMode({
+      electronVersion: null,
+      processType: null,
+      hasElectronParentPort: false,
+      executable: "/Applications/Example.app/Contents/Resources/node",
+    })).toBe("subprocess");
     expect(selectPdfjsIsolationMode({
       electronVersion: null,
       processType: null,
       hasElectronParentPort: false,
       executable: process.execPath,
     })).toBe("subprocess");
+  });
+
+  it("runs a source-bound request without spawning or threading in an embedded host", async () => {
+    const failIfUsed = () => {
+      throw new Error("The embedded host must not launch another executable.");
+    };
+    const priorElectron = Object.getOwnPropertyDescriptor(process.versions, "electron");
+    const priorProcessType = Object.getOwnPropertyDescriptor(process, "type");
+    const priorWorker = Object.getOwnPropertyDescriptor(globalThis, "Worker");
+    let webWorkerConstructions = 0;
+    Object.defineProperty(process.versions, "electron", {
+      configurable: true,
+      enumerable: true,
+      value: "39.0.0",
+    });
+    Object.defineProperty(process, "type", {
+      configurable: true,
+      value: "utility",
+    });
+    Object.defineProperty(globalThis, "Worker", {
+      configurable: true,
+      value: class {
+        constructor() {
+          webWorkerConstructions += 1;
+          throw new Error("PDF.js must not create an Electron Web Worker.");
+        }
+      },
+    });
+    let result;
+    try {
+      result = await runPdfjsSubprocess(
+        await createThreadPdfRequest(),
+        {
+          isolationMode: "in_process",
+          spawnProcess: failIfUsed,
+          workerClass: class {
+            constructor() {
+              failIfUsed();
+            }
+          },
+        },
+      );
+    } finally {
+      if (priorElectron) {
+        Object.defineProperty(process.versions, "electron", priorElectron);
+      } else {
+        delete process.versions.electron;
+      }
+      if (priorProcessType) Object.defineProperty(process, "type", priorProcessType);
+      else delete process.type;
+      if (priorWorker) Object.defineProperty(globalThis, "Worker", priorWorker);
+      else delete globalThis.Worker;
+    }
+    expect(webWorkerConstructions).toBe(0);
+    expect(process.versions.electron).toBeUndefined();
+    expect(process.type).toBeUndefined();
+    expect(result).toMatchObject({
+      pages_read: 1,
+      text_found: true,
+      total_pages: 1,
+    });
+    expect(result.output_text).toContain("Thread host conversion");
+  });
+
+  it("blocks embedded native canvas and renders through the tracked system child", async () => {
+    if (process.platform !== "darwin") return;
+    const result = await runPdfjsSubprocess(
+      await createThreadPdfRequest({
+        operation: "render_page",
+        options: {
+          max_dimension_px: 512,
+          page: 1,
+          renderer_policy: "native_with_system_fallback",
+          scale_override: null,
+        },
+      }),
+      { isolationMode: "in_process" },
+    );
+    expect(result).toMatchObject({ renderer: "macos-sips" });
+    expect(result.binary.subarray(0, 8)).toEqual(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    );
   });
 
   it("runs a source-bound PDF.js request in the Electron-host worker-thread fallback", async () => {

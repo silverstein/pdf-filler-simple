@@ -36,6 +36,8 @@ const queuedOperations = [];
 const activeChildren = new Set();
 const activeThreadWorkers = new Set();
 const activeThreadSystemChildren = new Set();
+let inProcessWorkerModulePromise = null;
+let inProcessCanvasGuardInstalled = false;
 
 export function selectPdfjsIsolationMode({
   electronVersion = process.versions.electron ?? null,
@@ -47,9 +49,21 @@ export function selectPdfjsIsolationMode({
   const embeddedElectronHost = typeof electronVersion === "string"
     || processType === "utility"
     || hasElectronParentPort
-    || /(?:^electron$| helper(?: \(plugin\))?$)/i.test(executableName);
-  return embeddedElectronHost ? "worker_thread" : "subprocess";
+    || /(?:^electron$|^claude(?: helper(?: \(plugin\))?)?(?:\.exe)?$)/i.test(executableName);
+  return embeddedElectronHost ? "in_process" : "subprocess";
 }
+
+const DEFAULT_ISOLATION_MODE = selectPdfjsIsolationMode();
+console.error("[PDF Tools] PDF.js execution host", JSON.stringify({
+  argv0: basename(process.argv0 ?? ""),
+  electron: typeof process.versions.electron === "string",
+  executable: basename(process.execPath),
+  mode: DEFAULT_ISOLATION_MODE,
+  parent_port: process.parentPort != null,
+  process_type: typeof process.type === "string" ? process.type : null,
+  utility_arg: [...process.execArgv, ...process.argv]
+    .some(argument => /^--(?:type=utility|utility-sub-type=)/.test(argument)),
+}));
 
 function exactKeys(value, expected, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -820,6 +834,67 @@ async function runThreadWorker({
   });
 }
 
+async function loadInProcessWorkerModule() {
+  inProcessWorkerModulePromise ??= import("./pdfjs-worker.js");
+  return await inProcessWorkerModulePromise;
+}
+
+function installInProcessCanvasNativeGuard() {
+  if (inProcessCanvasGuardInstalled) return;
+  inProcessCanvasGuardInstalled = true;
+  const originalDlopen = process.dlopen;
+  process.dlopen = function guardedDlopen(module, filename, ...args) {
+    const normalizedFilename = String(filename ?? "").replaceAll("\\", "/");
+    if (
+      normalizedFilename.includes("/node_modules/@napi-rs/canvas")
+      || /\/skia\.[^/]+\.node$/i.test(normalizedFilename)
+    ) {
+      const error = new Error(
+        "The native canvas binding is disabled in this embedded PDF host.",
+      );
+      error.code = "PDFJS_EMBEDDED_NATIVE_CANVAS_DISABLED";
+      throw error;
+    }
+    return originalDlopen.call(this, module, filename, ...args);
+  };
+}
+
+async function runInProcessWorker({
+  maxBinaryBytes,
+  maxResultBytes,
+  request,
+  signal,
+}) {
+  // Claude's embedded UtilityProcess cannot safely relaunch its executable or
+  // create a Node worker. This compatibility path retains the request, path,
+  // queue, and output bounds, but it is not a separate heap/process boundary.
+  if (signal?.aborted) throw abortError();
+  installInProcessCanvasNativeGuard();
+  const workerModule = await loadInProcessWorkerModule();
+  const operationResult = await workerModule.executePdfjsWorkerRequest(request);
+  if (signal?.aborted) throw abortError();
+  const encodedResult = Buffer.from(JSON.stringify(operationResult.result), "utf8");
+  if (encodedResult.length > maxResultBytes) {
+    throw resourceLimitError("worker_output_limit");
+  }
+  if (operationResult.binary === null) return operationResult.result;
+  const binary = Buffer.from(operationResult.binary);
+  const descriptor = {
+    bytes: binary.length,
+    mime_type: "image/png",
+    sha256: createHash("sha256").update(binary).digest("hex"),
+  };
+  return {
+    ...operationResult.result,
+    binary: validateBinaryResult(
+      binary,
+      descriptor,
+      operationResult.result,
+      maxBinaryBytes,
+    ),
+  };
+}
+
 export async function runPdfjsSubprocess(request, {
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxResultBytes = DEFAULT_MAX_RESULT_BYTES,
@@ -831,7 +906,7 @@ export async function runPdfjsSubprocess(request, {
   environment = process.env,
   platform = process.platform,
   spawnProcess = spawn,
-  isolationMode = selectPdfjsIsolationMode(),
+  isolationMode = DEFAULT_ISOLATION_MODE,
   workerClass = Worker,
   signal = null,
 } = {}) {
@@ -843,8 +918,8 @@ export async function runPdfjsSubprocess(request, {
   boundedInteger(maxOldSpaceMb, "maxOldSpaceMb", 64, 4096);
   nonEmptyString(workerPath, "workerPath");
   nonEmptyString(executable, "executable");
-  if (!["subprocess", "worker_thread"].includes(isolationMode)) {
-    throw new TypeError("isolationMode must be subprocess or worker_thread.");
+  if (!["in_process", "subprocess", "worker_thread"].includes(isolationMode)) {
+    throw new TypeError("isolationMode must be in_process, subprocess, or worker_thread.");
   }
 
   const deadlineAt = Date.now() + timeoutMs;
@@ -858,8 +933,15 @@ export async function runPdfjsSubprocess(request, {
     if (signal?.aborted) throw abortError();
     const remainingMs = deadlineAt - Date.now();
     if (remainingMs < 100) throw resourceLimitError("worker_queue_timeout");
-    result = isolationMode === "worker_thread"
-      ? await runThreadWorker({
+    result = isolationMode === "in_process"
+      ? await runInProcessWorker({
+          maxBinaryBytes,
+          maxResultBytes,
+          request,
+          signal,
+        })
+      : isolationMode === "worker_thread"
+        ? await runThreadWorker({
           environment,
           maxBinaryBytes,
           maxOldSpaceMb,
@@ -929,6 +1011,9 @@ export function createPdfjsSubprocessRequest({
 }
 
 export async function terminateAllPdfjsSubprocesses() {
+  const inProcessWorker = inProcessWorkerModulePromise === null
+    ? null
+    : await inProcessWorkerModulePromise;
   await Promise.all([
     ...[...activeChildren].map(async ({ child }) => {
       const closed = new Promise(resolve => child.once("close", resolve));
@@ -942,6 +1027,7 @@ export async function terminateAllPdfjsSubprocesses() {
       clearTimeout(escalation);
     }),
     ...[...activeThreadWorkers].map(worker => worker.terminate()),
+    inProcessWorker?.terminateAllPdfjsWorkerSystemChildren(),
   ]);
   await Promise.all(
     [...activeThreadSystemChildren].map(async child => {
@@ -961,5 +1047,11 @@ export function forceTerminateAllPdfjsSubprocesses() {
   }
   for (const child of activeThreadSystemChildren) {
     signalChild(child, "SIGKILL");
+  }
+  if (inProcessWorkerModulePromise !== null) {
+    void inProcessWorkerModulePromise.then(
+      worker => worker.forceTerminateAllPdfjsWorkerSystemChildren(),
+      () => {},
+    );
   }
 }
