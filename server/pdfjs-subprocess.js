@@ -2,7 +2,7 @@ import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
 import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 
@@ -40,10 +40,15 @@ const activeThreadSystemChildren = new Set();
 export function selectPdfjsIsolationMode({
   electronVersion = process.versions.electron ?? null,
   processType = process.type ?? null,
+  hasElectronParentPort = process.parentPort != null,
+  executable = process.execPath,
 } = {}) {
-  return typeof electronVersion === "string" && processType === "utility"
-    ? "worker_thread"
-    : "subprocess";
+  const executableName = typeof executable === "string" ? basename(executable) : "";
+  const embeddedElectronHost = typeof electronVersion === "string"
+    || processType === "utility"
+    || hasElectronParentPort
+    || /(?:^electron$| helper(?: \(plugin\))?$)/i.test(executableName);
+  return embeddedElectronHost ? "worker_thread" : "subprocess";
 }
 
 function exactKeys(value, expected, label) {

@@ -136,18 +136,36 @@ afterEach(async () => {
 });
 
 describe.sequential("PDF.js subprocess boundary", () => {
-  it("selects a worker thread only for an Electron utility host", () => {
+  it("never relaunches an Electron host executable as Node", () => {
     expect(selectPdfjsIsolationMode({
       electronVersion: "39.0.0",
       processType: "utility",
+      hasElectronParentPort: true,
+      executable: "/Applications/Claude.app/Contents/MacOS/Claude",
     })).toBe("worker_thread");
     expect(selectPdfjsIsolationMode({
       electronVersion: "39.0.0",
       processType: "browser",
-    })).toBe("subprocess");
+      hasElectronParentPort: false,
+      executable: "/Applications/Claude.app/Contents/MacOS/Claude",
+    })).toBe("worker_thread");
     expect(selectPdfjsIsolationMode({
       electronVersion: null,
       processType: null,
+      hasElectronParentPort: true,
+      executable: "/Applications/Claude.app/Contents/Frameworks/Claude Helper (Plugin)",
+    })).toBe("worker_thread");
+    expect(selectPdfjsIsolationMode({
+      electronVersion: null,
+      processType: null,
+      hasElectronParentPort: false,
+      executable: "/Applications/Claude.app/Contents/Frameworks/Claude Helper (Plugin)",
+    })).toBe("worker_thread");
+    expect(selectPdfjsIsolationMode({
+      electronVersion: null,
+      processType: null,
+      hasElectronParentPort: false,
+      executable: process.execPath,
     })).toBe("subprocess");
   });
 
