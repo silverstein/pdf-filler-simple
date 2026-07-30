@@ -5,6 +5,11 @@ import { closeSync, existsSync, writeSync } from "node:fs";
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import {
+  isMainThread,
+  parentPort,
+  workerData,
+} from "node:worker_threads";
 import { PDFDocument } from "pdf-lib";
 import {
   analyzePdfPages,
@@ -31,8 +36,10 @@ const SYSTEM_COMMAND_TIMEOUT_MS = 15_000;
 const PDF_RESOURCE_LIMIT_CODE = "PDF_RESOURCE_LIMIT_EXCEEDED";
 const _require = createRequire(import.meta.url);
 const activeSystemChildren = new Set();
+const threadSystemCommandWaiters = new Map();
 let systemChildTermination = null;
 let systemChildTerminationHandlersInstalled = false;
+let nextThreadSystemCommandId = 1;
 
 const OPERATION_OPTION_KEYS = new Map([
   ["analyze_pages", ["max_pages"]],
@@ -756,6 +763,64 @@ function killSystemChild(child) {
   }
 }
 
+function isPdfjsThreadRuntime() {
+  return !isMainThread
+    && workerData?.pdf_tools_worker === "pdfjs"
+    && parentPort !== null;
+}
+
+function installThreadSystemCommandHandler() {
+  parentPort.on("message", message => {
+    if (
+      !message
+      || message.kind !== "system_command_result"
+      || !Number.isSafeInteger(message.id)
+    ) {
+      return;
+    }
+    const waiter = threadSystemCommandWaiters.get(message.id);
+    if (!waiter) return;
+    threadSystemCommandWaiters.delete(message.id);
+    if (message.status === "ok") {
+      waiter.resolve();
+      return;
+    }
+    const error = new Error(
+      typeof message.error?.message === "string"
+        ? message.error.message
+        : "The macOS system PDF renderer could not complete this operation.",
+    );
+    if (typeof message.error?.code === "string") error.code = message.error.code;
+    error.name = typeof message.error?.name === "string"
+      ? message.error.name
+      : "Error";
+    waiter.reject(error);
+  });
+}
+
+async function runThreadSystemCommand(command, args, timeoutMs) {
+  const id = nextThreadSystemCommandId;
+  nextThreadSystemCommandId += 1;
+  if (!Number.isSafeInteger(id) || id > 2 ** 31 - 1) {
+    throw resourceLimitError("system_renderer_request_limit");
+  }
+  return await new Promise((resolve, reject) => {
+    threadSystemCommandWaiters.set(id, { reject, resolve });
+    try {
+      parentPort.postMessage({
+        kind: "system_command",
+        id,
+        command,
+        args,
+        timeout_ms: timeoutMs,
+      });
+    } catch (error) {
+      threadSystemCommandWaiters.delete(id);
+      reject(error);
+    }
+  });
+}
+
 async function terminateActiveSystemChildren() {
   const children = [...activeSystemChildren];
   await Promise.all(children.map(async child => {
@@ -794,6 +859,9 @@ export async function runSystemCommand(command, args, {
     || args.some(argument => typeof argument !== "string" || argument.length > 32_768)
   ) {
     throw new TypeError("system command arguments are invalid.");
+  }
+  if (isPdfjsThreadRuntime()) {
+    return await runThreadSystemCommand(command, args, timeoutMs);
   }
   await new Promise((resolve, reject) => {
     const child = spawnProcess(command, args, {
@@ -1331,32 +1399,112 @@ async function writeError(operation, inputError) {
   await writeStream(process.stdout, encoded);
 }
 
+export async function executePdfjsWorkerRequest(inputRequest) {
+  const request = validateRequest(inputRequest);
+  const assertPathAllowed = createPathPolicy(request);
+  assertPathAllowed(request.source.canonical_path);
+  return await withBoundedPdfFileSafely(
+    request.source.canonical_path,
+    request.source.size_bytes,
+    {
+      assertPathAllowed,
+      createSizeLimitError: () => sourceChangedError(),
+    },
+    async actualSource => {
+      if (!sameSourceBinding(actualSource, request.source)) throw sourceChangedError();
+      return await performOperation(request, actualSource.bytes);
+    },
+  );
+}
+
+function workerErrorDetail(inputError) {
+  const mappedPasswordError = passwordError(inputError, pdfjsLib);
+  const error = mappedPasswordError || inputError;
+  return {
+    name: typeof error?.name === "string" && error.name.length <= 256
+      ? error.name
+      : "Error",
+    code: typeof error?.code === "string" && error.code.length <= 256
+      ? error.code
+      : null,
+    message: typeof error?.message === "string" && error.message.length <= 4096
+      ? error.message
+      : "The isolated PDF parser could not complete this operation.",
+  };
+}
+
+function threadResponse(operation, operationResult) {
+  const binary = operationResult.binary;
+  if (binary !== null && binary.length > MAX_BINARY_BYTES) {
+    throw resourceLimitError("worker_binary_limit");
+  }
+  const descriptor = binary === null
+    ? null
+    : {
+        bytes: binary.length,
+        mime_type: "image/png",
+        sha256: createHash("sha256").update(binary).digest("hex"),
+      };
+  const frame = {
+    status: "ok",
+    protocol_version: PROTOCOL_VERSION,
+    operation,
+    result: operationResult.result,
+    binary: descriptor,
+  };
+  if (Buffer.byteLength(JSON.stringify(frame), "utf8") > MAX_RESPONSE_BYTES) {
+    throw resourceLimitError("worker_response_limit");
+  }
+  return { frame, binary };
+}
+
+async function threadMain() {
+  let operation = "unknown";
+  try {
+    installThreadSystemCommandHandler();
+    const request = validateRequest(workerData.request);
+    operation = request.operation;
+    const response = threadResponse(
+      operation,
+      await executePdfjsWorkerRequest(request),
+    );
+    parentPort.postMessage({ kind: "response", response });
+  } catch (error) {
+    parentPort.postMessage({
+      kind: "response",
+      response: {
+        frame: {
+          status: "error",
+          protocol_version: PROTOCOL_VERSION,
+          operation,
+          error: workerErrorDetail(error),
+        },
+        binary: null,
+      },
+    });
+  } finally {
+    parentPort.close();
+  }
+}
+
 async function main() {
   let operation = "unknown";
   try {
     const request = await readRequest();
     operation = request.operation;
-    const assertPathAllowed = createPathPolicy(request);
-    assertPathAllowed(request.source.canonical_path);
-    const operationResult = await withBoundedPdfFileSafely(
-      request.source.canonical_path,
-      request.source.size_bytes,
-      {
-        assertPathAllowed,
-        createSizeLimitError: () => sourceChangedError(),
-      },
-      async actualSource => {
-        if (!sameSourceBinding(actualSource, request.source)) throw sourceChangedError();
-        return await performOperation(request, actualSource.bytes);
-      },
-    );
-    await writeSuccess(operation, operationResult);
+    await writeSuccess(operation, await executePdfjsWorkerRequest(request));
   } catch (error) {
     await writeError(operation, error);
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  !isMainThread
+  && workerData?.pdf_tools_worker === "pdfjs"
+  && parentPort
+) {
+  await threadMain();
+} else if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   installSystemChildTerminationHandlers();
   await main();
 }

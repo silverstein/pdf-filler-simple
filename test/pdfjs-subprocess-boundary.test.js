@@ -1,13 +1,16 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
 import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
+import { PDFDocument, StandardFonts } from "pdf-lib";
 import {
   PDF_RESOURCE_LIMIT_CODE,
   createPdfjsSubprocessRequest,
   runPdfjsSubprocess,
+  selectPdfjsIsolationMode,
   terminateAllPdfjsSubprocesses,
 } from "../server/pdfjs-subprocess.js";
 
@@ -93,6 +96,36 @@ function success(result = { value: "ok" }, binary = null) {
   });
 }
 
+async function createThreadPdfRequest() {
+  const root = await fs.realpath(
+    await fs.mkdtemp(path.join(os.tmpdir(), "pdfjs-thread-test-")),
+  );
+  roots.push(root);
+  const filename = path.join(root, "source.pdf");
+  const document = await PDFDocument.create();
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  const page = document.addPage([300, 200]);
+  page.drawText("Thread host conversion", { x: 24, y: 120, size: 14, font });
+  const bytes = Buffer.from(await document.save({ useObjectStreams: false }));
+  await fs.writeFile(filename, bytes, { mode: 0o600 });
+  const stats = await fs.stat(filename, { bigint: true });
+  return createPdfjsSubprocessRequest({
+    operation: "read_content",
+    source: {
+      canonical_path: filename,
+      file_identity: {
+        device: String(stats.dev),
+        inode: String(stats.ino),
+      },
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      size_bytes: bytes.length,
+    },
+    password: null,
+    options: { max_pages: null },
+    allowedDirectories: [root],
+  });
+}
+
 afterEach(async () => {
   await Promise.all(
     roots.splice(0).map(root => fs.rm(root, { force: true, recursive: true })),
@@ -100,6 +133,120 @@ afterEach(async () => {
 });
 
 describe.sequential("PDF.js subprocess boundary", () => {
+  it("selects a worker thread only for an Electron utility host", () => {
+    expect(selectPdfjsIsolationMode({
+      electronVersion: "39.0.0",
+      processType: "utility",
+    })).toBe("worker_thread");
+    expect(selectPdfjsIsolationMode({
+      electronVersion: "39.0.0",
+      processType: "browser",
+    })).toBe("subprocess");
+    expect(selectPdfjsIsolationMode({
+      electronVersion: null,
+      processType: null,
+    })).toBe("subprocess");
+  });
+
+  it("runs a source-bound PDF.js request in the Electron-host worker-thread fallback", async () => {
+    const result = await runPdfjsSubprocess(
+      await createThreadPdfRequest(),
+      { isolationMode: "worker_thread" },
+    );
+    expect(result).toMatchObject({
+      pages_read: 1,
+      text_found: true,
+      total_pages: 1,
+    });
+    expect(result.output_text).toContain("Thread host conversion");
+  });
+
+  it("bounds a stalled Electron-host worker thread by the same wall deadline", async () => {
+    const workerPath = await fixtureWorker(`
+setInterval(() => {}, 1000);
+`);
+    await expect(runPdfjsSubprocess(request(), {
+      isolationMode: "worker_thread",
+      timeoutMs: 150,
+      workerPath,
+    })).rejects.toMatchObject({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason: "wall_timeout",
+    });
+  });
+
+  it("rejects a malformed Electron-host worker-thread response", async () => {
+    const workerPath = await fixtureWorker(`
+import { parentPort } from "node:worker_threads";
+parentPort.postMessage({ frame: {}, binary: null, unexpected: true });
+parentPort.close();
+`);
+    await expect(runPdfjsSubprocess(request(), {
+      isolationMode: "worker_thread",
+      workerPath,
+    })).rejects.toMatchObject({
+      code: "PDFJS_SUBPROCESS_FAILED",
+    });
+  });
+
+  it("classifies an Electron-host worker-thread heap death as a resource failure", async () => {
+    const workerPath = await fixtureWorker(`
+const retained = [];
+for (;;) retained.push(new Array(100000).fill("bounded-worker"));
+`);
+    await expect(runPdfjsSubprocess(request(), {
+      isolationMode: "worker_thread",
+      maxOldSpaceMb: 64,
+      timeoutMs: 10_000,
+      workerPath,
+    })).rejects.toMatchObject({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason: "worker_memory_or_signal_limit",
+    });
+  });
+
+  it("does not orphan a system child when the Electron-host worker thread is terminated", async () => {
+    if (process.platform === "win32") return;
+    const rendererPath = await fixtureWorker(`
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1000);
+`);
+    const workerPath = await fixtureWorker(`
+import { parentPort } from "node:worker_threads";
+parentPort.postMessage({
+  kind: "system_command",
+  id: 1,
+  command: "/usr/bin/sips",
+  args: ["synthetic"],
+  timeout_ms: 30000,
+});
+setInterval(() => {}, 1000);
+`);
+    let rendererPid = null;
+    const operation = expect(runPdfjsSubprocess(request(), {
+      isolationMode: "worker_thread",
+      spawnProcess(_command, _args, options) {
+        const child = spawn(process.execPath, [rendererPath], options);
+        rendererPid = child.pid;
+        return child;
+      },
+      timeoutMs: 500,
+      workerPath,
+    })).rejects.toMatchObject({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason: "wall_timeout",
+    });
+    const deadline = Date.now() + 2000;
+    while (rendererPid === null && Date.now() < deadline) {
+      await new Promise(resolve => setTimeout(resolve, 20));
+    }
+    expect(rendererPid).not.toBeNull();
+    await operation;
+    expect(() => process.kill(rendererPid, 0)).toThrow(
+      expect.objectContaining({ code: "ESRCH" }),
+    );
+  });
+
   it("accepts one strict response only after the worker exits and removes its private cwd", async () => {
     const workerPath = await fixtureWorker(`
 await new Promise(resolve => process.stdin.on("end", resolve).resume());

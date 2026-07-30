@@ -4,6 +4,7 @@ import { chmod, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 
 export const PDF_RESOURCE_LIMIT_CODE = "PDF_RESOURCE_LIMIT_EXCEEDED";
 
@@ -33,6 +34,17 @@ const WORKER_ERROR = Symbol("pdfjs-worker-error");
 let activeOperationCount = 0;
 const queuedOperations = [];
 const activeChildren = new Set();
+const activeThreadWorkers = new Set();
+const activeThreadSystemChildren = new Set();
+
+export function selectPdfjsIsolationMode({
+  electronVersion = process.versions.electron ?? null,
+  processType = process.type ?? null,
+} = {}) {
+  return typeof electronVersion === "string" && processType === "utility"
+    ? "worker_thread"
+    : "subprocess";
+}
 
 function exactKeys(value, expected, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -256,6 +268,34 @@ function parseWorkerResponse(bytes, operation) {
     throw subprocessFailure("The isolated PDF worker returned an invalid response shape.", error);
   }
   throw subprocessFailure("The isolated PDF worker returned an unknown response shape.");
+}
+
+function validateThreadMessage(message, operation, maxResultBytes, maxBinaryBytes) {
+  try {
+    exactKeys(message, ["binary", "frame"], "PDF.js thread response");
+    const encoded = Buffer.from(JSON.stringify(message.frame), "utf8");
+    if (encoded.length > maxResultBytes) {
+      throw resourceLimitError("worker_output_limit");
+    }
+    const parsed = parseWorkerResponse(encoded, operation);
+    const binaryBytes = message.binary === null ? Buffer.alloc(0) : Buffer.from(message.binary);
+    return parsed.binary === null
+      ? parsed.result
+      : {
+          ...parsed.result,
+          binary: validateBinaryResult(
+            binaryBytes,
+            parsed.binary,
+            parsed.result,
+            maxBinaryBytes,
+          ),
+        };
+  } catch (error) {
+    if (error?.code === PDF_RESOURCE_LIMIT_CODE || error?.code === "PDFJS_SUBPROCESS_FAILED") {
+      throw error;
+    }
+    throw subprocessFailure("The isolated PDF worker thread returned an invalid response.", error);
+  }
 }
 
 function validateBinaryResult(binaryBytes, descriptor, result, maximumBytes) {
@@ -500,6 +540,281 @@ async function runSpawnedWorker({
   });
 }
 
+async function runThreadWorker({
+  environment,
+  maxBinaryBytes,
+  maxOldSpaceMb,
+  maxResultBytes,
+  operationDirectory,
+  platform,
+  request,
+  signal,
+  spawnProcess,
+  timeoutMs,
+  workerClass,
+  workerPath,
+}) {
+  return await new Promise((resolve, reject) => {
+    let worker;
+    let settled = false;
+    let timedOut = false;
+    let aborted = false;
+    let response = null;
+    let workerError = null;
+    let deadlineTimer = null;
+    let terminationPromise = null;
+    let terminationStarted = false;
+    const systemChildren = new Set();
+
+    const terminateSystemChildren = async () => {
+      await Promise.all([...systemChildren].map(async child => {
+        let cleanupTimer;
+        const closed = new Promise((resolve, reject) => {
+          child.once("close", resolve);
+          cleanupTimer = setTimeout(
+            () => reject(resourceLimitError("system_renderer_cleanup_unproven")),
+            TERMINATION_GRACE_MS,
+          );
+          cleanupTimer.unref();
+        });
+        signalChild(child, "SIGKILL");
+        try {
+          await closed;
+        } finally {
+          clearTimeout(cleanupTimer);
+        }
+      }));
+    };
+
+    const runSystemCommand = message => {
+      exactKeys(
+        message,
+        ["args", "command", "id", "kind", "timeout_ms"],
+        "PDF.js system-command frame",
+      );
+      if (
+        platform !== "darwin"
+        || message.command !== "/usr/bin/sips"
+        || !Array.isArray(message.args)
+        || message.args.length > 128
+        || message.args.some(argument => typeof argument !== "string" || argument.length > 32_768)
+      ) {
+        throw subprocessFailure("The PDF.js worker requested an unsupported system command.");
+      }
+      boundedInteger(message.id, "PDF.js system-command id", 1, 2 ** 31 - 1);
+      boundedInteger(message.timeout_ms, "PDF.js system-command timeout", 100, 30_000);
+      if (terminationStarted) throw abortError();
+      if (systemChildren.size >= 1) {
+        throw resourceLimitError("system_renderer_concurrency_limit");
+      }
+      return new Promise((resolveCommand, rejectCommand) => {
+        let child;
+        let settled = false;
+        let timedOut = false;
+        let outputOverflow = false;
+        let childError = null;
+        let stdoutBytes = 0;
+        let stderrBytes = 0;
+        let deadline = null;
+        const finishCommand = error => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(deadline);
+          if (child) {
+            systemChildren.delete(child);
+            activeThreadSystemChildren.delete(child);
+          }
+          if (error) rejectCommand(error);
+          else resolveCommand();
+        };
+        try {
+          child = spawnProcess(message.command, message.args, {
+            cwd: operationDirectory,
+            detached: false,
+            env: childEnvironment(environment, platform, operationDirectory),
+            shell: false,
+            stdio: ["ignore", "pipe", "pipe"],
+            windowsHide: true,
+          });
+        } catch (error) {
+          rejectCommand(error);
+          return;
+        }
+        systemChildren.add(child);
+        activeThreadSystemChildren.add(child);
+        child.stdout.on("data", chunk => {
+          stdoutBytes += chunk.length;
+          if (stdoutBytes > DEFAULT_MAX_STDERR_BYTES) {
+            outputOverflow = true;
+            signalChild(child, "SIGKILL");
+          }
+        });
+        child.stderr.on("data", chunk => {
+          stderrBytes += chunk.length;
+          if (stderrBytes > DEFAULT_MAX_STDERR_BYTES) {
+            outputOverflow = true;
+            signalChild(child, "SIGKILL");
+          }
+        });
+        child.once("error", error => {
+          childError = error;
+          if (!child.pid) finishCommand(error);
+          else signalChild(child, "SIGKILL");
+        });
+        child.once("close", (code, signalName) => {
+          if (childError) {
+            finishCommand(childError);
+          } else if (timedOut) {
+            finishCommand(resourceLimitError("system_renderer_timeout"));
+          } else if (outputOverflow) {
+            finishCommand(resourceLimitError("system_renderer_output_limit"));
+          } else if (code !== 0 || signalName !== null) {
+            finishCommand(subprocessFailure("The macOS system PDF renderer could not render this page."));
+          } else {
+            finishCommand(null);
+          }
+        });
+        deadline = setTimeout(() => {
+          timedOut = true;
+          signalChild(child, "SIGKILL");
+        }, message.timeout_ms);
+        deadline.unref();
+      });
+    };
+
+    const replyToSystemCommand = (id, status, error = null) => {
+      try {
+        worker.postMessage({
+          kind: "system_command_result",
+          id,
+          status,
+          error: error === null
+            ? null
+            : {
+                name: typeof error?.name === "string" ? error.name.slice(0, 256) : "Error",
+                code: typeof error?.code === "string" ? error.code.slice(0, 256) : null,
+                message: typeof error?.message === "string"
+                  ? error.message.slice(0, 4096)
+                  : "The macOS system PDF renderer could not complete this operation.",
+              },
+        });
+      } catch {}
+    };
+
+    const finish = async code => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadlineTimer);
+      signal?.removeEventListener?.("abort", onAbort);
+      if (worker) activeThreadWorkers.delete(worker);
+      try {
+        if (terminationPromise) {
+          await terminationPromise;
+        } else if (systemChildren.size > 0) {
+          await terminateSystemChildren();
+        }
+      } catch (error) {
+        reject(resourceLimitError("system_renderer_cleanup_unproven", error));
+        return;
+      }
+      if (aborted) {
+        reject(abortError());
+        return;
+      }
+      if (timedOut) {
+        reject(resourceLimitError("wall_timeout"));
+        return;
+      }
+      if (workerError?.code === "PDFJS_SUBPROCESS_FAILED") {
+        reject(workerError);
+        return;
+      }
+      if (workerError || code !== 0 || response === null) {
+        reject(resourceLimitError("worker_memory_or_signal_limit", workerError));
+        return;
+      }
+      try {
+        resolve(validateThreadMessage(
+          response,
+          request.operation,
+          maxResultBytes,
+          maxBinaryBytes,
+        ));
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    const terminate = reason => {
+      if (!worker || terminationStarted) return;
+      terminationStarted = true;
+      if (reason === "timeout") timedOut = true;
+      if (reason === "abort") aborted = true;
+      terminationPromise = terminateSystemChildren()
+        .finally(() => worker.terminate());
+    };
+    const onAbort = () => terminate("abort");
+
+    try {
+      worker = new workerClass(workerPath, {
+        env: childEnvironment(environment, platform, operationDirectory),
+        resourceLimits: {
+          maxOldGenerationSizeMb: maxOldSpaceMb,
+        },
+        workerData: {
+          pdf_tools_worker: "pdfjs",
+          request,
+        },
+      });
+      activeThreadWorkers.add(worker);
+    } catch (error) {
+      reject(subprocessFailure("The isolated PDF worker thread could not be started.", error));
+      return;
+    }
+    worker.on("message", message => {
+      try {
+        if (message?.kind === "system_command") {
+          const id = message.id;
+          void runSystemCommand(message).then(
+            () => replyToSystemCommand(id, "ok"),
+            error => replyToSystemCommand(id, "error", error),
+          );
+          return;
+        }
+        exactKeys(message, ["kind", "response"], "PDF.js thread message");
+        if (message.kind !== "response" || response !== null) {
+          throw subprocessFailure("The isolated PDF worker thread returned an invalid response sequence.");
+        }
+        response = message.response;
+      } catch (error) {
+        workerError = error?.code === "PDFJS_SUBPROCESS_FAILED"
+          ? error
+          : subprocessFailure(
+              "The isolated PDF worker thread returned an invalid control message.",
+              error,
+            );
+        terminate("protocol");
+      }
+    });
+    worker.once("messageerror", error => {
+      workerError = subprocessFailure(
+        "The isolated PDF worker thread returned an unreadable control message.",
+        error,
+      );
+      terminate("protocol");
+    });
+    worker.once("error", error => {
+      workerError = error;
+    });
+    worker.once("exit", code => {
+      void finish(code);
+    });
+    signal?.addEventListener?.("abort", onAbort, { once: true });
+    deadlineTimer = setTimeout(() => terminate("timeout"), timeoutMs);
+    deadlineTimer.unref();
+  });
+}
+
 export async function runPdfjsSubprocess(request, {
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxResultBytes = DEFAULT_MAX_RESULT_BYTES,
@@ -511,6 +826,8 @@ export async function runPdfjsSubprocess(request, {
   environment = process.env,
   platform = process.platform,
   spawnProcess = spawn,
+  isolationMode = selectPdfjsIsolationMode(),
+  workerClass = Worker,
   signal = null,
 } = {}) {
   const requestBytes = validateRequest(request);
@@ -521,6 +838,9 @@ export async function runPdfjsSubprocess(request, {
   boundedInteger(maxOldSpaceMb, "maxOldSpaceMb", 64, 4096);
   nonEmptyString(workerPath, "workerPath");
   nonEmptyString(executable, "executable");
+  if (!["subprocess", "worker_thread"].includes(isolationMode)) {
+    throw new TypeError("isolationMode must be subprocess or worker_thread.");
+  }
 
   const deadlineAt = Date.now() + timeoutMs;
   const releaseSlot = await acquireOperationSlot(deadlineAt, signal);
@@ -533,22 +853,37 @@ export async function runPdfjsSubprocess(request, {
     if (signal?.aborted) throw abortError();
     const remainingMs = deadlineAt - Date.now();
     if (remainingMs < 100) throw resourceLimitError("worker_queue_timeout");
-    result = await runSpawnedWorker({
-      environment,
-      executable,
-      maxBinaryBytes,
-      maxOldSpaceMb,
-      maxResultBytes,
-      maxStderrBytes,
-      operationDirectory,
-      platform,
-      request,
-      requestBytes,
-      signal,
-      spawnProcess,
-      timeoutMs: remainingMs,
-      workerPath,
-    });
+    result = isolationMode === "worker_thread"
+      ? await runThreadWorker({
+          environment,
+          maxBinaryBytes,
+          maxOldSpaceMb,
+          maxResultBytes,
+          operationDirectory,
+          platform,
+          request,
+          signal,
+          spawnProcess,
+          timeoutMs: remainingMs,
+          workerClass,
+          workerPath,
+        })
+      : await runSpawnedWorker({
+          environment,
+          executable,
+          maxBinaryBytes,
+          maxOldSpaceMb,
+          maxResultBytes,
+          maxStderrBytes,
+          operationDirectory,
+          platform,
+          request,
+          requestBytes,
+          signal,
+          spawnProcess,
+          timeoutMs: remainingMs,
+          workerPath,
+        });
   } catch (error) {
     operationError = error;
   }
@@ -589,21 +924,37 @@ export function createPdfjsSubprocessRequest({
 }
 
 export async function terminateAllPdfjsSubprocesses() {
-  await Promise.all([...activeChildren].map(async ({ child }) => {
-    const closed = new Promise(resolve => child.once("close", resolve));
-    signalChild(child, "SIGTERM");
-    const escalation = setTimeout(
-      () => signalChild(child, "SIGKILL"),
-      TERMINATION_GRACE_MS,
-    );
-    escalation.unref();
-    await closed;
-    clearTimeout(escalation);
-  }));
+  await Promise.all([
+    ...[...activeChildren].map(async ({ child }) => {
+      const closed = new Promise(resolve => child.once("close", resolve));
+      signalChild(child, "SIGTERM");
+      const escalation = setTimeout(
+        () => signalChild(child, "SIGKILL"),
+        TERMINATION_GRACE_MS,
+      );
+      escalation.unref();
+      await closed;
+      clearTimeout(escalation);
+    }),
+    ...[...activeThreadWorkers].map(worker => worker.terminate()),
+  ]);
+  await Promise.all(
+    [...activeThreadSystemChildren].map(async child => {
+      const closed = new Promise(resolve => child.once("close", resolve));
+      signalChild(child, "SIGKILL");
+      await closed;
+    }),
+  );
 }
 
 export function forceTerminateAllPdfjsSubprocesses() {
   for (const { child } of activeChildren) {
+    signalChild(child, "SIGKILL");
+  }
+  for (const worker of activeThreadWorkers) {
+    void worker.terminate();
+  }
+  for (const child of activeThreadSystemChildren) {
     signalChild(child, "SIGKILL");
   }
 }
