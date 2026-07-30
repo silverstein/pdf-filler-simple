@@ -308,6 +308,17 @@ function resourceLimitError(reason) {
   return error;
 }
 
+function installThreadNativeModuleGuard() {
+  if (isMainThread) return;
+  process.dlopen = () => {
+    const error = new Error(
+      "Native Node modules are disabled inside the PDF.js worker thread.",
+    );
+    error.code = "PDFJS_THREAD_NATIVE_MODULE_DISABLED";
+    throw error;
+  };
+}
+
 function installBrowserPolyfills() {
   if (typeof globalThis.DOMMatrix === "undefined") {
     globalThis.DOMMatrix = class DOMMatrix {
@@ -1461,6 +1472,11 @@ function threadResponse(operation, operationResult) {
 async function threadMain() {
   let operation = "unknown";
   try {
+    // Electron warns that loading native Node modules from a worker can crash
+    // the enclosing process. PDF.js probes @napi-rs/canvas during import even
+    // for text-only operations, so fail that probe safely. Rendering can still
+    // use the controller-owned macOS system renderer.
+    installThreadNativeModuleGuard();
     installThreadSystemCommandHandler();
     const request = validateRequest(workerData.request);
     operation = request.operation;

@@ -96,7 +96,10 @@ function success(result = { value: "ok" }, binary = null) {
   });
 }
 
-async function createThreadPdfRequest() {
+async function createThreadPdfRequest({
+  operation = "read_content",
+  options = { max_pages: null },
+} = {}) {
   const root = await fs.realpath(
     await fs.mkdtemp(path.join(os.tmpdir(), "pdfjs-thread-test-")),
   );
@@ -110,7 +113,7 @@ async function createThreadPdfRequest() {
   await fs.writeFile(filename, bytes, { mode: 0o600 });
   const stats = await fs.stat(filename, { bigint: true });
   return createPdfjsSubprocessRequest({
-    operation: "read_content",
+    operation,
     source: {
       canonical_path: filename,
       file_identity: {
@@ -121,7 +124,7 @@ async function createThreadPdfRequest() {
       size_bytes: bytes.length,
     },
     password: null,
-    options: { max_pages: null },
+    options,
     allowedDirectories: [root],
   });
 }
@@ -159,6 +162,26 @@ describe.sequential("PDF.js subprocess boundary", () => {
       total_pages: 1,
     });
     expect(result.output_text).toContain("Thread host conversion");
+  });
+
+  it("keeps native modules out of the Electron-host worker and renders through the controller", async () => {
+    if (process.platform !== "darwin") return;
+    const result = await runPdfjsSubprocess(
+      await createThreadPdfRequest({
+        operation: "render_page",
+        options: {
+          max_dimension_px: 512,
+          page: 1,
+          renderer_policy: "native_with_system_fallback",
+          scale_override: null,
+        },
+      }),
+      { isolationMode: "worker_thread" },
+    );
+    expect(result).toMatchObject({ renderer: "macos-sips" });
+    expect(result.binary.subarray(0, 8)).toEqual(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    );
   });
 
   it("bounds a stalled Electron-host worker thread by the same wall deadline", async () => {
