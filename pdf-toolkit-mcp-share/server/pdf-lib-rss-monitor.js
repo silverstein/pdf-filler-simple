@@ -100,7 +100,11 @@ export function startPdfLibRssMonitor({
     throw new TypeError("Invalid PDF RSS monitor startup configuration.");
   }
   const worker = new WorkerClass(new URL(import.meta.url), {
-    workerData: { fd, interval_ms: sampleIntervalMs },
+    workerData: {
+      pdf_tools_worker: "pdf-lib-rss-monitor",
+      fd,
+      interval_ms: sampleIntervalMs,
+    },
   });
   let acknowledged = false;
   const completion = new Promise((resolve, reject) => {
@@ -132,4 +136,6 @@ export function startPdfLibRssMonitor({
   };
 }
 
-if (!isMainThread) monitorThread();
+if (!isMainThread && workerData?.pdf_tools_worker === "pdf-lib-rss-monitor") {
+  monitorThread();
+}

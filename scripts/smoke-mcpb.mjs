@@ -1,7 +1,16 @@
 #!/usr/bin/env node
 
 import { createHash } from "crypto";
-import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "fs";
+import {
+  copyFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
 import { tmpdir } from "os";
 import path from "path";
 import { fileURLToPath } from "url";
@@ -158,6 +167,33 @@ async function main() {
       throw new Error("Packed read_pdf_layout named-CMap vertical oracle failed");
     }
 
+    const rotatedPath = path.join(tempRoot, "rotated.pdf");
+    const rotated = await client.callTool({
+      name: "rotate_pdf_pages",
+      arguments: {
+        input_path: fixturePath,
+        output_path: rotatedPath,
+        pages: [1],
+        degrees: 90,
+      },
+    });
+    const rotatedDocument = await PDFDocument.load(readFileSync(rotatedPath));
+    if (
+      rotated.isError
+      || rotated.structuredContent?.last_mutation_tool !== "rotate_pdf_pages"
+      || rotated.structuredContent?.active_path !== realpathSync(rotatedPath)
+      || rotatedDocument.getPageCount() !== 1
+      || rotatedDocument.getPage(0).getRotation().angle !== 90
+    ) {
+      throw new Error(`Packed rotate_pdf_pages mutation smoke failed: ${JSON.stringify({
+        is_error: rotated.isError === true,
+        active_path_matches: rotated.structuredContent?.active_path === realpathSync(rotatedPath),
+        last_mutation_tool: rotated.structuredContent?.last_mutation_tool ?? null,
+        page_count: rotatedDocument.getPageCount(),
+        rotation: rotatedDocument.getPage(0).getRotation().angle,
+      })}`);
+    }
+
     const uriResult = await client.callTool({
       name: "get_pdf_resource_uri",
       arguments: { pdf_path: fixturePath },
@@ -194,7 +230,7 @@ async function main() {
 
     console.log(
       `Packed MCPB smoke passed on ${process.platform}/${process.arch}: ${tools.tools.length} tools, ` +
-        `${prompts.prompts.length} prompts, canonical resources, native raster image.`,
+        `${prompts.prompts.length} prompts, canonical resources, verified PDF-lib mutation, native raster image.`,
     );
   } finally {
     await transport?.close();

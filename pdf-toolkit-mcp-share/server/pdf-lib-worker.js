@@ -4,6 +4,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  isMainThread,
+  parentPort as threadParentPort,
+  workerData as threadWorkerData,
+} from "node:worker_threads";
+import {
   PDFArray,
   PDFDict,
   PDFDocument,
@@ -1806,6 +1811,45 @@ export async function executePdfLibMutationRequest(request) {
   };
 }
 
+function errorResponse(error, request) {
+  return {
+    protocol_version: PROTOCOL_VERSION,
+    operation: request?.operation ?? null,
+    status: "error",
+    error: {
+      name: error?.name ?? "Error",
+      code: error?.code ?? null,
+      message: error?.message ?? String(error),
+      reason: error?.reason ?? null,
+    },
+  };
+}
+
+function boundedControlBytes(response) {
+  const bytes = Buffer.from(JSON.stringify(response), "utf8");
+  if (bytes.length > MAX_CONTROL_BYTES) {
+    throw resourceError(
+      "control_output_too_large",
+      "Mutation control output is too large.",
+    );
+  }
+  return bytes;
+}
+
+async function threadMain() {
+  const request = threadWorkerData?.request ?? null;
+  let response;
+  try {
+    response = await executePdfLibMutationRequest(request);
+    boundedControlBytes(response);
+  } catch (error) {
+    response = errorResponse(error, request);
+    boundedControlBytes(response);
+  }
+  threadParentPort.postMessage({ kind: "response", response });
+  threadParentPort.close();
+}
+
 async function main() {
   const monitor = startPdfLibRssMonitor();
   let request = null;
@@ -1822,22 +1866,9 @@ async function main() {
     }
     request = JSON.parse(Buffer.concat(chunks).toString("utf8"));
     const response = await executePdfLibMutationRequest(request);
-    const bytes = Buffer.from(JSON.stringify(response), "utf8");
-    if (bytes.length > MAX_CONTROL_BYTES) throw resourceError("control_output_too_large", "Mutation control output is too large.");
-    writeSync(1, bytes);
+    writeSync(1, boundedControlBytes(response));
   } catch (error) {
-    const response = {
-      protocol_version: PROTOCOL_VERSION,
-      operation: request?.operation ?? null,
-      status: "error",
-      error: {
-        name: error?.name ?? "Error",
-        code: error?.code ?? null,
-        message: error?.message ?? String(error),
-        reason: error?.reason ?? null,
-      },
-    };
-    writeSync(1, Buffer.from(JSON.stringify(response), "utf8"));
+    writeSync(1, boundedControlBytes(errorResponse(error, request)));
     exitCode = 1;
   } finally {
     await monitor.stop();
@@ -1845,7 +1876,15 @@ async function main() {
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+if (
+  !isMainThread
+  && threadWorkerData?.pdf_tools_worker === "pdf-lib"
+  && threadParentPort
+) {
+  threadMain().catch(error => {
+    throw error;
+  });
+} else if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   main().catch(error => {
     writeSync(2, Buffer.from(String(error?.stack ?? error).slice(0, 64 * 1024), "utf8"));
     closeSync(0);

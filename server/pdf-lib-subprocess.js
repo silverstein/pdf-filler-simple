@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import {
   PDF_MERGE_MAX_TOTAL_BYTES,
   PDF_MUTATION_MAX_FILE_BYTES,
@@ -16,6 +17,7 @@ import {
   PDF_LIB_RSS_MAGIC,
   PDF_LIB_RSS_PROTOCOL_VERSION,
   PDF_LIB_RSS_READY,
+  PDF_LIB_RSS_SAMPLE_INTERVAL_MS,
   PDF_LIB_RSS_SAMPLE,
   PDF_LIB_RSS_TERMINAL,
 } from "./pdf-lib-rss-monitor.js";
@@ -63,7 +65,9 @@ const OPERATION_SHUTDOWN_TIMEOUT_MS = 15_000;
 // The V8 old-space flag is not a hard RSS ceiling: PDF buffers and native
 // decoder allocations live outside that heap. Keep aggregate admission low.
 const MAX_ACTIVE_MUTATIONS = 2;
+const MAX_ACTIVE_THREAD_MUTATIONS = 1;
 const activeChildren = new Set();
+const activeThreadWorkers = new Set();
 const activeOperations = new Set();
 let activeMutationReservations = 0;
 let shutdownInProgress = false;
@@ -87,6 +91,29 @@ const OPTION_KEYS = new Map([
     "allow_resign", "audit_line", "font_style", "modification_at", "placement", "text",
   ]],
 ]);
+
+export function selectPdfLibIsolationMode({
+  electronVersion = process.versions.electron ?? null,
+  processType = process.type ?? null,
+  hasElectronParentPort = process.parentPort != null,
+  executable = process.execPath,
+} = {}) {
+  const executableName = typeof executable === "string" ? path.basename(executable) : "";
+  const embeddedElectronHost = typeof electronVersion === "string"
+    || processType === "utility"
+    || hasElectronParentPort
+    || /(?:^electron$|^claude(?: helper(?: \(plugin\))?)?(?:\.exe)?$)/i.test(executableName);
+  return embeddedElectronHost ? "worker_thread" : "subprocess";
+}
+
+const DEFAULT_ISOLATION_MODE = selectPdfLibIsolationMode();
+console.error("[PDF Tools] PDF-lib execution host", JSON.stringify({
+  electron: typeof process.versions.electron === "string",
+  executable: path.basename(process.execPath),
+  mode: DEFAULT_ISOLATION_MODE,
+  parent_port: process.parentPort != null,
+  process_type: typeof process.type === "string" ? process.type : null,
+}));
 
 function exactKeys(value, expected, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -169,6 +196,40 @@ function collector(maximum, overflow) {
     },
     result: () => ({ bytes: Buffer.concat(chunks), observed, overflowed }),
   };
+}
+
+function validateWorkerResponse(response, expectedOperation) {
+  if (response?.status === "error") {
+    try {
+      exactKeys(response, ["error", "operation", "protocol_version", "status"], "worker error");
+      exactKeys(response.error, ["code", "message", "name", "reason"], "worker error detail");
+    } catch (error) {
+      throw resourceError("malformed_control_output", error);
+    }
+    if (response.protocol_version !== PROTOCOL_VERSION || response.operation !== expectedOperation) {
+      throw resourceError("mismatched_control_output");
+    }
+    if (response.error.code === PDF_RESOURCE_LIMIT_CODE) {
+      throw resourceError(response.error.reason ?? "worker_resource_limit");
+    }
+    const error = new Error(response.error.message);
+    error.name = response.error.name;
+    if (response.error.code !== null) error.code = response.error.code;
+    throw error;
+  }
+  try {
+    exactKeys(response, ["manifest", "operation", "protocol_version", "result", "status"], "worker response");
+  } catch (error) {
+    throw resourceError("malformed_control_output", error);
+  }
+  if (
+    response.status !== "ok"
+    || response.protocol_version !== PROTOCOL_VERSION
+    || response.operation !== expectedOperation
+  ) {
+    throw resourceError("mismatched_control_output");
+  }
+  return response;
 }
 
 const MIB = 1024 * 1024;
@@ -487,37 +548,105 @@ async function waitForWorker(
     throw resourceError("malformed_control_output", error);
   }
   if (response?.status === "error") {
-    try {
-      exactKeys(response, ["error", "operation", "protocol_version", "status"], "worker error");
-      exactKeys(response.error, ["code", "message", "name", "reason"], "worker error detail");
-    } catch (error) {
-      throw resourceError("malformed_control_output", error);
-    }
-    if (response.protocol_version !== PROTOCOL_VERSION || response.operation !== expectedOperation) {
-      throw resourceError("mismatched_control_output");
-    }
-    if (response.error.code === PDF_RESOURCE_LIMIT_CODE) {
-      throw resourceError(response.error.reason ?? "worker_resource_limit");
-    }
-    const error = new Error(response.error.message);
-    error.name = response.error.name;
-    if (response.error.code !== null) error.code = response.error.code;
-    throw error;
+    return validateWorkerResponse(response, expectedOperation);
   }
   if (code !== 0) throw resourceError(`worker_exit_${code}_heap_${maximumOldSpaceMb}`);
-  try {
-    exactKeys(response, ["manifest", "operation", "protocol_version", "result", "status"], "worker response");
-  } catch (error) {
-    throw resourceError("malformed_control_output", error);
-  }
-  if (
-    response.status !== "ok"
-    || response.protocol_version !== PROTOCOL_VERSION
-    || response.operation !== expectedOperation
-  ) {
-    throw resourceError("mismatched_control_output");
-  }
-  return response;
+  return validateWorkerResponse(response, expectedOperation);
+}
+
+async function waitForThreadWorker(
+  worker,
+  timeoutMs,
+  expectedOperation,
+  maximumRssBytes,
+  baselineRssBytes,
+  rssReader,
+) {
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let response = null;
+    let workerError = null;
+    let terminationReason = null;
+    let terminationPromise = null;
+    let deadline = null;
+    let rssMonitor = null;
+    const finish = code => {
+      if (settled) return;
+      settled = true;
+      if (deadline) clearTimeout(deadline);
+      if (rssMonitor) clearInterval(rssMonitor);
+      activeThreadWorkers.delete(worker);
+      const settle = async () => {
+        if (terminationPromise) {
+          try { await terminationPromise; } catch {}
+        }
+        if (terminationReason !== null) {
+          reject(resourceError(terminationReason, workerError));
+          return;
+        }
+        if (workerError || code !== 0 || response === null) {
+          reject(resourceError("worker_memory_or_signal_limit", workerError));
+          return;
+        }
+        try {
+          resolve(validateWorkerResponse(response, expectedOperation));
+        } catch (error) {
+          reject(error);
+        }
+      };
+      void settle();
+    };
+    const terminate = reason => {
+      if (terminationReason !== null) return;
+      terminationReason = reason;
+      try {
+        terminationPromise = worker.terminate();
+      } catch (error) {
+        workerError ??= error;
+      }
+    };
+    worker.on("message", message => {
+      try {
+        exactKeys(message, ["kind", "response"], "worker thread message");
+        if (message.kind !== "response" || response !== null) {
+          throw new Error("Worker thread response sequence is invalid.");
+        }
+        const encoded = Buffer.from(JSON.stringify(message.response), "utf8");
+        if (encoded.length < 1 || encoded.length > MAX_STDOUT_BYTES) {
+          throw new Error("Worker thread response exceeds its control limit.");
+        }
+        response = message.response;
+      } catch (error) {
+        workerError = error;
+        terminate("malformed_control_output");
+      }
+    });
+    worker.once("messageerror", error => {
+      workerError = error;
+      terminate("malformed_control_output");
+    });
+    worker.once("error", error => {
+      workerError = error;
+    });
+    worker.once("exit", finish);
+    deadline = setTimeout(() => terminate("timeout"), timeoutMs);
+    deadline.unref();
+    rssMonitor = setInterval(() => {
+      try {
+        const currentRssBytes = rssReader();
+        if (!Number.isSafeInteger(currentRssBytes) || currentRssBytes < 1) {
+          throw new Error("RSS reading is invalid.");
+        }
+        if (currentRssBytes - baselineRssBytes > maximumRssBytes) {
+          terminate("rss_limit_exceeded");
+        }
+      } catch (error) {
+        workerError = error;
+        terminate("rss_monitor_unavailable");
+      }
+    }, PDF_LIB_RSS_SAMPLE_INTERVAL_MS);
+    rssMonitor.unref();
+  });
 }
 
 async function hashFile(filePath) {
@@ -653,11 +782,14 @@ export async function runPdfLibMutation(request, consumeStage, {
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maximumOldSpaceMb = DEFAULT_OLD_SPACE_MB,
   rssLimitCalculator = calculatePdfLibRssLimit,
+  isolationMode = DEFAULT_ISOLATION_MODE,
   workerPath = fileURLToPath(new URL("./pdf-lib-worker.js", import.meta.url)),
   executable = process.execPath,
   environment = process.env,
   platform = process.platform,
   spawnProcess = spawn,
+  workerClass = Worker,
+  rssReader = () => process.memoryUsage.rss(),
   beforeSpawn = null,
 } = {}) {
   const base = createPdfLibMutationRequest(request);
@@ -671,13 +803,22 @@ export async function runPdfLibMutation(request, consumeStage, {
   if (typeof rssLimitCalculator !== "function") {
     throw new TypeError("rssLimitCalculator must be a function.");
   }
+  if (!["subprocess", "worker_thread"].includes(isolationMode)) {
+    throw new TypeError("isolationMode must be subprocess or worker_thread.");
+  }
+  if (typeof rssReader !== "function") {
+    throw new TypeError("rssReader must be a function.");
+  }
   if (beforeSpawn !== null && typeof beforeSpawn !== "function") {
     throw new TypeError("beforeSpawn must be a function.");
   }
   if (shutdownInProgress) {
     throw resourceError("mutation_shutdown_in_progress");
   }
-  if (activeMutationReservations >= MAX_ACTIVE_MUTATIONS) {
+  const activeLimit = isolationMode === "worker_thread"
+    ? MAX_ACTIVE_THREAD_MUTATIONS
+    : MAX_ACTIVE_MUTATIONS;
+  if (activeMutationReservations >= activeLimit) {
     throw resourceError("mutation_concurrency_limit");
   }
   activeMutationReservations += 1;
@@ -725,29 +866,68 @@ export async function runPdfLibMutation(request, consumeStage, {
     // setup. Recheck immediately before the synchronous spawn boundary so the
     // drain cannot miss a child created after its snapshot.
     if (shutdownInProgress) throw resourceError("mutation_shutdown_in_progress");
-    const child = spawnProcess(executable, [
-      `--max-old-space-size=${maximumOldSpaceMb}`,
-      workerPath,
-    ], {
-      cwd: operationDirectory,
-      detached: false,
-      env: childEnvironment(environment, operationDirectory, platform),
-      stdio: ["pipe", "pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    activeChildren.add(child);
     let response;
-    try {
-      response = await waitForWorker(
-        child,
-        requestBytes,
+    if (isolationMode === "worker_thread") {
+      let baselineRssBytes;
+      try {
+        baselineRssBytes = rssReader();
+      } catch (error) {
+        throw resourceError("rss_monitor_unavailable", error);
+      }
+      if (!Number.isSafeInteger(baselineRssBytes) || baselineRssBytes < 1) {
+        throw resourceError("rss_monitor_unavailable");
+      }
+      let worker;
+      try {
+        worker = new workerClass(workerPath, {
+          env: childEnvironment(environment, operationDirectory, platform),
+          resourceLimits: {
+            maxOldGenerationSizeMb: maximumOldSpaceMb,
+          },
+          workerData: {
+            pdf_tools_worker: "pdf-lib",
+            request: framed,
+          },
+        });
+      } catch (error) {
+        throw resourceError("worker_spawn_failed", error);
+      }
+      activeThreadWorkers.add(worker);
+      response = await waitForThreadWorker(
+        worker,
         timeoutMs,
-        maximumOldSpaceMb,
         base.operation,
+        // Worker threads have an independent V8 heap but share host RSS.
+        // Admit only one and bound its process-wide RSS growth from a fresh
+        // baseline while the parent event loop remains available to terminate it.
         maximumRssBytes,
+        baselineRssBytes,
+        rssReader,
       );
-    } finally {
-      activeChildren.delete(child);
+    } else {
+      const child = spawnProcess(executable, [
+        `--max-old-space-size=${maximumOldSpaceMb}`,
+        workerPath,
+      ], {
+        cwd: operationDirectory,
+        detached: false,
+        env: childEnvironment(environment, operationDirectory, platform),
+        stdio: ["pipe", "pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      activeChildren.add(child);
+      try {
+        response = await waitForWorker(
+          child,
+          requestBytes,
+          timeoutMs,
+          maximumOldSpaceMb,
+          base.operation,
+          maximumRssBytes,
+        );
+      } finally {
+        activeChildren.delete(child);
+      }
     }
     const outputs = await validateStage(stageDirectory, response, base.operation);
     await revalidateSources(base.sources);
@@ -800,6 +980,7 @@ export function terminateAllPdfLibMutations() {
   shutdownInProgress = true;
   const operations = [...activeOperations];
   const childTerminations = [...activeChildren].map(terminateChild);
+  const threadTerminations = [...activeThreadWorkers].map(worker => worker.terminate());
   gracefulShutdownPromise = (async () => {
     let timer;
     try {
@@ -811,7 +992,7 @@ export function terminateAllPdfLibMutations() {
         timer.unref();
       });
       await Promise.race([
-        Promise.allSettled([...childTerminations, ...operations]),
+        Promise.allSettled([...childTerminations, ...threadTerminations, ...operations]),
         timeout,
       ]);
     } finally {
@@ -829,5 +1010,8 @@ export function forceTerminateAllPdfLibMutations() {
   shutdownInProgress = true;
   for (const child of activeChildren) {
     try { child.kill("SIGKILL"); } catch {}
+  }
+  for (const worker of activeThreadWorkers) {
+    void worker.terminate().catch(() => {});
   }
 }
