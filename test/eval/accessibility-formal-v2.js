@@ -4,6 +4,7 @@ import fs from "node:fs/promises";
 import { constants as fileConstants } from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   buildFormalRunnerEnvironment,
   computeInstalledTreeDigest,
@@ -11,6 +12,60 @@ import {
 } from "./accessibility-formal.js";
 
 export const FORMAL_EVIDENCE_V2_RUNNER_VERSION = 3;
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
+const V2_SOURCE_PATHS = Object.freeze({
+  cli: "scripts/eval-run-accessibility-formal-v2.mjs",
+  runner: "test/eval/accessibility-formal-v2.js",
+  v1_helper: "test/eval/accessibility-formal.js",
+  contract: "test/fixtures/eval/accessibility/formal-corpus.v2.json",
+});
+const SOURCE_RECEIPT_CAPTURE_METHOD = "external_supervisor_git_sha256_node_identity_v1";
+const PROCESS_LIMIT_KEYS = Object.freeze([
+  "timeout_ms",
+  "stdout_max_bytes",
+  "stderr_max_bytes",
+  "aggregate_max_bytes",
+  "term_grace_ms",
+  "group_empty_timeout_ms",
+]);
+const REVIEWED_EXECUTION_LIMITS = Object.freeze({
+  signature_verifier: Object.freeze({
+    version_preflight: Object.freeze({
+      timeout_ms: 30_000,
+      stdout_max_bytes: 65_536,
+      stderr_max_bytes: 65_536,
+      aggregate_max_bytes: 131_072,
+      term_grace_ms: 500,
+      group_empty_timeout_ms: 2_000,
+    }),
+    signature_verification: Object.freeze({
+      timeout_ms: 30_000,
+      stdout_max_bytes: 1_048_576,
+      stderr_max_bytes: 1_048_576,
+      aggregate_max_bytes: 2_097_152,
+      term_grace_ms: 500,
+      group_empty_timeout_ms: 2_000,
+    }),
+  }),
+  validator: Object.freeze({
+    version_preflight: Object.freeze({
+      timeout_ms: 60_000,
+      stdout_max_bytes: 1_048_576,
+      stderr_max_bytes: 1_048_576,
+      aggregate_max_bytes: 2_097_152,
+      term_grace_ms: 1_000,
+      group_empty_timeout_ms: 2_000,
+    }),
+    fixture: Object.freeze({
+      timeout_ms: 60_000,
+      stdout_max_bytes: 16_777_216,
+      stderr_max_bytes: 1_048_576,
+      aggregate_max_bytes: 17_825_792,
+      term_grace_ms: 1_000,
+      group_empty_timeout_ms: 2_000,
+    }),
+  }),
+});
 export const FORMAL_EVIDENCE_V2_OFFICIAL = Object.freeze({
   documentationUrl: "https://docs.verapdf.org/install/",
   publicKeyUrl: "https://software.verapdf.org/keys/KEY",
@@ -146,6 +201,7 @@ function validateV2Contract(contract) {
     "evidence_runner_version",
     "provenance",
     "signature_verifier",
+    "execution_limits",
     "validator",
     "runtime",
     "corpus",
@@ -203,6 +259,31 @@ function validateV2Contract(contract) {
     "signature verifier SHA-256");
   exactValue(verifier.license_spdx_id, "GPL-3.0-or-later", "signature verifier license");
   exactValue(verifier.bundled, false, "signature verifier bundled state");
+
+  const limits = contract.execution_limits;
+  exactKeys(limits, ["signature_verifier", "validator"], "execution_limits");
+  exactKeys(limits.signature_verifier, ["version_preflight", "signature_verification"],
+    "execution_limits.signature_verifier");
+  exactKeys(limits.validator, ["version_preflight", "fixture"], "execution_limits.validator");
+  for (const [family, operations] of Object.entries(REVIEWED_EXECUTION_LIMITS)) {
+    for (const [operation, reviewed] of Object.entries(operations)) {
+      const actual = limits[family][operation];
+      exactKeys(actual, PROCESS_LIMIT_KEYS, `execution_limits.${family}.${operation}`);
+      for (const key of PROCESS_LIMIT_KEYS) {
+        if (!Number.isSafeInteger(actual[key]) || actual[key] < 1 || actual[key] > 60_000_000) {
+          fail("CONTRACT_IDENTITY_INVALID",
+            `execution_limits.${family}.${operation}.${key} must be a bounded positive integer`);
+        }
+        exactValue(actual[key], reviewed[key],
+          `execution_limits.${family}.${operation}.${key}`);
+      }
+      if (actual.aggregate_max_bytes < actual.stdout_max_bytes
+        || actual.aggregate_max_bytes < actual.stderr_max_bytes) {
+        fail("CONTRACT_IDENTITY_INVALID",
+          `execution_limits.${family}.${operation} aggregate limit is inconsistent`);
+      }
+    }
+  }
 
   const validator = contract.validator;
   exactKeys(validator, [
@@ -461,6 +542,146 @@ export async function loadFormalAccessibilityV2Contract(contractPath) {
   };
 }
 
+function validateSourceFileReceipt(entry, expectedRelativePath, label) {
+  exactKeys(entry, ["relative_path", "sha256", "size"], label);
+  exactValue(entry.relative_path, expectedRelativePath, `${label}.relative_path`);
+  if (!SHA256.test(entry.sha256 ?? "")
+    || !Number.isSafeInteger(entry.size)
+    || entry.size < 1) {
+    fail("SOURCE_RECEIPT_INVALID", `${label} must contain an exact SHA-256 and size`);
+  }
+}
+
+export async function loadAndVerifySourceReceipt(sourceReceiptPath, contractPath, contractSha256) {
+  const resolvedReceipt = await regularFile(sourceReceiptPath, "external source receipt");
+  const receiptHandle = await fs.open(
+    resolvedReceipt,
+    fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW
+  );
+  let receiptBytes;
+  let receiptIdentity;
+  try {
+    const receiptStat = await receiptHandle.stat();
+    if (!receiptStat.isFile()
+      || receiptStat.nlink !== 1
+      || (receiptStat.mode & 0o777) !== 0o600
+      || receiptStat.size < 1
+      || receiptStat.size > 65_536
+      || (typeof process.geteuid === "function" && receiptStat.uid !== process.geteuid())) {
+      fail("SOURCE_RECEIPT_INVALID",
+        "external source receipt must be an owned mode-0600 single-link file");
+    }
+    receiptIdentity = filesystemIdentity(receiptStat);
+    receiptBytes = await receiptHandle.readFile();
+  } finally {
+    await receiptHandle.close();
+  }
+  const receiptPathStat = await fs.lstat(resolvedReceipt);
+  if (receiptPathStat.isSymbolicLink()
+    || !receiptPathStat.isFile()
+    || !sameFilesystemIdentity(receiptPathStat, receiptIdentity)) {
+    fail("SOURCE_RECEIPT_INVALID", "external source receipt identity changed while reading");
+  }
+  let receipt;
+  try {
+    receipt = JSON.parse(receiptBytes.toString("utf8"));
+  } catch {
+    fail("SOURCE_RECEIPT_INVALID", "external source receipt is not valid JSON");
+  }
+  exactKeys(receipt, [
+    "receipt_version",
+    "receipt_kind",
+    "publication_authorized",
+    "captured_at",
+    "capture_method",
+    "repository",
+    "files",
+    "node",
+  ], "external source receipt");
+  exactValue(receipt.receipt_version, 1, "source receipt version");
+  exactValue(receipt.receipt_kind, "pdf_tools_accessibility_formal_v2_source_runtime",
+    "source receipt kind");
+  exactValue(receipt.publication_authorized, false, "source receipt publication authorization");
+  exactValue(receipt.capture_method, SOURCE_RECEIPT_CAPTURE_METHOD, "source receipt capture method");
+  if (typeof receipt.captured_at !== "string"
+    || !Number.isFinite(Date.parse(receipt.captured_at))
+    || new Date(receipt.captured_at).toISOString() !== receipt.captured_at) {
+    fail("SOURCE_RECEIPT_INVALID", "source receipt captured_at must be canonical UTC ISO-8601");
+  }
+
+  exactKeys(receipt.repository, ["commit", "tree", "clean_attested"],
+    "source receipt repository");
+  if (!/^[a-f0-9]{40}$/.test(receipt.repository.commit ?? "")
+    || !/^[a-f0-9]{40}$/.test(receipt.repository.tree ?? "")
+    || receipt.repository.clean_attested !== true) {
+    fail("SOURCE_RECEIPT_INVALID",
+      "source receipt must attest an exact Git commit, tree, and clean worktree");
+  }
+
+  exactKeys(receipt.files, Object.keys(V2_SOURCE_PATHS), "source receipt files");
+  for (const [name, relativePath] of Object.entries(V2_SOURCE_PATHS)) {
+    validateSourceFileReceipt(receipt.files[name], relativePath, `source receipt files.${name}`);
+  }
+  exactKeys(receipt.node, [
+    "executable_realpath",
+    "executable_sha256",
+    "executable_size",
+    "version",
+  ], "source receipt Node runtime");
+  if (typeof receipt.node.executable_realpath !== "string"
+    || !path.isAbsolute(receipt.node.executable_realpath)
+    || !SHA256.test(receipt.node.executable_sha256 ?? "")
+    || !Number.isSafeInteger(receipt.node.executable_size)
+    || receipt.node.executable_size < 1
+    || !/^v\d+\.\d+\.\d+$/.test(receipt.node.version ?? "")) {
+    fail("SOURCE_RECEIPT_INVALID", "source receipt Node runtime identity is invalid");
+  }
+
+  const expectedContractPath = path.join(REPO_ROOT, V2_SOURCE_PATHS.contract);
+  const resolvedContractPath = await regularFile(contractPath, "formal accessibility v2 contract");
+  exactValue(resolvedContractPath, expectedContractPath, "qualification contract path");
+  exactValue(receipt.files.contract.sha256, contractSha256, "source receipt contract SHA-256");
+
+  const verifiedFiles = {};
+  for (const [name, relativePath] of Object.entries(V2_SOURCE_PATHS)) {
+    const entry = receipt.files[name];
+    const current = await readExactFile(
+      path.join(REPO_ROOT, relativePath),
+      `source receipt ${name}`,
+      entry.sha256,
+      entry.size
+    );
+    verifiedFiles[name] = {
+      relative_path: relativePath,
+      sha256: current.sha256,
+      size: current.size,
+    };
+  }
+  const nodeRealpath = await fs.realpath(process.execPath);
+  exactValue(nodeRealpath, receipt.node.executable_realpath, "source receipt Node executable realpath");
+  exactValue(process.version, receipt.node.version, "source receipt Node version");
+  const verifiedNode = await readExactFile(
+    nodeRealpath,
+    "source receipt Node executable",
+    receipt.node.executable_sha256,
+    receipt.node.executable_size
+  );
+
+  return {
+    receipt,
+    receipt_bytes: receiptBytes,
+    receipt_path: resolvedReceipt,
+    receipt_sha256: sha256(receiptBytes),
+    receipt_size: receiptBytes.length,
+    verified_files: verifiedFiles,
+    verified_node: {
+      sha256: verifiedNode.sha256,
+      size: verifiedNode.size,
+      version: process.version,
+    },
+  };
+}
+
 function crc24(bytes) {
   let crc = 0xB704CE;
   for (const byte of bytes) {
@@ -514,19 +735,19 @@ function processGroupExists(processGroupId) {
   }
 }
 
-function killProcessGroup(processGroupId) {
+function signalProcessGroup(processGroupId, signal) {
   if (!Number.isInteger(processGroupId) || processGroupId < 1) {
     return "invalid_process_group";
   }
   try {
-    process.kill(-processGroupId, "SIGKILL");
+    process.kill(-processGroupId, signal);
     return null;
   } catch (error) {
     return error.code === "ESRCH" ? null : (error.code ?? "unknown");
   }
 }
 
-async function waitForEmptyProcessGroup(processGroupId, deadlineMs = 2_000) {
+async function waitForEmptyProcessGroup(processGroupId, deadlineMs) {
   const deadline = Date.now() + deadlineMs;
   while (processGroupExists(processGroupId)) {
     if (Date.now() >= deadline) return false;
@@ -539,8 +760,27 @@ export function runBoundedProcess(command, args, {
   env,
   cwd,
   timeoutMs = 60_000,
-  maxOutputBytes = 16 * 1024 * 1024,
+  stdoutMaxBytes = 16 * 1024 * 1024,
+  stderrMaxBytes = 1024 * 1024,
+  aggregateMaxBytes = 17 * 1024 * 1024,
+  termGraceMs = 1_000,
+  groupEmptyTimeoutMs = 2_000,
 } = {}) {
+  for (const [label, value] of Object.entries({
+    timeoutMs,
+    stdoutMaxBytes,
+    stderrMaxBytes,
+    aggregateMaxBytes,
+    termGraceMs,
+    groupEmptyTimeoutMs,
+  })) {
+    if (!Number.isSafeInteger(value) || value < 1 || value > 60_000_000) {
+      fail("PROCESS_LIMIT_INVALID", `${label} must be a bounded positive integer`);
+    }
+  }
+  if (aggregateMaxBytes < stdoutMaxBytes || aggregateMaxBytes < stderrMaxBytes) {
+    fail("PROCESS_LIMIT_INVALID", "aggregate output limit must cover each channel limit");
+  }
   return new Promise((resolve, reject) => {
     const child = spawn(command, args, {
       cwd,
@@ -551,34 +791,56 @@ export function runBoundedProcess(command, args, {
     const processGroupId = child.pid;
     const stdout = [];
     const stderr = [];
-    let outputBytes = 0;
+    let stdoutBytes = 0;
+    let stderrBytes = 0;
+    let aggregateBytes = 0;
     let timedOut = false;
-    let outputLimitExceeded = false;
+    let stdoutLimitExceeded = false;
+    let stderrLimitExceeded = false;
+    let aggregateLimitExceeded = false;
     let terminationAttempted = false;
-    let terminationFailure = null;
+    let termSignalFailure = null;
+    let killSignalFailure = null;
+    let termSignalSent = false;
+    let killSignalSent = false;
+    let termDeadline = null;
+    let escalationTimer = null;
     let settled = false;
 
+    const sendKill = () => {
+      if (killSignalSent) return;
+      killSignalSent = true;
+      killSignalFailure = signalProcessGroup(processGroupId, "SIGKILL");
+    };
     const terminate = reason => {
       if (terminationAttempted) return;
       terminationAttempted = true;
       if (reason === "timeout") timedOut = true;
-      if (reason === "output_limit") outputLimitExceeded = true;
-      terminationFailure = killProcessGroup(processGroupId);
+      termSignalSent = true;
+      termSignalFailure = signalProcessGroup(processGroupId, "SIGTERM");
+      termDeadline = Date.now() + termGraceMs;
+      escalationTimer = setTimeout(sendKill, termGraceMs);
     };
     const timer = setTimeout(() => terminate("timeout"), timeoutMs);
-    const collect = target => chunk => {
-      outputBytes += chunk.length;
-      if (outputBytes > maxOutputBytes) {
+    const collect = (target, channel) => chunk => {
+      if (channel === "stdout") stdoutBytes += chunk.length;
+      else stderrBytes += chunk.length;
+      aggregateBytes += chunk.length;
+      if (stdoutBytes > stdoutMaxBytes) stdoutLimitExceeded = true;
+      if (stderrBytes > stderrMaxBytes) stderrLimitExceeded = true;
+      if (aggregateBytes > aggregateMaxBytes) aggregateLimitExceeded = true;
+      if (stdoutLimitExceeded || stderrLimitExceeded || aggregateLimitExceeded) {
         terminate("output_limit");
         return;
       }
       target.push(chunk);
     };
 
-    child.stdout.on("data", collect(stdout));
-    child.stderr.on("data", collect(stderr));
+    child.stdout.on("data", collect(stdout, "stdout"));
+    child.stderr.on("data", collect(stderr, "stderr"));
     child.on("error", error => {
       clearTimeout(timer);
+      if (escalationTimer) clearTimeout(escalationTimer);
       if (!settled) {
         settled = true;
         reject(new FormalEvidenceV2Error("PROCESS_SPAWN_FAILED", `bounded child failed to spawn: ${error.code ?? "unknown"}`));
@@ -590,13 +852,19 @@ export function runBoundedProcess(command, args, {
       try {
         const descendantObserved = processGroupExists(processGroupId);
         if (descendantObserved) {
-          terminationAttempted = true;
-          terminationFailure = killProcessGroup(processGroupId);
+          if (!terminationAttempted) terminate("descendant");
+          const graceRemaining = Math.max(1, (termDeadline ?? Date.now()) - Date.now());
+          const emptiedDuringGrace = await waitForEmptyProcessGroup(processGroupId, graceRemaining);
+          if (!emptiedDuringGrace) sendKill();
         }
-        if (terminationFailure) {
+        if (escalationTimer) clearTimeout(escalationTimer);
+        if (termSignalFailure || killSignalFailure) {
           fail("PROCESS_GROUP_TERMINATION_FAILED", "child process group could not be terminated");
         }
-        const processGroupEmpty = await waitForEmptyProcessGroup(processGroupId);
+        const processGroupEmpty = await waitForEmptyProcessGroup(
+          processGroupId,
+          groupEmptyTimeoutMs
+        );
         if (!processGroupEmpty) {
           fail("PROCESS_GROUP_NOT_EMPTY", "child process group remained populated after cleanup");
         }
@@ -607,8 +875,14 @@ export function runBoundedProcess(command, args, {
           stdout: Buffer.concat(stdout),
           stderr: Buffer.concat(stderr),
           timed_out: timedOut,
-          output_limit_exceeded: outputLimitExceeded,
+          output_limit_exceeded:
+            stdoutLimitExceeded || stderrLimitExceeded || aggregateLimitExceeded,
+          stdout_limit_exceeded: stdoutLimitExceeded,
+          stderr_limit_exceeded: stderrLimitExceeded,
+          aggregate_output_limit_exceeded: aggregateLimitExceeded,
           termination_attempted: terminationAttempted,
+          term_signal_sent: termSignalSent,
+          kill_signal_sent: killSignalSent,
           descendant_observed_after_leader_close: descendantObserved,
           process_group_empty_after_cleanup: processGroupEmpty,
         });
@@ -701,8 +975,44 @@ function signatureVerifierEnvironment(runtimeHome) {
   };
 }
 
-export async function writePrivateFile(filePath, bytes) {
+function boundedProcessOptions(limits, { cwd, env }) {
+  return {
+    cwd,
+    env,
+    timeoutMs: limits.timeout_ms,
+    stdoutMaxBytes: limits.stdout_max_bytes,
+    stderrMaxBytes: limits.stderr_max_bytes,
+    aggregateMaxBytes: limits.aggregate_max_bytes,
+    termGraceMs: limits.term_grace_ms,
+    groupEmptyTimeoutMs: limits.group_empty_timeout_ms,
+  };
+}
+
+function filesystemIdentity(stat) {
+  return {
+    dev: String(stat.dev),
+    ino: String(stat.ino),
+    mode: stat.mode & 0o7777,
+    uid: stat.uid,
+    nlink: stat.nlink,
+  };
+}
+
+function sameFilesystemIdentity(stat, identity, includeNlink = true) {
+  return String(stat.dev) === identity.dev
+    && String(stat.ino) === identity.ino
+    && (stat.mode & 0o7777) === identity.mode
+    && stat.uid === identity.uid
+    && (!includeNlink || stat.nlink === identity.nlink);
+}
+
+async function writeExclusivePrivatePath(filePath, bytes, before = null, after = null) {
+  if (!Buffer.isBuffer(bytes)) {
+    fail("PRIVATE_WRITE_FAILED", "private evidence bytes must be a Buffer");
+  }
+  await before?.();
   let handle;
+  let writtenStat;
   try {
     handle = await fs.open(
       filePath,
@@ -713,58 +1023,192 @@ export async function writePrivateFile(filePath, bytes) {
       0o600
     );
     await handle.writeFile(bytes);
+    await handle.chmod(0o600);
     await handle.sync();
+    writtenStat = await handle.stat();
+    if (!writtenStat.isFile()
+      || writtenStat.nlink !== 1
+      || (writtenStat.mode & 0o777) !== 0o600
+      || (typeof process.geteuid === "function" && writtenStat.uid !== process.geteuid())
+      || writtenStat.size !== bytes.length) {
+      fail("PRIVATE_FILE_IDENTITY_INVALID",
+        "private evidence handle is not the reviewed mode-0600 single-link file");
+    }
   } catch (error) {
     if (error instanceof FormalEvidenceV2Error) throw error;
     fail("PRIVATE_WRITE_FAILED", `private evidence write failed: ${error.code ?? "unknown"}`);
   } finally {
     await handle?.close();
   }
-  await fs.chmod(filePath, 0o600);
-  const entry = await fs.lstat(filePath);
-  if (entry.isSymbolicLink() || !entry.isFile() || (entry.mode & 0o777) !== 0o600) {
-    fail("PRIVATE_FILE_MODE_INVALID", "private evidence file is not a mode-0600 regular file");
-  }
-  const reopened = await fs.open(filePath, fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW);
-  let reopenedBytes;
+  const writtenIdentity = filesystemIdentity(writtenStat);
+  let receipt;
   try {
-    reopenedBytes = await reopened.readFile();
+    const entry = await fs.lstat(filePath);
+    if (entry.isSymbolicLink()
+      || !entry.isFile()
+      || entry.nlink !== 1
+      || entry.size !== bytes.length
+      || !sameFilesystemIdentity(entry, writtenIdentity)) {
+      fail("PRIVATE_FILE_IDENTITY_INVALID",
+        "private evidence path does not retain the written file identity");
+    }
+    const reopened = await fs.open(
+      filePath,
+      fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW
+    );
+    let reopenedBytes;
+    try {
+      const reopenedStat = await reopened.stat();
+      if (!reopenedStat.isFile()
+        || reopenedStat.nlink !== 1
+        || reopenedStat.size !== bytes.length
+        || !sameFilesystemIdentity(reopenedStat, writtenIdentity)) {
+        fail("PRIVATE_FILE_IDENTITY_INVALID",
+          "reopened private evidence does not retain the written file identity");
+      }
+      reopenedBytes = await reopened.readFile();
+    } finally {
+      await reopened.close();
+    }
+    if (!reopenedBytes.equals(bytes)) {
+      fail("PRIVATE_REOPEN_MISMATCH",
+        "private evidence bytes changed after fsync and reopen");
+    }
+    receipt = {
+      sha256: sha256(reopenedBytes),
+      size: reopenedBytes.length,
+      identity: writtenIdentity,
+    };
+  } catch (error) {
+    if (error instanceof FormalEvidenceV2Error) throw error;
+    fail("PRIVATE_REOPEN_FAILED",
+      `private evidence reopen failed: ${error.code ?? "unknown"}`);
   } finally {
-    await reopened.close();
+    await after?.();
   }
-  if (!reopenedBytes.equals(bytes)) fail("PRIVATE_REOPEN_MISMATCH", "private evidence bytes changed after fsync and reopen");
-  return {
-    sha256: sha256(reopenedBytes),
-    size: reopenedBytes.length,
-  };
+  return receipt;
 }
 
-async function syncDirectory(directory) {
-  const handle = await fs.open(directory, fileConstants.O_RDONLY | fileConstants.O_DIRECTORY);
+function safePrivateBasename(basename) {
+  return typeof basename === "string"
+    && /^[A-Za-z0-9][A-Za-z0-9._-]*$/.test(basename)
+    && path.posix.basename(basename) === basename
+    && path.win32.basename(basename) === basename;
+}
+
+async function assertDirectoryPathAndHandle(pathname, handle, identity, label) {
+  let pathStat;
+  let handleStat;
   try {
-    await handle.sync();
-  } finally {
-    await handle.close();
+    pathStat = await fs.lstat(pathname);
+    handleStat = await handle.stat();
+  } catch {
+    fail("PRIVATE_GENERATION_IDENTITY_DRIFT", `${label} identity is unavailable`);
+  }
+  if (pathStat.isSymbolicLink()
+    || !pathStat.isDirectory()
+    || !handleStat.isDirectory()
+    || !sameFilesystemIdentity(pathStat, identity, false)
+    || !sameFilesystemIdentity(handleStat, identity, false)) {
+    fail("PRIVATE_GENERATION_IDENTITY_DRIFT", `${label} path or handle identity changed`);
+  }
+}
+
+export async function assertPrivateGenerationIdentity(generation) {
+  await assertDirectoryPathAndHandle(
+    generation.root_path,
+    generation.root_handle,
+    generation.root_identity,
+    "private generation root"
+  );
+  await assertDirectoryPathAndHandle(
+    generation.generation_path,
+    generation.generation_handle,
+    generation.generation_identity,
+    "private generation directory"
+  );
+  return true;
+}
+
+export async function writePrivateFile(generation, basename, bytes) {
+  if (!safePrivateBasename(basename)) {
+    fail("PRIVATE_BASENAME_INVALID", "private evidence writes require a safe basename");
+  }
+  return writeExclusivePrivatePath(
+    path.join(generation.generation_path, basename),
+    bytes,
+    () => assertPrivateGenerationIdentity(generation),
+    () => assertPrivateGenerationIdentity(generation)
+  );
+}
+
+export async function syncPrivateGeneration(generation) {
+  await assertPrivateGenerationIdentity(generation);
+  await generation.generation_handle.sync();
+  await assertPrivateGenerationIdentity(generation);
+}
+
+export async function closePrivateGeneration(generation) {
+  const failures = [];
+  for (const handle of [generation?.generation_handle, generation?.root_handle]) {
+    try {
+      await handle?.close();
+    } catch (error) {
+      failures.push(error);
+    }
+  }
+  if (failures.length > 0) {
+    fail("PRIVATE_GENERATION_CLOSE_FAILED", "private generation handles could not be closed");
   }
 }
 
 export async function preparePrivateGeneration(generationRoot) {
   await assertNoSymlinkComponents(generationRoot, "private generation root");
   const root = await regularFileOrDirectory(generationRoot, "private generation root", "directory");
-  const rootStat = await fs.stat(root);
-  if ((rootStat.mode & 0o077) !== 0
-    || (typeof process.geteuid === "function" && rootStat.uid !== process.geteuid())) {
-    fail("PRIVATE_GENERATION_ROOT_UNSAFE",
-      "private generation root must be owned by the runner and deny group and other access");
+  let rootHandle;
+  let generationHandle;
+  rootHandle = await fs.open(
+    root,
+    fileConstants.O_RDONLY | fileConstants.O_DIRECTORY | fileConstants.O_NOFOLLOW
+  );
+  try {
+    const rootStat = await rootHandle.stat();
+    if ((rootStat.mode & 0o077) !== 0
+      || (typeof process.geteuid === "function" && rootStat.uid !== process.geteuid())) {
+      fail("PRIVATE_GENERATION_ROOT_UNSAFE",
+        "private generation root must be owned by the runner and deny group and other access");
+    }
+    const generationPath = await fs.mkdtemp(path.join(root, "accessibility-formal-v2-"));
+    generationHandle = await fs.open(
+      generationPath,
+      fileConstants.O_RDONLY | fileConstants.O_DIRECTORY | fileConstants.O_NOFOLLOW
+    );
+    await generationHandle.chmod(0o700);
+    await generationHandle.sync();
+    await rootHandle.sync();
+    const stableRootStat = await rootHandle.stat();
+    const generationStat = await generationHandle.stat();
+    if (!generationStat.isDirectory()
+      || (generationStat.mode & 0o777) !== 0o700
+      || (typeof process.geteuid === "function" && generationStat.uid !== process.geteuid())) {
+      fail("PRIVATE_GENERATION_MODE_INVALID",
+        "private evidence generation is not an owned mode-0700 directory");
+    }
+    const generation = {
+      root_path: root,
+      root_handle: rootHandle,
+      root_identity: filesystemIdentity(stableRootStat),
+      generation_path: generationPath,
+      generation_handle: generationHandle,
+      generation_identity: filesystemIdentity(generationStat),
+    };
+    await assertPrivateGenerationIdentity(generation);
+    return generation;
+  } catch (error) {
+    await generationHandle?.close();
+    await rootHandle.close();
+    throw error;
   }
-  const generationPath = await fs.mkdtemp(path.join(root, "accessibility-formal-v2-"));
-  await fs.chmod(generationPath, 0o700);
-  const entry = await fs.lstat(generationPath);
-  if (entry.isSymbolicLink() || !entry.isDirectory() || (entry.mode & 0o777) !== 0o700) {
-    fail("PRIVATE_GENERATION_MODE_INVALID", "private evidence generation is not a mode-0700 directory");
-  }
-  await syncDirectory(root);
-  return generationPath;
 }
 
 async function assertNoSymlinkComponents(inputPath, label) {
@@ -808,6 +1252,63 @@ async function containedFixture(corpusDirectory, filename, label) {
   const resolved = await regularFile(candidate, label);
   if (path.dirname(resolved) !== root) fail("FIXTURE_ESCAPE_REJECTED", `${label} resolves outside the corpus directory`);
   return resolved;
+}
+
+export async function verifyStagedFixture(stagedPath, receipt) {
+  let entry;
+  try {
+    entry = await fs.lstat(stagedPath);
+  } catch {
+    fail("STAGED_FIXTURE_DRIFT", "staged fixture is unavailable");
+  }
+  if (entry.isSymbolicLink()
+    || !entry.isFile()
+    || entry.nlink !== 1
+    || entry.size !== receipt.size
+    || !sameFilesystemIdentity(entry, receipt.identity)) {
+    fail("STAGED_FIXTURE_DRIFT", "staged fixture path identity changed");
+  }
+  const reopened = await fs.open(stagedPath, fileConstants.O_RDONLY | fileConstants.O_NOFOLLOW);
+  let bytes;
+  try {
+    const reopenedStat = await reopened.stat();
+    if (!reopenedStat.isFile()
+      || reopenedStat.nlink !== 1
+      || reopenedStat.size !== receipt.size
+      || !sameFilesystemIdentity(reopenedStat, receipt.identity)) {
+      fail("STAGED_FIXTURE_DRIFT", "staged fixture reopened identity changed");
+    }
+    bytes = await reopened.readFile();
+  } finally {
+    await reopened.close();
+  }
+  if (bytes.length !== receipt.size || sha256(bytes) !== receipt.sha256) {
+    fail("STAGED_FIXTURE_DRIFT", "staged fixture bytes changed");
+  }
+  return true;
+}
+
+export async function stageVerifiedFixture(corpusDirectory, runtimeFixtureDirectory, fixture) {
+  const sourcePath = await containedFixture(corpusDirectory, fixture.filename, fixture.id);
+  const source = await readExactFile(
+    sourcePath,
+    `source fixture ${fixture.id}`,
+    fixture.sha256,
+    fixture.size,
+    true
+  );
+  const stagedBasename = `${fixture.id}.pdf`;
+  if (!safePrivateBasename(stagedBasename)) {
+    fail("PRIVATE_BASENAME_INVALID", "staged fixture basename is unsafe");
+  }
+  const stagedPath = path.join(runtimeFixtureDirectory, stagedBasename);
+  const receipt = await writeExclusivePrivatePath(stagedPath, source.bytes);
+  await verifyStagedFixture(stagedPath, receipt);
+  return {
+    source_path: source.resolved,
+    staged_path: stagedPath,
+    receipt,
+  };
 }
 
 async function captureExecutionIdentity({
@@ -887,18 +1388,18 @@ async function verifyInstallerAuthenticity({
   contract,
   identity,
   runtimeHome,
-  signatureTimeoutMs,
-  signatureMaxOutputBytes,
 }) {
   const keyringPath = path.join(runtimeHome, "trustedkeys.gpg");
   const keyringBytes = dearmorPublicKey(identity.publicKey.bytes);
-  await writePrivateFile(keyringPath, keyringBytes);
-  const version = await runBoundedProcess(identity.verifier.resolved, ["--version"], {
-    cwd: runtimeHome,
-    env: signatureVerifierEnvironment(runtimeHome),
-    timeoutMs: signatureTimeoutMs,
-    maxOutputBytes: signatureMaxOutputBytes,
-  });
+  await writeExclusivePrivatePath(keyringPath, keyringBytes);
+  const version = await runBoundedProcess(
+    identity.verifier.resolved,
+    ["--version"],
+    boundedProcessOptions(
+      contract.execution_limits.signature_verifier.version_preflight,
+      { cwd: runtimeHome, env: signatureVerifierEnvironment(runtimeHome) }
+    )
+  );
   assertProcessQualified(version, "gpgv version preflight");
   if (version.code !== 0
     || version.stderr.length !== 0
@@ -914,12 +1415,10 @@ async function verifyInstallerAuthenticity({
     "1",
     identity.signature.resolved,
     identity.installer.resolved,
-  ], {
-    cwd: runtimeHome,
-    env: signatureVerifierEnvironment(runtimeHome),
-    timeoutMs: signatureTimeoutMs,
-    maxOutputBytes: signatureMaxOutputBytes,
-  });
+  ], boundedProcessOptions(
+    contract.execution_limits.signature_verifier.signature_verification,
+    { cwd: runtimeHome, env: signatureVerifierEnvironment(runtimeHome) }
+  ));
   assertProcessQualified(verification, "gpgv signature verification");
   const parsed = parseGpgvStatus(verification.stdout, verification.code, contract);
   return {
@@ -1012,8 +1511,8 @@ export function buildPublicProjection({ contract, authenticity, results, passed 
     limitations: [
       "The signer key is pinned from veraPDF's HTTPS documentation; independent public-key infrastructure trust is not established.",
       "Key revocation status is not refreshed during the offline verification run.",
-      "The Linux loader and dynamic libraries used by gpgv remain part of the evidence host's trusted computing base.",
-      "Pre-run and post-run identity checks do not resist a same-user actor that can substitute and restore bytes during execution.",
+      "The evidence host kernel, operating system, loader, dynamic libraries, and Node runtime remain in the trusted computing base; the source receipt pins only the Node executable.",
+      "Identity checks detect persistent drift but Node lacks openat, so transient same-user substitution and restore, including the proof-to-open micro-race, is not resisted.",
       "The machine pilot covers only two PDF/UA-1 version-identification files and no human-verifiable requirements.",
       "PDF/UA conformance, WCAG conformance, legal compliance, certification, and document accessibility are not established.",
     ],
@@ -1117,6 +1616,9 @@ function safePrivateResult(result) {
     fixture_sha256: result.fixture_sha256,
     raw_report_filename: result.raw_report_filename,
     raw_report_sha256: result.raw_report_sha256,
+    raw_report_size: result.raw_report_size,
+    raw_report_identity: result.raw_report_identity,
+    staged_fixture_receipt: result.staged_fixture_receipt,
     stderr_sha256: result.stderr_sha256,
     evidence: result.evidence,
     harness_error_code: result.harness_error_code,
@@ -1146,6 +1648,7 @@ function safeAuthenticityResult(authenticity) {
 
 export async function runFormalAccessibilityV2Evaluation({
   contractPath,
+  sourceReceiptPath,
   corpusDirectory,
   publicKeyPath,
   signaturePath,
@@ -1155,15 +1658,17 @@ export async function runFormalAccessibilityV2Evaluation({
   runtimeArchivePath,
   javaHome,
   generationRoot,
-  signatureTimeoutMs = 30_000,
-  signatureMaxOutputBytes = 1024 * 1024,
-  validatorTimeoutMs = 60_000,
-  validatorMaxOutputBytes = 16 * 1024 * 1024,
 }) {
   if (process.platform !== "linux" || process.arch !== "x64") {
     fail("PLATFORM_MISMATCH", "formal accessibility v2 evidence requires Linux x64");
   }
-  const { contract, contract_sha256: contractSha256 } = await loadFormalAccessibilityV2Contract(contractPath);
+  const { contract, contract_sha256: contractSha256 } =
+    await loadFormalAccessibilityV2Contract(contractPath);
+  const sourceIdentity = await loadAndVerifySourceReceipt(
+    sourceReceiptPath,
+    contractPath,
+    contractSha256
+  );
   exactValue(verifierPath, contract.signature_verifier.executable_path, "requested verifier path");
   const identityArguments = {
     contract,
@@ -1179,164 +1684,242 @@ export async function runFormalAccessibilityV2Evaluation({
   const runtimeHome = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-verapdf-v2-home-"));
   await fs.chmod(runtimeHome, 0o700);
   try {
-    await Promise.all([
-      fs.mkdir(path.join(runtimeHome, "cache"), { mode: 0o700 }),
-      fs.mkdir(path.join(runtimeHome, "config"), { mode: 0o700 }),
-      fs.mkdir(path.join(runtimeHome, "tmp"), { mode: 0o700 }),
-    ]);
+    const runtimeDirectories = ["cache", "config", "tmp", "fixtures"]
+      .map(name => path.join(runtimeHome, name));
+    await Promise.all(runtimeDirectories.map(directory =>
+      fs.mkdir(directory, { mode: 0o700 })
+    ));
+    await Promise.all(runtimeDirectories.map(directory => fs.chmod(directory, 0o700)));
     const authenticity = await verifyInstallerAuthenticity({
       contract,
       identity: initialIdentity,
       runtimeHome,
-      signatureTimeoutMs,
-      signatureMaxOutputBytes,
     });
     const authenticatedIdentity = await captureExecutionIdentity(identityArguments);
     if (!executionIdentityMatches(initialIdentity, authenticatedIdentity)) {
       fail("AUTHENTICATED_IDENTITY_DRIFT", "execution identity changed during authenticity verification");
     }
 
-    const generationPath = await preparePrivateGeneration(generationRoot);
-    const signatureStatusReceipt = await writePrivateFile(
-      path.join(generationPath, "gpgv-signature-status.txt"),
-      authenticity.raw_status
-    );
-    const signatureDiagnosticReceipt = await writePrivateFile(
-      path.join(generationPath, "gpgv-signature-diagnostic.txt"),
-      authenticity.raw_diagnostic
-    );
-    const environment = buildFormalRunnerEnvironment({
-      javaHome: authenticatedIdentity.javaHome,
-      runtimeHome,
-    });
-    const version = await runBoundedProcess(authenticatedIdentity.validator.resolved, ["--version"], {
-      cwd: runtimeHome,
-      env: environment,
-      timeoutMs: validatorTimeoutMs,
-      maxOutputBytes: validatorMaxOutputBytes,
-    });
-    assertProcessQualified(version, "veraPDF version preflight");
-    if (version.code !== 0
-      || !version.stdout.toString("utf8").includes(`veraPDF ${contract.validator.version}`)) {
-      fail("VALIDATOR_VERSION_MISMATCH", "veraPDF version preflight does not match the reviewed identity");
-    }
-    const postVersionIdentity = await captureExecutionIdentity(identityArguments);
-    if (!executionIdentityMatches(authenticatedIdentity, postVersionIdentity)) {
-      fail("MID_RUN_IDENTITY_DRIFT", "execution identity changed during validator version preflight");
-    }
-
-    const results = [];
-    for (const fixture of contract.fixtures) {
-      const fixturePath = await containedFixture(corpusDirectory, fixture.filename, fixture.id);
-      const fixtureBytes = await fs.readFile(fixturePath);
-      if (fixtureBytes.length !== fixture.size || sha256(fixtureBytes) !== fixture.sha256) {
-        fail("FIXTURE_IDENTITY_MISMATCH", `${fixture.id} byte identity does not match the contract`);
+    const generation = await preparePrivateGeneration(generationRoot);
+    try {
+      const sourceReceiptCopy = await writePrivateFile(
+        generation,
+        "external-source-receipt.v1.json",
+        sourceIdentity.receipt_bytes
+      );
+      if (sourceReceiptCopy.sha256 !== sourceIdentity.receipt_sha256
+        || sourceReceiptCopy.size !== sourceIdentity.receipt_size) {
+        fail("SOURCE_RECEIPT_COPY_MISMATCH",
+          "private source receipt copy does not match the externally retained receipt");
       }
-      const execution = await runBoundedProcess(authenticatedIdentity.validator.resolved, [
-        "--format",
-        "json",
-        "--flavour",
-        contract.validator.profile,
-        fixturePath,
-      ], {
-        cwd: runtimeHome,
-        env: environment,
-        timeoutMs: validatorTimeoutMs,
-        maxOutputBytes: validatorMaxOutputBytes,
+      const signatureStatusReceipt = await writePrivateFile(
+        generation,
+        "gpgv-signature-status.txt",
+        authenticity.raw_status
+      );
+      const signatureDiagnosticReceipt = await writePrivateFile(
+        generation,
+        "gpgv-signature-diagnostic.txt",
+        authenticity.raw_diagnostic
+      );
+      const environment = buildFormalRunnerEnvironment({
+        javaHome: authenticatedIdentity.javaHome,
+        runtimeHome,
       });
-      const rawReportFilename = `${fixture.id}.raw.json`;
-      const rawReportReceipt = await writePrivateFile(path.join(generationPath, rawReportFilename), execution.stdout);
-      let evidence = null;
-      let harnessErrorCode = null;
-      try {
-        assertProcessQualified(execution, `veraPDF fixture ${fixture.id}`);
-        evidence = parseVeraPdfEvidence(execution.stdout, execution.code, fixture, contract);
-      } catch (error) {
-        harnessErrorCode = error.code ?? "VALIDATOR_EVIDENCE_INVALID";
+      const version = await runBoundedProcess(
+        authenticatedIdentity.validator.resolved,
+        ["--version"],
+        boundedProcessOptions(
+          contract.execution_limits.validator.version_preflight,
+          { cwd: runtimeHome, env: environment }
+        )
+      );
+      assertProcessQualified(version, "veraPDF version preflight");
+      if (version.code !== 0
+        || !version.stdout.toString("utf8").includes(`veraPDF ${contract.validator.version}`)) {
+        fail("VALIDATOR_VERSION_MISMATCH",
+          "veraPDF version preflight does not match the reviewed identity");
       }
-      results.push({
-        id: fixture.id,
-        expected_machine_compliant: fixture.expected_machine_compliant,
-        fixture_sha256: fixture.sha256,
-        raw_report_filename: rawReportFilename,
-        raw_report_sha256: rawReportReceipt.sha256,
-        stderr_sha256: sha256(execution.stderr),
-        evidence,
-        harness_error_code: harnessErrorCode,
-        expectation_met: harnessErrorCode === null && evidence.expectation_met,
-      });
-      const postFixtureIdentity = await captureExecutionIdentity(identityArguments);
-      if (!executionIdentityMatches(authenticatedIdentity, postFixtureIdentity)) {
-        fail("MID_RUN_IDENTITY_DRIFT", "execution identity changed during a validator fixture job");
+      const postVersionIdentity = await captureExecutionIdentity(identityArguments);
+      if (!executionIdentityMatches(authenticatedIdentity, postVersionIdentity)) {
+        fail("MID_RUN_IDENTITY_DRIFT",
+          "execution identity changed during validator version preflight");
       }
-    }
 
-    const finalIdentity = await captureExecutionIdentity(identityArguments);
-    if (!executionIdentityMatches(authenticatedIdentity, finalIdentity)) {
-      fail("POST_RUN_IDENTITY_DRIFT", "execution identity changed while validator jobs ran");
+      const results = [];
+      for (const fixture of contract.fixtures) {
+        const staged = await stageVerifiedFixture(
+          corpusDirectory,
+          path.join(runtimeHome, "fixtures"),
+          fixture
+        );
+        const execution = await runBoundedProcess(
+          authenticatedIdentity.validator.resolved,
+          [
+            "--format",
+            "json",
+            "--flavour",
+            contract.validator.profile,
+            staged.staged_path,
+          ],
+          boundedProcessOptions(
+            contract.execution_limits.validator.fixture,
+            { cwd: runtimeHome, env: environment }
+          )
+        );
+        await verifyStagedFixture(staged.staged_path, staged.receipt);
+        const rawReportFilename = `${fixture.id}.raw.json`;
+        const rawReportReceipt = await writePrivateFile(
+          generation,
+          rawReportFilename,
+          execution.stdout
+        );
+        let evidence = null;
+        let harnessErrorCode = null;
+        try {
+          assertProcessQualified(execution, `veraPDF fixture ${fixture.id}`);
+          evidence = parseVeraPdfEvidence(execution.stdout, execution.code, fixture, contract);
+        } catch (error) {
+          harnessErrorCode = error.code ?? "VALIDATOR_EVIDENCE_INVALID";
+        }
+        results.push({
+          id: fixture.id,
+          expected_machine_compliant: fixture.expected_machine_compliant,
+          fixture_sha256: fixture.sha256,
+          staged_fixture_receipt: staged.receipt,
+          raw_report_filename: rawReportFilename,
+          raw_report_sha256: rawReportReceipt.sha256,
+          raw_report_size: rawReportReceipt.size,
+          raw_report_identity: rawReportReceipt.identity,
+          stderr_sha256: sha256(execution.stderr),
+          evidence,
+          harness_error_code: harnessErrorCode,
+          expectation_met: harnessErrorCode === null && evidence.expectation_met,
+        });
+        const postFixtureIdentity = await captureExecutionIdentity(identityArguments);
+        if (!executionIdentityMatches(authenticatedIdentity, postFixtureIdentity)) {
+          fail("MID_RUN_IDENTITY_DRIFT",
+            "execution identity changed during a validator fixture job");
+        }
+      }
+
+      const finalIdentity = await captureExecutionIdentity(identityArguments);
+      if (!executionIdentityMatches(authenticatedIdentity, finalIdentity)) {
+        fail("POST_RUN_IDENTITY_DRIFT",
+          "execution identity changed while validator jobs ran");
+      }
+      const postSourceIdentity = await loadAndVerifySourceReceipt(
+        sourceReceiptPath,
+        contractPath,
+        contractSha256
+      );
+      if (postSourceIdentity.receipt_sha256 !== sourceIdentity.receipt_sha256
+        || postSourceIdentity.receipt_size !== sourceIdentity.receipt_size) {
+        fail("SOURCE_IDENTITY_DRIFT",
+          "source receipt or bound source/runtime identity changed during execution");
+      }
+      await assertPrivateGenerationIdentity(generation);
+      const passed = results.every(result => result.expectation_met);
+      const privateIndexWithoutSelf = {
+        index_version: 1,
+        evidence_runner_version: FORMAL_EVIDENCE_V2_RUNNER_VERSION,
+        contract_sha256: contractSha256,
+        publication_authorized: false,
+        execution_limits: contract.execution_limits,
+        source_runtime: {
+          external_receipt: {
+            filename: "external-source-receipt.v1.json",
+            sha256: sourceReceiptCopy.sha256,
+            size: sourceReceiptCopy.size,
+            identity: sourceReceiptCopy.identity,
+          },
+          captured_at: sourceIdentity.receipt.captured_at,
+          capture_method: sourceIdentity.receipt.capture_method,
+          repository: sourceIdentity.receipt.repository,
+          files: sourceIdentity.verified_files,
+          node: sourceIdentity.verified_node,
+        },
+        private_generation_identity: {
+          root: generation.root_identity,
+          generation: generation.generation_identity,
+        },
+        authenticity: {
+          verified: authenticity.verified,
+          primary_fingerprint: authenticity.primary_fingerprint,
+          public_key_sha256: authenticity.public_key_sha256,
+          signature_sha256: authenticity.signature_sha256,
+          installer_sha256: authenticity.installer_sha256,
+          verifier_executable_sha256: authenticity.verifier_executable_sha256,
+          status_sha256: authenticity.status_sha256,
+          diagnostic_sha256: authenticity.diagnostic_sha256,
+          raw_status: {
+            filename: "gpgv-signature-status.txt",
+            ...signatureStatusReceipt,
+          },
+          raw_diagnostic: {
+            filename: "gpgv-signature-diagnostic.txt",
+            ...signatureDiagnosticReceipt,
+          },
+        },
+        identity: {
+          validator_tree_sha256: finalIdentity.validatorTree.digest,
+          runtime_tree_sha256: finalIdentity.runtimeTree.digest,
+        },
+        passed,
+        results: results.map(safePrivateResult),
+      };
+      const projection = buildPublicProjection({
+        contract,
+        authenticity,
+        results,
+        passed,
+      });
+      const projectionBytes = Buffer.from(
+        `${JSON.stringify(projection, null, 2)}\n`,
+        "utf8"
+      );
+      const projectionReceipt = await writePrivateFile(
+        generation,
+        "public-projection.v1.json",
+        projectionBytes
+      );
+      await assertPrivateGenerationIdentity(generation);
+      const finalIndex = {
+        ...privateIndexWithoutSelf,
+        public_projection: {
+          filename: "public-projection.v1.json",
+          ...projectionReceipt,
+        },
+      };
+      const finalIndexBytes = Buffer.from(
+        `${JSON.stringify(finalIndex, null, 2)}\n`,
+        "utf8"
+      );
+      const finalIndexReceipt = await writePrivateFile(
+        generation,
+        "qualification-index.v1.json",
+        finalIndexBytes
+      );
+      await syncPrivateGeneration(generation);
+      await assertPrivateGenerationIdentity(generation);
+      const qualificationIndexPath =
+        path.join(generation.generation_path, "qualification-index.v1.json");
+      const result = {
+        evidence_runner_version: FORMAL_EVIDENCE_V2_RUNNER_VERSION,
+        passed,
+        authenticity: safeAuthenticityResult(authenticity),
+        results,
+        public_projection: projection,
+        private_generation_path: generation.generation_path,
+        qualification_index_path: qualificationIndexPath,
+        qualification_index_sha256: finalIndexReceipt.sha256,
+        qualification_index_identity: finalIndexReceipt.identity,
+      };
+      await assertPrivateGenerationIdentity(generation);
+      return result;
+    } finally {
+      await closePrivateGeneration(generation);
     }
-    const passed = results.every(result => result.expectation_met);
-    const privateIndexWithoutSelf = {
-      index_version: 1,
-      evidence_runner_version: FORMAL_EVIDENCE_V2_RUNNER_VERSION,
-      contract_sha256: contractSha256,
-      publication_authorized: false,
-      authenticity: {
-        verified: authenticity.verified,
-        primary_fingerprint: authenticity.primary_fingerprint,
-        public_key_sha256: authenticity.public_key_sha256,
-        signature_sha256: authenticity.signature_sha256,
-        installer_sha256: authenticity.installer_sha256,
-        verifier_executable_sha256: authenticity.verifier_executable_sha256,
-        status_sha256: authenticity.status_sha256,
-        diagnostic_sha256: authenticity.diagnostic_sha256,
-        raw_status: {
-          filename: "gpgv-signature-status.txt",
-          sha256: signatureStatusReceipt.sha256,
-          size: signatureStatusReceipt.size,
-        },
-        raw_diagnostic: {
-          filename: "gpgv-signature-diagnostic.txt",
-          sha256: signatureDiagnosticReceipt.sha256,
-          size: signatureDiagnosticReceipt.size,
-        },
-      },
-      identity: {
-        validator_tree_sha256: finalIdentity.validatorTree.digest,
-        runtime_tree_sha256: finalIdentity.runtimeTree.digest,
-      },
-      passed,
-      results: results.map(safePrivateResult),
-    };
-    const projection = buildPublicProjection({
-      contract,
-      authenticity,
-      results,
-      passed,
-    });
-    const projectionBytes = Buffer.from(`${JSON.stringify(projection, null, 2)}\n`, "utf8");
-    const projectionReceipt = await writePrivateFile(path.join(generationPath, "public-projection.v1.json"), projectionBytes);
-    const finalIndex = {
-      ...privateIndexWithoutSelf,
-      public_projection: {
-        filename: "public-projection.v1.json",
-        sha256: projectionReceipt.sha256,
-        size: projectionReceipt.size,
-      },
-    };
-    const finalIndexBytes = Buffer.from(`${JSON.stringify(finalIndex, null, 2)}\n`, "utf8");
-    const finalIndexReceipt = await writePrivateFile(path.join(generationPath, "qualification-index.v1.json"), finalIndexBytes);
-    await syncDirectory(generationPath);
-    return {
-      evidence_runner_version: FORMAL_EVIDENCE_V2_RUNNER_VERSION,
-      passed,
-      authenticity: safeAuthenticityResult(authenticity),
-      results,
-      public_projection: projection,
-      private_generation_path: generationPath,
-      qualification_index_path: path.join(generationPath, "qualification-index.v1.json"),
-      qualification_index_sha256: finalIndexReceipt.sha256,
-    };
   } finally {
     await fs.rm(runtimeHome, { recursive: true, force: true });
   }

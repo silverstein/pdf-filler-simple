@@ -23,6 +23,44 @@
     "license_spdx_id": "GPL-3.0-or-later",
     "bundled": false
   },
+  "execution_limits": {
+    "signature_verifier": {
+      "version_preflight": {
+        "timeout_ms": 30000,
+        "stdout_max_bytes": 65536,
+        "stderr_max_bytes": 65536,
+        "aggregate_max_bytes": 131072,
+        "term_grace_ms": 500,
+        "group_empty_timeout_ms": 2000
+      },
+      "signature_verification": {
+        "timeout_ms": 30000,
+        "stdout_max_bytes": 1048576,
+        "stderr_max_bytes": 1048576,
+        "aggregate_max_bytes": 2097152,
+        "term_grace_ms": 500,
+        "group_empty_timeout_ms": 2000
+      }
+    },
+    "validator": {
+      "version_preflight": {
+        "timeout_ms": 60000,
+        "stdout_max_bytes": 1048576,
+        "stderr_max_bytes": 1048576,
+        "aggregate_max_bytes": 2097152,
+        "term_grace_ms": 1000,
+        "group_empty_timeout_ms": 2000
+      },
+      "fixture": {
+        "timeout_ms": 60000,
+        "stdout_max_bytes": 16777216,
+        "stderr_max_bytes": 1048576,
+        "aggregate_max_bytes": 17825792,
+        "term_grace_ms": 1000,
+        "group_empty_timeout_ms": 2000
+      }
+    }
+  },
   "validator": {
     "name": "veraPDF Greenfield CLI",
     "version": "1.30.2",
