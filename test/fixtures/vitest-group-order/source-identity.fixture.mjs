@@ -15,11 +15,17 @@ if (!repositoryRoot || !path.isAbsolute(repositoryRoot)) {
 const control = process.env.PDF_TOOLS_VITEST_ORDER_CONTROL;
 if (control === "overlap") {
   const deadline = Date.now() + 5_000;
-  while (!fs.existsSync(path.join(stateRoot, "ordinary-active"))) {
+  while (!fs.existsSync(path.join(
+    stateRoot,
+    "ordinary-git-interference-ready",
+  ))) {
     if (Date.now() >= deadline) {
-      throw new Error("ordinary overlap fixture did not become active");
+      throw new Error("ordinary Git interference did not become ready");
     }
     await new Promise(resolve => setTimeout(resolve, 10));
+  }
+  if (!fs.existsSync(path.join(repositoryRoot, "ordinary-untracked.txt"))) {
+    throw new Error("ordinary Git interference marker preceded its artifact");
   }
 }
 

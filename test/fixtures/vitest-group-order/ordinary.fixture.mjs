@@ -22,6 +22,11 @@ await fs.writeFile(
 await fs.writeFile(checkoutArtifact, "Git-visible overlap artifact\n", {
   flag: "wx",
 });
+await fs.writeFile(
+  path.join(stateRoot, "ordinary-git-interference-ready"),
+  "ready\n",
+  { flag: "wx" },
+);
 
 it("keeps its resource active through the ordinary test", async () => {
   await expect(fs.readFile(path.join(activeRoot, "resource.txt"), "utf8"))
