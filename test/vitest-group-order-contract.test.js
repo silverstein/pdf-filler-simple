@@ -36,6 +36,23 @@ function boundedAppend(current, chunk) {
     : combined;
 }
 
+function waitForChildClose(child, timeoutMs = 2_000) {
+  if (child.exitCode !== null || child.signalCode !== null) {
+    return Promise.resolve();
+  }
+  return new Promise((resolve, reject) => {
+    const onClose = () => {
+      clearTimeout(timeout);
+      resolve();
+    };
+    const timeout = setTimeout(() => {
+      child.removeListener("close", onClose);
+      reject(new Error(`fixture child ${child.pid} did not close after termination`));
+    }, timeoutMs);
+    child.once("close", onClose);
+  });
+}
+
 async function terminateFixtureTree(child, environment) {
   if (
     !child
@@ -45,18 +62,28 @@ async function terminateFixtureTree(child, environment) {
   ) {
     return;
   }
+  const closed = waitForChildClose(child);
   if (process.platform === "win32") {
-    await terminateWindowsTree(child, {
+    const result = await terminateWindowsTree(child, {
       environment,
       timeoutMs: 1_000,
     });
+    if (!result.verified) {
+      await closed.catch(() => {});
+      throw new Error(`fixture tree termination was not verified: ${result.reason}`);
+    }
+    await closed;
     return;
   }
   try {
     process.kill(-child.pid, "SIGKILL");
   } catch (error) {
-    if (error.code !== "ESRCH") throw error;
+    if (error.code !== "ESRCH") {
+      await closed.catch(() => {});
+      throw error;
+    }
   }
+  await closed;
 }
 
 async function runFixture(control) {
@@ -162,7 +189,7 @@ async function runFixture(control) {
     child.once("error", fail);
     for (const signal of ["SIGINT", "SIGTERM"]) {
       const handler = () => {
-        void terminateFixtureTree(child, environment);
+        void terminateFixtureTree(child, environment).catch(fail);
       };
       signalHandlers.set(signal, handler);
       process.once(signal, handler);
@@ -231,5 +258,5 @@ describe("Vitest source-identity group barrier", () => {
     expect(`${overlap.stdout}\n${overlap.stderr}`).toContain(
       "EXPECTED_GIT_VISIBLE_INTERFERENCE",
     );
-  });
+  }, 60_000);
 });

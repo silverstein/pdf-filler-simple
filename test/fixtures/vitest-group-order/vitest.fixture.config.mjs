@@ -29,9 +29,6 @@ function retargetProject(name, include) {
       ...project.test,
       root: repoRoot,
       include: [include],
-      // Vitest excludes fixture directories by default. Clear only that
-      // selection constraint so these non-production modules can execute.
-      exclude: [],
       // The overlap sensitivity control deliberately removes the production
       // barrier and needs equal parallel worker limits in both projects.
       fileParallelism: overlap ? true : project.test.fileParallelism,
