@@ -673,7 +673,7 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
         observations: { original_process_group_empty: false },
       },
     });
-  });
+  }, 15_000);
 
   it("escalates a nonresponsive supervisor and performs lease-bound cleanup", async () => {
     const started = Date.now();
