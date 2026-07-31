@@ -48,7 +48,9 @@ function sha256(bytes) {
 }
 
 async function temporaryDirectory(prefix) {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  // Canonical: generation roots are rejected when an ancestor is a symlink,
+  // and on macOS os.tmpdir() resolves under a symlinked /var.
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), prefix)));
   temporaryDirectories.push(directory);
   return directory;
 }

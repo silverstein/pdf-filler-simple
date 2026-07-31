@@ -36,7 +36,7 @@ const MANIFEST = JSON.parse(
 
 const temporaryRoots = [];
 async function makeExtensionsDirectory(ids) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-extensions-"));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-extensions-")));
   temporaryRoots.push(root);
   for (const id of ids) await fs.mkdir(path.join(root, id), { recursive: true });
   return root;
