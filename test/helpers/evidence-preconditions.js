@@ -15,6 +15,9 @@
 
 const STALE_CODES = new Set([
   "EVAL_ATTESTATION_STALE",
+]);
+
+const UNPROVISIONED_CODES = new Set([
   "EVAL_EVIDENCE_UNPROVISIONED",
 ]);
 
@@ -42,6 +45,9 @@ export function classifyEvidencePrecondition(error) {
   if (STALE_CODES.has(error?.code)) {
     return { kind: "stale", reason: message };
   }
+  if (UNPROVISIONED_CODES.has(error?.code)) {
+    return { kind: "unprovisioned", reason: message };
+  }
   if (STALE_PATTERNS.some(pattern => pattern.test(message))) {
     return { kind: "stale", reason: message };
   }
@@ -49,6 +55,23 @@ export function classifyEvidencePrecondition(error) {
     return { kind: "unprovisioned", reason: message };
   }
   return null;
+}
+
+/**
+ * Whether a failed trajectory-suite load may be skipped as sealed-evidence
+ * staleness. The loader aggregates every validation error into one message,
+ * one "- " line per finding, so a message can mix a legitimate staleness line
+ * with real suite-integrity defects. Skip only when every finding is
+ * approval-source staleness; a malformed approval artifact, a binding
+ * violation, or an unreadable suite file stays a failure.
+ */
+export function trajectoryApprovalStalenessOnly(message) {
+  const findings = String(message)
+    .split("\n")
+    .filter(line => line.startsWith("- "));
+  return findings.length > 0 && findings.every(
+    line => /visual oracle approval source file .+ changed/i.test(line),
+  );
 }
 
 /**

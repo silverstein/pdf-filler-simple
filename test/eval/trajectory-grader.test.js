@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { PDFDocument } from "pdf-lib";
 import { createCanvas } from "@napi-rs/canvas";
+import { trajectoryApprovalStalenessOnly } from "../helpers/evidence-preconditions.js";
 import { generateTrajectoryCalibration } from "../../scripts/eval-generate-trajectory-calibration.mjs";
 import { captureTrajectoryToolContracts } from "../../scripts/eval-capture-tool-contracts.mjs";
 import {
@@ -221,14 +222,15 @@ const trajectoryEvidence = await (async () => {
     return { current: true, reason: null };
   } catch (error) {
     const message = String(error?.message ?? error);
-    if (/visual oracle approval source file .* changed/i.test(message)
-      || /visual oracle approval/i.test(message)) {
-      return {
-        current: false,
-        reason: `trajectory visual-oracle approval needs human re-approval: ${message}`,
-      };
-    }
-    throw error;
+    // Skip only when every aggregated finding is approval-source staleness. A
+    // malformed or tampered approval artifact, a binding violation, or an
+    // unreadable suite file stays a real failure even if the same aggregate
+    // also contains a staleness line.
+    if (!trajectoryApprovalStalenessOnly(message)) throw error;
+    return {
+      current: false,
+      reason: `trajectory visual-oracle approval needs human re-approval: ${message}`,
+    };
   }
 })();
 

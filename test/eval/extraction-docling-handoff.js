@@ -653,28 +653,37 @@ async function prepareDoclingMacHandoffCore({
  * a re-approval requirement, not a product defect.
  */
 export function doclingCalibrationStatus(repoRoot = REPO_ROOT) {
-  try {
-    const attestation = JSON.parse(readFileSync(path.join(
-      repoRoot,
-      "test/fixtures/eval/extraction/phase1/docling-supervisor-calibration-attestation.v1.json",
-    )));
-    const drift = [
-      ["supervisor source", attestation.supervisor?.source, "test/eval/native/docling-macos-supervisor.c"],
-      ["supervisor controller", attestation.supervisor?.controller, "test/eval/docling-macos-supervisor.js"],
-    ].filter(([, recorded, relativePath]) => {
-      const bytes = readFileSync(path.join(repoRoot, relativePath));
-      return recorded?.sha256 !== sha256(bytes) || recorded?.bytes !== bytes.length;
-    }).map(([label]) => label);
-    return drift.length === 0
-      ? { current: true, reason: null }
-      : {
-        current: false,
-        reason: `Docling supervisor calibration attestation is stale for ${drift.join(" and ")}; `
-          + "sealed evidence needs human re-approval, this is not a product defect.",
-      };
-  } catch (error) {
-    return { current: false, reason: `Docling calibration evidence is unavailable: ${error.message}` };
+  // The attestation and both supervisor sources are committed fixtures. If any
+  // of them is missing or unparseable, that is repository or evidence-store
+  // corruption, not staleness, so this throws and the gated suites fail red.
+  // Only a successfully computed comparison may report drift as a skip.
+  const attestation = JSON.parse(readFileSync(path.join(
+    repoRoot,
+    "test/fixtures/eval/extraction/phase1/docling-supervisor-calibration-attestation.v1.json",
+  )));
+  const bindings = [
+    ["supervisor source", attestation.supervisor?.source, "test/eval/native/docling-macos-supervisor.c"],
+    ["supervisor controller", attestation.supervisor?.controller, "test/eval/docling-macos-supervisor.js"],
+  ];
+  for (const [label, recorded] of bindings) {
+    // A structurally hollow attestation is corruption, not drift. Mirror the
+    // core handoff's structural checks so it cannot masquerade as staleness.
+    if (!/^[a-f0-9]{64}$/.test(recorded?.sha256 ?? "")
+      || !Number.isInteger(recorded?.bytes) || recorded.bytes < 1) {
+      throw new Error(`Docling calibration attestation is malformed: ${label} binding is missing or invalid`);
+    }
   }
+  const drift = bindings.filter(([, recorded, relativePath]) => {
+    const bytes = readFileSync(path.join(repoRoot, relativePath));
+    return recorded.sha256 !== sha256(bytes) || recorded.bytes !== bytes.length;
+  }).map(([label]) => label);
+  return drift.length === 0
+    ? { current: true, reason: null }
+    : {
+      current: false,
+      reason: `Docling supervisor calibration attestation is stale for ${drift.join(" and ")}; `
+        + "sealed evidence needs human re-approval, this is not a product defect.",
+    };
 }
 
 export async function prepareDoclingMacHandoff(options = {}) {
