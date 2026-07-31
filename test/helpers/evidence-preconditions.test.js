@@ -57,6 +57,20 @@ describe("trajectory approval staleness classifier", () => {
     )).toBe(false);
   });
 
+  it("rejects a non-staleness finding whose interpolated path merely ends in 'changed'", () => {
+    expect(trajectoryApprovalStalenessOnly(
+      "Invalid trajectory suite:\n"
+      + "- visual oracle approval source file evil changed is not allowlisted",
+    )).toBe(false);
+  });
+
+  it("accepts CRLF staleness findings", () => {
+    expect(trajectoryApprovalStalenessOnly(
+      "Invalid trajectory suite:\r\n"
+      + "- visual oracle approval source file package-lock.json changed\r",
+    )).toBe(true);
+  });
+
   it("rejects a malformed-approval aggregate with no staleness finding", () => {
     expect(trajectoryApprovalStalenessOnly(
       "Invalid trajectory suite:\n"

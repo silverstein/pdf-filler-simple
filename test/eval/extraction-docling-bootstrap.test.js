@@ -8,6 +8,7 @@ import {
   doclingCalibrationStatus,
 } from "./extraction-docling-handoff.js";
 import { validateReceipt } from "../../scripts/eval-capture-docling-bakeoff.mjs";
+import { validateReceipt as validateBakeoffRunnerReceipt } from "../../scripts/eval-run-markdown-bakeoff.mjs";
 
 // Regression coverage for the calibration-bootstrap bypass. Deliberately NOT
 // gated on calibration currency: this suite tests the staleness machinery
@@ -86,7 +87,10 @@ describe("Docling calibration-bootstrap bypass", () => {
     expect(error.message).toMatch(/re-approval requirement, not a product defect/);
   });
 
-  it.skipIf(!calibrationIsStale)("stamps the bootstrap marker into the durable receipt bytes and the capture path refuses it", async () => {
+  // Not gated on staleness: the marker is stamped whenever the flag is
+  // passed, drifted calibration or not, so this coverage must survive a
+  // future re-approval.
+  it("stamps the bootstrap marker into the durable receipt bytes and both scored runners refuse it", async () => {
     const root = await temporaryRoot("pdf-tools-bootstrap-on-");
     const handoff = await prepareDoclingMacHandoffForTest(await options(root, true));
 
@@ -99,14 +103,19 @@ describe("Docling calibration-bootstrap bypass", () => {
     const persisted = JSON.parse(await fs.readFile(handoff.receiptPath, "utf8"));
     expect(persisted.calibration_bootstrap).toBe(true);
 
-    // The qualifying capture path refuses the receipt outright.
+    // Every scored path refuses the receipt outright: the bakeoff capture
+    // and the markdown bakeoff runner, which validates receipts on its own.
     const schema = JSON.parse(await fs.readFile(SCHEMA_PATH, "utf8"));
     expect(() => validateReceipt(persisted, schema))
       .toThrow(/calibration-bootstrap handoff and cannot produce qualifying or scored evidence/);
+    expect(() => validateBakeoffRunnerReceipt(persisted, schema))
+      .toThrow(/calibration-bootstrap handoff and cannot produce qualifying or scored evidence/);
   });
 
-  it("refuses a bootstrap-marked receipt before shape validation", () => {
+  it("refuses a bootstrap-marked receipt before shape validation in both runners", () => {
     expect(() => validateReceipt({ calibration_bootstrap: true }, { type: "object" }))
+      .toThrow(/cannot produce qualifying or scored evidence/);
+    expect(() => validateBakeoffRunnerReceipt({ calibration_bootstrap: true }, { type: "object" }))
       .toThrow(/cannot produce qualifying or scored evidence/);
   });
 });

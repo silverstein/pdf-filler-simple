@@ -136,7 +136,16 @@ async function extractArtifact(artifactPath, outputRoot) {
   }
 }
 
-function validateReceipt(receipt, schema) {
+export function validateReceipt(receipt, schema) {
+  // A calibration-bootstrap handoff exists solely to re-measure a stale
+  // supervisor calibration; its receipt must never feed this runner's scored
+  // bakeoff report. Same trust decision, same ordering, as the capture
+  // runner's refusal: before shape validation.
+  if (receipt?.calibration_bootstrap === true) {
+    throw new Error(
+      "Docling receipt was produced by a calibration-bootstrap handoff and cannot produce qualifying or scored evidence",
+    );
+  }
   const validation = new AjvJsonSchemaValidator().getValidator(schema)(receipt);
   if (!validation.valid) throw new Error(`Docling receipt schema validation failed: ${validation.errorMessage}`);
   const identityDigest = sha256(Buffer.from(

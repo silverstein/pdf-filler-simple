@@ -69,8 +69,11 @@ export function trajectoryApprovalStalenessOnly(message) {
   const findings = String(message)
     .split("\n")
     .filter(line => line.startsWith("- "));
+  // Anchored to the whole line: a non-staleness finding whose interpolated
+  // path merely ends in " changed" (for example "... source file X changed is
+  // not allowlisted") must not count as staleness.
   return findings.length > 0 && findings.every(
-    line => /visual oracle approval source file .+ changed/i.test(line),
+    line => /^- visual oracle approval source file .+ changed\r?$/i.test(line),
   );
 }
 
