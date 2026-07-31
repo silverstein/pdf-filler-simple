@@ -24,7 +24,7 @@ afterEach(async () => {
 });
 
 async function tempRoot() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "phase1-companion-"));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "phase1-companion-")));
   temporaryRoots.push(root);
   return root;
 }

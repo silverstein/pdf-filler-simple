@@ -38,7 +38,7 @@ const DIRECT_ONLY_ADAPTERS = Object.freeze({ direct_pdf: true, layout_ir: false,
 const temporaryRoots = [];
 
 async function temporaryRoot() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-phase1-test-"));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-phase1-test-")));
   temporaryRoots.push(root);
   return root;
 }
