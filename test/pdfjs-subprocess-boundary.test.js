@@ -181,6 +181,33 @@ describe.sequential("PDF.js subprocess boundary", () => {
     })).toBe("subprocess");
   });
 
+  it("keeps PDF.js in process while PDF-lib keeps a worker boundary on the same host", async () => {
+    const { selectPdfLibIsolationMode } = await import("../server/pdf-lib-subprocess.js");
+    // One embedded Electron host, described identically to both selectors.
+    const embeddedHost = {
+      electronVersion: "34.0.0",
+      processType: "utility",
+      hasElectronParentPort: true,
+      executable: "/Applications/Claude.app/Contents/MacOS/Claude Helper (Plugin)",
+    };
+    // The asymmetry is deliberate and evidenced, not an oversight. PDF.js
+    // crashed this host in both isolated modes, while PDF-lib has completed
+    // live rotate, merge, and split mutations here through a worker thread.
+    // Harmonizing these two would either crash the host or silently drop a
+    // proven boundary, so both directions are pinned.
+    expect(selectPdfjsIsolationMode(embeddedHost)).toBe("in_process");
+    expect(selectPdfLibIsolationMode(embeddedHost)).toBe("worker_thread");
+
+    const ordinaryNodeHost = {
+      electronVersion: null,
+      processType: null,
+      hasElectronParentPort: false,
+      executable: "/usr/local/bin/node",
+    };
+    expect(selectPdfjsIsolationMode(ordinaryNodeHost)).toBe("subprocess");
+    expect(selectPdfLibIsolationMode(ordinaryNodeHost)).toBe("subprocess");
+  });
+
   it("runs a source-bound request without spawning or threading in an embedded host", async () => {
     const failIfUsed = () => {
       throw new Error("The embedded host must not launch another executable.");

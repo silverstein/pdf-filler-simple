@@ -865,9 +865,20 @@ async function runInProcessWorker({
   request,
   signal,
 }) {
-  // Claude's embedded UtilityProcess cannot safely relaunch its executable or
-  // create a Node worker. This compatibility path retains the request, path,
-  // queue, and output bounds, but it is not a separate heap/process boundary.
+  // Both isolated PDF.js paths were measured to crash Claude's embedded
+  // UtilityProcess. Its process.execPath is Claude Helper (Plugin) rather than
+  // a Node binary, so relaunching it produced SIGTRAP helper crashes, and
+  // ELECTRON_RUN_AS_NODE=1 exited 133 on a direct probe. The Node worker-thread
+  // fallback made Electron create a helper process and crash as well, which is
+  // specific to this library's native-canvas probe and browser-like runtime
+  // classification. It is NOT a general claim that the host cannot create a
+  // Node worker: PDF-lib keeps a worker_thread boundary on this same host and
+  // has completed live rotate, merge, and split mutations there.
+  //
+  // This compatibility path retains source binding, allowed-directory checks,
+  // request, path, queue, output, and binary bounds, native-canvas blocking,
+  // and macOS system-child reaping. It is not a separate heap or process
+  // boundary and cannot forcibly stop synchronous parser work.
   if (signal?.aborted) throw abortError();
   installInProcessCanvasNativeGuard();
   const workerModule = await loadInProcessWorkerModule();
