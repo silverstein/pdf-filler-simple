@@ -839,7 +839,20 @@ async function loadInProcessWorkerModule() {
   return await inProcessWorkerModulePromise;
 }
 
+// The in-process native-canvas block is precautionary, inherited from the
+// worker-thread path where Electron measurably crashed. No measurement shows
+// the native binding crashing on the utility-process main thread, and blocking
+// it is what leaves an embedded host with no renderer when there is no system
+// fallback, which is the Windows shape. PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=1
+// lifts the block so that can be measured on a real host before the default
+// changes. The renderer policy already falls back to the system renderer, so
+// an unsafe native attempt degrades rather than failing the call.
+function embeddedNativeCanvasAllowed() {
+  return process.env.PDF_TOOLS_EMBEDDED_NATIVE_CANVAS === "1";
+}
+
 function installInProcessCanvasNativeGuard() {
+  if (embeddedNativeCanvasAllowed()) return;
   if (inProcessCanvasGuardInstalled) return;
   inProcessCanvasGuardInstalled = true;
   const originalDlopen = process.dlopen;

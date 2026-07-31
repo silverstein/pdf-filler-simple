@@ -350,3 +350,46 @@ describe.runIf(process.platform === "darwin")("Claude Desktop Electron utility r
     expect(result.content.some(item => item.type === "image" && item.mimeType === "image/png")).toBe(true);
   }, 30_000);
 });
+
+// The embedded in-process canvas block is what leaves a host with no renderer
+// when there is no system fallback, which is the Windows shape. This pins that
+// the opt-in lifts it, so the fix is measurable and cannot regress silently.
+describe("embedded host native canvas opt-in", () => {
+  const runEmbedded = async env => {
+    const serverUrl = pathToFileURL(path.join(REPO_ROOT, "server", "index.js")).href;
+    const bootstrap = [
+      'process.type = "utility";',
+      'Object.defineProperty(process.versions, "electron", { value: "test", configurable: true });',
+      `await import(${JSON.stringify(serverUrl)});`,
+    ].join(" ");
+    const transport = new StdioClientTransport({
+      command: process.execPath,
+      args: ["--input-type=module", "--eval", bootstrap],
+      cwd: REPO_ROOT,
+      env: { ALLOWED_DIRECTORIES: REPO_ROOT, PDF_TOOLS_DISABLE_SYSTEM_RENDERER: "1", ...env },
+      stderr: "pipe",
+    });
+    const embeddedClient = new Client({ name: "pdf-tools-canvas-optin", version: "1.0.0" });
+    await embeddedClient.connect(transport);
+    try {
+      return await embeddedClient.callTool({
+        name: "render_pdf_page",
+        arguments: { pdf_path: EXAMPLE_PDF, page: 1, max_dimension_px: 800 },
+      });
+    } finally {
+      await transport.close();
+    }
+  };
+
+  it("cannot render with no system fallback while the block is in force", async () => {
+    const result = await runEmbedded({});
+    expect(result.isError).toBe(true);
+    expect(JSON.stringify(result.content)).toContain("No PDF page renderer is available in this host");
+  }, 30_000);
+
+  it("renders natively when the opt-in lifts the block", async () => {
+    const result = await runEmbedded({ PDF_TOOLS_EMBEDDED_NATIVE_CANVAS: "1" });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({ page: 1, renderer: "native-canvas" });
+  }, 30_000);
+});
