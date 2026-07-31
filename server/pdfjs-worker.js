@@ -1103,6 +1103,21 @@ export async function runRendererPolicy(policy, {
     ) {
       return await systemRenderer();
     }
+    // Embedded hosts deliberately block the native canvas binding, and the
+    // canvas library reports that as its own "cannot find native binding"
+    // message, which tells the caller to reinstall packages. That remediation
+    // is wrong and cannot succeed. Replace it with the true cause when no
+    // system fallback is available for this host.
+    if (error?.code !== PDF_RESOURCE_LIMIT_CODE && canvasDependencyError(error)) {
+      const unavailable = new Error(
+        "No PDF page renderer is available in this host. The native canvas "
+        + "binding is unavailable or blocked, and no system renderer fallback "
+        + "is configured. Reinstalling dependencies does not resolve this.",
+      );
+      unavailable.code = "PDF_RENDERER_UNAVAILABLE";
+      unavailable.cause = error;
+      throw unavailable;
+    }
     throw error;
   }
 }
