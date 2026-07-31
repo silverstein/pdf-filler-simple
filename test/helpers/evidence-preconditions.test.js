@@ -88,8 +88,23 @@ describe("trajectory approval staleness classifier", () => {
 describe("docling calibration status corruption boundary", () => {
   const ATTESTATION_RELATIVE =
     "test/fixtures/eval/extraction/phase1/docling-supervisor-calibration-attestation.v1.json";
+  const RETIREMENT_RELATIVE =
+    "test/fixtures/eval/extraction/phase1/docling-supervisor-calibration-retirement.v1.json";
   const SOURCE_RELATIVE = "test/eval/native/docling-macos-supervisor.c";
   const CONTROLLER_RELATIVE = "test/eval/docling-macos-supervisor.js";
+
+  async function writeRetirement(root, attestation, overrides = {}) {
+    const bytes = Buffer.from(JSON.stringify(attestation));
+    await fs.writeFile(path.join(root, RETIREMENT_RELATIVE), JSON.stringify({
+      protocol: "pdf-tools.docling-supervisor-calibration-retirement.v1",
+      retired: true,
+      retired_on: "2026-07-31",
+      retires_attestation: { sha256: sha256(bytes), bytes: bytes.length },
+      reason: "synthetic retirement for the corruption-boundary bank",
+      ...overrides,
+    }));
+    return bytes;
+  }
 
   async function syntheticRepo({ attestation, source, controller } = {}) {
     const root = await fs.realpath(
@@ -151,6 +166,44 @@ describe("docling calibration status corruption boundary", () => {
     expect(status.current).toBe(false);
     expect(status.reason).toMatch(/stale for supervisor source/);
     expect(status.reason).toMatch(/not a product defect/);
+  });
+
+  it("reports an exact-bound retirement as a retired skip, superseding drift", async () => {
+    const root = await syntheticRepo();
+    const attestation = await matchingAttestation(root);
+    const bytes = await writeRetirement(root, attestation);
+    await fs.writeFile(path.join(root, ATTESTATION_RELATIVE), bytes);
+    // Drift the source too: retirement must win over the drift comparison.
+    await fs.appendFile(path.join(root, SOURCE_RELATIVE), "/* drifted */\n");
+    const status = doclingCalibrationStatus(root);
+    expect(status).toMatchObject({ current: false, retired: true });
+    expect(status.reason).toMatch(/retired on 2026-07-31/);
+    expect(status.reason).toMatch(/not a product defect/);
+  });
+
+  it("throws when the retirement record does not bind the exact attestation", async () => {
+    const root = await syntheticRepo();
+    const attestation = await matchingAttestation(root);
+    await writeRetirement(root, attestation, {
+      retires_attestation: { sha256: "a".repeat(64), bytes: 1 },
+    });
+    await fs.writeFile(path.join(root, ATTESTATION_RELATIVE), JSON.stringify(attestation));
+    expect(() => doclingCalibrationStatus(root))
+      .toThrow(/does not bind the exact attestation/);
+  });
+
+  it("throws on a malformed retirement record instead of skipping", async () => {
+    const root = await syntheticRepo();
+    const attestation = await matchingAttestation(root);
+    const bytes = await writeRetirement(root, attestation, { retired: false });
+    await fs.writeFile(path.join(root, ATTESTATION_RELATIVE), bytes);
+    expect(() => doclingCalibrationStatus(root)).toThrow(/retirement record is malformed/);
+  });
+
+  it("throws when a retirement record dangles without its attestation", async () => {
+    const root = await syntheticRepo({ attestation: null });
+    await writeRetirement(root, { synthetic: true });
+    expect(() => doclingCalibrationStatus(root)).toThrow(/ENOENT/);
   });
 
   it("throws on a missing attestation instead of skipping", async () => {

@@ -1,0 +1,11 @@
+{
+  "protocol": "pdf-tools.docling-supervisor-calibration-retirement.v1",
+  "retired": true,
+  "retired_on": "2026-07-31",
+  "authorized_by": "maintainer decision, 2026-07-31",
+  "retires_attestation": {
+    "sha256": "8a532eea6c54ebbdc7d1509296efb763a6cda6ca0756b34970cbe8bad934f778",
+    "bytes": 2610
+  },
+  "reason": "The staging orchestrator that produced the sealed calibration measurement was never retained, so its observed_maxima are permanently unreproducible from retained code. The measurement is retired rather than re-approved. The derived supervisor policy limits remain in place as historical, non-authoritative bounds. Any future re-measurement requires a new reviewed protocol that retains its tooling and consumes the calibration-bootstrap taint contract; a fresh attestation sealed under that protocol supersedes this retirement."
+}

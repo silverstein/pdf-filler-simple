@@ -663,10 +663,47 @@ export function doclingCalibrationStatus(repoRoot = REPO_ROOT) {
   // of them is missing or unparseable, that is repository or evidence-store
   // corruption, not staleness, so this throws and the gated suites fail red.
   // Only a successfully computed comparison may report drift as a skip.
-  const attestation = JSON.parse(readFileSync(path.join(
+  const attestationPath = path.join(
     repoRoot,
     "test/fixtures/eval/extraction/phase1/docling-supervisor-calibration-attestation.v1.json",
-  )));
+  );
+  const attestationBytes = readFileSync(attestationPath);
+  const attestation = JSON.parse(attestationBytes);
+  // A maintainer-authorized retirement record supersedes the staleness
+  // comparison entirely: the retired measurement is permanently
+  // unreproducible, so the gated suites skip on the retirement itself. The
+  // record must bind the exact attestation bytes it retires; a mismatch or a
+  // dangling record is evidence-store corruption and stays red.
+  let retirementBytes = null;
+  try {
+    retirementBytes = readFileSync(path.join(
+      repoRoot,
+      "test/fixtures/eval/extraction/phase1/docling-supervisor-calibration-retirement.v1.json",
+    ));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  if (retirementBytes !== null) {
+    const retirement = JSON.parse(retirementBytes);
+    if (retirement.protocol !== "pdf-tools.docling-supervisor-calibration-retirement.v1"
+      || retirement.retired !== true
+      || typeof retirement.reason !== "string" || retirement.reason.length < 1) {
+      throw new Error("Docling calibration retirement record is malformed");
+    }
+    if (retirement.retires_attestation?.sha256 !== sha256(attestationBytes)
+      || retirement.retires_attestation?.bytes !== attestationBytes.length) {
+      throw new Error(
+        "Docling calibration retirement record does not bind the exact attestation it claims to retire",
+      );
+    }
+    return {
+      current: false,
+      retired: true,
+      reason: `Docling supervisor calibration was retired on ${retirement.retired_on}: `
+        + "its measurement is permanently unreproducible and the suites gate on the "
+        + "retirement. This is a recorded maintainer decision, not a product defect.",
+    };
+  }
   const bindings = [
     ["supervisor source", attestation.supervisor?.source, "test/eval/native/docling-macos-supervisor.c"],
     ["supervisor controller", attestation.supervisor?.controller, "test/eval/docling-macos-supervisor.js"],
