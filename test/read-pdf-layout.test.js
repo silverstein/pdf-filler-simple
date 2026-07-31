@@ -11,6 +11,7 @@ import { PDFDocument, PDFName, PDFNumber, StandardFonts, degrees } from "pdf-lib
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   extractPdfLayout,
+  pdfjsFactoryDirectory,
   validatePdfLayoutSemantics,
   validatePdfLayoutSourceEvidence,
 } from "../server/layout-extraction.js";
@@ -214,6 +215,28 @@ function shiftPageGeometryX(page, delta) {
     .map(line => `[${line.id} x=${line.x} y=${line.y} w=${line.width} h=${line.height}] ${line.text}`)
     .join("\n");
 }
+
+describe("PDF.js factory directory contract", () => {
+  it("always ends factory directories with a forward slash, including Windows-shaped paths", () => {
+    // PDF.js validates factory URLs with a literal .endsWith("/") check, so
+    // the backslash-terminated paths fileURLToPath yields on Windows failed
+    // it and broke every layout operation on win32 (caught by the Windows
+    // runtime CI lane, run 30670798499).
+    expect(pdfjsFactoryDirectory("C:\\Users\\runner\\ext\\node_modules\\pdfjs-dist\\cmaps\\"))
+      .toBe("C:/Users/runner/ext/node_modules/pdfjs-dist/cmaps/");
+    expect(pdfjsFactoryDirectory("C:\\ext\\cmaps")).toBe("C:/ext/cmaps/");
+    expect(pdfjsFactoryDirectory("/opt/ext/node_modules/pdfjs-dist/cmaps/"))
+      .toBe("/opt/ext/node_modules/pdfjs-dist/cmaps/");
+    expect(pdfjsFactoryDirectory("/opt/ext/cmaps")).toBe("/opt/ext/cmaps/");
+    for (const value of [
+      pdfjsFactoryDirectory("C:\\a\\b\\"),
+      pdfjsFactoryDirectory("/a/b"),
+    ]) {
+      expect(value.endsWith("/")).toBe(true);
+      expect(value.includes("\\")).toBe(false);
+    }
+  });
+});
 
 describe("read_pdf_layout MCP tool", () => {
   let client;

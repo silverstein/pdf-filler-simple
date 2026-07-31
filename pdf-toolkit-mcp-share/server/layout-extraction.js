@@ -6,10 +6,24 @@ const IR_NAME = "pdf-tools.extraction-ir";
 const IR_VERSION = "1.1.0";
 const INTERNAL_SOURCE_REPLAY = Symbol("pdf-layout-internal-source-replay");
 const INTERNAL_MARKDOWN_PROJECTION = Symbol("pdf-layout-internal-markdown-projection");
+
+/**
+ * PDF.js factory directories must end with a forward slash on every platform:
+ * its factory validation is literally `.endsWith("/")`, so the
+ * backslash-terminated paths fileURLToPath produces on Windows fail with
+ * "Invalid factory url" and take every layout operation down with them.
+ * Node's fs accepts forward-slash Windows paths, so normalizing the
+ * separators is sufficient and platform-neutral.
+ */
+export function pdfjsFactoryDirectory(nativePath) {
+  const normalized = String(nativePath).replaceAll("\\", "/");
+  return normalized.endsWith("/") ? normalized : `${normalized}/`;
+}
+
 const PDFJS_DOCUMENT_ASSETS = Object.freeze({
-  cMapUrl: fileURLToPath(new URL("../node_modules/pdfjs-dist/cmaps/", import.meta.url)),
+  cMapUrl: pdfjsFactoryDirectory(fileURLToPath(new URL("../node_modules/pdfjs-dist/cmaps/", import.meta.url))),
   cMapPacked: true,
-  standardFontDataUrl: fileURLToPath(new URL("../node_modules/pdfjs-dist/standard_fonts/", import.meta.url)),
+  standardFontDataUrl: pdfjsFactoryDirectory(fileURLToPath(new URL("../node_modules/pdfjs-dist/standard_fonts/", import.meta.url))),
 });
 const ITEM_SPACE = Object.freeze({
   origin: "top_left",
