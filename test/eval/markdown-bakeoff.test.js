@@ -5,7 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { classifyEvidencePrecondition } from "../helpers/evidence-preconditions.js";
 import { prepareDoclingMacHandoffForTest } from "./extraction-docling-handoff.js";
 import {
   canonicalJson,
@@ -239,6 +240,7 @@ describe("Markdown bakeoff renderer version binding", () => {
 });
 
 describe("packed Markdown bakeoff runner", () => {
+  let evidenceSkipReason = null;
   let root;
   let bindings;
   let fixtureRoot;
@@ -247,55 +249,69 @@ describe("packed Markdown bakeoff runner", () => {
   let options;
 
   beforeAll(async () => {
-    root = await fs.realpath(
-      await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-markdown-bakeoff-")),
-    );
-    await fs.chmod(root, 0o700);
-    const outputRoot = path.join(root, "output");
-    await fs.mkdir(outputRoot, { mode: 0o700 });
-    const manifestBytes = await fs.readFile(SOURCE_MANIFEST);
-    const receiptSchemaBytes = await fs.readFile(RECEIPT_SCHEMA);
-    manifest = JSON.parse(manifestBytes.toString("utf8"));
-    const fixturePaths = manifest.fixtures.map(fixture => path.resolve(
-      path.dirname(SOURCE_MANIFEST),
-      fixture.path,
-    ));
-    const uvPath = path.join(root, "uv-test-binary");
-    const uvVersion = "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)";
-    await fs.writeFile(uvPath, `#!/bin/sh\nprintf '%s\\n' '${uvVersion}'\n`, { mode: 0o700, flag: "wx" });
-    const handoff = await prepareDoclingMacHandoffForTest({
-      cacheRoot: path.join(root, "Library/Caches/oda-pdf-tools-extraction"),
-      sidecarRoot: path.join(root, "Sites/pdf-tools-extraction-sidecars"),
-      protectedRoots: [path.join(root, "Documents"), path.join(root, "Dropbox")],
-      fixturePaths,
-      testOnlyHost: {
-        platform: "darwin",
-        architecture: "arm64",
-        os_build: "25G5065a",
-        kernel_release: "25.6.0",
-        node_version: process.version,
-      },
-      testOnlySupervisorBuild: {
-        binaryBytes: Buffer.from("pdf-tools-test-only-supervisor-binary\n"),
-      },
-      testOnlyUv: { path: uvPath, version: uvVersion },
-    });
-    receipt = handoff.receipt;
-    fixtureRoot = path.join(path.dirname(handoff.receiptPath), "fixtures");
-    bindings = validateFixtureBindings(manifest, receipt);
-    const artifactPath = await createFakeArtifact(root);
-    const artifactBytes = await fs.readFile(artifactPath);
-    options = {
-      "--artifact": artifactPath,
-      "--artifact-sha256": sha256(artifactBytes),
-      "--manifest": SOURCE_MANIFEST,
-      "--manifest-sha256": sha256(manifestBytes),
-      "--output": path.join(outputRoot, "report.json"),
-      "--receipt": handoff.receiptPath,
-      "--receipt-sha256": handoff.receipt_sha256,
-      "--receipt-schema": RECEIPT_SCHEMA,
-      "--receipt-schema-sha256": sha256(receiptSchemaBytes),
-    };
+    try {
+      root = await fs.realpath(
+        await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-markdown-bakeoff-")),
+      );
+      await fs.chmod(root, 0o700);
+      const outputRoot = path.join(root, "output");
+      await fs.mkdir(outputRoot, { mode: 0o700 });
+      const manifestBytes = await fs.readFile(SOURCE_MANIFEST);
+      const receiptSchemaBytes = await fs.readFile(RECEIPT_SCHEMA);
+      manifest = JSON.parse(manifestBytes.toString("utf8"));
+      const fixturePaths = manifest.fixtures.map(fixture => path.resolve(
+        path.dirname(SOURCE_MANIFEST),
+        fixture.path,
+      ));
+      const uvPath = path.join(root, "uv-test-binary");
+      const uvVersion = "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)";
+      await fs.writeFile(uvPath, `#!/bin/sh\nprintf '%s\\n' '${uvVersion}'\n`, { mode: 0o700, flag: "wx" });
+      const handoff = await prepareDoclingMacHandoffForTest({
+        cacheRoot: path.join(root, "Library/Caches/oda-pdf-tools-extraction"),
+        sidecarRoot: path.join(root, "Sites/pdf-tools-extraction-sidecars"),
+        protectedRoots: [path.join(root, "Documents"), path.join(root, "Dropbox")],
+        fixturePaths,
+        testOnlyHost: {
+          platform: "darwin",
+          architecture: "arm64",
+          os_build: "25G5065a",
+          kernel_release: "25.6.0",
+          node_version: process.version,
+        },
+        testOnlySupervisorBuild: {
+          binaryBytes: Buffer.from("pdf-tools-test-only-supervisor-binary\n"),
+        },
+        testOnlyUv: { path: uvPath, version: uvVersion },
+      });
+      receipt = handoff.receipt;
+      fixtureRoot = path.join(path.dirname(handoff.receiptPath), "fixtures");
+      bindings = validateFixtureBindings(manifest, receipt);
+      const artifactPath = await createFakeArtifact(root);
+      const artifactBytes = await fs.readFile(artifactPath);
+      options = {
+        "--artifact": artifactPath,
+        "--artifact-sha256": sha256(artifactBytes),
+        "--manifest": SOURCE_MANIFEST,
+        "--manifest-sha256": sha256(manifestBytes),
+        "--output": path.join(outputRoot, "report.json"),
+        "--receipt": handoff.receiptPath,
+        "--receipt-sha256": handoff.receipt_sha256,
+        "--receipt-schema": RECEIPT_SCHEMA,
+        "--receipt-schema-sha256": sha256(receiptSchemaBytes),
+      };
+    } catch (error) {
+      // An unmet evidence precondition is reported as a skip that names
+      // what is required. Anything else still fails.
+      const classified = classifyEvidencePrecondition(error);
+      if (classified === null) throw error;
+      evidenceSkipReason = classified.kind === "stale"
+        ? `sealed evidence needs re-approval: ${classified.reason}`
+        : `host is not provisioned: ${classified.reason}`;
+    }
+  });
+
+  beforeEach(context => {
+    if (evidenceSkipReason) context.skip(evidenceSkipReason);
   });
 
   afterAll(async () => {

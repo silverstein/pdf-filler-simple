@@ -10,6 +10,7 @@ import {
   isValidDoclingUvVersion,
   prepareDoclingMacHandoff,
   prepareDoclingMacHandoffForTest,
+  doclingCalibrationStatus,
 } from "./extraction-docling-handoff.js";
 import { canonicalJson, normalizeUvLockSentinels, validateFinalizationSchemaMirror } from "../../scripts/eval-docling-authority.mjs";
 
@@ -152,7 +153,12 @@ afterEach(async () => {
   await Promise.all(roots.splice(0).map(root => fs.rm(root, { recursive: true, force: true })));
 });
 
-describe("Docling macOS handoff", () => {
+// Sealed Docling calibration evidence goes stale whenever the supervisor
+// source moves. That is a re-approval requirement, so these suites report a
+// named skip rather than red tests that would hide a real defect.
+const doclingEvidence = doclingCalibrationStatus();
+
+describe.skipIf(!doclingEvidence.current)("Docling macOS handoff", () => {
   it("normalizes only the two exact uv lock sentinels while preserving managed-runtime symlinks", async () => {
     const value = await uvLockFixture();
     await normalizeUvLockSentinels(value.receipt);

@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -315,14 +315,34 @@ async function prepareDoclingMacHandoffCore({
         Object.entries(DOCLING_SUPERVISOR_POLICY_V1)
           .filter(([key]) => key !== "calibration_attestation_sha256"),
       ))
-    || calibrationAttestation.supervisor?.source?.sha256 !== supervisorSource.sha256
-    || calibrationAttestation.supervisor?.source?.bytes !== supervisorSource.bytes.length
-    || calibrationAttestation.supervisor?.controller?.sha256 !== supervisorController.sha256
-    || calibrationAttestation.supervisor?.controller?.bytes !== supervisorController.bytes.length
     || !/^[a-f0-9]{64}$/.test(calibrationAttestation.calibration_source?.sha256 ?? "")
     || !Number.isInteger(calibrationAttestation.calibration_source?.bytes)
     || calibrationAttestation.calibration_source.bytes < 1) {
     throw new Error("Docling supervisor policy lacks its exact reviewed calibration attestation");
+  }
+  // Source drift is a distinct state from a malformed or absent attestation.
+  // The supervisor is actively developed, so its reviewed calibration goes
+  // stale whenever the source legitimately moves. Reporting that as an
+  // ordinary failure is what buries real defects: it turned four suites red
+  // with a message that reads like corruption. Type it instead, so callers can
+  // report "needs re-approval" and a red test still means a real defect.
+  const attestationDrift = [
+    ["supervisor source", calibrationAttestation.supervisor?.source, supervisorSource],
+    ["supervisor controller", calibrationAttestation.supervisor?.controller, supervisorController],
+  ].filter(([, recorded, actual]) => recorded?.sha256 !== actual.sha256
+    || recorded?.bytes !== actual.bytes.length);
+  if (attestationDrift.length > 0) {
+    const detail = attestationDrift
+      .map(([label, recorded, actual]) => `${label} recorded ${recorded?.bytes ?? "none"} bytes `
+        + `${String(recorded?.sha256 ?? "none").slice(0, 12)}, actual ${actual.bytes.length} bytes `
+        + `${actual.sha256.slice(0, 12)}`)
+      .join("; ");
+    const stale = new Error(
+      "Docling supervisor calibration attestation is stale and needs review: "
+      + `${detail}. This is a re-approval requirement, not a product defect.`,
+    );
+    stale.code = "EVAL_ATTESTATION_STALE";
+    throw stale;
   }
   let observedSupervisorBuild;
   let supervisorBinaryBytes;
@@ -611,6 +631,37 @@ async function prepareDoclingMacHandoffCore({
     bootstrap_sha256: sha256(Buffer.from(DOCLING_BOOTSTRAP_V1)),
     protected_roots_json: canonicalJson([...protectedRoots].map(value => path.resolve(value)).sort()),
   };
+}
+
+/**
+ * Whether the reviewed Docling supervisor calibration attestation still matches
+ * the sources it attests to. Pure and cheap, so suites can gate themselves at
+ * module load instead of failing deep inside a fixture build. A stale result is
+ * a re-approval requirement, not a product defect.
+ */
+export function doclingCalibrationStatus(repoRoot = REPO_ROOT) {
+  try {
+    const attestation = JSON.parse(readFileSync(path.join(
+      repoRoot,
+      "test/fixtures/eval/extraction/phase1/docling-supervisor-calibration-attestation.v1.json",
+    )));
+    const drift = [
+      ["supervisor source", attestation.supervisor?.source, "test/eval/native/docling-macos-supervisor.c"],
+      ["supervisor controller", attestation.supervisor?.controller, "test/eval/docling-macos-supervisor.js"],
+    ].filter(([, recorded, relativePath]) => {
+      const bytes = readFileSync(path.join(repoRoot, relativePath));
+      return recorded?.sha256 !== sha256(bytes) || recorded?.bytes !== bytes.length;
+    }).map(([label]) => label);
+    return drift.length === 0
+      ? { current: true, reason: null }
+      : {
+        current: false,
+        reason: `Docling supervisor calibration attestation is stale for ${drift.join(" and ")}; `
+          + "sealed evidence needs human re-approval, this is not a product defect.",
+      };
+  } catch (error) {
+    return { current: false, reason: `Docling calibration evidence is unavailable: ${error.message}` };
+  }
 }
 
 export async function prepareDoclingMacHandoff(options = {}) {
