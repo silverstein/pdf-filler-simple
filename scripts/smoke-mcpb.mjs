@@ -181,13 +181,17 @@ async function main() {
     if (
       rotated.isError
       || rotated.structuredContent?.last_mutation_tool !== "rotate_pdf_pages"
-      || rotated.structuredContent?.active_path !== realpathSync(rotatedPath)
+      // realpathSync.native expands Windows 8.3 short names the way the
+      // server's canonicalization does; the JS implementation does not, and
+      // runner temp paths arrive short-named, so only the native form states
+      // the intended OS-canonical equality on every platform.
+      || rotated.structuredContent?.active_path !== realpathSync.native(rotatedPath)
       || rotatedDocument.getPageCount() !== 1
       || rotatedDocument.getPage(0).getRotation().angle !== 90
     ) {
       throw new Error(`Packed rotate_pdf_pages mutation smoke failed: ${JSON.stringify({
         is_error: rotated.isError === true,
-        active_path_matches: rotated.structuredContent?.active_path === realpathSync(rotatedPath),
+        active_path_matches: rotated.structuredContent?.active_path === realpathSync.native(rotatedPath),
         last_mutation_tool: rotated.structuredContent?.last_mutation_tool ?? null,
         page_count: rotatedDocument.getPageCount(),
         rotation: rotatedDocument.getPage(0).getRotation().angle,
