@@ -302,13 +302,16 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
 
   it("accepts sampling EPERM only after the real child is absent between two ESRCH probes", async () => {
     // The child must be observed alive alongside the leader before it
-    // vanishes. An 8ms lifetime gave a loaded host almost no sampling window
-    // and flaked; 400ms keeps the vanish semantics while making the
-    // two-member observation robust at a 1ms sample interval.
+    // vanishes, and it must then die inside the supervisor's sealed 20ms
+    // sampling-revalidation budget (SAMPLE_REVALIDATION_BUDGET_NS), which
+    // starts at the first injected EPERM. A longer-lived child is therefore
+    // not an option: 15ms is the widest observation window that still proves
+    // the vanish path. The remaining scheduling sensitivity is why this suite
+    // runs in the serial-native group with the host to itself.
     const result = await runFault(
       "sampling_vanish_eperm",
       "multiple-children",
-      [1, 400],
+      [1, 15],
       { sampleIntervalMs: 1 },
     );
     expect(result.evidence).toMatchObject({

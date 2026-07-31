@@ -27,6 +27,7 @@ import {
   NON_EXECUTABLE_SOURCE_IDENTITY_REFERENCES,
   REAL_CHECKOUT_SOURCE_IDENTITY_BINDERS,
   REVIEWED_COMPUTED_MODULE_LOADS,
+  SERIAL_NATIVE_TEST_FILES,
   SOURCE_IDENTITY_TEST_FILES,
   SOURCE_IDENTITY_TEST_SUITES,
   SOURCE_IDENTITY_TRANSITIVE_MODULES,
@@ -512,7 +513,7 @@ describe("aggregate test-runner contract", () => {
     );
   });
 
-  it("runs ordinary tests before an exclusive source-identity project", () => {
+  it("runs ordinary tests before the exclusive source-identity and serial-native projects", () => {
     const config = viteConfigFactory({ command: "build", mode: "test" });
     expect(config.test.exclude).toEqual([
       ...configDefaults.exclude,
@@ -521,20 +522,23 @@ describe("aggregate test-runner contract", () => {
     const projects = config.test.projects ?? [];
     expect(projects.map(project => project.test?.name)).toEqual([
       "ordinary",
+      "serial-native",
       "source-identity",
     ]);
     expect(projects.every(project => project.extends === true)).toBe(true);
-    expect(projects[0]?.test).toMatchObject({
+    const byName = new Map(projects.map(project => [project.test?.name, project.test]));
+    expect(byName.get("ordinary")).toMatchObject({
       pool: "forks",
       isolate: true,
       sequence: { groupOrder: 0 },
     });
-    expect(projects[0]?.test?.exclude).toEqual([
+    expect(byName.get("ordinary")?.exclude).toEqual([
       ...configDefaults.exclude,
       ...NODE_TEST_FILES,
       ...SOURCE_IDENTITY_TEST_FILES,
+      ...SERIAL_NATIVE_TEST_FILES,
     ]);
-    expect(projects[1]?.test).toMatchObject({
+    expect(byName.get("source-identity")).toMatchObject({
       include: SOURCE_IDENTITY_TEST_FILES,
       pool: "forks",
       isolate: true,
@@ -542,6 +546,20 @@ describe("aggregate test-runner contract", () => {
       maxWorkers: 1,
       sequence: { groupOrder: 1 },
     });
+    // The native supervisor suite races real process lifetimes against the
+    // supervisor's sealed 20ms sampling-revalidation budget, so it must have
+    // the host to itself: exclusive worker, no file parallelism, and the last
+    // group so no sibling project runs beside it.
+    expect(byName.get("serial-native")).toMatchObject({
+      include: SERIAL_NATIVE_TEST_FILES,
+      pool: "forks",
+      isolate: true,
+      fileParallelism: false,
+      maxWorkers: 1,
+      sequence: { groupOrder: 2 },
+    });
+    const orders = projects.map(project => project.test?.sequence?.groupOrder);
+    expect(new Set(orders).size).toBe(orders.length);
   });
 
   it("exposes explicit aggregate and native runner scripts", async () => {

@@ -209,3 +209,17 @@ export const SOURCE_IDENTITY_TEST_SUITES = Object.freeze([
 export const SOURCE_IDENTITY_TEST_FILES = Object.freeze(
   SOURCE_IDENTITY_TEST_SUITES.map(suite => suite.file),
 );
+
+export const SERIAL_NATIVE_TEST_SUITES = Object.freeze([
+  Object.freeze({
+    file: "test/eval/docling-macos-supervisor.test.js",
+    reason: "Races real process lifetimes against the supervisor's sealed 20ms "
+      + "sampling-revalidation budget; sibling-worker scheduler starvation can "
+      + "delay the first sample past a candidate child's lifetime, so the "
+      + "suite must have the host to itself.",
+  }),
+]);
+
+export const SERIAL_NATIVE_TEST_FILES = Object.freeze(
+  SERIAL_NATIVE_TEST_SUITES.map(suite => suite.file),
+);
