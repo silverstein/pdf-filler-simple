@@ -928,8 +928,15 @@ async function main() {
   const expectedReceiptSha256 = option(argv, "--expected-receipt-sha256");
   const protectedRootsJson = option(argv, "--protected-roots-json");
   let context = await verifyHandoffAuthority({ receiptPath, expectedReceiptSha256, protectedRootsJson });
+  // A calibration-bootstrap handoff is verifiable and settable-up, because
+  // re-measuring a stale calibration requires both. But no success envelope
+  // may present it as qualifying: every consumer of these envelopes must see
+  // the taint without having to re-open the receipt.
+  const taint = context.receipt.calibration_bootstrap === true
+    ? { calibration_bootstrap: true, qualifying: false }
+    : {};
   if (action === "verify") {
-    process.stdout.write(`${JSON.stringify({ verified: true, handoff_id: context.receipt.handoff_id, receipt_sha256: expectedReceiptSha256 })}\n`);
+    process.stdout.write(`${JSON.stringify({ verified: true, handoff_id: context.receipt.handoff_id, receipt_sha256: expectedReceiptSha256, ...taint })}\n`);
     return;
   }
   if (action === "setup") {
@@ -941,7 +948,7 @@ async function main() {
     }
     const finalized = await finalizeSetup(context, receiptPath, expectedReceiptSha256);
     await verifyHandoffAuthority({ receiptPath, expectedReceiptSha256, protectedRootsJson });
-    process.stdout.write(`${JSON.stringify({ setup_complete: true, handoff_id: context.receipt.handoff_id, finalization_path: finalized.finalizationPath, finalization_sha256: finalized.finalizationSha256 })}\n`);
+    process.stdout.write(`${JSON.stringify({ setup_complete: true, handoff_id: context.receipt.handoff_id, finalization_path: finalized.finalizationPath, finalization_sha256: finalized.finalizationSha256, ...taint })}\n`);
     return;
   }
   throw new Error("Action must be verify or setup; candidate execution is retained-bakeoff-capture-only");

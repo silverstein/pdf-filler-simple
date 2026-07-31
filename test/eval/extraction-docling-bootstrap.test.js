@@ -1,6 +1,7 @@
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { spawnSync } from "node:child_process";
 import { describe, afterEach, expect, it } from "vitest";
 import {
   prepareDoclingMacHandoff,
@@ -110,6 +111,34 @@ describe("Docling calibration-bootstrap bypass", () => {
       .toThrow(/calibration-bootstrap handoff and cannot produce qualifying or scored evidence/);
     expect(() => validateBakeoffRunnerReceipt(persisted, schema))
       .toThrow(/calibration-bootstrap handoff and cannot produce qualifying or scored evidence/);
+  });
+
+  it("surfaces the taint in the authority verify success envelope", async () => {
+    const root = await temporaryRoot("pdf-tools-bootstrap-verify-");
+    const handoff = await prepareDoclingMacHandoffForTest(await options(root, true));
+    const command = handoff.receipt.setup.authority_command.map(value => value === "setup" ? "verify"
+      : value === "$OUT_OF_BAND_RECEIPT_SHA256" ? handoff.receipt_sha256
+        : value === "$OUT_OF_BAND_PROTECTED_ROOTS_JSON" ? handoff.protected_roots_json : value);
+    const result = spawnSync(command[0], command.slice(1), {
+      encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], env: process.env,
+    });
+    expect(result.status, result.stderr).toBe(0);
+    const envelope = JSON.parse(result.stdout);
+    expect(envelope.verified).toBe(true);
+    expect(envelope.calibration_bootstrap).toBe(true);
+    expect(envelope.qualifying).toBe(false);
+  });
+
+  it("keeps the taint in the authority setup envelope by construction", async () => {
+    // The setup action runs the full uv toolchain, which a unit bank cannot,
+    // so the setup envelope's taint is asserted at source: both success
+    // envelopes must spread the same taint object derived from the receipt.
+    const source = await fs.readFile(
+      path.resolve("scripts/eval-docling-authority.mjs"), "utf8",
+    );
+    const spreads = source.match(/\.\.\.taint/g) ?? [];
+    expect(spreads.length).toBe(2);
+    expect(source).toContain("calibration_bootstrap: true, qualifying: false");
   });
 
   it("refuses a bootstrap-marked receipt before shape validation in both runners", () => {
