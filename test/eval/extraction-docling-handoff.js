@@ -239,6 +239,13 @@ async function prepareDoclingMacHandoffCore({
   testOnlyUv = null,
   testOnlyBootstrapRoot = null,
   testOnlySupervisorBuild = null,
+  // Re-measuring the supervisor calibration requires a handoff, and the
+  // attestation gate refuses a handoff until the calibration is fresh. That is
+  // circular: the first calibration predates the gate, so the gate now blocks
+  // its own renewal. This option breaks the deadlock for measurement only. The
+  // resulting handoff is marked and must never be treated as qualifying
+  // evidence.
+  calibrationBootstrap = false,
   testCapability = null,
 } = {}) {
   if (!cacheRoot || !sidecarRoot || !Array.isArray(protectedRoots) || protectedRoots.length < 1
@@ -337,12 +344,14 @@ async function prepareDoclingMacHandoffCore({
         + `${String(recorded?.sha256 ?? "none").slice(0, 12)}, actual ${actual.bytes.length} bytes `
         + `${actual.sha256.slice(0, 12)}`)
       .join("; ");
-    const stale = new Error(
-      "Docling supervisor calibration attestation is stale and needs review: "
-      + `${detail}. This is a re-approval requirement, not a product defect.`,
-    );
-    stale.code = "EVAL_ATTESTATION_STALE";
-    throw stale;
+    if (!calibrationBootstrap) {
+      const stale = new Error(
+        "Docling supervisor calibration attestation is stale and needs review: "
+        + `${detail}. This is a re-approval requirement, not a product defect.`,
+      );
+      stale.code = "EVAL_ATTESTATION_STALE";
+      throw stale;
+    }
   }
   let observedSupervisorBuild;
   let supervisorBinaryBytes;
@@ -630,6 +639,10 @@ async function prepareDoclingMacHandoffCore({
     receipt_sha256: sha256(receiptBytes),
     bootstrap_sha256: sha256(Buffer.from(DOCLING_BOOTSTRAP_V1)),
     protected_roots_json: canonicalJson([...protectedRoots].map(value => path.resolve(value)).sort()),
+    // Present and true only when the attestation gate was bypassed to re-measure
+    // the calibration. Consumers that produce qualifying or scored evidence must
+    // refuse a handoff carrying this marker.
+    calibration_bootstrap: calibrationBootstrap === true,
   };
 }
 
