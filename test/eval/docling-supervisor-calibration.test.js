@@ -65,11 +65,14 @@ describe("Docling supervisor calibration boundary", () => {
       .toThrow(/cannot feed an ordinary calibration/);
     expect(() => assertCalibrationModeContract(false, {}))
       .not.toThrow();
-    // The marker is only meaningful as literal true.
+    // The marker is only meaningful as the literal boolean true. Any other
+    // present value is malformed provenance and refused in both modes.
     expect(() => assertCalibrationModeContract(false, { calibration_bootstrap: "true" }))
-      .not.toThrow();
+      .toThrow(/literal true; this receipt is malformed/);
     expect(() => assertCalibrationModeContract(true, { calibration_bootstrap: "true" }))
-      .toThrow(/requires a calibration-bootstrap-marked receipt/);
+      .toThrow(/literal true; this receipt is malformed/);
+    expect(() => assertCalibrationModeContract(false, { calibration_bootstrap: false }))
+      .toThrow(/literal true; this receipt is malformed/);
   });
 
   it("checks the mode contract before staging and taints the bootstrap report and envelope", async () => {

@@ -68,7 +68,15 @@ function options(argv) {
  * receipt's provenance disagree, and the run is refused before any staging.
  */
 export function assertCalibrationModeContract(calibrationBootstrap, receipt) {
-  const marked = receipt?.calibration_bootstrap === true;
+  const present = receipt != null && Object.hasOwn(receipt, "calibration_bootstrap");
+  if (present && receipt.calibration_bootstrap !== true) {
+    // The honest pipeline can only mint the literal boolean true; any other
+    // present value is malformed provenance, not an unmarked receipt.
+    throw new Error(
+      "calibration_bootstrap may only be present as the literal true; this receipt is malformed",
+    );
+  }
+  const marked = present;
   if (calibrationBootstrap && !marked) {
     throw new Error(
       "Bootstrap re-measurement requires a calibration-bootstrap-marked receipt; this receipt is unmarked",
