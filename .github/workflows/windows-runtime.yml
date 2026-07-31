@@ -1,0 +1,73 @@
+# Windows runtime evidence (class A: headless CI runner, not Claude Desktop).
+#
+# Builds the MCPB from the exact checked-out commit on a real win32-x64
+# runner, boots the packed artifact over MCP stdio, and exercises tool
+# discovery, prompts, canonical resources, a PDF-lib mutation, and ordinary
+# native rasterization. The embedded-host renderer question (where native
+# canvas is deliberately blocked and rendering is expected unavailable) is
+# covered by the separate "Windows render proof" workflow's probe.
+#
+# Standard runners are free for this public repository. The trigger is
+# workflow_dispatch only so runs stay deliberate; the evidence value is the
+# run at an exact SHA, not continuous execution.
+#
+# Claim boundary: this proves the packed server's runtime behavior under
+# Windows Node on GitHub's runner image. It is not Windows Claude Desktop
+# host evidence, and the Windows-built artifact hash is recorded as
+# informational, with no byte-identity claim against the macOS-built release
+# artifact.
+name: Windows runtime evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  packed-runtime:
+    name: packed runtime on windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Record exact identity
+        shell: bash
+        run: |
+          echo "commit=$(git rev-parse HEAD)"
+          echo "tree=$(git rev-parse HEAD^{tree})"
+          node --version
+          npm --version
+
+      - name: Install exact locked dependencies
+        shell: bash
+        run: npm ci
+
+      - name: Build MCPB from this exact commit
+        shell: bash
+        run: npm run build:mcpb
+
+      - name: Record Windows-built artifact identity (informational)
+        shell: bash
+        run: |
+          ls -la pdf-toolkit-mcp.mcpb
+          sha256sum pdf-toolkit-mcp.mcpb | tee windows-built-artifact.sha256
+
+      - name: Packed stdio smoke on win32-x64
+        shell: bash
+        run: npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb
+
+      - name: Upload evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-runtime-evidence
+          path: |
+            windows-built-artifact.sha256
+          if-no-files-found: warn
