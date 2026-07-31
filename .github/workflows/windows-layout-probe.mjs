@@ -64,6 +64,26 @@ console.log(JSON.stringify(layout.structuredContent ?? null).slice(0, 3000));
 if (layout.isError) {
   console.log("PROBE error content:", JSON.stringify(layout.content ?? null).slice(0, 3000));
 }
+// Mutation path identity: the rotate smoke fails only on
+// active_path_matches. Print both strings so the divergence (short names,
+// drive casing, separators) is visible byte for byte.
+import { realpathSync } from "fs";
+const rotatedPath = path.join(tempRoot, "probe-rotated.pdf");
+const rotated = await client.callTool({
+  name: "rotate_pdf_pages",
+  arguments: { input_path: fixturePath, output_path: rotatedPath, pages: [1], degrees: 90 },
+});
+console.log("PROBE rotate isError:", rotated.isError === true);
+console.log("PROBE rotate active_path :", JSON.stringify(rotated.structuredContent?.active_path));
+try {
+  console.log("PROBE realpathSync(out)  :", JSON.stringify(realpathSync(rotatedPath)));
+} catch (error) {
+  console.log("PROBE realpathSync failed:", error.code, error.message.slice(0, 120));
+}
+console.log("PROBE raw rotatedPath    :", JSON.stringify(rotatedPath));
+if (rotated.isError) {
+  console.log("PROBE rotate error:", JSON.stringify(rotated.content ?? null).slice(0, 1500));
+}
 console.log("PROBE server stderr (first 4000 chars):");
 console.log(Buffer.concat(stderrChunks).toString("utf8").slice(0, 4000));
 await transport.close();
