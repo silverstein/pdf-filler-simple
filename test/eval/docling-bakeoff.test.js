@@ -49,7 +49,7 @@ function receiptFixture() {
 // named skip rather than red tests that would hide a real defect.
 const doclingEvidence = doclingCalibrationStatus();
 
-describe.skipIf(!doclingEvidence.current)("Docling bakeoff evidence validators", () => {
+describe("Docling bakeoff evidence validators", () => {
   it("uses a fresh exact working directory for every scored repetition", async () => {
     const source = await fs.readFile(
       path.resolve("scripts/eval-capture-docling-bakeoff.mjs"),
@@ -116,7 +116,7 @@ describe.skipIf(!doclingEvidence.current)("Docling bakeoff evidence validators",
     )).toThrow(/not bound/);
   });
 
-  it("uses the receipt-bound launcher to execute a private sealed authority", async () => {
+  it.skipIf(!doclingEvidence.current)("uses the receipt-bound launcher to execute a private sealed authority", async () => {
     const root = await fs.realpath(
       await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-bakeoff-authority-")),
     );
