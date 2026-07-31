@@ -102,3 +102,8 @@ jobs:
       - name: Packed stdio smoke on win32-x64
         shell: bash
         run: npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb
+
+      - name: Layout diagnostic probe (always, full responses)
+        if: always()
+        shell: bash
+        run: node .github/workflows/windows-layout-probe.mjs pdf-toolkit-mcp.mcpb
