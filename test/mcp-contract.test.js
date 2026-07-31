@@ -33,7 +33,11 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // and link capabilities it actually has, then shortened to 820 characters
 // without dropping a safety boundary. Previously
 // 4bb56420fc7b0a5d5fc51fe57a5c888aa740a1f60d9ff63fc8080f1dbdb2f909.
-const TOOL_CONTRACT_SHA256 = "3993365ec0868e80afc629cbb8661566a363fe543acc928992ad36bcee4db86f";
+// 2026-07-31: removed MARKDOWN_BYTE_LIMIT_REACHED from the published Markdown
+// gap enum. The renderer throws on the byte limit rather than truncating, so
+// that code was unreachable and misdescribed the contract. Previously
+// 3993365ec0868e80afc629cbb8661566a363fe543acc928992ad36bcee4db86f.
+const TOOL_CONTRACT_SHA256 = "07b2f6035903e699d3d4f023137fc14d4316a214e789d45ed22a4dc804a1184b";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -738,5 +742,21 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     const error = await captureMcpError(() => client.listResourceTemplates());
     expect(error).toMatchObject({ code: -32601 });
     expect(error.message).toContain("Method not found");
+  });
+});
+
+describe("user-visible copy style", () => {
+  // Tool descriptions render inside Claude Desktop and the README is the
+  // project's public front page, so they follow the house rule of no em
+  // dashes. Enforced here because the strings are easy to reintroduce by
+  // copy-paste and nothing else checks them.
+  it("keeps shipped descriptions and the README free of em dashes", async () => {
+    const targets = ["manifest.json", "manifest.mcpb.json", "README.md", "pdf-toolkit-mcp-share/README.md"];
+    const offenders = [];
+    for (const target of targets) {
+      const text = await fs.readFile(path.join(REPO_ROOT, target), "utf8");
+      if (text.includes("—")) offenders.push(target);
+    }
+    expect(offenders, `em dash in user-visible copy: ${offenders.join(", ")}`).toEqual([]);
   });
 });

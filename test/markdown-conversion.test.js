@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import {
@@ -85,6 +88,8 @@ async function validatedSyntheticLayout(pageConfigs) {
     maxOutputCharacters: 200000,
   });
 }
+
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("layout Markdown renderer", () => {
   it("renders deterministic source-backed headings, lists, links, escaping, and page boundaries", async () => {
@@ -595,6 +600,59 @@ describe("layout Markdown renderer", () => {
     ];
     for (const [message, tampered] of cases) {
       expect(() => validateMarkdownConversionSemantics(tampered, { layout })).toThrow(message);
+    }
+  });
+});
+
+describe("Markdown gap-code contract", () => {
+  // Every code this renderer declares must be reachable. Four codes were
+  // declared but unreachable before this lane, so a page that was entirely a
+  // flattened table or a dropped link reported complete coverage. This test
+  // fails the whole class rather than one instance: it reads the shipped
+  // sources and requires each declared code to have at least one emit site,
+  // and requires the runtime set and the published schema enum to agree.
+  const readSource = name => fs.readFile(
+    path.join(REPO_ROOT, name),
+    "utf8",
+  );
+
+  it("declares no gap code the renderer cannot emit", async () => {
+    const source = await readSource("server/markdown-conversion.js");
+    const declared = source
+      .slice(source.indexOf("const GAP_CODES"), source.indexOf("const LIMITATIONS"))
+      .match(/"[A-Z_]+"/gu)
+      .map(value => value.replaceAll('"', ""));
+    expect(declared.length).toBeGreaterThan(0);
+    const unreachable = declared.filter(code => !source.includes(`add("${code}"`));
+    expect(unreachable, `declared but never emitted: ${unreachable.join(", ")}`)
+      .toEqual([]);
+  });
+
+  it("keeps the runtime gap set and the published schema enum identical", async () => {
+    const [source, schema] = await Promise.all([
+      readSource("server/markdown-conversion.js"),
+      readSource("server/output-schemas.js"),
+    ]);
+    const declared = source
+      .slice(source.indexOf("const GAP_CODES"), source.indexOf("const LIMITATIONS"))
+      .match(/"[A-Z_]+"/gu)
+      .map(value => value.replaceAll('"', ""))
+      .sort();
+    const published = schema
+      .slice(schema.indexOf("const markdownGapCode"), schema.indexOf("const markdownPage"))
+      .match(/"[A-Z_]+"/gu)
+      .map(value => value.replaceAll('"', ""))
+      .sort();
+    expect(published).toEqual(declared);
+  });
+
+  it("keeps the share runtime byte-identical to its source", async () => {
+    for (const name of ["markdown-conversion.js", "output-schemas.js", "layout-extraction.js"]) {
+      const [a, b] = await Promise.all([
+        readSource(`server/${name}`),
+        readSource(`pdf-toolkit-mcp-share/server/${name}`),
+      ]);
+      expect(b, name).toBe(a);
     }
   });
 });

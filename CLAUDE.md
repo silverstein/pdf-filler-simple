@@ -103,7 +103,7 @@ qualification. Then perform manual host runs against `example-fw9.pdf`:
 11. **validate_pdf** - Check for missing required fields
 12. **read_pdf_content** - Read the PDF.js text layer; if the selected extraction contains no text, it may return a rendered page-1 image for host/model vision
 13. **read_pdf_layout** - Extract bounded local text geometry and conservative reading order without OCR or table inference
-14. **convert_pdf_to_markdown** - Convert a bounded supported text-layer range to deterministic Markdown with explicit coverage gaps
+14. **convert_pdf_to_markdown** - Convert a bounded supported text-layer range to deterministic Markdown with explicit coverage gaps, including evidence-backed tables and source-validated external http or https links
 15. **get_pdf_resource_uri** - Get resource URI for a PDF file
 16. **read_pdf_bytes** - (app-only) Chunked byte streaming for the interactive viewer
 17. **merge_pdfs** - Merge multiple PDFs into a single document

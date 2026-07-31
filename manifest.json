@@ -127,7 +127,7 @@
     },
     {
       "name": "apply_page_plan",
-      "description": "Reorder, rotate, and delete PDF pages in one pass — saves as a new file"
+      "description": "Reorder, rotate, and delete PDF pages in one pass, saving as a new file"
     },
     {
       "name": "get_page_analysis",
@@ -135,7 +135,7 @@
     },
     {
       "name": "fetch_pdf_from_url",
-      "description": "Download a PDF from an HTTP(S) URL to the user's local machine — works when Claude's WebFetch is blocked"
+      "description": "Download a PDF from an HTTP(S) URL to the user's local machine. Works when Claude's WebFetch is blocked"
     },
     {
       "name": "create_signature",
@@ -159,15 +159,15 @@
     },
     {
       "name": "add_signature_field",
-      "description": "Draw a visible 'Sign here' placeholder box on a PDF page (marks location — does NOT sign)"
+      "description": "Draw a visible 'Sign here' placeholder box on a PDF page (marks location only; does NOT sign)"
     },
     {
       "name": "apply_signature",
-      "description": "Stamp a saved signature at a specific location — requires explicit human intent (user_intent_statement + user_confirmed_at). Basic local stamp, not cryptographic signing."
+      "description": "Stamp a saved signature at a specific location. Requires explicit human intent (user_intent_statement + user_confirmed_at). Basic local stamp, not cryptographic signing."
     },
     {
       "name": "prepare_signing_packet",
-      "description": "Fill form fields AND add sign-here placeholder boxes in one pass — returns a pending-signatures manifest"
+      "description": "Fill form fields AND add sign-here placeholder boxes in one pass, returning a pending-signatures manifest"
     },
     {
       "name": "detect_signature_zones",
@@ -175,11 +175,11 @@
     },
     {
       "name": "apply_text",
-      "description": "Stamp a plain text string at a location (for date zones or arbitrary text fills — no intent required)"
+      "description": "Stamp a plain text string at a location (for date zones or arbitrary text fills; no intent required)"
     },
     {
       "name": "reveal_in_finder",
-      "description": "Open the OS file manager with the given file selected — used by the viewer to surface the active PDF or its backup"
+      "description": "Open the OS file manager with the given file selected. Used by the viewer to surface the active PDF or its backup"
     }
   ],
   "prompts": [

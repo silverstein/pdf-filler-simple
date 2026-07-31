@@ -30,7 +30,6 @@ const GAP_CODES = new Set([
   "INVALID_TEXT_GEOMETRY",
   "LINK_ANNOTATIONS_UNAVAILABLE",
   "LINK_MAPPING_AMBIGUOUS",
-  "MARKDOWN_BYTE_LIMIT_REACHED",
   "OCR_NOT_PERFORMED",
   "PAGE_RANGE_INCOMPLETE",
   "RAW_PAGE_GEOMETRY_UNAVAILABLE",
@@ -830,6 +829,10 @@ export function renderPdfLayoutToMarkdown(layout, {
   const markdown = renderDocumentMarkdown(renderedPages, includePageBoundaries, gaps);
   const markdownBytes = utf8Bytes(markdown);
   if (markdownBytes > maxMarkdownBytes) {
+    // Deliberately throws rather than emitting a gap: truncating would cut a
+    // line or a Unicode sequence. There is therefore no byte-limit gap code,
+    // because a code the renderer can never emit would misdescribe the
+    // contract to callers.
     throw new RangeError(
       `Markdown output is ${markdownBytes} UTF-8 bytes, which exceeds maxMarkdownBytes ${maxMarkdownBytes}. Request a narrower page range or raise the limit.`,
     );

@@ -286,9 +286,9 @@ be silently omitted.
 
 ### Maintainer Docs
 
-- `docs/MAINTAINERS.md` — architecture and operations
-- `docs/RELEASE.md` — release checklist
-- `docs/SUPPORT.md` — issue triage
+- `docs/MAINTAINERS.md`: architecture and operations
+- `docs/RELEASE.md`: release checklist
+- `docs/SUPPORT.md`: issue triage
 
 </details>
 

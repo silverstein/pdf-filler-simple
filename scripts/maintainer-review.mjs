@@ -692,7 +692,7 @@ async function evaluationComparisonKey(scoreCommand) {
       const packageJson = JSON.parse(file.bytes.toString("utf8"));
       installedPackages.set(packageName, {
         version: packageJson.version,
-        package_sha256: file.sha256,
+        package_json_sha256: file.sha256,
       });
     }
   }
@@ -717,9 +717,12 @@ async function evaluationComparisonKey(scoreCommand) {
     }
     scorerRuntime[packageName] = {
       installed_version: installed.version,
-      installed_package_sha256: installed.package_sha256,
+      installed_package_json_sha256: installed.package_json_sha256,
       locked_version: locked.version,
-      locked_integrity: locked.integrity ?? null,
+      // Bound as evidence so a lockfile change moves this contract hash. It
+      // is deliberately not compared against the installed tree, because npm
+      // integrity covers the published tarball rather than the extracted files.
+      locked_integrity_recorded: locked.integrity ?? null,
     };
   }
   const contract = {
@@ -1558,13 +1561,13 @@ export async function runMaintainerReview({
     platform: process.platform,
     architecture: process.arch,
     installed_vitest_version: installedVitest.version,
-    installed_vitest_package_sha256: installedVitestFile.sha256,
+    installed_vitest_package_json_sha256: installedVitestFile.sha256,
     installed_sdk_version: installedSdk.version,
-    installed_sdk_package_sha256: installedSdkFile.sha256,
+    installed_sdk_package_json_sha256: installedSdkFile.sha256,
     installed_pdf_lib_version: installedPdfLib.version,
-    installed_pdf_lib_package_sha256: installedPdfLibFile.sha256,
+    installed_pdf_lib_package_json_sha256: installedPdfLibFile.sha256,
     installed_pdfjs_version: installedPdfjs.version,
-    installed_pdfjs_package_sha256: installedPdfjsFile.sha256,
+    installed_pdfjs_package_json_sha256: installedPdfjsFile.sha256,
   };
   const beads = parseBeadsJsonl(beadsFile.bytes);
   const dependencies = [...new Set([
