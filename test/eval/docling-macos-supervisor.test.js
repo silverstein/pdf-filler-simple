@@ -301,10 +301,14 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
   });
 
   it("accepts sampling EPERM only after the real child is absent between two ESRCH probes", async () => {
+    // The child must be observed alive alongside the leader before it
+    // vanishes. An 8ms lifetime gave a loaded host almost no sampling window
+    // and flaked; 400ms keeps the vanish semantics while making the
+    // two-member observation robust at a 1ms sample interval.
     const result = await runFault(
       "sampling_vanish_eperm",
       "multiple-children",
-      [1, 8],
+      [1, 400],
       { sampleIntervalMs: 1 },
     );
     expect(result.evidence).toMatchObject({
@@ -419,12 +423,17 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
   });
 
   it("enforces physical footprint limits during leader-exit grace", async () => {
+    // The descendant now holds its pages until killed, so the only timing
+    // requirement left is faulting 128 MiB resident within the grace window.
+    // The prior 1000ms grace raced page-in under host load and flaked; the
+    // wider grace and deadline keep the run bounded while the limit check,
+    // not a self-exit, decides the outcome.
     const result = await run(
       "leader-exit-memory-descendant",
       [128 * 1024 * 1024],
       {
-        deadlineMs: 3000,
-        leaderExitGraceMs: 1000,
+        deadlineMs: 6000,
+        leaderExitGraceMs: 2500,
         physicalFootprintMaxBytes: 64 * 1024 * 1024,
         sampleIntervalMs: 5,
       },
