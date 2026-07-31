@@ -628,6 +628,12 @@ async function prepareDoclingMacHandoffCore({
     },
     claim_boundary: "Unexecuted private evaluation handoff only. No benchmark, package, product, redistribution, or release claim is authorized.",
   };
+  // The bootstrap marker must survive in the durable receipt bytes, not only
+  // on the in-memory result, or a bootstrap handoff's receipt is
+  // byte-indistinguishable from a qualifying one. Present only when true, so
+  // ordinary receipts keep their exact current shape, and archived receipts
+  // without the field remain valid non-bootstrap receipts.
+  if (calibrationBootstrap === true) receipt.calibration_bootstrap = true;
   const receiptBytes = Buffer.from(`${canonicalJson(receipt)}\n`);
   const trustedSchema = JSON.parse(sourceInputs.find(item => item.role === "handoff_schema").bytes);
   const validation = new AjvJsonSchemaValidator().getValidator(trustedSchema)(receipt);
