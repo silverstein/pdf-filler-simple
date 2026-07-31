@@ -49,3 +49,4 @@ pdf-toolkit-mcp.zip
 # Dolt database files (added by bd init)
 .dolt/
 *.db
+windows-render-probe.json
