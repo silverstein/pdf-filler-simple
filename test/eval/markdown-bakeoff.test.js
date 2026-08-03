@@ -232,7 +232,7 @@ describe("Markdown bakeoff renderer version binding", () => {
 
   it("accepts the current renderer version and rejects the superseded one", () => {
     expect(validateMarkdownResult(resultFor("1.3.0"), binding).renderer.version).toBe("1.3.0");
-    for (const stale of ["1.0.0", "1.1.0"]) {
+    for (const stale of ["1.0.0", "1.1.0", "1.2.0"]) {
       expect(() => validateMarkdownResult(resultFor(stale), binding), stale)
         .toThrow(/Markdown result evidence is invalid/u);
     }

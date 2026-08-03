@@ -176,6 +176,14 @@ function lineFontEvidence(page) {
   });
 }
 
+function headingTextEligible(value) {
+  const text = String(value).trim();
+  const alphanumericCharacters = text.match(/[\p{L}\p{N}]/gu) ?? [];
+  return !text.includes("\uFFFD")
+    && alphanumericCharacters.length >= 3
+    && !/[=∑∫∞≤≥≈≠±×÷√]/u.test(text);
+}
+
 function headingLevels(page) {
   const evidence = lineFontEvidence(page);
   const heights = evidence.map(value => value.height).filter(Number.isFinite);
@@ -189,6 +197,7 @@ function headingLevels(page) {
       && height >= bodyHeight * 1.5
       && line.text.length > 0
       && line.text.length <= 120
+      && headingTextEligible(line.text)
       && !/[.!?;]$/u.test(line.text)
       && !/^\s*(?:[\u2022\u2023\u25e6\u2043\u2219]|\d{1,3}[.)])\s+/u.test(line.text)
   ));

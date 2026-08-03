@@ -585,6 +585,29 @@ describe("layout Markdown renderer", () => {
     expect(result.options.include_page_boundaries).toBe(false);
   });
 
+  it("keeps unreadable glyphs, lone characters, and equation fragments out of headings", async () => {
+    const page = candidate => ({
+      items: [
+        textItem(candidate, { top: 50, fontSize: 24 }),
+        textItem("First body line", { top: 100 }),
+        textItem("Second body line", { top: 130 }),
+        textItem("Third body line", { top: 160 }),
+        textItem("Fourth body line", { top: 190 }),
+      ],
+    });
+    const layout = await validatedSyntheticLayout([
+      page("�"),
+      page("T"),
+      page("H = p log p"),
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toContain("�\n");
+    expect(result.markdown).toContain("T\n");
+    expect(result.markdown).toContain("H = p log p\n");
+    expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:�|T|H = p log p)$/gmu);
+  });
+
   it("neutralizes hostile Markdown, HTML, table, autolink, and control syntax", async () => {
     const layout = await validatedSyntheticLayout([{
       items: [
