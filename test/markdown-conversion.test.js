@@ -118,6 +118,26 @@ async function validatedSyntheticLayout(pageConfigs) {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("layout Markdown renderer", () => {
+  it("reports suspect text integrity without suppressing source text", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [textItem("PUA \uE000\uE001\uE002", { top: 50 })],
+    }, {
+      items: [textItem("ordinary source text", { top: 50 })],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout);
+    expect(result.pages[0]).toMatchObject({
+      conversion_status: "partial",
+      gaps: [{
+        code: "TEXT_INTEGRITY_SUSPECT",
+        message: expect.stringContaining("private_use_runs=1"),
+      }],
+    });
+    expect(result.markdown).toContain("PUA");
+    expect(result.pages[1].gaps).toEqual([]);
+    expect(result.gaps.map(gap => gap.code)).toEqual(["TEXT_INTEGRITY_SUSPECT"]);
+    expect(validateMarkdownConversionSemantics(result, { layout })).toBe(result);
+  });
+
   it("renders deterministic source-backed headings, lists, links, escaping, and page boundaries", async () => {
     const layout = await validatedSyntheticLayout([
       {

@@ -323,7 +323,7 @@ describe("get_page_analysis content provenance", () => {
   });
 });
 
-function measuredPage({ page = 1, textLength = 25, imageOpCount = 0, pathSegmentCount = 0 } = {}) {
+function measuredPage({ page = 1, textLength = 25, imageOpCount = 0, pathSegmentCount = 0, textIntegrity } = {}) {
   return {
     page,
     text_length: textLength,
@@ -334,10 +334,33 @@ function measuredPage({ page = 1, textLength = 25, imageOpCount = 0, pathSegment
     path_op_count: pathSegmentCount > 0 ? 1 : 0,
     path_segment_count: pathSegmentCount,
     content_analysis_status: "complete",
+    ...(textIntegrity ? { text_integrity: textIntegrity } : {}),
   };
 }
 
 describe("get_page_analysis classification and routing", () => {
+  it("adds only the suspect-integrity routing reason", () => {
+    expect(classifyPageRouting(measuredPage({
+      textIntegrity: {
+        status: "suspect",
+        signals: [{ kind: "private_use_runs", count: 1 }],
+      },
+    }))).toEqual({ text_bearing: true, reasons: ["suspected_text_integrity"] });
+    expect(classifyPageRouting(measuredPage({
+      textIntegrity: { status: "ok", signals: [] },
+    }))).toEqual({ text_bearing: true, reasons: [] });
+    expect(classifyPageRouting({
+      ...measuredPage(),
+      content_analysis_status: "unavailable",
+      text_extraction_status: "failed",
+      text_integrity: { status: "unavailable", signals: [] },
+      text_length: null,
+      image_op_count: null,
+      path_op_count: null,
+      path_segment_count: null,
+    }).reasons).not.toContain("suspected_text_integrity");
+  });
+
   it("pins text and image threshold boundaries", () => {
     expect(classifyPageRouting(measuredPage({ textLength: MIN_TEXT_CHARS - 1 })).reasons)
       .toEqual(["no_text_layer"]);

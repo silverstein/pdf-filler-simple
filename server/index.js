@@ -69,7 +69,7 @@ import {
 } from "./pdf-lib-subprocess.js";
 
 export const READ_CONTENT_ROUTING_GUIDANCE =
-  "Pages without extractable text were successfully read in this call. Use render_pdf_page for visual inspection of those pages; read_pages_without_text is limited to successfully-read pages, and pages outside this read scope or stopped at a page-read error are not classified by this result.";
+  "Pages without extractable text or with suspect text integrity were successfully read in this call. Use render_pdf_page for visual inspection of those pages; the page routing fields are limited to successfully-read pages, and pages outside this read scope or stopped at a page-read error are not classified by this result.";
 
 /**
  * Keep Markdown routing in one mapping function so later text-integrity
@@ -83,6 +83,7 @@ export function deriveMarkdownVisionRouting(layout) {
       reasons.push("image_dominated");
     }
     if (page.modality_hint === "vector-only-candidate") reasons.push("vector_only_text");
+    if (page.text_integrity?.status === "suspect") reasons.push("suspected_text_integrity");
     return reasons.length > 0 ? [{ page: page.page, reasons }] : [];
   });
 }
@@ -4132,6 +4133,7 @@ async function handleToolCall(request) {
         const resolvedPath = resolvePath(pdf_path);
         const MAX_CHARS = 50000;
         let readPagesWithoutText = [];
+        let pagesWithSuspectedTextIntegrity = [];
         let readPagesReadCount = 0;
         let readPageReadError = null;
 
@@ -4151,12 +4153,14 @@ async function handleToolCall(request) {
           const pageCount = result.total_pages;
           const pagesRead = result.pages_read;
           const pagesWithoutText = result.pages_without_text ?? [];
+          const pagesWithIntegrity = result.pages_with_suspected_text_integrity ?? [];
           readPagesWithoutText = pagesWithoutText;
+          pagesWithSuspectedTextIntegrity = pagesWithIntegrity;
           const pageReadError = result.page_read_error ?? null;
           readPagesReadCount = Number.isInteger(pagesRead) ? pagesRead : 0;
           readPageReadError = pageReadError;
           const pageReadErrorCodes = pageReadError ? [pageReadError.code] : [];
-          const routingGuidance = pagesWithoutText.length > 0
+          const routingGuidance = pagesWithoutText.length > 0 || pagesWithIntegrity.length > 0
             ? READ_CONTENT_ROUTING_GUIDANCE
             : null;
 
@@ -4243,6 +4247,7 @@ async function handleToolCall(request) {
                   image_renderer: renderedImage.renderer,
                   page_read_error: pageReadError,
                   read_pages_without_text: pagesWithoutText,
+                  pages_with_suspected_text_integrity: pagesWithIntegrity,
                   routing_guidance: routingGuidance,
                   error_codes: pageReadErrorCodes,
                   retry_guidance:
@@ -4261,6 +4266,7 @@ async function handleToolCall(request) {
                     error: { error_schema_version: 1, code: PDF_RESOURCE_LIMIT_CODE },
                     pages_read: readPagesReadCount,
                     read_pages_without_text: readPagesWithoutText,
+                    pages_with_suspected_text_integrity: pagesWithSuspectedTextIntegrity,
                     page_read_error: readPageReadError,
                   },
                 });
@@ -4289,6 +4295,7 @@ async function handleToolCall(request) {
                   extraction_mode: "none",
                   page_read_error: pageReadError,
                   read_pages_without_text: pagesWithoutText,
+                  pages_with_suspected_text_integrity: pagesWithIntegrity,
                   routing_guidance: routingGuidance,
                   error_codes: ["NO_EXTRACTABLE_TEXT", "IMAGE_FALLBACK_FAILED", ...pageReadErrorCodes],
                   retry_guidance:
@@ -4320,6 +4327,7 @@ async function handleToolCall(request) {
               extraction_mode: "text",
               page_read_error: pageReadError,
               read_pages_without_text: pagesWithoutText,
+              pages_with_suspected_text_integrity: pagesWithIntegrity,
               routing_guidance: routingGuidance,
               error_codes: pageReadErrorCodes,
               retry_guidance: extractionPartial
@@ -4337,6 +4345,7 @@ async function handleToolCall(request) {
                 error: { error_schema_version: 1, code: PDF_RESOURCE_LIMIT_CODE },
                 pages_read: readPagesReadCount,
                 read_pages_without_text: readPagesWithoutText,
+                pages_with_suspected_text_integrity: pagesWithSuspectedTextIntegrity,
                 page_read_error: readPageReadError,
               },
             });
@@ -4355,6 +4364,7 @@ async function handleToolCall(request) {
               },
               pages_read: readPagesReadCount,
               read_pages_without_text: readPagesWithoutText,
+              pages_with_suspected_text_integrity: pagesWithSuspectedTextIntegrity,
               page_read_error: readPageReadError,
             },
           });

@@ -79,7 +79,7 @@
       "path": "text-integrity-pua.pdf",
       "sha256": "f67dda2257e91f221714bf019188def5559b5bf7ada4822bc53c7af241b63085",
       "media_type": "application/pdf",
-      "description": "Single-page synthetic text layer dense with private-use and replacement characters; current conversion silently reports complete.",
+      "description": "Single-page synthetic text layer dense with private-use and replacement characters; conversion retains the text and reports typed integrity evidence.",
       "provenance": {
         "kind": "synthetic",
         "origin": "Open Document Alliance PDF Tools extraction-intelligence fixture generator",
@@ -99,9 +99,10 @@
       },
       "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0 }],
       "expected_current": {
-        "conversion_status": "complete",
-        "gap_codes": [],
-        "text_integrity_signal": "absent"
+        "conversion_status": "partial",
+        "gap_codes": ["TEXT_INTEGRITY_SUSPECT"],
+        "text_integrity_signal": "present",
+        "pages_needing_vision": [{ "page": 1, "reasons": ["suspected_text_integrity"] }]
       }
     },
     {

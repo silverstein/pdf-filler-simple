@@ -3882,10 +3882,118 @@ export const PAGE_CLASSIFICATION_REASONS = Object.freeze([
   "no_text_layer",
   "image_dominated",
   "vector_only_text",
+  "suspected_text_integrity",
   "analysis_unavailable",
 ]);
 
 const ROUTING_TEXT_LENGTH = Symbol("routingTextLength");
+
+// Ported from firecrawl/pdf-inspector (MIT): src/text_quality.rs. Keep this
+// synchronized with layout-extraction.js because get_page_analysis and
+// read_pdf_content receive PDF.js text items rather than the extraction IR.
+function codePointIsPrivateUse(codePoint) {
+  return (codePoint >= 0xe000 && codePoint <= 0xf8ff)
+    || (codePoint >= 0xf0000 && codePoint <= 0xffffd)
+    || (codePoint >= 0x100000 && codePoint <= 0x10fffd);
+}
+
+function itemTextIntegrityForRouting(text) {
+  const codePoints = [...text];
+  let replacementCharacters = 0;
+  let longestReplacementRun = 0;
+  let replacementSpans = 0;
+  let replacementRun = 0;
+  let privateUse = 0;
+  let privateUseRuns = 0;
+  let privateRun = 0;
+  for (const character of codePoints) {
+    const codePoint = character.codePointAt(0);
+    if (character === "\uFFFD") {
+      replacementCharacters += 1;
+      replacementRun += 1;
+      longestReplacementRun = Math.max(longestReplacementRun, replacementRun);
+    } else if (replacementRun > 0) {
+      if (replacementRun >= 2) replacementSpans += 1;
+      replacementRun = 0;
+    }
+    if (codePointIsPrivateUse(codePoint)) {
+      privateUse += 1;
+      privateRun += 1;
+    } else if (privateRun > 0) {
+      if (privateRun >= 3) privateUseRuns += 1;
+      privateRun = 0;
+    }
+  }
+  if (replacementRun >= 2) replacementSpans += 1;
+  if (privateRun >= 3) privateUseRuns += 1;
+  const replacementSignal = longestReplacementRun >= 2 || replacementCharacters >= 3;
+  let c1ControlTokens = 0;
+  for (const token of text.matchAll(/\S+/gu)) {
+    const tokenCodePoints = [...token[0]];
+    const c1Count = tokenCodePoints.filter(character => {
+      const codePoint = character.codePointAt(0);
+      return codePoint >= 0x80 && codePoint <= 0x9f;
+    }).length;
+    if (tokenCodePoints.length >= 5 && c1Count >= 2 && c1Count * 20 >= tokenCodePoints.length) c1ControlTokens += 1;
+  }
+  const privateUseSignal = privateUseRuns > 0
+    || (codePoints.length >= 5 && privateUse >= 2 && privateUse * 2 >= codePoints.length);
+  return {
+    replacementCharacters: replacementSignal ? replacementCharacters : 0,
+    longestReplacementRun,
+    replacementSpans: replacementSignal ? replacementSpans : 0,
+    privateUseRuns: privateUseSignal ? Math.max(1, privateUseRuns) : 0,
+    c1ControlTokens,
+  };
+}
+
+function nonAlphanumericDominanceForRouting(text) {
+  const codePoints = [...text];
+  let total = 0;
+  let alphanumeric = 0;
+  for (let index = 0; index < codePoints.length;) {
+    if ([".", "_", "·"].includes(codePoints[index])) {
+      let end = index + 1;
+      while (end < codePoints.length && [".", "_", "·"].includes(codePoints[end])) end += 1;
+      if (end - index >= 3) {
+        index = end;
+        continue;
+      }
+    }
+    const character = codePoints[index++];
+    if (/\s/u.test(character)) continue;
+    total += 1;
+    if (/^[\p{L}\p{N}]$/u.test(character)) alphanumeric += 1;
+  }
+  return total >= 50 && alphanumeric * 2 < total;
+}
+
+export function deriveTextIntegrityForRouting(texts, unavailable = false) {
+  if (unavailable) return { status: "unavailable", signals: [] };
+  const itemTexts = (texts ?? []).map(text => String(text ?? ""));
+  const pageText = itemTexts.join("\n");
+  const itemSignals = itemTexts.map(itemTextIntegrityForRouting);
+  const characters = [...pageText].length;
+  const replacementCharacters = itemSignals.reduce((sum, signal) => sum + signal.replacementCharacters, 0);
+  const replacementSpans = itemSignals.reduce((sum, signal) => sum + signal.replacementSpans, 0);
+  const longestReplacementRun = Math.max(0, ...itemSignals.map(signal => signal.longestReplacementRun));
+  const privateUseRuns = itemSignals.reduce((sum, signal) => sum + signal.privateUseRuns, 0);
+  const c1ControlTokens = itemSignals.reduce((sum, signal) => sum + signal.c1ControlTokens, 0);
+  const replacementSuspect = (characters <= 80 && longestReplacementRun >= 2)
+    || (replacementCharacters >= 12 && replacementCharacters / Math.max(1, characters) >= 0.05)
+    || (replacementSpans >= 3 && replacementSpans / Math.max(1, characters) >= 0.025)
+    || (longestReplacementRun >= 8 && longestReplacementRun / Math.max(1, characters) >= 0.025);
+  const signals = [];
+  if (replacementCharacters > 0) signals.push({ kind: "replacement_characters", count: replacementCharacters });
+  if (privateUseRuns > 0) signals.push({ kind: "private_use_runs", count: privateUseRuns });
+  if (c1ControlTokens > 0) signals.push({ kind: "c1_control_tokens", count: c1ControlTokens });
+  if (nonAlphanumericDominanceForRouting(pageText)) signals.push({ kind: "non_alphanumeric_dominance", count: 1 });
+  return {
+    status: replacementSuspect || privateUseRuns > 0 || c1ControlTokens > 0 || signals.some(signal => signal.kind === "non_alphanumeric_dominance")
+      ? "suspect" : "ok",
+    signals,
+  };
+}
 
 function initialPageAnalysis(page, index) {
   const { width, height } = page.getSize();
@@ -3910,6 +4018,7 @@ function initialPageAnalysis(page, index) {
     graphics_detection_status: "not_analyzed",
     blank_status: "unknown",
     analysis_error_codes: [],
+    text_integrity: { status: "unavailable", signals: [] },
     analysis_provenance: {
       dimensions: "pdf-lib",
       text: null,
@@ -3968,6 +4077,9 @@ export function classifyPageRouting(page, {
   }
   if (page.path_segment_count >= vectorSegmentMin && textLength < 30) {
     reasons.push("vector_only_text");
+  }
+  if (page.text_integrity?.status === "suspect") {
+    reasons.push("suspected_text_integrity");
   }
   return { text_bearing: textBearing, reasons };
 }
@@ -4041,6 +4153,7 @@ function markPageUnavailable(page, errorCode) {
   page.image_op_count = null;
   page.path_op_count = null;
   page.path_segment_count = null;
+  page.text_integrity = { status: "unavailable", signals: [] };
   page.analysis_error_codes.push(errorCode);
 }
 
@@ -4221,6 +4334,9 @@ export async function analyzePdfPages({
           try {
             const content = await pdfjsPage.getTextContent();
             const fullText = content.items.map(item => item.str).join("");
+            pageResult.text_integrity = deriveTextIntegrityForRouting(
+              content.items.filter(item => typeof item?.str === "string").map(item => item.str),
+            );
             pageResult.text_length = fullText.length;
             pageResult[ROUTING_TEXT_LENGTH] = fullText.trim().length;
             pageResult.text_snippet = fullText.slice(0, 100);

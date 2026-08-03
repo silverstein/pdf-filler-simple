@@ -37,6 +37,7 @@ const GAP_CODES = new Set([
   "SOURCE_CHARACTER_LIMIT_REACHED",
   "SOURCE_ITEM_LIMIT_REACHED",
   "TABLE_TOPOLOGY_UNKNOWN",
+  "TEXT_INTEGRITY_SUSPECT",
   "TEXT_LAYER_EMPTY",
   "TEXT_LAYER_FAILED",
   "UNSUPPORTED_LINK_TARGET",
@@ -603,6 +604,12 @@ function pageGaps(page, analysis, linkState) {
   }
   if (analysis?.tableReason === "header") {
     add("TABLE_TOPOLOGY_UNKNOWN", "A column grid was detected but no source evidence distinguishes a header row, and a Markdown table would impose one, so it remains reading-order text.");
+  }
+  if (page.text_integrity?.status === "suspect") {
+    const details = page.text_integrity.signals
+      .map(signal => `${signal.kind}=${signal.count}`)
+      .join(", ");
+    add("TEXT_INTEGRITY_SUSPECT", `Text-layer integrity signals were detected (${details}); extracted text is retained but may require visual inspection.`);
   }
   if (page.extraction_status === "failed") {
     add("TEXT_LAYER_FAILED", "The page text-layer extraction failed.");

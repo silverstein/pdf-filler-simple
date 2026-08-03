@@ -43,7 +43,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // gap enum. The renderer throws on the byte limit rather than truncating, so
 // that code was unreachable and misdescribed the contract. Previously
 // 3993365ec0868e80afc629cbb8661566a363fe543acc928992ad36bcee4db86f.
-const TOOL_CONTRACT_SHA256 = "9493a450cf16b0b1110792553cfd55b644fc7724fea55bfdebb92806196f139b";
+const TOOL_CONTRACT_SHA256 = "173aff503af91b015aebd63325d4b0d84880e257b7bd3fc31414d55a1b4294a2";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

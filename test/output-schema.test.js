@@ -424,6 +424,7 @@ describe("live output schema contract", () => {
         error: { error_schema_version: 1, code: "tool_execution_failed" },
         pages_read: 1,
         read_pages_without_text: [1],
+        pages_with_suspected_text_integrity: [],
         page_read_error: { page: 2, code: "PDFJS_PAGE_READ_FAILED" },
       },
     };
@@ -438,6 +439,7 @@ describe("live output schema contract", () => {
         error: { error_schema_version: 1, code: "PDF_RESOURCE_LIMIT_EXCEEDED" },
         pages_read: 1,
         read_pages_without_text: [1],
+        pages_with_suspected_text_integrity: [],
         page_read_error: null,
       },
     };
