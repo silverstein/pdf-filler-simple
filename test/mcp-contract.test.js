@@ -48,6 +48,8 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-08-03: convert_pdf_to_markdown renderer 1.3.0 rejects unreadable,
 // fragmentary, and equation-like heading candidates while retaining their
 // source text as escaped body text.
+// 2026-08-03: convert_pdf_to_markdown renderer 1.4.0 adds conservative
+// source-backed title, introduction, part, and appendix structure.
 const TOOL_CONTRACT_SHA256 = "aca6dabd3add8c1299da548253d804ae08ab27e94b8c8485a1c9c2ad6e41a1f3";
 
 const CLOSED_READ = Object.freeze({

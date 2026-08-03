@@ -608,6 +608,38 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:�|T|H = p log p)$/gmu);
   });
 
+  it("recognizes conservative document structure without promoting lookalike equations", async () => {
+    const body = top => [
+      textItem("First body line", { top }),
+      textItem("Second body line", { top: top + 30 }),
+      textItem("Third body line", { top: top + 60 }),
+      textItem("Fourth body line", { top: top + 90 }),
+    ];
+    const layout = await validatedSyntheticLayout([
+      { items: [
+        textItem("Reprinted with corrections from the journal", { top: 20 }),
+        textItem("Volume 27, July 1948", { top: 35 }),
+        textItem("A Mathematical Theory of Communication", { top: 50 }),
+        textItem("INTRODUCTION", { top: 90 }),
+        ...body(130),
+      ] },
+      { items: [textItem("PART IV: THE CONTINUOUS CHANNEL", { top: 50 }), ...body(90)] },
+      { items: [textItem("APPENDIX 7", { top: 50 }), ...body(90)] },
+      { items: [
+        textItem("PART I = H", { top: 50, fontSize: 24 }),
+        textItem("INTRODUCTION = H", { top: 90, fontSize: 24 }),
+        ...body(130),
+      ] },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toMatch(/^# A Mathematical Theory of Communication$/mu);
+    expect(result.markdown).toMatch(/^## INTRODUCTION$/mu);
+    expect(result.markdown).toMatch(/^## PART IV: THE CONTINUOUS CHANNEL$/mu);
+    expect(result.markdown).toMatch(/^## APPENDIX 7$/mu);
+    expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:PART I = H|INTRODUCTION = H)$/gmu);
+  });
+
   it("neutralizes hostile Markdown, HTML, table, autolink, and control syntax", async () => {
     const layout = await validatedSyntheticLayout([{
       items: [
