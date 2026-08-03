@@ -309,10 +309,10 @@ describe("extraction-intelligence current baseline", () => {
     expect(Object.hasOwn(markdown.structuredContent, "text_integrity_signal")).toBe(false);
   }, 30_000);
 
-  it("keeps routing truth in the sidecar while asserting the current field is absent", async () => {
+  it("keeps routing truth in the sidecar and exposes Markdown routing metadata", async () => {
     const fixture = expectedCurrentFor(manifest, "routing-mixed.pdf");
     const routingTruth = JSON.parse(await fs.readFile(ROUTING_TRUTH_PATH, "utf8"));
-    expect(fixture.expected_current.pages_needing_vision_field).toBe("absent");
+    expect(fixture.expected_current.pages_needing_vision_field).toBe("present");
     expect(routingTruth).toEqual({
       fixture_id: fixture.id,
       truth_version: "v1",
@@ -353,7 +353,9 @@ describe("extraction-intelligence current baseline", () => {
     expect(markdown.isError).not.toBe(true);
     expectCurrentConversion(markdown, fixture);
     expect(markdown.structuredContent.markdown).toBe(ROUTING_MARKDOWN);
-    expect(Object.hasOwn(markdown.structuredContent, "pages_needing_vision")).toBe(false);
+    expect(markdown.structuredContent.pages_needing_vision).toEqual(
+      fixture.expected_current.pages_needing_vision,
+    );
     expect(markdown.structuredContent.gaps.map(gap => gap.code)).toEqual([
       "TEXT_LAYER_EMPTY",
       "OCR_NOT_PERFORMED",

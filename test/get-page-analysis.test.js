@@ -6,8 +6,15 @@ import { fileURLToPath } from "url";
 import {
   PAGE_ANALYSIS_RETRY_GUIDANCE,
   PAGE_ANALYSIS_MUTATION_GUIDANCE,
+  IMAGE_DOMINATED_MIN_PAINTS,
+  MIN_TEXT_CHARS,
+  MIN_TEXT_CHARS_WITH_IMAGES,
+  TEXT_PAGE_RATIO_THRESHOLD,
+  VECTOR_SEGMENT_MIN,
   analyzePdfPages,
+  classifyPageRouting,
   getPageDisplayMetrics,
+  rollupPageClassification,
 } from "../server/helpers.js";
 import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
@@ -123,6 +130,7 @@ function fakePdfjs(pageBehaviors, { documentFailure = false } = {}) {
     paintJpegXObject: 2,
     paintImageMaskXObject: 3,
     fill: 4,
+    constructPath: 5,
   };
   const document = {
     async getPage(pageNumber) {
@@ -135,12 +143,25 @@ function fakePdfjs(pageBehaviors, { documentFailure = false } = {}) {
         },
         async getOperatorList() {
           if (behavior.imageFailure) throw new Error("forced image failure");
-          return {
-            fnArray: [
-              ...(behavior.hasImages ? [OPS.paintImageXObject] : []),
-              ...(behavior.hasGraphics ? [OPS.fill] : []),
-            ],
-          };
+          const fnArray = [];
+          const argsArray = [];
+          if (behavior.hasImages) {
+            fnArray.push(OPS.paintImageXObject);
+            argsArray.push(null);
+          }
+          if (behavior.hasGraphics) {
+            fnArray.push(OPS.fill);
+            argsArray.push(null);
+          }
+          if (behavior.pathSegments) {
+            const buffer = [];
+            for (let index = 0; index < behavior.pathSegments; index += 1) {
+              buffer.push(0, 0, 0);
+            }
+            fnArray.push(OPS.constructPath);
+            argsArray.push([0, [buffer], null]);
+          }
+          return { fnArray, argsArray };
         },
       };
     },
@@ -278,5 +299,105 @@ describe("get_page_analysis content provenance", () => {
       has_graphics: null,
       blank_status: "unknown",
     });
+  });
+
+  it("counts image paints and DrawOPS segments from the same operator-list read", async () => {
+    const result = await analyzePdfPages({
+      pdfLibPages: fakePdfLibPages(1),
+      pdfBytes: new Uint8Array([1]),
+      pdfjsLib: fakePdfjs([{ text: "enough text", hasImages: true, pathSegments: 3 }]),
+    });
+    expect(result.pages[0]).toMatchObject({
+      image_op_count: 1,
+      path_op_count: 1,
+      path_segment_count: 3,
+      has_images: true,
+      has_graphics: true,
+    });
+  });
+});
+
+function measuredPage({ page = 1, textLength = 25, imageOpCount = 0, pathSegmentCount = 0 } = {}) {
+  return {
+    page,
+    text_length: textLength,
+    text_extraction_status: "complete",
+    image_detection_status: "complete",
+    graphics_detection_status: "complete",
+    image_op_count: imageOpCount,
+    path_op_count: pathSegmentCount > 0 ? 1 : 0,
+    path_segment_count: pathSegmentCount,
+    content_analysis_status: "complete",
+  };
+}
+
+describe("get_page_analysis classification and routing", () => {
+  it("pins text and image threshold boundaries", () => {
+    expect(classifyPageRouting(measuredPage({ textLength: MIN_TEXT_CHARS - 1 })).reasons)
+      .toEqual(["no_text_layer"]);
+    expect(classifyPageRouting(measuredPage({ textLength: MIN_TEXT_CHARS })).text_bearing)
+      .toBe(true);
+    expect(classifyPageRouting(measuredPage({
+      textLength: MIN_TEXT_CHARS_WITH_IMAGES - 1,
+      imageOpCount: IMAGE_DOMINATED_MIN_PAINTS,
+    })).reasons).toEqual(["image_dominated"]);
+    expect(classifyPageRouting(measuredPage({
+      textLength: MIN_TEXT_CHARS_WITH_IMAGES,
+      imageOpCount: IMAGE_DOMINATED_MIN_PAINTS,
+    })).text_bearing).toBe(true);
+  });
+
+  it("routes high-vector low-text pages and preserves unavailable truth", () => {
+    expect(classifyPageRouting(measuredPage({
+      textLength: 29,
+      pathSegmentCount: VECTOR_SEGMENT_MIN,
+    })).reasons).toEqual(["vector_only_text"]);
+    expect(classifyPageRouting({
+      ...measuredPage(),
+      text_extraction_status: "failed",
+      text_length: null,
+      image_op_count: null,
+      path_op_count: null,
+      path_segment_count: null,
+    })).toEqual({ text_bearing: null, reasons: ["analysis_unavailable"] });
+  });
+
+  it("uses the inclusive 0.6 text-page ratio and is deterministic", () => {
+    const pages = [
+      measuredPage({ page: 1, textLength: 25 }),
+      measuredPage({ page: 2, textLength: 25 }),
+      measuredPage({ page: 3, textLength: 25 }),
+      measuredPage({ page: 4, textLength: 0 }),
+      measuredPage({ page: 5, textLength: 0 }),
+    ];
+    expect(3 / pages.length).toBe(TEXT_PAGE_RATIO_THRESHOLD);
+    const first = rollupPageClassification(pages);
+    expect(first).toEqual(rollupPageClassification(pages));
+    expect(first.document_kind).toBe("mixed");
+    expect(first.pages_needing_vision).toEqual([
+      { page: 4, reasons: ["no_text_layer"] },
+      { page: 5, reasons: ["no_text_layer"] },
+    ]);
+  });
+
+  it("keeps an unavailable page unknown unless the remaining evidence proves mixed", () => {
+    const text = measuredPage({ page: 1, textLength: 40 });
+    const unavailable = {
+      ...measuredPage({ page: 2 }),
+      content_analysis_status: "unavailable",
+      text_extraction_status: "failed",
+      image_detection_status: "failed",
+      graphics_detection_status: "failed",
+      text_length: null,
+      image_op_count: null,
+      path_op_count: null,
+      path_segment_count: null,
+    };
+    expect(rollupPageClassification([text, unavailable]).document_kind).toBe("unknown");
+    expect(rollupPageClassification([
+      text,
+      measuredPage({ page: 2, textLength: 0, imageOpCount: 1 }),
+      unavailable,
+    ]).document_kind).toBe("mixed");
   });
 });

@@ -210,6 +210,8 @@ const contentProperties = {
   content_available: boolean,
   extraction_status: enumString(["complete", "partial"]),
   page_previews: arrayOf(pageTextPreview),
+  read_pages_without_text: { ...integerArray, description: "Pages actually read in this call whose normalized text layer is empty." },
+  routing_guidance: nullable({ type: "string", description: "Fixed guidance to use render_pdf_page for pages without text, scoped to this call." }),
   preview_truncated: boolean,
   extraction_mode: enumString(["text", "image-fallback"]),
   error_codes: stringArray,
@@ -251,6 +253,9 @@ const pageAnalysis = object({
   text_snippet: nullable(string),
   has_images: nullable(boolean),
   has_graphics: nullable(boolean),
+  image_op_count: nullable({ type: "integer", minimum: 0, description: "Count of PDF.js image paint invocations; grouped or repeat image operators count as one invocation each, not raw PDF operators." }),
+  path_op_count: nullable({ type: "integer", minimum: 0, description: "Count of PDF.js constructPath invocations, not raw PDF path operators." }),
+  path_segment_count: nullable({ type: "integer", minimum: 0, description: "Count of DrawOPS path commands contained in PDF.js constructPath invocations." }),
   content_analysis_status: enumString(["complete", "degraded", "unavailable", "not_analyzed"]),
   text_extraction_status: enumString(["complete", "failed", "not_analyzed"]),
   image_detection_status: enumString(["complete", "failed", "not_analyzed"]),
@@ -274,6 +279,16 @@ const layoutItemSpace = object({
   origin: { const: "top_left" },
   unit: { const: "points_1_72_in_after_user_unit" },
   reference_box: { const: "pdfjs_display_viewport" },
+});
+const routingReason = enumString([
+  "no_text_layer",
+  "image_dominated",
+  "vector_only_text",
+  "analysis_unavailable",
+]);
+const visionRoutingPage = object({
+  page: integer,
+  reasons: arrayOf(routingReason),
 });
 const layoutRawPageSpace = object({
   basis: { const: "pdf_default_user_space" },
@@ -589,6 +604,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     options: object({ include_page_boundaries: boolean }),
     limits: object({ max_markdown_bytes: { type: "integer", minimum: 1, maximum: 200000 } }),
     pages: arrayOf(markdownPage),
+    pages_needing_vision: arrayOf(visionRoutingPage),
     gaps: arrayOf(markdownGap),
     limitations: stringArray,
     provenance: object({
@@ -727,6 +743,11 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     analysis_errors: arrayOf(analysisError),
     retry_guidance: nullable(string),
     mutation_guidance: string,
+    classification: object({
+      document_kind: enumString(["text_based", "image_based", "vector_heavy", "mixed", "empty", "unknown"]),
+      pages_analyzed: integer,
+      pages_needing_vision: arrayOf(visionRoutingPage),
+    }),
     pages: arrayOf(pageAnalysis),
     majority_orientation: enumString(["portrait", "landscape"]),
   }),

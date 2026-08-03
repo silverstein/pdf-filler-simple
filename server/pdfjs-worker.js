@@ -587,6 +587,7 @@ async function readContent(bytes, password, options) {
     let previewRemaining = 12_000;
     let previewTruncated = false;
     const pagePreviews = [];
+    const pagesWithoutText = [];
     for (let pageNumber = 1; pageNumber <= pagesRead; pageNumber += 1) {
       const page = await document.getPage(pageNumber);
       try {
@@ -597,7 +598,9 @@ async function readContent(bytes, password, options) {
         }
         sourceLength += rawText.length;
         if (prefix.length < 50_000) prefix += rawText.slice(0, 50_000 - prefix.length);
-        if (rawText.trim().length > 0) textFound = true;
+        const hasText = rawText.trim().length > 0;
+        if (hasText) textFound = true;
+        else pagesWithoutText.push(pageNumber);
 
         const normalized = normalizeText(rawText);
         const available = Math.max(Math.min(previewRemaining, 2000), 0);
@@ -619,6 +622,7 @@ async function readContent(bytes, password, options) {
     return {
       output_text: prefix,
       page_previews: pagePreviews,
+      pages_without_text: pagesWithoutText,
       pages_read: pagesRead,
       preview_truncated: previewTruncated,
       source_length: sourceLength,

@@ -68,6 +68,25 @@ import {
   terminateAllPdfLibMutations,
 } from "./pdf-lib-subprocess.js";
 
+export const READ_CONTENT_ROUTING_GUIDANCE =
+  "Pages without extractable text were read in this call. Use render_pdf_page for visual inspection of those pages; this list is scoped to pages_read and does not classify pages outside this call.";
+
+/**
+ * Keep Markdown routing in one mapping function so later text-integrity
+ * signals can extend the same additive surface without duplicating policy.
+ */
+export function deriveMarkdownVisionRouting(layout) {
+  return (layout?.pages ?? []).flatMap(page => {
+    const reasons = [];
+    if (["empty", "failed"].includes(page.text_layer_status)) reasons.push("no_text_layer");
+    if (page.image_detection_status === "detected" && page.text_layer_status !== "present") {
+      reasons.push("image_dominated");
+    }
+    if (page.modality_hint === "vector-only-candidate") reasons.push("vector_only_text");
+    return reasons.length > 0 ? [{ page: page.page, reasons }] : [];
+  });
+}
+
 function boundedInteger(value, fallback, { name, minimum, maximum }) {
   const candidate = value === undefined || value === null ? fallback : value;
   if (!Number.isInteger(candidate) || candidate < minimum || candidate > maximum) {
@@ -4128,6 +4147,10 @@ async function handleToolCall(request) {
           const extractedText = result.output_text;
           const pageCount = result.total_pages;
           const pagesRead = result.pages_read;
+          const pagesWithoutText = result.pages_without_text ?? [];
+          const routingGuidance = pagesWithoutText.length > 0
+            ? READ_CONTENT_ROUTING_GUIDANCE
+            : null;
 
           // Prepare the response
           let response = `PDF Content Extracted Successfully!\n\n`;
@@ -4139,6 +4162,7 @@ async function handleToolCall(request) {
           }
           response += `\n`;
           response += `Text Length: ${result.source_length} characters\n`;
+          if (routingGuidance) response += `Routing guidance: ${routingGuidance}\n`;
 
           // Truncate if too large for context window
           const truncated = result.text_truncated;
@@ -4209,6 +4233,8 @@ async function handleToolCall(request) {
                   preview_truncated: result.preview_truncated,
                   extraction_mode: "image-fallback",
                   image_renderer: renderedImage.renderer,
+                  read_pages_without_text: pagesWithoutText,
+                  routing_guidance: routingGuidance,
                   error_codes: [],
                   retry_guidance:
                     "Only page 1 was returned as an image. Use render_pdf_page for any additional pages that require inspection.",
@@ -4238,6 +4264,8 @@ async function handleToolCall(request) {
                   page_previews: result.page_previews,
                   preview_truncated: result.preview_truncated,
                   extraction_mode: "none",
+                  read_pages_without_text: pagesWithoutText,
+                  routing_guidance: routingGuidance,
                   error_codes: ["NO_EXTRACTABLE_TEXT", "IMAGE_FALLBACK_FAILED"],
                   retry_guidance:
                     "Do not treat this PDF as empty. Check PDF access/password and renderer availability, then retry read_pdf_content or render_pdf_page.",
@@ -4266,6 +4294,8 @@ async function handleToolCall(request) {
               page_previews: result.page_previews,
               preview_truncated: result.preview_truncated,
               extraction_mode: "text",
+              read_pages_without_text: pagesWithoutText,
+              routing_guidance: routingGuidance,
               error_codes: [],
               retry_guidance: extractionPartial
                 ? "Use max_pages or page-bounded tools to retrieve content outside this partial result."
@@ -4490,6 +4520,7 @@ async function handleToolCall(request) {
             includePageBoundaries,
             maxMarkdownBytes,
           });
+          const pagesNeedingVision = deriveMarkdownVisionRouting(layout);
 
           let savedOutput = null;
           if (outputBinding) {
@@ -4508,13 +4539,20 @@ async function handleToolCall(request) {
             });
           }
 
-          const payload = { ...rendered, saved_output: savedOutput };
+          const payload = {
+            ...rendered,
+            pages_needing_vision: pagesNeedingVision,
+            saved_output: savedOutput,
+          };
           const summary = [
             `Converted pages ${layout.page_range.start_page}-${layout.page_range.end_page} of ${fileName} to deterministic Markdown.`,
             `Status: ${rendered.conversion_status}. UTF-8 bytes: ${rendered.markdown_bytes}.`,
             `Source SHA-256: ${sourceSha256}.`,
             ...(savedOutput ? [`Saved and reopened exact UTF-8 output: ${savedOutput.path}`] : []),
             ...(rendered.gaps.length > 0 ? [`Coverage gaps: ${rendered.gaps.map(gap => `page ${gap.page}: ${gap.code}`).join(", ")}.`] : []),
+            ...(pagesNeedingVision.length > 0
+              ? [`Vision routing: use render_pdf_page for pages ${pagesNeedingVision.map(entry => entry.page).join(", ")}.`]
+              : []),
             "No OCR, external model, hidden link-target recovery, or table-topology inference was performed.",
             rendered.markdown,
           ].join("\n\n");
