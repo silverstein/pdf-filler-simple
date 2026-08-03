@@ -39,7 +39,10 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // gap enum. The renderer throws on the byte limit rather than truncating, so
 // that code was unreachable and misdescribed the contract. Previously
 // 3993365ec0868e80afc629cbb8661566a363fe543acc928992ad36bcee4db86f.
-const TOOL_CONTRACT_SHA256 = "c5b5a2113cbd9f1524d3263a49b36476b77b4aa51a1182aaca7eb2accd0a5f39";
+// 2026-08-03: renderer 1.3.0 adds ruled-grid reconstruction and its typed
+// TABLE_RULING_UNSUPPORTED gap; vector-gap wording is requalified.
+// 8558b9b66011eae147e4e9c5754f71ef2c5db5a8e42ef9660eb0497d27baa4ea.
+const TOOL_CONTRACT_SHA256 = "8558b9b66011eae147e4e9c5754f71ef2c5db5a8e42ef9660eb0497d27baa4ea";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

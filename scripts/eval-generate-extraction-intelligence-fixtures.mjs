@@ -90,14 +90,29 @@ async function tableRuledGrid() {
     const [columns, ...rows] = TABLE_RULED_GRID_CELLS;
     const totalWidth = columns.length * columnWidth;
     const totalHeight = (rows.length + 1) * rowHeight;
+    // Emit explicit row/cell rectangles so the B1 IR carries the closed
+    // ruling evidence that the renderer is allowed to consume. The first-row
+    // full-width band is header evidence; body cells remain one-cell rects.
     page.drawRectangle({
       x,
-      y: top - totalHeight,
+      y: top - rowHeight,
       width: totalWidth,
-      height: totalHeight,
+      height: rowHeight,
       borderColor: rgb(0.1, 0.1, 0.1),
       borderWidth: 1,
     });
+    for (let row = 1; row < rows.length + 1; row += 1) {
+      for (let column = 0; column < columns.length; column += 1) {
+        page.drawRectangle({
+          x: x + column * columnWidth,
+          y: top - (row + 1) * rowHeight,
+          width: columnWidth,
+          height: rowHeight,
+          borderColor: rgb(0.1, 0.1, 0.1),
+          borderWidth: 1,
+        });
+      }
+    }
     for (let column = 1; column < columns.length; column += 1) {
       page.drawLine({
         start: { x: x + column * columnWidth, y: top },

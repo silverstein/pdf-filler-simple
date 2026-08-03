@@ -37,6 +37,51 @@ function textItem(text, { top, fontSize = 12, left = 50, eol = true } = {}) {
   };
 }
 
+function ruledGridRects() {
+  const rects = [{ x: 72, y: 112, width: 450, height: 48, verb: "stroke" }];
+  for (let row = 1; row < 4; row += 1) {
+    for (let column = 0; column < 3; column += 1) {
+      rects.push({ x: 72 + column * 150, y: 112 + row * 48, width: 150, height: 48, verb: "stroke" });
+    }
+  }
+  return rects;
+}
+
+function ruledGridItems({ headerSize = 13 } = {}) {
+  const values = [
+    ["Region", "Q1", "Q2"],
+    ["North", "1200", "1450"],
+    ["South", "980", "1020"],
+    ["West", "1500", "1380"],
+  ];
+  return values.flatMap((row, rowIndex) => row.map((value, columnIndex) => textItem(value, {
+    top: 130 + rowIndex * 48,
+    left: 82 + columnIndex * 150,
+    fontSize: rowIndex === 0 ? headerSize : 12,
+    eol: columnIndex === row.length - 1,
+  })));
+}
+
+function attachRuledRects(layout, items, status = "available") {
+  const page = layout.pages[0];
+  page.ruled_rects = {
+    status,
+    observed_count: status === "truncated" ? items.length + 1 : items.length,
+    returned_count: items.length,
+    items,
+  };
+  if (status === "truncated") {
+    page.extraction_status = "partial";
+    page.needs_visual_inspection = true;
+    page.errors.push({
+      stage: "ruled_rects",
+      code: "RULED_RECT_PAGE_LIMIT",
+      message: "Ruled rectangle evidence was truncated.",
+    });
+  }
+  return layout;
+}
+
 function fakePdfjs(pageConfigs) {
   const pages = pageConfigs.map(config => ({
     view: [0, 0, 612, 792],
@@ -118,6 +163,57 @@ async function validatedSyntheticLayout(pageConfigs) {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("layout Markdown renderer", () => {
+  it("reconstructs a ruled grid from IR evidence and renders deterministically", async () => {
+    const layout = attachRuledRects(
+      await validatedSyntheticLayout([{ items: ruledGridItems() }]),
+      ruledGridRects(),
+    );
+    const first = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    const second = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(second).toEqual(first);
+    expect(first.markdown).toContain("| Region | Q1 | Q2 |\n| --- | --- | --- |\n| North | 1200 | 1450 |");
+    expect(first.gaps).toEqual([]);
+    expect(first.conversion_status).toBe("complete");
+  });
+
+  it("abstains on a ruled merged span with TABLE_TOPOLOGY_UNKNOWN", async () => {
+    const mergedRects = ruledGridRects().filter(rect => rect.y !== 112);
+    mergedRects.push({ x: 72, y: 112, width: 150, height: 48, verb: "stroke" });
+    mergedRects.push({ x: 222, y: 112, width: 300, height: 48, verb: "stroke" });
+    const layout = attachRuledRects(
+      await validatedSyntheticLayout([{ items: ruledGridItems() }]),
+      mergedRects,
+    );
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(result.gaps.map(gap => gap.code)).toEqual(["TABLE_TOPOLOGY_UNKNOWN"]);
+  });
+
+  it("keeps decorative boxes silent and disables truncated rect evidence", async () => {
+    const decorative = attachRuledRects(
+      await validatedSyntheticLayout([{ items: [
+        textItem("Callout", { top: 130, left: 82 }),
+        textItem("Body", { top: 180, left: 82 }),
+      ] }]),
+      [{ x: 72, y: 112, width: 450, height: 96, verb: "stroke" }],
+    );
+    const decorativeResult = renderPdfLayoutToMarkdown(decorative, { includePageBoundaries: false });
+    expect(decorativeResult.gaps.map(gap => gap.code)).not.toContain("TABLE_RULING_UNSUPPORTED");
+    expect(decorativeResult.markdown).not.toMatch(/^\|.*\|$/m);
+
+    const truncated = attachRuledRects(
+      await validatedSyntheticLayout([{ operations: [1], items: [
+        textItem("First", { top: 130 }),
+        textItem("Second", { top: 180 }),
+      ] }]),
+      ruledGridRects(),
+      "truncated",
+    );
+    const truncatedResult = renderPdfLayoutToMarkdown(truncated, { includePageBoundaries: false });
+    expect(truncatedResult.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(truncatedResult.gaps.map(gap => gap.code)).not.toContain("TABLE_RULING_UNSUPPORTED");
+  });
+
   it("renders deterministic source-backed headings, lists, links, escaping, and page boundaries", async () => {
     const layout = await validatedSyntheticLayout([
       {
@@ -211,7 +307,7 @@ describe("layout Markdown renderer", () => {
     expect(result.pages[2].gaps.map(gap => gap.code)).toEqual(["VECTOR_CONTENT_NOT_INTERPRETED"]);
     expect(result.markdown).toContain("## Conversion gaps");
     expect(result.markdown).toContain("OCR is not performed");
-    expect(result.limitations.some(value => value.includes("Ruling lines and merged or spanning cells are not interpreted"))).toBe(true);
+    expect(result.limitations.some(value => value.includes("clean ruled-rectangle grid evidence"))).toBe(true);
     expect(result.limitations.some(value => value.includes("Links are emitted only for source-validated http or https annotation targets"))).toBe(true);
   });
 

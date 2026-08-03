@@ -8,9 +8,9 @@
     {
       "id": "pdf-tools.extraction.intelligence.table-ruled-grid",
       "path": "table-ruled-grid.pdf",
-      "sha256": "f434b0be353c4e1aea0614393b90f7e4517d9d6d73c8815ff523bdc513ee6235",
+      "sha256": "d7a541560b0ab1994d84155f484ad2fc2c38cffb11a573daa85f1a8cb9a59eea",
       "media_type": "application/pdf",
-      "description": "Single-page synthetic bordered three-column, four-row grid; current Markdown conversion abstains to reading-order text.",
+      "description": "Single-page synthetic bordered three-column, four-row grid; Markdown conversion reconstructs it from closed ruling rectangles.",
       "provenance": {
         "kind": "synthetic",
         "origin": "Open Document Alliance PDF Tools extraction-intelligence fixture generator",
@@ -31,8 +31,8 @@
       "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0 }],
       "expected_current": {
         "conversion_status": "partial",
-        "table_reconstructed": false,
-        "gap_codes": ["TABLE_TOPOLOGY_UNKNOWN", "VECTOR_CONTENT_NOT_INTERPRETED"]
+        "table_reconstructed": true,
+        "gap_codes": ["VECTOR_CONTENT_NOT_INTERPRETED"]
       },
       "truth": {
         "cells": [

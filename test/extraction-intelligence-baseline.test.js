@@ -38,22 +38,23 @@ function sha256(bytes) {
 
 const TABLE_GRID_MARKDOWN = `<!-- PDF page 1 -->
 
-Region Q1 Q2
-North 1200 1450
-South 980 1020
-West 1500 1380
+| Region | Q1 | Q2 |
+| --- | --- | --- |
+| North | 1200 | 1450 |
+| South | 980 | 1020 |
+| West | 1500 | 1380 |
 
 ## Conversion gaps
 
-- Page 1: A column grid was detected but no source evidence distinguishes a header row, and a Markdown table would impose one, so it remains reading-order text.
-- Page 1: Vector-painted content was not interpreted as text or table structure.
+- Page 1: Vector paint operations beyond any reconstructed table rulings were not interpreted.
 
 ## Conversion limitations
 
 - Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.
 - Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.
 - Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.
-- Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
+- Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
+- Vector paint operations beyond any reconstructed table rulings are not interpreted.
 - OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.
 - Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.
 `;
@@ -68,14 +69,15 @@ West 1500 1380
 ## Conversion gaps
 
 - Page 1: Table-like content was detected but its column topology could not be reconstructed, so it remains reading-order text.
-- Page 1: Vector-painted content was not interpreted as text or table structure.
+- Page 1: Vector paint operations beyond any reconstructed table rulings were not interpreted.
 
 ## Conversion limitations
 
 - Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.
 - Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.
 - Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.
-- Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
+- Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
+- Vector paint operations beyond any reconstructed table rulings are not interpreted.
 - OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.
 - Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.
 `;
@@ -89,7 +91,8 @@ ${PUA_TEXT}
 - Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.
 - Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.
 - Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.
-- Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
+- Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
+- Vector paint operations beyond any reconstructed table rulings are not interpreted.
 - OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.
 - Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.
 `;
@@ -117,7 +120,8 @@ Page one is born digital.
 - Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.
 - Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.
 - Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.
-- Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
+- Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
+- Vector paint operations beyond any reconstructed table rulings are not interpreted.
 - OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.
 - Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.
 `;
@@ -144,7 +148,8 @@ Chapter 10: Index .................. 58
 - Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.
 - Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.
 - Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.
-- Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
+- Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
+- Vector paint operations beyond any reconstructed table rulings are not interpreted.
 - OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.
 - Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.
 `;
@@ -256,15 +261,12 @@ describe("extraction-intelligence current baseline", () => {
     expect(result.isError).not.toBe(true);
     expectCurrentConversion(result, fixture);
     expect(result.structuredContent.markdown).toBe(TABLE_GRID_MARKDOWN);
-    expect(result.structuredContent.markdown.split("\n\n## Conversion gaps\n\n")[0].split("\n\n")[1]).toBe(
-      fixture.truth.cells.map(row => row.join(" ")).join("\n"),
-    );
+    expect(result.structuredContent.markdown).toContain("| Region | Q1 | Q2 |");
     expect(result.structuredContent.markdown.split("\n").some(line => /^\|.*\|$/.test(line))).toBe(
       fixture.expected_current.table_reconstructed,
     );
-    expect(result.structuredContent.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(result.structuredContent.markdown).toMatch(/^\|.*\|$/m);
     expect(result.structuredContent.gaps.map(gap => gap.code)).toEqual([
-      "TABLE_TOPOLOGY_UNKNOWN",
       "VECTOR_CONTENT_NOT_INTERPRETED",
     ]);
   }, 30_000);
