@@ -991,6 +991,7 @@ function pageGaps(page, analysis, linkState) {
   }
   if (analysis?.tableReason === "ruling_unsupported") {
     add("TABLE_RULING_UNSUPPORTED", "Ruled rectangle evidence described a grid-shaped region, but its table topology could not be reconstructed, so it remains reading-order text.");
+  }
   if (page.text_integrity?.status === "suspect") {
     const details = page.text_integrity.signals
       .map(signal => `${signal.kind}=${signal.count}`)

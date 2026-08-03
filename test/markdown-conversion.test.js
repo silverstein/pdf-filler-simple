@@ -405,6 +405,8 @@ describe("layout Markdown renderer", () => {
     const truncatedResult = renderPdfLayoutToMarkdown(truncated, { includePageBoundaries: false });
     expect(truncatedResult.markdown).not.toMatch(/^\|.*\|$/m);
     expect(truncatedResult.gaps.map(gap => gap.code)).not.toContain("TABLE_RULING_UNSUPPORTED");
+  });
+
   it("reports suspect text integrity without suppressing source text", async () => {
     const layout = await validatedSyntheticLayout([{
       items: [textItem("PUA \uE000\uE001\uE002", { top: 50 })],
