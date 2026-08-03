@@ -8,6 +8,7 @@ const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
   version: "1.2.0",
 });
+const SUPPORTED_LAYOUT_IR_VERSION = "1.2.0";
 
 // Bounded geometric table inference. A run of adjacent lines is treated as a
 // table only when every row fills every detected column, so ragged or
@@ -57,8 +58,9 @@ function assertion(condition, message) {
 
 function validateSupportedLayoutIdentity(layout) {
   assertion(layout.ir?.name === EXTRACTION_IR_IDENTITY.name
-    && layout.ir?.version === EXTRACTION_IR_IDENTITY.version,
-  `unsupported layout IR; expected ${EXTRACTION_IR_IDENTITY.name} ${EXTRACTION_IR_IDENTITY.version}`);
+    && layout.ir?.version === SUPPORTED_LAYOUT_IR_VERSION
+    && SUPPORTED_LAYOUT_IR_VERSION === EXTRACTION_IR_IDENTITY.version,
+  `unsupported layout IR; expected ${EXTRACTION_IR_IDENTITY.name} ${SUPPORTED_LAYOUT_IR_VERSION}`);
   assertion(layout.parser?.name === "pdfjs-dist" && layout.parser?.version === "5.4.624",
     "unsupported parser; expected pdfjs-dist 5.4.624");
 }

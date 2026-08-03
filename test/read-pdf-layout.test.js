@@ -62,6 +62,18 @@ function textItem({ text, x, top, width = 60, direction = "ltr", hasEOL = true, 
   };
 }
 
+function rectPath(paintOp, x = 10, y = 20, width = 20, height = 30) {
+  return [
+    paintOp,
+    [new Float32Array([0, x, y, 1, x + width, y, 1, x + width, y + height, 1, x, y + height, 4])],
+    new Float32Array([x, y, x + width, y + height]),
+  ];
+}
+
+function fakeOperatorFixture(operations, argsArray) {
+  return { operations, argsArray };
+}
+
 async function pdfBytes(pageCount = 1) {
   const document = await PDFDocument.create();
   for (let index = 0; index < pageCount; index += 1) document.addPage([612, 792]);
@@ -84,7 +96,7 @@ function fakePdfjs(pageConfigs, { requiredPassword = null, neverLoad = false } =
     },
     getOperatorList: async () => {
       if (config.operatorError) throw config.operatorError;
-      return { fnArray: config.operations ?? [] };
+      return { fnArray: config.operations ?? [], argsArray: config.argsArray ?? [] };
     },
     getAnnotations: async () => {
       if (config.annotationError) throw config.annotationError;
@@ -95,7 +107,33 @@ function fakePdfjs(pageConfigs, { requiredPassword = null, neverLoad = false } =
   const pdfjs = {
     version: "5.4.624",
     PasswordResponses: { NEED_PASSWORD: 1, INCORRECT_PASSWORD: 2 },
-    OPS: { paintImageXObject: 1, constructPath: 2, fill: 3 },
+    OPS: {
+      save: 10,
+      restore: 11,
+      transform: 12,
+      clip: 29,
+      eoClip: 30,
+      paintFormXObjectBegin: 74,
+      paintFormXObjectEnd: 75,
+      paintImageXObject: 1,
+      paintJpegXObject: 5,
+      paintImageMaskXObject: 6,
+      paintImageMaskXObjectGroup: 7,
+      paintInlineImageXObject: 8,
+      paintInlineImageXObjectGroup: 9,
+      paintImageXObjectRepeat: 13,
+      paintImageMaskXObjectRepeat: 14,
+      constructPath: 2,
+      stroke: 4,
+      closeStroke: 15,
+      fill: 3,
+      eoFill: 16,
+      fillStroke: 17,
+      eoFillStroke: 18,
+      closeFillStroke: 19,
+      closeEOFillStroke: 20,
+      endPath: 21,
+    },
     Util: { transform: multiply },
     getDocument: documentOptions => {
       state.document_options = documentOptions;
@@ -238,6 +276,173 @@ describe("PDF.js factory directory contract", () => {
   });
 });
 
+describe("Extraction IR v1.2.0 evidence blocks", () => {
+  it("tracks CTM/Form scopes, classifies paints, drops degenerate paths, deduplicates, and counts operators", async () => {
+    const fixture = fakeOperatorFixture(
+      [10, 12, 2, 11, 74, 2, 75, 29, 2, 1, 5, 13, 2],
+      [
+        null,
+        [2, 0, 0, 2, 10, 20],
+        rectPath(3),
+        null,
+        [new Float32Array([1, 0, 0, 1, 50, 60]), null],
+        rectPath(4, 10, 20, 20, 30),
+        [],
+        null,
+        rectPath(21, 10, 20, 20, 30),
+        null,
+        null,
+        null,
+        rectPath(3, 10, 20, 4, 30),
+      ],
+    );
+    const { result } = await runFake([fixture]);
+    const page = result.pages[0];
+    expect(page.ruled_rects).toMatchObject({ status: "available", observed_count: 3, returned_count: 3 });
+    expect(page.ruled_rects.items.map(item => item.verb)).toEqual(["fill", "stroke", "clip"]);
+    expect(page.ruled_rects.items[0]).toEqual({ x: 30, y: 672, width: 40, height: 60, verb: "fill" });
+    expect(page.ruled_rects.items[1]).toEqual({ x: 60, y: 682, width: 20, height: 30, verb: "stroke" });
+    expect(page.ruled_rects.items[2]).toEqual({ x: 10, y: 742, width: 20, height: 30, verb: "clip" });
+    expect(page.operator_counts).toEqual({ image_paint_ops: 3, path_segments: 20, path_construct_ops: 4 });
+  });
+
+  it("treats a matrix-less Form XObject as identity instead of failing the page", async () => {
+    const fixture = fakeOperatorFixture(
+      [74, 2, 75],
+      [
+        [null, null],
+        rectPath(3, 30, 40, 20, 30),
+        null,
+      ],
+    );
+    const { result } = await runFake([fixture]);
+    const page = result.pages[0];
+    expect(page.ruled_rects).toMatchObject({ status: "available", observed_count: 1, returned_count: 1 });
+    expect(page.ruled_rects.items[0]).toEqual({ x: 30, y: 722, width: 20, height: 30, verb: "fill" });
+    expect(page.errors.some(error => error.stage === "ruled_rects")).toBe(false);
+  });
+
+  it("leaves the CTM unchanged when restore underflows", async () => {
+    const fixture = fakeOperatorFixture(
+      [12, 11, 2],
+      [
+        [2, 0, 0, 2, 10, 20],
+        null,
+        rectPath(3),
+      ],
+    );
+    const { result } = await runFake([fixture]);
+    expect(result.pages[0].ruled_rects.items).toEqual([
+      { x: 30, y: 672, width: 40, height: 60, verb: "fill" },
+    ]);
+  });
+
+  it("keeps an unmatched restore inside a Form XObject from escaping its outer CTM", async () => {
+    const fixture = fakeOperatorFixture(
+      [12, 74, 11, 75, 2],
+      [
+        [2, 0, 0, 2, 10, 20],
+        [new Float32Array([1, 0, 0, 1, 50, 60]), null],
+        null,
+        null,
+        rectPath(3),
+      ],
+    );
+    const { result } = await runFake([fixture]);
+    expect(result.pages[0].ruled_rects.items).toEqual([
+      { x: 30, y: 672, width: 40, height: 60, verb: "fill" },
+    ]);
+  });
+
+  it("deduplicates on the half-point grid and reports a self-contained cap", async () => {
+    const duplicateFixture = fakeOperatorFixture(
+      [2, 2, 2],
+      [rectPath(3), rectPath(3, 10.2, 20.2, 20.2, 30.2), rectPath(3, 10, 20, 4, 30)],
+    );
+    const deduplicated = await runFake([duplicateFixture]);
+    expect(deduplicated.result.pages[0].ruled_rects).toMatchObject({
+      status: "available",
+      observed_count: 1,
+      returned_count: 1,
+    });
+
+    const operations = [];
+    const argsArray = [];
+    for (let index = 0; index < 513; index += 1) {
+      operations.push(2);
+      argsArray.push(rectPath(3, 10 + (index % 32) * 8, 20 + Math.floor(index / 32) * 8, 6, 6));
+    }
+    const capped = await runFake([fakeOperatorFixture(operations, argsArray)]);
+    const rects = capped.result.pages[0].ruled_rects;
+    expect(rects.status).toBe("truncated");
+    expect(rects.observed_count).toBe(513);
+    expect(rects.returned_count).toBe(512);
+    expect(rects.items).toHaveLength(512);
+    expect(capped.result.pages[0].errors).toEqual([
+      expect.objectContaining({ stage: "ruled_rects", code: "RULED_RECT_PAGE_LIMIT" }),
+    ]);
+  });
+
+  it("applies text-integrity thresholds over raw PDF.js item text", async () => {
+    const run = async text => (await runFake([{ items: [textItem({ text, x: 50, top: 50 })] }])).result.pages[0].text_integrity;
+    const runItems = async texts => (await runFake([{ items: texts.map((text, index) => textItem({ text, x: 50, top: 50 + index * 20 })) }])).result.pages[0].text_integrity;
+    expect((await run("\uFFFD")).status).toBe("ok");
+    expect((await run("\uFFFD\uFFFD"))).toMatchObject({ status: "suspect", signals: [{ kind: "replacement_characters", count: 2 }] });
+    expect((await run(`\uFFFD\uFFFD${"a".repeat(78)}`)).status).toBe("suspect");
+    expect((await run(`\uFFFD\uFFFD${"a".repeat(79)}`)).status).toBe("ok");
+    expect((await run(`${"\uFFFDa".repeat(12)}${"b".repeat(216)}`)).status).toBe("suspect");
+    expect((await run(`${"\uFFFDa".repeat(12)}${"b".repeat(217)}`)).status).toBe("ok");
+    expect((await run("\uE000\uE001\uE002ab")).status).toBe("suspect");
+    expect((await run("\uE000abcd")).status).toBe("ok");
+    expect((await run("\uE000a\uE001bc")).status).toBe("ok");
+    expect((await run("\uE000a\uE001b\uE002c")).status).toBe("suspect");
+    expect((await run("\uE000a\uE001bcd")).status).toBe("ok");
+    expect((await run("\uE000a\uE001b\uE002")).status).toBe("suspect");
+    expect((await run("\uE000a\uE001\uE002")).status).toBe("ok");
+    expect((await run("aa\u0080\u0081")).status).toBe("ok");
+    expect((await run("aaa\u0080\u0081")).status).toBe("suspect");
+    expect((await run("abcd\u0080")).status).toBe("ok");
+    expect((await run("abc\u0080\u0081")).status).toBe("suspect");
+    expect((await run(`${"a".repeat(38)}\u0080\u0081`)).status).toBe("suspect");
+    expect((await run(`${"a".repeat(39)}\u0080\u0081`)).status).toBe("ok");
+    expect((await runItems([
+      `\uFFFD\uFFFD${"a".repeat(38)}`,
+      `\uFFFD\uFFFD${"a".repeat(37)}`,
+      `\uFFFD\uFFFD${"a".repeat(37)}`,
+    ])).status).toBe("suspect");
+    expect((await runItems([
+      `\uFFFD\uFFFD${"a".repeat(38)}`,
+      `\uFFFD\uFFFD${"a".repeat(37)}`,
+      `\uFFFD\uFFFD${"a".repeat(38)}`,
+    ])).status).toBe("ok");
+    expect((await run(`${"\uFFFD".repeat(8)}${"a".repeat(312)}`)).status).toBe("suspect");
+    expect((await run(`${"\uFFFD".repeat(8)}${"a".repeat(313)}`)).status).toBe("ok");
+    expect((await run("!".repeat(50))).signals).toEqual([{ kind: "non_alphanumeric_dominance", count: 1 }]);
+    expect((await run(".".repeat(50))).status).toBe("ok");
+    expect((await run(`${"a".repeat(27)}${"!".repeat(27)}._·`)).status).toBe("ok");
+    expect((await run(`${"a".repeat(27)}${"!".repeat(27)}._`)).status).toBe("suspect");
+  });
+
+  it("rejects independent replay forgeries for every new evidence block and is deterministic", async () => {
+    const fixture = fakeOperatorFixture([2, 1], [rectPath(3), null]);
+    const first = await runFake([{ ...fixture, items: [textItem({ text: "evidence", x: 50, top: 50 })] }]);
+    const second = await runFake([{ ...fixture, items: [textItem({ text: "evidence", x: 50, top: 50 })] }]);
+    expect(second.result).toEqual(first.result);
+    const mutations = [
+      layout => { layout.pages[0].ruled_rects.items[0].x += 1; },
+      layout => { layout.pages[0].text_integrity.status = "suspect"; },
+      layout => { layout.pages[0].operator_counts.path_segments += 1; },
+    ];
+    for (const mutate of mutations) {
+      const forged = structuredClone(first.result);
+      mutate(forged);
+      const { pdfjs } = fakePdfjs([{ ...fixture, items: [textItem({ text: "evidence", x: 50, top: 50 })] }]);
+      await expect(validatePdfLayoutSourceEvidence(forged, { pdfjsLib: pdfjs, sourceBytes: first.bytes }))
+        .rejects.toThrow(/dedicated operator evidence|text-integrity evidence/);
+    }
+  });
+});
+
 describe("read_pdf_layout MCP tool", () => {
   let client;
   let transport;
@@ -275,14 +480,14 @@ describe("read_pdf_layout MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(JSON.stringify(first.structuredContent)).toBe(JSON.stringify(second.structuredContent));
     expect(first.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.1.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.2.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       source: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
       id_scope: {
         kind: "source_parser_ir_options",
         source_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         parser_version: "5.4.624",
-        ir_version: "1.1.0",
+        ir_version: "1.2.0",
         max_output_characters: 200000,
       },
       page_range: { requested_start_page: 1, requested_end_page: 1, start_page: 1, end_page: 1, total_pages: 1 },
