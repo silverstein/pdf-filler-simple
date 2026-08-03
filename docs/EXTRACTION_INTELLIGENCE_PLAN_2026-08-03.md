@@ -422,13 +422,14 @@ B4=`zyx.4` B5=`zyx.5` B6=`zyx.6` B7=`zyx.7` B8=`zyx.8`; backlog
 | Bead | Title | Depends on | Lane |
 |---|---|---|---|
 | B1 | IR v1.2.0: ruled-rect + text-integrity + op-count evidence (extractor, dedicated operator-evidence replay, full version-pin sweep, schemas, test-double extension, share mirror) | — | codex |
-| B2 | Classification & routing surfaces (`get_page_analysis` rollup, `read_pdf_content` per-page fields, markdown routing metadata, operator-set consistency contract test) | B1 (consumes its measurement contract — codex review finding 13) | codex |
-| B3 | Rect-grid table reconstruction + `TABLE_RULING_UNSUPPORTED` + vector-gap requalification (renderer 1.3.0) | B1 | codex |
-| B4 | Text-integrity gaps + routing integration (`TEXT_INTEGRITY_SUSPECT`) | B1, B2 | codex |
-| B5 | Compact mode normalizations + counts + full tool-contract wiring | B3 AND B4 (all renderer gap/result-shape changes land first — codex review finding 14) | codex |
+| B2 | Classification & routing surfaces (`get_page_analysis` rollup, `read_pdf_content` per-page fields, markdown routing metadata, operator-set consistency contract test) | B1 (measurement contract — review-1 finding 13), B6 (fixtures — review-2 finding 1) | codex |
+| B3 | Rect-grid table reconstruction + `TABLE_RULING_UNSUPPORTED` + vector-gap requalification (renderer 1.3.0) | B1, B6 | codex |
+| B4 | Text-integrity gaps + routing integration (`TEXT_INTEGRITY_SUSPECT`) | B1, B2, B6 | codex |
+| B5 | Compact mode normalizations + counts + full tool-contract wiring | B3 AND B4 (all renderer gap/result-shape changes land first — review-1 finding 14), B6 | codex |
 | B6 | W5 fixtures + **baseline assertions** (fixtures assert *current* behavior — abstention/verbatim — as the frozen baseline; each feature lane flips only its own expectations as part of acceptance, producing the before/after delta). Fixtures live in their own `intelligence/` subdir with their own mini-manifest — the frozen Phase 0 manifest, category enums, and digests are untouched | — (starts first) | codex |
-| B7 | Integration: share-parity re-verification, docs (CLAUDE.md boundary text, OUTPUT_SCHEMAS.md), tool-annotation audit entry, `test:all` on Silverbook, evidence ledger, milestone push | B1–B6 | control tower |
-| B8 | [bug] Pre-existing: error-stage schema enum omits `annotations` accepted by runtime validation (`output-schemas.js:314` vs `layout-extraction.js:1067`) — fixed inside B1's stage-enum work, tracked separately for visibility | — (rides B1) | codex (B1 lane) |
+| B7 | **Branch** integration only: share-parity re-verification, docs (CLAUDE.md boundary text, OUTPUT_SCHEMAS.md), tool-annotation audit entry, `test:all` on Silverbook, evidence ledger incl. claim-boundary statement, recorded per-lane independent-review receipts | B1–B6, B8 | control tower |
+| B7b (`zyx.16`) | Land epic to master + single milestone push — **human gate**: requires jm4 GUI-gate resolution or explicit maintainer acceptance of superseding candidate e9d57522, recorded in the bead | B7 | control tower + maintainer |
+| B8 | [bug] Pre-existing: error-stage schema enum omits `annotations` accepted by runtime validation (`output-schemas.js:314` vs `layout-extraction.js:1067`) — fixed inside B1's stage-enum work; has its own acceptance and blocks B7 so it cannot be left open | — (rides B1) | codex (B1 lane) |
 | B9+ | Backlog: font forensics; cipher detector + multilingual fixtures; repeated header/footer strip; drop-cap merge; hyphen-linebreak rejoin; opendataloader-bench reference; template-image analysis | epic | deferred |
 
 Share-mirror parity is a **per-lane** gate: every lane mirrors every
