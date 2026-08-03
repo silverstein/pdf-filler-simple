@@ -36,6 +36,9 @@ const MAX_CLUSTER_RECTS = 2000;
 const RECT_MIN_FILL_RATIO = 0.3;
 const RECT_MAX_COLUMNS = 25;
 const RECT_CONTAINMENT_TOLERANCE = 2;
+// Two cell rectangles sharing a drawn border may overlap by a stroke width;
+// anything beyond this in BOTH axes is competing evidence, not a border.
+const RECT_MATERIAL_OVERLAP = 1;
 
 const MAX_MARKDOWN_BYTES_LIMIT = 200_000;
 const GAP_CODES = new Set([
@@ -735,6 +738,7 @@ function tryBuildRectGrid(page, run, clusters, itemById) {
 
     const bands = [];
     const occupiedCells = new Set();
+    const cellRects = [];
     let filledCells = 0;
     const totalCells = columnCount * rowCount;
     for (const rect of cluster) {
@@ -759,6 +763,21 @@ function tryBuildRectGrid(page, run, clusters, itemById) {
       const cellKey = `${coverage.rows[0]}:${coverage.columns[0]}`;
       if (occupiedCells.has(cellKey)) return { reason: "topology" };
       occupiedCells.add(cellKey);
+      cellRects.push(rect);
+    }
+    // Distinct cell rectangles may share borders, but a material geometric
+    // overlap in both axes means two grids compete for the same region even
+    // when both rects snap cleanly to (different) cells. Fail closed.
+    for (let first = 0; first < cellRects.length; first += 1) {
+      for (let second = first + 1; second < cellRects.length; second += 1) {
+        const a = cellRects[first];
+        const b = cellRects[second];
+        const overlapWidth = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+        const overlapHeight = Math.min(rectBottom(a), rectBottom(b)) - Math.max(a.y, b.y);
+        if (overlapWidth > RECT_MATERIAL_OVERLAP && overlapHeight > RECT_MATERIAL_OVERLAP) {
+          return { reason: "topology" };
+        }
+      }
     }
     for (let row = 0; row < rowCount; row += 1) {
       for (let column = 0; column < columnCount; column += 1) {

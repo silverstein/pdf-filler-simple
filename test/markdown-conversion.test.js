@@ -190,6 +190,18 @@ describe("layout Markdown renderer", () => {
       ],
     }]);
     const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    // Independent full-output pin: ANY serialized delta beyond this literal —
+    // intended or not — fails here, closing the self-derived-comparison hole.
+    // The single run-variant field (the synthetic source PDF's sha256, which
+    // varies because pdf-lib stamps a creation date) is normalized to a named
+    // placeholder on BOTH sides; everything else is byte-exact.
+    const pinnedFullResult = (await import("node:fs")).readFileSync(
+      new URL("./fixtures/markdown/nonrect-differential-expected.v1_3_0.json", import.meta.url),
+      "utf8",
+    );
+    const pinnable = structuredClone(result);
+    pinnable.provenance.source.sha256 = "RUN_VARIANT_SOURCE_SHA256";
+    expect(JSON.stringify(pinnable)).toBe(pinnedFullResult);
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,
@@ -267,6 +279,23 @@ describe("layout Markdown renderer", () => {
     const layout = attachRuledRects(
       await validatedSyntheticLayout([{ items: ruledGridItems({ headerSize: 12 }) }]),
       [...ruledGridRects(), ...shiftedCopy],
+    );
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(result.gaps).toEqual([{
+      code: "TABLE_TOPOLOGY_UNKNOWN",
+      page: 1,
+      message: "Table-like content was detected but its column topology could not be reconstructed, so it remains reading-order text.",
+    }]);
+  });
+
+  it("abstains when a partially overlapping rect snaps into a neighboring cell", async () => {
+    const overlappingRects = ruledGridRects()
+      .filter(rect => !(rect.x === 222 && rect.y === 160))
+      .concat({ x: 220, y: 160, width: 150, height: 48, verb: "stroke" });
+    const layout = attachRuledRects(
+      await validatedSyntheticLayout([{ items: ruledGridItems({ headerSize: 12 }) }]),
+      overlappingRects,
     );
     const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
     expect(result.markdown).not.toMatch(/^\|.*\|$/m);
