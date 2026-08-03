@@ -322,6 +322,17 @@ describe("Extraction IR v1.2.0 evidence blocks", () => {
     expect(page.errors.some(error => error.stage === "ruled_rects")).toBe(false);
   });
 
+  it("accepts an annotations-stage page error through structured-output validation (zyx.8)", async () => {
+    const { result } = await runFake([{ items: [], annotationError: new Error("synthetic annotation failure") }]);
+    const annotationEntry = result.pages[0].errors.find(error => error.stage === "annotations");
+    expect(annotationEntry).toMatchObject({ stage: "annotations", message: "synthetic annotation failure" });
+    const validated = validateStructuredToolResult("read_pdf_layout", {
+      content: [{ type: "text", text: "annotation-stage regression" }],
+      structuredContent: result,
+    });
+    expect(validated.structuredContent).toEqual(result);
+  });
+
   it("leaves the CTM unchanged when restore underflows", async () => {
     const fixture = fakeOperatorFixture(
       [12, 11, 2],
