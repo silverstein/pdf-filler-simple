@@ -2703,7 +2703,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "convert_pdf_to_markdown",
-        description: "Convert a bounded page range of a local PDF into deterministic Markdown from the source-validated PDF Tools Extraction IR. Headings and lists require geometry or literal marker evidence. A table is reconstructed only when every row fills every recurring detected column and the first row carries real header evidence. A link is emitted only for a source-validated external http or https annotation target covering one contiguous run of text on one line. Unsupported table structures and link targets, including merged cells, internal destinations, actions, and other schemes, stay escaped text reported as typed coverage gaps. No OCR and no external model. Optionally saves UTF-8 Markdown through the transactional output path. Use absolute or ~/ paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Convert a bounded page range of a local PDF into deterministic Markdown from the source-validated PDF Tools Extraction IR. Headings and lists require geometry or literal marker evidence. A table is reconstructed only when every row fills every recurring detected column and the first row carries real header evidence. A link is emitted only for a source-validated external http or https annotation target covering one contiguous run of text on one line. Unsupported table structures and link targets, including merged cells, internal destinations, actions, and other schemes, stay escaped text reported as typed coverage gaps. No OCR and no external model. Optionally enable compact mode for counted dot-leader, isolated page-number, and spaced-hyphen normalizations; default output remains unchanged. Optionally saves UTF-8 Markdown through the transactional output path. Use absolute or ~/ paths on the user's local machine, NOT Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -2716,6 +2716,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             max_characters: { type: "integer", minimum: 1, maximum: 100000, description: "Maximum retained PDF text characters across the requested range. Default: 50000." },
             max_markdown_bytes: { type: "integer", minimum: 256, maximum: 200000, description: "Maximum UTF-8 Markdown bytes. The conversion fails rather than cutting a line or Unicode sequence. Default: 50000." },
             include_page_boundaries: { type: "boolean", description: "Include deterministic HTML comments marking page boundaries. Default: true." },
+            compact: { type: "boolean", description: "Opt into counted dot-leader, isolated page-number, and Unicode-letter spaced-hyphen normalizations. Default: false." },
             output_path: { type: "string", description: "Optional absolute .md path, or ~/ path. The file is written only after complete bytes are staged and verified." },
             overwrite: { type: "boolean", description: "Replace an existing output_path only when its exact expected_output_identity is also supplied. Default: false." },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
@@ -4519,6 +4520,7 @@ async function handleToolCall(request) {
           "max_characters",
           "max_markdown_bytes",
           "include_page_boundaries",
+          "compact",
           "output_path",
           "overwrite",
           "expected_output_identity",
@@ -4529,6 +4531,7 @@ async function handleToolCall(request) {
         const password = optionalStringArgument(markdownArgs.password, "password", { maxLength: 4096 });
         const outputPathArgument = optionalStringArgument(markdownArgs.output_path, "output_path", { maxLength: 32768 });
         const includePageBoundaries = optionalBooleanArgument(markdownArgs.include_page_boundaries, "include_page_boundaries", true);
+        const compact = optionalBooleanArgument(markdownArgs.compact, "compact", false);
         const overwrite = optionalBooleanArgument(markdownArgs.overwrite, "overwrite", false);
         const expectedOutputIdentity = normalizeExpectedOutputIdentity(
           markdownArgs.expected_output_identity,
@@ -4586,6 +4589,7 @@ async function handleToolCall(request) {
           const rendered = renderPdfLayoutToMarkdown(layout, {
             includePageBoundaries,
             maxMarkdownBytes,
+            compact,
           });
           const pagesNeedingVision = deriveMarkdownVisionRouting(layout);
 

@@ -936,6 +936,111 @@ function renderTable(grid) {
   return lines;
 }
 
+const PAGE_NUMBER_LINE = /^(?:\d{1,4}|page\s+\d{1,4}(?:\s+of\s+\d{1,4})?|\d{1,4}\s+of\s+\d{1,4}|-\d{1,4}-)$/iu;
+// Unlike the source port's hardcoded Latin alphabet, Unicode Letter covers
+// every script without silently making compact mode language-dependent.
+const SPACED_HYPHEN = /(\p{L}) - (\p{L})/gu;
+
+function emptyNormalizations() {
+  return {
+    dot_leaders_collapsed: 0,
+    page_number_lines_removed: 0,
+    spaced_hyphens_joined: 0,
+    normalized_pages: [],
+  };
+}
+
+function isPageNumberLine(value) {
+  return PAGE_NUMBER_LINE.test(value.trim());
+}
+
+function collapseDotLeaders(value, normalizations) {
+  let result = "";
+  let cursor = 0;
+  for (const match of value.matchAll(/\.{4,}/gu)) {
+    const start = match.index;
+    const end = start + match[0].length;
+    result += value.slice(cursor, start);
+    const leftSpace = result.endsWith(" ");
+    const rightSpace = value[end] === " ";
+    // The upstream port emits " ... ". Only the spaces introduced at this
+    // splice are collapsed, so compact mode does not rewrite unrelated source
+    // spacing elsewhere on the line.
+    result += leftSpace && rightSpace
+      ? "..."
+      : leftSpace
+        ? "... "
+        : rightSpace
+          ? " ..."
+          : " ... ";
+    cursor = end;
+    normalizations.dot_leaders_collapsed += 1;
+  }
+  return result + value.slice(cursor);
+}
+
+function joinSpacedHyphens(value, normalizations) {
+  return value.replace(SPACED_HYPHEN, (_match, left, right) => {
+    normalizations.spaced_hyphens_joined += 1;
+    return `${left}-${right}`;
+  });
+}
+
+function normalizePlainLines(entries, {
+  page,
+  pageBoundaryBefore,
+  pageBoundaryAfter,
+}) {
+  const normalizations = emptyNormalizations();
+  const pageNumberCandidates = entries.map(entry => (
+    entry.normalizable && isPageNumberLine(entry.sourceText)
+  ));
+  const removed = new Set();
+
+  // Ported from firecrawl/pdf-inspector (MIT): src/markdown/postprocess.rs.
+  // The source port works over document text with explicit page-break markers;
+  // this renderer keeps page structure as typed entries. A consecutive run of
+  // page-number candidates is treated as one isolated footer block, allowing a
+  // trailing run to be removed when its final line is directly before the
+  // page boundary. This preserves mid-prose numbers while handling PDFs that
+  // emit multiple footer candidates without blank text lines between them.
+  for (let index = 0; index < entries.length;) {
+    if (!pageNumberCandidates[index]) {
+      index += 1;
+      continue;
+    }
+    const start = index;
+    while (index + 1 < entries.length && pageNumberCandidates[index + 1]) index += 1;
+    const end = index;
+    const previousIsBlank = start > 0 && entries[start - 1].sourceText.trim() === "";
+    const nextIsBlank = end + 1 < entries.length && entries[end + 1].sourceText.trim() === "";
+    const pageBoundaryBeforeLine = pageBoundaryBefore && start === 0;
+    const pageBoundaryAfterLine = pageBoundaryAfter && end === entries.length - 1;
+    const isolated = (pageBoundaryBeforeLine || previousIsBlank)
+      && (pageBoundaryAfterLine || nextIsBlank);
+    const beforePageBoundary = pageBoundaryAfterLine;
+    if (isolated || beforePageBoundary) {
+      for (let removal = start; removal <= end; removal += 1) removed.add(removal);
+      normalizations.page_number_lines_removed += end - start + 1;
+      normalizations.normalized_pages.push(page);
+    }
+    index += 1;
+  }
+
+  const lines = [];
+  entries.forEach((entry, index) => {
+    if (removed.has(index)) return;
+    if (!entry.normalizable) {
+      lines.push(entry.text);
+      return;
+    }
+    let text = collapseDotLeaders(entry.text, normalizations);
+    text = joinSpacedHyphens(text, normalizations);
+    lines.push(text);
+  });
+  return { lines, normalizations };
+}
+
 /**
  * Resolve every link annotation on the page against the rendered lines.
  * Table runs cannot carry inline links in this renderer, so their lines are
@@ -1043,23 +1148,35 @@ function pageStatus(page, gaps) {
   return gaps.length > 0 ? "partial" : "complete";
 }
 
-function renderPage(page) {
+function renderPage(page, {
+  compact = false,
+  pageBoundaryBefore = false,
+  pageBoundaryAfter = false,
+} = {}) {
   const headings = headingLevels(page);
   const analysis = segmentPageLines(page);
   const linkState = analyzePageLinks(page, analysis, headings);
-  const lines = analysis.segments.flatMap(segment => (
+  const entries = analysis.segments.flatMap(segment => (
     segment.kind === "table"
-      ? renderTable(segment.grid)
+      ? renderTable(segment.grid).map(text => ({ text, normalizable: false, sourceText: text }))
       : segment.rows.map(({ line }) => {
         const spans = linkState.spansByLine.get(line.id);
         const offsets = linkState.offsetsByLine.get(line.id);
         if (spans && spans.length > 0 && offsets && !headings.get(line.id)) {
           const linked = renderLinkedLine(line, offsets, spans);
-          if (linked !== null) return linked;
+          if (linked !== null) return { text: linked, normalizable: false, sourceText: line.text };
         }
-        return renderLine(line, headings.get(line.id));
+        return {
+          text: renderLine(line, headings.get(line.id)),
+          normalizable: true,
+          sourceText: line.text,
+        };
       })
   ));
+  const normalized = compact
+    ? normalizePlainLines(entries, { page: page.page, pageBoundaryBefore, pageBoundaryAfter })
+    : { lines: entries.map(entry => entry.text), normalizations: emptyNormalizations() };
+  const lines = normalized.lines;
   const markdown = lines.length > 0
     ? lines.join("\n")
     : "[No source-backed text was available on this page.]";
@@ -1072,6 +1189,7 @@ function renderPage(page) {
     line_count: page.lines.length,
     rendered_line_count: lines.length,
     gaps,
+    normalizations: normalized.normalizations,
   };
 }
 
@@ -1131,6 +1249,31 @@ function sameJson(left, right) {
   return JSON.stringify(left) === JSON.stringify(right);
 }
 
+function aggregateNormalizations(renderedPages) {
+  const normalizations = emptyNormalizations();
+  for (const page of renderedPages) {
+    normalizations.dot_leaders_collapsed += page.normalizations.dot_leaders_collapsed;
+    normalizations.page_number_lines_removed += page.normalizations.page_number_lines_removed;
+    normalizations.spaced_hyphens_joined += page.normalizations.spaced_hyphens_joined;
+    normalizations.normalized_pages.push(...page.normalizations.normalized_pages);
+  }
+  normalizations.normalized_pages = [...new Set(normalizations.normalized_pages)].sort((left, right) => left - right);
+  return normalizations;
+}
+
+function validateNormalizations(normalizations) {
+  assertion(normalizations && typeof normalizations === "object" && !Array.isArray(normalizations),
+    "normalizations must be an object");
+  for (const key of ["dot_leaders_collapsed", "page_number_lines_removed", "spaced_hyphens_joined"]) {
+    assertion(Number.isSafeInteger(normalizations[key]) && normalizations[key] >= 0,
+      `${key} must be a non-negative integer`);
+  }
+  assertion(Array.isArray(normalizations.normalized_pages)
+    && normalizations.normalized_pages.every(page => Number.isSafeInteger(page) && page >= 1)
+    && sameJson(normalizations.normalized_pages, [...new Set(normalizations.normalized_pages)].sort((left, right) => left - right)),
+  "normalized_pages must be a sorted unique page-number array");
+}
+
 /**
  * Validate the deterministic renderer result. When layout is supplied, this
  * also binds provenance, page status, line counts, gaps, and page byte counts
@@ -1141,10 +1284,13 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
   assertion(sameJson(result.renderer, RENDERER), "renderer identity mismatch");
   assertion(result.options?.include_page_boundaries === true || result.options?.include_page_boundaries === false,
     "include_page_boundaries must be boolean");
+  assertion(result.options?.compact === true || result.options?.compact === false,
+    "compact must be boolean");
   assertion(Number.isSafeInteger(result.limits?.max_markdown_bytes)
     && result.limits.max_markdown_bytes >= 1
     && result.limits.max_markdown_bytes <= MAX_MARKDOWN_BYTES_LIMIT, "max_markdown_bytes is out of range");
   assertion(typeof result.markdown === "string", "markdown must be a string");
+  validateNormalizations(result.normalizations);
   const markdownBytes = utf8Bytes(result.markdown);
   assertion(result.markdown_bytes === markdownBytes, "markdown UTF-8 byte count mismatch");
   assertion(result.markdown_sha256 === sha256(result.markdown), "markdown SHA-256 mismatch");
@@ -1179,7 +1325,11 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
     assertion(sameJson(result.provenance, provenanceFromLayout(layout)), "source or layout provenance mismatch");
     assertion(result.pages.length === layout.pages.length, "page count does not match layout IR");
     for (let index = 0; index < layout.pages.length; index += 1) {
-      const expected = renderPage(layout.pages[index]);
+      const expected = renderPage(layout.pages[index], {
+        compact: result.options.compact,
+        pageBoundaryBefore: index > 0,
+        pageBoundaryAfter: true,
+      });
       const actual = result.pages[index];
       assertion(actual.page === expected.page, `page ${expected.page} order mismatch`);
       assertion(actual.line_count === expected.line_count, `page ${expected.page} line count mismatch`);
@@ -1188,8 +1338,19 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
       assertion(actual.conversion_status === expected.conversion_status, `page ${expected.page} status mismatch`);
       assertion(sameJson(actual.gaps, expected.gaps), `page ${expected.page} gaps mismatch`);
     }
+    assertion(sameJson(result.normalizations, aggregateNormalizations(
+      layout.pages.map((page, index) => renderPage(page, {
+        compact: result.options.compact,
+        pageBoundaryBefore: index > 0,
+        pageBoundaryAfter: true,
+      })),
+    )), "normalizations do not match the bound layout IR");
     const expectedMarkdown = renderDocumentMarkdown(
-      layout.pages.map(renderPage),
+      layout.pages.map((page, index) => renderPage(page, {
+        compact: result.options.compact,
+        pageBoundaryBefore: index > 0,
+        pageBoundaryAfter: true,
+      })),
       result.options.include_page_boundaries,
       flattenedGaps,
     );
@@ -1210,11 +1371,15 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
 export function renderPdfLayoutToMarkdown(layout, {
   includePageBoundaries = true,
   maxMarkdownBytes = 50000,
+  compact = false,
 } = {}) {
   validatePdfLayoutSemantics(layout, { enforceOutputBudget: false });
   validateSupportedLayoutIdentity(layout);
   if (typeof includePageBoundaries !== "boolean") {
     throw new TypeError("includePageBoundaries must be a boolean.");
+  }
+  if (typeof compact !== "boolean") {
+    throw new TypeError("compact must be a boolean.");
   }
   if (!Number.isSafeInteger(maxMarkdownBytes)
     || maxMarkdownBytes < 1
@@ -1222,7 +1387,14 @@ export function renderPdfLayoutToMarkdown(layout, {
     throw new RangeError(`maxMarkdownBytes must be an integer from 1 through ${MAX_MARKDOWN_BYTES_LIMIT}.`);
   }
 
-  const renderedPages = layout.pages.map(renderPage);
+  const renderedPages = layout.pages.map((page, index) => renderPage(page, {
+    compact,
+    pageBoundaryBefore: index > 0,
+    // A page boundary is a semantic boundary even when the caller omits the
+    // visual HTML marker. This also lets compact mode remove a trailing footer
+    // number from a single-page selection.
+    pageBoundaryAfter: true,
+  }));
   const gaps = renderedPages.flatMap(page => page.gaps);
   const markdown = renderDocumentMarkdown(renderedPages, includePageBoundaries, gaps);
   const markdownBytes = utf8Bytes(markdown);
@@ -1242,11 +1414,12 @@ export function renderPdfLayoutToMarkdown(layout, {
     markdown,
     markdown_sha256: sha256(markdown),
     markdown_bytes: markdownBytes,
-    options: { include_page_boundaries: includePageBoundaries },
+    options: { include_page_boundaries: includePageBoundaries, compact },
     limits: { max_markdown_bytes: maxMarkdownBytes },
-    pages: renderedPages.map(({ markdown: _markdown, ...page }) => page),
+    pages: renderedPages.map(({ markdown: _markdown, normalizations: _normalizations, ...page }) => page),
     gaps,
     limitations: [...LIMITATIONS],
+    normalizations: aggregateNormalizations(renderedPages),
     provenance: provenanceFromLayout(layout),
   };
   return validateMarkdownConversionSemantics(result, { layout });

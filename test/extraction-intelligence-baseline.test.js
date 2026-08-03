@@ -135,18 +135,16 @@ const COMPACT_TOC_MARKDOWN = `<!-- PDF page 1 -->
 
 # CONTENTS
 Preface ... ii
-Chapter 1: Scope .................... 1
-Chapter 2: Inputs ................... 7
-Chapter 3: Methods ................ 12
-Chapter 4: Evidence ............... 19
-Chapter 5: Review .................. 24
-Chapter 6: Findings ................ 31
-Chapter 7: Limits .................. 38
-Chapter 8: Appendix ................ 44
-Chapter 9: Closing ................. 51
-Chapter 10: Index .................. 58
-63
-71
+Chapter 1: Scope ... 1
+Chapter 2: Inputs ... 7
+Chapter 3: Methods ... 12
+Chapter 4: Evidence ... 19
+Chapter 5: Review ... 24
+Chapter 6: Findings ... 31
+Chapter 7: Limits ... 38
+Chapter 8: Appendix ... 44
+Chapter 9: Closing ... 51
+Chapter 10: Index ... 58
 
 ## Conversion limitations
 
@@ -425,20 +423,41 @@ describe("extraction-intelligence current baseline", () => {
     ]);
   }, 30_000);
 
-  it("freezes compact-toc default conversion as verbatim output", async () => {
+  it("flips compact-toc to the normalized compact output while retaining the default baseline contract", async () => {
     const fixture = expectedCurrentFor(manifest, "compact-toc.pdf");
-    const result = await client.callTool({
+    const defaultResult = await client.callTool({
       name: "convert_pdf_to_markdown",
       arguments: {
         pdf_path: path.join(INTELLIGENCE_ROOT, fixture.path),
         max_markdown_bytes: 200000,
       },
     });
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: {
+        pdf_path: path.join(INTELLIGENCE_ROOT, fixture.path),
+        max_markdown_bytes: 200000,
+        compact: true,
+      },
+    });
+    expect(defaultResult.isError).not.toBe(true);
+    expect(defaultResult.structuredContent.markdown).toContain("Chapter 1: Scope .................... 1");
+    expect(defaultResult.structuredContent.normalizations).toEqual({
+      dot_leaders_collapsed: 0,
+      page_number_lines_removed: 0,
+      spaced_hyphens_joined: 0,
+      normalized_pages: [],
+    });
     expect(result.isError).not.toBe(true);
     expectCurrentConversion(result, fixture);
     expect(result.structuredContent.markdown).toBe(COMPACT_TOC_MARKDOWN);
     expect(fixture.expected_current.default_output).toBe("verbatim");
-    expect(fixture.expected_current.normalization_counts_field).toBe("absent");
-    expect(Object.hasOwn(result.structuredContent, "normalization_counts")).toBe(false);
+    expect(fixture.expected_current.normalizations_field).toBe("present");
+    expect(result.structuredContent.normalizations).toEqual({
+      dot_leaders_collapsed: 10,
+      page_number_lines_removed: 2,
+      spaced_hyphens_joined: 0,
+      normalized_pages: [1],
+    });
   }, 30_000);
 });
