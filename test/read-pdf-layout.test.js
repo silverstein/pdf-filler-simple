@@ -322,6 +322,38 @@ describe("Extraction IR v1.2.0 evidence blocks", () => {
     expect(page.errors.some(error => error.stage === "ruled_rects")).toBe(false);
   });
 
+  it("leaves the CTM unchanged when restore underflows", async () => {
+    const fixture = fakeOperatorFixture(
+      [12, 11, 2],
+      [
+        [2, 0, 0, 2, 10, 20],
+        null,
+        rectPath(3),
+      ],
+    );
+    const { result } = await runFake([fixture]);
+    expect(result.pages[0].ruled_rects.items).toEqual([
+      { x: 30, y: 672, width: 40, height: 60, verb: "fill" },
+    ]);
+  });
+
+  it("keeps an unmatched restore inside a Form XObject from escaping its outer CTM", async () => {
+    const fixture = fakeOperatorFixture(
+      [12, 74, 11, 75, 2],
+      [
+        [2, 0, 0, 2, 10, 20],
+        [new Float32Array([1, 0, 0, 1, 50, 60]), null],
+        null,
+        null,
+        rectPath(3),
+      ],
+    );
+    const { result } = await runFake([fixture]);
+    expect(result.pages[0].ruled_rects.items).toEqual([
+      { x: 30, y: 672, width: 40, height: 60, verb: "fill" },
+    ]);
+  });
+
   it("deduplicates on the half-point grid and reports a self-contained cap", async () => {
     const duplicateFixture = fakeOperatorFixture(
       [2, 2, 2],
@@ -353,6 +385,7 @@ describe("Extraction IR v1.2.0 evidence blocks", () => {
 
   it("applies text-integrity thresholds over raw PDF.js item text", async () => {
     const run = async text => (await runFake([{ items: [textItem({ text, x: 50, top: 50 })] }])).result.pages[0].text_integrity;
+    const runItems = async texts => (await runFake([{ items: texts.map((text, index) => textItem({ text, x: 50, top: 50 + index * 20 })) }])).result.pages[0].text_integrity;
     expect((await run("\uFFFD")).status).toBe("ok");
     expect((await run("\uFFFD\uFFFD"))).toMatchObject({ status: "suspect", signals: [{ kind: "replacement_characters", count: 2 }] });
     expect((await run(`\uFFFD\uFFFD${"a".repeat(78)}`)).status).toBe("suspect");
@@ -360,9 +393,34 @@ describe("Extraction IR v1.2.0 evidence blocks", () => {
     expect((await run(`${"\uFFFDa".repeat(12)}${"b".repeat(216)}`)).status).toBe("suspect");
     expect((await run(`${"\uFFFDa".repeat(12)}${"b".repeat(217)}`)).status).toBe("ok");
     expect((await run("\uE000\uE001\uE002ab")).status).toBe("suspect");
+    expect((await run("\uE000abcd")).status).toBe("ok");
+    expect((await run("\uE000a\uE001bc")).status).toBe("ok");
+    expect((await run("\uE000a\uE001b\uE002c")).status).toBe("suspect");
+    expect((await run("\uE000a\uE001bcd")).status).toBe("ok");
+    expect((await run("\uE000a\uE001b\uE002")).status).toBe("suspect");
+    expect((await run("\uE000a\uE001\uE002")).status).toBe("ok");
+    expect((await run("aa\u0080\u0081")).status).toBe("ok");
+    expect((await run("aaa\u0080\u0081")).status).toBe("suspect");
+    expect((await run("abcd\u0080")).status).toBe("ok");
     expect((await run("abc\u0080\u0081")).status).toBe("suspect");
+    expect((await run(`${"a".repeat(38)}\u0080\u0081`)).status).toBe("suspect");
+    expect((await run(`${"a".repeat(39)}\u0080\u0081`)).status).toBe("ok");
+    expect((await runItems([
+      `\uFFFD\uFFFD${"a".repeat(38)}`,
+      `\uFFFD\uFFFD${"a".repeat(37)}`,
+      `\uFFFD\uFFFD${"a".repeat(37)}`,
+    ])).status).toBe("suspect");
+    expect((await runItems([
+      `\uFFFD\uFFFD${"a".repeat(38)}`,
+      `\uFFFD\uFFFD${"a".repeat(37)}`,
+      `\uFFFD\uFFFD${"a".repeat(38)}`,
+    ])).status).toBe("ok");
+    expect((await run(`${"\uFFFD".repeat(8)}${"a".repeat(312)}`)).status).toBe("suspect");
+    expect((await run(`${"\uFFFD".repeat(8)}${"a".repeat(313)}`)).status).toBe("ok");
     expect((await run("!".repeat(50))).signals).toEqual([{ kind: "non_alphanumeric_dominance", count: 1 }]);
     expect((await run(".".repeat(50))).status).toBe("ok");
+    expect((await run(`${"a".repeat(27)}${"!".repeat(27)}._·`)).status).toBe("ok");
+    expect((await run(`${"a".repeat(27)}${"!".repeat(27)}._`)).status).toBe("suspect");
   });
 
   it("rejects independent replay forgeries for every new evidence block and is deterministic", async () => {

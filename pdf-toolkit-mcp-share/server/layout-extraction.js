@@ -769,6 +769,7 @@ function deriveOperatorEvidence(pdfjsLib, operators, viewportTransform) {
   const imageOps = imageOperationSet(pdfjsLib);
   const constructPathOp = pdfjsLib.OPS?.constructPath;
   const matrixStack = [];
+  const scopeBases = [0];
   let currentTransform = identityTransform();
   let pendingClip = false;
   let imagePaintOps = 0;
@@ -783,13 +784,15 @@ function deriveOperatorEvidence(pdfjsLib, operators, viewportTransform) {
     const args = operatorArgument(argsArray, operatorIndex);
     if (imageOps.has(operation)) imagePaintOps += 1;
     if (operation === pdfjsLib.OPS?.save) {
-      matrixStack.push(currentTransform);
+      matrixStack.push({ kind: "save", transform: currentTransform });
     } else if (operation === pdfjsLib.OPS?.restore) {
-      currentTransform = matrixStack.pop() ?? identityTransform();
+      const scopeBase = scopeBases.at(-1);
+      if (matrixStack.length > scopeBase) currentTransform = matrixStack.pop().transform;
     } else if (operation === pdfjsLib.OPS?.transform) {
       currentTransform = multiplyTransforms(currentTransform, finiteMatrix(args, "transform"));
     } else if (operation === pdfjsLib.OPS?.paintFormXObjectBegin) {
-      matrixStack.push(currentTransform);
+      matrixStack.push({ kind: "form", transform: currentTransform });
+      scopeBases.push(matrixStack.length);
       const formArgs = Array.isArray(args) ? args : [];
       // pdfjs passes [null, bbox] for a Form XObject without /Matrix; null
       // means identity, not an invalid operator list.
@@ -797,7 +800,12 @@ function deriveOperatorEvidence(pdfjsLib, operators, viewportTransform) {
         currentTransform = multiplyTransforms(currentTransform, finiteMatrix(formArgs[0], "Form XObject"));
       }
     } else if (operation === pdfjsLib.OPS?.paintFormXObjectEnd) {
-      currentTransform = matrixStack.pop() ?? identityTransform();
+      const scopeBase = scopeBases.length > 1 ? scopeBases.pop() : null;
+      if (scopeBase !== null) {
+        while (matrixStack.length > scopeBase) matrixStack.pop();
+        const formFrame = matrixStack.pop();
+        if (formFrame?.kind === "form") currentTransform = formFrame.transform;
+      }
     } else if (operation === pdfjsLib.OPS?.clip || operation === pdfjsLib.OPS?.eoClip) {
       pendingClip = true;
     } else if (operation === constructPathOp) {
@@ -904,7 +912,7 @@ function nonAlphanumericDominance(text) {
   for (let index = 0; index < codePoints.length;) {
     if ([".", "_", "·"].includes(codePoints[index])) {
       let end = index + 1;
-      while (end < codePoints.length && codePoints[end] === codePoints[index]) end += 1;
+      while (end < codePoints.length && [".", "_", "·"].includes(codePoints[end])) end += 1;
       if (end - index >= 3) {
         index = end;
         continue;
