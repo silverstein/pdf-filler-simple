@@ -41,7 +41,10 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // fragmentary, and equation-like heading candidates while retaining their
 // source text as escaped body text. Previously
 // 07b2f6035903e699d3d4f023137fc14d4316a214e789d45ed22a4dc804a1184b.
-const TOOL_CONTRACT_SHA256 = "a7619f2d4b07b855e8625578be66f5c61c54af2a2881a33545deed7e7b008de0";
+// 2026-08-03: convert_pdf_to_markdown renderer 1.4.0 adds conservative
+// source-backed title, introduction, part, and appendix structure. Previously
+// a7619f2d4b07b855e8625578be66f5c61c54af2a2881a33545deed7e7b008de0.
+const TOOL_CONTRACT_SHA256 = "fc757dc89b8aaf25b22f05b07863a4b8be1e09b6a544764a1b4afc8cdca3d6dd";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

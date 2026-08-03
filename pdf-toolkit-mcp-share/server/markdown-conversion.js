@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.3.0",
+  version: "1.4.0",
 });
 
 // Bounded geometric table inference. A run of adjacent lines is treated as a
@@ -163,13 +163,40 @@ function headingTextEligible(value) {
     && !/[=∑∫∞≤≥≈≠±×÷√]/u.test(text);
 }
 
+function titleCaseHeading(value) {
+  const words = String(value).trim().match(/[\p{L}\p{N}]+/gu) ?? [];
+  if (words.length < 3 || words.length > 15) return false;
+  const minorWords = new Set(["a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to"]);
+  return words.every((word, index) => {
+    const lower = word.toLocaleLowerCase("en-US");
+    if (index > 0 && minorWords.has(lower)) return true;
+    const first = [...word][0];
+    return first === first.toLocaleUpperCase("en-US")
+      && first !== first.toLocaleLowerCase("en-US");
+  });
+}
+
+function structuralHeadingLevel(page, line, index) {
+  const text = line.text.trim();
+  if (!headingTextEligible(text)) return null;
+  if (page.page === 1 && index <= 2 && titleCaseHeading(text)) return 1;
+  if (text === "INTRODUCTION") return 2;
+  if (/^PART\s+[IVXLCDM]+:\s+.+$/u.test(text) && text === text.toLocaleUpperCase("en-US")) return 2;
+  if (/^APPENDIX\s+(?:\d+|[IVXLCDM]+)$/u.test(text)) return 2;
+  return null;
+}
+
 function headingLevels(page) {
   const evidence = lineFontEvidence(page);
+  const structural = new Map(evidence.flatMap(({ line }, index) => {
+    const level = structuralHeadingLevel(page, line, index);
+    return level === null ? [] : [[line.id, level]];
+  }));
   const heights = evidence.map(value => value.height).filter(Number.isFinite);
-  if (heights.length < 4) return new Map();
+  if (heights.length < 4) return structural;
   const bodyHeight = median(heights);
   const bodyEvidence = heights.filter(height => Math.abs(height - bodyHeight) <= bodyHeight * 0.1);
-  if (bodyEvidence.length < 3) return new Map();
+  if (bodyEvidence.length < 3) return structural;
   const candidates = evidence.filter(({ line, height, consistentHeight, consistentFont }) => (
     consistentHeight
       && consistentFont
@@ -181,7 +208,8 @@ function headingLevels(page) {
       && !/^\s*(?:[\u2022\u2023\u25e6\u2043\u2219]|\d{1,3}[.)])\s+/u.test(line.text)
   ));
   const levels = [...new Set(candidates.map(value => value.height))].sort((left, right) => right - left);
-  return new Map(candidates.map(({ line, height }) => [line.id, Math.min(6, levels.indexOf(height) + 1)]));
+  const geometric = candidates.map(({ line, height }) => [line.id, Math.min(6, levels.indexOf(height) + 1)]);
+  return new Map([...geometric, ...structural]);
 }
 
 /**
