@@ -10,6 +10,7 @@ import { PDFDocument, rgb } from "pdf-lib";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
+const MIXED_PDF = path.join(REPO_ROOT, "test/fixtures/eval/extraction/synthetic/mixed-text-raster.pdf");
 
 const RUNTIMES = [
   { name: "source runtime", root: REPO_ROOT },
@@ -100,6 +101,24 @@ describe.each(RUNTIMES)("$name analysis truthfulness", ({ root }) => {
     });
   }, 30_000);
 
+  it("reports only read pages without text and gives fixed render routing guidance", async () => {
+    const scoped = await normal.client.callTool({
+      name: "read_pdf_content",
+      arguments: { pdf_path: MIXED_PDF, max_pages: 2 },
+    });
+    expect(scoped.isError).not.toBe(true);
+    expect(scoped.structuredContent.read_pages_without_text).toEqual([2]);
+    expect(scoped.structuredContent.routing_guidance).toContain("render_pdf_page");
+
+    const firstPageOnly = await normal.client.callTool({
+      name: "read_pdf_content",
+      arguments: { pdf_path: MIXED_PDF, max_pages: 1 },
+    });
+    expect(firstPageOnly.isError).not.toBe(true);
+    expect(firstPageOnly.structuredContent.read_pages_without_text).toEqual([]);
+    expect(firstPageOnly.structuredContent.routing_guidance).toBeNull();
+  }, 30_000);
+
   it("returns an MCP tool error plus safe structured state when all content paths fail", async () => {
     const result = await forcedRenderFailure.client.callTool({
       name: "read_pdf_content",
@@ -123,6 +142,8 @@ describe.each(RUNTIMES)("$name analysis truthfulness", ({ root }) => {
       extraction_mode: "none",
       error_codes: ["NO_EXTRACTABLE_TEXT", "IMAGE_FALLBACK_FAILED"],
       retry_guidance: expect.stringContaining("Do not treat this PDF as empty"),
+      read_pages_without_text: [1],
+      routing_guidance: expect.stringContaining("render_pdf_page"),
     });
     expect(result.structuredContent.page_previews).toEqual([expect.objectContaining({
       page: 1,

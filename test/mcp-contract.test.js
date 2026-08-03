@@ -29,8 +29,12 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-07-30: convert_pdf_to_markdown renderer 1.2.0 (link emission) and
 // extraction-ir 1.2.0 (ruled rectangles, text integrity, operator evidence).
 // 942cb650fa28c0c2482efb8fde8130d5793abc73d431071b46aa41906f7c619d.
-// 2026-08-03: extraction IR v1.2.0 page evidence blocks and replay-bound schema.
-// c5b5a2113cbd9f1524d3263a49b36476b77b4aa51a1182aaca7eb2accd0a5f39.
+// 2026-08-03: classification/routing fields for page analysis, content, and
+// Markdown conversion; read_pdf_content page-scoped text routing metadata.
+// 24e8a55633d745478d242a9593790115a1ea94d3e91493ebdd07c3e0ec659e0a.
+// 2026-08-03: classification scope, ratio routing, and page-read failure
+// provenance.
+// 9493a450cf16b0b1110792553cfd55b644fc7724fea55bfdebb92806196f139b.
 // 2026-07-30: convert_pdf_to_markdown description corrected to state the table
 // and link capabilities it actually has, then shortened to 820 characters
 // without dropping a safety boundary. Previously
@@ -39,7 +43,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // gap enum. The renderer throws on the byte limit rather than truncating, so
 // that code was unreachable and misdescribed the contract. Previously
 // 3993365ec0868e80afc629cbb8661566a363fe543acc928992ad36bcee4db86f.
-const TOOL_CONTRACT_SHA256 = "c5b5a2113cbd9f1524d3263a49b36476b77b4aa51a1182aaca7eb2accd0a5f39";
+const TOOL_CONTRACT_SHA256 = "9493a450cf16b0b1110792553cfd55b644fc7724fea55bfdebb92806196f139b";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

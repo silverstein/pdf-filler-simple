@@ -135,7 +135,8 @@
         "page_count": 2,
         "conversion_status": "partial",
         "gap_codes": ["TEXT_LAYER_EMPTY", "OCR_NOT_PERFORMED", "IMAGE_CONTENT_NOT_RENDERED"],
-        "pages_needing_vision_field": "absent"
+        "pages_needing_vision_field": "present",
+        "pages_needing_vision": [{ "page": 2, "reasons": ["no_text_layer", "image_dominated"] }]
       }
     },
     {

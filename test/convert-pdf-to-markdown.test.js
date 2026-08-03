@@ -311,6 +311,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       provenance: {
         layout: { name: "pdf-tools.extraction-ir", version: "1.2.0", parser_version: "5.4.624" },
       },
+      pages_needing_vision: [],
     });
     const { markdown } = first.structuredContent;
     expect(markdown).toContain("<!-- PDF page 1 -->");
@@ -541,6 +542,12 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       expect(result.structuredContent.conversion_status, pdfPath).toBe("partial");
       const codes = result.structuredContent.gaps.map(gap => gap.code);
       expect(codes, pdfPath).toEqual(expect.arrayContaining(expectedCodes));
+      expect(result.structuredContent.pages_needing_vision, pdfPath).toEqual(
+        range.end_page === 2
+          ? [{ page: 2, reasons: ["no_text_layer", "image_dominated"] }]
+          : [{ page: 1, reasons: ["no_text_layer", "image_dominated"] }],
+      );
+      expect(result.content?.[0]?.text ?? "").toContain("render_pdf_page");
       expect(result.structuredContent.limitations.join("\n")).toMatch(/OCR is not performed/);
       expect(result.structuredContent.limitations.join("\n")).toMatch(/Ruling lines and merged or spanning cells are not interpreted/);
     }

@@ -68,6 +68,25 @@ import {
   terminateAllPdfLibMutations,
 } from "./pdf-lib-subprocess.js";
 
+export const READ_CONTENT_ROUTING_GUIDANCE =
+  "Pages without extractable text were successfully read in this call. Use render_pdf_page for visual inspection of those pages; read_pages_without_text is limited to successfully-read pages, and pages outside this read scope or stopped at a page-read error are not classified by this result.";
+
+/**
+ * Keep Markdown routing in one mapping function so later text-integrity
+ * signals can extend the same additive surface without duplicating policy.
+ */
+export function deriveMarkdownVisionRouting(layout) {
+  return (layout?.pages ?? []).flatMap(page => {
+    const reasons = [];
+    if (["empty", "failed"].includes(page.text_layer_status)) reasons.push("no_text_layer");
+    if (page.image_detection_status === "detected" && page.text_layer_status !== "present") {
+      reasons.push("image_dominated");
+    }
+    if (page.modality_hint === "vector-only-candidate") reasons.push("vector_only_text");
+    return reasons.length > 0 ? [{ page: page.page, reasons }] : [];
+  });
+}
+
 function boundedInteger(value, fallback, { name, minimum, maximum }) {
   const candidate = value === undefined || value === null ? fallback : value;
   if (!Number.isInteger(candidate) || candidate < minimum || candidate > maximum) {
@@ -4112,6 +4131,9 @@ async function handleToolCall(request) {
         const { pdf_path, max_pages = null } = args;
         const resolvedPath = resolvePath(pdf_path);
         const MAX_CHARS = 50000;
+        let readPagesWithoutText = [];
+        let readPagesReadCount = 0;
+        let readPageReadError = null;
 
         try {
           const { result, source } = await runPdfjsOperation(resolvedPath, {
@@ -4128,6 +4150,15 @@ async function handleToolCall(request) {
           const extractedText = result.output_text;
           const pageCount = result.total_pages;
           const pagesRead = result.pages_read;
+          const pagesWithoutText = result.pages_without_text ?? [];
+          readPagesWithoutText = pagesWithoutText;
+          const pageReadError = result.page_read_error ?? null;
+          readPagesReadCount = Number.isInteger(pagesRead) ? pagesRead : 0;
+          readPageReadError = pageReadError;
+          const pageReadErrorCodes = pageReadError ? [pageReadError.code] : [];
+          const routingGuidance = pagesWithoutText.length > 0
+            ? READ_CONTENT_ROUTING_GUIDANCE
+            : null;
 
           // Prepare the response
           let response = `PDF Content Extracted Successfully!\n\n`;
@@ -4139,6 +4170,7 @@ async function handleToolCall(request) {
           }
           response += `\n`;
           response += `Text Length: ${result.source_length} characters\n`;
+          if (routingGuidance) response += `Routing guidance: ${routingGuidance}\n`;
 
           // Truncate if too large for context window
           const truncated = result.text_truncated;
@@ -4209,13 +4241,30 @@ async function handleToolCall(request) {
                   preview_truncated: result.preview_truncated,
                   extraction_mode: "image-fallback",
                   image_renderer: renderedImage.renderer,
-                  error_codes: [],
+                  page_read_error: pageReadError,
+                  read_pages_without_text: pagesWithoutText,
+                  routing_guidance: routingGuidance,
+                  error_codes: pageReadErrorCodes,
                   retry_guidance:
                     "Only page 1 was returned as an image. Use render_pdf_page for any additional pages that require inspection.",
                 },
               };
             } catch (imageError) {
-              if (imageError?.code === PDF_RESOURCE_LIMIT_CODE) throw imageError;
+              if (imageError?.code === PDF_RESOURCE_LIMIT_CODE) {
+                // Preserve already-computed read provenance instead of losing
+                // it to the bare shared resource-limit shape.
+                return createTypedToolError({
+                  message: `Error: ${imageError.message}`,
+                  code: PDF_RESOURCE_LIMIT_CODE,
+                  structuredContent: {
+                    status: "failed",
+                    error: { error_schema_version: 1, code: PDF_RESOURCE_LIMIT_CODE },
+                    pages_read: readPagesReadCount,
+                    read_pages_without_text: readPagesWithoutText,
+                    page_read_error: readPageReadError,
+                  },
+                });
+              }
               console.error("[read_pdf_content] Image fallback failed:", imageError.message);
               response = `Error: PDF content extraction failed: no text was found and the page-image fallback was unavailable.\n`;
               response += `Do not assume this PDF is empty or complete. Check PDF access/password, retry, and use render_pdf_page to diagnose page 1 before relying on the document contents.\n`;
@@ -4238,7 +4287,10 @@ async function handleToolCall(request) {
                   page_previews: result.page_previews,
                   preview_truncated: result.preview_truncated,
                   extraction_mode: "none",
-                  error_codes: ["NO_EXTRACTABLE_TEXT", "IMAGE_FALLBACK_FAILED"],
+                  page_read_error: pageReadError,
+                  read_pages_without_text: pagesWithoutText,
+                  routing_guidance: routingGuidance,
+                  error_codes: ["NO_EXTRACTABLE_TEXT", "IMAGE_FALLBACK_FAILED", ...pageReadErrorCodes],
                   retry_guidance:
                     "Do not treat this PDF as empty. Check PDF access/password and renderer availability, then retry read_pdf_content or render_pdf_page.",
                 },
@@ -4266,20 +4318,45 @@ async function handleToolCall(request) {
               page_previews: result.page_previews,
               preview_truncated: result.preview_truncated,
               extraction_mode: "text",
-              error_codes: [],
+              page_read_error: pageReadError,
+              read_pages_without_text: pagesWithoutText,
+              routing_guidance: routingGuidance,
+              error_codes: pageReadErrorCodes,
               retry_guidance: extractionPartial
                 ? "Use max_pages or page-bounded tools to retrieve content outside this partial result."
                 : null,
             },
           };
         } catch (error) {
-          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) {
+            return createTypedToolError({
+              message: `Error: ${error.message}`,
+              code: PDF_RESOURCE_LIMIT_CODE,
+              structuredContent: {
+                status: "failed",
+                error: { error_schema_version: 1, code: PDF_RESOURCE_LIMIT_CODE },
+                pages_read: readPagesReadCount,
+                read_pages_without_text: readPagesWithoutText,
+                page_read_error: readPageReadError,
+              },
+            });
+          }
           return createTypedToolError({
             message: `Error reading PDF file: ${error.message}`,
             content: [{
               type: "text",
               text: `Error reading PDF file: ${error.message}\n\nPlease ensure the file path is correct and the file exists.`
             }],
+            structuredContent: {
+              status: "failed",
+              error: {
+                error_schema_version: 1,
+                code: "tool_execution_failed",
+              },
+              pages_read: readPagesReadCount,
+              read_pages_without_text: readPagesWithoutText,
+              page_read_error: readPageReadError,
+            },
           });
         }
       }
@@ -4490,6 +4567,7 @@ async function handleToolCall(request) {
             includePageBoundaries,
             maxMarkdownBytes,
           });
+          const pagesNeedingVision = deriveMarkdownVisionRouting(layout);
 
           let savedOutput = null;
           if (outputBinding) {
@@ -4508,13 +4586,20 @@ async function handleToolCall(request) {
             });
           }
 
-          const payload = { ...rendered, saved_output: savedOutput };
+          const payload = {
+            ...rendered,
+            pages_needing_vision: pagesNeedingVision,
+            saved_output: savedOutput,
+          };
           const summary = [
             `Converted pages ${layout.page_range.start_page}-${layout.page_range.end_page} of ${fileName} to deterministic Markdown.`,
             `Status: ${rendered.conversion_status}. UTF-8 bytes: ${rendered.markdown_bytes}.`,
             `Source SHA-256: ${sourceSha256}.`,
             ...(savedOutput ? [`Saved and reopened exact UTF-8 output: ${savedOutput.path}`] : []),
             ...(rendered.gaps.length > 0 ? [`Coverage gaps: ${rendered.gaps.map(gap => `page ${gap.page}: ${gap.code}`).join(", ")}.`] : []),
+            ...(pagesNeedingVision.length > 0
+              ? [`Vision routing: use render_pdf_page for pages ${pagesNeedingVision.map(entry => entry.page).join(", ")}.`]
+              : []),
             "No OCR, external model, hidden link-target recovery, or table-topology inference was performed.",
             rendered.markdown,
           ].join("\n\n");
