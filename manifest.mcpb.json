@@ -79,7 +79,7 @@
     },
     {
       "name": "convert_pdf_to_markdown",
-      "description": "Convert supported local PDF text to deterministic Markdown with explicit partial and unsupported-content gaps"
+      "description": "Convert supported local PDF text to deterministic Markdown with explicit partial and unsupported-content gaps; optionally enable counted compact-mode normalizations"
     },
     {
       "name": "render_pdf_page",

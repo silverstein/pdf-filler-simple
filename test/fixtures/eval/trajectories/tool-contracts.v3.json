@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.8.6"
   },
-  "tools_sha256": "12aa25959e4faeff5a07df3e9412ad8c37658a05f2a6ef28c739093da016b7b8",
+  "tools_sha256": "02f8a6d3956c4a137163a5aee9b525daeb548d39c1292b677ce418d502812d17",
   "tools": [
     {
       "name": "add_signature_field",
@@ -502,6 +502,10 @@
           "include_page_boundaries": {
             "type": "boolean",
             "description": "Include deterministic HTML comments marking page boundaries. Default: true."
+          },
+          "compact": {
+            "type": "boolean",
+            "description": "Opt into counted dot-leader, isolated page-number, and Unicode-letter spaced-hyphen normalizations. Default: false."
           },
           "output_path": {
             "type": "string",

@@ -198,7 +198,8 @@
       "expected_current": {
         "conversion_status": "complete",
         "default_output": "verbatim",
-        "normalization_counts_field": "absent",
+        "compact_output": "normalized",
+        "normalizations_field": "present",
         "gap_codes": []
       }
     }

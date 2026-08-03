@@ -181,6 +181,53 @@ async function validatedSyntheticLayout(pageConfigs) {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("layout Markdown renderer", () => {
+  it("applies compact normalizations at their boundaries and leaves default output byte-identical", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        textItem("three...dots", { top: 50 }),
+        textItem("four....................dots", { top: 80 }),
+        textItem("12345", { top: 110 }),
+        textItem("Context before", { top: 140 }),
+        textItem("42", { top: 170 }),
+        textItem("Context after", { top: 200 }),
+        textItem("東京 - café", { top: 230 }),
+        textItem("- item", { top: 260 }),
+        textItem("99", { top: 290 }),
+      ],
+    }]);
+    const defaultResult = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    const explicitDefault = renderPdfLayoutToMarkdown(layout, {
+      includePageBoundaries: false,
+      compact: false,
+    });
+    const compactResult = renderPdfLayoutToMarkdown(layout, {
+      includePageBoundaries: false,
+      compact: true,
+    });
+
+    expect(explicitDefault.markdown).toBe(defaultResult.markdown);
+    expect(explicitDefault.markdown_sha256).toBe(defaultResult.markdown_sha256);
+    expect(defaultResult.normalizations).toEqual({
+      dot_leaders_collapsed: 0,
+      page_number_lines_removed: 0,
+      spaced_hyphens_joined: 0,
+      normalized_pages: [],
+    });
+    expect(compactResult.markdown).toContain("three...dots");
+    expect(compactResult.markdown).toContain("four ... dots");
+    expect(compactResult.markdown).toContain("12345");
+    expect(compactResult.markdown).toContain("Context before\n42\nContext after");
+    expect(compactResult.markdown).toContain("東京-café");
+    expect(compactResult.markdown).toContain("- item");
+    expect(compactResult.markdown).not.toMatch(/^99$/mu);
+    expect(compactResult.normalizations).toEqual({
+      dot_leaders_collapsed: 1,
+      page_number_lines_removed: 1,
+      spaced_hyphens_joined: 1,
+      normalized_pages: [1],
+    });
+  });
+
   it("pins the non-rect 1.2.0 regression body and isolates the 1.3.0 wording delta", async () => {
     const layout = await validatedSyntheticLayout([{
       operations: [2],
@@ -198,7 +245,7 @@ describe("layout Markdown renderer", () => {
     const pinnedFullResult = (await import("node:fs")).readFileSync(
       new URL("./fixtures/markdown/nonrect-differential-expected.v1_3_0.json", import.meta.url),
       "utf8",
-    );
+    ).trimEnd();
     const pinnable = structuredClone(result);
     pinnable.provenance.source.sha256 = "RUN_VARIANT_SOURCE_SHA256";
     expect(JSON.stringify(pinnable)).toBe(pinnedFullResult);
