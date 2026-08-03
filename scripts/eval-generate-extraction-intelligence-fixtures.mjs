@@ -73,6 +73,13 @@ function drawLines(page, font, lines, { x = 72, y = 700, size = 14, leading = 28
   }
 }
 
+export const TABLE_RULED_GRID_CELLS = Object.freeze([
+  ["Region", "Q1", "Q2"],
+  ["North", "1200", "1450"],
+  ["South", "980", "1020"],
+  ["West", "1500", "1380"],
+]);
+
 async function tableRuledGrid() {
   return createTextPdf("Extraction intelligence fixture: ruled grid", async (pdf, fonts) => {
     const page = pdf.addPage(PAGE);
@@ -80,12 +87,7 @@ async function tableRuledGrid() {
     const top = 680;
     const columnWidth = 150;
     const rowHeight = 48;
-    const columns = ["Region", "Q1", "Q2"];
-    const rows = [
-      ["North", "1200", "1450"],
-      ["South", "980", "1020"],
-      ["West", "1500", "1380"],
-    ];
+    const [columns, ...rows] = TABLE_RULED_GRID_CELLS;
     const totalWidth = columns.length * columnWidth;
     const totalHeight = (rows.length + 1) * rowHeight;
     page.drawRectangle({
@@ -269,6 +271,7 @@ async function compactToc() {
     const page = pdf.addPage(PAGE);
     page.drawText("CONTENTS", { x: 72, y: 742, size: 20, font: fonts.bold });
     drawLines(page, fonts.regular, [
+      "Preface ... ii",
       "Chapter 1: Scope .................... 1",
       "Chapter 2: Inputs ................... 7",
       "Chapter 3: Methods ................ 12",

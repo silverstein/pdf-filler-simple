@@ -9,8 +9,8 @@ untouched.
 Generator provenance
 
 - Generator: `scripts/eval-generate-extraction-intelligence-fixtures.mjs`
-- Generator source reference: `f10a34749f09fafd54736c93ec27e2a4fcae4183` (worktree
-  base `HEAD`; the requested implementation remains uncommitted)
+- The generator, mini-manifest, fixtures, and this document are committed together
+  in one change on branch `codex/eval-fixtures`.
 - PDF library: `pdf-lib 1.17.1`; parser baseline: `pdfjs-dist 5.4.624`
 - Content: anonymized synthetic text, geometry, raster, and character-class
   stress data only
@@ -25,7 +25,7 @@ Fixture identities
 | `table-ruled-merged-negative.pdf` | `abca089a1f67c7d0cfbd6c5345f8a80e006452dddec630295ee356bab59f6d70` |
 | `text-integrity-pua.pdf` | `f67dda2257e91f221714bf019188def5559b5bf7ada4822bc53c7af241b63085` |
 | `routing-mixed.pdf` | `d9afa9f168e825f0f3cfcfff9afb5f73a468c8c214450f7330aa5da3a4b96086` |
-| `compact-toc.pdf` | `488d9c7338b9ec8e028e3f41ad8021197f0dd30445b8c9fce9ae0e0a7eedb936` |
+| `compact-toc.pdf` | `a1a136035987782a7c47886694649672b336ddeb8e1095bd153d9665fbcef936` |
 
 Baseline observations against current code
 
@@ -43,9 +43,10 @@ Baseline observations against current code
   with reason `no_text_layer`. Current `read_pdf_layout` and
   `convert_pdf_to_markdown` expose no `pages_needing_vision` field; conversion
   of both pages is `partial` with the existing image/OCR gaps on page 2.
-- `compact-toc`: default conversion is `complete` and preserves all ten
-  dot-leader lines and both isolated page-number lines verbatim. No
-  normalization-count field is present.
+- `compact-toc`: default conversion is `complete` and preserves all eleven
+  dot-leader lines, including the exactly-three-dot `Preface ... ii` case, and
+  both isolated page-number lines verbatim. No normalization-count field is
+  present.
 
 Verification commands
 

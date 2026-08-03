@@ -33,6 +33,14 @@
         "conversion_status": "partial",
         "table_reconstructed": false,
         "gap_codes": ["TABLE_TOPOLOGY_UNKNOWN", "VECTOR_CONTENT_NOT_INTERPRETED"]
+      },
+      "truth": {
+        "cells": [
+          ["Region", "Q1", "Q2"],
+          ["North", "1200", "1450"],
+          ["South", "980", "1020"],
+          ["West", "1500", "1380"]
+        ]
       }
     },
     {
@@ -126,15 +134,16 @@
       "expected_current": {
         "page_count": 2,
         "conversion_status": "partial",
+        "gap_codes": ["TEXT_LAYER_EMPTY", "OCR_NOT_PERFORMED", "IMAGE_CONTENT_NOT_RENDERED"],
         "pages_needing_vision_field": "absent"
       }
     },
     {
       "id": "pdf-tools.extraction.intelligence.compact-toc",
       "path": "compact-toc.pdf",
-      "sha256": "488d9c7338b9ec8e028e3f41ad8021197f0dd30445b8c9fce9ae0e0a7eedb936",
+      "sha256": "a1a136035987782a7c47886694649672b336ddeb8e1095bd153d9665fbcef936",
       "media_type": "application/pdf",
-      "description": "Single-page synthetic table of contents with ten dot-leader lines and two isolated page numbers; current default output is verbatim.",
+      "description": "Single-page synthetic table of contents with eleven dot-leader lines, including one exactly-three-dot leader, and two isolated page numbers; current default output is verbatim.",
       "provenance": {
         "kind": "synthetic",
         "origin": "Open Document Alliance PDF Tools extraction-intelligence fixture generator",
@@ -156,7 +165,8 @@
       "expected_current": {
         "conversion_status": "complete",
         "default_output": "verbatim",
-        "normalization_counts_field": "absent"
+        "normalization_counts_field": "absent",
+        "gap_codes": []
       }
     }
   ]
