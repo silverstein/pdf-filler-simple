@@ -27,6 +27,7 @@ const PUA_TEXT = [
 const FIXTURE_FILES = [
   "table-ruled-grid.pdf",
   "table-ruled-merged-negative.pdf",
+  "table-ruled-lines.pdf",
   "text-integrity-pua.pdf",
   "routing-mixed.pdf",
   "compact-toc.pdf",
@@ -193,11 +194,11 @@ describe("extraction-intelligence current baseline", () => {
     await transport?.close();
   });
 
-  it("validates the separate five-fixture mini-manifest and all provenance fields", async () => {
+  it("validates the separate six-fixture mini-manifest and all provenance fields", async () => {
     expect(manifest.manifest_version).toBe(1);
     expect(manifest.suite_id).toBe("pdf-tools.extraction.intelligence.baseline");
     expect(manifest.generator).toBe("scripts/eval-generate-extraction-intelligence-fixtures.mjs");
-    expect(manifest.fixtures).toHaveLength(5);
+    expect(manifest.fixtures).toHaveLength(6);
     expect(manifest.fixtures.map(fixture => fixture.path)).toEqual(FIXTURE_FILES);
     for (const fixture of manifest.fixtures) {
       expect(fixture.media_type).toBe("application/pdf");
@@ -237,7 +238,7 @@ describe("extraction-intelligence current baseline", () => {
     }
   });
 
-  it("freezes current ruled-grid abstention as plain text with TABLE_TOPOLOGY_UNKNOWN", async () => {
+  it("freezes current ruled-grid reconstruction from cell-rect evidence", async () => {
     const fixture = expectedCurrentFor(manifest, "table-ruled-grid.pdf");
     const layout = await client.callTool({
       name: "read_pdf_layout",
@@ -267,6 +268,24 @@ describe("extraction-intelligence current baseline", () => {
     );
     expect(result.structuredContent.markdown).toMatch(/^\|.*\|$/m);
     expect(result.structuredContent.gaps.map(gap => gap.code)).toEqual([
+      "VECTOR_CONTENT_NOT_INTERPRETED",
+    ]);
+  }, 30_000);
+
+  it("freezes line-ruled tables as truthful abstention pending line synthesis", async () => {
+    const fixture = expectedCurrentFor(manifest, "table-ruled-lines.pdf");
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: {
+        pdf_path: path.join(INTELLIGENCE_ROOT, fixture.path),
+        max_markdown_bytes: 200000,
+      },
+    });
+    expect(result.isError).not.toBe(true);
+    expectCurrentConversion(result, fixture);
+    expect(result.structuredContent.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(result.structuredContent.gaps.map(gap => gap.code)).toEqual([
+      "TABLE_TOPOLOGY_UNKNOWN",
       "VECTOR_CONTENT_NOT_INTERPRETED",
     ]);
   }, 30_000);

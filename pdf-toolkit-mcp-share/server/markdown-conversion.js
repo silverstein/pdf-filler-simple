@@ -554,6 +554,11 @@ function preprocessRuledRects(page) {
     return !all.some((outer, outerIndex) => {
       if (outerIndex === innerIndex) return false;
       if (outer.x < 5 && outer.y < 5) return false;
+      // Preserve cell rectangles underneath a one-row band until the grid
+      // has been built. A body-row band is ambiguous and must be classified
+      // as topology, not allowed to erase the evidence needed to classify it.
+      if (Math.abs(outer.height - inner.height) <= RECT_CONTAINMENT_TOLERANCE
+        && outer.width > inner.width + RECT_CONTAINMENT_TOLERANCE) return false;
       const outerArea = outer.width * outer.height;
       return outerArea > innerArea * 1.2
         && outer.height < inner.height * 4
@@ -649,6 +654,18 @@ function gridRectCoverage(rect, xEdges, yEdges, tolerance = RECT_SNAP_TOLERANCE)
   return { columns, rows };
 }
 
+function rectEdgesMatchCell(rect, column, row, xEdges, yEdges) {
+  return Math.abs(rect.x - xEdges[column]) <= RECT_SNAP_TOLERANCE
+    && Math.abs(rectRight(rect) - xEdges[column + 1]) <= RECT_SNAP_TOLERANCE
+    && Math.abs(rect.y - yEdges[row]) <= RECT_SNAP_TOLERANCE
+    && Math.abs(rectBottom(rect) - yEdges[row + 1]) <= RECT_SNAP_TOLERANCE;
+}
+
+function boxesOverlap(left, right) {
+  return Math.min(left.x + left.width, right.x + right.width) > Math.max(left.x, right.x)
+    && Math.min(left.y + left.height, right.y + right.height) > Math.max(left.y, right.y);
+}
+
 function clusterBounds(cluster) {
   return {
     x: Math.min(...cluster.map(rect => rect.x)),
@@ -717,17 +734,31 @@ function tryBuildRectGrid(page, run, clusters, itemById) {
     }
 
     const bands = [];
+    const occupiedCells = new Set();
     let filledCells = 0;
     const totalCells = columnCount * rowCount;
     for (const rect of cluster) {
       const coverage = gridRectCoverage(rect, xEdges, yEdges);
       if (coverage.columns.length === columnCount && coverage.rows.length === 1) {
+        // A full-width band is only safe as first-row header evidence. On a
+        // body row it could be decoration or a merged cell, so abandon the
+        // entire candidate with a topology gap.
+        if (coverage.rows[0] > 0) return { reason: "topology" };
+        if (bands.some(band => band.rows[0] === coverage.rows[0])) {
+          return { reason: "topology" };
+        }
         bands.push({ rect, ...coverage });
+        continue;
       }
-      if (coverage.rows.length > 1
-        || (coverage.columns.length > 1 && coverage.columns.length < columnCount)) {
+      // Every non-band rectangle must describe exactly one cell. This catches
+      // merged spans and competing/shifted grids before text can be emitted.
+      if (coverage.columns.length !== 1 || coverage.rows.length !== 1
+        || !rectEdgesMatchCell(rect, coverage.columns[0], coverage.rows[0], xEdges, yEdges)) {
         return { reason: "topology" };
       }
+      const cellKey = `${coverage.rows[0]}:${coverage.columns[0]}`;
+      if (occupiedCells.has(cellKey)) return { reason: "topology" };
+      occupiedCells.add(cellKey);
     }
     for (let row = 0; row < rowCount; row += 1) {
       for (let column = 0; column < columnCount; column += 1) {
@@ -761,10 +792,14 @@ function tryBuildRectGrid(page, run, clusters, itemById) {
             }
           }
         }
-        // Preserve the source port's first-match behavior at a snapped edge,
-        // but never permit an item to disappear from the reconstructed grid.
-        if (matches.length === 0) return { reason: "topology" };
-        cells[matches[0].row][matches[0].column].push({ item, line: record.line });
+        // An item near a snapped boundary can be eligible for two cells. A
+        // first-match choice would invent topology, so abandon instead.
+        if (matches.length !== 1) return { reason: "topology" };
+        const cell = cells[matches[0].row][matches[0].column];
+        if (cell.some(entry => boxesOverlap(entry.item.bbox, box))) {
+          return { reason: "topology" };
+        }
+        cell.push({ item, line: record.line });
       }
     }
     const assignedItems = new Set(lineRecords.flatMap(record => record.insideNonWhitespace));
@@ -844,16 +879,17 @@ function segmentPageLines(page) {
       if (ruling?.kind === "table") {
         segments.push({ kind: "table", rows: run, grid: ruling.grid });
       } else {
-        if (ruling?.reason === "ruling_unsupported") {
-          tableReason = "ruling_unsupported";
-        } else if (tableLike) {
-          tableReason = grid && grid.every(Boolean) ? "header" : "topology";
-        } else if (ruling?.reason === "topology") {
+        // Preserve the reason from the rect-evidence attempt. The text path
+        // can independently see a header/topology failure, but it must not
+        // overwrite a more specific rect-path failure and its gap detail.
+        if (ruling?.reason === "topology") {
           tableReason = "topology";
         } else if (ruling?.reason === "header") {
           tableReason = "header";
         } else if (ruling?.reason === "ruling_unsupported") {
           tableReason = "ruling_unsupported";
+        } else if (tableLike) {
+          tableReason = grid && grid.every(Boolean) ? "header" : "topology";
         }
         segments.push({ kind: "text", rows: run });
       }
@@ -1140,8 +1176,10 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
  * Render an already source-validated PDF Tools layout IR to deterministic
  * Markdown. This function rechecks IR semantics but deliberately performs no
  * I/O, PDF parsing, rendering, OCR, or annotation lookup. Table reconstruction
- * is bounded to the layout IR's own text-item column geometry; it reads no
- * ruling lines and infers no merged or spanning cells.
+ * uses the layout IR's own text-item column geometry plus independently
+ * validated closed ruled-rectangle evidence. The non-rect path remains the
+ * pre-1.3.0 path; the rect path never infers merged or spanning cells and
+ * abandons on ambiguous geometry.
  */
 export function renderPdfLayoutToMarkdown(layout, {
   includePageBoundaries = true,

@@ -82,6 +82,24 @@ function attachRuledRects(layout, items, status = "available") {
   return layout;
 }
 
+const PRE_1_3_NON_RECT_EXPECTED = JSON.stringify({
+  body: "NON-RECT HEADER\nbody",
+  gap_codes: ["VECTOR_CONTENT_NOT_INTERPRETED"],
+});
+const PRE_1_2_TABLE_LIMITATION = "Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.";
+const CURRENT_TABLE_LIMITATION = "Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.";
+const PRE_1_2_VECTOR_GAP = "Vector-painted content was not interpreted as text or table structure.";
+const CURRENT_VECTOR_GAP = "Vector paint operations beyond any reconstructed table rulings were not interpreted.";
+const CURRENT_VECTOR_LIMITATION = "Vector paint operations beyond any reconstructed table rulings are not interpreted.";
+const PRE_1_2_LIMITATIONS = [
+  "Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.",
+  "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
+  "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
+  PRE_1_2_TABLE_LIMITATION,
+  "OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.",
+  "Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.",
+];
+
 function fakePdfjs(pageConfigs) {
   const pages = pageConfigs.map(config => ({
     view: [0, 0, 612, 792],
@@ -163,6 +181,59 @@ async function validatedSyntheticLayout(pageConfigs) {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("layout Markdown renderer", () => {
+  it("pins the non-rect 1.2.0 regression body and isolates the 1.3.0 wording delta", async () => {
+    const layout = await validatedSyntheticLayout([{
+      operations: [2],
+      items: [
+        textItem("NON-RECT HEADER", { top: 50, fontSize: 24 }),
+        textItem("body", { top: 100 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
+    expect(JSON.stringify({
+      body,
+      gap_codes: result.gaps.map(gap => gap.code),
+    })).toBe(PRE_1_3_NON_RECT_EXPECTED);
+    expect(result.renderer).toEqual({
+      name: "pdf-tools.layout-markdown-renderer",
+      version: "1.3.0",
+    });
+    expect(result.gaps[0].message).toBe(CURRENT_VECTOR_GAP);
+    expect(result.limitations).toContain(CURRENT_TABLE_LIMITATION);
+    expect(result.limitations).toContain(CURRENT_VECTOR_LIMITATION);
+
+    const legacy = structuredClone(result);
+    legacy.renderer.version = "1.2.0";
+    legacy.pages[0].gaps[0].message = PRE_1_2_VECTOR_GAP;
+    legacy.gaps[0].message = PRE_1_2_VECTOR_GAP;
+    legacy.limitations = PRE_1_2_LIMITATIONS;
+    legacy.markdown = legacy.markdown
+      .replace(CURRENT_VECTOR_GAP, PRE_1_2_VECTOR_GAP)
+      .replace(CURRENT_TABLE_LIMITATION, PRE_1_2_TABLE_LIMITATION)
+      .replace(`- ${CURRENT_VECTOR_LIMITATION}\n`, "");
+    expect(legacy.markdown).toContain(PRE_1_2_TABLE_LIMITATION);
+    expect(legacy.markdown).toContain(PRE_1_2_VECTOR_GAP);
+    expect(legacy.markdown).not.toContain(CURRENT_TABLE_LIMITATION);
+    expect(legacy.markdown).not.toContain(CURRENT_VECTOR_LIMITATION);
+
+    const comparable = value => {
+      const copy = structuredClone(value);
+      copy.renderer.version = "1.2.0";
+      copy.pages[0].gaps[0].message = PRE_1_2_VECTOR_GAP;
+      copy.gaps[0].message = PRE_1_2_VECTOR_GAP;
+      copy.limitations = PRE_1_2_LIMITATIONS;
+      copy.markdown = copy.markdown
+        .replace(CURRENT_VECTOR_GAP, PRE_1_2_VECTOR_GAP)
+        .replace(CURRENT_TABLE_LIMITATION, PRE_1_2_TABLE_LIMITATION)
+        .replace(`- ${CURRENT_VECTOR_LIMITATION}\n`, "");
+      delete copy.markdown_bytes;
+      delete copy.markdown_sha256;
+      return copy;
+    };
+    expect(comparable(result)).toEqual(comparable(legacy));
+  });
+
   it("reconstructs a ruled grid from IR evidence and renders deterministically", async () => {
     const layout = attachRuledRects(
       await validatedSyntheticLayout([{ items: ruledGridItems() }]),
@@ -187,6 +258,99 @@ describe("layout Markdown renderer", () => {
     const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
     expect(result.markdown).not.toMatch(/^\|.*\|$/m);
     expect(result.gaps.map(gap => gap.code)).toEqual(["TABLE_TOPOLOGY_UNKNOWN"]);
+  });
+
+  it("abstains on a competing grid even when its shifted edges fall within snap tolerance", async () => {
+    const shiftedCopy = ruledGridRects()
+      .filter(rect => rect.y !== 112)
+      .map(rect => ({ ...rect, x: rect.x + 1 }));
+    const layout = attachRuledRects(
+      await validatedSyntheticLayout([{ items: ruledGridItems({ headerSize: 12 }) }]),
+      [...ruledGridRects(), ...shiftedCopy],
+    );
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(result.gaps).toEqual([{
+      code: "TABLE_TOPOLOGY_UNKNOWN",
+      page: 1,
+      message: "Table-like content was detected but its column topology could not be reconstructed, so it remains reading-order text.",
+    }]);
+  });
+
+  it("abstains on a full-width body band and preserves the cell evidence underneath it", async () => {
+    const bodyBand = { x: 72, y: 160, width: 450, height: 48, verb: "stroke" };
+    const bodyBandRects = ruledGridRects()
+      .filter(rect => rect.y !== 160)
+      .concat(bodyBand);
+    const layout = attachRuledRects(
+      await validatedSyntheticLayout([{ items: ruledGridItems() }]),
+      bodyBandRects,
+    );
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(result.gaps).toEqual([{
+      code: "TABLE_TOPOLOGY_UNKNOWN",
+      page: 1,
+      message: "Table-like content was detected but its column topology could not be reconstructed, so it remains reading-order text.",
+    }]);
+  });
+
+  it("abstains when an item is centered on a cell edge within assignment slack", async () => {
+    const items = ruledGridItems({ headerSize: 12 }).map(item => (
+      item.str === "Q1"
+        ? textItem("Q1", { top: 130, left: 210, fontSize: 12, eol: false })
+        : item
+    ));
+    const layout = attachRuledRects(
+      await validatedSyntheticLayout([{ items }]),
+      ruledGridRects(),
+    );
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(result.gaps).toEqual([{
+      code: "TABLE_TOPOLOGY_UNKNOWN",
+      page: 1,
+      message: "Table-like content was detected but its column topology could not be reconstructed, so it remains reading-order text.",
+    }]);
+  });
+
+  it("abstains when two text bboxes overlap within one cell", async () => {
+    const items = [
+      ...ruledGridItems({ headerSize: 12 }),
+      textItem("Twin", { top: 130, left: 84, fontSize: 12, eol: false }),
+    ];
+    const layout = attachRuledRects(
+      await validatedSyntheticLayout([{ items }]),
+      ruledGridRects(),
+    );
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(result.gaps).toEqual([{
+      code: "TABLE_TOPOLOGY_UNKNOWN",
+      page: 1,
+      message: "Table-like content was detected but its column topology could not be reconstructed, so it remains reading-order text.",
+    }]);
+  });
+
+  it("preserves a rect-path header failure when the text path sees topology", async () => {
+    const items = [
+      ...ruledGridItems({ headerSize: 12 }),
+      // The text path sees two items claiming the first column, while this
+      // item is outside the body-only rect candidate and cannot affect its
+      // rect-path header evidence.
+      textItem("Duplicate", { top: 130, left: 82, fontSize: 12, eol: false }),
+    ];
+    const layout = attachRuledRects(
+      await validatedSyntheticLayout([{ items }]),
+      ruledGridRects().filter(rect => rect.y !== 112),
+    );
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown).not.toMatch(/^\|.*\|$/m);
+    expect(result.gaps).toEqual([{
+      code: "TABLE_TOPOLOGY_UNKNOWN",
+      page: 1,
+      message: "A column grid was detected but no source evidence distinguishes a header row, and a Markdown table would impose one, so it remains reading-order text.",
+    }]);
   });
 
   it("keeps decorative boxes silent and disables truncated rect evidence", async () => {
