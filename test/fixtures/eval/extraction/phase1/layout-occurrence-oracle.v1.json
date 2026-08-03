@@ -61,14 +61,14 @@
     {
       "role": "markdown_conversion_module",
       "path": "server/markdown-conversion.js",
-      "bytes": 36742,
-      "sha256": "67b597921e21c8d78dbfdc11029694473cd38e1684dfb5b02b75bc0b67ac1476"
+      "bytes": 37062,
+      "sha256": "f6603c2e461053d71a40dfd1a0958705dd67bbe79a06832534ca0c59585b0446"
     },
     {
       "role": "output_schemas_module",
       "path": "server/output-schemas.js",
       "bytes": 29954,
-      "sha256": "dfb1f11100458c096e6eeb3d35e2f5e9ef09e0d80c57695aa77bcee22a7e5f0e"
+      "sha256": "c860fb09d08870336b7a1dee890cb06aca40d6ba8097409fcbed00e26f6bdba6"
     },
     {
       "role": "package_json",
@@ -95,7 +95,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "1b4823995d320df4c2bf11b528099be39d10069091193baa777b9d11fa8d2bf6",
+  "validator_source_set_sha256": "83735c769cd23f88e2fadeb8349e76ec4ab54b4b127a97966a52967fd57cc372",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",
