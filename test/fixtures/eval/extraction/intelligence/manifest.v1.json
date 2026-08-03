@@ -1,0 +1,163 @@
+{
+  "manifest_version": 1,
+  "suite_id": "pdf-tools.extraction.intelligence.baseline",
+  "suite_version": "v0.1.0",
+  "claim_boundary": "Synthetic local direct-tool baseline only. This suite freezes current behavior for later extraction-intelligence feature deltas; it is not a public benchmark or calibration claim.",
+  "generator": "scripts/eval-generate-extraction-intelligence-fixtures.mjs",
+  "fixtures": [
+    {
+      "id": "pdf-tools.extraction.intelligence.table-ruled-grid",
+      "path": "table-ruled-grid.pdf",
+      "sha256": "f434b0be353c4e1aea0614393b90f7e4517d9d6d73c8815ff523bdc513ee6235",
+      "media_type": "application/pdf",
+      "description": "Single-page synthetic bordered three-column, four-row grid; current Markdown conversion abstains to reading-order text.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Open Document Alliance PDF Tools extraction-intelligence fixture generator",
+        "generator": "scripts/eval-generate-extraction-intelligence-fixtures.mjs",
+        "source_url": null
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false,
+        "notes": "Fictional region labels and numeric values only."
+      },
+      "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0 }],
+      "expected_current": {
+        "conversion_status": "partial",
+        "table_reconstructed": false,
+        "gap_codes": ["TABLE_TOPOLOGY_UNKNOWN", "VECTOR_CONTENT_NOT_INTERPRETED"]
+      }
+    },
+    {
+      "id": "pdf-tools.extraction.intelligence.table-ruled-merged-negative",
+      "path": "table-ruled-merged-negative.pdf",
+      "sha256": "abca089a1f67c7d0cfbd6c5345f8a80e006452dddec630295ee356bab59f6d70",
+      "media_type": "application/pdf",
+      "description": "Single-page synthetic ruled grid with a two-column merged span; abstention is a permanent fail-closed guard.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Open Document Alliance PDF Tools extraction-intelligence fixture generator",
+        "generator": "scripts/eval-generate-extraction-intelligence-fixtures.mjs",
+        "source_url": null
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false,
+        "notes": "Fictional region labels and numeric values only."
+      },
+      "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0 }],
+      "expected_current": {
+        "conversion_status": "partial",
+        "table_reconstructed": false,
+        "gap_codes": ["TABLE_TOPOLOGY_UNKNOWN", "VECTOR_CONTENT_NOT_INTERPRETED"],
+        "permanent_abstention": true
+      }
+    },
+    {
+      "id": "pdf-tools.extraction.intelligence.text-integrity-pua",
+      "path": "text-integrity-pua.pdf",
+      "sha256": "f67dda2257e91f221714bf019188def5559b5bf7ada4822bc53c7af241b63085",
+      "media_type": "application/pdf",
+      "description": "Single-page synthetic text layer dense with private-use and replacement characters; current conversion silently reports complete.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Open Document Alliance PDF Tools extraction-intelligence fixture generator",
+        "generator": "scripts/eval-generate-extraction-intelligence-fixtures.mjs",
+        "source_url": null
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false,
+        "notes": "Character-class stress fixture with no natural-language or personal content."
+      },
+      "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0 }],
+      "expected_current": {
+        "conversion_status": "complete",
+        "gap_codes": [],
+        "text_integrity_signal": "absent"
+      }
+    },
+    {
+      "id": "pdf-tools.extraction.intelligence.routing-mixed",
+      "path": "routing-mixed.pdf",
+      "sha256": "d9afa9f168e825f0f3cfcfff9afb5f73a468c8c214450f7330aa5da3a4b96086",
+      "media_type": "application/pdf",
+      "description": "Two-page synthetic mixed packet with a digital first page and raster-only second page; routing truth is in routing-truth.json.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Open Document Alliance PDF Tools extraction-intelligence fixture generator",
+        "generator": "scripts/eval-generate-extraction-intelligence-fixtures.mjs",
+        "source_url": null
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false,
+        "notes": "Fictional packet identifier and reused synthetic raster source only."
+      },
+      "page_geometry": [
+        { "page": 1, "width": 612, "height": 792, "rotation": 0 },
+        { "page": 2, "width": 612, "height": 792, "rotation": 0 }
+      ],
+      "expected_current": {
+        "page_count": 2,
+        "conversion_status": "partial",
+        "pages_needing_vision_field": "absent"
+      }
+    },
+    {
+      "id": "pdf-tools.extraction.intelligence.compact-toc",
+      "path": "compact-toc.pdf",
+      "sha256": "488d9c7338b9ec8e028e3f41ad8021197f0dd30445b8c9fce9ae0e0a7eedb936",
+      "media_type": "application/pdf",
+      "description": "Single-page synthetic table of contents with ten dot-leader lines and two isolated page numbers; current default output is verbatim.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Open Document Alliance PDF Tools extraction-intelligence fixture generator",
+        "generator": "scripts/eval-generate-extraction-intelligence-fixtures.mjs",
+        "source_url": null
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false,
+        "notes": "Synthetic chapter labels and page numbers only."
+      },
+      "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0 }],
+      "expected_current": {
+        "conversion_status": "complete",
+        "default_output": "verbatim",
+        "normalization_counts_field": "absent"
+      }
+    }
+  ]
+}
