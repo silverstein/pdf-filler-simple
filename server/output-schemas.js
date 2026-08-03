@@ -454,6 +454,7 @@ const markdownGapCode = enumString([
   "LINK_ANNOTATIONS_UNAVAILABLE",
   "LINK_MAPPING_AMBIGUOUS",
   "UNSUPPORTED_LINK_TARGET",
+  "TABLE_RULING_UNSUPPORTED",
   "TABLE_TOPOLOGY_UNKNOWN",
   "CONTROL_CHARACTERS_SANITIZED",
 ]);
@@ -620,7 +621,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
   convert_pdf_to_markdown: object({
     renderer: object({
       name: { const: "pdf-tools.layout-markdown-renderer" },
-      version: { const: "1.2.0" },
+      version: { const: "1.3.0" },
     }),
     conversion_status: enumString(["complete", "partial", "failed"]),
     markdown: string,

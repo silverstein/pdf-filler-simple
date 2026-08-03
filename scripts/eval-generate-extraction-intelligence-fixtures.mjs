@@ -90,14 +90,29 @@ async function tableRuledGrid() {
     const [columns, ...rows] = TABLE_RULED_GRID_CELLS;
     const totalWidth = columns.length * columnWidth;
     const totalHeight = (rows.length + 1) * rowHeight;
+    // Emit explicit row/cell rectangles so the B1 IR carries the closed
+    // ruling evidence that the renderer is allowed to consume. The first-row
+    // full-width band is header evidence; body cells remain one-cell rects.
     page.drawRectangle({
       x,
-      y: top - totalHeight,
+      y: top - rowHeight,
       width: totalWidth,
-      height: totalHeight,
+      height: rowHeight,
       borderColor: rgb(0.1, 0.1, 0.1),
       borderWidth: 1,
     });
+    for (let row = 1; row < rows.length + 1; row += 1) {
+      for (let column = 0; column < columns.length; column += 1) {
+        page.drawRectangle({
+          x: x + column * columnWidth,
+          y: top - (row + 1) * rowHeight,
+          width: columnWidth,
+          height: rowHeight,
+          borderColor: rgb(0.1, 0.1, 0.1),
+          borderWidth: 1,
+        });
+      }
+    }
     for (let column = 1; column < columns.length; column += 1) {
       page.drawLine({
         start: { x: x + column * columnWidth, y: top },
@@ -113,6 +128,54 @@ async function tableRuledGrid() {
       });
     }
     for (const [rowIndex, values] of [columns, ...rows].entries()) {
+      values.forEach((value, columnIndex) => {
+        page.drawText(value, {
+          x: x + columnIndex * columnWidth + 10,
+          y: top - (rowIndex + 1) * rowHeight + 17,
+          size: rowIndex === 0 ? 13 : 12,
+          font: rowIndex === 0 ? fonts.bold : fonts.regular,
+        });
+      });
+    }
+  });
+}
+
+// Coverage-boundary fixture for line-segment ruling. The parent generator's
+// outer rectangle plus individual line segments deliberately produces no
+// closed cell rectangles in the B1 IR, so zyx.3 must abstain until line-grid
+// synthesis is implemented in the separate backlog bead.
+async function tableRuledLines() {
+  return createTextPdf("Extraction intelligence fixture: line-ruled table", async (pdf, fonts) => {
+    const page = pdf.addPage(PAGE);
+    const x = 72;
+    const top = 680;
+    const columnWidth = 150;
+    const rowHeight = 48;
+    const totalWidth = 3 * columnWidth;
+    const totalHeight = 4 * rowHeight;
+    page.drawRectangle({
+      x,
+      y: top - totalHeight,
+      width: totalWidth,
+      height: totalHeight,
+      borderColor: rgb(0.1, 0.1, 0.1),
+      borderWidth: 1,
+    });
+    for (let column = 1; column < 3; column += 1) {
+      page.drawLine({
+        start: { x: x + column * columnWidth, y: top },
+        end: { x: x + column * columnWidth, y: top - totalHeight },
+        thickness: 1,
+      });
+    }
+    for (let row = 1; row < 4; row += 1) {
+      page.drawLine({
+        start: { x, y: top - row * rowHeight },
+        end: { x: x + totalWidth, y: top - row * rowHeight },
+        thickness: 1,
+      });
+    }
+    for (const [rowIndex, values] of TABLE_RULED_GRID_CELLS.entries()) {
       values.forEach((value, columnIndex) => {
         page.drawText(value, {
           x: x + columnIndex * columnWidth + 10,
@@ -291,6 +354,7 @@ async function compactToc() {
 const BUILDERS = Object.freeze([
   ["table-ruled-grid.pdf", tableRuledGrid],
   ["table-ruled-merged-negative.pdf", tableRuledMergedNegative],
+  ["table-ruled-lines.pdf", tableRuledLines],
   ["text-integrity-pua.pdf", textIntegrityPua],
   ["routing-mixed.pdf", routingMixed],
   ["compact-toc.pdf", compactToc],

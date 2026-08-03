@@ -8,9 +8,47 @@
     {
       "id": "pdf-tools.extraction.intelligence.table-ruled-grid",
       "path": "table-ruled-grid.pdf",
-      "sha256": "f434b0be353c4e1aea0614393b90f7e4517d9d6d73c8815ff523bdc513ee6235",
+      "sha256": "d7a541560b0ab1994d84155f484ad2fc2c38cffb11a573daa85f1a8cb9a59eea",
       "media_type": "application/pdf",
-      "description": "Single-page synthetic bordered three-column, four-row grid; current Markdown conversion abstains to reading-order text.",
+      "description": "Single-page synthetic bordered three-column, four-row grid; Markdown conversion reconstructs it from closed ruling rectangles.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Open Document Alliance PDF Tools extraction-intelligence fixture generator",
+        "generator": "scripts/eval-generate-extraction-intelligence-fixtures.mjs",
+        "source_url": null
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "url": "https://opensource.org/license/mit",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false,
+        "notes": "Fictional region labels and numeric values only."
+      },
+      "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0 }],
+      "expected_current": {
+        "conversion_status": "partial",
+        "table_reconstructed": true,
+        "gap_codes": ["VECTOR_CONTENT_NOT_INTERPRETED"]
+      },
+      "truth": {
+        "cells": [
+          ["Region", "Q1", "Q2"],
+          ["North", "1200", "1450"],
+          ["South", "980", "1020"],
+          ["West", "1500", "1380"]
+        ]
+      }
+    },
+    {
+      "id": "pdf-tools.extraction.intelligence.table-ruled-merged-negative",
+      "path": "table-ruled-merged-negative.pdf",
+      "sha256": "abca089a1f67c7d0cfbd6c5345f8a80e006452dddec630295ee356bab59f6d70",
+      "media_type": "application/pdf",
+      "description": "Single-page synthetic ruled grid with a two-column merged span; abstention is a permanent fail-closed guard.",
       "provenance": {
         "kind": "synthetic",
         "origin": "Open Document Alliance PDF Tools extraction-intelligence fixture generator",
@@ -32,23 +70,16 @@
       "expected_current": {
         "conversion_status": "partial",
         "table_reconstructed": false,
-        "gap_codes": ["TABLE_TOPOLOGY_UNKNOWN", "VECTOR_CONTENT_NOT_INTERPRETED"]
-      },
-      "truth": {
-        "cells": [
-          ["Region", "Q1", "Q2"],
-          ["North", "1200", "1450"],
-          ["South", "980", "1020"],
-          ["West", "1500", "1380"]
-        ]
+        "gap_codes": ["TABLE_TOPOLOGY_UNKNOWN", "VECTOR_CONTENT_NOT_INTERPRETED"],
+        "permanent_abstention": true
       }
     },
     {
-      "id": "pdf-tools.extraction.intelligence.table-ruled-merged-negative",
-      "path": "table-ruled-merged-negative.pdf",
-      "sha256": "abca089a1f67c7d0cfbd6c5345f8a80e006452dddec630295ee356bab59f6d70",
+      "id": "pdf-tools.extraction.intelligence.table-ruled-lines",
+      "path": "table-ruled-lines.pdf",
+      "sha256": "7b8e2d148c506eb3cfd8a0ca0bcae8d9d9549caadce2162476305cb8bbf547e7",
       "media_type": "application/pdf",
-      "description": "Single-page synthetic ruled grid with a two-column merged span; abstention is a permanent fail-closed guard.",
+      "description": "Single-page synthetic line-ruled three-column, four-row table; individual line segments are a coverage-boundary fixture and remain fail-closed until line-grid synthesis.",
       "provenance": {
         "kind": "synthetic",
         "origin": "Open Document Alliance PDF Tools extraction-intelligence fixture generator",

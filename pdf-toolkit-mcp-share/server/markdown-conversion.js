@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.2.0",
+  version: "1.3.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.2.0";
 
@@ -24,6 +24,22 @@ const TABLE_COLUMNAR_COVERAGE = 0.8;
 // How much taller the first row must be to evidence a header row.
 const HEADER_HEIGHT_RATIO = 1.15;
 
+// Ported from firecrawl/pdf-inspector (MIT): src/tables/detect_rects.rs.
+// These are deliberately named, bounded geometry gates rather than a
+// confidence score: the renderer either has enough ruling evidence to prove a
+// grid or it reports why it declined one.
+const RECT_CLUSTER_ADJACENCY_TOLERANCE = 3;
+const RECT_SNAP_TOLERANCE = 6;
+const RECT_CELL_ASSIGNMENT_SLACK = 2;
+const RECT_MIN_CLUSTER_RECTS = 6;
+const MAX_CLUSTER_RECTS = 2000;
+const RECT_MIN_FILL_RATIO = 0.3;
+const RECT_MAX_COLUMNS = 25;
+const RECT_CONTAINMENT_TOLERANCE = 2;
+// Two cell rectangles sharing a drawn border may overlap by a stroke width;
+// anything beyond this in BOTH axes is competing evidence, not a border.
+const RECT_MATERIAL_OVERLAP = 1;
+
 const MAX_MARKDOWN_BYTES_LIMIT = 200_000;
 const GAP_CODES = new Set([
   "CONTROL_CHARACTERS_SANITIZED",
@@ -36,6 +52,7 @@ const GAP_CODES = new Set([
   "RAW_PAGE_GEOMETRY_UNAVAILABLE",
   "SOURCE_CHARACTER_LIMIT_REACHED",
   "SOURCE_ITEM_LIMIT_REACHED",
+  "TABLE_RULING_UNSUPPORTED",
   "TABLE_TOPOLOGY_UNKNOWN",
   "TEXT_LAYER_EMPTY",
   "TEXT_LAYER_FAILED",
@@ -47,7 +64,8 @@ const LIMITATIONS = Object.freeze([
   "Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
-  "Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.",
+  "Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.",
+  "Vector paint operations beyond any reconstructed table rulings are not interpreted.",
   "OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.",
   "Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.",
 ]);
@@ -495,6 +513,354 @@ function assignRowToColumns(row, anchors) {
   return anchors.map((_anchor, index) => assigned.get(index));
 }
 
+function rectRight(rect) {
+  return rect.x + rect.width;
+}
+
+function rectBottom(rect) {
+  return rect.y + rect.height;
+}
+
+function rectsExactlyEqual(left, right) {
+  return left.x === right.x
+    && left.y === right.y
+    && left.width === right.width
+    && left.height === right.height
+    && left.verb === right.verb;
+}
+
+function containsRect(outer, inner, tolerance = RECT_CONTAINMENT_TOLERANCE) {
+  return outer.x <= inner.x + tolerance
+    && outer.y <= inner.y + tolerance
+    && rectRight(outer) >= rectRight(inner) - tolerance
+    && rectBottom(outer) >= rectBottom(inner) - tolerance;
+}
+
+function preprocessRuledRects(page) {
+  const evidence = page.ruled_rects;
+  // A truncated page cannot distinguish a complete grid from one whose
+  // omitted rects would change its topology. It is intentionally a hard
+  // disable, not a partial table candidate.
+  if (!evidence || evidence.status !== "available") return null;
+  const sourceRects = evidence.items
+    .map((rect, order) => ({ ...rect, order }))
+    .filter(rect => rect.width > 0 && rect.height > 0);
+  if (sourceRects.length === 0) return [];
+
+  const medianWidth = median(sourceRects.map(rect => rect.width));
+  const widthFiltered = sourceRects.filter(rect => rect.width <= medianWidth * 10);
+  const unique = widthFiltered.filter((rect, index, all) => (
+    all.findIndex(candidate => rectsExactlyEqual(candidate, rect)) === index
+  ));
+  const containedFiltered = unique.filter((inner, innerIndex, all) => {
+    const innerArea = inner.width * inner.height;
+    return !all.some((outer, outerIndex) => {
+      if (outerIndex === innerIndex) return false;
+      if (outer.x < 5 && outer.y < 5) return false;
+      // Preserve cell rectangles underneath a one-row band until the grid
+      // has been built. A body-row band is ambiguous and must be classified
+      // as topology, not allowed to erase the evidence needed to classify it.
+      if (Math.abs(outer.height - inner.height) <= RECT_CONTAINMENT_TOLERANCE
+        && outer.width > inner.width + RECT_CONTAINMENT_TOLERANCE) return false;
+      const outerArea = outer.width * outer.height;
+      return outerArea > innerArea * 1.2
+        && outer.height < inner.height * 4
+        && containsRect(outer, inner);
+    });
+  });
+  const medianHeight = median(containedFiltered.length > 0
+    ? containedFiltered.map(rect => rect.height)
+    : sourceRects.map(rect => rect.height));
+  const filtered = containedFiltered
+    .filter(rect => !(rect.x < 5 && rect.y < 5 && rect.height > medianHeight * 20))
+    .sort((left, right) => left.order - right.order);
+  return filtered.length > MAX_CLUSTER_RECTS ? null : filtered;
+}
+
+function intervalGap(firstStart, firstEnd, secondStart, secondEnd) {
+  if (firstEnd < secondStart) return secondStart - firstEnd;
+  if (secondEnd < firstStart) return firstStart - secondEnd;
+  return 0;
+}
+
+function rectsAdjacent(left, right) {
+  return intervalGap(left.x, rectRight(left), right.x, rectRight(right))
+      <= RECT_CLUSTER_ADJACENCY_TOLERANCE
+    && intervalGap(left.y, rectBottom(left), right.y, rectBottom(right))
+      <= RECT_CLUSTER_ADJACENCY_TOLERANCE;
+}
+
+function clusterRuledRects(rects) {
+  const parents = rects.map((_rect, index) => index);
+  const find = index => {
+    let root = index;
+    while (parents[root] !== root) root = parents[root];
+    while (parents[index] !== index) {
+      const next = parents[index];
+      parents[index] = root;
+      index = next;
+    }
+    return root;
+  };
+  const union = (left, right) => {
+    const leftRoot = find(left);
+    const rightRoot = find(right);
+    if (leftRoot !== rightRoot) parents[rightRoot] = leftRoot;
+  };
+  for (let left = 0; left < rects.length; left += 1) {
+    for (let right = left + 1; right < rects.length; right += 1) {
+      if (rectsAdjacent(rects[left], rects[right])) union(left, right);
+    }
+  }
+  const membersByRoot = new Map();
+  rects.forEach((_rect, index) => {
+    const root = find(index);
+    if (!membersByRoot.has(root)) membersByRoot.set(root, []);
+    membersByRoot.get(root).push(index);
+  });
+  return [...membersByRoot.values()]
+    .map(members => members.sort((left, right) => rects[left].order - rects[right].order))
+    .sort((left, right) => rects[left[0]].order - rects[right[0]].order)
+    .filter(members => members.length >= RECT_MIN_CLUSTER_RECTS)
+    .map(members => members.map(index => rects[index]));
+}
+
+function snapEdges(values) {
+  const sorted = [...values].sort((left, right) => left - right);
+  const groups = [];
+  for (const value of sorted) {
+    const last = groups[groups.length - 1];
+    if (last && value - last.values[last.values.length - 1] <= RECT_SNAP_TOLERANCE) {
+      last.values.push(value);
+    } else {
+      groups.push({ values: [value] });
+    }
+  }
+  return groups.map(group => median(group.values));
+}
+
+function coversInterval(rect, start, end, tolerance = RECT_SNAP_TOLERANCE) {
+  return rect.x <= start + tolerance
+    && rectRight(rect) >= end - tolerance;
+}
+
+function gridRectCoverage(rect, xEdges, yEdges, tolerance = RECT_SNAP_TOLERANCE) {
+  const columns = [];
+  const rows = [];
+  for (let column = 0; column < xEdges.length - 1; column += 1) {
+    if (coversInterval(rect, xEdges[column], xEdges[column + 1], tolerance)) columns.push(column);
+  }
+  for (let row = 0; row < yEdges.length - 1; row += 1) {
+    if (rect.y <= yEdges[row] + tolerance
+      && rectBottom(rect) >= yEdges[row + 1] - tolerance) rows.push(row);
+  }
+  return { columns, rows };
+}
+
+function rectEdgesMatchCell(rect, column, row, xEdges, yEdges) {
+  return Math.abs(rect.x - xEdges[column]) <= RECT_SNAP_TOLERANCE
+    && Math.abs(rectRight(rect) - xEdges[column + 1]) <= RECT_SNAP_TOLERANCE
+    && Math.abs(rect.y - yEdges[row]) <= RECT_SNAP_TOLERANCE
+    && Math.abs(rectBottom(rect) - yEdges[row + 1]) <= RECT_SNAP_TOLERANCE;
+}
+
+function boxesOverlap(left, right) {
+  return Math.min(left.x + left.width, right.x + right.width) > Math.max(left.x, right.x)
+    && Math.min(left.y + left.height, right.y + right.height) > Math.max(left.y, right.y);
+}
+
+function clusterBounds(cluster) {
+  return {
+    x: Math.min(...cluster.map(rect => rect.x)),
+    y: Math.min(...cluster.map(rect => rect.y)),
+    right: Math.max(...cluster.map(rect => rectRight(rect))),
+    bottom: Math.max(...cluster.map(rect => rectBottom(rect))),
+  };
+}
+
+function pointInsideCluster(item, bounds) {
+  const box = itemBox(item);
+  if (!box) return false;
+  const centerX = box.x + box.width / 2;
+  const centerY = box.y + box.height / 2;
+  return centerX >= bounds.x && centerX <= bounds.right
+    && centerY >= bounds.y && centerY <= bounds.bottom;
+}
+
+function hasFirstRowBandEvidence(bands) {
+  const firstRow = bands.find(band => band.rows.length === 1 && band.rows[0] === 0);
+  if (!firstRow) return false;
+  return !bands.some(band => band !== firstRow
+    && band.rows.length === 1
+    && band.rows[0] > 0
+    && Math.abs(band.rect.y - firstRow.rect.y) <= RECT_SNAP_TOLERANCE
+    && Math.abs(rectBottom(band.rect) - rectBottom(firstRow.rect)) <= RECT_SNAP_TOLERANCE);
+}
+
+function tryBuildRectGrid(page, run, clusters, itemById) {
+  const runLineIds = new Set(run.map(row => row.line.id));
+  const candidates = [];
+  for (const cluster of clusters) {
+    if (cluster.length < RECT_MIN_CLUSTER_RECTS) continue;
+    const bounds = clusterBounds(cluster);
+    const lineRecords = page.lines.map(line => {
+      const allItems = line.item_ids.map(id => itemById.get(id)).filter(Boolean);
+      const insideItems = allItems.filter(item => pointInsideCluster(item, bounds));
+      const nonWhitespace = allItems.filter(item => item.is_whitespace !== true
+        && typeof item.text === "string" && item.text.trim().length > 0);
+      const insideNonWhitespace = insideItems.filter(item => item.is_whitespace !== true
+        && typeof item.text === "string" && item.text.trim().length > 0);
+      if (insideNonWhitespace.length === 0) return null;
+      return {
+        line,
+        allItems,
+        items: insideItems,
+        nonWhitespace,
+        insideNonWhitespace,
+      };
+    }).filter(Boolean);
+    if (lineRecords.length < TABLE_MIN_ROWS || !lineRecords.some(record => runLineIds.has(record.line.id))) continue;
+    candidates.push({ cluster, bounds, lineRecords });
+  }
+
+  for (const { cluster, bounds, lineRecords } of candidates) {
+    const xEdges = snapEdges(cluster.flatMap(rect => [rect.x, rectRight(rect)]));
+    const yEdges = snapEdges(cluster.flatMap(rect => [rect.y, rectBottom(rect)]));
+    const gridShape = xEdges.length >= 3 && yEdges.length >= 4;
+    const canReportUnsupported = gridShape && lineRecords.length >= TABLE_MIN_ROWS;
+    if (!gridShape) continue;
+    const columnCount = xEdges.length - 1;
+    const rowCount = yEdges.length - 1;
+    if (columnCount < TABLE_MIN_COLUMNS || columnCount > RECT_MAX_COLUMNS || rowCount < TABLE_MIN_ROWS) {
+      if (canReportUnsupported) return { reason: "ruling_unsupported" };
+      continue;
+    }
+
+    const bands = [];
+    const occupiedCells = new Set();
+    const cellRects = [];
+    let filledCells = 0;
+    const totalCells = columnCount * rowCount;
+    for (const rect of cluster) {
+      const coverage = gridRectCoverage(rect, xEdges, yEdges);
+      if (coverage.columns.length === columnCount && coverage.rows.length === 1) {
+        // A full-width band is only safe as first-row header evidence. On a
+        // body row it could be decoration or a merged cell, so abandon the
+        // entire candidate with a topology gap.
+        if (coverage.rows[0] > 0) return { reason: "topology" };
+        if (bands.some(band => band.rows[0] === coverage.rows[0])) {
+          return { reason: "topology" };
+        }
+        bands.push({ rect, ...coverage });
+        continue;
+      }
+      // Every non-band rectangle must describe exactly one cell. This catches
+      // merged spans and competing/shifted grids before text can be emitted.
+      if (coverage.columns.length !== 1 || coverage.rows.length !== 1
+        || !rectEdgesMatchCell(rect, coverage.columns[0], coverage.rows[0], xEdges, yEdges)) {
+        return { reason: "topology" };
+      }
+      const cellKey = `${coverage.rows[0]}:${coverage.columns[0]}`;
+      if (occupiedCells.has(cellKey)) return { reason: "topology" };
+      occupiedCells.add(cellKey);
+      cellRects.push(rect);
+    }
+    // Distinct cell rectangles may share borders, but a material geometric
+    // overlap in both axes means two grids compete for the same region even
+    // when both rects snap cleanly to (different) cells. Fail closed.
+    for (let first = 0; first < cellRects.length; first += 1) {
+      for (let second = first + 1; second < cellRects.length; second += 1) {
+        const a = cellRects[first];
+        const b = cellRects[second];
+        const overlapWidth = Math.min(a.x + a.width, b.x + b.width) - Math.max(a.x, b.x);
+        const overlapHeight = Math.min(rectBottom(a), rectBottom(b)) - Math.max(a.y, b.y);
+        if (overlapWidth > RECT_MATERIAL_OVERLAP && overlapHeight > RECT_MATERIAL_OVERLAP) {
+          return { reason: "topology" };
+        }
+      }
+    }
+    for (let row = 0; row < rowCount; row += 1) {
+      for (let column = 0; column < columnCount; column += 1) {
+        if (cluster.some(rect => coversInterval(rect, xEdges[column], xEdges[column + 1])
+          && rect.y <= yEdges[row] + RECT_SNAP_TOLERANCE
+          && rectBottom(rect) >= yEdges[row + 1] - RECT_SNAP_TOLERANCE)) filledCells += 1;
+      }
+    }
+    if (filledCells / totalCells < RECT_MIN_FILL_RATIO) return { reason: "ruling_unsupported" };
+
+    const cells = Array.from({ length: rowCount }, () => (
+      Array.from({ length: columnCount }, () => [])
+    ));
+    for (const record of lineRecords) {
+      // A line partially crossing the cluster would be split or duplicated by
+      // a table render, so the whole line must be inside the same evidence box.
+      if (record.nonWhitespace.some(item => !pointInsideCluster(item, bounds))) {
+        return { reason: "topology" };
+      }
+      for (const item of record.insideNonWhitespace) {
+        const box = itemBox(item);
+        const centerX = box.x + box.width / 2;
+        const matches = [];
+        for (let row = 0; row < rowCount; row += 1) {
+          for (let column = 0; column < columnCount; column += 1) {
+            if (centerX >= xEdges[column] - RECT_CELL_ASSIGNMENT_SLACK
+              && centerX <= xEdges[column + 1] + RECT_CELL_ASSIGNMENT_SLACK
+              && box.y >= yEdges[row] - RECT_CELL_ASSIGNMENT_SLACK
+              && box.y <= yEdges[row + 1] + RECT_CELL_ASSIGNMENT_SLACK) {
+              matches.push({ row, column });
+            }
+          }
+        }
+        // An item near a snapped boundary can be eligible for two cells. A
+        // first-match choice would invent topology, so abandon instead.
+        if (matches.length !== 1) return { reason: "topology" };
+        const cell = cells[matches[0].row][matches[0].column];
+        if (cell.some(entry => boxesOverlap(entry.item.bbox, box))) {
+          return { reason: "topology" };
+        }
+        cell.push({ item, line: record.line });
+      }
+    }
+    const assignedItems = new Set(lineRecords.flatMap(record => record.insideNonWhitespace));
+    const unrepresentedItem = page.raw_items.some(item => (
+      item.is_whitespace !== true
+        && typeof item.text === "string"
+        && item.text.trim().length > 0
+        && pointInsideCluster(item, bounds)
+        && !assignedItems.has(item)
+    ));
+    if (unrepresentedItem) return { reason: "topology" };
+
+    const grid = cells.map(row => row.map(cell => {
+      cell.sort((left, right) => (
+        right.item.bbox.y - left.item.bbox.y
+          || left.item.bbox.x - right.item.bbox.x
+      ));
+      if (cell.some(entry => /[\r\n]/u.test(entry.item.text) || /[\r\n]/u.test(entry.line.text))) return null;
+      return cell.map(entry => entry.item.text.trim()).filter(Boolean).join(" ");
+    }));
+    if (grid.some(row => row.some(value => value === null))) return { reason: "topology" };
+
+    const emptyColumns = grid[0].map((_value, column) => grid.every(row => row[column] === ""));
+    let firstColumn = 0;
+    let lastColumn = columnCount - 1;
+    while (firstColumn <= lastColumn && emptyColumns[firstColumn]) firstColumn += 1;
+    while (lastColumn >= firstColumn && emptyColumns[lastColumn]) lastColumn -= 1;
+    if (emptyColumns.slice(firstColumn, lastColumn + 1).some(Boolean)) return { reason: "ruling_unsupported" };
+    if (firstColumn > lastColumn) return { reason: "ruling_unsupported" };
+    const trimmedGrid = grid.map(row => row.slice(firstColumn, lastColumn + 1));
+    const candidateRows = lineRecords
+      .sort((left, right) => left.line.y - right.line.y)
+      .map(record => ({ line: record.line, cells: record.insideNonWhitespace }));
+    if (!hasHeaderEvidence(candidateRows) && !hasFirstRowBandEvidence(bands)) {
+      return { reason: "header" };
+    }
+    if (candidateRows.some(row => !runLineIds.has(row.line.id))) return { reason: "topology" };
+    return { kind: "table", grid: trimmedGrid, rows: candidateRows };
+  }
+  return null;
+}
+
 /**
  * Partition a page's lines into reading-order segments. Each segment is either
  * a confidently reconstructed table or a run of ordinary lines. Table-like runs
@@ -504,6 +870,8 @@ function assignRowToColumns(row, anchors) {
 function segmentPageLines(page) {
   const itemById = new Map(page.raw_items.map(item => [item.id, item]));
   const rows = page.lines.map(line => ({ line, cells: lineCells(line, itemById) }));
+  const ruledRects = preprocessRuledRects(page);
+  const ruledClusters = ruledRects ? clusterRuledRects(ruledRects) : [];
   const segments = [];
   let tableReason = null;
   let index = 0;
@@ -524,10 +892,26 @@ function segmentPageLines(page) {
       // Only report a topology gap for runs that actually look columnar.
       // Ordinary prose that happens to share a left margin must not be
       // reported as an unreconstructed table.
-      if (tableLike) {
-        tableReason = grid && grid.every(Boolean) ? "header" : "topology";
+      const ruling = ruledClusters.length > 0
+        ? tryBuildRectGrid(page, run, ruledClusters, itemById)
+        : null;
+      if (ruling?.kind === "table") {
+        segments.push({ kind: "table", rows: run, grid: ruling.grid });
+      } else {
+        // Preserve the reason from the rect-evidence attempt. The text path
+        // can independently see a header/topology failure, but it must not
+        // overwrite a more specific rect-path failure and its gap detail.
+        if (ruling?.reason === "topology") {
+          tableReason = "topology";
+        } else if (ruling?.reason === "header") {
+          tableReason = "header";
+        } else if (ruling?.reason === "ruling_unsupported") {
+          tableReason = "ruling_unsupported";
+        } else if (tableLike) {
+          tableReason = grid && grid.every(Boolean) ? "header" : "topology";
+        }
+        segments.push({ kind: "text", rows: run });
       }
-      segments.push({ kind: "text", rows: run });
     }
     index = end;
   }
@@ -604,6 +988,9 @@ function pageGaps(page, analysis, linkState) {
   if (analysis?.tableReason === "header") {
     add("TABLE_TOPOLOGY_UNKNOWN", "A column grid was detected but no source evidence distinguishes a header row, and a Markdown table would impose one, so it remains reading-order text.");
   }
+  if (analysis?.tableReason === "ruling_unsupported") {
+    add("TABLE_RULING_UNSUPPORTED", "Ruled rectangle evidence described a grid-shaped region, but its table topology could not be reconstructed, so it remains reading-order text.");
+  }
   if (page.extraction_status === "failed") {
     add("TEXT_LAYER_FAILED", "The page text-layer extraction failed.");
   }
@@ -627,7 +1014,7 @@ function pageGaps(page, analysis, linkState) {
     add("IMAGE_CONTENT_NOT_RENDERED", "Image content was not rendered into Markdown.");
   }
   if (page.has_vector_paint_operations) {
-    add("VECTOR_CONTENT_NOT_INTERPRETED", "Vector-painted content was not interpreted as text or table structure.");
+    add("VECTOR_CONTENT_NOT_INTERPRETED", "Vector paint operations beyond any reconstructed table rulings were not interpreted.");
   }
   if (page.errors.some(error => error.code === "RAW_PAGE_GEOMETRY_UNAVAILABLE")) {
     add("RAW_PAGE_GEOMETRY_UNAVAILABLE", "Raw MediaBox, CropBox, or rotation evidence was unavailable.");
@@ -808,8 +1195,10 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
  * Render an already source-validated PDF Tools layout IR to deterministic
  * Markdown. This function rechecks IR semantics but deliberately performs no
  * I/O, PDF parsing, rendering, OCR, or annotation lookup. Table reconstruction
- * is bounded to the layout IR's own text-item column geometry; it reads no
- * ruling lines and infers no merged or spanning cells.
+ * uses the layout IR's own text-item column geometry plus independently
+ * validated closed ruled-rectangle evidence. The non-rect path remains the
+ * pre-1.3.0 path; the rect path never infers merged or spanning cells and
+ * abandons on ambiguous geometry.
  */
 export function renderPdfLayoutToMarkdown(layout, {
   includePageBoundaries = true,

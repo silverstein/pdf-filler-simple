@@ -305,7 +305,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(second.structuredContent).toEqual(first.structuredContent);
     expect(first.structuredContent).toMatchObject({
-      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.2.0" },
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.3.0" },
       conversion_status: "complete",
       saved_output: null,
       provenance: {
@@ -549,7 +549,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       );
       expect(result.content?.[0]?.text ?? "").toContain("render_pdf_page");
       expect(result.structuredContent.limitations.join("\n")).toMatch(/OCR is not performed/);
-      expect(result.structuredContent.limitations.join("\n")).toMatch(/Ruling lines and merged or spanning cells are not interpreted/);
+      expect(result.structuredContent.limitations.join("\n")).toMatch(/Merged or spanning cells are not interpreted/);
     }
 
     const table = await client.callTool({
@@ -557,7 +557,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       arguments: { pdf_path: TABLE, max_markdown_bytes: 100000 },
     });
     expect(table.isError).not.toBe(true);
-    expect(table.structuredContent.limitations.join("\n")).toMatch(/Ruling lines and merged or spanning cells are not interpreted/);
+    expect(table.structuredContent.limitations.join("\n")).toMatch(/Merged or spanning cells are not interpreted/);
     // This fixture has a merged/blank cell, so no row fills every detected
     // column. It must degrade to reading-order text and report typed partial
     // coverage rather than inventing a topology.
