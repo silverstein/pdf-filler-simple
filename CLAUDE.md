@@ -127,18 +127,36 @@ The local runtime does not bundle an OCR engine. `read_pdf_content` reads the
 PDF.js text layer. Only when the entire selected extraction contains no text may
 it return a rendered image of page 1 for a vision-capable host or model to
 inspect. `render_pdf_page` and `render_pdf_region` perform local rasterization;
-they do not produce recognized text. Mixed text/raster documents and raster
-pages after page 1 can therefore remain unrecognized by a broad text read.
+they do not produce recognized text. Mixed text/raster documents are no longer
+silent: `read_pdf_content` reports `read_pages_without_text` (scoped to pages
+actually read), `get_page_analysis` reports a `classification` rollup with
+typed `pages_needing_vision` reasons and an explicit `pages_not_analyzed`
+scope, and `convert_pdf_to_markdown` embeds the same routing metadata — all
+statuses and typed reasons, never numeric confidence, with failed measurements
+surfacing as unavailable rather than fabricated zeros.
 
-`convert_pdf_to_markdown` consumes the bounded source-validated layout IR. It
-reconstructs a table only from recurring column geometry when every row fills
-every detected column and the first row carries real header evidence, and emits
-a link only for a source-validated external http or https annotation target
-that maps to exactly one contiguous run of text on one line. Ruling lines,
-merged or spanning cells, internal destinations, actions, other URL schemes,
-and ambiguous labels stay escaped text. It does not run OCR or use an external
-model. Unsupported visual or structural content is reported as
-typed partial coverage rather than silently represented as complete Markdown.
+`convert_pdf_to_markdown` consumes the bounded source-validated layout IR
+(v1.2.0, which carries CTM-tracked ruled-rectangle evidence, text-integrity
+character-class signals, and operator counts, all independently replayed
+against a second parse). It reconstructs a table from recurring column
+geometry, or from clean ruled-rectangle grid evidence when every rect aligns
+to exactly one cell, every text item lands in exactly one cell, and the first
+row carries header evidence (typographic or a non-recurring first-row band);
+overlapping grids, body-row bands, merged or spanning cells, ambiguous
+assignments, and line-segment-only rulings all abandon with typed gaps
+(`TABLE_TOPOLOGY_UNKNOWN`, `TABLE_RULING_UNSUPPORTED`). A text layer that is
+present but suspect (replacement-character, private-use, or C1-control
+density) is flagged with `TEXT_INTEGRITY_SUSPECT` and routed to vision while
+the extracted text is still emitted verbatim. An opt-in `compact` mode applies
+three declared, counted normalizations (dot-leader collapse, isolated
+page-number removal, spaced-hyphen joining) with tables and link lines exempt;
+default output is byte-identical to non-compact behavior. Links are emitted
+only for a source-validated external http or https annotation target that maps
+to exactly one contiguous run of text on one line; internal destinations,
+actions, other URL schemes, and ambiguous labels stay escaped text. It does
+not run OCR or use an external model. Unsupported visual or structural content
+is reported as typed partial coverage rather than silently represented as
+complete Markdown.
 
 PDF Tools performs filesystem operations and rasterization locally and does not
 upload files to a separate PDF service. Content returned through MCP can be
