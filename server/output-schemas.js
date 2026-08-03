@@ -108,7 +108,19 @@ const contentWorkerFailure = object({
     error_schema_version: { const: 1 },
     code: enumString(["internal_validation_error", "path_policy_denied", "tool_execution_failed"]),
   }),
+  pages_read: integer,
   read_pages_without_text: integerArray,
+  page_read_error: pageReadError,
+});
+const contentResourceLimitError = object({
+  status: { const: "failed" },
+  error: object({
+    error_schema_version: { const: 1 },
+    code: { const: "PDF_RESOURCE_LIMIT_EXCEEDED" },
+  }),
+  pages_read: integer,
+  read_pages_without_text: integerArray,
+  page_read_error: pageReadError,
 });
 const layoutPasswordError = object({
   status: { const: "failed" },
@@ -855,7 +867,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
 const specialErrorSchemas = {
   get_pdf_identity: [pdfIdentityError],
   validate_pdf: [validationFailure],
-  read_pdf_content: [contentFailure, contentWorkerFailure, pdfResourceLimitError],
+  read_pdf_content: [contentFailure, contentWorkerFailure, contentResourceLimitError, pdfResourceLimitError],
   read_pdf_pages: [pdfResourceLimitError],
   read_pdf_layout: [layoutPasswordError, pdfResourceLimitError],
   convert_pdf_to_markdown: [layoutPasswordError, pdfResourceLimitError],

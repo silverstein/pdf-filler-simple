@@ -4003,8 +4003,11 @@ export function rollupPageClassification(pages, pagesAnalyzed = null) {
   const textRatio = available.length > 0 ? textBearingPages.length / available.length : null;
 
   let documentKind = "unknown";
-  if (unavailable && !provesMixed) {
-    documentKind = "unknown";
+  if (unavailable) {
+    // Fail closed: a page whose measurements ran and failed can never be
+    // absorbed into a confident text_based summary. Available evidence may
+    // still prove the document mixed; anything less stays unknown.
+    documentKind = provesMixed ? "mixed" : "unknown";
   } else if (textRatio !== null && textRatio >= TEXT_PAGE_RATIO_THRESHOLD) {
     documentKind = "text_based";
   } else if (textBearingPages.length > 0 && pagesNeedingVision.length > 0) {

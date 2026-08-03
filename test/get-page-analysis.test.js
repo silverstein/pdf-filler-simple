@@ -455,6 +455,14 @@ describe("get_page_analysis classification and routing", () => {
       measuredPage({ page: 2, textLength: 0, imageOpCount: 1 }),
       unavailable,
     ]).document_kind).toBe("mixed");
+    // The discriminating regression case: available ratio 2/3 >= 0.6 must NOT
+    // absorb an attempted-but-failed page into text_based.
+    expect(rollupPageClassification([
+      text,
+      measuredPage({ page: 2, textLength: 55 }),
+      measuredPage({ page: 3, textLength: 0, imageOpCount: 1 }),
+      unavailable,
+    ]).document_kind).toBe("mixed");
   });
 
   it("excludes not-analyzed pages from vision routing", () => {

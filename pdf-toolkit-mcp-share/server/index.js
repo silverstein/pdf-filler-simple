@@ -4132,6 +4132,8 @@ async function handleToolCall(request) {
         const resolvedPath = resolvePath(pdf_path);
         const MAX_CHARS = 50000;
         let readPagesWithoutText = [];
+        let readPagesReadCount = 0;
+        let readPageReadError = null;
 
         try {
           const { result, source } = await runPdfjsOperation(resolvedPath, {
@@ -4151,6 +4153,8 @@ async function handleToolCall(request) {
           const pagesWithoutText = result.pages_without_text ?? [];
           readPagesWithoutText = pagesWithoutText;
           const pageReadError = result.page_read_error ?? null;
+          readPagesReadCount = Number.isInteger(pagesRead) ? pagesRead : 0;
+          readPageReadError = pageReadError;
           const pageReadErrorCodes = pageReadError ? [pageReadError.code] : [];
           const routingGuidance = pagesWithoutText.length > 0
             ? READ_CONTENT_ROUTING_GUIDANCE
@@ -4246,7 +4250,21 @@ async function handleToolCall(request) {
                 },
               };
             } catch (imageError) {
-              if (imageError?.code === PDF_RESOURCE_LIMIT_CODE) throw imageError;
+              if (imageError?.code === PDF_RESOURCE_LIMIT_CODE) {
+                // Preserve already-computed read provenance instead of losing
+                // it to the bare shared resource-limit shape.
+                return createTypedToolError({
+                  message: `Error: ${imageError.message}`,
+                  code: PDF_RESOURCE_LIMIT_CODE,
+                  structuredContent: {
+                    status: "failed",
+                    error: { error_schema_version: 1, code: PDF_RESOURCE_LIMIT_CODE },
+                    pages_read: readPagesReadCount,
+                    read_pages_without_text: readPagesWithoutText,
+                    page_read_error: readPageReadError,
+                  },
+                });
+              }
               console.error("[read_pdf_content] Image fallback failed:", imageError.message);
               response = `Error: PDF content extraction failed: no text was found and the page-image fallback was unavailable.\n`;
               response += `Do not assume this PDF is empty or complete. Check PDF access/password, retry, and use render_pdf_page to diagnose page 1 before relying on the document contents.\n`;
@@ -4310,7 +4328,19 @@ async function handleToolCall(request) {
             },
           };
         } catch (error) {
-          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) {
+            return createTypedToolError({
+              message: `Error: ${error.message}`,
+              code: PDF_RESOURCE_LIMIT_CODE,
+              structuredContent: {
+                status: "failed",
+                error: { error_schema_version: 1, code: PDF_RESOURCE_LIMIT_CODE },
+                pages_read: readPagesReadCount,
+                read_pages_without_text: readPagesWithoutText,
+                page_read_error: readPageReadError,
+              },
+            });
+          }
           return createTypedToolError({
             message: `Error reading PDF file: ${error.message}`,
             content: [{
@@ -4323,7 +4353,9 @@ async function handleToolCall(request) {
                 error_schema_version: 1,
                 code: "tool_execution_failed",
               },
+              pages_read: readPagesReadCount,
               read_pages_without_text: readPagesWithoutText,
+              page_read_error: readPageReadError,
             },
           });
         }
