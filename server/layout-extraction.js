@@ -3,9 +3,23 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const IR_NAME = "pdf-tools.extraction-ir";
-const IR_VERSION = "1.1.0";
+const IR_VERSION = "1.2.0";
+/*
+ * IR_VERSION pin sweep (all must remain aligned):
+ * - server/layout-extraction.js: IR_VERSION and EXTRACTION_IR_IDENTITY
+ * - server/output-schemas.js: read_pdf_layout root, id_scope, and Markdown provenance
+ * - server/markdown-conversion.js: supported layout identity
+ * - test/read-pdf-layout.test.js, test/convert-pdf-to-markdown.test.js,
+ *   test/mcp-contract.test.js, and test/pdfjs-worker-contract.test.js
+ * - pdf-toolkit-mcp-share/server/layout-extraction.js and output-schemas.js
+ */
 const INTERNAL_SOURCE_REPLAY = Symbol("pdf-layout-internal-source-replay");
 const INTERNAL_MARKDOWN_PROJECTION = Symbol("pdf-layout-internal-markdown-projection");
+
+const RULED_RECT_PAGE_LIMIT = 512;
+const RULED_RECT_AXIS_TOLERANCE = 0.5;
+const RULED_RECT_MIN_SIZE = 5;
+const DRAW_OPS = Object.freeze({ moveTo: 0, lineTo: 1, curveTo: 2, quadraticCurveTo: 3, closePath: 4 });
 
 /**
  * PDF.js factory directories must end with a forward slash on every platform:
@@ -558,6 +572,378 @@ function vectorOperationSet(pdfjsLib) {
   ].filter(Number.isInteger));
 }
 
+const RECT_FILL_OP_NAMES = [
+  "fill",
+  "eoFill",
+  "fillStroke",
+  "eoFillStroke",
+  "closeFillStroke",
+  "closeEOFillStroke",
+];
+const RECT_STROKE_OP_NAMES = ["stroke", "closeStroke"];
+
+function identityTransform() {
+  return [1, 0, 0, 1, 0, 0];
+}
+
+function operatorArgument(argsArray, index) {
+  return Array.isArray(argsArray) ? argsArray[index] : undefined;
+}
+
+function operatorMatrix(value) {
+  if ((Array.isArray(value) || ArrayBuffer.isView(value))
+    && value.length === 1
+    && (Array.isArray(value[0]) || ArrayBuffer.isView(value[0]))) return value[0];
+  return value;
+}
+
+function finiteMatrix(value, label) {
+  const matrix = operatorMatrix(value);
+  if (!matrix || matrix.length !== 6 || !Array.from(matrix).every(Number.isFinite)) {
+    throw new Error(`Invalid ${label} matrix in operator list.`);
+  }
+  return Array.from(matrix, Number);
+}
+
+function pathBufferFromArguments(argumentsForOperation) {
+  if (!Array.isArray(argumentsForOperation)) return null;
+  const pathData = argumentsForOperation[1];
+  if (!Array.isArray(pathData) && !ArrayBuffer.isView(pathData)) {
+    throw new Error("Invalid constructPath data in operator list.");
+  }
+  const buffer = pathData[0];
+  if (buffer === null || buffer === undefined) return null;
+  if (!Array.isArray(buffer) && !ArrayBuffer.isView(buffer)) {
+    throw new Error("Invalid constructPath DrawOPS buffer in operator list.");
+  }
+  return buffer;
+}
+
+function decodeDrawOps(buffer) {
+  if (buffer === null) return [];
+  const commands = [];
+  let index = 0;
+  while (index < buffer.length) {
+    const opcode = Number(buffer[index++]);
+    if (![DRAW_OPS.moveTo, DRAW_OPS.lineTo, DRAW_OPS.curveTo, DRAW_OPS.quadraticCurveTo, DRAW_OPS.closePath].includes(opcode)) {
+      throw new Error(`Unknown DrawOPS opcode ${opcode}.`);
+    }
+    const coordinateCount = opcode === DRAW_OPS.curveTo ? 6
+      : opcode === DRAW_OPS.quadraticCurveTo ? 4
+        : opcode === DRAW_OPS.moveTo || opcode === DRAW_OPS.lineTo ? 2 : 0;
+    if (index + coordinateCount > buffer.length) throw new Error("Truncated constructPath DrawOPS buffer.");
+    const coordinates = Array.from(buffer.slice(index, index + coordinateCount), Number);
+    if (!coordinates.every(Number.isFinite)) throw new Error("Non-finite constructPath coordinate.");
+    index += coordinateCount;
+    commands.push({ opcode, coordinates });
+  }
+  return commands;
+}
+
+function rectangleSubpaths(commands) {
+  const rectangles = [];
+  let current = null;
+  const finish = () => {
+    if (!current || !current.closed || current.hasCurve || ![3, 4].includes(current.lines.length)) return;
+    const segments = current.lines.map(segment => [...segment]);
+    const last = segments.at(-1);
+    const closeSegment = [last[1], current.start];
+    if (segments.length === 3) segments.push(closeSegment);
+    else if (Math.hypot(last[1][0] - current.start[0], last[1][1] - current.start[1]) > RULED_RECT_AXIS_TOLERANCE) return;
+    rectangles.push(segments);
+  };
+  for (const command of commands) {
+    if (command.opcode === DRAW_OPS.moveTo) {
+      finish();
+      const point = [command.coordinates[0], command.coordinates[1]];
+      current = { start: point, point, lines: [], hasCurve: false, closed: false };
+    } else if (command.opcode === DRAW_OPS.lineTo) {
+      if (!current) continue;
+      const next = [command.coordinates[0], command.coordinates[1]];
+      current.lines.push([current.point, next]);
+      current.point = next;
+    } else if (command.opcode === DRAW_OPS.curveTo || command.opcode === DRAW_OPS.quadraticCurveTo) {
+      if (current) {
+        current.hasCurve = true;
+        current.point = command.opcode === DRAW_OPS.curveTo
+          ? [command.coordinates[4], command.coordinates[5]]
+          : [command.coordinates[2], command.coordinates[3]];
+      }
+    } else if (command.opcode === DRAW_OPS.closePath) {
+      if (current) {
+        current.closed = true;
+        finish();
+        current = null;
+      }
+    }
+  }
+  finish();
+  return rectangles;
+}
+
+function transformedRectangle(segments, transform) {
+  const transformedSegments = segments.map(([start, end]) => [
+    applyViewportPoint(transform, start[0], start[1]),
+    applyViewportPoint(transform, end[0], end[1]),
+  ]);
+  const points = transformedSegments.flat();
+  if (!points.every(point => point.every(Number.isFinite))) return null;
+  const axisAligned = transformedSegments.every(([start, end]) => {
+    const dx = Math.abs(end[0] - start[0]);
+    const dy = Math.abs(end[1] - start[1]);
+    return (dy <= RULED_RECT_AXIS_TOLERANCE && dx > RULED_RECT_AXIS_TOLERANCE)
+      || (dx <= RULED_RECT_AXIS_TOLERANCE && dy > RULED_RECT_AXIS_TOLERANCE);
+  });
+  if (!axisAligned) return null;
+  const xs = points.map(point => point[0]);
+  const ys = points.map(point => point[1]);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  const width = Math.max(...xs) - x;
+  const height = Math.max(...ys) - y;
+  if (width < RULED_RECT_MIN_SIZE || height < RULED_RECT_MIN_SIZE) return null;
+  const uniqueCorners = [];
+  for (const point of points) {
+    if (!uniqueCorners.some(existing => Math.hypot(existing[0] - point[0], existing[1] - point[1]) <= RULED_RECT_AXIS_TOLERANCE)) {
+      uniqueCorners.push(point);
+    }
+  }
+  if (uniqueCorners.length !== 4) return null;
+  return { x: round(x), y: round(y), width: round(width), height: round(height) };
+}
+
+function rectPaintVerb(pdfjsLib, paintOp, pendingClip) {
+  if (pendingClip && paintOp === pdfjsLib.OPS?.endPath) return "clip";
+  if (RECT_FILL_OP_NAMES.some(name => paintOp === pdfjsLib.OPS?.[name])) return "fill";
+  if (RECT_STROKE_OP_NAMES.some(name => paintOp === pdfjsLib.OPS?.[name])) return "stroke";
+  if (paintOp === pdfjsLib.OPS?.endPath) return "none";
+  return null;
+}
+
+function rectGridKey(rect) {
+  return [rect.x, rect.y, rect.width, rect.height].map(value => Math.round(value / RULED_RECT_AXIS_TOLERANCE));
+}
+
+function deduplicateRectangles(candidates) {
+  const sorted = [...candidates].sort((left, right) => {
+    const leftKey = rectGridKey(left);
+    const rightKey = rectGridKey(right);
+    for (let index = 0; index < leftKey.length; index += 1) {
+      if (leftKey[index] !== rightKey[index]) return leftKey[index] - rightKey[index];
+    }
+    return left.operator_index - right.operator_index;
+  });
+  const buckets = new Map();
+  const unique = [];
+  for (const candidate of sorted) {
+    const [x, y, width, height] = rectGridKey(candidate);
+    let duplicate = false;
+    for (let dx = -1; dx <= 1 && !duplicate; dx += 1) {
+      for (let dy = -1; dy <= 1 && !duplicate; dy += 1) {
+        for (let dw = -1; dw <= 1 && !duplicate; dw += 1) {
+          for (let dh = -1; dh <= 1 && !duplicate; dh += 1) {
+            const bucket = buckets.get(`${x + dx}:${y + dy}:${width + dw}:${height + dh}`) ?? [];
+            duplicate = bucket.some(existing => existing.verb === candidate.verb
+              && ["x", "y", "width", "height"].every(
+                field => Math.abs(existing[field] - candidate[field]) <= RULED_RECT_AXIS_TOLERANCE,
+              ));
+          }
+        }
+      }
+    }
+    if (duplicate) continue;
+    const key = `${x}:${y}:${width}:${height}`;
+    const bucket = buckets.get(key) ?? [];
+    bucket.push(candidate);
+    buckets.set(key, bucket);
+    unique.push(candidate);
+  }
+  return unique.sort((left, right) => left.operator_index - right.operator_index);
+}
+
+// Ported from firecrawl/pdf-inspector (MIT): src/tables/detect_rects.rs.
+function deriveOperatorEvidence(pdfjsLib, operators, viewportTransform) {
+  const fnArray = operators?.fnArray;
+  if (!Array.isArray(fnArray)) throw new Error("Operator list fnArray is unavailable.");
+  const argsArray = Array.isArray(operators?.argsArray) ? operators.argsArray : [];
+  const imageOps = imageOperationSet(pdfjsLib);
+  const constructPathOp = pdfjsLib.OPS?.constructPath;
+  const matrixStack = [];
+  let currentTransform = identityTransform();
+  let pendingClip = false;
+  let imagePaintOps = 0;
+  let pathConstructOps = 0;
+  let pathSegments = 0;
+  const candidates = [];
+  const displayTransform = Array.isArray(viewportTransform) && viewportTransform.length === 6
+    ? viewportTransform : identityTransform();
+
+  for (let operatorIndex = 0; operatorIndex < fnArray.length; operatorIndex += 1) {
+    const operation = fnArray[operatorIndex];
+    const args = operatorArgument(argsArray, operatorIndex);
+    if (imageOps.has(operation)) imagePaintOps += 1;
+    if (operation === pdfjsLib.OPS?.save) {
+      matrixStack.push(currentTransform);
+    } else if (operation === pdfjsLib.OPS?.restore) {
+      currentTransform = matrixStack.pop() ?? identityTransform();
+    } else if (operation === pdfjsLib.OPS?.transform) {
+      currentTransform = multiplyTransforms(currentTransform, finiteMatrix(args, "transform"));
+    } else if (operation === pdfjsLib.OPS?.paintFormXObjectBegin) {
+      matrixStack.push(currentTransform);
+      const formArgs = Array.isArray(args) ? args : [];
+      // pdfjs passes [null, bbox] for a Form XObject without /Matrix; null
+      // means identity, not an invalid operator list.
+      if (formArgs[0] !== null && formArgs[0] !== undefined) {
+        currentTransform = multiplyTransforms(currentTransform, finiteMatrix(formArgs[0], "Form XObject"));
+      }
+    } else if (operation === pdfjsLib.OPS?.paintFormXObjectEnd) {
+      currentTransform = matrixStack.pop() ?? identityTransform();
+    } else if (operation === pdfjsLib.OPS?.clip || operation === pdfjsLib.OPS?.eoClip) {
+      pendingClip = true;
+    } else if (operation === constructPathOp) {
+      pathConstructOps += 1;
+      const argumentsForPath = Array.isArray(args) ? args : null;
+      const buffer = pathBufferFromArguments(argumentsForPath);
+      const commands = decodeDrawOps(buffer);
+      pathSegments += commands.length;
+      const paintOp = argumentsForPath?.[0];
+      const verb = rectPaintVerb(pdfjsLib, paintOp, pendingClip);
+      if (verb !== null && buffer !== null) {
+        const combinedTransform = multiplyTransforms(displayTransform, currentTransform);
+        for (const segments of rectangleSubpaths(commands)) {
+          const rect = transformedRectangle(segments, combinedTransform);
+          if (rect) candidates.push({ ...rect, verb, operator_index: operatorIndex });
+        }
+      }
+      pendingClip = false;
+    }
+  }
+
+  const unique = deduplicateRectangles(candidates);
+  const returned = unique.slice(0, RULED_RECT_PAGE_LIMIT).map(({ operator_index: _operatorIndex, ...rect }) => rect);
+  const truncated = unique.length > returned.length;
+  return {
+    ruled_rects: {
+      status: truncated ? "truncated" : "available",
+      observed_count: unique.length,
+      returned_count: returned.length,
+      items: returned,
+    },
+    operator_counts: {
+      image_paint_ops: imagePaintOps,
+      path_segments: pathSegments,
+      path_construct_ops: pathConstructOps,
+    },
+  };
+}
+
+// Ported from firecrawl/pdf-inspector (MIT): src/text_quality.rs.
+function codePointIsPrivateUse(codePoint) {
+  return (codePoint >= 0xe000 && codePoint <= 0xf8ff)
+    || (codePoint >= 0xf0000 && codePoint <= 0xffffd)
+    || (codePoint >= 0x100000 && codePoint <= 0x10fffd);
+}
+
+// Ported from firecrawl/pdf-inspector (MIT): src/text_quality.rs.
+function itemTextIntegrity(text) {
+  const codePoints = [...text];
+  let replacementCharacters = 0;
+  let longestReplacementRun = 0;
+  let replacementSpans = 0;
+  let replacementRun = 0;
+  let privateUse = 0;
+  let privateUseRuns = 0;
+  let privateRun = 0;
+  for (const character of codePoints) {
+    const codePoint = character.codePointAt(0);
+    if (character === "\uFFFD") {
+      replacementCharacters += 1;
+      replacementRun += 1;
+      longestReplacementRun = Math.max(longestReplacementRun, replacementRun);
+    } else if (replacementRun > 0) {
+      if (replacementRun >= 2) replacementSpans += 1;
+      replacementRun = 0;
+    }
+    if (codePointIsPrivateUse(codePoint)) {
+      privateUse += 1;
+      privateRun += 1;
+    } else if (privateRun > 0) {
+      if (privateRun >= 3) privateUseRuns += 1;
+      privateRun = 0;
+    }
+  }
+  if (replacementRun >= 2) replacementSpans += 1;
+  if (privateRun >= 3) privateUseRuns += 1;
+  const replacementSignal = longestReplacementRun >= 2 || replacementCharacters >= 3;
+  let c1ControlTokens = 0;
+  for (const token of text.matchAll(/\S+/gu)) {
+    const tokenText = token[0];
+    const tokenCodePoints = [...tokenText];
+    const c1Count = tokenCodePoints.filter(character => {
+      const codePoint = character.codePointAt(0);
+      return codePoint >= 0x80 && codePoint <= 0x9f;
+    }).length;
+    if (tokenCodePoints.length >= 5 && c1Count >= 2 && c1Count * 20 >= tokenCodePoints.length) c1ControlTokens += 1;
+  }
+  const privateUseSignal = privateUseRuns > 0
+    || (codePoints.length >= 5 && privateUse >= 2 && privateUse * 2 >= codePoints.length);
+  return {
+    replacementCharacters: replacementSignal ? replacementCharacters : 0,
+    longestReplacementRun,
+    replacementSpans: replacementSignal ? replacementSpans : 0,
+    privateUseRuns: privateUseSignal ? Math.max(1, privateUseRuns) : 0,
+    privateUseSignal,
+    c1ControlTokens,
+  };
+}
+
+function nonAlphanumericDominance(text) {
+  const codePoints = [...text];
+  let total = 0;
+  let alphanumeric = 0;
+  for (let index = 0; index < codePoints.length;) {
+    if ([".", "_", "·"].includes(codePoints[index])) {
+      let end = index + 1;
+      while (end < codePoints.length && codePoints[end] === codePoints[index]) end += 1;
+      if (end - index >= 3) {
+        index = end;
+        continue;
+      }
+    }
+    const character = codePoints[index++];
+    if (/\s/u.test(character)) continue;
+    total += 1;
+    if (/^[\p{L}\p{N}]$/u.test(character)) alphanumeric += 1;
+  }
+  return total >= 50 && alphanumeric * 2 < total;
+}
+
+function deriveTextIntegrity(textItemEntries, unavailable = false) {
+  if (unavailable) return { status: "unavailable", signals: [] };
+  const pageText = textItemEntries.map(([, item]) => item.str).join("\n");
+  const itemSignals = textItemEntries.map(([, item]) => itemTextIntegrity(item.str));
+  const characters = [...pageText].length;
+  const replacementCharacters = itemSignals.reduce((sum, signal) => sum + signal.replacementCharacters, 0);
+  const replacementSpans = itemSignals.reduce((sum, signal) => sum + signal.replacementSpans, 0);
+  const longestReplacementRun = Math.max(0, ...itemSignals.map(signal => signal.longestReplacementRun));
+  const privateUseRuns = itemSignals.reduce((sum, signal) => sum + signal.privateUseRuns, 0);
+  const c1ControlTokens = itemSignals.reduce((sum, signal) => sum + signal.c1ControlTokens, 0);
+  const replacementSuspect = (characters <= 80 && longestReplacementRun >= 2)
+    || (replacementCharacters >= 12 && replacementCharacters / Math.max(1, characters) >= 0.05)
+    || (replacementSpans >= 3 && replacementSpans / Math.max(1, characters) >= 0.025)
+    || (longestReplacementRun >= 8 && longestReplacementRun / Math.max(1, characters) >= 0.025);
+  const signals = [];
+  if (replacementCharacters > 0) signals.push({ kind: "replacement_characters", count: replacementCharacters });
+  if (privateUseRuns > 0) signals.push({ kind: "private_use_runs", count: privateUseRuns });
+  if (c1ControlTokens > 0) signals.push({ kind: "c1_control_tokens", count: c1ControlTokens });
+  if (nonAlphanumericDominance(pageText)) signals.push({ kind: "non_alphanumeric_dominance", count: 1 });
+  return {
+    status: replacementSuspect || privateUseRuns > 0 || c1ControlTokens > 0 || signals.some(signal => signal.kind === "non_alphanumeric_dominance")
+      ? "suspect" : "ok",
+    signals,
+  };
+}
+
 function errorRecord(stage, error) {
   return {
     stage,
@@ -816,6 +1202,64 @@ export function validatePdfLayoutSemantics(payload, {
     }
     semanticAssertion(page.page === expectedPage && page.id === pagePrefix, `page ${expectedPage} identity mismatch`);
     semanticAssertion(page.geometry.page === page.page, `page ${page.page} geometry identity mismatch`);
+    const ruledRects = page.ruled_rects;
+    semanticAssertion(ruledRects && typeof ruledRects === "object" && !Array.isArray(ruledRects),
+      `page ${page.page} ruled rectangle evidence is malformed`);
+    semanticAssertion(["available", "truncated", "failed", "unavailable"].includes(ruledRects.status),
+      `page ${page.page} ruled rectangle status is invalid`);
+    semanticAssertion(Number.isSafeInteger(ruledRects.observed_count) && ruledRects.observed_count >= 0
+      && Number.isSafeInteger(ruledRects.returned_count) && ruledRects.returned_count >= 0
+      && ruledRects.returned_count <= ruledRects.observed_count
+      && Array.isArray(ruledRects.items) && ruledRects.items.length === ruledRects.returned_count
+      && ruledRects.items.length <= RULED_RECT_PAGE_LIMIT,
+    `page ${page.page} ruled rectangle accounting is invalid`);
+    semanticAssertion((ruledRects.status === "truncated") === (ruledRects.observed_count > ruledRects.returned_count),
+      `page ${page.page} ruled rectangle truncation status mismatch`);
+    if (ruledRects.status === "available") {
+      semanticAssertion(ruledRects.observed_count === ruledRects.returned_count,
+        `page ${page.page} available ruled rectangle evidence is incomplete`);
+    }
+    if (ruledRects.status === "failed" || ruledRects.status === "unavailable") {
+      semanticAssertion(ruledRects.items.length === 0 && ruledRects.observed_count === 0 && ruledRects.returned_count === 0,
+      `page ${page.page} degraded ruled rectangle evidence retains geometry`);
+    }
+    if (ruledRects.status === "truncated" || ruledRects.status === "failed") {
+      semanticAssertion(page.errors.some(error => error.stage === "ruled_rects"),
+        `page ${page.page} degraded ruled rectangle evidence lacks a supporting error`);
+    }
+    if (ruledRects.status === "unavailable") {
+      semanticAssertion(page.errors.some(error => error.stage === "operators" || error.stage === "page"),
+        `page ${page.page} unavailable ruled rectangle evidence lacks an operator failure`);
+    }
+    for (const rect of ruledRects.items) {
+      semanticAssertion(Number.isFinite(rect.x) && Number.isFinite(rect.y)
+        && Number.isFinite(rect.width) && Number.isFinite(rect.height)
+        && rect.x >= 0 && rect.y >= 0 && rect.width >= 0 && rect.height >= 0
+        && ["fill", "stroke", "clip", "none"].includes(rect.verb),
+      `page ${page.page} ruled rectangle geometry or verb is invalid`);
+    }
+    const operatorCounts = page.operator_counts;
+    semanticAssertion(operatorCounts === null || (
+      typeof operatorCounts === "object"
+      && ["image_paint_ops", "path_segments", "path_construct_ops"].every(field => Number.isSafeInteger(operatorCounts[field]) && operatorCounts[field] >= 0)
+    ), `page ${page.page} operator counts are invalid`);
+    const textIntegrity = page.text_integrity;
+    semanticAssertion(textIntegrity && typeof textIntegrity === "object" && !Array.isArray(textIntegrity)
+      && ["ok", "suspect", "unavailable"].includes(textIntegrity.status)
+      && Array.isArray(textIntegrity.signals), `page ${page.page} text-integrity evidence is malformed`);
+    const textSignalKinds = ["replacement_characters", "private_use_runs", "c1_control_tokens", "non_alphanumeric_dominance"];
+    const seenTextSignalKinds = new Set();
+    for (const signal of textIntegrity.signals) {
+      semanticAssertion(textSignalKinds.includes(signal.kind)
+        && Number.isSafeInteger(signal.count) && signal.count > 0
+        && !seenTextSignalKinds.has(signal.kind), `page ${page.page} text-integrity signal is invalid`);
+      seenTextSignalKinds.add(signal.kind);
+    }
+    if (textIntegrity.status === "unavailable") {
+      semanticAssertion(textIntegrity.signals.length === 0
+        && page.errors.some(error => error.stage === "page" || error.stage === "text"),
+      `page ${page.page} unavailable text-integrity evidence lacks a text failure`);
+    }
     semanticAssertion(page.geometry.rotation_matches_raw === (page.geometry.display_rotation === null || page.geometry.raw_pdf_rotation === null
       ? null : page.geometry.display_rotation === page.geometry.raw_pdf_rotation), `page ${page.page} rotation cross-check mismatch`);
     const rawGeometryUnavailable = page.errors.some(error => error.code === "RAW_PAGE_GEOMETRY_UNAVAILABLE");
@@ -1058,13 +1502,13 @@ export function validatePdfLayoutSemantics(payload, {
         && page.modality_hint === "text-layer-candidate"
         && !page.needs_visual_inspection
         && !page.truncation.truncated
-        && page.errors.length === 0
+        && page.errors.every(error => error.stage === "ruled_rects")
         && page.link_annotations.status === "available"
         && page.link_annotations.truncated === false
         && page.raw_items.every(item => item.geometry_valid), `page ${page.page} complete status overclaims evidence`);
     }
     if (page.text_layer_status === "failed") semanticAssertion(page.extraction_status === "failed", `page ${page.page} failed text status mismatch`);
-    semanticAssertion(page.errors.every(error => ["page", "text", "operators", "geometry", "annotations"].includes(error.stage)
+    semanticAssertion(page.errors.every(error => ["page", "text", "operators", "geometry", "annotations", "ruled_rects"].includes(error.stage)
       && typeof error.code === "string" && error.code.length > 0 && error.code.length <= 100
       && typeof error.message === "string" && error.message.length > 0 && error.message.length <= 500), `page ${page.page} invalid error record`);
   }
@@ -1317,7 +1761,11 @@ export async function validatePdfLayoutSourceEvidence(payload, {
                 ],
               })
               && outputPage.has_image_operations === null
-              && outputPage.has_vector_paint_operations === null,
+              && outputPage.has_vector_paint_operations === null
+              && sameJson(outputPage.ruled_rects, { status: "unavailable", observed_count: 0, returned_count: 0, items: [] })
+              && outputPage.text_integrity.status === "unavailable"
+              && outputPage.text_integrity.signals.length === 0
+              && outputPage.operator_counts === null,
             `page ${outputPage.page} ordinary page failure differs from reparsed source`,
           );
           continue;
@@ -1370,6 +1818,13 @@ export async function validatePdfLayoutSourceEvidence(payload, {
         const sourceEntries = (textContent?.items ?? [])
           .filter(item => typeof item?.str === "string")
           .map((item, sourceIndex) => [sourceIndex, item]);
+        // Dedicated source replay: ruled_rects, text_integrity, and operator_counts
+        // are all replay-proven from the second parse; none are semantic-only.
+        const sourceTextIntegrity = deriveTextIntegrity(sourceEntries, textContent === null);
+        sourceEvidenceAssertion(
+          sameJson(outputPage.text_integrity, sourceTextIntegrity),
+          `page ${outputPage.page} text-integrity evidence differs from independently reparsed source`,
+        );
         sourceEvidenceAssertion(outputPage.counts.observed_items === sourceEntries.length, `page ${outputPage.page} observed item count differs from reparsed source`);
         sourceEvidenceAssertion(
           outputPage.counts.observed_non_whitespace_items === sourceEntries.filter(([, item]) => item.str.trim().length > 0).length,
@@ -1451,8 +1906,17 @@ export async function validatePdfLayoutSourceEvidence(payload, {
 
         let sourceOperators = null;
         let sourceOperatorError = null;
+        let sourceOperatorEvidenceError = null;
+        let sourceOperatorEvidence = null;
         try {
           sourceOperators = await withDeadline(sourcePage.getOperatorList(), deadlineAt);
+          if (!Array.isArray(sourceOperators?.fnArray)) throw new Error("Operator list fnArray is unavailable.");
+          try {
+            sourceOperatorEvidence = deriveOperatorEvidence(pdfjsLib, sourceOperators, sourceViewport?.transform ?? null);
+          } catch (error) {
+            if (isFatalParserResourceError(error)) throw error;
+            sourceOperatorEvidenceError = error;
+          }
         } catch (error) {
           if (isFatalParserResourceError(error)) throw error;
           sourceOperatorError = error;
@@ -1466,11 +1930,35 @@ export async function validatePdfLayoutSourceEvidence(payload, {
               && !outputPage.errors.some(error => error.stage === "operators"),
             `page ${outputPage.page} operator evidence differs from reparsed source`,
           );
+          if (sourceOperatorEvidenceError === null) {
+            const expectedRuledErrors = sourceOperatorEvidence.ruled_rects.status === "truncated"
+              ? [errorRecord("ruled_rects", Object.assign(new Error(`Ruled rectangle evidence exceeded the per-page limit of ${RULED_RECT_PAGE_LIMIT}.`), { name: "RULED_RECT_PAGE_LIMIT" }))]
+              : [];
+            sourceEvidenceAssertion(
+              sameJson(outputPage.ruled_rects, sourceOperatorEvidence.ruled_rects)
+                && sameJson(outputPage.operator_counts, sourceOperatorEvidence.operator_counts)
+                && sameJson(outputPage.errors.filter(error => error.stage === "ruled_rects"), expectedRuledErrors),
+              `page ${outputPage.page} dedicated operator evidence differs from independently reparsed source`,
+            );
+          } else {
+            const expectedError = errorRecord("ruled_rects", sourceOperatorEvidenceError);
+            sourceEvidenceAssertion(
+              outputPage.ruled_rects.status === "failed"
+                && outputPage.ruled_rects.observed_count === 0
+                && outputPage.ruled_rects.returned_count === 0
+                && outputPage.ruled_rects.items.length === 0
+                && outputPage.operator_counts === null
+                && sameJson(outputPage.errors.filter(error => error.stage === "ruled_rects"), [expectedError]),
+              `page ${outputPage.page} failed dedicated operator evidence differs from independently reparsed source`,
+            );
+          }
         } else {
           const expectedError = errorRecord("operators", sourceOperatorError);
           sourceEvidenceAssertion(
             outputPage.has_image_operations === null
               && outputPage.has_vector_paint_operations === null
+              && sameJson(outputPage.ruled_rects, { status: "unavailable", observed_count: 0, returned_count: 0, items: [] })
+              && outputPage.operator_counts === null
               && outputPage.errors.some(outputError => sameJson(outputError, expectedError)),
             `page ${outputPage.page} source operator parse failed but output claims operator evidence`,
           );
@@ -1605,6 +2093,8 @@ export async function extractPdfLayout({
       let textContent = null;
       let hasImageOperations = null;
       let hasVectorPaintOperations = null;
+      let ruledRects = { status: "unavailable", observed_count: 0, returned_count: 0, items: [] };
+      let operatorCounts = null;
       let pdfjsPage = null;
       let viewport = null;
       let linkAnnotations = UNAVAILABLE_LINK_ANNOTATIONS;
@@ -1638,6 +2128,22 @@ export async function extractPdfLayout({
           const operators = await withDeadline(pdfjsPage.getOperatorList(), deadlineAt);
           hasImageOperations = operators.fnArray.some(operation => imageOps.has(operation));
           hasVectorPaintOperations = operators.fnArray.some(operation => vectorOps.has(operation));
+          try {
+            const operatorEvidence = deriveOperatorEvidence(pdfjsLib, operators, viewport?.transform ?? null);
+            ruledRects = operatorEvidence.ruled_rects;
+            operatorCounts = operatorEvidence.operator_counts;
+            if (ruledRects.status === "truncated") {
+              const limitError = Object.assign(new Error(`Ruled rectangle evidence exceeded the per-page limit of ${RULED_RECT_PAGE_LIMIT}.`), {
+                name: "RULED_RECT_PAGE_LIMIT",
+              });
+              errors.push(errorRecord("ruled_rects", limitError));
+            }
+          } catch (error) {
+            if (isFatalParserResourceError(error)) throw error;
+            ruledRects = { status: "failed", observed_count: 0, returned_count: 0, items: [] };
+            operatorCounts = null;
+            errors.push(errorRecord("ruled_rects", error));
+          }
         } catch (error) {
           if (isFatalParserResourceError(error)) throw error;
           errors.push(errorRecord("operators", error));
@@ -1653,6 +2159,7 @@ export async function extractPdfLayout({
       const textItemEntries = (textContent?.items ?? [])
         .filter(item => typeof item?.str === "string")
         .map((item, sourceIndex) => [sourceIndex, item]);
+      const textIntegrity = deriveTextIntegrity(textItemEntries, textContent === null);
       const observedCharacters = textItemEntries.reduce((sum, [, item]) => sum + item.str.length, 0);
       const rawItems = [];
       const pageReasons = [];
@@ -1808,6 +2315,9 @@ export async function extractPdfLayout({
         geometry,
         has_image_operations: hasImageOperations,
         has_vector_paint_operations: hasVectorPaintOperations,
+        ruled_rects: ruledRects,
+        text_integrity: textIntegrity,
+        operator_counts: operatorCounts,
         link_annotations: linkAnnotations,
         raw_items: rawItems,
         lines: ordered.lines,

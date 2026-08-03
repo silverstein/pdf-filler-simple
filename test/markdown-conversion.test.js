@@ -50,7 +50,7 @@ function fakePdfjs(pageConfigs) {
         styles: { f1: { fontFamily: "Test Sans", ascent: 0.8, descent: -0.2, vertical: false } },
       };
     },
-    getOperatorList: async () => ({ fnArray: config.operations ?? [] }),
+    getOperatorList: async () => ({ fnArray: config.operations ?? [], argsArray: config.argsArray ?? [] }),
     getAnnotations: async () => {
       if (config.annotationError) throw config.annotationError;
       return config.annotations ?? [];
@@ -59,7 +59,33 @@ function fakePdfjs(pageConfigs) {
   }));
   return {
     version: "5.4.624",
-    OPS: { paintImageXObject: 1, constructPath: 2, fill: 3 },
+    OPS: {
+      save: 10,
+      restore: 11,
+      transform: 12,
+      clip: 29,
+      eoClip: 30,
+      paintFormXObjectBegin: 74,
+      paintFormXObjectEnd: 75,
+      paintImageXObject: 1,
+      paintJpegXObject: 5,
+      paintImageMaskXObject: 6,
+      paintImageMaskXObjectGroup: 7,
+      paintInlineImageXObject: 8,
+      paintInlineImageXObjectGroup: 9,
+      paintImageXObjectRepeat: 13,
+      paintImageMaskXObjectRepeat: 14,
+      constructPath: 2,
+      stroke: 4,
+      closeStroke: 15,
+      fill: 3,
+      eoFill: 16,
+      fillStroke: 17,
+      eoFillStroke: 18,
+      closeFillStroke: 19,
+      closeEOFillStroke: 20,
+      endPath: 21,
+    },
     Util: { transform: multiply },
     getDocument: () => ({
       promise: Promise.resolve({
@@ -564,8 +590,8 @@ describe("layout Markdown renderer", () => {
       items: [textItem("Body text", { top: 50 })],
     }]);
     const unsupportedIr = structuredClone(layout);
-    unsupportedIr.ir.version = "2.0.0";
-    unsupportedIr.id_scope.ir_version = "2.0.0";
+    unsupportedIr.ir.version = "1.1.0";
+    unsupportedIr.id_scope.ir_version = "1.1.0";
     expect(() => renderPdfLayoutToMarkdown(unsupportedIr)).toThrow("unsupported layout IR");
 
     const unsupportedParser = structuredClone(layout);

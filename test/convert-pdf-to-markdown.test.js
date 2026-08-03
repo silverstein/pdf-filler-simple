@@ -309,7 +309,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       conversion_status: "complete",
       saved_output: null,
       provenance: {
-        layout: { name: "pdf-tools.extraction-ir", version: "1.1.0", parser_version: "5.4.624" },
+        layout: { name: "pdf-tools.extraction-ir", version: "1.2.0", parser_version: "5.4.624" },
       },
     });
     const { markdown } = first.structuredContent;

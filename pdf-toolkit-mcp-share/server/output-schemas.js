@@ -312,7 +312,7 @@ const layoutDocumentTruncation = object({
   first_omitted_source_index: nullable(integer),
 });
 const layoutError = object({
-  stage: enumString(["page", "text", "operators", "geometry"]),
+  stage: enumString(["page", "text", "operators", "geometry", "annotations", "ruled_rects"]),
   code: string,
   message: string,
 });
@@ -375,6 +375,31 @@ const layoutBlock = object({
   column_index: integer,
   line_ids: stringArray,
 });
+const layoutRuledRect = object({
+  x: { type: "number", minimum: 0 },
+  y: { type: "number", minimum: 0 },
+  width: { type: "number", minimum: 0 },
+  height: { type: "number", minimum: 0 },
+  verb: enumString(["fill", "stroke", "clip", "none"]),
+});
+const layoutRuledRects = object({
+  status: enumString(["available", "truncated", "failed", "unavailable"]),
+  observed_count: { type: "integer", minimum: 0 },
+  returned_count: { type: "integer", minimum: 0 },
+  items: arrayOf(layoutRuledRect),
+});
+const layoutTextIntegrity = object({
+  status: enumString(["ok", "suspect", "unavailable"]),
+  signals: arrayOf(object({
+    kind: enumString(["replacement_characters", "private_use_runs", "c1_control_tokens", "non_alphanumeric_dominance"]),
+    count: { type: "integer", minimum: 1 },
+  })),
+});
+const layoutOperatorCounts = nullable(object({
+  image_paint_ops: { type: "integer", minimum: 0 },
+  path_segments: { type: "integer", minimum: 0 },
+  path_construct_ops: { type: "integer", minimum: 0 },
+}));
 const markdownGapCode = enumString([
   "PAGE_RANGE_INCOMPLETE",
   "SOURCE_ITEM_LIMIT_REACHED",
@@ -425,6 +450,9 @@ const layoutPage = object({
   geometry: layoutGeometry,
   has_image_operations: nullable(boolean),
   has_vector_paint_operations: nullable(boolean),
+  ruled_rects: layoutRuledRects,
+  text_integrity: layoutTextIntegrity,
+  operator_counts: layoutOperatorCounts,
   link_annotations: object({
     status: enumString(["available", "unavailable"]),
     truncated: boolean,
@@ -512,7 +540,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     truncated: boolean,
   }),
   read_pdf_layout: object({
-    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.1.0" } }),
+    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.2.0" } }),
     parser: object({ name: { const: "pdfjs-dist" }, version: { const: "5.4.624" } }),
     source: object({
       pdf_path: string,
@@ -524,7 +552,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       kind: { const: "source_parser_ir_options" },
       source_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       parser_version: { const: "5.4.624" },
-      ir_version: { const: "1.1.0" },
+      ir_version: { const: "1.2.0" },
       requested_start_page: integer,
       requested_end_page: integer,
       max_items: integer,
@@ -571,7 +599,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       }),
       layout: object({
         name: { const: "pdf-tools.extraction-ir" },
-        version: { const: "1.1.0" },
+        version: { const: "1.2.0" },
         parser_name: { const: "pdfjs-dist" },
         parser_version: { const: "5.4.624" },
         page_range: object({
