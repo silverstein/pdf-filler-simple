@@ -79,7 +79,16 @@ export function deriveMarkdownVisionRouting(layout) {
   return (layout?.pages ?? []).flatMap(page => {
     const reasons = [];
     if (["empty", "failed"].includes(page.text_layer_status)) reasons.push("no_text_layer");
-    if (page.image_detection_status === "detected" && page.text_layer_status !== "present") {
+    // Threshold-consistent with get_page_analysis (helpers.js
+    // MIN_TEXT_CHARS_WITH_IMAGES): a page with image paints and text below
+    // the raised bar routes to vision even when a thin text layer exists.
+    const trimmedTextLength = (page.raw_items ?? [])
+      .filter(item => item.is_whitespace !== true && typeof item.text === "string")
+      .reduce((total, item) => total + item.text.trim().length, 0);
+    const imagePaints = page.operator_counts?.image_paint_ops ?? 0;
+    if (page.image_detection_status === "detected"
+      && (page.text_layer_status !== "present"
+        || (imagePaints > 0 && trimmedTextLength < MIN_TEXT_CHARS_WITH_IMAGES))) {
       reasons.push("image_dominated");
     }
     if (page.modality_hint === "vector-only-candidate") reasons.push("vector_only_text");
@@ -622,6 +631,7 @@ import {
   recoverPdfOutputTransactions,
   writePdfOutputAtomic,
   writePdfOutputsAtomic,
+  MIN_TEXT_CHARS_WITH_IMAGES,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal

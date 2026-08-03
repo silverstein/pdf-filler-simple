@@ -35,6 +35,11 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-08-03: classification scope, ratio routing, and page-read failure
 // provenance.
 // 9493a450cf16b0b1110792553cfd55b644fc7724fea55bfdebb92806196f139b.
+// 2026-08-03: zyx.4 text-integrity surfaces — TEXT_INTEGRITY_SUSPECT gap code
+// in the Markdown gap enum, suspected_text_integrity routing reason, and
+// read_pdf_content pages_with_suspected_text_integrity with typed per-page
+// signal counts. Previously
+// 9493a450cf16b0b1110792553cfd55b644fc7724fea55bfdebb92806196f139b.
 // 2026-07-30: convert_pdf_to_markdown description corrected to state the table
 // and link capabilities it actually has, then shortened to 820 characters
 // without dropping a safety boundary. Previously

@@ -528,6 +528,29 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     expect(result.structuredContent.gaps.map(gap => gap.code)).toContain("LINK_MAPPING_AMBIGUOUS");
   }, 30_000);
 
+  it("routes an image page with sub-threshold text to vision, matching get_page_analysis semantics", async () => {
+    const pdfPath = path.join(temporaryRoot, "image-short-text.pdf");
+    const document = await PDFDocument.create();
+    const page = document.addPage([612, 792]);
+    const font = await document.embedFont(StandardFonts.Helvetica);
+    const raster = await document.embedPng(await fs.readFile(
+      path.join(REPO_ROOT, "test/fixtures/eval/extraction/source-images/raster-clean.png"),
+    ));
+    page.drawImage(raster, { x: 72, y: 200, width: 400, height: 400 });
+    page.drawText("Caption under the scan", { x: 72, y: 160, size: 12, font });
+    await fs.writeFile(pdfPath, await document.save({ useObjectStreams: false }));
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: pdfPath, max_markdown_bytes: 100000 },
+    });
+    expect(result.isError).not.toBe(true);
+    // 22 trimmed chars < MIN_TEXT_CHARS_WITH_IMAGES (100): the thin caption
+    // must not suppress vision routing merely because a text layer exists.
+    expect(result.structuredContent.pages_needing_vision).toEqual([
+      { page: 1, reasons: ["image_dominated"] },
+    ]);
+  });
+
   it("reports mixed, raster-only, and table-like visual structure without OCR or topology claims", async () => {
     const cases = [
       [MIXED, { end_page: 2 }, ["OCR_NOT_PERFORMED", "IMAGE_CONTENT_NOT_RENDERED"]],
