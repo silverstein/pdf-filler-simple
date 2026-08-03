@@ -59,3 +59,69 @@ Algorithm designs ported from firecrawl/pdf-inspector (MIT, Copyright
 Firecrawl) per the plan's attribution contract; no pdf-inspector code ships
 in the MCPB. Silverbook aggregate `npm run test:all` result is recorded in
 the zyx.7 bead notes with host, commit, and command.
+
+## Addendum 2026-08-03: head reconciliation and the aggregate gate
+
+Everything above was written at head `a546ce4`. The branch then advanced:
+`5c9f7ed` (docs only), `77e1af9` and `0d5e091` (tracker bytes only), and
+`65a49cf` (merge of reviewed `f75ef53`, which changes only
+`test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.v1.json`).
+No `server/` or shipped runtime file changed after `a546ce4`, so the
+functional evidence above speaks unchanged for `65a49cf`.
+
+Corrections to the text above, recorded rather than rewritten:
+
+- The claim that the Silverbook aggregate result "is recorded in the zyx.7
+  bead notes" did not survive: the Beads backend regression tracked by
+  `pdf-toolkit-mcp-cnh` reverted that persist (commit `77e1af9` captured
+  note updates but no closure, and commit `a546ce4` persisted only the
+  zyx.4 closure despite its subject line). Committed Git bytes and the
+  receipts below are the authority.
+- The first Silverbook aggregate at `a546ce4` was RED, not green: vitest
+  10 failed / 1885 passed / 81 skipped, and the native partition never ran
+  because `run-all-test-suites.mjs` short-circuits on a failing vitest
+  partition. Exact receipt and full log: private vault
+  `evidence/ei-aggregate-a546ce4-2026-08-03/` (log sha256 `c8a9a312…`).
+  All ten failures were the retained layout-occurrence oracle failing
+  closed on validator-source identity drift — pre-existing on clean master
+  (bead `pdf-toolkit-mcp-wvu`: master commit `0da18ea` changed
+  `server/layout-extraction.js` after the last master oracle regen) and
+  reproduced on the epic branch for the sources zyx.3/4/5 legitimately
+  advanced. Fix: reviewed regeneration `f75ef53` (adversarial review PASS;
+  cases byte-equal, identity entries only).
+- Aggregate at merged `65a49cf` on Silverbook (macOS 26.6 arm64, node
+  v26.3.1, fresh bundle clone + npm ci, stock `npm run test:all`): RED,
+  exit 1 — vitest 1 failed / 1894 passed / 81 skipped; native partition
+  short-circuited. The ten wvu failures are gone; the single remaining
+  failure is candidate-owned: `5c9f7ed`'s CLAUDE.md boundary rewrite
+  dropped the explicit later-raster-pages limitation that
+  `test/documentation-claims.test.js:277` enforces. Recorded as a
+  truthful-documentation regression; the claims contract is not weakened
+  or waived. Receipt: vault `evidence/ei-aggregate-65a49cf-2026-08-03/`
+  (log sha256 `aa5592fe…`).
+- Repair `55ce2e5` plus `77945ce` (worktree claude-docs-boundary-claims,
+  CLAUDE.md only) restores the explicit boundary: routing metadata
+  identifies pages needing vision but does not recognize their scanned
+  text, including later raster pages in mixed documents. The
+  `pages_needing_vision` routing description is preserved unweakened.
+  Fresh-context adversarial review PASS, including verification of the
+  new wording against the runtime (the page-1 image fallback is gated on
+  a fully textless read; no recognition path exists) and independent
+  re-application of all four claims regexes to all four product surfaces.
+  Merged as `76846ef`.
+- **Aggregate gate MET at `76846ef`**: Silverbook (macOS 26.6 arm64,
+  node v26.3.1), fresh bundle clone + `npm ci`, stock `npm run test:all`,
+  exit 0. Vitest 119 files / 1895 passed / 81 skipped / 0 failed; native
+  partition 71 tests / 62 passed / 0 failed / 9 skipped. This is the
+  first complete `test:all` of the cycle: both earlier aggregates
+  short-circuited before the native partition, so that partition had
+  never actually run against this epic. Receipt and full log: private
+  vault `evidence/ei-aggregate-76846ef-2026-08-03/` (log sha256
+  `7017c998…`).
+
+This qualifies the integrated epic at source level on darwin/arm64 only.
+No packaged artifact, no Windows or darwin/x64 host, and no live-host
+conversation is qualified by it. Release remains HOLD, and the epic's
+milestone push is an unmet human gate, so `pdf-toolkit-mcp-zyx.7` and the
+parent epic stay open rather than being closed or amended on the strength
+of a green suite.
