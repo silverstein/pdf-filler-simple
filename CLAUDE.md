@@ -134,9 +134,10 @@ they are no longer silent: `read_pdf_content` reports
 `read_pages_without_text` (scoped to pages actually read),
 `get_page_analysis` reports a `classification` rollup with typed
 `pages_needing_vision` reasons and an explicit `pages_not_analyzed` scope,
-and `convert_pdf_to_markdown` embeds the same routing metadata — all
-statuses and typed reasons, never numeric confidence, with failed measurements
-surfacing as unavailable rather than fabricated zeros.
+and `convert_pdf_to_markdown` embeds the same routing metadata. All of
+these surfaces report statuses and typed reasons, never numeric confidence,
+with failed measurements surfacing as unavailable rather than fabricated
+zeros.
 
 `convert_pdf_to_markdown` consumes the bounded source-validated layout IR
 (v1.2.0, which carries CTM-tracked ruled-rectangle evidence, text-integrity
