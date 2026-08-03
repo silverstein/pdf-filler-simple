@@ -127,11 +127,14 @@ The local runtime does not bundle an OCR engine. `read_pdf_content` reads the
 PDF.js text layer. Only when the entire selected extraction contains no text may
 it return a rendered image of page 1 for a vision-capable host or model to
 inspect. `render_pdf_page` and `render_pdf_region` perform local rasterization;
-they do not produce recognized text. Mixed text/raster documents are no longer
-silent: `read_pdf_content` reports `read_pages_without_text` (scoped to pages
-actually read), `get_page_analysis` reports a `classification` rollup with
-typed `pages_needing_vision` reasons and an explicit `pages_not_analyzed`
-scope, and `convert_pdf_to_markdown` embeds the same routing metadata — all
+they do not produce recognized text. Mixed text/raster documents still include
+later raster pages whose scanned content no broad text read recognizes; the
+routing metadata identifies those pages without recognizing their text, so
+they are no longer silent: `read_pdf_content` reports
+`read_pages_without_text` (scoped to pages actually read),
+`get_page_analysis` reports a `classification` rollup with typed
+`pages_needing_vision` reasons and an explicit `pages_not_analyzed` scope,
+and `convert_pdf_to_markdown` embeds the same routing metadata — all
 statuses and typed reasons, never numeric confidence, with failed measurements
 surfacing as unavailable rather than fabricated zeros.
 
