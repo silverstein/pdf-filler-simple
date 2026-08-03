@@ -69,7 +69,7 @@ import {
 } from "./pdf-lib-subprocess.js";
 
 export const READ_CONTENT_ROUTING_GUIDANCE =
-  "Pages without extractable text were read in this call. Use render_pdf_page for visual inspection of those pages; this list is scoped to pages_read and does not classify pages outside this call.";
+  "Pages without extractable text were successfully read in this call. Use render_pdf_page for visual inspection of those pages; read_pages_without_text is limited to successfully-read pages, and pages outside this read scope or stopped at a page-read error are not classified by this result.";
 
 /**
  * Keep Markdown routing in one mapping function so later text-integrity
@@ -4131,6 +4131,7 @@ async function handleToolCall(request) {
         const { pdf_path, max_pages = null } = args;
         const resolvedPath = resolvePath(pdf_path);
         const MAX_CHARS = 50000;
+        let readPagesWithoutText = [];
 
         try {
           const { result, source } = await runPdfjsOperation(resolvedPath, {
@@ -4148,6 +4149,9 @@ async function handleToolCall(request) {
           const pageCount = result.total_pages;
           const pagesRead = result.pages_read;
           const pagesWithoutText = result.pages_without_text ?? [];
+          readPagesWithoutText = pagesWithoutText;
+          const pageReadError = result.page_read_error ?? null;
+          const pageReadErrorCodes = pageReadError ? [pageReadError.code] : [];
           const routingGuidance = pagesWithoutText.length > 0
             ? READ_CONTENT_ROUTING_GUIDANCE
             : null;
@@ -4233,9 +4237,10 @@ async function handleToolCall(request) {
                   preview_truncated: result.preview_truncated,
                   extraction_mode: "image-fallback",
                   image_renderer: renderedImage.renderer,
+                  page_read_error: pageReadError,
                   read_pages_without_text: pagesWithoutText,
                   routing_guidance: routingGuidance,
-                  error_codes: [],
+                  error_codes: pageReadErrorCodes,
                   retry_guidance:
                     "Only page 1 was returned as an image. Use render_pdf_page for any additional pages that require inspection.",
                 },
@@ -4264,9 +4269,10 @@ async function handleToolCall(request) {
                   page_previews: result.page_previews,
                   preview_truncated: result.preview_truncated,
                   extraction_mode: "none",
+                  page_read_error: pageReadError,
                   read_pages_without_text: pagesWithoutText,
                   routing_guidance: routingGuidance,
-                  error_codes: ["NO_EXTRACTABLE_TEXT", "IMAGE_FALLBACK_FAILED"],
+                  error_codes: ["NO_EXTRACTABLE_TEXT", "IMAGE_FALLBACK_FAILED", ...pageReadErrorCodes],
                   retry_guidance:
                     "Do not treat this PDF as empty. Check PDF access/password and renderer availability, then retry read_pdf_content or render_pdf_page.",
                 },
@@ -4294,9 +4300,10 @@ async function handleToolCall(request) {
               page_previews: result.page_previews,
               preview_truncated: result.preview_truncated,
               extraction_mode: "text",
+              page_read_error: pageReadError,
               read_pages_without_text: pagesWithoutText,
               routing_guidance: routingGuidance,
-              error_codes: [],
+              error_codes: pageReadErrorCodes,
               retry_guidance: extractionPartial
                 ? "Use max_pages or page-bounded tools to retrieve content outside this partial result."
                 : null,
@@ -4310,6 +4317,14 @@ async function handleToolCall(request) {
               type: "text",
               text: `Error reading PDF file: ${error.message}\n\nPlease ensure the file path is correct and the file exists.`
             }],
+            structuredContent: {
+              status: "failed",
+              error: {
+                error_schema_version: 1,
+                code: "tool_execution_failed",
+              },
+              read_pages_without_text: readPagesWithoutText,
+            },
           });
         }
       }

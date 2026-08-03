@@ -51,6 +51,10 @@ const pageTextPreview = object({
   truncated: boolean,
   text: string,
 });
+const pageReadError = nullable(object({
+  page: integer,
+  code: { const: "PDFJS_PAGE_READ_FAILED" },
+}));
 const regionPoints = object({
   x: number,
   y: number,
@@ -97,6 +101,14 @@ const standardError = object({
       "tool_execution_failed",
     ]),
   }),
+});
+const contentWorkerFailure = object({
+  status: { const: "failed" },
+  error: object({
+    error_schema_version: { const: 1 },
+    code: enumString(["internal_validation_error", "path_policy_denied", "tool_execution_failed"]),
+  }),
+  read_pages_without_text: integerArray,
 });
 const layoutPasswordError = object({
   status: { const: "failed" },
@@ -210,6 +222,7 @@ const contentProperties = {
   content_available: boolean,
   extraction_status: enumString(["complete", "partial"]),
   page_previews: arrayOf(pageTextPreview),
+  page_read_error: pageReadError,
   read_pages_without_text: { ...integerArray, description: "Pages actually read in this call whose normalized text layer is empty." },
   routing_guidance: nullable({ type: "string", description: "Fixed guidance to use render_pdf_page for pages without text, scoped to this call." }),
   preview_truncated: boolean,
@@ -747,6 +760,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       document_kind: enumString(["text_based", "image_based", "vector_heavy", "mixed", "empty", "unknown"]),
       pages_analyzed: integer,
       pages_needing_vision: arrayOf(visionRoutingPage),
+      pages_not_analyzed: integerArray,
     }),
     pages: arrayOf(pageAnalysis),
     majority_orientation: enumString(["portrait", "landscape"]),
@@ -841,7 +855,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
 const specialErrorSchemas = {
   get_pdf_identity: [pdfIdentityError],
   validate_pdf: [validationFailure],
-  read_pdf_content: [contentFailure, pdfResourceLimitError],
+  read_pdf_content: [contentFailure, contentWorkerFailure, pdfResourceLimitError],
   read_pdf_pages: [pdfResourceLimitError],
   read_pdf_layout: [layoutPasswordError, pdfResourceLimitError],
   convert_pdf_to_markdown: [layoutPasswordError, pdfResourceLimitError],

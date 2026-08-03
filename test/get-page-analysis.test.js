@@ -282,15 +282,21 @@ describe("get_page_analysis content provenance", () => {
     const result = await analyzePdfPages({
       pdfLibPages: fakePdfLibPages(2),
       pdfBytes: new Uint8Array([1]),
-      pdfjsLib: fakePdfjs([{ text: "", hasImages: false }]),
+      pdfjsLib: fakePdfjs([{ text: "a".repeat(30), hasImages: false }]),
       maxPages: 1,
     });
 
     expect(result).toMatchObject({
       content_analysis_status: "partial",
-      likely_blank_pages: [1],
+      nonblank_pages: [1],
       unknown_pages: [2],
       retry_guidance: PAGE_ANALYSIS_RETRY_GUIDANCE,
+      classification: {
+        document_kind: "text_based",
+        pages_analyzed: 1,
+        pages_needing_vision: [],
+        pages_not_analyzed: [2],
+      },
     });
     expect(result.pages[1]).toMatchObject({
       content_analysis_status: "not_analyzed",
@@ -373,11 +379,61 @@ describe("get_page_analysis classification and routing", () => {
     expect(3 / pages.length).toBe(TEXT_PAGE_RATIO_THRESHOLD);
     const first = rollupPageClassification(pages);
     expect(first).toEqual(rollupPageClassification(pages));
-    expect(first.document_kind).toBe("mixed");
+    expect(first.document_kind).toBe("text_based");
     expect(first.pages_needing_vision).toEqual([
       { page: 4, reasons: ["no_text_layer"] },
       { page: 5, reasons: ["no_text_layer"] },
     ]);
+  });
+
+  it("classifies below the ratio threshold as mixed and keeps vision pages explicit above it", () => {
+    const belowThreshold = rollupPageClassification([
+      measuredPage({ page: 1, textLength: 25 }),
+      measuredPage({ page: 2, textLength: 25 }),
+      measuredPage({ page: 3, textLength: 0 }),
+      measuredPage({ page: 4, textLength: 0 }),
+    ]);
+    expect(belowThreshold.document_kind).toBe("mixed");
+    expect(belowThreshold.pages_needing_vision).toEqual([
+      { page: 3, reasons: ["no_text_layer"] },
+      { page: 4, reasons: ["no_text_layer"] },
+    ]);
+
+    const aboveThreshold = rollupPageClassification([
+      measuredPage({ page: 1, textLength: 25 }),
+      measuredPage({ page: 2, textLength: 25 }),
+      measuredPage({ page: 3, textLength: 25 }),
+      measuredPage({ page: 4, textLength: 25 }),
+      measuredPage({ page: 5, textLength: 0 }),
+      measuredPage({ page: 6, textLength: 0, imageOpCount: 1 }),
+    ]);
+    expect(aboveThreshold.document_kind).toBe("text_based");
+    expect(aboveThreshold.pages_needing_vision).toEqual([
+      { page: 5, reasons: ["no_text_layer"] },
+      { page: 6, reasons: ["image_dominated"] },
+    ]);
+  });
+
+  it("pins vector and trimmed-text boundaries", async () => {
+    expect(classifyPageRouting(measuredPage({ textLength: 29, pathSegmentCount: VECTOR_SEGMENT_MIN - 1 })))
+      .toEqual({ text_bearing: true, reasons: [] });
+    expect(classifyPageRouting(measuredPage({ textLength: 29, pathSegmentCount: VECTOR_SEGMENT_MIN })))
+      .toEqual({ text_bearing: true, reasons: ["vector_only_text"] });
+    expect(classifyPageRouting(measuredPage({ textLength: 29, pathSegmentCount: VECTOR_SEGMENT_MIN + 1 })))
+      .toEqual({ text_bearing: true, reasons: ["vector_only_text"] });
+    expect(classifyPageRouting(measuredPage({ textLength: 30, pathSegmentCount: VECTOR_SEGMENT_MIN })))
+      .toEqual({ text_bearing: true, reasons: [] });
+
+    const whitespace = await analyzePdfPages({
+      pdfLibPages: fakePdfLibPages(1),
+      pdfBytes: new Uint8Array([1]),
+      pdfjsLib: fakePdfjs([{ text: " \n\t  " }]),
+    });
+    expect(whitespace.pages[0].text_length).toBe(5);
+    expect(classifyPageRouting(whitespace.pages[0])).toEqual({
+      text_bearing: false,
+      reasons: ["no_text_layer"],
+    });
   });
 
   it("keeps an unavailable page unknown unless the remaining evidence proves mixed", () => {
@@ -399,5 +455,28 @@ describe("get_page_analysis classification and routing", () => {
       measuredPage({ page: 2, textLength: 0, imageOpCount: 1 }),
       unavailable,
     ]).document_kind).toBe("mixed");
+  });
+
+  it("excludes not-analyzed pages from vision routing", () => {
+    expect(classifyPageRouting({ content_analysis_status: "not_analyzed" })).toEqual({
+      text_bearing: null,
+      reasons: [],
+    });
+    const result = rollupPageClassification([
+      measuredPage({ page: 1, textLength: 30 }),
+      {
+        page: 2,
+        content_analysis_status: "not_analyzed",
+        text_extraction_status: "not_analyzed",
+        image_detection_status: "not_analyzed",
+        graphics_detection_status: "not_analyzed",
+      },
+    ], 1);
+    expect(result).toEqual({
+      document_kind: "text_based",
+      pages_analyzed: 1,
+      pages_needing_vision: [],
+      pages_not_analyzed: [2],
+    });
   });
 });

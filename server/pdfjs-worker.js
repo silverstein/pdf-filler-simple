@@ -576,61 +576,77 @@ async function withPdfjsDocument(bytes, password, action, { render = false } = {
   }
 }
 
-async function readContent(bytes, password, options) {
-  return await withPdfjsDocument(bytes, password, async document => {
-    const pagesRead = options.max_pages === null
-      ? document.numPages
-      : Math.min(options.max_pages, document.numPages);
-    let sourceLength = 0;
-    let prefix = "";
-    let textFound = false;
-    let previewRemaining = 12_000;
-    let previewTruncated = false;
-    const pagePreviews = [];
-    const pagesWithoutText = [];
-    for (let pageNumber = 1; pageNumber <= pagesRead; pageNumber += 1) {
-      const page = await document.getPage(pageNumber);
-      try {
-        const rawText = await pageText(page);
-        if (pageNumber > 1) {
-          sourceLength += 2;
-          if (prefix.length < 50_000) prefix += "\n\n".slice(0, 50_000 - prefix.length);
-        }
-        sourceLength += rawText.length;
-        if (prefix.length < 50_000) prefix += rawText.slice(0, 50_000 - prefix.length);
-        const hasText = rawText.trim().length > 0;
-        if (hasText) textFound = true;
-        else pagesWithoutText.push(pageNumber);
-
-        const normalized = normalizeText(rawText);
-        const available = Math.max(Math.min(previewRemaining, 2000), 0);
-        const returned = normalized.slice(0, available);
-        const truncated = returned.length < normalized.length;
-        previewTruncated ||= truncated;
-        pagePreviews.push({
-          page: pageNumber,
-          char_count: normalized.length,
-          returned_chars: returned.length,
-          truncated,
-          text: returned,
-        });
-        previewRemaining -= returned.length;
-      } finally {
-        page.cleanup();
+export async function readContentFromDocument(document, options) {
+  const pagesRead = options.max_pages === null
+    ? document.numPages
+    : Math.min(options.max_pages, document.numPages);
+  let sourceLength = 0;
+  let prefix = "";
+  let textFound = false;
+  let previewRemaining = 12_000;
+  let previewTruncated = false;
+  const pagePreviews = [];
+  const pagesWithoutText = [];
+  let pagesReadSuccessfully = 0;
+  let pageReadError = null;
+  for (let pageNumber = 1; pageNumber <= pagesRead; pageNumber += 1) {
+    let page = null;
+    try {
+      page = await document.getPage(pageNumber);
+      const rawText = await pageText(page);
+      if (pageNumber > 1) {
+        sourceLength += 2;
+        if (prefix.length < 50_000) prefix += "\n\n".slice(0, 50_000 - prefix.length);
       }
+      sourceLength += rawText.length;
+      if (prefix.length < 50_000) prefix += rawText.slice(0, 50_000 - prefix.length);
+      const hasText = rawText.trim().length > 0;
+      if (hasText) textFound = true;
+      else pagesWithoutText.push(pageNumber);
+
+      const normalized = normalizeText(rawText);
+      const available = Math.max(Math.min(previewRemaining, 2000), 0);
+      const returned = normalized.slice(0, available);
+      const truncated = returned.length < normalized.length;
+      previewTruncated ||= truncated;
+      pagePreviews.push({
+        page: pageNumber,
+        char_count: normalized.length,
+        returned_chars: returned.length,
+        truncated,
+        text: returned,
+      });
+      previewRemaining -= returned.length;
+      pagesReadSuccessfully += 1;
+    } catch {
+      pageReadError = {
+        page: pageNumber,
+        code: "PDFJS_PAGE_READ_FAILED",
+      };
+      break;
+    } finally {
+      try {
+        page?.cleanup();
+      } catch {}
     }
-    return {
-      output_text: prefix,
-      page_previews: pagePreviews,
-      pages_without_text: pagesWithoutText,
-      pages_read: pagesRead,
-      preview_truncated: previewTruncated,
-      source_length: sourceLength,
-      text_found: textFound,
-      text_truncated: sourceLength > 50_000,
-      total_pages: document.numPages,
-    };
-  });
+  }
+  return {
+    output_text: prefix,
+    page_previews: pagePreviews,
+    pages_without_text: pagesWithoutText,
+    page_read_error: pageReadError,
+    pages_read: pagesReadSuccessfully,
+    preview_truncated: previewTruncated,
+    source_length: sourceLength,
+    text_found: textFound,
+    text_truncated: sourceLength > 50_000,
+    total_pages: document.numPages,
+  };
+}
+
+async function readContent(bytes, password, options) {
+  return await withPdfjsDocument(bytes, password, document =>
+    readContentFromDocument(document, options));
 }
 
 async function readPages(bytes, password, options) {

@@ -416,6 +416,18 @@ describe("live output schema contract", () => {
     });
   });
 
+  it("accepts scoped routing facts on a read-content worker failure", () => {
+    const result = {
+      isError: true,
+      structuredContent: {
+        status: "failed",
+        error: { error_schema_version: 1, code: "tool_execution_failed" },
+        read_pages_without_text: [1],
+      },
+    };
+    expect(validateStructuredToolResult("read_pdf_content", result)).toBe(result);
+  });
+
   it("preserves its rich typed failure for an empty malformed content read", async () => {
     const fixture = makeDeepMalformedFixture({
       scale: "full",

@@ -3945,6 +3945,12 @@ export function classifyPageRouting(page, {
   imageDominatedMinPaints = IMAGE_DOMINATED_MIN_PAINTS,
   vectorSegmentMin = VECTOR_SEGMENT_MIN,
 } = {}) {
+  if (page?.content_analysis_status === "not_analyzed") {
+    return {
+      text_bearing: null,
+      reasons: [],
+    };
+  }
   if (!pageMeasurementsAvailable(page)) {
     return {
       text_bearing: null,
@@ -3978,32 +3984,31 @@ function pageHasVectorEvidence(page, routing) {
 /** Roll up per-page routing decisions without inventing confidence scores. */
 export function rollupPageClassification(pages, pagesAnalyzed = null) {
   if (!Array.isArray(pages)) throw new TypeError("pages must be an array.");
-  const decisions = pages.map(page => ({ page, routing: classifyPageRouting(page) }));
+  const pagesNotAnalyzed = pages
+    .filter(page => page.content_analysis_status === "not_analyzed")
+    .map(page => page.page);
+  const analyzedPages = pages.filter(page => page.content_analysis_status !== "not_analyzed");
+  const decisions = analyzedPages.map(page => ({ page, routing: classifyPageRouting(page) }));
   const pagesNeedingVision = decisions
     .filter(({ routing }) => routing.reasons.length > 0)
     .map(({ page, routing }) => ({ page: page.page, reasons: routing.reasons }));
-  const analyzedCount = pagesAnalyzed === null
-    ? pages.filter(page => page.content_analysis_status !== "not_analyzed").length
-    : pagesAnalyzed;
+  const analyzedCount = pagesAnalyzed === null ? analyzedPages.length : pagesAnalyzed;
   const available = decisions.filter(({ routing }) => routing.text_bearing !== null);
   const textBearingPages = available.filter(({ routing }) => routing.text_bearing);
   const imagePages = available.filter(({ page }) => pageHasImageEvidence(page));
-  const vectorPages = available.filter(({ page, routing }) => pageHasVectorEvidence(page, routing));
   const nonTextPages = available.filter(({ routing }) => !routing.text_bearing);
   const unavailable = decisions.some(({ routing }) => routing.reasons.includes("analysis_unavailable"));
   const provesMixed = textBearingPages.length > 0
-    && (imagePages.some(({ routing }) => !routing.text_bearing)
-      || vectorPages.some(({ routing }) => !routing.text_bearing)
-      || available.some(({ routing }) => !routing.text_bearing));
+    && nonTextPages.length > 0;
+  const textRatio = available.length > 0 ? textBearingPages.length / available.length : null;
 
   let documentKind = "unknown";
   if (unavailable && !provesMixed) {
     documentKind = "unknown";
-  } else if (textBearingPages.length > 0 && provesMixed) {
-    documentKind = "mixed";
-  } else if (available.length > 0 && textBearingPages.length / available.length >= TEXT_PAGE_RATIO_THRESHOLD
-      && pagesNeedingVision.every(entry => entry.reasons.every(reason => reason === "analysis_unavailable"))) {
+  } else if (textRatio !== null && textRatio >= TEXT_PAGE_RATIO_THRESHOLD) {
     documentKind = "text_based";
+  } else if (textBearingPages.length > 0 && pagesNeedingVision.length > 0) {
+    documentKind = "mixed";
   } else if (textBearingPages.length === 0 && imagePages.length > 0) {
     const imageReasonCount = pagesNeedingVision.filter(entry => entry.reasons.includes("image_dominated")).length;
     const vectorReasonCount = pagesNeedingVision.filter(entry => entry.reasons.includes("vector_only_text")).length;
@@ -4020,6 +4025,7 @@ export function rollupPageClassification(pages, pagesAnalyzed = null) {
     document_kind: documentKind,
     pages_analyzed: analyzedCount,
     pages_needing_vision: pagesNeedingVision,
+    pages_not_analyzed: pagesNotAnalyzed,
   };
 }
 
