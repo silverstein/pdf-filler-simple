@@ -1969,4 +1969,30 @@ describe("Extraction IR hostile reconstruction", () => {
     page.spatial_text = `[${merged.id} x=${merged.x} y=${merged.y} w=${merged.width} h=${merged.height}] ${merged.text}`;
     expect(() => validatePdfLayoutSemantics(mutant)).toThrow(/baseline spread mismatch/);
   });
+
+  it("splits source-order runs when a small first glyph would make the final baseline spread invalid", async () => {
+    const item = (text, x, top, size, hasEOL) => ({
+      ...textItem({
+        text,
+        x,
+        top,
+        width: 10,
+        hasEOL,
+        transform: [size, 0, 0, size, x, 792 - top - size],
+      }),
+      height: size,
+    });
+    const { result } = await runFake([{ items: [
+      item("A", 10, 98.6, 2, false),
+      item("B", 25, 87, 20, false),
+      item("C", 50, 89, 20, true),
+    ] }]);
+
+    expect(result.pages[0].reading_order.strategy).toBe("source_order_fallback");
+    expect(result.pages[0].lines.map(line => line.item_ids)).toEqual([
+      ["p0001-i000001", "p0001-i000002"],
+      ["p0001-i000003"],
+    ]);
+    expect(() => validatePdfLayoutSemantics(result)).not.toThrow();
+  });
 });
