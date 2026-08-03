@@ -332,19 +332,6 @@ function itemBaselineCenter(item) {
   return item.y + item.height / 2;
 }
 
-function baselineCompatible(lineItems, candidate, toleranceFactor) {
-  if (lineItems.length === 0) return true;
-  const centers = lineItems.map(itemBaselineCenter);
-  const candidateCenter = itemBaselineCenter(candidate);
-  const heights = lineItems.map(item => item.line_height).filter(Number.isFinite);
-  const referenceHeight = heights.length > 0 ? medianNumber(heights) : 8;
-  const tolerance = Math.max(2, Math.min(referenceHeight, candidate.line_height ?? referenceHeight) * toleranceFactor);
-  const nextCenters = [...centers, candidateCenter];
-  return Math.abs(candidateCenter - centers[0]) <= tolerance
-    && Math.abs(candidateCenter - medianNumber(centers)) <= tolerance
-    && Math.max(...nextCenters) - Math.min(...nextCenters) <= tolerance;
-}
-
 function baselineInvariant(lineItems, toleranceFactor) {
   if (lineItems.length <= 1) return true;
   const centers = lineItems.map(itemBaselineCenter);
@@ -370,7 +357,7 @@ function groupLines(items, pageNumber) {
     let bestDistance = Infinity;
     for (const line of lines) {
       if (line.direction !== item.direction || line.hard_segment !== item.hard_segment) continue;
-      if (!baselineCompatible(line.items, item, 0.35)) continue;
+      if (!baselineInvariant([...line.items, item], 0.35)) continue;
       const distance = Math.abs(center - medianNumber(line.items.map(itemBaselineCenter)));
       const lineLeft = Math.min(...line.items.map(value => value.x));
       const lineRight = Math.max(...line.items.map(value => value.x + value.width));
@@ -408,7 +395,7 @@ function sourceOrderLines(items, pageNumber) {
     if (!current
       || current.hard_segment !== item.hard_segment
       || current.direction !== item.direction
-      || !baselineCompatible(current.items, item, 0.5)) {
+      || !baselineInvariant([...current.items, item], 0.5)) {
       current = { hard_segment: item.hard_segment, direction: item.direction, items: [] };
       segments.push(current);
     }

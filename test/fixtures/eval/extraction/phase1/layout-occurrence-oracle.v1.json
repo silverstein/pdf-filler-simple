@@ -49,8 +49,8 @@
     {
       "role": "layout_extraction_module",
       "path": "server/layout-extraction.js",
-      "bytes": 100819,
-      "sha256": "f545fb3d566b7fa1edfb8abce327527a81c76e4d88e566f27a29c14ec859a99f"
+      "bytes": 100717,
+      "sha256": "3112e46b04373eed55abaed630da3adca7a74612f9dc503701422f84d6e5f0f9"
     },
     {
       "role": "layout_oracle_schema",
@@ -95,7 +95,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "6825723a56d9408d0ea4f496eedda8b45e5fee3e96a6033b607d38afb620757c",
+  "validator_source_set_sha256": "1b4823995d320df4c2bf11b528099be39d10069091193baa777b9d11fa8d2bf6",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",

@@ -1,0 +1,138 @@
+{
+  "suite_id": "pdf-tools.shannon-markdown-adversarial.v1",
+  "suite_version": 1,
+  "benchmark_claim_ready": false,
+  "calibration_claim_ready": false,
+  "source": {
+    "id": "shannon-1948-mathematical-theory-of-communication",
+    "url": "https://people.math.harvard.edu/~ctm/home/text/others/shannon/entropy/entropy.pdf",
+    "redistribution": "external_only",
+    "sha256": "6e4e3411984f3edf99dbfe8b941cb5e8a321379ff0cae6ae5c1f592ad8882ca8",
+    "size_bytes": 366296,
+    "page_count": 55
+  },
+  "execution": {
+    "repetitions": 3,
+    "deadline_ms": 120000,
+    "max_stdout_bytes": 2097152,
+    "max_stderr_bytes": 1048576,
+    "pdf_tools_page_span": 10
+  },
+  "candidates": {
+    "pdf_tools": {
+      "slot": "control.current_product.v0",
+      "renderer_name": "pdf-tools.layout-markdown-renderer",
+      "renderer_version": "1.2.0",
+      "parser_name": "pdfjs-dist",
+      "parser_version": "5.4.624"
+    },
+    "pdf_inspector": {
+      "slot": "candidate.direct_pdf.v1",
+      "repository": "https://github.com/firecrawl/pdf-inspector",
+      "revision": "1c32e4bd691bde83778ffef235019c8feac0c0c5",
+      "crate_name": "pdf-inspector",
+      "crate_version": "0.1.7",
+      "license": "MIT",
+      "resolved_lock_sha256": "d976c94ada1b91ab3c2fd65f3ba24b93854d4622ad59760891be4ce26becd982"
+    },
+    "layout_reference": {
+      "slot": "candidate.layout_ir.v1",
+      "status": "not_run",
+      "reason": "No Shannon-specific, hash-bound layout-reference handoff is configured. Existing Docling evidence is bound to the separate Phase 0 corpus."
+    }
+  },
+  "oracle": {
+    "scope": "sampled_structural_anchors_not_full_transcript_ground_truth",
+    "expected_headings": [
+      { "text": "A Mathematical Theory of Communication", "level": 1 },
+      { "text": "INTRODUCTION", "level": 2 },
+      { "text": "PART I: DISCRETE NOISELESS SYSTEMS", "level": 2 },
+      { "text": "PART II: THE DISCRETE CHANNEL WITH NOISE", "level": 2 },
+      { "text": "PART III: MATHEMATICAL PRELIMINARIES", "level": 2 },
+      { "text": "PART IV: THE CONTINUOUS CHANNEL", "level": 2 },
+      { "text": "PART V: THE RATE FOR A CONTINUOUS SOURCE", "level": 2 },
+      { "text": "APPENDIX 1", "level": 2 },
+      { "text": "APPENDIX 2", "level": 2 },
+      { "text": "APPENDIX 3", "level": 2 },
+      { "text": "APPENDIX 4", "level": 2 },
+      { "text": "APPENDIX 5", "level": 2 },
+      { "text": "APPENDIX 6", "level": 2 },
+      { "text": "APPENDIX 7", "level": 2 }
+    ],
+    "ordered_anchor_groups": [
+      [
+        "A Mathematical Theory of Communication",
+        "The recent development of various methods of modulation",
+        "The fundamental problem of communication",
+        "The logarithmic measure is more convenient",
+        "Schematic diagram of a general communication system"
+      ],
+      [
+        "PART I: DISCRETE NOISELESS SYSTEMS",
+        "The capacity C of a discrete channel is given by",
+        "Theorem 1",
+        "The discrete source of information"
+      ],
+      [
+        "PART II: THE DISCRETE CHANNEL WITH NOISE",
+        "Representation of a noisy discrete channel",
+        "Theorem 10",
+        "Theorem 12"
+      ],
+      [
+        "PART III: MATHEMATICAL PRELIMINARIES",
+        "Sets and ensembles of functions",
+        "Entropy of a continuous distribution",
+        "Entropy of an ensemble of functions"
+      ],
+      [
+        "TABLE I",
+        "The final entropy power is the initial entropy power",
+        "Entropy of a sum of two ensembles"
+      ],
+      [
+        "PART IV: THE CONTINUOUS CHANNEL",
+        "The capacity of a continuous channel",
+        "Theorem 20",
+        "PART V: THE RATE FOR A CONTINUOUS SOURCE"
+      ]
+    ],
+    "paragraph_continuity": [
+      "The recent development of various methods of modulation such as PCM and PPM which exchange bandwidth for signal-to-noise ratio",
+      "The fundamental problem of communication is that of reproducing at one point either exactly or approximately a message selected at another point",
+      "A decimal digit is about 3 1/3 bits",
+      "The final entropy power is the initial entropy power multiplied by the geometric mean gain of the filter"
+    ],
+    "equation_anchors": [
+      ["log2 M", "log10 M", "log10 2"],
+      ["C", "Lim", "log N(T)", "T"],
+      ["H", "pi", "log pi"],
+      ["C", "W", "log", "P", "N"]
+    ],
+    "footnote_anchors": [
+      "Certain Factors Affecting Telegraph Speed",
+      "Transmission of Information",
+      "Tables of Random Sampling Numbers",
+      "Communication in the Presence of Noise"
+    ],
+    "table": {
+      "label": "TABLE I",
+      "required_header_terms": [
+        "impulse response",
+        "gain factor",
+        "entropy power factor",
+        "entropy gain in decibels"
+      ],
+      "minimum_data_rows": 5
+    },
+    "exactly_once_anchors": [
+      "A Mathematical Theory of Communication",
+      "Schematic diagram of a general communication system",
+      "PART II: THE DISCRETE CHANNEL WITH NOISE",
+      "PART III: MATHEMATICAL PRELIMINARIES",
+      "TABLE I",
+      "PART IV: THE CONTINUOUS CHANNEL",
+      "PART V: THE RATE FOR A CONTINUOUS SOURCE"
+    ]
+  }
+}
