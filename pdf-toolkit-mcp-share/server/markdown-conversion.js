@@ -1014,9 +1014,11 @@ function normalizePlainLines(entries, {
     const end = index;
     const previousIsBlank = start > 0 && entries[start - 1].sourceText.trim() === "";
     const nextIsBlank = end + 1 < entries.length && entries[end + 1].sourceText.trim() === "";
-    const isolated = (start === 0 || pageBoundaryBefore || previousIsBlank)
-      && (end === entries.length - 1 || pageBoundaryAfter || nextIsBlank);
-    const beforePageBoundary = pageBoundaryAfter && end === entries.length - 1;
+    const pageBoundaryBeforeLine = pageBoundaryBefore && start === 0;
+    const pageBoundaryAfterLine = pageBoundaryAfter && end === entries.length - 1;
+    const isolated = (pageBoundaryBeforeLine || previousIsBlank)
+      && (pageBoundaryAfterLine || nextIsBlank);
+    const beforePageBoundary = pageBoundaryAfterLine;
     if (isolated || beforePageBoundary) {
       for (let removal = start; removal <= end; removal += 1) removed.add(removal);
       normalizations.page_number_lines_removed += end - start + 1;
