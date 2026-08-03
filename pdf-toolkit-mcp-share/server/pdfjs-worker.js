@@ -13,6 +13,7 @@ import {
 import { PDFDocument } from "pdf-lib";
 import {
   analyzePdfPages,
+  deriveTextIntegrityForRouting,
   detectSignatureZones,
   getPageBoxGeometry,
   getPageRenderScale,
@@ -587,13 +588,22 @@ export async function readContentFromDocument(document, options) {
   let previewTruncated = false;
   const pagePreviews = [];
   const pagesWithoutText = [];
+  const pagesWithSuspectedTextIntegrity = [];
   let pagesReadSuccessfully = 0;
   let pageReadError = null;
   for (let pageNumber = 1; pageNumber <= pagesRead; pageNumber += 1) {
     let page = null;
     try {
       page = await document.getPage(pageNumber);
-      const rawText = await pageText(page);
+      const textContent = await page.getTextContent();
+      const textItems = textContent.items
+        .filter(item => typeof item?.str === "string")
+        .map(item => item.str);
+      const rawText = textItems.join("");
+      const textIntegrity = deriveTextIntegrityForRouting(textItems);
+      if (textIntegrity.status === "suspect") {
+        pagesWithSuspectedTextIntegrity.push({ page: pageNumber, signals: textIntegrity.signals });
+      }
       if (pageNumber > 1) {
         sourceLength += 2;
         if (prefix.length < 50_000) prefix += "\n\n".slice(0, 50_000 - prefix.length);
@@ -634,6 +644,7 @@ export async function readContentFromDocument(document, options) {
     output_text: prefix,
     page_previews: pagePreviews,
     pages_without_text: pagesWithoutText,
+    pages_with_suspected_text_integrity: pagesWithSuspectedTextIntegrity,
     page_read_error: pageReadError,
     pages_read: pagesReadSuccessfully,
     preview_truncated: previewTruncated,

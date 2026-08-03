@@ -69,7 +69,7 @@ import {
 } from "./pdf-lib-subprocess.js";
 
 export const READ_CONTENT_ROUTING_GUIDANCE =
-  "Pages without extractable text were successfully read in this call. Use render_pdf_page for visual inspection of those pages; read_pages_without_text is limited to successfully-read pages, and pages outside this read scope or stopped at a page-read error are not classified by this result.";
+  "Pages without extractable text or with suspect text integrity were successfully read in this call. Use render_pdf_page for visual inspection of those pages; the page routing fields are limited to successfully-read pages, and pages outside this read scope or stopped at a page-read error are not classified by this result.";
 
 /**
  * Keep Markdown routing in one mapping function so later text-integrity
@@ -79,10 +79,20 @@ export function deriveMarkdownVisionRouting(layout) {
   return (layout?.pages ?? []).flatMap(page => {
     const reasons = [];
     if (["empty", "failed"].includes(page.text_layer_status)) reasons.push("no_text_layer");
-    if (page.image_detection_status === "detected" && page.text_layer_status !== "present") {
+    // Threshold-consistent with get_page_analysis (helpers.js
+    // MIN_TEXT_CHARS_WITH_IMAGES): a page with image paints and text below
+    // the raised bar routes to vision even when a thin text layer exists.
+    const trimmedTextLength = (page.raw_items ?? [])
+      .filter(item => item.is_whitespace !== true && typeof item.text === "string")
+      .reduce((total, item) => total + item.text.trim().length, 0);
+    const imagePaints = page.operator_counts?.image_paint_ops ?? 0;
+    if (page.image_detection_status === "detected"
+      && (page.text_layer_status !== "present"
+        || (imagePaints > 0 && trimmedTextLength < MIN_TEXT_CHARS_WITH_IMAGES))) {
       reasons.push("image_dominated");
     }
     if (page.modality_hint === "vector-only-candidate") reasons.push("vector_only_text");
+    if (page.text_integrity?.status === "suspect") reasons.push("suspected_text_integrity");
     return reasons.length > 0 ? [{ page: page.page, reasons }] : [];
   });
 }
@@ -621,6 +631,7 @@ import {
   recoverPdfOutputTransactions,
   writePdfOutputAtomic,
   writePdfOutputsAtomic,
+  MIN_TEXT_CHARS_WITH_IMAGES,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
@@ -4132,6 +4143,7 @@ async function handleToolCall(request) {
         const resolvedPath = resolvePath(pdf_path);
         const MAX_CHARS = 50000;
         let readPagesWithoutText = [];
+        let pagesWithSuspectedTextIntegrity = [];
         let readPagesReadCount = 0;
         let readPageReadError = null;
 
@@ -4151,12 +4163,14 @@ async function handleToolCall(request) {
           const pageCount = result.total_pages;
           const pagesRead = result.pages_read;
           const pagesWithoutText = result.pages_without_text ?? [];
+          const pagesWithIntegrity = result.pages_with_suspected_text_integrity ?? [];
           readPagesWithoutText = pagesWithoutText;
+          pagesWithSuspectedTextIntegrity = pagesWithIntegrity;
           const pageReadError = result.page_read_error ?? null;
           readPagesReadCount = Number.isInteger(pagesRead) ? pagesRead : 0;
           readPageReadError = pageReadError;
           const pageReadErrorCodes = pageReadError ? [pageReadError.code] : [];
-          const routingGuidance = pagesWithoutText.length > 0
+          const routingGuidance = pagesWithoutText.length > 0 || pagesWithIntegrity.length > 0
             ? READ_CONTENT_ROUTING_GUIDANCE
             : null;
 
@@ -4243,6 +4257,7 @@ async function handleToolCall(request) {
                   image_renderer: renderedImage.renderer,
                   page_read_error: pageReadError,
                   read_pages_without_text: pagesWithoutText,
+                  pages_with_suspected_text_integrity: pagesWithIntegrity,
                   routing_guidance: routingGuidance,
                   error_codes: pageReadErrorCodes,
                   retry_guidance:
@@ -4261,6 +4276,7 @@ async function handleToolCall(request) {
                     error: { error_schema_version: 1, code: PDF_RESOURCE_LIMIT_CODE },
                     pages_read: readPagesReadCount,
                     read_pages_without_text: readPagesWithoutText,
+                    pages_with_suspected_text_integrity: pagesWithSuspectedTextIntegrity,
                     page_read_error: readPageReadError,
                   },
                 });
@@ -4289,6 +4305,7 @@ async function handleToolCall(request) {
                   extraction_mode: "none",
                   page_read_error: pageReadError,
                   read_pages_without_text: pagesWithoutText,
+                  pages_with_suspected_text_integrity: pagesWithIntegrity,
                   routing_guidance: routingGuidance,
                   error_codes: ["NO_EXTRACTABLE_TEXT", "IMAGE_FALLBACK_FAILED", ...pageReadErrorCodes],
                   retry_guidance:
@@ -4320,6 +4337,7 @@ async function handleToolCall(request) {
               extraction_mode: "text",
               page_read_error: pageReadError,
               read_pages_without_text: pagesWithoutText,
+              pages_with_suspected_text_integrity: pagesWithIntegrity,
               routing_guidance: routingGuidance,
               error_codes: pageReadErrorCodes,
               retry_guidance: extractionPartial
@@ -4337,6 +4355,7 @@ async function handleToolCall(request) {
                 error: { error_schema_version: 1, code: PDF_RESOURCE_LIMIT_CODE },
                 pages_read: readPagesReadCount,
                 read_pages_without_text: readPagesWithoutText,
+                pages_with_suspected_text_integrity: pagesWithSuspectedTextIntegrity,
                 page_read_error: readPageReadError,
               },
             });
@@ -4355,6 +4374,7 @@ async function handleToolCall(request) {
               },
               pages_read: readPagesReadCount,
               read_pages_without_text: readPagesWithoutText,
+              pages_with_suspected_text_integrity: pagesWithSuspectedTextIntegrity,
               page_read_error: readPageReadError,
             },
           });

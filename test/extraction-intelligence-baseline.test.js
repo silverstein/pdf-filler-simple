@@ -87,6 +87,10 @@ const PUA_MARKDOWN = `<!-- PDF page 1 -->
 
 ${PUA_TEXT}
 
+## Conversion gaps
+
+- Page 1: Text-layer integrity signals were detected (replacement\\_characters=14, private\\_use\\_runs=4); extracted text is retained but may require visual inspection.
+
 ## Conversion limitations
 
 - Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.
@@ -309,7 +313,7 @@ describe("extraction-intelligence current baseline", () => {
     ]);
   }, 30_000);
 
-  it("records the current silent-complete behavior for PUA and replacement-heavy text", async () => {
+  it("surfaces typed integrity evidence while retaining PUA and replacement-heavy text", async () => {
     const fixture = expectedCurrentFor(manifest, "text-integrity-pua.pdf");
     const pdfPath = path.join(INTELLIGENCE_ROOT, fixture.path);
     const layout = await client.callTool({
@@ -323,11 +327,48 @@ describe("extraction-intelligence current baseline", () => {
     expect(layout.isError).not.toBe(true);
     expect(layout.structuredContent.extraction_status).toBe("complete");
     expect(layout.structuredContent.pages[0].flow_text).toBe(PUA_TEXT);
+    expect(layout.structuredContent.pages[0].text_integrity).toEqual({
+      status: "suspect",
+      signals: [
+        { kind: "replacement_characters", count: 14 },
+        { kind: "private_use_runs", count: 4 },
+      ],
+    });
     expect(markdown.isError).not.toBe(true);
     expectCurrentConversion(markdown, fixture);
     expect(markdown.structuredContent.markdown).toBe(PUA_MARKDOWN);
-    expect(fixture.expected_current.text_integrity_signal).toBe("absent");
-    expect(Object.hasOwn(markdown.structuredContent, "text_integrity_signal")).toBe(false);
+    expect(fixture.expected_current.text_integrity_signal).toBe("present");
+    expect(markdown.structuredContent.pages[0]).toMatchObject({
+      conversion_status: "partial",
+      gaps: [{
+        code: "TEXT_INTEGRITY_SUSPECT",
+        message: expect.stringContaining("replacement_characters=14, private_use_runs=4"),
+      }],
+    });
+    expect(markdown.structuredContent.pages_needing_vision).toEqual(
+      fixture.expected_current.pages_needing_vision,
+    );
+    const content = await client.callTool({
+      name: "read_pdf_content",
+      arguments: { pdf_path: pdfPath },
+    });
+    expect(content.isError).not.toBe(true);
+    expect(content.structuredContent.pages_with_suspected_text_integrity).toEqual([{
+      page: 1,
+      signals: [
+        { kind: "replacement_characters", count: 14 },
+        { kind: "private_use_runs", count: 4 },
+      ],
+    }]);
+    const analysis = await client.callTool({
+      name: "get_page_analysis",
+      arguments: { pdf_path: pdfPath },
+    });
+    expect(analysis.isError).not.toBe(true);
+    expect(analysis.structuredContent.classification.pages_needing_vision).toEqual([{
+      page: 1,
+      reasons: ["suspected_text_integrity"],
+    }]);
   }, 30_000);
 
   it("keeps routing truth in the sidecar and exposes Markdown routing metadata", async () => {

@@ -110,6 +110,13 @@ const contentWorkerFailure = object({
   }),
   pages_read: integer,
   read_pages_without_text: integerArray,
+  pages_with_suspected_text_integrity: arrayOf(object({
+    page: integer,
+    signals: arrayOf(object({
+      kind: enumString(["replacement_characters", "private_use_runs", "c1_control_tokens", "non_alphanumeric_dominance"]),
+      count: { type: "integer", minimum: 1 },
+    })),
+  })),
   page_read_error: pageReadError,
 });
 const contentResourceLimitError = object({
@@ -120,6 +127,13 @@ const contentResourceLimitError = object({
   }),
   pages_read: integer,
   read_pages_without_text: integerArray,
+  pages_with_suspected_text_integrity: arrayOf(object({
+    page: integer,
+    signals: arrayOf(object({
+      kind: enumString(["replacement_characters", "private_use_runs", "c1_control_tokens", "non_alphanumeric_dominance"]),
+      count: { type: "integer", minimum: 1 },
+    })),
+  })),
   page_read_error: pageReadError,
 });
 const layoutPasswordError = object({
@@ -236,6 +250,13 @@ const contentProperties = {
   page_previews: arrayOf(pageTextPreview),
   page_read_error: pageReadError,
   read_pages_without_text: { ...integerArray, description: "Pages actually read in this call whose normalized text layer is empty." },
+  pages_with_suspected_text_integrity: arrayOf(object({
+    page: integer,
+    signals: arrayOf(object({
+      kind: enumString(["replacement_characters", "private_use_runs", "c1_control_tokens", "non_alphanumeric_dominance"]),
+      count: { type: "integer", minimum: 1 },
+    })),
+  })),
   routing_guidance: nullable({ type: "string", description: "Fixed guidance to use render_pdf_page for pages without text, scoped to this call." }),
   preview_truncated: boolean,
   extraction_mode: enumString(["text", "image-fallback"]),
@@ -266,6 +287,13 @@ const contentFailure = object({
   extraction_status: { const: "failed" },
   extraction_mode: { const: "none" },
 });
+const layoutTextIntegrity = object({
+  status: enumString(["ok", "suspect", "unavailable"]),
+  signals: arrayOf(object({
+    kind: enumString(["replacement_characters", "private_use_runs", "c1_control_tokens", "non_alphanumeric_dominance"]),
+    count: { type: "integer", minimum: 1 },
+  })),
+});
 const pageAnalysis = object({
   page: integer,
   width: integer,
@@ -293,6 +321,7 @@ const pageAnalysis = object({
     images: nullable(enumString(["pdfjs"])),
     graphics: nullable(enumString(["pdfjs"])),
   }),
+  text_integrity: layoutTextIntegrity,
 });
 const analysisError = object({
   scope: enumString(["document", "page"]),
@@ -309,6 +338,7 @@ const routingReason = enumString([
   "no_text_layer",
   "image_dominated",
   "vector_only_text",
+  "suspected_text_integrity",
   "analysis_unavailable",
 ]);
 const visionRoutingPage = object({
@@ -428,13 +458,6 @@ const layoutRuledRects = object({
   returned_count: { type: "integer", minimum: 0 },
   items: arrayOf(layoutRuledRect),
 });
-const layoutTextIntegrity = object({
-  status: enumString(["ok", "suspect", "unavailable"]),
-  signals: arrayOf(object({
-    kind: enumString(["replacement_characters", "private_use_runs", "c1_control_tokens", "non_alphanumeric_dominance"]),
-    count: { type: "integer", minimum: 1 },
-  })),
-});
 const layoutOperatorCounts = nullable(object({
   image_paint_ops: { type: "integer", minimum: 0 },
   path_segments: { type: "integer", minimum: 0 },
@@ -456,6 +479,7 @@ const markdownGapCode = enumString([
   "UNSUPPORTED_LINK_TARGET",
   "TABLE_RULING_UNSUPPORTED",
   "TABLE_TOPOLOGY_UNKNOWN",
+  "TEXT_INTEGRITY_SUSPECT",
   "CONTROL_CHARACTERS_SANITIZED",
 ]);
 const markdownGap = object({

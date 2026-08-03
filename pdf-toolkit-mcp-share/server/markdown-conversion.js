@@ -54,6 +54,7 @@ const GAP_CODES = new Set([
   "SOURCE_ITEM_LIMIT_REACHED",
   "TABLE_RULING_UNSUPPORTED",
   "TABLE_TOPOLOGY_UNKNOWN",
+  "TEXT_INTEGRITY_SUSPECT",
   "TEXT_LAYER_EMPTY",
   "TEXT_LAYER_FAILED",
   "UNSUPPORTED_LINK_TARGET",
@@ -990,6 +991,11 @@ function pageGaps(page, analysis, linkState) {
   }
   if (analysis?.tableReason === "ruling_unsupported") {
     add("TABLE_RULING_UNSUPPORTED", "Ruled rectangle evidence described a grid-shaped region, but its table topology could not be reconstructed, so it remains reading-order text.");
+  if (page.text_integrity?.status === "suspect") {
+    const details = page.text_integrity.signals
+      .map(signal => `${signal.kind}=${signal.count}`)
+      .join(", ");
+    add("TEXT_INTEGRITY_SUSPECT", `Text-layer integrity signals were detected (${details}); extracted text is retained but may require visual inspection.`);
   }
   if (page.extraction_status === "failed") {
     add("TEXT_LAYER_FAILED", "The page text-layer extraction failed.");
