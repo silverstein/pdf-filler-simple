@@ -64,7 +64,7 @@ async function handle(message) {
     const pageBoundaries = Array.from({ length: pageCount }, (_, index) => "<!-- PDF page " + (index + 1) + " -->");
     const markdown = pageBoundaries.join("\n\n") + "\n\nINV-1001 fixture evidence\n";
     const value = {
-      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.2.0" },
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.3.0" },
       conversion_status: "complete",
       markdown,
       markdown_sha256: digest(Buffer.from(markdown)),
@@ -143,7 +143,7 @@ function resultFor(binding) {
   const markdown = "<!-- PDF page 1 -->\n\nFixture text\n";
   return {
     structuredContent: {
-      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.2.0" },
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.3.0" },
       conversion_status: "complete",
       markdown,
       markdown_sha256: sha256(Buffer.from(markdown)),
@@ -231,8 +231,8 @@ describe("Markdown bakeoff renderer version binding", () => {
   });
 
   it("accepts the current renderer version and rejects the superseded one", () => {
-    expect(validateMarkdownResult(resultFor("1.2.0"), binding).renderer.version).toBe("1.2.0");
-    for (const stale of ["1.0.0", "1.1.0"]) {
+    expect(validateMarkdownResult(resultFor("1.3.0"), binding).renderer.version).toBe("1.3.0");
+    for (const stale of ["1.0.0", "1.1.0", "1.2.0"]) {
       expect(() => validateMarkdownResult(resultFor(stale), binding), stale)
         .toThrow(/Markdown result evidence is invalid/u);
     }

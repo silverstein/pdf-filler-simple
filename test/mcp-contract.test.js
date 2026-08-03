@@ -37,7 +37,11 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // gap enum. The renderer throws on the byte limit rather than truncating, so
 // that code was unreachable and misdescribed the contract. Previously
 // 3993365ec0868e80afc629cbb8661566a363fe543acc928992ad36bcee4db86f.
-const TOOL_CONTRACT_SHA256 = "07b2f6035903e699d3d4f023137fc14d4316a214e789d45ed22a4dc804a1184b";
+// 2026-08-03: convert_pdf_to_markdown renderer 1.3.0 rejects unreadable,
+// fragmentary, and equation-like heading candidates while retaining their
+// source text as escaped body text. Previously
+// 07b2f6035903e699d3d4f023137fc14d4316a214e789d45ed22a4dc804a1184b.
+const TOOL_CONTRACT_SHA256 = "a7619f2d4b07b855e8625578be66f5c61c54af2a2881a33545deed7e7b008de0";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
