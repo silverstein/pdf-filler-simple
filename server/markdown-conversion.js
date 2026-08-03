@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.4.0",
+  version: "1.5.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.2.0";
 
@@ -63,6 +63,7 @@ const GAP_CODES = new Set([
 
 const LIMITATIONS = Object.freeze([
   "Headings are emitted only from consistent enlarged font metrics or centered English-language source structure with section spacing for a first-page title, introduction, part, or appendix. Ambiguous, very short, or unsupported heading styles remain body text.",
+  "A geometrically overlapping initial capital may be joined to its following uppercase word remainder, and a lowercase word split by a line-end hyphen may be dehyphenated only across consecutive body lines in the same flow column. The source Extraction IR retains the original lines.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
   "Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.",
@@ -1231,6 +1232,62 @@ function pageStatus(page, gaps) {
   return gaps.length > 0 ? "partial" : "complete";
 }
 
+function sameFlow(left, right) {
+  return left?.joinable === true
+    && right?.joinable === true
+    && left.line.column_index === right.line.column_index;
+}
+
+function dropCapContinuation(left, right) {
+  if (!sameFlow(left, right)) return false;
+  const leftText = left.line.text.trim();
+  const rightText = right.line.text.trim();
+  const verticalOverlap = Math.min(left.line.y + left.line.height, right.line.y + right.line.height)
+    - Math.max(left.line.y, right.line.y);
+  const horizontalGap = right.line.x - (left.line.x + left.line.width);
+  return /^\p{Lu}$/u.test(leftText)
+    && /^\p{Lu}{2,}(?:\s|$)/u.test(rightText)
+    && left.line.height >= right.line.height * 1.5
+    && verticalOverlap > 0
+    && horizontalGap >= -1
+    && horizontalGap <= Math.max(4, right.line.height);
+}
+
+function lineEndHyphenContinuation(left, right) {
+  if (!sameFlow(left, right)) return false;
+  const leftText = left.line.text.trim();
+  const rightText = right.line.text.trim();
+  const verticalGap = right.line.y - (left.line.y + left.line.height);
+  return /\p{Ll}{2,}-$/u.test(leftText)
+    && /^\p{Ll}{2,}/u.test(rightText)
+    && right.line.y > left.line.y
+    && verticalGap <= Math.max(left.line.height, right.line.height) * 2.5;
+}
+
+function joinParagraphContinuity(records) {
+  const joined = [];
+  let previous = null;
+  for (const record of records) {
+    if (previous && dropCapContinuation(previous, record)) {
+      joined[joined.length - 1] = {
+        ...record,
+        text: `${joined[joined.length - 1].text}${record.text}`,
+        sourceText: `${joined[joined.length - 1].sourceText}${record.sourceText}`,
+      };
+    } else if (previous && lineEndHyphenContinuation(previous, record)) {
+      joined[joined.length - 1] = {
+        ...record,
+        text: `${joined[joined.length - 1].text.slice(0, -1)}${record.text}`,
+        sourceText: `${joined[joined.length - 1].sourceText.slice(0, -1)}${record.sourceText}`,
+      };
+    } else {
+      joined.push(record);
+    }
+    previous = record;
+  }
+  return joined;
+}
+
 function renderPage(page, {
   compact = false,
   pageBoundaryBefore = false,
@@ -1239,23 +1296,40 @@ function renderPage(page, {
   const headings = headingLevels(page);
   const analysis = segmentPageLines(page);
   const linkState = analyzePageLinks(page, analysis, headings);
-  const entries = analysis.segments.flatMap(segment => (
+  const records = analysis.segments.flatMap(segment => (
     segment.kind === "table"
-      ? renderTable(segment.grid).map(text => ({ text, normalizable: false, sourceText: text }))
+      ? renderTable(segment.grid).map(text => ({
+          text,
+          sourceText: text,
+          normalizable: false,
+          line: null,
+          joinable: false,
+        }))
       : segment.rows.map(({ line }) => {
         const spans = linkState.spansByLine.get(line.id);
         const offsets = linkState.offsetsByLine.get(line.id);
         if (spans && spans.length > 0 && offsets && !headings.get(line.id)) {
           const linked = renderLinkedLine(line, offsets, spans);
-          if (linked !== null) return { text: linked, normalizable: false, sourceText: line.text };
+          if (linked !== null) {
+            return {
+              text: linked,
+              sourceText: line.text,
+              normalizable: false,
+              line,
+              joinable: false,
+            };
+          }
         }
         return {
           text: renderLine(line, headings.get(line.id)),
-          normalizable: true,
           sourceText: line.text,
+          normalizable: true,
+          line,
+          joinable: !headings.get(line.id) && !rewritesLineStructure(line),
         };
       })
   ));
+  const entries = joinParagraphContinuity(records);
   const normalized = compact
     ? normalizePlainLines(entries, { page: page.page, pageBoundaryBefore, pageBoundaryAfter })
     : { lines: entries.map(entry => entry.text), normalizations: emptyNormalizations() };

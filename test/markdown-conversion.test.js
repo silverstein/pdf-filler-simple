@@ -683,6 +683,24 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:INTRODUCTION|APPENDIX 1|PART I: REPEATED PAGE LABEL)$/gmu);
   });
 
+  it("joins a geometrically supported drop cap and line-end word break without joining ambiguous structure", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        textItem("T", { top: 50, left: 40, fontSize: 30 }),
+        textItem("HE recent development was rapid and ap-", { top: 62, left: 67 }),
+        textItem("proximately correct.", { top: 90, left: 67 }),
+        centeredTextItem("PART I: BODY", { top: 140 }),
+        textItem("state-", { top: 180 }),
+        textItem("2) of the art", { top: 210 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toContain("THE recent development was rapid and approximately correct.");
+    expect(result.markdown).toContain("## PART I: BODY");
+    expect(result.markdown).toContain("state-\n2) of the art");
+  });
+
   it("neutralizes hostile Markdown, HTML, table, autolink, and control syntax", async () => {
     const layout = await validatedSyntheticLayout([{
       items: [
