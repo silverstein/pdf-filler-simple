@@ -63,7 +63,7 @@ const GAP_CODES = new Set([
 
 const LIMITATIONS = Object.freeze([
   "Headings are emitted only from consistent enlarged font metrics or centered English-language source structure with section spacing for a first-page title, introduction, part, or appendix. Ambiguous, very short, or unsupported heading styles remain body text.",
-  "A geometrically overlapping initial capital may be joined to its following uppercase word remainder, and a lowercase word split by a line-end hyphen may be dehyphenated only across consecutive body lines in the same flow column. The source Extraction IR retains the original lines.",
+  "A geometrically overlapping initial capital may be joined to its following uppercase word remainder. Line-end hyphens are preserved because source geometry cannot reliably distinguish a split word from an intentional compound. The source Extraction IR retains the original lines.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
   "Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.",
@@ -1238,52 +1238,41 @@ function sameFlow(left, right) {
     && left.line.column_index === right.line.column_index;
 }
 
-function dropCapContinuation(left, right) {
+function dropCapContinuation(preceding, left, right) {
   if (!sameFlow(left, right)) return false;
   const leftText = left.line.text.trim();
   const rightText = right.line.text.trim();
+  const rightWords = rightText.match(/[\p{L}\p{N}]+/gu) ?? [];
   const verticalOverlap = Math.min(left.line.y + left.line.height, right.line.y + right.line.height)
     - Math.max(left.line.y, right.line.y);
   const horizontalGap = right.line.x - (left.line.x + left.line.width);
-  return /^\p{Lu}$/u.test(leftText)
+  return (preceding === null || preceding.joinable === false)
+    && left.line.direction === "ltr"
+    && right.line.direction === "ltr"
+    && /^\p{Lu}$/u.test(leftText)
     && /^\p{Lu}{2,}(?:\s|$)/u.test(rightText)
+    && rightWords.length >= 5
+    && /\p{Ll}/u.test(rightText)
     && left.line.height >= right.line.height * 1.5
     && verticalOverlap > 0
     && horizontalGap >= -1
     && horizontalGap <= Math.max(4, right.line.height);
 }
 
-function lineEndHyphenContinuation(left, right) {
-  if (!sameFlow(left, right)) return false;
-  const leftText = left.line.text.trim();
-  const rightText = right.line.text.trim();
-  const verticalGap = right.line.y - (left.line.y + left.line.height);
-  return /\p{Ll}{2,}-$/u.test(leftText)
-    && /^\p{Ll}{2,}/u.test(rightText)
-    && right.line.y > left.line.y
-    && verticalGap <= Math.max(left.line.height, right.line.height) * 2.5;
-}
-
 function joinParagraphContinuity(records) {
   const joined = [];
-  let previous = null;
-  for (const record of records) {
-    if (previous && dropCapContinuation(previous, record)) {
+  for (const [index, record] of records.entries()) {
+    const previous = records[index - 1] ?? null;
+    const preceding = records[index - 2] ?? null;
+    if (previous && dropCapContinuation(preceding, previous, record)) {
       joined[joined.length - 1] = {
         ...record,
         text: `${joined[joined.length - 1].text}${record.text}`,
         sourceText: `${joined[joined.length - 1].sourceText}${record.sourceText}`,
       };
-    } else if (previous && lineEndHyphenContinuation(previous, record)) {
-      joined[joined.length - 1] = {
-        ...record,
-        text: `${joined[joined.length - 1].text.slice(0, -1)}${record.text}`,
-        sourceText: `${joined[joined.length - 1].sourceText.slice(0, -1)}${record.sourceText}`,
-      };
     } else {
       joined.push(record);
     }
-    previous = record;
   }
   return joined;
 }
