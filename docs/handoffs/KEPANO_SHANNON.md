@@ -121,10 +121,14 @@ check; do not silently claim that narrower proof.
 
 As of this handoff, PR #63 is an open draft stacked on PR #62. PR #63 has clean
 source-checkout, deterministic Shannon, native Mac safety, and transactional
-share-contract proof. It has not been repacked or installed. The native
-installation, Claude host-loading, and installed-bundle server proof belongs
-only to the exact PR #62 artifact; do not silently transfer it to PR #63 or
-upgrade either result into release, cross-platform, or Claude-chat proof.
+share-contract proof. Its two isolated MCPB builds were byte-identical: 3,000
+files, 73,643,660 bytes, SHA-256
+`23ba42f4c9f9c2949021c5b098748cd54e0f46145b6346d6478c9fe0dd118f18`.
+The packed copy passed its macOS arm64 smoke with all 40 tools, but has not been
+installed. The native installation, Claude host-loading, and installed-bundle
+server proof belongs only to the exact PR #62 artifact; do not silently
+transfer it to PR #63 or upgrade either result into release, cross-platform,
+or Claude-chat proof.
 
 ## Current decision boundary
 

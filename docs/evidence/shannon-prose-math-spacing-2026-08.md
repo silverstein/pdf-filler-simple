@@ -77,12 +77,18 @@ rule and appears once per ten-page conversion chunk.
   `63ca160a177f5f9b22db6f057714ed0f1a83968d26f41a05ac994e720d0ea80a`.
 - Complete repository suite from the committed clean draft snapshot: 1,888
   passed, 80 intentionally skipped, zero failed.
+- Reproducible MCPB: two isolated builds were byte-identical; 3,000 files,
+  73,643,660 bytes; SHA-256
+  `23ba42f4c9f9c2949021c5b098748cd54e0f46145b6346d6478c9fe0dd118f18`.
+- Packed MCPB smoke passed on macOS arm64 with all 40 tools, 14 prompts,
+  canonical resources, one verified PDF-lib mutation, and a native raster
+  image.
 
 ## Claim boundary
 
-This is a draft stacked above PR #62. It is not merged, released, repacked, or
-installed. The prior PR #62 installed-copy proof applies only to its exact
-artifact and must not be silently transferred to this draft.
+This is a draft stacked above PR #62. It is not merged, released, or installed.
+The prior PR #62 installed-copy proof applies only to its exact artifact and
+must not be silently transferred to the new packed PR #63 artifact.
 
 The result does not prove general formula reconstruction, mathematical layout
 fidelity, OCR, general prose spacing repair, cross-platform behavior, release
