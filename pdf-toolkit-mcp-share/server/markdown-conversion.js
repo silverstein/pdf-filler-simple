@@ -8,7 +8,7 @@ const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
   version: "1.10.0",
 });
-const SUPPORTED_LAYOUT_IR_VERSION = "1.3.0";
+const SUPPORTED_LAYOUT_IR_VERSION = "1.4.0";
 
 // Bounded geometric table inference. A run of adjacent lines is treated as a
 // table only when every row fills every detected column, so ragged or
@@ -511,6 +511,12 @@ function lineCells(line, itemById) {
       && Number.isFinite(itemStartX(item)));
 }
 
+function tableStructureCells(row) {
+  return row.cells.filter(item => !item.glyph_recoveries?.some(
+    recovery => recovery.binding_kind === "collapsed_whitespace_item",
+  ));
+}
+
 const COMPACT_MATH_PUNCTUATION = /^[()[\]{},.;:+\-*/=∞∑∫]+$/u;
 
 function compactMathItemText(value) {
@@ -899,9 +905,10 @@ function nearestAnchor(anchors, x) {
  * stops ordinary prose from being read as a failed table.
  */
 function columnarAnalysis(run) {
-  const anchors = columnAnchors(run);
+  const structuralRun = run.map(row => ({ ...row, cells: tableStructureCells(row) }));
+  const anchors = columnAnchors(structuralRun);
   const rowsPerAnchor = anchors.map(() => new Set());
-  run.forEach((row, rowIndex) => {
+  structuralRun.forEach((row, rowIndex) => {
     for (const item of row.cells) {
       const index = nearestAnchor(anchors, itemStartX(item));
       if (index !== -1) rowsPerAnchor[index].add(rowIndex);
@@ -910,8 +917,8 @@ function columnarAnalysis(run) {
   const columnar = anchors.filter(
     (_anchor, index) => rowsPerAnchor[index].size >= TABLE_MIN_COLUMN_ROWS,
   );
-  const totalCells = run.reduce((total, row) => total + row.cells.length, 0);
-  const covered = run.reduce((total, row) => total + row.cells.filter(
+  const totalCells = structuralRun.reduce((total, row) => total + row.cells.length, 0);
+  const covered = structuralRun.reduce((total, row) => total + row.cells.filter(
     item => nearestAnchor(columnar, itemStartX(item)) !== -1,
   ).length, 0);
   const coverage = totalCells === 0 ? 0 : covered / totalCells;
@@ -1572,7 +1579,7 @@ function segmentTextRows(page, rows, itemById, ruledClusters) {
   let index = 0;
   while (index < rows.length) {
     let end = index;
-    while (end < rows.length && rows[end].cells.length >= TABLE_MIN_COLUMNS) end += 1;
+    while (end < rows.length && tableStructureCells(rows[end]).length >= TABLE_MIN_COLUMNS) end += 1;
     const run = rows.slice(index, end);
     if (run.length < TABLE_MIN_ROWS) {
       segments.push({ kind: "text", rows: rows.slice(index, Math.max(end, index + 1)) });

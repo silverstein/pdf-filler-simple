@@ -39,13 +39,12 @@ and the 59-character remaining qualified Type-3 batch.
 PR #68 landed the 59-character batch and PR #69 prepared v0.9.1. The old
 stacked PRs #55 through #64 remain closed as superseded. Do not resume them.
 
-## Next excellence target
+## Alpha candidate ready for integration
 
-- Released source: public `master` at v0.9.1 commit
-  `da82eca8ae36f2013ff1871421991167cd80df03`.
-- The old `agent/shannon-remaining-type3` worktree is historical after PR #68;
-  create a fresh collision-free worktree from current `origin/master` for any
-  alpha-alignment experiment.
+- Candidate branch: `agent/shannon-alpha-alignment` in the collision-free
+  `pdf-tools-shannon-alpha` worktree, based on public `master` commit
+  `cb585b9e158e9b76feada053ca36511e40d62a55`.
+- The old `agent/shannon-remaining-type3` worktree is historical after PR #68.
 
 The shipped v0.9.1 tranche adds 59 exact recoveries from nine already qualified
 raster groups: 26 commas, 13 slashes, 9 rho characters, 6 periods, 3 pi
@@ -56,24 +55,41 @@ Three full-paper runs are byte-identical. Replacement characters fall from
 at the shipped best. The detailed record is
 `docs/evidence/shannon-remaining-qualified-type3-2026-08.md`.
 
-The fresh census now strictly recovers 1,111 of 1,240 officially named Type-3
-occurrences. The 129 remaining occurrences are:
+The fresh alpha-alignment candidate restores 49 alphas without changing the
+498 replacement-character count, 68 explicit gaps, sampled structural scores,
+or qualifying table. Three full-paper runs are byte-identical at Markdown
+SHA-256
+`2e7e4fb71d0ea116a352eb1aa1ed1b06c089969643073394d82e23eb5f6ffee3`.
+The detailed record is
+`docs/evidence/shannon-alpha-alignment-2026-08.md`.
+
+The design uses exact PDF operator text state to place each recovered alpha.
+It accepts only one isolated source space whose visible neighbors belong to the
+same reconstructed baseline. It intentionally rejects three cross-line cases,
+seven empty end-of-line items, one bundled control run, and one unqualified
+variant. A recovered whitespace glyph can contribute text but cannot create
+new table-structure evidence by itself.
+
+Before this candidate is merged, the released v0.9.1 census strictly recovers
+1,111 of 1,240 officially named Type-3 occurrences. Its 129 remaining
+occurrences are:
 
 - 64 minuses with a target fingerprint but no two qualified companion glyphs;
 - 60 alpha symbols across three variants whose source control characters are
   collapsed into ordinary-looking whitespace by PDF.js;
 - 5 commas without two qualified companion glyphs.
 
-Do not register any remaining group by guess. Alpha has strong identity
-evidence, but needs a separate, carefully tested alignment design because
-several symbols can collapse into one blank text run.
+Do not register any remaining group by guess. Alpha now has a reviewed,
+source-bound alignment design; the minus and comma groups still lack sufficient
+companion evidence.
 
 ## Current gates
 
-The v0.9.1 release and installed-copy gates are complete. The next code target
-is the alpha alignment problem, but only if it can preserve exact source-item
-placement when PDF.js collapses several alpha controls into one blank run. The
-64-minus and 5-comma groups remain blocked on missing companion evidence.
+The v0.9.1 release and installed-copy gates are complete. The alpha candidate's
+focused tests and full-paper evaluation are complete. It still needs a clean
+full suite, package build, independent review, merge, installed-copy proof, and
+release decision. The 64-minus and 5-comma groups remain blocked on missing
+companion evidence.
 
 Mat has authorized routine merge and installation. A new public release should
 still be based on the complete checks above. No public reply to Kepano has been

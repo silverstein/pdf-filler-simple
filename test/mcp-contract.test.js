@@ -66,7 +66,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // combined contract digest is refreshed after the integration replay.
 // 2026-08-04: additive deterministic compare_pdfs contract with source-bound
 // evidence, exact whole-document limits, and typed channel coverage.
-const TOOL_CONTRACT_SHA256 = "941d6bd50b2a3930defb0526919d714ff9d4bc51acef2b2ad88c99c7533e8c98";
+const TOOL_CONTRACT_SHA256 = "109df9e468513e07377804bff842ac9c398923d88dc07c0ffd68c12a8c075e82";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -414,7 +414,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.3.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.4.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       page_range: { start_page: 1, end_page: 1 },
     });
