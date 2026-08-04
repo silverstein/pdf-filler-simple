@@ -1087,6 +1087,7 @@ setInterval(() => {}, 1000);
     let caught = null;
     let parentPid = null;
     let grandchildPid = null;
+    let settledAt = null;
     const startedAt = Date.now();
     try {
       await Promise.race([
@@ -1110,6 +1111,7 @@ setInterval(() => {}, 1000);
     } catch (error) {
       caught = error;
     } finally {
+      settledAt = Date.now();
       if (watchdog !== null) clearTimeout(watchdog);
       const readFixturePid = async filename => {
         try {
@@ -1124,7 +1126,19 @@ setInterval(() => {}, 1000);
       parentPid = Number.isSafeInteger(reportedPid) && reportedPid > 0
         ? reportedPid
         : await readFixturePid(parentPidPath);
+      // The injected killProcess denies every real signal, so the fixture is
+      // still running once the runner gives up, and it records its grandchild
+      // pid on its own schedule rather than inside the runner's rejection
+      // budget. Wait for that observable readiness before the process group is
+      // killed below, otherwise a slow host lets the kill beat the write and
+      // the pid these assertions need is never recorded. The wait is bounded so
+      // a genuinely missing pid still fails instead of hanging.
       grandchildPid = await readFixturePid(grandchildPidPath);
+      const readinessDeadlineAt = Date.now() + 2_000;
+      while (grandchildPid === null && Date.now() < readinessDeadlineAt) {
+        await new Promise(resolve => setTimeout(resolve, 5));
+        grandchildPid = await readFixturePid(grandchildPidPath);
+      }
       if (parentPid !== null) {
         try {
           process.kill(-parentPid, "SIGKILL");
@@ -1152,7 +1166,10 @@ setInterval(() => {}, 1000);
         await new Promise(resolve => setTimeout(resolve, 10));
       }
     }
-    expect(Date.now() - startedAt).toBeLessThan(5_000);
+    // Bound the runner's own rejection, measured when the race settled, not the
+    // fixture teardown that follows it.
+    expect(settledAt).not.toBeNull();
+    expect(settledAt - startedAt).toBeLessThan(5_000);
     expect(caught).toMatchObject({
       code: "CODEX_PROCESS_TERMINATION_UNVERIFIABLE",
       process_result: {
@@ -1180,6 +1197,7 @@ setInterval(() => {}, 1000);
     });
     expect(parentPid).not.toBeNull();
     expect(grandchildPid).not.toBeNull();
+    expect(await fs.readFile(grandchildReadyPath, "utf8")).toBe("ready");
     for (const pid of [-parentPid, parentPid, grandchildPid]) {
       expect(() => process.kill(pid, 0)).toThrow(
         expect.objectContaining({ code: "ESRCH" }),
