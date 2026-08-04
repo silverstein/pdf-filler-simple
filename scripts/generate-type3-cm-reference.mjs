@@ -10,8 +10,10 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const TFM_ARCHIVE_URL = "https://mirrors.ctan.org/fonts/cm/tfm.zip";
 const TYPE3_ARCHIVE_URL = "https://mirrors.ctan.org/fonts/cm/ps-type3.zip";
+const MF_ARCHIVE_URL = "https://mirrors.ctan.org/fonts/cm/mf.zip";
 const TFM_ARCHIVE_SHA256 = "9c0f99fa34c7d801c40f6b5ff60bc28f200e8ef6ffb2fe75e54ca835c67fc04c";
 const TYPE3_ARCHIVE_SHA256 = "ef38efbd58774b454b190e17c8b5ca0fde13dd5d5ff2282bf0dc0313197f1033";
+const MF_ARCHIVE_SHA256 = "b22c69034d9f3f7a9bf22673544bdeaace5656973cf7fb1a395a857148943076";
 const OUTPUT_MODULE = path.join(REPO_ROOT, "server/type3-cm-reference.js");
 const OUTPUT_SHARE_MODULE = path.join(REPO_ROOT, "pdf-toolkit-mcp-share/server/type3-cm-reference.js");
 const OUTPUT_FIXTURE = path.join(REPO_ROOT, "test/fixtures/eval/extraction/type3-cm-reference.pdf");
@@ -60,6 +62,28 @@ function encodingFamily(filename) {
   if (/^(?:cmmi|cmmib)/u.test(filename)) return "computer-modern-math-italic";
   if (/^(?:cmsy|cmbsy)/u.test(filename)) return "computer-modern-math-symbol";
   return `unsupported:${filename.replace(/\.tfm$/u, "")}`;
+}
+
+function requireSourceDefinitions(mfRoot) {
+  const checks = [
+    ["greekl.mf", /cmchar "Lowercase Greek alpha";\s*beginchar\(oct"013"/u],
+    ["greekl.mf", /cmchar "Lowercase Greek pi";\s*beginchar\(oct"031"/u],
+    ["greekl.mf", /cmchar "Lowercase Greek rho";\s*beginchar\(oct"032"/u],
+    ["greekl.mf", /cmchar "Lowercase Greek omega";\s*beginchar\(oct"041"/u],
+    ["romms.mf", /cmchar "Period";[\s\S]*?beginchar\(oct"072"/u],
+    ["romms.mf", /cmchar "Comma";[\s\S]*?beginchar\(oct"073"/u],
+    ["romms.mf", /cmchar "Virgule \(slash\)";\s*beginchar\(oct"075"/u],
+    ["symbol.mf", /minus=oct"000"/u],
+    ["sym.mf", /iff known minus: cmchar "Minus sign";\s*beginarithchar\(minus\)/u],
+    ["symbol.mf", /geq=oct"025"/u],
+    ["sym.mf", /iff known geq: cmchar "Greater than or equal to sign";[\s\S]*?beginchar\(geq,/u],
+    ["symbol.mf", /cmchar "Radical sign";\s*beginchar\(oct"160"/u],
+  ];
+  const sources = new Map();
+  for (const [filename, pattern] of checks) {
+    if (!sources.has(filename)) sources.set(filename, fs.readFileSync(path.join(mfRoot, filename), "utf8"));
+    if (!pattern.test(sources.get(filename))) throw new Error(`Official Computer Modern definition check failed: ${filename}`);
+  }
 }
 
 function generateMetricModule(tfmRoot, archiveSha256) {
@@ -116,15 +140,21 @@ const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pdf-tools-type3-cm-
 try {
   const tfmArchive = path.join(temporaryRoot, "cm-tfm.zip");
   const type3Archive = path.join(temporaryRoot, "cm-type3.zip");
+  const mfArchive = path.join(temporaryRoot, "cm-mf.zip");
   download(TFM_ARCHIVE_URL, tfmArchive);
   download(TYPE3_ARCHIVE_URL, type3Archive);
+  download(MF_ARCHIVE_URL, mfArchive);
   requireDigest(tfmArchive, TFM_ARCHIVE_SHA256);
   requireDigest(type3Archive, TYPE3_ARCHIVE_SHA256);
+  requireDigest(mfArchive, MF_ARCHIVE_SHA256);
 
   const tfmExtracted = path.join(temporaryRoot, "tfm");
   const type3Extracted = path.join(temporaryRoot, "type3");
+  const mfExtracted = path.join(temporaryRoot, "mf");
   unzip(tfmArchive, tfmExtracted);
   unzip(type3Archive, type3Extracted);
+  unzip(mfArchive, mfExtracted);
+  requireSourceDefinitions(path.join(mfExtracted, "mf"));
   const metricModule = generateMetricModule(path.join(tfmExtracted, "tfm"), TFM_ARCHIVE_SHA256);
   fs.writeFileSync(OUTPUT_MODULE, metricModule);
   fs.writeFileSync(OUTPUT_SHARE_MODULE, metricModule);
@@ -136,6 +166,7 @@ try {
     sources: [
       { url: TFM_ARCHIVE_URL, sha256: TFM_ARCHIVE_SHA256 },
       { url: TYPE3_ARCHIVE_URL, sha256: TYPE3_ARCHIVE_SHA256 },
+      { url: MF_ARCHIVE_URL, sha256: MF_ARCHIVE_SHA256 },
     ],
     generator: {
       ghostscript: execFileSync("gs", ["--version"], { encoding: "utf8" }).trim(),
