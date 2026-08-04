@@ -14,6 +14,7 @@ async function oracle() {
 describe("Shannon Markdown adversarial scorer", () => {
   it("normalizes presentation punctuation without repairing displaced text", () => {
     expect(normalizeShannonText("A—B  *C*\nD")).toBe("a-b c d");
+    expect(normalizeShannonText("ENTROPY<br>POWER GAIN<br />IN DECIBELS")).toBe("entropy power gain in decibels");
     expect(normalizeShannonText("HE recent T bandwidth")).not.toContain("the recent");
   });
 
