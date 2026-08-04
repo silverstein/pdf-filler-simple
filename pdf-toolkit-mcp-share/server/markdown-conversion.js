@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.9.0",
+  version: "1.10.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.3.0";
 
@@ -71,7 +71,7 @@ const GAP_CODES = new Set([
 const LIMITATIONS = Object.freeze([
   "Headings are emitted only from consistent enlarged font metrics or centered English-language source structure with section spacing for a first-page title, introduction, part, or appendix. Ambiguous, very short, or unsupported heading styles remain body text.",
   "A geometrically overlapping initial capital may be joined to its following uppercase word remainder. Line-end hyphens are preserved because source geometry cannot reliably distinguish a split word from an intentional compound. The source Extraction IR retains the original lines.",
-  "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different source font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. A missing prose-to-variable space is restored only when a multiword prose item, a separate uppercase letter from a different source font resource, and continuing prose from the original prose font share one baseline with distinct positive boundary gaps, and the same letter/font pair occurs in a nearby compact equation on the same page and column. A small version-pinned registry may recover a legacy Computer Modern Type-3 character only after an exact official-metric family match, exact target and two-witness glyph-program matches, and a complete operator/text sequence binding. General equations, scripts, fraction bars, unregistered raster variants, and other damaged mathematical glyphs remain source reading-order text rather than being guessed.",
+  "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different source font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. A missing prose-to-variable space is restored only when a multiword prose item, a separate uppercase letter from a different source font resource, and continuing prose from the original prose font share one baseline with distinct positive boundary gaps, and the same letter/font pair occurs in a nearby compact equation on the same page and column. An inline single-digit stacked fraction is rendered only when consecutive same-font source items, explicit source whitespace, smaller exactly aligned numerator and denominator digits, ordinary prose on both sides, and exactly one thin matching solid-mask bar agree. A small version-pinned registry may recover a legacy Computer Modern Type-3 character only after an exact official-metric family match, exact target and two-witness glyph-program matches, and a complete operator/text sequence binding. General equations, scripts, other fraction bars, unregistered raster variants, and other damaged mathematical glyphs remain source reading-order text rather than being guessed.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
   "Tables are reconstructed only from complete text-item column geometry, clean ruled-rectangle grid evidence, or one unambiguous complete closed grid of bounded axis-aligned solid-mask rectangles. Every text item must fit exactly one cell, aligned partial dividers that evidence merged or spanning topology are rejected, and the first row must carry real header evidence because Markdown imposes header semantics. Incomplete grids and damaged mathematical glyphs are not interpreted; ambiguous content remains escaped reading-order text with a conversion gap. Cell artwork is omitted and reported as a vector-content gap; only independently qualified exact legacy glyph variants are recovered.",
@@ -719,6 +719,152 @@ function hasNearbyMathVariableEvidence(row, variable, rows, rowIndex) {
     if (verticalDistance <= height * 4) return true;
   }
   return false;
+}
+
+function alignedFractionBar(page, numerator, denominator) {
+  const evidence = page.painted_rectangles;
+  if (evidence?.status !== "available" || evidence.truncated === true) return null;
+  const tolerance = numerator.line_height * 0.05;
+  const matches = (evidence.items ?? []).filter(item => {
+    const box = item.bbox;
+    const transform = item.graphics_transform;
+    return item.source_kind === "solid_color_image_mask"
+      && box
+      && Array.isArray(transform)
+      && transform.length === 6
+      && transform.every(Number.isFinite)
+      && transform[0] > 0
+      && transform[3] < 0
+      && Math.abs(transform[1]) <= 1e-6
+      && Math.abs(transform[2]) <= 1e-6
+      && box.height > 0
+      && box.height <= numerator.line_height * 0.1
+      && Math.abs(box.x - numerator.x) <= tolerance
+      && Math.abs(box.width - numerator.width) <= tolerance
+      && Math.abs((box.x + box.width / 2) - (numerator.x + numerator.width / 2)) <= tolerance
+      && Math.abs((box.x + box.width / 2) - (denominator.x + denominator.width / 2)) <= tolerance
+      && box.y <= numerator.y + numerator.height + tolerance
+      && box.y + box.height >= denominator.y - tolerance;
+  });
+  return matches.length === 1 ? matches[0] : null;
+}
+
+function axisAlignedTextItem(item) {
+  const transform = item.raw_transform;
+  return Array.isArray(transform) && transform.length === 6
+    && transform.every(Number.isFinite)
+    && transform[0] > 0 && transform[3] > 0
+    && Math.abs(transform[1]) <= 1e-6
+    && Math.abs(transform[2]) <= 1e-6;
+}
+
+function exactFractionSourceSequence(page, prose, numerator, denominator, continuation) {
+  const byIndex = new Map(page.raw_items.map(item => [item.source_index, item]));
+  const before = byIndex.get(prose.source_index + 1);
+  const after = byIndex.get(denominator.source_index + 1);
+  return numerator.source_index === prose.source_index + 2
+    && denominator.source_index === numerator.source_index + 1
+    && continuation.source_index === denominator.source_index + 2
+    && before?.text_kind === "whitespace"
+    && after?.text_kind === "whitespace"
+    && /^\s+$/u.test(before.text)
+    && /^\s+$/u.test(after.text)
+    && before.font_name === prose.font_name
+    && after.font_name === denominator.font_name;
+}
+
+/**
+ * Interpret only a single-digit stacked fraction whose exact source geometry
+ * includes a matching solid-mask bar and whose three rows form one ordinary
+ * prose sentence. Other stacked scripts and fraction-like layouts remain in
+ * source reading order.
+ */
+function simpleStackedFractionPlan(page, rows, {
+  headings,
+  linkState,
+  unsafePage,
+}) {
+  const replacements = new Map();
+  const skipped = new Set();
+  if (unsafePage) return { replacements, skipped };
+  for (let index = 0; index < rows.length - 2; index += 1) {
+    const host = rows[index];
+    const denominatorRow = rows[index + 1];
+    const continuation = rows[index + 2];
+    const numerator = host.cells.at(-1);
+    const prose = host.cells.at(-2);
+    const denominator = denominatorRow.cells[0];
+    const continuationItem = continuation.cells[0];
+    if (host.cells.length !== 2 || denominatorRow.cells.length !== 1
+      || continuation.cells.length !== 1 || !numerator || !prose || !denominator
+      || !continuationItem || headings.get(host.line.id)
+      || headings.get(denominatorRow.line.id) || headings.get(continuation.line.id)
+      || linkState.spansByLine.get(host.line.id)?.length
+      || linkState.spansByLine.get(denominatorRow.line.id)?.length
+      || linkState.spansByLine.get(continuation.line.id)?.length
+      || [host.line, denominatorRow.line, continuation.line]
+        .some(line => line.direction !== "ltr" || rewritesLineStructure(line)
+          || containsUnsafeText(line.text))
+      || host.line.column_index !== denominatorRow.line.column_index
+      || host.line.column_index !== continuation.line.column_index
+      || !/\d$/u.test(prose.text.trim())
+      || (prose.text.trim().match(/[\p{L}\p{N}]+/gu)?.length ?? 0) < 5
+      || !/^\p{Ll}/u.test(continuationItem.text.trim())
+      || (continuationItem.text.trim().match(/[\p{L}\p{N}]+/gu)?.length ?? 0) < 5
+      || !/^\d$/u.test(numerator.text.trim())
+      || !/^\d$/u.test(denominator.text.trim())
+      || typeof prose.font_name !== "string"
+      || prose.font_name !== numerator.font_name
+      || prose.font_name !== denominator.font_name
+      || prose.font_name !== continuationItem.font_name
+      || ![prose, numerator, denominator, continuationItem].every(axisAlignedTextItem)
+      || !exactFractionSourceSequence(page, prose, numerator, denominator, continuationItem)) continue;
+    const proseHeight = Math.max(prose.line_height, continuationItem.line_height);
+    const digitHeight = Math.max(numerator.line_height, denominator.line_height);
+    const leftGap = numerator.x - (prose.x + prose.width);
+    const rightGap = continuationItem.x - (numerator.x + numerator.width);
+    if (!(digitHeight >= proseHeight * 0.65 && digitHeight <= proseHeight * 0.8)
+      || Math.abs(numerator.x - denominator.x) > digitHeight * 0.05
+      || Math.abs(numerator.width - denominator.width) > digitHeight * 0.05
+      || Math.abs(numerator.line_height - denominator.line_height) > digitHeight * 0.05
+      || Math.abs(prose.line_height - continuationItem.line_height) > proseHeight * 0.05
+      || !(numerator.y < prose.y && denominator.y > prose.y)
+      || Math.abs(prose.y - continuationItem.y) > proseHeight * 0.05
+      || !(leftGap > 0 && leftGap <= proseHeight * 0.2)
+      || !(rightGap > proseHeight * 0.25 && rightGap <= proseHeight * 0.6)
+      || alignedFractionBar(page, numerator, denominator) === null) continue;
+    const offsets = itemOffsets(host.line, host.cells);
+    const numeratorOffset = offsets?.at(-1);
+    if (!numeratorOffset || numeratorOffset.start !== numeratorOffset.end - 1
+      || numeratorOffset.end !== host.line.text.length
+      || /\s/u.test(host.line.text.slice(offsets.at(-2).end, numeratorOffset.start))) continue;
+    replacements.set(
+      host.line.id,
+      `${host.line.text.slice(0, numeratorOffset.start)} ${numerator.text.trim()}/${denominator.text.trim()} ${continuation.line.text.trim()}`,
+    );
+    skipped.add(denominatorRow.line.id);
+    skipped.add(continuation.line.id);
+    index += 2;
+  }
+  return { replacements, skipped };
+}
+
+function pageStackedFractionPlan(page, segments, options) {
+  const replacements = new Map();
+  const skipped = new Set();
+  let contiguousTextRows = [];
+  const flush = () => {
+    const plan = simpleStackedFractionPlan(page, contiguousTextRows, options);
+    for (const [lineId, text] of plan.replacements) replacements.set(lineId, text);
+    for (const lineId of plan.skipped) skipped.add(lineId);
+    contiguousTextRows = [];
+  };
+  for (const segment of segments) {
+    if (segment.kind === "table") flush();
+    else contiguousTextRows.push(...segment.rows);
+  }
+  flush();
+  return { replacements, skipped };
 }
 
 function columnAnchors(rows) {
@@ -1777,16 +1923,27 @@ function renderPage(page, {
   const headings = headingLevels(page);
   const analysis = segmentPageLines(page);
   const linkState = analyzePageLinks(page, analysis, headings);
-  const records = analysis.segments.flatMap(segment => (
-    segment.kind === "table"
-      ? renderTable(segment.grid).map(text => ({
+  const unsafePage = analysis.tableReason !== null
+    || linkState.unavailable
+    || linkState.ambiguous
+    || linkState.unsupportedTarget;
+  const fractionPlan = pageStackedFractionPlan(page, analysis.segments, {
+    headings,
+    linkState,
+    unsafePage,
+  });
+  const records = analysis.segments.flatMap(segment => {
+    if (segment.kind === "table") {
+      return renderTable(segment.grid).map(text => ({
           text,
           sourceText: text,
           normalizable: false,
           line: null,
           joinable: false,
-        }))
-      : segment.rows.map(({ line, cells }, rowIndex, rows) => {
+        }));
+    }
+    return segment.rows.flatMap(({ line, cells }, rowIndex, rows) => {
+        if (fractionPlan.skipped.has(line.id)) return [];
         const spans = linkState.spansByLine.get(line.id);
         const offsets = linkState.offsetsByLine.get(line.id);
         if (spans && spans.length > 0 && offsets && !headings.get(line.id)) {
@@ -1806,10 +1963,7 @@ function renderPage(page, {
           linked: Boolean(spans?.length),
           rows,
           rowIndex,
-          unsafePage: analysis.tableReason !== null
-            || linkState.unavailable
-            || linkState.ambiguous
-            || linkState.unsupportedTarget,
+          unsafePage,
         };
         const mathText = mathOperatorSpacedText(
           { line, cells },
@@ -1818,7 +1972,7 @@ function renderPage(page, {
         const proseMathText = mathText === null
           ? proseMathVariableSpacedText({ line, cells }, projectionOptions)
           : null;
-        const projectedText = mathText ?? proseMathText;
+        const projectedText = fractionPlan.replacements.get(line.id) ?? mathText ?? proseMathText;
         return {
           text: renderLine(line, headings.get(line.id), projectedText ?? line.text),
           sourceText: line.text,
@@ -1826,8 +1980,8 @@ function renderPage(page, {
           line,
           joinable: projectedText === null && !headings.get(line.id) && !rewritesLineStructure(line),
         };
-      })
-  ));
+      });
+  });
   const entries = joinParagraphContinuity(records);
   const normalized = compact
     ? normalizePlainLines(entries, { page: page.page, pageBoundaryBefore, pageBoundaryAfter })
