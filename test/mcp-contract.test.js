@@ -50,7 +50,11 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-08-03: convert_pdf_to_markdown renderer 1.6.0 adds bounded, local
 // math-operator spacing with explicit limitations. Previously
 // e80436c2e09aefc4a8ecb7bbc989a9c133fa3a1a2b84e4b07747a784c3e16d6b.
-const TOOL_CONTRACT_SHA256 = "4efcce458b5041a2d822bb921f46550cc15cdb9bcb2d54550f8eaa80c4f5a756";
+// 2026-08-03: extraction IR 1.2.0 preserves bounded solid-mask rectangle
+// evidence and Markdown renderer 1.7.0 uses only complete closed grids for
+// ruled tables. Previously
+// 4efcce458b5041a2d822bb921f46550cc15cdb9bcb2d54550f8eaa80c4f5a756.
+const TOOL_CONTRACT_SHA256 = "9947d16e32562981651216c95598786d9f3324d5f1fae3b53fa8d7f089d2ea05";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -395,7 +399,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.1.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.2.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       page_range: { start_page: 1, end_page: 1 },
     });

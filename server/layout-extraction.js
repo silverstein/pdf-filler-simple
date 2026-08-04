@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 const IR_NAME = "pdf-tools.extraction-ir";
-const IR_VERSION = "1.1.0";
+const IR_VERSION = "1.2.0";
 const INTERNAL_SOURCE_REPLAY = Symbol("pdf-layout-internal-source-replay");
 const INTERNAL_MARKDOWN_PROJECTION = Symbol("pdf-layout-internal-markdown-projection");
 
@@ -35,6 +35,7 @@ const RAW_PAGE_SPACE = Object.freeze({
   unit: "pdf_user_unit",
   stage: "before_user_unit_and_page_rotation",
 });
+const MAX_PAINTED_RECTANGLES = 500;
 
 function round(value) {
   return Number(Number(value).toFixed(3));
@@ -545,6 +546,96 @@ function vectorOperationSet(pdfjsLib) {
   ].filter(Number.isInteger));
 }
 
+function unavailablePaintedRectangles() {
+  return {
+    status: "unavailable",
+    truncated: false,
+    observed_count: 0,
+    returned_count: 0,
+    items: [],
+  };
+}
+
+function unitRectangleGeometry(viewportTransform, graphicsTransform) {
+  if (![...viewportTransform, ...graphicsTransform].every(Number.isFinite)) return null;
+  const transformed = multiplyTransforms(viewportTransform, graphicsTransform);
+  if (!transformed.every(Number.isFinite)) return null;
+  const axisAligned = (Math.abs(transformed[1]) <= 0.002 && Math.abs(transformed[2]) <= 0.002)
+    || (Math.abs(transformed[0]) <= 0.002 && Math.abs(transformed[3]) <= 0.002);
+  if (!axisAligned) return null;
+  const points = [[0, 0], [1, 0], [1, 1], [0, 1]].map(([x, y]) => ({
+    x: round(transformed[0] * x + transformed[2] * y + transformed[4]),
+    y: round(transformed[1] * x + transformed[3] * y + transformed[5]),
+  }));
+  const xs = points.map(point => point.x);
+  const ys = points.map(point => point.y);
+  const x = Math.min(...xs);
+  const y = Math.min(...ys);
+  const width = round(Math.max(...xs) - x);
+  const height = round(Math.max(...ys) - y);
+  if (!(width > 0 && height > 0)) return null;
+  return {
+    quad: points,
+    bbox: { x: round(x), y: round(y), width, height },
+  };
+}
+
+/**
+ * Preserve a bounded neutral projection of PDF.js solid-color image-mask
+ * rectangles. These marks include rules but can also include fraction bars or
+ * other artwork; table semantics are deliberately left to the renderer, which
+ * must require a complete closed grid rather than trusting any one rectangle.
+ */
+function collectPaintedRectangles(operators, pdfjsLib, viewportTransform, pageNumber) {
+  const save = pdfjsLib.OPS?.save;
+  const restore = pdfjsLib.OPS?.restore;
+  const transform = pdfjsLib.OPS?.transform;
+  const paint = pdfjsLib.OPS?.paintSolidColorImageMask;
+  if (![save, restore, transform, paint].every(Number.isInteger)
+    || !Array.isArray(operators?.fnArray)
+    || !Array.isArray(operators?.argsArray)) return unavailablePaintedRectangles();
+  let current = [1, 0, 0, 1, 0, 0];
+  const stack = [];
+  const items = [];
+  let observedCount = 0;
+  for (let operationIndex = 0; operationIndex < operators.fnArray.length; operationIndex += 1) {
+    const operation = operators.fnArray[operationIndex];
+    if (operation === save) {
+      stack.push([...current]);
+    } else if (operation === restore) {
+      if (stack.length === 0) return unavailablePaintedRectangles();
+      current = stack.pop();
+    } else if (operation === transform) {
+      const values = operators.argsArray[operationIndex];
+      if (!Array.isArray(values) || values.length !== 6 || !values.every(Number.isFinite)) {
+        return unavailablePaintedRectangles();
+      }
+      current = multiplyTransforms(current, values);
+      if (!current.every(Number.isFinite)) return unavailablePaintedRectangles();
+    } else if (operation === paint) {
+      const geometry = unitRectangleGeometry(viewportTransform, current);
+      if (!geometry) continue;
+      observedCount += 1;
+      if (items.length >= MAX_PAINTED_RECTANGLES) continue;
+      items.push({
+        id: `p${String(pageNumber).padStart(4, "0")}-r${String(operationIndex + 1).padStart(6, "0")}`,
+        source_operation_index: operationIndex,
+        source_kind: "solid_color_image_mask",
+        graphics_transform: current.map(round),
+        quad: geometry.quad,
+        bbox: geometry.bbox,
+      });
+    }
+  }
+  return {
+    status: "available",
+    truncated: observedCount > items.length,
+    observed_count: observedCount,
+    returned_count: items.length,
+    items,
+  };
+}
+
 function errorRecord(stage, error) {
   return {
     stage,
@@ -599,6 +690,26 @@ function recomputeDocumentTruncation(payload) {
 
 function markOutputBudget(payload, maxOutputCharacters) {
   if (JSON.stringify(payload).length <= maxOutputCharacters) return payload;
+  for (let index = payload.pages.length - 1; index >= 0 && JSON.stringify(payload).length > maxOutputCharacters; index -= 1) {
+    const page = payload.pages[index];
+    if (page.painted_rectangles.items.length === 0) continue;
+    page.painted_rectangles = {
+      status: "unavailable",
+      truncated: true,
+      observed_count: page.painted_rectangles.observed_count,
+      returned_count: 0,
+      items: [],
+    };
+    page.extraction_status = page.extraction_status === "failed" ? "failed" : "partial";
+    page.needs_visual_inspection = true;
+    if (!page.limitations.includes("Painted rectangle detail was omitted to satisfy max_output_characters.")) {
+      page.limitations.push("Painted rectangle detail was omitted to satisfy max_output_characters.");
+    }
+  }
+  if (JSON.stringify(payload).length <= maxOutputCharacters) {
+    payload.extraction_status = payload.pages.every(page => page.extraction_status === "complete") ? "complete" : "partial";
+    return payload;
+  }
   if (!payload.truncation.reasons.includes("max_output_characters")) payload.truncation.reasons.push("max_output_characters");
   for (let index = payload.pages.length - 1; index >= 0 && JSON.stringify(payload).length > maxOutputCharacters; index -= 1) {
     const page = payload.pages[index];
@@ -618,6 +729,13 @@ function markOutputBudget(payload, maxOutputCharacters) {
     // Link items are page detail too. Leaving them would keep a link-heavy
     // page over budget and turn a bounded partial into a whole-call error.
     page.link_annotations = { status: "unavailable", truncated: true, items: [] };
+    page.painted_rectangles = {
+      status: "unavailable",
+      truncated: true,
+      observed_count: page.painted_rectangles.observed_count,
+      returned_count: 0,
+      items: [],
+    };
     page.flow_text = "";
     page.spatial_text = "";
     page.reading_order = {
@@ -848,6 +966,48 @@ export function validatePdfLayoutSemantics(payload, {
     semanticAssertion(!documentIds.has(page.id), `duplicate ID ${page.id}`);
     documentIds.add(page.id);
 
+    const painted = page.painted_rectangles;
+    semanticAssertion(painted && ["available", "unavailable"].includes(painted.status),
+      `page ${page.page} painted rectangle status is invalid`);
+    semanticAssertion(typeof painted.truncated === "boolean"
+      && Number.isSafeInteger(painted.observed_count) && painted.observed_count >= 0
+      && Number.isSafeInteger(painted.returned_count) && painted.returned_count >= 0
+      && painted.returned_count === painted.items.length
+      && painted.returned_count <= painted.observed_count
+      && painted.returned_count <= MAX_PAINTED_RECTANGLES,
+    `page ${page.page} painted rectangle counts are invalid`);
+    if (painted.status === "available") {
+      semanticAssertion(painted.returned_count === Math.min(painted.observed_count, MAX_PAINTED_RECTANGLES)
+        && painted.truncated === (painted.observed_count > painted.returned_count),
+      `page ${page.page} painted rectangle availability is inconsistent`);
+    } else {
+      semanticAssertion(painted.returned_count === 0 && painted.items.length === 0,
+        `page ${page.page} unavailable painted rectangles leaked items`);
+    }
+    let priorPaintOperation = -1;
+    for (const item of painted.items) {
+      semanticAssertion(Number.isSafeInteger(item.source_operation_index)
+        && item.source_operation_index > priorPaintOperation,
+      `page ${page.page} painted rectangle operation order is invalid`);
+      priorPaintOperation = item.source_operation_index;
+      semanticAssertion(item.id === `${pagePrefix}-r${String(item.source_operation_index + 1).padStart(6, "0")}`
+        && item.source_kind === "solid_color_image_mask"
+        && Array.isArray(item.graphics_transform)
+        && item.graphics_transform.length === 6
+        && item.graphics_transform.every(Number.isFinite),
+      `painted rectangle ${item.id} source identity is invalid`);
+      semanticAssertion(!documentIds.has(item.id), `duplicate ID ${item.id}`);
+      documentIds.add(item.id);
+      const expected = unitRectangleGeometry(
+        page.geometry.viewport_transform,
+        item.graphics_transform,
+      );
+      semanticAssertion(expected !== null
+        && sameJson(item.quad, expected.quad)
+        && sameJson(item.bbox, expected.bbox),
+      `painted rectangle ${item.id} geometry mismatch`);
+    }
+
     const itemById = new Map();
     let returnedCharacters = 0;
     for (let index = 0; index < page.raw_items.length; index += 1) {
@@ -1033,9 +1193,11 @@ export function validatePdfLayoutSemantics(payload, {
     // Degraded link evidence, including a hit 200-link cap, is partial evidence.
     const hasDegradedLinks = page.link_annotations.status !== "available"
       || page.link_annotations.truncated === true;
+    const hasDegradedPaintedRectangles = page.painted_rectangles.status !== "available"
+      || page.painted_rectangles.truncated === true;
     const expectedExtraction = expectedTextLayerStatus === "failed"
       ? "failed"
-      : page.truncation.truncated || hasInvalidGeometry || hasRawGeometryGap || expectedImageStatus === "failed" || expectedModality !== "text-layer-candidate" || hasAnnotationError || hasDegradedLinks
+      : page.truncation.truncated || hasInvalidGeometry || hasRawGeometryGap || expectedImageStatus === "failed" || expectedModality !== "text-layer-candidate" || hasAnnotationError || hasDegradedLinks || hasDegradedPaintedRectangles
         ? "partial" : "complete";
     semanticAssertion(page.extraction_status === expectedExtraction, `page ${page.page} extraction status mismatch`);
     semanticAssertion(page.needs_visual_inspection === (expectedExtraction !== "complete" || expectedModality !== "text-layer-candidate"), `page ${page.page} visual-inspection status mismatch`);
@@ -1048,6 +1210,8 @@ export function validatePdfLayoutSemantics(payload, {
         && page.errors.length === 0
         && page.link_annotations.status === "available"
         && page.link_annotations.truncated === false
+        && page.painted_rectangles.status === "available"
+        && page.painted_rectangles.truncated === false
         && page.raw_items.every(item => item.geometry_valid), `page ${page.page} complete status overclaims evidence`);
     }
     if (page.text_layer_status === "failed") semanticAssertion(page.extraction_status === "failed", `page ${page.page} failed text status mismatch`);
@@ -1087,6 +1251,26 @@ function replayOutputBudgetIndependently(seedPayload, maxOutputCharacters) {
   replay.id_scope.max_output_characters = maxOutputCharacters;
   replay.limits.max_output_characters = maxOutputCharacters;
   if (JSON.stringify(replay).length <= maxOutputCharacters) return replay;
+  for (let index = replay.pages.length - 1; index >= 0 && JSON.stringify(replay).length > maxOutputCharacters; index -= 1) {
+    const page = replay.pages[index];
+    if (page.painted_rectangles.items.length === 0) continue;
+    page.painted_rectangles = {
+      status: "unavailable",
+      truncated: true,
+      observed_count: page.painted_rectangles.observed_count,
+      returned_count: 0,
+      items: [],
+    };
+    page.extraction_status = page.extraction_status === "failed" ? "failed" : "partial";
+    page.needs_visual_inspection = true;
+    if (!page.limitations.includes("Painted rectangle detail was omitted to satisfy max_output_characters.")) {
+      page.limitations.push("Painted rectangle detail was omitted to satisfy max_output_characters.");
+    }
+  }
+  if (JSON.stringify(replay).length <= maxOutputCharacters) {
+    replay.extraction_status = replay.pages.every(page => page.extraction_status === "complete") ? "complete" : "partial";
+    return replay;
+  }
   if (!replay.truncation.reasons.includes("max_output_characters")) replay.truncation.reasons.push("max_output_characters");
   for (let index = replay.pages.length - 1; index >= 0 && JSON.stringify(replay).length > maxOutputCharacters; index -= 1) {
     const page = replay.pages[index];
@@ -1104,6 +1288,13 @@ function replayOutputBudgetIndependently(seedPayload, maxOutputCharacters) {
     page.lines = [];
     page.blocks = [];
     page.link_annotations = { status: "unavailable", truncated: true, items: [] };
+    page.painted_rectangles = {
+      status: "unavailable",
+      truncated: true,
+      observed_count: page.painted_rectangles.observed_count,
+      returned_count: 0,
+      items: [],
+    };
     page.flow_text = "";
     page.spatial_text = "";
     page.reading_order = {
@@ -1304,7 +1495,8 @@ export async function validatePdfLayoutSourceEvidence(payload, {
                 ],
               })
               && outputPage.has_image_operations === null
-              && outputPage.has_vector_paint_operations === null,
+              && outputPage.has_vector_paint_operations === null
+              && sameJson(outputPage.painted_rectangles, unavailablePaintedRectangles()),
             `page ${outputPage.page} ordinary page failure differs from reparsed source`,
           );
           continue;
@@ -1447,9 +1639,28 @@ export async function validatePdfLayoutSourceEvidence(payload, {
         if (sourceOperatorError === null) {
           const sourceHasImageOperations = sourceOperators.fnArray.some(operation => sourceImageOps.has(operation));
           const sourceHasVectorOperations = sourceOperators.fnArray.some(operation => sourceVectorOps.has(operation));
+          const sourcePaintedRectangles = collectPaintedRectangles(
+            sourceOperators,
+            pdfjsLib,
+            sourceViewport?.transform ?? [],
+            outputPage.page,
+          );
+          const paintedOutputOmitted = outputPage.painted_rectangles.status === "unavailable"
+            && outputPage.painted_rectangles.truncated === true
+            && !outputPage.errors.some(error => error.stage === "operators" || error.stage === "page");
+          const expectedPaintedRectangles = (outputOmitted || paintedOutputOmitted)
+            ? {
+              status: "unavailable",
+              truncated: true,
+              observed_count: sourcePaintedRectangles.observed_count,
+              returned_count: 0,
+              items: [],
+            }
+            : sourcePaintedRectangles;
           sourceEvidenceAssertion(
             outputPage.has_image_operations === sourceHasImageOperations
               && outputPage.has_vector_paint_operations === sourceHasVectorOperations
+              && sameJson(outputPage.painted_rectangles, expectedPaintedRectangles)
               && !outputPage.errors.some(error => error.stage === "operators"),
             `page ${outputPage.page} operator evidence differs from reparsed source`,
           );
@@ -1458,6 +1669,7 @@ export async function validatePdfLayoutSourceEvidence(payload, {
           sourceEvidenceAssertion(
             outputPage.has_image_operations === null
               && outputPage.has_vector_paint_operations === null
+              && sameJson(outputPage.painted_rectangles, unavailablePaintedRectangles())
               && outputPage.errors.some(outputError => sameJson(outputError, expectedError)),
             `page ${outputPage.page} source operator parse failed but output claims operator evidence`,
           );
@@ -1481,10 +1693,12 @@ export async function validatePdfLayoutSourceEvidence(payload, {
     sourceEvidenceAssertion(payload.extraction_status === sourceDocumentStatus, "document status differs from source-verified page records");
     if (!enforceOutputBudget) {
       sourceEvidenceAssertion(
-        payload.pages.every(page => !page.truncation.reasons.includes("max_output_characters")),
+        payload.pages.every(page => !page.truncation.reasons.includes("max_output_characters")
+          && !(page.painted_rectangles.status === "unavailable" && page.painted_rectangles.truncated)),
         "internal Markdown evidence contains a public output-budget omission",
       );
-    } else if (payload.pages.some(page => page.truncation.reasons.includes("max_output_characters"))) {
+    } else if (payload.pages.some(page => page.truncation.reasons.includes("max_output_characters")
+      || (page.painted_rectangles.status === "unavailable" && page.painted_rectangles.truncated))) {
       const replaySeed = await extractPdfLayout({
         pdfjsLib,
         pdfBytes: sourceBytes,
@@ -1592,6 +1806,7 @@ export async function extractPdfLayout({
       let textContent = null;
       let hasImageOperations = null;
       let hasVectorPaintOperations = null;
+      let paintedRectangles = unavailablePaintedRectangles();
       let pdfjsPage = null;
       let viewport = null;
       let linkAnnotations = UNAVAILABLE_LINK_ANNOTATIONS;
@@ -1625,6 +1840,12 @@ export async function extractPdfLayout({
           const operators = await withDeadline(pdfjsPage.getOperatorList(), deadlineAt);
           hasImageOperations = operators.fnArray.some(operation => imageOps.has(operation));
           hasVectorPaintOperations = operators.fnArray.some(operation => vectorOps.has(operation));
+          paintedRectangles = collectPaintedRectangles(
+            operators,
+            pdfjsLib,
+            viewport?.transform ?? [],
+            pageNumber,
+          );
         } catch (error) {
           if (isFatalParserResourceError(error)) throw error;
           errors.push(errorRecord("operators", error));
@@ -1774,7 +1995,7 @@ export async function extractPdfLayout({
       const pageTruncated = firstOmittedSourceIndex !== null;
       let extractionStatus = "complete";
       if (textLayerStatus === "failed") extractionStatus = "failed";
-      else if (pageTruncated || invalidGeometry || !pdfLibPages || imageDetectionStatus === "failed" || modalityHint !== "text-layer-candidate" || errors.some(error => error.stage === "annotations") || linkAnnotations.truncated === true) extractionStatus = "partial";
+      else if (pageTruncated || invalidGeometry || !pdfLibPages || imageDetectionStatus === "failed" || modalityHint !== "text-layer-candidate" || errors.some(error => error.stage === "annotations") || linkAnnotations.truncated === true || paintedRectangles.status !== "available" || paintedRectangles.truncated === true) extractionStatus = "partial";
       const needsVisualInspection = extractionStatus !== "complete" || modalityHint !== "text-layer-candidate";
       if (hasImageOperations) limitations.push("Image paint operations were detected, but no image was rendered or OCRed; this is not raster-content proof.");
       if (hasVectorPaintOperations) limitations.push("Vector paint operations were detected but not interpreted.");
@@ -1795,6 +2016,7 @@ export async function extractPdfLayout({
         geometry,
         has_image_operations: hasImageOperations,
         has_vector_paint_operations: hasVectorPaintOperations,
+        painted_rectangles: paintedRectangles,
         link_annotations: linkAnnotations,
         raw_items: rawItems,
         lines: ordered.lines,

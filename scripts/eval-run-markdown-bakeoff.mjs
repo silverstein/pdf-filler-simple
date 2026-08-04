@@ -190,7 +190,7 @@ export function validateMarkdownResult(result, binding) {
     throw new Error(`Markdown conversion failed for ${binding.fixture.id}`);
   }
   const value = result.structuredContent;
-  if (value.renderer?.name !== "pdf-tools.layout-markdown-renderer" || value.renderer?.version !== "1.6.0"
+  if (value.renderer?.name !== "pdf-tools.layout-markdown-renderer" || value.renderer?.version !== "1.7.0"
     || value.options?.include_page_boundaries !== true || value.limits?.max_markdown_bytes !== 200000
     || value.provenance?.source?.file_name !== binding.retained.filename
     || value.provenance?.source?.sha256 !== binding.retained.sha256

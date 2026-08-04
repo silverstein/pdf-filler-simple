@@ -84,7 +84,10 @@ function fakePdfjs(pageConfigs, { requiredPassword = null, neverLoad = false } =
     },
     getOperatorList: async () => {
       if (config.operatorError) throw config.operatorError;
-      return { fnArray: config.operations ?? [] };
+      return {
+        fnArray: config.operations ?? [],
+        argsArray: config.operatorArgs ?? (config.operations ?? []).map(() => null),
+      };
     },
     getAnnotations: async () => {
       if (config.annotationError) throw config.annotationError;
@@ -95,7 +98,15 @@ function fakePdfjs(pageConfigs, { requiredPassword = null, neverLoad = false } =
   const pdfjs = {
     version: "5.4.624",
     PasswordResponses: { NEED_PASSWORD: 1, INCORRECT_PASSWORD: 2 },
-    OPS: { paintImageXObject: 1, constructPath: 2, fill: 3 },
+    OPS: {
+      paintImageXObject: 1,
+      constructPath: 2,
+      fill: 3,
+      save: 4,
+      restore: 5,
+      transform: 6,
+      paintSolidColorImageMask: 7,
+    },
     Util: { transform: multiply },
     getDocument: documentOptions => {
       state.document_options = documentOptions;
@@ -275,14 +286,14 @@ describe("read_pdf_layout MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(JSON.stringify(first.structuredContent)).toBe(JSON.stringify(second.structuredContent));
     expect(first.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.1.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.2.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       source: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
       id_scope: {
         kind: "source_parser_ir_options",
         source_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         parser_version: "5.4.624",
-        ir_version: "1.1.0",
+        ir_version: "1.2.0",
         max_output_characters: 200000,
       },
       page_range: { requested_start_page: 1, requested_end_page: 1, start_page: 1, end_page: 1, total_pages: 1 },
@@ -648,6 +659,68 @@ describe("read_pdf_layout MCP tool", () => {
     expect(() => validatePdfLayoutSemantics(forgedImageEvidence, { sourceBytes: bytes })).not.toThrow();
     await expect(validatePdfLayoutSourceEvidence(forgedImageEvidence, { pdfjsLib: pdfjs, sourceBytes: bytes }))
       .rejects.toThrow(/operator evidence differs from reparsed source/);
+  });
+
+  it("captures bounded solid-mask rectangles and binds them to source operators", async () => {
+    const config = {
+      items: [textItem({ text: "Cell", x: 110, top: 100 })],
+      operations: [4, 6, 7, 5],
+      operatorArgs: [null, [40, 0, 0, -0.5, 100, 700], [], null],
+    };
+    const { result, bytes } = await runFake([config]);
+    expect(result.pages[0].painted_rectangles).toEqual({
+      status: "available",
+      truncated: false,
+      observed_count: 1,
+      returned_count: 1,
+      items: [{
+        id: "p0001-r000003",
+        source_operation_index: 2,
+        source_kind: "solid_color_image_mask",
+        graphics_transform: [40, 0, 0, -0.5, 100, 700],
+        quad: [
+          { x: 100, y: 92 },
+          { x: 140, y: 92 },
+          { x: 140, y: 92.5 },
+          { x: 100, y: 92.5 },
+        ],
+        bbox: { x: 100, y: 92, width: 40, height: 0.5 },
+      }],
+    });
+    const { pdfjs } = fakePdfjs([config]);
+    await expect(validatePdfLayoutSourceEvidence(result, { pdfjsLib: pdfjs, sourceBytes: bytes }))
+      .resolves.toBe(result);
+
+    const translated = structuredClone(result);
+    const painted = translated.pages[0].painted_rectangles.items[0];
+    painted.graphics_transform[4] += 5;
+    painted.quad = painted.quad.map(point => ({ ...point, x: point.x + 5 }));
+    painted.bbox.x += 5;
+    expect(() => validatePdfLayoutSemantics(translated, { sourceBytes: bytes })).not.toThrow();
+    await expect(validatePdfLayoutSourceEvidence(translated, { pdfjsLib: pdfjs, sourceBytes: bytes }))
+      .rejects.toThrow(/painted_rectangles|operator evidence differs/);
+  });
+
+  it("caps painted rectangle evidence without accepting it as complete", async () => {
+    const operations = [];
+    const operatorArgs = [];
+    for (let index = 0; index < 501; index += 1) {
+      operations.push(4, 6, 7, 5);
+      operatorArgs.push(null, [20, 0, 0, -0.5, 20, 700 - index * 0.01], [], null);
+    }
+    const { result } = await runFake([{
+      items: [textItem({ text: "Bounded", x: 50, top: 50 })],
+      operations,
+      operatorArgs,
+    }]);
+    expect(result.pages[0].painted_rectangles).toMatchObject({
+      status: "available",
+      truncated: true,
+      observed_count: 501,
+      returned_count: 500,
+    });
+    expect(result.pages[0].extraction_status).toBe("partial");
+    expect(result.pages[0].needs_visual_inspection).toBe(true);
   });
 
   it("fails closed on retention/output limits and keeps references non-dangling", async () => {

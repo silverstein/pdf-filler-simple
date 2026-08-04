@@ -305,11 +305,11 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(second.structuredContent).toEqual(first.structuredContent);
     expect(first.structuredContent).toMatchObject({
-      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.6.0" },
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.7.0" },
       conversion_status: "complete",
       saved_output: null,
       provenance: {
-        layout: { name: "pdf-tools.extraction-ir", version: "1.1.0", parser_version: "5.4.624" },
+        layout: { name: "pdf-tools.extraction-ir", version: "1.2.0", parser_version: "5.4.624" },
       },
     });
     const { markdown } = first.structuredContent;
@@ -542,7 +542,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       const codes = result.structuredContent.gaps.map(gap => gap.code);
       expect(codes, pdfPath).toEqual(expect.arrayContaining(expectedCodes));
       expect(result.structuredContent.limitations.join("\n")).toMatch(/OCR is not performed/);
-      expect(result.structuredContent.limitations.join("\n")).toMatch(/Ruling lines and merged or spanning cells are not interpreted/);
+      expect(result.structuredContent.limitations.join("\n")).toMatch(/Stroked paths, incomplete grids, cell artwork/);
     }
 
     const table = await client.callTool({
@@ -550,7 +550,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       arguments: { pdf_path: TABLE, max_markdown_bytes: 100000 },
     });
     expect(table.isError).not.toBe(true);
-    expect(table.structuredContent.limitations.join("\n")).toMatch(/Ruling lines and merged or spanning cells are not interpreted/);
+    expect(table.structuredContent.limitations.join("\n")).toMatch(/Stroked paths, incomplete grids, cell artwork/);
     // This fixture has a merged/blank cell, so no row fills every detected
     // column. It must degrade to reading-order text and report typed partial
     // coverage rather than inventing a topology.
