@@ -85,8 +85,14 @@ function assertPublicHttpsUrl(value) {
   const raw = assertBoundedString(value, { max: 4096 });
   const url = new URL(raw);
   if (url.protocol !== "https:" || url.username || url.password || url.hash) throw new Error("invalid transfer url");
-  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
+  const parsedHostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const terminalDotCount = parsedHostname.length - parsedHostname.replace(/\.+$/, "").length;
+  if (terminalDotCount > 1) throw new Error("invalid transfer hostname");
+  const hostname = parsedHostname.replace(/\.$/, "");
   const ipVersion = isIP(hostname);
+  const invalidDnsName = ipVersion === 0 && hostname.split(".").some(label => (
+    !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(label)
+  ));
   if (
     hostname === "localhost"
     || hostname.endsWith(".localhost")
@@ -95,6 +101,7 @@ function assertPublicHttpsUrl(value) {
     || hostname.endsWith(".home.arpa")
     || !hostname.includes(".")
     || ipVersion !== 0
+    || invalidDnsName
   ) {
     throw new Error("non-public transfer url");
   }
@@ -135,8 +142,10 @@ function assertContiguousGroups(signers) {
   if (groups.some((group, index) => group !== index + 1)) throw new Error("noncontiguous signing groups");
 }
 
-export function mapLuminSignV1SignatureRequest(intent, { nowMs = Date.now() } = {}) {
+export function mapLuminSignV1SignatureRequest(intent, options = {}) {
   try {
+    assertExactKeys(options, [], ["nowMs"]);
+    const nowMs = options.nowMs === undefined ? Date.now() : options.nowMs;
     assertExactKeys(intent, [
       "expires_at_ms",
       "field_mapping",

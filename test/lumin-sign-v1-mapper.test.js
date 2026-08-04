@@ -189,6 +189,24 @@ describe("mapLuminSignV1SignatureRequest", () => {
       },
     });
     expectInvalid(intent, [sentinel]);
+
+    const optionsSentinel = "SENTINEL_OPTIONS_SECRET";
+    const options = new Proxy({}, {
+      get(target, key, receiver) {
+        if (key === "nowMs") throw new Error(optionsSentinel);
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    try {
+      mapLuminSignV1SignatureRequest(validIntent(), options);
+      throw new Error("expected mapper to reject options");
+    } catch (error) {
+      expect(error).toMatchObject({
+        code: "LUMIN_MAPPING_INVALID",
+        message: "LUMIN_MAPPING_INVALID: The Lumin Sign request intent failed local validation.",
+      });
+      expect(error.message).not.toContain(optionsSentinel);
+    }
   });
 
   it("refuses duplicate participant bindings", () => {
@@ -239,6 +257,11 @@ describe("mapLuminSignV1SignatureRequest", () => {
     "https://printer.local./document.pdf",
     "https://service.internal./document.pdf",
     "https://host.home.arpa./document.pdf",
+    "https://localhost../document.pdf",
+    "https://printer.local../document.pdf",
+    "https://service.internal../document.pdf",
+    "https://host.home.arpa../document.pdf",
+    "https://bad_label.example.com/document.pdf",
     "https://intranet/document.pdf",
     "https://objects.example.com/document.pdf#secret",
   ])("refuses a non-public or credential-bearing transfer URL: %s", url => {
