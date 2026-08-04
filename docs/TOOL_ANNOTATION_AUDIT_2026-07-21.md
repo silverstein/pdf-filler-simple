@@ -103,3 +103,14 @@ Verification on Node `22.22.3`:
 - shuffled suite (`--sequence.seed=410`): 27 files, 308 tests passed;
 - source/share runtime byte comparison: identical;
 - dependency manifests and the protected `pdfjs-dist` pin: unchanged.
+
+## Addendum — 2026-08-03 (extraction-intelligence epic, pdf-toolkit-mcp-zyx)
+
+The epic extended the structured outputs of `read_pdf_layout`,
+`convert_pdf_to_markdown`, `get_page_analysis`, and `read_pdf_content`
+(ruled-rect/text-integrity/operator evidence, vision routing, compact-mode
+normalizations) and added the optional `compact` input argument to
+`convert_pdf_to_markdown`. All four tools remain read-only local operations;
+no `readOnlyHint`, `destructiveHint`, `idempotentHint`, or `openWorldHint`
+value changes. The advertised tool-contract digest changes are recorded with
+dated entries in `test/mcp-contract.test.js`.

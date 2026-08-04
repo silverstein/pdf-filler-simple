@@ -51,6 +51,10 @@ const pageTextPreview = object({
   truncated: boolean,
   text: string,
 });
+const pageReadError = nullable(object({
+  page: integer,
+  code: { const: "PDFJS_PAGE_READ_FAILED" },
+}));
 const regionPoints = object({
   x: number,
   y: number,
@@ -97,6 +101,40 @@ const standardError = object({
       "tool_execution_failed",
     ]),
   }),
+});
+const contentWorkerFailure = object({
+  status: { const: "failed" },
+  error: object({
+    error_schema_version: { const: 1 },
+    code: enumString(["internal_validation_error", "path_policy_denied", "tool_execution_failed"]),
+  }),
+  pages_read: integer,
+  read_pages_without_text: integerArray,
+  pages_with_suspected_text_integrity: arrayOf(object({
+    page: integer,
+    signals: arrayOf(object({
+      kind: enumString(["replacement_characters", "private_use_runs", "c1_control_tokens", "non_alphanumeric_dominance"]),
+      count: { type: "integer", minimum: 1 },
+    })),
+  })),
+  page_read_error: pageReadError,
+});
+const contentResourceLimitError = object({
+  status: { const: "failed" },
+  error: object({
+    error_schema_version: { const: 1 },
+    code: { const: "PDF_RESOURCE_LIMIT_EXCEEDED" },
+  }),
+  pages_read: integer,
+  read_pages_without_text: integerArray,
+  pages_with_suspected_text_integrity: arrayOf(object({
+    page: integer,
+    signals: arrayOf(object({
+      kind: enumString(["replacement_characters", "private_use_runs", "c1_control_tokens", "non_alphanumeric_dominance"]),
+      count: { type: "integer", minimum: 1 },
+    })),
+  })),
+  page_read_error: pageReadError,
 });
 const layoutPasswordError = object({
   status: { const: "failed" },
@@ -210,6 +248,16 @@ const contentProperties = {
   content_available: boolean,
   extraction_status: enumString(["complete", "partial"]),
   page_previews: arrayOf(pageTextPreview),
+  page_read_error: pageReadError,
+  read_pages_without_text: { ...integerArray, description: "Pages actually read in this call whose normalized text layer is empty." },
+  pages_with_suspected_text_integrity: arrayOf(object({
+    page: integer,
+    signals: arrayOf(object({
+      kind: enumString(["replacement_characters", "private_use_runs", "c1_control_tokens", "non_alphanumeric_dominance"]),
+      count: { type: "integer", minimum: 1 },
+    })),
+  })),
+  routing_guidance: nullable({ type: "string", description: "Fixed guidance to use render_pdf_page for pages without text, scoped to this call." }),
   preview_truncated: boolean,
   extraction_mode: enumString(["text", "image-fallback"]),
   error_codes: stringArray,
@@ -239,6 +287,13 @@ const contentFailure = object({
   extraction_status: { const: "failed" },
   extraction_mode: { const: "none" },
 });
+const layoutTextIntegrity = object({
+  status: enumString(["ok", "suspect", "unavailable"]),
+  signals: arrayOf(object({
+    kind: enumString(["replacement_characters", "private_use_runs", "c1_control_tokens", "non_alphanumeric_dominance"]),
+    count: { type: "integer", minimum: 1 },
+  })),
+});
 const pageAnalysis = object({
   page: integer,
   width: integer,
@@ -251,6 +306,9 @@ const pageAnalysis = object({
   text_snippet: nullable(string),
   has_images: nullable(boolean),
   has_graphics: nullable(boolean),
+  image_op_count: nullable({ type: "integer", minimum: 0, description: "Count of PDF.js image paint invocations; grouped or repeat image operators count as one invocation each, not raw PDF operators." }),
+  path_op_count: nullable({ type: "integer", minimum: 0, description: "Count of PDF.js constructPath invocations, not raw PDF path operators." }),
+  path_segment_count: nullable({ type: "integer", minimum: 0, description: "Count of DrawOPS path commands contained in PDF.js constructPath invocations." }),
   content_analysis_status: enumString(["complete", "degraded", "unavailable", "not_analyzed"]),
   text_extraction_status: enumString(["complete", "failed", "not_analyzed"]),
   image_detection_status: enumString(["complete", "failed", "not_analyzed"]),
@@ -263,6 +321,7 @@ const pageAnalysis = object({
     images: nullable(enumString(["pdfjs"])),
     graphics: nullable(enumString(["pdfjs"])),
   }),
+  text_integrity: layoutTextIntegrity,
 });
 const analysisError = object({
   scope: enumString(["document", "page"]),
@@ -274,6 +333,17 @@ const layoutItemSpace = object({
   origin: { const: "top_left" },
   unit: { const: "points_1_72_in_after_user_unit" },
   reference_box: { const: "pdfjs_display_viewport" },
+});
+const routingReason = enumString([
+  "no_text_layer",
+  "image_dominated",
+  "vector_only_text",
+  "suspected_text_integrity",
+  "analysis_unavailable",
+]);
+const visionRoutingPage = object({
+  page: integer,
+  reasons: arrayOf(routingReason),
 });
 const layoutRawPageSpace = object({
   basis: { const: "pdf_default_user_space" },
@@ -312,7 +382,7 @@ const layoutDocumentTruncation = object({
   first_omitted_source_index: nullable(integer),
 });
 const layoutError = object({
-  stage: enumString(["page", "text", "operators", "geometry"]),
+  stage: enumString(["page", "text", "operators", "geometry", "annotations", "ruled_rects"]),
   code: string,
   message: string,
 });
@@ -375,6 +445,24 @@ const layoutBlock = object({
   column_index: integer,
   line_ids: stringArray,
 });
+const layoutRuledRect = object({
+  x: { type: "number", minimum: 0 },
+  y: { type: "number", minimum: 0 },
+  width: { type: "number", minimum: 0 },
+  height: { type: "number", minimum: 0 },
+  verb: enumString(["fill", "stroke", "clip", "none"]),
+});
+const layoutRuledRects = object({
+  status: enumString(["available", "truncated", "failed", "unavailable"]),
+  observed_count: { type: "integer", minimum: 0 },
+  returned_count: { type: "integer", minimum: 0 },
+  items: arrayOf(layoutRuledRect),
+});
+const layoutOperatorCounts = nullable(object({
+  image_paint_ops: { type: "integer", minimum: 0 },
+  path_segments: { type: "integer", minimum: 0 },
+  path_construct_ops: { type: "integer", minimum: 0 },
+}));
 const markdownGapCode = enumString([
   "PAGE_RANGE_INCOMPLETE",
   "SOURCE_ITEM_LIMIT_REACHED",
@@ -389,7 +477,9 @@ const markdownGapCode = enumString([
   "LINK_ANNOTATIONS_UNAVAILABLE",
   "LINK_MAPPING_AMBIGUOUS",
   "UNSUPPORTED_LINK_TARGET",
+  "TABLE_RULING_UNSUPPORTED",
   "TABLE_TOPOLOGY_UNKNOWN",
+  "TEXT_INTEGRITY_SUSPECT",
   "CONTROL_CHARACTERS_SANITIZED",
 ]);
 const markdownGap = object({
@@ -425,6 +515,9 @@ const layoutPage = object({
   geometry: layoutGeometry,
   has_image_operations: nullable(boolean),
   has_vector_paint_operations: nullable(boolean),
+  ruled_rects: layoutRuledRects,
+  text_integrity: layoutTextIntegrity,
+  operator_counts: layoutOperatorCounts,
   link_annotations: object({
     status: enumString(["available", "unavailable"]),
     truncated: boolean,
@@ -512,7 +605,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     truncated: boolean,
   }),
   read_pdf_layout: object({
-    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.1.0" } }),
+    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.2.0" } }),
     parser: object({ name: { const: "pdfjs-dist" }, version: { const: "5.4.624" } }),
     source: object({
       pdf_path: string,
@@ -524,7 +617,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       kind: { const: "source_parser_ir_options" },
       source_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       parser_version: { const: "5.4.624" },
-      ir_version: { const: "1.1.0" },
+      ir_version: { const: "1.2.0" },
       requested_start_page: integer,
       requested_end_page: integer,
       max_items: integer,
@@ -552,17 +645,24 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
   convert_pdf_to_markdown: object({
     renderer: object({
       name: { const: "pdf-tools.layout-markdown-renderer" },
-      version: { const: "1.2.0" },
+      version: { const: "1.3.0" },
     }),
     conversion_status: enumString(["complete", "partial", "failed"]),
     markdown: string,
     markdown_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
     markdown_bytes: { type: "integer", minimum: 0 },
-    options: object({ include_page_boundaries: boolean }),
+    options: object({ include_page_boundaries: boolean, compact: boolean }),
     limits: object({ max_markdown_bytes: { type: "integer", minimum: 1, maximum: 200000 } }),
     pages: arrayOf(markdownPage),
+    pages_needing_vision: arrayOf(visionRoutingPage),
     gaps: arrayOf(markdownGap),
     limitations: stringArray,
+    normalizations: object({
+      dot_leaders_collapsed: { type: "integer", minimum: 0 },
+      page_number_lines_removed: { type: "integer", minimum: 0 },
+      spaced_hyphens_joined: { type: "integer", minimum: 0 },
+      normalized_pages: integerArray,
+    }),
     provenance: object({
       source: object({
         file_name: string,
@@ -571,7 +671,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       }),
       layout: object({
         name: { const: "pdf-tools.extraction-ir" },
-        version: { const: "1.1.0" },
+        version: { const: "1.2.0" },
         parser_name: { const: "pdfjs-dist" },
         parser_version: { const: "5.4.624" },
         page_range: object({
@@ -699,6 +799,12 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     analysis_errors: arrayOf(analysisError),
     retry_guidance: nullable(string),
     mutation_guidance: string,
+    classification: object({
+      document_kind: enumString(["text_based", "image_based", "vector_heavy", "mixed", "empty", "unknown"]),
+      pages_analyzed: integer,
+      pages_needing_vision: arrayOf(visionRoutingPage),
+      pages_not_analyzed: integerArray,
+    }),
     pages: arrayOf(pageAnalysis),
     majority_orientation: enumString(["portrait", "landscape"]),
   }),
@@ -792,7 +898,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
 const specialErrorSchemas = {
   get_pdf_identity: [pdfIdentityError],
   validate_pdf: [validationFailure],
-  read_pdf_content: [contentFailure, pdfResourceLimitError],
+  read_pdf_content: [contentFailure, contentWorkerFailure, contentResourceLimitError, pdfResourceLimitError],
   read_pdf_pages: [pdfResourceLimitError],
   read_pdf_layout: [layoutPasswordError, pdfResourceLimitError],
   convert_pdf_to_markdown: [layoutPasswordError, pdfResourceLimitError],

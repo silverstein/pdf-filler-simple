@@ -305,12 +305,13 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(second.structuredContent).toEqual(first.structuredContent);
     expect(first.structuredContent).toMatchObject({
-      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.2.0" },
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.3.0" },
       conversion_status: "complete",
       saved_output: null,
       provenance: {
-        layout: { name: "pdf-tools.extraction-ir", version: "1.1.0", parser_version: "5.4.624" },
+        layout: { name: "pdf-tools.extraction-ir", version: "1.2.0", parser_version: "5.4.624" },
       },
+      pages_needing_vision: [],
     });
     const { markdown } = first.structuredContent;
     expect(markdown).toContain("<!-- PDF page 1 -->");
@@ -527,6 +528,29 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     expect(result.structuredContent.gaps.map(gap => gap.code)).toContain("LINK_MAPPING_AMBIGUOUS");
   }, 30_000);
 
+  it("routes an image page with sub-threshold text to vision, matching get_page_analysis semantics", async () => {
+    const pdfPath = path.join(temporaryRoot, "image-short-text.pdf");
+    const document = await PDFDocument.create();
+    const page = document.addPage([612, 792]);
+    const font = await document.embedFont(StandardFonts.Helvetica);
+    const raster = await document.embedPng(await fs.readFile(
+      path.join(REPO_ROOT, "test/fixtures/eval/extraction/source-images/raster-clean.png"),
+    ));
+    page.drawImage(raster, { x: 72, y: 200, width: 400, height: 400 });
+    page.drawText("Caption under the scan", { x: 72, y: 160, size: 12, font });
+    await fs.writeFile(pdfPath, await document.save({ useObjectStreams: false }));
+    const result = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: pdfPath, max_markdown_bytes: 100000 },
+    });
+    expect(result.isError).not.toBe(true);
+    // 22 trimmed chars < MIN_TEXT_CHARS_WITH_IMAGES (100): the thin caption
+    // must not suppress vision routing merely because a text layer exists.
+    expect(result.structuredContent.pages_needing_vision).toEqual([
+      { page: 1, reasons: ["image_dominated"] },
+    ]);
+  });
+
   it("reports mixed, raster-only, and table-like visual structure without OCR or topology claims", async () => {
     const cases = [
       [MIXED, { end_page: 2 }, ["OCR_NOT_PERFORMED", "IMAGE_CONTENT_NOT_RENDERED"]],
@@ -541,8 +565,14 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       expect(result.structuredContent.conversion_status, pdfPath).toBe("partial");
       const codes = result.structuredContent.gaps.map(gap => gap.code);
       expect(codes, pdfPath).toEqual(expect.arrayContaining(expectedCodes));
+      expect(result.structuredContent.pages_needing_vision, pdfPath).toEqual(
+        range.end_page === 2
+          ? [{ page: 2, reasons: ["no_text_layer", "image_dominated"] }]
+          : [{ page: 1, reasons: ["no_text_layer", "image_dominated"] }],
+      );
+      expect(result.content?.[0]?.text ?? "").toContain("render_pdf_page");
       expect(result.structuredContent.limitations.join("\n")).toMatch(/OCR is not performed/);
-      expect(result.structuredContent.limitations.join("\n")).toMatch(/Ruling lines and merged or spanning cells are not interpreted/);
+      expect(result.structuredContent.limitations.join("\n")).toMatch(/Merged or spanning cells are not interpreted/);
     }
 
     const table = await client.callTool({
@@ -550,7 +580,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       arguments: { pdf_path: TABLE, max_markdown_bytes: 100000 },
     });
     expect(table.isError).not.toBe(true);
-    expect(table.structuredContent.limitations.join("\n")).toMatch(/Ruling lines and merged or spanning cells are not interpreted/);
+    expect(table.structuredContent.limitations.join("\n")).toMatch(/Merged or spanning cells are not interpreted/);
     // This fixture has a merged/blank cell, so no row fills every detected
     // column. It must degrade to reading-order text and report typed partial
     // coverage rather than inventing a topology.

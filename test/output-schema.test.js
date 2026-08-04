@@ -416,6 +416,49 @@ describe("live output schema contract", () => {
     });
   });
 
+  it("accepts scoped routing facts on a read-content worker failure", () => {
+    const result = {
+      isError: true,
+      structuredContent: {
+        status: "failed",
+        error: { error_schema_version: 1, code: "tool_execution_failed" },
+        pages_read: 1,
+        read_pages_without_text: [1],
+        pages_with_suspected_text_integrity: [],
+        page_read_error: { page: 2, code: "PDFJS_PAGE_READ_FAILED" },
+      },
+    };
+    expect(validateStructuredToolResult("read_pdf_content", result)).toBe(result);
+  });
+
+  it("accepts scoped routing facts on a read-content resource-limit failure", () => {
+    const result = {
+      isError: true,
+      structuredContent: {
+        status: "failed",
+        error: { error_schema_version: 1, code: "PDF_RESOURCE_LIMIT_EXCEEDED" },
+        pages_read: 1,
+        read_pages_without_text: [1],
+        pages_with_suspected_text_integrity: [],
+        page_read_error: null,
+      },
+    };
+    expect(validateStructuredToolResult("read_pdf_content", result)).toBe(result);
+  });
+
+  it("rejects a read-content worker failure that omits read provenance", () => {
+    const rejected = validateStructuredToolResult("read_pdf_content", {
+      isError: true,
+      structuredContent: {
+        status: "failed",
+        error: { error_schema_version: 1, code: "tool_execution_failed" },
+        read_pages_without_text: [1],
+      },
+    });
+    expect(rejected).not.toBe(rejected.structuredContent);
+    expect(rejected.structuredContent.error.code).toBe("internal_validation_error");
+  });
+
   it("preserves its rich typed failure for an empty malformed content read", async () => {
     const fixture = makeDeepMalformedFixture({
       scale: "full",

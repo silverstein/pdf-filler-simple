@@ -25,7 +25,7 @@ an `isError` result is never forced through a success schema.
 | `apply_text` | active document plus text placement |
 | `bulk_fill_from_csv` | row results and bounded record preview |
 | `create_signature` | saved signature metadata |
-| `convert_pdf_to_markdown` | deterministic Markdown, typed coverage gaps, provenance, and optional verified UTF-8 output |
+| `convert_pdf_to_markdown` | deterministic Markdown, typed coverage gaps (incl. `TABLE_RULING_UNSUPPORTED`, `TEXT_INTEGRITY_SUSPECT`), `pages_needing_vision` routing, opt-in compact `normalizations` counts, provenance, and optional verified UTF-8 output |
 | `detect_signature_zones` | detected coordinate zones |
 | `display_pdf` | active document and form summary |
 | `extract_to_csv` | CSV counts, headers, and bounded row preview |
@@ -33,7 +33,7 @@ an `isError` result is never forced through a success schema.
 | `fill_pdf` | active document and field-fill outcome |
 | `fill_with_profile` | active document and profile-fill outcome |
 | `get_active_document` | empty or populated active-document state |
-| `get_page_analysis` | bounded page analysis with explicit provenance |
+| `get_page_analysis` | bounded page analysis with explicit provenance, operator counts, and a `classification` rollup (`document_kind`, typed `pages_needing_vision`, explicit `pages_not_analyzed`) |
 | `get_pdf_identity` | parser-independent canonical path, byte length, and SHA-256 |
 | `get_pdf_resource_uri` | resource URI and local file metadata |
 | `list_signatures` | saved signature summaries, including an empty array |
@@ -41,7 +41,7 @@ an `isError` result is never forced through a success schema.
 | `merge_pdfs` | active output document and page count |
 | `prepare_signing_packet` | active document, fills, and pending placements |
 | `read_pdf_bytes` | bounded base64 byte chunk |
-| `read_pdf_content` | complete/partial text or image-fallback result |
+| `read_pdf_content` | complete/partial text or image-fallback result with page-scoped routing facts (`read_pages_without_text`, integrity signals, typed `page_read_error`) preserved through failure and resource-limit branches |
 | `read_pdf_fields` | active document and form fields |
 | `read_pdf_pages` | bounded page-numbered text |
 | `read_pdf_layout` | versioned bounded Extraction IR with source, geometry, reading order, gaps, and limits |

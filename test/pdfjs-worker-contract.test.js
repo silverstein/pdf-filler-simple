@@ -13,6 +13,7 @@ import {
   runPdfjsSubprocess,
 } from "../server/pdfjs-subprocess.js";
 import {
+  readContentFromDocument,
   runRendererPolicy,
   runSystemCommand,
 } from "../server/pdfjs-worker.js";
@@ -106,6 +107,31 @@ async function run(operation, options, password = null, source = null) {
 }
 
 describe.sequential("one-shot PDF.js worker contracts", () => {
+  it("preserves textless pages when a later page read fails", async () => {
+    const pageOne = {
+      async getTextContent() {
+        return { items: [{ str: " \n\t " }] };
+      },
+      cleanup() {},
+    };
+    const document = {
+      numPages: 2,
+      async getPage(pageNumber) {
+        if (pageNumber === 1) return pageOne;
+        throw new Error("forced page load failure");
+      },
+    };
+    await expect(readContentFromDocument(document, { max_pages: null })).resolves.toMatchObject({
+      pages_without_text: [1],
+      pages_read: 1,
+      page_read_error: {
+        page: 2,
+        code: "PDFJS_PAGE_READ_FAILED",
+      },
+      page_previews: [{ page: 1, char_count: 0, text: "" }],
+    });
+  });
+
   it("projects text extraction without returning an unbounded page-text graph", async () => {
     const content = await run("read_content", { max_pages: 1 });
     expect(content).toMatchObject({
@@ -151,7 +177,7 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
     };
     const layout = await run("extract_layout", common);
     expect(layout.layout).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.1.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.2.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       pages: expect.any(Array),
     });

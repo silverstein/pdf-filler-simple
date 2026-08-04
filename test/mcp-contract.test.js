@@ -27,8 +27,16 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // structured tools advertise universal typed errors. Previously
 // 3a1710d4500a330f04cb1527031d6cbebd8f0193d7d6b4716081120f3ea629af.
 // 2026-07-30: convert_pdf_to_markdown renderer 1.2.0 (link emission) and
-// extraction-ir 1.1.0 (link annotation evidence). Previously
+// extraction-ir 1.2.0 (ruled rectangles, text integrity, operator evidence).
 // 942cb650fa28c0c2482efb8fde8130d5793abc73d431071b46aa41906f7c619d.
+// 2026-08-03: classification/routing fields for page analysis, content, and
+// Markdown conversion; read_pdf_content page-scoped text routing metadata.
+// 24e8a55633d745478d242a9593790115a1ea94d3e91493ebdd07c3e0ec659e0a.
+// 2026-08-03: classification scope, ratio routing, and page-read failure
+// provenance.
+// 08c1f0d18959cfbf7c29319bc208d2cb75ca8a8334c36cb11539e77dcf87aca2.
+// 2026-08-03: opt-in compact Markdown normalizations and result-shape wiring.
+// aca6dabd3add8c1299da548253d804ae08ab27e94b8c8485a1c9c2ad6e41a1f3.
 // 2026-07-30: convert_pdf_to_markdown description corrected to state the table
 // and link capabilities it actually has, then shortened to 820 characters
 // without dropping a safety boundary. Previously
@@ -37,7 +45,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // gap enum. The renderer throws on the byte limit rather than truncating, so
 // that code was unreachable and misdescribed the contract. Previously
 // 3993365ec0868e80afc629cbb8661566a363fe543acc928992ad36bcee4db86f.
-const TOOL_CONTRACT_SHA256 = "07b2f6035903e699d3d4f023137fc14d4316a214e789d45ed22a4dc804a1184b";
+const TOOL_CONTRACT_SHA256 = "aca6dabd3add8c1299da548253d804ae08ab27e94b8c8485a1c9c2ad6e41a1f3";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -382,7 +390,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.1.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.2.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       page_range: { start_page: 1, end_page: 1 },
     });
