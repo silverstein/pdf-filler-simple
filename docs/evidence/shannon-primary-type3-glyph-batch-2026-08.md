@@ -4,8 +4,9 @@
 
 PDF Tools now recovers 1,021 additional exact characters from nine repeatedly
 used legacy Computer Modern Type-3 glyph groups in Shannon's 55-page paper.
-Together with the preceding qualified batch, the production extractor recovers
-1,052 exact characters from 13 registered groups.
+Together with the preceding qualified batch, the tested draft production path
+recovers 1,052 exact characters from 13 registered groups. PR #62 remains an
+unmerged draft; this is verified implementation behavior, not a shipped claim.
 
 This remains a fail-closed character recovery. A replacement is accepted only
 when the raw PDF font link, official Computer Modern character position, target
