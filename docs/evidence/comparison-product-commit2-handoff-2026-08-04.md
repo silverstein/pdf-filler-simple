@@ -11,9 +11,12 @@
   evidence head `8696da4da0d80590e54d69222d41147f4050721f`.
 - Independently blocked first repair: `02ed531d5fc82c0cf96cb681e5c0d66a81213138`
   (tree `295da2d11ae79659deadb058d0e8a0b87adaa116`).
-- Clipping-repair parent: `02ed531d5fc82c0cf96cb681e5c0d66a81213138`.
-- Current repair candidate: the single commit containing this handoff; consume
-  the exact SHA and tree reported by the operator, never the branch name.
+- Independently accepted implementation:
+  `7077ef4257026107c849b9326f1d07a4d5de5dca`, parent
+  `02ed531d5fc82c0cf96cb681e5c0d66a81213138`, tree
+  `71d6999a4c4d36a9819b7e6aac3d7df52d6c94c9`.
+- Evidence head: the docs-only commit containing this final handoff; consume
+  its exact SHA reported by the operator, never the branch name.
 - Protected dependency: `pdfjs-dist` remains exactly `5.4.624`; no dependency
   was added or changed.
 
@@ -60,6 +63,16 @@ rectangles before any typed-array operation. Exact primitive regressions place
 a disjoint visible delta in the raster and prove fully off-left, off-right,
 off-top, and off-bottom ignored evidence boxes produce the identical result as
 no mask.
+
+PurplePine returned implementation-only ACCEPT in Agent Mail reply 76 for
+exact `7077ef4257026107c849b9326f1d07a4d5de5dca`, tree
+`71d6999a4c4d36a9819b7e6aac3d7df52d6c94c9`. The reviewer independently
+verified the original mixed cross-page and same-page repairs, all four clipped
+edges, 23 direct tests, 83 focused tests, source/share parity, exact HEAD/tree,
+and the clean worktree. This narrow ACCEPT does not transfer historical full
+aggregate, Linux scorer, or MCPB identity to the accepted SHA and does not
+authorize packaging, integration, GitHub, installation, merge, release,
+benchmark claims, or external/Kepano action.
 
 ## Implemented boundary
 
@@ -193,5 +206,7 @@ performed. Installed-host exercises, Stonebook x64 evidence, Claude-chat UI
 invocation, OS-denied benchmark isolation, signed result attestation, and broad
 benchmark/release claims remain separate gates. Any future integration must
 consume an exact reviewed SHA and preserve the Shannon/comparison ownership
-boundary. The repair remains BLOCKED pending a fresh independent ACCEPT/BLOCK
-review; this handoff does not self-approve it.
+boundary. The implementation is independently ACCEPTED at exact
+`7077ef4257026107c849b9326f1d07a4d5de5dca`;
+all packaging, integration, GitHub, installation, merge, release, benchmark,
+and external/Kepano gates remain closed.
