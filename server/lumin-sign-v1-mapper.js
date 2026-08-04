@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isIP } from "node:net";
+import { types as utilTypes } from "node:util";
 
 const MAX_PROVIDER_FILE_BYTES = 200 * 1024 * 1024;
 const MAX_PARTICIPANTS = 100;
@@ -44,7 +45,9 @@ function mappingError() {
 }
 
 function assertExactKeys(value, required, optional = []) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid object");
+  if (!value || typeof value !== "object" || Array.isArray(value) || utilTypes.isProxy(value)) {
+    throw new Error("invalid object");
+  }
   const prototype = Object.getPrototypeOf(value);
   if (prototype !== Object.prototype && prototype !== null) throw new Error("invalid object prototype");
   const allowed = [...required, ...optional].sort();
@@ -70,7 +73,7 @@ function assertExactKeys(value, required, optional = []) {
 }
 
 function assertDenseArray(value, { min = 0, max }) {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+  if (!Array.isArray(value) || utilTypes.isProxy(value) || Object.getPrototypeOf(value) !== Array.prototype) {
     throw new Error("invalid array");
   }
   const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");

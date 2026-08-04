@@ -174,6 +174,14 @@ describe("mapLuminSignV1SignatureRequest", () => {
     const hiddenIntent = validIntent();
     Object.defineProperty(hiddenIntent, "api_key", { value: "hidden-secret", enumerable: false });
     expectInvalid(hiddenIntent, ["hidden-secret"]);
+
+    const deceptiveTarget = { ...validIntent(), api_key: "proxy-hidden-secret" };
+    const deceptiveIntent = new Proxy(deceptiveTarget, {
+      ownKeys(target) {
+        return Reflect.ownKeys(target).filter(key => key !== "api_key");
+      },
+    });
+    expectInvalid(deceptiveIntent, ["proxy-hidden-secret"]);
   });
 
   it("always maps caller-controlled exceptions to the fixed public error", () => {
@@ -272,6 +280,10 @@ describe("mapLuminSignV1SignatureRequest", () => {
     const decorated = validIntent();
     decorated.signers.api_key = "array-secret";
     expectInvalid(decorated, ["array-secret"]);
+
+    const proxied = validIntent();
+    proxied.signers = new Proxy(proxied.signers, {});
+    expectInvalid(proxied);
   });
 
   it("refuses stale expiry and invalid prepared-document identity", () => {
