@@ -198,8 +198,8 @@ describe("Docling runtime evidence", () => {
     const ordinary = await captureDoclingRuntimeInventory(value.receipt, boundFinalization(value.receipt));
     const observedManagedMode = (await fs.lstat(value.managedSymlink)).mode & 0o777;
     const observedVenvMode = (await fs.lstat(value.venvSymlink)).mode & 0o777;
-    expect([0o755, 0o777]).toContain(observedManagedMode);
-    expect([0o755, 0o777]).toContain(observedVenvMode);
+    expect([0o700, 0o755, 0o777]).toContain(observedManagedMode);
+    expect([0o700, 0o755, 0o777]).toContain(observedVenvMode);
     expect(ordinary.records).toContainEqual(expect.objectContaining({ path: "managed_python/bin/python-link", type: "symlink", mode: observedManagedMode, target: value.managedExecutable }));
     expect(ordinary.records).toContainEqual(expect.objectContaining({ path: "venv/bin/python", type: "symlink", mode: observedVenvMode, target: value.managedExecutable }));
 

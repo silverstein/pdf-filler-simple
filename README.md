@@ -98,7 +98,7 @@ content, so the complete workflow is not necessarily zero egress.
 - Read existing PDF text layers for summarization, question answering, and research workflows
 - Extract structured data to CSV
 - Inspect page-level details like orientation, text presence, images, and likely blank pages
-- Review metadata such as page count, dimensions, form fields, and file size
+- Review source-bound page geometry, bounded metadata, form widgets, ordinary annotations, and file identity
 
 PDF Tools does not currently bundle an OCR engine. Text reads use the PDF.js
 text layer. If the selected `read_pdf_content` result contains no text, the tool
@@ -107,6 +107,17 @@ Page and region rendering produces raster images, not recognized text. A mixed
 text/raster PDF, or raster pages after page 1, may therefore contain content the
 broad text read does not recognize. Optional local OCR remains a planned
 improvement rather than a shipped capability.
+
+`get_pdf_info` binds these observations to the exact race-aware source
+SHA-256, keeps widget annotations separate from ordinary annotations, and
+returns link or action targets only as inert values. Page and region renders
+report page geometry, coordinate spaces, renderer policy, the PNG SHA-256,
+and raw RGBA SHA-256 availability.
+
+Region-render inputs are top-left PDF.js viewport points after CropBox,
+rotation, and UserUnit. They are not MediaBox-relative signing-zone
+coordinates. The macOS Quick Look fallback renders whole pages and regions in
+that same view and reports raw pixels unavailable.
 
 ## Great Fit For
 

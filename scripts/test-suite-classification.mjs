@@ -66,6 +66,7 @@ export const CHECKOUT_LOCAL_MUTATING_TEST_SUITES = Object.freeze([
   "test/atomic-output-recovery.test.js",
   "test/atomic-output.test.js",
   "test/atomic-tool-output.test.js",
+  "test/compare-pdfs.test.js",
   "test/csv-roundtrip.test.js",
   "test/deep-malformed-campaign.test.js",
   "test/detect-signature-zones-tool.test.js",
@@ -73,6 +74,7 @@ export const CHECKOUT_LOCAL_MUTATING_TEST_SUITES = Object.freeze([
   "test/fetch-pdf-from-url.test.js",
   "test/fuzz-malformed-pdfs.test.js",
   "test/get-page-analysis.test.js",
+  "test/get-pdf-info.test.js",
   "test/golden-set-placement.test.js",
   "test/integration.test.js",
   "test/metadata-provenance.test.js",
@@ -139,6 +141,16 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
       "f180d903a09ac300faa7afdd76e0afee1781676c3b3a34adbf56aafb5c5d486c",
     ]),
     reason: "Loads the selected generated qpdf module URL.",
+  }),
+  Object.freeze({
+    file: "scripts/macos-claude-installed-shannon.mjs",
+    count: 2,
+    kinds: Object.freeze(["dynamic-import", "dynamic-import"]),
+    fingerprints: Object.freeze([
+      "0bea25bcef085af91e6d4364375bbdde843149fa1d65f834db34ae52fcae5ef7",
+      "28c033735ea9fb0f4f12abf4ed9d905107b81abef289f9e5315316809b5440c7",
+    ]),
+    reason: "Loads an installed SDK by validated absolute file URL for the Shannon proof.",
   }),
   Object.freeze({
     file: "scripts/macos-claude-installed-smoke.mjs",

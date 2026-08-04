@@ -20,7 +20,10 @@ const PACKED_RUNTIME_FILES = [
   ["package_json", "package.json"],
   ["server_entry", "server/index.js"],
   ["output_schemas", "server/output-schemas.js"],
+  ["pdfjs_subprocess", "server/pdfjs-subprocess.js"],
+  ["pdfjs_worker", "server/pdfjs-worker.js"],
   ["layout_extraction", "server/layout-extraction.js"],
+  ["type3_cm_reference", "server/type3-cm-reference.js"],
   ["markdown_conversion", "server/markdown-conversion.js"],
   ["markdown_transaction", "server/markdown-output-transaction.js"],
 ];
@@ -190,7 +193,7 @@ export function validateMarkdownResult(result, binding) {
     throw new Error(`Markdown conversion failed for ${binding.fixture.id}`);
   }
   const value = result.structuredContent;
-  if (value.renderer?.name !== "pdf-tools.layout-markdown-renderer" || value.renderer?.version !== "1.3.0"
+  if (value.renderer?.name !== "pdf-tools.layout-markdown-renderer" || value.renderer?.version !== "1.10.0"
     || value.options?.include_page_boundaries !== true || value.limits?.max_markdown_bytes !== 200000
     || value.provenance?.source?.file_name !== binding.retained.filename
     || value.provenance?.source?.sha256 !== binding.retained.sha256
@@ -253,8 +256,8 @@ async function runOne({ extensionRoot, fixtureRoot, fixturePath, outputRoot, bin
     pid = transport.pid;
     if (!Number.isSafeInteger(pid) || pid < 1) throw new Error("Packed Markdown server PID is unavailable");
     const discovery = await client.listTools();
-    if (discovery.tools.length !== 40 || !discovery.tools.some(tool => tool.name === "convert_pdf_to_markdown")) {
-      throw new Error("Packed Markdown bakeoff discovery differs from the approved 40-tool contract");
+    if (discovery.tools.length !== 41 || !discovery.tools.some(tool => tool.name === "convert_pdf_to_markdown")) {
+      throw new Error("Packed Markdown bakeoff discovery differs from the approved 41-tool contract");
     }
     const result = await client.callTool({
       name: "convert_pdf_to_markdown",

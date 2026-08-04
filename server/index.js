@@ -41,6 +41,17 @@ import {
   withToolOutputSchema,
 } from "./output-schemas.js";
 import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
+import { validatePdfLayoutSemantics } from "./layout-extraction.js";
+import {
+  buildRenderObservation,
+  publicPdfObservationError,
+  validatePdfObservationSemantics,
+} from "./pdf-observations.js";
+import {
+  PDF_COMPARISON_RENDERER,
+  buildPdfComparison,
+  publicPdfComparisonError,
+} from "./pdf-comparison.js";
 import {
   PDF_MUTATION_MAX_FILE_BYTES,
   assertDanglingPdfInputAlias,
@@ -1244,7 +1255,7 @@ function rejectUnissuedCursor(request, method) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.8.6",
+    version: "0.9.0",
   },
   {
     capabilities: {
@@ -1337,8 +1348,10 @@ function buildAllowedDirectories() {
 const ALLOWED_DIRECTORIES = buildAllowedDirectories();
 const PDFJS_TOOL_NAMES = new Set([
   "convert_pdf_to_markdown",
+  "compare_pdfs",
   "detect_signature_zones",
   "get_page_analysis",
+  "get_pdf_info",
   "read_pdf_content",
   "read_pdf_layout",
   "read_pdf_pages",
@@ -1380,6 +1393,110 @@ async function runPdfjsOperation(resolvedPath, {
     allowedDirectories: ALLOWED_DIRECTORIES.map(directory => directory.canonical),
   }), { timeoutMs });
   return { result, source };
+}
+
+function comparisonSourceChangedError() {
+  const error = new Error("A comparison source changed while it was being inspected.");
+  error.code = "COMPARISON_SOURCE_CHANGED";
+  return error;
+}
+
+async function inspectComparisonDocument(resolvedPath, {
+  side,
+  password,
+  maxPages,
+  includeVisual,
+}) {
+  const observed = await runPdfjsOperation(resolvedPath, {
+    operation: "observe_document",
+    password,
+    options: { max_pages: maxPages, max_output_characters: 200_000 },
+  });
+  if (observed.result.pages.total_count > maxPages) {
+    const error = new Error(`Comparison supports at most ${maxPages} pages per document.`);
+    error.code = "COMPARISON_PAGE_LIMIT_EXCEEDED";
+    throw error;
+  }
+  validatePdfObservationSemantics(observed.result);
+  const layoutChunks = [];
+  for (let startPage = 1; startPage <= observed.result.pages.total_count; startPage += 10) {
+    const layoutChunk = await runPdfjsOperation(resolvedPath, {
+      operation: "extract_layout",
+      password,
+      options: {
+        source_path: resolvedPath,
+        source_file_name: path.basename(resolvedPath),
+        start_page: startPage,
+        end_page: Math.min(startPage + 9, observed.result.pages.total_count),
+        max_items: 5000,
+        max_characters: 100_000,
+        max_output_characters: 200_000,
+      },
+    });
+    if (
+      observed.source.sha256 !== layoutChunk.source.sha256
+      || observed.source.size_bytes !== layoutChunk.source.size_bytes
+    ) throw comparisonSourceChangedError();
+    validatePdfLayoutSemantics(layoutChunk.result.layout);
+    layoutChunks.push(layoutChunk.result.layout);
+  }
+  const layout = {
+    source: layoutChunks[0].source,
+    pages: layoutChunks.flatMap(chunk => chunk.pages),
+    truncation: {
+      truncated: layoutChunks.some(chunk => chunk.truncation.truncated),
+      reasons: [...new Set(layoutChunks.flatMap(chunk => chunk.truncation.reasons))].sort(),
+    },
+  };
+
+  const renders = [];
+  if (includeVisual) {
+    for (let page = 1; page <= observed.result.pages.total_count; page += 1) {
+      try {
+        const rendered = await runPdfjsOperation(resolvedPath, {
+          operation: "render_comparison_page",
+          password,
+          timeoutMs: 60_000,
+          options: {
+            page,
+            renderer_policy: "native",
+            max_dimension_px: null,
+            scale_override: PDF_COMPARISON_RENDERER.scale,
+          },
+        });
+        if (observed.source.sha256 !== rendered.source.sha256) {
+          throw comparisonSourceChangedError();
+        }
+        renders.push(rendered.result);
+      } catch (error) {
+        if (error?.code !== "PDF_RENDERER_UNAVAILABLE") throw error;
+        renders.push(null);
+      }
+    }
+  }
+  return {
+    side,
+    observation: observed.result,
+    layout,
+    renders,
+    initial_source: observed.source,
+  };
+}
+
+async function verifyComparisonSourceUnchanged(resolvedPath, initialSource) {
+  const finalSource = await bindPdfjsSubprocessSource(resolvedPath);
+  const unchanged = finalSource.sha256 === initialSource.sha256
+    && finalSource.size_bytes === initialSource.size_bytes
+    && finalSource.file_identity.device === initialSource.file_identity.device
+    && finalSource.file_identity.inode === initialSource.file_identity.inode;
+  if (!unchanged) throw comparisonSourceChangedError();
+  return {
+    initial_sha256: initialSource.sha256,
+    final_sha256: finalSource.sha256,
+    initial_size_bytes: initialSource.size_bytes,
+    final_size_bytes: finalSource.size_bytes,
+    unchanged: true,
+  };
 }
 
 function pdfjsRendererPolicy() {
@@ -2703,7 +2820,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "convert_pdf_to_markdown",
-        description: "Convert a bounded page range of a local PDF into deterministic Markdown from the source-validated PDF Tools Extraction IR. Headings and lists require geometry or literal marker evidence. A table is reconstructed only when every row fills every recurring detected column and the first row carries real header evidence. A link is emitted only for a source-validated external http or https annotation target covering one contiguous run of text on one line. Unsupported table structures and link targets, including merged cells, internal destinations, actions, and other schemes, stay escaped text reported as typed coverage gaps. No OCR and no external model. Optionally enable compact mode for counted dot-leader, isolated page-number, and spaced-hyphen normalizations; default output remains unchanged. Optionally saves UTF-8 Markdown through the transactional output path. Use absolute or ~/ paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Convert a bounded page range of a local PDF into deterministic Markdown from the source-validated PDF Tools Extraction IR. Headings and lists require geometry or literal marker evidence. A table requires a complete recurring text grid, a clean ruled-rectangle grid, or a complete closed painted grid, with every item in one cell and real header evidence. A link requires a source-validated external http or https annotation target covering one contiguous text run. Unsupported tables and link targets, including merged cells, internal destinations, actions, and other schemes, stay escaped text with typed gaps. No OCR or external model. Optionally enable compact mode for counted dot-leader, isolated page-number, and spaced-hyphen normalizations; default output remains unchanged. Optionally saves transactional UTF-8 Markdown. Use absolute or ~/ local paths, not Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -2733,7 +2850,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "render_pdf_page",
-        description: "Render one PDF page to a PNG image for visual reasoning. Use this when text extraction is weak, the PDF is scanned/image-only, or the model needs to inspect layout, signatures, handwriting, or tables visually. Returns the rendered page as image content plus page metadata. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Render one PDF.js page view to a PNG image for visual reasoning. The source-bound result distinguishes raw MediaBox/CropBox geometry from the rotated, UserUnit-scaled PDF.js view and raster coordinate spaces. Use this when text extraction is weak or visual layout must be inspected. All paths must be absolute local paths, not host container paths.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2773,7 +2890,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "render_pdf_region",
-        description: "Render a rectangular region from one PDF page to a PNG image using the toolkit's top-left point coordinate system. Use this for signatures, handwritten notes, stamps, tables, or any small visual area where the full page is too broad. Coordinates are in PDF points (72 pt = 1 inch) with a TOP-LEFT origin, matching detect_signature_zones and the signing tools. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Render a rectangular region from the rotated, UserUnit-scaled PDF.js page view. Coordinates use a top-left origin in PDF.js viewport points and are not interchangeable with MediaBox-relative detect_signature_zones or signing coordinates. The macOS system renderer preserves this view mapping and reports raw pixels unavailable. All paths must be absolute local paths, not host container paths.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2787,19 +2904,19 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             x: {
               type: "number",
-              description: "Left edge of the region, in points from the left side of the page."
+              description: "Left edge in PDF.js viewport points from the displayed page view's left edge."
             },
             y: {
               type: "number",
-              description: "Top edge of the region, in points from the TOP of the page."
+              description: "Top edge in PDF.js viewport points from the displayed page view's top edge."
             },
             width: {
               type: "number",
-              description: "Width of the region in points."
+              description: "Width in rotated, UserUnit-scaled PDF.js viewport points."
             },
             height: {
               type: "number",
-              description: "Height of the region in points."
+              description: "Height in rotated, UserUnit-scaled PDF.js viewport points."
             },
             max_dimension_px: {
               type: "number",
@@ -3196,10 +3313,37 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
         }
       },
       {
-        name: "get_pdf_info",
-        description: "Get metadata about a PDF file: page count, file size, page dimensions, form field count, and whether it is encrypted. All paths must be absolute paths on the user's local machine.",
+        name: "compare_pdfs",
+        description: "Deterministically compare two complete bounded local PDFs through source-bound parser observations, Extraction IR text geometry, forms, ordinary annotations, metadata, and optional raw-RGBA visual evidence. Page alignment never guesses across unresolved repeated-page ambiguity. Default mode suppresses only typed presentation noise while retaining every detected change. A no-reported-changes result is never an equivalence claim and is emitted only when every requested channel is supported and complete. Both inputs are re-hashed after comparison and any source mutation discards all claims. No links or actions are followed and no network access or persistent output is used.",
         inputSchema: {
           type: "object",
+          additionalProperties: false,
+          properties: {
+            before_pdf_path: { type: "string", description: "Absolute path to the earlier PDF." },
+            after_pdf_path: { type: "string", description: "Absolute path to the later PDF." },
+            before_password: { type: "string", maxLength: 4096, description: "Optional password for the earlier PDF." },
+            after_password: { type: "string", maxLength: 4096, description: "Optional password for the later PDF." },
+            mode: { type: "string", enum: ["default_material", "forensic"], description: "Presentation mode. Default: default_material." },
+            max_pages: { type: "integer", minimum: 1, maximum: 20, description: "Whole-document page ceiling for each input. Default: 10." },
+            include_visual: { type: "boolean", description: "Request canonical raw-pixel visual comparison. Default: true." },
+            max_output_characters: { type: "integer", minimum: 20000, maximum: 200000, description: "Maximum serialized structured-output characters. Default: 100000." },
+          },
+          required: ["before_pdf_path", "after_pdf_path"],
+        },
+        annotations: {
+          title: "Compare PDFs",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      {
+        name: "get_pdf_info",
+        description: "Inspect a bounded local PDF through the pinned parser and return source-bound page geometry, Info and XMP metadata, form fields and widgets, and inert ordinary annotations. Every retained observation is tied to the canonical path, byte length, and SHA-256. Caps and parser failures are reported as partial or unavailable coverage, never as an empty-document claim. Annotation actions and URLs are observed but never followed. All paths must be absolute paths on the user's local machine.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
           properties: {
             pdf_path: {
               type: "string",
@@ -3207,7 +3351,20 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
+              maxLength: 4096,
               description: "Password for encrypted PDFs (optional)"
+            },
+            max_pages: {
+              type: "integer",
+              minimum: 1,
+              maximum: 200,
+              description: "Maximum pages to observe. Default: 200."
+            },
+            max_output_characters: {
+              type: "integer",
+              minimum: 20000,
+              maximum: 200000,
+              description: "Maximum serialized structured-output characters. Whole observations are omitted with explicit partial coverage when necessary. Default: 50000."
             }
           },
           required: ["pdf_path"]
@@ -4624,7 +4781,7 @@ async function handleToolCall(request) {
             ...(pagesNeedingVision.length > 0
               ? [`Vision routing: use render_pdf_page for pages ${pagesNeedingVision.map(entry => entry.page).join(", ")}.`]
               : []),
-            "No OCR, external model, hidden link-target recovery, or table-topology inference was performed.",
+            "No OCR, external model, hidden link-target recovery, or table inference beyond complete source-bound text, ruled, or painted grids was performed.",
             rendered.markdown,
           ].join("\n\n");
           return {
@@ -4658,13 +4815,14 @@ async function handleToolCall(request) {
 
         try {
           const targetPage = Math.max(1, Number(page) || 1);
-          const { result: renderedImage } = await runPdfjsOperation(resolvedPath, {
+          const rendererPolicy = pdfjsRendererPolicy();
+          const { result: renderedImage, source } = await runPdfjsOperation(resolvedPath, {
             operation: "render_page",
             password,
             options: {
               page: targetPage,
               max_dimension_px: Number(max_dimension_px) || 1800,
-              renderer_policy: pdfjsRendererPolicy(),
+              renderer_policy: rendererPolicy,
               scale_override: null,
             },
           });
@@ -4673,9 +4831,34 @@ async function handleToolCall(request) {
           const height = renderedImage.height_points;
           const scale = renderedImage.scale;
           const totalPages = renderedImage.total_pages;
-          const renderedWidth = Math.round(width * scale);
-          const renderedHeight = Math.round(height * scale);
+          const renderedWidth = renderedImage.width;
+          const renderedHeight = renderedImage.height;
           const fileName = path.basename(resolvedPath);
+          const payload = buildRenderObservation({
+            existing: {
+              pdf_path: resolvedPath,
+              file_name: fileName,
+              page: targetPage,
+              total_pages: totalPages,
+              width_points: Math.round(width),
+              height_points: Math.round(height),
+              rendered_width_px: renderedWidth,
+              rendered_height_px: renderedHeight,
+              scale,
+              renderer: renderedImage.renderer,
+              mime_type: "image/png",
+            },
+            source: { ...source, file_name: fileName },
+            geometry: renderedImage.page_geometry,
+            pageView: renderedImage.page_view,
+            page: targetPage,
+            requestedRegion: renderedImage.requested_region,
+            renderedRegion: renderedImage.rendered_region,
+            rendererPolicy,
+            pngSha256: createHash("sha256").update(imageBuffer).digest("hex"),
+            rawPixelSha256: renderedImage.raw_pixel_sha256,
+            rawPixelStatus: renderedImage.raw_pixel_status,
+          });
 
           return {
             content: [{
@@ -4691,19 +4874,7 @@ async function handleToolCall(request) {
               data: imageBuffer.toString("base64"),
               mimeType: "image/png",
             }],
-            structuredContent: {
-              pdf_path: resolvedPath,
-              file_name: fileName,
-              page: targetPage,
-              total_pages: totalPages,
-              width_points: Math.round(width),
-              height_points: Math.round(height),
-              rendered_width_px: renderedWidth,
-              rendered_height_px: renderedHeight,
-              scale,
-              renderer: renderedImage.renderer,
-              mime_type: "image/png",
-            },
+            structuredContent: payload,
           };
         } catch (error) {
           if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
@@ -4734,13 +4905,14 @@ async function handleToolCall(request) {
             width: Number(width),
             height: Number(height),
           };
-          const { result: renderedImage } = await runPdfjsOperation(resolvedPath, {
+          const rendererPolicy = pdfjsRendererPolicy();
+          const { result: renderedImage, source } = await runPdfjsOperation(resolvedPath, {
             operation: "render_region",
             password,
             options: {
               page: targetPage,
               max_dimension_px: Number(max_dimension_px) || 1400,
-              renderer_policy: pdfjsRendererPolicy(),
+              renderer_policy: rendererPolicy,
               ...region,
             },
           });
@@ -4752,6 +4924,30 @@ async function handleToolCall(request) {
           const imageBuffer = renderedImage.binary;
           const totalPages = renderedImage.total_pages;
           const fileName = path.basename(resolvedPath);
+          const payload = buildRenderObservation({
+            existing: {
+              pdf_path: resolvedPath,
+              file_name: fileName,
+              page: targetPage,
+              total_pages: totalPages,
+              region_points: region,
+              rendered_width_px: renderedImage.width,
+              rendered_height_px: renderedImage.height,
+              scale,
+              renderer: renderedImage.renderer,
+              mime_type: "image/png",
+            },
+            source: { ...source, file_name: fileName },
+            geometry: renderedImage.page_geometry,
+            pageView: renderedImage.page_view,
+            page: targetPage,
+            requestedRegion: renderedImage.requested_region,
+            renderedRegion: renderedImage.rendered_region,
+            rendererPolicy,
+            pngSha256: createHash("sha256").update(imageBuffer).digest("hex"),
+            rawPixelSha256: renderedImage.raw_pixel_sha256,
+            rawPixelStatus: renderedImage.raw_pixel_status,
+          });
 
           return {
             content: [{
@@ -4767,18 +4963,7 @@ async function handleToolCall(request) {
               data: imageBuffer.toString("base64"),
               mimeType: "image/png",
             }],
-            structuredContent: {
-              pdf_path: resolvedPath,
-              file_name: fileName,
-              page: targetPage,
-              total_pages: totalPages,
-              region_points: region,
-              rendered_width_px: crop.width,
-              rendered_height_px: crop.height,
-              scale,
-              renderer: renderedImage.renderer,
-              mime_type: "image/png",
-            },
+            structuredContent: payload,
           };
         } catch (error) {
           if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
@@ -5389,60 +5574,113 @@ async function handleToolCall(request) {
         };
       }
 
-      case "get_pdf_info": {
-        const { pdf_path, password } = args;
-        const resolvedPath = resolvePath(pdf_path);
-        const stats = await fs.stat(resolvedPath);
-        const fileName = path.basename(resolvedPath);
-        const fileSizeKB = (stats.size / 1024).toFixed(2);
-
-        let pageCount = 0;
-        let hasFormFields = false;
-        let fieldCount = 0;
-        let isEncrypted = false;
-        let pageDimensions = null;
-
+      case "compare_pdfs": {
         try {
-          const pdfBytes = await fs.readFile(resolvedPath);
-          const loadOpts = password ? { password } : { ignoreEncryption: true };
-          const pdfDoc = await PDFDocument.load(pdfBytes, loadOpts);
-          const pages = pdfDoc.getPages();
-          pageCount = pages.length;
-
-          if (pages.length > 0) {
-            const firstPage = pages[0];
-            const { width, height } = firstPage.getSize();
-            pageDimensions = { width: Math.round(width), height: Math.round(height) };
+          const compareArgs = requireArgumentObject(args, "compare_pdfs");
+          const allowedArguments = new Set([
+            "before_pdf_path", "after_pdf_path", "before_password", "after_password",
+            "mode", "max_pages", "include_visual", "max_output_characters",
+          ]);
+          const unknownArgument = Object.keys(compareArgs).find(name => !allowedArguments.has(name));
+          if (unknownArgument) throw new Error(`Unknown compare_pdfs argument: ${unknownArgument}.`);
+          const beforePdfPath = requireStringArgument(compareArgs.before_pdf_path, "before_pdf_path", { maxLength: 32_768 });
+          const afterPdfPath = requireStringArgument(compareArgs.after_pdf_path, "after_pdf_path", { maxLength: 32_768 });
+          const beforePassword = optionalStringArgument(compareArgs.before_password, "before_password", { maxLength: 4096 });
+          const afterPassword = optionalStringArgument(compareArgs.after_password, "after_password", { maxLength: 4096 });
+          const mode = compareArgs.mode === undefined ? "default_material" : compareArgs.mode;
+          if (!new Set(["default_material", "forensic"]).has(mode)) {
+            throw new Error("'mode' must be default_material or forensic.");
           }
+          const maxPages = compareArgs.max_pages === undefined ? 10 : requireIntegerArgument(compareArgs.max_pages, "max_pages", { min: 1 });
+          if (maxPages > 20) throw new Error("'max_pages' must not exceed 20.");
+          const includeVisual = compareArgs.include_visual === undefined ? true : compareArgs.include_visual;
+          if (typeof includeVisual !== "boolean") throw new Error("'include_visual' must be a boolean.");
+          const maxOutputCharacters = compareArgs.max_output_characters === undefined
+            ? 100_000
+            : requireIntegerArgument(compareArgs.max_output_characters, "max_output_characters", { min: 20_000 });
+          if (maxOutputCharacters > 200_000) throw new Error("'max_output_characters' must not exceed 200000.");
 
-          try {
-            const form = pdfDoc.getForm();
-            const fields = form.getFields();
-            fieldCount = fields.length;
-            hasFormFields = fieldCount > 0;
-          } catch {
-            // No form or encrypted form — fine
-          }
+          const started = performance.now();
+          const beforePath = resolvePath(beforePdfPath);
+          const afterPath = resolvePath(afterPdfPath);
+          const before = await inspectComparisonDocument(beforePath, { side: "before", password: beforePassword, maxPages, includeVisual });
+          const after = await inspectComparisonDocument(afterPath, { side: "after", password: afterPassword, maxPages, includeVisual });
+          const sourceImmutability = {
+            before: await verifyComparisonSourceUnchanged(beforePath, before.initial_source),
+            after: await verifyComparisonSourceUnchanged(afterPath, after.initial_source),
+          };
+          delete before.initial_source;
+          delete after.initial_source;
+          const payload = buildPdfComparison({
+            before, after, mode, includeVisual, maxOutputCharacters,
+            sourceImmutability,
+            durationMs: performance.now() - started,
+          });
+          return {
+            content: [{ type: "text", text: [
+              `Comparison status: ${payload.status}.`,
+              `Detected changes: ${payload.summary.detected_change_count}; reported in ${mode}: ${payload.summary.reported_change_count}.`,
+              `Before SHA-256: ${payload.before_source.sha256}. After SHA-256: ${payload.after_source.sha256}.`,
+              "No links or annotation actions were opened. No network or persistent output was used.",
+            ].join("\n") }],
+            structuredContent: payload,
+          };
         } catch (error) {
-          if (error.message?.includes("password") || error.message?.includes("encrypt")) {
-            isEncrypted = true;
-          } else {
-            throw error;
-          }
+          return createTypedToolError(publicPdfComparisonError(error));
         }
+      }
 
-        let info = `File: ${fileName}\n`;
-        info += `Size: ${fileSizeKB} KB\n`;
-        info += `Pages: ${pageCount}\n`;
-        if (pageDimensions) {
-          info += `Page size: ${pageDimensions.width} x ${pageDimensions.height} pts\n`;
+      case "get_pdf_info": {
+        const infoArgs = requireArgumentObject(args, "get_pdf_info");
+        const allowedArguments = new Set([
+          "pdf_path",
+          "password",
+          "max_pages",
+          "max_output_characters",
+        ]);
+        const unknownArgument = Object.keys(infoArgs).find(name => !allowedArguments.has(name));
+        if (unknownArgument) throw new Error(`Unknown get_pdf_info argument: ${unknownArgument}.`);
+        const pdfPath = requireStringArgument(infoArgs.pdf_path, "pdf_path", { maxLength: 32_768 });
+        const password = optionalStringArgument(infoArgs.password, "password", { maxLength: 4096 });
+        const maxPages = infoArgs.max_pages === undefined
+          ? 200
+          : requireIntegerArgument(infoArgs.max_pages, "max_pages", { min: 1 });
+        const maxOutputCharacters = infoArgs.max_output_characters === undefined
+          ? 50_000
+          : requireIntegerArgument(
+            infoArgs.max_output_characters,
+            "max_output_characters",
+            { min: 20_000 },
+          );
+        if (maxPages > 200) throw new Error("'max_pages' must not exceed 200.");
+        if (maxOutputCharacters > 200_000) {
+          throw new Error("'max_output_characters' must not exceed 200000.");
         }
-        info += `Form fields: ${hasFormFields ? fieldCount : "none"}\n`;
-        info += `Encrypted: ${isEncrypted ? "yes" : "no"}`;
-
-        return {
-          content: [{ type: "text", text: info }],
-        };
+        try {
+          const resolvedPath = resolvePath(pdfPath);
+          const { result: payload } = await runPdfjsOperation(resolvedPath, {
+            operation: "observe_document",
+            password,
+            options: {
+              max_pages: maxPages,
+              max_output_characters: maxOutputCharacters,
+            },
+          });
+          const summary = [
+            `Inspected ${payload.pages.observed_count} of ${payload.pages.total_count} pages in ${payload.source.file_name}.`,
+            `Status: ${payload.status}. Source SHA-256: ${payload.source.sha256}.`,
+            `Form-field observations: ${payload.form_fields.observed_count}. Ordinary annotations: ${payload.annotations.observed_count}.`,
+            ...payload.limitations.map(reason => `Limitation: ${reason}.`),
+            "Annotation targets were observed as inert values and were not opened or fetched.",
+          ].join("\n");
+          return {
+            content: [{ type: "text", text: summary }],
+            structuredContent: payload,
+          };
+        } catch (error) {
+          const publicError = publicPdfObservationError(error);
+          return createTypedToolError(publicError);
+        }
       }
 
       case "apply_page_plan": {

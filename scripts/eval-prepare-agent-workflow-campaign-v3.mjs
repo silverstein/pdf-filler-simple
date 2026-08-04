@@ -222,8 +222,8 @@ async function validatePriorBindings(priorBindings) {
 }
 
 function validateToolContract(toolContract) {
-  if (!Array.isArray(toolContract.tools) || toolContract.tools.length !== 40) {
-    throw new Error("v3 requires the exact captured 40-tool contract");
+  if (!Array.isArray(toolContract.tools) || toolContract.tools.length !== 41) {
+    throw new Error("v3 requires the exact captured 41-tool contract");
   }
   const boundedPasswordRead = toolContract.tools.find(
     tool => tool.name === "read_pdf_layout",

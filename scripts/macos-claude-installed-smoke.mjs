@@ -29,7 +29,7 @@ const textFixture = path.join(fixtureDirectory, "synthetic-text-two-page.pdf");
 const rasterFixture = path.join(fixtureDirectory, "synthetic-raster-only.pdf");
 const mutationDirectory = path.join(fixtureDirectory, "mutation-output");
 const toolNames = [];
-const EXPECTED_TOOL_CONTRACT_SHA256 = "4f5c1299b4fab3b415fa6eb7cff4c802b832a4d0d6bbe9fbbc8db1bd109bccdc";
+const EXPECTED_TOOL_CONTRACT_SHA256 = "922bc866cd2c338ee3f3cc3ca5b888aed339b65680c9cba9ac71ce62eecf3ac3";
 let toolContractSha256;
 let structuredToolCount;
 let markdownHash;
@@ -68,8 +68,8 @@ let rasterHash;
 try {
   const tools = await first.client.listTools();
   toolNames.push(...tools.tools.map(tool => tool.name).sort());
-  assert(toolNames.length === 40, `Expected 40 tools, received ${toolNames.length}`);
-  assert(new Set(toolNames).size === 40, "Tool names were not unique");
+  assert(toolNames.length === 41, `Expected 41 tools, received ${toolNames.length}`);
+  assert(new Set(toolNames).size === 41, "Tool names were not unique");
   toolContractSha256 = createHash("sha256")
     .update(JSON.stringify(tools.tools))
     .digest("hex");
@@ -183,7 +183,7 @@ assert(mutationFiles.length === 2, `Expected two mutation outputs, received ${mu
 const fresh = await connect("fresh-session");
 try {
   const tools = await fresh.client.listTools();
-  assert(tools.tools.length === 40, "Fresh session did not discover 40 tools");
+  assert(tools.tools.length === 41, "Fresh session did not discover 41 tools");
   const info = await fresh.client.callTool({
     name: "get_pdf_info",
     arguments: { pdf_path: path.join(mutationDirectory, mutationFiles[1]) },

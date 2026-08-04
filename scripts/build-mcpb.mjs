@@ -56,13 +56,16 @@ const SERVER_FILES = [
   "markdown-conversion.js",
   "markdown-output-transaction.js",
   "output-schemas.js",
+  "pdf-comparison.js",
   "pdf-lib-rss-monitor.js",
   "pdf-lib-subprocess.js",
   "pdf-lib-worker.js",
+  "pdf-observations.js",
   "pdfjs-subprocess.js",
   "pdfjs-worker.js",
   "resource-uri.js",
   "stderr-suppression.js",
+  "type3-cm-reference.js",
 ];
 const FIRST_PARTY_TEXT_FILES = [
   ...SERVER_FILES.map(filename => `server/${filename}`),

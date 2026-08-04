@@ -82,23 +82,34 @@ function attachRuledRects(layout, items, status = "available") {
   return layout;
 }
 
-const PRE_1_3_NON_RECT_EXPECTED = JSON.stringify({
+const NON_RECT_EXPECTED = JSON.stringify({
   body: "NON-RECT HEADER\nbody",
   gap_codes: ["VECTOR_CONTENT_NOT_INTERPRETED"],
 });
-const PRE_1_2_TABLE_LIMITATION = "Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.";
-const CURRENT_TABLE_LIMITATION = "Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.";
-const PRE_1_2_VECTOR_GAP = "Vector-painted content was not interpreted as text or table structure.";
-const CURRENT_VECTOR_GAP = "Vector paint operations beyond any reconstructed table rulings were not interpreted.";
-const CURRENT_VECTOR_LIMITATION = "Vector paint operations beyond any reconstructed table rulings are not interpreted.";
-const PRE_1_2_LIMITATIONS = [
-  "Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.",
-  "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
-  "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
-  PRE_1_2_TABLE_LIMITATION,
-  "OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.",
-  "Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.",
-];
+
+function positionedTextItem(text, {
+  top,
+  left,
+  width,
+  fontSize = 10,
+  fontName = "f1",
+  eol = false,
+} = {}) {
+  return {
+    str: text,
+    dir: "ltr",
+    width,
+    height: fontSize,
+    transform: [fontSize, 0, 0, fontSize, left, 792 - top - fontSize],
+    fontName,
+    hasEOL: eol,
+  };
+}
+
+function centeredTextItem(text, { top, fontSize = 12 } = {}) {
+  const width = Math.max(20, text.length * fontSize * 0.5);
+  return textItem(text, { top, fontSize, left: (612 - width) / 2 });
+}
 
 function fakePdfjs(pageConfigs) {
   const pages = pageConfigs.map(config => ({
@@ -110,10 +121,16 @@ function fakePdfjs(pageConfigs) {
       if (config.textError) throw config.textError;
       return {
         items: config.items ?? [],
-        styles: { f1: { fontFamily: "Test Sans", ascent: 0.8, descent: -0.2, vertical: false } },
+        styles: {
+          f1: { fontFamily: "Test Sans", ascent: 0.8, descent: -0.2, vertical: false },
+          f2: { fontFamily: "Test Sans", ascent: 0.8, descent: -0.2, vertical: false },
+        },
       };
     },
-    getOperatorList: async () => ({ fnArray: config.operations ?? [], argsArray: config.argsArray ?? [] }),
+    getOperatorList: async () => ({
+      fnArray: config.operations ?? [],
+      argsArray: config.argsArray ?? config.operatorArgs ?? (config.operations ?? []).map(() => null),
+    }),
     getAnnotations: async () => {
       if (config.annotationError) throw config.annotationError;
       return config.annotations ?? [];
@@ -148,6 +165,7 @@ function fakePdfjs(pageConfigs) {
       closeFillStroke: 19,
       closeEOFillStroke: 20,
       endPath: 21,
+      paintSolidColorImageMask: 76,
     },
     Util: { transform: multiply },
     getDocument: () => ({
@@ -176,6 +194,50 @@ async function validatedSyntheticLayout(pageConfigs) {
     requestedEndPage: pageConfigs.length,
     maxOutputCharacters: 200000,
   });
+}
+
+function paintedGridOperations({ xs, ys, missingVertical = null, extraRectangles = [] }) {
+  const rectangles = [
+    ...ys.map(y => ({ x: xs[0], y, width: xs[xs.length - 1] - xs[0], height: 0.5 })),
+    ...xs.filter(x => x !== missingVertical).map(x => ({
+      x,
+      y: ys[0],
+      width: 0.5,
+      height: ys[ys.length - 1] - ys[0],
+    })),
+    ...extraRectangles,
+  ];
+  const operations = [];
+  const operatorArgs = [];
+  for (const rectangle of rectangles) {
+    operations.push(10, 12, 76, 11);
+    operatorArgs.push(
+      null,
+      [rectangle.width, 0, 0, -rectangle.height, rectangle.x, 792 - rectangle.y],
+      [],
+      null,
+    );
+  }
+  return { operations, operatorArgs };
+}
+
+function combinePaintedOperations(...groups) {
+  return {
+    operations: groups.flatMap(group => group.operations),
+    operatorArgs: groups.flatMap(group => group.operatorArgs),
+  };
+}
+
+function paintedFractionBarOperations({ x, y, width, height = 0.48 }) {
+  return {
+    operations: [10, 12, 76, 11],
+    operatorArgs: [
+      null,
+      [width, 0, 0, -height, x, 792 - y],
+      [],
+      null,
+    ],
+  };
 }
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -257,7 +319,7 @@ describe("layout Markdown renderer", () => {
     });
   });
 
-  it("pins the non-rect 1.2.0 regression body and isolates the 1.3.0 wording delta", async () => {
+  it("pins the combined non-rect regression output", async () => {
     const layout = await validatedSyntheticLayout([{
       operations: [2],
       items: [
@@ -266,93 +328,25 @@ describe("layout Markdown renderer", () => {
       ],
     }]);
     const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
-    // Independent full-output pin: ANY serialized delta beyond this literal —
-    // intended or not — fails here, closing the self-derived-comparison hole.
-    // The single run-variant field (the synthetic source PDF's sha256, which
-    // varies because pdf-lib stamps a creation date) is normalized to a named
-    // placeholder on BOTH sides; everything else is byte-exact.
-    const { readFileSync } = await import("node:fs");
-    const pinnedFullResult = readFileSync(
-      new URL("./fixtures/markdown/nonrect-differential-expected.v1_3_0.json", import.meta.url),
-      "utf8",
-    );
-    const currentPinnedFullResult = readFileSync(
-      new URL("./fixtures/markdown/nonrect-differential-expected.v1_3_1.json", import.meta.url),
-      "utf8",
-    );
-    const parentPin = JSON.parse(pinnedFullResult);
-    const currentPin = JSON.parse(currentPinnedFullResult);
-    const deepDiff = (left, right, path = []) => {
-      if (left && right && typeof left === "object" && typeof right === "object") {
-        const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-        return [...keys].flatMap(key => {
-          if (!(key in left)) return [{ type: "added", path: [...path, key], value: right[key] }];
-          if (!(key in right)) return [{ type: "removed", path: [...path, key], value: left[key] }];
-          return deepDiff(left[key], right[key], [...path, key]);
-        });
-      }
-      return Object.is(left, right)
-        ? []
-        : [{ type: "changed", path, left, right }];
-    };
-    expect(deepDiff(parentPin, currentPin)).toEqual([
-      { type: "added", path: ["options", "compact"], value: false },
-      {
-        type: "added",
-        path: ["normalizations"],
-        value: {
-          dot_leaders_collapsed: 0,
-          page_number_lines_removed: 0,
-          spaced_hyphens_joined: 0,
-          normalized_pages: [],
-        },
-      },
-    ]);
     const pinnable = structuredClone(result);
     pinnable.provenance.source.sha256 = "RUN_VARIANT_SOURCE_SHA256";
-    expect(JSON.stringify(pinnable)).toBe(currentPinnedFullResult);
+    // Pin the complete normalized envelope, not a value derived from a second
+    // invocation, so any unreviewed serialized delta fails this regression.
+    const serialized = JSON.stringify(pinnable);
+    expect(createHash("sha256").update(serialized).digest("hex"))
+      .toBe("ab8d5e1a49a0f4ee114ac774920d3482716fe2c818d876e55b16c4fe74e64503");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,
       gap_codes: result.gaps.map(gap => gap.code),
-    })).toBe(PRE_1_3_NON_RECT_EXPECTED);
+    })).toBe(NON_RECT_EXPECTED);
     expect(result.renderer).toEqual({
       name: "pdf-tools.layout-markdown-renderer",
-      version: "1.3.0",
+      version: "1.10.0",
     });
-    expect(result.gaps[0].message).toBe(CURRENT_VECTOR_GAP);
-    expect(result.limitations).toContain(CURRENT_TABLE_LIMITATION);
-    expect(result.limitations).toContain(CURRENT_VECTOR_LIMITATION);
-
-    const legacy = structuredClone(result);
-    legacy.renderer.version = "1.2.0";
-    legacy.pages[0].gaps[0].message = PRE_1_2_VECTOR_GAP;
-    legacy.gaps[0].message = PRE_1_2_VECTOR_GAP;
-    legacy.limitations = PRE_1_2_LIMITATIONS;
-    legacy.markdown = legacy.markdown
-      .replace(CURRENT_VECTOR_GAP, PRE_1_2_VECTOR_GAP)
-      .replace(CURRENT_TABLE_LIMITATION, PRE_1_2_TABLE_LIMITATION)
-      .replace(`- ${CURRENT_VECTOR_LIMITATION}\n`, "");
-    expect(legacy.markdown).toContain(PRE_1_2_TABLE_LIMITATION);
-    expect(legacy.markdown).toContain(PRE_1_2_VECTOR_GAP);
-    expect(legacy.markdown).not.toContain(CURRENT_TABLE_LIMITATION);
-    expect(legacy.markdown).not.toContain(CURRENT_VECTOR_LIMITATION);
-
-    const comparable = value => {
-      const copy = structuredClone(value);
-      copy.renderer.version = "1.2.0";
-      copy.pages[0].gaps[0].message = PRE_1_2_VECTOR_GAP;
-      copy.gaps[0].message = PRE_1_2_VECTOR_GAP;
-      copy.limitations = PRE_1_2_LIMITATIONS;
-      copy.markdown = copy.markdown
-        .replace(CURRENT_VECTOR_GAP, PRE_1_2_VECTOR_GAP)
-        .replace(CURRENT_TABLE_LIMITATION, PRE_1_2_TABLE_LIMITATION)
-        .replace(`- ${CURRENT_VECTOR_LIMITATION}\n`, "");
-      delete copy.markdown_bytes;
-      delete copy.markdown_sha256;
-      return copy;
-    };
-    expect(comparable(result)).toEqual(comparable(legacy));
+    expect(result.gaps[0].message).toMatch(/beyond reconstructed ruled or bounded solid-mask table grids/);
+    expect(result.limitations.some(value => value.includes("clean ruled-rectangle grid evidence"))).toBe(true);
+    expect(result.limitations.some(value => value.includes("solid-mask table grid"))).toBe(true);
   });
 
   it("reconstructs a ruled grid from IR evidence and renders deterministically", async () => {
@@ -570,6 +564,162 @@ describe("layout Markdown renderer", () => {
     expect(validateMarkdownConversionSemantics(first, { layout })).toBe(first);
   });
 
+  it("uses a complete painted grid to recover multi-line table cells", async () => {
+    const rules = paintedGridOperations({ xs: [100, 250, 400], ys: [100, 130, 200, 270] });
+    const layout = await validatedSyntheticLayout([{
+      ...rules,
+      items: [
+        centeredTextItem("TABLE 1", { top: 70, fontSize: 10 }),
+        positionedTextItem("FIRST", { top: 105, left: 120, width: 30 }),
+        positionedTextItem("SECOND", { top: 105, left: 270, width: 40, eol: true }),
+        positionedTextItem("alpha", { top: 145, left: 120, width: 30 }),
+        positionedTextItem("one", { top: 155, left: 120, width: 20, eol: true }),
+        positionedTextItem("10", { top: 150, left: 270, width: 12, eol: true }),
+        positionedTextItem("beta", { top: 215, left: 120, width: 25, eol: true }),
+        positionedTextItem("20", { top: 220, left: 270, width: 12, eol: true }),
+        textItem("Following prose remains outside the table.", { top: 300 }),
+      ],
+    }]);
+    expect(layout.pages[0].painted_rectangles).toMatchObject({
+      status: "available",
+      truncated: false,
+      observed_count: 7,
+      returned_count: 7,
+    });
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown).toContain("| FIRST | SECOND |\n| --- | --- |\n| alpha<br>one | 10 |\n| beta | 20 |");
+    expect(result.markdown).toContain("Following prose remains outside the table.");
+    expect(result.gaps.map(gap => gap.code)).not.toContain("TABLE_TOPOLOGY_UNKNOWN");
+  });
+
+  it("refuses incomplete grids and closed grids without header evidence", async () => {
+    const incomplete = paintedGridOperations({
+      xs: [100, 250, 400],
+      ys: [100, 130, 200, 270],
+      missingVertical: 250,
+    });
+    const items = [
+      centeredTextItem("TABLE 1", { top: 70, fontSize: 10 }),
+      positionedTextItem("FIRST", { top: 105, left: 120, width: 30 }),
+      positionedTextItem("SECOND", { top: 105, left: 270, width: 40, eol: true }),
+      positionedTextItem("alpha", { top: 150, left: 120, width: 30 }),
+      positionedTextItem("10", { top: 150, left: 270, width: 12, eol: true }),
+      positionedTextItem("beta", { top: 220, left: 120, width: 25 }),
+      positionedTextItem("20", { top: 220, left: 270, width: 12, eol: true }),
+    ];
+    const closed = paintedGridOperations({ xs: [100, 250, 400], ys: [100, 130, 200, 270] });
+    const crossing = [
+      centeredTextItem("TABLE 2", { top: 70, fontSize: 10 }),
+      positionedTextItem("CROSSING HEADER", { top: 105, left: 225, width: 80, eol: true }),
+      ...items.slice(3),
+    ];
+    const layout = await validatedSyntheticLayout([
+      { ...incomplete, items },
+      { ...closed, items: items.slice(1) },
+      { ...closed, items: crossing },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.gaps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 2 }),
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 3 }),
+    ]));
+    expect(result.markdown.match(/\| --- \| --- \|/gu)).toBeNull();
+  });
+
+  it("refuses partial dividers that evidence merged columns or rows", async () => {
+    const mergedHeader = paintedGridOperations({
+      xs: [100, 300, 400],
+      ys: [100, 130, 200, 270],
+      extraRectangles: [{ x: 200, y: 130, width: 0.5, height: 140 }],
+    });
+    const rowSpan = paintedGridOperations({
+      xs: [100, 250, 400],
+      ys: [100, 130, 270, 340],
+      extraRectangles: [{ x: 250, y: 200, width: 150, height: 0.5 }],
+    });
+    const mergedItems = [
+      centeredTextItem("TABLE 1", { top: 70, fontSize: 10 }),
+      positionedTextItem("FIRST", { top: 105, left: 120, width: 30 }),
+      positionedTextItem("SECOND", { top: 105, left: 210, width: 40 }),
+      positionedTextItem("THIRD", { top: 105, left: 320, width: 30, eol: true }),
+      positionedTextItem("a", { top: 150, left: 120, width: 8 }),
+      positionedTextItem("b", { top: 150, left: 220, width: 8 }),
+      positionedTextItem("1", { top: 150, left: 320, width: 8, eol: true }),
+      positionedTextItem("c", { top: 220, left: 120, width: 8 }),
+      positionedTextItem("d", { top: 220, left: 220, width: 8 }),
+      positionedTextItem("2", { top: 220, left: 320, width: 8, eol: true }),
+    ];
+    const rowSpanItems = [
+      centeredTextItem("TABLE 2", { top: 70, fontSize: 10 }),
+      positionedTextItem("FIRST", { top: 105, left: 120, width: 30 }),
+      positionedTextItem("SECOND", { top: 105, left: 270, width: 40, eol: true }),
+      positionedTextItem("span", { top: 155, left: 120, width: 25 }),
+      positionedTextItem("upper", { top: 155, left: 270, width: 30, eol: true }),
+      positionedTextItem("lower", { top: 220, left: 270, width: 30, eol: true }),
+      positionedTextItem("left", { top: 290, left: 120, width: 20 }),
+      positionedTextItem("right", { top: 290, left: 270, width: 25, eol: true }),
+    ];
+    const layout = await validatedSyntheticLayout([
+      { ...mergedHeader, items: mergedItems },
+      { ...rowSpan, items: rowSpanItems },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.gaps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 1 }),
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 2 }),
+    ]));
+    expect(result.markdown).not.toContain("| --- |");
+  });
+
+  it("refuses ambiguous multiple grids and source-order cell interleaving", async () => {
+    const firstGrid = paintedGridOperations({ xs: [40, 110, 180], ys: [100, 130, 200, 270] });
+    const secondGrid = paintedGridOperations({ xs: [300, 370, 440], ys: [100, 130, 200, 270] });
+    const closed = paintedGridOperations({ xs: [100, 150, 200], ys: [100, 130, 200, 270] });
+    const interleavedItems = [
+      positionedTextItem("TABLE 3", { top: 70, left: 130, width: 40, eol: true }),
+      positionedTextItem("FIRST", { top: 105, left: 105, width: 30 }),
+      positionedTextItem("SECOND", { top: 105, left: 155, width: 40, eol: true }),
+      positionedTextItem("a", { top: 150, left: 110, width: 8 }),
+      positionedTextItem("1", { top: 150, left: 160, width: 8 }),
+      positionedTextItem("b", { top: 150, left: 130, width: 8 }),
+      positionedTextItem("2", { top: 150, left: 180, width: 8, eol: true }),
+      positionedTextItem("c", { top: 220, left: 110, width: 8 }),
+      positionedTextItem("3", { top: 220, left: 160, width: 8, eol: true }),
+    ];
+    const layout = await validatedSyntheticLayout([
+      { ...combinePaintedOperations(firstGrid, secondGrid), items: [] },
+      { ...closed, items: interleavedItems },
+    ]);
+    const interleavedLine = layout.pages[1].lines.find(line => line.text.includes("a") && line.text.includes("1"));
+    expect(interleavedLine?.text).toMatch(/a.*1.*b.*2/u);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.gaps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 1 }),
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 2 }),
+    ]));
+    expect(result.markdown).not.toContain("| --- |");
+  });
+
+  it("bounds ruled-grid rows, columns, and cells before allocating cell content", async () => {
+    const tooManyColumns = paintedGridOperations({
+      xs: Array.from({ length: 52 }, (_value, index) => index * 12),
+      ys: [100, 110, 200, 300],
+    });
+    const tooManyCells = paintedGridOperations({
+      xs: Array.from({ length: 41 }, (_value, index) => 50 + index * 12),
+      ys: [100, 108, ...Array.from({ length: 29 }, (_value, index) => 116 + index * 8)],
+    });
+    const layout = await validatedSyntheticLayout([
+      { ...tooManyColumns, items: [] },
+      { ...tooManyCells, items: [] },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.gaps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 1 }),
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 2 }),
+    ]));
+  });
+
   it("does not invent a heading without enough geometric evidence", async () => {
     const layout = await validatedSyntheticLayout([{
       items: [
@@ -583,6 +733,340 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).toContain("Large but unsupported\n");
     expect(result.markdown).not.toContain("# Large but unsupported");
     expect(result.options.include_page_boundaries).toBe(false);
+  });
+
+  it("keeps unreadable glyphs, lone characters, and equation fragments out of headings", async () => {
+    const page = candidate => ({
+      items: [
+        textItem(candidate, { top: 50, fontSize: 24 }),
+        textItem("First body line", { top: 100 }),
+        textItem("Second body line", { top: 130 }),
+        textItem("Third body line", { top: 160 }),
+        textItem("Fourth body line", { top: 190 }),
+      ],
+    });
+    const layout = await validatedSyntheticLayout([
+      page("�"),
+      page("T"),
+      page("H = p log p"),
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toContain("�\n");
+    expect(result.markdown).toContain("T\n");
+    expect(result.markdown).toContain("H = p log p\n");
+    expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:�|T|H = p log p)$/gmu);
+  });
+
+  it("restores only a geometrically proven space after a separate log operator", async () => {
+    const layout = await validatedSyntheticLayout([
+      { items: [
+        positionedTextItem("C", { top: 80, left: 60, width: 6.67, fontName: "f2" }),
+        positionedTextItem("=", { top: 80, left: 68.5, width: 7.8 }),
+        positionedTextItem("Lim", { top: 80, left: 78.5, width: 16.65, eol: true }),
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, fontName: "f2" }),
+        positionedTextItem("(", { top: 100, left: 120.9, width: 3.84 }),
+        positionedTextItem("T", { top: 100, left: 124.74, width: 5.56, fontName: "f2" }),
+        positionedTextItem(")", { top: 100, left: 131, width: 3.84, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("p", { top: 100, left: 100, width: 5, fontName: "f2" }),
+        positionedTextItem("i", { top: 103.52, left: 105.04, width: 2.057, fontSize: 7.4, fontName: "f2" }),
+        positionedTextItem(" ", { top: 100, left: 107.1, width: 1.7 }),
+        positionedTextItem("log", { top: 100, left: 108.8, width: 12.8 }),
+        positionedTextItem("p", { top: 100, left: 123.319, width: 5, fontName: "f2" }),
+        positionedTextItem("i", { top: 103.52, left: 128.36, width: 2.057, fontSize: 7.4, fontName: "f2", eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("cata", { top: 100, left: 100, width: 16 }),
+        positionedTextItem("log", { top: 100, left: 116, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 129.8, width: 6.67, fontName: "f2", eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, fontName: "f2", eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("s", { top: 100, left: 100, width: 5 }),
+        positionedTextItem("log", { top: 100, left: 105, width: 12.8 }),
+        positionedTextItem("a", { top: 100, left: 118.8, width: 5, fontName: "f2" }),
+        positionedTextItem("n", { top: 100, left: 123.8, width: 5, fontName: "f2", eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("logN", { top: 100, left: 100, width: 20, fontName: "f2", eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("Noise", { top: 100, left: 113.8, width: 22, fontName: "f2", eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, fontName: "f2" }),
+        positionedTextItem("=", { top: 100, left: 121, width: 7.8 }),
+        positionedTextItem("5", { top: 100, left: 130, width: 5, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("x", { top: 80, left: 100, width: 5, fontName: "f2" }),
+        positionedTextItem("=", { top: 80, left: 106, width: 7.8 }),
+        positionedTextItem("1", { top: 80, left: 115, width: 5, eol: true }),
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, fontName: "f2" }),
+        positionedTextItem("(", { top: 100, left: 120.9, width: 3.84 }),
+        positionedTextItem(")", { top: 100, left: 124.74, width: 3.84, eol: true }),
+      ] },
+    ]);
+    const originalLines = layout.pages.map(page => page.lines.map(line => line.text));
+    const result = renderPdfLayoutToMarkdown(layout);
+
+    expect(result.markdown).toContain("log N(T)");
+    expect(result.markdown).toContain("pi log pi");
+    expect(result.markdown).toContain("catalogN");
+    expect(result.markdown).toContain("logN\n");
+    expect(result.markdown.split("\n").filter(line => line === "logN")).toHaveLength(3);
+    expect(result.markdown).toContain("slogan");
+    expect(result.markdown).toContain("logNoise");
+    expect(result.markdown).toContain("logN=5");
+    expect(result.markdown).toContain("x=1\nlogN()");
+    expect(layout.pages.map(page => page.lines.map(line => line.text))).toEqual(originalLines);
+    expect(originalLines[0]).toContain("logN(T)");
+    expect(validateMarkdownConversionSemantics(result, { layout })).toBe(result);
+  });
+
+  it("restores only a three-item geometrically proven prose-to-variable space", async () => {
+    const layout = await validatedSyntheticLayout([
+      { items: [
+        positionedTextItem("C", { top: 80, left: 120, width: 6.67, fontName: "f2" }),
+        positionedTextItem("=", { top: 80, left: 129, width: 7.8 }),
+        positionedTextItem("Lim", { top: 80, left: 139, width: 16.65, eol: true }),
+        positionedTextItem("Definition: The capacity", { top: 100, left: 91.92, width: 97.54 }),
+        positionedTextItem("C", { top: 100, left: 191.394, width: 6.67, fontName: "f2" }),
+        positionedTextItem("of a discrete channel is given by", { top: 100, left: 200.754, width: 127.99, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("Model", { top: 100, left: 100, width: 25 }),
+        positionedTextItem("C", { top: 100, left: 126.9, width: 6.7, fontName: "f2" }),
+        positionedTextItem("interface remains compact here", { top: 100, left: 136.3, width: 130, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("This document uses model", { top: 100, left: 100, width: 100 }),
+        positionedTextItem("C", { top: 100, left: 201.9, width: 6.7, fontName: "f2" }),
+        positionedTextItem("interface remains compact here", { top: 100, left: 211.3, width: 130, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("Definition: The capacity", { top: 100, left: 100, width: 97.54 }),
+        positionedTextItem("c", { top: 100, left: 199.474, width: 6.67, fontName: "f2" }),
+        positionedTextItem("of a discrete channel is given by", { top: 100, left: 208.834, width: 127.99, eol: true }),
+      ] },
+    ]);
+    const originalLines = layout.pages.map(page => page.lines.map(line => line.text));
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toContain("Definition: The capacity C of a discrete channel is given by");
+    expect(result.markdown).toContain("ModelC interface remains compact here");
+    expect(result.markdown).toContain("This document uses modelC interface remains compact here");
+    expect(result.markdown).toContain("Definition: The capacityc of a discrete channel is given by");
+    expect(layout.pages.map(page => page.lines.map(line => line.text))).toEqual(originalLines);
+    expect(validateMarkdownConversionSemantics(result, { layout })).toBe(result);
+  });
+
+  it("renders only an explicitly barred single-digit stacked fraction in prose", async () => {
+    const alignedBar = paintedFractionBarOperations({ x: 211.208, y: 105.252, width: 3.72 });
+    const misalignedBar = paintedFractionBarOperations({ x: 225, y: 105.252, width: 3.72 });
+    const thickBar = paintedFractionBarOperations({ x: 211.208, y: 105.252, width: 3.72, height: 1.2 });
+    const fractionItems = [
+      positionedTextItem("A decimal digit is about 3", { top: 98, left: 100, width: 110 }),
+      positionedTextItem(" ", { top: 98, left: 210, width: 0.165 }),
+      positionedTextItem("1", { top: 96.64, left: 211.22, width: 3.7, fontSize: 7.4 }),
+      positionedTextItem("3", { top: 104.08, left: 211.22, width: 3.7, fontSize: 7.4 }),
+      positionedTextItem(" ", { top: 104.08, left: 214.92, width: 0.41, fontSize: 7.4 }),
+      positionedTextItem("bits. A digit wheel remains stable here", {
+        top: 98,
+        left: 219.02,
+        width: 170,
+        eol: true,
+      }),
+    ];
+    const negativePages = [
+      { items: fractionItems },
+      { items: fractionItems, ...misalignedBar },
+      { items: fractionItems, ...thickBar },
+      { items: fractionItems, ...combinePaintedOperations(alignedBar, alignedBar) },
+      { items: fractionItems.filter(item => item.str !== " "), ...alignedBar },
+      {
+        items: fractionItems.map((item, index) => index === 0
+          ? { ...item, str: "A decimal digit is about three" }
+          : item),
+        ...alignedBar,
+      },
+      {
+        items: fractionItems.map((item, index) => index === fractionItems.length - 1
+          ? { ...item, str: "Bits. A digit wheel remains stable here" }
+          : item),
+        ...alignedBar,
+      },
+      {
+        items: fractionItems.map((item, index) => index === fractionItems.length - 1
+          ? { ...item, fontName: "f2" }
+          : item),
+        ...alignedBar,
+      },
+    ];
+    const layout = await validatedSyntheticLayout([
+      { items: fractionItems, ...alignedBar },
+      ...negativePages,
+    ]);
+    const originalLines = layout.pages.map(page => page.lines.map(line => line.text));
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toContain("A decimal digit is about 3 1/3 bits. A digit wheel remains stable here");
+    expect(result.markdown.match(/A decimal digit is about 31\n3\nbits\./gu)).toHaveLength(6);
+    expect(result.markdown).toContain("A decimal digit is about three1\n3\nbits.");
+    expect(result.markdown).toContain("A decimal digit is about 31\n3\nBits.");
+    expect(result.pages[0].rendered_line_count).toBe(layout.pages[0].lines.length - 2);
+    for (let index = 1; index < result.pages.length; index += 1) {
+      expect(result.pages[index].rendered_line_count).toBe(layout.pages[index].lines.length);
+    }
+    expect(layout.pages.map(page => page.lines.map(line => line.text))).toEqual(originalLines);
+    expect(validateMarkdownConversionSemantics(result, { layout })).toBe(result);
+  });
+
+  it("does not rewrite math-like lists, ambiguous tables, or unsupported link pages", async () => {
+    const compactScript = top => [
+      positionedTextItem("p", { top, left: 100, width: 5, fontName: "f2" }),
+      positionedTextItem("i", { top: top + 3.52, left: 105.04, width: 2.057, fontSize: 7.4, fontName: "f2" }),
+      positionedTextItem(" ", { top, left: 107.1, width: 1.7 }),
+      positionedTextItem("log", { top, left: 108.8, width: 12.8 }),
+      positionedTextItem("p", { top, left: 123.319, width: 5, fontName: "f2" }),
+      positionedTextItem("i", { top: top + 3.52, left: 128.36, width: 2.057, fontSize: 7.4, fontName: "f2", eol: true }),
+    ];
+    const layout = await validatedSyntheticLayout([
+      { items: [
+        positionedTextItem("• ", { top: 100, left: 90, width: 8 }),
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, fontName: "f2" }),
+        positionedTextItem("(", { top: 100, left: 120.9, width: 3.84 }),
+        positionedTextItem("T", { top: 100, left: 124.74, width: 5.56, fontName: "f2" }),
+        positionedTextItem(")", { top: 100, left: 131, width: 3.84, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("A", { top: 60, left: 50, width: 5 }),
+        positionedTextItem("B", { top: 60, left: 80, width: 5, eol: true }),
+        positionedTextItem("1", { top: 80, left: 50, width: 5 }),
+        positionedTextItem("2", { top: 80, left: 80, width: 5, eol: true }),
+        textItem("separator", { top: 110, left: 50 }),
+        ...compactScript(140),
+      ] },
+      {
+        items: compactScript(100),
+        annotations: [{ subtype: "Link", rect: [99, 677, 150, 690], dest: ["XYZ"] }],
+      },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout);
+
+    expect(result.markdown).toMatch(/^- logN\(T\)$/mu);
+    expect(result.markdown.split("\n").filter(line => line === "pi logpi")).toHaveLength(2);
+    expect(result.gaps.map(gap => gap.code)).toContain("TABLE_TOPOLOGY_UNKNOWN");
+    expect(result.gaps.map(gap => gap.code)).toContain("UNSUPPORTED_LINK_TARGET");
+  });
+
+  it("recognizes conservative document structure without promoting lookalike equations", async () => {
+    const body = top => [
+      textItem("First body line", { top }),
+      textItem("Second body line", { top: top + 30 }),
+      textItem("Third body line", { top: top + 60 }),
+      textItem("Fourth body line", { top: top + 90 }),
+    ];
+    const layout = await validatedSyntheticLayout([
+      { items: [
+        textItem("Reprinted with corrections from the journal", { top: 20 }),
+        textItem("Volume 27, July 1948", { top: 35 }),
+        centeredTextItem("A Mathematical Theory of Communication", { top: 50, fontSize: 16 }),
+        centeredTextItem("INTRODUCTION", { top: 90 }),
+        ...body(130),
+      ] },
+      { items: [centeredTextItem("PART IV: THE CONTINUOUS CHANNEL", { top: 60 }), ...body(100)] },
+      { items: [centeredTextItem("APPENDIX 7", { top: 60 }), ...body(100)] },
+      { items: [
+        textItem("PART I = H", { top: 50, fontSize: 24 }),
+        textItem("INTRODUCTION = H", { top: 90, fontSize: 24 }),
+        ...body(130),
+      ] },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toMatch(/^# A Mathematical Theory of Communication$/mu);
+    expect(result.markdown).toMatch(/^## INTRODUCTION$/mu);
+    expect(result.markdown).toMatch(/^## PART IV: THE CONTINUOUS CHANNEL$/mu);
+    expect(result.markdown).toMatch(/^## APPENDIX 7$/mu);
+    expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:PART I = H|INTRODUCTION = H)$/gmu);
+  });
+
+  it("emits at most one first-page H1 when a title and subtitle share the strongest style", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        centeredTextItem("Annual Financial Report", { top: 30, fontSize: 18 }),
+        centeredTextItem("For Shareholders and Partners", { top: 60, fontSize: 18 }),
+        textItem("First body line", { top: 100 }),
+        textItem("Second body line", { top: 130 }),
+        textItem("Third body line", { top: 160 }),
+        textItem("Fourth body line", { top: 190 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown.match(/^#\s+/gmu)).toHaveLength(1);
+    expect(result.markdown).toMatch(/^## (?:Annual Financial Report|For Shareholders and Partners)$/mu);
+  });
+
+  it("does not promote repeated page labels or contents-like entries without layout support", async () => {
+    const body = top => [
+      textItem("First body line", { top }),
+      textItem("Second body line", { top: top + 30 }),
+      textItem("Third body line", { top: top + 60 }),
+      textItem("Fourth body line", { top: top + 90 }),
+    ];
+    const layout = await validatedSyntheticLayout([
+      { items: [centeredTextItem("INTRODUCTION", { top: 20 }), ...body(50)] },
+      { items: [
+        textItem("Contents entry", { top: 80 }),
+        centeredTextItem("APPENDIX 1", { top: 98 }),
+        ...body(120),
+      ] },
+      { items: [textItem("PART I: REPEATED PAGE LABEL", { top: 20 }), ...body(50)] },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:INTRODUCTION|APPENDIX 1|PART I: REPEATED PAGE LABEL)$/gmu);
+  });
+
+  it("joins a geometrically supported drop cap without deleting ambiguous line-end hyphens", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        textItem("T", { top: 50, left: 40, fontSize: 30 }),
+        textItem("HE recent development was rapid and ap-", { top: 62, left: 67 }),
+        textItem("proximately correct.", { top: 90, left: 67 }),
+        centeredTextItem("PART I: BODY", { top: 140 }),
+        textItem("state-", { top: 180 }),
+        textItem("2) of the art", { top: 210 }),
+        textItem("three-", { top: 250 }),
+        textItem("dimensional sound", { top: 280 }),
+        textItem("Ordinary context", { top: 320 }),
+        textItem("A", { top: 360, left: 40, fontSize: 30 }),
+        textItem("BC Corporation provides ordinary business services", { top: 372, left: 67 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toContain("THE recent development was rapid and ap-\nproximately correct.");
+    expect(result.markdown).toContain("## PART I: BODY");
+    expect(result.markdown).toContain("state-\n2) of the art");
+    expect(result.markdown).toContain("three-\ndimensional sound");
+    expect(result.markdown).toContain("Ordinary context\nA\nBC Corporation provides ordinary business services");
   });
 
   it("neutralizes hostile Markdown, HTML, table, autolink, and control syntax", async () => {
@@ -630,6 +1114,7 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).toContain("## Conversion gaps");
     expect(result.markdown).toContain("OCR is not performed");
     expect(result.limitations.some(value => value.includes("clean ruled-rectangle grid evidence"))).toBe(true);
+    expect(result.limitations.some(value => value.includes("Cell artwork is omitted and reported as a vector-content gap"))).toBe(true);
     expect(result.limitations.some(value => value.includes("Links are emitted only for source-validated http or https annotation targets"))).toBe(true);
   });
 
@@ -1091,7 +1576,7 @@ describe("Markdown gap-code contract", () => {
   });
 
   it("keeps the share runtime byte-identical to its source", async () => {
-    for (const name of ["markdown-conversion.js", "output-schemas.js", "layout-extraction.js"]) {
+    for (const name of ["markdown-conversion.js", "output-schemas.js", "layout-extraction.js", "type3-cm-reference.js"]) {
       const [a, b] = await Promise.all([
         readSource(`server/${name}`),
         readSource(`pdf-toolkit-mcp-share/server/${name}`),

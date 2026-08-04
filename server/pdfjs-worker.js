@@ -24,6 +24,16 @@ import {
   extractPdfLayout,
   extractPdfLayoutForMarkdown,
 } from "./layout-extraction.js";
+import {
+  PDF_OBSERVATION_LIMITS,
+  buildAnnotationObservation,
+  buildDocumentObservation,
+  buildFormFieldObservation,
+  buildMetadataObservation,
+  buildPageObservation,
+  pageGeometryFromPdfLib,
+  pageViewFromPdfjs,
+} from "./pdf-observations.js";
 import { withBoundedPdfFileSafely } from "./bounded-pdf-file.js";
 
 const PROTOCOL_VERSION = 1;
@@ -45,6 +55,7 @@ let nextThreadSystemCommandId = 1;
 const OPERATION_OPTION_KEYS = new Map([
   ["analyze_pages", ["max_pages"]],
   ["detect_signature_zones", []],
+  ["observe_document", ["max_output_characters", "max_pages"]],
   [
     "extract_layout",
     [
@@ -73,6 +84,10 @@ const OPERATION_OPTION_KEYS = new Map([
   ["read_pages", ["end_page", "max_chars_per_page", "start_page"]],
   [
     "render_page",
+    ["max_dimension_px", "page", "renderer_policy", "scale_override"],
+  ],
+  [
+    "render_comparison_page",
     ["max_dimension_px", "page", "renderer_policy", "scale_override"],
   ],
   [
@@ -162,6 +177,7 @@ function validateOptions(operation, options) {
       );
       break;
     case "render_page":
+    case "render_comparison_page":
       boundedInteger(options.page, "page", 1, 1_000_000);
       rendererPolicy(options.renderer_policy);
       boundedInteger(
@@ -191,6 +207,15 @@ function validateOptions(operation, options) {
       break;
     case "analyze_pages":
       boundedInteger(options.max_pages, "max_pages", 1, 200);
+      break;
+    case "observe_document":
+      boundedInteger(options.max_pages, "max_pages", 1, 200);
+      boundedInteger(
+        options.max_output_characters,
+        "max_output_characters",
+        20_000,
+        200_000,
+      );
       break;
     case "detect_signature_zones":
       break;
@@ -324,18 +349,87 @@ function installBrowserPolyfills() {
   if (typeof globalThis.DOMMatrix === "undefined") {
     globalThis.DOMMatrix = class DOMMatrix {
       constructor(init) {
-        const value = Array.isArray(init) ? init : [1, 0, 0, 1, 0, 0];
+        const value = Array.isArray(init) || ArrayBuffer.isView(init)
+          ? init
+          : init && typeof init === "object"
+            ? [init.a, init.b, init.c, init.d, init.e, init.f]
+            : [1, 0, 0, 1, 0, 0];
         [this.a, this.b, this.c, this.d, this.e, this.f] = value;
-        this.is2D = true;
-        this.isIdentity = value[0] === 1 && value[1] === 0 && value[2] === 0
-          && value[3] === 1 && value[4] === 0 && value[5] === 0;
+        if (![this.a, this.b, this.c, this.d, this.e, this.f].every(Number.isFinite)) {
+          throw new TypeError("DOMMatrix requires six finite 2D matrix values.");
+        }
+        this.#syncFlags();
       }
-      multiplySelf() { return this; }
-      preMultiplySelf() { return this; }
-      translateSelf() { return this; }
-      scaleSelf() { return this; }
-      rotateSelf() { return this; }
-      invertSelf() { return this; }
+      #syncFlags() {
+        this.is2D = true;
+        this.isIdentity = this.a === 1 && this.b === 0 && this.c === 0
+          && this.d === 1 && this.e === 0 && this.f === 0;
+      }
+      #set(value) {
+        [this.a, this.b, this.c, this.d, this.e, this.f] = value;
+        this.#syncFlags();
+        return this;
+      }
+      multiplySelf(other) {
+        const right = DOMMatrix.fromMatrix(other);
+        const { a, b, c, d, e, f } = this;
+        return this.#set([
+          a * right.a + c * right.b,
+          b * right.a + d * right.b,
+          a * right.c + c * right.d,
+          b * right.c + d * right.d,
+          a * right.e + c * right.f + e,
+          b * right.e + d * right.f + f,
+        ]);
+      }
+      preMultiplySelf(other) {
+        const left = DOMMatrix.fromMatrix(other);
+        const current = new DOMMatrix(this);
+        return this.#set(left.multiplySelf(current).toArray());
+      }
+      translateSelf(tx = 0, ty = 0) {
+        return this.multiplySelf(new DOMMatrix([1, 0, 0, 1, tx, ty]));
+      }
+      scaleSelf(scaleX = 1, scaleY = scaleX, _scaleZ = 1, originX = 0, originY = 0) {
+        return this.translateSelf(originX, originY)
+          .multiplySelf(new DOMMatrix([scaleX, 0, 0, scaleY, 0, 0]))
+          .translateSelf(-originX, -originY);
+      }
+      rotateSelf(angle = 0) {
+        const radians = angle * Math.PI / 180;
+        const cosine = Math.cos(radians);
+        const sine = Math.sin(radians);
+        return this.multiplySelf(new DOMMatrix([cosine, sine, -sine, cosine, 0, 0]));
+      }
+      invertSelf() {
+        const { a, b, c, d, e, f } = this;
+        const determinant = a * d - b * c;
+        if (determinant === 0) return this.#set([NaN, NaN, NaN, NaN, NaN, NaN]);
+        return this.#set([
+          d / determinant,
+          -b / determinant,
+          -c / determinant,
+          a / determinant,
+          (c * f - d * e) / determinant,
+          (b * e - a * f) / determinant,
+        ]);
+      }
+      multiply(other) { return new DOMMatrix(this).multiplySelf(other); }
+      translate(tx = 0, ty = 0) { return new DOMMatrix(this).translateSelf(tx, ty); }
+      scale(scaleX = 1, scaleY = scaleX) { return new DOMMatrix(this).scaleSelf(scaleX, scaleY); }
+      rotate(angle = 0) { return new DOMMatrix(this).rotateSelf(angle); }
+      inverse() { return new DOMMatrix(this).invertSelf(); }
+      transformPoint(point = {}) {
+        const x = Number(point.x ?? 0);
+        const y = Number(point.y ?? 0);
+        return {
+          x: this.a * x + this.c * y + this.e,
+          y: this.b * x + this.d * y + this.f,
+          z: Number(point.z ?? 0),
+          w: Number(point.w ?? 1),
+        };
+      }
+      toArray() { return [this.a, this.b, this.c, this.d, this.e, this.f]; }
       static fromMatrix(value) {
         return new DOMMatrix([value.a, value.b, value.c, value.d, value.e, value.f]);
       }
@@ -408,6 +502,12 @@ async function loadPdfjs() {
   ).href;
   pdfjsLib.GlobalWorkerOptions.isEvalSupported = false;
   return pdfjsLib;
+}
+
+// Maintenance scripts use the production loader so glyph-program evidence is
+// never computed under a different DOM/canvas implementation than the worker.
+export async function loadPdfjsForMaintenance() {
+  return await loadPdfjs();
 }
 
 function nativeCanvasBindingCandidate() {
@@ -779,6 +879,258 @@ async function layoutOperation(bytes, source, password, options, forMarkdown) {
   };
 }
 
+function fallbackPageGeometry(pdfjsPage) {
+  const view = Array.isArray(pdfjsPage?.view) && pdfjsPage.view.length === 4
+    ? pdfjsPage.view.map(value => Number(value))
+    : [0, 0, 0, 0];
+  return {
+    geometry_source: "pdfjs-view-fallback",
+    media_box: null,
+    crop_box: view,
+    width_points: Math.abs(view[2] - view[0]),
+    height_points: Math.abs(view[3] - view[1]),
+    rotation: Number.isFinite(pdfjsPage?.rotate) ? Number(pdfjsPage.rotate) : 0,
+    user_unit: Number.isFinite(pdfjsPage?.userUnit) && pdfjsPage.userUnit > 0
+      ? Number(pdfjsPage.userUnit)
+      : 1,
+    coordinate_space: "pdf_user_space_bottom_left_points",
+  };
+}
+
+function fieldRows(fieldObjects) {
+  const rows = [];
+  for (const name of Object.keys(fieldObjects ?? {}).sort()) {
+    const entries = Array.isArray(fieldObjects[name]) ? fieldObjects[name] : [];
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") continue;
+      if ((entry.type ?? "") === "" && (!Number.isInteger(entry.page) || entry.page < 0)) continue;
+      rows.push({ ...entry, name: String(entry.name ?? name) });
+    }
+  }
+  return rows;
+}
+
+async function observeDocument(bytes, source, password, options) {
+  let rawPages = null;
+  const coverageReasons = {};
+  const addCoverageReason = (channel, reason) => {
+    coverageReasons[channel] = [...(coverageReasons[channel] ?? []), reason];
+  };
+  try {
+    const rawDocument = await PDFDocument.load(bytes, {
+      ignoreEncryption: true,
+      updateMetadata: false,
+    });
+    rawPages = rawDocument.getPages();
+  } catch {
+    addCoverageReason("pages", "RAW_PAGE_GEOMETRY_UNAVAILABLE");
+  }
+
+  return await withPdfjsDocument(bytes, password, async document => {
+    const pagesToObserve = Math.min(document.numPages, options.max_pages);
+    const pageItems = [];
+    const annotations = [];
+    const pageViewports = new Map();
+    const widgetsByRetainedFieldId = new Map();
+    const retainedUnmatchedWidgets = [];
+    let pageFailureCount = 0;
+    let annotationFailureCount = 0;
+    let annotationEncounteredCount = 0;
+    let widgetCount = 0;
+    let matchedWidgetCount = 0;
+    let unmatchedWidgetCount = 0;
+
+    let rows = [];
+    try {
+      rows = fieldRows(await document.getFieldObjects());
+    } catch {
+      addCoverageReason("form_fields", "FORM_FIELD_PARSE_UNAVAILABLE");
+    }
+    const fieldsBeyondPageLimit = rows.some(
+      field => Number.isInteger(field.page) && field.page >= pagesToObserve,
+    );
+    if (fieldsBeyondPageLimit) {
+      addCoverageReason("form_fields", "FORM_FIELD_PAGE_LIMIT_REACHED");
+    }
+    const eligibleRows = rows.filter(
+      field => !Number.isInteger(field.page) || field.page < pagesToObserve,
+    );
+    const retainedRows = eligibleRows.slice(0, PDF_OBSERVATION_LIMITS.max_fields);
+    const knownFieldIds = new Set(rows
+      .map(field => typeof field.id === "string" ? field.id : null)
+      .filter(Boolean));
+    const retainedFieldIds = new Set(retainedRows
+      .map(field => typeof field.id === "string" ? field.id : null)
+      .filter(Boolean));
+
+    for (let pageNumber = 1; pageNumber <= pagesToObserve; pageNumber += 1) {
+      let page = null;
+      try {
+        page = await document.getPage(pageNumber);
+        const geometry = rawPages?.[pageNumber - 1]
+          ? pageGeometryFromPdfLib(rawPages[pageNumber - 1])
+          : fallbackPageGeometry(page);
+        pageItems.push(buildPageObservation(source.sha256, pageNumber, geometry));
+        const viewport = page.getViewport({ scale: 1 });
+        pageViewports.set(pageNumber - 1, viewport);
+        try {
+          const pageAnnotations = await page.getAnnotations({ intent: "display" });
+          for (const annotation of pageAnnotations) {
+            if (annotation?.subtype === "Widget") {
+              widgetCount += 1;
+              const widget = { ...annotation, page: pageNumber - 1 };
+              const recognized = typeof annotation.id === "string"
+                && knownFieldIds.has(annotation.id);
+              if (recognized) {
+                matchedWidgetCount += 1;
+                if (
+                  retainedFieldIds.has(annotation.id)
+                  && !widgetsByRetainedFieldId.has(annotation.id)
+                ) {
+                  widgetsByRetainedFieldId.set(annotation.id, widget);
+                }
+              } else {
+                unmatchedWidgetCount += 1;
+                if (retainedUnmatchedWidgets.length < PDF_OBSERVATION_LIMITS.max_fields) {
+                  retainedUnmatchedWidgets.push(widget);
+                }
+              }
+              continue;
+            }
+            annotationEncounteredCount += 1;
+            if (annotations.length < PDF_OBSERVATION_LIMITS.max_annotations) {
+              annotations.push(buildAnnotationObservation({
+                sourceSha256: source.sha256,
+                annotation,
+                page: pageNumber,
+                viewport,
+                ordinal: annotationEncounteredCount,
+              }));
+            }
+          }
+        } catch {
+          annotationFailureCount += 1;
+        }
+      } catch {
+        pageFailureCount += 1;
+        annotationFailureCount += 1;
+      } finally {
+        try { page?.cleanup(); } catch {}
+      }
+    }
+
+    if (pageFailureCount > 0) {
+      addCoverageReason(
+        "pages",
+        pageFailureCount === pagesToObserve ? "PAGE_PARSE_UNAVAILABLE" : "PAGE_PARSE_PARTIAL",
+      );
+    }
+    if (document.numPages > pagesToObserve) {
+      addCoverageReason("annotations", "ANNOTATION_PAGE_LIMIT_REACHED");
+    }
+
+    let info = {};
+    let xmp = {};
+    try {
+      const rawMetadata = await document.getMetadata();
+      info = rawMetadata?.info ?? {};
+      xmp = rawMetadata?.metadata?.getAll?.() ?? {};
+    } catch {
+      addCoverageReason("metadata", "METADATA_PARSE_UNAVAILABLE");
+    }
+    const metadata = buildMetadataObservation(
+      source.sha256,
+      info,
+      xmp,
+      PDF_OBSERVATION_LIMITS.max_metadata_characters,
+    );
+
+    if (pageFailureCount > 0 && rows.some(
+      field => Number.isInteger(field.page) && !pageViewports.has(field.page),
+    )) {
+      addCoverageReason("form_fields", "FORM_FIELD_PAGE_GEOMETRY_PARTIAL");
+    }
+    const formFields = [];
+    let representedWidgetCount = 0;
+    for (const field of retainedRows) {
+      const matchedWidget = typeof field.id === "string"
+        ? widgetsByRetainedFieldId.get(field.id) ?? null
+        : null;
+      if (matchedWidget) representedWidgetCount += 1;
+      const pageIndex = Number.isInteger(matchedWidget?.page) ? matchedWidget.page : field.page;
+      const viewport = Number.isInteger(pageIndex) && pageIndex >= 0
+        ? pageViewports.get(pageIndex) ?? null
+        : null;
+      formFields.push(buildFormFieldObservation({
+        sourceSha256: source.sha256,
+        field,
+        widget: matchedWidget ?? field,
+        viewport,
+        ordinal: formFields.length + 1,
+        recordKind: "field",
+      }));
+    }
+    const remainingFieldCapacity = PDF_OBSERVATION_LIMITS.max_fields - formFields.length;
+    for (const widget of retainedUnmatchedWidgets.slice(0, remainingFieldCapacity)) {
+      const pageIndex = Number.isInteger(widget.page) ? widget.page : null;
+      const viewport = pageIndex === null ? null : pageViewports.get(pageIndex) ?? null;
+      formFields.push(buildFormFieldObservation({
+        sourceSha256: source.sha256,
+        field: widget,
+        widget,
+        viewport,
+        ordinal: formFields.length + 1,
+        recordKind: "unmatched_widget",
+      }));
+      representedWidgetCount += 1;
+    }
+    const totalFormFields = eligibleRows.length + unmatchedWidgetCount;
+    const fieldLimitReached = totalFormFields > PDF_OBSERVATION_LIMITS.max_fields;
+    const omittedWidgetCount = Math.max(0, widgetCount - representedWidgetCount);
+    const fieldsTruncated = formFields.length < totalFormFields
+      || fieldsBeyondPageLimit
+      || omittedWidgetCount > 0;
+
+    if (annotationFailureCount > 0) {
+      addCoverageReason(
+        "annotations",
+        annotationFailureCount === pagesToObserve
+          ? "ANNOTATION_PARSE_UNAVAILABLE"
+          : "ANNOTATION_PAGE_PARSE_PARTIAL",
+      );
+    }
+    return buildDocumentObservation({
+      source: {
+        ...source,
+        file_name: path.basename(source.canonical_path),
+      },
+      totalPages: document.numPages,
+      pageItems,
+      pageTruncated: pageItems.length < document.numPages,
+      pageLimitReached: document.numPages > pagesToObserve,
+      metadata,
+      formFields,
+      fieldObjectCount: eligibleRows.length,
+      totalFormFields,
+      fieldsTruncated,
+      fieldsLimitReached: fieldLimitReached,
+      widgetCount,
+      matchedWidgetCount,
+      unmatchedWidgetCount,
+      omittedWidgetCount,
+      annotations,
+      annotationEncounteredCount,
+      annotationsTruncated: annotations.length < annotationEncounteredCount
+        || document.numPages > pagesToObserve,
+      annotationsLimitReached:
+        annotationEncounteredCount > PDF_OBSERVATION_LIMITS.max_annotations,
+      coverageReasons,
+      maxPages: options.max_pages,
+      maxOutputCharacters: options.max_output_characters,
+    });
+  });
+}
+
 function pngResult(buffer, result) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 24 || buffer.length > MAX_BINARY_BYTES) {
     throw resourceLimitError("png_output_limit");
@@ -1007,12 +1359,55 @@ export async function runSystemCommand(command, args, {
   });
 }
 
-async function writeSinglePagePdf(bytes, pageNumber, password, targetPath) {
+async function writeSinglePagePdf(bytes, pageNumber, password, targetPath, cropBox = null) {
   const source = await PDFDocument.load(bytes, password ? { password } : {});
   const target = await PDFDocument.create();
   const [page] = await target.copyPages(source, [pageNumber - 1]);
+  if (cropBox !== null) {
+    const [left, bottom, right, top] = cropBox;
+    page.setCropBox(left, bottom, right - left, top - bottom);
+  }
   target.addPage(page);
   await writeFile(targetPath, await target.save());
+}
+
+async function inspectPdfjsPageView(bytes, password, pageNumber, viewRegion = null) {
+  return await withPdfjsDocument(bytes, password, async document => {
+    if (pageNumber > document.numPages) {
+      throw new Error(`Page ${pageNumber} is out of range (1-${document.numPages}).`);
+    }
+    const page = await document.getPage(pageNumber);
+    try {
+      const pageView = pageViewFromPdfjs(page);
+      let pdfCropBox = null;
+      if (viewRegion !== null) {
+        validatePdfRegionBox({
+          pageWidth: pageView.width_points,
+          pageHeight: pageView.height_points,
+          ...viewRegion,
+        });
+        const viewport = page.getViewport({ scale: 1 });
+        const corners = [
+          viewport.convertToPdfPoint(viewRegion.x, viewRegion.y),
+          viewport.convertToPdfPoint(
+            viewRegion.x + viewRegion.width,
+            viewRegion.y + viewRegion.height,
+          ),
+        ];
+        const xValues = corners.map(point => point[0]);
+        const yValues = corners.map(point => point[1]);
+        pdfCropBox = [
+          Math.min(...xValues),
+          Math.min(...yValues),
+          Math.max(...xValues),
+          Math.max(...yValues),
+        ];
+      }
+      return { pageView, pdfCropBox, totalPages: document.numPages };
+    } finally {
+      page.cleanup();
+    }
+  });
 }
 
 async function systemRenderPage(bytes, password, options) {
@@ -1025,27 +1420,38 @@ async function systemRenderPage(bytes, password, options) {
       `Page ${options.page} is out of range (1-${geometryDocument.getPageCount()}).`,
     );
   }
-  const geometry = geometryDocument.getPages()[options.page - 1].getSize();
+  const geometryPage = geometryDocument.getPages()[options.page - 1];
+  const geometry = geometryPage.getSize();
+  const pageGeometry = pageGeometryFromPdfLib(geometryPage);
+  const requestedRegion = options.view_region ?? null;
+  const { pageView, pdfCropBox, totalPages } = await inspectPdfjsPageView(
+    bytes,
+    password,
+    options.page,
+    requestedRegion,
+  );
+  const renderedView = requestedRegion ?? {
+    x: 0,
+    y: 0,
+    width: pageView.width_points,
+    height: pageView.height_points,
+  };
   const scale = options.scale_override ?? getPageRenderScale({
-    width: geometry.width,
-    height: geometry.height,
+    width: renderedView.width,
+    height: renderedView.height,
     maxDimensionPx: options.max_dimension_px,
   });
-  validateCanvasDimensions(geometry.width * scale, geometry.height * scale);
+  validateCanvasDimensions(renderedView.width * scale, renderedView.height * scale);
   const sourcePath = path.join(process.cwd(), "system-page.pdf");
-  const basePath = path.join(process.cwd(), "system-page-base.png");
-  const outputPath = path.join(process.cwd(), "system-page.png");
+  const outputPath = path.join(process.cwd(), "system-page.pdf.png");
   try {
-    await writeSinglePagePdf(bytes, options.page, password, sourcePath);
-    await runSystemCommand("/usr/bin/sips", [
-      "-s", "format", "png", sourcePath, "--out", basePath,
-    ]);
+    await writeSinglePagePdf(bytes, options.page, password, sourcePath, pdfCropBox);
     const maximumDimension = Math.max(
       1,
-      Math.round(Math.max(geometry.width, geometry.height) * scale),
+      Math.round(Math.max(renderedView.width, renderedView.height) * scale),
     );
-    await runSystemCommand("/usr/bin/sips", [
-      "-Z", String(maximumDimension), basePath, "--out", outputPath,
+    await runSystemCommand("/usr/bin/qlmanage", [
+      "-t", "-s", String(maximumDimension), "-o", process.cwd(), sourcePath,
     ]);
     const buffer = await readFile(outputPath);
     const pixels = pngDimensions(buffer);
@@ -1053,16 +1459,21 @@ async function systemRenderPage(bytes, password, options) {
     return pngResult(buffer, {
       height: pixels.height,
       height_points: geometry.height,
-      renderer: "macos-sips",
+      renderer: "macos-quicklook",
+      page_geometry: pageGeometry,
+      page_view: pageView,
+      requested_region: renderedView,
+      rendered_region: { x: 0, y: 0, width: pixels.width, height: pixels.height },
+      raw_pixel_sha256: null,
+      raw_pixel_status: "unavailable",
       scale,
-      total_pages: geometryDocument.getPageCount(),
+      total_pages: totalPages,
       width: pixels.width,
       width_points: geometry.width,
     });
   } finally {
     await Promise.all([
       rm(sourcePath, { force: true }),
-      rm(basePath, { force: true }),
       rm(outputPath, { force: true }),
     ]);
   }
@@ -1075,18 +1486,21 @@ async function nativeRenderPage(bytes, password, options) {
       `Page ${options.page} is out of range (1-${geometryDocument.getPageCount()}).`,
     );
   }
-  const geometry = geometryDocument.getPages()[options.page - 1].getSize();
-  const scale = options.scale_override ?? getPageRenderScale({
-    width: geometry.width,
-    height: geometry.height,
-    maxDimensionPx: options.max_dimension_px,
-  });
+  const geometryPage = geometryDocument.getPages()[options.page - 1];
+  const geometry = geometryPage.getSize();
+  const pageGeometry = pageGeometryFromPdfLib(geometryPage);
   return await withPdfjsDocument(bytes, password, async document => {
     if (options.page > document.numPages) {
       throw new Error(`Page ${options.page} is out of range (1-${document.numPages}).`);
     }
     const page = await document.getPage(options.page);
     try {
+      const pageView = pageViewFromPdfjs(page);
+      const scale = options.scale_override ?? getPageRenderScale({
+        width: pageView.width_points,
+        height: pageView.height_points,
+        maxDimensionPx: options.max_dimension_px,
+      });
       const viewport = page.getViewport({ scale });
       const pixels = validateCanvasDimensions(viewport.width, viewport.height);
       const canvas = createCanvas(pixels.width, pixels.height);
@@ -1094,10 +1508,24 @@ async function nativeRenderPage(bytes, password, options) {
       context.fillStyle = "white";
       context.fillRect(0, 0, pixels.width, pixels.height);
       await page.render({ canvasContext: context, viewport }).promise;
+      const rawPixels = Buffer.from(
+        context.getImageData(0, 0, pixels.width, pixels.height).data,
+      );
       const buffer = canvas.toBuffer("image/png");
       return pngResult(buffer, {
         height: pixels.height,
         height_points: geometry.height,
+        page_geometry: pageGeometry,
+        page_view: pageView,
+        requested_region: {
+          x: 0,
+          y: 0,
+          width: pageView.width_points,
+          height: pageView.height_points,
+        },
+        rendered_region: { x: 0, y: 0, width: pixels.width, height: pixels.height },
+        raw_pixel_sha256: createHash("sha256").update(rawPixels).digest("hex"),
+        raw_pixel_status: "available",
         renderer: "native-canvas",
         scale,
         total_pages: document.numPages,
@@ -1160,6 +1588,40 @@ async function renderPage(bytes, password, options) {
   });
 }
 
+async function renderComparisonPage(bytes, password, options) {
+  const rendered = await renderPage(bytes, password, options);
+  const imported = _require("@pdf-lib/upng");
+  const upng = imported?.default?.default ?? imported?.default ?? imported;
+  const decoded = upng.decode(rendered.binary.buffer.slice(
+    rendered.binary.byteOffset,
+    rendered.binary.byteOffset + rendered.binary.byteLength,
+  ));
+  const frames = upng.toRGBA8(decoded);
+  if (!Array.isArray(frames) || frames.length !== 1) {
+    throw new Error("The comparison renderer requires a single-frame PNG.");
+  }
+  const rgba = Buffer.from(frames[0]);
+  const expectedBytes = rendered.result.width * rendered.result.height * 4;
+  if (rgba.length !== expectedBytes || rgba.length > MAX_BINARY_BYTES) {
+    throw resourceLimitError("comparison_rgba_output_limit");
+  }
+  const rgbaSha256 = createHash("sha256").update(rgba).digest("hex");
+  if (
+    rendered.result.raw_pixel_status === "available"
+    && rendered.result.raw_pixel_sha256 !== rgbaSha256
+  ) {
+    throw new Error("The comparison PNG does not reproduce the rendered raw pixels.");
+  }
+  return {
+    binary: rgba,
+    result: {
+      ...rendered.result,
+      raw_pixel_sha256: rgbaSha256,
+      raw_pixel_status: "available",
+    },
+  };
+}
+
 async function nativeRenderRegion(bytes, password, options) {
   const geometryDocument = await PDFDocument.load(bytes, password ? { password } : {});
   if (options.page > geometryDocument.getPageCount()) {
@@ -1167,15 +1629,8 @@ async function nativeRenderRegion(bytes, password, options) {
       `Page ${options.page} is out of range (1-${geometryDocument.getPageCount()}).`,
     );
   }
-  const pageSize = geometryDocument.getPages()[options.page - 1].getSize();
-  validatePdfRegionBox({
-    pageWidth: pageSize.width,
-    pageHeight: pageSize.height,
-    x: options.x,
-    y: options.y,
-    width: options.width,
-    height: options.height,
-  });
+  const geometryPage = geometryDocument.getPages()[options.page - 1];
+  const pageGeometry = pageGeometryFromPdfLib(geometryPage);
   const scale = getPageRenderScale({
     width: options.width,
     height: options.height,
@@ -1189,7 +1644,16 @@ async function nativeRenderRegion(bytes, password, options) {
     }
     const page = await document.getPage(options.page);
     try {
-      const viewport = page.getViewport({ scale, rotation: 0 });
+      const pageView = pageViewFromPdfjs(page);
+      validatePdfRegionBox({
+        pageWidth: pageView.width_points,
+        pageHeight: pageView.height_points,
+        x: options.x,
+        y: options.y,
+        width: options.width,
+        height: options.height,
+      });
+      const viewport = page.getViewport({ scale });
       const crop = {
         height: Math.max(1, Math.round(options.height * scale)),
         left: Math.round(options.x * scale),
@@ -1226,9 +1690,28 @@ async function nativeRenderRegion(bytes, password, options) {
         transform: [1, 0, 0, 1, -crop.left, -crop.top],
         viewport,
       }).promise;
+      const rawPixels = Buffer.from(
+        context.getImageData(0, 0, cropPixels.width, cropPixels.height).data,
+      );
       const buffer = canvas.toBuffer("image/png");
       return pngResult(buffer, {
         height: cropPixels.height,
+        page_geometry: pageGeometry,
+        page_view: pageView,
+        requested_region: {
+          x: options.x,
+          y: options.y,
+          width: options.width,
+          height: options.height,
+        },
+        rendered_region: {
+          x: crop.left,
+          y: crop.top,
+          width: cropPixels.width,
+          height: cropPixels.height,
+        },
+        raw_pixel_sha256: createHash("sha256").update(rawPixels).digest("hex"),
+        raw_pixel_status: "available",
         renderer: "native-canvas",
         scale,
         total_pages: document.numPages,
@@ -1252,38 +1735,26 @@ async function systemRenderRegion(bytes, password, options) {
       minScale: 0.1,
       maxScale: 4,
     }),
+    view_region: {
+      x: options.x,
+      y: options.y,
+      width: options.width,
+      height: options.height,
+    },
   });
-  const fullPath = path.join(process.cwd(), "system-region-full.png");
-  const cropPath = path.join(process.cwd(), "system-region.png");
-  const crop = {
-    height: Math.max(1, Math.round(options.height * page.result.scale)),
-    left: Math.round(options.x * page.result.scale),
-    top: Math.round(options.y * page.result.scale),
-    width: Math.max(1, Math.round(options.width * page.result.scale)),
-  };
-  validateCanvasDimensions(crop.width, crop.height);
-  try {
-    await writeFile(fullPath, page.binary);
-    await runSystemCommand("/usr/bin/sips", [
-      "-c", String(crop.height), String(crop.width),
-      "--cropOffset", String(crop.top), String(crop.left),
-      fullPath, "--out", cropPath,
-    ]);
-    const buffer = await readFile(cropPath);
-    const pixels = pngDimensions(buffer);
-    return pngResult(buffer, {
-      height: pixels.height,
-      renderer: "macos-sips",
-      scale: page.result.scale,
-      total_pages: page.result.total_pages,
-      width: pixels.width,
-    });
-  } finally {
-    await Promise.all([
-      rm(fullPath, { force: true }),
-      rm(cropPath, { force: true }),
-    ]);
-  }
+  return pngResult(page.binary, {
+    height: page.result.height,
+    page_geometry: page.result.page_geometry,
+    page_view: page.result.page_view,
+    requested_region: page.result.requested_region,
+    rendered_region: page.result.rendered_region,
+    raw_pixel_sha256: null,
+    raw_pixel_status: "unavailable",
+    renderer: "macos-quicklook",
+    scale: page.result.scale,
+    total_pages: page.result.total_pages,
+    width: page.result.width,
+  });
 }
 
 async function renderRegion(bytes, password, options) {
@@ -1391,8 +1862,17 @@ async function performOperation(request, sourceBytes) {
         request.options,
         true,
       ) };
+    case "observe_document":
+      return { binary: null, result: await observeDocument(
+        sourceBytes,
+        request.source,
+        request.password,
+        request.options,
+      ) };
     case "render_page":
       return await renderPage(sourceBytes, request.password, request.options);
+    case "render_comparison_page":
+      return await renderComparisonPage(sourceBytes, request.password, request.options);
     case "render_region":
       return await renderRegion(sourceBytes, request.password, request.options);
     case "analyze_pages":
@@ -1449,7 +1929,9 @@ async function writeSuccess(operation, operationResult) {
     ? null
     : {
         bytes: binary.length,
-        mime_type: "image/png",
+        mime_type: operation === "render_comparison_page"
+          ? "application/x-pdf-tools-rgba"
+          : "image/png",
         sha256: createHash("sha256").update(binary).digest("hex"),
       };
   const encoded = Buffer.from(JSON.stringify({
@@ -1533,7 +2015,9 @@ function threadResponse(operation, operationResult) {
     ? null
     : {
         bytes: binary.length,
-        mime_type: "image/png",
+        mime_type: operation === "render_comparison_page"
+          ? "application/x-pdf-tools-rgba"
+          : "image/png",
         sha256: createHash("sha256").update(binary).digest("hex"),
       };
   const frame = {

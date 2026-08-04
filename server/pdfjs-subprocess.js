@@ -22,8 +22,10 @@ const PDFJS_OPERATIONS = new Set([
   "detect_signature_zones",
   "extract_layout",
   "extract_layout_for_markdown",
+  "observe_document",
   "read_content",
   "read_pages",
+  "render_comparison_page",
   "render_page",
   "render_region",
   "search_text",
@@ -256,7 +258,8 @@ function parseWorkerResponse(bytes, operation) {
         exactKeys(response.binary, ["bytes", "mime_type", "sha256"], "PDF.js worker binary");
         boundedInteger(response.binary.bytes, "worker binary bytes", 1, DEFAULT_MAX_BINARY_BYTES);
         if (
-          response.binary.mime_type !== "image/png"
+          !new Set(["image/png", "application/x-pdf-tools-rgba"])
+            .has(response.binary.mime_type)
           || !/^[a-f0-9]{64}$/.test(response.binary.sha256)
         ) {
           throw new TypeError("The worker binary descriptor is invalid.");
@@ -331,21 +334,25 @@ function validateBinaryResult(binaryBytes, descriptor, result, maximumBytes) {
   ) {
     throw subprocessFailure("The isolated PDF worker returned mismatched binary output.");
   }
-  if (
-    binaryBytes.length < 24
-    || !binaryBytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
-  ) {
-    throw subprocessFailure("The isolated PDF worker returned invalid PNG output.");
+  if (!Number.isSafeInteger(result.width) || !Number.isSafeInteger(result.height)) {
+    throw subprocessFailure("The isolated PDF worker returned invalid binary dimensions.");
   }
-  const pngWidth = binaryBytes.readUInt32BE(16);
-  const pngHeight = binaryBytes.readUInt32BE(20);
-  if (
-    !Number.isSafeInteger(result.width)
-    || !Number.isSafeInteger(result.height)
-    || result.width !== pngWidth
-    || result.height !== pngHeight
-  ) {
-    throw subprocessFailure("The isolated PDF worker returned mismatched PNG dimensions.");
+  if (descriptor.mime_type === "application/x-pdf-tools-rgba") {
+    if (binaryBytes.length !== result.width * result.height * 4) {
+      throw subprocessFailure("The isolated PDF worker returned mismatched RGBA dimensions.");
+    }
+  } else {
+    if (
+      binaryBytes.length < 24
+      || !binaryBytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+    ) {
+      throw subprocessFailure("The isolated PDF worker returned invalid PNG output.");
+    }
+    const pngWidth = binaryBytes.readUInt32BE(16);
+    const pngHeight = binaryBytes.readUInt32BE(20);
+    if (result.width !== pngWidth || result.height !== pngHeight) {
+      throw subprocessFailure("The isolated PDF worker returned mismatched PNG dimensions.");
+    }
   }
   return Buffer.from(binaryBytes);
 }
@@ -613,7 +620,7 @@ async function runThreadWorker({
       );
       if (
         platform !== "darwin"
-        || message.command !== "/usr/bin/sips"
+        || !new Set(["/usr/bin/qlmanage", "/usr/bin/sips"]).has(message.command)
         || !Array.isArray(message.args)
         || message.args.length > 128
         || message.args.some(argument => typeof argument !== "string" || argument.length > 32_768)
@@ -905,7 +912,9 @@ async function runInProcessWorker({
   const binary = Buffer.from(operationResult.binary);
   const descriptor = {
     bytes: binary.length,
-    mime_type: "image/png",
+    mime_type: request.operation === "render_comparison_page"
+      ? "application/x-pdf-tools-rgba"
+      : "image/png",
     sha256: createHash("sha256").update(binary).digest("hex"),
   };
   return {

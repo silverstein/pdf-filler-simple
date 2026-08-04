@@ -41,11 +41,11 @@ function extract(bundlePath, destination) {
   }
 }
 
-async function createFixture(filename) {
+async function createFixture(filename, text = "Packaged PDF Tools smoke test") {
   const document = await PDFDocument.create();
   const page = document.addPage([300, 180]);
   const font = await document.embedFont(StandardFonts.Helvetica);
-  page.drawText("Packaged PDF Tools smoke test", { x: 30, y: 100, size: 18, font });
+  page.drawText(text, { x: 30, y: 100, size: 18, font });
   writeFileSync(filename, await document.save());
 }
 
@@ -67,12 +67,14 @@ async function main() {
     ? "smoke # quarterly draft.pdf"
     : "smoke # quarterly ? draft.pdf";
   const fixturePath = path.join(tempRoot, specialFilename);
+  const comparisonFixturePath = path.join(tempRoot, "smoke-comparison-after.pdf");
   const cMapOraclePath = path.join(tempRoot, "layout-unijis-vertical.pdf");
   let transport;
 
   try {
     extract(bundlePath, extensionDir);
     await createFixture(fixturePath);
+    await createFixture(comparisonFixturePath, "Packaged PDF Tools revised smoke test");
     copyFileSync(CMAP_ORACLE_SOURCE, cMapOraclePath);
 
     const client = new Client({ name: "pdf-tools-packed-smoke", version: "1.0.0" });
@@ -102,8 +104,10 @@ async function main() {
     const tools = await client.listTools();
     const prompts = await client.listPrompts();
     const resources = await client.listResources();
-    if (tools.tools.length !== 40 || !tools.tools.some(tool => tool.name === "render_pdf_page")) {
-      throw new Error("Packed server did not expose render_pdf_page");
+    if (tools.tools.length !== 41
+      || !tools.tools.some(tool => tool.name === "render_pdf_page")
+      || !tools.tools.some(tool => tool.name === "compare_pdfs")) {
+      throw new Error("Packed server did not expose render_pdf_page and compare_pdfs");
     }
     if (prompts.prompts.length !== 14 || resources.resources.length !== 1) {
       throw new Error(
@@ -137,7 +141,7 @@ async function main() {
       arguments: { pdf_path: fixturePath, max_output_characters: 200000 },
     });
     if (layout.isError
-      || layout.structuredContent?.ir?.version !== "1.2.0"
+      || layout.structuredContent?.ir?.version !== "1.3.0"
       || layout.structuredContent?.source?.size_bytes !== statSync(fixturePath).size) {
       throw new Error("Packed read_pdf_layout contract smoke failed");
     }
@@ -146,10 +150,42 @@ async function main() {
       arguments: { pdf_path: fixturePath, max_markdown_bytes: 200000 },
     });
     if (markdown.isError
-      || markdown.structuredContent?.renderer?.version !== "1.3.0"
+      || markdown.structuredContent?.renderer?.version !== "1.10.0"
       || markdown.structuredContent?.markdown_bytes !== Buffer.byteLength(markdown.structuredContent?.markdown || "", "utf8")
       || markdown.structuredContent?.markdown_sha256 !== sha256(Buffer.from(markdown.structuredContent?.markdown || "", "utf8"))) {
       throw new Error("Packed convert_pdf_to_markdown contract smoke failed");
+    }
+    const comparison = await client.callTool({
+      name: "compare_pdfs",
+      arguments: {
+        before_pdf_path: fixturePath,
+        after_pdf_path: comparisonFixturePath,
+        max_pages: 20,
+        include_visual: true,
+        max_output_characters: 200000,
+      },
+    });
+    if (comparison.isError
+      || comparison.structuredContent?.status !== "complete"
+      || comparison.structuredContent?.before_source?.sha256 !== sha256(readFileSync(fixturePath))
+      || comparison.structuredContent?.after_source?.sha256 !== sha256(readFileSync(comparisonFixturePath))
+      || comparison.structuredContent?.coverage?.visual?.status !== "supported"
+      || comparison.structuredContent?.summary?.reported_change_count < 1
+      || comparison.structuredContent?.summary?.equivalence_claim !== false
+      || comparison.structuredContent?.resource_usage?.network_requests !== 0
+      || comparison.structuredContent?.resource_usage?.external_persistence_writes !== 0) {
+      throw new Error(`Packed compare_pdfs source, coverage, change, or claim-boundary smoke failed: ${JSON.stringify({
+        is_error: comparison.isError === true,
+        error_code: comparison.structuredContent?.error?.code ?? null,
+        status: comparison.structuredContent?.status ?? null,
+        before_sha_matches: comparison.structuredContent?.before_source?.sha256 === sha256(readFileSync(fixturePath)),
+        after_sha_matches: comparison.structuredContent?.after_source?.sha256 === sha256(readFileSync(comparisonFixturePath)),
+        visual_status: comparison.structuredContent?.coverage?.visual?.status ?? null,
+        reported_change_count: comparison.structuredContent?.summary?.reported_change_count ?? null,
+        equivalence_claim: comparison.structuredContent?.summary?.equivalence_claim ?? null,
+        network_requests: comparison.structuredContent?.resource_usage?.network_requests ?? null,
+        persistence_writes: comparison.structuredContent?.resource_usage?.external_persistence_writes ?? null,
+      })}`);
     }
     const cMapLayout = await client.callTool({
       name: "read_pdf_layout",
@@ -234,7 +270,8 @@ async function main() {
 
     console.log(
       `Packed MCPB smoke passed on ${process.platform}/${process.arch}: ${tools.tools.length} tools, ` +
-        `${prompts.prompts.length} prompts, canonical resources, verified PDF-lib mutation, native raster image.`,
+        `${prompts.prompts.length} prompts, canonical resources, verified PDF-lib mutation, ` +
+        `source-bound compare_pdfs, native raster image.`,
     );
   } finally {
     await transport?.close();

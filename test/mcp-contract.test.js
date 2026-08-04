@@ -36,7 +36,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // provenance.
 // 08c1f0d18959cfbf7c29319bc208d2cb75ca8a8334c36cb11539e77dcf87aca2.
 // 2026-08-03: opt-in compact Markdown normalizations and result-shape wiring.
-// aca6dabd3add8c1299da548253d804ae08ab27e94b8c8485a1c9c2ad6e41a1f3.
+// c8c1875eb1a78191e6846308c9184a1cc749b568dae890d0690f03ca203756e1.
 // 2026-07-30: convert_pdf_to_markdown description corrected to state the table
 // and link capabilities it actually has, then shortened to 820 characters
 // without dropping a safety boundary. Previously
@@ -45,7 +45,28 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // gap enum. The renderer throws on the byte limit rather than truncating, so
 // that code was unreachable and misdescribed the contract. Previously
 // 3993365ec0868e80afc629cbb8661566a363fe543acc928992ad36bcee4db86f.
-const TOOL_CONTRACT_SHA256 = "aca6dabd3add8c1299da548253d804ae08ab27e94b8c8485a1c9c2ad6e41a1f3";
+// 2026-08-03: convert_pdf_to_markdown renderer 1.3.0 rejects unreadable,
+// fragmentary, and equation-like heading candidates while retaining their
+// source text as escaped body text.
+// 2026-08-03: convert_pdf_to_markdown renderer 1.4.0 adds conservative
+// source-backed title, introduction, part, and appendix structure.
+// 2026-08-03: convert_pdf_to_markdown renderer 1.5.0 adds bounded drop-cap
+// continuation while preserving ordinary printed line-end hyphens.
+// 2026-08-03: convert_pdf_to_markdown renderer 1.6.0 adds bounded, local
+// math-operator spacing with explicit limitations.
+// 2026-08-03: extraction IR 1.2.0 preserves bounded solid-mask rectangle
+// evidence and Markdown renderer 1.7.0 uses only complete closed grids for
+// ruled tables.
+// 2026-08-03: extraction IR 1.3.0 and Markdown renderer 1.8.0 preserve only
+// independently qualified exact legacy Computer Modern Type-3 glyphs.
+// 2026-08-04: Markdown renderer 1.9.0 restores only narrowly source-supported
+// boundaries between multiword prose and a separate uppercase math variable.
+// 2026-08-04: Markdown renderer 1.10.0 interprets only explicitly barred,
+// single-digit stacked fractions in an ordinary prose sandwich. The final
+// combined contract digest is refreshed after the integration replay.
+// 2026-08-04: additive deterministic compare_pdfs contract with source-bound
+// evidence, exact whole-document limits, and typed channel coverage.
+const TOOL_CONTRACT_SHA256 = "941d6bd50b2a3930defb0526919d714ff9d4bc51acef2b2ad88c99c7533e8c98";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -83,6 +104,7 @@ const TOOL_EFFECT_ANNOTATIONS = {
   read_pdf_fields: CLOSED_SESSION_ACTION,
   fill_pdf: CLOSED_IDEMPOTENT_OVERWRITE,
   bulk_fill_from_csv: CLOSED_IDEMPOTENT_OVERWRITE,
+  compare_pdfs: CLOSED_READ,
   save_profile: CLOSED_IDEMPOTENT_OVERWRITE,
   load_profile: CLOSED_READ,
   list_profiles: CLOSED_READ,
@@ -278,10 +300,12 @@ describe("MCPB static declarations", () => {
   it("keeps every committed share runtime file byte-identical to its source", async () => {
     for (const filename of [
       "bounded-pdf-file.js",
+      "pdf-comparison.js",
       "index.js",
       "helpers.js",
       "output-schemas.js",
       "layout-extraction.js",
+      "type3-cm-reference.js",
       "markdown-conversion.js",
       "markdown-output-transaction.js",
       "pdf-lib-subprocess.js",
@@ -334,7 +358,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(40);
+    expect(tools).toHaveLength(41);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))
@@ -390,7 +414,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.2.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.3.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       page_range: { start_page: 1, end_page: 1 },
     });
@@ -713,7 +737,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(deniedInfo.content?.[0]).toMatchObject({
       type: "text",
-      text: expect.stringMatching(/^Error:/),
+      text: "The requested PDF path is not permitted.",
     });
   });
 

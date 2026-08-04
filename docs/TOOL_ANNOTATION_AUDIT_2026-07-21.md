@@ -1,6 +1,6 @@
 # MCP tool-annotation audit — 2026-07-21
 
-This is the handler-by-handler evidence behind PDF Tools' 39 MCP
+This is the handler-by-handler evidence behind PDF Tools' 41 MCP
 `ToolAnnotations`. It covers the source runtime and the byte-identical share
 runtime. It is a risk declaration for host UX, not an authorization boundary.
 
@@ -70,6 +70,7 @@ not idempotent.
 | `rotate_pdf_pages` | F | T | T | F | Deterministically writes rotated output and can replace an existing destination. |
 | `reorder_pdf_pages` | F | T | T | F | Deterministically writes reordered output and can replace an existing destination. |
 | `get_pdf_info` | T | F | T | F | Reads local file and PDF metadata. |
+| `compare_pdfs` | T | F | T | F | Reads and compares two bounded local PDFs in memory without retaining output or mutating either source. |
 | `apply_page_plan` | F | T | T | F | Deterministically writes reordered/rotated/subset output and can replace an existing destination. |
 | `get_page_analysis` | T | F | T | F | Reads and analyzes local PDF pages without saving mutations. |
 | `create_signature` | F | T | F | F | Creates a timestamped signature record; `overwrite=true` can replace an existing signature. |
@@ -85,7 +86,7 @@ not idempotent.
 
 ## Regression proof
 
-`test/mcp-contract.test.js` contains the same exhaustive 40-tool matrix and
+`test/mcp-contract.test.js` contains the same exhaustive 41-tool matrix and
 compares all four effect hints for both runtime copies after live MCP
 discovery. It also binds the complete discovery payload to an updated SHA-256,
 so a title, description, schema, metadata, or annotation change requires

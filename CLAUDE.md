@@ -1,5 +1,12 @@
 # PDF Toolkit MCP - Development Guide
 
+## Active Kepano / Shannon Work
+
+Before continuing the current extraction-improvement tranche, read
+`docs/handoffs/KEPANO_SHANNON.md`. The crucial starting fact is that Kepano's
+example is Shannon's *A Mathematical Theory of Communication* PDF; it is not a
+separate example to locate.
+
 This document provides essential context for Claude and other AI assistants when working on the PDF Toolkit extension.
 
 ## Project Overview
@@ -110,16 +117,17 @@ qualification. Then perform manual host runs against `example-fw9.pdf`:
 18. **split_pdf** - Split a PDF by page ranges or at regular intervals
 19. **rotate_pdf_pages** - Rotate pages by 90, 180, or 270 degrees
 20. **reorder_pdf_pages** - Rearrange the pages of a PDF into a new order
-21. **get_pdf_info** - Get page count, file size, dimensions, form field info
-22. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
-23. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
-24. **fetch_pdf_from_url** - Download a PDF from a URL to the user's local machine (bypasses Claude's WebFetch sandbox)
-25. **create_signature** - Save a reusable typed or image signature
-26. **list_signatures** - List saved signatures
-27. **add_signature_field** - Draw a "Sign here" placeholder box (does NOT sign)
-28. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent; see Signature Architecture below)
-29. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
-30. **detect_signature_zones** - Locate signature, initials, printed-name, and date zones with coordinates. Use apply_signature for signatures and initials, and apply_text for names and dates.
+21. **get_pdf_info** - Get source-bound page geometry, bounded metadata, form widgets, and inert ordinary annotations with explicit coverage
+22. **compare_pdfs** - Compare two immutable PDFs across semantic, text, structure, form, annotation, metadata, and visual channels with source-bound evidence
+23. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
+24. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
+25. **fetch_pdf_from_url** - Download a PDF from a URL to the user's local machine (bypasses Claude's WebFetch sandbox)
+26. **create_signature** - Save a reusable typed or image signature
+27. **list_signatures** - List saved signatures
+28. **add_signature_field** - Draw a "Sign here" placeholder box (does NOT sign)
+29. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent; see Signature Architecture below)
+30. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
+31. **detect_signature_zones** - Locate signature, initials, printed-name, and date zones with coordinates. Use apply_signature for signatures and initials, and apply_text for names and dates.
 
 ### Current Extraction Boundary
 
@@ -139,15 +147,38 @@ these surfaces report statuses and typed reasons, never numeric confidence,
 with failed measurements surfacing as unavailable rather than fabricated
 zeros.
 
+`get_pdf_info` binds every observation to the race-aware source SHA-256 and
+keeps page, metadata, form-widget, and ordinary-annotation coverage separate.
+Annotation URLs, destinations, and actions are never opened. Render results
+report the source identity, page geometry, coordinate spaces, renderer policy,
+PNG digest, and native raw-pixel digest availability.
+
+`render_pdf_region` uses top-left PDF.js viewport points after CropBox,
+rotation, and UserUnit. Do not pass MediaBox-relative signature-zone or signing
+coordinates to it. The macOS Quick Look fallback renders whole pages and
+regions in that same PDF.js view, including nonzero origins, rotated CropBoxes,
+and UserUnit scaling, while reporting raw pixels unavailable.
+
+`compare_pdfs` reads both inputs through immutable source descriptors, refuses
+documents over 20 pages instead of comparing prefixes, and reports typed
+coverage for semantic, text, structure, form-field, annotation, metadata, and
+visual channels. Ambiguous repeated pages remain unresolved. The default mode
+may suppress reversible metadata or visual noise, while forensic mode reports
+it; neither mode claims that no reported changes proves document equivalence.
+
 `convert_pdf_to_markdown` consumes the bounded source-validated layout IR
-(v1.2.0, which carries CTM-tracked ruled-rectangle evidence, text-integrity
+(v1.3.0, which carries CTM-tracked ruled-rectangle evidence, text-integrity
 character-class signals, and operator counts, all independently replayed
 against a second parse). It reconstructs a table from recurring column
 geometry, or from clean ruled-rectangle grid evidence when every rect aligns
 to exactly one cell, every text item lands in exactly one cell, and the first
 row carries header evidence (typographic or a non-recurring first-row band);
-overlapping grids, body-row bands, merged or spanning cells, ambiguous
-assignments, and line-segment-only rulings all abandon with typed gaps
+it may also use a complete closed grid of bounded axis-aligned solid-mask
+rectangles when every text item fits exactly one cell and independent caption
+and header evidence are present;
+overlapping grids, body-row bands, aligned partial dividers that evidence
+merged or spanning cells, ambiguous assignments, and line-segment-only rulings
+all abandon with typed gaps
 (`TABLE_TOPOLOGY_UNKNOWN`, `TABLE_RULING_UNSUPPORTED`). A text layer that is
 present but suspect (replacement-character, private-use, or C1-control
 density) is flagged with `TEXT_INTEGRITY_SUSPECT` and routed to vision while
@@ -158,6 +189,12 @@ default output is byte-identical to non-compact behavior. Links are emitted
 only for a source-validated external http or https annotation target that maps
 to exactly one contiguous run of text on one line; internal destinations,
 actions, other URL schemes, and ambiguous labels stay escaped text. It does
+not reconstruct general equations, scripts, or fraction bars, but may restore
+a missing space after a separate `log` source item only in a short, tightly
+bounded math run with same-baseline variable evidence plus an independent
+local math-layout clue. A small version-pinned registry may recover a legacy
+Computer Modern Type-3 character only after exact official-metric, glyph
+program, and operator/text sequence checks. It does
 not run OCR or use an external model. Unsupported visual or structural content
 is reported as typed partial coverage rather than silently represented as
 complete Markdown.

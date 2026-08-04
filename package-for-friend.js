@@ -31,6 +31,8 @@ const SHARE_FILES = [
   "server/markdown-conversion.js",
   "server/markdown-output-transaction.js",
   "server/output-schemas.js",
+  "server/pdf-comparison.js",
+  "server/pdf-observations.js",
   "server/pdf-lib-rss-monitor.js",
   "server/pdf-lib-subprocess.js",
   "server/pdf-lib-worker.js",
@@ -38,6 +40,7 @@ const SHARE_FILES = [
   "server/pdfjs-worker.js",
   "server/resource-uri.js",
   "server/stderr-suppression.js",
+  "server/type3-cm-reference.js",
   "smart-install.sh",
 ];
 const EXECUTABLE_SHARE_FILES = new Set([
@@ -359,6 +362,10 @@ async function syncSharePackage() {
       path.join(shareServerDir, "layout-extraction.js"),
     ),
     fs.copyFile(
+      path.join(PROJECT_ROOT, "server", "type3-cm-reference.js"),
+      path.join(shareServerDir, "type3-cm-reference.js"),
+    ),
+    fs.copyFile(
       path.join(PROJECT_ROOT, "server", "markdown-conversion.js"),
       path.join(shareServerDir, "markdown-conversion.js"),
     ),
@@ -370,6 +377,14 @@ async function syncSharePackage() {
     fs.copyFile(
       path.join(PROJECT_ROOT, "server", "output-schemas.js"),
       path.join(shareServerDir, "output-schemas.js"),
+    ),
+    fs.copyFile(
+      path.join(PROJECT_ROOT, "server", "pdf-comparison.js"),
+      path.join(shareServerDir, "pdf-comparison.js"),
+    ),
+    fs.copyFile(
+      path.join(PROJECT_ROOT, "server", "pdf-observations.js"),
+      path.join(shareServerDir, "pdf-observations.js"),
     ),
     fs.copyFile(
       path.join(PROJECT_ROOT, "server", "pdf-lib-rss-monitor.js"),

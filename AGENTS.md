@@ -1,5 +1,12 @@
 # Repository Guidelines
 
+## Active Kepano / Shannon Work
+
+Before continuing the current extraction-improvement tranche, read
+`docs/handoffs/KEPANO_SHANNON.md`. The crucial starting fact is that Kepano's
+example is Shannon's *A Mathematical Theory of Communication* PDF; it is not a
+separate example to locate.
+
 ## Project Structure & Module Organization
 - `server/index.js`: Node MCP server exposing PDF tools shared by Claude Desktop and Cursor. Keep tool definitions and helper utilities here; prefer incremental updates over rewrites.
 - `pdf-toolkit-mcp-share/`: Packaged variant used by `package-for-friend.js`; mirror changes from `server/index.js` when APIs evolve.
@@ -7,7 +14,23 @@
 - `example-fw9.pdf`: Sample form for smoke tests. Keep anonymized assets only.
 
 ### Tools currently shipped
-- `display_pdf`, `list_pdfs`, `read_pdf_fields`, `fill_pdf`, `bulk_fill_from_csv`, `save_profile`, `load_profile`, `list_profiles`, `fill_with_profile`, `extract_to_csv`, `validate_pdf`, `read_pdf_content`, `read_pdf_layout`, `convert_pdf_to_markdown`, `get_pdf_resource_uri`, `read_pdf_bytes` (app-only).
+- `display_pdf`, `list_pdfs`, `read_pdf_fields`, `fill_pdf`, `bulk_fill_from_csv`, `save_profile`, `load_profile`, `list_profiles`, `fill_with_profile`, `extract_to_csv`, `validate_pdf`, `read_pdf_content`, `read_pdf_layout`, `convert_pdf_to_markdown`, `get_pdf_info`, `compare_pdfs`, `render_pdf_page`, `render_pdf_region`, `get_pdf_resource_uri`, `read_pdf_bytes` (app-only).
+
+`get_pdf_info` returns bounded source-bound observations. Widget annotations
+belong to form fields; ordinary annotations remain separate and their targets
+are returned only as inert values. Render tools bind PNG and, when native
+canvas is available, raw RGBA digests to the exact source SHA-256.
+Render-region inputs are top-left PDF.js viewport points after CropBox,
+rotation, and UserUnit, not MediaBox-relative signing coordinates. The macOS
+system renderer uses the same view mapping for whole pages and regions and
+reports raw pixels unavailable.
+
+`compare_pdfs` performs a bounded, local, read-only whole-document comparison
+of two PDFs with at most 20 pages each. It binds observations and evidence to
+both immutable source envelopes, keeps seven coverage channels separate,
+preserves ambiguous page matches, and emits reversible default-material or
+forensic presentation decisions. A successful result is a detected-change
+set, never a document-equivalence claim.
 
 ## Build, Test, and Development Commands
 - `npm install`: install dependencies with Node.js 20.19+ or 22.12+; this is
@@ -35,6 +58,9 @@
   `read_pdf_fields`, `fill_pdf`, and one profile flow.
 - Validate CSV workflows with a two-row fixture before publishing; include a value with a comma to catch CSV parsing regressions.
 - Smoke-test new tools: `extract_to_csv` on two PDFs, `validate_pdf` on a partially filled form, `read_pdf_content` on a text-layer PDF and a textless scanned PDF to verify its page-1 image fallback, and `get_pdf_resource_uri` with a local file path.
+- Exercise `compare_pdfs` with the seven deterministic synthetic roles
+  (semantic, text, structure, form, annotation, metadata, and visual), plus an
+  identical/noise control and an inserted-page ambiguity case.
 
 ## Commit & Pull Request Guidelines
 - Follow the existing imperative subject style (`Update index.html to improve structure`). Group related changes and note version bumps explicitly.

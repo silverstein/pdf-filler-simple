@@ -12,6 +12,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   extractPdfLayout,
   pdfjsFactoryDirectory,
+  type3CharProcSha256,
+  uniqueComputerModernFamily,
   validatePdfLayoutSemantics,
   validatePdfLayoutSourceEvidence,
 } from "../server/layout-extraction.js";
@@ -38,6 +40,70 @@ const HORIZONTAL_GEOMETRY_PROVENANCE = {
   ascent_source: "style_ascent",
   ascent_ratio: 0.905,
 };
+
+describe("qualified legacy Type-3 glyph evidence", () => {
+  const minusCharProc = () => ({
+    fnArray: [49, 10, 12, 91, 11],
+    argsArray: [
+      [52, 0, 5, 15, 46, 18],
+      null,
+      [41, 0, 0, 3, 5.1, 14.9],
+      [
+        94,
+        [new Float32Array([0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1])],
+        new Float32Array([0, 0, 41, 3]),
+      ],
+      null,
+    ],
+  });
+
+  it("pins the exact reviewed glyph program and refuses a one-value near match", () => {
+    expect(type3CharProcSha256(minusCharProc())).toBe(
+      "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
+    );
+    const nearMatch = minusCharProc();
+    nearMatch.argsArray[3][1][0][14] = 0;
+    expect(type3CharProcSha256(nearMatch)).not.toBe(
+      "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
+    );
+    expect(type3CharProcSha256({ fnArray: [49], argsArray: [new Float32Array(100001)] })).toBeNull();
+  });
+
+  it("requires one unique official Computer Modern encoding family", () => {
+    expect(uniqueComputerModernFamily([[0, 52], [21, 52], [112, 55]]))
+      .toBe("computer-modern-math-symbol");
+    expect(uniqueComputerModernFamily([[11, 45], [25, 41], [26, 36], [33, 44]]))
+      .toBe("computer-modern-math-italic");
+    expect(uniqueComputerModernFamily([[58, 18], [59, 18], [61, 33]]))
+      .toBe("computer-modern-math-italic");
+    expect(uniqueComputerModernFamily([[0, 52]])).toBeNull();
+    expect(uniqueComputerModernFamily([[40, 32], [41, 32]])).toBeNull();
+  });
+
+  it("keeps ordinary punctuation and already-correct Unicode byte-for-byte unchanged", async () => {
+    const { result } = await runFake([{ items: [textItem({ text: "!:=,-−", x: 20, top: 20 })] }]);
+    const item = result.pages[0].raw_items[0];
+    expect(item.text).toBe("!:=,-−");
+    expect(item).not.toHaveProperty("source_text");
+    expect(item).not.toHaveProperty("glyph_recoveries");
+  });
+
+  it("binds the generated labeled reference to its checked-in provenance", async () => {
+    const fixture = path.join(REPO_ROOT, "test/fixtures/eval/extraction/type3-cm-reference.pdf");
+    const module = path.join(REPO_ROOT, "server/type3-cm-reference.js");
+    const shareModule = path.join(REPO_ROOT, "pdf-toolkit-mcp-share/server/type3-cm-reference.js");
+    const provenance = JSON.parse(await fs.readFile(
+      path.join(REPO_ROOT, "test/fixtures/eval/extraction/type3-cm-reference.provenance.json"),
+      "utf8",
+    ));
+    const digest = bytes => createHash("sha256").update(bytes).digest("hex");
+    expect(digest(await fs.readFile(fixture))).toBe(provenance.outputs["test/fixtures/eval/extraction/type3-cm-reference.pdf"]);
+    expect(digest(await fs.readFile(module))).toBe(provenance.outputs["server/type3-cm-reference.js"]);
+    expect(digest(await fs.readFile(shareModule))).toBe(provenance.outputs["pdf-toolkit-mcp-share/server/type3-cm-reference.js"]);
+    expect(provenance.visual_labels["computer-modern-math-italic"][33]).toBe("omega");
+    expect(provenance.visual_labels["computer-modern-math-symbol"][0]).toBe("minus");
+  });
+});
 
 function multiply(left, right) {
   return [
@@ -96,7 +162,10 @@ function fakePdfjs(pageConfigs, { requiredPassword = null, neverLoad = false } =
     },
     getOperatorList: async () => {
       if (config.operatorError) throw config.operatorError;
-      return { fnArray: config.operations ?? [], argsArray: config.argsArray ?? [] };
+      return {
+        fnArray: config.operations ?? [],
+        argsArray: config.argsArray ?? config.operatorArgs ?? (config.operations ?? []).map(() => null),
+      };
     },
     getAnnotations: async () => {
       if (config.annotationError) throw config.annotationError;
@@ -133,6 +202,7 @@ function fakePdfjs(pageConfigs, { requiredPassword = null, neverLoad = false } =
       closeFillStroke: 19,
       closeEOFillStroke: 20,
       endPath: 21,
+      paintSolidColorImageMask: 76,
     },
     Util: { transform: multiply },
     getDocument: documentOptions => {
@@ -491,14 +561,14 @@ describe("read_pdf_layout MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(JSON.stringify(first.structuredContent)).toBe(JSON.stringify(second.structuredContent));
     expect(first.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.2.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.3.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       source: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
       id_scope: {
         kind: "source_parser_ir_options",
         source_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         parser_version: "5.4.624",
-        ir_version: "1.2.0",
+        ir_version: "1.3.0",
         max_output_characters: 200000,
       },
       page_range: { requested_start_page: 1, requested_end_page: 1, start_page: 1, end_page: 1, total_pages: 1 },
@@ -866,6 +936,91 @@ describe("read_pdf_layout MCP tool", () => {
       .rejects.toThrow(/operator evidence differs from reparsed source/);
   });
 
+  it("captures bounded solid-mask rectangles and binds them to source operators", async () => {
+    const config = {
+      items: [textItem({ text: "Cell", x: 110, top: 100 })],
+      operations: [10, 12, 76, 11],
+      operatorArgs: [null, [40, 0, 0, -0.5, 100, 700], [], null],
+    };
+    const { result, bytes } = await runFake([config]);
+    expect(result.pages[0].painted_rectangles).toEqual({
+      status: "available",
+      truncated: false,
+      observed_count: 1,
+      returned_count: 1,
+      items: [{
+        id: "p0001-r000003",
+        source_operation_index: 2,
+        source_kind: "solid_color_image_mask",
+        graphics_transform: [40, 0, 0, -0.5, 100, 700],
+        quad: [
+          { x: 100, y: 92 },
+          { x: 140, y: 92 },
+          { x: 140, y: 92.5 },
+          { x: 100, y: 92.5 },
+        ],
+        bbox: { x: 100, y: 92, width: 40, height: 0.5 },
+      }],
+    });
+    const { pdfjs } = fakePdfjs([config]);
+    await expect(validatePdfLayoutSourceEvidence(result, { pdfjsLib: pdfjs, sourceBytes: bytes }))
+      .resolves.toBe(result);
+
+    const translated = structuredClone(result);
+    const painted = translated.pages[0].painted_rectangles.items[0];
+    painted.graphics_transform[4] += 5;
+    painted.quad = painted.quad.map(point => ({ ...point, x: point.x + 5 }));
+    painted.bbox.x += 5;
+    expect(() => validatePdfLayoutSemantics(translated, { sourceBytes: bytes })).not.toThrow();
+    await expect(validatePdfLayoutSourceEvidence(translated, { pdfjsLib: pdfjs, sourceBytes: bytes }))
+      .rejects.toThrow(/painted_rectangles|operator evidence differs/);
+  });
+
+  it("retains the full painted-rectangle transform under large UserUnit scaling", async () => {
+    const graphicsTransform = [1.23456, 0, 0, -0.5, 100.12345, 700.67891];
+    const viewport = {
+      scale: 75,
+      width: 45_900,
+      height: 59_400,
+      transform: [75, 0, 0, -75, 0, 59_400],
+    };
+    const config = {
+      userUnit: 75,
+      viewport,
+      items: [textItem({ text: "Scaled", x: 110, top: 100 })],
+      operations: [10, 12, 76, 11],
+      operatorArgs: [null, graphicsTransform, [], null],
+    };
+    const { result, bytes } = await runFake([config]);
+    expect(result.pages[0].painted_rectangles.items[0].graphics_transform).toEqual(graphicsTransform);
+    expect(() => validatePdfLayoutSemantics(result, { sourceBytes: bytes })).not.toThrow();
+    const { pdfjs } = fakePdfjs([config]);
+    await expect(validatePdfLayoutSourceEvidence(result, { pdfjsLib: pdfjs, sourceBytes: bytes }))
+      .resolves.toBe(result);
+  });
+
+  it("caps painted rectangle evidence without accepting it as complete", async () => {
+    const operations = [];
+    const operatorArgs = [];
+    for (let index = 0; index < 501; index += 1) {
+      operations.push(10, 12, 76, 11);
+      operatorArgs.push(null, [20, 0, 0, -0.5, 20, 700 - index * 0.01], [], null);
+    }
+    const { result } = await runFake([{
+      items: [textItem({ text: "Bounded", x: 50, top: 50 })],
+      operations,
+      operatorArgs,
+    }]);
+    expect(result.pages[0].painted_rectangles).toMatchObject({
+      status: "available",
+      truncated: true,
+      observed_count: 501,
+      returned_count: 500,
+    });
+    expect(result.pages[0].extraction_status).toBe("partial");
+    expect(result.pages[0].needs_visual_inspection).toBe(true);
+  });
+
   it("fails closed on retention/output limits and keeps references non-dangling", async () => {
     const limited = await client.callTool({
       name: "read_pdf_layout",
@@ -1118,6 +1273,70 @@ describe("Extraction IR hostile reconstruction", () => {
     expect(raw[2]).toMatchObject({ has_eol: true, text_kind: "empty", raw_width: 0, width: 0, bbox_status: "degenerate" });
     expect(raw[1].font).toEqual({ family: "Test Sans", ascent: 0.8, descent: -0.2, vertical: false });
     expect(result.pages[0].limitations.join(" ")).toContain("hidden, clipped, duplicated");
+  });
+
+  it("rejects invented glyph-recovery provenance", async () => {
+    const { result } = await runFake([{ items: [textItem({ text: "A", x: 10, top: 20 })] }]);
+    const forged = structuredClone(result);
+    const item = forged.pages[0].raw_items[0];
+    item.source_text = "A";
+    item.text = "−";
+    item.glyph_recoveries = [{
+      source_utf16_start: 0,
+      source_utf16_end: 1,
+      output_utf16_start: 0,
+      output_utf16_end: 1,
+      original_char_code: 0,
+      source_unicode: "A",
+      target_unicode: "−",
+      font_name: item.font_name,
+      registry_id: "cmsy-pk-raster-minus-v1",
+      qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+      charproc_sha256: "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
+      witness_charproc_sha256: [
+        "b57ae2e4cf2525371916a1a4bcf0c55165b9230b1038f2d5451cdbbad5a51dcc",
+        "0c8ca6c662e9ca24f90a61f53206ea0719476473861471a1b04bf489b3cc37a3",
+      ],
+      tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
+      canonicalizer_version: "pdfjs-charproc-json-v1",
+    }];
+    expect(() => validatePdfLayoutSemantics(forged)).toThrow(/registry evidence is invalid/);
+  });
+
+  it("replays the source operators instead of trusting a well-formed recovery claim", async () => {
+    const sourceItem = textItem({ text: "\u0000", x: 10, top: 20 });
+    const { result, bytes } = await runFake([{ items: [sourceItem] }]);
+    const forged = structuredClone(result);
+    const item = forged.pages[0].raw_items[0];
+    item.source_text = "\u0000";
+    item.text = "−";
+    item.glyph_recoveries = [{
+      source_utf16_start: 0,
+      source_utf16_end: 1,
+      output_utf16_start: 0,
+      output_utf16_end: 1,
+      original_char_code: 0,
+      source_unicode: "\u0000",
+      target_unicode: "−",
+      font_name: item.font_name,
+      registry_id: "cmsy-pk-raster-minus-v1",
+      qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+      charproc_sha256: "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
+      witness_charproc_sha256: [
+        "b57ae2e4cf2525371916a1a4bcf0c55165b9230b1038f2d5451cdbbad5a51dcc",
+        "0c8ca6c662e9ca24f90a61f53206ea0719476473861471a1b04bf489b3cc37a3",
+      ],
+      tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
+      canonicalizer_version: "pdfjs-charproc-json-v1",
+    }];
+    forged.pages[0].lines[0].text = "−";
+    forged.pages[0].flow_text = "−";
+    forged.pages[0].spatial_text = forged.pages[0].spatial_text.replace("\u0000", "−");
+    expect(() => validatePdfLayoutSemantics(forged, { sourceBytes: bytes })).not.toThrow();
+    await expect(validatePdfLayoutSourceEvidence(forged, {
+      pdfjsLib: fakePdfjs([{ items: [sourceItem] }]).pdfjs,
+      sourceBytes: bytes,
+    })).rejects.toThrow(/differs from reparsed source/);
   });
 
   it("binds truncation to the exact parser-order TextItem prefix", async () => {
@@ -1968,5 +2187,31 @@ describe("Extraction IR hostile reconstruction", () => {
     page.flow_text = merged.text;
     page.spatial_text = `[${merged.id} x=${merged.x} y=${merged.y} w=${merged.width} h=${merged.height}] ${merged.text}`;
     expect(() => validatePdfLayoutSemantics(mutant)).toThrow(/baseline spread mismatch/);
+  });
+
+  it("splits source-order runs when a small first glyph would make the final baseline spread invalid", async () => {
+    const item = (text, x, top, size, hasEOL) => ({
+      ...textItem({
+        text,
+        x,
+        top,
+        width: 10,
+        hasEOL,
+        transform: [size, 0, 0, size, x, 792 - top - size],
+      }),
+      height: size,
+    });
+    const { result } = await runFake([{ items: [
+      item("A", 10, 98.6, 2, false),
+      item("B", 25, 87, 20, false),
+      item("C", 50, 89, 20, true),
+    ] }]);
+
+    expect(result.pages[0].reading_order.strategy).toBe("source_order_fallback");
+    expect(result.pages[0].lines.map(line => line.item_ids)).toEqual([
+      ["p0001-i000001", "p0001-i000002"],
+      ["p0001-i000003"],
+    ]);
+    expect(() => validatePdfLayoutSemantics(result)).not.toThrow();
   });
 });
