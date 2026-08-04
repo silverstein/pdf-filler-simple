@@ -26,17 +26,35 @@ function page(pageNumber, text, { width = 100, height = 100, rotation = 0 } = {}
   };
 }
 
-function render(width, height, fill = 0, requestedRegion = {
-  x: 0,
-  y: 0,
-  width: width / 1.5,
-  height: height / 1.5,
-}) {
+function render(width, height, fill = 0, options = {}) {
+  const scale = options.scale ?? 1.5;
+  const logicalWidth = options.logicalWidth ?? width / scale;
+  const logicalHeight = options.logicalHeight ?? height / scale;
+  const exactLogicalWidth = options.exactLogicalWidth ?? logicalWidth;
+  const exactLogicalHeight = options.exactLogicalHeight ?? logicalHeight;
+  const rotation = options.rotation ?? 0;
+  const userUnit = options.userUnit ?? 1;
+  const nativeWidth = (rotation % 180 === 0 ? logicalWidth : logicalHeight) / userUnit;
+  const nativeHeight = (rotation % 180 === 0 ? logicalHeight : logicalWidth) / userUnit;
   return {
     width,
     height,
-    scale: 1.5,
-    requested_region: requestedRegion,
+    scale,
+    renderer: "native-canvas",
+    comparison_view: {
+      width_points: exactLogicalWidth,
+      height_points: exactLogicalHeight,
+    },
+    page_view: {
+      view_box: [0, 0, nativeWidth, nativeHeight],
+      width_points: logicalWidth,
+      height_points: logicalHeight,
+      rotation,
+      user_unit: userUnit,
+      coordinate_space: "pdfjs_viewport_top_left_points",
+    },
+    requested_region: { x: 0, y: 0, width: logicalWidth, height: logicalHeight },
+    rendered_region: { x: 0, y: 0, width, height },
     binary: Buffer.alloc(width * height * 4, fill),
   };
 }
@@ -196,14 +214,14 @@ describe("PDF comparison primitives", () => {
   });
 
   it("uses exact page points instead of rounded raster dimensions at right and bottom edges", () => {
-    const requestedRegion = { x: 0, y: 0, width: 8.1, height: 4.1 };
+    const options = { logicalWidth: 8.1, logicalHeight: 4.1 };
     const cases = [
       { region: [8.2, 1, 0.2, 1], pixel: [12, 3] },
       { region: [2, 4.2, 1, 0.2], pixel: [4, 6] },
     ];
     for (const { region, pixel: [x, y] } of cases) {
-      const before = render(13, 7, 0, requestedRegion);
-      const after = render(13, 7, 0, requestedRegion);
+      const before = render(13, 7, 0, options);
+      const after = render(13, 7, 0, options);
       after.binary[(y * 13 + x) * 4] = 20;
       const baseline = diffComparisonRgba(before, after);
       expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region))
@@ -245,6 +263,110 @@ describe("PDF comparison primitives", () => {
       expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region))
         .toEqual(baseline);
     }
+  });
+
+  it("disables masking when equal pixel canvases bind different logical render mappings", () => {
+    const before = render(151, 76, 0, {
+      logicalWidth: 100.2,
+      logicalHeight: 50.2,
+    });
+    const after = render(151, 76, 0, {
+      logicalWidth: 100.4,
+      logicalHeight: 50.4,
+    });
+    after.binary[(15 * 151 + 150) * 4] = 20;
+    const baseline = diffComparisonRgba(before, after);
+    expect(diffComparisonRgba(before, after, [[100.3, 10, 0.05, 1]]))
+      .toEqual(baseline);
+
+    const rotatedAfter = render(151, 76, 0, {
+      logicalWidth: 100.2,
+      logicalHeight: 50.2,
+    });
+    rotatedAfter.page_view.rotation = 90;
+    rotatedAfter.binary[(15 * 151 + 150) * 4] = 20;
+    const rotatedBaseline = diffComparisonRgba(before, rotatedAfter);
+    expect(diffComparisonRgba(before, rotatedAfter, [[99, 9, 2, 2]]))
+      .toEqual(rotatedBaseline);
+  });
+
+  it("fails closed when both render mappings share the same invalid metadata", () => {
+    const mutations = [
+      ["wrong coordinate space", value => { value.page_view.coordinate_space = "pdf_user_space_bottom_left_points"; }],
+      ["missing coordinate space", value => { delete value.page_view.coordinate_space; }],
+      ["non-finite view box", value => { value.page_view.view_box = [Number.NaN, 0, 8, 4]; }],
+      ["missing view box", value => { delete value.page_view.view_box; }],
+      ["degenerate view box", value => { value.page_view.view_box = [0, 0, 0, 4]; }],
+      ["inconsistent view box", value => { value.page_view.view_box = [0, 0, 1, 1]; }],
+      ["invalid rotation", value => { value.page_view.rotation = 45; }],
+      ["missing rotation", value => { delete value.page_view.rotation; }],
+      ["negative UserUnit", value => { value.page_view.user_unit = -1; }],
+      ["missing UserUnit", value => { delete value.page_view.user_unit; }],
+      ["wrong renderer", value => { value.renderer = "macos-quicklook"; }],
+      ["missing exact viewport", value => { delete value.comparison_view; }],
+      ["non-finite exact viewport", value => { value.comparison_view.width_points = Number.NaN; }],
+      ["unbound exact viewport", value => { value.comparison_view.width_points += 0.001; }],
+      ["shifted requested region", value => { value.requested_region.x = 1; }],
+      ["cropped requested region", value => { value.requested_region.width -= 1; }],
+      ["missing rendered region", value => { delete value.rendered_region; }],
+      ["shifted rendered region", value => { value.rendered_region.x = 1; }],
+      ["cropped rendered region", value => { value.rendered_region.width -= 1; }],
+    ];
+    for (const [label, mutate] of mutations) {
+      const before = render(12, 6);
+      const after = render(12, 6);
+      mutate(before);
+      mutate(after);
+      after.binary[(2 * 12 + 2) * 4] = 20;
+      const baseline = diffComparisonRgba(before, after);
+      expect(diffComparisonRgba(before, after, [[0, 0, 3, 3]]), label).toEqual(baseline);
+    }
+  });
+
+  it("fails closed when both renders drift from the frozen comparison scale", () => {
+    const before = render(16, 8, 0, { scale: 2 });
+    const after = render(16, 8, 0, { scale: 2 });
+    after.binary[(2 * 16 + 2) * 4] = 20;
+    const baseline = diffComparisonRgba(before, after);
+    expect(diffComparisonRgba(before, after, [[0, 0, 3, 3]])).toEqual(baseline);
+  });
+
+  it("accepts a self-consistent rotated page view with a positive UserUnit", () => {
+    const options = { rotation: 90, userUnit: 2 };
+    const before = render(12, 6, 0, options);
+    const after = render(12, 6, 0, options);
+    after.binary[(2 * 12 + 2) * 4] = 20;
+    after.binary[(2 * 12 + 9) * 4] = 20;
+    expect(diffComparisonRgba(before, after, [[0, 0, 3, 3]])).toMatchObject({
+      raw_changed_pixels: 1,
+    });
+  });
+
+  it("uses the producer's unrounded viewport at a raster ceiling boundary", () => {
+    const options = {
+      logicalWidth: 100,
+      logicalHeight: 50.2,
+      exactLogicalWidth: 100.0000001,
+    };
+    const before = render(151, 76, 0, options);
+    const after = render(151, 76, 0, options);
+    after.binary[(2 * 151 + 2) * 4] = 20;
+    after.binary[(2 * 151 + 9) * 4] = 20;
+    expect(diffComparisonRgba(before, after, [[0, 0, 3, 3]])).toMatchObject({
+      raw_changed_pixels: 1,
+    });
+    const baseline = diffComparisonRgba(before, after);
+    expect(diffComparisonRgba(before, after, [[100.0000002, 1, 0.1, 1]]))
+      .toEqual(baseline);
+  });
+
+  it("fails closed to no masking when exact logical render metadata is unavailable", () => {
+    const before = render(12, 6);
+    const after = render(12, 6);
+    delete before.page_view;
+    after.binary[(2 * 12 + 2) * 4] = 20;
+    const baseline = diffComparisonRgba(before, after);
+    expect(diffComparisonRgba(before, after, [[0, 0, 3, 3]])).toEqual(baseline);
   });
 
   it("marks visual coverage unavailable when any requested native render is unavailable", () => {

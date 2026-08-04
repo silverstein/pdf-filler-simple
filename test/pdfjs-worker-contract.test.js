@@ -5,9 +5,11 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { PDFDocument } from "pdf-lib";
 import {
   hashBoundedPdfFileSafely,
 } from "../server/bounded-pdf-file.js";
+import { diffComparisonRgba } from "../server/pdf-comparison.js";
 import {
   createPdfjsSubprocessRequest,
   runPdfjsSubprocess,
@@ -256,6 +258,41 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
       expect(systemPage.renderer).toBe("macos-quicklook");
     }
   });
+
+  it("binds comparison masking to the producer's exact unrounded viewport", async () => {
+    const root = await fs.realpath(
+      await fs.mkdtemp(path.join(REPO_ROOT, ".pdfjs-comparison-view-")),
+    );
+    roots.push(root);
+    const pdfPath = path.join(root, "fractional-raster-boundary.pdf");
+    const pdf = await PDFDocument.create();
+    pdf.addPage([100.0000001, 50.2]);
+    await fs.writeFile(pdfPath, await pdf.save());
+
+    const rendered = await run("render_comparison_page", {
+      page: 1,
+      max_dimension_px: null,
+      renderer_policy: "native",
+      scale_override: 1.5,
+    }, null, await sourceBinding(pdfPath));
+    expect(rendered.page_view.width_points).toBe(100);
+    expect(rendered.comparison_view.width_points).toBeGreaterThan(100);
+    expect(rendered.width).toBe(151);
+    expect(rendered.width).toBe(Math.ceil(
+      rendered.comparison_view.width_points * rendered.scale,
+    ));
+
+    const before = { ...rendered, binary: Buffer.from(rendered.binary) };
+    const after = { ...rendered, binary: Buffer.from(rendered.binary) };
+    for (const [x, y] of [[2, 2], [9, 2]]) {
+      const offset = (y * rendered.width + x) * 4;
+      after.binary[offset] = before.binary[offset] > 127 ? 0 : 255;
+    }
+    expect(diffComparisonRgba(before, after)).toMatchObject({ raw_changed_pixels: 2 });
+    expect(diffComparisonRgba(before, after, [[0, 0, 3, 3]])).toMatchObject({
+      raw_changed_pixels: 1,
+    });
+  }, 30_000);
 
   it("runs page operators and signature text heuristics inside the worker", async () => {
     const analysis = await run("analyze_pages", { max_pages: 200 });

@@ -1496,6 +1496,7 @@ async function nativeRenderPage(bytes, password, options) {
     const page = await document.getPage(options.page);
     try {
       const pageView = pageViewFromPdfjs(page);
+      const comparisonView = page.getViewport({ scale: 1 });
       const scale = options.scale_override ?? getPageRenderScale({
         width: pageView.width_points,
         height: pageView.height_points,
@@ -1513,6 +1514,10 @@ async function nativeRenderPage(bytes, password, options) {
       );
       const buffer = canvas.toBuffer("image/png");
       return pngResult(buffer, {
+        comparison_view: {
+          width_points: comparisonView.width,
+          height_points: comparisonView.height,
+        },
         height: pixels.height,
         height_points: geometry.height,
         page_geometry: pageGeometry,

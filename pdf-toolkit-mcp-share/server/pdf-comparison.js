@@ -335,25 +335,74 @@ function cropRgba(render, region) {
   return { bytes, sha256: comparisonSha256(bytes) };
 }
 
-function comparisonIgnoredPixelMask(render, regions) {
+function comparisonRenderLogicalExtent(render) {
+  const pageView = render?.page_view;
+  const pageWidth = pageView?.width_points;
+  const pageHeight = pageView?.height_points;
+  const exactPageWidth = render?.comparison_view?.width_points;
+  const exactPageHeight = render?.comparison_view?.height_points;
+  const viewBox = pageView?.view_box;
+  const rotation = pageView?.rotation;
+  const userUnit = pageView?.user_unit;
+  const requested = render?.requested_region;
+  const rendered = render?.rendered_region;
+  if (render?.renderer !== PDF_COMPARISON_ENGINE.renderer.name
+    || render?.scale !== PDF_COMPARISON_RENDERER.scale
+    || pageView?.coordinate_space !== "pdfjs_viewport_top_left_points"
+    || !Array.isArray(viewBox) || viewBox.length !== 4 || !viewBox.every(Number.isFinite)
+    || viewBox[2] <= viewBox[0] || viewBox[3] <= viewBox[1]
+    || ![0, 90, 180, 270].includes(rotation)
+    || !Number.isFinite(userUnit) || userUnit <= 0
+    || !Number.isFinite(pageWidth) || pageWidth <= 0
+    || !Number.isFinite(pageHeight) || pageHeight <= 0
+    || !Number.isFinite(exactPageWidth) || exactPageWidth <= 0
+    || !Number.isFinite(exactPageHeight) || exactPageHeight <= 0
+    || Number(exactPageWidth.toFixed(6)) !== pageWidth
+    || Number(exactPageHeight.toFixed(6)) !== pageHeight
+    || !requested || requested.x !== 0 || requested.y !== 0
+    || requested.width !== pageWidth || requested.height !== pageHeight
+    || !Number.isSafeInteger(render.width) || render.width <= 0
+    || !Number.isSafeInteger(render.height) || render.height <= 0
+    || !rendered || rendered.x !== 0 || rendered.y !== 0
+    || rendered.width !== render.width || rendered.height !== render.height
+    || Math.ceil(exactPageWidth * render.scale) !== render.width
+    || Math.ceil(exactPageHeight * render.scale) !== render.height) return null;
+  const nativeWidth = (viewBox[2] - viewBox[0]) * userUnit;
+  const nativeHeight = (viewBox[3] - viewBox[1]) * userUnit;
+  const expectedWidth = rotation % 180 === 0 ? nativeWidth : nativeHeight;
+  const expectedHeight = rotation % 180 === 0 ? nativeHeight : nativeWidth;
+  const nearlyEqual = (left, right) => Math.abs(left - right)
+    <= 0.000001 * Math.max(1, Math.abs(left), Math.abs(right));
+  if (!Number.isFinite(expectedWidth) || !Number.isFinite(expectedHeight)
+    || !nearlyEqual(pageWidth, expectedWidth)
+    || !nearlyEqual(pageHeight, expectedHeight)) return null;
+  return { width: exactPageWidth, height: exactPageHeight };
+}
+
+function comparisonSharedLogicalExtent(before, after) {
+  const beforeExtent = comparisonRenderLogicalExtent(before);
+  const afterExtent = comparisonRenderLogicalExtent(after);
+  if (!beforeExtent || !afterExtent
+    || canonical(before.page_view) !== canonical(after.page_view)
+    || canonical(before.comparison_view) !== canonical(after.comparison_view)
+    || canonical(before.requested_region) !== canonical(after.requested_region)
+    || beforeExtent.width !== afterExtent.width
+    || beforeExtent.height !== afterExtent.height) return null;
+  return beforeExtent;
+}
+
+function comparisonIgnoredPixelMask(render, regions, logicalExtent) {
   const mask = new Uint8Array(render.width * render.height);
+  if (!logicalExtent) return mask;
   const clamp = (value, maximum) => Math.max(0, Math.min(maximum, value));
-  const requestedRegion = render.requested_region;
-  const pageLeft = Number.isFinite(requestedRegion?.x) ? requestedRegion.x : 0;
-  const pageTop = Number.isFinite(requestedRegion?.y) ? requestedRegion.y : 0;
-  const pageRight = Number.isFinite(requestedRegion?.width) && requestedRegion.width > 0
-    ? pageLeft + requestedRegion.width
-    : render.width / render.scale;
-  const pageBottom = Number.isFinite(requestedRegion?.height) && requestedRegion.height > 0
-    ? pageTop + requestedRegion.height
-    : render.height / render.scale;
   for (const region of regions) {
     if (!Array.isArray(region) || region.length !== 4 || !region.every(Number.isFinite)
       || region[2] <= 0 || region[3] <= 0) continue;
     const regionRight = region[0] + region[2];
     const regionBottom = region[1] + region[3];
-    if (regionRight <= pageLeft || regionBottom <= pageTop
-      || region[0] >= pageRight || region[1] >= pageBottom) continue;
+    if (regionRight <= 0 || regionBottom <= 0
+      || region[0] >= logicalExtent.width
+      || region[1] >= logicalExtent.height) continue;
     const x0 = clamp(Math.floor(region[0] * render.scale) - 1, render.width);
     const y0 = clamp(Math.floor(region[1] * render.scale) - 1, render.height);
     const x1 = clamp(Math.ceil((region[0] + region[2]) * render.scale) + 1, render.width);
@@ -371,7 +420,11 @@ export function diffComparisonRgba(before, after, ignoredRegions = []) {
     return { dimension_mismatch: true, raw_changed_pixels: null, changed_pixels: null, changed_fraction: null, bounds: null, components: [] };
   }
   const pixelCount = before.width * before.height;
-  const ignoredPixels = comparisonIgnoredPixelMask(before, ignoredRegions);
+  const ignoredPixels = comparisonIgnoredPixelMask(
+    before,
+    ignoredRegions,
+    comparisonSharedLogicalExtent(before, after),
+  );
   const threshold = new Uint8Array(pixelCount);
   let rawChangedPixels = 0;
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
