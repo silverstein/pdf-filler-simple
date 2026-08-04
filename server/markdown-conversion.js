@@ -26,6 +26,9 @@ const RULE_MAX_THICKNESS = 1.5;
 const RULE_AXIS_TOLERANCE = 1;
 const RULE_JOIN_TOLERANCE = 1;
 const RULE_EDGE_TOLERANCE = 1.5;
+const RULED_TABLE_MAX_ROWS = 100;
+const RULED_TABLE_MAX_COLUMNS = 50;
+const RULED_TABLE_MAX_CELLS = 1_000;
 
 const MAX_MARKDOWN_BYTES_LIMIT = 200_000;
 const GAP_CODES = new Set([
@@ -52,7 +55,7 @@ const LIMITATIONS = Object.freeze([
   "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different embedded-font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. General equations, scripts, fraction bars, and damaged mathematical glyphs remain source reading-order text rather than being guessed.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
-  "Tables are reconstructed only from either complete text-item column geometry or a complete closed grid of bounded axis-aligned solid-mask rectangles. Ruled grids require every text item to fit exactly one cell, no merged or spanning topology, and independent caption and header evidence because Markdown imposes header semantics. Stroked paths, incomplete grids, cell artwork, and damaged mathematical glyphs are not interpreted; ambiguous content remains escaped reading-order text with a conversion gap.",
+  "Tables are reconstructed only from either complete text-item column geometry or one unambiguous complete closed grid of bounded axis-aligned solid-mask rectangles. Ruled grids require every text item to fit exactly one cell, reject aligned partial dividers that evidence merged or spanning topology, and require independent caption and header evidence because Markdown imposes header semantics. Unsupported text remains escaped reading-order text with a conversion gap. Stroked paths are omitted and reported as vector-content gaps. Cell artwork is omitted and reported as a vector-content gap; damaged mathematical glyphs are not repaired.",
   "OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.",
   "Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.",
 ]);
@@ -763,10 +766,36 @@ function uniqueCoordinates(values) {
   return unique;
 }
 
+function alignedCoordinateIndex(values, candidate) {
+  return values.findIndex(value => Math.abs(value - candidate) <= RULE_EDGE_TOLERANCE);
+}
+
+function hasAlignedPartialRule(horizontal, vertical, xs, ys) {
+  const lastX = xs.length - 1;
+  const lastY = ys.length - 1;
+  for (const rule of vertical) {
+    if (rule.axis < xs[0] - RULE_EDGE_TOLERANCE || rule.axis > xs[lastX] + RULE_EDGE_TOLERANCE) continue;
+    const xIndex = alignedCoordinateIndex(xs, rule.axis);
+    const startIndex = alignedCoordinateIndex(ys, rule.start);
+    const endIndex = alignedCoordinateIndex(ys, rule.end);
+    if (startIndex < 0 || endIndex <= startIndex) continue;
+    if (!(xIndex >= 0 && startIndex === 0 && endIndex === lastY)) return true;
+  }
+  for (const rule of horizontal) {
+    if (rule.axis < ys[0] - RULE_EDGE_TOLERANCE || rule.axis > ys[lastY] + RULE_EDGE_TOLERANCE) continue;
+    const yIndex = alignedCoordinateIndex(ys, rule.axis);
+    const startIndex = alignedCoordinateIndex(xs, rule.start);
+    const endIndex = alignedCoordinateIndex(xs, rule.end);
+    if (startIndex < 0 || endIndex <= startIndex) continue;
+    if (!(yIndex >= 0 && startIndex === 0 && endIndex === lastX)) return true;
+  }
+  return false;
+}
+
 function closedRuleGrid(page) {
   const evidence = page.painted_rectangles;
   if (!evidence || evidence.status !== "available" || evidence.truncated || evidence.items.length === 0) {
-    return null;
+    return { boundaries: null, tableReason: null };
   }
   const horizontal = mergeRuleSegments(evidence.items, "horizontal")
     .filter(rule => rule.end - rule.start >= 100);
@@ -788,7 +817,11 @@ function closedRuleGrid(page) {
       || Math.abs(xs[0] - seed.start) > RULE_EDGE_TOLERANCE
       || Math.abs(xs[xs.length - 1] - seed.end) > RULE_EDGE_TOLERANCE
       || xs.some((value, index) => index > 0 && value - xs[index - 1] < 12)) continue;
-    candidates.push({ xs, ys });
+    candidates.push({
+      xs,
+      ys,
+      hasPartialRule: hasAlignedPartialRule(horizontal, vertical, xs, ys),
+    });
   }
   const distinct = [];
   for (const candidate of candidates) {
@@ -798,7 +831,11 @@ function closedRuleGrid(page) {
     });
     if (!distinct.some(value => value.key === key)) distinct.push({ key, ...candidate });
   }
-  return distinct.length === 1 ? distinct[0] : null;
+  if (distinct.length === 1 && !distinct[0].hasPartialRule) {
+    return { boundaries: distinct[0], tableReason: null };
+  }
+  const gridLikeEvidence = horizontal.length >= 3 && vertical.length >= 2;
+  return { boundaries: null, tableReason: distinct.length > 0 || gridLikeEvidence ? "topology" : null };
 }
 
 function itemCell(item, xs, ys) {
@@ -816,39 +853,18 @@ function itemCell(item, xs, ys) {
   return { row, column };
 }
 
-function fragmentsForCell(page, itemIds) {
-  const wanted = new Set(itemIds);
-  return page.lines
-    .map(line => ({
-      line,
-      allItems: line.item_ids
-        .map(id => page.raw_items.find(item => item.id === id))
-        .filter(Boolean),
-    }))
-    .map(value => ({
-      ...value,
-      indexes: value.line.item_ids
-        .map((id, index) => (wanted.has(id) ? index : -1))
-        .filter(index => index !== -1),
-    }))
-    .filter(value => value.indexes.length > 0)
-    .sort((left, right) => left.line.y - right.line.y || left.line.x - right.line.x)
-    .map(({ line, allItems, indexes }) => {
-      const offsets = itemOffsets(line, allItems);
-      if (offsets === null) return indexes.map(index => allItems[index].text).join(" ").trim();
-      const start = offsets[Math.min(...indexes)].start;
-      const end = offsets[Math.max(...indexes)].end;
-      return line.text.slice(start, end).trim();
-    })
-    .filter(Boolean);
-}
-
 function ruledGridSegment(page) {
-  const boundaries = closedRuleGrid(page);
-  if (!boundaries) return { segment: null, tableReason: null };
+  const detected = closedRuleGrid(page);
+  const boundaries = detected.boundaries;
+  if (!boundaries) return { segment: null, tableReason: detected.tableReason };
   const { xs, ys } = boundaries;
   const rowCount = ys.length - 1;
   const columnCount = xs.length - 1;
+  if (rowCount > RULED_TABLE_MAX_ROWS
+    || columnCount > RULED_TABLE_MAX_COLUMNS
+    || rowCount * columnCount > RULED_TABLE_MAX_CELLS) {
+    return { segment: null, tableReason: "topology" };
+  }
   const rowHeights = ys.slice(1).map((value, index) => value - ys[index]);
   const bodyMedian = median(rowHeights.slice(1));
   if (rowCount < 3 || columnCount < 2 || !(rowHeights[0] <= bodyMedian * 0.6)) {
@@ -870,6 +886,8 @@ function ruledGridSegment(page) {
     Array.from({ length: columnCount }, () => [])
   ));
   const covered = new Set();
+  const itemLocations = new Map();
+  const itemById = new Map(page.raw_items.map(item => [item.id, item]));
   const gridBox = { left: xs[0], right: xs[xs.length - 1], top: ys[0], bottom: ys[ys.length - 1] };
   for (const item of page.raw_items) {
     if (!item.geometry_valid || !item.bbox || item.text_kind !== "non_whitespace") continue;
@@ -880,24 +898,60 @@ function ruledGridSegment(page) {
     if (!location) return { segment: null, tableReason: "topology" };
     cells[location.row][location.column].push(item.id);
     covered.add(item.id);
+    itemLocations.set(item.id, location);
   }
   if (cells.some(row => row.some(cell => cell.length === 0))) {
     return { segment: null, tableReason: "topology" };
   }
-  const rows = page.lines
-    .map((line, index) => ({
-      index,
-      line,
-      cells: line.item_ids.map(id => page.raw_items.find(item => item.id === id)).filter(Boolean),
-      covered: line.item_ids.filter(id => covered.has(id)).length,
-    }));
-  if (rows.some(row => row.covered > 0 && row.covered !== row.line.item_ids.length)) {
+  const grid = Array.from({ length: rowCount }, () => (
+    Array.from({ length: columnCount }, () => [])
+  ));
+  const coveredRows = [];
+  for (let lineIndex = 0; lineIndex < page.lines.length; lineIndex += 1) {
+    const line = page.lines[lineIndex];
+    const allItems = line.item_ids.map(id => itemById.get(id)).filter(Boolean);
+    const coveredCount = line.item_ids.filter(id => covered.has(id)).length;
+    if (coveredCount === 0) continue;
+    if (coveredCount !== line.item_ids.length || allItems.length !== line.item_ids.length) {
+      return { segment: null, tableReason: "topology" };
+    }
+    const locations = line.item_ids.map(id => itemLocations.get(id));
+    const tableRow = locations[0]?.row;
+    if (!Number.isInteger(tableRow) || locations.some(location => location?.row !== tableRow)) {
+      return { segment: null, tableReason: "topology" };
+    }
+    const groups = [];
+    let previousColumn = -1;
+    for (let itemIndex = 0; itemIndex < locations.length; itemIndex += 1) {
+      const column = locations[itemIndex].column;
+      if (column < previousColumn) return { segment: null, tableReason: "topology" };
+      if (column !== previousColumn) groups.push({ column, start: itemIndex, end: itemIndex });
+      else groups.at(-1).end = itemIndex;
+      previousColumn = column;
+    }
+    const offsets = itemOffsets(line, allItems);
+    for (const group of groups) {
+      const fragment = offsets === null
+        ? allItems.slice(group.start, group.end + 1).map(item => item.text).join(" ").trim()
+        : line.text.slice(offsets[group.start].start, offsets[group.end].end).trim();
+      if (!fragment) return { segment: null, tableReason: "topology" };
+      grid[tableRow][group.column].push({
+        text: fragment,
+        y: line.y,
+        x: line.x,
+        lineIndex,
+      });
+    }
+    coveredRows.push({ index: lineIndex, line, cells: allItems });
+  }
+  if (coveredRows.length === 0) return { segment: null, tableReason: "topology" };
+  if (grid.some(row => row.some(fragments => fragments.length === 0))) {
     return { segment: null, tableReason: "topology" };
   }
-  const coveredRows = rows.filter(row => row.covered > 0);
-  if (coveredRows.length === 0) return { segment: null, tableReason: "topology" };
-  const grid = cells.map(row => row.map(itemIds => fragmentsForCell(page, itemIds)));
-  const header = grid[0];
+  const orderedGrid = grid.map(row => row.map(fragments => fragments
+    .sort((left, right) => left.y - right.y || left.x - right.x || left.lineIndex - right.lineIndex)
+    .map(fragment => fragment.text)));
+  const header = orderedGrid[0];
   if (header.some(fragments => {
     const text = fragments.join(" ").trim();
     const letters = text.match(/\p{L}/gu)?.length ?? 0;
@@ -909,7 +963,7 @@ function ruledGridSegment(page) {
     segment: {
       kind: "table",
       rows: coveredRows.map(({ line, cells: rowCells }) => ({ line, cells: rowCells })),
-      grid,
+      grid: orderedGrid,
       coveredLineIds: new Set(coveredRows.map(row => row.line.id)),
       insertionIndex: page.lines.findIndex(line => line.id === captionCandidates[0].id) + 1,
     },

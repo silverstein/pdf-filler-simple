@@ -134,9 +134,11 @@ pages after page 1 can therefore remain unrecognized by a broad text read.
 reconstructs a table only from either a complete recurring text grid or a
 complete closed grid of bounded solid-mask rectangles. Every text item must fit
 exactly one cell, and the first row must carry independent header evidence.
-Stroked or incomplete grids, merged or spanning cells, cell artwork, internal
-destinations, actions, other URL schemes, and ambiguous labels stay escaped
-text. External links still require one source-validated contiguous text run.
+Unsupported text from stroked, incomplete, or ambiguous grids, aligned partial
+dividers, internal destinations, actions, other URL schemes, and ambiguous
+labels stays escaped and is reported as a typed gap. Cell artwork is omitted
+and reported as a vector-content gap. External links still require one
+source-validated contiguous text run.
 The renderer may restore a missing space after a
 separate `log` source item only in a short, tightly bounded math run with
 same-baseline variable evidence plus an independent local math-layout clue. It does not reconstruct general equations,

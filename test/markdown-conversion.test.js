@@ -127,7 +127,7 @@ async function validatedSyntheticLayout(pageConfigs) {
   });
 }
 
-function paintedGridOperations({ xs, ys, missingVertical = null }) {
+function paintedGridOperations({ xs, ys, missingVertical = null, extraRectangles = [] }) {
   const rectangles = [
     ...ys.map(y => ({ x: xs[0], y, width: xs[xs.length - 1] - xs[0], height: 0.5 })),
     ...xs.filter(x => x !== missingVertical).map(x => ({
@@ -136,6 +136,7 @@ function paintedGridOperations({ xs, ys, missingVertical = null }) {
       width: 0.5,
       height: ys[ys.length - 1] - ys[0],
     })),
+    ...extraRectangles,
   ];
   const operations = [];
   const operatorArgs = [];
@@ -149,6 +150,13 @@ function paintedGridOperations({ xs, ys, missingVertical = null }) {
     );
   }
   return { operations, operatorArgs };
+}
+
+function combinePaintedOperations(...groups) {
+  return {
+    operations: groups.flatMap(group => group.operations),
+    operatorArgs: groups.flatMap(group => group.operatorArgs),
+  };
 }
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -248,6 +256,100 @@ describe("layout Markdown renderer", () => {
       expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 3 }),
     ]));
     expect(result.markdown.match(/\| --- \| --- \|/gu)).toBeNull();
+  });
+
+  it("refuses partial dividers that evidence merged columns or rows", async () => {
+    const mergedHeader = paintedGridOperations({
+      xs: [100, 300, 400],
+      ys: [100, 130, 200, 270],
+      extraRectangles: [{ x: 200, y: 130, width: 0.5, height: 140 }],
+    });
+    const rowSpan = paintedGridOperations({
+      xs: [100, 250, 400],
+      ys: [100, 130, 270, 340],
+      extraRectangles: [{ x: 250, y: 200, width: 150, height: 0.5 }],
+    });
+    const mergedItems = [
+      centeredTextItem("TABLE 1", { top: 70, fontSize: 10 }),
+      positionedTextItem("FIRST", { top: 105, left: 120, width: 30 }),
+      positionedTextItem("SECOND", { top: 105, left: 210, width: 40 }),
+      positionedTextItem("THIRD", { top: 105, left: 320, width: 30, eol: true }),
+      positionedTextItem("a", { top: 150, left: 120, width: 8 }),
+      positionedTextItem("b", { top: 150, left: 220, width: 8 }),
+      positionedTextItem("1", { top: 150, left: 320, width: 8, eol: true }),
+      positionedTextItem("c", { top: 220, left: 120, width: 8 }),
+      positionedTextItem("d", { top: 220, left: 220, width: 8 }),
+      positionedTextItem("2", { top: 220, left: 320, width: 8, eol: true }),
+    ];
+    const rowSpanItems = [
+      centeredTextItem("TABLE 2", { top: 70, fontSize: 10 }),
+      positionedTextItem("FIRST", { top: 105, left: 120, width: 30 }),
+      positionedTextItem("SECOND", { top: 105, left: 270, width: 40, eol: true }),
+      positionedTextItem("span", { top: 155, left: 120, width: 25 }),
+      positionedTextItem("upper", { top: 155, left: 270, width: 30, eol: true }),
+      positionedTextItem("lower", { top: 220, left: 270, width: 30, eol: true }),
+      positionedTextItem("left", { top: 290, left: 120, width: 20 }),
+      positionedTextItem("right", { top: 290, left: 270, width: 25, eol: true }),
+    ];
+    const layout = await validatedSyntheticLayout([
+      { ...mergedHeader, items: mergedItems },
+      { ...rowSpan, items: rowSpanItems },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.gaps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 1 }),
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 2 }),
+    ]));
+    expect(result.markdown).not.toContain("| --- |");
+  });
+
+  it("refuses ambiguous multiple grids and source-order cell interleaving", async () => {
+    const firstGrid = paintedGridOperations({ xs: [40, 110, 180], ys: [100, 130, 200, 270] });
+    const secondGrid = paintedGridOperations({ xs: [300, 370, 440], ys: [100, 130, 200, 270] });
+    const closed = paintedGridOperations({ xs: [100, 150, 200], ys: [100, 130, 200, 270] });
+    const interleavedItems = [
+      positionedTextItem("TABLE 3", { top: 70, left: 130, width: 40, eol: true }),
+      positionedTextItem("FIRST", { top: 105, left: 105, width: 30 }),
+      positionedTextItem("SECOND", { top: 105, left: 155, width: 40, eol: true }),
+      positionedTextItem("a", { top: 150, left: 110, width: 8 }),
+      positionedTextItem("1", { top: 150, left: 160, width: 8 }),
+      positionedTextItem("b", { top: 150, left: 130, width: 8 }),
+      positionedTextItem("2", { top: 150, left: 180, width: 8, eol: true }),
+      positionedTextItem("c", { top: 220, left: 110, width: 8 }),
+      positionedTextItem("3", { top: 220, left: 160, width: 8, eol: true }),
+    ];
+    const layout = await validatedSyntheticLayout([
+      { ...combinePaintedOperations(firstGrid, secondGrid), items: [] },
+      { ...closed, items: interleavedItems },
+    ]);
+    const interleavedLine = layout.pages[1].lines.find(line => line.text.includes("a") && line.text.includes("1"));
+    expect(interleavedLine?.text).toMatch(/a.*1.*b.*2/u);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.gaps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 1 }),
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 2 }),
+    ]));
+    expect(result.markdown).not.toContain("| --- |");
+  });
+
+  it("bounds ruled-grid rows, columns, and cells before allocating cell content", async () => {
+    const tooManyColumns = paintedGridOperations({
+      xs: Array.from({ length: 52 }, (_value, index) => index * 12),
+      ys: [100, 110, 200, 300],
+    });
+    const tooManyCells = paintedGridOperations({
+      xs: Array.from({ length: 41 }, (_value, index) => 50 + index * 12),
+      ys: [100, 108, ...Array.from({ length: 29 }, (_value, index) => 116 + index * 8)],
+    });
+    const layout = await validatedSyntheticLayout([
+      { ...tooManyColumns, items: [] },
+      { ...tooManyCells, items: [] },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.gaps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 1 }),
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 2 }),
+    ]));
   });
 
   it("does not invent a heading without enough geometric evidence", async () => {
@@ -545,7 +647,7 @@ describe("layout Markdown renderer", () => {
     expect(result.pages[2].gaps.map(gap => gap.code)).toEqual(["VECTOR_CONTENT_NOT_INTERPRETED"]);
     expect(result.markdown).toContain("## Conversion gaps");
     expect(result.markdown).toContain("OCR is not performed");
-    expect(result.limitations.some(value => value.includes("Stroked paths, incomplete grids, cell artwork"))).toBe(true);
+    expect(result.limitations.some(value => value.includes("Cell artwork is omitted and reported as a vector-content gap"))).toBe(true);
     expect(result.limitations.some(value => value.includes("Links are emitted only for source-validated http or https annotation targets"))).toBe(true);
   });
 
