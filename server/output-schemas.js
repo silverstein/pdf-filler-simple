@@ -1,6 +1,10 @@
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 import { validatePdfLayoutSemantics } from "./layout-extraction.js";
 import { validateMarkdownConversionSemantics } from "./markdown-conversion.js";
+import {
+  validatePdfObservationSemantics,
+  validateRenderObservationSemantics,
+} from "./pdf-observations.js";
 
 const string = { type: "string" };
 const number = { type: "number" };
@@ -60,6 +64,96 @@ const regionPoints = object({
   y: number,
   width: number,
   height: number,
+});
+const sha256Digest = { type: "string", pattern: "^[a-f0-9]{64}$" };
+const pageBox = {
+  type: "array",
+  items: number,
+  minItems: 4,
+  maxItems: 4,
+};
+const observationCoverage = object({
+  status: enumString(["supported", "partial", "unavailable"]),
+  reason_codes: stringArray,
+});
+const observationSource = object({
+  canonical_path: string,
+  file_name: string,
+  size_bytes: integer,
+  sha256: sha256Digest,
+});
+const observationPageGeometry = object({
+  media_box: pageBox,
+  crop_box: pageBox,
+  width_points: number,
+  height_points: number,
+  rotation: number,
+  user_unit: number,
+  coordinate_space: { const: "pdf_tools_top_left_media_box_points" },
+});
+const nativeObservationRegion = nullable(object({
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+}));
+const displayObservationRegion = nullable(regionPoints);
+const metadataRecord = object({
+  values: { type: "object", additionalProperties: true },
+  omitted_keys: stringArray,
+  truncated: boolean,
+});
+const metadataObservation = object({
+  info: metadataRecord,
+  xmp: metadataRecord,
+  disagreements: arrayOf(object({
+    property: string,
+    info_value_sha256: sha256Digest,
+    xmp_value_sha256: sha256Digest,
+  })),
+  observation_sha256: sha256Digest,
+});
+const pageObservation = object({
+  page: integer,
+  media_box: pageBox,
+  crop_box: pageBox,
+  width_points: number,
+  height_points: number,
+  rotation: number,
+  user_unit: number,
+  coordinate_space: { const: "pdf_tools_top_left_media_box_points" },
+  observation_sha256: sha256Digest,
+});
+const formFieldObservation = object({
+  id: { type: "string", pattern: "^field-[a-f0-9]{64}$" },
+  source_object_id: nullable(string),
+  name: string,
+  type: string,
+  value: {},
+  default_value: {},
+  flags: integer,
+  options: arrayOf({}),
+  widget_page: nullable(integer),
+  widget_native_region: nativeObservationRegion,
+  widget_display_region: displayObservationRegion,
+  appearance_state: {},
+  rotation: number,
+  value_sha256: sha256Digest,
+  observation_sha256: sha256Digest,
+});
+const annotationObservation = object({
+  id: { type: "string", pattern: "^annotation-[a-f0-9]{64}$" },
+  source_object_id: nullable(string),
+  page: integer,
+  subtype: string,
+  contents: string,
+  flags: integer,
+  native_region: nativeObservationRegion,
+  display_region: displayObservationRegion,
+  quad_points: {},
+  target_kind: enumString(["external_url", "internal_destination", "action", "none"]),
+  target_value: {},
+  observation_sha256: sha256Digest,
 });
 const placement = object({
   label: string,
@@ -732,6 +826,23 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     scale: number,
     renderer: enumString(["native-canvas", "macos-sips"]),
     mime_type: { const: "image/png" },
+    observation_schema_version: { const: "1.0" },
+    source: observationSource,
+    page_geometry: observationPageGeometry,
+    requested_coordinate_space: { const: "pdf_tools_top_left_media_box_points" },
+    rendered_coordinate_space: { const: "raster_top_left_pixels" },
+    requested_region: regionPoints,
+    rendered_region: regionPoints,
+    renderer_policy: enumString([
+      "forced_unavailable",
+      "native",
+      "native_with_system_fallback",
+      "system",
+    ]),
+    png_sha256: sha256Digest,
+    raw_pixel_sha256: nullable(sha256Digest),
+    raw_pixel_status: enumString(["available", "unavailable"]),
+    observation_sha256: sha256Digest,
   }),
   render_pdf_region: object({
     pdf_path: string,
@@ -744,6 +855,23 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     scale: number,
     renderer: enumString(["native-canvas", "macos-sips"]),
     mime_type: { const: "image/png" },
+    observation_schema_version: { const: "1.0" },
+    source: observationSource,
+    page_geometry: observationPageGeometry,
+    requested_coordinate_space: { const: "pdf_tools_top_left_media_box_points" },
+    rendered_coordinate_space: { const: "raster_top_left_pixels" },
+    requested_region: regionPoints,
+    rendered_region: regionPoints,
+    renderer_policy: enumString([
+      "forced_unavailable",
+      "native",
+      "native_with_system_fallback",
+      "system",
+    ]),
+    png_sha256: sha256Digest,
+    raw_pixel_sha256: nullable(sha256Digest),
+    raw_pixel_status: enumString(["available", "unavailable"]),
+    observation_sha256: sha256Digest,
   }),
   search_pdf_text: object({
     pdf_path: string,
@@ -774,6 +902,49 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
     identity_method: { const: "race_aware_descriptor_sha256" },
     pdf_parsed: { const: false },
+  }),
+  get_pdf_info: object({
+    schema_version: { const: "1.0" },
+    status: enumString(["complete", "partial"]),
+    source: object({
+      canonical_path: string,
+      file_name: string,
+      size_bytes: integer,
+      sha256: sha256Digest,
+      identity_method: { const: "race_aware_descriptor_sha256" },
+    }),
+    parser: object({ name: { const: "pdfjs-dist" }, version: { const: "5.4.624" } }),
+    coverage: object({
+      pages: observationCoverage,
+      metadata: observationCoverage,
+      form_fields: observationCoverage,
+      annotations: observationCoverage,
+    }),
+    limits: object({
+      max_pages: { type: "integer", minimum: 1, maximum: 200 },
+      max_fields: { const: 500 },
+      max_annotations: { const: 500 },
+      max_metadata_characters: { const: 32768 },
+      max_output_characters: { type: "integer", minimum: 20000, maximum: 200000 },
+    }),
+    pages: object({
+      total_count: integer,
+      observed_count: integer,
+      truncated: boolean,
+      items: arrayOf(pageObservation),
+    }),
+    metadata: metadataObservation,
+    form_fields: object({
+      observed_count: integer,
+      truncated: boolean,
+      items: arrayOf(formFieldObservation),
+    }),
+    annotations: object({
+      observed_count: integer,
+      truncated: boolean,
+      items: arrayOf(annotationObservation),
+    }),
+    limitations: stringArray,
   }),
   display_pdf: activeDocument(),
   get_active_document: {
@@ -934,6 +1105,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
 
 const specialErrorSchemas = {
   get_pdf_identity: [pdfIdentityError],
+  get_pdf_info: [layoutPasswordError, pdfResourceLimitError],
   validate_pdf: [validationFailure],
   read_pdf_content: [contentFailure, contentWorkerFailure, contentResourceLimitError, pdfResourceLimitError],
   read_pdf_pages: [pdfResourceLimitError],
@@ -999,6 +1171,9 @@ const standardErrorValidator = validatorProvider.getValidator(standardError);
 const semanticSuccessValidators = new Map([
   ["read_pdf_layout", validatePdfLayoutSemantics],
   ["convert_pdf_to_markdown", validateMarkdownConversionSemantics],
+  ["get_pdf_info", validatePdfObservationSemantics],
+  ["render_pdf_page", validateRenderObservationSemantics],
+  ["render_pdf_region", validateRenderObservationSemantics],
 ]);
 
 export function withToolOutputSchema(tool) {

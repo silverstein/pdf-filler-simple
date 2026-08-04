@@ -83,11 +83,11 @@
     },
     {
       "name": "render_pdf_page",
-      "description": "Render one PDF page to PNG for visual reasoning on scanned or image-heavy documents"
+      "description": "Render one source-bound PDF page to PNG with page geometry, renderer policy, and PNG and raw-pixel digest evidence"
     },
     {
       "name": "render_pdf_region",
-      "description": "Render a bounded PDF region to PNG using top-left point coordinates"
+      "description": "Render a bounded source-bound PDF region to PNG with explicit point and raster coordinates plus digest evidence"
     },
     {
       "name": "search_pdf_text",
@@ -119,7 +119,7 @@
     },
     {
       "name": "get_pdf_info",
-      "description": "Get metadata about a PDF: page count, file size, dimensions, form fields"
+      "description": "Observe bounded source-bound PDF page geometry, metadata, form widgets, and inert ordinary annotations with explicit coverage"
     },
     {
       "name": "apply_page_plan",

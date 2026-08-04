@@ -56,6 +56,7 @@ const SERVER_FILES = [
   "markdown-conversion.js",
   "markdown-output-transaction.js",
   "output-schemas.js",
+  "pdf-observations.js",
   "pdf-lib-rss-monitor.js",
   "pdf-lib-subprocess.js",
   "pdf-lib-worker.js",

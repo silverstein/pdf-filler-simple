@@ -35,6 +35,7 @@ const STRUCTURED_TOOLS = [
   "get_active_document",
   "get_page_analysis",
   "get_pdf_identity",
+  "get_pdf_info",
   "get_pdf_resource_uri",
   "list_signatures",
   "load_signature",
@@ -56,7 +57,6 @@ const STRUCTURED_TOOLS = [
   "validate_pdf",
 ].sort();
 const TEXT_ONLY_TOOLS = [
-  "get_pdf_info",
   "list_pdfs",
   "list_profiles",
   "load_profile",
@@ -106,6 +106,7 @@ describe("output schema definitions", () => {
       "fill_pdf",
       "fill_with_profile",
       "get_page_analysis",
+      "get_pdf_info",
       "merge_pdfs",
       "prepare_signing_packet",
       "read_pdf_content",
@@ -139,12 +140,12 @@ describe("output schema definitions", () => {
     expect(rejected.structuredContent.error.code).toBe("internal_validation_error");
   });
 
-  it("covers the exact 35 structured tools and no text-only tool", () => {
+  it("covers the exact 36 structured tools and no text-only tool", () => {
     expect(Object.keys(TOOL_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_ERROR_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
-    expect(STRUCTURED_TOOLS).toHaveLength(35);
-    expect(TEXT_ONLY_TOOLS).toHaveLength(5);
+    expect(STRUCTURED_TOOLS).toHaveLength(36);
+    expect(TEXT_ONLY_TOOLS).toHaveLength(4);
   });
 
   it("uses current-host-compatible object schemas that compile with the pinned SDK", () => {

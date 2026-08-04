@@ -107,13 +107,14 @@ Once installed, ask Claude in Cursor:
 - **read_pdf_pages** - Read a bounded page range with page-numbered structured output
 - **read_pdf_layout** - Extract bounded local text geometry and conservative reading order without OCR or table inference
 - **convert_pdf_to_markdown** - Convert supported PDF text to deterministic Markdown with explicit partial and unsupported-content gaps. Reconstructs a table only when every row fills every recurring column and the first row carries real header evidence, and emits a link only for a source-validated external http or https target. Unsupported table structures and link targets stay escaped text reported as a typed gap.
-- **render_pdf_page** - Render a page to PNG for visual inspection of scanned/image-heavy PDFs
-- **render_pdf_region** - Render a bounded PDF region to PNG for focused visual inspection
+- **render_pdf_page** - Render a source-bound page to PNG with page geometry, renderer policy, and digest evidence
+- **render_pdf_region** - Render a bounded source-bound PDF region with explicit point/raster coordinates and digest evidence
 - **search_pdf_text** - Search extracted PDF text and return page-numbered snippets
 - **merge_pdfs** / **split_pdf** - Combine and split documents
 - **rotate_pdf_pages** / **reorder_pdf_pages** - Organize scanned or shuffled pages
 - **get_pdf_identity** - Bind plans and provenance to the canonical path, byte length, and SHA-256 for a PDF up to 250 MiB without parsing its document structure
-- **get_pdf_info** / **get_page_analysis** - Inspect pages, blank detection, orientation, and metadata
+- **get_pdf_info** - Observe bounded source-bound page geometry, metadata, form widgets, and inert ordinary annotations with explicit coverage
+- **get_page_analysis** - Inspect blank detection, orientation, and page-content routing
 
 ### Current Extraction Boundary
 

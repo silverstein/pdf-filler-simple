@@ -117,7 +117,7 @@ qualification. Then perform manual host runs against `example-fw9.pdf`:
 18. **split_pdf** - Split a PDF by page ranges or at regular intervals
 19. **rotate_pdf_pages** - Rotate pages by 90, 180, or 270 degrees
 20. **reorder_pdf_pages** - Rearrange the pages of a PDF into a new order
-21. **get_pdf_info** - Get page count, file size, dimensions, form field info
+21. **get_pdf_info** - Get source-bound page geometry, bounded metadata, form widgets, and inert ordinary annotations with explicit coverage
 22. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
 23. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
 24. **fetch_pdf_from_url** - Download a PDF from a URL to the user's local machine (bypasses Claude's WebFetch sandbox)
@@ -145,6 +145,12 @@ and `convert_pdf_to_markdown` embeds the same routing metadata. All of
 these surfaces report statuses and typed reasons, never numeric confidence,
 with failed measurements surfacing as unavailable rather than fabricated
 zeros.
+
+`get_pdf_info` binds every observation to the race-aware source SHA-256 and
+keeps page, metadata, form-widget, and ordinary-annotation coverage separate.
+Annotation URLs, destinations, and actions are never opened. Render results
+report the source identity, page geometry, coordinate spaces, renderer policy,
+PNG digest, and native raw-pixel digest availability.
 
 `convert_pdf_to_markdown` consumes the bounded source-validated layout IR
 (v1.3.0, which carries CTM-tracked ruled-rectangle evidence, text-integrity

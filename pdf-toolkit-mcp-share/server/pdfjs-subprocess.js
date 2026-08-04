@@ -22,6 +22,7 @@ const PDFJS_OPERATIONS = new Set([
   "detect_signature_zones",
   "extract_layout",
   "extract_layout_for_markdown",
+  "observe_document",
   "read_content",
   "read_pages",
   "render_page",

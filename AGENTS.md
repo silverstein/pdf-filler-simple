@@ -14,7 +14,12 @@ separate example to locate.
 - `example-fw9.pdf`: Sample form for smoke tests. Keep anonymized assets only.
 
 ### Tools currently shipped
-- `display_pdf`, `list_pdfs`, `read_pdf_fields`, `fill_pdf`, `bulk_fill_from_csv`, `save_profile`, `load_profile`, `list_profiles`, `fill_with_profile`, `extract_to_csv`, `validate_pdf`, `read_pdf_content`, `read_pdf_layout`, `convert_pdf_to_markdown`, `get_pdf_resource_uri`, `read_pdf_bytes` (app-only).
+- `display_pdf`, `list_pdfs`, `read_pdf_fields`, `fill_pdf`, `bulk_fill_from_csv`, `save_profile`, `load_profile`, `list_profiles`, `fill_with_profile`, `extract_to_csv`, `validate_pdf`, `read_pdf_content`, `read_pdf_layout`, `convert_pdf_to_markdown`, `get_pdf_info`, `render_pdf_page`, `render_pdf_region`, `get_pdf_resource_uri`, `read_pdf_bytes` (app-only).
+
+`get_pdf_info` returns bounded source-bound observations. Widget annotations
+belong to form fields; ordinary annotations remain separate and their targets
+are returned only as inert values. Render tools bind PNG and, when native
+canvas is available, raw RGBA digests to the exact source SHA-256.
 
 ## Build, Test, and Development Commands
 - `npm install`: install dependencies with Node.js 20.19+ or 22.12+; this is

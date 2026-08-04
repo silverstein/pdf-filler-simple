@@ -41,6 +41,7 @@ import {
   withToolOutputSchema,
 } from "./output-schemas.js";
 import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
+import { buildRenderObservation } from "./pdf-observations.js";
 import {
   PDF_MUTATION_MAX_FILE_BYTES,
   assertDanglingPdfInputAlias,
@@ -1339,6 +1340,7 @@ const PDFJS_TOOL_NAMES = new Set([
   "convert_pdf_to_markdown",
   "detect_signature_zones",
   "get_page_analysis",
+  "get_pdf_info",
   "read_pdf_content",
   "read_pdf_layout",
   "read_pdf_pages",
@@ -3197,9 +3199,10 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "get_pdf_info",
-        description: "Get metadata about a PDF file: page count, file size, page dimensions, form field count, and whether it is encrypted. All paths must be absolute paths on the user's local machine.",
+        description: "Inspect a bounded local PDF through the pinned parser and return source-bound page geometry, Info and XMP metadata, form fields and widgets, and inert ordinary annotations. Every retained observation is tied to the canonical path, byte length, and SHA-256. Caps and parser failures are reported as partial or unavailable coverage, never as an empty-document claim. Annotation actions and URLs are observed but never followed. All paths must be absolute paths on the user's local machine.",
         inputSchema: {
           type: "object",
+          additionalProperties: false,
           properties: {
             pdf_path: {
               type: "string",
@@ -3207,7 +3210,20 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
+              maxLength: 4096,
               description: "Password for encrypted PDFs (optional)"
+            },
+            max_pages: {
+              type: "integer",
+              minimum: 1,
+              maximum: 200,
+              description: "Maximum pages to observe. Default: 200."
+            },
+            max_output_characters: {
+              type: "integer",
+              minimum: 20000,
+              maximum: 200000,
+              description: "Maximum serialized structured-output characters. Whole observations are omitted with explicit partial coverage when necessary. Default: 50000."
             }
           },
           required: ["pdf_path"]
@@ -4658,13 +4674,14 @@ async function handleToolCall(request) {
 
         try {
           const targetPage = Math.max(1, Number(page) || 1);
-          const { result: renderedImage } = await runPdfjsOperation(resolvedPath, {
+          const rendererPolicy = pdfjsRendererPolicy();
+          const { result: renderedImage, source } = await runPdfjsOperation(resolvedPath, {
             operation: "render_page",
             password,
             options: {
               page: targetPage,
               max_dimension_px: Number(max_dimension_px) || 1800,
-              renderer_policy: pdfjsRendererPolicy(),
+              renderer_policy: rendererPolicy,
               scale_override: null,
             },
           });
@@ -4673,9 +4690,38 @@ async function handleToolCall(request) {
           const height = renderedImage.height_points;
           const scale = renderedImage.scale;
           const totalPages = renderedImage.total_pages;
-          const renderedWidth = Math.round(width * scale);
-          const renderedHeight = Math.round(height * scale);
+          const renderedWidth = renderedImage.width;
+          const renderedHeight = renderedImage.height;
           const fileName = path.basename(resolvedPath);
+          const payload = buildRenderObservation({
+            existing: {
+              pdf_path: resolvedPath,
+              file_name: fileName,
+              page: targetPage,
+              total_pages: totalPages,
+              width_points: Math.round(width),
+              height_points: Math.round(height),
+              rendered_width_px: renderedWidth,
+              rendered_height_px: renderedHeight,
+              scale,
+              renderer: renderedImage.renderer,
+              mime_type: "image/png",
+            },
+            source: { ...source, file_name: fileName },
+            geometry: renderedImage.page_geometry,
+            page: targetPage,
+            requestedRegion: {
+              x: 0,
+              y: 0,
+              width: renderedImage.page_geometry.width_points,
+              height: renderedImage.page_geometry.height_points,
+            },
+            renderedRegion: { x: 0, y: 0, width: renderedWidth, height: renderedHeight },
+            rendererPolicy,
+            pngSha256: createHash("sha256").update(imageBuffer).digest("hex"),
+            rawPixelSha256: renderedImage.raw_pixel_sha256,
+            rawPixelStatus: renderedImage.raw_pixel_status,
+          });
 
           return {
             content: [{
@@ -4691,19 +4737,7 @@ async function handleToolCall(request) {
               data: imageBuffer.toString("base64"),
               mimeType: "image/png",
             }],
-            structuredContent: {
-              pdf_path: resolvedPath,
-              file_name: fileName,
-              page: targetPage,
-              total_pages: totalPages,
-              width_points: Math.round(width),
-              height_points: Math.round(height),
-              rendered_width_px: renderedWidth,
-              rendered_height_px: renderedHeight,
-              scale,
-              renderer: renderedImage.renderer,
-              mime_type: "image/png",
-            },
+            structuredContent: payload,
           };
         } catch (error) {
           if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
@@ -4734,13 +4768,14 @@ async function handleToolCall(request) {
             width: Number(width),
             height: Number(height),
           };
-          const { result: renderedImage } = await runPdfjsOperation(resolvedPath, {
+          const rendererPolicy = pdfjsRendererPolicy();
+          const { result: renderedImage, source } = await runPdfjsOperation(resolvedPath, {
             operation: "render_region",
             password,
             options: {
               page: targetPage,
               max_dimension_px: Number(max_dimension_px) || 1400,
-              renderer_policy: pdfjsRendererPolicy(),
+              renderer_policy: rendererPolicy,
               ...region,
             },
           });
@@ -4752,6 +4787,34 @@ async function handleToolCall(request) {
           const imageBuffer = renderedImage.binary;
           const totalPages = renderedImage.total_pages;
           const fileName = path.basename(resolvedPath);
+          const payload = buildRenderObservation({
+            existing: {
+              pdf_path: resolvedPath,
+              file_name: fileName,
+              page: targetPage,
+              total_pages: totalPages,
+              region_points: region,
+              rendered_width_px: renderedImage.width,
+              rendered_height_px: renderedImage.height,
+              scale,
+              renderer: renderedImage.renderer,
+              mime_type: "image/png",
+            },
+            source: { ...source, file_name: fileName },
+            geometry: renderedImage.page_geometry,
+            page: targetPage,
+            requestedRegion: region,
+            renderedRegion: {
+              x: crop.left,
+              y: crop.top,
+              width: renderedImage.width,
+              height: renderedImage.height,
+            },
+            rendererPolicy,
+            pngSha256: createHash("sha256").update(imageBuffer).digest("hex"),
+            rawPixelSha256: renderedImage.raw_pixel_sha256,
+            rawPixelStatus: renderedImage.raw_pixel_status,
+          });
 
           return {
             content: [{
@@ -4767,18 +4830,7 @@ async function handleToolCall(request) {
               data: imageBuffer.toString("base64"),
               mimeType: "image/png",
             }],
-            structuredContent: {
-              pdf_path: resolvedPath,
-              file_name: fileName,
-              page: targetPage,
-              total_pages: totalPages,
-              region_points: region,
-              rendered_width_px: crop.width,
-              rendered_height_px: crop.height,
-              scale,
-              renderer: renderedImage.renderer,
-              mime_type: "image/png",
-            },
+            structuredContent: payload,
           };
         } catch (error) {
           if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
@@ -5390,59 +5442,62 @@ async function handleToolCall(request) {
       }
 
       case "get_pdf_info": {
-        const { pdf_path, password } = args;
-        const resolvedPath = resolvePath(pdf_path);
-        const stats = await fs.stat(resolvedPath);
-        const fileName = path.basename(resolvedPath);
-        const fileSizeKB = (stats.size / 1024).toFixed(2);
-
-        let pageCount = 0;
-        let hasFormFields = false;
-        let fieldCount = 0;
-        let isEncrypted = false;
-        let pageDimensions = null;
-
+        const infoArgs = requireArgumentObject(args, "get_pdf_info");
+        const allowedArguments = new Set([
+          "pdf_path",
+          "password",
+          "max_pages",
+          "max_output_characters",
+        ]);
+        const unknownArgument = Object.keys(infoArgs).find(name => !allowedArguments.has(name));
+        if (unknownArgument) throw new Error(`Unknown get_pdf_info argument: ${unknownArgument}.`);
+        const pdfPath = requireStringArgument(infoArgs.pdf_path, "pdf_path", { maxLength: 32_768 });
+        const password = optionalStringArgument(infoArgs.password, "password", { maxLength: 4096 });
+        const maxPages = infoArgs.max_pages === undefined
+          ? 200
+          : requireIntegerArgument(infoArgs.max_pages, "max_pages", { min: 1 });
+        const maxOutputCharacters = infoArgs.max_output_characters === undefined
+          ? 50_000
+          : requireIntegerArgument(
+            infoArgs.max_output_characters,
+            "max_output_characters",
+            { min: 20_000 },
+          );
+        if (maxPages > 200) throw new Error("'max_pages' must not exceed 200.");
+        if (maxOutputCharacters > 200_000) {
+          throw new Error("'max_output_characters' must not exceed 200000.");
+        }
+        const resolvedPath = resolvePath(pdfPath);
         try {
-          const pdfBytes = await fs.readFile(resolvedPath);
-          const loadOpts = password ? { password } : { ignoreEncryption: true };
-          const pdfDoc = await PDFDocument.load(pdfBytes, loadOpts);
-          const pages = pdfDoc.getPages();
-          pageCount = pages.length;
-
-          if (pages.length > 0) {
-            const firstPage = pages[0];
-            const { width, height } = firstPage.getSize();
-            pageDimensions = { width: Math.round(width), height: Math.round(height) };
-          }
-
-          try {
-            const form = pdfDoc.getForm();
-            const fields = form.getFields();
-            fieldCount = fields.length;
-            hasFormFields = fieldCount > 0;
-          } catch {
-            // No form or encrypted form — fine
-          }
+          const { result: payload } = await runPdfjsOperation(resolvedPath, {
+            operation: "observe_document",
+            password,
+            options: {
+              max_pages: maxPages,
+              max_output_characters: maxOutputCharacters,
+            },
+          });
+          const summary = [
+            `Inspected ${payload.pages.observed_count} of ${payload.pages.total_count} pages in ${payload.source.file_name}.`,
+            `Status: ${payload.status}. Source SHA-256: ${payload.source.sha256}.`,
+            `Form-field observations: ${payload.form_fields.observed_count}. Ordinary annotations: ${payload.annotations.observed_count}.`,
+            ...payload.limitations.map(reason => `Limitation: ${reason}.`),
+            "Annotation targets were observed as inert values and were not opened or fetched.",
+          ].join("\n");
+          return {
+            content: [{ type: "text", text: summary }],
+            structuredContent: payload,
+          };
         } catch (error) {
-          if (error.message?.includes("password") || error.message?.includes("encrypt")) {
-            isEncrypted = true;
-          } else {
-            throw error;
-          }
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
+          const passwordCode = ["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"].includes(error?.code)
+            ? error.code
+            : null;
+          const message = `Error inspecting PDF: ${error.message}`;
+          return passwordCode
+            ? createTypedToolError({ message, code: passwordCode })
+            : createTypedToolError({ message });
         }
-
-        let info = `File: ${fileName}\n`;
-        info += `Size: ${fileSizeKB} KB\n`;
-        info += `Pages: ${pageCount}\n`;
-        if (pageDimensions) {
-          info += `Page size: ${pageDimensions.width} x ${pageDimensions.height} pts\n`;
-        }
-        info += `Form fields: ${hasFormFields ? fieldCount : "none"}\n`;
-        info += `Encrypted: ${isEncrypted ? "yes" : "no"}`;
-
-        return {
-          content: [{ type: "text", text: info }],
-        };
       }
 
       case "apply_page_plan": {

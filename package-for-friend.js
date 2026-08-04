@@ -31,6 +31,7 @@ const SHARE_FILES = [
   "server/markdown-conversion.js",
   "server/markdown-output-transaction.js",
   "server/output-schemas.js",
+  "server/pdf-observations.js",
   "server/pdf-lib-rss-monitor.js",
   "server/pdf-lib-subprocess.js",
   "server/pdf-lib-worker.js",

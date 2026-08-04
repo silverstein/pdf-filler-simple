@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import path from "path";
 import fs from "fs/promises";
 import { fileURLToPath, pathToFileURL } from "url";
@@ -11,6 +12,7 @@ import {
   getRegionPixelRect,
   validatePdfRegionBox,
 } from "../server/helpers.js";
+import { validateStructuredToolResult } from "../server/output-schemas.js";
 import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -127,6 +129,24 @@ describe("render_pdf_page MCP tool", () => {
     expect(result.structuredContent.rendered_width_px).toBeGreaterThan(0);
     expect(result.structuredContent.rendered_height_px).toBeGreaterThan(0);
     expect(result.structuredContent.scale).toBeGreaterThanOrEqual(1);
+    const image = result.content.find(item => item.type === "image");
+    const sourceBytes = await fs.readFile(EXAMPLE_PDF);
+    expect(result.structuredContent).toMatchObject({
+      observation_schema_version: "1.0",
+      source: {
+        sha256: createHash("sha256").update(sourceBytes).digest("hex"),
+        size_bytes: sourceBytes.length,
+      },
+      raw_pixel_status: "available",
+      renderer_policy: "native_with_system_fallback",
+    });
+    expect(result.structuredContent.png_sha256)
+      .toBe(createHash("sha256").update(Buffer.from(image.data, "base64")).digest("hex"));
+    expect(result.structuredContent.raw_pixel_sha256).toMatch(/^[a-f0-9]{64}$/);
+    const tampered = structuredClone(result);
+    tampered.structuredContent.png_sha256 = "0".repeat(64);
+    expect(validateStructuredToolResult("render_pdf_page", tampered).structuredContent.error.code)
+      .toBe("internal_validation_error");
   }, 30_000);
 
   it("renders a bounded region using top-left point coordinates", async () => {
@@ -159,6 +179,10 @@ describe("render_pdf_page MCP tool", () => {
     });
     expect(result.structuredContent.rendered_width_px).toBeGreaterThan(0);
     expect(result.structuredContent.rendered_height_px).toBeGreaterThan(0);
+    const image = result.content.find(item => item.type === "image");
+    expect(result.structuredContent.png_sha256)
+      .toBe(createHash("sha256").update(Buffer.from(image.data, "base64")).digest("hex"));
+    expect(result.structuredContent.requested_region).toEqual(result.structuredContent.region_points);
   }, 30_000);
 
   it("keeps region coordinates aligned on rotated pages by rendering in native page space", async () => {
@@ -346,7 +370,12 @@ describe.runIf(process.platform === "darwin")("Claude Desktop Electron utility r
       arguments: { pdf_path: EXAMPLE_PDF, page: 1, max_dimension_px: 800 },
     });
     expect(result.isError).not.toBe(true);
-    expect(result.structuredContent).toMatchObject({ page: 1, renderer: "macos-sips" });
+    expect(result.structuredContent).toMatchObject({
+      page: 1,
+      renderer: "macos-sips",
+      raw_pixel_sha256: null,
+      raw_pixel_status: "unavailable",
+    });
     expect(result.content.some(item => item.type === "image" && item.mimeType === "image/png")).toBe(true);
   }, 30_000);
 });

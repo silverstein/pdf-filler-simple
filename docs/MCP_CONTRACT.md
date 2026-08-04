@@ -93,6 +93,24 @@ or host must still obtain that approval.
 
 #### Extraction and page-analysis truthfulness
 
+`get_pdf_info` returns bounded observations tied to the exact race-aware
+source path, byte length, and SHA-256. Page geometry preserves MediaBox,
+CropBox, rotation, and UserUnit with an explicit coordinate-space label.
+Metadata preserves Info and XMP as distinct records and reports disagreement
+without choosing a winner. Form widgets are returned only under
+`form_fields`; ordinary annotations are separate, and external URLs, internal
+destinations, and actions are inert observed values that are never opened or
+fetched. Each channel reports `supported`, `partial`, or `unavailable` with
+typed reasons. Whole observation records are omitted when necessary to honor
+the caller's serialized output cap.
+
+`render_pdf_page` and `render_pdf_region` preserve their existing raster
+fields and additionally bind the image to the source identity, page geometry,
+requested and rendered coordinate spaces, renderer policy, and PNG SHA-256.
+Native canvas renders also report a digest of the exact raw RGBA bytes.
+System-rendered PNGs report that raw-pixel evidence as unavailable rather than
+deriving it from re-decoded or re-encoded bytes.
+
 `read_pdf_layout` returns the versioned PDF Tools Extraction IR for at most 10
 pages per call. It binds each ID scope to the source SHA-256, pinned PDF.js
 parser, IR version, page range, and retention options. When pdf-lib can parse

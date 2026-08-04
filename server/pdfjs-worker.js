@@ -24,6 +24,15 @@ import {
   extractPdfLayout,
   extractPdfLayoutForMarkdown,
 } from "./layout-extraction.js";
+import {
+  PDF_OBSERVATION_LIMITS,
+  buildAnnotationObservation,
+  buildDocumentObservation,
+  buildFormFieldObservation,
+  buildMetadataObservation,
+  buildPageObservation,
+  pageGeometryFromPdfLib,
+} from "./pdf-observations.js";
 import { withBoundedPdfFileSafely } from "./bounded-pdf-file.js";
 
 const PROTOCOL_VERSION = 1;
@@ -45,6 +54,7 @@ let nextThreadSystemCommandId = 1;
 const OPERATION_OPTION_KEYS = new Map([
   ["analyze_pages", ["max_pages"]],
   ["detect_signature_zones", []],
+  ["observe_document", ["max_output_characters", "max_pages"]],
   [
     "extract_layout",
     [
@@ -191,6 +201,15 @@ function validateOptions(operation, options) {
       break;
     case "analyze_pages":
       boundedInteger(options.max_pages, "max_pages", 1, 200);
+      break;
+    case "observe_document":
+      boundedInteger(options.max_pages, "max_pages", 1, 200);
+      boundedInteger(
+        options.max_output_characters,
+        "max_output_characters",
+        20_000,
+        200_000,
+      );
       break;
     case "detect_signature_zones":
       break;
@@ -854,6 +873,199 @@ async function layoutOperation(bytes, source, password, options, forMarkdown) {
   };
 }
 
+function fallbackPageGeometry(pdfjsPage) {
+  const view = Array.isArray(pdfjsPage?.view) && pdfjsPage.view.length === 4
+    ? pdfjsPage.view.map(value => Number(value))
+    : [0, 0, 0, 0];
+  return {
+    media_box: view,
+    crop_box: view,
+    width_points: Math.abs(view[2] - view[0]),
+    height_points: Math.abs(view[3] - view[1]),
+    rotation: Number.isFinite(pdfjsPage?.rotate) ? Number(pdfjsPage.rotate) : 0,
+    user_unit: Number.isFinite(pdfjsPage?.userUnit) && pdfjsPage.userUnit > 0
+      ? Number(pdfjsPage.userUnit)
+      : 1,
+    coordinate_space: "pdf_tools_top_left_media_box_points",
+  };
+}
+
+function fieldRows(fieldObjects) {
+  const rows = [];
+  for (const name of Object.keys(fieldObjects ?? {}).sort()) {
+    const entries = Array.isArray(fieldObjects[name]) ? fieldObjects[name] : [];
+    for (const entry of entries) {
+      if (!entry || typeof entry !== "object") continue;
+      if ((entry.type ?? "") === "" && (!Number.isInteger(entry.page) || entry.page < 0)) continue;
+      rows.push({ ...entry, name: String(entry.name ?? name) });
+    }
+  }
+  return rows;
+}
+
+async function observeDocument(bytes, source, password, options) {
+  let rawPages = null;
+  const coverageReasons = {};
+  const addCoverageReason = (channel, reason) => {
+    coverageReasons[channel] = [...(coverageReasons[channel] ?? []), reason];
+  };
+  try {
+    const rawDocument = await PDFDocument.load(bytes, {
+      ignoreEncryption: true,
+      updateMetadata: false,
+    });
+    rawPages = rawDocument.getPages();
+  } catch {
+    addCoverageReason("pages", "RAW_PAGE_GEOMETRY_UNAVAILABLE");
+  }
+
+  return await withPdfjsDocument(bytes, password, async document => {
+    const pagesToObserve = Math.min(document.numPages, options.max_pages);
+    const pageItems = [];
+    const annotations = [];
+    const widgetsById = new Map();
+    const pageViewports = new Map();
+    let pageFailureCount = 0;
+    let annotationFailureCount = 0;
+    let annotationLimitReached = false;
+
+    for (let pageNumber = 1; pageNumber <= pagesToObserve; pageNumber += 1) {
+      let page = null;
+      try {
+        page = await document.getPage(pageNumber);
+        const geometry = rawPages?.[pageNumber - 1]
+          ? pageGeometryFromPdfLib(rawPages[pageNumber - 1])
+          : fallbackPageGeometry(page);
+        pageItems.push(buildPageObservation(source.sha256, pageNumber, geometry));
+        const viewport = page.getViewport({ scale: 1 });
+        pageViewports.set(pageNumber - 1, viewport);
+        try {
+          const pageAnnotations = await page.getAnnotations({ intent: "display" });
+          for (const annotation of pageAnnotations) {
+            if (annotation?.subtype === "Widget") {
+              if (typeof annotation.id === "string" && widgetsById.size < PDF_OBSERVATION_LIMITS.max_fields) {
+                widgetsById.set(annotation.id, { ...annotation, page: pageNumber - 1 });
+              }
+              continue;
+            }
+            if (annotations.length >= PDF_OBSERVATION_LIMITS.max_annotations) {
+              annotationLimitReached = true;
+              continue;
+            }
+            annotations.push(buildAnnotationObservation({
+              sourceSha256: source.sha256,
+              annotation,
+              page: pageNumber,
+              viewport,
+              ordinal: annotations.length + 1,
+            }));
+          }
+        } catch {
+          annotationFailureCount += 1;
+        }
+      } catch {
+        pageFailureCount += 1;
+        annotationFailureCount += 1;
+      } finally {
+        try { page?.cleanup(); } catch {}
+      }
+    }
+
+    if (pageFailureCount > 0) {
+      addCoverageReason(
+        "pages",
+        pageFailureCount === pagesToObserve ? "PAGE_PARSE_UNAVAILABLE" : "PAGE_PARSE_PARTIAL",
+      );
+    }
+    if (document.numPages > pagesToObserve) {
+      addCoverageReason("annotations", "ANNOTATION_PAGE_LIMIT_REACHED");
+    }
+
+    let info = {};
+    let xmp = {};
+    try {
+      const rawMetadata = await document.getMetadata();
+      info = rawMetadata?.info ?? {};
+      xmp = rawMetadata?.metadata?.getAll?.() ?? {};
+    } catch {
+      addCoverageReason("metadata", "METADATA_PARSE_UNAVAILABLE");
+    }
+    const metadata = buildMetadataObservation(
+      source.sha256,
+      info,
+      xmp,
+      PDF_OBSERVATION_LIMITS.max_metadata_characters,
+    );
+
+    let formFields = [];
+    let fieldsTruncated = false;
+    let fieldLimitReached = false;
+    try {
+      const rows = fieldRows(await document.getFieldObjects());
+      const fieldsBeyondPageLimit = rows.some(
+        field => Number.isInteger(field.page) && field.page >= pagesToObserve,
+      );
+      fieldLimitReached = rows.length > PDF_OBSERVATION_LIMITS.max_fields;
+      fieldsTruncated = fieldLimitReached
+        || fieldsBeyondPageLimit;
+      if (fieldsBeyondPageLimit) {
+        addCoverageReason("form_fields", "FORM_FIELD_PAGE_LIMIT_REACHED");
+      }
+      if (pageFailureCount > 0 && rows.some(
+        field => Number.isInteger(field.page) && !pageViewports.has(field.page),
+      )) {
+        addCoverageReason("form_fields", "FORM_FIELD_PAGE_GEOMETRY_PARTIAL");
+      }
+      for (const field of rows) {
+        if (formFields.length >= PDF_OBSERVATION_LIMITS.max_fields) break;
+        const widget = typeof field.id === "string" ? widgetsById.get(field.id) ?? field : field;
+        const pageIndex = Number.isInteger(widget?.page) ? widget.page : field.page;
+        if (Number.isInteger(pageIndex) && pageIndex >= pagesToObserve) continue;
+        const viewport = Number.isInteger(pageIndex) && pageIndex >= 0
+          ? pageViewports.get(pageIndex) ?? null
+          : null;
+        formFields.push(buildFormFieldObservation({
+          sourceSha256: source.sha256,
+          field,
+          widget,
+          viewport,
+          ordinal: formFields.length + 1,
+        }));
+      }
+    } catch {
+      addCoverageReason("form_fields", "FORM_FIELD_PARSE_UNAVAILABLE");
+    }
+
+    if (annotationFailureCount > 0) {
+      addCoverageReason(
+        "annotations",
+        annotationFailureCount === pagesToObserve
+          ? "ANNOTATION_PARSE_UNAVAILABLE"
+          : "ANNOTATION_PAGE_PARSE_PARTIAL",
+      );
+    }
+    return buildDocumentObservation({
+      source: {
+        ...source,
+        file_name: path.basename(source.canonical_path),
+      },
+      totalPages: document.numPages,
+      pageItems,
+      pageTruncated: document.numPages > pagesToObserve,
+      metadata,
+      formFields,
+      fieldsTruncated,
+      fieldsLimitReached: fieldLimitReached,
+      annotations,
+      annotationsTruncated: annotationLimitReached || document.numPages > pagesToObserve,
+      annotationsLimitReached: annotationLimitReached,
+      coverageReasons,
+      maxPages: options.max_pages,
+      maxOutputCharacters: options.max_output_characters,
+    });
+  });
+}
+
 function pngResult(buffer, result) {
   if (!Buffer.isBuffer(buffer) || buffer.length < 24 || buffer.length > MAX_BINARY_BYTES) {
     throw resourceLimitError("png_output_limit");
@@ -1100,7 +1312,9 @@ async function systemRenderPage(bytes, password, options) {
       `Page ${options.page} is out of range (1-${geometryDocument.getPageCount()}).`,
     );
   }
-  const geometry = geometryDocument.getPages()[options.page - 1].getSize();
+  const geometryPage = geometryDocument.getPages()[options.page - 1];
+  const geometry = geometryPage.getSize();
+  const pageGeometry = pageGeometryFromPdfLib(geometryPage);
   const scale = options.scale_override ?? getPageRenderScale({
     width: geometry.width,
     height: geometry.height,
@@ -1129,6 +1343,9 @@ async function systemRenderPage(bytes, password, options) {
       height: pixels.height,
       height_points: geometry.height,
       renderer: "macos-sips",
+      page_geometry: pageGeometry,
+      raw_pixel_sha256: null,
+      raw_pixel_status: "unavailable",
       scale,
       total_pages: geometryDocument.getPageCount(),
       width: pixels.width,
@@ -1150,7 +1367,9 @@ async function nativeRenderPage(bytes, password, options) {
       `Page ${options.page} is out of range (1-${geometryDocument.getPageCount()}).`,
     );
   }
-  const geometry = geometryDocument.getPages()[options.page - 1].getSize();
+  const geometryPage = geometryDocument.getPages()[options.page - 1];
+  const geometry = geometryPage.getSize();
+  const pageGeometry = pageGeometryFromPdfLib(geometryPage);
   const scale = options.scale_override ?? getPageRenderScale({
     width: geometry.width,
     height: geometry.height,
@@ -1169,10 +1388,16 @@ async function nativeRenderPage(bytes, password, options) {
       context.fillStyle = "white";
       context.fillRect(0, 0, pixels.width, pixels.height);
       await page.render({ canvasContext: context, viewport }).promise;
+      const rawPixels = Buffer.from(
+        context.getImageData(0, 0, pixels.width, pixels.height).data,
+      );
       const buffer = canvas.toBuffer("image/png");
       return pngResult(buffer, {
         height: pixels.height,
         height_points: geometry.height,
+        page_geometry: pageGeometry,
+        raw_pixel_sha256: createHash("sha256").update(rawPixels).digest("hex"),
+        raw_pixel_status: "available",
         renderer: "native-canvas",
         scale,
         total_pages: document.numPages,
@@ -1242,7 +1467,9 @@ async function nativeRenderRegion(bytes, password, options) {
       `Page ${options.page} is out of range (1-${geometryDocument.getPageCount()}).`,
     );
   }
-  const pageSize = geometryDocument.getPages()[options.page - 1].getSize();
+  const geometryPage = geometryDocument.getPages()[options.page - 1];
+  const pageSize = geometryPage.getSize();
+  const pageGeometry = pageGeometryFromPdfLib(geometryPage);
   validatePdfRegionBox({
     pageWidth: pageSize.width,
     pageHeight: pageSize.height,
@@ -1301,9 +1528,15 @@ async function nativeRenderRegion(bytes, password, options) {
         transform: [1, 0, 0, 1, -crop.left, -crop.top],
         viewport,
       }).promise;
+      const rawPixels = Buffer.from(
+        context.getImageData(0, 0, cropPixels.width, cropPixels.height).data,
+      );
       const buffer = canvas.toBuffer("image/png");
       return pngResult(buffer, {
         height: cropPixels.height,
+        page_geometry: pageGeometry,
+        raw_pixel_sha256: createHash("sha256").update(rawPixels).digest("hex"),
+        raw_pixel_status: "available",
         renderer: "native-canvas",
         scale,
         total_pages: document.numPages,
@@ -1348,6 +1581,9 @@ async function systemRenderRegion(bytes, password, options) {
     const pixels = pngDimensions(buffer);
     return pngResult(buffer, {
       height: pixels.height,
+      page_geometry: page.result.page_geometry,
+      raw_pixel_sha256: null,
+      raw_pixel_status: "unavailable",
       renderer: "macos-sips",
       scale: page.result.scale,
       total_pages: page.result.total_pages,
@@ -1465,6 +1701,13 @@ async function performOperation(request, sourceBytes) {
         request.password,
         request.options,
         true,
+      ) };
+    case "observe_document":
+      return { binary: null, result: await observeDocument(
+        sourceBytes,
+        request.source,
+        request.password,
+        request.options,
       ) };
     case "render_page":
       return await renderPage(sourceBytes, request.password, request.options);

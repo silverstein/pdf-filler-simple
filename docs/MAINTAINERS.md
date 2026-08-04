@@ -657,8 +657,10 @@ Run these after any tool or packaging change:
 - `rotate_pdf_pages` with invalid angle 45° — clear error message
 - `reorder_pdf_pages` with reversed order — pages reversed in output
 - `reorder_pdf_pages` with duplicate page — rejection error
-- `get_pdf_info` on example-fw9.pdf — returns page count, size, form fields
-- `get_pdf_info` on a non-form PDF — returns "none" for form fields
+- `get_pdf_info` on example-fw9.pdf - verify exact source SHA-256, page geometry, form widgets, ordinary-annotation separation, and coverage
+- `get_pdf_info` on a non-form PDF - verify empty supported form and annotation channels rather than fabricated unavailability
+- `get_pdf_info` on an encrypted PDF - verify typed missing/wrong password errors do not expose password or document observations
+- `render_pdf_page` and `render_pdf_region` - verify the PNG SHA-256 against returned image bytes and raw-pixel availability against the renderer
 - `npm test` — all parsePageRanges tests pass
 - `npm run build:ui` produces single-file HTML in `dist-ui/`
 - `npm run build:mcpb` builds successfully and reports the statically verified packaged native asset paths

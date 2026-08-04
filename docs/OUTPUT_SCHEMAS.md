@@ -35,6 +35,7 @@ an `isError` result is never forced through a success schema.
 | `get_active_document` | empty or populated active-document state |
 | `get_page_analysis` | bounded page analysis with explicit provenance, operator counts, and a `classification` rollup (`document_kind`, typed `pages_needing_vision`, explicit `pages_not_analyzed`) |
 | `get_pdf_identity` | parser-independent canonical path, byte length, and SHA-256 |
+| `get_pdf_info` | bounded source-bound page, metadata, form-widget, and inert annotation observations with typed coverage |
 | `get_pdf_resource_uri` | resource URI and local file metadata |
 | `list_signatures` | saved signature summaries, including an empty array |
 | `load_signature` | signature metadata and optional preview |
@@ -45,8 +46,8 @@ an `isError` result is never forced through a success schema.
 | `read_pdf_fields` | active document and form fields |
 | `read_pdf_pages` | bounded page-numbered text |
 | `read_pdf_layout` | versioned bounded Extraction IR with source, geometry, reading order, gaps, and limits |
-| `render_pdf_page` | page raster metadata |
-| `render_pdf_region` | region raster metadata |
+| `render_pdf_page` | source identity, page geometry, coordinate spaces, renderer policy, raster dimensions, and PNG/raw-pixel digest evidence |
+| `render_pdf_region` | source identity, requested and rendered regions, page geometry, renderer policy, and PNG/raw-pixel digest evidence |
 | `reorder_pdf_pages` | active output document and page order |
 | `reveal_in_finder` | revealed path and platform |
 | `rotate_pdf_pages` | active output document and rotation outcome |
@@ -54,9 +55,9 @@ an `isError` result is never forced through a success schema.
 | `set_active_document` | populated active-document state |
 | `validate_pdf` | versioned PDF field-validation result |
 
-The following six tools remain intentionally text-only and therefore do not
-advertise `outputSchema`: `get_pdf_info`, `list_pdfs`, `list_profiles`,
-`load_profile`, `save_profile`, and `split_pdf`. Their error results are also
+The following four tools remain intentionally text-only and therefore do not
+advertise `outputSchema`: `list_pdfs`, `list_profiles`, `load_profile`,
+and `save_profile`. Their error results are also
 text-only; attaching an undeclared `structuredContent` error would create a
 wire contract that discovery does not publish.
 
