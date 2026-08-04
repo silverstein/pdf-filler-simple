@@ -26,8 +26,10 @@ to replace it with a newly invented benchmark.
 - Active worktree:
   `/Users/silverbook/Sites/pdf-tools-worktrees/codex-shannon-type3-next`
 - Active branch: `codex/shannon-type3-next`
-- Clean implementation checkpoint:
+- Exact runtime implementation and evaluation checkpoint:
   `578f517c90f21c073673e6668421368374f7cf55`
+- Later commits on the branch update evidence and this handoff only; use
+  `git rev-parse HEAD` for the current published branch tip.
 - Publication status: draft PR #62, stacked directly on PR #61.
 - Current draft stack, reviewed from bottom to top:
   - PR #59, `Restore proven mathematical operator spacing`
@@ -52,9 +54,9 @@ remain unchanged.
 The active next tranche adds 1,021 exact recoveries from nine primary glyph
 groups: 345 periods, 315 commas, 216 minuses, 55 pi characters, 27 rho
 characters, 27 square roots, 22 greater-or-equal characters, 8 slashes, and 6
-omega characters. Production recovery now totals 1,052 exact characters from
-13 registered groups. Replacement characters fall from 831 to 511 while all
-sampled structural scores remain unchanged.
+omega characters. The tested draft implementation totals 1,052 exact
+characters from 13 registered groups. Replacement characters fall from 831 to
+511 while all sampled structural scores remain unchanged.
 
 The complete two-lane census observes all 4,437 Type-3 occurrences. It safely
 links 4,427 and explicitly abstains on 10 ambiguous raw-font links. Of 1,240
