@@ -109,13 +109,25 @@ because Silverbook's caller uses private mode-077 creation and one existing
 portable-symlink test explicitly expects the ordinary macOS mode. No machine
 setting was changed.
 
-The exact bundle has not yet been installed over Silverbook's currently enabled
-older PDF Toolkit build. A verified recovery backup was created at
-`/Users/silverbook/Library/Application Support/Claude/PDF Tools Host Validation Backups/20260804T141500Z-pre-pr62`,
-but Claude's app-control bridge failed to start twice before any installation
-action. Native Claude Desktop installation and chat-level use therefore remain
-an explicit human-assisted gate.
+On 2026-08-04, the exact MCPB above was installed in Claude Desktop. Claude's
+installation registry records the matching SHA-256, and its host log records a
+successful server start, initialization, and tool discovery. The legacy PDF
+Tools identity was removed, leaving exactly one enabled current installation.
+A verified recovery backup remains at
+`/Users/silverbook/Library/Application Support/Claude/PDF Tools Host Validation Backups/20260804T141500Z-pre-pr62`.
+
+The installed extension directory passed the synthetic installed-server smoke:
+40 unique tools, the exact reviewed tool-contract digest, text extraction,
+Markdown conversion, native raster rendering, one verified mutation, a fresh
+session, and denial outside the configured directory. The installed directory
+then converted all 55 Shannon pages in six bounded calls. It produced the exact
+reviewed Markdown SHA-256
+`8b1d2520e4fdbbb1ec3aa1b9fa3ee3604f72712c0b0a37b53a4e4c9d3962ca94`,
+177,761 bytes, 511 replacement characters, and 68 explicit gaps. This proves
+native installation, Claude host loading/tool discovery, and installed-bundle
+server behavior. A Shannon conversion initiated from a Claude chat remains a
+separate unrun UI-level check.
 
 This evidence does not prove general Type-3 decoding, formula reconstruction,
-OCR, full mathematical fidelity, native Claude Desktop behavior, Windows or
-Linux execution, release readiness, or that Kepano's complete issue is solved.
+OCR, full mathematical fidelity, Windows or Linux behavior, release readiness,
+or that Kepano's complete issue is solved.

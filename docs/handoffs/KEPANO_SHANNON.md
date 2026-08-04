@@ -95,15 +95,23 @@ The active MCPB passed its packed smoke test and grew by only 2,075 bytes
 maintainer scripts, plus private evaluation outputs, are excluded from the
 distributable package.
 
-Native Claude Desktop installation remains outstanding. The currently enabled
-PDF Toolkit is an older build. A verified pre-install backup exists at
-`/Users/silverbook/Library/Application Support/Claude/PDF Tools Host Validation Backups/20260804T141500Z-pre-pr62`;
-Claude's app-control bridge failed twice before any install action, so do not
-claim installed-host proof.
+On 2026-08-04, the exact MCPB was installed in Claude Desktop. The installation
+registry SHA-256 matches the artifact, the Claude host log records successful
+startup and tool discovery, and the older PDF Tools identity was removed. One
+enabled current installation remains. Its installed directory passed the
+synthetic installed-server smoke and converted all 55 Shannon pages to the
+exact reviewed Markdown SHA-256
+`8b1d2520e4fdbbb1ec3aa1b9fa3ee3604f72712c0b0a37b53a4e4c9d3962ca94`,
+with 511 replacement characters and 68 explicit gaps. A verified pre-install
+backup remains at
+`/Users/silverbook/Library/Application Support/Claude/PDF Tools Host Validation Backups/20260804T141500Z-pre-pr62`.
+A Shannon conversion initiated inside a Claude chat remains an unrun UI-level
+check; do not silently claim that narrower proof.
 
-As of this handoff, PR #62 is an open draft stacked on PR #61. Local
-verification is the available evidence; do not silently upgrade that into
-host, release, or cross-platform proof.
+As of this handoff, PR #62 is an open draft stacked on PR #61. Local, native
+installation, Claude host-loading, and installed-bundle server verification are
+available; do not silently upgrade them into release, cross-platform, or
+Claude-chat proof.
 
 ## Current decision boundary
 
