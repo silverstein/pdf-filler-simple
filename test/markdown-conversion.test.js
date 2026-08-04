@@ -136,7 +136,7 @@ function fakePdfjs(pageConfigs) {
         items: config.items ?? [],
         styles: {
           f1: { fontFamily: "Test Sans", ascent: 0.8, descent: -0.2, vertical: false },
-          f2: { fontFamily: "Test Serif", ascent: 0.8, descent: -0.2, vertical: false },
+          f2: { fontFamily: "Test Sans", ascent: 0.8, descent: -0.2, vertical: false },
         },
       };
     },
@@ -638,6 +638,9 @@ describe("layout Markdown renderer", () => {
   it("restores only a geometrically proven space after a separate log operator", async () => {
     const layout = await validatedSyntheticLayout([
       { items: [
+        positionedTextItem("C", { top: 80, left: 60, width: 6.67, fontName: "f2" }),
+        positionedTextItem("=", { top: 80, left: 68.5, width: 7.8 }),
+        positionedTextItem("Lim", { top: 80, left: 78.5, width: 16.65, eol: true }),
         positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
         positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, fontName: "f2" }),
         positionedTextItem("(", { top: 100, left: 120.9, width: 3.84 }),
@@ -662,6 +665,16 @@ describe("layout Markdown renderer", () => {
         positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, eol: true }),
       ] },
       { items: [
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, fontName: "f2", eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("s", { top: 100, left: 100, width: 5 }),
+        positionedTextItem("log", { top: 100, left: 105, width: 12.8 }),
+        positionedTextItem("a", { top: 100, left: 118.8, width: 5, fontName: "f2" }),
+        positionedTextItem("n", { top: 100, left: 123.8, width: 5, fontName: "f2", eol: true }),
+      ] },
+      { items: [
         positionedTextItem("logN", { top: 100, left: 100, width: 20, fontName: "f2", eol: true }),
       ] },
       { items: [
@@ -676,10 +689,51 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).toContain("pi log pi");
     expect(result.markdown).toContain("catalogN");
     expect(result.markdown).toContain("logN\n");
+    expect(result.markdown.split("\n").filter(line => line === "logN")).toHaveLength(3);
+    expect(result.markdown).toContain("slogan");
     expect(result.markdown).toContain("logNoise");
     expect(layout.pages.map(page => page.lines.map(line => line.text))).toEqual(originalLines);
     expect(originalLines[0]).toContain("logN(T)");
     expect(validateMarkdownConversionSemantics(result, { layout })).toBe(result);
+  });
+
+  it("does not rewrite math-like lists, ambiguous tables, or unsupported link pages", async () => {
+    const compactScript = top => [
+      positionedTextItem("p", { top, left: 100, width: 5, fontName: "f2" }),
+      positionedTextItem("i", { top: top + 3.52, left: 105.04, width: 2.057, fontSize: 7.4, fontName: "f2" }),
+      positionedTextItem(" ", { top, left: 107.1, width: 1.7 }),
+      positionedTextItem("log", { top, left: 108.8, width: 12.8 }),
+      positionedTextItem("p", { top, left: 123.319, width: 5, fontName: "f2" }),
+      positionedTextItem("i", { top: top + 3.52, left: 128.36, width: 2.057, fontSize: 7.4, fontName: "f2", eol: true }),
+    ];
+    const layout = await validatedSyntheticLayout([
+      { items: [
+        positionedTextItem("• ", { top: 100, left: 90, width: 8 }),
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, fontName: "f2" }),
+        positionedTextItem("(", { top: 100, left: 120.9, width: 3.84 }),
+        positionedTextItem("T", { top: 100, left: 124.74, width: 5.56, fontName: "f2" }),
+        positionedTextItem(")", { top: 100, left: 131, width: 3.84, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("A", { top: 60, left: 50, width: 5 }),
+        positionedTextItem("B", { top: 60, left: 80, width: 5, eol: true }),
+        positionedTextItem("1", { top: 80, left: 50, width: 5 }),
+        positionedTextItem("2", { top: 80, left: 80, width: 5, eol: true }),
+        textItem("separator", { top: 110, left: 50 }),
+        ...compactScript(140),
+      ] },
+      {
+        items: compactScript(100),
+        annotations: [{ subtype: "Link", rect: [99, 677, 150, 690], dest: ["XYZ"] }],
+      },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout);
+
+    expect(result.markdown).toMatch(/^- logN\(T\)$/mu);
+    expect(result.markdown.split("\n").filter(line => line === "pi logpi")).toHaveLength(2);
+    expect(result.gaps.map(gap => gap.code)).toContain("TABLE_TOPOLOGY_UNKNOWN");
+    expect(result.gaps.map(gap => gap.code)).toContain("UNSUPPORTED_LINK_TARGET");
   });
 
   it("recognizes conservative document structure without promoting lookalike equations", async () => {
