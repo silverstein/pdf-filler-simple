@@ -368,8 +368,18 @@ therefore not an exact scoring host. A direct development run on Silverbook
 produced F1 1.0 for semantic, text, structure, form-field, annotation, and
 metadata channels, but host-dependent raster hashes made visual F1 0 and only
 3 of 7 product pairs passed. Those numbers are diagnostic, not a benchmark
-claim. Exact Linux/amd64 scoring and the remaining package/native-host gates
-must pass before a release-readiness statement.
+claim.
+
+An exact Linux/amd64 run on Silverbook was subsequently bound to implementation
+SHA `ae1efe831833d9799c9988b4c2067b7bab5eb705` and renderer fingerprint
+`c2dd1a1d44aac6b47b58a18b9b578e2e863bb0b75cfd8dbf95346e841b4eace8`.
+All 7 product pairs passed with event F1 1.0, every channel F1 1.0, material
+recall 1.0, and evidence completeness 1.0 across six deterministic iterations
+per pair. The validated report still has global `passed: false` and
+`benchmark_claim_ready: false` because OS network isolation, signed result
+attestation, packed MCPB evidence, and native-host evidence were not present.
+It is exact synthetic calibration evidence, not a general benchmark or release
+claim.
 
 PDF object identities, stream bytes, timestamps, and compression are not
 semantic equality signals. Raster comparison is a localized visual sensor, not

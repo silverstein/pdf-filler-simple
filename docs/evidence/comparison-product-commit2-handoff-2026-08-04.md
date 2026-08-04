@@ -6,8 +6,10 @@
 - Branch: `codex/comparison-product-observations`
 - Parent: `c8fa7462f8664b3709aaaae23fc78d3de9ae21dc`
 - Selected program base: `8575246837e824239af03e63e9e2538852910403`
-- Candidate: the clean commit containing this handoff; use the exact SHA and
-  tree reported by the operator rather than a branch name.
+- Implementation candidate: `ae1efe831833d9799c9988b4c2067b7bab5eb705`
+- Implementation tree: `dca88b50744182f53859b9dd6ace3391e98a7d6e`
+- Evidence head: the clean docs-only commit containing this updated handoff;
+  use its exact SHA reported by the operator rather than a branch name.
 - Protected dependency: `pdfjs-dist` remains exactly `5.4.624`; no dependency
   was added or changed.
 
@@ -69,9 +71,29 @@ Silverbook development scoring is diagnostic only: semantic, text, structure,
 form-field, annotation, and metadata channel F1 values were each 1.0, while
 Darwin-arm64 raster hashes did not match the frozen Linux-x64 renderer truth;
 visual F1 was 0 and 3 of 7 product pairs passed. The frozen scorer admits Linux
-x64, Node 22.22.3, `pdfjs-dist` 5.4.624. Exact Linux/amd64 scoring remains a
-required evidence gate and must not be replaced with expected hashes or tuned
-truth.
+x64, Node 22.22.3, `pdfjs-dist` 5.4.624.
+
+The exact frozen-host run then completed in a disposable Linux/amd64 container
+on Silverbook, bound to implementation SHA
+`ae1efe831833d9799c9988b4c2067b7bab5eb705` and renderer fingerprint
+`c2dd1a1d44aac6b47b58a18b9b578e2e863bb0b75cfd8dbf95346e841b4eace8`.
+Across six deterministic iterations per pair, the product passed all 7 of 7
+pairs with 9 true-positive events, no false positives or false negatives,
+event F1 1.0, every channel F1 1.0, material recall 1.0, 27 of 27 evidence
+anchors, 13 of 13 two-sided facets, and no unsupported facets, references, or
+orphan observations. The validated score remains globally `passed: false`
+because OS network isolation and signed result attestation were intentionally
+absent; `benchmark_claim_ready` remains false.
+
+Exact generated artifact bindings:
+
+- product report: `073ed5a3c90f845e1fa6f0637a21ab2ebd3f0bc92dddad5f4e9b26dfef86f1e1`
+- product score: `ea5aceb32504048a1f66a67d57343f9a74a11bc40e807ba842d70ee1ed052628`
+- product observation registry: `7987f7248281d8c5d6c90712edca65ad67cda2b5bea9321d134b4e9c5454d258`
+- run index: `dda5a5619278fc03fd01d83a3ca49ee06336d83230dae225e506d845a8d7fde7`
+
+The generated raw artifacts remain in the preserved disposable review clone
+at `/tmp/pdf-comparison-linux.8upyBV/repo/.comparison-output/` on Silverbook.
 
 ## Closed gates and residual work
 
