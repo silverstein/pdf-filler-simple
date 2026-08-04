@@ -18,17 +18,17 @@ promoting equations is separate follow-up work.
 
 ## Clean run
 
-- Evaluated commit: `e3f5615`
+- Evaluated commit: `c96ecbd064ff815c88eae5acb0a78f68e428fa23`
 - Source PDF SHA-256:
   `6e4e3411984f3edf99dbfe8b941cb5e8a321379ff0cae6ae5c1f592ad8882ca8`
 - Baseline report SHA-256:
-  `a5d468f897dbbe9931b5b4b4e3fa6da17cd1b99bede5111fd7888e3a9a1a5a38`
+  `0c4b7caa8bbb7b60ef88fb644dae6a563c0dee3b51a0a47e14331de831b26d01`
 - Guardrail report SHA-256:
-  `4489c23f5c19d17e93f8a4d689cc6106e26390082b945fb7b2cebb42ea2a03fd`
+  `04d1af01c27a6f76d4db3fdcb6c21f3614598aed590db32bccf3abcab8bff2c1`
 - Repetitions: three fresh processes per candidate
 - PDF Tools Markdown deterministic across repetitions: `true`
-- Median PDF Tools elapsed time: 3415.627 ms
-- Median PDF Tools maximum RSS: 284,229,632 bytes
+- Median PDF Tools elapsed time: 3502.845 ms
+- Median PDF Tools maximum RSS: 317,407,232 bytes
 
 ## Metric comparison
 
