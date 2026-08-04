@@ -70,6 +70,12 @@ function expectInvalid(intent, sentinels = []) {
   }
 }
 
+function expectIsolatedOutputGraph(value) {
+  if (!value || typeof value !== "object") return;
+  expect(Object.getPrototypeOf(value)).toBeNull();
+  for (const key of Object.keys(value)) expectIsolatedOutputGraph(value[key]);
+}
+
 describe("mapLuminSignV1SignatureRequest", () => {
   it("maps a provisional same-time text-tag request bound to the exact OpenAPI snapshot without claiming provider execution, credentials, or transport", () => {
     const result = map();
@@ -241,6 +247,39 @@ describe("mapLuminSignV1SignatureRequest", () => {
         message: "LUMIN_MAPPING_INVALID: The Lumin Sign request intent failed local validation.",
       });
       expect(error.message).not.toContain(optionsSentinel);
+    }
+  });
+
+  it("isolates every output record and array from hostile prototype serialization", () => {
+    const sentinel = "SENTINEL_HOSTILE_TO_JSON";
+    let calls = 0;
+    Object.defineProperty(Object.prototype, "toJSON", {
+      value() {
+        calls += 1;
+        return sentinel;
+      },
+      configurable: true,
+    });
+    try {
+      const result = map();
+      expectIsolatedOutputGraph(result);
+      const serialized = JSON.stringify(result);
+      expect(calls).toBe(0);
+      expect(serialized).not.toContain(sentinel);
+      expect(JSON.parse(serialized)).toMatchObject({
+        request: {
+          authentication_alternatives: [
+            { scheme: "ApiKey" },
+            { scheme: "BearerAuth" },
+          ],
+          body: { signers: [{ name: "Client Signer" }, { name: "Consultant Signer" }] },
+        },
+        limitations: expect.arrayContaining([
+          "ordered_signing_blocked_pending_group_wire_type_resolution",
+        ]),
+      });
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "toJSON");
     }
   });
 

@@ -131,7 +131,14 @@ function deepFreeze(value) {
 }
 
 function isolateOutputRecords(value) {
-  if (Array.isArray(value)) return value.map(isolateOutputRecords);
+  if (Array.isArray(value)) {
+    const normalized = new Array(value.length);
+    for (let index = 0; index < value.length; index += 1) {
+      normalized[index] = isolateOutputRecords(value[index]);
+    }
+    Object.setPrototypeOf(normalized, null);
+    return normalized;
+  }
   if (!value || typeof value !== "object") return value;
   const normalized = Object.create(null);
   for (const key of Object.keys(value)) {
