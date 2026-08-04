@@ -18,6 +18,10 @@ const CURRENT_PACKAGE_VERSION = JSON.parse(await fs.readFile(
   new URL("../package.json", import.meta.url),
   "utf8",
 )).version;
+const CURRENT_LOCKED_SDK_VERSION = JSON.parse(await fs.readFile(
+  new URL("../package-lock.json", import.meta.url),
+  "utf8",
+)).packages["node_modules/@modelcontextprotocol/sdk"].version;
 const temporaryDirectories = [];
 const ACTIVE_STATUSES = new Set(["open", "in_progress", "blocked", "deferred"]);
 
@@ -303,7 +307,7 @@ describe("recurring maintainer review", () => {
       platform: process.platform,
       architecture: process.arch,
       installed_vitest_version: "4.1.10",
-      installed_sdk_version: "1.29.0",
+      installed_sdk_version: CURRENT_LOCKED_SDK_VERSION,
       installed_pdf_lib_version: "1.17.1",
       installed_pdfjs_version: "5.4.624",
     });

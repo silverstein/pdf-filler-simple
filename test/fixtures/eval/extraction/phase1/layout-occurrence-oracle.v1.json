@@ -80,13 +80,13 @@
       "role": "package_json",
       "path": "package.json",
       "bytes": 2704,
-      "sha256": "de84ec0bbbbcf9fe7cbeb225cfcd5d19eed9c8d365f67bc5401d9f8a67a908dc"
+      "sha256": "e2bb7197812a14121b244d8e34a8f498afccd5041115b967beef1eb06231d7c2"
     },
     {
       "role": "package_lock",
       "path": "package-lock.json",
-      "bytes": 119004,
-      "sha256": "f8fb133e60ea2ab3199d9e4cdf4a50b7dc01f2e2ae5224ff410f7d1027fbbd7e"
+      "bytes": 119051,
+      "sha256": "78ade146e2f9395ce3041d15b6ef4f310fbaa2cb5918065ea5dffd3182478bea"
     },
     {
       "role": "pdf_comparison_module",
@@ -113,7 +113,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "b4067f2978a6bd0f10978e971402f5c16455990feed62ff72e8d41f5a8abdabd",
+  "validator_source_set_sha256": "a25c038c8c031c77deb8a96a146abc24b681f8f32e5cdcb37325f5058fa47950",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",

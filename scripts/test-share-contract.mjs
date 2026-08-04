@@ -33,7 +33,7 @@ const CMAP_ORACLE_PROVENANCE = JSON.parse(readFileSync(
   "utf8",
 ));
 const PROTECTED_DIRECT_DEPENDENCIES = {
-  "@modelcontextprotocol/sdk": "1.29.0",
+  "@modelcontextprotocol/sdk": "1.30.0",
   "@napi-rs/canvas": "0.1.99",
   "pdf-lib": "1.17.1",
   "pdfjs-dist": "5.4.624",
