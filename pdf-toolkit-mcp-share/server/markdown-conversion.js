@@ -197,42 +197,63 @@ function titleCaseHeading(value) {
   });
 }
 
-function structuralHeadingLevel(line) {
+function lineIsCentered(page, line) {
+  const pageWidth = page.geometry?.display_width;
+  return Number.isFinite(pageWidth)
+    && Math.abs(line.x + line.width / 2 - pageWidth / 2) <= Math.max(4, line.height);
+}
+
+function hasSectionBreakBefore(page, evidence, index, bodyHeight) {
+  const line = evidence[index].line;
+  if (index === 0) {
+    return Number.isFinite(page.geometry?.display_height)
+      && line.y >= page.geometry.display_height * 0.07;
+  }
+  const previous = evidence[index - 1].line;
+  const gap = line.y - (previous.y + previous.height);
+  return gap >= Math.max(line.height, bodyHeight) * 1.15;
+}
+
+function structuralHeadingLevel(page, evidence, index, bodyHeight) {
+  const line = evidence[index].line;
   const text = line.text.trim();
-  if (!headingTextEligible(text)) return null;
-  if (text === "INTRODUCTION") return 2;
+  if (!headingTextEligible(text) || !lineIsCentered(page, line)
+    || !hasSectionBreakBefore(page, evidence, index, bodyHeight)) return null;
+  if (page.page === 1 && text === "INTRODUCTION") return 2;
   if (/^PART\s+[IVXLCDM]+:\s+.+$/u.test(text) && text === text.toLocaleUpperCase("en-US")) return 2;
   if (/^APPENDIX\s+(?:\d+|[IVXLCDM]+)$/u.test(text)) return 2;
   return null;
 }
 
-function structuralHeadingLevels(page, evidence) {
-  const structural = new Map(evidence.flatMap(({ line }) => {
-    const level = structuralHeadingLevel(line);
+function structuralHeadingLevels(page, evidence, bodyHeight) {
+  const structural = new Map(evidence.flatMap(({ line }, index) => {
+    const level = structuralHeadingLevel(page, evidence, index, bodyHeight);
     return level === null ? [] : [[line.id, level]];
   }));
   if (page.page !== 1) return structural;
-  const titleCandidates = evidence.slice(0, 3).filter(({ line }) => (
-    headingTextEligible(line.text) && titleCaseHeading(line.text)
+  const titleCandidates = evidence.slice(0, 3).filter(({ line, height }) => (
+    headingTextEligible(line.text)
+    && titleCaseHeading(line.text)
+    && lineIsCentered(page, line)
+    && Number.isFinite(height)
+    && height >= bodyHeight * 1.2
   ));
   const ranked = [...titleCandidates].sort((left, right) => (
     (right.height ?? 0) - (left.height ?? 0)
-    || right.line.text.length - left.line.text.length
+    || evidence.findIndex(item => item.line.id === left.line.id)
+      - evidence.findIndex(item => item.line.id === right.line.id)
   ));
   const winner = ranked[0];
-  const runnerUp = ranked[1];
-  if (winner && (!runnerUp || (winner.height ?? 0) > (runnerUp.height ?? 0))) {
-    structural.set(winner.line.id, 1);
-  }
+  if (winner) structural.set(winner.line.id, 1);
   return structural;
 }
 
 function headingLevels(page) {
   const evidence = lineFontEvidence(page);
-  const structural = structuralHeadingLevels(page, evidence);
   const heights = evidence.map(value => value.height).filter(Number.isFinite);
-  if (heights.length < 4) return structural;
+  if (heights.length < 4) return new Map();
   const bodyHeight = median(heights);
+  const structural = structuralHeadingLevels(page, evidence, bodyHeight);
   const bodyEvidence = heights.filter(height => Math.abs(height - bodyHeight) <= bodyHeight * 0.1);
   if (bodyEvidence.length < 3) return structural;
   const candidates = evidence.filter(({ line, height, consistentHeight, consistentFont }) => (
@@ -247,7 +268,15 @@ function headingLevels(page) {
   ));
   const levels = [...new Set(candidates.map(value => value.height))].sort((left, right) => right - left);
   const geometric = candidates.map(({ line, height }) => [line.id, Math.min(6, levels.indexOf(height) + 1)]);
-  return new Map([...geometric, ...structural]);
+  const combined = new Map([...geometric, ...structural]);
+  if (page.page === 1) {
+    const h1 = evidence.filter(({ line }) => combined.get(line.id) === 1);
+    const preferred = h1.find(({ line }) => structural.get(line.id) === 1) ?? h1[0];
+    for (const { line } of h1) {
+      if (line.id !== preferred?.line.id) combined.set(line.id, 2);
+    }
+  }
+  return combined;
 }
 
 /**
