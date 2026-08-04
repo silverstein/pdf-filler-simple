@@ -29,7 +29,7 @@ const textFixture = path.join(fixtureDirectory, "synthetic-text-two-page.pdf");
 const rasterFixture = path.join(fixtureDirectory, "synthetic-raster-only.pdf");
 const mutationDirectory = path.join(fixtureDirectory, "mutation-output");
 const toolNames = [];
-const EXPECTED_TOOL_CONTRACT_SHA256 = "922bc866cd2c338ee3f3cc3ca5b888aed339b65680c9cba9ac71ce62eecf3ac3";
+const EXPECTED_TOOL_CONTRACT_SHA256 = "941d6bd50b2a3930defb0526919d714ff9d4bc51acef2b2ad88c99c7533e8c98";
 let toolContractSha256;
 let structuredToolCount;
 let markdownHash;
@@ -78,7 +78,7 @@ try {
     `Tool contract digest drifted: ${toolContractSha256}`,
   );
   structuredToolCount = tools.tools.filter(tool => tool.outputSchema).length;
-  assert(structuredToolCount === 35, `Expected 35 structured tools, received ${structuredToolCount}`);
+  assert(structuredToolCount === 37, `Expected 37 structured tools, received ${structuredToolCount}`);
 
   const listed = await first.client.callTool({
     name: "list_pdfs",
@@ -94,7 +94,11 @@ try {
     arguments: { pdf_path: textFixture },
   });
   assert(!info.isError, "get_pdf_info failed for the text fixture");
-  assert(/Pages:\s*2\b/.test(textContent(info)), "get_pdf_info did not report two pages");
+  assert(
+    info.structuredContent?.pages?.total_count === 2
+      && info.structuredContent?.pages?.observed_count === 2,
+    "get_pdf_info did not report two observed pages",
+  );
 
   const identity = await first.client.callTool({
     name: "get_pdf_identity",
@@ -158,8 +162,9 @@ try {
     },
   });
   assert(
-    textContent(denied).includes("only allowed to access"),
-    "Path outside the configured directory was not denied with the policy error",
+    denied.isError
+      && denied.structuredContent?.error?.code === "path_policy_denied",
+    `Path outside the configured directory was not denied with the typed policy error: ${textContent(denied)}`,
   );
 
   const split = await first.client.callTool({
@@ -189,7 +194,11 @@ try {
     arguments: { pdf_path: path.join(mutationDirectory, mutationFiles[1]) },
   });
   assert(!info.isError, "Fresh-session get_pdf_info call failed");
-  assert(/Pages:\s*1\b/.test(textContent(info)), "Fresh-session mutation output was not one page");
+  assert(
+    info.structuredContent?.pages?.total_count === 1
+      && info.structuredContent?.pages?.observed_count === 1,
+    "Fresh-session mutation output was not one observed page",
+  );
 } finally {
   await fresh.transport.close();
 }

@@ -12,8 +12,8 @@ if (!process.argv[2] || !process.argv[3]) {
 }
 
 const EXPECTED_SOURCE_SHA256 = "6e4e3411984f3edf99dbfe8b941cb5e8a321379ff0cae6ae5c1f592ad8882ca8";
-const EXPECTED_MARKDOWN_SHA256 = "bb3f7586a3268fc2ed5a1de2d57bad3ca63321720f1af4d5e62dbe46716e187e";
-const EXPECTED_TOOL_CONTRACT_SHA256 = "922bc866cd2c338ee3f3cc3ca5b888aed339b65680c9cba9ac71ce62eecf3ac3";
+const EXPECTED_MARKDOWN_SHA256 = "eb95044865294fcb086d6f003fdaa277cfaac98270b8cf63e26d4216c8275269";
+const EXPECTED_TOOL_CONTRACT_SHA256 = "941d6bd50b2a3930defb0526919d714ff9d4bc51acef2b2ad88c99c7533e8c98";
 const EXPECTED_PAGE_COUNT = 55;
 const PAGE_SPAN = 10;
 
@@ -55,7 +55,7 @@ const chunks = [];
 try {
   await client.connect(transport);
   const tools = await client.listTools();
-  assert(tools.tools.length === 40, `Expected 40 installed tools, received ${tools.tools.length}`);
+  assert(tools.tools.length === 41, `Expected 41 installed tools, received ${tools.tools.length}`);
   assert(
     sha256(Buffer.from(JSON.stringify(tools.tools))) === EXPECTED_TOOL_CONTRACT_SHA256,
     "Installed tool contract differs from the reviewed build",
@@ -92,7 +92,10 @@ try {
 
 const markdown = chunks.map(chunk => chunk.markdown).join("\n\n");
 const markdownSha256 = sha256(Buffer.from(markdown, "utf8"));
-assert(markdownSha256 === EXPECTED_MARKDOWN_SHA256, "Installed Shannon Markdown differs from the reviewed output");
+assert(
+  markdownSha256 === EXPECTED_MARKDOWN_SHA256,
+  `Installed Shannon Markdown differs from the reviewed output: expected ${EXPECTED_MARKDOWN_SHA256}, received ${markdownSha256}`,
+);
 
 process.stdout.write(`${JSON.stringify({
   installed_extension: extensionDirectory,
