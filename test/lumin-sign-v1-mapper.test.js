@@ -6,6 +6,10 @@ import {
   LUMIN_SIGN_V1_MAPPER_CONTRACT_SHA256,
   mapLuminSignV1SignatureRequest,
 } from "../server/lumin-sign-v1-mapper.js";
+import {
+  LUMIN_SIGN_V1_OPENAPI_PROJECTION_SHA256,
+  LUMIN_SIGN_V1_OPENAPI_SOURCE,
+} from "../scripts/verify-lumin-sign-v1-openapi.mjs";
 
 const NOW_MS = 1_800_000_000_000;
 
@@ -69,7 +73,7 @@ function expectInvalid(intent, sentinels = []) {
 }
 
 describe("mapLuminSignV1SignatureRequest", () => {
-  it("maps a provisional ordered text-tag request without claiming provider verification, auth, or transport", () => {
+  it("maps a provisional ordered text-tag request bound to the exact OpenAPI snapshot without claiming provider execution, credentials, or transport", () => {
     const result = map();
     expect(result).toEqual({
       schema_version: 1,
@@ -77,7 +81,14 @@ describe("mapLuminSignV1SignatureRequest", () => {
       api_version: "v1",
       mapper_contract_sha256: LUMIN_SIGN_V1_MAPPER_CONTRACT_SHA256,
       request_mapping_status: "provisional_unverified",
-      official_reference_identity_status: "not_established",
+      official_reference_identity_status: "exact_snapshot_pinned",
+      official_reference: {
+        source_url: LUMIN_SIGN_V1_OPENAPI_SOURCE.url,
+        source_bytes: LUMIN_SIGN_V1_OPENAPI_SOURCE.bytes,
+        source_sha256: LUMIN_SIGN_V1_OPENAPI_SOURCE.sha256,
+        contract_projection_sha256: LUMIN_SIGN_V1_OPENAPI_PROJECTION_SHA256,
+        discrepancy_codes: ["SIGNER_GROUP_SCHEMA_EXAMPLE_TYPE_MISMATCH"],
+      },
       transport_allowed: false,
       transport_status: "not_requested",
       provider_execution_status: "not_requested",
@@ -89,7 +100,21 @@ describe("mapLuminSignV1SignatureRequest", () => {
         method: "POST",
         path: "/signature_request/send",
         content_type: "application/json",
-        required_oauth_scope: "sign:requests",
+        authentication_alternatives: [
+          {
+            scheme: "ApiKey",
+            type: "apiKey",
+            location: "header",
+            name: "X-API-Key",
+            required_scopes: [],
+          },
+          {
+            scheme: "BearerAuth",
+            type: "oauth2",
+            flow: "authorizationCode",
+            required_scopes: ["sign:requests"],
+          },
+        ],
         body: {
           file_url: "https://objects.example.com/prepared/document.pdf?grant=one-object",
           title: "Consulting agreement",
@@ -115,9 +140,9 @@ describe("mapLuminSignV1SignatureRequest", () => {
         "provider_environment_not_established",
         "provider_create_idempotency_not_established",
         "field_mapping_not_independently_verified",
-        "official_openapi_identity_not_frozen",
-        "provider_reference_fixture_not_frozen",
         "provider_signer_group_type_reference_inconsistent",
+        "participant_bounds_are_local_safety_policy_not_provider_limits",
+        "participant_field_constraints_are_local_narrowing",
         "provider_expiry_horizon_not_established",
         "plan_specific_upload_limit_not_established",
         "transfer_url_destination_not_resolved",
@@ -127,6 +152,9 @@ describe("mapLuminSignV1SignatureRequest", () => {
     expect(result.request).not.toHaveProperty("headers");
     expect(result.request).not.toHaveProperty("authorization");
     expect(result.request.body).not.toHaveProperty("api_key");
+    expect(LUMIN_SIGN_V1_MAPPER_CONTRACT_SHA256).toBe(
+      "6e6d1d56b88ad548a065bcb6c713b662992c204509d9aabb6aec3e73a8d63d77",
+    );
   });
 
   it("maps same-time signing only when no ordering groups are supplied", () => {
@@ -331,6 +359,10 @@ describe("mapLuminSignV1SignatureRequest", () => {
     expect(Object.isFrozen(result.request.body)).toBe(true);
     expect(Object.isFrozen(result.request.body.signers)).toBe(true);
     expect(Object.isFrozen(result.request.body.signers[0])).toBe(true);
+    expect(Object.isFrozen(result.official_reference)).toBe(true);
+    expect(Object.isFrozen(result.official_reference.discrepancy_codes)).toBe(true);
+    expect(Object.isFrozen(result.request.authentication_alternatives)).toBe(true);
+    expect(Object.isFrozen(result.request.authentication_alternatives[1].required_scopes)).toBe(true);
     expect(Object.isFrozen(result.bindings.participant_ids)).toBe(true);
     expect(() => { result.automatic_retry_allowed = true; }).toThrow(TypeError);
     expect(() => { result.request.body.file_url = "https://changed.example.com/document.pdf"; }).toThrow(TypeError);
