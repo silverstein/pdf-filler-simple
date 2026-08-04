@@ -57,7 +57,10 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-08-03: extraction IR 1.3.0 and Markdown renderer 1.8.0 preserve only
 // independently qualified exact legacy Computer Modern Type-3 glyphs.
 // Previously 9947d16e32562981651216c95598786d9f3324d5f1fae3b53fa8d7f089d2ea05.
-const TOOL_CONTRACT_SHA256 = "223c8ec6b37d600e2918b5b4b124af80845a51cb9530819024b2426a9c101c06";
+// 2026-08-04: Markdown renderer 1.9.0 restores only source-proven boundaries
+// between multiword prose and a separate uppercase math variable. Previously
+// 223c8ec6b37d600e2918b5b4b124af80845a51cb9530819024b2426a9c101c06.
+const TOOL_CONTRACT_SHA256 = "d358ad9e6b7ee830a41c7b64a5ee612decd9ac4c8bb58e76f6c5dbc0529aa555";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
