@@ -52,3 +52,26 @@ failure exposed a process-runner race in which a deadline termination was
 misreported as a late `EPERM` spawn failure. Deadline evidence now takes
 precedence after a process has started and timed out; the complete 21-test
 runner file then passed.
+
+## Merge, package, and installed proof
+
+- PR #71 merged as
+  `cce500f693df597160ae21f332ec1292dd9ee5c6`.
+- Two clean MCPB builds were byte-identical: 2,996 files, 73,688,901 bytes,
+  SHA-256
+  `5d64d3e33168020f8f7304706eb2200821d6600dfaab162e8e48cff4867788ef`.
+- The packed macOS arm64 smoke passed with 41 tools, 14 prompts, PDF mutation,
+  source-bound comparison, and native raster rendering.
+- The installed Claude extension's extraction runtime is byte-identical to the
+  merged source. Its existing enabled setting was preserved, and the prior
+  extension was moved to the recoverable host-validation backup directory.
+- Claude's host log records a fresh server start, successful initialization,
+  and tool, prompt, and resource discovery after installation.
+- Installed-copy smoke passed with 41 unique tools, tool-contract SHA-256
+  `109df9e468513e07377804bff842ac9c398923d88dc07c0ffd68c12a8c075e82`,
+  native raster rendering, PDF mutation, allowed-directory success, and
+  outside-directory denial.
+- The installed copy reproduced the reviewed 55-page Shannon output exactly:
+  49 alphas, 498 replacement characters, 68 explicit gaps, 182,565 bytes, and
+  Markdown SHA-256
+  `2e7e4fb71d0ea116a352eb1aa1ed1b06c089969643073394d82e23eb5f6ffee3`.
