@@ -34,7 +34,12 @@ export const LUMIN_SIGN_V1_MAPPER_CONTRACT_SHA256 = createHash("sha256")
 
 function mappingError() {
   const error = new Error("LUMIN_MAPPING_INVALID: The Lumin Sign request intent failed local validation.");
-  error.code = "LUMIN_MAPPING_INVALID";
+  Object.defineProperty(error, "code", {
+    value: "LUMIN_MAPPING_INVALID",
+    enumerable: true,
+    writable: false,
+    configurable: false,
+  });
   return error;
 }
 
@@ -50,10 +55,44 @@ function assertExactKeys(value, required, optional = []) {
   if (actual.some(key => !allowed.includes(key)) || required.some(key => !actual.includes(key))) {
     throw new Error("invalid object keys");
   }
+  const normalized = Object.create(null);
   for (const key of actual) {
     const descriptor = Object.getOwnPropertyDescriptor(value, key);
     if (!descriptor?.enumerable || !("value" in descriptor)) throw new Error("invalid object property");
+    Object.defineProperty(normalized, key, {
+      value: descriptor.value,
+      enumerable: true,
+      writable: false,
+      configurable: false,
+    });
   }
+  return Object.freeze(normalized);
+}
+
+function assertDenseArray(value, { min = 0, max }) {
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype) {
+    throw new Error("invalid array");
+  }
+  const lengthDescriptor = Object.getOwnPropertyDescriptor(value, "length");
+  const length = lengthDescriptor?.value;
+  if (!Number.isSafeInteger(length) || length < min || length > max) throw new Error("invalid array length");
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.some(key => typeof key !== "string") || ownKeys.length !== length + 1) {
+    throw new Error("invalid array keys");
+  }
+  const normalized = new Array(length);
+  for (let index = 0; index < length; index += 1) {
+    const key = String(index);
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) throw new Error("invalid array element");
+    Object.defineProperty(normalized, key, {
+      value: descriptor.value,
+      enumerable: true,
+      writable: false,
+      configurable: false,
+    });
+  }
+  return Object.freeze(normalized);
 }
 
 function deepFreeze(value) {
@@ -109,30 +148,31 @@ function assertPublicHttpsUrl(value) {
 }
 
 function mapSigner(value, signingType) {
-  assertExactKeys(value, ["email_address", "name", "participant_id"], ["group"]);
-  const participantId = assertParticipantId(value.participant_id);
-  const signer = {
-    email_address: assertEmail(value.email_address),
-    name: assertBoundedString(value.name, { max: 255 }),
-  };
+  const signerIntent = assertExactKeys(value, ["email_address", "name", "participant_id"], ["group"]);
+  const participantId = assertParticipantId(signerIntent.participant_id);
+  const emailAddress = assertEmail(signerIntent.email_address);
+  const name = assertBoundedString(signerIntent.name, { max: 255 });
   if (signingType === "ORDER") {
-    if (!Number.isSafeInteger(value.group) || value.group < 1 || value.group > MAX_PARTICIPANTS) {
+    if (!Number.isSafeInteger(signerIntent.group) || signerIntent.group < 1 || signerIntent.group > MAX_PARTICIPANTS) {
       throw new Error("invalid signing group");
     }
-    signer.group = value.group;
-  } else if (value.group !== undefined) {
+    return {
+      participantId,
+      signer: { email_address: emailAddress, name, group: signerIntent.group },
+    };
+  } else if (signerIntent.group !== undefined) {
     throw new Error("unexpected signing group");
   }
-  return { participantId, signer };
+  return { participantId, signer: { email_address: emailAddress, name } };
 }
 
 function mapViewer(value) {
-  assertExactKeys(value, ["email_address", "name", "participant_id"]);
+  const viewerIntent = assertExactKeys(value, ["email_address", "name", "participant_id"]);
   return {
-    participantId: assertParticipantId(value.participant_id),
+    participantId: assertParticipantId(viewerIntent.participant_id),
     viewer: {
-      email_address: assertEmail(value.email_address),
-      name: assertBoundedString(value.name, { max: 255 }),
+      email_address: assertEmail(viewerIntent.email_address),
+      name: assertBoundedString(viewerIntent.name, { max: 255 }),
     },
   };
 }
@@ -144,9 +184,9 @@ function assertContiguousGroups(signers) {
 
 export function mapLuminSignV1SignatureRequest(intent, options = {}) {
   try {
-    assertExactKeys(options, [], ["nowMs"]);
-    const nowMs = options.nowMs === undefined ? Date.now() : options.nowMs;
-    assertExactKeys(intent, [
+    const validatedOptions = assertExactKeys(options, [], ["nowMs"]);
+    const nowMs = validatedOptions.nowMs === undefined ? Date.now() : validatedOptions.nowMs;
+    const requestIntent = assertExactKeys(intent, [
       "expires_at_ms",
       "field_mapping",
       "prepared_document",
@@ -155,59 +195,57 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
       "signing_type",
       "title",
     ], ["viewers"]);
-    if (intent.schema_version !== 1) throw new Error("unsupported intent schema");
+    if (requestIntent.schema_version !== 1) throw new Error("unsupported intent schema");
     if (!Number.isSafeInteger(nowMs) || nowMs < 0) throw new Error("invalid clock");
 
-    assertExactKeys(intent.prepared_document, ["sha256", "size_bytes", "transfer"]);
-    if (!SHA256_PATTERN.test(intent.prepared_document.sha256)) throw new Error("invalid prepared sha256");
+    const preparedDocument = assertExactKeys(requestIntent.prepared_document, ["sha256", "size_bytes", "transfer"]);
+    if (!SHA256_PATTERN.test(preparedDocument.sha256)) throw new Error("invalid prepared sha256");
     if (
-      !Number.isSafeInteger(intent.prepared_document.size_bytes)
-      || intent.prepared_document.size_bytes < 1
-      || intent.prepared_document.size_bytes > MAX_PROVIDER_FILE_BYTES
+      !Number.isSafeInteger(preparedDocument.size_bytes)
+      || preparedDocument.size_bytes < 1
+      || preparedDocument.size_bytes > MAX_PROVIDER_FILE_BYTES
     ) {
       throw new Error("invalid prepared size");
     }
-    assertExactKeys(intent.prepared_document.transfer, ["kind", "url"]);
-    if (intent.prepared_document.transfer.kind !== "https_url") throw new Error("unsupported transfer");
-    const fileUrl = assertPublicHttpsUrl(intent.prepared_document.transfer.url);
+    const transfer = assertExactKeys(preparedDocument.transfer, ["kind", "url"]);
+    if (transfer.kind !== "https_url") throw new Error("unsupported transfer");
+    const fileUrl = assertPublicHttpsUrl(transfer.url);
 
-    assertExactKeys(intent.field_mapping, ["evidence_status", "method"]);
-    if (intent.field_mapping.method !== "lumin_text_tags" || intent.field_mapping.evidence_status !== "caller_asserted") {
+    const fieldMapping = assertExactKeys(requestIntent.field_mapping, ["evidence_status", "method"]);
+    if (fieldMapping.method !== "lumin_text_tags" || fieldMapping.evidence_status !== "caller_asserted") {
       throw new Error("unsupported provider field mapping assertion");
     }
 
-    const title = assertBoundedString(intent.title, { max: 255 });
-    if (!Number.isSafeInteger(intent.expires_at_ms) || intent.expires_at_ms <= nowMs) {
+    const title = assertBoundedString(requestIntent.title, { max: 255 });
+    if (!Number.isSafeInteger(requestIntent.expires_at_ms) || requestIntent.expires_at_ms <= nowMs) {
       throw new Error("invalid expiry");
     }
-    if (!MAPPER_CONTRACT.supported_signing_types.includes(intent.signing_type)) {
+    if (!MAPPER_CONTRACT.supported_signing_types.includes(requestIntent.signing_type)) {
       throw new Error("unsupported signing type");
     }
-    if (!Array.isArray(intent.signers) || intent.signers.length < 1 || intent.signers.length > MAX_PARTICIPANTS) {
-      throw new Error("invalid signers");
-    }
-    if (!Array.isArray(intent.viewers ?? []) || (intent.viewers ?? []).length > MAX_PARTICIPANTS) {
-      throw new Error("invalid viewers");
-    }
+    const signerIntents = assertDenseArray(requestIntent.signers, { min: 1, max: MAX_PARTICIPANTS });
+    const viewerIntents = requestIntent.viewers === undefined
+      ? Object.freeze([])
+      : assertDenseArray(requestIntent.viewers, { max: MAX_PARTICIPANTS });
 
-    const mappedSigners = intent.signers.map(value => mapSigner(value, intent.signing_type));
-    const mappedViewers = (intent.viewers ?? []).map(mapViewer);
+    const mappedSigners = signerIntents.map(value => mapSigner(value, requestIntent.signing_type));
+    const mappedViewers = viewerIntents.map(mapViewer);
     if (mappedSigners.length + mappedViewers.length > MAX_PARTICIPANTS) {
       throw new Error("too many participants");
     }
     const participantIds = [...mappedSigners, ...mappedViewers].map(value => value.participantId);
     if (new Set(participantIds).size !== participantIds.length) throw new Error("duplicate participant binding");
-    if (intent.signing_type === "ORDER") assertContiguousGroups(mappedSigners.map(value => value.signer));
+    if (requestIntent.signing_type === "ORDER") assertContiguousGroups(mappedSigners.map(value => value.signer));
 
     const body = {
       file_url: fileUrl,
       title,
       signers: mappedSigners.map(value => value.signer),
-      expires_at: intent.expires_at_ms,
+      expires_at: requestIntent.expires_at_ms,
       use_text_tags: true,
-      signing_type: intent.signing_type,
+      signing_type: requestIntent.signing_type,
+      ...(mappedViewers.length ? { viewers: mappedViewers.map(value => value.viewer) } : {}),
     };
-    if (mappedViewers.length) body.viewers = mappedViewers.map(value => value.viewer);
 
     return deepFreeze({
       schema_version: 1,
@@ -231,8 +269,8 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
         body,
       },
       bindings: {
-        prepared_document_sha256: intent.prepared_document.sha256,
-        prepared_document_size_bytes: intent.prepared_document.size_bytes,
+        prepared_document_sha256: preparedDocument.sha256,
+        prepared_document_size_bytes: preparedDocument.size_bytes,
         participant_ids: participantIds,
       },
       limitations: [

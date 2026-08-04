@@ -179,22 +179,18 @@ describe("mapLuminSignV1SignatureRequest", () => {
   it("always maps caller-controlled exceptions to the fixed public error", () => {
     const sentinel = "SENTINEL_SECRET_FROM_PROXY";
     const intent = new Proxy(validIntent(), {
-      get(target, key, receiver) {
-        if (key === "schema_version") {
-          const error = new Error(sentinel);
-          error.code = "LUMIN_MAPPING_INVALID";
-          throw error;
-        }
-        return Reflect.get(target, key, receiver);
+      ownKeys() {
+        const error = new Error(sentinel);
+        error.code = "LUMIN_MAPPING_INVALID";
+        throw error;
       },
     });
     expectInvalid(intent, [sentinel]);
 
     const optionsSentinel = "SENTINEL_OPTIONS_SECRET";
     const options = new Proxy({}, {
-      get(target, key, receiver) {
-        if (key === "nowMs") throw new Error(optionsSentinel);
-        return Reflect.get(target, key, receiver);
+      ownKeys() {
+        throw new Error(optionsSentinel);
       },
     });
     try {
@@ -230,6 +226,52 @@ describe("mapLuminSignV1SignatureRequest", () => {
     const intent = validIntent();
     for (let index = 0; index < 1_000; index += 1) intent[`unknown_${index}`] = index;
     expectInvalid(intent);
+  });
+
+  it("never consumes inherited optional intent, option, or signer values", () => {
+    Object.defineProperties(Object.prototype, {
+      viewers: {
+        value: [{ participant_id: "polluted.viewer", email_address: "polluted@example.com", name: "Polluted" }],
+        configurable: true,
+        writable: true,
+      },
+      nowMs: { value: 0, configurable: true, writable: true },
+      group: { value: 1, configurable: true, writable: true },
+    });
+    try {
+      const noViewers = validIntent();
+      delete noViewers.viewers;
+      const result = map(noViewers);
+      expect(Object.hasOwn(result.request.body, "viewers")).toBe(false);
+      expect(result.bindings.participant_ids).not.toContain("polluted.viewer");
+
+      const stale = validIntent();
+      stale.expires_at_ms = 1;
+      try {
+        mapLuminSignV1SignatureRequest(stale);
+        throw new Error("expected mapper to reject inherited clock");
+      } catch (error) {
+        expect(error).toMatchObject({ code: "LUMIN_MAPPING_INVALID" });
+      }
+
+      const missingGroup = validIntent();
+      delete missingGroup.signers[0].group;
+      expectInvalid(missingGroup);
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "viewers");
+      Reflect.deleteProperty(Object.prototype, "nowMs");
+      Reflect.deleteProperty(Object.prototype, "group");
+    }
+  });
+
+  it("rejects sparse or property-bearing participant arrays", () => {
+    const sparse = validIntent();
+    sparse.signers = new Array(1);
+    expectInvalid(sparse);
+
+    const decorated = validIntent();
+    decorated.signers.api_key = "array-secret";
+    expectInvalid(decorated, ["array-secret"]);
   });
 
   it("refuses stale expiry and invalid prepared-document identity", () => {
