@@ -121,6 +121,7 @@ export function projectLuminSignV1OpenApi(specification) {
         enum: sortedStrings(requestSchema.properties?.signing_type?.enum, "signing_type enum"),
       },
       signer: {
+        property_names: Object.keys(required(signer.properties, "Signer properties")).sort(),
         required_fields: sortedStrings(signer.required, "Signer required fields"),
         email_address_type: required(signer.properties?.email_address?.type, "Signer email_address type"),
         name_type: required(signer.properties?.name?.type, "Signer name type"),
@@ -128,6 +129,7 @@ export function projectLuminSignV1OpenApi(specification) {
         group_example_type: signerGroupExampleType,
       },
       viewer: {
+        property_names: Object.keys(required(viewer.properties, "Viewer properties")).sort(),
         required_fields: sortedStrings(viewer.required, "Viewer required fields"),
         email_address_type: required(viewer.properties?.email_address?.type, "Viewer email_address type"),
         name_type: required(viewer.properties?.name?.type, "Viewer name type"),
@@ -191,6 +193,7 @@ export const LUMIN_SIGN_V1_OPENAPI_PROJECTION = deepFreeze({
     use_text_tags_type: "boolean",
     signing_type: { type: "string", enum: ["ORDER", "SAME_TIME"] },
     signer: {
+      property_names: ["email_address", "group", "name", "verification"],
       required_fields: ["email_address", "name"],
       email_address_type: "string",
       name_type: "string",
@@ -198,6 +201,7 @@ export const LUMIN_SIGN_V1_OPENAPI_PROJECTION = deepFreeze({
       group_example_type: "number",
     },
     viewer: {
+      property_names: ["email_address", "name"],
       required_fields: ["email_address", "name"],
       email_address_type: "string",
       name_type: "string",

@@ -63,6 +63,7 @@ function syntheticSpecification() {
             email_address: { type: "string" },
             name: { type: "string" },
             group: { type: "string" },
+            verification: { type: "object" },
           },
         },
         Viewer: {
@@ -83,7 +84,7 @@ describe("Lumin Sign v1 official OpenAPI contract", () => {
       LUMIN_SIGN_V1_OPENAPI_PROJECTION,
     );
     expect(LUMIN_SIGN_V1_OPENAPI_PROJECTION_SHA256).toBe(
-      "9906fefe48bc63b761eadce479405119e6597b0ea7fa2b5d677a3f253e218088",
+      "8f3fb987391ce1552ff25c8784b9dc2725cac9b2f833abe005e9f2569a9b2701",
     );
   });
 

@@ -30,19 +30,17 @@ function validIntent() {
     },
     title: "Consulting agreement",
     expires_at_ms: NOW_MS + 86_400_000,
-    signing_type: "ORDER",
+    signing_type: "SAME_TIME",
     signers: [
       {
         participant_id: "signer.client",
         email_address: "client@example.com",
         name: "Client Signer",
-        group: 1,
       },
       {
         participant_id: "signer.consultant",
         email_address: "consultant@example.com",
         name: "Consultant Signer",
-        group: 2,
       },
     ],
     viewers: [
@@ -73,12 +71,12 @@ function expectInvalid(intent, sentinels = []) {
 }
 
 describe("mapLuminSignV1SignatureRequest", () => {
-  it("maps a provisional ordered text-tag request bound to the exact OpenAPI snapshot without claiming provider execution, credentials, or transport", () => {
+  it("maps a provisional same-time text-tag request bound to the exact OpenAPI snapshot without claiming provider execution, credentials, or transport", () => {
     const result = map();
     expect(result).toEqual({
       schema_version: 1,
       provider: "lumin_sign",
-      api_version: "v1",
+      provider_api_path_version: "v1",
       mapper_contract_sha256: LUMIN_SIGN_V1_MAPPER_CONTRACT_SHA256,
       request_mapping_status: "provisional_unverified",
       official_reference_identity_status: "exact_snapshot_pinned",
@@ -87,7 +85,16 @@ describe("mapLuminSignV1SignatureRequest", () => {
         source_bytes: LUMIN_SIGN_V1_OPENAPI_SOURCE.bytes,
         source_sha256: LUMIN_SIGN_V1_OPENAPI_SOURCE.sha256,
         contract_projection_sha256: LUMIN_SIGN_V1_OPENAPI_PROJECTION_SHA256,
+        openapi_document_version: "3.1.0",
+        provider_info_version: "1.0.0",
         discrepancy_codes: ["SIGNER_GROUP_SCHEMA_EXAMPLE_TYPE_MISMATCH"],
+        unmapped_official_request_options: [
+          "custom_email",
+          "file",
+          "file_urls",
+          "files",
+          "signer_verification",
+        ],
       },
       transport_allowed: false,
       transport_status: "not_requested",
@@ -119,12 +126,12 @@ describe("mapLuminSignV1SignatureRequest", () => {
           file_url: "https://objects.example.com/prepared/document.pdf?grant=one-object",
           title: "Consulting agreement",
           signers: [
-            { email_address: "client@example.com", name: "Client Signer", group: 1 },
-            { email_address: "consultant@example.com", name: "Consultant Signer", group: 2 },
+            { email_address: "client@example.com", name: "Client Signer" },
+            { email_address: "consultant@example.com", name: "Consultant Signer" },
           ],
           expires_at: NOW_MS + 86_400_000,
           use_text_tags: true,
-          signing_type: "ORDER",
+          signing_type: "SAME_TIME",
           viewers: [
             { email_address: "counsel@example.com", name: "Review Counsel" },
           ],
@@ -141,6 +148,8 @@ describe("mapLuminSignV1SignatureRequest", () => {
         "provider_create_idempotency_not_established",
         "field_mapping_not_independently_verified",
         "provider_signer_group_type_reference_inconsistent",
+        "ordered_signing_blocked_pending_group_wire_type_resolution",
+        "prepared_file_size_bound_is_local_safety_policy_not_provider_limit",
         "participant_bounds_are_local_safety_policy_not_provider_limits",
         "participant_field_constraints_are_local_narrowing",
         "provider_expiry_horizon_not_established",
@@ -153,17 +162,19 @@ describe("mapLuminSignV1SignatureRequest", () => {
     expect(result.request).not.toHaveProperty("authorization");
     expect(result.request.body).not.toHaveProperty("api_key");
     expect(LUMIN_SIGN_V1_MAPPER_CONTRACT_SHA256).toBe(
-      "6e6d1d56b88ad548a065bcb6c713b662992c204509d9aabb6aec3e73a8d63d77",
+      "1c4c9ccff8f17e7317f280101cfa7a3df0850698edf8e8fdd57d376bf052657e",
     );
   });
 
-  it("maps same-time signing only when no ordering groups are supplied", () => {
-    const intent = validIntent();
-    intent.signing_type = "SAME_TIME";
-    intent.signers = intent.signers.map(({ group: _group, ...signer }) => signer);
-    const result = map(intent);
-    expect(result.request.body.signing_type).toBe("SAME_TIME");
-    expect(result.request.body.signers.every(signer => signer.group === undefined)).toBe(true);
+  it("fails closed on ordered signing or any signer group until the official type conflict is resolved", () => {
+    const ordered = validIntent();
+    ordered.signing_type = "ORDER";
+    ordered.signers[0].group = 1;
+    expectInvalid(ordered);
+
+    const groupedSameTime = validIntent();
+    groupedSameTime.signers[0].group = "1";
+    expectInvalid(groupedSameTime);
   });
 
   it("refuses visual placeholders or any unsupported field-mapping evidence status", () => {
@@ -171,14 +182,6 @@ describe("mapLuminSignV1SignatureRequest", () => {
     intent.field_mapping = { method: "pdf_tools_visual_placeholders", evidence_status: "caller_asserted" };
     expectInvalid(intent);
     intent.field_mapping = { method: "lumin_text_tags", evidence_status: "independently_verified" };
-    expectInvalid(intent);
-  });
-
-  it("requires contiguous ordered groups starting at one", () => {
-    const intent = validIntent();
-    intent.signers[1].group = 3;
-    expectInvalid(intent);
-    intent.signers[0].group = 0;
     expectInvalid(intent);
   });
 
@@ -253,7 +256,6 @@ describe("mapLuminSignV1SignatureRequest", () => {
       participant_id: `signer.${index}`,
       email_address: `signer.${index}@example.com`,
       name: `Signer ${index}`,
-      group: 1,
     }));
     expectInvalid(intent);
   });
@@ -290,9 +292,9 @@ describe("mapLuminSignV1SignatureRequest", () => {
         expect(error).toMatchObject({ code: "LUMIN_MAPPING_INVALID" });
       }
 
-      const missingGroup = validIntent();
-      delete missingGroup.signers[0].group;
-      expectInvalid(missingGroup);
+      const inheritedGroup = validIntent();
+      const inheritedGroupResult = map(inheritedGroup);
+      expect(inheritedGroupResult.request.body.signers[0]).not.toHaveProperty("group");
     } finally {
       Reflect.deleteProperty(Object.prototype, "viewers");
       Reflect.deleteProperty(Object.prototype, "nowMs");
@@ -361,6 +363,7 @@ describe("mapLuminSignV1SignatureRequest", () => {
     expect(Object.isFrozen(result.request.body.signers[0])).toBe(true);
     expect(Object.isFrozen(result.official_reference)).toBe(true);
     expect(Object.isFrozen(result.official_reference.discrepancy_codes)).toBe(true);
+    expect(Object.isFrozen(result.official_reference.unmapped_official_request_options)).toBe(true);
     expect(Object.isFrozen(result.request.authentication_alternatives)).toBe(true);
     expect(Object.isFrozen(result.request.authentication_alternatives[1].required_scopes)).toBe(true);
     expect(Object.isFrozen(result.bindings.participant_ids)).toBe(true);

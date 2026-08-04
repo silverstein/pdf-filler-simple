@@ -2,8 +2,8 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import { types as utilTypes } from "node:util";
 
-const MAX_PROVIDER_FILE_BYTES = 200 * 1024 * 1024;
-const MAX_PARTICIPANTS = 100;
+const MAX_LOCAL_PREPARED_DOCUMENT_BYTES = 200 * 1024 * 1024;
+const MAX_LOCAL_PARTICIPANTS = 100;
 const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 function canonicalJson(value) {
@@ -16,7 +16,7 @@ function canonicalJson(value) {
 
 const MAPPER_CONTRACT = Object.freeze({
   provider: "lumin_sign",
-  api_version: "v1",
+  provider_api_path_version: "v1",
   base_url: "https://api.luminpdf.com/v1",
   method: "POST",
   path: "/signature_request/send",
@@ -24,7 +24,7 @@ const MAPPER_CONTRACT = Object.freeze({
   official_openapi_source_url: "https://developers.luminpdf.com/tabs/api-reference/openapi.json",
   official_openapi_source_bytes: 121_913,
   official_openapi_source_sha256: "d59ba4a27b0ce795c1d366a81735a3dc918619951ecc5ec3fb7a7f80d878d5bc",
-  official_openapi_projection_sha256: "9906fefe48bc63b761eadce479405119e6597b0ea7fa2b5d677a3f253e218088",
+  official_openapi_projection_sha256: "8f3fb987391ce1552ff25c8784b9dc2725cac9b2f833abe005e9f2569a9b2701",
   official_reference_identity_status: "exact_snapshot_pinned",
   authentication_alternatives: [
     {
@@ -43,7 +43,15 @@ const MAPPER_CONTRACT = Object.freeze({
   ],
   supported_transfer: "https_url",
   supported_field_mapping: "lumin_text_tags",
-  supported_signing_types: ["ORDER", "SAME_TIME"],
+  supported_signing_types: ["SAME_TIME"],
+  blocked_signing_types: ["ORDER"],
+  unmapped_official_request_options: [
+    "custom_email",
+    "file",
+    "file_urls",
+    "files",
+    "signer_verification",
+  ],
   transport: "disabled",
 });
 
@@ -168,22 +176,11 @@ function assertPublicHttpsUrl(value) {
   return raw;
 }
 
-function mapSigner(value, signingType) {
-  const signerIntent = assertExactKeys(value, ["email_address", "name", "participant_id"], ["group"]);
+function mapSigner(value) {
+  const signerIntent = assertExactKeys(value, ["email_address", "name", "participant_id"]);
   const participantId = assertParticipantId(signerIntent.participant_id);
   const emailAddress = assertEmail(signerIntent.email_address);
   const name = assertBoundedString(signerIntent.name, { max: 255 });
-  if (signingType === "ORDER") {
-    if (!Number.isSafeInteger(signerIntent.group) || signerIntent.group < 1 || signerIntent.group > MAX_PARTICIPANTS) {
-      throw new Error("invalid signing group");
-    }
-    return {
-      participantId,
-      signer: { email_address: emailAddress, name, group: signerIntent.group },
-    };
-  } else if (signerIntent.group !== undefined) {
-    throw new Error("unexpected signing group");
-  }
   return { participantId, signer: { email_address: emailAddress, name } };
 }
 
@@ -196,11 +193,6 @@ function mapViewer(value) {
       name: assertBoundedString(viewerIntent.name, { max: 255 }),
     },
   };
-}
-
-function assertContiguousGroups(signers) {
-  const groups = [...new Set(signers.map(signer => signer.group))].sort((left, right) => left - right);
-  if (groups.some((group, index) => group !== index + 1)) throw new Error("noncontiguous signing groups");
 }
 
 export function mapLuminSignV1SignatureRequest(intent, options = {}) {
@@ -224,7 +216,7 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
     if (
       !Number.isSafeInteger(preparedDocument.size_bytes)
       || preparedDocument.size_bytes < 1
-      || preparedDocument.size_bytes > MAX_PROVIDER_FILE_BYTES
+      || preparedDocument.size_bytes > MAX_LOCAL_PREPARED_DOCUMENT_BYTES
     ) {
       throw new Error("invalid prepared size");
     }
@@ -244,20 +236,18 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
     if (!MAPPER_CONTRACT.supported_signing_types.includes(requestIntent.signing_type)) {
       throw new Error("unsupported signing type");
     }
-    const signerIntents = assertDenseArray(requestIntent.signers, { min: 1, max: MAX_PARTICIPANTS });
+    const signerIntents = assertDenseArray(requestIntent.signers, { min: 1, max: MAX_LOCAL_PARTICIPANTS });
     const viewerIntents = requestIntent.viewers === undefined
       ? Object.freeze([])
-      : assertDenseArray(requestIntent.viewers, { max: MAX_PARTICIPANTS });
+      : assertDenseArray(requestIntent.viewers, { max: MAX_LOCAL_PARTICIPANTS });
 
-    const mappedSigners = signerIntents.map(value => mapSigner(value, requestIntent.signing_type));
+    const mappedSigners = signerIntents.map(mapSigner);
     const mappedViewers = viewerIntents.map(mapViewer);
-    if (mappedSigners.length + mappedViewers.length > MAX_PARTICIPANTS) {
+    if (mappedSigners.length + mappedViewers.length > MAX_LOCAL_PARTICIPANTS) {
       throw new Error("too many participants");
     }
     const participantIds = [...mappedSigners, ...mappedViewers].map(value => value.participantId);
     if (new Set(participantIds).size !== participantIds.length) throw new Error("duplicate participant binding");
-    if (requestIntent.signing_type === "ORDER") assertContiguousGroups(mappedSigners.map(value => value.signer));
-
     const body = {
       file_url: fileUrl,
       title,
@@ -271,7 +261,7 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
     return deepFreeze({
       schema_version: 1,
       provider: "lumin_sign",
-      api_version: "v1",
+      provider_api_path_version: "v1",
       mapper_contract_sha256: LUMIN_SIGN_V1_MAPPER_CONTRACT_SHA256,
       request_mapping_status: "provisional_unverified",
       official_reference_identity_status: MAPPER_CONTRACT.official_reference_identity_status,
@@ -280,7 +270,10 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
         source_bytes: MAPPER_CONTRACT.official_openapi_source_bytes,
         source_sha256: MAPPER_CONTRACT.official_openapi_source_sha256,
         contract_projection_sha256: MAPPER_CONTRACT.official_openapi_projection_sha256,
+        openapi_document_version: "3.1.0",
+        provider_info_version: "1.0.0",
         discrepancy_codes: ["SIGNER_GROUP_SCHEMA_EXAMPLE_TYPE_MISMATCH"],
+        unmapped_official_request_options: [...MAPPER_CONTRACT.unmapped_official_request_options],
       },
       transport_allowed: false,
       transport_status: "not_requested",
@@ -310,6 +303,8 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
         "provider_create_idempotency_not_established",
         "field_mapping_not_independently_verified",
         "provider_signer_group_type_reference_inconsistent",
+        "ordered_signing_blocked_pending_group_wire_type_resolution",
+        "prepared_file_size_bound_is_local_safety_policy_not_provider_limit",
         "participant_bounds_are_local_safety_policy_not_provider_limits",
         "participant_field_constraints_are_local_narrowing",
         "provider_expiry_horizon_not_established",
