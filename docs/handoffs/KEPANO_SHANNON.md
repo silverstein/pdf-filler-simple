@@ -24,16 +24,16 @@ to replace it with a newly invented benchmark.
 ## Verified current state
 
 - Active worktree:
-  `/Users/silverbook/Sites/pdf-tools-worktrees/codex-shannon-prose-math-spacing`
-- Active branch: `codex/shannon-prose-math-spacing`
+  `/Users/silverbook/Sites/pdf-tools-worktrees/codex-shannon-simple-fraction`
+- Active branch: `codex/shannon-simple-fraction`
 - Exact current implementation and clean-suite checkpoint:
-  `7208abd739f394493278996f57d514fa6f4fda58`
+  `a6a2f79aaeb292d9dc8f65433feaf00ca7ea3705`
 - Later commits on the branch update evidence and this handoff only; use
   `git rev-parse HEAD` for the current published branch tip.
 - The documentation tip is intentionally resolved live rather than written
   into this file, because committing a self-referenced hash would immediately
   create a different tip. The tested runtime checkpoint above is immutable.
-- Publication status: draft PR #63, stacked directly on PR #62.
+- Publication status: draft PR #64, stacked directly on PR #63.
 - Current draft stack, reviewed from bottom to top:
 
 | PR | Draft outcome | Direct base |
@@ -47,11 +47,12 @@ to replace it with a newly invented benchmark.
 | #61 | Recover the first qualified legacy Type-3 glyph batch | PR #60 |
 | #62 | Recover the primary vetted Type-3 glyph batch | PR #61 |
 | #63 | Restore narrowly supported prose/math spacing | PR #62 |
+| #64 | Render explicitly barred prose fractions | PR #63 |
 
-All nine local branch tips matched their live GitHub PR heads during the
-2026-08-04 review. Each draft was open and mergeable with no comments, reviews,
-or reported checks. The cumulative top branch passed the complete verification
-described below.
+All ten local branch tips through PR #64 match their live GitHub PR heads.
+Each draft was open and mergeable during its live review. PR #64 is open,
+draft, mergeable, and clean with no comments, reviews, or reported checks. The
+cumulative top branch passed the complete verification described below.
 
 PR #61 is stacked directly on PR #60. On the verified Shannon PDF it changes
 exactly 31 intended codepoint positions without changing output length:
@@ -92,14 +93,21 @@ reference `In Table I` as a duplicated standalone table label, improving that
 sampled score from 6/7 to 7/7 without changing table output. Paragraph
 continuity remains 2/4.
 
-The active clean full repository run passed 1,888 tests with 80 intentional
+PR #64 converts one explicitly barred, single-digit stacked fraction from the
+split output `31` / `3` into `3 1/3`. It requires exact surrounding source
+whitespace, aligned same-font digits, same-line prose on both sides, and one
+matching thin source-painted bar. Missing, shifted, thick, or competing bars
+abstain. This improves sampled paragraph continuity from 2/4 to 3/4. It is not
+general formula or fraction reconstruction.
+
+The active clean full repository run passed 1,889 tests with 80 intentional
 skips and zero failures. The separate native Mac safety suite passed 62 with 9
-intentional skips and zero failures. The PR #63 Shannon evaluation ran three
+intentional skips and zero failures. The PR #64 Shannon evaluation ran three
 fresh repetitions with byte-identical Markdown. Its report SHA-256 is
-`6f9ec8aac28c9b25f181cbb91809e7ca300213be72fbb6fc16771ede94930572`,
+`e5339902bd55b9aabe2a1a2f60ccc76844323f0db83935bd641e0f43fddb8ccd`,
 stored outside the repository at:
 
-`/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-prose-math-spacing-final3-20260804-0845`
+`/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-simple-fraction-final3-20260804-0924`
 
 The exact PR #62 MCPB passed its packed smoke test and grew by only 2,075 bytes
 (approximately 0.0028%) over PR #61. First-party documentation, tests, and
@@ -119,20 +127,26 @@ backup remains at
 A Shannon conversion initiated inside a Claude chat remains an unrun UI-level
 check; do not silently claim that narrower proof.
 
-As of this handoff, PR #63 is an open draft stacked on PR #62. PR #63 has clean
-source-checkout, deterministic Shannon, native Mac safety, and transactional
-share-contract proof. Its two isolated MCPB builds were byte-identical: 3,000
-files, 73,643,660 bytes, SHA-256
+PR #63 remains an open draft stacked on PR #62. It has clean source-checkout,
+deterministic Shannon, native Mac safety, and transactional share-contract
+proof. Its two isolated MCPB builds were byte-identical: 3,000 files,
+73,643,660 bytes, SHA-256
 `23ba42f4c9f9c2949021c5b098748cd54e0f46145b6346d6478c9fe0dd118f18`.
 The packed copy passed its macOS arm64 smoke with all 40 tools, but has not been
 installed. The native installation, Claude host-loading, and installed-bundle
 server proof belongs only to the exact PR #62 artifact; do not silently
-transfer it to PR #63 or upgrade either result into release, cross-platform,
+transfer it to PR #63 or a later draft, or upgrade either result into release, cross-platform,
 or Claude-chat proof.
+
+PR #64's two isolated MCPB builds were byte-identical: 3,000 files, 73,645,475
+bytes, SHA-256
+`fa4431ca17894413484a5e940283b99ec6458e35031dee083a96b6fb4898287d`.
+The packed copy passed its macOS arm64 smoke with all 40 tools, all 14 prompts,
+PDF mutation, and native raster rendering. It has not been installed.
 
 ## Current decision boundary
 
-PR #63 is the active review target. Do not wander off to locate a different
+PR #64 is the active review target. Do not wander off to locate a different
 Kepano PDF. First recover the exact state above from Git and the evidence
 record, inspect the draft, and preserve its narrow safety claim.
 
@@ -147,7 +161,7 @@ his actual issue is honestly solved; otherwise do not ping him.
 
 If Mat later authorizes landing, preserve the order above. Merge PR #55 first,
 retarget PR #56 to `master`, verify its diff, and continue one PR at a time
-through #63. Never merge a higher draft while its direct base is still an
+through #64. Never merge a higher draft while its direct base is still an
 unmerged feature branch. Re-run the cumulative tests and package proof after
 the final landing; any repack has a new artifact identity. Installed Claude
 Desktop proof must be repeated for that new artifact identity after the code
@@ -177,8 +191,8 @@ node scripts/eval-run-shannon-markdown-bakeoff.mjs --source /Users/silverbook/Si
 ```
 
 Use a new output directory for every run. The active detailed evidence record
-is `docs/evidence/shannon-prose-math-spacing-2026-08.md`; the preceding record
-is `docs/evidence/shannon-primary-type3-glyph-batch-2026-08.md`.
+is `docs/evidence/shannon-explicit-stacked-fraction-2026-08.md`; the preceding
+record is `docs/evidence/shannon-prose-math-spacing-2026-08.md`.
 
 ## Working with Mat
 
