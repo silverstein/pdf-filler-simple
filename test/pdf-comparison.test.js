@@ -137,6 +137,18 @@ describe("PDF comparison primitives", () => {
     });
   });
 
+  it("masks only explained regions while retaining independent residual pixels", () => {
+    const before = render(12, 6);
+    const after = render(12, 6);
+    after.binary[(2 * 12 + 2) * 4] = 20;
+    after.binary[(2 * 12 + 9) * 4] = 20;
+    const difference = diffComparisonRgba(before, after, [[0, 0, 3, 3]]);
+    expect(difference.raw_changed_pixels).toBe(1);
+    expect(difference.components).toEqual([expect.objectContaining({
+      bounds: [8 / 1.5, 1 / 1.5, 2, 2],
+    })]);
+  });
+
   it("marks visual coverage unavailable when any requested native render is unavailable", () => {
     const supported = { status: "supported", reason_codes: [] };
     const document = side => ({

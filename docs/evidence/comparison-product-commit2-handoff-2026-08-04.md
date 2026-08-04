@@ -6,16 +6,44 @@
 - Branch: `codex/comparison-product-observations`
 - Parent: `c8fa7462f8664b3709aaaae23fc78d3de9ae21dc`
 - Selected program base: `8575246837e824239af03e63e9e2538852910403`
-- Implementation candidate: `96d314b01a1fecfa54811bc0255faa83e73edbf7`
-- Implementation tree: `752de29ca602222b52efdc16acc899a4eeaafb8d`
-- Evidence head: the clean docs-only commit containing this updated handoff;
-  use its exact SHA reported by the operator rather than a branch name.
+- Independently blocked implementation: `96d314b01a1fecfa54811bc0255faa83e73edbf7`
+  (tree `752de29ca602222b52efdc16acc899a4eeaafb8d`), reviewed at docs-only
+  evidence head `8696da4da0d80590e54d69222d41147f4050721f`.
+- Repair parent: `8696da4da0d80590e54d69222d41147f4050721f`.
+- Repair candidate: the single commit containing this handoff; consume the
+  exact SHA and tree reported by the operator, never the branch name.
 - Protected dependency: `pdfjs-dist` remains exactly `5.4.624`; no dependency
   was added or changed.
 
 This lane is collision-free with the Shannon work. It does not modify Shannon
 layout/Markdown implementation or its evidence. Shannon PR 62 remains a
 separate bounded glyph-recovery tranche and is not comparison-product proof.
+
+## Independent BLOCK and repair
+
+PurplePine independently returned BLOCK in Agent Mail reply 72 for exact
+`96d314b01a1fecfa54811bc0255faa83e73edbf7`. In a two-page reproduction, a
+page-1 semantic text change caused the identical independently proven page-2
+black-to-red visual delta to disappear, while visual coverage incorrectly
+remained `supported` and the document status remained `complete`. The cause
+was a document-global early return from residual raster comparison whenever
+any text, form, or annotation change had already been detected.
+
+The repair removes that global guard. Every aligned page pair requested for
+visual comparison is now raster-diffed. Regions already explained by text,
+form-field, or ordinary-annotation evidence on that exact page pair are masked
+with a one-render-pixel safety border; residual pixels elsewhere on the same
+page and on all other aligned pages remain observable. The result now binds
+requested and completed aligned-page visual-comparison counts. Supported
+visual coverage with a short completed count fails semantic validation; a
+runtime shortfall is typed partial coverage with
+`VISUAL_ALIGNED_PAGE_COMPARISON_SKIPPED`.
+
+The exact MCP regression covers page-1 `USD 10` to `USD 20` plus an independent
+page-2 black-to-red rectangle and proves the page-2 visual event is retained.
+The same test also proves an independent rectangle delta elsewhere on the same
+page as changed text remains observable. A primitive regression proves that
+masking an explained region does not mask a disconnected residual pixel.
 
 ## Implemented boundary
 
@@ -87,6 +115,11 @@ orphan observations. The validated score remains globally `passed: false`
 because OS network isolation and signed result attestation were intentionally
 absent; `benchmark_claim_ready` remains false.
 
+This scorer run predates the independent BLOCK and is historical evidence for
+the blocked SHA only. It is not scorer evidence for the repair candidate. Per
+the constrained session boundary, no deterministic package/scorer campaign or
+broad aggregate was rerun for this repair.
+
 Exact generated artifact bindings:
 
 - product report: `542187e110b35daa1a23e28b6348ae8941bc466a71643c6ac3c372b7ed32ce7e`
@@ -99,6 +132,24 @@ The generated raw artifacts remain in the preserved disposable review clone at
 Silverbook.
 
 ## Verification evidence
+
+Repair-candidate narrow evidence:
+
+- focused source/share, output-schema, comparator, MCP-contract, product
+  adapter, and six-repeat product-baseline bank: 6 files, 82 tests passed;
+- direct comparator and exact mixed-change bank: 2 files, 22 tests passed;
+- source/share `pdf-comparison.js` bytes are identical, SHA-256
+  `e51bd2558f68a1a97da3f6bab8a740debdc296303fa529bbbd4f36b36013013e`;
+- source/share `output-schemas.js` bytes are identical, SHA-256
+  `8d69414e52ae4d7cf5e34f7b502965a6e9a19b9643f5d8db716d0e6021d03921`;
+- source and staged-share tool discovery recompute the same frozen contract
+  SHA-256 `95896e8038c074b79971a6ff0401418b47557c5c6262733ad4357829851d5aaf`;
+- output mutation reducing the completed aligned-page visual count while
+  retaining supported coverage becomes `internal_validation_error`.
+
+The remaining evidence below is retained as historical exact-SHA evidence for
+the independently blocked implementation and must not be attributed to the
+repair commit:
 
 - Focused final source/share, schema, comparator, and inherited-provenance bank:
   6 files, 89 tests passed.
@@ -125,4 +176,5 @@ performed. Installed-host exercises, Stonebook x64 evidence, Claude-chat UI
 invocation, OS-denied benchmark isolation, signed result attestation, and broad
 benchmark/release claims remain separate gates. Any future integration must
 consume an exact reviewed SHA and preserve the Shannon/comparison ownership
-boundary.
+boundary. The repair remains BLOCKED pending a fresh independent ACCEPT/BLOCK
+review; this handoff does not self-approve it.

@@ -5,7 +5,7 @@ import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { PDFDocument, PDFName, PDFNumber, StandardFonts, degrees } from "pdf-lib";
+import { PDFDocument, PDFName, PDFNumber, StandardFonts, degrees, rgb } from "pdf-lib";
 import { validateStructuredToolResult } from "../server/output-schemas.js";
 import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
@@ -146,6 +146,87 @@ describe("compare_pdfs deterministic product", () => {
       }
     }
   }, 60_000);
+
+  it("retains independent page and same-page visual changes alongside semantic text changes", async () => {
+    async function makeMixedChangePdf(fileName, balance, rectangleColor, rectanglePage = 2) {
+      const pdf = await PDFDocument.create();
+      const font = await pdf.embedFont(StandardFonts.Helvetica);
+      const first = pdf.addPage([400, 400]);
+      first.drawText(`Current account balance: USD ${balance}`, {
+        x: 40,
+        y: 330,
+        size: 16,
+        font,
+      });
+      if (rectanglePage === 1) {
+        first.drawRectangle({ x: 80, y: 160, width: 120, height: 80, color: rectangleColor });
+      }
+      const second = pdf.addPage([400, 400]);
+      second.drawText("Stable independent visual page", { x: 40, y: 330, size: 16, font });
+      if (rectanglePage === 2) {
+        second.drawRectangle({ x: 80, y: 160, width: 120, height: 80, color: rectangleColor });
+      }
+      const filename = path.join(tempDirectory, fileName);
+      await fs.writeFile(filename, await pdf.save());
+      return filename;
+    }
+
+    const before = await makeMixedChangePdf("mixed-before.pdf", 10, rgb(0, 0, 0));
+    const visualOnly = await makeMixedChangePdf("mixed-visual-only.pdf", 10, rgb(1, 0, 0));
+    const mixed = await makeMixedChangePdf("mixed-text-and-visual.pdf", 20, rgb(1, 0, 0));
+    const samePageBefore = await makeMixedChangePdf("same-page-before.pdf", 10, rgb(0, 0, 0), 1);
+    const samePageAfter = await makeMixedChangePdf("same-page-after.pdf", 20, rgb(1, 0, 0), 1);
+    const compare = async after => client.callTool({
+      name: "compare_pdfs",
+      arguments: {
+        before_pdf_path: before,
+        after_pdf_path: after,
+        max_output_characters: 200_000,
+      },
+    });
+
+    const visualOnlyResult = await compare(visualOnly);
+    const mixedResult = await compare(mixed);
+    const samePageResult = await client.callTool({
+      name: "compare_pdfs",
+      arguments: {
+        before_pdf_path: samePageBefore,
+        after_pdf_path: samePageAfter,
+        max_output_characters: 200_000,
+      },
+    });
+    expect(visualOnlyResult.isError).not.toBe(true);
+    expect(mixedResult.isError).not.toBe(true);
+    const visualOnlyChange = visualOnlyResult.structuredContent.changes.find(change => change.kind === "visual");
+    const mixedVisualChange = mixedResult.structuredContent.changes.find(change => change.kind === "visual");
+    expect(visualOnlyChange).toBeTruthy();
+    expect(mixedResult.structuredContent.changes.map(change => change.kind))
+      .toEqual(["semantic_text", "visual"]);
+    expect(mixedVisualChange).toBeTruthy();
+    const mixedVisualObservations = mixedVisualChange.facets.flatMap(facet => [
+      facet.before_evidence_id,
+      facet.after_evidence_id,
+    ]).map(id => mixedResult.structuredContent.observations.find(observation => observation.id === id));
+    expect(mixedVisualObservations.every(observation => observation.page === 2)).toBe(true);
+    expect(mixedResult.structuredContent).toMatchObject({
+      status: "complete",
+      coverage: { visual: { status: "supported", reason_codes: [] } },
+      resource_usage: {
+        aligned_page_visual_comparisons_requested: 2,
+        aligned_page_visual_comparisons_completed: 2,
+      },
+    });
+    expect(mixedVisualChange.facets[0].operation).toBe(visualOnlyChange.facets[0].operation);
+    expect(samePageResult.isError).not.toBe(true);
+    expect(samePageResult.structuredContent.changes.map(change => change.kind))
+      .toEqual(["semantic_text", "visual"]);
+    const samePageVisualChange = samePageResult.structuredContent.changes.find(change => change.kind === "visual");
+    const samePageVisualObservations = samePageVisualChange.facets.flatMap(facet => [
+      facet.before_evidence_id,
+      facet.after_evidence_id,
+    ]).map(id => samePageResult.structuredContent.observations.find(observation => observation.id === id));
+    expect(samePageVisualObservations.every(observation => observation.page === 1)).toBe(true);
+  }, 30_000);
 
   it("keeps visual-not-requested outside status while preserving typed coverage", async () => {
     const beforeBytes = await fs.readFile(BASE);
@@ -452,6 +533,7 @@ describe("compare_pdfs deterministic product", () => {
       value => { value.summary.reported_change_count = 0; },
       value => { value.summary.no_reported_changes = true; },
       value => { value.resource_usage.network_requests = 1; },
+      value => { value.resource_usage.aligned_page_visual_comparisons_completed -= 1; },
       value => { value.observations[0].document_sha256 = "0".repeat(64); },
       value => { value.observations[0].page = value.before_source.page_count + 1; },
       value => { value.observations[0].native_region = [0, 0, -1, 1]; },

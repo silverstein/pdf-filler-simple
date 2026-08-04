@@ -34,6 +34,7 @@ export const PDF_COMPARISON_CHANNELS = Object.freeze([
 const PDF_COMPARISON_COVERAGE_REASONS = new Set([
   "VISUAL_NOT_REQUESTED",
   "VISUAL_RENDERER_UNAVAILABLE",
+  "VISUAL_ALIGNED_PAGE_COMPARISON_SKIPPED",
   ...["BEFORE", "AFTER"].flatMap(side => [
     `${side}_PAGE_LIMIT_REACHED`,
     `${side}_PAGE_PARSE_UNAVAILABLE`,
@@ -334,14 +335,32 @@ function cropRgba(render, region) {
   return { bytes, sha256: comparisonSha256(bytes) };
 }
 
-export function diffComparisonRgba(before, after) {
+function comparisonIgnoredPixelMask(render, regions) {
+  const mask = new Uint8Array(render.width * render.height);
+  for (const region of regions) {
+    if (!Array.isArray(region) || region.length !== 4 || !region.every(Number.isFinite)
+      || region[2] <= 0 || region[3] <= 0) continue;
+    const x0 = Math.max(0, Math.floor(region[0] * render.scale) - 1);
+    const y0 = Math.max(0, Math.floor(region[1] * render.scale) - 1);
+    const x1 = Math.min(render.width, Math.ceil((region[0] + region[2]) * render.scale) + 1);
+    const y1 = Math.min(render.height, Math.ceil((region[1] + region[3]) * render.scale) + 1);
+    for (let y = y0; y < y1; y += 1) {
+      mask.fill(1, y * render.width + x0, y * render.width + x1);
+    }
+  }
+  return mask;
+}
+
+export function diffComparisonRgba(before, after, ignoredRegions = []) {
   if (before.width !== after.width || before.height !== after.height) {
     return { dimension_mismatch: true, raw_changed_pixels: null, changed_pixels: null, changed_fraction: null, bounds: null, components: [] };
   }
   const pixelCount = before.width * before.height;
+  const ignoredPixels = comparisonIgnoredPixelMask(before, ignoredRegions);
   const threshold = new Uint8Array(pixelCount);
   let rawChangedPixels = 0;
   for (let pixel = 0; pixel < pixelCount; pixel += 1) {
+    if (ignoredPixels[pixel]) continue;
     const offset = pixel * 4;
     let maximumDelta = 0;
     for (let channel = 0; channel < 4; channel += 1) {
@@ -774,11 +793,32 @@ function detectStructure(state, alignments) {
   }
 }
 
-function detectResidualVisual(state, pairs, contentChanges, includeVisual) {
-  if (!includeVisual || contentChanges > 0) return;
+function residualVisualIgnoredRegions(state, pair) {
+  const observations = new Map(state.observations.map(observation => [observation.id, observation]));
+  const regions = [];
+  const addRegion = (id, side, page) => {
+    if (!id) return;
+    const observation = observations.get(id);
+    if (observation?.side === side && observation.page === page) regions.push(observation.display_region);
+  };
+  for (const change of state.changes) {
+    for (const facet of change.facets) {
+      if (!["text", "form_field", "annotation"].includes(facet.channel)) continue;
+      addRegion(facet.before_evidence_id, "before", pair.beforePage.page);
+      addRegion(facet.after_evidence_id, "after", pair.afterPage.page);
+    }
+  }
+  return [...new Map(regions.map(region => [canonical(region), region])).values()];
+}
+
+function detectResidualVisual(state, pairs, includeVisual) {
+  const analysis = { requested: includeVisual ? pairs.length : 0, completed: 0 };
+  if (!includeVisual) return analysis;
   for (const pair of pairs) {
     if (!pair.beforeRender || !pair.afterRender) continue;
-    const difference = diffComparisonRgba(pair.beforeRender, pair.afterRender);
+    analysis.completed += 1;
+    const ignoredRegions = residualVisualIgnoredRegions(state, pair);
+    const difference = diffComparisonRgba(pair.beforeRender, pair.afterRender, ignoredRegions);
     if (!difference.dimension_mismatch && difference.changed_pixels === 0) continue;
     const textEqual = pageText(pair.beforePage) === pageText(pair.afterPage);
     const layoutNoise = textEqual && difference.components.length > 3;
@@ -793,6 +833,7 @@ function detectResidualVisual(state, pairs, contentChanges, includeVisual) {
       after_evidence_id: observe(state, "after", "visual", pair.afterPage, null, region, afterCrop.bytes, { difference, sha256: afterCrop.sha256 }),
     }], layoutNoise ? "CALIBRATED_LAYOUT_NOISE" : null);
   }
+  return analysis;
 }
 
 function validateDocumentInput(document, side) {
@@ -861,9 +902,9 @@ export function buildPdfComparison({
   const pairs = alignedPagePairs(before, after, alignments);
   const state = createState(mode, before, after);
   detectStructure(state, alignments);
-  const contentChanges = detectText(state, pairs, includeVisual);
-  const fieldChanges = detectFormChanges(state, includeVisual, alignments);
-  const annotationChanges = detectRecordChanges(
+  detectText(state, pairs, includeVisual);
+  detectFormChanges(state, includeVisual, alignments);
+  detectRecordChanges(
     state, "annotation", before.observation.annotations.items, after.observation.annotations.items,
     item => canonical([item.source_object_id, item.subtype, item.page]),
     annotationKey,
@@ -872,7 +913,11 @@ export function buildPdfComparison({
     item => item.contents,
   );
   detectMetadata(state);
-  detectResidualVisual(state, pairs, contentChanges + fieldChanges + annotationChanges, includeVisual);
+  const visualAnalysis = detectResidualVisual(state, pairs, includeVisual);
+  if (includeVisual && coverageByChannel.visual.status === "supported"
+    && visualAnalysis.completed !== visualAnalysis.requested) {
+    coverageByChannel.visual = coverage("partial", ["VISUAL_ALIGNED_PAGE_COMPARISON_SKIPPED"]);
+  }
 
   const limitations = Object.entries(coverageByChannel).flatMap(([channel, value]) => value.reason_codes.map(reason => `${channel}:${reason}`));
   const status = Object.entries(coverageByChannel).some(([channel, value]) => value.status !== "supported"
@@ -906,6 +951,8 @@ export function buildPdfComparison({
       source_bytes: before.observation.source.size_bytes + after.observation.source.size_bytes,
       rendered_pixels: [...before.renders, ...after.renders]
         .filter(Boolean).reduce((sum, render) => sum + render.width * render.height, 0),
+      aligned_page_visual_comparisons_requested: visualAnalysis.requested,
+      aligned_page_visual_comparisons_completed: visualAnalysis.completed,
       network_requests: 0,
       external_persistence_writes: 0,
     },
@@ -1044,6 +1091,25 @@ export function validatePdfComparisonSemantics(payload) {
       || [...pages].some(page => !Number.isSafeInteger(page) || page < 1 || page > expectedCount)) {
       semanticError(`${side} page alignments do not cover the source envelope`);
     }
+  }
+  const pairedAlignmentCount = payload.page_alignments.filter(alignment => alignment.before_page !== null
+    && alignment.after_page !== null).length;
+  const visualNotRequested = payload.coverage.visual.reason_codes.includes("VISUAL_NOT_REQUESTED");
+  const expectedVisualRequests = visualNotRequested ? 0 : pairedAlignmentCount;
+  const visualRequests = payload.resource_usage.aligned_page_visual_comparisons_requested;
+  const visualCompleted = payload.resource_usage.aligned_page_visual_comparisons_completed;
+  if (visualRequests !== expectedVisualRequests || visualCompleted > visualRequests
+    || visualCompleted < 0 || !Number.isSafeInteger(visualCompleted)) {
+    semanticError("visual comparison accounting does not bind aligned pages");
+  }
+  const hasSkippedVisualReason = payload.coverage.visual.reason_codes
+    .includes("VISUAL_ALIGNED_PAGE_COMPARISON_SKIPPED");
+  if (payload.coverage.visual.status === "supported" && visualCompleted !== visualRequests) {
+    semanticError("supported visual coverage skipped an aligned page comparison");
+  }
+  if (hasSkippedVisualReason !== (payload.coverage.visual.status === "partial"
+    && visualCompleted < visualRequests)) {
+    semanticError("skipped visual comparison reason does not match accounting");
   }
 
   const observations = new Map();

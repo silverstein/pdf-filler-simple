@@ -1048,6 +1048,8 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       duration_ms: number,
       source_bytes: integer,
       rendered_pixels: integer,
+      aligned_page_visual_comparisons_requested: integer,
+      aligned_page_visual_comparisons_completed: integer,
       network_requests: { const: 0 },
       external_persistence_writes: { const: 0 },
     }),
