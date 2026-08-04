@@ -140,7 +140,10 @@ function fakePdfjs(pageConfigs) {
         },
       };
     },
-    getOperatorList: async () => ({ fnArray: config.operations ?? [], argsArray: config.argsArray ?? [] }),
+    getOperatorList: async () => ({
+      fnArray: config.operations ?? [],
+      argsArray: config.argsArray ?? config.operatorArgs ?? (config.operations ?? []).map(() => null),
+    }),
     getAnnotations: async () => {
       if (config.annotationError) throw config.annotationError;
       return config.annotations ?? [];
@@ -175,6 +178,7 @@ function fakePdfjs(pageConfigs) {
       closeFillStroke: 19,
       closeEOFillStroke: 20,
       endPath: 21,
+      paintSolidColorImageMask: 76,
     },
     Util: { transform: multiply },
     getDocument: () => ({
@@ -203,6 +207,30 @@ async function validatedSyntheticLayout(pageConfigs) {
     requestedEndPage: pageConfigs.length,
     maxOutputCharacters: 200000,
   });
+}
+
+function paintedGridOperations({ xs, ys, missingVertical = null }) {
+  const rectangles = [
+    ...ys.map(y => ({ x: xs[0], y, width: xs[xs.length - 1] - xs[0], height: 0.5 })),
+    ...xs.filter(x => x !== missingVertical).map(x => ({
+      x,
+      y: ys[0],
+      width: 0.5,
+      height: ys[ys.length - 1] - ys[0],
+    })),
+  ];
+  const operations = [];
+  const operatorArgs = [];
+  for (const rectangle of rectangles) {
+    operations.push(4, 6, 7, 5);
+    operatorArgs.push(
+      null,
+      [rectangle.width, 0, 0, -rectangle.height, rectangle.x, 792 - rectangle.y],
+      [],
+      null,
+    );
+  }
+  return { operations, operatorArgs };
 }
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -595,6 +623,68 @@ describe("layout Markdown renderer", () => {
     expect(first.markdown_bytes).toBe(Buffer.byteLength(first.markdown, "utf8"));
     expect(first.markdown_sha256).toBe(createHash("sha256").update(first.markdown).digest("hex"));
     expect(validateMarkdownConversionSemantics(first, { layout })).toBe(first);
+  });
+
+  it("uses a complete painted grid to recover multi-line table cells", async () => {
+    const rules = paintedGridOperations({ xs: [100, 250, 400], ys: [100, 130, 200, 270] });
+    const layout = await validatedSyntheticLayout([{
+      ...rules,
+      items: [
+        centeredTextItem("TABLE 1", { top: 70, fontSize: 10 }),
+        positionedTextItem("FIRST", { top: 105, left: 120, width: 30 }),
+        positionedTextItem("SECOND", { top: 105, left: 270, width: 40, eol: true }),
+        positionedTextItem("alpha", { top: 145, left: 120, width: 30 }),
+        positionedTextItem("one", { top: 155, left: 120, width: 20, eol: true }),
+        positionedTextItem("10", { top: 150, left: 270, width: 12, eol: true }),
+        positionedTextItem("beta", { top: 215, left: 120, width: 25, eol: true }),
+        positionedTextItem("20", { top: 220, left: 270, width: 12, eol: true }),
+        textItem("Following prose remains outside the table.", { top: 300 }),
+      ],
+    }]);
+    expect(layout.pages[0].painted_rectangles).toMatchObject({
+      status: "available",
+      truncated: false,
+      observed_count: 7,
+      returned_count: 7,
+    });
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown).toContain("| FIRST | SECOND |\n| --- | --- |\n| alpha<br>one | 10 |\n| beta | 20 |");
+    expect(result.markdown).toContain("Following prose remains outside the table.");
+    expect(result.gaps.map(gap => gap.code)).not.toContain("TABLE_TOPOLOGY_UNKNOWN");
+  });
+
+  it("refuses incomplete grids and closed grids without header evidence", async () => {
+    const incomplete = paintedGridOperations({
+      xs: [100, 250, 400],
+      ys: [100, 130, 200, 270],
+      missingVertical: 250,
+    });
+    const items = [
+      centeredTextItem("TABLE 1", { top: 70, fontSize: 10 }),
+      positionedTextItem("FIRST", { top: 105, left: 120, width: 30 }),
+      positionedTextItem("SECOND", { top: 105, left: 270, width: 40, eol: true }),
+      positionedTextItem("alpha", { top: 150, left: 120, width: 30 }),
+      positionedTextItem("10", { top: 150, left: 270, width: 12, eol: true }),
+      positionedTextItem("beta", { top: 220, left: 120, width: 25 }),
+      positionedTextItem("20", { top: 220, left: 270, width: 12, eol: true }),
+    ];
+    const closed = paintedGridOperations({ xs: [100, 250, 400], ys: [100, 130, 200, 270] });
+    const crossing = [
+      centeredTextItem("TABLE 2", { top: 70, fontSize: 10 }),
+      positionedTextItem("CROSSING HEADER", { top: 105, left: 225, width: 80, eol: true }),
+      ...items.slice(3),
+    ];
+    const layout = await validatedSyntheticLayout([
+      { ...incomplete, items },
+      { ...closed, items: items.slice(1) },
+      { ...closed, items: crossing },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.gaps).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 2 }),
+      expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 3 }),
+    ]));
+    expect(result.markdown.match(/\| --- \| --- \|/gu)).toBeNull();
   });
 
   it("does not invent a heading without enough geometric evidence", async () => {

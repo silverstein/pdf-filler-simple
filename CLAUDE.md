@@ -146,6 +146,9 @@ against a second parse). It reconstructs a table from recurring column
 geometry, or from clean ruled-rectangle grid evidence when every rect aligns
 to exactly one cell, every text item lands in exactly one cell, and the first
 row carries header evidence (typographic or a non-recurring first-row band);
+it may also use a complete closed grid of bounded axis-aligned solid-mask
+rectangles when every text item fits exactly one cell and independent caption
+and header evidence are present;
 overlapping grids, body-row bands, merged or spanning cells, ambiguous
 assignments, and line-segment-only rulings all abandon with typed gaps
 (`TABLE_TOPOLOGY_UNKNOWN`, `TABLE_RULING_UNSUPPORTED`). A text layer that is

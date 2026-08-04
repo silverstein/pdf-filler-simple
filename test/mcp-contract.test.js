@@ -53,8 +53,11 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-08-03: convert_pdf_to_markdown renderer 1.5.0 adds bounded drop-cap
 // continuation while preserving ordinary printed line-end hyphens.
 // 2026-08-03: convert_pdf_to_markdown renderer 1.6.0 adds bounded, local
-// math-operator spacing with explicit limitations. The final combined contract
-// digest is refreshed after the integration replay.
+// math-operator spacing with explicit limitations.
+// 2026-08-03: extraction IR 1.2.0 preserves bounded solid-mask rectangle
+// evidence and Markdown renderer 1.7.0 uses only complete closed grids for
+// ruled tables. The final combined contract digest is refreshed after the
+// integration replay.
 const TOOL_CONTRACT_SHA256 = "aca6dabd3add8c1299da548253d804ae08ab27e94b8c8485a1c9c2ad6e41a1f3";
 
 const CLOSED_READ = Object.freeze({

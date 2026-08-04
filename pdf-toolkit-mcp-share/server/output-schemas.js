@@ -387,6 +387,20 @@ const layoutError = object({
   message: string,
 });
 const layoutPoint = object({ x: number, y: number });
+const layoutPaintedRectangles = object({
+  status: enumString(["available", "unavailable"]),
+  truncated: boolean,
+  observed_count: integer,
+  returned_count: integer,
+  items: arrayOf(object({
+    id: string,
+    source_operation_index: integer,
+    source_kind: { const: "solid_color_image_mask" },
+    graphics_transform: { type: "array", minItems: 6, maxItems: 6, items: number },
+    quad: { type: "array", minItems: 4, maxItems: 4, items: layoutPoint },
+    bbox: layoutBox,
+  })),
+});
 const layoutRawItem = object({
   id: string,
   source_index: integer,
@@ -518,6 +532,7 @@ const layoutPage = object({
   ruled_rects: layoutRuledRects,
   text_integrity: layoutTextIntegrity,
   operator_counts: layoutOperatorCounts,
+  painted_rectangles: layoutPaintedRectangles,
   link_annotations: object({
     status: enumString(["available", "unavailable"]),
     truncated: boolean,
@@ -645,7 +660,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
   convert_pdf_to_markdown: object({
     renderer: object({
       name: { const: "pdf-tools.layout-markdown-renderer" },
-      version: { const: "1.6.0" },
+      version: { const: "1.7.0" },
     }),
     conversion_status: enumString(["complete", "partial", "failed"]),
     markdown: string,

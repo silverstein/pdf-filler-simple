@@ -2703,7 +2703,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "convert_pdf_to_markdown",
-        description: "Convert a bounded page range of a local PDF into deterministic Markdown from the source-validated PDF Tools Extraction IR. Headings and lists require geometry or literal marker evidence. A table is reconstructed only when every row fills every recurring detected column and the first row carries real header evidence. A link is emitted only for a source-validated external http or https annotation target covering one contiguous run of text on one line. Unsupported table structures and link targets, including merged cells, internal destinations, actions, and other schemes, stay escaped text reported as typed coverage gaps. No OCR and no external model. Optionally enable compact mode for counted dot-leader, isolated page-number, and spaced-hyphen normalizations; default output remains unchanged. Optionally saves UTF-8 Markdown through the transactional output path. Use absolute or ~/ paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Convert a bounded page range of a local PDF into deterministic Markdown from the source-validated PDF Tools Extraction IR. Headings and lists require geometry or literal marker evidence. A table requires a complete recurring text grid, a clean ruled-rectangle grid, or a complete closed painted grid, with every item in one cell and real header evidence. A link requires a source-validated external http or https annotation target covering one contiguous text run. Unsupported tables and link targets, including merged cells, internal destinations, actions, and other schemes, stay escaped text with typed gaps. No OCR or external model. Optionally enable compact mode for counted dot-leader, isolated page-number, and spaced-hyphen normalizations; default output remains unchanged. Optionally saves transactional UTF-8 Markdown. Use absolute or ~/ local paths, not Claude container paths (/mnt/...).",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -4624,7 +4624,7 @@ async function handleToolCall(request) {
             ...(pagesNeedingVision.length > 0
               ? [`Vision routing: use render_pdf_page for pages ${pagesNeedingVision.map(entry => entry.page).join(", ")}.`]
               : []),
-            "No OCR, external model, hidden link-target recovery, or table-topology inference was performed.",
+            "No OCR, external model, hidden link-target recovery, or table inference beyond complete source-bound text, ruled, or painted grids was performed.",
             rendered.markdown,
           ].join("\n\n");
           return {

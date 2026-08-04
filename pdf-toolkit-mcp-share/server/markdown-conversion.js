@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.6.0",
+  version: "1.7.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.2.0";
 
@@ -23,6 +23,10 @@ const TABLE_MIN_COLUMN_ROWS = 2;
 const TABLE_COLUMNAR_COVERAGE = 0.8;
 // How much taller the first row must be to evidence a header row.
 const HEADER_HEIGHT_RATIO = 1.15;
+const RULE_MAX_THICKNESS = 1.5;
+const RULE_AXIS_TOLERANCE = 1;
+const RULE_JOIN_TOLERANCE = 1;
+const RULE_EDGE_TOLERANCE = 1.5;
 
 // Ported from firecrawl/pdf-inspector (MIT): src/tables/detect_rects.rs.
 // These are deliberately named, bounded geometry gates rather than a
@@ -67,8 +71,8 @@ const LIMITATIONS = Object.freeze([
   "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different embedded-font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. General equations, scripts, fraction bars, and damaged mathematical glyphs remain source reading-order text rather than being guessed.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
-  "Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.",
-  "Vector paint operations beyond any reconstructed table rulings are not interpreted.",
+  "Tables are reconstructed only from complete text-item column geometry, clean ruled-rectangle grid evidence, or a complete closed grid of bounded axis-aligned solid-mask rectangles. Every text item must fit exactly one cell and the first row must carry real header evidence because Markdown imposes header semantics. Merged or spanning cells, incomplete grids, cell artwork, and damaged mathematical glyphs are not interpreted; ambiguous content remains escaped reading-order text with a conversion gap.",
+  "Vector paint operations beyond any reconstructed ruled or solid-mask table grid are not interpreted.",
   "OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.",
   "Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.",
 ]);
@@ -1077,17 +1081,212 @@ function tryBuildRectGrid(page, run, clusters, itemById) {
   return null;
 }
 
-/**
- * Partition a page's lines into reading-order segments. Each segment is either
- * a confidently reconstructed table or a run of ordinary lines. Table-like runs
- * that cannot be reconstructed are returned as text with tableReason set, so
- * the caller can report typed partial coverage instead of silently flattening.
- */
-function segmentPageLines(page) {
-  const itemById = new Map(page.raw_items.map(item => [item.id, item]));
-  const rows = page.lines.map(line => ({ line, cells: lineCells(line, itemById) }));
-  const ruledRects = preprocessRuledRects(page);
-  const ruledClusters = ruledRects ? clusterRuledRects(ruledRects) : [];
+function mergeRuleSegments(rectangles, orientation) {
+  const horizontal = orientation === "horizontal";
+  const candidates = rectangles
+    .map(item => item.bbox)
+    .filter(rect => horizontal
+      ? rect.height <= RULE_MAX_THICKNESS && rect.width >= 20
+      : rect.width <= RULE_MAX_THICKNESS && rect.height >= 8)
+    .map(rect => ({
+      axis: horizontal ? rect.y + rect.height / 2 : rect.x + rect.width / 2,
+      start: horizontal ? rect.x : rect.y,
+      end: horizontal ? rect.x + rect.width : rect.y + rect.height,
+    }))
+    .sort((left, right) => left.axis - right.axis || left.start - right.start);
+  const axisGroups = [];
+  for (const candidate of candidates) {
+    const group = axisGroups.find(value => Math.abs(value.axis - candidate.axis) <= RULE_AXIS_TOLERANCE);
+    if (group) {
+      group.values.push(candidate);
+      group.axis = median(group.values.map(value => value.axis));
+    } else {
+      axisGroups.push({ axis: candidate.axis, values: [candidate] });
+    }
+  }
+  const merged = [];
+  for (const group of axisGroups) {
+    const spans = group.values.sort((left, right) => left.start - right.start);
+    for (const span of spans) {
+      const prior = merged[merged.length - 1];
+      if (prior && Math.abs(prior.axis - group.axis) <= RULE_AXIS_TOLERANCE
+        && span.start <= prior.end + RULE_JOIN_TOLERANCE) {
+        prior.end = Math.max(prior.end, span.end);
+      } else {
+        merged.push({ axis: group.axis, start: span.start, end: span.end });
+      }
+    }
+  }
+  return merged;
+}
+
+function uniqueCoordinates(values) {
+  const unique = [];
+  for (const value of [...values].sort((left, right) => left - right)) {
+    if (unique.length === 0 || Math.abs(unique[unique.length - 1] - value) > RULE_AXIS_TOLERANCE) {
+      unique.push(value);
+    } else {
+      unique[unique.length - 1] = (unique[unique.length - 1] + value) / 2;
+    }
+  }
+  return unique;
+}
+
+function closedRuleGrid(page) {
+  const evidence = page.painted_rectangles;
+  if (!evidence || evidence.status !== "available" || evidence.truncated || evidence.items.length === 0) {
+    return null;
+  }
+  const horizontal = mergeRuleSegments(evidence.items, "horizontal")
+    .filter(rule => rule.end - rule.start >= 100);
+  const vertical = mergeRuleSegments(evidence.items, "vertical");
+  const candidates = [];
+  for (const seed of horizontal) {
+    const peers = horizontal.filter(rule => Math.abs(rule.start - seed.start) <= RULE_EDGE_TOLERANCE
+      && Math.abs(rule.end - seed.end) <= RULE_EDGE_TOLERANCE);
+    const ys = uniqueCoordinates(peers.map(rule => rule.axis));
+    if (ys.length < 3 || ys.some((value, index) => index > 0 && value - ys[index - 1] < 8)) continue;
+    const top = ys[0];
+    const bottom = ys[ys.length - 1];
+    const spanning = vertical.filter(rule => rule.start <= top + RULE_EDGE_TOLERANCE
+      && rule.end >= bottom - RULE_EDGE_TOLERANCE
+      && rule.axis >= seed.start - RULE_EDGE_TOLERANCE
+      && rule.axis <= seed.end + RULE_EDGE_TOLERANCE);
+    const xs = uniqueCoordinates(spanning.map(rule => rule.axis));
+    if (xs.length < 3
+      || Math.abs(xs[0] - seed.start) > RULE_EDGE_TOLERANCE
+      || Math.abs(xs[xs.length - 1] - seed.end) > RULE_EDGE_TOLERANCE
+      || xs.some((value, index) => index > 0 && value - xs[index - 1] < 12)) continue;
+    candidates.push({ xs, ys });
+  }
+  const distinct = [];
+  for (const candidate of candidates) {
+    const key = JSON.stringify({
+      xs: candidate.xs.map(value => Number(value.toFixed(1))),
+      ys: candidate.ys.map(value => Number(value.toFixed(1))),
+    });
+    if (!distinct.some(value => value.key === key)) distinct.push({ key, ...candidate });
+  }
+  return distinct.length === 1 ? distinct[0] : null;
+}
+
+function itemCell(item, xs, ys) {
+  if (!item.geometry_valid || !item.bbox || item.text_kind !== "non_whitespace") return null;
+  const centerX = item.bbox.x + item.bbox.width / 2;
+  const centerY = item.bbox.y + item.bbox.height / 2;
+  const column = xs.findIndex((right, index) => index > 0 && centerX < right) - 1;
+  const row = ys.findIndex((bottom, index) => index > 0 && centerY < bottom) - 1;
+  if (column < 0 || row < 0) return null;
+  const tolerance = 0.75;
+  if (item.bbox.x < xs[column] - tolerance
+    || item.bbox.x + item.bbox.width > xs[column + 1] + tolerance
+    || item.bbox.y < ys[row] - tolerance
+    || item.bbox.y + item.bbox.height > ys[row + 1] + tolerance) return null;
+  return { row, column };
+}
+
+function fragmentsForCell(page, itemIds) {
+  const wanted = new Set(itemIds);
+  return page.lines
+    .map(line => ({
+      line,
+      allItems: line.item_ids
+        .map(id => page.raw_items.find(item => item.id === id))
+        .filter(Boolean),
+    }))
+    .map(value => ({
+      ...value,
+      indexes: value.line.item_ids
+        .map((id, index) => (wanted.has(id) ? index : -1))
+        .filter(index => index !== -1),
+    }))
+    .filter(value => value.indexes.length > 0)
+    .sort((left, right) => left.line.y - right.line.y || left.line.x - right.line.x)
+    .map(({ line, allItems, indexes }) => {
+      const offsets = itemOffsets(line, allItems);
+      if (offsets === null) return indexes.map(index => allItems[index].text).join(" ").trim();
+      const start = offsets[Math.min(...indexes)].start;
+      const end = offsets[Math.max(...indexes)].end;
+      return line.text.slice(start, end).trim();
+    })
+    .filter(Boolean);
+}
+
+function ruledGridSegment(page) {
+  const boundaries = closedRuleGrid(page);
+  if (!boundaries) return { segment: null, tableReason: null };
+  const { xs, ys } = boundaries;
+  const rowCount = ys.length - 1;
+  const columnCount = xs.length - 1;
+  const rowHeights = ys.slice(1).map((value, index) => value - ys[index]);
+  const bodyMedian = median(rowHeights.slice(1));
+  if (rowCount < 3 || columnCount < 2 || !(rowHeights[0] <= bodyMedian * 0.6)) {
+    return { segment: null, tableReason: "topology" };
+  }
+  const captionCandidates = page.lines.filter(line => {
+    const text = line.text.trim();
+    const bottom = line.y + line.height;
+    const center = line.x + line.width / 2;
+    return /^TABLE\s+(?:\d+|[IVXLCDM]+)$/iu.test(text)
+      && bottom <= ys[0]
+      && ys[0] - bottom <= 30
+      && center >= xs[0]
+      && center <= xs[xs.length - 1];
+  });
+  if (captionCandidates.length !== 1) return { segment: null, tableReason: "header" };
+
+  const cells = Array.from({ length: rowCount }, () => (
+    Array.from({ length: columnCount }, () => [])
+  ));
+  const covered = new Set();
+  const gridBox = { left: xs[0], right: xs[xs.length - 1], top: ys[0], bottom: ys[ys.length - 1] };
+  for (const item of page.raw_items) {
+    if (!item.geometry_valid || !item.bbox || item.text_kind !== "non_whitespace") continue;
+    const overlaps = item.bbox.x < gridBox.right && item.bbox.x + item.bbox.width > gridBox.left
+      && item.bbox.y < gridBox.bottom && item.bbox.y + item.bbox.height > gridBox.top;
+    if (!overlaps) continue;
+    const location = itemCell(item, xs, ys);
+    if (!location) return { segment: null, tableReason: "topology" };
+    cells[location.row][location.column].push(item.id);
+    covered.add(item.id);
+  }
+  if (cells.some(row => row.some(cell => cell.length === 0))) {
+    return { segment: null, tableReason: "topology" };
+  }
+  const rows = page.lines
+    .map((line, index) => ({
+      index,
+      line,
+      cells: line.item_ids.map(id => page.raw_items.find(item => item.id === id)).filter(Boolean),
+      covered: line.item_ids.filter(id => covered.has(id)).length,
+    }));
+  if (rows.some(row => row.covered > 0 && row.covered !== row.line.item_ids.length)) {
+    return { segment: null, tableReason: "topology" };
+  }
+  const coveredRows = rows.filter(row => row.covered > 0);
+  if (coveredRows.length === 0) return { segment: null, tableReason: "topology" };
+  const grid = cells.map(row => row.map(itemIds => fragmentsForCell(page, itemIds)));
+  const header = grid[0];
+  if (header.some(fragments => {
+    const text = fragments.join(" ").trim();
+    const letters = text.match(/\p{L}/gu)?.length ?? 0;
+    const visible = text.match(/[\p{L}\p{N}]/gu)?.length ?? 0;
+    return text.length === 0 || text.length > 80 || visible === 0
+      || letters / visible < 0.8 || text !== text.toLocaleUpperCase("en-US");
+  })) return { segment: null, tableReason: "header" };
+  return {
+    segment: {
+      kind: "table",
+      rows: coveredRows.map(({ line, cells: rowCells }) => ({ line, cells: rowCells })),
+      grid,
+      coveredLineIds: new Set(coveredRows.map(row => row.line.id)),
+      insertionIndex: page.lines.findIndex(line => line.id === captionCandidates[0].id) + 1,
+    },
+    tableReason: null,
+  };
+}
+
+function segmentTextRows(page, rows, itemById, ruledClusters) {
   const segments = [];
   let tableReason = null;
   let index = 0;
@@ -1134,11 +1333,39 @@ function segmentPageLines(page) {
   return { segments, tableReason };
 }
 
+/**
+ * Partition a page's lines into reading-order segments. Each segment is either
+ * a confidently reconstructed table or a run of ordinary lines. Table-like runs
+ * that cannot be reconstructed are returned as text with tableReason set, so
+ * the caller can report typed partial coverage instead of silently flattening.
+ */
+function segmentPageLines(page) {
+  const itemById = new Map(page.raw_items.map(item => [item.id, item]));
+  const rows = page.lines.map(line => ({ line, cells: lineCells(line, itemById) }));
+  const ruledRects = preprocessRuledRects(page);
+  const ruledClusters = ruledRects ? clusterRuledRects(ruledRects) : [];
+  const ruled = ruledGridSegment(page);
+  if (!ruled.segment) {
+    const text = segmentTextRows(page, rows, itemById, ruledClusters);
+    return { segments: text.segments, tableReason: ruled.tableReason ?? text.tableReason };
+  }
+  const remaining = rows.map((row, index) => ({ ...row, sourceIndex: index }))
+    .filter(row => !ruled.segment.coveredLineIds.has(row.line.id));
+  const before = segmentTextRows(page, remaining.filter(row => row.sourceIndex < ruled.segment.insertionIndex), itemById, ruledClusters);
+  const after = segmentTextRows(page, remaining.filter(row => row.sourceIndex >= ruled.segment.insertionIndex), itemById, ruledClusters);
+  return {
+    segments: [...before.segments, ruled.segment, ...after.segments],
+    tableReason: before.tableReason ?? after.tableReason,
+  };
+}
+
 // escapePlainMarkdown already escapes "|" (and backslashes before it), so a
 // second pass here would emit "\\|", which is an escaped backslash followed by
 // a live cell delimiter. Reuse the single existing escape.
 function escapeTableCell(value) {
-  return escapePlainMarkdown(value);
+  return Array.isArray(value)
+    ? value.map(fragment => escapePlainMarkdown(fragment)).join("<br>")
+    : escapePlainMarkdown(value);
 }
 
 function renderTable(grid) {
@@ -1341,7 +1568,7 @@ function pageGaps(page, analysis, linkState) {
     add("IMAGE_CONTENT_NOT_RENDERED", "Image content was not rendered into Markdown.");
   }
   if (page.has_vector_paint_operations) {
-    add("VECTOR_CONTENT_NOT_INTERPRETED", "Vector paint operations beyond any reconstructed table rulings were not interpreted.");
+    add("VECTOR_CONTENT_NOT_INTERPRETED", "Vector-painted content beyond reconstructed ruled or bounded solid-mask table grids was not interpreted as text or table structure.");
   }
   if (page.errors.some(error => error.code === "RAW_PAGE_GEOMETRY_UNAVAILABLE")) {
     add("RAW_PAGE_GEOMETRY_UNAVAILABLE", "Raw MediaBox, CropBox, or rotation evidence was unavailable.");
@@ -1656,7 +1883,8 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
  * uses the layout IR's own text-item column geometry plus independently
  * validated closed ruled-rectangle evidence. The non-rect path remains the
  * pre-1.3.0 path; the rect path never infers merged or spanning cells and
- * abandons on ambiguous geometry.
+ * abandons on ambiguous geometry. Complete axis-aligned solid-mask grids are
+ * independently bounded and never interpreted as merged cells or cell art.
  */
 export function renderPdfLayoutToMarkdown(layout, {
   includePageBoundaries = true,
