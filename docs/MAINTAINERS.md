@@ -101,11 +101,14 @@ therefore remain unrecognized by a broad text read.
 layout IR. It preserves supported text and conservative order, returns typed
 gaps for incomplete coverage, and optionally commits a verified UTF-8 `.md`
 file. It reconstructs evidence-complete recurring-column tables that carry real
-header evidence, and emits source-validated external http or https link
-annotations that map to exactly one contiguous run of text. Unsupported table
-structures and link targets, including ruling lines, merged or spanning cells,
-internal destinations, actions, other URL schemes, and ambiguous labels, stay
-escaped text reported as a typed gap. It does not run OCR or use Docling,
+header evidence. It can also reconstruct one unambiguous complete closed grid
+from bounded solid-mask rectangle evidence when every retained text item fits
+exactly one cell and the first row has real header evidence. It emits
+source-validated external http or https link annotations that map to exactly
+one contiguous run of text. Unsupported table structures and link targets,
+including stroked, incomplete, or ambiguous grids, merged or spanning cells,
+cell artwork, internal destinations, actions, other URL schemes, and ambiguous
+labels, stay escaped text reported as a typed gap. It does not run OCR or use Docling,
 Python, a model, or the network. A complete status means the requested
 text-layer slice was converted under this bounded contract, not that
 the original PDF's visual or semantic structure was fully recovered.
