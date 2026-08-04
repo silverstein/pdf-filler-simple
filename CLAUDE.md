@@ -136,9 +136,12 @@ every detected column and the first row carries real header evidence, and emits
 a link only for a source-validated external http or https annotation target
 that maps to exactly one contiguous run of text on one line. Ruling lines,
 merged or spanning cells, internal destinations, actions, other URL schemes,
-and ambiguous labels stay escaped text. It does not run OCR or use an external
-model. Unsupported visual or structural content is reported as
-typed partial coverage rather than silently represented as complete Markdown.
+and ambiguous labels stay escaped text. It may restore a missing space after a
+separate `log` source item only in a short, tightly bounded math run with
+same-baseline variable evidence. It does not reconstruct general equations,
+scripts, or fraction bars. It does not run OCR or use an external model.
+Unsupported visual or structural content is reported as typed partial coverage
+rather than silently represented as complete Markdown.
 
 PDF Tools performs filesystem operations and rasterization locally and does not
 upload files to a separate PDF service. Content returned through MCP can be
