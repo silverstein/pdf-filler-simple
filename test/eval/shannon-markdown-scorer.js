@@ -35,6 +35,15 @@ function normalizedCount(haystack, needle) {
   return count;
 }
 
+function normalizedStandaloneLineCount(markdown, needle) {
+  const target = normalizeShannonText(needle);
+  if (!target) return 0;
+  return String(markdown ?? "")
+    .split(/\r?\n/u)
+    .filter(line => normalizeShannonText(line) === target)
+    .length;
+}
+
 function headingRecords(markdown) {
   return String(markdown ?? "")
     .split(/\r?\n/u)
@@ -185,8 +194,7 @@ function parseMarkdownTables(markdown) {
 
 function scoreTable(markdown, normalized, oracle) {
   const tables = parseMarkdownTables(markdown);
-  const label = normalizeShannonText(oracle.table.label);
-  const labelOffset = normalized.indexOf(label);
+  const labelCount = normalizedStandaloneLineCount(markdown, oracle.table.label);
   const headerTerms = oracle.table.required_header_terms.map(term => ({
     term,
     present: normalized.includes(normalizeShannonText(term)),
@@ -196,7 +204,7 @@ function scoreTable(markdown, normalized, oracle) {
     return oracle.table.required_header_terms.every(term => normalizedHeader.includes(normalizeShannonText(term)));
   });
   return {
-    label_present: labelOffset >= 0,
+    label_present: labelCount > 0,
     markdown_table_count: tables.length,
     required_header_terms: headerTerms,
     qualifying_table_count: qualifying.length,
@@ -205,10 +213,13 @@ function scoreTable(markdown, normalized, oracle) {
   };
 }
 
-function scoreDuplication(normalized, oracle) {
+function scoreDuplication(markdown, normalized, oracle) {
+  const tableLabel = normalizeShannonText(oracle.table.label);
   const details = oracle.exactly_once_anchors.map(anchor => ({
     anchor,
-    count: normalizedCount(normalized, anchor),
+    count: normalizeShannonText(anchor) === tableLabel
+      ? normalizedStandaloneLineCount(markdown, anchor)
+      : normalizedCount(normalized, anchor),
   }));
   return {
     expected: details.length,
@@ -233,7 +244,7 @@ export function scoreShannonMarkdown({ markdown, oracle, evidence }) {
     equations: scoreEquations(markdown, oracle),
     footnotes: scorePresence(normalized, oracle.footnote_anchors, "anchor"),
     table_topology: scoreTable(markdown, normalized, oracle),
-    omissions_and_duplication: scoreDuplication(normalized, oracle),
+    omissions_and_duplication: scoreDuplication(markdown, normalized, oracle),
     evidence: {
       page_identity: evidence?.page_identity === true,
       typed_coverage_gaps: evidence?.typed_coverage_gaps === true,
