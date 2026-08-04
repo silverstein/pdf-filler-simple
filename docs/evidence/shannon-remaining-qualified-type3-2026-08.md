@@ -62,8 +62,13 @@ SHA-256
 `6b1853f5bd1e5f0557ae5d1fcfe21da280c83613b605c524ed9b070b7f0af6ff`.
 The packed MCPB smoke passed on macOS arm64 with all 41 tools, all 14 prompts,
 canonical resources, PDF mutation, source-bound comparison, and native raster
-rendering. Installation and Claude host proof have not yet been run for this
-new artifact.
+rendering.
+
+The public v0.9.1 artifact was subsequently installed in Claude Desktop. Its
+registry hash matches the public MCPB, Claude's host log records successful
+server launch and discovery, the installed-copy smoke passed, and the installed
+55-page Shannon conversion exactly reproduced the reviewed 498-character
+output. See `docs/evidence/v0.9.1-installed-proof-2026-08.md`.
 
 This evidence does not qualify the remaining minus, alpha, or comma groups and
 does not prove general Type-3 decoding, OCR, or complete mathematical fidelity.
