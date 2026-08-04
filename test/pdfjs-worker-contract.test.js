@@ -253,7 +253,7 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
         scale_override: null,
       });
       expect(Buffer.isBuffer(systemPage.binary)).toBe(true);
-      expect(systemPage.renderer).toBe("macos-sips");
+      expect(systemPage.renderer).toBe("macos-quicklook");
     }
   });
 

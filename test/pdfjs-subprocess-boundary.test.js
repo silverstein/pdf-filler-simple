@@ -284,7 +284,7 @@ describe.sequential("PDF.js subprocess boundary", () => {
       }),
       { isolationMode: "in_process" },
     );
-    expect(result).toMatchObject({ renderer: "macos-sips" });
+    expect(result).toMatchObject({ renderer: "macos-quicklook" });
     expect(result.binary.subarray(0, 8)).toEqual(
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     );
@@ -317,7 +317,7 @@ describe.sequential("PDF.js subprocess boundary", () => {
       }),
       { isolationMode: "worker_thread" },
     );
-    expect(result).toMatchObject({ renderer: "macos-sips" });
+    expect(result).toMatchObject({ renderer: "macos-quicklook" });
     expect(result.binary.subarray(0, 8)).toEqual(
       Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
     );

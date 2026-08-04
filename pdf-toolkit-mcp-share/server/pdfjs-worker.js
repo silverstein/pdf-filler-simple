@@ -1354,22 +1354,51 @@ export async function runSystemCommand(command, args, {
   });
 }
 
-async function writeSinglePagePdf(bytes, pageNumber, password, targetPath) {
+async function writeSinglePagePdf(bytes, pageNumber, password, targetPath, cropBox = null) {
   const source = await PDFDocument.load(bytes, password ? { password } : {});
   const target = await PDFDocument.create();
   const [page] = await target.copyPages(source, [pageNumber - 1]);
+  if (cropBox !== null) {
+    const [left, bottom, right, top] = cropBox;
+    page.setCropBox(left, bottom, right - left, top - bottom);
+  }
   target.addPage(page);
   await writeFile(targetPath, await target.save());
 }
 
-async function inspectPdfjsPageView(bytes, password, pageNumber) {
+async function inspectPdfjsPageView(bytes, password, pageNumber, viewRegion = null) {
   return await withPdfjsDocument(bytes, password, async document => {
     if (pageNumber > document.numPages) {
       throw new Error(`Page ${pageNumber} is out of range (1-${document.numPages}).`);
     }
     const page = await document.getPage(pageNumber);
     try {
-      return { pageView: pageViewFromPdfjs(page), totalPages: document.numPages };
+      const pageView = pageViewFromPdfjs(page);
+      let pdfCropBox = null;
+      if (viewRegion !== null) {
+        validatePdfRegionBox({
+          pageWidth: pageView.width_points,
+          pageHeight: pageView.height_points,
+          ...viewRegion,
+        });
+        const viewport = page.getViewport({ scale: 1 });
+        const corners = [
+          viewport.convertToPdfPoint(viewRegion.x, viewRegion.y),
+          viewport.convertToPdfPoint(
+            viewRegion.x + viewRegion.width,
+            viewRegion.y + viewRegion.height,
+          ),
+        ];
+        const xValues = corners.map(point => point[0]);
+        const yValues = corners.map(point => point[1]);
+        pdfCropBox = [
+          Math.min(...xValues),
+          Math.min(...yValues),
+          Math.max(...xValues),
+          Math.max(...yValues),
+        ];
+      }
+      return { pageView, pdfCropBox, totalPages: document.numPages };
     } finally {
       page.cleanup();
     }
@@ -1389,44 +1418,35 @@ async function systemRenderPage(bytes, password, options) {
   const geometryPage = geometryDocument.getPages()[options.page - 1];
   const geometry = geometryPage.getSize();
   const pageGeometry = pageGeometryFromPdfLib(geometryPage);
-  const { pageView, totalPages } = await inspectPdfjsPageView(bytes, password, options.page);
-  const [mediaX1, mediaY1, mediaX2, mediaY2] = pageGeometry.media_box;
-  const [cropX1, cropY1, cropX2, cropY2] = pageGeometry.crop_box;
-  const systemCoordinatesSupported = mediaX1 === 0
-    && mediaY1 === 0
-    && cropX1 === mediaX1
-    && cropY1 === mediaY1
-    && cropX2 === mediaX2
-    && cropY2 === mediaY2
-    && pageGeometry.user_unit === 1
-    && pageGeometry.rotation === 0;
-  if (!systemCoordinatesSupported) {
-    const error = new Error(
-      "The macOS system renderer cannot guarantee PDF.js view coordinates for this page geometry.",
-    );
-    error.code = "PDF_RENDERER_COORDINATE_SPACE_UNAVAILABLE";
-    throw error;
-  }
-  const scale = options.scale_override ?? getPageRenderScale({
+  const requestedRegion = options.view_region ?? null;
+  const { pageView, pdfCropBox, totalPages } = await inspectPdfjsPageView(
+    bytes,
+    password,
+    options.page,
+    requestedRegion,
+  );
+  const renderedView = requestedRegion ?? {
+    x: 0,
+    y: 0,
     width: pageView.width_points,
     height: pageView.height_points,
+  };
+  const scale = options.scale_override ?? getPageRenderScale({
+    width: renderedView.width,
+    height: renderedView.height,
     maxDimensionPx: options.max_dimension_px,
   });
-  validateCanvasDimensions(pageView.width_points * scale, pageView.height_points * scale);
+  validateCanvasDimensions(renderedView.width * scale, renderedView.height * scale);
   const sourcePath = path.join(process.cwd(), "system-page.pdf");
-  const basePath = path.join(process.cwd(), "system-page-base.png");
-  const outputPath = path.join(process.cwd(), "system-page.png");
+  const outputPath = path.join(process.cwd(), "system-page.pdf.png");
   try {
-    await writeSinglePagePdf(bytes, options.page, password, sourcePath);
-    await runSystemCommand("/usr/bin/sips", [
-      "-s", "format", "png", sourcePath, "--out", basePath,
-    ]);
+    await writeSinglePagePdf(bytes, options.page, password, sourcePath, pdfCropBox);
     const maximumDimension = Math.max(
       1,
-      Math.round(Math.max(pageView.width_points, pageView.height_points) * scale),
+      Math.round(Math.max(renderedView.width, renderedView.height) * scale),
     );
-    await runSystemCommand("/usr/bin/sips", [
-      "-Z", String(maximumDimension), basePath, "--out", outputPath,
+    await runSystemCommand("/usr/bin/qlmanage", [
+      "-t", "-s", String(maximumDimension), "-o", process.cwd(), sourcePath,
     ]);
     const buffer = await readFile(outputPath);
     const pixels = pngDimensions(buffer);
@@ -1434,15 +1454,10 @@ async function systemRenderPage(bytes, password, options) {
     return pngResult(buffer, {
       height: pixels.height,
       height_points: geometry.height,
-      renderer: "macos-sips",
+      renderer: "macos-quicklook",
       page_geometry: pageGeometry,
       page_view: pageView,
-      requested_region: {
-        x: 0,
-        y: 0,
-        width: pageView.width_points,
-        height: pageView.height_points,
-      },
+      requested_region: renderedView,
       rendered_region: { x: 0, y: 0, width: pixels.width, height: pixels.height },
       raw_pixel_sha256: null,
       raw_pixel_status: "unavailable",
@@ -1454,7 +1469,6 @@ async function systemRenderPage(bytes, password, options) {
   } finally {
     await Promise.all([
       rm(sourcePath, { force: true }),
-      rm(basePath, { force: true }),
       rm(outputPath, { force: true }),
     ]);
   }
@@ -1682,64 +1696,26 @@ async function systemRenderRegion(bytes, password, options) {
       minScale: 0.1,
       maxScale: 4,
     }),
+    view_region: {
+      x: options.x,
+      y: options.y,
+      width: options.width,
+      height: options.height,
+    },
   });
-  const fullPath = path.join(process.cwd(), "system-region-full.png");
-  const cropPath = path.join(process.cwd(), "system-region.png");
-  validatePdfRegionBox({
-    pageWidth: page.result.page_view.width_points,
-    pageHeight: page.result.page_view.height_points,
-    x: options.x,
-    y: options.y,
-    width: options.width,
-    height: options.height,
+  return pngResult(page.binary, {
+    height: page.result.height,
+    page_geometry: page.result.page_geometry,
+    page_view: page.result.page_view,
+    requested_region: page.result.requested_region,
+    rendered_region: page.result.rendered_region,
+    raw_pixel_sha256: null,
+    raw_pixel_status: "unavailable",
+    renderer: "macos-quicklook",
+    scale: page.result.scale,
+    total_pages: page.result.total_pages,
+    width: page.result.width,
   });
-  const scaleX = page.result.width / page.result.page_view.width_points;
-  const scaleY = page.result.height / page.result.page_view.height_points;
-  const crop = {
-    height: Math.max(1, Math.round(options.height * scaleY)),
-    left: Math.round(options.x * scaleX),
-    top: Math.round(options.y * scaleY),
-    width: Math.max(1, Math.round(options.width * scaleX)),
-  };
-  validateCanvasDimensions(crop.width, crop.height);
-  try {
-    await writeFile(fullPath, page.binary);
-    await runSystemCommand("/usr/bin/sips", [
-      "-c", String(crop.height), String(crop.width),
-      "--cropOffset", String(crop.top), String(crop.left),
-      fullPath, "--out", cropPath,
-    ]);
-    const buffer = await readFile(cropPath);
-    const pixels = pngDimensions(buffer);
-    return pngResult(buffer, {
-      height: pixels.height,
-      page_geometry: page.result.page_geometry,
-      page_view: page.result.page_view,
-      requested_region: {
-        x: options.x,
-        y: options.y,
-        width: options.width,
-        height: options.height,
-      },
-      rendered_region: {
-        x: crop.left,
-        y: crop.top,
-        width: pixels.width,
-        height: pixels.height,
-      },
-      raw_pixel_sha256: null,
-      raw_pixel_status: "unavailable",
-      renderer: "macos-sips",
-      scale: page.result.scale,
-      total_pages: page.result.total_pages,
-      width: pixels.width,
-    });
-  } finally {
-    await Promise.all([
-      rm(fullPath, { force: true }),
-      rm(cropPath, { force: true }),
-    ]);
-  }
 }
 
 async function renderRegion(bytes, password, options) {

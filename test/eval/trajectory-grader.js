@@ -648,7 +648,12 @@ function validateSemanticObservations(
       errors.push(`${itemLocation}.image_transport is unsupported`);
     }
     if (render.mime_type !== "image/png") errors.push(`${itemLocation}.mime_type must equal image/png`);
-    if (!new Set(["native-canvas", "macos-sips", "synthetic-calibration"]).has(render.server_renderer)) {
+    if (!new Set([
+      "native-canvas",
+      "macos-sips",
+      "macos-quicklook",
+      "synthetic-calibration",
+    ]).has(render.server_renderer)) {
       errors.push(`${itemLocation}.server_renderer is not an approved pinned runtime or calibration renderer`);
     }
     if (!Number.isFinite(render.server_scale) || render.server_scale <= 0) {
@@ -1950,7 +1955,7 @@ async function semanticObservationIssues(
     const rendererValid = isCalibrationRender
       ? render.server_renderer === "synthetic-calibration"
         && render.image_transport === "synthetic_calibration"
-      : new Set(["native-canvas", "macos-sips"]).has(render.server_renderer)
+      : new Set(["native-canvas", "macos-sips", "macos-quicklook"]).has(render.server_renderer)
         && render.image_transport === "codex_jsonl_host_visible";
     let visualOracleValid = false;
     try {

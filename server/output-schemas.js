@@ -385,7 +385,7 @@ const contentImageSuccess = object({
   content_available: { const: true },
   extraction_status: { const: "partial" },
   extraction_mode: { const: "image-fallback" },
-  image_renderer: enumString(["native-canvas", "macos-sips"]),
+  image_renderer: enumString(["native-canvas", "macos-sips", "macos-quicklook"]),
 });
 const contentFailure = object({
   ...contentProperties,
@@ -838,7 +838,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     rendered_width_px: integer,
     rendered_height_px: integer,
     scale: number,
-    renderer: enumString(["native-canvas", "macos-sips"]),
+    renderer: enumString(["native-canvas", "macos-sips", "macos-quicklook"]),
     mime_type: { const: "image/png" },
     observation_schema_version: { const: "1.0" },
     source: observationSource,
@@ -868,7 +868,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     rendered_width_px: integer,
     rendered_height_px: integer,
     scale: number,
-    renderer: enumString(["native-canvas", "macos-sips"]),
+    renderer: enumString(["native-canvas", "macos-sips", "macos-quicklook"]),
     mime_type: { const: "image/png" },
     observation_schema_version: { const: "1.0" },
     source: observationSource,

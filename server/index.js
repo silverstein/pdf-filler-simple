@@ -2778,7 +2778,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "render_pdf_region",
-        description: "Render a rectangular region from the rotated, UserUnit-scaled PDF.js page view. Coordinates use a top-left origin in PDF.js viewport points and are not interchangeable with MediaBox-relative detect_signature_zones or signing coordinates. The system renderer fails closed when it cannot guarantee this view mapping. All paths must be absolute local paths, not host container paths.",
+        description: "Render a rectangular region from the rotated, UserUnit-scaled PDF.js page view. Coordinates use a top-left origin in PDF.js viewport points and are not interchangeable with MediaBox-relative detect_signature_zones or signing coordinates. The macOS system renderer preserves this view mapping and reports raw pixels unavailable. All paths must be absolute local paths, not host container paths.",
         inputSchema: {
           type: "object",
           properties: {

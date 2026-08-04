@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.8.6"
   },
-  "tools_sha256": "02f8a6d3956c4a137163a5aee9b525daeb548d39c1292b677ce418d502812d17",
+  "tools_sha256": "842c391689e9056c95ff999896f625e0f1c9d28e394a9fb2060af80f75ac379b",
   "tools": [
     {
       "name": "add_signature_field",
@@ -889,12 +889,26 @@
           },
           "password": {
             "type": "string",
+            "maxLength": 4096,
             "description": "Password for encrypted PDFs (optional)"
+          },
+          "max_pages": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 200,
+            "description": "Maximum pages to observe. Default: 200."
+          },
+          "max_output_characters": {
+            "type": "integer",
+            "minimum": 20000,
+            "maximum": 200000,
+            "description": "Maximum serialized structured-output characters. Whole observations are omitted with explicit partial coverage when necessary. Default: 50000."
           }
         },
         "required": [
           "pdf_path"
-        ]
+        ],
+        "additionalProperties": false
       }
     },
     {
@@ -1324,19 +1338,19 @@
           },
           "x": {
             "type": "number",
-            "description": "Left edge of the region, in points from the left side of the page."
+            "description": "Left edge in PDF.js viewport points from the displayed page view's left edge."
           },
           "y": {
             "type": "number",
-            "description": "Top edge of the region, in points from the TOP of the page."
+            "description": "Top edge in PDF.js viewport points from the displayed page view's top edge."
           },
           "width": {
             "type": "number",
-            "description": "Width of the region in points."
+            "description": "Width in rotated, UserUnit-scaled PDF.js viewport points."
           },
           "height": {
             "type": "number",
-            "description": "Height of the region in points."
+            "description": "Height in rotated, UserUnit-scaled PDF.js viewport points."
           },
           "max_dimension_px": {
             "type": "number",

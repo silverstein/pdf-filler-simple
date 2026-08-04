@@ -116,8 +116,8 @@ and raw RGBA SHA-256 availability.
 
 Region-render inputs are top-left PDF.js viewport points after CropBox,
 rotation, and UserUnit. They are not MediaBox-relative signing-zone
-coordinates. The macOS system fallback refuses geometries it cannot map to
-that view exactly.
+coordinates. The macOS Quick Look fallback renders whole pages and regions in
+that same view and reports raw pixels unavailable.
 
 ## Great Fit For
 

@@ -19,14 +19,28 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 
-async function writeCoordinateTruthFixture(targetPath) {
+async function writeCoordinateTruthFixture(targetPath, rotation = 90) {
   const document = await PDFDocument.create();
   const page = document.addPage([400, 400]);
   page.setMediaBox(50, 60, 400, 400);
   page.setCropBox(100, 100, 200, 100);
-  page.setRotation(degrees(90));
+  page.setRotation(degrees(rotation));
   page.node.set(PDFName.of("UserUnit"), PDFNumber.of(2));
-  page.drawRectangle({ x: 100, y: 100, width: 50, height: 50, color: rgb(1, 0, 0) });
+  const redCorner = new Map([
+    [0, { x: 100, y: 150 }],
+    [90, { x: 100, y: 100 }],
+    [180, { x: 250, y: 100 }],
+    [270, { x: 250, y: 150 }],
+  ]).get(rotation);
+  const blueCorner = new Map([
+    [0, { x: 250, y: 100 }],
+    [90, { x: 250, y: 150 }],
+    [180, { x: 100, y: 150 }],
+    [270, { x: 100, y: 100 }],
+  ]).get(rotation);
+  if (!redCorner) throw new Error(`Unsupported test rotation ${rotation}.`);
+  page.drawRectangle({ ...redCorner, width: 50, height: 50, color: rgb(1, 0, 0) });
+  page.drawRectangle({ ...blueCorner, width: 50, height: 50, color: rgb(0, 0, 1) });
   await fs.writeFile(targetPath, await document.save({ useObjectStreams: false }));
 }
 
@@ -453,7 +467,7 @@ describe.runIf(process.platform === "darwin")("Claude Desktop Electron utility r
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
       page: 1,
-      renderer: "macos-sips",
+      renderer: "macos-quicklook",
       raw_pixel_sha256: null,
       raw_pixel_status: "unavailable",
     });
@@ -475,7 +489,7 @@ describe.runIf(process.platform === "darwin")("Claude Desktop Electron utility r
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      renderer: "macos-sips",
+      renderer: "macos-quicklook",
       requested_coordinate_space: "pdfjs_viewport_top_left_points",
       requested_region: { x: 72, y: 120, width: 180, height: 60 },
       raw_pixel_status: "unavailable",
@@ -486,16 +500,42 @@ describe.runIf(process.platform === "darwin")("Claude Desktop Electron utility r
       .toBe(createHash("sha256").update(Buffer.from(imageItem.data, "base64")).digest("hex"));
   }, 30_000);
 
-  it("keeps system fallback regions in the same PDF.js view coordinate space", async () => {
+  it("keeps system page and region pixels in the PDF.js view across origins, rotation, CropBox, and UserUnit", async () => {
+    const sourceBefore = await fs.readFile(coordinateFixture);
+    const sourceStatBefore = await fs.stat(coordinateFixture);
     const wholePage = await client.callTool({
       name: "render_pdf_page",
       arguments: { pdf_path: coordinateFixture, page: 1, max_dimension_px: 800 },
     });
-    expect(wholePage.isError).toBe(true);
-    expect(wholePage.structuredContent.source).toBeUndefined();
-    expect(JSON.stringify(wholePage.content)).toContain(
-      "cannot guarantee PDF.js view coordinates for this page geometry",
+    expect(wholePage.isError).not.toBe(true);
+    expect(wholePage.structuredContent).toMatchObject({
+      renderer: "macos-quicklook",
+      page_view: {
+        view_box: [100, 100, 300, 200],
+        width_points: 200,
+        height_points: 400,
+        rotation: 90,
+        user_unit: 2,
+        coordinate_space: "pdfjs_viewport_top_left_points",
+      },
+      requested_region: { x: 0, y: 0, width: 200, height: 400 },
+    });
+    const wholeImageItem = wholePage.content.find(item => item.type === "image");
+    const wholeImage = await loadImage(Buffer.from(wholeImageItem.data, "base64"));
+    expect(wholeImage.width).toBe(400);
+    expect(wholeImage.height).toBe(800);
+    expect(wholePage.structuredContent.png_sha256).toBe(
+      createHash("sha256").update(Buffer.from(wholeImageItem.data, "base64")).digest("hex"),
     );
+    const repeatedWholePage = await client.callTool({
+      name: "render_pdf_page",
+      arguments: { pdf_path: coordinateFixture, page: 1, max_dimension_px: 800 },
+    });
+    expect(repeatedWholePage.isError).not.toBe(true);
+    expect(repeatedWholePage.structuredContent.png_sha256)
+      .toBe(wholePage.structuredContent.png_sha256);
+    expect(await fs.readFile(coordinateFixture)).toEqual(sourceBefore);
+    expect((await fs.stat(coordinateFixture)).mtimeMs).toBe(sourceStatBefore.mtimeMs);
     const region = await client.callTool({
       name: "render_pdf_region",
       arguments: {
@@ -508,12 +548,105 @@ describe.runIf(process.platform === "darwin")("Claude Desktop Electron utility r
         max_dimension_px: 400,
       },
     });
-    expect(region.isError).toBe(true);
-    expect(region.structuredContent.source).toBeUndefined();
-    expect(JSON.stringify(region.content)).toContain(
-      "cannot guarantee PDF.js view coordinates for this page geometry",
-    );
+    expect(region.isError).not.toBe(true);
+    expect(region.structuredContent).toMatchObject({
+      renderer: "macos-quicklook",
+      requested_coordinate_space: "pdfjs_viewport_top_left_points",
+      requested_region: { x: 0, y: 0, width: 100, height: 100 },
+      rendered_width_px: 400,
+      rendered_height_px: 400,
+    });
+    const imageItem = region.content.find(item => item.type === "image");
+    const image = await loadImage(Buffer.from(imageItem.data, "base64"));
+    const canvas = createCanvas(image.width, image.height);
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    const center = context.getImageData(
+      Math.floor(image.width / 2),
+      Math.floor(image.height / 2),
+      1,
+      1,
+    ).data;
+    expect(center[0]).toBeGreaterThan(200);
+    expect(center[1]).toBeLessThan(80);
+    expect(center[2]).toBeLessThan(80);
   }, 30_000);
+
+  it.each([0, 90, 180, 270])(
+    "maps the top-left PDF.js view region through the system renderer at rotation %i",
+    async rotation => {
+      const fixturePath = path.join(tempDirectory, `system-coordinate-${rotation}.pdf`);
+      await writeCoordinateTruthFixture(fixturePath, rotation);
+      const expectedView = rotation % 180 === 0
+        ? { width_points: 400, height_points: 200 }
+        : { width_points: 200, height_points: 400 };
+      const wholePage = await client.callTool({
+        name: "render_pdf_page",
+        arguments: { pdf_path: fixturePath, page: 1, max_dimension_px: 800 },
+      });
+      expect(wholePage.isError).not.toBe(true);
+      expect(wholePage.structuredContent).toMatchObject({
+        renderer: "macos-quicklook",
+        page_view: { ...expectedView, rotation, user_unit: 2 },
+      });
+      const region = await client.callTool({
+        name: "render_pdf_region",
+        arguments: {
+          pdf_path: fixturePath,
+          page: 1,
+          x: 0,
+          y: 0,
+          width: 100,
+          height: 100,
+          max_dimension_px: 400,
+        },
+      });
+      expect(region.isError).not.toBe(true);
+      const imageItem = region.content.find(item => item.type === "image");
+      const image = await loadImage(Buffer.from(imageItem.data, "base64"));
+      const canvas = createCanvas(image.width, image.height);
+      const context = canvas.getContext("2d");
+      context.drawImage(image, 0, 0);
+      const center = context.getImageData(
+        Math.floor(image.width / 2),
+        Math.floor(image.height / 2),
+        1,
+        1,
+      ).data;
+      expect(center[0]).toBeGreaterThan(200);
+      expect(center[1]).toBeLessThan(80);
+      expect(center[2]).toBeLessThan(80);
+
+      const oppositeRegion = await client.callTool({
+        name: "render_pdf_region",
+        arguments: {
+          pdf_path: fixturePath,
+          page: 1,
+          x: expectedView.width_points - 100,
+          y: expectedView.height_points - 100,
+          width: 100,
+          height: 100,
+          max_dimension_px: 400,
+        },
+      });
+      expect(oppositeRegion.isError).not.toBe(true);
+      const oppositeImageItem = oppositeRegion.content.find(item => item.type === "image");
+      const oppositeImage = await loadImage(Buffer.from(oppositeImageItem.data, "base64"));
+      const oppositeCanvas = createCanvas(oppositeImage.width, oppositeImage.height);
+      const oppositeContext = oppositeCanvas.getContext("2d");
+      oppositeContext.drawImage(oppositeImage, 0, 0);
+      const oppositeCenter = oppositeContext.getImageData(
+        Math.floor(oppositeImage.width / 2),
+        Math.floor(oppositeImage.height / 2),
+        1,
+        1,
+      ).data;
+      expect(oppositeCenter[0]).toBeLessThan(80);
+      expect(oppositeCenter[1]).toBeLessThan(80);
+      expect(oppositeCenter[2]).toBeGreaterThan(200);
+    },
+    30_000,
+  );
 });
 
 // The embedded in-process canvas block is what leaves a host with no renderer

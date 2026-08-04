@@ -614,7 +614,7 @@ async function runThreadWorker({
       );
       if (
         platform !== "darwin"
-        || message.command !== "/usr/bin/sips"
+        || !new Set(["/usr/bin/qlmanage", "/usr/bin/sips"]).has(message.command)
         || !Array.isArray(message.args)
         || message.args.length > 128
         || message.args.some(argument => typeof argument !== "string" || argument.length > 32_768)

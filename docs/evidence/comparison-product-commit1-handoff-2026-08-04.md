@@ -6,7 +6,9 @@
 - Branch: `codex/comparison-product-observations`
 - Selected base: `8575246837e824239af03e63e9e2538852910403`
 - Blocked Commit 1: `5c9f2fdcec4934e6a503af9598588d26ec7b207e`
-- Repair seam: the commit containing this handoff, directly atop the blocked commit
+- First repair: `4bfa28a8b464b93d480de8b2ef9ec54ada21726b`
+- Final Commit 1 repair seam: the commit containing this handoff, directly atop
+  `4bfa28a8b464b93d480de8b2ef9ec54ada21726b`
 - `pdfjs-dist`: exact pin remains `5.4.624`
 
 This lane did not call `bd`, touch the protected `pdf-tools` tmux windows or
@@ -23,6 +25,11 @@ and lower-level errors could expose internal strings. The earlier 220-test
 handoff result did not cover those failures and is superseded by this repair
 seam.
 
+The first repair commit closed those five findings but deliberately rejected
+complex geometry in the macOS system renderer. That was safe but not a usable
+embedded-host result. The final Commit 1 repair replaces that rejection with a
+coordinate-correct Quick Look path and keeps the earlier five repairs intact.
+
 ## Repair scope
 
 - Counts every encountered Widget, prioritizes recognized fields over orphan
@@ -31,8 +38,9 @@ seam.
 - Separates raw bottom-left PDF MediaBox/CropBox geometry from the rotated,
   UserUnit-scaled top-left PDF.js page view. Region requests now truthfully use
   PDF.js viewport points and are explicitly incompatible with signing zones.
-- Makes the macOS `sips` path fail closed on nonzero origins, a distinct
-  CropBox, rotation, or UserUnit instead of returning a falsely aligned image.
+- Replaces direct PDF rendering through `sips`, which ignores page rotation,
+  with bounded macOS Quick Look rendering. Whole pages and regions now preserve
+  the PDF.js CropBox view across nonzero origins, rotation, and UserUnit.
 - Derives channel coverage and truncation semantics, cross-checks all retained
   counts and cap reasons, validates the source path/name/size envelope, and
   binds the full final document envelope with a SHA-256 digest.
@@ -76,8 +84,8 @@ seam.
   remain unchanged across repeated calls.
 - Render truth: the PNG digest is calculated from the exact returned bytes.
   Native renders digest exact RGBA bytes before PNG encoding. System renders
-  report raw pixels unavailable and reject page views they cannot align.
-  Semantic digest tampering fails closed.
+  report raw pixels unavailable and use the same PDF.js view for whole pages
+  and regions. Semantic digest tampering fails closed.
 - Annotation safety: widgets never appear in ordinary annotations, and no
   annotation target is opened or fetched.
 - Unknown input: `get_pdf_info` rejects additional properties in discovery and
@@ -94,10 +102,19 @@ Command:
 npx vitest run test/pdf-observations.test.js test/get-pdf-info.test.js test/output-schema.test.js test/render-pdf-page.test.js test/pdfjs-worker-contract.test.js test/pdfjs-subprocess-boundary.test.js test/read-bounded-pdf-file.test.js test/mcp-contract.test.js test/documentation-claims.test.js test/agent-host-workflow-contract.test.js test/eval/extraction-phase1-packaging.test.js
 ```
 
-Repair result: 11 test files passed, 228 tests passed, 4 platform-path tests
-skipped. The worker-contract run emitted expected native-binding warnings in
-guarded non-rendering contexts; the directly exercised native and supported
-system render tests passed. Complex system geometry was verified fail-closed.
+The first repair result was 11 test files passed, 228 tests passed, and 4
+platform-path tests skipped. A follow-up review found that failing closed left
+embedded macOS hosts unable to render ordinary complex page geometry. The
+Quick Look correction directly tests whole-page and top-left-region rendering
+for rotations 0, 90, 180, and 270 with a nonzero MediaBox/CropBox origin and
+UserUnit 2. Final focused result: 11 test files passed, 232 tests passed, and 4
+platform-path tests skipped. The discovery contract SHA-256 is
+`c8c1875eb1a78191e6846308c9184a1cc749b568dae890d0690f03ca203756e1`.
+The adjacent current trajectory-contract regeneration also passed: the full
+12-file bank recorded 235 passed and 35 intentional skips. The regenerated
+current v3 input-schema projection is
+`842c391689e9056c95ff999896f625e0f1c9d28e394a9fb2060af80f75ac379b`;
+the frozen v1 and v2 contracts were not changed.
 
 ## Deliberately not run
 
@@ -107,6 +124,6 @@ work.
 
 ## Next protected action
 
-Preserve this worktree and independently review the exact repair SHA before any
-integration or Commit 2 work. Push, merge, package qualification, release, and
-external communication remain separately protected gates.
+Preserve this worktree for exact-SHA review. Commit 2 may proceed only from this
+clean seam. Package qualification, release, and external communication remain
+separate gates.

@@ -36,7 +36,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // provenance.
 // 08c1f0d18959cfbf7c29319bc208d2cb75ca8a8334c36cb11539e77dcf87aca2.
 // 2026-08-03: opt-in compact Markdown normalizations and result-shape wiring.
-// 3ad7a1419cfc2375e809dd891f3fc4d99d3860de739838bbaca1d17753077603.
+// c8c1875eb1a78191e6846308c9184a1cc749b568dae890d0690f03ca203756e1.
 // 2026-07-30: convert_pdf_to_markdown description corrected to state the table
 // and link capabilities it actually has, then shortened to 820 characters
 // without dropping a safety boundary. Previously
