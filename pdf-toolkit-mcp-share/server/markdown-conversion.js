@@ -511,10 +511,14 @@ function lineCells(line, itemById) {
       && Number.isFinite(itemStartX(item)));
 }
 
-function tableStructureCells(row) {
-  return row.cells.filter(item => !item.glyph_recoveries?.some(
+function isCollapsedWhitespaceRecovery(item) {
+  return item.glyph_recoveries?.some(
     recovery => recovery.binding_kind === "collapsed_whitespace_item",
-  ));
+  ) === true;
+}
+
+function tableStructureCells(row) {
+  return row.cells.filter(item => !isCollapsedWhitespaceRecovery(item));
 }
 
 const COMPACT_MATH_PUNCTUATION = /^[()[\]{},.;:+\-*/=∞∑∫]+$/u;
@@ -1166,13 +1170,15 @@ function tryBuildRectGrid(page, run, clusters, itemById) {
         && typeof item.text === "string" && item.text.trim().length > 0);
       const insideNonWhitespace = insideItems.filter(item => item.is_whitespace !== true
         && typeof item.text === "string" && item.text.trim().length > 0);
-      if (insideNonWhitespace.length === 0) return null;
+      const structuralInsideNonWhitespace = insideNonWhitespace.filter(item => !isCollapsedWhitespaceRecovery(item));
+      if (structuralInsideNonWhitespace.length === 0) return null;
       return {
         line,
         allItems,
         items: insideItems,
         nonWhitespace,
         insideNonWhitespace,
+        structuralInsideNonWhitespace,
       };
     }).filter(Boolean);
     if (lineRecords.length < TABLE_MIN_ROWS || !lineRecords.some(record => runLineIds.has(record.line.id))) continue;
@@ -1297,7 +1303,12 @@ function tryBuildRectGrid(page, run, clusters, itemById) {
     }));
     if (grid.some(row => row.some(value => value === null))) return { reason: "topology" };
 
-    const emptyColumns = grid[0].map((_value, column) => grid.every(row => row[column] === ""));
+    const structuralGrid = cells.map(row => row.map(cell => cell
+      .filter(entry => !isCollapsedWhitespaceRecovery(entry.item))
+      .map(entry => entry.item.text.trim())
+      .filter(Boolean)
+      .join(" ")));
+    const emptyColumns = structuralGrid[0].map((_value, column) => structuralGrid.every(row => row[column] === ""));
     let firstColumn = 0;
     let lastColumn = columnCount - 1;
     while (firstColumn <= lastColumn && emptyColumns[firstColumn]) firstColumn += 1;
@@ -1307,7 +1318,7 @@ function tryBuildRectGrid(page, run, clusters, itemById) {
     const trimmedGrid = grid.map(row => row.slice(firstColumn, lastColumn + 1));
     const candidateRows = lineRecords
       .sort((left, right) => left.line.y - right.line.y)
-      .map(record => ({ line: record.line, cells: record.insideNonWhitespace }));
+      .map(record => ({ line: record.line, cells: record.structuralInsideNonWhitespace }));
     if (!hasHeaderEvidence(candidateRows) && !hasFirstRowBandEvidence(bands)) {
       return { reason: "header" };
     }
@@ -1487,6 +1498,9 @@ function ruledGridSegment(page) {
   const cells = Array.from({ length: rowCount }, () => (
     Array.from({ length: columnCount }, () => [])
   ));
+  const structuralCells = Array.from({ length: rowCount }, () => (
+    Array.from({ length: columnCount }, () => [])
+  ));
   const covered = new Set();
   const itemLocations = new Map();
   const itemById = new Map(page.raw_items.map(item => [item.id, item]));
@@ -1499,10 +1513,11 @@ function ruledGridSegment(page) {
     const location = itemCell(item, xs, ys);
     if (!location) return { segment: null, tableReason: "topology" };
     cells[location.row][location.column].push(item.id);
+    if (!isCollapsedWhitespaceRecovery(item)) structuralCells[location.row][location.column].push(item.id);
     covered.add(item.id);
     itemLocations.set(item.id, location);
   }
-  if (cells.some(row => row.some(cell => cell.length === 0))) {
+  if (structuralCells.some(row => row.some(cell => cell.length === 0))) {
     return { segment: null, tableReason: "topology" };
   }
   const grid = Array.from({ length: rowCount }, () => (
@@ -1553,8 +1568,8 @@ function ruledGridSegment(page) {
   const orderedGrid = grid.map(row => row.map(fragments => fragments
     .sort((left, right) => left.y - right.y || left.x - right.x || left.lineIndex - right.lineIndex)
     .map(fragment => fragment.text)));
-  const header = orderedGrid[0];
-  if (header.some(fragments => {
+  const structuralHeader = structuralCells[0].map(cell => cell.map(id => itemById.get(id)?.text ?? ""));
+  if (structuralHeader.some(fragments => {
     const text = fragments.join(" ").trim();
     const letters = text.match(/\p{L}/gu)?.length ?? 0;
     const visible = text.match(/[\p{L}\p{N}]/gu)?.length ?? 0;

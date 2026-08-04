@@ -31,16 +31,24 @@ font variant remain unchanged.
   paragraphs 3/4, equations 4/4, footnotes 4/4, one qualifying table, and zero
   false equation headings.
 - Report SHA-256:
-  `4d89be75a3fbae231f8cd46926c7540039867762e7281c2e3281663895113ba9`.
+  `13f8b45a3706137bb9662d742d111836b5787e73d45d81e433402c98537f361d`.
 - Private report directory:
-  `/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-alpha-final2-2kGgeR/run`.
+  `/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-alpha-final3-5HyZw1/run`.
 
 The operator-derived glyph boxes are used for text placement, but a glyph that
 was collapsed to whitespace does not independently create table-structure
-evidence. This preserves the existing Shannon table and prevents equation
-symbols from creating a false table gap.
+evidence in the column, painted-rectangle, or closed-rule paths. It may appear
+inside a cell whose structure is independently complete. This preserves the
+existing Shannon table and prevents equation symbols from creating a false
+table gap.
 
 The focused contract suite, Markdown renderer suite, live Shannon count test,
 and full-paper deterministic evaluation pass. This evidence is source-bound to
 the named Shannon PDF. It does not claim general Type-3 decoding or qualify the
 remaining minus and comma groups.
+
+The clean full suite passed 1,985 tests with 79 intentional skips. Its sole
+failure exposed a process-runner race in which a deadline termination was
+misreported as a late `EPERM` spawn failure. Deadline evidence now takes
+precedence after a process has started and timed out; the complete 21-test
+runner file then passed.
