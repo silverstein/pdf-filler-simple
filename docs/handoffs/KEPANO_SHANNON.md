@@ -28,12 +28,12 @@ to replace it with a newly invented benchmark.
 - Active branch: `codex/shannon-type3-next`
 - Clean implementation checkpoint:
   `578f517c90f21c073673e6668421368374f7cf55`
-- Publication status: local only; the next stacked draft PR has not yet been
-  opened.
+- Publication status: draft PR #62, stacked directly on PR #61.
 - Current draft stack, reviewed from bottom to top:
   - PR #59, `Restore proven mathematical operator spacing`
   - PR #60, `Recover bounded ruled table topology`
   - PR #61, `Recover qualified legacy Type-3 glyphs`
+  - PR #62, `Recover the primary vetted Type-3 glyph batch`
 
 PR #61 is stacked directly on PR #60. On the verified Shannon PDF it changes
 exactly 31 intended codepoint positions without changing output length:
@@ -77,17 +77,15 @@ The active MCPB passed its packed smoke test and grew by only 2,075 bytes
 maintainer scripts, plus private evaluation outputs, are excluded from the
 distributable package.
 
-As of this handoff, PRs #60 and #61 are open, mergeable drafts with no reviewer
-comments and no GitHub checks reported. Local verification is the available
-evidence; do not silently upgrade that into host, release, or cross-platform
-proof.
+As of this handoff, PR #62 is an open draft stacked on PR #61. Local
+verification is the available evidence; do not silently upgrade that into
+host, release, or cross-platform proof.
 
 ## Current decision boundary
 
-The active branch is the next review target and should become a draft PR stacked
-on PR #61 only after its final independent review. Do not wander off to locate
-a different Kepano PDF. First recover the exact state above from Git and the
-evidence record, inspect the draft, and preserve its narrow safety claim.
+PR #62 is the active review target. Do not wander off to locate a different
+Kepano PDF. First recover the exact state above from Git and the evidence
+record, inspect the draft, and preserve its narrow safety claim.
 
 The stack honestly proves bounded exact recoveries from qualified legacy
 Computer Modern Type-3 glyph groups. It does not prove general Type-3 decoding,
