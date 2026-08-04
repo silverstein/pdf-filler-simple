@@ -1,6 +1,7 @@
 function stripMarkdown(value) {
   return value
     .replace(/<!--[^]*?-->/gu, " ")
+    .replace(/<br\s*\/?\s*>/giu, " ")
     .replace(/!\[([^\]]*)\]\([^)]*\)/gu, "$1")
     .replace(/\[([^\]]+)\]\([^)]*\)/gu, "$1")
     .replace(/[*_`~]/gu, "");
