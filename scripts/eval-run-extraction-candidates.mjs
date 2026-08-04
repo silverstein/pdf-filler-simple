@@ -442,8 +442,8 @@ export async function runCandidateProcess({ command, request, attemptRoot, limit
 }
 
 function outcomeFromExecution(execution, spawnError) {
-  if (spawnError) return { error_code: "SPAWN_FAILED", reason: `Candidate process could not start: ${spawnError.code ?? spawnError.message}` };
   if (execution.timed_out) return { error_code: "DEADLINE_EXCEEDED", reason: "Candidate exceeded the runner wall-clock deadline" };
+  if (spawnError) return { error_code: "SPAWN_FAILED", reason: `Candidate process could not start: ${spawnError.code ?? spawnError.message}` };
   if (execution.stdout_limit_exceeded) return { error_code: "STDOUT_LIMIT_EXCEEDED", reason: "Candidate exceeded the runner stdout byte limit" };
   if (execution.stderr_limit_exceeded) return { error_code: "STDERR_LIMIT_EXCEEDED", reason: "Candidate exceeded the runner stderr byte limit" };
   if (execution.exit_code !== 0) return { error_code: "NONZERO_EXIT", reason: `Candidate exited with code ${execution.exit_code} and signal ${execution.signal ?? "none"}` };

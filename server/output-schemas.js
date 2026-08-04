@@ -596,7 +596,12 @@ const layoutGlyphRecovery = object({
   output_utf16_end: integer,
   original_char_code: integer,
   source_unicode: string,
+  operator_unicode: string,
   target_unicode: string,
+  binding_kind: enumString(["exact_text_scalar", "collapsed_whitespace_item"]),
+  operator_advance_width: nullable(number),
+  operator_anchor_span_width: nullable(number),
+  operator_raw_transform: nullable({ type: "array", minItems: 6, maxItems: 6, items: number }),
   font_name: nullable(string),
   registry_id: string,
   qualification: string,
@@ -628,9 +633,12 @@ const layoutRawItemProperties = {
   geometry_valid: boolean,
   bbox_status: enumString(["valid", "degenerate", "invalid"]),
   geometry_provenance: object({
-    formula: { const: "pdfjs_text_item_style_metric_advance_box_approximation" },
+    formula: enumString([
+      "pdfjs_text_item_style_metric_advance_box_approximation",
+      "pdfjs_collapsed_type3_operator_advance_box_approximation",
+    ]),
     quad_order: { const: "anchor_top_terminal_top_anchor_bottom_terminal_bottom" },
-    advance_source: enumString(["item_width", "item_height"]),
+    advance_source: enumString(["item_width", "item_height", "operator_advance_width"]),
     ascent_source: nullable(enumString(["style_ascent", "style_descent_fallback", "default_0_8"])),
     ascent_ratio: nullable(number),
   }),
@@ -830,7 +838,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     truncated: boolean,
   }),
   read_pdf_layout: object({
-    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.3.0" } }),
+    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.4.0" } }),
     parser: object({ name: { const: "pdfjs-dist" }, version: { const: "5.4.624" } }),
     source: object({
       pdf_path: string,
@@ -842,7 +850,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       kind: { const: "source_parser_ir_options" },
       source_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       parser_version: { const: "5.4.624" },
-      ir_version: { const: "1.3.0" },
+      ir_version: { const: "1.4.0" },
       requested_start_page: integer,
       requested_end_page: integer,
       max_items: integer,
@@ -896,7 +904,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       }),
       layout: object({
         name: { const: "pdf-tools.extraction-ir" },
-        version: { const: "1.3.0" },
+        version: { const: "1.4.0" },
         parser_name: { const: "pdfjs-dist" },
         parser_version: { const: "5.4.624" },
         page_range: object({

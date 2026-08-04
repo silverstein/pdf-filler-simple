@@ -106,6 +106,36 @@ function positionedTextItem(text, {
   };
 }
 
+function markCollapsedAlpha(item) {
+  item.source_text = " ";
+  item.glyph_recoveries = [{
+    source_utf16_start: 0,
+    source_utf16_end: 1,
+    output_utf16_start: 0,
+    output_utf16_end: 1,
+    original_char_code: 11,
+    source_unicode: " ",
+    operator_unicode: "\u000b",
+    target_unicode: "α",
+    binding_kind: "collapsed_whitespace_item",
+    operator_advance_width: item.raw_width,
+    operator_anchor_span_width: item.raw_width,
+    operator_raw_transform: item.raw_transform,
+    font_name: item.font_name,
+    registry_id: "cmmi-pk-raster-alpha-e688a8-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259",
+    witness_charproc_sha256: [
+      "780b04fa47830ca782211b86dbedfe0adec0445bdf94d538bfe7adde08ed9445",
+      "1500df39391626d02f9e98132f991f71899612069298e52340e12fb65590836f",
+    ],
+    tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
+    canonicalizer_version: "pdfjs-charproc-json-v1",
+  }];
+  item.geometry_provenance.formula = "pdfjs_collapsed_type3_operator_advance_box_approximation";
+  item.geometry_provenance.advance_source = "operator_advance_width";
+}
+
 function centeredTextItem(text, { top, fontSize = 12 } = {}) {
   const width = Math.max(20, text.length * fontSize * 0.5);
   return textItem(text, { top, fontSize, left: (612 - width) / 2 });
@@ -334,7 +364,7 @@ describe("layout Markdown renderer", () => {
     // invocation, so any unreviewed serialized delta fails this regression.
     const serialized = JSON.stringify(pinnable);
     expect(createHash("sha256").update(serialized).digest("hex"))
-      .toBe("ab8d5e1a49a0f4ee114ac774920d3482716fe2c818d876e55b16c4fe74e64503");
+      .toBe("01182c0a1fc5e0cf112e9c1c8e00959406b67e32e4b31820cc3ad66395c50deb");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,
@@ -592,6 +622,26 @@ describe("layout Markdown renderer", () => {
     expect(result.gaps.map(gap => gap.code)).not.toContain("TABLE_TOPOLOGY_UNKNOWN");
   });
 
+  it("does not let collapsed recoveries create a painted-grid text column", async () => {
+    const rules = paintedGridOperations({ xs: [100, 200, 300], ys: [100, 130, 180, 230] });
+    const layout = await validatedSyntheticLayout([{
+      ...rules,
+      items: [
+        centeredTextItem("TABLE 1", { top: 70, fontSize: 10 }),
+        positionedTextItem("FIRST", { top: 105, left: 120, width: 30 }),
+        positionedTextItem("α", { top: 105, left: 220, width: 8, eol: true }),
+        positionedTextItem("one", { top: 150, left: 120, width: 20 }),
+        positionedTextItem("α", { top: 150, left: 220, width: 8, eol: true }),
+        positionedTextItem("two", { top: 200, left: 120, width: 20 }),
+        positionedTextItem("α", { top: 200, left: 220, width: 8, eol: true }),
+      ],
+    }]);
+    for (const item of layout.pages[0].raw_items.filter(item => item.text === "α")) markCollapsedAlpha(item);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown).not.toContain("| FIRST | α |");
+    expect(result.gaps.map(gap => gap.code)).toContain("TABLE_TOPOLOGY_UNKNOWN");
+  });
+
   it("refuses incomplete grids and closed grids without header evidence", async () => {
     const incomplete = paintedGridOperations({
       xs: [100, 250, 400],
@@ -624,6 +674,16 @@ describe("layout Markdown renderer", () => {
       expect.objectContaining({ code: "TABLE_TOPOLOGY_UNKNOWN", page: 3 }),
     ]));
     expect(result.markdown.match(/\| --- \| --- \|/gu)).toBeNull();
+  });
+
+  it("does not let a collapsed recovery complete a ruled-grid cell", async () => {
+    const items = ruledGridItems();
+    items[5] = positionedTextItem("α", { top: 178, left: 232, width: 8, eol: true });
+    const layout = attachRuledRects(await validatedSyntheticLayout([{ items }]), ruledGridRects());
+    markCollapsedAlpha(layout.pages[0].raw_items.find(item => item.text === "α"));
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown).not.toContain("| --- | --- | --- |");
+    expect(result.gaps.map(gap => gap.code)).toContain("TABLE_TOPOLOGY_UNKNOWN");
   });
 
   it("refuses partial dividers that evidence merged columns or rows", async () => {
@@ -972,6 +1032,23 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown.split("\n").filter(line => line === "pi logpi")).toHaveLength(2);
     expect(result.gaps.map(gap => gap.code)).toContain("TABLE_TOPOLOGY_UNKNOWN");
     expect(result.gaps.map(gap => gap.code)).toContain("UNSUPPORTED_LINK_TARGET");
+  });
+
+  it("does not invent table evidence from operator-positioned recovered glyphs", async () => {
+    const layout = await validatedSyntheticLayout([{ items: [
+      positionedTextItem("a", { top: 100, left: 100, width: 5 }),
+      positionedTextItem("α", { top: 100, left: 200, width: 5, eol: true }),
+      positionedTextItem("c", { top: 120, left: 100, width: 5 }),
+      positionedTextItem("α", { top: 120, left: 200, width: 5, eol: true }),
+      positionedTextItem("e", { top: 140, left: 100, width: 5 }),
+      positionedTextItem("α", { top: 140, left: 200, width: 5, eol: true }),
+    ] }]);
+    for (const item of layout.pages[0].raw_items.filter(item => item.text === "α")) {
+      markCollapsedAlpha(item);
+    }
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+    expect(result.markdown.match(/α/gu)).toHaveLength(3);
+    expect(result.gaps.map(gap => gap.code)).not.toContain("TABLE_TOPOLOGY_UNKNOWN");
   });
 
   it("recognizes conservative document structure without promoting lookalike equations", async () => {

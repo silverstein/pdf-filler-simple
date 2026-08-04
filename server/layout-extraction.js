@@ -8,7 +8,7 @@ import {
 } from "./type3-cm-reference.js";
 
 const IR_NAME = "pdf-tools.extraction-ir";
-const IR_VERSION = "1.3.0";
+const IR_VERSION = "1.4.0";
 /*
  * IR_VERSION pin sweep (all must remain aligned):
  * - server/layout-extraction.js: IR_VERSION and EXTRACTION_IR_IDENTITY
@@ -61,6 +61,20 @@ const MAX_TYPE3_GLYPH_CANONICAL_DEPTH = 32;
 const MAX_TYPE3_GLYPH_CANONICAL_BYTES = 250000;
 
 const TYPE3_RECOVERY_REGISTRY = Object.freeze([
+  Object.freeze({
+    id: "cmmi-pk-raster-alpha-e688a8-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 11,
+    source_unicode: "\u000b",
+    target_unicode: "α",
+    charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259",
+    allow_collapsed_whitespace: true,
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 25, charproc_sha256: "780b04fa47830ca782211b86dbedfe0adec0445bdf94d538bfe7adde08ed9445" }),
+      Object.freeze({ original_char_code: 26, charproc_sha256: "1500df39391626d02f9e98132f991f71899612069298e52340e12fb65590836f" }),
+    ]),
+  }),
   Object.freeze({
     id: "cmmi-pk-raster-period-2df559-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
@@ -283,6 +297,20 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     ]),
   }),
   Object.freeze({
+    id: "cmmi-pk-raster-alpha-bab8ae-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 11,
+    source_unicode: "\u000b",
+    target_unicode: "α",
+    charproc_sha256: "bab8aeb78893a19704c95538c54764abaae0cfe9d84812825f718e7687432f63",
+    allow_collapsed_whitespace: true,
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 25, charproc_sha256: "3d439e1c736c51e1c18e75219c43d953b6f2c3ab588f50ceeb69f5567343492c" }),
+      Object.freeze({ original_char_code: 26, charproc_sha256: "fa4a3dbc3f77e082142e29cc43e4e21aaf61fcf6ddbaefae24f1767caaea34b8" }),
+    ]),
+  }),
+  Object.freeze({
     id: "cmmi-pk-raster-pi-3d439e-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
     family: "computer-modern-math-italic",
@@ -306,6 +334,20 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 11, charproc_sha256: "bab8aeb78893a19704c95538c54764abaae0cfe9d84812825f718e7687432f63" }),
       Object.freeze({ original_char_code: 25, charproc_sha256: "3d439e1c736c51e1c18e75219c43d953b6f2c3ab588f50ceeb69f5567343492c" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-alpha-c3d175-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 11,
+    source_unicode: "\u000b",
+    target_unicode: "α",
+    charproc_sha256: "c3d175e547d650cd0382115f3caed3b08d39f61827d10b26aad43eac6b6c4fa1",
+    allow_collapsed_whitespace: true,
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 25, charproc_sha256: "994283a40dea8e4890f7216ef046a865f34ef7100cc1055de62d1eba7daf8fe2" }),
+      Object.freeze({ original_char_code: 26, charproc_sha256: "ee4042a5a8e974c4bbcb77535105c9244e68a6d9c79181107ffab0fce453bfe0" }),
     ]),
   }),
   Object.freeze({
@@ -490,61 +532,167 @@ export function uniqueComputerModernFamily(widthEntries) {
 function operatorGlyphTokens(operators, pdfjsPage, pdfjsLib) {
   const ops = pdfjsLib?.OPS ?? {};
   if (!operators || !Array.isArray(operators.fnArray) || !Array.isArray(operators.argsArray)) return null;
-  let currentFont = null;
-  const fontStack = [];
+  const state = {
+    current_font: null,
+    font_size: 0,
+    font_direction: 1,
+    char_spacing: 0,
+    word_spacing: 0,
+    text_h_scale: 1,
+    text_rise: 0,
+    leading: 0,
+    text_matrix: null,
+    x: 0,
+    y: 0,
+    line_x: 0,
+    line_y: 0,
+    graphics_transform: identityTransform(),
+  };
+  const stateStack = [];
   const tokens = [];
+  const allTokens = [];
   const fonts = new Map();
+  const fontObjects = new Map();
   const unsupportedTextOps = new Set([
     ops.showSpacedText,
     ops.nextLineShowText,
     ops.nextLineSetSpacingShowText,
   ].filter(Number.isFinite));
+  const numericArgument = (args, index = 0) => Number(Array.isArray(args) ? args[index] : NaN);
+  const moveText = (x, y) => {
+    if (![x, y].every(Number.isFinite)) return false;
+    state.line_x += x;
+    state.line_y += y;
+    state.x = state.line_x;
+    state.y = state.line_y;
+    return true;
+  };
+  const fontObject = fontId => {
+    if (fontObjects.has(fontId)) return fontObjects.get(fontId);
+    let font;
+    try {
+      font = pdfjsPage.commonObjs.get(fontId);
+    } catch {
+      return null;
+    }
+    fontObjects.set(fontId, font);
+    fonts.set(fontId, font?.isType3Font === true ? font : null);
+    return font;
+  };
   for (let index = 0; index < operators.fnArray.length; index += 1) {
     const operation = operators.fnArray[index];
     const args = operators.argsArray[index];
-    if (operation === ops.save) fontStack.push(currentFont);
+    if (operation === ops.save) stateStack.push(structuredClone(state));
     else if (operation === ops.restore) {
-      if (fontStack.length === 0) return null;
-      currentFont = fontStack.pop();
+      if (stateStack.length === 0) return null;
+      Object.assign(state, stateStack.pop());
+    } else if (operation === ops.transform) {
+      try {
+        state.graphics_transform = multiplyTransforms(state.graphics_transform, finiteMatrix(args, "text graphics"));
+      } catch {
+        return null;
+      }
+    } else if (operation === ops.beginText) {
+      state.text_matrix = null;
+      state.x = state.line_x = 0;
+      state.y = state.line_y = 0;
     } else if (operation === ops.setFont) {
-      currentFont = typeof args?.[0] === "string" ? args[0] : null;
+      state.current_font = typeof args?.[0] === "string" ? args[0] : null;
+      const size = numericArgument(args, 1);
+      if (state.current_font === null || !Number.isFinite(size)) return null;
+      state.font_size = Math.abs(size);
+      state.font_direction = size < 0 ? -1 : 1;
+    } else if (operation === ops.setTextMatrix) {
+      try {
+        state.text_matrix = finiteMatrix(args, "text");
+      } catch {
+        return null;
+      }
+      state.x = state.line_x = 0;
+      state.y = state.line_y = 0;
+    } else if (operation === ops.moveText) {
+      if (!moveText(numericArgument(args), numericArgument(args, 1))) return null;
+    } else if (operation === ops.setLeadingMoveText) {
+      const x = numericArgument(args);
+      const y = numericArgument(args, 1);
+      state.leading = -y;
+      if (!moveText(x, y)) return null;
+    } else if (operation === ops.nextLine) {
+      if (!moveText(0, state.leading)) return null;
+    } else if (operation === ops.setLeading) {
+      const leading = numericArgument(args);
+      if (!Number.isFinite(leading)) return null;
+      state.leading = -leading;
+    } else if (operation === ops.setCharSpacing) {
+      state.char_spacing = numericArgument(args);
+      if (!Number.isFinite(state.char_spacing)) return null;
+    } else if (operation === ops.setWordSpacing) {
+      state.word_spacing = numericArgument(args);
+      if (!Number.isFinite(state.word_spacing)) return null;
+    } else if (operation === ops.setHScale) {
+      state.text_h_scale = numericArgument(args) / 100;
+      if (!Number.isFinite(state.text_h_scale)) return null;
+    } else if (operation === ops.setTextRise) {
+      state.text_rise = numericArgument(args);
+      if (!Number.isFinite(state.text_rise)) return null;
     } else if (unsupportedTextOps.has(operation)) {
       return null;
     } else if (operation === ops.showText) {
-      if (currentFont === null || !Array.isArray(args?.[0])) return null;
-      let font = fonts.get(currentFont);
-      if (!font) {
-        try {
-          font = pdfjsPage.commonObjs.get(currentFont);
-        } catch {
-          return null;
-        }
-        if (font?.isType3Font !== true) font = null;
-        fonts.set(currentFont, font);
-      }
+      if (state.current_font === null || state.text_matrix === null || !Array.isArray(args?.[0])) return null;
+      const font = fontObject(state.current_font);
+      if (!font) return null;
+      const fontMatrix = Array.isArray(font.fontMatrix) || ArrayBuffer.isView(font.fontMatrix)
+        ? Array.from(font.fontMatrix, Number) : [0.001, 0, 0, 0.001, 0, 0];
+      if (fontMatrix.length !== 6 || !fontMatrix.every(Number.isFinite)) return null;
+      const textHScale = state.text_h_scale * state.font_direction;
       for (const glyph of args[0]) {
-        if (!glyph || typeof glyph !== "object") continue;
+        if (typeof glyph === "number" && Number.isFinite(glyph)) {
+          const spacingDirection = font.vertical ? 1 : -1;
+          state.x += spacingDirection * glyph * state.font_size / 1000 * textHScale;
+          continue;
+        }
+        if (!glyph || typeof glyph !== "object" || !Number.isFinite(glyph.width)) continue;
+        const textOrigin = multiplyTransforms(
+          state.graphics_transform,
+          multiplyTransforms(state.text_matrix, [1, 0, 0, 1, state.x, state.y + state.text_rise]),
+        );
+        const origin = [textOrigin[4], textOrigin[5]];
+        const glyphWidth = font.isType3Font
+          ? (glyph.width * fontMatrix[0] + fontMatrix[4]) * state.font_size
+          : glyph.width * state.font_size * fontMatrix[0];
+        const spacing = (glyph.isSpace ? state.word_spacing : 0) + state.char_spacing;
+        const glyphAdvanceVector = [
+          textOrigin[0] * glyphWidth * textHScale,
+          textOrigin[1] * glyphWidth * textHScale,
+        ];
+        const operatorAdvanceWidth = Math.hypot(...glyphAdvanceVector);
         const unicode = typeof glyph.unicode === "string" ? glyph.unicode : "";
         let offset = 0;
         for (const originalScalar of unicode) {
           const start = offset;
           offset += originalScalar.length;
           for (const scalar of originalScalar.normalize("NFKC")) {
-            if (/^\s$/u.test(scalar)) continue;
-            tokens.push({
-              font_id: currentFont,
+            const token = {
+              font_id: state.current_font,
               unicode: scalar,
               glyph,
               glyph_unicode_start: start,
               glyph_unicode_end: offset,
-            });
+              all_token_index: allTokens.length,
+              operator_origin: origin,
+              operator_advance_width: operatorAdvanceWidth,
+              operator_baseline: [textOrigin[0] * textHScale, textOrigin[1] * textHScale],
+            };
+            allTokens.push(token);
+            if (!/^\s$/u.test(scalar)) tokens.push(token);
           }
         }
+        state.x += (glyphWidth + spacing) * textHScale;
       }
     }
   }
-  if (fontStack.length !== 0) return null;
-  return { tokens, fonts };
+  if (stateStack.length !== 0) return null;
+  return { tokens, all_tokens: allTokens, fonts };
 }
 
 function textItemTokens(textContent) {
@@ -570,7 +718,117 @@ function textItemTokens(textContent) {
       }
     }
   }
-  return tokens;
+  return { tokens, entries };
+}
+
+function baselineTextLineEvidence(textContent, pdfjsPage) {
+  const viewport = pdfjsPage?.getViewport?.({ scale: 1 });
+  const viewportTransform = safeTransform(viewport?.transform);
+  if (!viewportTransform || !Number.isFinite(viewport?.width)) return null;
+  const items = [];
+  let hardSegment = 0;
+  let invalidGeometry = false;
+  for (let sourceIndex = 0; sourceIndex < (textContent?.items ?? []).length; sourceIndex += 1) {
+    const item = textContent.items[sourceIndex];
+    if (typeof item?.str !== "string") continue;
+    const style = textContent?.styles?.[item.fontName] ?? {};
+    const geometry = computeItemGeometry(
+      viewportTransform,
+      safeTransform(item.transform),
+      finiteOrNull(item.width),
+      finiteOrNull(item.height),
+      style,
+    );
+    invalidGeometry ||= !geometry.valid;
+    if (item.str.trim().length > 0) {
+      const baselineItem = {
+        id: `baseline-${sourceIndex}`,
+        source_index: sourceIndex,
+        is_whitespace: false,
+        geometry_valid: geometry.valid,
+        x: geometry.bbox?.x ?? null,
+        y: geometry.bbox?.y ?? null,
+        width: geometry.bbox?.width ?? null,
+        height: geometry.bbox?.height ?? null,
+        line_height: geometry.line_height,
+        direction: direction(item.dir),
+      };
+      Object.defineProperty(baselineItem, "hard_segment", { value: hardSegment, enumerable: false });
+      items.push(baselineItem);
+    }
+    if (item.hasEOL) hardSegment += 1;
+  }
+  const candidates = items.filter(item => item.geometry_valid);
+  const grouped = groupLines(candidates, pdfjsPage?.pageNumber ?? 0);
+  if (invalidGeometry) return null;
+  const sourceById = new Map(items.map(item => [item.id, item.source_index]));
+  const lineBySource = new Map();
+  for (const line of grouped) {
+    for (const itemId of line.item_ids) lineBySource.set(sourceById.get(itemId), line);
+  }
+  return { line_by_source: lineBySource };
+}
+
+function collapsedWhitespaceBinding(operatorTokens, token, textEntries, baselineEvidence) {
+  const tokenIndex = token.all_token_index;
+  if (!Number.isSafeInteger(tokenIndex) || operatorTokens[tokenIndex] !== token || !/^\s$/u.test(token.unicode)) return null;
+  if ((tokenIndex > 0 && /^\s$/u.test(operatorTokens[tokenIndex - 1].unicode))
+    || (tokenIndex + 1 < operatorTokens.length && /^\s$/u.test(operatorTokens[tokenIndex + 1].unicode))) return null;
+  const previous = operatorTokens[tokenIndex - 1];
+  const next = operatorTokens[tokenIndex + 1];
+  if (!previous?.binding || !next?.binding) return null;
+  if (next.binding.source_index !== previous.binding.source_index + 2) return null;
+  const sourceIndex = previous.binding.source_index + 1;
+  const item = textEntries[sourceIndex]?.[1];
+  const nextItem = textEntries[next.binding.source_index]?.[1];
+  if (!item || !["ltr", "unknown"].includes(direction(item.dir))) return null;
+  if (item.str !== " ") return null;
+  const previousSourceIndex = previous.binding.source_index;
+  const nextSourceIndex = next.binding.source_index;
+  const previousLine = baselineEvidence?.line_by_source.get(previousSourceIndex);
+  const nextLine = baselineEvidence?.line_by_source.get(nextSourceIndex);
+  if (!previousLine || previousLine !== nextLine) return null;
+  const transform = safeTransform(item.transform);
+  const nextTransform = safeTransform(nextItem?.transform);
+  const operatorOrigin = token.operator_origin;
+  const operatorBaseline = token.operator_baseline;
+  if (!transform || !nextTransform
+    || !Array.isArray(operatorOrigin) || operatorOrigin.length !== 2 || !operatorOrigin.every(Number.isFinite)
+    || !Array.isArray(operatorBaseline) || operatorBaseline.length !== 2 || !operatorBaseline.every(Number.isFinite)) return null;
+  const baselineMagnitude = Math.hypot(...operatorBaseline);
+  if (!(baselineMagnitude > 0)) return null;
+  const baselineUnit = operatorBaseline.map(value => value / baselineMagnitude);
+  const fontSize = Math.hypot(transform[2], transform[3]);
+  if (!(fontSize > 0)) return null;
+  const toNext = [nextTransform[4] - operatorOrigin[0], nextTransform[5] - operatorOrigin[1]];
+  const operatorAnchorSpanWidth = toNext[0] * baselineUnit[0] + toNext[1] * baselineUnit[1];
+  const crossDistance = Math.abs(toNext[0] * -baselineUnit[1] + toNext[1] * baselineUnit[0]);
+  const operatorAdvanceWidth = token.operator_advance_width;
+  if (!Number.isFinite(operatorAdvanceWidth)
+    || operatorAdvanceWidth <= 0
+    || !Number.isFinite(operatorAnchorSpanWidth)
+    || operatorAnchorSpanWidth + 0.01 < operatorAdvanceWidth
+    || operatorAnchorSpanWidth > Math.max(24, fontSize * 2)
+    || crossDistance > Math.max(2, fontSize * 0.5)) return null;
+  const operatorRawTransform = [
+    baselineUnit[0] * fontSize,
+    baselineUnit[1] * fontSize,
+    -baselineUnit[1] * fontSize,
+    baselineUnit[0] * fontSize,
+    operatorOrigin[0],
+    operatorOrigin[1],
+  ];
+  return {
+    font_id: item.fontName,
+    unicode: item.str,
+    source_index: sourceIndex,
+    source_utf16_start: 0,
+    source_utf16_end: item.str.length,
+    direction: direction(item.dir),
+    operator_advance_width: operatorAdvanceWidth,
+    operator_anchor_span_width: operatorAnchorSpanWidth,
+    operator_raw_transform: operatorRawTransform,
+  };
 }
 
 function linkedRawType3Font(fontId, fontTokens, rawFonts) {
@@ -599,7 +857,10 @@ function charProcDigestForCode(font, rawFont, code) {
 function collectType3GlyphRecoveries({ textContent, operators, pdfjsPage, pdfLibPage, pdfjsLib }) {
   const operatorEvidence = operatorGlyphTokens(operators, pdfjsPage, pdfjsLib);
   if (!operatorEvidence) return new Map();
-  const textTokens = textItemTokens(textContent);
+  const textEvidence = textItemTokens(textContent);
+  const baselineEvidence = baselineTextLineEvidence(textContent, pdfjsPage);
+  if (!baselineEvidence) return new Map();
+  const textTokens = textEvidence.tokens;
   if (textTokens.length !== operatorEvidence.tokens.length) return new Map();
   for (let index = 0; index < textTokens.length; index += 1) {
     const source = textTokens[index];
@@ -610,7 +871,7 @@ function collectType3GlyphRecoveries({ textContent, operators, pdfjsPage, pdfLib
 
   const rawFonts = rawType3Fonts(pdfLibPage);
   const byFont = new Map();
-  for (const token of operatorEvidence.tokens) {
+  for (const token of operatorEvidence.all_tokens) {
     if (!byFont.has(token.font_id)) byFont.set(token.font_id, []);
     byFont.get(token.font_id).push(token);
   }
@@ -630,7 +891,10 @@ function collectType3GlyphRecoveries({ textContent, operators, pdfjsPage, pdfLib
       for (const token of fontTokens) {
         const glyph = token.glyph;
         if (glyph.originalCharCode !== registry.original_char_code || glyph.unicode !== registry.source_unicode) continue;
-        const binding = token.binding;
+        const collapsedBinding = registry.allow_collapsed_whitespace === true
+          ? collapsedWhitespaceBinding(operatorEvidence.all_tokens, token, textEvidence.entries, baselineEvidence)
+          : null;
+        const binding = token.binding ?? collapsedBinding;
         if (!binding || !["ltr", "unknown"].includes(binding.direction)) continue;
         if (!recoveries.has(binding.source_index)) recoveries.set(binding.source_index, []);
         recoveries.get(binding.source_index).push({
@@ -639,8 +903,13 @@ function collectType3GlyphRecoveries({ textContent, operators, pdfjsPage, pdfLib
           output_utf16_start: binding.source_utf16_start,
           output_utf16_end: binding.source_utf16_start + registry.target_unicode.length,
           original_char_code: registry.original_char_code,
-          source_unicode: registry.source_unicode,
+          source_unicode: binding.unicode,
+          operator_unicode: registry.source_unicode,
           target_unicode: registry.target_unicode,
+          binding_kind: collapsedBinding ? "collapsed_whitespace_item" : "exact_text_scalar",
+          operator_advance_width: collapsedBinding?.operator_advance_width ?? null,
+          operator_anchor_span_width: collapsedBinding?.operator_anchor_span_width ?? null,
+          operator_raw_transform: collapsedBinding?.operator_raw_transform ?? null,
           source_font_id: fontId,
           registry_id: registry.id,
           qualification: registry.qualification,
@@ -1058,7 +1327,11 @@ function lineText(items, lineDirection) {
       const gap = lineDirection === "rtl"
         ? previous.x - (item.x + item.width)
         : item.x - (previous.x + previous.width);
-      const spaceThreshold = Math.max(1, Math.min(item.line_height ?? 8, previous.line_height ?? 8) * 0.2);
+      const operatorRecoveredBoundary = [previous, item].some(value => value.glyph_recoveries
+        ?.some(recovery => recovery.binding_kind === "collapsed_whitespace_item"));
+      const spaceThreshold = operatorRecoveredBoundary
+        ? Math.max(0.5, Math.min(item.line_height ?? 8, previous.line_height ?? 8) * 0.08)
+        : Math.max(1, Math.min(item.line_height ?? 8, previous.line_height ?? 8) * 0.2);
       if (gap > spaceThreshold && !text.endsWith(" ")) text += " ";
     }
     text += item.text;
@@ -2243,18 +2516,34 @@ export function validatePdfLayoutSemantics(payload, {
           semanticAssertion(registry
             && recovery.qualification === registry.qualification
             && recovery.original_char_code === registry.original_char_code
-            && recovery.source_unicode === registry.source_unicode
+            && recovery.operator_unicode === registry.source_unicode
             && recovery.target_unicode === registry.target_unicode
             && recovery.charproc_sha256 === registry.charproc_sha256
             && sameJson(recovery.witness_charproc_sha256, registry.witnesses.map(witness => witness.charproc_sha256))
             && recovery.tfm_reference_version === CM_TFM_REFERENCE_VERSION
             && recovery.canonicalizer_version === TYPE3_GLYPH_CANONICALIZER_VERSION,
           `item ${item.id} glyph-recovery registry evidence is invalid`);
-          semanticAssertion(recovery.font_name === item.font_name
+          const exactScalarBinding = recovery.binding_kind === "exact_text_scalar"
+            && recovery.source_unicode === recovery.operator_unicode
             && recovery.source_unicode.length === 1
+            && recovery.operator_advance_width === null
+            && recovery.operator_anchor_span_width === null
+            && recovery.operator_raw_transform === null;
+          const collapsedWhitespaceBinding = recovery.binding_kind === "collapsed_whitespace_item"
+            && recovery.source_unicode === " "
+            && /^\s$/u.test(recovery.operator_unicode)
+            && Number.isFinite(recovery.operator_advance_width)
+            && recovery.operator_advance_width > 0
+            && Number.isFinite(recovery.operator_anchor_span_width)
+            && recovery.operator_anchor_span_width + 0.01 >= recovery.operator_advance_width
+            && Array.isArray(recovery.operator_raw_transform)
+            && recovery.operator_raw_transform.length === 6
+            && recovery.operator_raw_transform.every(Number.isFinite);
+          semanticAssertion(recovery.font_name === item.font_name
+            && (exactScalarBinding || collapsedWhitespaceBinding)
             && recovery.target_unicode.length === 1
             && recovery.source_utf16_start === sourceCursor + item.source_text.slice(sourceCursor, recovery.source_utf16_start).length
-            && recovery.source_utf16_end === recovery.source_utf16_start + 1
+            && recovery.source_utf16_end === recovery.source_utf16_start + recovery.source_unicode.length
             && recovery.output_utf16_start === outputCursor + item.source_text.slice(sourceCursor, recovery.source_utf16_start).length
             && recovery.output_utf16_end === recovery.output_utf16_start + 1
             && recovery.source_utf16_start >= sourceCursor
@@ -2269,13 +2558,19 @@ export function validatePdfLayoutSemantics(payload, {
         semanticAssertion(recoveredText === item.text && item.source_text !== item.text,
           `item ${item.id} recovered text does not follow its evidence`);
       }
-      semanticAssertion(item.geometry_provenance.formula === "pdfjs_text_item_style_metric_advance_box_approximation", `item ${item.id} formula provenance mismatch`);
+      const collapsedRecovery = item.glyph_recoveries?.find(recovery => recovery.binding_kind === "collapsed_whitespace_item") ?? null;
+      const expectedGeometryFormula = collapsedRecovery
+        ? "pdfjs_collapsed_type3_operator_advance_box_approximation"
+        : "pdfjs_text_item_style_metric_advance_box_approximation";
+      semanticAssertion(item.geometry_provenance.formula === expectedGeometryFormula, `item ${item.id} formula provenance mismatch`);
       semanticAssertion(item.geometry_provenance.quad_order === "anchor_top_terminal_top_anchor_bottom_terminal_bottom", `item ${item.id} quad order mismatch`);
-      semanticAssertion(item.geometry_provenance.advance_source === (item.font.vertical ? "item_height" : "item_width"), `item ${item.id} advance provenance mismatch`);
+      semanticAssertion(item.geometry_provenance.advance_source === (collapsedRecovery
+        ? "operator_advance_width"
+        : item.font.vertical ? "item_height" : "item_width"), `item ${item.id} advance provenance mismatch`);
       const expectedGeometry = computeItemGeometry(
         page.geometry.viewport_transform ?? [],
-        item.raw_transform ?? [],
-        item.raw_width,
+        collapsedRecovery?.operator_raw_transform ?? item.raw_transform ?? [],
+        collapsedRecovery?.operator_advance_width ?? item.raw_width,
         item.raw_height,
         item.font,
       );
@@ -2296,7 +2591,7 @@ export function validatePdfLayoutSemantics(payload, {
         semanticAssertion(item.quad.every((point, pointIndex) => sameRoundedNumber(point.x, expectedGeometry.quad[pointIndex].x)
           && sameRoundedNumber(point.y, expectedGeometry.quad[pointIndex].y)), `item ${item.id} quad does not match raw PDF.js metrics`);
         semanticAssertion(sameRoundedNumber(item.line_height, expectedGeometry.line_height), `item ${item.id} line height mismatch`);
-        semanticAssertion(item.geometry_provenance.advance_source === expectedGeometry.advance_source
+        semanticAssertion(item.geometry_provenance.advance_source === (collapsedRecovery ? "operator_advance_width" : expectedGeometry.advance_source)
           && item.geometry_provenance.ascent_source === expectedGeometry.ascent_source
           && sameRoundedNumber(item.geometry_provenance.ascent_ratio, expectedGeometry.ascent_ratio), `item ${item.id} recomputed provenance mismatch`);
         const expectedRawCrossMetric = Math.hypot(item.raw_transform[2], item.raw_transform[3]);
@@ -2799,6 +3094,27 @@ export async function validatePdfLayoutSourceEvidence(payload, {
         const sourceEntries = (textContent?.items ?? [])
           .filter(item => typeof item?.str === "string")
           .map((item, sourceIndex) => [sourceIndex, item]);
+        let sourceOperators = null;
+        let sourceOperatorError = null;
+        try {
+          sourceOperators = await withDeadline(sourcePage.getOperatorList(), deadlineAt);
+        } catch (error) {
+          if (isFatalParserResourceError(error)) throw error;
+          sourceOperatorError = error;
+        }
+        const sourceType3Recoveries = sourceOperatorError === null
+          ? collectType3GlyphRecoveries({
+            textContent,
+            operators: sourceOperators,
+            pdfjsPage: sourcePage,
+            pdfLibPage: pdfLibPages?.[outputPage.page - 1] ?? null,
+            pdfjsLib,
+          })
+          : new Map();
+        const sourceEffectiveText = (sourceIndex, item) => applyType3GlyphRecoveries(
+          item.str,
+          sourceType3Recoveries.get(sourceIndex) ?? [],
+        );
         // Dedicated source replay: ruled_rects, text_integrity, and operator_counts
         // are all replay-proven from the second parse; none are semantic-only.
         const sourceTextIntegrity = deriveTextIntegrity(sourceEntries, textContent === null);
@@ -2808,7 +3124,7 @@ export async function validatePdfLayoutSourceEvidence(payload, {
         );
         sourceEvidenceAssertion(outputPage.counts.observed_items === sourceEntries.length, `page ${outputPage.page} observed item count differs from reparsed source`);
         sourceEvidenceAssertion(
-          outputPage.counts.observed_non_whitespace_items === sourceEntries.filter(([, item]) => item.str.trim().length > 0).length,
+          outputPage.counts.observed_non_whitespace_items === sourceEntries.filter(([sourceIndex, item]) => sourceEffectiveText(sourceIndex, item).trim().length > 0).length,
           `page ${outputPage.page} observed non-whitespace count differs from reparsed source`,
         );
         sourceEvidenceAssertion(
@@ -2846,7 +3162,7 @@ export async function validatePdfLayoutSourceEvidence(payload, {
         );
         sourceEvidenceAssertion(
           outputPage.truncation.omitted_items === expectedOmittedEntries.length
-            && outputPage.truncation.omitted_non_whitespace_items === expectedOmittedEntries.filter(([, item]) => item.str.trim().length > 0).length
+            && outputPage.truncation.omitted_non_whitespace_items === expectedOmittedEntries.filter(([sourceIndex, item]) => sourceEffectiveText(sourceIndex, item).trim().length > 0).length
             && outputPage.truncation.omitted_characters === expectedOmittedEntries.reduce((sum, [, item]) => sum + item.str.length, 0),
           `page ${outputPage.page} omission counts differ from independently replayed limits`,
         );
@@ -2854,24 +3170,6 @@ export async function validatePdfLayoutSourceEvidence(payload, {
           outputPage.truncation.first_omitted_source_index === (expectedOmittedEntries.length > 0 ? expectedReturnedEntries.length : null),
           `page ${outputPage.page} first omitted index differs from independently replayed limits`,
         );
-
-        let sourceOperators = null;
-        let sourceOperatorError = null;
-        try {
-          sourceOperators = await withDeadline(sourcePage.getOperatorList(), deadlineAt);
-        } catch (error) {
-          if (isFatalParserResourceError(error)) throw error;
-          sourceOperatorError = error;
-        }
-        const sourceType3Recoveries = sourceOperatorError === null
-          ? collectType3GlyphRecoveries({
-            textContent,
-            operators: sourceOperators,
-            pdfjsPage: sourcePage,
-            pdfLibPage: pdfLibPages?.[outputPage.page - 1] ?? null,
-            pdfjsLib,
-          })
-          : new Map();
 
         const sourceByIndex = new Map(sourceEntries);
         const fontIds = new Map();
@@ -2898,7 +3196,12 @@ export async function validatePdfLayoutSourceEvidence(payload, {
             output_utf16_end: recovery.output_utf16_end,
             original_char_code: recovery.original_char_code,
             source_unicode: recovery.source_unicode,
+            operator_unicode: recovery.operator_unicode,
             target_unicode: recovery.target_unicode,
+            binding_kind: recovery.binding_kind,
+            operator_advance_width: recovery.operator_advance_width,
+            operator_anchor_span_width: recovery.operator_anchor_span_width,
+            operator_raw_transform: recovery.operator_raw_transform,
             font_name: expectedFontName,
             registry_id: recovery.registry_id,
             qualification: recovery.qualification,
@@ -3242,17 +3545,19 @@ export async function extractPdfLayout({
           descent: finiteOrNull(style.descent),
           vertical: style.vertical === true,
         };
+        const itemRecoveries = type3GlyphRecoveries.get(sourceIndex) ?? [];
+        const collapsedRecovery = itemRecoveries.find(recovery => recovery.binding_kind === "collapsed_whitespace_item") ?? null;
+        const geometryAdvanceWidth = collapsedRecovery?.operator_advance_width ?? rawWidth;
         const geometryItem = computeItemGeometry(
           geometry.viewport_transform ?? [],
-          rawTransform,
-          rawWidth,
+          collapsedRecovery?.operator_raw_transform ?? rawTransform,
+          geometryAdvanceWidth,
           rawHeight,
           font,
         );
         if (typeof item.fontName === "string" && !fontIds.has(item.fontName)) {
           fontIds.set(item.fontName, `font-${String(fontIds.size + 1).padStart(4, "0")}`);
         }
-        const itemRecoveries = type3GlyphRecoveries.get(sourceIndex) ?? [];
         const effectiveText = applyType3GlyphRecoveries(item.str, itemRecoveries);
         const publicFontName = typeof item.fontName === "string" ? fontIds.get(item.fontName) : null;
         const publicRecoveries = effectiveText === item.str ? [] : itemRecoveries.map(recovery => ({
@@ -3262,7 +3567,12 @@ export async function extractPdfLayout({
           output_utf16_end: recovery.output_utf16_end,
           original_char_code: recovery.original_char_code,
           source_unicode: recovery.source_unicode,
+          operator_unicode: recovery.operator_unicode,
           target_unicode: recovery.target_unicode,
+          binding_kind: recovery.binding_kind,
+          operator_advance_width: recovery.operator_advance_width,
+          operator_anchor_span_width: recovery.operator_anchor_span_width,
+          operator_raw_transform: recovery.operator_raw_transform,
           font_name: publicFontName,
           registry_id: recovery.registry_id,
           qualification: recovery.qualification,
@@ -3292,9 +3602,11 @@ export async function extractPdfLayout({
           geometry_valid: geometryItem.valid,
           bbox_status: !geometryItem.valid ? "invalid" : geometryItem.bbox.width === 0 || geometryItem.bbox.height === 0 ? "degenerate" : "valid",
           geometry_provenance: {
-            formula: "pdfjs_text_item_style_metric_advance_box_approximation",
+            formula: collapsedRecovery
+              ? "pdfjs_collapsed_type3_operator_advance_box_approximation"
+              : "pdfjs_text_item_style_metric_advance_box_approximation",
             quad_order: "anchor_top_terminal_top_anchor_bottom_terminal_bottom",
-            advance_source: geometryItem.advance_source,
+            advance_source: collapsedRecovery ? "operator_advance_width" : geometryItem.advance_source,
             ascent_source: geometryItem.ascent_source,
             ascent_ratio: geometryItem.ascent_ratio,
           },
@@ -3405,7 +3717,10 @@ export async function extractPdfLayout({
         counts: {
           observed_items: textItemEntries.length,
           returned_items: rawItems.length,
-          observed_non_whitespace_items: textItemEntries.filter(([, item]) => item.str.trim().length > 0).length,
+          observed_non_whitespace_items: textItemEntries.filter(([sourceIndex, item]) => applyType3GlyphRecoveries(
+            item.str,
+            type3GlyphRecoveries.get(sourceIndex) ?? [],
+          ).trim().length > 0).length,
           returned_non_whitespace_items: rawItems.filter(item => item.text_kind === "non_whitespace").length,
           observed_characters: observedCharacters,
           returned_characters: rawItems.reduce((sum, item) => sum + item.text.length, 0),
@@ -3414,7 +3729,10 @@ export async function extractPdfLayout({
           truncated: pageTruncated,
           reasons: pageReasons,
           omitted_items: textItemEntries.length - rawItems.length,
-          omitted_non_whitespace_items: textItemEntries.filter(([, item]) => item.str.trim().length > 0).length
+          omitted_non_whitespace_items: textItemEntries.filter(([sourceIndex, item]) => applyType3GlyphRecoveries(
+            item.str,
+            type3GlyphRecoveries.get(sourceIndex) ?? [],
+          ).trim().length > 0).length
             - rawItems.filter(item => item.text_kind === "non_whitespace").length,
           omitted_characters: observedCharacters - rawItems.reduce((sum, item) => sum + item.text.length, 0),
           first_omitted_source_index: firstOmittedSourceIndex,

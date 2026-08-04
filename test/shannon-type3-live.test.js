@@ -48,6 +48,9 @@ describe("external Shannon Type-3 recovery", () => {
       }
     }
     expect(Object.fromEntries([...counts].sort())).toEqual({
+      "cmmi-pk-raster-alpha-bab8ae-v1": 22,
+      "cmmi-pk-raster-alpha-c3d175-v1": 1,
+      "cmmi-pk-raster-alpha-e688a8-v1": 26,
       "cmmi-pk-raster-comma-42b5eb-v1": 315,
       "cmmi-pk-raster-comma-dec7c4-v1": 26,
       "cmmi-pk-raster-omega-81b411-v1": 6,
