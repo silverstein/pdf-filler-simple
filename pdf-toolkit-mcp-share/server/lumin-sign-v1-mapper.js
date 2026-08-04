@@ -20,8 +20,8 @@ const MAPPER_CONTRACT = Object.freeze({
   method: "POST",
   path: "/signature_request/send",
   required_oauth_scope: "sign:requests",
-  reference_url: "https://developers.luminpdf.com/tabs/api-reference/api/signature-requests/send-signature-request",
-  reference_checked_at: "2026-08-04",
+  informational_reference_url: "https://developers.luminpdf.com/tabs/api-reference/api/signature-requests/send-signature-request",
+  official_reference_identity_status: "not_established",
   supported_transfer: "https_url",
   supported_field_mapping: "lumin_text_tags",
   supported_signing_types: ["ORDER", "SAME_TIME"],
@@ -40,11 +40,26 @@ function mappingError() {
 
 function assertExactKeys(value, required, optional = []) {
   if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("invalid object");
+  const prototype = Object.getPrototypeOf(value);
+  if (prototype !== Object.prototype && prototype !== null) throw new Error("invalid object prototype");
   const allowed = [...required, ...optional].sort();
-  const actual = Object.keys(value).sort();
+  const ownKeys = Reflect.ownKeys(value);
+  if (ownKeys.length < required.length || ownKeys.length > allowed.length) throw new Error("invalid object key count");
+  if (ownKeys.some(key => typeof key !== "string")) throw new Error("invalid object key type");
+  const actual = ownKeys.sort();
   if (actual.some(key => !allowed.includes(key)) || required.some(key => !actual.includes(key))) {
     throw new Error("invalid object keys");
   }
+  for (const key of actual) {
+    const descriptor = Object.getOwnPropertyDescriptor(value, key);
+    if (!descriptor?.enumerable || !("value" in descriptor)) throw new Error("invalid object property");
+  }
+}
+
+function deepFreeze(value) {
+  if (!value || typeof value !== "object" || Object.isFrozen(value)) return value;
+  for (const key of Reflect.ownKeys(value)) deepFreeze(value[key]);
+  return Object.freeze(value);
 }
 
 function assertBoundedString(value, { min = 1, max }) {
@@ -70,7 +85,7 @@ function assertPublicHttpsUrl(value) {
   const raw = assertBoundedString(value, { max: 4096 });
   const url = new URL(raw);
   if (url.protocol !== "https:" || url.username || url.password || url.hash) throw new Error("invalid transfer url");
-  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "");
+  const hostname = url.hostname.toLowerCase().replace(/^\[|\]$/g, "").replace(/\.$/, "");
   const ipVersion = isIP(hostname);
   if (
     hostname === "localhost"
@@ -168,6 +183,9 @@ export function mapLuminSignV1SignatureRequest(intent, { nowMs = Date.now() } = 
 
     const mappedSigners = intent.signers.map(value => mapSigner(value, intent.signing_type));
     const mappedViewers = (intent.viewers ?? []).map(mapViewer);
+    if (mappedSigners.length + mappedViewers.length > MAX_PARTICIPANTS) {
+      throw new Error("too many participants");
+    }
     const participantIds = [...mappedSigners, ...mappedViewers].map(value => value.participantId);
     if (new Set(participantIds).size !== participantIds.length) throw new Error("duplicate participant binding");
     if (intent.signing_type === "ORDER") assertContiguousGroups(mappedSigners.map(value => value.signer));
@@ -182,11 +200,14 @@ export function mapLuminSignV1SignatureRequest(intent, { nowMs = Date.now() } = 
     };
     if (mappedViewers.length) body.viewers = mappedViewers.map(value => value.viewer);
 
-    return {
+    return deepFreeze({
       schema_version: 1,
       provider: "lumin_sign",
       api_version: "v1",
       mapper_contract_sha256: LUMIN_SIGN_V1_MAPPER_CONTRACT_SHA256,
+      request_mapping_status: "provisional_unverified",
+      official_reference_identity_status: MAPPER_CONTRACT.official_reference_identity_status,
+      transport_allowed: false,
       transport_status: "not_requested",
       provider_execution_status: "not_requested",
       field_mapping_status: "caller_asserted_not_independently_verified",
@@ -210,13 +231,16 @@ export function mapLuminSignV1SignatureRequest(intent, { nowMs = Date.now() } = 
         "provider_environment_not_established",
         "provider_create_idempotency_not_established",
         "field_mapping_not_independently_verified",
+        "official_openapi_identity_not_frozen",
+        "provider_reference_fixture_not_frozen",
+        "provider_signer_group_type_reference_inconsistent",
+        "provider_expiry_horizon_not_established",
         "plan_specific_upload_limit_not_established",
         "transfer_url_destination_not_resolved",
         "transport_not_requested",
       ],
-    };
-  } catch (error) {
-    if (error?.code === "LUMIN_MAPPING_INVALID") throw error;
+    });
+  } catch {
     throw mappingError();
   }
 }
