@@ -24,16 +24,16 @@ to replace it with a newly invented benchmark.
 ## Verified current state
 
 - Active worktree:
-  `/Users/silverbook/Sites/pdf-tools-worktrees/codex-shannon-type3-next`
-- Active branch: `codex/shannon-type3-next`
-- Exact runtime implementation and evaluation checkpoint:
-  `578f517c90f21c073673e6668421368374f7cf55`
+  `/Users/silverbook/Sites/pdf-tools-worktrees/codex-shannon-prose-math-spacing`
+- Active branch: `codex/shannon-prose-math-spacing`
+- Exact current implementation and clean-suite checkpoint:
+  `7208abd739f394493278996f57d514fa6f4fda58`
 - Later commits on the branch update evidence and this handoff only; use
   `git rev-parse HEAD` for the current published branch tip.
 - The documentation tip is intentionally resolved live rather than written
   into this file, because committing a self-referenced hash would immediately
   create a different tip. The tested runtime checkpoint above is immutable.
-- Publication status: draft PR #62, stacked directly on PR #61.
+- Publication status: draft PR #63, stacked directly on PR #62.
 - Current draft stack, reviewed from bottom to top:
 
 | PR | Draft outcome | Direct base |
@@ -46,8 +46,9 @@ to replace it with a newly invented benchmark.
 | #60 | Recover bounded ruled table topology | PR #59 |
 | #61 | Recover the first qualified legacy Type-3 glyph batch | PR #60 |
 | #62 | Recover the primary vetted Type-3 glyph batch | PR #61 |
+| #63 | Restore narrowly supported prose/math spacing | PR #62 |
 
-All eight local branch tips matched their live GitHub PR heads during the
+All nine local branch tips matched their live GitHub PR heads during the
 2026-08-04 review. Each draft was open and mergeable with no comments, reviews,
 or reported checks. The cumulative top branch passed the complete verification
 described below.
@@ -66,8 +67,8 @@ Examples now include `−8.69`, `0.411`, `t/2`, and `ω`. All sampled heading,
 reading-order, paragraph, equation-anchor, footnote, and table-topology metrics
 remain unchanged.
 
-The active next tranche adds 1,021 exact recoveries from nine primary glyph
-groups: 345 periods, 315 commas, 216 minuses, 55 pi characters, 27 rho
+PR #62 adds 1,021 exact recoveries from nine primary glyph groups: 345
+periods, 315 commas, 216 minuses, 55 pi characters, 27 rho
 characters, 27 square roots, 22 greater-or-equal characters, 8 slashes, and 6
 omega characters. The tested draft implementation totals 1,052 exact
 characters from 13 registered groups. Replacement characters fall from 831 to
@@ -81,16 +82,26 @@ because the source control character interfered with an existing exact
 recovery during an experiment, and a 64-occurrence minus variant lacks two
 qualified witness glyphs. Do not register either by guess.
 
-The active clean full repository run passed 1,886 tests with 79 intentional
+PR #63 restores exactly two source-supported spaces: `storeN bits` becomes
+`store N bits`, and `capacityC of a discrete channel` becomes `capacity C of a
+discrete channel`. It requires a matching nearby compact equation, exact font
+identity, same column, tight geometry, and a prose-font sandwich. The sampled
+reading-order score improves from 23/24 across 5/6 complete groups to 24/24
+across 6/6 groups. The evaluator also stops treating the legitimate prose
+reference `In Table I` as a duplicated standalone table label, improving that
+sampled score from 6/7 to 7/7 without changing table output. Paragraph
+continuity remains 2/4.
+
+The active clean full repository run passed 1,888 tests with 80 intentional
 skips and zero failures. The separate native Mac safety suite passed 62 with 9
-intentional skips and zero failures. The clean Shannon evaluation ran three
+intentional skips and zero failures. The PR #63 Shannon evaluation ran three
 fresh repetitions with byte-identical Markdown. Its report SHA-256 is
-`a785b07f9638be5419319330bb9102fe53b40259e3432f528aec83d6cf95d502`,
+`6f9ec8aac28c9b25f181cbb91809e7ca300213be72fbb6fc16771ede94930572`,
 stored outside the repository at:
 
-`/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-primary-type3-final-20260803-clean-578f517`
+`/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-prose-math-spacing-final3-20260804-0845`
 
-The active MCPB passed its packed smoke test and grew by only 2,075 bytes
+The exact PR #62 MCPB passed its packed smoke test and grew by only 2,075 bytes
 (approximately 0.0028%) over PR #61. First-party documentation, tests, and
 maintainer scripts, plus private evaluation outputs, are excluded from the
 distributable package.
@@ -108,14 +119,16 @@ backup remains at
 A Shannon conversion initiated inside a Claude chat remains an unrun UI-level
 check; do not silently claim that narrower proof.
 
-As of this handoff, PR #62 is an open draft stacked on PR #61. Local, native
-installation, Claude host-loading, and installed-bundle server verification are
-available; do not silently upgrade them into release, cross-platform, or
-Claude-chat proof.
+As of this handoff, PR #63 is an open draft stacked on PR #62. PR #63 has clean
+source-checkout, deterministic Shannon, native Mac safety, and transactional
+share-contract proof. It has not been repacked or installed. The native
+installation, Claude host-loading, and installed-bundle server proof belongs
+only to the exact PR #62 artifact; do not silently transfer it to PR #63 or
+upgrade either result into release, cross-platform, or Claude-chat proof.
 
 ## Current decision boundary
 
-PR #62 is the active review target. Do not wander off to locate a different
+PR #63 is the active review target. Do not wander off to locate a different
 Kepano PDF. First recover the exact state above from Git and the evidence
 record, inspect the draft, and preserve its narrow safety claim.
 
@@ -130,7 +143,7 @@ his actual issue is honestly solved; otherwise do not ping him.
 
 If Mat later authorizes landing, preserve the order above. Merge PR #55 first,
 retarget PR #56 to `master`, verify its diff, and continue one PR at a time
-through #62. Never merge a higher draft while its direct base is still an
+through #63. Never merge a higher draft while its direct base is still an
 unmerged feature branch. Re-run the cumulative tests and package proof after
 the final landing; any repack has a new artifact identity. Installed Claude
 Desktop proof must be repeated for that new artifact identity after the code
@@ -150,7 +163,7 @@ shasum -a 256 /Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-entr
 The focused feature checks are:
 
 ```sh
-PDF_TOOLS_SHANNON_SOURCE=/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-entropy.pdf npm test -- --run test/shannon-type3-live.test.js test/type3-glyph-inventory.test.js test/pdfjs-worker-contract.test.js test/read-pdf-layout.test.js test/eval/extraction-phase1-layout-evidence.test.js
+npx vitest run test/test-runner-contract.test.js test/mcp-contract.test.js test/eval/markdown-bakeoff.test.js test/convert-pdf-to-markdown.test.js test/markdown-conversion.test.js
 ```
 
 The clean Shannon runner command is:
@@ -160,8 +173,8 @@ node scripts/eval-run-shannon-markdown-bakeoff.mjs --source /Users/silverbook/Si
 ```
 
 Use a new output directory for every run. The active detailed evidence record
-is `docs/evidence/shannon-primary-type3-glyph-batch-2026-08.md`; the preceding
-record is `docs/evidence/shannon-qualified-type3-glyphs-2026-08.md`.
+is `docs/evidence/shannon-prose-math-spacing-2026-08.md`; the preceding record
+is `docs/evidence/shannon-primary-type3-glyph-batch-2026-08.md`.
 
 ## Working with Mat
 
