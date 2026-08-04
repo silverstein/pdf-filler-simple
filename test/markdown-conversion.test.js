@@ -37,6 +37,11 @@ function textItem(text, { top, fontSize = 12, left = 50, eol = true } = {}) {
   };
 }
 
+function centeredTextItem(text, { top, fontSize = 12 } = {}) {
+  const width = Math.max(20, text.length * fontSize * 0.5);
+  return textItem(text, { top, fontSize, left: (612 - width) / 2 });
+}
+
 function fakePdfjs(pageConfigs) {
   const pages = pageConfigs.map(config => ({
     view: [0, 0, 612, 792],
@@ -175,12 +180,12 @@ describe("layout Markdown renderer", () => {
       { items: [
         textItem("Reprinted with corrections from the journal", { top: 20 }),
         textItem("Volume 27, July 1948", { top: 35 }),
-        textItem("A Mathematical Theory of Communication", { top: 50 }),
-        textItem("INTRODUCTION", { top: 90 }),
+        centeredTextItem("A Mathematical Theory of Communication", { top: 50, fontSize: 16 }),
+        centeredTextItem("INTRODUCTION", { top: 90 }),
         ...body(130),
       ] },
-      { items: [textItem("PART IV: THE CONTINUOUS CHANNEL", { top: 50 }), ...body(90)] },
-      { items: [textItem("APPENDIX 7", { top: 50 }), ...body(90)] },
+      { items: [centeredTextItem("PART IV: THE CONTINUOUS CHANNEL", { top: 60 }), ...body(100)] },
+      { items: [centeredTextItem("APPENDIX 7", { top: 60 }), ...body(100)] },
       { items: [
         textItem("PART I = H", { top: 50, fontSize: 24 }),
         textItem("INTRODUCTION = H", { top: 90, fontSize: 24 }),
@@ -196,12 +201,11 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:PART I = H|INTRODUCTION = H)$/gmu);
   });
 
-  it("chooses at most one strongest first-page title candidate", async () => {
+  it("emits at most one first-page H1 when a title and subtitle share the strongest style", async () => {
     const layout = await validatedSyntheticLayout([{
       items: [
-        textItem("Prepared For Journal Readers", { top: 20 }),
-        textItem("A Preliminary Edition Note", { top: 35 }),
-        textItem("A Mathematical Theory of Communication", { top: 55, fontSize: 16 }),
+        centeredTextItem("Annual Financial Report", { top: 30, fontSize: 18 }),
+        centeredTextItem("For Shareholders and Partners", { top: 60, fontSize: 18 }),
         textItem("First body line", { top: 100 }),
         textItem("Second body line", { top: 130 }),
         textItem("Third body line", { top: 160 }),
@@ -210,8 +214,29 @@ describe("layout Markdown renderer", () => {
     }]);
     const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
 
-    expect(result.markdown).toMatch(/^# A Mathematical Theory of Communication$/mu);
-    expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:Prepared For Journal Readers|A Preliminary Edition Note)$/gmu);
+    expect(result.markdown.match(/^#\s+/gmu)).toHaveLength(1);
+    expect(result.markdown).toMatch(/^## (?:Annual Financial Report|For Shareholders and Partners)$/mu);
+  });
+
+  it("does not promote repeated page labels or contents-like entries without layout support", async () => {
+    const body = top => [
+      textItem("First body line", { top }),
+      textItem("Second body line", { top: top + 30 }),
+      textItem("Third body line", { top: top + 60 }),
+      textItem("Fourth body line", { top: top + 90 }),
+    ];
+    const layout = await validatedSyntheticLayout([
+      { items: [centeredTextItem("INTRODUCTION", { top: 20 }), ...body(50)] },
+      { items: [
+        textItem("Contents entry", { top: 80 }),
+        centeredTextItem("APPENDIX 1", { top: 98 }),
+        ...body(120),
+      ] },
+      { items: [textItem("PART I: REPEATED PAGE LABEL", { top: 20 }), ...body(50)] },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:INTRODUCTION|APPENDIX 1|PART I: REPEATED PAGE LABEL)$/gmu);
   });
 
   it("neutralizes hostile Markdown, HTML, table, autolink, and control syntax", async () => {
