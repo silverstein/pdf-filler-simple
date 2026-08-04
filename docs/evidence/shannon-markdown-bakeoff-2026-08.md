@@ -12,22 +12,23 @@ the clean evaluated commit, PDF Tools processes all 55 pages deterministically
 instead of aborting on page 3.
 
 The remaining quality tradeoffs are material. PDF Tools retains stronger page,
-gap, and canonical-coordinate evidence and more sampled reading-order anchors.
-The pinned `pdf-inspector` candidate is much faster and finds nearly all sampled
-major headings, but it turns many equations into headings and provides none of
-PDF Tools' evidence surfaces. Neither candidate reconstructs the sampled table,
-and both miss the same sampled paragraph and equation coverage.
+gap, and canonical-coordinate evidence, more sampled reading-order anchors, and
+one more page-local sampled equation. The pinned `pdf-inspector` candidate is
+much faster and finds nearly all sampled major headings, but it turns many
+equations into headings and provides none of PDF Tools' evidence surfaces.
+Neither candidate reconstructs the sampled table, and both miss the same
+sampled paragraph coverage.
 
 ## Bound run
 
-- PDF Tools commit: `60e13bcb78d74126ef8310f75498e6b02fac601f`
+- PDF Tools commit: `277f8a99229e54774782bf1544ab871f6a540106`
 - PDF Tools runtime source set SHA-256:
   `f0d9aad0163a2b1a055469f8c34814ea81b3b7a0def6f4a52e321ed2bd1a166a`
 - Runtime files clean at execution: `true`
 - Shannon source SHA-256:
   `6e4e3411984f3edf99dbfe8b941cb5e8a321379ff0cae6ae5c1f592ad8882ca8`
 - Manifest SHA-256:
-  `8b732875a8073f306cf67bc8532f7a4bca54cba968588d2977f3e5aae29f6fbf`
+  `0b01d892bc0e33d8ff5d9425c874cab695ac0c2c3722641d808b2edda828fff9`
 - `pdf-inspector` revision:
   `1c32e4bd691bde83778ffef235019c8feac0c0c5`
 - Generated `Cargo.lock` SHA-256:
@@ -35,21 +36,23 @@ and both miss the same sampled paragraph and equation coverage.
 - `pdf2md` binary SHA-256:
   `62a670b0e9bc5d47ea8f4e626540e83740b92a95d0ce0baad4426f2a5bc11cf8`
 - Private report SHA-256:
-  `a5d468f897dbbe9931b5b4b4e3fa6da17cd1b99bede5111fd7888e3a9a1a5a38`
+  `0c4b7caa8bbb7b60ef88fb644dae6a563c0dee3b51a0a47e14331de831b26d01`
 - Host: macOS arm64, Node `v26.3.1`
 - Repetitions: three fresh processes per candidate; Markdown was byte-identical
   within each candidate.
 
 The source PDF, candidate checkout, generated Markdown, and full report remain
-outside the repository. The source manifest declares the paper
-`external_only`; no source or extracted paper text is committed here.
+outside the repository. Candidate execution uses private verified snapshots of
+the source PDF and executable, and revalidates the PDF Tools runtime files after
+each repetition. The source manifest declares the paper `external_only`; no
+source or extracted paper text is committed here.
 
 ## Results
 
 | Metric | PDF Tools | `pdf-inspector` |
 | --- | ---: | ---: |
-| Median elapsed time | 3329.448 ms | 94.342 ms |
-| Median maximum RSS | 279,592,960 bytes | 26,804,224 bytes |
+| Median elapsed time | 3426.416 ms | 105.85 ms |
+| Median maximum RSS | 280,117,248 bytes | 26,853,376 bytes |
 | Markdown bytes | 169,490 | 156,449 |
 | Expected headings found | 0 / 14 | 13 / 14 |
 | Wrong-level expected headings | 0 | 7 |
@@ -58,7 +61,7 @@ outside the repository. The source manifest declares the paper
 | Complete ordered-anchor groups | 4 / 6 | 1 / 6 |
 | Ordered anchors retained | 22 / 24 | 19 / 24 |
 | Paragraph-continuity anchors | 1 / 4 | 1 / 4 |
-| Equation anchors | 2 / 4 | 2 / 4 |
+| Page-local equation anchors | 2 / 4 | 1 / 4 |
 | Footnote anchors | 4 / 4 | 4 / 4 |
 | Sampled Table I topology | absent | absent |
 | Page identity evidence | present | absent |
@@ -67,8 +70,9 @@ outside the repository. The source manifest declares the paper
 
 PDF Tools reports every ten-page chunk as `partial`, with 71 typed gaps across
 the document. The `pdf-inspector` output contains 40 Markdown-shaped tables,
-but none satisfies the sampled Table I topology contract. A Markdown table
-count is therefore not table-reconstruction credit.
+but none has the required terms in its actual header row and satisfies the
+sampled Table I topology contract. A Markdown table count is therefore not
+table-reconstruction credit.
 
 ## Decision
 
