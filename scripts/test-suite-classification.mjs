@@ -141,6 +141,16 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
     reason: "Loads the selected generated qpdf module URL.",
   }),
   Object.freeze({
+    file: "scripts/macos-claude-installed-shannon.mjs",
+    count: 2,
+    kinds: Object.freeze(["dynamic-import", "dynamic-import"]),
+    fingerprints: Object.freeze([
+      "0bea25bcef085af91e6d4364375bbdde843149fa1d65f834db34ae52fcae5ef7",
+      "28c033735ea9fb0f4f12abf4ed9d905107b81abef289f9e5315316809b5440c7",
+    ]),
+    reason: "Loads an installed SDK by validated absolute file URL for the Shannon proof.",
+  }),
+  Object.freeze({
     file: "scripts/macos-claude-installed-smoke.mjs",
     count: 2,
     kinds: Object.freeze(["dynamic-import", "dynamic-import"]),

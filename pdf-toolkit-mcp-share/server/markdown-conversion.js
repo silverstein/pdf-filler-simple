@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.8.0",
+  version: "1.9.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.3.0";
 
@@ -71,7 +71,7 @@ const GAP_CODES = new Set([
 const LIMITATIONS = Object.freeze([
   "Headings are emitted only from consistent enlarged font metrics or centered English-language source structure with section spacing for a first-page title, introduction, part, or appendix. Ambiguous, very short, or unsupported heading styles remain body text.",
   "A geometrically overlapping initial capital may be joined to its following uppercase word remainder. Line-end hyphens are preserved because source geometry cannot reliably distinguish a split word from an intentional compound. The source Extraction IR retains the original lines.",
-  "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different embedded-font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. A small version-pinned registry may recover a legacy Computer Modern Type-3 character only after an exact official-metric family match, exact target and two-witness glyph-program matches, and a complete operator/text sequence binding. General equations, scripts, fraction bars, unregistered raster variants, and other damaged mathematical glyphs remain source reading-order text rather than being guessed.",
+  "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different source font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. A missing prose-to-variable space is restored only when a multiword prose item, a separate uppercase letter from a different source font resource, and continuing prose from the original prose font share one baseline with distinct positive boundary gaps, and the same letter/font pair occurs in a nearby compact equation on the same page and column. A small version-pinned registry may recover a legacy Computer Modern Type-3 character only after an exact official-metric family match, exact target and two-witness glyph-program matches, and a complete operator/text sequence binding. General equations, scripts, fraction bars, unregistered raster variants, and other damaged mathematical glyphs remain source reading-order text rather than being guessed.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
   "Tables are reconstructed only from complete text-item column geometry, clean ruled-rectangle grid evidence, or one unambiguous complete closed grid of bounded axis-aligned solid-mask rectangles. Every text item must fit exactly one cell, aligned partial dividers that evidence merged or spanning topology are rejected, and the first row must carry real header evidence because Markdown imposes header semantics. Incomplete grids and damaged mathematical glyphs are not interpreted; ambiguous content remains escaped reading-order text with a conversion gap. Cell artwork is omitted and reported as a vector-content gap; only independently qualified exact legacy glyph variants are recovered.",
@@ -639,6 +639,86 @@ function mathOperatorSpacedText(row, {
     text = `${text.slice(0, offset)} ${text.slice(offset)}`;
   }
   return text;
+}
+
+/**
+ * Restore a prose-to-variable boundary only when three separate source items
+ * prove the intended transition: multiword prose, one uppercase math-font
+ * variable, and continuing prose in the original font. Requiring both a
+ * smaller first gap and an already preserved second space avoids lowering the
+ * general line-grouping threshold or interpreting compact identifiers.
+ */
+function proseMathVariableSpacedText(row, {
+  headingLevel,
+  linked,
+  rows,
+  rowIndex,
+  unsafePage,
+}) {
+  const { line, cells } = row;
+  if (headingLevel || linked || unsafePage || rewritesLineStructure(line)
+    || line.direction !== "ltr" || line.text.length > 160 || cells.length < 3) return null;
+  const offsets = itemOffsets(line, cells);
+  if (offsets === null) return null;
+  const insertions = [];
+  for (let index = 0; index < cells.length - 2; index += 1) {
+    const prose = cells[index];
+    const variable = cells[index + 1];
+    const continuation = cells[index + 2];
+    const proseWords = prose.text.trim().split(/\s+/u);
+    const continuationWords = continuation.text.trim().split(/\s+/u);
+    if (proseWords.length < 3 || continuationWords.length < 3
+      || !/\p{Ll}{4,}$/u.test(prose.text.trim())
+      || !/^\p{Lu}$/u.test(variable.text.trim())
+      || !/^\p{Ll}/u.test(continuation.text.trim())
+      || typeof prose.font_name !== "string"
+      || typeof variable.font_name !== "string"
+      || typeof continuation.font_name !== "string"
+      || prose.font_name !== continuation.font_name
+      || prose.font_name === variable.font_name
+      || !sameMathBaseline(prose, variable)
+      || !sameMathBaseline(variable, continuation)
+      || !hasNearbyMathVariableEvidence(row, variable, rows, rowIndex)) continue;
+    const gap = operatorVariableGap(prose, variable);
+    const continuationGap = operatorVariableGap(variable, continuation);
+    const height = Math.max(prose.line_height, variable.line_height, continuation.line_height);
+    if (!(gap > height * 0.15 && gap <= height * 0.25)
+      || !(continuationGap > gap && continuationGap <= height * 0.5)) continue;
+    const from = offsets[index].end;
+    const to = offsets[index + 1].start;
+    const after = line.text.slice(offsets[index + 1].end, offsets[index + 2].start);
+    if (from !== to || /\s/u.test(line.text.slice(from, to)) || !/^\s+$/u.test(after)) continue;
+    insertions.push(from);
+  }
+  if (insertions.length === 0) return null;
+  let text = line.text;
+  for (const offset of insertions.sort((left, right) => right - left)) {
+    text = `${text.slice(0, offset)} ${text.slice(offset)}`;
+  }
+  return text;
+}
+
+function hasNearbyMathVariableEvidence(row, variable, rows, rowIndex) {
+  const start = Math.max(0, rowIndex - 3);
+  const end = Math.min(rows.length - 1, rowIndex + 3);
+  for (let index = start; index <= end; index += 1) {
+    if (index === rowIndex) continue;
+    const candidate = rows[index];
+    if (candidate.line.column_index !== row.line.column_index
+      || candidate.line.direction !== "ltr"
+      || candidate.line.text.length > 80
+      || !candidate.cells.every(item => (compactMathItemText(item.text)
+        || /^(?:Lim|Max|Min)$/u.test(item.text.trim()))
+        && !containsUnsafeText(item.text))
+      || !candidate.cells.some(item => item.text.trim() === variable.text.trim()
+        && item.font_name === variable.font_name)
+      || !candidate.cells.some(item => item.text.trim() === "=")
+      || containsUnsafeText(candidate.line.text)) continue;
+    const verticalDistance = Math.abs(candidate.line.y - row.line.y);
+    const height = Math.max(candidate.line.height, row.line.height);
+    if (verticalDistance <= height * 4) return true;
+  }
+  return false;
 }
 
 function columnAnchors(rows) {
@@ -1721,25 +1801,30 @@ function renderPage(page, {
             };
           }
         }
+        const projectionOptions = {
+          headingLevel: headings.get(line.id),
+          linked: Boolean(spans?.length),
+          rows,
+          rowIndex,
+          unsafePage: analysis.tableReason !== null
+            || linkState.unavailable
+            || linkState.ambiguous
+            || linkState.unsupportedTarget,
+        };
         const mathText = mathOperatorSpacedText(
           { line, cells },
-          {
-            headingLevel: headings.get(line.id),
-            linked: Boolean(spans?.length),
-            rows,
-            rowIndex,
-            unsafePage: analysis.tableReason !== null
-              || linkState.unavailable
-              || linkState.ambiguous
-              || linkState.unsupportedTarget,
-          },
+          projectionOptions,
         );
+        const proseMathText = mathText === null
+          ? proseMathVariableSpacedText({ line, cells }, projectionOptions)
+          : null;
+        const projectedText = mathText ?? proseMathText;
         return {
-          text: renderLine(line, headings.get(line.id), mathText ?? line.text),
+          text: renderLine(line, headings.get(line.id), projectedText ?? line.text),
           sourceText: line.text,
           normalizable: true,
           line,
-          joinable: mathText === null && !headings.get(line.id) && !rewritesLineStructure(line),
+          joinable: projectedText === null && !headings.get(line.id) && !rewritesLineStructure(line),
         };
       })
   ));

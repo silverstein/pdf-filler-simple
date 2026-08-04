@@ -12,8 +12,8 @@ if (!process.argv[2] || !process.argv[3]) {
 }
 
 const EXPECTED_SOURCE_SHA256 = "6e4e3411984f3edf99dbfe8b941cb5e8a321379ff0cae6ae5c1f592ad8882ca8";
-const EXPECTED_MARKDOWN_SHA256 = "8b1d2520e4fdbbb1ec3aa1b9fa3ee3604f72712c0b0a37b53a4e4c9d3962ca94";
-const EXPECTED_TOOL_CONTRACT_SHA256 = "223c8ec6b37d600e2918b5b4b124af80845a51cb9530819024b2426a9c101c06";
+const EXPECTED_MARKDOWN_SHA256 = "5aefe08bd0228379f0dc8a23c57bbc906899a1995baadd92c67a5aae0065e602";
+const EXPECTED_TOOL_CONTRACT_SHA256 = "d358ad9e6b7ee830a41c7b64a5ee612decd9ac4c8bb58e76f6c5dbc0529aa555";
 const EXPECTED_PAGE_COUNT = 55;
 const PAGE_SPAN = 10;
 
@@ -77,7 +77,7 @@ try {
     });
     const value = result.structuredContent;
     assert(!result.isError && value, `Installed conversion failed for pages ${startPage}-${endPage}`);
-    assert(value.renderer?.version === "1.8.0", "Installed Markdown renderer version differs");
+    assert(value.renderer?.version === "1.9.0", "Installed Markdown renderer version differs");
     assert(value.provenance?.layout?.parser_version === "5.4.624", "Installed PDF parser version differs");
     assert(value.provenance?.source?.sha256 === sourceSha256, "Installed conversion source identity differs");
     assert(value.provenance?.layout?.page_range?.start_page === startPage, "Installed conversion start page differs");

@@ -906,6 +906,43 @@ describe("layout Markdown renderer", () => {
     expect(validateMarkdownConversionSemantics(result, { layout })).toBe(result);
   });
 
+  it("restores only a three-item geometrically proven prose-to-variable space", async () => {
+    const layout = await validatedSyntheticLayout([
+      { items: [
+        positionedTextItem("C", { top: 80, left: 120, width: 6.67, fontName: "f2" }),
+        positionedTextItem("=", { top: 80, left: 129, width: 7.8 }),
+        positionedTextItem("Lim", { top: 80, left: 139, width: 16.65, eol: true }),
+        positionedTextItem("Definition: The capacity", { top: 100, left: 91.92, width: 97.54 }),
+        positionedTextItem("C", { top: 100, left: 191.394, width: 6.67, fontName: "f2" }),
+        positionedTextItem("of a discrete channel is given by", { top: 100, left: 200.754, width: 127.99, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("Model", { top: 100, left: 100, width: 25 }),
+        positionedTextItem("C", { top: 100, left: 126.9, width: 6.7, fontName: "f2" }),
+        positionedTextItem("interface remains compact here", { top: 100, left: 136.3, width: 130, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("This document uses model", { top: 100, left: 100, width: 100 }),
+        positionedTextItem("C", { top: 100, left: 201.9, width: 6.7, fontName: "f2" }),
+        positionedTextItem("interface remains compact here", { top: 100, left: 211.3, width: 130, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("Definition: The capacity", { top: 100, left: 100, width: 97.54 }),
+        positionedTextItem("c", { top: 100, left: 199.474, width: 6.67, fontName: "f2" }),
+        positionedTextItem("of a discrete channel is given by", { top: 100, left: 208.834, width: 127.99, eol: true }),
+      ] },
+    ]);
+    const originalLines = layout.pages.map(page => page.lines.map(line => line.text));
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toContain("Definition: The capacity C of a discrete channel is given by");
+    expect(result.markdown).toContain("ModelC interface remains compact here");
+    expect(result.markdown).toContain("This document uses modelC interface remains compact here");
+    expect(result.markdown).toContain("Definition: The capacityc of a discrete channel is given by");
+    expect(layout.pages.map(page => page.lines.map(line => line.text))).toEqual(originalLines);
+    expect(validateMarkdownConversionSemantics(result, { layout })).toBe(result);
+  });
+
   it("does not rewrite math-like lists, ambiguous tables, or unsupported link pages", async () => {
     const compactScript = top => [
       positionedTextItem("p", { top, left: 100, width: 5, fontName: "f2" }),
