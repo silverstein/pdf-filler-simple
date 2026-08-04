@@ -130,6 +130,21 @@ function deepFreeze(value) {
   return Object.freeze(value);
 }
 
+function isolateOutputRecords(value) {
+  if (Array.isArray(value)) return value.map(isolateOutputRecords);
+  if (!value || typeof value !== "object") return value;
+  const normalized = Object.create(null);
+  for (const key of Object.keys(value)) {
+    Object.defineProperty(normalized, key, {
+      value: isolateOutputRecords(value[key]),
+      enumerable: true,
+      writable: true,
+      configurable: true,
+    });
+  }
+  return normalized;
+}
+
 function assertBoundedString(value, { min = 1, max }) {
   if (typeof value !== "string" || value !== value.trim() || value.length < min || value.length > max) {
     throw new Error("invalid string");
@@ -258,7 +273,7 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
       ...(mappedViewers.length ? { viewers: mappedViewers.map(value => value.viewer) } : {}),
     };
 
-    return deepFreeze({
+    return deepFreeze(isolateOutputRecords({
       schema_version: 1,
       provider: "lumin_sign",
       provider_api_path_version: "v1",
@@ -312,7 +327,7 @@ export function mapLuminSignV1SignatureRequest(intent, options = {}) {
         "transfer_url_destination_not_resolved",
         "transport_not_requested",
       ],
-    });
+    }));
   } catch {
     throw mappingError();
   }

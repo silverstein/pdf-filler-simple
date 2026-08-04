@@ -367,6 +367,9 @@ describe("mapLuminSignV1SignatureRequest", () => {
     expect(Object.isFrozen(result.request.authentication_alternatives)).toBe(true);
     expect(Object.isFrozen(result.request.authentication_alternatives[1].required_scopes)).toBe(true);
     expect(Object.isFrozen(result.bindings.participant_ids)).toBe(true);
+    expect(Object.getPrototypeOf(result)).toBeNull();
+    expect(Object.getPrototypeOf(result.request)).toBeNull();
+    expect(Object.getPrototypeOf(result.request.body.signers[0])).toBeNull();
     expect(() => { result.automatic_retry_allowed = true; }).toThrow(TypeError);
     expect(() => { result.request.body.file_url = "https://changed.example.com/document.pdf"; }).toThrow(TypeError);
     expect(result.automatic_retry_allowed).toBe(false);
