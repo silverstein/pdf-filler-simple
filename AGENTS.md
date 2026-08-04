@@ -20,6 +20,9 @@ separate example to locate.
 belong to form fields; ordinary annotations remain separate and their targets
 are returned only as inert values. Render tools bind PNG and, when native
 canvas is available, raw RGBA digests to the exact source SHA-256.
+Render-region inputs are top-left PDF.js viewport points after CropBox,
+rotation, and UserUnit, not MediaBox-relative signing coordinates. The macOS
+system renderer must fail closed when it cannot guarantee that mapping.
 
 ## Build, Test, and Development Commands
 - `npm install`: install dependencies with Node.js 20.19+ or 22.12+; this is

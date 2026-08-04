@@ -95,7 +95,9 @@ or host must still obtain that approval.
 
 `get_pdf_info` returns bounded observations tied to the exact race-aware
 source path, byte length, and SHA-256. Page geometry preserves MediaBox,
-CropBox, rotation, and UserUnit with an explicit coordinate-space label.
+CropBox, rotation, and UserUnit in raw bottom-left PDF user space. A separate
+PDF.js page-view envelope records the CropBox/view, rotation, UserUnit, and
+top-left display dimensions.
 Metadata preserves Info and XMP as distinct records and reports disagreement
 without choosing a winner. Form widgets are returned only under
 `form_fields`; ordinary annotations are separate, and external URLs, internal
@@ -108,8 +110,12 @@ the caller's serialized output cap.
 fields and additionally bind the image to the source identity, page geometry,
 requested and rendered coordinate spaces, renderer policy, and PNG SHA-256.
 Native canvas renders also report a digest of the exact raw RGBA bytes.
-System-rendered PNGs report that raw-pixel evidence as unavailable rather than
-deriving it from re-decoded or re-encoded bytes.
+`render_pdf_region` requests use the rotated, UserUnit-scaled PDF.js page view
+with a top-left origin. They are not interchangeable with MediaBox-relative
+zone or signing coordinates. System-rendered PNGs report raw-pixel evidence as
+unavailable. The macOS system path fails closed on nonzero origins, a distinct
+CropBox, rotation, or UserUnit because `sips` cannot guarantee the PDF.js view
+mapping for those geometries.
 
 `read_pdf_layout` returns the versioned PDF Tools Extraction IR for at most 10
 pages per call. It binds each ID scope to the source SHA-256, pinned PDF.js

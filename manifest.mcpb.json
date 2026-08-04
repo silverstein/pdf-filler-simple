@@ -83,11 +83,11 @@
     },
     {
       "name": "render_pdf_page",
-      "description": "Render one source-bound PDF page to PNG with page geometry, renderer policy, and PNG and raw-pixel digest evidence"
+      "description": "Render one source-bound PDF.js page view to PNG with distinct raw page geometry, view geometry, renderer policy, and digest evidence"
     },
     {
       "name": "render_pdf_region",
-      "description": "Render a bounded source-bound PDF region to PNG with explicit point and raster coordinates plus digest evidence"
+      "description": "Render a bounded source-bound PDF.js viewport region to PNG; these coordinates are not MediaBox-relative signing coordinates"
     },
     {
       "name": "search_pdf_text",

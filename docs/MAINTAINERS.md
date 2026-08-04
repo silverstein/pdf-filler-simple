@@ -661,6 +661,9 @@ Run these after any tool or packaging change:
 - `get_pdf_info` on a non-form PDF - verify empty supported form and annotation channels rather than fabricated unavailability
 - `get_pdf_info` on an encrypted PDF - verify typed missing/wrong password errors do not expose password or document observations
 - `render_pdf_page` and `render_pdf_region` - verify the PNG SHA-256 against returned image bytes and raw-pixel availability against the renderer
+- Render a fixture with nonzero MediaBox/CropBox origins, rotation, and UserUnit - verify native regions use PDF.js viewport points and the macOS system path fails closed
+- Precede one required/read-only field with 500 orphan Widget annotations - verify the real field retains flags `3`, every widget is counted, and coverage is partial
+- Exercise metadata with a 40,000-character key plus many escaped, control, and nested values - verify both metadata and global serialized caps
 - `npm test` — all parsePageRanges tests pass
 - `npm run build:ui` produces single-file HTML in `dist-ui/`
 - `npm run build:mcpb` builds successfully and reports the statically verified packaged native asset paths

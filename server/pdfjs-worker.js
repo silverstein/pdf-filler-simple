@@ -32,6 +32,7 @@ import {
   buildMetadataObservation,
   buildPageObservation,
   pageGeometryFromPdfLib,
+  pageViewFromPdfjs,
 } from "./pdf-observations.js";
 import { withBoundedPdfFileSafely } from "./bounded-pdf-file.js";
 
@@ -878,7 +879,8 @@ function fallbackPageGeometry(pdfjsPage) {
     ? pdfjsPage.view.map(value => Number(value))
     : [0, 0, 0, 0];
   return {
-    media_box: view,
+    geometry_source: "pdfjs-view-fallback",
+    media_box: null,
     crop_box: view,
     width_points: Math.abs(view[2] - view[0]),
     height_points: Math.abs(view[3] - view[1]),
@@ -886,7 +888,7 @@ function fallbackPageGeometry(pdfjsPage) {
     user_unit: Number.isFinite(pdfjsPage?.userUnit) && pdfjsPage.userUnit > 0
       ? Number(pdfjsPage.userUnit)
       : 1,
-    coordinate_space: "pdf_tools_top_left_media_box_points",
+    coordinate_space: "pdf_user_space_bottom_left_points",
   };
 }
 
@@ -923,11 +925,38 @@ async function observeDocument(bytes, source, password, options) {
     const pagesToObserve = Math.min(document.numPages, options.max_pages);
     const pageItems = [];
     const annotations = [];
-    const widgetsById = new Map();
     const pageViewports = new Map();
+    const widgetsByRetainedFieldId = new Map();
+    const retainedUnmatchedWidgets = [];
     let pageFailureCount = 0;
     let annotationFailureCount = 0;
-    let annotationLimitReached = false;
+    let annotationEncounteredCount = 0;
+    let widgetCount = 0;
+    let matchedWidgetCount = 0;
+    let unmatchedWidgetCount = 0;
+
+    let rows = [];
+    try {
+      rows = fieldRows(await document.getFieldObjects());
+    } catch {
+      addCoverageReason("form_fields", "FORM_FIELD_PARSE_UNAVAILABLE");
+    }
+    const fieldsBeyondPageLimit = rows.some(
+      field => Number.isInteger(field.page) && field.page >= pagesToObserve,
+    );
+    if (fieldsBeyondPageLimit) {
+      addCoverageReason("form_fields", "FORM_FIELD_PAGE_LIMIT_REACHED");
+    }
+    const eligibleRows = rows.filter(
+      field => !Number.isInteger(field.page) || field.page < pagesToObserve,
+    );
+    const retainedRows = eligibleRows.slice(0, PDF_OBSERVATION_LIMITS.max_fields);
+    const knownFieldIds = new Set(rows
+      .map(field => typeof field.id === "string" ? field.id : null)
+      .filter(Boolean));
+    const retainedFieldIds = new Set(retainedRows
+      .map(field => typeof field.id === "string" ? field.id : null)
+      .filter(Boolean));
 
     for (let pageNumber = 1; pageNumber <= pagesToObserve; pageNumber += 1) {
       let page = null;
@@ -943,22 +972,36 @@ async function observeDocument(bytes, source, password, options) {
           const pageAnnotations = await page.getAnnotations({ intent: "display" });
           for (const annotation of pageAnnotations) {
             if (annotation?.subtype === "Widget") {
-              if (typeof annotation.id === "string" && widgetsById.size < PDF_OBSERVATION_LIMITS.max_fields) {
-                widgetsById.set(annotation.id, { ...annotation, page: pageNumber - 1 });
+              widgetCount += 1;
+              const widget = { ...annotation, page: pageNumber - 1 };
+              const recognized = typeof annotation.id === "string"
+                && knownFieldIds.has(annotation.id);
+              if (recognized) {
+                matchedWidgetCount += 1;
+                if (
+                  retainedFieldIds.has(annotation.id)
+                  && !widgetsByRetainedFieldId.has(annotation.id)
+                ) {
+                  widgetsByRetainedFieldId.set(annotation.id, widget);
+                }
+              } else {
+                unmatchedWidgetCount += 1;
+                if (retainedUnmatchedWidgets.length < PDF_OBSERVATION_LIMITS.max_fields) {
+                  retainedUnmatchedWidgets.push(widget);
+                }
               }
               continue;
             }
-            if (annotations.length >= PDF_OBSERVATION_LIMITS.max_annotations) {
-              annotationLimitReached = true;
-              continue;
+            annotationEncounteredCount += 1;
+            if (annotations.length < PDF_OBSERVATION_LIMITS.max_annotations) {
+              annotations.push(buildAnnotationObservation({
+                sourceSha256: source.sha256,
+                annotation,
+                page: pageNumber,
+                viewport,
+                ordinal: annotationEncounteredCount,
+              }));
             }
-            annotations.push(buildAnnotationObservation({
-              sourceSha256: source.sha256,
-              annotation,
-              page: pageNumber,
-              viewport,
-              ordinal: annotations.length + 1,
-            }));
           }
         } catch {
           annotationFailureCount += 1;
@@ -997,44 +1040,51 @@ async function observeDocument(bytes, source, password, options) {
       PDF_OBSERVATION_LIMITS.max_metadata_characters,
     );
 
-    let formFields = [];
-    let fieldsTruncated = false;
-    let fieldLimitReached = false;
-    try {
-      const rows = fieldRows(await document.getFieldObjects());
-      const fieldsBeyondPageLimit = rows.some(
-        field => Number.isInteger(field.page) && field.page >= pagesToObserve,
-      );
-      fieldLimitReached = rows.length > PDF_OBSERVATION_LIMITS.max_fields;
-      fieldsTruncated = fieldLimitReached
-        || fieldsBeyondPageLimit;
-      if (fieldsBeyondPageLimit) {
-        addCoverageReason("form_fields", "FORM_FIELD_PAGE_LIMIT_REACHED");
-      }
-      if (pageFailureCount > 0 && rows.some(
-        field => Number.isInteger(field.page) && !pageViewports.has(field.page),
-      )) {
-        addCoverageReason("form_fields", "FORM_FIELD_PAGE_GEOMETRY_PARTIAL");
-      }
-      for (const field of rows) {
-        if (formFields.length >= PDF_OBSERVATION_LIMITS.max_fields) break;
-        const widget = typeof field.id === "string" ? widgetsById.get(field.id) ?? field : field;
-        const pageIndex = Number.isInteger(widget?.page) ? widget.page : field.page;
-        if (Number.isInteger(pageIndex) && pageIndex >= pagesToObserve) continue;
-        const viewport = Number.isInteger(pageIndex) && pageIndex >= 0
-          ? pageViewports.get(pageIndex) ?? null
-          : null;
-        formFields.push(buildFormFieldObservation({
-          sourceSha256: source.sha256,
-          field,
-          widget,
-          viewport,
-          ordinal: formFields.length + 1,
-        }));
-      }
-    } catch {
-      addCoverageReason("form_fields", "FORM_FIELD_PARSE_UNAVAILABLE");
+    if (pageFailureCount > 0 && rows.some(
+      field => Number.isInteger(field.page) && !pageViewports.has(field.page),
+    )) {
+      addCoverageReason("form_fields", "FORM_FIELD_PAGE_GEOMETRY_PARTIAL");
     }
+    const formFields = [];
+    let representedWidgetCount = 0;
+    for (const field of retainedRows) {
+      const matchedWidget = typeof field.id === "string"
+        ? widgetsByRetainedFieldId.get(field.id) ?? null
+        : null;
+      if (matchedWidget) representedWidgetCount += 1;
+      const pageIndex = Number.isInteger(matchedWidget?.page) ? matchedWidget.page : field.page;
+      const viewport = Number.isInteger(pageIndex) && pageIndex >= 0
+        ? pageViewports.get(pageIndex) ?? null
+        : null;
+      formFields.push(buildFormFieldObservation({
+        sourceSha256: source.sha256,
+        field,
+        widget: matchedWidget ?? field,
+        viewport,
+        ordinal: formFields.length + 1,
+        recordKind: "field",
+      }));
+    }
+    const remainingFieldCapacity = PDF_OBSERVATION_LIMITS.max_fields - formFields.length;
+    for (const widget of retainedUnmatchedWidgets.slice(0, remainingFieldCapacity)) {
+      const pageIndex = Number.isInteger(widget.page) ? widget.page : null;
+      const viewport = pageIndex === null ? null : pageViewports.get(pageIndex) ?? null;
+      formFields.push(buildFormFieldObservation({
+        sourceSha256: source.sha256,
+        field: widget,
+        widget,
+        viewport,
+        ordinal: formFields.length + 1,
+        recordKind: "unmatched_widget",
+      }));
+      representedWidgetCount += 1;
+    }
+    const totalFormFields = eligibleRows.length + unmatchedWidgetCount;
+    const fieldLimitReached = totalFormFields > PDF_OBSERVATION_LIMITS.max_fields;
+    const omittedWidgetCount = Math.max(0, widgetCount - representedWidgetCount);
+    const fieldsTruncated = formFields.length < totalFormFields
+      || fieldsBeyondPageLimit
+      || omittedWidgetCount > 0;
 
     if (annotationFailureCount > 0) {
       addCoverageReason(
@@ -1051,14 +1101,24 @@ async function observeDocument(bytes, source, password, options) {
       },
       totalPages: document.numPages,
       pageItems,
-      pageTruncated: document.numPages > pagesToObserve,
+      pageTruncated: pageItems.length < document.numPages,
+      pageLimitReached: document.numPages > pagesToObserve,
       metadata,
       formFields,
+      fieldObjectCount: eligibleRows.length,
+      totalFormFields,
       fieldsTruncated,
       fieldsLimitReached: fieldLimitReached,
+      widgetCount,
+      matchedWidgetCount,
+      unmatchedWidgetCount,
+      omittedWidgetCount,
       annotations,
-      annotationsTruncated: annotationLimitReached || document.numPages > pagesToObserve,
-      annotationsLimitReached: annotationLimitReached,
+      annotationEncounteredCount,
+      annotationsTruncated: annotations.length < annotationEncounteredCount
+        || document.numPages > pagesToObserve,
+      annotationsLimitReached:
+        annotationEncounteredCount > PDF_OBSERVATION_LIMITS.max_annotations,
       coverageReasons,
       maxPages: options.max_pages,
       maxOutputCharacters: options.max_output_characters,
@@ -1302,6 +1362,20 @@ async function writeSinglePagePdf(bytes, pageNumber, password, targetPath) {
   await writeFile(targetPath, await target.save());
 }
 
+async function inspectPdfjsPageView(bytes, password, pageNumber) {
+  return await withPdfjsDocument(bytes, password, async document => {
+    if (pageNumber > document.numPages) {
+      throw new Error(`Page ${pageNumber} is out of range (1-${document.numPages}).`);
+    }
+    const page = await document.getPage(pageNumber);
+    try {
+      return { pageView: pageViewFromPdfjs(page), totalPages: document.numPages };
+    } finally {
+      page.cleanup();
+    }
+  });
+}
+
 async function systemRenderPage(bytes, password, options) {
   if (process.platform !== "darwin") {
     throw new Error("The macOS system PDF renderer is unavailable on this platform.");
@@ -1315,12 +1389,30 @@ async function systemRenderPage(bytes, password, options) {
   const geometryPage = geometryDocument.getPages()[options.page - 1];
   const geometry = geometryPage.getSize();
   const pageGeometry = pageGeometryFromPdfLib(geometryPage);
+  const { pageView, totalPages } = await inspectPdfjsPageView(bytes, password, options.page);
+  const [mediaX1, mediaY1, mediaX2, mediaY2] = pageGeometry.media_box;
+  const [cropX1, cropY1, cropX2, cropY2] = pageGeometry.crop_box;
+  const systemCoordinatesSupported = mediaX1 === 0
+    && mediaY1 === 0
+    && cropX1 === mediaX1
+    && cropY1 === mediaY1
+    && cropX2 === mediaX2
+    && cropY2 === mediaY2
+    && pageGeometry.user_unit === 1
+    && pageGeometry.rotation === 0;
+  if (!systemCoordinatesSupported) {
+    const error = new Error(
+      "The macOS system renderer cannot guarantee PDF.js view coordinates for this page geometry.",
+    );
+    error.code = "PDF_RENDERER_COORDINATE_SPACE_UNAVAILABLE";
+    throw error;
+  }
   const scale = options.scale_override ?? getPageRenderScale({
-    width: geometry.width,
-    height: geometry.height,
+    width: pageView.width_points,
+    height: pageView.height_points,
     maxDimensionPx: options.max_dimension_px,
   });
-  validateCanvasDimensions(geometry.width * scale, geometry.height * scale);
+  validateCanvasDimensions(pageView.width_points * scale, pageView.height_points * scale);
   const sourcePath = path.join(process.cwd(), "system-page.pdf");
   const basePath = path.join(process.cwd(), "system-page-base.png");
   const outputPath = path.join(process.cwd(), "system-page.png");
@@ -1331,7 +1423,7 @@ async function systemRenderPage(bytes, password, options) {
     ]);
     const maximumDimension = Math.max(
       1,
-      Math.round(Math.max(geometry.width, geometry.height) * scale),
+      Math.round(Math.max(pageView.width_points, pageView.height_points) * scale),
     );
     await runSystemCommand("/usr/bin/sips", [
       "-Z", String(maximumDimension), basePath, "--out", outputPath,
@@ -1344,10 +1436,18 @@ async function systemRenderPage(bytes, password, options) {
       height_points: geometry.height,
       renderer: "macos-sips",
       page_geometry: pageGeometry,
+      page_view: pageView,
+      requested_region: {
+        x: 0,
+        y: 0,
+        width: pageView.width_points,
+        height: pageView.height_points,
+      },
+      rendered_region: { x: 0, y: 0, width: pixels.width, height: pixels.height },
       raw_pixel_sha256: null,
       raw_pixel_status: "unavailable",
       scale,
-      total_pages: geometryDocument.getPageCount(),
+      total_pages: totalPages,
       width: pixels.width,
       width_points: geometry.width,
     });
@@ -1370,17 +1470,18 @@ async function nativeRenderPage(bytes, password, options) {
   const geometryPage = geometryDocument.getPages()[options.page - 1];
   const geometry = geometryPage.getSize();
   const pageGeometry = pageGeometryFromPdfLib(geometryPage);
-  const scale = options.scale_override ?? getPageRenderScale({
-    width: geometry.width,
-    height: geometry.height,
-    maxDimensionPx: options.max_dimension_px,
-  });
   return await withPdfjsDocument(bytes, password, async document => {
     if (options.page > document.numPages) {
       throw new Error(`Page ${options.page} is out of range (1-${document.numPages}).`);
     }
     const page = await document.getPage(options.page);
     try {
+      const pageView = pageViewFromPdfjs(page);
+      const scale = options.scale_override ?? getPageRenderScale({
+        width: pageView.width_points,
+        height: pageView.height_points,
+        maxDimensionPx: options.max_dimension_px,
+      });
       const viewport = page.getViewport({ scale });
       const pixels = validateCanvasDimensions(viewport.width, viewport.height);
       const canvas = createCanvas(pixels.width, pixels.height);
@@ -1396,6 +1497,14 @@ async function nativeRenderPage(bytes, password, options) {
         height: pixels.height,
         height_points: geometry.height,
         page_geometry: pageGeometry,
+        page_view: pageView,
+        requested_region: {
+          x: 0,
+          y: 0,
+          width: pageView.width_points,
+          height: pageView.height_points,
+        },
+        rendered_region: { x: 0, y: 0, width: pixels.width, height: pixels.height },
         raw_pixel_sha256: createHash("sha256").update(rawPixels).digest("hex"),
         raw_pixel_status: "available",
         renderer: "native-canvas",
@@ -1468,16 +1577,7 @@ async function nativeRenderRegion(bytes, password, options) {
     );
   }
   const geometryPage = geometryDocument.getPages()[options.page - 1];
-  const pageSize = geometryPage.getSize();
   const pageGeometry = pageGeometryFromPdfLib(geometryPage);
-  validatePdfRegionBox({
-    pageWidth: pageSize.width,
-    pageHeight: pageSize.height,
-    x: options.x,
-    y: options.y,
-    width: options.width,
-    height: options.height,
-  });
   const scale = getPageRenderScale({
     width: options.width,
     height: options.height,
@@ -1491,7 +1591,16 @@ async function nativeRenderRegion(bytes, password, options) {
     }
     const page = await document.getPage(options.page);
     try {
-      const viewport = page.getViewport({ scale, rotation: 0 });
+      const pageView = pageViewFromPdfjs(page);
+      validatePdfRegionBox({
+        pageWidth: pageView.width_points,
+        pageHeight: pageView.height_points,
+        x: options.x,
+        y: options.y,
+        width: options.width,
+        height: options.height,
+      });
+      const viewport = page.getViewport({ scale });
       const crop = {
         height: Math.max(1, Math.round(options.height * scale)),
         left: Math.round(options.x * scale),
@@ -1535,6 +1644,19 @@ async function nativeRenderRegion(bytes, password, options) {
       return pngResult(buffer, {
         height: cropPixels.height,
         page_geometry: pageGeometry,
+        page_view: pageView,
+        requested_region: {
+          x: options.x,
+          y: options.y,
+          width: options.width,
+          height: options.height,
+        },
+        rendered_region: {
+          x: crop.left,
+          y: crop.top,
+          width: cropPixels.width,
+          height: cropPixels.height,
+        },
         raw_pixel_sha256: createHash("sha256").update(rawPixels).digest("hex"),
         raw_pixel_status: "available",
         renderer: "native-canvas",
@@ -1563,11 +1685,21 @@ async function systemRenderRegion(bytes, password, options) {
   });
   const fullPath = path.join(process.cwd(), "system-region-full.png");
   const cropPath = path.join(process.cwd(), "system-region.png");
+  validatePdfRegionBox({
+    pageWidth: page.result.page_view.width_points,
+    pageHeight: page.result.page_view.height_points,
+    x: options.x,
+    y: options.y,
+    width: options.width,
+    height: options.height,
+  });
+  const scaleX = page.result.width / page.result.page_view.width_points;
+  const scaleY = page.result.height / page.result.page_view.height_points;
   const crop = {
-    height: Math.max(1, Math.round(options.height * page.result.scale)),
-    left: Math.round(options.x * page.result.scale),
-    top: Math.round(options.y * page.result.scale),
-    width: Math.max(1, Math.round(options.width * page.result.scale)),
+    height: Math.max(1, Math.round(options.height * scaleY)),
+    left: Math.round(options.x * scaleX),
+    top: Math.round(options.y * scaleY),
+    width: Math.max(1, Math.round(options.width * scaleX)),
   };
   validateCanvasDimensions(crop.width, crop.height);
   try {
@@ -1582,6 +1714,19 @@ async function systemRenderRegion(bytes, password, options) {
     return pngResult(buffer, {
       height: pixels.height,
       page_geometry: page.result.page_geometry,
+      page_view: page.result.page_view,
+      requested_region: {
+        x: options.x,
+        y: options.y,
+        width: options.width,
+        height: options.height,
+      },
+      rendered_region: {
+        x: crop.left,
+        y: crop.top,
+        width: pixels.width,
+        height: pixels.height,
+      },
       raw_pixel_sha256: null,
       raw_pixel_status: "unavailable",
       renderer: "macos-sips",

@@ -35,7 +35,7 @@ an `isError` result is never forced through a success schema.
 | `get_active_document` | empty or populated active-document state |
 | `get_page_analysis` | bounded page analysis with explicit provenance, operator counts, and a `classification` rollup (`document_kind`, typed `pages_needing_vision`, explicit `pages_not_analyzed`) |
 | `get_pdf_identity` | parser-independent canonical path, byte length, and SHA-256 |
-| `get_pdf_info` | bounded source-bound page, metadata, form-widget, and inert annotation observations with typed coverage |
+| `get_pdf_info` | bounded source-bound page, metadata, form-widget, and inert annotation observations with typed coverage, exact accounting, and a full-envelope digest |
 | `get_pdf_resource_uri` | resource URI and local file metadata |
 | `list_signatures` | saved signature summaries, including an empty array |
 | `load_signature` | signature metadata and optional preview |
@@ -46,8 +46,8 @@ an `isError` result is never forced through a success schema.
 | `read_pdf_fields` | active document and form fields |
 | `read_pdf_pages` | bounded page-numbered text |
 | `read_pdf_layout` | versioned bounded Extraction IR with source, geometry, reading order, gaps, and limits |
-| `render_pdf_page` | source identity, page geometry, coordinate spaces, renderer policy, raster dimensions, and PNG/raw-pixel digest evidence |
-| `render_pdf_region` | source identity, requested and rendered regions, page geometry, renderer policy, and PNG/raw-pixel digest evidence |
+| `render_pdf_page` | source identity, distinct raw page and PDF.js view geometry, renderer policy, raster dimensions, and PNG/raw-pixel digest evidence |
+| `render_pdf_region` | source identity, PDF.js viewport request coordinates, rendered raster region, page/view geometry, renderer policy, and PNG/raw-pixel digest evidence |
 | `reorder_pdf_pages` | active output document and page order |
 | `reveal_in_finder` | revealed path and platform |
 | `rotate_pdf_pages` | active output document and rotation outcome |

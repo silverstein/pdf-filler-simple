@@ -6,7 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
-import { PDFDocument, degrees, rgb } from "pdf-lib";
+import { PDFDocument, PDFName, PDFNumber, degrees, rgb } from "pdf-lib";
 import {
   getPageRenderScale,
   getRegionPixelRect,
@@ -18,6 +18,17 @@ import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
+
+async function writeCoordinateTruthFixture(targetPath) {
+  const document = await PDFDocument.create();
+  const page = document.addPage([400, 400]);
+  page.setMediaBox(50, 60, 400, 400);
+  page.setCropBox(100, 100, 200, 100);
+  page.setRotation(degrees(90));
+  page.node.set(PDFName.of("UserUnit"), PDFNumber.of(2));
+  page.drawRectangle({ x: 100, y: 100, width: 50, height: 50, color: rgb(1, 0, 0) });
+  await fs.writeFile(targetPath, await document.save({ useObjectStreams: false }));
+}
 
 describe("getPageRenderScale", () => {
   it("bounds the scale to the requested dominant dimension", () => {
@@ -204,10 +215,10 @@ describe("render_pdf_page MCP tool", () => {
       arguments: {
         pdf_path: rotatedPdfPath,
         page: 1,
-        x: 30,
+        x: 230,
         y: 30,
-        width: 80,
-        height: 40,
+        width: 40,
+        height: 80,
         max_dimension_px: 400,
       },
     });
@@ -222,6 +233,67 @@ describe("render_pdf_page MCP tool", () => {
     ctx.drawImage(image, 0, 0, image.width, image.height);
     const center = ctx.getImageData(Math.floor(image.width / 2), Math.floor(image.height / 2), 1, 1).data;
 
+    expect(center[0]).toBeGreaterThan(200);
+    expect(center[1]).toBeLessThan(80);
+    expect(center[2]).toBeLessThan(80);
+  }, 30_000);
+
+  it("labels and applies PDF.js view coordinates across origins, rotation, CropBox, and UserUnit", async () => {
+    const fixturePath = path.join(tempDirectory, "coordinate-truth.pdf");
+    await writeCoordinateTruthFixture(fixturePath);
+    const wholePage = await client.callTool({
+      name: "render_pdf_page",
+      arguments: { pdf_path: fixturePath, page: 1, max_dimension_px: 800 },
+    });
+    expect(wholePage.isError).not.toBe(true);
+    expect(wholePage.structuredContent).toMatchObject({
+      page_geometry: {
+        geometry_source: "pdf-lib",
+        media_box: [50, 60, 450, 460],
+        crop_box: [100, 100, 300, 200],
+        rotation: 90,
+        user_unit: 2,
+        coordinate_space: "pdf_user_space_bottom_left_points",
+      },
+      page_view: {
+        view_box: [100, 100, 300, 200],
+        width_points: 200,
+        height_points: 400,
+        rotation: 90,
+        user_unit: 2,
+        coordinate_space: "pdfjs_viewport_top_left_points",
+      },
+      requested_coordinate_space: "pdfjs_viewport_top_left_points",
+      requested_region: { x: 0, y: 0, width: 200, height: 400 },
+    });
+
+    const region = await client.callTool({
+      name: "render_pdf_region",
+      arguments: {
+        pdf_path: fixturePath,
+        page: 1,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        max_dimension_px: 400,
+      },
+    });
+    expect(region.isError).not.toBe(true);
+    expect(region.structuredContent.requested_region).toEqual({
+      x: 0, y: 0, width: 100, height: 100,
+    });
+    const imageItem = region.content.find(item => item.type === "image");
+    const image = await loadImage(Buffer.from(imageItem.data, "base64"));
+    const canvas = createCanvas(image.width, image.height);
+    const context = canvas.getContext("2d");
+    context.drawImage(image, 0, 0);
+    const center = context.getImageData(
+      Math.floor(image.width / 2),
+      Math.floor(image.height / 2),
+      1,
+      1,
+    ).data;
     expect(center[0]).toBeGreaterThan(200);
     expect(center[1]).toBeLessThan(80);
     expect(center[2]).toBeLessThan(80);
@@ -341,8 +413,13 @@ describe("Claude Desktop Electron utility rendering", () => {
 describe.runIf(process.platform === "darwin")("Claude Desktop Electron utility rendering with a system fallback", () => {
   let client;
   let transport;
+  let tempDirectory;
+  let coordinateFixture;
 
   beforeAll(async () => {
+    tempDirectory = await createTestTempDirectory(REPO_ROOT, "system-coordinate-render");
+    coordinateFixture = path.join(tempDirectory, "system-coordinate-truth.pdf");
+    await writeCoordinateTruthFixture(coordinateFixture);
     const serverUrl = pathToFileURL(path.join(REPO_ROOT, "server", "index.js")).href;
     const bootstrap = [
       'process.type = "utility";',
@@ -361,7 +438,11 @@ describe.runIf(process.platform === "darwin")("Claude Desktop Electron utility r
   }, 30_000);
 
   afterAll(async () => {
-    await transport?.close();
+    try {
+      await transport?.close();
+    } finally {
+      await removeTestTempDirectory(tempDirectory);
+    }
   });
 
   it("renders through the system renderer rather than the blocked native binding", async () => {
@@ -377,6 +458,61 @@ describe.runIf(process.platform === "darwin")("Claude Desktop Electron utility r
       raw_pixel_status: "unavailable",
     });
     expect(result.content.some(item => item.type === "image" && item.mimeType === "image/png")).toBe(true);
+  }, 30_000);
+
+  it("renders a supported system region with explicit PDF.js view coordinates", async () => {
+    const result = await client.callTool({
+      name: "render_pdf_region",
+      arguments: {
+        pdf_path: EXAMPLE_PDF,
+        page: 1,
+        x: 72,
+        y: 120,
+        width: 180,
+        height: 60,
+        max_dimension_px: 720,
+      },
+    });
+    expect(result.isError).not.toBe(true);
+    expect(result.structuredContent).toMatchObject({
+      renderer: "macos-sips",
+      requested_coordinate_space: "pdfjs_viewport_top_left_points",
+      requested_region: { x: 72, y: 120, width: 180, height: 60 },
+      raw_pixel_status: "unavailable",
+      raw_pixel_sha256: null,
+    });
+    const imageItem = result.content.find(item => item.type === "image");
+    expect(result.structuredContent.png_sha256)
+      .toBe(createHash("sha256").update(Buffer.from(imageItem.data, "base64")).digest("hex"));
+  }, 30_000);
+
+  it("keeps system fallback regions in the same PDF.js view coordinate space", async () => {
+    const wholePage = await client.callTool({
+      name: "render_pdf_page",
+      arguments: { pdf_path: coordinateFixture, page: 1, max_dimension_px: 800 },
+    });
+    expect(wholePage.isError).toBe(true);
+    expect(wholePage.structuredContent.source).toBeUndefined();
+    expect(JSON.stringify(wholePage.content)).toContain(
+      "cannot guarantee PDF.js view coordinates for this page geometry",
+    );
+    const region = await client.callTool({
+      name: "render_pdf_region",
+      arguments: {
+        pdf_path: coordinateFixture,
+        page: 1,
+        x: 0,
+        y: 0,
+        width: 100,
+        height: 100,
+        max_dimension_px: 400,
+      },
+    });
+    expect(region.isError).toBe(true);
+    expect(region.structuredContent.source).toBeUndefined();
+    expect(JSON.stringify(region.content)).toContain(
+      "cannot guarantee PDF.js view coordinates for this page geometry",
+    );
   }, 30_000);
 });
 

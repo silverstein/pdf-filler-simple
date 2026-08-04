@@ -83,13 +83,22 @@ const observationSource = object({
   sha256: sha256Digest,
 });
 const observationPageGeometry = object({
-  media_box: pageBox,
+  geometry_source: enumString(["pdf-lib", "pdfjs-view-fallback"]),
+  media_box: nullable(pageBox),
   crop_box: pageBox,
   width_points: number,
   height_points: number,
   rotation: number,
   user_unit: number,
-  coordinate_space: { const: "pdf_tools_top_left_media_box_points" },
+  coordinate_space: { const: "pdf_user_space_bottom_left_points" },
+});
+const observationPageView = object({
+  view_box: pageBox,
+  width_points: number,
+  height_points: number,
+  rotation: number,
+  user_unit: number,
+  coordinate_space: { const: "pdfjs_viewport_top_left_points" },
 });
 const nativeObservationRegion = nullable(object({
   x1: number,
@@ -101,6 +110,8 @@ const displayObservationRegion = nullable(regionPoints);
 const metadataRecord = object({
   values: { type: "object", additionalProperties: true },
   omitted_keys: stringArray,
+  omitted_key_count: integer,
+  omitted_keys_truncated: boolean,
   truncated: boolean,
 });
 const metadataObservation = object({
@@ -111,21 +122,24 @@ const metadataObservation = object({
     info_value_sha256: sha256Digest,
     xmp_value_sha256: sha256Digest,
   })),
+  disagreements_truncated: boolean,
   observation_sha256: sha256Digest,
 });
 const pageObservation = object({
   page: integer,
-  media_box: pageBox,
+  geometry_source: enumString(["pdf-lib", "pdfjs-view-fallback"]),
+  media_box: nullable(pageBox),
   crop_box: pageBox,
   width_points: number,
   height_points: number,
   rotation: number,
   user_unit: number,
-  coordinate_space: { const: "pdf_tools_top_left_media_box_points" },
+  coordinate_space: { const: "pdf_user_space_bottom_left_points" },
   observation_sha256: sha256Digest,
 });
 const formFieldObservation = object({
   id: { type: "string", pattern: "^field-[a-f0-9]{64}$" },
+  record_kind: enumString(["field", "unmatched_widget"]),
   source_object_id: nullable(string),
   name: string,
   type: string,
@@ -829,7 +843,8 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     observation_schema_version: { const: "1.0" },
     source: observationSource,
     page_geometry: observationPageGeometry,
-    requested_coordinate_space: { const: "pdf_tools_top_left_media_box_points" },
+    page_view: observationPageView,
+    requested_coordinate_space: { const: "pdfjs_viewport_top_left_points" },
     rendered_coordinate_space: { const: "raster_top_left_pixels" },
     requested_region: regionPoints,
     rendered_region: regionPoints,
@@ -858,7 +873,8 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     observation_schema_version: { const: "1.0" },
     source: observationSource,
     page_geometry: observationPageGeometry,
-    requested_coordinate_space: { const: "pdf_tools_top_left_media_box_points" },
+    page_view: observationPageView,
+    requested_coordinate_space: { const: "pdfjs_viewport_top_left_points" },
     rendered_coordinate_space: { const: "raster_top_left_pixels" },
     requested_region: regionPoints,
     rendered_region: regionPoints,
@@ -935,16 +951,24 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     }),
     metadata: metadataObservation,
     form_fields: object({
+      field_object_count: integer,
+      total_count: integer,
       observed_count: integer,
       truncated: boolean,
+      widget_count: integer,
+      matched_widget_count: integer,
+      unmatched_widget_count: integer,
+      omitted_widget_count: integer,
       items: arrayOf(formFieldObservation),
     }),
     annotations: object({
+      encountered_count: integer,
       observed_count: integer,
       truncated: boolean,
       items: arrayOf(annotationObservation),
     }),
     limitations: stringArray,
+    observation_sha256: sha256Digest,
   }),
   display_pdf: activeDocument(),
   get_active_document: {
@@ -1105,7 +1129,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
 
 const specialErrorSchemas = {
   get_pdf_identity: [pdfIdentityError],
-  get_pdf_info: [layoutPasswordError, pdfResourceLimitError],
+  get_pdf_info: [layoutPasswordError, pdfResourceLimitError, pdfIdentityError],
   validate_pdf: [validationFailure],
   read_pdf_content: [contentFailure, contentWorkerFailure, contentResourceLimitError, pdfResourceLimitError],
   read_pdf_pages: [pdfResourceLimitError],

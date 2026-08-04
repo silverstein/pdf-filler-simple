@@ -114,6 +114,11 @@ returns link or action targets only as inert values. Page and region renders
 report page geometry, coordinate spaces, renderer policy, the PNG SHA-256,
 and raw RGBA SHA-256 availability.
 
+Region-render inputs are top-left PDF.js viewport points after CropBox,
+rotation, and UserUnit. They are not MediaBox-relative signing-zone
+coordinates. The macOS system fallback refuses geometries it cannot map to
+that view exactly.
+
 ## Great Fit For
 
 - Researchers reviewing papers and reports

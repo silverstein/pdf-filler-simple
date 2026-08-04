@@ -36,7 +36,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // provenance.
 // 08c1f0d18959cfbf7c29319bc208d2cb75ca8a8334c36cb11539e77dcf87aca2.
 // 2026-08-03: opt-in compact Markdown normalizations and result-shape wiring.
-// 58952c461519d4959b355811005f4d9723c1d0e07c10c85e0e61259f8bec59cd.
+// 3ad7a1419cfc2375e809dd891f3fc4d99d3860de739838bbaca1d17753077603.
 // 2026-07-30: convert_pdf_to_markdown description corrected to state the table
 // and link capabilities it actually has, then shortened to 820 characters
 // without dropping a safety boundary. Previously
@@ -733,7 +733,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(deniedInfo.content?.[0]).toMatchObject({
       type: "text",
-      text: expect.stringMatching(/^Error:/),
+      text: "The requested PDF path is not permitted.",
     });
   });
 

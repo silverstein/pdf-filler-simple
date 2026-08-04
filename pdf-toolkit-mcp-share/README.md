@@ -107,8 +107,8 @@ Once installed, ask Claude in Cursor:
 - **read_pdf_pages** - Read a bounded page range with page-numbered structured output
 - **read_pdf_layout** - Extract bounded local text geometry and conservative reading order without OCR or table inference
 - **convert_pdf_to_markdown** - Convert supported PDF text to deterministic Markdown with explicit partial and unsupported-content gaps. Reconstructs a table only when every row fills every recurring column and the first row carries real header evidence, and emits a link only for a source-validated external http or https target. Unsupported table structures and link targets stay escaped text reported as a typed gap.
-- **render_pdf_page** - Render a source-bound page to PNG with page geometry, renderer policy, and digest evidence
-- **render_pdf_region** - Render a bounded source-bound PDF region with explicit point/raster coordinates and digest evidence
+- **render_pdf_page** - Render a source-bound PDF.js page view with distinct raw geometry, view geometry, renderer policy, and digest evidence
+- **render_pdf_region** - Render a bounded PDF.js viewport region; these inputs are not MediaBox-relative signing coordinates
 - **search_pdf_text** - Search extracted PDF text and return page-numbered snippets
 - **merge_pdfs** / **split_pdf** - Combine and split documents
 - **rotate_pdf_pages** / **reorder_pdf_pages** - Organize scanned or shuffled pages

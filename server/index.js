@@ -41,7 +41,10 @@ import {
   withToolOutputSchema,
 } from "./output-schemas.js";
 import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
-import { buildRenderObservation } from "./pdf-observations.js";
+import {
+  buildRenderObservation,
+  publicPdfObservationError,
+} from "./pdf-observations.js";
 import {
   PDF_MUTATION_MAX_FILE_BYTES,
   assertDanglingPdfInputAlias,
@@ -2735,7 +2738,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "render_pdf_page",
-        description: "Render one PDF page to a PNG image for visual reasoning. Use this when text extraction is weak, the PDF is scanned/image-only, or the model needs to inspect layout, signatures, handwriting, or tables visually. Returns the rendered page as image content plus page metadata. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Render one PDF.js page view to a PNG image for visual reasoning. The source-bound result distinguishes raw MediaBox/CropBox geometry from the rotated, UserUnit-scaled PDF.js view and raster coordinate spaces. Use this when text extraction is weak or visual layout must be inspected. All paths must be absolute local paths, not host container paths.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2775,7 +2778,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "render_pdf_region",
-        description: "Render a rectangular region from one PDF page to a PNG image using the toolkit's top-left point coordinate system. Use this for signatures, handwritten notes, stamps, tables, or any small visual area where the full page is too broad. Coordinates are in PDF points (72 pt = 1 inch) with a TOP-LEFT origin, matching detect_signature_zones and the signing tools. All paths must be absolute paths on the user's local machine, NOT Claude container paths (/mnt/...).",
+        description: "Render a rectangular region from the rotated, UserUnit-scaled PDF.js page view. Coordinates use a top-left origin in PDF.js viewport points and are not interchangeable with MediaBox-relative detect_signature_zones or signing coordinates. The system renderer fails closed when it cannot guarantee this view mapping. All paths must be absolute local paths, not host container paths.",
         inputSchema: {
           type: "object",
           properties: {
@@ -2789,19 +2792,19 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             x: {
               type: "number",
-              description: "Left edge of the region, in points from the left side of the page."
+              description: "Left edge in PDF.js viewport points from the displayed page view's left edge."
             },
             y: {
               type: "number",
-              description: "Top edge of the region, in points from the TOP of the page."
+              description: "Top edge in PDF.js viewport points from the displayed page view's top edge."
             },
             width: {
               type: "number",
-              description: "Width of the region in points."
+              description: "Width in rotated, UserUnit-scaled PDF.js viewport points."
             },
             height: {
               type: "number",
-              description: "Height of the region in points."
+              description: "Height in rotated, UserUnit-scaled PDF.js viewport points."
             },
             max_dimension_px: {
               type: "number",
@@ -4709,14 +4712,10 @@ async function handleToolCall(request) {
             },
             source: { ...source, file_name: fileName },
             geometry: renderedImage.page_geometry,
+            pageView: renderedImage.page_view,
             page: targetPage,
-            requestedRegion: {
-              x: 0,
-              y: 0,
-              width: renderedImage.page_geometry.width_points,
-              height: renderedImage.page_geometry.height_points,
-            },
-            renderedRegion: { x: 0, y: 0, width: renderedWidth, height: renderedHeight },
+            requestedRegion: renderedImage.requested_region,
+            renderedRegion: renderedImage.rendered_region,
             rendererPolicy,
             pngSha256: createHash("sha256").update(imageBuffer).digest("hex"),
             rawPixelSha256: renderedImage.raw_pixel_sha256,
@@ -4802,14 +4801,10 @@ async function handleToolCall(request) {
             },
             source: { ...source, file_name: fileName },
             geometry: renderedImage.page_geometry,
+            pageView: renderedImage.page_view,
             page: targetPage,
-            requestedRegion: region,
-            renderedRegion: {
-              x: crop.left,
-              y: crop.top,
-              width: renderedImage.width,
-              height: renderedImage.height,
-            },
+            requestedRegion: renderedImage.requested_region,
+            renderedRegion: renderedImage.rendered_region,
             rendererPolicy,
             pngSha256: createHash("sha256").update(imageBuffer).digest("hex"),
             rawPixelSha256: renderedImage.raw_pixel_sha256,
@@ -5467,8 +5462,8 @@ async function handleToolCall(request) {
         if (maxOutputCharacters > 200_000) {
           throw new Error("'max_output_characters' must not exceed 200000.");
         }
-        const resolvedPath = resolvePath(pdfPath);
         try {
+          const resolvedPath = resolvePath(pdfPath);
           const { result: payload } = await runPdfjsOperation(resolvedPath, {
             operation: "observe_document",
             password,
@@ -5489,14 +5484,8 @@ async function handleToolCall(request) {
             structuredContent: payload,
           };
         } catch (error) {
-          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
-          const passwordCode = ["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"].includes(error?.code)
-            ? error.code
-            : null;
-          const message = `Error inspecting PDF: ${error.message}`;
-          return passwordCode
-            ? createTypedToolError({ message, code: passwordCode })
-            : createTypedToolError({ message });
+          const publicError = publicPdfObservationError(error);
+          return createTypedToolError(publicError);
         }
       }
 

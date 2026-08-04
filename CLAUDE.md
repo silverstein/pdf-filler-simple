@@ -152,6 +152,11 @@ Annotation URLs, destinations, and actions are never opened. Render results
 report the source identity, page geometry, coordinate spaces, renderer policy,
 PNG digest, and native raw-pixel digest availability.
 
+`render_pdf_region` uses top-left PDF.js viewport points after CropBox,
+rotation, and UserUnit. Do not pass MediaBox-relative signature-zone or signing
+coordinates to it. The macOS system fallback rejects page geometries whose
+PDF.js view mapping it cannot guarantee.
+
 `convert_pdf_to_markdown` consumes the bounded source-validated layout IR
 (v1.3.0, which carries CTM-tracked ruled-rectangle evidence, text-integrity
 character-class signals, and operator counts, all independently replayed
