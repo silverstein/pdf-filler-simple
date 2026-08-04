@@ -133,7 +133,8 @@ retarget PR #56 to `master`, verify its diff, and continue one PR at a time
 through #62. Never merge a higher draft while its direct base is still an
 unmerged feature branch. Re-run the cumulative tests and package proof after
 the final landing; any repack has a new artifact identity. Installed Claude
-Desktop proof remains a separate gate even after the code lands.
+Desktop proof must be repeated for that new artifact identity after the code
+lands.
 
 ## Fast recovery commands
 
