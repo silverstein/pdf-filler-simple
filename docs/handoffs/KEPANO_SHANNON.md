@@ -1,6 +1,6 @@
 # Kepano / Shannon current handoff
 
-Updated 2026-08-03 (America/Los_Angeles).
+Updated 2026-08-04 (America/Los_Angeles).
 
 ## Read this first
 
@@ -30,6 +30,9 @@ to replace it with a newly invented benchmark.
   `578f517c90f21c073673e6668421368374f7cf55`
 - Later commits on the branch update evidence and this handoff only; use
   `git rev-parse HEAD` for the current published branch tip.
+- The documentation tip is intentionally resolved live rather than written
+  into this file, because committing a self-referenced hash would immediately
+  create a different tip. The tested runtime checkpoint above is immutable.
 - Publication status: draft PR #62, stacked directly on PR #61.
 - Current draft stack, reviewed from bottom to top:
 
