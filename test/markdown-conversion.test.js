@@ -239,7 +239,7 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:INTRODUCTION|APPENDIX 1|PART I: REPEATED PAGE LABEL)$/gmu);
   });
 
-  it("joins a geometrically supported drop cap and line-end word break without joining ambiguous structure", async () => {
+  it("joins a geometrically supported drop cap without deleting ambiguous line-end hyphens", async () => {
     const layout = await validatedSyntheticLayout([{
       items: [
         textItem("T", { top: 50, left: 40, fontSize: 30 }),
@@ -248,13 +248,20 @@ describe("layout Markdown renderer", () => {
         centeredTextItem("PART I: BODY", { top: 140 }),
         textItem("state-", { top: 180 }),
         textItem("2) of the art", { top: 210 }),
+        textItem("three-", { top: 250 }),
+        textItem("dimensional sound", { top: 280 }),
+        textItem("Ordinary context", { top: 320 }),
+        textItem("A", { top: 360, left: 40, fontSize: 30 }),
+        textItem("BC Corporation provides ordinary business services", { top: 372, left: 67 }),
       ],
     }]);
     const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
 
-    expect(result.markdown).toContain("THE recent development was rapid and approximately correct.");
+    expect(result.markdown).toContain("THE recent development was rapid and ap-\nproximately correct.");
     expect(result.markdown).toContain("## PART I: BODY");
     expect(result.markdown).toContain("state-\n2) of the art");
+    expect(result.markdown).toContain("three-\ndimensional sound");
+    expect(result.markdown).toContain("Ordinary context\nA\nBC Corporation provides ordinary business services");
   });
 
   it("neutralizes hostile Markdown, HTML, table, autolink, and control syntax", async () => {
