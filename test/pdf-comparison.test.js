@@ -26,11 +26,17 @@ function page(pageNumber, text, { width = 100, height = 100, rotation = 0 } = {}
   };
 }
 
-function render(width, height, fill = 0) {
+function render(width, height, fill = 0, requestedRegion = {
+  x: 0,
+  y: 0,
+  width: width / 1.5,
+  height: height / 1.5,
+}) {
   return {
     width,
     height,
     scale: 1.5,
+    requested_region: requestedRegion,
     binary: Buffer.alloc(width * height * 4, fill),
   };
 }
@@ -183,6 +189,22 @@ describe("PDF comparison primitives", () => {
       const before = render(12, 6);
       const after = render(12, 6);
       after.binary[(y * 12 + x) * 4] = 20;
+      const baseline = diffComparisonRgba(before, after);
+      expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region))
+        .toEqual(baseline);
+    }
+  });
+
+  it("uses exact page points instead of rounded raster dimensions at right and bottom edges", () => {
+    const requestedRegion = { x: 0, y: 0, width: 8.1, height: 4.1 };
+    const cases = [
+      { region: [8.2, 1, 0.2, 1], pixel: [12, 3] },
+      { region: [2, 4.2, 1, 0.2], pixel: [4, 6] },
+    ];
+    for (const { region, pixel: [x, y] } of cases) {
+      const before = render(13, 7, 0, requestedRegion);
+      const after = render(13, 7, 0, requestedRegion);
+      after.binary[(y * 13 + x) * 4] = 20;
       const baseline = diffComparisonRgba(before, after);
       expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region))
         .toEqual(baseline);

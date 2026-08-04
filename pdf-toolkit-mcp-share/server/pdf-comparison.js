@@ -338,14 +338,22 @@ function cropRgba(render, region) {
 function comparisonIgnoredPixelMask(render, regions) {
   const mask = new Uint8Array(render.width * render.height);
   const clamp = (value, maximum) => Math.max(0, Math.min(maximum, value));
+  const requestedRegion = render.requested_region;
+  const pageLeft = Number.isFinite(requestedRegion?.x) ? requestedRegion.x : 0;
+  const pageTop = Number.isFinite(requestedRegion?.y) ? requestedRegion.y : 0;
+  const pageRight = Number.isFinite(requestedRegion?.width) && requestedRegion.width > 0
+    ? pageLeft + requestedRegion.width
+    : render.width / render.scale;
+  const pageBottom = Number.isFinite(requestedRegion?.height) && requestedRegion.height > 0
+    ? pageTop + requestedRegion.height
+    : render.height / render.scale;
   for (const region of regions) {
     if (!Array.isArray(region) || region.length !== 4 || !region.every(Number.isFinite)
       || region[2] <= 0 || region[3] <= 0) continue;
     const regionRight = region[0] + region[2];
     const regionBottom = region[1] + region[3];
-    if (regionRight <= 0 || regionBottom <= 0
-      || region[0] >= render.width / render.scale
-      || region[1] >= render.height / render.scale) continue;
+    if (regionRight <= pageLeft || regionBottom <= pageTop
+      || region[0] >= pageRight || region[1] >= pageBottom) continue;
     const x0 = clamp(Math.floor(region[0] * render.scale) - 1, render.width);
     const y0 = clamp(Math.floor(region[1] * render.scale) - 1, render.height);
     const x1 = clamp(Math.ceil((region[0] + region[2]) * render.scale) + 1, render.width);
