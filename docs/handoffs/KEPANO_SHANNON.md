@@ -32,10 +32,22 @@ to replace it with a newly invented benchmark.
   `git rev-parse HEAD` for the current published branch tip.
 - Publication status: draft PR #62, stacked directly on PR #61.
 - Current draft stack, reviewed from bottom to top:
-  - PR #59, `Restore proven mathematical operator spacing`
-  - PR #60, `Recover bounded ruled table topology`
-  - PR #61, `Recover qualified legacy Type-3 glyphs`
-  - PR #62, `Recover the primary vetted Type-3 glyph batch`
+
+| PR | Draft outcome | Direct base |
+| ---: | --- | --- |
+| #55 | Evaluate Shannon Markdown candidates and fix invalid line grouping | `master` |
+| #56 | Reject malformed heading candidates | PR #55 |
+| #57 | Recover strongly supported document headings | PR #56 |
+| #58 | Improve narrowly supported paragraph continuity | PR #57 |
+| #59 | Restore proven mathematical operator spacing | PR #58 |
+| #60 | Recover bounded ruled table topology | PR #59 |
+| #61 | Recover the first qualified legacy Type-3 glyph batch | PR #60 |
+| #62 | Recover the primary vetted Type-3 glyph batch | PR #61 |
+
+All eight local branch tips matched their live GitHub PR heads during the
+2026-08-04 review. Each draft was open and mergeable with no comments, reviews,
+or reported checks. The cumulative top branch passed the complete verification
+described below.
 
 PR #61 is stacked directly on PR #60. On the verified Shannon PDF it changes
 exactly 31 intended codepoint positions without changing output length:
@@ -104,6 +116,13 @@ paper.
 Do not merge, release, or reply publicly to Kepano without Mat's explicit
 authorization. No Kepano reply has been sent. A reply is worthwhile only if
 his actual issue is honestly solved; otherwise do not ping him.
+
+If Mat later authorizes landing, preserve the order above. Merge PR #55 first,
+retarget PR #56 to `master`, verify its diff, and continue one PR at a time
+through #62. Never merge a higher draft while its direct base is still an
+unmerged feature branch. Re-run the cumulative tests and package proof after
+the final landing; any repack has a new artifact identity. Installed Claude
+Desktop proof remains a separate gate even after the code lands.
 
 ## Fast recovery commands
 
