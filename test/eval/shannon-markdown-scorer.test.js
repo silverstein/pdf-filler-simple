@@ -130,4 +130,38 @@ describe("Shannon Markdown adversarial scorer", () => {
     const table = result.omissions_and_duplication.details.find(item => item.anchor === "TABLE I");
     expect(table.count).toBe(1);
   });
+
+  it("does not count a prose reference as a duplicate Table I label", async () => {
+    const manifestOracle = await oracle();
+    const result = scoreShannonMarkdown({
+      markdown: "TABLE I\n\nIn Table I the final entropy power is discussed.\n",
+      oracle: manifestOracle,
+      evidence: {},
+    });
+    const table = result.omissions_and_duplication.details.find(item => item.anchor === "TABLE I");
+    expect(table.count).toBe(1);
+    expect(result.omissions_and_duplication.duplicated.some(item => item.anchor === "TABLE I")).toBe(false);
+    expect(result.table_topology.label_present).toBe(true);
+
+    const proseOnly = scoreShannonMarkdown({
+      markdown: "In Table I the final entropy power is discussed.\n",
+      oracle: manifestOracle,
+      evidence: {},
+    });
+    const proseOnlyTable = proseOnly.omissions_and_duplication.details.find(item => item.anchor === "TABLE I");
+    expect(proseOnlyTable.count).toBe(0);
+    expect(proseOnly.table_topology.label_present).toBe(false);
+  });
+
+  it("reports two standalone Table I labels as duplicated despite a prose reference", async () => {
+    const manifestOracle = await oracle();
+    const result = scoreShannonMarkdown({
+      markdown: "TABLE I\n\nIn Table I the final entropy power is discussed.\n\n**TABLE I**\n",
+      oracle: manifestOracle,
+      evidence: {},
+    });
+    const table = result.omissions_and_duplication.details.find(item => item.anchor === "TABLE I");
+    expect(table.count).toBe(2);
+    expect(result.omissions_and_duplication.duplicated).toContainEqual({ anchor: "TABLE I", count: 2 });
+  });
 });
