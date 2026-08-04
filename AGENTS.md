@@ -1,5 +1,12 @@
 # Repository Guidelines
 
+## Active Kepano / Shannon Work
+
+Before continuing the current extraction-improvement tranche, read
+`docs/handoffs/KEPANO_SHANNON.md`. The crucial starting fact is that Kepano's
+example is Shannon's *A Mathematical Theory of Communication* PDF; it is not a
+separate example to locate.
+
 ## Project Structure & Module Organization
 - `server/index.js`: Node MCP server exposing PDF tools shared by Claude Desktop and Cursor. Keep tool definitions and helper utilities here; prefer incremental updates over rewrites.
 - `pdf-toolkit-mcp-share/`: Packaged variant used by `package-for-friend.js`; mirror changes from `server/index.js` when APIs evolve.

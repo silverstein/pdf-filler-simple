@@ -1,5 +1,12 @@
 # PDF Toolkit MCP - Development Guide
 
+## Active Kepano / Shannon Work
+
+Before continuing the current extraction-improvement tranche, read
+`docs/handoffs/KEPANO_SHANNON.md`. The crucial starting fact is that Kepano's
+example is Shannon's *A Mathematical Theory of Communication* PDF; it is not a
+separate example to locate.
+
 This document provides essential context for Claude and other AI assistants when working on the PDF Toolkit extension.
 
 ## Project Overview
