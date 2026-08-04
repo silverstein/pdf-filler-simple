@@ -324,18 +324,87 @@ function installBrowserPolyfills() {
   if (typeof globalThis.DOMMatrix === "undefined") {
     globalThis.DOMMatrix = class DOMMatrix {
       constructor(init) {
-        const value = Array.isArray(init) ? init : [1, 0, 0, 1, 0, 0];
+        const value = Array.isArray(init) || ArrayBuffer.isView(init)
+          ? init
+          : init && typeof init === "object"
+            ? [init.a, init.b, init.c, init.d, init.e, init.f]
+            : [1, 0, 0, 1, 0, 0];
         [this.a, this.b, this.c, this.d, this.e, this.f] = value;
-        this.is2D = true;
-        this.isIdentity = value[0] === 1 && value[1] === 0 && value[2] === 0
-          && value[3] === 1 && value[4] === 0 && value[5] === 0;
+        if (![this.a, this.b, this.c, this.d, this.e, this.f].every(Number.isFinite)) {
+          throw new TypeError("DOMMatrix requires six finite 2D matrix values.");
+        }
+        this.#syncFlags();
       }
-      multiplySelf() { return this; }
-      preMultiplySelf() { return this; }
-      translateSelf() { return this; }
-      scaleSelf() { return this; }
-      rotateSelf() { return this; }
-      invertSelf() { return this; }
+      #syncFlags() {
+        this.is2D = true;
+        this.isIdentity = this.a === 1 && this.b === 0 && this.c === 0
+          && this.d === 1 && this.e === 0 && this.f === 0;
+      }
+      #set(value) {
+        [this.a, this.b, this.c, this.d, this.e, this.f] = value;
+        this.#syncFlags();
+        return this;
+      }
+      multiplySelf(other) {
+        const right = DOMMatrix.fromMatrix(other);
+        const { a, b, c, d, e, f } = this;
+        return this.#set([
+          a * right.a + c * right.b,
+          b * right.a + d * right.b,
+          a * right.c + c * right.d,
+          b * right.c + d * right.d,
+          a * right.e + c * right.f + e,
+          b * right.e + d * right.f + f,
+        ]);
+      }
+      preMultiplySelf(other) {
+        const left = DOMMatrix.fromMatrix(other);
+        const current = new DOMMatrix(this);
+        return this.#set(left.multiplySelf(current).toArray());
+      }
+      translateSelf(tx = 0, ty = 0) {
+        return this.multiplySelf(new DOMMatrix([1, 0, 0, 1, tx, ty]));
+      }
+      scaleSelf(scaleX = 1, scaleY = scaleX, _scaleZ = 1, originX = 0, originY = 0) {
+        return this.translateSelf(originX, originY)
+          .multiplySelf(new DOMMatrix([scaleX, 0, 0, scaleY, 0, 0]))
+          .translateSelf(-originX, -originY);
+      }
+      rotateSelf(angle = 0) {
+        const radians = angle * Math.PI / 180;
+        const cosine = Math.cos(radians);
+        const sine = Math.sin(radians);
+        return this.multiplySelf(new DOMMatrix([cosine, sine, -sine, cosine, 0, 0]));
+      }
+      invertSelf() {
+        const { a, b, c, d, e, f } = this;
+        const determinant = a * d - b * c;
+        if (determinant === 0) return this.#set([NaN, NaN, NaN, NaN, NaN, NaN]);
+        return this.#set([
+          d / determinant,
+          -b / determinant,
+          -c / determinant,
+          a / determinant,
+          (c * f - d * e) / determinant,
+          (b * e - a * f) / determinant,
+        ]);
+      }
+      multiply(other) { return new DOMMatrix(this).multiplySelf(other); }
+      translate(tx = 0, ty = 0) { return new DOMMatrix(this).translateSelf(tx, ty); }
+      scale(scaleX = 1, scaleY = scaleX) { return new DOMMatrix(this).scaleSelf(scaleX, scaleY); }
+      rotate(angle = 0) { return new DOMMatrix(this).rotateSelf(angle); }
+      inverse() { return new DOMMatrix(this).invertSelf(); }
+      transformPoint(point = {}) {
+        const x = Number(point.x ?? 0);
+        const y = Number(point.y ?? 0);
+        return {
+          x: this.a * x + this.c * y + this.e,
+          y: this.b * x + this.d * y + this.f,
+          z: Number(point.z ?? 0),
+          w: Number(point.w ?? 1),
+        };
+      }
+      toArray() { return [this.a, this.b, this.c, this.d, this.e, this.f]; }
       static fromMatrix(value) {
         return new DOMMatrix([value.a, value.b, value.c, value.d, value.e, value.f]);
       }

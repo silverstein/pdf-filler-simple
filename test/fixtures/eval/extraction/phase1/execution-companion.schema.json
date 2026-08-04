@@ -19,7 +19,7 @@
     "runtime": { "type": "object" },
     "runner_environment": { "$ref": "#/$defs/runnerEnvironment" },
     "limitations": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 } },
-    "direct_sources": { "type": "array", "minItems": 31, "maxItems": 31, "items": { "$ref": "#/$defs/source" } },
+    "direct_sources": { "type": "array", "minItems": 32, "maxItems": 32, "items": { "$ref": "#/$defs/source" } },
     "direct_source_set_sha256": { "$ref": "#/$defs/sha256" }
   },
   "$defs": {
@@ -149,7 +149,7 @@
     "source": {
       "type": "object", "additionalProperties": false,
       "required": ["role", "path", "bytes", "sha256"],
-      "properties": { "role": { "enum": ["artifact_config_schema", "artifact_inventory_schema", "artifact_module", "companion_module", "companion_schema", "corpus_module", "corpus_schema", "execution_generation_verifier_module", "execution_index_schema", "extraction_manifest_loader", "generation_privacy_schema", "generation_verifier_common_module", "layout_evidence_module", "layout_extraction_module", "layout_output_schemas_module", "markdown_conversion_module", "mcp_sdk_package", "package_json", "package_lock", "pdf_lib_package", "pdfjs_package", "plan_schema", "protocol_module", "publisher_module", "receipt_schema", "registry_schema", "report_schema", "report_verifier_module", "request_schema", "response_schema", "runner_script"] }, "path": { "type": "string", "minLength": 1 }, "bytes": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
+      "properties": { "role": { "enum": ["artifact_config_schema", "artifact_inventory_schema", "artifact_module", "companion_module", "companion_schema", "corpus_module", "corpus_schema", "execution_generation_verifier_module", "execution_index_schema", "extraction_manifest_loader", "generation_privacy_schema", "generation_verifier_common_module", "layout_evidence_module", "layout_extraction_module", "type3_cm_reference_module", "layout_output_schemas_module", "markdown_conversion_module", "mcp_sdk_package", "package_json", "package_lock", "pdf_lib_package", "pdfjs_package", "plan_schema", "protocol_module", "publisher_module", "receipt_schema", "registry_schema", "report_schema", "report_verifier_module", "request_schema", "response_schema", "runner_script"] }, "path": { "type": "string", "minLength": 1 }, "bytes": { "type": "integer", "minimum": 1 }, "sha256": { "$ref": "#/$defs/sha256" } }
     }
   }
 }

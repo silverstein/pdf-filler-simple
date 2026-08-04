@@ -37,6 +37,7 @@ export const PHASE1_COMPANION_SOURCE_ROLES = Object.freeze([
   "request_schema",
   "response_schema",
   "runner_script",
+  "type3_cm_reference_module",
 ]);
 export const PHASE1_COMPANION_SOURCE_PATHS = Object.freeze({
   artifact_config_schema: "test/fixtures/eval/extraction/phase1/artifact-config.schema.json",
@@ -53,6 +54,7 @@ export const PHASE1_COMPANION_SOURCE_PATHS = Object.freeze({
   generation_verifier_common_module: "test/eval/extraction-phase1-generation-verifier-common.js",
   layout_evidence_module: "test/eval/extraction-phase1-layout-evidence.js",
   layout_extraction_module: "server/layout-extraction.js",
+  type3_cm_reference_module: "server/type3-cm-reference.js",
   layout_output_schemas_module: "server/output-schemas.js",
   markdown_conversion_module: "server/markdown-conversion.js",
   mcp_sdk_package: "node_modules/@modelcontextprotocol/sdk/package.json",

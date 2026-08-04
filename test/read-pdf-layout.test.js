@@ -12,6 +12,8 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   extractPdfLayout,
   pdfjsFactoryDirectory,
+  type3CharProcSha256,
+  uniqueComputerModernFamily,
   validatePdfLayoutSemantics,
   validatePdfLayoutSourceEvidence,
 } from "../server/layout-extraction.js";
@@ -38,6 +40,70 @@ const HORIZONTAL_GEOMETRY_PROVENANCE = {
   ascent_source: "style_ascent",
   ascent_ratio: 0.905,
 };
+
+describe("qualified legacy Type-3 glyph evidence", () => {
+  const minusCharProc = () => ({
+    fnArray: [49, 10, 12, 91, 11],
+    argsArray: [
+      [52, 0, 5, 15, 46, 18],
+      null,
+      [41, 0, 0, 3, 5.1, 14.9],
+      [
+        94,
+        [new Float32Array([0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1])],
+        new Float32Array([0, 0, 41, 3]),
+      ],
+      null,
+    ],
+  });
+
+  it("pins the exact reviewed glyph program and refuses a one-value near match", () => {
+    expect(type3CharProcSha256(minusCharProc())).toBe(
+      "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
+    );
+    const nearMatch = minusCharProc();
+    nearMatch.argsArray[3][1][0][14] = 0;
+    expect(type3CharProcSha256(nearMatch)).not.toBe(
+      "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
+    );
+    expect(type3CharProcSha256({ fnArray: [49], argsArray: [new Float32Array(100001)] })).toBeNull();
+  });
+
+  it("requires one unique official Computer Modern encoding family", () => {
+    expect(uniqueComputerModernFamily([[0, 52], [21, 52], [112, 55]]))
+      .toBe("computer-modern-math-symbol");
+    expect(uniqueComputerModernFamily([[11, 45], [25, 41], [26, 36], [33, 44]]))
+      .toBe("computer-modern-math-italic");
+    expect(uniqueComputerModernFamily([[58, 18], [59, 18], [61, 33]]))
+      .toBe("computer-modern-math-italic");
+    expect(uniqueComputerModernFamily([[0, 52]])).toBeNull();
+    expect(uniqueComputerModernFamily([[40, 32], [41, 32]])).toBeNull();
+  });
+
+  it("keeps ordinary punctuation and already-correct Unicode byte-for-byte unchanged", async () => {
+    const { result } = await runFake([{ items: [textItem({ text: "!:=,-−", x: 20, top: 20 })] }]);
+    const item = result.pages[0].raw_items[0];
+    expect(item.text).toBe("!:=,-−");
+    expect(item).not.toHaveProperty("source_text");
+    expect(item).not.toHaveProperty("glyph_recoveries");
+  });
+
+  it("binds the generated labeled reference to its checked-in provenance", async () => {
+    const fixture = path.join(REPO_ROOT, "test/fixtures/eval/extraction/type3-cm-reference.pdf");
+    const module = path.join(REPO_ROOT, "server/type3-cm-reference.js");
+    const shareModule = path.join(REPO_ROOT, "pdf-toolkit-mcp-share/server/type3-cm-reference.js");
+    const provenance = JSON.parse(await fs.readFile(
+      path.join(REPO_ROOT, "test/fixtures/eval/extraction/type3-cm-reference.provenance.json"),
+      "utf8",
+    ));
+    const digest = bytes => createHash("sha256").update(bytes).digest("hex");
+    expect(digest(await fs.readFile(fixture))).toBe(provenance.outputs["test/fixtures/eval/extraction/type3-cm-reference.pdf"]);
+    expect(digest(await fs.readFile(module))).toBe(provenance.outputs["server/type3-cm-reference.js"]);
+    expect(digest(await fs.readFile(shareModule))).toBe(provenance.outputs["pdf-toolkit-mcp-share/server/type3-cm-reference.js"]);
+    expect(provenance.visual_labels["computer-modern-math-italic"][33]).toBe("omega");
+    expect(provenance.visual_labels["computer-modern-math-symbol"][0]).toBe("minus");
+  });
+});
 
 function multiply(left, right) {
   return [
@@ -495,14 +561,14 @@ describe("read_pdf_layout MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(JSON.stringify(first.structuredContent)).toBe(JSON.stringify(second.structuredContent));
     expect(first.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.2.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.3.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       source: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
       id_scope: {
         kind: "source_parser_ir_options",
         source_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         parser_version: "5.4.624",
-        ir_version: "1.2.0",
+        ir_version: "1.3.0",
         max_output_characters: 200000,
       },
       page_range: { requested_start_page: 1, requested_end_page: 1, start_page: 1, end_page: 1, total_pages: 1 },
@@ -1207,6 +1273,70 @@ describe("Extraction IR hostile reconstruction", () => {
     expect(raw[2]).toMatchObject({ has_eol: true, text_kind: "empty", raw_width: 0, width: 0, bbox_status: "degenerate" });
     expect(raw[1].font).toEqual({ family: "Test Sans", ascent: 0.8, descent: -0.2, vertical: false });
     expect(result.pages[0].limitations.join(" ")).toContain("hidden, clipped, duplicated");
+  });
+
+  it("rejects invented glyph-recovery provenance", async () => {
+    const { result } = await runFake([{ items: [textItem({ text: "A", x: 10, top: 20 })] }]);
+    const forged = structuredClone(result);
+    const item = forged.pages[0].raw_items[0];
+    item.source_text = "A";
+    item.text = "−";
+    item.glyph_recoveries = [{
+      source_utf16_start: 0,
+      source_utf16_end: 1,
+      output_utf16_start: 0,
+      output_utf16_end: 1,
+      original_char_code: 0,
+      source_unicode: "A",
+      target_unicode: "−",
+      font_name: item.font_name,
+      registry_id: "cmsy-pk-raster-minus-v1",
+      qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+      charproc_sha256: "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
+      witness_charproc_sha256: [
+        "b57ae2e4cf2525371916a1a4bcf0c55165b9230b1038f2d5451cdbbad5a51dcc",
+        "0c8ca6c662e9ca24f90a61f53206ea0719476473861471a1b04bf489b3cc37a3",
+      ],
+      tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
+      canonicalizer_version: "pdfjs-charproc-json-v1",
+    }];
+    expect(() => validatePdfLayoutSemantics(forged)).toThrow(/registry evidence is invalid/);
+  });
+
+  it("replays the source operators instead of trusting a well-formed recovery claim", async () => {
+    const sourceItem = textItem({ text: "\u0000", x: 10, top: 20 });
+    const { result, bytes } = await runFake([{ items: [sourceItem] }]);
+    const forged = structuredClone(result);
+    const item = forged.pages[0].raw_items[0];
+    item.source_text = "\u0000";
+    item.text = "−";
+    item.glyph_recoveries = [{
+      source_utf16_start: 0,
+      source_utf16_end: 1,
+      output_utf16_start: 0,
+      output_utf16_end: 1,
+      original_char_code: 0,
+      source_unicode: "\u0000",
+      target_unicode: "−",
+      font_name: item.font_name,
+      registry_id: "cmsy-pk-raster-minus-v1",
+      qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+      charproc_sha256: "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
+      witness_charproc_sha256: [
+        "b57ae2e4cf2525371916a1a4bcf0c55165b9230b1038f2d5451cdbbad5a51dcc",
+        "0c8ca6c662e9ca24f90a61f53206ea0719476473861471a1b04bf489b3cc37a3",
+      ],
+      tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
+      canonicalizer_version: "pdfjs-charproc-json-v1",
+    }];
+    forged.pages[0].lines[0].text = "−";
+    forged.pages[0].flow_text = "−";
+    forged.pages[0].spatial_text = forged.pages[0].spatial_text.replace("\u0000", "−");
+    expect(() => validatePdfLayoutSemantics(forged, { sourceBytes: bytes })).not.toThrow();
+    await expect(validatePdfLayoutSourceEvidence(forged, {
+      pdfjsLib: fakePdfjs([{ items: [sourceItem] }]).pdfjs,
+      sourceBytes: bytes,
+    })).rejects.toThrow(/differs from reparsed source/);
   });
 
   it("binds truncation to the exact parser-order TextItem prefix", async () => {

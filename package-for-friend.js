@@ -38,6 +38,7 @@ const SHARE_FILES = [
   "server/pdfjs-worker.js",
   "server/resource-uri.js",
   "server/stderr-suppression.js",
+  "server/type3-cm-reference.js",
   "smart-install.sh",
 ];
 const EXECUTABLE_SHARE_FILES = new Set([
@@ -357,6 +358,10 @@ async function syncSharePackage() {
     fs.copyFile(
       path.join(PROJECT_ROOT, "server", "layout-extraction.js"),
       path.join(shareServerDir, "layout-extraction.js"),
+    ),
+    fs.copyFile(
+      path.join(PROJECT_ROOT, "server", "type3-cm-reference.js"),
+      path.join(shareServerDir, "type3-cm-reference.js"),
     ),
     fs.copyFile(
       path.join(PROJECT_ROOT, "server", "markdown-conversion.js"),

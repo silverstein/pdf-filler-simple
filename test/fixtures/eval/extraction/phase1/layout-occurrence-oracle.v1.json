@@ -37,8 +37,8 @@
     {
       "role": "generator_script",
       "path": "scripts/eval-generate-extraction-layout-oracle.mjs",
-      "bytes": 11432,
-      "sha256": "09193e298333b8e79368783788d21d83b64f96c85ca2f8900227bbb68284b4a1"
+      "bytes": 11493,
+      "sha256": "1467ba4eb594076db30affc410916e7bc272cba037cdd42e6561cd02fd5e1c25"
     },
     {
       "role": "layout_evidence_module",
@@ -53,10 +53,16 @@
       "sha256": "6cb403f433aad775155ee1af95182c841b22a978cb27ebfebd022af98712d220"
     },
     {
+      "role": "type3_cm_reference_module",
+      "path": "server/type3-cm-reference.js",
+      "bytes": 72543,
+      "sha256": "df7869d18c1a7c433cae0518cfa48c9d22f13a74c58b3f7424b36d286bf61e5b"
+    },
+    {
       "role": "layout_oracle_schema",
       "path": "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
-      "bytes": 7184,
-      "sha256": "21806ca2def8f23e115498abee58db176d11c04506631ed35b0fb518e851db53"
+      "bytes": 7213,
+      "sha256": "f7b72c6070b4b8b0c0757726ca9dea9f7ea61ec08656f82090b4fb9bb0dccc72"
     },
     {
       "role": "markdown_conversion_module",

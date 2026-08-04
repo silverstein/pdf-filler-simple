@@ -56,8 +56,10 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // math-operator spacing with explicit limitations.
 // 2026-08-03: extraction IR 1.2.0 preserves bounded solid-mask rectangle
 // evidence and Markdown renderer 1.7.0 uses only complete closed grids for
-// ruled tables. The final combined contract digest is refreshed after the
-// integration replay.
+// ruled tables.
+// 2026-08-03: extraction IR 1.3.0 and Markdown renderer 1.8.0 preserve only
+// independently qualified exact legacy Computer Modern Type-3 glyphs.
+// The final combined contract digest is refreshed after the integration replay.
 const TOOL_CONTRACT_SHA256 = "aca6dabd3add8c1299da548253d804ae08ab27e94b8c8485a1c9c2ad6e41a1f3";
 
 const CLOSED_READ = Object.freeze({
@@ -295,6 +297,7 @@ describe("MCPB static declarations", () => {
       "helpers.js",
       "output-schemas.js",
       "layout-extraction.js",
+      "type3-cm-reference.js",
       "markdown-conversion.js",
       "markdown-output-transaction.js",
       "pdf-lib-subprocess.js",
@@ -403,7 +406,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.2.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.3.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       page_range: { start_page: 1, end_page: 1 },
     });

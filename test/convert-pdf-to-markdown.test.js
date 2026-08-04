@@ -305,11 +305,11 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(second.structuredContent).toEqual(first.structuredContent);
     expect(first.structuredContent).toMatchObject({
-      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.7.0" },
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.8.0" },
       conversion_status: "complete",
       saved_output: null,
       provenance: {
-        layout: { name: "pdf-tools.extraction-ir", version: "1.2.0", parser_version: "5.4.624" },
+        layout: { name: "pdf-tools.extraction-ir", version: "1.3.0", parser_version: "5.4.624" },
       },
       pages_needing_vision: [],
     });

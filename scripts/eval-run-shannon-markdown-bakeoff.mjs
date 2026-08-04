@@ -21,7 +21,10 @@ const RUNTIME_SOURCE_FILES = [
   "package-lock.json",
   "server/index.js",
   "server/output-schemas.js",
+  "server/pdfjs-subprocess.js",
+  "server/pdfjs-worker.js",
   "server/layout-extraction.js",
+  "server/type3-cm-reference.js",
   "server/markdown-conversion.js",
   "server/markdown-output-transaction.js",
 ];

@@ -140,7 +140,7 @@ with failed measurements surfacing as unavailable rather than fabricated
 zeros.
 
 `convert_pdf_to_markdown` consumes the bounded source-validated layout IR
-(v1.2.0, which carries CTM-tracked ruled-rectangle evidence, text-integrity
+(v1.3.0, which carries CTM-tracked ruled-rectangle evidence, text-integrity
 character-class signals, and operator counts, all independently replayed
 against a second parse). It reconstructs a table from recurring column
 geometry, or from clean ruled-rectangle grid evidence when every rect aligns
@@ -165,7 +165,9 @@ actions, other URL schemes, and ambiguous labels stay escaped text. It does
 not reconstruct general equations, scripts, or fraction bars, but may restore
 a missing space after a separate `log` source item only in a short, tightly
 bounded math run with same-baseline variable evidence plus an independent
-local math-layout clue. It does
+local math-layout clue. A small version-pinned registry may recover a legacy
+Computer Modern Type-3 character only after exact official-metric, glyph
+program, and operator/text sequence checks. It does
 not run OCR or use an external model. Unsupported visual or structural content
 is reported as typed partial coverage rather than silently represented as
 complete Markdown.
