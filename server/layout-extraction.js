@@ -1,9 +1,14 @@
-import { PDFDocument } from "pdf-lib";
+import { PDFArray, PDFDict, PDFDocument, PDFName, PDFNumber } from "pdf-lib";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import {
+  CM_CODEPOINTS,
+  CM_TFM_METRICS,
+  CM_TFM_REFERENCE_VERSION,
+} from "./type3-cm-reference.js";
 
 const IR_NAME = "pdf-tools.extraction-ir";
-const IR_VERSION = "1.2.0";
+const IR_VERSION = "1.3.0";
 const INTERNAL_SOURCE_REPLAY = Symbol("pdf-layout-internal-source-replay");
 const INTERNAL_MARKDOWN_PROJECTION = Symbol("pdf-layout-internal-markdown-projection");
 
@@ -36,6 +41,390 @@ const RAW_PAGE_SPACE = Object.freeze({
   stage: "before_user_unit_and_page_rotation",
 });
 const MAX_PAINTED_RECTANGLES = 500;
+const TYPE3_GLYPH_CANONICALIZER_VERSION = "pdfjs-charproc-json-v1";
+const MAX_TYPE3_GLYPH_CANONICAL_NODES = 100000;
+const MAX_TYPE3_GLYPH_CANONICAL_DEPTH = 32;
+const MAX_TYPE3_GLYPH_CANONICAL_BYTES = 250000;
+
+const TYPE3_RECOVERY_REGISTRY = Object.freeze([
+  Object.freeze({
+    id: "cmmi-pk-raster-omega-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 33,
+    source_unicode: "!",
+    target_unicode: "ω",
+    charproc_sha256: "0ebf4d75e5bdb232683c871c77579bc14887f9aaa397a3c8334c220ec09af0d9",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "c3d175e547d650cd0382115f3caed3b08d39f61827d10b26aad43eac6b6c4fa1" }),
+      Object.freeze({ original_char_code: 25, charproc_sha256: "994283a40dea8e4890f7216ef046a865f34ef7100cc1055de62d1eba7daf8fe2" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-period-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 58,
+    source_unicode: ":",
+    target_unicode: ".",
+    charproc_sha256: "cdf3cbb1bd7626495858ebacb74816ba82ac139458edf75c6d737f6b121b65fe",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 59, charproc_sha256: "7c69e2ebf2eec772599fae11d278adcc3c88472af6279f9801865628040d981b" }),
+      Object.freeze({ original_char_code: 61, charproc_sha256: "dfa9c162caf4e99dafd16ca5d87e90f89d44c29312a2675e89aa789c5355d63e" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-slash-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 61,
+    source_unicode: "=",
+    target_unicode: "/",
+    charproc_sha256: "dfa9c162caf4e99dafd16ca5d87e90f89d44c29312a2675e89aa789c5355d63e",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 58, charproc_sha256: "cdf3cbb1bd7626495858ebacb74816ba82ac139458edf75c6d737f6b121b65fe" }),
+      Object.freeze({ original_char_code: 59, charproc_sha256: "7c69e2ebf2eec772599fae11d278adcc3c88472af6279f9801865628040d981b" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmsy-pk-raster-minus-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-symbol",
+    original_char_code: 0,
+    source_unicode: "\u0000",
+    target_unicode: "−",
+    charproc_sha256: "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 21, charproc_sha256: "b57ae2e4cf2525371916a1a4bcf0c55165b9230b1038f2d5451cdbbad5a51dcc" }),
+      Object.freeze({ original_char_code: 112, charproc_sha256: "0c8ca6c662e9ca24f90a61f53206ea0719476473861471a1b04bf489b3cc37a3" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmsy-ctan-type3-minus-v1",
+    qualification: "ctan-cm-type3-labeled-reference-2026-08",
+    family: "computer-modern-math-symbol",
+    original_char_code: 0,
+    source_unicode: "\u0000",
+    target_unicode: "−",
+    charproc_sha256: "f56714c48094acb5e3fdb76a62fcce203b4ed0bc60ec49f57fba5bf6ee80d91a",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 21, charproc_sha256: "b6986c1595532ddd51fad9d8148c404111da8cb112c272d66f1d0c4acaa86395" }),
+      Object.freeze({ original_char_code: 112, charproc_sha256: "7d178f8e3e6ebbba7a97d5476fa81d88528b89b45fecae79124d7b497cb69973" }),
+    ]),
+  }),
+]);
+const TYPE3_RECOVERY_BY_ID = new Map(TYPE3_RECOVERY_REGISTRY.map(entry => [entry.id, entry]));
+
+for (const entry of TYPE3_RECOVERY_REGISTRY) {
+  if (CM_CODEPOINTS[entry.family]?.[entry.original_char_code] !== entry.target_unicode) {
+    throw new Error(`Type-3 registry ${entry.id} disagrees with the official Computer Modern encoding`);
+  }
+  if (entry.witnesses.length < 2 || entry.witnesses.some(witness => !CM_CODEPOINTS[entry.family]?.[witness.original_char_code])) {
+    throw new Error(`Type-3 registry ${entry.id} lacks two official Computer Modern witnesses`);
+  }
+}
+
+function normalizeType3CanonicalValue(value, state, depth = 0) {
+  if (depth > MAX_TYPE3_GLYPH_CANONICAL_DEPTH) throw new Error("Type-3 glyph program is too deeply nested");
+  state.nodes += 1;
+  if (state.nodes > MAX_TYPE3_GLYPH_CANONICAL_NODES) throw new Error("Type-3 glyph program is too large");
+  if (value === null || typeof value === "string" || typeof value === "boolean") return value;
+  if (typeof value === "number") {
+    if (!Number.isFinite(value)) throw new Error("Type-3 glyph program contains a non-finite number");
+    return value;
+  }
+  if (ArrayBuffer.isView(value)) {
+    if (value.length > MAX_TYPE3_GLYPH_CANONICAL_NODES) throw new Error("Type-3 glyph array is too large");
+    return { typed: value.constructor.name, values: Array.from(value, item => normalizeType3CanonicalValue(item, state, depth + 1)) };
+  }
+  if (Array.isArray(value)) return value.map(item => normalizeType3CanonicalValue(item, state, depth + 1));
+  if (typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map(key => [
+      key,
+      normalizeType3CanonicalValue(value[key], state, depth + 1),
+    ]));
+  }
+  throw new Error("Type-3 glyph program contains an unsupported value");
+}
+
+export function type3CharProcSha256(charProc) {
+  if (!charProc || !Array.isArray(charProc.fnArray) || !Array.isArray(charProc.argsArray)) return null;
+  try {
+    const canonical = JSON.stringify(normalizeType3CanonicalValue({
+      fnArray: charProc.fnArray,
+      argsArray: charProc.argsArray,
+    }, { nodes: 0 }));
+    if (canonical.length > MAX_TYPE3_GLYPH_CANONICAL_BYTES) return null;
+    return createHash("sha256").update(canonical).digest("hex");
+  } catch {
+    return null;
+  }
+}
+
+function fontEncodingDifferences(font, context) {
+  const encoding = context.lookup(font.get(PDFName.of("Encoding")), PDFDict);
+  const differences = encoding?.lookup(PDFName.of("Differences"), PDFArray);
+  if (!differences) return null;
+  const codeToGlyph = new Map();
+  let code = null;
+  for (let index = 0; index < differences.size(); index += 1) {
+    const value = differences.lookup(index);
+    if (value instanceof PDFNumber) {
+      code = value.asNumber();
+    } else if (value instanceof PDFName && Number.isSafeInteger(code) && code >= 0 && code <= 255) {
+      codeToGlyph.set(code, value.decodeText());
+      code += 1;
+    } else {
+      return null;
+    }
+  }
+  return codeToGlyph;
+}
+
+function rawType3Fonts(pdfLibPage) {
+  try {
+    const context = pdfLibPage.doc.context;
+    const resources = pdfLibPage.node.Resources();
+    const fonts = resources?.lookup(PDFName.of("Font"), PDFDict);
+    if (!fonts) return [];
+    const records = [];
+    for (const [, reference] of fonts.entries()) {
+      const font = context.lookup(reference, PDFDict);
+      if (font?.get(PDFName.of("Subtype"))?.toString() !== "/Type3") continue;
+      if (font.has(PDFName.of("ToUnicode"))) continue;
+      const first = font.lookup(PDFName.of("FirstChar"), PDFNumber)?.asNumber();
+      const last = font.lookup(PDFName.of("LastChar"), PDFNumber)?.asNumber();
+      const widthsArray = font.lookup(PDFName.of("Widths"), PDFArray);
+      const codeToGlyph = fontEncodingDifferences(font, context);
+      if (!Number.isSafeInteger(first) || !Number.isSafeInteger(last) || !widthsArray || !codeToGlyph) continue;
+      if (first < 0 || last > 127 || last < first || widthsArray.size() !== last - first + 1) continue;
+      const widths = new Map();
+      let valid = true;
+      for (let code = first; code <= last; code += 1) {
+        const width = widthsArray.lookup(code - first, PDFNumber)?.asNumber();
+        if (!Number.isSafeInteger(width) || width < 0) {
+          valid = false;
+          break;
+        }
+        if (width > 0) widths.set(code, width);
+      }
+      if (valid && widths.size > 0) records.push({ widths, codeToGlyph });
+    }
+    return records;
+  } catch {
+    return [];
+  }
+}
+
+function metricScaleInterval(widths, metric) {
+  let lower = 0;
+  let upper = Infinity;
+  for (const [code, observed] of widths) {
+    const fixedWidth = metric.widths[code];
+    if (!Number.isSafeInteger(fixedWidth) || fixedWidth <= 0) return null;
+    const reference = fixedWidth / 1048576;
+    lower = Math.max(lower, (observed - 0.5) / reference);
+    upper = Math.min(upper, (observed + 0.5) / reference);
+  }
+  return lower < upper ? { lower, upper } : null;
+}
+
+export function uniqueComputerModernFamily(widthEntries) {
+  const widths = widthEntries instanceof Map ? widthEntries : new Map(widthEntries);
+  if (widths.size < 2) return null;
+  const families = new Set();
+  for (const metric of CM_TFM_METRICS) {
+    if (metricScaleInterval(widths, metric)) families.add(metric.family);
+  }
+  return families.size === 1 ? [...families][0] : null;
+}
+
+function operatorGlyphTokens(operators, pdfjsPage, pdfjsLib) {
+  const ops = pdfjsLib?.OPS ?? {};
+  if (!operators || !Array.isArray(operators.fnArray) || !Array.isArray(operators.argsArray)) return null;
+  let currentFont = null;
+  const fontStack = [];
+  const tokens = [];
+  const fonts = new Map();
+  const unsupportedTextOps = new Set([
+    ops.showSpacedText,
+    ops.nextLineShowText,
+    ops.nextLineSetSpacingShowText,
+  ].filter(Number.isFinite));
+  for (let index = 0; index < operators.fnArray.length; index += 1) {
+    const operation = operators.fnArray[index];
+    const args = operators.argsArray[index];
+    if (operation === ops.save) fontStack.push(currentFont);
+    else if (operation === ops.restore) {
+      if (fontStack.length === 0) return null;
+      currentFont = fontStack.pop();
+    } else if (operation === ops.setFont) {
+      currentFont = typeof args?.[0] === "string" ? args[0] : null;
+    } else if (unsupportedTextOps.has(operation)) {
+      return null;
+    } else if (operation === ops.showText) {
+      if (currentFont === null || !Array.isArray(args?.[0])) return null;
+      let font = fonts.get(currentFont);
+      if (!font) {
+        try {
+          font = pdfjsPage.commonObjs.get(currentFont);
+        } catch {
+          return null;
+        }
+        if (font?.isType3Font !== true) font = null;
+        fonts.set(currentFont, font);
+      }
+      for (const glyph of args[0]) {
+        if (!glyph || typeof glyph !== "object") continue;
+        const unicode = typeof glyph.unicode === "string" ? glyph.unicode : "";
+        let offset = 0;
+        for (const originalScalar of unicode) {
+          const start = offset;
+          offset += originalScalar.length;
+          for (const scalar of originalScalar.normalize("NFKC")) {
+            if (/^\s$/u.test(scalar)) continue;
+            tokens.push({
+              font_id: currentFont,
+              unicode: scalar,
+              glyph,
+              glyph_unicode_start: start,
+              glyph_unicode_end: offset,
+            });
+          }
+        }
+      }
+    }
+  }
+  if (fontStack.length !== 0) return null;
+  return { tokens, fonts };
+}
+
+function textItemTokens(textContent) {
+  const entries = (textContent?.items ?? [])
+    .filter(item => typeof item?.str === "string")
+    .map((item, sourceIndex) => [sourceIndex, item]);
+  const tokens = [];
+  for (const [sourceIndex, item] of entries) {
+    let offset = 0;
+    for (const originalScalar of item.str) {
+      const start = offset;
+      offset += originalScalar.length;
+      for (const scalar of originalScalar.normalize("NFKC")) {
+        if (/^\s$/u.test(scalar)) continue;
+        tokens.push({
+          font_id: item.fontName,
+          unicode: scalar,
+          source_index: sourceIndex,
+          source_utf16_start: start,
+          source_utf16_end: offset,
+          direction: direction(item.dir),
+        });
+      }
+    }
+  }
+  return tokens;
+}
+
+function linkedRawType3Font(fontId, fontTokens, rawFonts) {
+  const observed = new Map();
+  const glyphIds = new Map();
+  for (const token of fontTokens) {
+    const glyph = token.glyph;
+    if (!Number.isSafeInteger(glyph.originalCharCode) || !Number.isFinite(glyph.width)) return null;
+    const priorWidth = observed.get(glyph.originalCharCode);
+    if (priorWidth !== undefined && priorWidth !== glyph.width) return null;
+    observed.set(glyph.originalCharCode, glyph.width);
+    if (typeof glyph.operatorListId === "string") glyphIds.set(glyph.originalCharCode, glyph.operatorListId);
+  }
+  const candidates = rawFonts.filter(raw => [...observed].every(([code, width]) => raw.widths.get(code) === width)
+    && [...glyphIds].every(([code, glyphId]) => raw.codeToGlyph.get(code) === glyphId));
+  if (candidates.length !== 1) return null;
+  return candidates[0];
+}
+
+function charProcDigestForCode(font, rawFont, code) {
+  const glyphId = rawFont.codeToGlyph.get(code);
+  if (typeof glyphId !== "string") return null;
+  return type3CharProcSha256(font?.charProcOperatorList?.[glyphId]);
+}
+
+function collectType3GlyphRecoveries({ textContent, operators, pdfjsPage, pdfLibPage, pdfjsLib }) {
+  const operatorEvidence = operatorGlyphTokens(operators, pdfjsPage, pdfjsLib);
+  if (!operatorEvidence) return new Map();
+  const textTokens = textItemTokens(textContent);
+  if (textTokens.length !== operatorEvidence.tokens.length) return new Map();
+  for (let index = 0; index < textTokens.length; index += 1) {
+    const source = textTokens[index];
+    const operator = operatorEvidence.tokens[index];
+    if (source.font_id !== operator.font_id || source.unicode !== operator.unicode) return new Map();
+    operator.binding = source;
+  }
+
+  const rawFonts = rawType3Fonts(pdfLibPage);
+  const byFont = new Map();
+  for (const token of operatorEvidence.tokens) {
+    if (!byFont.has(token.font_id)) byFont.set(token.font_id, []);
+    byFont.get(token.font_id).push(token);
+  }
+  const recoveries = new Map();
+  for (const [fontId, fontTokens] of byFont) {
+    const font = operatorEvidence.fonts.get(fontId);
+    if (!font) continue;
+    const rawFont = linkedRawType3Font(fontId, fontTokens, rawFonts);
+    if (!rawFont) continue;
+    const family = uniqueComputerModernFamily(rawFont.widths);
+    if (!family || family.startsWith("unsupported:")) continue;
+    for (const registry of TYPE3_RECOVERY_REGISTRY.filter(entry => entry.family === family)) {
+      const targetDigest = charProcDigestForCode(font, rawFont, registry.original_char_code);
+      if (targetDigest !== registry.charproc_sha256) continue;
+      const witnessDigests = registry.witnesses.map(witness => charProcDigestForCode(font, rawFont, witness.original_char_code));
+      if (witnessDigests.some((digest, index) => digest !== registry.witnesses[index].charproc_sha256)) continue;
+      for (const token of fontTokens) {
+        const glyph = token.glyph;
+        if (glyph.originalCharCode !== registry.original_char_code || glyph.unicode !== registry.source_unicode) continue;
+        const binding = token.binding;
+        if (!binding || !["ltr", "unknown"].includes(binding.direction)) continue;
+        if (!recoveries.has(binding.source_index)) recoveries.set(binding.source_index, []);
+        recoveries.get(binding.source_index).push({
+          source_utf16_start: binding.source_utf16_start,
+          source_utf16_end: binding.source_utf16_end,
+          output_utf16_start: binding.source_utf16_start,
+          output_utf16_end: binding.source_utf16_start + registry.target_unicode.length,
+          original_char_code: registry.original_char_code,
+          source_unicode: registry.source_unicode,
+          target_unicode: registry.target_unicode,
+          source_font_id: fontId,
+          registry_id: registry.id,
+          qualification: registry.qualification,
+          charproc_sha256: registry.charproc_sha256,
+          witness_charproc_sha256: witnessDigests,
+          tfm_reference_version: CM_TFM_REFERENCE_VERSION,
+          canonicalizer_version: TYPE3_GLYPH_CANONICALIZER_VERSION,
+        });
+      }
+    }
+  }
+  for (const [sourceIndex, items] of recoveries) {
+    const deduplicated = [...new Map(items.map(item => [`${item.source_utf16_start}:${item.registry_id}`, item])).values()]
+      .sort((left, right) => left.source_utf16_start - right.source_utf16_start);
+    recoveries.set(sourceIndex, deduplicated);
+  }
+  return recoveries;
+}
+
+function applyType3GlyphRecoveries(sourceText, recoveries) {
+  if (!recoveries?.length) return sourceText;
+  let cursor = 0;
+  let result = "";
+  for (const recovery of recoveries) {
+    if (recovery.source_utf16_start < cursor
+      || sourceText.slice(recovery.source_utf16_start, recovery.source_utf16_end) !== recovery.source_unicode) return sourceText;
+    result += sourceText.slice(cursor, recovery.source_utf16_start);
+    result += recovery.target_unicode;
+    cursor = recovery.source_utf16_end;
+  }
+  return result + sourceText.slice(cursor);
+}
 
 function round(value) {
   return Number(Number(value).toFixed(3));
@@ -1023,6 +1412,48 @@ export function validatePdfLayoutSemantics(payload, {
       const expectedTextKind = item.text.length === 0 ? "empty" : item.text.trim().length === 0 ? "whitespace" : "non_whitespace";
       semanticAssertion(item.text_kind === expectedTextKind, `item ${item.id} text_kind mismatch`);
       semanticAssertion(item.is_whitespace === (expectedTextKind !== "non_whitespace"), `item ${item.id} whitespace mismatch`);
+      if (item.source_text === undefined || item.glyph_recoveries === undefined) {
+        semanticAssertion(item.source_text === undefined && item.glyph_recoveries === undefined,
+          `item ${item.id} has incomplete glyph-recovery evidence`);
+      } else {
+        semanticAssertion(typeof item.source_text === "string"
+          && Array.isArray(item.glyph_recoveries)
+          && item.glyph_recoveries.length > 0,
+        `item ${item.id} glyph-recovery evidence is malformed`);
+        let sourceCursor = 0;
+        let outputCursor = 0;
+        let recoveredText = "";
+        for (const recovery of item.glyph_recoveries) {
+          const registry = TYPE3_RECOVERY_BY_ID.get(recovery.registry_id);
+          semanticAssertion(registry
+            && recovery.qualification === registry.qualification
+            && recovery.original_char_code === registry.original_char_code
+            && recovery.source_unicode === registry.source_unicode
+            && recovery.target_unicode === registry.target_unicode
+            && recovery.charproc_sha256 === registry.charproc_sha256
+            && sameJson(recovery.witness_charproc_sha256, registry.witnesses.map(witness => witness.charproc_sha256))
+            && recovery.tfm_reference_version === CM_TFM_REFERENCE_VERSION
+            && recovery.canonicalizer_version === TYPE3_GLYPH_CANONICALIZER_VERSION,
+          `item ${item.id} glyph-recovery registry evidence is invalid`);
+          semanticAssertion(recovery.font_name === item.font_name
+            && recovery.source_unicode.length === 1
+            && recovery.target_unicode.length === 1
+            && recovery.source_utf16_start === sourceCursor + item.source_text.slice(sourceCursor, recovery.source_utf16_start).length
+            && recovery.source_utf16_end === recovery.source_utf16_start + 1
+            && recovery.output_utf16_start === outputCursor + item.source_text.slice(sourceCursor, recovery.source_utf16_start).length
+            && recovery.output_utf16_end === recovery.output_utf16_start + 1
+            && recovery.source_utf16_start >= sourceCursor
+            && item.source_text.slice(recovery.source_utf16_start, recovery.source_utf16_end) === recovery.source_unicode,
+          `item ${item.id} glyph-recovery offsets are invalid`);
+          const unchanged = item.source_text.slice(sourceCursor, recovery.source_utf16_start);
+          recoveredText += unchanged + recovery.target_unicode;
+          sourceCursor = recovery.source_utf16_end;
+          outputCursor = recovery.output_utf16_end;
+        }
+        recoveredText += item.source_text.slice(sourceCursor);
+        semanticAssertion(recoveredText === item.text && item.source_text !== item.text,
+          `item ${item.id} recovered text does not follow its evidence`);
+      }
       semanticAssertion(item.geometry_provenance.formula === "pdfjs_text_item_style_metric_advance_box_approximation", `item ${item.id} formula provenance mismatch`);
       semanticAssertion(item.geometry_provenance.quad_order === "anchor_top_terminal_top_anchor_bottom_terminal_bottom", `item ${item.id} quad order mismatch`);
       semanticAssertion(item.geometry_provenance.advance_source === (item.font.vertical ? "item_height" : "item_width"), `item ${item.id} advance provenance mismatch`);
@@ -1598,6 +2029,24 @@ export async function validatePdfLayoutSourceEvidence(payload, {
           `page ${outputPage.page} first omitted index differs from independently replayed limits`,
         );
 
+        let sourceOperators = null;
+        let sourceOperatorError = null;
+        try {
+          sourceOperators = await withDeadline(sourcePage.getOperatorList(), deadlineAt);
+        } catch (error) {
+          if (isFatalParserResourceError(error)) throw error;
+          sourceOperatorError = error;
+        }
+        const sourceType3Recoveries = sourceOperatorError === null
+          ? collectType3GlyphRecoveries({
+            textContent,
+            operators: sourceOperators,
+            pdfjsPage: sourcePage,
+            pdfLibPage: pdfLibPages?.[outputPage.page - 1] ?? null,
+            pdfjsLib,
+          })
+          : new Map();
+
         const sourceByIndex = new Map(sourceEntries);
         const fontIds = new Map();
         for (const outputItem of outputPage.raw_items) {
@@ -1613,13 +2062,34 @@ export async function validatePdfLayoutSourceEvidence(payload, {
             descent: finiteOrNull(sourceStyle.descent),
             vertical: sourceStyle.vertical === true,
           };
+          const expectedFontName = typeof sourceItem.fontName === "string" ? fontIds.get(sourceItem.fontName) : null;
+          const internalRecoveries = sourceType3Recoveries.get(outputItem.source_index) ?? [];
+          const expectedText = applyType3GlyphRecoveries(sourceItem.str, internalRecoveries);
+          const expectedGlyphRecoveries = expectedText === sourceItem.str ? undefined : internalRecoveries.map(recovery => ({
+            source_utf16_start: recovery.source_utf16_start,
+            source_utf16_end: recovery.source_utf16_end,
+            output_utf16_start: recovery.output_utf16_start,
+            output_utf16_end: recovery.output_utf16_end,
+            original_char_code: recovery.original_char_code,
+            source_unicode: recovery.source_unicode,
+            target_unicode: recovery.target_unicode,
+            font_name: expectedFontName,
+            registry_id: recovery.registry_id,
+            qualification: recovery.qualification,
+            charproc_sha256: recovery.charproc_sha256,
+            witness_charproc_sha256: recovery.witness_charproc_sha256,
+            tfm_reference_version: recovery.tfm_reference_version,
+            canonicalizer_version: recovery.canonicalizer_version,
+          }));
           const comparisons = [
-            ["text", outputItem.text, sourceItem.str],
+            ["text", outputItem.text, expectedText],
+            ["source_text", outputItem.source_text, expectedGlyphRecoveries ? sourceItem.str : undefined],
+            ["glyph_recoveries", outputItem.glyph_recoveries, expectedGlyphRecoveries],
             ["has_eol", outputItem.has_eol, sourceItem.hasEOL === true],
             ["raw_transform", outputItem.raw_transform, safeTransform(sourceItem.transform)],
             ["raw_width", outputItem.raw_width, finiteOrNull(sourceItem.width)],
             ["raw_height", outputItem.raw_height, finiteOrNull(sourceItem.height)],
-            ["font_name", outputItem.font_name, typeof sourceItem.fontName === "string" ? fontIds.get(sourceItem.fontName) : null],
+            ["font_name", outputItem.font_name, expectedFontName],
             ["font", outputItem.font, sourceFont],
             ["direction", outputItem.direction, direction(sourceItem.dir)],
           ];
@@ -1628,14 +2098,6 @@ export async function validatePdfLayoutSourceEvidence(payload, {
           }
         }
 
-        let sourceOperators = null;
-        let sourceOperatorError = null;
-        try {
-          sourceOperators = await withDeadline(sourcePage.getOperatorList(), deadlineAt);
-        } catch (error) {
-          if (isFatalParserResourceError(error)) throw error;
-          sourceOperatorError = error;
-        }
         if (sourceOperatorError === null) {
           const sourceHasImageOperations = sourceOperators.fnArray.some(operation => sourceImageOps.has(operation));
           const sourceHasVectorOperations = sourceOperators.fnArray.some(operation => sourceVectorOps.has(operation));
@@ -1807,6 +2269,7 @@ export async function extractPdfLayout({
       let hasImageOperations = null;
       let hasVectorPaintOperations = null;
       let paintedRectangles = unavailablePaintedRectangles();
+      let type3GlyphRecoveries = new Map();
       let pdfjsPage = null;
       let viewport = null;
       let linkAnnotations = UNAVAILABLE_LINK_ANNOTATIONS;
@@ -1846,6 +2309,13 @@ export async function extractPdfLayout({
             viewport?.transform ?? [],
             pageNumber,
           );
+          type3GlyphRecoveries = collectType3GlyphRecoveries({
+            textContent,
+            operators,
+            pdfjsPage,
+            pdfLibPage: pdfLibPages?.[pageNumber - 1] ?? null,
+            pdfjsLib,
+          });
         } catch (error) {
           if (isFatalParserResourceError(error)) throw error;
           errors.push(errorRecord("operators", error));
@@ -1902,6 +2372,25 @@ export async function extractPdfLayout({
         if (typeof item.fontName === "string" && !fontIds.has(item.fontName)) {
           fontIds.set(item.fontName, `font-${String(fontIds.size + 1).padStart(4, "0")}`);
         }
+        const itemRecoveries = type3GlyphRecoveries.get(sourceIndex) ?? [];
+        const effectiveText = applyType3GlyphRecoveries(item.str, itemRecoveries);
+        const publicFontName = typeof item.fontName === "string" ? fontIds.get(item.fontName) : null;
+        const publicRecoveries = effectiveText === item.str ? [] : itemRecoveries.map(recovery => ({
+          source_utf16_start: recovery.source_utf16_start,
+          source_utf16_end: recovery.source_utf16_end,
+          output_utf16_start: recovery.output_utf16_start,
+          output_utf16_end: recovery.output_utf16_end,
+          original_char_code: recovery.original_char_code,
+          source_unicode: recovery.source_unicode,
+          target_unicode: recovery.target_unicode,
+          font_name: publicFontName,
+          registry_id: recovery.registry_id,
+          qualification: recovery.qualification,
+          charproc_sha256: recovery.charproc_sha256,
+          witness_charproc_sha256: recovery.witness_charproc_sha256,
+          tfm_reference_version: recovery.tfm_reference_version,
+          canonicalizer_version: recovery.canonicalizer_version,
+        }));
         if (!geometryItem.valid) {
           invalidGeometry = true;
           errors.push({ stage: "geometry", code: "NONFINITE_TEXT_GEOMETRY", message: `Text item ${sourceIndex} has non-finite geometry.` });
@@ -1909,14 +2398,15 @@ export async function extractPdfLayout({
         const rawItem = {
           id: `p${String(pageNumber).padStart(4, "0")}-i${String(sourceIndex + 1).padStart(6, "0")}`,
           source_index: sourceIndex,
-          text: item.str,
-          is_whitespace: item.str.trim().length === 0,
-          text_kind: item.str.length === 0 ? "empty" : item.str.trim().length === 0 ? "whitespace" : "non_whitespace",
+          text: effectiveText,
+          ...(publicRecoveries.length > 0 ? { source_text: item.str, glyph_recoveries: publicRecoveries } : {}),
+          is_whitespace: effectiveText.trim().length === 0,
+          text_kind: effectiveText.length === 0 ? "empty" : effectiveText.trim().length === 0 ? "whitespace" : "non_whitespace",
           has_eol: item.hasEOL === true,
           raw_transform: rawTransform,
           raw_width: rawWidth,
           raw_height: rawHeight,
-          font_name: typeof item.fontName === "string" ? fontIds.get(item.fontName) : null,
+          font_name: publicFontName,
           font,
           geometry_kind: "pdfjs_text_run_advance_box",
           geometry_valid: geometryItem.valid,
@@ -2091,6 +2581,7 @@ export async function extractPdfLayout({
         "Text-run quads are a deterministic PDF.js TextItem/style-metric approximation, not DOM TextLayer or glyph ink bounds.",
         "Text-layer content can be hidden, clipped, duplicated, or an OCR overlay and is not proof of visible page content.",
         "Reading order is deterministic conservative reconstruction, not tagged-PDF or intended semantic order.",
+        "Legacy Computer Modern Type-3 text is recovered only for independently qualified exact metric, target-glyph, witness-glyph, and full-page sequence matches; every unsupported or ambiguous variant is left unchanged.",
       ],
     };
     recomputeDocumentTruncation(payload);

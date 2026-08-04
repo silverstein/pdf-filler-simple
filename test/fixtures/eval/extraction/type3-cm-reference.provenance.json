@@ -1,0 +1,39 @@
+{
+  "schema_version": 1,
+  "generated_by": "scripts/generate-type3-cm-reference.mjs",
+  "sources": [
+    {
+      "url": "https://mirrors.ctan.org/fonts/cm/tfm.zip",
+      "sha256": "9c0f99fa34c7d801c40f6b5ff60bc28f200e8ef6ffb2fe75e54ca835c67fc04c"
+    },
+    {
+      "url": "https://mirrors.ctan.org/fonts/cm/ps-type3.zip",
+      "sha256": "ef38efbd58774b454b190e17c8b5ca0fde13dd5d5ff2282bf0dc0313197f1033"
+    }
+  ],
+  "generator": {
+    "ghostscript": "10.07.1",
+    "qpdf": "qpdf version 12.3.2\nRun qpdf --copyright to see copyright and license information."
+  },
+  "outputs": {
+    "server/type3-cm-reference.js": "df7869d18c1a7c433cae0518cfa48c9d22f13a74c58b3f7424b36d286bf61e5b",
+    "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "df7869d18c1a7c433cae0518cfa48c9d22f13a74c58b3f7424b36d286bf61e5b",
+    "test/fixtures/eval/extraction/type3-cm-reference.pdf": "e4ebba6ac1bb381288281cd261c8475eacdd1a4cf44d0b4e2f327436b33276ff"
+  },
+  "visual_labels": {
+    "computer-modern-math-italic": {
+      "11": "alpha",
+      "25": "pi",
+      "26": "rho",
+      "33": "omega",
+      "58": "period",
+      "59": "comma",
+      "61": "slash"
+    },
+    "computer-modern-math-symbol": {
+      "0": "minus",
+      "21": "greater-or-equal",
+      "112": "square-root"
+    }
+  }
+}

@@ -20,7 +20,10 @@ const PACKED_RUNTIME_FILES = [
   ["package_json", "package.json"],
   ["server_entry", "server/index.js"],
   ["output_schemas", "server/output-schemas.js"],
+  ["pdfjs_subprocess", "server/pdfjs-subprocess.js"],
+  ["pdfjs_worker", "server/pdfjs-worker.js"],
   ["layout_extraction", "server/layout-extraction.js"],
+  ["type3_cm_reference", "server/type3-cm-reference.js"],
   ["markdown_conversion", "server/markdown-conversion.js"],
   ["markdown_transaction", "server/markdown-output-transaction.js"],
 ];
@@ -190,7 +193,7 @@ export function validateMarkdownResult(result, binding) {
     throw new Error(`Markdown conversion failed for ${binding.fixture.id}`);
   }
   const value = result.structuredContent;
-  if (value.renderer?.name !== "pdf-tools.layout-markdown-renderer" || value.renderer?.version !== "1.7.0"
+  if (value.renderer?.name !== "pdf-tools.layout-markdown-renderer" || value.renderer?.version !== "1.8.0"
     || value.options?.include_page_boundaries !== true || value.limits?.max_markdown_bytes !== 200000
     || value.provenance?.source?.file_name !== binding.retained.filename
     || value.provenance?.source?.sha256 !== binding.retained.sha256

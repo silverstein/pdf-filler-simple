@@ -725,6 +725,7 @@ async function main() {
       "server/helpers.js",
       "server/index.js",
       "server/layout-extraction.js",
+      "server/type3-cm-reference.js",
       "server/markdown-conversion.js",
       "server/markdown-output-transaction.js",
       "server/output-schemas.js",
@@ -828,7 +829,7 @@ async function main() {
       arguments: { pdf_path: fixturePath, max_output_characters: 200000 },
     });
     if (layout.isError
-      || layout.structuredContent?.ir?.version !== "1.2.0"
+      || layout.structuredContent?.ir?.version !== "1.3.0"
       || layout.structuredContent?.source?.size_bytes !== statSync(fixturePath).size) {
       throw new Error("Share read_pdf_layout contract smoke failed");
     }
@@ -837,7 +838,7 @@ async function main() {
       arguments: { pdf_path: fixturePath, max_markdown_bytes: 200000 },
     });
     if (markdown.isError
-      || markdown.structuredContent?.renderer?.version !== "1.7.0"
+      || markdown.structuredContent?.renderer?.version !== "1.8.0"
       || markdown.structuredContent?.markdown_bytes !== Buffer.byteLength(markdown.structuredContent?.markdown || "", "utf8")
       || markdown.structuredContent?.markdown_sha256 !== sha256(Buffer.from(markdown.structuredContent?.markdown || "", "utf8"))) {
       throw new Error("Share convert_pdf_to_markdown contract smoke failed");

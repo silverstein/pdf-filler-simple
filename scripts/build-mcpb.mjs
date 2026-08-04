@@ -63,6 +63,7 @@ const SERVER_FILES = [
   "pdfjs-worker.js",
   "resource-uri.js",
   "stderr-suppression.js",
+  "type3-cm-reference.js",
 ];
 const FIRST_PARTY_TEXT_FILES = [
   ...SERVER_FILES.map(filename => `server/${filename}`),

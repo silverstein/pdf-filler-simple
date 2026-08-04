@@ -54,7 +54,10 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // evidence and Markdown renderer 1.7.0 uses only complete closed grids for
 // ruled tables. Previously
 // 4efcce458b5041a2d822bb921f46550cc15cdb9bcb2d54550f8eaa80c4f5a756.
-const TOOL_CONTRACT_SHA256 = "9947d16e32562981651216c95598786d9f3324d5f1fae3b53fa8d7f089d2ea05";
+// 2026-08-03: extraction IR 1.3.0 and Markdown renderer 1.8.0 preserve only
+// independently qualified exact legacy Computer Modern Type-3 glyphs.
+// Previously 9947d16e32562981651216c95598786d9f3324d5f1fae3b53fa8d7f089d2ea05.
+const TOOL_CONTRACT_SHA256 = "223c8ec6b37d600e2918b5b4b124af80845a51cb9530819024b2426a9c101c06";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -291,6 +294,7 @@ describe("MCPB static declarations", () => {
       "helpers.js",
       "output-schemas.js",
       "layout-extraction.js",
+      "type3-cm-reference.js",
       "markdown-conversion.js",
       "markdown-output-transaction.js",
       "pdf-lib-subprocess.js",
@@ -399,7 +403,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.2.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.3.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       page_range: { start_page: 1, end_page: 1 },
     });

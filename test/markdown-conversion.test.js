@@ -1109,7 +1109,7 @@ describe("Markdown gap-code contract", () => {
   });
 
   it("keeps the share runtime byte-identical to its source", async () => {
-    for (const name of ["markdown-conversion.js", "output-schemas.js", "layout-extraction.js"]) {
+    for (const name of ["markdown-conversion.js", "output-schemas.js", "layout-extraction.js", "type3-cm-reference.js"]) {
       const [a, b] = await Promise.all([
         readSource(`server/${name}`),
         readSource(`pdf-toolkit-mcp-share/server/${name}`),

@@ -19,6 +19,10 @@ import {
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
+const TYPE3_REFERENCE_PDF = path.join(
+  REPO_ROOT,
+  "test/fixtures/eval/extraction/type3-cm-reference.pdf",
+);
 const roots = [];
 const hosts = new Set();
 
@@ -151,13 +155,37 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
     };
     const layout = await run("extract_layout", common);
     expect(layout.layout).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.2.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.3.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       pages: expect.any(Array),
     });
     const markdownLayout = await run("extract_layout_for_markdown", common);
     expect(markdownLayout.layout.parser.version).toBe("5.4.624");
     expect(markdownLayout.layout.page_range.start_page).toBe(1);
+  });
+
+  it("preserves exact Type-3 glyph evidence inside the isolated worker", async () => {
+    const result = await run("extract_layout_for_markdown", {
+      source_path: TYPE3_REFERENCE_PDF,
+      source_file_name: path.basename(TYPE3_REFERENCE_PDF),
+      start_page: 1,
+      end_page: 1,
+      max_items: 5000,
+      max_characters: 100_000,
+      max_output_characters: 200_000,
+    }, null, await sourceBinding(TYPE3_REFERENCE_PDF));
+    const recoveredItems = result.layout.pages[0].raw_items
+      .filter(item => Array.isArray(item.glyph_recoveries));
+    expect(recoveredItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source_text: "\u0000\u0015p",
+        text: "−\u0015p",
+        glyph_recoveries: [expect.objectContaining({
+          registry_id: "cmsy-ctan-type3-minus-v1",
+          target_unicode: "−",
+        })],
+      }),
+    ]));
   });
 
   it("returns PNG bytes only on the separately bounded binary channel", async () => {

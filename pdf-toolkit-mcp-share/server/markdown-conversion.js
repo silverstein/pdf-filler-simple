@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.7.0",
+  version: "1.8.0",
 });
 
 // Bounded geometric table inference. A run of adjacent lines is treated as a
@@ -52,10 +52,10 @@ const GAP_CODES = new Set([
 const LIMITATIONS = Object.freeze([
   "Headings are emitted only from consistent enlarged font metrics or centered English-language source structure with section spacing for a first-page title, introduction, part, or appendix. Ambiguous, very short, or unsupported heading styles remain body text.",
   "A geometrically overlapping initial capital may be joined to its following uppercase word remainder. Line-end hyphens are preserved because source geometry cannot reliably distinguish a split word from an intentional compound. The source Extraction IR retains the original lines.",
-  "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different embedded-font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. General equations, scripts, fraction bars, and damaged mathematical glyphs remain source reading-order text rather than being guessed.",
+  "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different embedded-font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. A small version-pinned registry may recover a legacy Computer Modern Type-3 character only after an exact official-metric family match, exact target and two-witness glyph-program matches, and a complete operator/text sequence binding. General equations, scripts, fraction bars, unregistered raster variants, and other damaged mathematical glyphs remain source reading-order text rather than being guessed.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
-  "Tables are reconstructed only from either complete text-item column geometry or one unambiguous complete closed grid of bounded axis-aligned solid-mask rectangles. Ruled grids require every text item to fit exactly one cell, reject aligned partial dividers that evidence merged or spanning topology, and require independent caption and header evidence because Markdown imposes header semantics. Unsupported text remains escaped reading-order text with a conversion gap. Stroked paths are omitted and reported as vector-content gaps. Cell artwork is omitted and reported as a vector-content gap; damaged mathematical glyphs are not repaired.",
+  "Tables are reconstructed only from either complete text-item column geometry or one unambiguous complete closed grid of bounded axis-aligned solid-mask rectangles. Ruled grids require every text item to fit exactly one cell, reject aligned partial dividers that evidence merged or spanning topology, and require independent caption and header evidence because Markdown imposes header semantics. Unsupported text remains escaped reading-order text with a conversion gap. Stroked paths are omitted and reported as vector-content gaps. Cell artwork is omitted and reported as a vector-content gap; only independently qualified exact legacy glyph variants are recovered.",
   "OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.",
   "Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.",
 ]);

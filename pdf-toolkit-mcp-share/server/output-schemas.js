@@ -331,10 +331,28 @@ const layoutPaintedRectangles = object({
     bbox: layoutBox,
   })),
 });
-const layoutRawItem = object({
+const layoutGlyphRecovery = object({
+  source_utf16_start: integer,
+  source_utf16_end: integer,
+  output_utf16_start: integer,
+  output_utf16_end: integer,
+  original_char_code: integer,
+  source_unicode: string,
+  target_unicode: string,
+  font_name: nullable(string),
+  registry_id: string,
+  qualification: string,
+  charproc_sha256: string,
+  witness_charproc_sha256: stringArray,
+  tfm_reference_version: string,
+  canonicalizer_version: string,
+});
+const layoutRawItemProperties = {
   id: string,
   source_index: integer,
   text: string,
+  source_text: string,
+  glyph_recoveries: arrayOf(layoutGlyphRecovery),
   is_whitespace: boolean,
   text_kind: enumString(["empty", "whitespace", "non_whitespace"]),
   has_eol: boolean,
@@ -369,7 +387,11 @@ const layoutRawItem = object({
   reading_order_index: integer,
   line_id: nullable(string),
   column_index: nullable(integer),
-});
+};
+const layoutRawItem = object(
+  layoutRawItemProperties,
+  Object.keys(layoutRawItemProperties).filter(key => !["source_text", "glyph_recoveries"].includes(key)),
+);
 const layoutLine = object({
   id: string,
   source_first_index: integer,
@@ -527,7 +549,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     truncated: boolean,
   }),
   read_pdf_layout: object({
-    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.2.0" } }),
+    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.3.0" } }),
     parser: object({ name: { const: "pdfjs-dist" }, version: { const: "5.4.624" } }),
     source: object({
       pdf_path: string,
@@ -539,7 +561,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       kind: { const: "source_parser_ir_options" },
       source_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       parser_version: { const: "5.4.624" },
-      ir_version: { const: "1.2.0" },
+      ir_version: { const: "1.3.0" },
       requested_start_page: integer,
       requested_end_page: integer,
       max_items: integer,
@@ -567,7 +589,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
   convert_pdf_to_markdown: object({
     renderer: object({
       name: { const: "pdf-tools.layout-markdown-renderer" },
-      version: { const: "1.7.0" },
+      version: { const: "1.8.0" },
     }),
     conversion_status: enumString(["complete", "partial", "failed"]),
     markdown: string,
@@ -586,7 +608,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       }),
       layout: object({
         name: { const: "pdf-tools.extraction-ir" },
-        version: { const: "1.2.0" },
+        version: { const: "1.3.0" },
         parser_name: { const: "pdfjs-dist" },
         parser_version: { const: "5.4.624" },
         page_range: object({
