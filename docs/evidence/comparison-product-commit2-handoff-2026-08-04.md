@@ -9,9 +9,11 @@
 - Independently blocked implementation: `96d314b01a1fecfa54811bc0255faa83e73edbf7`
   (tree `752de29ca602222b52efdc16acc899a4eeaafb8d`), reviewed at docs-only
   evidence head `8696da4da0d80590e54d69222d41147f4050721f`.
-- Repair parent: `8696da4da0d80590e54d69222d41147f4050721f`.
-- Repair candidate: the single commit containing this handoff; consume the
-  exact SHA and tree reported by the operator, never the branch name.
+- Independently blocked first repair: `02ed531d5fc82c0cf96cb681e5c0d66a81213138`
+  (tree `295da2d11ae79659deadb058d0e8a0b87adaa116`).
+- Clipping-repair parent: `02ed531d5fc82c0cf96cb681e5c0d66a81213138`.
+- Current repair candidate: the single commit containing this handoff; consume
+  the exact SHA and tree reported by the operator, never the branch name.
 - Protected dependency: `pdfjs-dist` remains exactly `5.4.624`; no dependency
   was added or changed.
 
@@ -44,6 +46,20 @@ page-2 black-to-red rectangle and proves the page-2 visual event is retained.
 The same test also proves an independent rectangle delta elsewhere on the same
 page as changed text remains observable. A primitive regression proves that
 masking an explained region does not mask a disconnected residual pixel.
+
+PurplePine then independently returned BLOCK in Agent Mail reply 74 for exact
+first repair `02ed531d5fc82c0cf96cb681e5c0d66a81213138`. The original mixed
+cross-page and same-page defect was fixed and 22 of 22 direct tests passed, but
+a fully off-left ignored evidence region such as `[-10, 0, 3, 3]` left a
+negative clipped end index. `Uint8Array.fill` interpreted that negative end
+relative to the full mask and erased an unrelated visible residual pixel.
+
+The clipping repair clamps both x endpoints to `0..render.width` and both y
+endpoints to `0..render.height`, then skips empty or non-overlapping clipped
+rectangles before any typed-array operation. Exact primitive regressions place
+a disjoint visible delta in the raster and prove fully off-left, off-right,
+off-top, and off-bottom ignored evidence boxes produce the identical result as
+no mask.
 
 ## Implemented boundary
 
@@ -136,10 +152,11 @@ Silverbook.
 Repair-candidate narrow evidence:
 
 - focused source/share, output-schema, comparator, MCP-contract, product
-  adapter, and six-repeat product-baseline bank: 6 files, 82 tests passed;
-- direct comparator and exact mixed-change bank: 2 files, 22 tests passed;
+  adapter, and six-repeat product-baseline bank: 6 files, 83 tests passed;
+- direct comparator, exact mixed-change, and four-side clipping bank: 2 files,
+  23 tests passed;
 - source/share `pdf-comparison.js` bytes are identical, SHA-256
-  `e51bd2558f68a1a97da3f6bab8a740debdc296303fa529bbbd4f36b36013013e`;
+  `36646fac7e19937304c7695eb7056f121a079e1cfecfff692835275d49931d90`;
 - source/share `output-schemas.js` bytes are identical, SHA-256
   `8d69414e52ae4d7cf5e34f7b502965a6e9a19b9643f5d8db716d0e6021d03921`;
 - source and staged-share tool discovery recompute the same frozen contract

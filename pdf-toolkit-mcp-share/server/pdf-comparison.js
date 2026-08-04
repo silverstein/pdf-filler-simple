@@ -337,13 +337,15 @@ function cropRgba(render, region) {
 
 function comparisonIgnoredPixelMask(render, regions) {
   const mask = new Uint8Array(render.width * render.height);
+  const clamp = (value, maximum) => Math.max(0, Math.min(maximum, value));
   for (const region of regions) {
     if (!Array.isArray(region) || region.length !== 4 || !region.every(Number.isFinite)
       || region[2] <= 0 || region[3] <= 0) continue;
-    const x0 = Math.max(0, Math.floor(region[0] * render.scale) - 1);
-    const y0 = Math.max(0, Math.floor(region[1] * render.scale) - 1);
-    const x1 = Math.min(render.width, Math.ceil((region[0] + region[2]) * render.scale) + 1);
-    const y1 = Math.min(render.height, Math.ceil((region[1] + region[3]) * render.scale) + 1);
+    const x0 = clamp(Math.floor(region[0] * render.scale) - 1, render.width);
+    const y0 = clamp(Math.floor(region[1] * render.scale) - 1, render.height);
+    const x1 = clamp(Math.ceil((region[0] + region[2]) * render.scale) + 1, render.width);
+    const y1 = clamp(Math.ceil((region[1] + region[3]) * render.scale) + 1, render.height);
+    if (x1 <= x0 || y1 <= y0) continue;
     for (let y = y0; y < y1; y += 1) {
       mask.fill(1, y * render.width + x0, y * render.width + x1);
     }

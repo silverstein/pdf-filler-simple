@@ -149,6 +149,25 @@ describe("PDF comparison primitives", () => {
     })]);
   });
 
+  it("clips fully off-page ignored regions on all four sides without masking visible residuals", () => {
+    const before = render(12, 6);
+    const after = render(12, 6);
+    after.binary[(2 * 12 + 9) * 4] = 20;
+    const baseline = diffComparisonRgba(before, after);
+    expect(baseline).toMatchObject({
+      raw_changed_pixels: 1,
+      changed_pixels: 9,
+    });
+    for (const region of [
+      [-10, 0, 3, 3],
+      [10, 0, 3, 3],
+      [0, -10, 3, 3],
+      [0, 10, 3, 3],
+    ]) {
+      expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region)).toEqual(baseline);
+    }
+  });
+
   it("marks visual coverage unavailable when any requested native render is unavailable", () => {
     const supported = { status: "supported", reason_codes: [] };
     const document = side => ({
