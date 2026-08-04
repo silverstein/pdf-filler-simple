@@ -120,9 +120,9 @@
       "label": "TABLE I",
       "required_header_terms": [
         "impulse response",
-        "gain factor",
+        "gain",
         "entropy power factor",
-        "entropy gain in decibels"
+        "entropy power gain in decibels"
       ],
       "minimum_data_rows": 5
     },
