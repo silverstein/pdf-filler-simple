@@ -43,4 +43,14 @@ describe("Shannon Markdown bakeoff manifest", () => {
     inventedReference.candidates.layout_reference.status = "complete";
     expect(() => validateShannonManifest(inventedReference)).toThrow("Candidate slot projection is invalid");
   });
+
+  it("rejects equation anchors without bounded page-local evidence", async () => {
+    const missingPage = await manifest();
+    delete missingPage.oracle.equation_anchors[0].page;
+    expect(() => validateShannonManifest(missingPage)).toThrow("Shannon sampled oracle is invalid");
+
+    const unbounded = await manifest();
+    unbounded.oracle.equation_max_span_characters = 10000;
+    expect(() => validateShannonManifest(unbounded)).toThrow("Shannon sampled oracle is invalid");
+  });
 });

@@ -103,11 +103,12 @@
       "A decimal digit is about 3 1/3 bits",
       "The final entropy power is the initial entropy power multiplied by the geometric mean gain of the filter"
     ],
+    "equation_max_span_characters": 200,
     "equation_anchors": [
-      ["log2 M", "log10 M", "log10 2"],
-      ["C", "Lim", "log N(T)", "T"],
-      ["H", "pi", "log pi"],
-      ["C", "W", "log", "P", "N"]
+      { "page": 1, "tokens": ["log2 M", "log10 M", "log10 2"] },
+      { "page": 3, "tokens": ["C", "Lim", "log N(T)", "T"] },
+      { "page": 11, "tokens": ["H", "pi", "log pi"] },
+      { "page": 45, "tokens": ["C", "W", "log", "P", "N"] }
     ],
     "footnote_anchors": [
       "Certain Factors Affecting Telegraph Speed",

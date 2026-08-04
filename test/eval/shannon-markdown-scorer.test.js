@@ -65,6 +65,29 @@ describe("Shannon Markdown adversarial scorer", () => {
     expect(result.table_topology.topology_present).toBe(false);
   });
 
+  it("does not award equation credit to scattered prose or header terms in table data rows", async () => {
+    const result = scoreShannonMarkdown({
+      markdown: [
+        "<!-- PDF page 1 -->",
+        "C appears in prose.",
+        "x".repeat(250),
+        "W log P N appear much later.",
+        "| junk | header |",
+        "|---|---|",
+        "| impulse response | gain factor |",
+        "| entropy power factor | entropy gain in decibels |",
+        "| value | value |",
+        "| value | value |",
+        "| value | value |",
+      ].join("\n"),
+      oracle: await oracle(),
+      evidence: {},
+    });
+    expect(result.equations.found).toBe(0);
+    expect(result.table_topology.qualifying_table_count).toBe(0);
+    expect(result.table_topology.topology_present).toBe(false);
+  });
+
   it("reports omissions and duplications independently", async () => {
     const manifestOracle = await oracle();
     const repeated = manifestOracle.exactly_once_anchors[0];

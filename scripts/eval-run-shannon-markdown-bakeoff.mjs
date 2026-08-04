@@ -135,6 +135,21 @@ export function validateShannonManifest(manifest) {
     || !Array.isArray(manifest.oracle.exactly_once_anchors)) {
     throw new Error("Shannon sampled oracle is invalid");
   }
+  if (!Number.isSafeInteger(manifest.oracle.equation_max_span_characters)
+    || manifest.oracle.equation_max_span_characters < 20
+    || manifest.oracle.equation_max_span_characters > 500
+    || manifest.oracle.equation_anchors.some(anchor => {
+      try {
+        exactKeys(anchor, ["page", "tokens"], "Shannon equation anchor");
+      } catch {
+        return true;
+      }
+      return !Number.isSafeInteger(anchor.page) || anchor.page < 1 || anchor.page > source.page_count
+        || !Array.isArray(anchor.tokens) || anchor.tokens.length < 2
+        || anchor.tokens.some(token => typeof token !== "string" || token.trim().length < 1);
+    })) {
+    throw new Error("Shannon sampled oracle is invalid");
+  }
   return manifest;
 }
 
@@ -447,6 +462,11 @@ async function writePrivate(filename, bytes) {
   await fs.chmod(filename, 0o600);
 }
 
+async function writePrivateExecutable(filename, bytes) {
+  await fs.writeFile(filename, bytes, { mode: 0o700, flag: "wx" });
+  await fs.chmod(filename, 0o700);
+}
+
 async function run(options) {
   if (process.platform !== "darwin" || process.arch !== "arm64") {
     throw new Error("The initial Shannon bakeoff is intentionally calibrated only for macOS arm64");
@@ -488,35 +508,59 @@ async function run(options) {
   const pdfToolsSource = await runtimeSourceIdentity();
   const attempts = { pdf_tools: [], pdf_inspector: [] };
   const markdownByCandidate = { pdf_tools: [], pdf_inspector: [] };
+  const inputRoot = await fs.mkdtemp(path.join(canonicalOutput, ".verified-inputs-"));
+  await fs.chmod(inputRoot, 0o700);
+  const executionSourcePath = path.join(inputRoot, "shannon-source.pdf");
+  const executionBinaryPath = path.join(inputRoot, "pdf2md");
+  await writePrivate(executionSourcePath, source.bytes);
+  await writePrivateExecutable(executionBinaryPath, binary.bytes);
+  try {
+    for (let repetition = 1; repetition <= manifest.execution.repetitions; repetition += 1) {
+      const sourceBefore = await canonicalRegular(executionSourcePath, 16 * 1024 * 1024, "Shannon source snapshot before attempt");
+      const inspector = await runPdfInspector({ binary: executionBinaryPath, sourcePath: executionSourcePath, manifest });
+      const stateRoot = await fs.mkdtemp(path.join(canonicalOutput, `.pdf-tools-state-r${repetition}-`));
+      await fs.chmod(stateRoot, 0o700);
+      let current;
+      try {
+        current = await runPdfTools({ sourcePath: executionSourcePath, source, manifest, stateRoot });
+      } finally {
+        await fs.rm(stateRoot, { recursive: true, force: true });
+      }
+      const [sourceAfter, binaryAfter, runtimeAfter] = await Promise.all([
+        canonicalRegular(executionSourcePath, 16 * 1024 * 1024, "Shannon source snapshot after attempt"),
+        canonicalRegular(executionBinaryPath, 64 * 1024 * 1024, "pdf-inspector binary snapshot after attempt"),
+        runtimeSourceIdentity(),
+      ]);
+      if (sourceBefore.sha256 !== sourceAfter.sha256 || sourceBefore.size_bytes !== sourceAfter.size_bytes
+        || sourceAfter.sha256 !== source.sha256 || binaryAfter.sha256 !== binary.sha256
+        || canonicalJson(runtimeAfter) !== canonicalJson(pdfToolsSource)) {
+        throw new Error("A verified candidate input changed during execution");
+      }
+      for (const [candidate, result] of [["pdf_inspector", inspector], ["pdf_tools", current]]) {
+        const markdownBytes = Buffer.from(result.markdown, "utf8");
+        const filename = `${candidate.replaceAll("_", "-")}-r${repetition}.md`;
+        await writePrivate(path.join(canonicalOutput, filename), markdownBytes);
+        attempts[candidate].push({
+          repetition,
+          output_file: filename,
+          markdown_sha256: sha256(markdownBytes),
+          markdown_bytes: markdownBytes.length,
+          ...result.attempt,
+        });
+        markdownByCandidate[candidate].push(result.markdown);
+      }
+    }
+  } finally {
+    await fs.rm(inputRoot, { recursive: true, force: true });
+  }
 
-  for (let repetition = 1; repetition <= manifest.execution.repetitions; repetition += 1) {
-    const sourceBefore = await canonicalRegular(sourcePath, 16 * 1024 * 1024, "Shannon source before attempt");
-    const inspector = await runPdfInspector({ binary: binaryPath, sourcePath, manifest });
-    const stateRoot = await fs.mkdtemp(path.join(canonicalOutput, `.pdf-tools-state-r${repetition}-`));
-    await fs.chmod(stateRoot, 0o700);
-    let current;
-    try {
-      current = await runPdfTools({ sourcePath, source, manifest, stateRoot });
-    } finally {
-      await fs.rm(stateRoot, { recursive: true, force: true });
-    }
-    const sourceAfter = await canonicalRegular(sourcePath, 16 * 1024 * 1024, "Shannon source after attempt");
-    if (sourceBefore.sha256 !== sourceAfter.sha256 || sourceBefore.size_bytes !== sourceAfter.size_bytes) {
-      throw new Error("Shannon source changed during candidate execution");
-    }
-    for (const [candidate, result] of [["pdf_inspector", inspector], ["pdf_tools", current]]) {
-      const markdownBytes = Buffer.from(result.markdown, "utf8");
-      const filename = `${candidate.replaceAll("_", "-")}-r${repetition}.md`;
-      await writePrivate(path.join(canonicalOutput, filename), markdownBytes);
-      attempts[candidate].push({
-        repetition,
-        output_file: filename,
-        markdown_sha256: sha256(markdownBytes),
-        markdown_bytes: markdownBytes.length,
-        ...result.attempt,
-      });
-      markdownByCandidate[candidate].push(result.markdown);
-    }
+  const [finalRevision, finalTrackedStatus, finalLock] = await Promise.all([
+    gitValue(inspectorRoot, ["rev-parse", "HEAD"]),
+    gitValue(inspectorRoot, ["status", "--porcelain", "--untracked-files=no"]),
+    canonicalRegular(path.join(inspectorRoot, "Cargo.lock"), 4 * 1024 * 1024, "pdf-inspector resolved lock after execution"),
+  ]);
+  if (finalRevision !== revision || finalTrackedStatus !== trackedStatus || finalLock.sha256 !== lock.sha256) {
+    throw new Error("pdf-inspector reviewed source binding changed during execution");
   }
 
   for (const candidate of Object.keys(attempts)) {
@@ -580,6 +624,8 @@ async function run(options) {
     },
     execution_boundary: {
       fresh_process_per_repetition: true,
+      verified_input_snapshots: true,
+      runtime_sources_revalidated_after_each_repetition: true,
       network_isolation: false,
       hard_memory_limit: false,
       source_reopened_before_and_after: true,
@@ -601,6 +647,7 @@ async function run(options) {
       "No metric families are blended into an overall score.",
       "PDF Tools ran from the named source checkout, not a packed MCPB artifact.",
       "The stronger layout-reference slot was not run because no Shannon-specific hash-bound handoff exists.",
+      "The source PDF and pdf-inspector executable run from private verified snapshots. PDF Tools JavaScript and dependency paths run from the named checkout and are revalidated after each repetition rather than executed from a filesystem-isolated snapshot.",
       "Network inactivity is intended by the candidate commands but is not syscall-isolated.",
       "Maximum RSS is observed from the macOS time wrapper and is not a hard memory limit.",
       "A successful evaluation does not authorize bundling, release, or a comparative product claim.",
