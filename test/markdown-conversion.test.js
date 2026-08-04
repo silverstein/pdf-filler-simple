@@ -159,6 +159,18 @@ function combinePaintedOperations(...groups) {
   };
 }
 
+function paintedFractionBarOperations({ x, y, width, height = 0.48 }) {
+  return {
+    operations: [4, 6, 7, 5],
+    operatorArgs: [
+      null,
+      [width, 0, 0, -height, x, 792 - y],
+      [],
+      null,
+    ],
+  };
+}
+
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("layout Markdown renderer", () => {
@@ -502,6 +514,67 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).toContain("ModelC interface remains compact here");
     expect(result.markdown).toContain("This document uses modelC interface remains compact here");
     expect(result.markdown).toContain("Definition: The capacityc of a discrete channel is given by");
+    expect(layout.pages.map(page => page.lines.map(line => line.text))).toEqual(originalLines);
+    expect(validateMarkdownConversionSemantics(result, { layout })).toBe(result);
+  });
+
+  it("renders only an explicitly barred single-digit stacked fraction in prose", async () => {
+    const alignedBar = paintedFractionBarOperations({ x: 211.208, y: 105.252, width: 3.72 });
+    const misalignedBar = paintedFractionBarOperations({ x: 225, y: 105.252, width: 3.72 });
+    const thickBar = paintedFractionBarOperations({ x: 211.208, y: 105.252, width: 3.72, height: 1.2 });
+    const fractionItems = [
+      positionedTextItem("A decimal digit is about 3", { top: 98, left: 100, width: 110 }),
+      positionedTextItem(" ", { top: 98, left: 210, width: 0.165 }),
+      positionedTextItem("1", { top: 96.64, left: 211.22, width: 3.7, fontSize: 7.4 }),
+      positionedTextItem("3", { top: 104.08, left: 211.22, width: 3.7, fontSize: 7.4 }),
+      positionedTextItem(" ", { top: 104.08, left: 214.92, width: 0.41, fontSize: 7.4 }),
+      positionedTextItem("bits. A digit wheel remains stable here", {
+        top: 98,
+        left: 219.02,
+        width: 170,
+        eol: true,
+      }),
+    ];
+    const negativePages = [
+      { items: fractionItems },
+      { items: fractionItems, ...misalignedBar },
+      { items: fractionItems, ...thickBar },
+      { items: fractionItems, ...combinePaintedOperations(alignedBar, alignedBar) },
+      { items: fractionItems.filter(item => item.str !== " "), ...alignedBar },
+      {
+        items: fractionItems.map((item, index) => index === 0
+          ? { ...item, str: "A decimal digit is about three" }
+          : item),
+        ...alignedBar,
+      },
+      {
+        items: fractionItems.map((item, index) => index === fractionItems.length - 1
+          ? { ...item, str: "Bits. A digit wheel remains stable here" }
+          : item),
+        ...alignedBar,
+      },
+      {
+        items: fractionItems.map((item, index) => index === fractionItems.length - 1
+          ? { ...item, fontName: "f2" }
+          : item),
+        ...alignedBar,
+      },
+    ];
+    const layout = await validatedSyntheticLayout([
+      { items: fractionItems, ...alignedBar },
+      ...negativePages,
+    ]);
+    const originalLines = layout.pages.map(page => page.lines.map(line => line.text));
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toContain("A decimal digit is about 3 1/3 bits. A digit wheel remains stable here");
+    expect(result.markdown.match(/A decimal digit is about 31\n3\nbits\./gu)).toHaveLength(6);
+    expect(result.markdown).toContain("A decimal digit is about three1\n3\nbits.");
+    expect(result.markdown).toContain("A decimal digit is about 31\n3\nBits.");
+    expect(result.pages[0].rendered_line_count).toBe(layout.pages[0].lines.length - 2);
+    for (let index = 1; index < result.pages.length; index += 1) {
+      expect(result.pages[index].rendered_line_count).toBe(layout.pages[index].lines.length);
+    }
     expect(layout.pages.map(page => page.lines.map(line => line.text))).toEqual(originalLines);
     expect(validateMarkdownConversionSemantics(result, { layout })).toBe(result);
   });
