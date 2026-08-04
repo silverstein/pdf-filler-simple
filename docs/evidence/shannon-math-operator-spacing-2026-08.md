@@ -12,11 +12,11 @@ now `pdf-tools.layout-markdown-renderer` version `1.6.0`.
 
 On the hash-bound 55-page Shannon document, the sampled page-local equation
 anchors improved from 2 of 4 to 4 of 4. All three PDF Tools repetitions were
-byte-identical. The source-text diff contained 37 restored `log` operator
-boundaries across 35 changed lines and no other source-text changes; the new limitation also appears in
-each bounded output chunk. Sampled headings, reading order, paragraph
-continuity, footnotes, table topology, omission/duplication, and evidence did
-not regress.
+byte-identical. The source-text diff contained 19 restored `log` operator
+boundaries across 18 changed lines and no other source-text changes; the new
+limitation also appears in each bounded output chunk. Sampled headings, reading
+order, paragraph continuity, footnotes, table topology, omission/duplication,
+and evidence did not regress.
 
 The 4-of-4 sample result does **not** mean equation extraction is solved. The
 paper still contains damaged or flattened arrows, minus signs, subscripts,
@@ -28,19 +28,19 @@ table cells.
 
 ## Clean run
 
-- Evaluated commit: `befbb553eeb73a6e6144312809df4acf15cc4827`
+- Evaluated commit: `b8b301ce6c2eb87d1a55aeafffff9323e25d3eba`
 - Source PDF SHA-256:
   `6e4e3411984f3edf99dbfe8b941cb5e8a321379ff0cae6ae5c1f592ad8882ca8`
 - Previous paragraph-continuity report SHA-256:
   `0dcc8284d18b960b1a63bdeba6f91f4cf28ae7ab5aad0b20f9b623f34961fc06`
 - Math-spacing report SHA-256:
-  `51f8a3df6bf04538fcd5b2f7cb5be79f30bde231c8840c7a5a54b0b7fba4a787`
+  `6e81ae082de64650595c70b659bb82b79e04400ecc9506352d92766ae46ddb39`
 - Private report directory:
-  `/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-math-spacing-20260803-clean-befbb55`
+  `/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-math-spacing-final-review-20260803-clean-b8b301c`
 - Repetitions: three fresh processes per candidate
 - PDF Tools Markdown deterministic across repetitions: `true`
-- Median PDF Tools elapsed time: 3465.051 ms
-- Median PDF Tools maximum RSS: 286,146,560 bytes
+- Median PDF Tools elapsed time: 3533.064 ms
+- Median PDF Tools maximum RSS: 312,033,280 bytes
 
 ## Metric comparison
 
