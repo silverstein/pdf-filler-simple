@@ -158,6 +158,9 @@ default output is byte-identical to non-compact behavior. Links are emitted
 only for a source-validated external http or https annotation target that maps
 to exactly one contiguous run of text on one line; internal destinations,
 actions, other URL schemes, and ambiguous labels stay escaped text. It does
+not reconstruct general equations, scripts, or fraction bars, but may restore
+a missing space after a separate `log` source item only in a short, tightly
+bounded math run with same-baseline variable evidence. It does
 not run OCR or use an external model. Unsupported visual or structural content
 is reported as typed partial coverage rather than silently represented as
 complete Markdown.

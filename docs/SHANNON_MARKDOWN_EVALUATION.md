@@ -37,6 +37,10 @@ files are revalidated after every repetition.
 
 The sampled oracle is deliberately narrow. A missing anchor can identify a
 regression, but a passing anchor set cannot prove complete 55-page fidelity.
+The current PDF Tools result finds all four sampled page-local equation anchors,
+but that token result does not prove faithful equation topology. Damaged arrows,
+minus signs, scripts, summation limits, and fraction bars remain separate known
+gaps; see `docs/evidence/shannon-math-operator-spacing-2026-08.md`.
 
 ## Reproduction
 
