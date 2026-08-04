@@ -61,6 +61,8 @@ rule and appears once per ten-page conversion chunk.
 
 ## Verification state
 
+- Evaluated implementation/evidence commit:
+  `7208abd739f394493278996f57d514fa6f4fda58`.
 - Focused Markdown conversion tests: 45/45 passed.
 - Focused renderer, contract, output-schema, bakeoff, and conversion suites:
   122 passed, 6 intentionally skipped, zero failed.
@@ -73,10 +75,8 @@ rule and appears once per ten-page conversion chunk.
 - Transactional share contract: 40 tools, 14 prompts, 112 SBOM components,
   native raster image; SHA-256
   `63ca160a177f5f9b22db6f057714ed0f1a83968d26f41a05ac994e720d0ea80a`.
-
-The complete repository suite must be repeated from the committed clean draft
-snapshot because its source-identity cases intentionally reject a dirty
-worktree.
+- Complete repository suite from the committed clean draft snapshot: 1,888
+  passed, 80 intentionally skipped, zero failed.
 
 ## Claim boundary
 
