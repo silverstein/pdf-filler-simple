@@ -66,7 +66,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // combined contract digest is refreshed after the integration replay.
 // 2026-08-04: additive deterministic compare_pdfs contract with source-bound
 // evidence, exact whole-document limits, and typed channel coverage.
-const TOOL_CONTRACT_SHA256 = "aca6dabd3add8c1299da548253d804ae08ab27e94b8c8485a1c9c2ad6e41a1f3";
+const TOOL_CONTRACT_SHA256 = "941d6bd50b2a3930defb0526919d714ff9d4bc51acef2b2ad88c99c7533e8c98";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

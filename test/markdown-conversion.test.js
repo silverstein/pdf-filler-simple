@@ -82,23 +82,10 @@ function attachRuledRects(layout, items, status = "available") {
   return layout;
 }
 
-const PRE_1_3_NON_RECT_EXPECTED = JSON.stringify({
+const NON_RECT_EXPECTED = JSON.stringify({
   body: "NON-RECT HEADER\nbody",
   gap_codes: ["VECTOR_CONTENT_NOT_INTERPRETED"],
 });
-const PRE_1_2_TABLE_LIMITATION = "Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.";
-const CURRENT_TABLE_LIMITATION = "Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.";
-const PRE_1_2_VECTOR_GAP = "Vector-painted content was not interpreted as text or table structure.";
-const CURRENT_VECTOR_GAP = "Vector paint operations beyond any reconstructed table rulings were not interpreted.";
-const CURRENT_VECTOR_LIMITATION = "Vector paint operations beyond any reconstructed table rulings are not interpreted.";
-const PRE_1_2_LIMITATIONS = [
-  "Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.",
-  "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
-  "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
-  PRE_1_2_TABLE_LIMITATION,
-  "OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.",
-  "Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.",
-];
 
 function positionedTextItem(text, {
   top,
@@ -223,7 +210,7 @@ function paintedGridOperations({ xs, ys, missingVertical = null, extraRectangles
   const operations = [];
   const operatorArgs = [];
   for (const rectangle of rectangles) {
-    operations.push(4, 6, 7, 5);
+    operations.push(10, 12, 76, 11);
     operatorArgs.push(
       null,
       [rectangle.width, 0, 0, -rectangle.height, rectangle.x, 792 - rectangle.y],
@@ -243,7 +230,7 @@ function combinePaintedOperations(...groups) {
 
 function paintedFractionBarOperations({ x, y, width, height = 0.48 }) {
   return {
-    operations: [4, 6, 7, 5],
+    operations: [10, 12, 76, 11],
     operatorArgs: [
       null,
       [width, 0, 0, -height, x, 792 - y],
@@ -332,7 +319,7 @@ describe("layout Markdown renderer", () => {
     });
   });
 
-  it("pins the non-rect 1.2.0 regression body and isolates the 1.3.0 wording delta", async () => {
+  it("pins the combined non-rect regression output", async () => {
     const layout = await validatedSyntheticLayout([{
       operations: [2],
       items: [
@@ -341,93 +328,25 @@ describe("layout Markdown renderer", () => {
       ],
     }]);
     const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
-    // Independent full-output pin: ANY serialized delta beyond this literal —
-    // intended or not — fails here, closing the self-derived-comparison hole.
-    // The single run-variant field (the synthetic source PDF's sha256, which
-    // varies because pdf-lib stamps a creation date) is normalized to a named
-    // placeholder on BOTH sides; everything else is byte-exact.
-    const { readFileSync } = await import("node:fs");
-    const pinnedFullResult = readFileSync(
-      new URL("./fixtures/markdown/nonrect-differential-expected.v1_3_0.json", import.meta.url),
-      "utf8",
-    );
-    const currentPinnedFullResult = readFileSync(
-      new URL("./fixtures/markdown/nonrect-differential-expected.v1_3_1.json", import.meta.url),
-      "utf8",
-    );
-    const parentPin = JSON.parse(pinnedFullResult);
-    const currentPin = JSON.parse(currentPinnedFullResult);
-    const deepDiff = (left, right, path = []) => {
-      if (left && right && typeof left === "object" && typeof right === "object") {
-        const keys = new Set([...Object.keys(left), ...Object.keys(right)]);
-        return [...keys].flatMap(key => {
-          if (!(key in left)) return [{ type: "added", path: [...path, key], value: right[key] }];
-          if (!(key in right)) return [{ type: "removed", path: [...path, key], value: left[key] }];
-          return deepDiff(left[key], right[key], [...path, key]);
-        });
-      }
-      return Object.is(left, right)
-        ? []
-        : [{ type: "changed", path, left, right }];
-    };
-    expect(deepDiff(parentPin, currentPin)).toEqual([
-      { type: "added", path: ["options", "compact"], value: false },
-      {
-        type: "added",
-        path: ["normalizations"],
-        value: {
-          dot_leaders_collapsed: 0,
-          page_number_lines_removed: 0,
-          spaced_hyphens_joined: 0,
-          normalized_pages: [],
-        },
-      },
-    ]);
     const pinnable = structuredClone(result);
     pinnable.provenance.source.sha256 = "RUN_VARIANT_SOURCE_SHA256";
-    expect(JSON.stringify(pinnable)).toBe(currentPinnedFullResult);
+    // Pin the complete normalized envelope, not a value derived from a second
+    // invocation, so any unreviewed serialized delta fails this regression.
+    const serialized = JSON.stringify(pinnable);
+    expect(createHash("sha256").update(serialized).digest("hex"))
+      .toBe("ab8d5e1a49a0f4ee114ac774920d3482716fe2c818d876e55b16c4fe74e64503");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,
       gap_codes: result.gaps.map(gap => gap.code),
-    })).toBe(PRE_1_3_NON_RECT_EXPECTED);
+    })).toBe(NON_RECT_EXPECTED);
     expect(result.renderer).toEqual({
       name: "pdf-tools.layout-markdown-renderer",
-      version: "1.3.0",
+      version: "1.10.0",
     });
-    expect(result.gaps[0].message).toBe(CURRENT_VECTOR_GAP);
-    expect(result.limitations).toContain(CURRENT_TABLE_LIMITATION);
-    expect(result.limitations).toContain(CURRENT_VECTOR_LIMITATION);
-
-    const legacy = structuredClone(result);
-    legacy.renderer.version = "1.2.0";
-    legacy.pages[0].gaps[0].message = PRE_1_2_VECTOR_GAP;
-    legacy.gaps[0].message = PRE_1_2_VECTOR_GAP;
-    legacy.limitations = PRE_1_2_LIMITATIONS;
-    legacy.markdown = legacy.markdown
-      .replace(CURRENT_VECTOR_GAP, PRE_1_2_VECTOR_GAP)
-      .replace(CURRENT_TABLE_LIMITATION, PRE_1_2_TABLE_LIMITATION)
-      .replace(`- ${CURRENT_VECTOR_LIMITATION}\n`, "");
-    expect(legacy.markdown).toContain(PRE_1_2_TABLE_LIMITATION);
-    expect(legacy.markdown).toContain(PRE_1_2_VECTOR_GAP);
-    expect(legacy.markdown).not.toContain(CURRENT_TABLE_LIMITATION);
-    expect(legacy.markdown).not.toContain(CURRENT_VECTOR_LIMITATION);
-
-    const comparable = value => {
-      const copy = structuredClone(value);
-      copy.renderer.version = "1.2.0";
-      copy.pages[0].gaps[0].message = PRE_1_2_VECTOR_GAP;
-      copy.gaps[0].message = PRE_1_2_VECTOR_GAP;
-      copy.limitations = PRE_1_2_LIMITATIONS;
-      copy.markdown = copy.markdown
-        .replace(CURRENT_VECTOR_GAP, PRE_1_2_VECTOR_GAP)
-        .replace(CURRENT_TABLE_LIMITATION, PRE_1_2_TABLE_LIMITATION)
-        .replace(`- ${CURRENT_VECTOR_LIMITATION}\n`, "");
-      delete copy.markdown_bytes;
-      delete copy.markdown_sha256;
-      return copy;
-    };
-    expect(comparable(result)).toEqual(comparable(legacy));
+    expect(result.gaps[0].message).toMatch(/beyond reconstructed ruled or bounded solid-mask table grids/);
+    expect(result.limitations.some(value => value.includes("clean ruled-rectangle grid evidence"))).toBe(true);
+    expect(result.limitations.some(value => value.includes("solid-mask table grid"))).toBe(true);
   });
 
   it("reconstructs a ruled grid from IR evidence and renders deterministically", async () => {

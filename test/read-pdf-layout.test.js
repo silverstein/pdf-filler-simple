@@ -939,7 +939,7 @@ describe("read_pdf_layout MCP tool", () => {
   it("captures bounded solid-mask rectangles and binds them to source operators", async () => {
     const config = {
       items: [textItem({ text: "Cell", x: 110, top: 100 })],
-      operations: [4, 6, 7, 5],
+      operations: [10, 12, 76, 11],
       operatorArgs: [null, [40, 0, 0, -0.5, 100, 700], [], null],
     };
     const { result, bytes } = await runFake([config]);
@@ -988,7 +988,7 @@ describe("read_pdf_layout MCP tool", () => {
       userUnit: 75,
       viewport,
       items: [textItem({ text: "Scaled", x: 110, top: 100 })],
-      operations: [4, 6, 7, 5],
+      operations: [10, 12, 76, 11],
       operatorArgs: [null, graphicsTransform, [], null],
     };
     const { result, bytes } = await runFake([config]);
@@ -1003,7 +1003,7 @@ describe("read_pdf_layout MCP tool", () => {
     const operations = [];
     const operatorArgs = [];
     for (let index = 0; index < 501; index += 1) {
-      operations.push(4, 6, 7, 5);
+      operations.push(10, 12, 76, 11);
       operatorArgs.push(null, [20, 0, 0, -0.5, 20, 700 - index * 0.01], [], null);
     }
     const { result } = await runFake([{
