@@ -118,6 +118,10 @@
       "description": "Rearrange the pages of a PDF in a new order"
     },
     {
+      "name": "compare_pdfs",
+      "description": "Deterministically compare two whole local PDFs with source-bound semantic, text, structure, form, annotation, metadata, and optional visual evidence"
+    },
+    {
       "name": "get_pdf_info",
       "description": "Observe bounded source-bound PDF page geometry, metadata, form widgets, and inert ordinary annotations with explicit coverage"
     },

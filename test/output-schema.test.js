@@ -24,6 +24,7 @@ const STRUCTURED_TOOLS = [
   "apply_signature",
   "apply_text",
   "bulk_fill_from_csv",
+  "compare_pdfs",
   "create_signature",
   "convert_pdf_to_markdown",
   "detect_signature_zones",
@@ -101,6 +102,7 @@ describe("output schema definitions", () => {
       "apply_signature",
       "apply_text",
       "bulk_fill_from_csv",
+      "compare_pdfs",
       "convert_pdf_to_markdown",
       "detect_signature_zones",
       "fill_pdf",
@@ -140,11 +142,11 @@ describe("output schema definitions", () => {
     expect(rejected.structuredContent.error.code).toBe("internal_validation_error");
   });
 
-  it("covers the exact 36 structured tools and no text-only tool", () => {
+  it("covers the exact 37 structured tools and no text-only tool", () => {
     expect(Object.keys(TOOL_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_ERROR_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
-    expect(STRUCTURED_TOOLS).toHaveLength(36);
+    expect(STRUCTURED_TOOLS).toHaveLength(37);
     expect(TEXT_ONLY_TOOLS).toHaveLength(4);
   });
 

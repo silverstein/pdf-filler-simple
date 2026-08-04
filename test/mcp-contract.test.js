@@ -64,6 +64,8 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-08-04: Markdown renderer 1.10.0 interprets only explicitly barred,
 // single-digit stacked fractions in an ordinary prose sandwich. The final
 // combined contract digest is refreshed after the integration replay.
+// 2026-08-04: additive deterministic compare_pdfs contract with source-bound
+// evidence, exact whole-document limits, and typed channel coverage.
 const TOOL_CONTRACT_SHA256 = "aca6dabd3add8c1299da548253d804ae08ab27e94b8c8485a1c9c2ad6e41a1f3";
 
 const CLOSED_READ = Object.freeze({
@@ -102,6 +104,7 @@ const TOOL_EFFECT_ANNOTATIONS = {
   read_pdf_fields: CLOSED_SESSION_ACTION,
   fill_pdf: CLOSED_IDEMPOTENT_OVERWRITE,
   bulk_fill_from_csv: CLOSED_IDEMPOTENT_OVERWRITE,
+  compare_pdfs: CLOSED_READ,
   save_profile: CLOSED_IDEMPOTENT_OVERWRITE,
   load_profile: CLOSED_READ,
   list_profiles: CLOSED_READ,
@@ -297,6 +300,7 @@ describe("MCPB static declarations", () => {
   it("keeps every committed share runtime file byte-identical to its source", async () => {
     for (const filename of [
       "bounded-pdf-file.js",
+      "pdf-comparison.js",
       "index.js",
       "helpers.js",
       "output-schemas.js",
@@ -354,7 +358,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(40);
+    expect(tools).toHaveLength(41);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))

@@ -27,7 +27,7 @@ template discovery is also unsupported and deterministically returns JSON-RPC
 
 ### Tools
 
-The runtime returns 40 uniquely named tools. Every tool has an object input
+The runtime returns 41 uniquely named tools. Every tool has an object input
 schema plus `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, and
 `openWorldHint` annotations. Annotations are user-interface hints, never an
 authorization boundary; path allowlists and signature-intent checks remain the
@@ -36,7 +36,7 @@ every tool in both runtime copies. The handler evidence and classification
 rules are recorded in
 [`TOOL_ANNOTATION_AUDIT_2026-07-21.md`](TOOL_ANNOTATION_AUDIT_2026-07-21.md).
 
-The source manifest lists all 40 tools. The packed MCPB manifest lists the 39
+The source manifest lists all 41 tools. The packed MCPB manifest lists the 40
 normal model-workflow tools and omits `read_pdf_bytes`, whose runtime metadata
 marks it `ui.visibility: ["app"]`. `tools_generated: true` explicitly tells MCPB
 hosts that runtime discovery includes an additional tool. That visibility hint
@@ -45,7 +45,7 @@ a generic MCP client can still discover and call `read_pdf_bytes`. It is not an
 authorization or confidentiality boundary. Filesystem allowlists and the tool's
 bounded reads remain the enforced controls.
 
-Thirty-four tool handlers advertise strict `outputSchema` contracts and return
+Thirty-seven tool handlers advertise strict `outputSchema` contracts and return
 `structuredContent`. They also return a human-readable `content` text block so
 non-Apps and older clients remain usable. Successful structured output is
 validated before it leaves the server, with separate generic and tool-specific
@@ -68,7 +68,7 @@ exact-output-identity preconditions. New evaluation suites must bind v3
 explicitly. The grader selects the allowlisted contract and trust registry
 declared by each suite, so historical evidence remains valid under its original
 stack and is not silently rescored. The six existing trajectory jobs do not
-constitute behavioral trajectory coverage of all 40 tools.
+constitute behavioral trajectory coverage of all 41 tools.
 `get_pdf_identity` is covered by its contract, handler, filesystem-race, and
 agent-workflow tests rather than by those six retained jobs.
 
@@ -113,9 +113,28 @@ Native canvas renders also report a digest of the exact raw RGBA bytes.
 `render_pdf_region` requests use the rotated, UserUnit-scaled PDF.js page view
 with a top-left origin. They are not interchangeable with MediaBox-relative
 zone or signing coordinates. System-rendered PNGs report raw-pixel evidence as
-unavailable. The macOS system path fails closed on nonzero origins, a distinct
-CropBox, rotation, or UserUnit because `sips` cannot guarantee the PDF.js view
-mapping for those geometries.
+unavailable. The macOS system path renders through Quick Look (`qlmanage`),
+with its PDF.js page-view and crop mapping covered by nonzero-origin, CropBox,
+rotation, and UserUnit regressions. Canonical comparison still requires native
+raw-RGBA rendering and never silently substitutes this system path.
+
+`compare_pdfs` is a local, read-only, whole-document operation over two PDFs
+with at most 20 pages each. It binds canonical path, byte length, SHA-256,
+parser, observation digest, page count, and pre/post immutability evidence for
+both inputs. It aligns pages without resolving repeated-page ambiguity, emits
+source-bound observations and typed changes across seven coverage channels,
+and keeps widgets under the form channel rather than ordinary annotations.
+Default-material suppressions are retained as reversible typed decisions;
+forensic mode reports them. A complete result means the requested channels
+were observed under this policy. It never sets an equivalence claim, and an
+empty reported set is not proof that the files are semantically identical.
+
+Comparison refuses page-cap prefixes, changed sources, malformed PDFs,
+password failures, output-cap truncation, unknown input fields, and invalid
+internal semantics. Public errors use stable typed messages and do not include
+input paths, passwords, or lower-level parser and filesystem text. Native raw
+RGBA is the only visual comparison sensor; an unavailable native renderer is
+typed partial coverage rather than a system-renderer substitution.
 
 `read_pdf_layout` returns the versioned PDF Tools Extraction IR for at most 10
 pages per call. It binds each ID scope to the source SHA-256, pinned PDF.js

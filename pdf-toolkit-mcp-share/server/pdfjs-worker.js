@@ -87,6 +87,10 @@ const OPERATION_OPTION_KEYS = new Map([
     ["max_dimension_px", "page", "renderer_policy", "scale_override"],
   ],
   [
+    "render_comparison_page",
+    ["max_dimension_px", "page", "renderer_policy", "scale_override"],
+  ],
+  [
     "render_region",
     ["height", "max_dimension_px", "page", "renderer_policy", "width", "x", "y"],
   ],
@@ -173,6 +177,7 @@ function validateOptions(operation, options) {
       );
       break;
     case "render_page":
+    case "render_comparison_page":
       boundedInteger(options.page, "page", 1, 1_000_000);
       rendererPolicy(options.renderer_policy);
       boundedInteger(
@@ -1583,6 +1588,40 @@ async function renderPage(bytes, password, options) {
   });
 }
 
+async function renderComparisonPage(bytes, password, options) {
+  const rendered = await renderPage(bytes, password, options);
+  const imported = _require("@pdf-lib/upng");
+  const upng = imported?.default?.default ?? imported?.default ?? imported;
+  const decoded = upng.decode(rendered.binary.buffer.slice(
+    rendered.binary.byteOffset,
+    rendered.binary.byteOffset + rendered.binary.byteLength,
+  ));
+  const frames = upng.toRGBA8(decoded);
+  if (!Array.isArray(frames) || frames.length !== 1) {
+    throw new Error("The comparison renderer requires a single-frame PNG.");
+  }
+  const rgba = Buffer.from(frames[0]);
+  const expectedBytes = rendered.result.width * rendered.result.height * 4;
+  if (rgba.length !== expectedBytes || rgba.length > MAX_BINARY_BYTES) {
+    throw resourceLimitError("comparison_rgba_output_limit");
+  }
+  const rgbaSha256 = createHash("sha256").update(rgba).digest("hex");
+  if (
+    rendered.result.raw_pixel_status === "available"
+    && rendered.result.raw_pixel_sha256 !== rgbaSha256
+  ) {
+    throw new Error("The comparison PNG does not reproduce the rendered raw pixels.");
+  }
+  return {
+    binary: rgba,
+    result: {
+      ...rendered.result,
+      raw_pixel_sha256: rgbaSha256,
+      raw_pixel_status: "available",
+    },
+  };
+}
+
 async function nativeRenderRegion(bytes, password, options) {
   const geometryDocument = await PDFDocument.load(bytes, password ? { password } : {});
   if (options.page > geometryDocument.getPageCount()) {
@@ -1832,6 +1871,8 @@ async function performOperation(request, sourceBytes) {
       ) };
     case "render_page":
       return await renderPage(sourceBytes, request.password, request.options);
+    case "render_comparison_page":
+      return await renderComparisonPage(sourceBytes, request.password, request.options);
     case "render_region":
       return await renderRegion(sourceBytes, request.password, request.options);
     case "analyze_pages":
@@ -1888,7 +1929,9 @@ async function writeSuccess(operation, operationResult) {
     ? null
     : {
         bytes: binary.length,
-        mime_type: "image/png",
+        mime_type: operation === "render_comparison_page"
+          ? "application/x-pdf-tools-rgba"
+          : "image/png",
         sha256: createHash("sha256").update(binary).digest("hex"),
       };
   const encoded = Buffer.from(JSON.stringify({
@@ -1972,7 +2015,9 @@ function threadResponse(operation, operationResult) {
     ? null
     : {
         bytes: binary.length,
-        mime_type: "image/png",
+        mime_type: operation === "render_comparison_page"
+          ? "application/x-pdf-tools-rgba"
+          : "image/png",
         sha256: createHash("sha256").update(binary).digest("hex"),
       };
   const frame = {

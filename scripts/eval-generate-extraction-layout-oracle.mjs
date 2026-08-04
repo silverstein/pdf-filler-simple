@@ -33,6 +33,8 @@ const SOURCE_PATHS = Object.freeze({
   output_schemas_module: "server/output-schemas.js",
   package_json: "package.json",
   package_lock: "package-lock.json",
+  pdf_comparison_module: "server/pdf-comparison.js",
+  pdf_observations_module: "server/pdf-observations.js",
   pdfjs_package: "node_modules/pdfjs-dist/package.json",
   scoring_oracle_schema: "test/fixtures/eval/extraction/phase1/scoring-oracle.schema.json",
 });

@@ -24,6 +24,7 @@ an `isError` result is never forced through a success schema.
 | `apply_signature` | active document plus signature-stamp audit fields |
 | `apply_text` | active document plus text placement |
 | `bulk_fill_from_csv` | row results and bounded record preview |
+| `compare_pdfs` | source-bound whole-document alignments, seven-channel coverage, evidence, typed changes, reversible presentation decisions, and an equivalence-claim boundary |
 | `create_signature` | saved signature metadata |
 | `convert_pdf_to_markdown` | deterministic Markdown, typed coverage gaps (incl. `TABLE_RULING_UNSUPPORTED`, `TEXT_INTEGRITY_SUSPECT`), `pages_needing_vision` routing, opt-in compact `normalizations` counts, provenance, and optional verified UTF-8 output |
 | `detect_signature_zones` | detected coordinate zones |
@@ -65,6 +66,14 @@ wire contract that discovery does not publish.
 invalid PDF header, input over 250 MiB, and a file or pathname that changed
 during hashing. Path-policy denial remains the shared structured error.
 
+`compare_pdfs` has stable structured failures for page-cap refusal, source
+identity races, password requirements or rejection, unsupported parsing,
+filesystem policy denial, unavailable inputs, output-cap refusal, and internal
+validation failure. Success validates complete source-page alignment coverage,
+known sorted coverage reasons, evidence geometry and digests, change/facet
+relations, summary counts, zero server network/persistence effects, and a full
+comparison-envelope digest before leaving the server.
+
 The low-level MCP server does not apply advertised input schemas on its own.
 Session rehydration and coordinate-bearing mutations therefore validate and
 normalize typed arguments before changing active-document state, opening an
@@ -81,7 +90,7 @@ before loading the target PDF, writing output, or changing active-document
 state.
 
 The executable source of truth is `server/output-schemas.js`. The MCP contract
-tests assert this complete 34/6 matrix, compile every schema through the pinned
+tests assert this complete 37/4 matrix, compile every schema through the pinned
 SDK validator, reject newer unsupported JSON Schema keywords, exercise live
 success and error branches, and require byte-identical source/share runtime
 files.

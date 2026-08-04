@@ -41,10 +41,17 @@ import {
   withToolOutputSchema,
 } from "./output-schemas.js";
 import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
+import { validatePdfLayoutSemantics } from "./layout-extraction.js";
 import {
   buildRenderObservation,
   publicPdfObservationError,
+  validatePdfObservationSemantics,
 } from "./pdf-observations.js";
+import {
+  PDF_COMPARISON_RENDERER,
+  buildPdfComparison,
+  publicPdfComparisonError,
+} from "./pdf-comparison.js";
 import {
   PDF_MUTATION_MAX_FILE_BYTES,
   assertDanglingPdfInputAlias,
@@ -1341,6 +1348,7 @@ function buildAllowedDirectories() {
 const ALLOWED_DIRECTORIES = buildAllowedDirectories();
 const PDFJS_TOOL_NAMES = new Set([
   "convert_pdf_to_markdown",
+  "compare_pdfs",
   "detect_signature_zones",
   "get_page_analysis",
   "get_pdf_info",
@@ -1385,6 +1393,110 @@ async function runPdfjsOperation(resolvedPath, {
     allowedDirectories: ALLOWED_DIRECTORIES.map(directory => directory.canonical),
   }), { timeoutMs });
   return { result, source };
+}
+
+function comparisonSourceChangedError() {
+  const error = new Error("A comparison source changed while it was being inspected.");
+  error.code = "COMPARISON_SOURCE_CHANGED";
+  return error;
+}
+
+async function inspectComparisonDocument(resolvedPath, {
+  side,
+  password,
+  maxPages,
+  includeVisual,
+}) {
+  const observed = await runPdfjsOperation(resolvedPath, {
+    operation: "observe_document",
+    password,
+    options: { max_pages: maxPages, max_output_characters: 200_000 },
+  });
+  if (observed.result.pages.total_count > maxPages) {
+    const error = new Error(`Comparison supports at most ${maxPages} pages per document.`);
+    error.code = "COMPARISON_PAGE_LIMIT_EXCEEDED";
+    throw error;
+  }
+  validatePdfObservationSemantics(observed.result);
+  const layoutChunks = [];
+  for (let startPage = 1; startPage <= observed.result.pages.total_count; startPage += 10) {
+    const layoutChunk = await runPdfjsOperation(resolvedPath, {
+      operation: "extract_layout",
+      password,
+      options: {
+        source_path: resolvedPath,
+        source_file_name: path.basename(resolvedPath),
+        start_page: startPage,
+        end_page: Math.min(startPage + 9, observed.result.pages.total_count),
+        max_items: 5000,
+        max_characters: 100_000,
+        max_output_characters: 200_000,
+      },
+    });
+    if (
+      observed.source.sha256 !== layoutChunk.source.sha256
+      || observed.source.size_bytes !== layoutChunk.source.size_bytes
+    ) throw comparisonSourceChangedError();
+    validatePdfLayoutSemantics(layoutChunk.result.layout);
+    layoutChunks.push(layoutChunk.result.layout);
+  }
+  const layout = {
+    source: layoutChunks[0].source,
+    pages: layoutChunks.flatMap(chunk => chunk.pages),
+    truncation: {
+      truncated: layoutChunks.some(chunk => chunk.truncation.truncated),
+      reasons: [...new Set(layoutChunks.flatMap(chunk => chunk.truncation.reasons))].sort(),
+    },
+  };
+
+  const renders = [];
+  if (includeVisual) {
+    for (let page = 1; page <= observed.result.pages.total_count; page += 1) {
+      try {
+        const rendered = await runPdfjsOperation(resolvedPath, {
+          operation: "render_comparison_page",
+          password,
+          timeoutMs: 60_000,
+          options: {
+            page,
+            renderer_policy: "native",
+            max_dimension_px: null,
+            scale_override: PDF_COMPARISON_RENDERER.scale,
+          },
+        });
+        if (observed.source.sha256 !== rendered.source.sha256) {
+          throw comparisonSourceChangedError();
+        }
+        renders.push(rendered.result);
+      } catch (error) {
+        if (error?.code !== "PDF_RENDERER_UNAVAILABLE") throw error;
+        renders.push(null);
+      }
+    }
+  }
+  return {
+    side,
+    observation: observed.result,
+    layout,
+    renders,
+    initial_source: observed.source,
+  };
+}
+
+async function verifyComparisonSourceUnchanged(resolvedPath, initialSource) {
+  const finalSource = await bindPdfjsSubprocessSource(resolvedPath);
+  const unchanged = finalSource.sha256 === initialSource.sha256
+    && finalSource.size_bytes === initialSource.size_bytes
+    && finalSource.file_identity.device === initialSource.file_identity.device
+    && finalSource.file_identity.inode === initialSource.file_identity.inode;
+  if (!unchanged) throw comparisonSourceChangedError();
+  return {
+    initial_sha256: initialSource.sha256,
+    final_sha256: finalSource.sha256,
+    initial_size_bytes: initialSource.size_bytes,
+    final_size_bytes: finalSource.size_bytes,
+    unchanged: true,
+  };
 }
 
 function pdfjsRendererPolicy() {
@@ -3199,6 +3311,32 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             resourceUri: "ui://pdf-toolkit/viewer"
           }
         }
+      },
+      {
+        name: "compare_pdfs",
+        description: "Deterministically compare two complete bounded local PDFs through source-bound parser observations, Extraction IR text geometry, forms, ordinary annotations, metadata, and optional raw-RGBA visual evidence. Page alignment never guesses across unresolved repeated-page ambiguity. Default mode suppresses only typed presentation noise while retaining every detected change. A no-reported-changes result is never an equivalence claim and is emitted only when every requested channel is supported and complete. Both inputs are re-hashed after comparison and any source mutation discards all claims. No links or actions are followed and no network access or persistent output is used.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            before_pdf_path: { type: "string", description: "Absolute path to the earlier PDF." },
+            after_pdf_path: { type: "string", description: "Absolute path to the later PDF." },
+            before_password: { type: "string", maxLength: 4096, description: "Optional password for the earlier PDF." },
+            after_password: { type: "string", maxLength: 4096, description: "Optional password for the later PDF." },
+            mode: { type: "string", enum: ["default_material", "forensic"], description: "Presentation mode. Default: default_material." },
+            max_pages: { type: "integer", minimum: 1, maximum: 20, description: "Whole-document page ceiling for each input. Default: 10." },
+            include_visual: { type: "boolean", description: "Request canonical raw-pixel visual comparison. Default: true." },
+            max_output_characters: { type: "integer", minimum: 20000, maximum: 200000, description: "Maximum serialized structured-output characters. Default: 100000." },
+          },
+          required: ["before_pdf_path", "after_pdf_path"],
+        },
+        annotations: {
+          title: "Compare PDFs",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
       },
       {
         name: "get_pdf_info",
@@ -5434,6 +5572,62 @@ async function handleToolCall(request) {
             ...payload,
           },
         };
+      }
+
+      case "compare_pdfs": {
+        try {
+          const compareArgs = requireArgumentObject(args, "compare_pdfs");
+          const allowedArguments = new Set([
+            "before_pdf_path", "after_pdf_path", "before_password", "after_password",
+            "mode", "max_pages", "include_visual", "max_output_characters",
+          ]);
+          const unknownArgument = Object.keys(compareArgs).find(name => !allowedArguments.has(name));
+          if (unknownArgument) throw new Error(`Unknown compare_pdfs argument: ${unknownArgument}.`);
+          const beforePdfPath = requireStringArgument(compareArgs.before_pdf_path, "before_pdf_path", { maxLength: 32_768 });
+          const afterPdfPath = requireStringArgument(compareArgs.after_pdf_path, "after_pdf_path", { maxLength: 32_768 });
+          const beforePassword = optionalStringArgument(compareArgs.before_password, "before_password", { maxLength: 4096 });
+          const afterPassword = optionalStringArgument(compareArgs.after_password, "after_password", { maxLength: 4096 });
+          const mode = compareArgs.mode === undefined ? "default_material" : compareArgs.mode;
+          if (!new Set(["default_material", "forensic"]).has(mode)) {
+            throw new Error("'mode' must be default_material or forensic.");
+          }
+          const maxPages = compareArgs.max_pages === undefined ? 10 : requireIntegerArgument(compareArgs.max_pages, "max_pages", { min: 1 });
+          if (maxPages > 20) throw new Error("'max_pages' must not exceed 20.");
+          const includeVisual = compareArgs.include_visual === undefined ? true : compareArgs.include_visual;
+          if (typeof includeVisual !== "boolean") throw new Error("'include_visual' must be a boolean.");
+          const maxOutputCharacters = compareArgs.max_output_characters === undefined
+            ? 100_000
+            : requireIntegerArgument(compareArgs.max_output_characters, "max_output_characters", { min: 20_000 });
+          if (maxOutputCharacters > 200_000) throw new Error("'max_output_characters' must not exceed 200000.");
+
+          const started = performance.now();
+          const beforePath = resolvePath(beforePdfPath);
+          const afterPath = resolvePath(afterPdfPath);
+          const before = await inspectComparisonDocument(beforePath, { side: "before", password: beforePassword, maxPages, includeVisual });
+          const after = await inspectComparisonDocument(afterPath, { side: "after", password: afterPassword, maxPages, includeVisual });
+          const sourceImmutability = {
+            before: await verifyComparisonSourceUnchanged(beforePath, before.initial_source),
+            after: await verifyComparisonSourceUnchanged(afterPath, after.initial_source),
+          };
+          delete before.initial_source;
+          delete after.initial_source;
+          const payload = buildPdfComparison({
+            before, after, mode, includeVisual, maxOutputCharacters,
+            sourceImmutability,
+            durationMs: performance.now() - started,
+          });
+          return {
+            content: [{ type: "text", text: [
+              `Comparison status: ${payload.status}.`,
+              `Detected changes: ${payload.summary.detected_change_count}; reported in ${mode}: ${payload.summary.reported_change_count}.`,
+              `Before SHA-256: ${payload.before_source.sha256}. After SHA-256: ${payload.after_source.sha256}.`,
+              "No links or annotation actions were opened. No network or persistent output was used.",
+            ].join("\n") }],
+            structuredContent: payload,
+          };
+        } catch (error) {
+          return createTypedToolError(publicPdfComparisonError(error));
+        }
       }
 
       case "get_pdf_info": {

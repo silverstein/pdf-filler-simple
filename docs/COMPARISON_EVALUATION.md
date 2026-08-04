@@ -1,8 +1,10 @@
 # PDF Comparison Evaluation
 
 This document defines the public, versioned evaluation contract for comparing
-two PDF versions. It is an evaluation boundary, not a claim that PDF Tools
-currently implements a complete comparison product.
+two PDF versions. The frozen v1 corpus and scorer remain historical evidence.
+The current unmerged candidate adds a minimal deterministic `compare_pdfs`
+product, but this document is still an evaluation boundary rather than a claim
+of general comparison accuracy or release readiness.
 
 ## Product boundary
 
@@ -22,12 +24,15 @@ The first corpus measures the first three layers. Viewer interaction remains a
 native-host gate. Both inputs are read-only; producing or displaying a report
 must not mutate them.
 
-V1 is benchmark-only. It does not add a monolithic `compare_pdfs` product tool.
-The current read/render/form primitives are measured first so the architecture
-decision is based on observed misses, false positives, latency, and evidence
-quality. Current product primitives do not enumerate annotations or return the
-document's actual metadata values; those channels must be reported unsupported,
-not inferred unchanged.
+Frozen v1 is benchmark evidence, not the runtime contract. The candidate
+`compare_pdfs` tool reads both immutable sources directly and emits page
+alignments, seven-channel coverage, source-bound evidence, typed changes, and
+reversible material/noise presentation decisions. It enumerates inert ordinary
+annotations separately from form widgets and preserves Info/XMP metadata
+disagreements. It refuses documents over 20 pages rather than comparing
+prefixes. Its complete status means only that the requested channels were
+observed under the named deterministic policies; it never claims document
+equivalence.
 
 ## Threat model
 
@@ -335,8 +340,8 @@ aggregate score:
 3. same-renderer raster comparison at a pinned scale, reporting exact changed
    pixels, a thresholded mask, connected regions, and excluded-noise regions
    (same-renderer implementation sensor);
-4. current PDF Tools agent workflow using only its published read and render
-   tools, marking document metadata and annotation enumeration unsupported;
+4. current PDF Tools `compare_pdfs` candidate, using its public whole-document
+   contract and all seven typed coverage channels;
 5. an optional Poppler CLI baseline on named versions, recorded as an external
    process and never bundled or used as the sole oracle; and
 6. other optional external tools on named versions, never used as the sole
@@ -347,17 +352,36 @@ independent confirmation. Only a named implementation with distinct provenance,
 such as Poppler or qpdf, is labeled external/independent, and no single external
 engine is the sole oracle.
 
+### Current candidate adapter and host boundary
+
+The product baseline invokes `compare_pdfs` once per pair and requires six
+byte-stable iterations, immutable source envelopes, complete seven-channel
+coverage, exact page relations, one-to-one typed events, source/page/rotation/
+page-box evidence, and region IoU of at least 0.5. Evaluator-only normalization
+adapts the candidate's richer evidence envelope to frozen v1 truth shapes. It
+does not put truth IDs or expected values into the runtime, and its capture is
+`oracle_calibration`, not measured product or benchmark evidence.
+
+The frozen v1 scorer admits only its reviewed Linux x64 renderer profile on
+Node 22.22.3 with `pdfjs-dist` 5.4.624. Silverbook's Darwin arm64 renderer is
+therefore not an exact scoring host. A direct development run on Silverbook
+produced F1 1.0 for semantic, text, structure, form-field, annotation, and
+metadata channels, but host-dependent raster hashes made visual F1 0 and only
+3 of 7 product pairs passed. Those numbers are diagnostic, not a benchmark
+claim. Exact Linux/amd64 scoring and the remaining package/native-host gates
+must pass before a release-readiness statement.
+
 PDF object identities, stream bytes, timestamps, and compression are not
 semantic equality signals. Raster comparison is a localized visual sensor, not
 a semantic oracle. Text comparison cannot prove that a visual or form change is
 absent.
 
-The current trajectory ingester binds region evidence only to detected
-signature locations. Before measured visual-comparison trials, render results
-must gain a shared semantic observation containing the exact image-content
-digest, source hash/path, page, requested region, renderer, dimensions, and
-scale. A claimed region cannot self-attest. This is shared evaluation
-infrastructure, not a comparison-specific trust shortcut.
+The frozen trajectory evidence binds generic regions only where its reviewed
+schema permits them. The product candidate now emits comparison observations
+with exact source hash, page/view geometry, native and display regions,
+canonical-value digest, raw-result digest, and observation digest. A claimed
+region still cannot self-attest: the frozen scorer and its independent
+validator remain the authority for benchmark matching.
 
 ## Agent trials
 
@@ -380,14 +404,15 @@ sample variance, standard error, and a Wilson interval only after the existing
 independence and trust gates pass. Generated calibration records exercise the
 grader but are never presented as observed agent performance.
 
-Before these measured trials, the shared trajectory schema, ingester, and
-grader are versioned to accept generic observed regions bound to the exact input
-hash, page, box, render parameters, result/image digest, and retained host
-observation. The comparison answer schema and trusted suite digest are bumped.
-Agents return `unavailable` for annotation or metadata evidence the current
-product cannot observe. Predeclared per-case strata and denominators cannot be
-changed after seeing results. Because the repository has no authorized planner
-or result-attestation keys, the measured report remains descriptive,
+Measured trials still require the shared trajectory schema, ingester, and
+grader to accept generic observed regions bound to the exact input hash, page,
+box, render parameters, result/image digest, and retained host observation.
+The comparison answer schema and trusted suite digest must be reviewed and
+bumped. Agents return `unavailable` for any required channel the admitted
+runtime cannot observe; they may not infer unchanged. Predeclared per-case
+strata and denominators cannot be changed after seeing results. Because the
+repository has no authorized planner or result-attestation keys, the measured
+report remains descriptive,
 `benchmark_claim_ready` remains false, and no keys are authorized merely to
 make this Bead pass.
 
@@ -403,7 +428,7 @@ satisfied. Cloud-hosted agents remain a separate product boundary: upload,
 retention, authentication, regional processing, consent, and cost must be
 declared and evaluated separately.
 
-## V1 implementation sequence
+## Frozen v1 implementation sequence
 
 1. Add schema, independent validator, reproducible generator, paired fixtures,
    and hostile validator tests.

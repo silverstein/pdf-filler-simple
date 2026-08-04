@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.8.6"
   },
-  "tools_sha256": "842c391689e9056c95ff999896f625e0f1c9d28e394a9fb2060af80f75ac379b",
+  "tools_sha256": "8a11b629b715ccdeb00c20f0b5ed86026ad5a047da51edea10c24ab55b1a1aa0",
   "tools": [
     {
       "name": "add_signature_field",
@@ -456,6 +456,61 @@
           "csv_path",
           "output_directory"
         ]
+      }
+    },
+    {
+      "name": "compare_pdfs",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "before_pdf_path": {
+            "type": "string",
+            "description": "Absolute path to the earlier PDF."
+          },
+          "after_pdf_path": {
+            "type": "string",
+            "description": "Absolute path to the later PDF."
+          },
+          "before_password": {
+            "type": "string",
+            "maxLength": 4096,
+            "description": "Optional password for the earlier PDF."
+          },
+          "after_password": {
+            "type": "string",
+            "maxLength": 4096,
+            "description": "Optional password for the later PDF."
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "default_material",
+              "forensic"
+            ],
+            "description": "Presentation mode. Default: default_material."
+          },
+          "max_pages": {
+            "type": "integer",
+            "minimum": 1,
+            "maximum": 20,
+            "description": "Whole-document page ceiling for each input. Default: 10."
+          },
+          "include_visual": {
+            "type": "boolean",
+            "description": "Request canonical raw-pixel visual comparison. Default: true."
+          },
+          "max_output_characters": {
+            "type": "integer",
+            "minimum": 20000,
+            "maximum": 200000,
+            "description": "Maximum serialized structured-output characters. Default: 100000."
+          }
+        },
+        "required": [
+          "before_pdf_path",
+          "after_pdf_path"
+        ],
+        "additionalProperties": false
       }
     },
     {

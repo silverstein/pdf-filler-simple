@@ -2,55 +2,15 @@ import { createHash } from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { performance } from "node:perf_hooks";
-import { createCanvas, loadImage } from "@napi-rs/canvas";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { COMPARISON_CHANNELS } from "./comparison-manifest.js";
 import { registerControllerObservationRecords } from "./comparison-observation-registry.js";
-import { rendererFingerprint } from "./comparison-observations.js";
+import { inspectComparisonDocument, rendererFingerprint } from "./comparison-observations.js";
 import { buildComparisonPairFromInspections } from "./comparison-reference-baseline.js";
 
 function digest(value) {
   return createHash("sha256").update(value).digest("hex");
-}
-
-function nullMetadata() {
-  return Object.fromEntries([
-    "Title", "Author", "Subject", "Keywords", "Creator", "Producer", "CreationDate", "ModDate",
-  ].map(key => [key, null]));
-}
-
-async function decodePng(content, page) {
-  const imageContent = content.find(item => item.type === "image");
-  if (!imageContent?.data) throw new Error(`render_pdf_page returned no image for page ${page}`);
-  const png = Buffer.from(imageContent.data, "base64");
-  const image = await loadImage(png);
-  const canvas = createCanvas(image.width, image.height);
-  const context = canvas.getContext("2d", { willReadFrequently: true });
-  context.drawImage(image, 0, 0);
-  return {
-    page,
-    width: image.width,
-    height: image.height,
-    scale: image.height / 792,
-    rgba: Buffer.from(context.getImageData(0, 0, image.width, image.height).data),
-    rgba_sha256: digest(Buffer.from(context.getImageData(0, 0, image.width, image.height).data)),
-    retained_png_sha256: digest(png),
-  };
-}
-
-function extractItems(text) {
-  const items = [];
-  for (const pattern of [
-    /Monthly fee: (USD [\d,]+)/,
-    /Termination notice: (\d+ days)/,
-  ]) {
-    const match = text.match(pattern);
-    if (match) items.push({ text: match[0], region: [0, 0, 612, 792], retained_value: match[1] });
-  }
-  const marker = text.match(/PAGE-ID: [A-Z]+/)?.[0] ?? null;
-  if (marker) items.push({ text: marker, region: [0, 0, 612, 792], retained_value: marker });
-  return { items, marker };
 }
 
 function toolFailed(result, tool) {
@@ -61,64 +21,87 @@ function toolFailed(result, tool) {
   return result;
 }
 
-async function inspectWithPublishedTools(client, filePath) {
-  const pagesResult = toolFailed(await client.callTool({
-    name: "read_pdf_pages",
-    arguments: { pdf_path: filePath, start_page: 1, end_page: 2, max_chars_per_page: 4000 },
-  }), "read_pdf_pages");
-  const fieldsResult = toolFailed(await client.callTool({
-    name: "read_pdf_fields",
-    arguments: { pdf_path: filePath },
-  }), "read_pdf_fields");
-  const renders = [];
-  for (let page = 1; page <= pagesResult.structuredContent.total_pages; page += 1) {
-    const result = toolFailed(await client.callTool({
-      name: "render_pdf_page",
-      arguments: { pdf_path: filePath, page, max_dimension_px: 1584 },
-    }), "render_pdf_page");
-    renders.push(await decodePng(result.content, page));
+function canonical(value) {
+  if (Array.isArray(value)) return `[${value.map(canonical).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.keys(value).sort().map(key => `${JSON.stringify(key)}:${canonical(value[key])}`).join(",")}}`;
   }
-  const bytes = await fs.readFile(filePath);
-  const pages = pagesResult.structuredContent.pages.map(item => {
-    const parsed = extractItems(item.text);
-    return {
-      page: item.page,
-      width: 612,
-      height: 792,
-      text: item.text,
-      text_sha256: digest(item.text),
-      marker: parsed.marker,
-      items: parsed.items,
-      retained_result_sha256: digest(JSON.stringify(pagesResult.structuredContent)),
-    };
-  });
-  const fields = fieldsResult.structuredContent.fields.map(field => ({
-    name: field.name,
-    type: field.type,
-    value: field.currentValue ?? "",
-    value_sha256: digest(String(field.currentValue ?? "")),
-    page: fieldsResult.structuredContent.initialPage ?? 1,
-    region: [0, 0, 612, 792],
-    retained_result_sha256: digest(JSON.stringify(fieldsResult.structuredContent)),
-  }));
-  return {
-    path: filePath,
-    sha256: digest(bytes),
-    size: bytes.length,
-    pages,
-    renders,
-    fields,
-    annotations: [],
-    metadata: nullMetadata(),
-  };
+  return JSON.stringify(value);
 }
 
-async function inspectProductPair(client, beforePath, afterPath) {
-  const [before, after] = await Promise.all([
-    inspectWithPublishedTools(client, beforePath),
-    inspectWithPublishedTools(client, afterPath),
-  ]);
-  return { before, after };
+function intersectionOverUnion(left, right) {
+  const x1 = Math.max(left[0], right[0]);
+  const y1 = Math.max(left[1], right[1]);
+  const x2 = Math.min(left[0] + left[2], right[0] + right[2]);
+  const y2 = Math.min(left[1] + left[3], right[1] + right[3]);
+  const intersection = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  const union = left[2] * left[3] + right[2] * right[3] - intersection;
+  return union === 0 ? 0 : intersection / union;
+}
+
+export function assertProductMatchesCanonicalAdapter(product, canonicalPair) {
+  if (product.status !== "complete"
+    || product.before_source.sha256 !== canonicalPair.before_sha256
+    || product.after_source.sha256 !== canonicalPair.after_sha256
+    || !product.source_immutability.before.unchanged
+    || !product.source_immutability.after.unchanged) {
+    throw new Error("compare_pdfs did not complete against immutable canonical pair bytes");
+  }
+  const productAlignments = product.page_alignments.map(item => ({
+    before_page: item.before_page,
+    after_page: item.after_page,
+    relation: item.relation,
+  }));
+  const canonicalAlignments = canonicalPair.alignments.map(item => ({
+    before_page: item.before_page,
+    after_page: item.after_page,
+    relation: item.relation,
+  }));
+  if (canonical(productAlignments) !== canonical(canonicalAlignments)) {
+    throw new Error("compare_pdfs page relations do not match the canonical adapter");
+  }
+  for (const channel of COMPARISON_CHANNELS) {
+    if (product.coverage[channel].status !== "supported") {
+      throw new Error(`compare_pdfs ${channel} coverage is not complete in the seven-pair slice`);
+    }
+  }
+  const productObservations = new Map(product.observations.map(item => [item.id, item]));
+  const canonicalObservations = new Map(canonicalPair.observations.map(item => [item.id, item]));
+  const unusedChanges = new Set(product.changes);
+  for (const referenceEvent of canonicalPair.detected_events) {
+    const referenceDecision = canonicalPair.presentation_decisions.find(item => item.event_id === referenceEvent.id);
+    const match = [...unusedChanges].find(change => {
+      if (change.salience !== referenceEvent.salience
+        || change.facets.length !== referenceEvent.facets.length
+        || change.presentation.disposition !== referenceDecision?.disposition) return false;
+      return referenceEvent.facets.every(referenceFacet => {
+        const productFacet = change.facets.find(item => item.channel === referenceFacet.channel
+          && item.operation === referenceFacet.operation);
+        if (!productFacet) return false;
+        return [["before_evidence_id", "before"], ["after_evidence_id", "after"]]
+          .every(([key]) => {
+            const referenceId = referenceFacet[key];
+            const productId = productFacet[key];
+            if (referenceId === null || productId === null) return referenceId === productId;
+            const referenceEvidence = canonicalObservations.get(referenceId);
+            const productEvidence = productObservations.get(productId);
+            if (!referenceEvidence || !productEvidence
+              || referenceEvidence.channel !== productEvidence.channel
+              || referenceEvidence.document_sha256 !== productEvidence.document_sha256
+              || referenceEvidence.page !== productEvidence.page
+              || referenceEvidence.rotation !== productEvidence.rotation
+              || canonical(referenceEvidence.page_box) !== canonical(productEvidence.page_box)
+              || intersectionOverUnion(referenceEvidence.region, productEvidence.display_region) < 0.5) return false;
+            return referenceFacet.channel === "visual"
+              || referenceFacet.channel === "metadata"
+              || referenceEvidence.value_sha256 === productEvidence.value_sha256;
+          });
+      });
+    });
+    if (!match) throw new Error(`compare_pdfs did not support canonical event ${referenceEvent.id}`);
+    unusedChanges.delete(match);
+  }
+  if (unusedChanges.size > 0) throw new Error("compare_pdfs produced unsupported extra events");
 }
 
 export async function buildProductPrimitiveReport({
@@ -151,38 +134,55 @@ export async function buildProductPrimitiveReport({
   const controllerRecords = [];
   try {
     for (const pair of pairs) {
-      let inspected;
+      let product;
       const timingSamples = [];
       const iterationCosts = [];
       let warmupMs = 0;
       let warmupCost;
       for (let iteration = 0; iteration < 6; iteration += 1) {
         const started = performance.now();
-        const candidate = await inspectProductPair(client, pair.beforePath, pair.afterPath);
+        const candidate = toolFailed(await client.callTool({
+          name: "compare_pdfs",
+          arguments: {
+            before_pdf_path: pair.beforePath,
+            after_pdf_path: pair.afterPath,
+            mode: "default_material",
+            max_pages: 20,
+            include_visual: true,
+            max_output_characters: 200_000,
+          },
+        }), "compare_pdfs").structuredContent;
         const elapsed = performance.now() - started;
         const candidateCost = {
-          tool_calls: 8,
-          logical_input_bytes: candidate.before.size + candidate.after.size,
-          rendered_pixels: [...candidate.before.renders, ...candidate.after.renders]
-            .reduce((sum, render) => sum + render.width * render.height, 0),
+          tool_calls: 1,
+          logical_input_bytes: candidate.resource_usage.source_bytes,
+          rendered_pixels: candidate.resource_usage.rendered_pixels,
           peak_rss_bytes: null,
         };
         if (iteration === 0) {
-          inspected = candidate;
+          product = candidate;
           warmupMs = elapsed;
           warmupCost = candidateCost;
         } else {
+          if (candidate.comparison_sha256 !== product.comparison_sha256) {
+            throw new Error(`compare_pdfs was nondeterministic for ${pair.pairId}`);
+          }
           timingSamples.push(elapsed);
           iterationCosts.push(candidateCost);
         }
       }
+      const [before, after] = await Promise.all([
+        inspectComparisonDocument(pair.beforePath, renderer),
+        inspectComparisonDocument(pair.afterPath, renderer),
+      ]);
       const sourceHashes = await Promise.all([
         fs.readFile(pair.beforePath).then(digest),
         fs.readFile(pair.afterPath).then(digest),
       ]);
       const built = buildComparisonPairFromInspections({
         pairId: pair.pairId,
-        ...inspected,
+        before,
+        after,
         renderer,
         timingSamples,
         warmupMs,
@@ -190,16 +190,19 @@ export async function buildProductPrimitiveReport({
         iterationCosts,
         peakRss: null,
         resourceMeasurementStatus: "unavailable",
-        capture: "retained_tool_result",
+        capture: "oracle_calibration",
         channelStatus: Object.fromEntries(COMPARISON_CHANNELS.map(channel => [
           channel,
-          ["annotation", "metadata"].includes(channel) ? "unavailable" : "supported",
+          product.coverage[channel].status === "supported" ? "supported" : "unavailable",
         ])),
       });
       const report = built.pairReport;
+      assertProductMatchesCanonicalAdapter(product, report);
       controllerRecords.push(...built.controllerRecords);
       report.source_immutable = sourceHashes[0] === report.before_sha256
-        && sourceHashes[1] === report.after_sha256;
+        && sourceHashes[1] === report.after_sha256
+        && product.source_immutability.before.unchanged
+        && product.source_immutability.after.unchanged;
       pairReports.push(report);
     }
   } finally {
@@ -211,14 +214,14 @@ export async function buildProductPrimitiveReport({
     benchmark_id: benchmarkId,
     benchmark_version: benchmarkVersion,
     mode: "default_material",
-    claim_boundary: "Deterministic inspection through the current published PDF Tools MCP read/field/render primitives on the recorded host; no model, metadata-value tool, annotation-enumeration tool, or native Claude Desktop host.",
+    claim_boundary: "Synthetic seven-pair calibration of compare_pdfs event, facet, alignment, presentation, immutability, and direct evidence-region output. The frozen v1 scorer requires its scale-2 canonical renderer, so visual and metadata evidence are evaluator-normalized only after the product output passes source, page, region-IoU, operation, salience, disposition, and nonvisual-value gates. This is not direct product evidence completeness, a packed MCPB test, a native Claude Desktop test, or a benchmark/general-accuracy claim.",
     benchmark_claim_ready: false,
     engine: {
-      id: "pdf-tools-current-published-primitives",
+      id: "pdf-tools-compare-pdfs-v1-adapter",
       kind: "pdf_tools_mcp",
       version: packageJson.version,
       license: packageJson.license ?? "MIT",
-      provenance: "repository server/index.js; candidate MCPB SHA-256 b586221595cc3095d43f73daf3b66c6cc9695bddcd98365f46c445a597d9a1b4 not executed in this lane",
+      provenance: "repository server/index.js compare_pdfs output gated before frozen-v1 evaluator normalization; repository source runtime, not a packed MCPB",
       bundle_increment_bytes: 0,
       native_targets: [`${process.platform}-${process.arch}`],
       network_requests: 0,

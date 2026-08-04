@@ -256,8 +256,8 @@ async function runOne({ extensionRoot, fixtureRoot, fixturePath, outputRoot, bin
     pid = transport.pid;
     if (!Number.isSafeInteger(pid) || pid < 1) throw new Error("Packed Markdown server PID is unavailable");
     const discovery = await client.listTools();
-    if (discovery.tools.length !== 40 || !discovery.tools.some(tool => tool.name === "convert_pdf_to_markdown")) {
-      throw new Error("Packed Markdown bakeoff discovery differs from the approved 40-tool contract");
+    if (discovery.tools.length !== 41 || !discovery.tools.some(tool => tool.name === "convert_pdf_to_markdown")) {
+      throw new Error("Packed Markdown bakeoff discovery differs from the approved 41-tool contract");
     }
     const result = await client.callTool({
       name: "convert_pdf_to_markdown",

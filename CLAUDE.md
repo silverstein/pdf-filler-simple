@@ -118,15 +118,16 @@ qualification. Then perform manual host runs against `example-fw9.pdf`:
 19. **rotate_pdf_pages** - Rotate pages by 90, 180, or 270 degrees
 20. **reorder_pdf_pages** - Rearrange the pages of a PDF into a new order
 21. **get_pdf_info** - Get source-bound page geometry, bounded metadata, form widgets, and inert ordinary annotations with explicit coverage
-22. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
-23. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
-24. **fetch_pdf_from_url** - Download a PDF from a URL to the user's local machine (bypasses Claude's WebFetch sandbox)
-25. **create_signature** - Save a reusable typed or image signature
-26. **list_signatures** - List saved signatures
-27. **add_signature_field** - Draw a "Sign here" placeholder box (does NOT sign)
-28. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent; see Signature Architecture below)
-29. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
-30. **detect_signature_zones** - Locate signature, initials, printed-name, and date zones with coordinates. Use apply_signature for signatures and initials, and apply_text for names and dates.
+22. **compare_pdfs** - Compare two immutable PDFs across semantic, text, structure, form, annotation, metadata, and visual channels with source-bound evidence
+23. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
+24. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
+25. **fetch_pdf_from_url** - Download a PDF from a URL to the user's local machine (bypasses Claude's WebFetch sandbox)
+26. **create_signature** - Save a reusable typed or image signature
+27. **list_signatures** - List saved signatures
+28. **add_signature_field** - Draw a "Sign here" placeholder box (does NOT sign)
+29. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent; see Signature Architecture below)
+30. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
+31. **detect_signature_zones** - Locate signature, initials, printed-name, and date zones with coordinates. Use apply_signature for signatures and initials, and apply_text for names and dates.
 
 ### Current Extraction Boundary
 
@@ -157,6 +158,13 @@ rotation, and UserUnit. Do not pass MediaBox-relative signature-zone or signing
 coordinates to it. The macOS Quick Look fallback renders whole pages and
 regions in that same PDF.js view, including nonzero origins, rotated CropBoxes,
 and UserUnit scaling, while reporting raw pixels unavailable.
+
+`compare_pdfs` reads both inputs through immutable source descriptors, refuses
+documents over 20 pages instead of comparing prefixes, and reports typed
+coverage for semantic, text, structure, form-field, annotation, metadata, and
+visual channels. Ambiguous repeated pages remain unresolved. The default mode
+may suppress reversible metadata or visual noise, while forensic mode reports
+it; neither mode claims that no reported changes proves document equivalence.
 
 `convert_pdf_to_markdown` consumes the bounded source-validated layout IR
 (v1.3.0, which carries CTM-tracked ruled-rectangle evidence, text-integrity

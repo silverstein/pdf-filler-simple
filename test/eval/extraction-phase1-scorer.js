@@ -56,6 +56,8 @@ export const PHASE1_SCORER_LOCAL_SOURCE_PATHS = Object.freeze({
   output_schemas_module: "server/output-schemas.js",
   package_json: "package.json",
   package_lock: "package-lock.json",
+  pdf_comparison_module: "server/pdf-comparison.js",
+  pdf_observations_module: "server/pdf-observations.js",
   pdf_lib_package: "node_modules/pdf-lib/package.json",
   pdfjs_package: "node_modules/pdfjs-dist/package.json",
   plan_schema: "test/fixtures/eval/extraction/phase1/run-plan.schema.json",

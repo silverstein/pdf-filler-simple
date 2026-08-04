@@ -729,6 +729,8 @@ async function main() {
       "server/markdown-conversion.js",
       "server/markdown-output-transaction.js",
       "server/output-schemas.js",
+      "server/pdf-comparison.js",
+      "server/pdf-observations.js",
       "server/pdf-lib-rss-monitor.js",
       "server/pdf-lib-subprocess.js",
       "server/pdf-lib-worker.js",
@@ -800,7 +802,7 @@ async function main() {
     const { tools } = await client.listTools();
     const { prompts } = await client.listPrompts();
     const { resources } = await client.listResources();
-    if (tools.length !== 40 || prompts.length !== 14 || resources.length !== 1) {
+    if (tools.length !== 41 || prompts.length !== 14 || resources.length !== 1) {
       throw new Error(
         `Unexpected discovery counts: ${tools.length} tools, ${prompts.length} prompts, ${resources.length} resources`,
       );

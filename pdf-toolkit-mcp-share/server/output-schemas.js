@@ -5,6 +5,7 @@ import {
   validatePdfObservationSemantics,
   validateRenderObservationSemantics,
 } from "./pdf-observations.js";
+import { validatePdfComparisonSemantics } from "./pdf-comparison.js";
 
 const string = { type: "string" };
 const number = { type: "number" };
@@ -81,6 +82,71 @@ const observationSource = object({
   file_name: string,
   size_bytes: integer,
   sha256: sha256Digest,
+});
+const comparisonSource = object({
+  canonical_path: string,
+  file_name: string,
+  size_bytes: integer,
+  sha256: sha256Digest,
+  page_count: integer,
+  identity_method: { const: "race_aware_descriptor_sha256" },
+  parser: object({ name: { const: "pdfjs-dist" }, version: { const: "5.4.624" } }),
+  observation_sha256: sha256Digest,
+});
+const comparisonCoverage = object({
+  status: enumString(["supported", "partial", "unavailable"]),
+  reason_codes: stringArray,
+});
+const comparisonImmutability = object({
+  initial_sha256: sha256Digest,
+  final_sha256: sha256Digest,
+  initial_size_bytes: integer,
+  final_size_bytes: integer,
+  unchanged: { const: true },
+});
+const comparisonAlignment = object({
+  before_page: nullable(integer),
+  after_page: nullable(integer),
+  relation: enumString(["same", "moved", "inserted", "deleted"]),
+  anchor_digest: sha256Digest,
+  match_basis: enumString(["exact_composite_anchor", "unique_normalized_text", "weighted_assignment", "repeated_ambiguous", "unmatched"]),
+  score: number,
+  ambiguity_group: nullable(string),
+});
+const comparisonObservation = object({
+  id: { type: "string", pattern: "^evidence\\.[a-z_]+\\.[0-9]{6}$" },
+  channel: enumString(["semantic", "text", "structure", "form_field", "annotation", "metadata", "visual"]),
+  side: enumString(["before", "after"]),
+  document_sha256: sha256Digest,
+  page: integer,
+  page_box: pageBox,
+  rotation: number,
+  coordinate_space: { const: "pdfjs_viewport_top_left_points" },
+  native_region: nullable(pageBox),
+  display_region: pageBox,
+  canonical_value: {},
+  value_sha256: sha256Digest,
+  raw_result_sha256: sha256Digest,
+  observation_sha256: sha256Digest,
+});
+const comparisonFacet = object({
+  channel: enumString(["semantic", "text", "structure", "form_field", "annotation", "metadata", "visual"]),
+  operation: enumString(["added", "removed", "modified", "moved"]),
+  before_evidence_id: nullable(string),
+  after_evidence_id: nullable(string),
+});
+const comparisonChange = object({
+  id: { type: "string", pattern: "^change\\.[0-9]{6}$" },
+  kind: enumString(["semantic_text", "text", "structure", "form_field", "widget", "annotation", "metadata", "visual"]),
+  operation: enumString(["added", "removed", "modified", "moved"]),
+  salience: enumString(["material", "minor", "noise", "unknown"]),
+  summary: string,
+  facets: arrayOf(comparisonFacet),
+  presentation: object({
+    mode: enumString(["default_material", "forensic"]),
+    disposition: enumString(["report", "suppress"]),
+    reversible_reason_code: nullable(string),
+  }),
 });
 const observationPageGeometry = object({
   geometry_source: enumString(["pdf-lib", "pdfjs-view-fallback"]),
@@ -267,6 +333,20 @@ const pdfIdentityError = object({
       "PDF_INPUT_TOO_LARGE",
       "PDF_INVALID_HEADER",
       "PDF_UNAVAILABLE",
+    ]),
+  }),
+});
+const pdfComparisonError = object({
+  status: { const: "failed" },
+  error: object({
+    error_schema_version: { const: 1 },
+    code: enumString([
+      "COMPARISON_OUTPUT_LIMIT_EXCEEDED",
+      "COMPARISON_PAGE_LIMIT_EXCEEDED",
+      "COMPARISON_SOURCE_BINDING_MISMATCH",
+      "COMPARISON_SOURCE_CHANGED",
+      "PDF_PARSE_FAILED",
+      "invalid_input",
     ]),
   }),
 });
@@ -919,6 +999,60 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     identity_method: { const: "race_aware_descriptor_sha256" },
     pdf_parsed: { const: false },
   }),
+  compare_pdfs: object({
+    schema_version: { const: "1.0" },
+    engine: object({
+      name: { const: "pdf-tools.deterministic-comparison" },
+      version: { const: "0.1.0" },
+      parser: object({ name: { const: "pdfjs-dist" }, version: { const: "5.4.624" } }),
+      renderer: object({
+        name: { const: "native-canvas" },
+        scale: { const: 1.5 },
+        pixel_delta_threshold: { const: 8 },
+        mask_dilation_pixels: { const: 1 },
+        connected_components: { const: 8 },
+        minimum_component_area_pixels: { const: 4 },
+        resizing: { const: false },
+      }),
+      alignment_policy: { const: "pdf-tools.page-alignment.v1" },
+      text_policy: { const: "pdf-tools.extraction-ir-lines.v1" },
+      visual_policy: { const: "pdf-tools.rgba-delta.v1" },
+      presentation_policy: { const: "pdf-tools.material-presentation.v1" },
+    }),
+    status: enumString(["complete", "partial"]),
+    mode: enumString(["default_material", "forensic"]),
+    before_source: comparisonSource,
+    after_source: comparisonSource,
+    source_immutability: object({ before: comparisonImmutability, after: comparisonImmutability }),
+    coverage: object({
+      semantic: comparisonCoverage,
+      text: comparisonCoverage,
+      structure: comparisonCoverage,
+      form_field: comparisonCoverage,
+      annotation: comparisonCoverage,
+      metadata: comparisonCoverage,
+      visual: comparisonCoverage,
+    }),
+    page_alignments: arrayOf(comparisonAlignment),
+    observations: arrayOf(comparisonObservation),
+    changes: arrayOf(comparisonChange),
+    summary: object({
+      detected_change_count: integer,
+      reported_change_count: integer,
+      suppressed_change_count: integer,
+      no_reported_changes: boolean,
+      equivalence_claim: { const: false },
+    }),
+    limitations: stringArray,
+    resource_usage: object({
+      duration_ms: number,
+      source_bytes: integer,
+      rendered_pixels: integer,
+      network_requests: { const: 0 },
+      external_persistence_writes: { const: 0 },
+    }),
+    comparison_sha256: sha256Digest,
+  }),
   get_pdf_info: object({
     schema_version: { const: "1.0" },
     status: enumString(["complete", "partial"]),
@@ -1128,6 +1262,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
 });
 
 const specialErrorSchemas = {
+  compare_pdfs: [layoutPasswordError, pdfResourceLimitError, pdfIdentityError, pdfComparisonError],
   get_pdf_identity: [pdfIdentityError],
   get_pdf_info: [layoutPasswordError, pdfResourceLimitError, pdfIdentityError],
   validate_pdf: [validationFailure],
@@ -1193,6 +1328,7 @@ const errorValidators = new Map(Object.entries(TOOL_ERROR_OUTPUT_SCHEMAS).map(
 ));
 const standardErrorValidator = validatorProvider.getValidator(standardError);
 const semanticSuccessValidators = new Map([
+  ["compare_pdfs", validatePdfComparisonSemantics],
   ["read_pdf_layout", validatePdfLayoutSemantics],
   ["convert_pdf_to_markdown", validateMarkdownConversionSemantics],
   ["get_pdf_info", validatePdfObservationSemantics],

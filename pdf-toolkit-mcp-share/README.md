@@ -89,6 +89,7 @@ Once installed, ask Claude in Cursor:
 - *"Fill 50 PDFs using data from this spreadsheet"*
 - *"Read the content of this PDF document"*
 - *"Render page 1 of this scanned invoice so you can inspect it visually"*
+- *"Compare these two contract versions and cite every material change in both files"*
 - *"Merge these contracts and show me the result"*
 - *"Split this report every 10 pages"*
 - *"Rotate page 3 by 90 degrees"*
@@ -114,6 +115,7 @@ Once installed, ask Claude in Cursor:
 - **rotate_pdf_pages** / **reorder_pdf_pages** - Organize scanned or shuffled pages
 - **get_pdf_identity** - Bind plans and provenance to the canonical path, byte length, and SHA-256 for a PDF up to 250 MiB without parsing its document structure
 - **get_pdf_info** - Observe bounded source-bound page geometry, metadata, form widgets, and inert ordinary annotations with explicit coverage
+- **compare_pdfs** - Compare two immutable PDFs (up to 20 pages each) across seven typed channels with page alignment, source-bound evidence, and reversible material/noise decisions; it never claims document equivalence
 - **get_page_analysis** - Inspect blank detection, orientation, and page-content routing
 
 ### Current Extraction Boundary
