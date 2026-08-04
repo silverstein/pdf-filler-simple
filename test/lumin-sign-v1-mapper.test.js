@@ -283,6 +283,32 @@ describe("mapLuminSignV1SignatureRequest", () => {
     }
   });
 
+  it("defines dense output indices without invoking an inherited numeric setter", () => {
+    let calls = 0;
+    let capturedValue;
+    Object.defineProperty(Object.prototype, "0", {
+      set(value) {
+        calls += 1;
+        capturedValue = value;
+      },
+      configurable: true,
+    });
+    let result;
+    try {
+      result = map();
+    } finally {
+      Reflect.deleteProperty(Object.prototype, "0");
+    }
+    expect(calls).toBe(0);
+    expect(capturedValue).toBeUndefined();
+    expect(Object.hasOwn(result.request.body.signers, "0")).toBe(true);
+    expect(Object.keys(result.request.body.signers)).toEqual(["0", "1"]);
+    expect(JSON.parse(JSON.stringify(result)).request.body.signers).toEqual([
+      { email_address: "client@example.com", name: "Client Signer" },
+      { email_address: "consultant@example.com", name: "Consultant Signer" },
+    ]);
+  });
+
   it("refuses duplicate participant bindings", () => {
     const intent = validIntent();
     intent.viewers[0].participant_id = intent.signers[0].participant_id;
