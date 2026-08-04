@@ -640,6 +640,24 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:PART I = H|INTRODUCTION = H)$/gmu);
   });
 
+  it("chooses at most one strongest first-page title candidate", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        textItem("Prepared For Journal Readers", { top: 20 }),
+        textItem("A Preliminary Edition Note", { top: 35 }),
+        textItem("A Mathematical Theory of Communication", { top: 55, fontSize: 16 }),
+        textItem("First body line", { top: 100 }),
+        textItem("Second body line", { top: 130 }),
+        textItem("Third body line", { top: 160 }),
+        textItem("Fourth body line", { top: 190 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toMatch(/^# A Mathematical Theory of Communication$/mu);
+    expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:Prepared For Journal Readers|A Preliminary Edition Note)$/gmu);
+  });
+
   it("neutralizes hostile Markdown, HTML, table, autolink, and control syntax", async () => {
     const layout = await validatedSyntheticLayout([{
       items: [

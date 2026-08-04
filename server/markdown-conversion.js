@@ -197,22 +197,39 @@ function titleCaseHeading(value) {
   });
 }
 
-function structuralHeadingLevel(page, line, index) {
+function structuralHeadingLevel(line) {
   const text = line.text.trim();
   if (!headingTextEligible(text)) return null;
-  if (page.page === 1 && index <= 2 && titleCaseHeading(text)) return 1;
   if (text === "INTRODUCTION") return 2;
   if (/^PART\s+[IVXLCDM]+:\s+.+$/u.test(text) && text === text.toLocaleUpperCase("en-US")) return 2;
   if (/^APPENDIX\s+(?:\d+|[IVXLCDM]+)$/u.test(text)) return 2;
   return null;
 }
 
-function headingLevels(page) {
-  const evidence = lineFontEvidence(page);
-  const structural = new Map(evidence.flatMap(({ line }, index) => {
-    const level = structuralHeadingLevel(page, line, index);
+function structuralHeadingLevels(page, evidence) {
+  const structural = new Map(evidence.flatMap(({ line }) => {
+    const level = structuralHeadingLevel(line);
     return level === null ? [] : [[line.id, level]];
   }));
+  if (page.page !== 1) return structural;
+  const titleCandidates = evidence.slice(0, 3).filter(({ line }) => (
+    headingTextEligible(line.text) && titleCaseHeading(line.text)
+  ));
+  const ranked = [...titleCandidates].sort((left, right) => (
+    (right.height ?? 0) - (left.height ?? 0)
+    || right.line.text.length - left.line.text.length
+  ));
+  const winner = ranked[0];
+  const runnerUp = ranked[1];
+  if (winner && (!runnerUp || (winner.height ?? 0) > (runnerUp.height ?? 0))) {
+    structural.set(winner.line.id, 1);
+  }
+  return structural;
+}
+
+function headingLevels(page) {
+  const evidence = lineFontEvidence(page);
+  const structural = structuralHeadingLevels(page, evidence);
   const heights = evidence.map(value => value.height).filter(Number.isFinite);
   if (heights.length < 4) return structural;
   const bodyHeight = median(heights);
