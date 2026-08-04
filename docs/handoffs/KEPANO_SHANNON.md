@@ -72,15 +72,17 @@ several symbols can collapse into one blank text run.
 
 ## Current gates
 
-The active tranche is not shipped yet. Before merging or installing it:
+The active tranche is not shipped yet. Implementation commit
+`d5b902b45084738fe7ed6a275c3dfbf8c02db3bc` has full-paper, focused,
+share-contract, reproducible MCPB, packed-smoke, and native Mac evidence.
+The complete suite passed 1,983 tests and hit one unrelated timing assertion;
+that exact 22-test lifecycle file then passed three consecutive reruns.
 
-1. Commit the exact implementation and evidence.
-2. Run the complete suite from the clean commit. Some source-identity tests
-   intentionally reject a dirty worktree.
-3. Build the MCPB, run the packed smoke and share-contract checks, and record
-   exact artifact size and SHA-256.
-4. Obtain an independent exact-commit review.
-5. Merge, rebuild from public master, install that exact artifact, and repeat
+Before merging or installing it:
+
+1. Obtain an independent exact-commit review.
+2. Push and merge through a reviewed PR.
+3. Rebuild from public master, install that exact artifact, and repeat
    installed-copy and Shannon proof.
 
 Mat has authorized routine merge and installation. A new public release should

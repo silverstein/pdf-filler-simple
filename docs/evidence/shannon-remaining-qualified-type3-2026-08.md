@@ -49,5 +49,21 @@ root and shared runtime copies are byte-identical. The retained extraction
 oracle changed only its exact runtime file size and hashes; all fixture cases
 and approved observations stayed byte-identical.
 
+The clean full suite passed 1,983 tests with 80 intentional skips except for
+one timing-sensitive process-lifecycle assertion; the exact 22-test lifecycle
+file then passed three consecutive reruns. The separate native Mac suite passed
+62 tests with 9 intentional skips and zero failures.
+
+The transactional share contract passed with 41 tools, 14 prompts, 112 SBOM
+components, native raster rendering, and SHA-256
+`e1381a5dbb418f05378b5f1c0e44cdbe5f0349b2c093702955c96c600e5a8dff`.
+Two isolated MCPB builds were byte-identical: 2,996 files, 73,685,458 bytes,
+SHA-256
+`6b1853f5bd1e5f0557ae5d1fcfe21da280c83613b605c524ed9b070b7f0af6ff`.
+The packed MCPB smoke passed on macOS arm64 with all 41 tools, all 14 prompts,
+canonical resources, PDF mutation, source-bound comparison, and native raster
+rendering. Installation and Claude host proof have not yet been run for this
+new artifact.
+
 This evidence does not qualify the remaining minus, alpha, or comma groups and
 does not prove general Type-3 decoding, OCR, or complete mathematical fidelity.
