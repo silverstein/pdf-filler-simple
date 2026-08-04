@@ -59,7 +59,8 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // ruled tables.
 // 2026-08-03: extraction IR 1.3.0 and Markdown renderer 1.8.0 preserve only
 // independently qualified exact legacy Computer Modern Type-3 glyphs.
-// 2026-08-04: Markdown renderer 1.9.0 restores only source-proven boundaries
+// 2026-08-04: Markdown renderer 1.9.0 restores only narrowly source-supported
+// boundaries
 // between multiword prose and a separate uppercase math variable. The final
 // combined contract digest is refreshed after the integration replay.
 const TOOL_CONTRACT_SHA256 = "aca6dabd3add8c1299da548253d804ae08ab27e94b8c8485a1c9c2ad6e41a1f3";
