@@ -85,11 +85,12 @@ companion evidence.
 
 ## Current gates
 
-The v0.9.1 release and installed-copy gates are complete. The alpha candidate's
-focused tests and full-paper evaluation are complete. It still needs a clean
-full suite, package build, independent review, merge, installed-copy proof, and
-release decision. The 64-minus and 5-comma groups remain blocked on missing
-companion evidence.
+The alpha implementation, independent review, merge, reproducible package,
+packed smoke, Claude installation, host discovery, installed-copy smoke, and
+installed Shannon proof are complete. PR #71 merged as
+`cce500f693df597160ae21f332ec1292dd9ee5c6`. The public release and Kepano
+reply remain the next decisions. The 64-minus and 5-comma groups remain blocked
+on missing companion evidence.
 
 Mat has authorized routine merge and installation. A new public release should
 still be based on the complete checks above. No public reply to Kepano has been
