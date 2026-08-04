@@ -24,21 +24,21 @@ Markdown renderer identity is `pdf-tools.layout-markdown-renderer` version
 
 ## Clean run
 
-- Evaluated commit: `0511ab213137a669248ec611d4a4a4bb256717b5`
+- Evaluated commit: `0274bd84ca950f83d7fbd7b620527b7d4345b39d`
 - Source PDF SHA-256:
   `6e4e3411984f3edf99dbfe8b941cb5e8a321379ff0cae6ae5c1f592ad8882ca8`
 - Previous math-spacing report SHA-256:
   `2074f1b1a0d0856c523d827b9fb27e387623713db0273f1c37d30fab24c1cf3e`
 - Ruled-table report SHA-256:
-  `d9aaf1e482d3fdf81b4486797875e2397ce5e9e99e4b464d9c938a1b6cfd6a56`
+  `ed5a8d7c2ad7bdde748ae15fb755056bae14bd9ab27c048fd912de637566e8e6`
 - Private report directory:
-  `/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-table-topology-final-review-20260803-clean-0511ab2`
+  `/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-table-topology-hardened-final-20260803-clean-0274bd8`
 - Repetitions: three fresh processes per candidate
 - PDF Tools Markdown deterministic across repetitions: `true`
 - PDF Tools output SHA-256 for all three repetitions:
-  `3237ca7d3734b84ec42dc2e237a2d2e03d28715eeef7814747fd653996ba843d`
-- Median PDF Tools elapsed time: 3441.557 ms
-- Median PDF Tools maximum RSS: 316,440,576 bytes
+  `7405d8516b47ed0ec4bef4b63aabc58e973b2d1b475e4dff542d2d06d57d497f`
+- Median PDF Tools elapsed time: 3465.582 ms
+- Median PDF Tools maximum RSS: 310,116,352 bytes
 
 ## Metric comparison
 
@@ -60,6 +60,16 @@ The run emitted no other Markdown tables in the 55-page paper. The automatic
 judge was corrected to use the source-faithful four header phrases and to
 treat safe `<br>` line breaks as spaces while scoring the header. The original
 PDF page, not the candidate output, determined those phrases.
+
+Independent review found and the final commit closes three pre-publication
+issues: aligned partial dividers can no longer flatten a merged or spanning
+table into a coarser ordinary table; painted transforms retain their full
+finite precision before large `UserUnit` scaling; and ruled-table work is
+bounded before cell allocation and uses one indexed pass over retained lines.
+Adversarial tests also cover multiple grids and interleaved source item order.
+The final focused run passed 162 tests, the native platform run passed 62 with
+9 intentional skips, the phase-one layout oracle regenerated exactly, and the
+reproducible share-package contract passed.
 
 This is a sampled adversarial evaluation, not complete transcript ground truth,
 public benchmark, packed-MCPB qualification, or a claim that mathematical
