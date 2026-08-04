@@ -4,15 +4,16 @@
 
 PDF Tools now restores a missing visible space after a separate source text
 item that is exactly the mathematical operator `log`, but only in a short,
-compact left-to-right math run. The following item must be a differently styled
-single-letter variable on the same baseline, separated by a small positive gap.
+compact left-to-right math run. The following item must be a single-letter
+variable from a different embedded-font resource on the same baseline,
+separated by a small positive gap, with independent local math-layout evidence.
 The original Extraction IR remains unchanged. The Markdown renderer identity is
 now `pdf-tools.layout-markdown-renderer` version `1.6.0`.
 
 On the hash-bound 55-page Shannon document, the sampled page-local equation
 anchors improved from 2 of 4 to 4 of 4. All three PDF Tools repetitions were
-byte-identical. The source-text diff contained 35 restored `log` operator
-boundaries and no other source-text changes; the new limitation also appears in
+byte-identical. The source-text diff contained 37 restored `log` operator
+boundaries across 35 changed lines and no other source-text changes; the new limitation also appears in
 each bounded output chunk. Sampled headings, reading order, paragraph
 continuity, footnotes, table topology, omission/duplication, and evidence did
 not regress.

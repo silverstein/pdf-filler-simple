@@ -45,7 +45,7 @@ const GAP_CODES = new Set([
 const LIMITATIONS = Object.freeze([
   "Headings are emitted only from consistent enlarged font metrics or centered English-language source structure with section spacing for a first-page title, introduction, part, or appendix. Ambiguous, very short, or unsupported heading styles remain body text.",
   "A geometrically overlapping initial capital may be joined to its following uppercase word remainder. Line-end hyphens are preserved because source geometry cannot reliably distinguish a split word from an intentional compound. The source Extraction IR retains the original lines.",
-  "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a differently styled single-letter variable follows on the same baseline with a small positive geometric gap. General equations, scripts, fraction bars, and damaged mathematical glyphs remain source reading-order text rather than being guessed.",
+  "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different embedded-font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. General equations, scripts, fraction bars, and damaged mathematical glyphs remain source reading-order text rather than being guessed.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
   "Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.",
@@ -513,6 +513,50 @@ function operatorVariableGap(left, right) {
   return rightX - (leftX + leftWidth);
 }
 
+function hasSmallerOffsetScript(cells) {
+  const heights = cells.map(item => item.line_height).filter(Number.isFinite);
+  const ys = cells.map(item => item.y).filter(Number.isFinite);
+  if (heights.length !== cells.length || ys.length !== cells.length) return false;
+  const baseHeight = Math.max(...heights);
+  const baselineY = Math.min(...ys.filter((_y, index) => heights[index] >= baseHeight * 0.9));
+  return cells.some(item => item.line_height <= baseHeight * 0.8
+    && Math.abs(item.y - baselineY) >= baseHeight * 0.2);
+}
+
+function rowHasExplicitEquationOperator(row) {
+  return row.cells.some(item => /^(?:=|[+\-−×÷∑∫∞])$/u.test(item.text.trim()));
+}
+
+function nearbyEquationEvidence(rows, rowIndex) {
+  const row = rows[rowIndex];
+  const start = Math.max(0, rowIndex - 4);
+  const end = Math.min(rows.length - 1, rowIndex + 4);
+  for (let index = start; index <= end; index += 1) {
+    if (index === rowIndex) continue;
+    const candidate = rows[index];
+    if (candidate.line.column_index !== row.line.column_index
+      || candidate.line.direction !== "ltr"
+      || candidate.line.text.length > 80
+      || !candidate.cells.some(item => /^(?:=|Lim|Max|Min|[∑∫∞])$/u.test(item.text.trim()))) continue;
+    const verticalDistance = Math.abs(candidate.line.y - row.line.y);
+    const height = Math.max(candidate.line.height, row.line.height);
+    const horizontalGap = Math.max(
+      candidate.line.x - (row.line.x + row.line.width),
+      row.line.x - (candidate.line.x + candidate.line.width),
+      0,
+    );
+    if (verticalDistance <= height * 2.5 && horizontalGap <= height * 2) return true;
+  }
+  return false;
+}
+
+function hasIndependentMathLayoutEvidence(row, rows, rowIndex) {
+  return hasSmallerOffsetScript(row.cells)
+    || rowHasExplicitEquationOperator(row)
+    || (row.cells.some(item => /^[()]$/u.test(item.text.trim()))
+      && nearbyEquationEvidence(rows, rowIndex));
+}
+
 /**
  * Restore one visible operator boundary that the layout IR can prove without
  * interpreting equation topology. PDF.js may expose roman "log" and its
@@ -520,12 +564,19 @@ function operatorVariableGap(left, right) {
  * gap is smaller than the general prose-spacing threshold. This projection is
  * intentionally much narrower than lowering that threshold for every line.
  */
-function mathOperatorSpacedText(row, { headingLevel, linked }) {
+function mathOperatorSpacedText(row, {
+  headingLevel,
+  linked,
+  rows,
+  rowIndex,
+  unsafePage,
+}) {
   const { line, cells } = row;
-  if (headingLevel || linked || rewritesLineStructure(line)
+  if (headingLevel || linked || unsafePage || rewritesLineStructure(line)
     || line.direction !== "ltr" || line.text.length > 80
     || cells.length < 2 || cells.length > 16
-    || cells.some(item => !compactMathItemText(item.text) || containsUnsafeText(item.text))) return null;
+    || cells.some(item => !compactMathItemText(item.text) || containsUnsafeText(item.text))
+    || !hasIndependentMathLayoutEvidence(row, rows, rowIndex)) return null;
   const offsets = itemOffsets(line, cells);
   if (offsets === null) return null;
   const insertions = [];
@@ -845,14 +896,13 @@ function joinParagraphContinuity(records) {
 }
 
 function renderPage(page) {
-  const itemById = new Map(page.raw_items.map(item => [item.id, item]));
   const headings = headingLevels(page);
   const analysis = segmentPageLines(page);
   const linkState = analyzePageLinks(page, analysis, headings);
   const records = analysis.segments.flatMap(segment => (
     segment.kind === "table"
       ? renderTable(segment.grid).map(text => ({ text, line: null, joinable: false }))
-      : segment.rows.map(({ line }) => {
+      : segment.rows.map(({ line, cells }, rowIndex, rows) => {
         const spans = linkState.spansByLine.get(line.id);
         const offsets = linkState.offsetsByLine.get(line.id);
         if (spans && spans.length > 0 && offsets && !headings.get(line.id)) {
@@ -860,8 +910,17 @@ function renderPage(page) {
           if (linked !== null) return { text: linked, line, joinable: false };
         }
         const mathText = mathOperatorSpacedText(
-          { line, cells: lineCells(line, itemById) },
-          { headingLevel: headings.get(line.id), linked: Boolean(spans?.length) },
+          { line, cells },
+          {
+            headingLevel: headings.get(line.id),
+            linked: Boolean(spans?.length),
+            rows,
+            rowIndex,
+            unsafePage: analysis.tableReason !== null
+              || linkState.unavailable
+              || linkState.ambiguous
+              || linkState.unsupportedTarget,
+          },
         );
         return {
           text: renderLine(line, headings.get(line.id), mathText ?? line.text),

@@ -45,9 +45,12 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // source-backed title, introduction, part, and appendix structure. Previously
 // a7619f2d4b07b855e8625578be66f5c61c54af2a2881a33545deed7e7b008de0.
 // 2026-08-03: convert_pdf_to_markdown renderer 1.5.0 adds bounded drop-cap
-// continuation and same-flow lowercase line-end dehyphenation. Previously
+// continuation while preserving ordinary printed line-end hyphens. Previously
 // fc757dc89b8aaf25b22f05b07863a4b8be1e09b6a544764a1b4afc8cdca3d6dd.
-const TOOL_CONTRACT_SHA256 = "e80436c2e09aefc4a8ecb7bbc989a9c133fa3a1a2b84e4b07747a784c3e16d6b";
+// 2026-08-03: convert_pdf_to_markdown renderer 1.6.0 adds bounded, local
+// math-operator spacing with explicit limitations. Previously
+// e80436c2e09aefc4a8ecb7bbc989a9c133fa3a1a2b84e4b07747a784c3e16d6b.
+const TOOL_CONTRACT_SHA256 = "4efcce458b5041a2d822bb921f46550cc15cdb9bcb2d54550f8eaa80c4f5a756";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
