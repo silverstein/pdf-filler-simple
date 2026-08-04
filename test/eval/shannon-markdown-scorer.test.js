@@ -52,7 +52,7 @@ describe("Shannon Markdown adversarial scorer", () => {
         "Representation of a noisy discrete channel",
         "PART II: THE DISCRETE CHANNEL WITH NOISE",
         "TABLE I",
-        "entropy gain in decibels impulse response gain factor entropy power factor",
+        "entropy power gain in decibels impulse response gain entropy power factor",
         "| value | value |",
         "|---|---|",
         "| 1 | 2 |",
@@ -74,8 +74,8 @@ describe("Shannon Markdown adversarial scorer", () => {
         "W log P N appear much later.",
         "| junk | header |",
         "|---|---|",
-        "| impulse response | gain factor |",
-        "| entropy power factor | entropy gain in decibels |",
+        "| impulse response | gain |",
+        "| entropy power factor | entropy power gain in decibels |",
         "| value | value |",
         "| value | value |",
         "| value | value |",
@@ -86,6 +86,25 @@ describe("Shannon Markdown adversarial scorer", () => {
     expect(result.equations.found).toBe(0);
     expect(result.table_topology.qualifying_table_count).toBe(0);
     expect(result.table_topology.topology_present).toBe(false);
+  });
+
+  it("awards topology credit to the source-faithful four-column Table I header and five data rows", async () => {
+    const result = scoreShannonMarkdown({
+      markdown: [
+        "TABLE I",
+        "| GAIN | ENTROPY POWER FACTOR | ENTROPY POWER GAIN IN DECIBELS | IMPULSE RESPONSE |",
+        "|---|---|---|---|",
+        "| 1 | a | b | c |",
+        "| 2 | a | b | c |",
+        "| 3 | a | b | c |",
+        "| 4 | a | b | c |",
+        "| 5 | a | b | c |",
+      ].join("\n"),
+      oracle: await oracle(),
+      evidence: {},
+    });
+    expect(result.table_topology.qualifying_table_count).toBe(1);
+    expect(result.table_topology.topology_present).toBe(true);
   });
 
   it("reports omissions and duplications independently", async () => {
