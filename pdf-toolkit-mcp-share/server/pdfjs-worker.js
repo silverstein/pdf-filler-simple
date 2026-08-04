@@ -479,6 +479,12 @@ async function loadPdfjs() {
   return pdfjsLib;
 }
 
+// Maintenance scripts use the production loader so glyph-program evidence is
+// never computed under a different DOM/canvas implementation than the worker.
+export async function loadPdfjsForMaintenance() {
+  return await loadPdfjs();
+}
+
 function nativeCanvasBindingCandidate() {
   const packageByPlatform = {
     "darwin-arm64": "@napi-rs/canvas-darwin-arm64",

@@ -62,6 +62,123 @@ const MAX_TYPE3_GLYPH_CANONICAL_BYTES = 250000;
 
 const TYPE3_RECOVERY_REGISTRY = Object.freeze([
   Object.freeze({
+    id: "cmmi-pk-raster-period-2df559-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 58,
+    source_unicode: ":",
+    target_unicode: ".",
+    charproc_sha256: "2df559091df37cc5da5c1ce3e05eebc1075c4c041b83d96a1904d2c2f21edab0",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 59, charproc_sha256: "42b5ebf435945b75e1dc1bc271bfbb4aa2dc02b8adc93cd26b4bb64dec9fde8a" }),
+      Object.freeze({ original_char_code: 61, charproc_sha256: "55447dde50a97970297d189788eb154c675c41e6d2eca2836949aefadd0b1780" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-comma-42b5eb-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 59,
+    source_unicode: ";",
+    target_unicode: ",",
+    charproc_sha256: "42b5ebf435945b75e1dc1bc271bfbb4aa2dc02b8adc93cd26b4bb64dec9fde8a",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 58, charproc_sha256: "2df559091df37cc5da5c1ce3e05eebc1075c4c041b83d96a1904d2c2f21edab0" }),
+      Object.freeze({ original_char_code: 61, charproc_sha256: "55447dde50a97970297d189788eb154c675c41e6d2eca2836949aefadd0b1780" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-pi-780b04-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 25,
+    source_unicode: "\u0019",
+    target_unicode: "π",
+    charproc_sha256: "780b04fa47830ca782211b86dbedfe0adec0445bdf94d538bfe7adde08ed9445",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+      Object.freeze({ original_char_code: 26, charproc_sha256: "1500df39391626d02f9e98132f991f71899612069298e52340e12fb65590836f" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-rho-1500df-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 26,
+    source_unicode: "\u001a",
+    target_unicode: "ρ",
+    charproc_sha256: "1500df39391626d02f9e98132f991f71899612069298e52340e12fb65590836f",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+      Object.freeze({ original_char_code: 25, charproc_sha256: "780b04fa47830ca782211b86dbedfe0adec0445bdf94d538bfe7adde08ed9445" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-omega-81b411-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 33,
+    source_unicode: "!",
+    target_unicode: "ω",
+    charproc_sha256: "81b41121b5e19a2aebd37331ab3584fe08221ca1afcda83f4ce8b76997177074",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+      Object.freeze({ original_char_code: 25, charproc_sha256: "780b04fa47830ca782211b86dbedfe0adec0445bdf94d538bfe7adde08ed9445" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-slash-55447d-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 61,
+    source_unicode: "=",
+    target_unicode: "/",
+    charproc_sha256: "55447dde50a97970297d189788eb154c675c41e6d2eca2836949aefadd0b1780",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 58, charproc_sha256: "2df559091df37cc5da5c1ce3e05eebc1075c4c041b83d96a1904d2c2f21edab0" }),
+      Object.freeze({ original_char_code: 59, charproc_sha256: "42b5ebf435945b75e1dc1bc271bfbb4aa2dc02b8adc93cd26b4bb64dec9fde8a" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmsy-pk-raster-minus-fb1f6b-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-symbol",
+    original_char_code: 0,
+    source_unicode: "\u0000",
+    target_unicode: "−",
+    charproc_sha256: "fb1f6bf10138511bcefade47467b3e2f9ae691ab3dab097914be1f0f66305470",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 21, charproc_sha256: "05b4a9d88c1df64b3ac339ae6bb7ed82383b93bb08512842452db43453a28970" }),
+      Object.freeze({ original_char_code: 112, charproc_sha256: "772f491fc17e6bb3bc37c17ace6be704244ab121c7180d59319726e0af4b0efc" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmsy-pk-raster-greater-equal-05b4a9-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-symbol",
+    original_char_code: 21,
+    source_unicode: "\u0015",
+    target_unicode: "≥",
+    charproc_sha256: "05b4a9d88c1df64b3ac339ae6bb7ed82383b93bb08512842452db43453a28970",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 0, charproc_sha256: "fb1f6bf10138511bcefade47467b3e2f9ae691ab3dab097914be1f0f66305470" }),
+      Object.freeze({ original_char_code: 112, charproc_sha256: "772f491fc17e6bb3bc37c17ace6be704244ab121c7180d59319726e0af4b0efc" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmsy-pk-raster-square-root-772f49-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-symbol",
+    original_char_code: 112,
+    source_unicode: "p",
+    target_unicode: "√",
+    charproc_sha256: "772f491fc17e6bb3bc37c17ace6be704244ab121c7180d59319726e0af4b0efc",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 0, charproc_sha256: "fb1f6bf10138511bcefade47467b3e2f9ae691ab3dab097914be1f0f66305470" }),
+      Object.freeze({ original_char_code: 21, charproc_sha256: "05b4a9d88c1df64b3ac339ae6bb7ed82383b93bb08512842452db43453a28970" }),
+    ]),
+  }),
+  Object.freeze({
     id: "cmmi-pk-raster-omega-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
     family: "computer-modern-math-italic",
@@ -424,6 +541,135 @@ function collectType3GlyphRecoveries({ textContent, operators, pdfjsPage, pdfLib
     recoveries.set(sourceIndex, deduplicated);
   }
   return recoveries;
+}
+
+/**
+ * Read-only maintainer census for every understood legacy Type-3 showText
+ * glyph. Unlike recovery's strict text-binding lane, this keeps control and
+ * whitespace-like Unicode values so old encodings cannot disappear from the
+ * report. Missing links/classification/digests remain explicit omissions.
+ */
+export function inspectType3GlyphEvidenceForPage({ textContent, operators, pdfjsPage, pdfLibPage, pdfjsLib }) {
+  const ops = pdfjsLib?.OPS ?? {};
+  const omissions = [];
+  if (!operators || !Array.isArray(operators.fnArray) || !Array.isArray(operators.argsArray)) {
+    return { occurrences: [], omissions: [{ reason: "operator_evidence_unavailable", count: 1 }] };
+  }
+  let currentFont = null;
+  const fontStack = [];
+  const byFont = new Map();
+  const fonts = new Map();
+  const unsupportedTextOps = new Set([
+    ops.showSpacedText,
+    ops.nextLineShowText,
+    ops.nextLineSetSpacingShowText,
+  ].filter(Number.isFinite));
+  for (let operatorIndex = 0; operatorIndex < operators.fnArray.length; operatorIndex += 1) {
+    const operation = operators.fnArray[operatorIndex];
+    const args = operators.argsArray[operatorIndex];
+    if (operation === ops.save) fontStack.push(currentFont);
+    else if (operation === ops.restore) {
+      if (fontStack.length === 0) omissions.push({ reason: "font_stack_restore_underflow", count: 1 });
+      else currentFont = fontStack.pop();
+    } else if (operation === ops.setFont) {
+      currentFont = typeof args?.[0] === "string" ? args[0] : null;
+    } else if (unsupportedTextOps.has(operation)) {
+      omissions.push({ reason: "unsupported_text_operator", count: 1 });
+    } else if (operation === ops.showText && currentFont !== null && Array.isArray(args?.[0])) {
+      let font = fonts.get(currentFont);
+      if (font === undefined) {
+        try {
+          font = pdfjsPage.commonObjs.get(currentFont);
+        } catch {
+          font = null;
+          omissions.push({ font_id: currentFont, reason: "font_object_unavailable", scope: "potential_font_glyph", count: args[0].length });
+        }
+        if (font?.isType3Font !== true) font = null;
+        fonts.set(currentFont, font);
+      }
+      if (!font) continue;
+      if (!byFont.has(currentFont)) byFont.set(currentFont, []);
+      for (let glyphIndex = 0; glyphIndex < args[0].length; glyphIndex += 1) {
+        const glyph = args[0][glyphIndex];
+        // PDF.js interleaves numeric text-position adjustments with glyphs.
+        if (typeof glyph === "number" && Number.isFinite(glyph)) continue;
+        if (!glyph || typeof glyph !== "object") {
+          omissions.push({ font_id: currentFont, reason: "malformed_type3_glyph", scope: "type3_glyph", count: 1 });
+          continue;
+        }
+        byFont.get(currentFont).push({ glyph, operator_index: operatorIndex, glyph_index: glyphIndex });
+      }
+    } else if (operation === ops.showText && currentFont === null) {
+      omissions.push({ reason: "show_text_without_current_font", scope: "potential_font_glyph", count: Array.isArray(args?.[0]) ? args[0].length : 1 });
+    } else if (operation === ops.showText) {
+      omissions.push({ reason: "malformed_show_text_arguments", scope: "potential_font_glyph", count: 1 });
+    }
+  }
+  if (fontStack.length !== 0) omissions.push({ reason: "font_stack_unbalanced_at_end", count: fontStack.length });
+
+  const rawFonts = rawType3Fonts(pdfLibPage);
+  const occurrences = [];
+  for (const [fontId, fontTokens] of byFont) {
+    const font = fonts.get(fontId);
+    const rawFont = linkedRawType3Font(fontId, fontTokens, rawFonts);
+    if (!rawFont) {
+      omissions.push({ font_id: fontId, reason: "raw_type3_font_link_ambiguous_or_unavailable", scope: "type3_glyph", count: fontTokens.length });
+      continue;
+    }
+    const family = uniqueComputerModernFamily(rawFont.widths);
+    const official = family ? CM_CODEPOINTS[family] : null;
+    const mappedCodeCharprocSha256 = official ? Object.fromEntries(Object.keys(official)
+      .map(Number)
+      .sort((left, right) => left - right)
+      .map(code => [code, charProcDigestForCode(font, rawFont, code)])) : {};
+    for (const token of fontTokens) {
+      const code = token.glyph.originalCharCode;
+      if (!Number.isSafeInteger(code)) {
+        omissions.push({ font_id: fontId, reason: "original_char_code_unavailable", scope: "type3_glyph", count: 1 });
+        continue;
+      }
+      const digest = charProcDigestForCode(font, rawFont, code);
+      if (!digest) omissions.push({ font_id: fontId, reason: "charproc_digest_unavailable", scope: "glyph_evidence", count: 1 });
+      const registryEvidenceMatchIds = TYPE3_RECOVERY_REGISTRY.filter(entry => entry.family === family
+        && entry.original_char_code === code
+        && entry.source_unicode === token.glyph.unicode
+        && entry.target_unicode === official?.[code]
+        && entry.charproc_sha256 === digest
+        && entry.witnesses.every(witness => mappedCodeCharprocSha256[witness.original_char_code] === witness.charproc_sha256))
+        .map(entry => entry.id)
+        .sort();
+      occurrences.push({
+        family,
+        family_status: !family
+          ? "ambiguous_or_unavailable"
+          : official
+            ? "identified_reviewed_mapping"
+            : "identified_not_unicode_mapped",
+        original_char_code: code,
+        source_unicode: typeof token.glyph.unicode === "string" ? token.glyph.unicode : "",
+        intended_unicode: official?.[code] ?? null,
+        charproc_sha256: digest,
+        mapped_code_charproc_sha256: mappedCodeCharprocSha256,
+        registry_evidence_match_ids: registryEvidenceMatchIds,
+        operator_index: token.operator_index,
+        glyph_index: token.glyph_index,
+        tfm_reference_version: CM_TFM_REFERENCE_VERSION,
+        canonicalizer_version: TYPE3_GLYPH_CANONICALIZER_VERSION,
+      });
+    }
+  }
+  const strictRecoveries = textContent ? [...collectType3GlyphRecoveries({
+    textContent,
+    operators,
+    pdfjsPage,
+    pdfLibPage,
+    pdfjsLib,
+  }).entries()].flatMap(([sourceIndex, recoveries]) => recoveries.map(recovery => ({
+    source_index: sourceIndex,
+    ...recovery,
+  }))) : [];
+  if (!textContent) omissions.push({ reason: "strict_text_binding_unavailable", scope: "strict_recovery", count: 1 });
+  return { occurrences, omissions, strict_recoveries: strictRecoveries };
 }
 
 function applyType3GlyphRecoveries(sourceText, recoveries) {

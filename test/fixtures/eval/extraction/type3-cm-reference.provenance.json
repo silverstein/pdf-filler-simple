@@ -9,6 +9,10 @@
     {
       "url": "https://mirrors.ctan.org/fonts/cm/ps-type3.zip",
       "sha256": "ef38efbd58774b454b190e17c8b5ca0fde13dd5d5ff2282bf0dc0313197f1033"
+    },
+    {
+      "url": "https://mirrors.ctan.org/fonts/cm/mf.zip",
+      "sha256": "b22c69034d9f3f7a9bf22673544bdeaace5656973cf7fb1a395a857148943076"
     }
   ],
   "generator": {
