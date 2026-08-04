@@ -339,8 +339,8 @@ function comparisonRenderLogicalExtent(render) {
   const pageView = render?.page_view;
   const pageWidth = pageView?.width_points;
   const pageHeight = pageView?.height_points;
-  const exactPageWidth = render?.comparison_view?.width_points;
-  const exactPageHeight = render?.comparison_view?.height_points;
+  const rawPageWidth = render?.comparison_view?.raw_width_pixels;
+  const rawPageHeight = render?.comparison_view?.raw_height_pixels;
   const viewBox = pageView?.view_box;
   const rotation = pageView?.rotation;
   const userUnit = pageView?.user_unit;
@@ -355,18 +355,22 @@ function comparisonRenderLogicalExtent(render) {
     || !Number.isFinite(userUnit) || userUnit <= 0
     || !Number.isFinite(pageWidth) || pageWidth <= 0
     || !Number.isFinite(pageHeight) || pageHeight <= 0
-    || !Number.isFinite(exactPageWidth) || exactPageWidth <= 0
-    || !Number.isFinite(exactPageHeight) || exactPageHeight <= 0
-    || Number(exactPageWidth.toFixed(6)) !== pageWidth
-    || Number(exactPageHeight.toFixed(6)) !== pageHeight
+    || !Number.isFinite(rawPageWidth) || rawPageWidth <= 0
+    || !Number.isFinite(rawPageHeight) || rawPageHeight <= 0
     || !requested || requested.x !== 0 || requested.y !== 0
     || requested.width !== pageWidth || requested.height !== pageHeight
     || !Number.isSafeInteger(render.width) || render.width <= 0
     || !Number.isSafeInteger(render.height) || render.height <= 0
     || !rendered || rendered.x !== 0 || rendered.y !== 0
     || rendered.width !== render.width || rendered.height !== render.height
-    || Math.ceil(exactPageWidth * render.scale) !== render.width
-    || Math.ceil(exactPageHeight * render.scale) !== render.height) return null;
+    || Math.ceil(rawPageWidth) !== render.width
+    || Math.ceil(rawPageHeight) !== render.height) return null;
+  const exactPageWidth = rawPageWidth / render.scale;
+  const exactPageHeight = rawPageHeight / render.scale;
+  const roundsToPublished = (exact, published) => Math.abs(exact - published)
+    <= 0.00000051 + Number.EPSILON * Math.max(1, Math.abs(exact), Math.abs(published));
+  if (!roundsToPublished(exactPageWidth, pageWidth)
+    || !roundsToPublished(exactPageHeight, pageHeight)) return null;
   const nativeWidth = (viewBox[2] - viewBox[0]) * userUnit;
   const nativeHeight = (viewBox[3] - viewBox[1]) * userUnit;
   const expectedWidth = rotation % 180 === 0 ? nativeWidth : nativeHeight;

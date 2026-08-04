@@ -32,6 +32,8 @@ function render(width, height, fill = 0, options = {}) {
   const logicalHeight = options.logicalHeight ?? height / scale;
   const exactLogicalWidth = options.exactLogicalWidth ?? logicalWidth;
   const exactLogicalHeight = options.exactLogicalHeight ?? logicalHeight;
+  const rawWidth = options.rawWidth ?? exactLogicalWidth * scale;
+  const rawHeight = options.rawHeight ?? exactLogicalHeight * scale;
   const rotation = options.rotation ?? 0;
   const userUnit = options.userUnit ?? 1;
   const nativeWidth = (rotation % 180 === 0 ? logicalWidth : logicalHeight) / userUnit;
@@ -42,8 +44,8 @@ function render(width, height, fill = 0, options = {}) {
     scale,
     renderer: "native-canvas",
     comparison_view: {
-      width_points: exactLogicalWidth,
-      height_points: exactLogicalHeight,
+      raw_width_pixels: rawWidth,
+      raw_height_pixels: rawHeight,
     },
     page_view: {
       view_box: [0, 0, nativeWidth, nativeHeight],
@@ -304,8 +306,8 @@ describe("PDF comparison primitives", () => {
       ["missing UserUnit", value => { delete value.page_view.user_unit; }],
       ["wrong renderer", value => { value.renderer = "macos-quicklook"; }],
       ["missing exact viewport", value => { delete value.comparison_view; }],
-      ["non-finite exact viewport", value => { value.comparison_view.width_points = Number.NaN; }],
-      ["unbound exact viewport", value => { value.comparison_view.width_points += 0.001; }],
+      ["non-finite exact viewport", value => { value.comparison_view.raw_width_pixels = Number.NaN; }],
+      ["unbound exact viewport", value => { value.comparison_view.raw_width_pixels -= 0.000001; }],
       ["shifted requested region", value => { value.requested_region.x = 1; }],
       ["cropped requested region", value => { value.requested_region.width -= 1; }],
       ["missing rendered region", value => { delete value.rendered_region; }],

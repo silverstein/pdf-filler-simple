@@ -5,7 +5,7 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { PDFDocument } from "pdf-lib";
+import { PDFDocument, PDFName, PDFNumber } from "pdf-lib";
 import {
   hashBoundedPdfFileSafely,
 } from "../server/bounded-pdf-file.js";
@@ -267,20 +267,32 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
     const pdfPath = path.join(root, "fractional-raster-boundary.pdf");
     const pdf = await PDFDocument.create();
     pdf.addPage([100.0000001, 50.2]);
+    const nonAssociativePage = pdf.addPage([67.32371565966767, 50]);
+    nonAssociativePage.node.set(
+      PDFName.of("UserUnit"),
+      PDFNumber.of(1.0001428571428572),
+    );
     await fs.writeFile(pdfPath, await pdf.save());
 
-    const rendered = await run("render_comparison_page", {
-      page: 1,
+    const renderPage = async page => await run("render_comparison_page", {
+      page,
       max_dimension_px: null,
       renderer_policy: "native",
       scale_override: 1.5,
     }, null, await sourceBinding(pdfPath));
-    expect(rendered.page_view.width_points).toBe(100);
-    expect(rendered.comparison_view.width_points).toBeGreaterThan(100);
-    expect(rendered.width).toBe(151);
-    expect(rendered.width).toBe(Math.ceil(
-      rendered.comparison_view.width_points * rendered.scale,
-    ));
+    const roundedBoundary = await renderPage(1);
+    expect(roundedBoundary.page_view.width_points).toBe(100);
+    expect(roundedBoundary.comparison_view.raw_width_pixels).toBeGreaterThan(150);
+    expect(roundedBoundary.width).toBe(151);
+
+    const rendered = await renderPage(2);
+    expect(rendered.page_view).toMatchObject({
+      width_points: 67.333333,
+      user_unit: 1.000143,
+    });
+    expect(rendered.comparison_view.raw_width_pixels).toBe(101);
+    expect(rendered.width).toBe(101);
+    expect(rendered.width).toBe(Math.ceil(rendered.comparison_view.raw_width_pixels));
 
     const before = { ...rendered, binary: Buffer.from(rendered.binary) };
     const after = { ...rendered, binary: Buffer.from(rendered.binary) };
