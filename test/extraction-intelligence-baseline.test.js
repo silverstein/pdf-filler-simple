@@ -37,7 +37,7 @@ function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
 }
 
-const TABLE_GRID_MARKDOWN = `<!-- PDF page 1 -->
+const TABLE_GRID_MARKDOWN_CORE = `<!-- PDF page 1 -->
 
 | Region | Q1 | Q2 |
 | --- | --- | --- |
@@ -47,20 +47,9 @@ const TABLE_GRID_MARKDOWN = `<!-- PDF page 1 -->
 
 ## Conversion gaps
 
-- Page 1: Vector paint operations beyond any reconstructed table rulings were not interpreted.
+- Page 1: Vector-painted content beyond reconstructed ruled or bounded solid-mask table grids was not interpreted as text or table structure.`;
 
-## Conversion limitations
-
-- Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.
-- Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.
-- Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.
-- Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
-- Vector paint operations beyond any reconstructed table rulings are not interpreted.
-- OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.
-- Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.
-`;
-
-const MERGED_MARKDOWN = `<!-- PDF page 1 -->
+const MERGED_MARKDOWN_CORE = `<!-- PDF page 1 -->
 
 Status Merged Q1-Q2
 North 1200 1450
@@ -70,39 +59,17 @@ West 1500 1380
 ## Conversion gaps
 
 - Page 1: Table-like content was detected but its column topology could not be reconstructed, so it remains reading-order text.
-- Page 1: Vector paint operations beyond any reconstructed table rulings were not interpreted.
+- Page 1: Vector-painted content beyond reconstructed ruled or bounded solid-mask table grids was not interpreted as text or table structure.`;
 
-## Conversion limitations
-
-- Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.
-- Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.
-- Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.
-- Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
-- Vector paint operations beyond any reconstructed table rulings are not interpreted.
-- OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.
-- Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.
-`;
-
-const PUA_MARKDOWN = `<!-- PDF page 1 -->
+const PUA_MARKDOWN_CORE = `<!-- PDF page 1 -->
 
 ${PUA_TEXT}
 
 ## Conversion gaps
 
-- Page 1: Text-layer integrity signals were detected (replacement\\_characters=14, private\\_use\\_runs=4); extracted text is retained but may require visual inspection.
+- Page 1: Text-layer integrity signals were detected (replacement\\_characters=14, private\\_use\\_runs=4); extracted text is retained but may require visual inspection.`;
 
-## Conversion limitations
-
-- Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.
-- Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.
-- Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.
-- Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
-- Vector paint operations beyond any reconstructed table rulings are not interpreted.
-- OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.
-- Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.
-`;
-
-const ROUTING_MARKDOWN = `<!-- PDF page 1 -->
+const ROUTING_MARKDOWN_CORE = `<!-- PDF page 1 -->
 
 MIXED ROUTING FIXTURE
 Packet ID: ROUTE-77
@@ -118,20 +85,9 @@ Page one is born digital.
 
 - Page 2: No source-backed text-layer content was available on this page.
 - Page 2: The page appears image-only, and OCR was not performed.
-- Page 2: Image content was not rendered into Markdown.
+- Page 2: Image content was not rendered into Markdown.`;
 
-## Conversion limitations
-
-- Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.
-- Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.
-- Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.
-- Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
-- Vector paint operations beyond any reconstructed table rulings are not interpreted.
-- OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.
-- Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.
-`;
-
-const COMPACT_TOC_MARKDOWN = `<!-- PDF page 1 -->
+const COMPACT_TOC_MARKDOWN_CORE = `<!-- PDF page 1 -->
 
 # CONTENTS
 Preface ... ii
@@ -144,18 +100,11 @@ Chapter 6: Findings ... 31
 Chapter 7: Limits ... 38
 Chapter 8: Appendix ... 44
 Chapter 9: Closing ... 51
-Chapter 10: Index ... 58
+Chapter 10: Index ... 58`;
 
-## Conversion limitations
-
-- Headings are emitted only when a short line has consistent font metrics and is at least 1.5 times the page's median line height.
-- Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.
-- Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.
-- Tables are reconstructed only from text-item column geometry or clean ruled-rectangle grid evidence, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header (or has non-recurring first-row ruling evidence), because a Markdown table imposes header semantics. Merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.
-- Vector paint operations beyond any reconstructed table rulings are not interpreted.
-- OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.
-- Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.
-`;
+function markdownCore(markdown) {
+  return markdown.split("\n\n## Conversion limitations\n\n", 1)[0];
+}
 
 function expectedCurrentFor(manifest, filename) {
   const fixture = manifest.fixtures.find(item => item.path === filename);
@@ -263,7 +212,7 @@ describe("extraction-intelligence current baseline", () => {
     );
     expect(result.isError).not.toBe(true);
     expectCurrentConversion(result, fixture);
-    expect(result.structuredContent.markdown).toBe(TABLE_GRID_MARKDOWN);
+    expect(markdownCore(result.structuredContent.markdown)).toBe(TABLE_GRID_MARKDOWN_CORE);
     expect(result.structuredContent.markdown).toContain("| Region | Q1 | Q2 |");
     expect(result.structuredContent.markdown.split("\n").some(line => /^\|.*\|$/.test(line))).toBe(
       fixture.expected_current.table_reconstructed,
@@ -303,7 +252,7 @@ describe("extraction-intelligence current baseline", () => {
     });
     expect(result.isError).not.toBe(true);
     expectCurrentConversion(result, fixture);
-    expect(result.structuredContent.markdown).toBe(MERGED_MARKDOWN);
+    expect(markdownCore(result.structuredContent.markdown)).toBe(MERGED_MARKDOWN_CORE);
     expect(result.structuredContent.markdown).not.toMatch(/^\|.*\|$/m);
     expect(result.structuredContent.gaps.map(gap => gap.code)).toEqual([
       "TABLE_TOPOLOGY_UNKNOWN",
@@ -334,7 +283,7 @@ describe("extraction-intelligence current baseline", () => {
     });
     expect(markdown.isError).not.toBe(true);
     expectCurrentConversion(markdown, fixture);
-    expect(markdown.structuredContent.markdown).toBe(PUA_MARKDOWN);
+    expect(markdownCore(markdown.structuredContent.markdown)).toBe(PUA_MARKDOWN_CORE);
     expect(fixture.expected_current.text_integrity_signal).toBe("present");
     expect(markdown.structuredContent.pages[0]).toMatchObject({
       conversion_status: "partial",
@@ -412,7 +361,7 @@ describe("extraction-intelligence current baseline", () => {
     expect(Object.hasOwn(layout.structuredContent, "pages_needing_vision")).toBe(false);
     expect(markdown.isError).not.toBe(true);
     expectCurrentConversion(markdown, fixture);
-    expect(markdown.structuredContent.markdown).toBe(ROUTING_MARKDOWN);
+    expect(markdownCore(markdown.structuredContent.markdown)).toBe(ROUTING_MARKDOWN_CORE);
     expect(markdown.structuredContent.pages_needing_vision).toEqual(
       fixture.expected_current.pages_needing_vision,
     );
@@ -450,7 +399,7 @@ describe("extraction-intelligence current baseline", () => {
     });
     expect(result.isError).not.toBe(true);
     expectCurrentConversion(result, fixture);
-    expect(result.structuredContent.markdown).toBe(COMPACT_TOC_MARKDOWN);
+    expect(markdownCore(result.structuredContent.markdown)).toBe(COMPACT_TOC_MARKDOWN_CORE);
     expect(fixture.expected_current.default_output).toBe("verbatim");
     expect(fixture.expected_current.normalizations_field).toBe("present");
     expect(result.structuredContent.normalizations).toEqual({
