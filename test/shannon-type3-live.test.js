@@ -49,17 +49,26 @@ describe("external Shannon Type-3 recovery", () => {
     }
     expect(Object.fromEntries([...counts].sort())).toEqual({
       "cmmi-pk-raster-comma-42b5eb-v1": 315,
+      "cmmi-pk-raster-comma-dec7c4-v1": 26,
       "cmmi-pk-raster-omega-81b411-v1": 6,
       "cmmi-pk-raster-omega-v1": 9,
       "cmmi-pk-raster-period-2df559-v1": 345,
+      "cmmi-pk-raster-period-bd8a8b-v1": 6,
       "cmmi-pk-raster-period-v1": 6,
+      "cmmi-pk-raster-pi-3d439e-v1": 2,
       "cmmi-pk-raster-pi-780b04-v1": 55,
+      "cmmi-pk-raster-pi-994283-v1": 1,
       "cmmi-pk-raster-rho-1500df-v1": 27,
+      "cmmi-pk-raster-rho-ee4042-v1": 5,
+      "cmmi-pk-raster-rho-fa4a3d-v1": 4,
       "cmmi-pk-raster-slash-55447d-v1": 8,
+      "cmmi-pk-raster-slash-f5b035-v1": 13,
       "cmmi-pk-raster-slash-v1": 2,
       "cmsy-pk-raster-greater-equal-05b4a9-v1": 22,
+      "cmsy-pk-raster-greater-equal-b57ae2-v1": 1,
       "cmsy-pk-raster-minus-fb1f6b-v1": 216,
       "cmsy-pk-raster-minus-v1": 14,
+      "cmsy-pk-raster-square-root-0c8ca6-v1": 1,
       "cmsy-pk-raster-square-root-772f49-v1": 27,
     });
   }, 60_000);
