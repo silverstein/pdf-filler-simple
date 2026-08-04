@@ -20,38 +20,36 @@ refusing unsupported guesses.
 
 ## Shipped state
 
-PDF Tools v0.9.0 is public:
-`https://github.com/Open-Document-Alliance/PDF-Tools/releases/tag/v0.9.0`.
-The release tag and public `master` include the cumulative Shannon extraction
-work through the fraction, spacing, table, heading, and first two Type-3
-batches, plus the PDF comparison product.
+PDF Tools v0.9.1 is public:
+`https://github.com/Open-Document-Alliance/PDF-Tools/releases/tag/v0.9.1`.
+It includes the cumulative Shannon extraction work, the PDF comparison product,
+and the 59-character remaining qualified Type-3 batch.
 
-- Final v0.9.0 master:
-  `9c98bd3eaee8dbd61e1e3c9639d3263ce4147683`.
+- v0.9.1 release commit:
+  `da82eca8ae36f2013ff1871421991167cd80df03`.
 - The release MCPB was downloaded, hash-checked, installed in Claude Desktop,
   loaded successfully, and tested from the installed copy.
 - Exactly one current PDF Tools identity remained enabled after installation.
-- Installed Shannon conversion: 55 pages, 511 replacement characters, 68
-  explicit gaps.
+- Installed Shannon conversion: 55 pages, 498 replacement characters, 68
+  explicit gaps, exact reviewed Markdown SHA-256.
 - Current sampled quality: headings 14/14, reading order 24/24, paragraphs
   3/4, equations 4/4, footnotes 4/4, one qualifying table, and zero false
   equation headings.
 
-The old stacked PRs #55 through #64 are closed as superseded by the combined
-release PR #66. PR #67 repaired the final installed-copy evidence. Do not try
-to resume or merge the old stack.
+PR #68 landed the 59-character batch and PR #69 prepared v0.9.1. The old
+stacked PRs #55 through #64 remain closed as superseded. Do not resume them.
 
-## Active next excellence target
+## Next excellence target
 
-- Worktree:
-  `/Users/silverbook/Sites/pdf-tools-worktrees/pdf-tools-shannon-remaining`
-- Branch: `agent/shannon-remaining-type3`
-- Exact base: released master
-  `9c98bd3eaee8dbd61e1e3c9639d3263ce4147683`.
+- Released source: public `master` at v0.9.1 commit
+  `da82eca8ae36f2013ff1871421991167cd80df03`.
+- The old `agent/shannon-remaining-type3` worktree is historical after PR #68;
+  create a fresh collision-free worktree from current `origin/master` for any
+  alpha-alignment experiment.
 
-The active tranche adds 59 exact recoveries from nine already qualified raster
-groups: 26 commas, 13 slashes, 9 rho characters, 6 periods, 3 pi characters,
-1 greater-or-equal character, and 1 square root.
+The shipped v0.9.1 tranche adds 59 exact recoveries from nine already qualified
+raster groups: 26 commas, 13 slashes, 9 rho characters, 6 periods, 3 pi
+characters, 1 greater-or-equal character, and 1 square root.
 
 Three full-paper runs are byte-identical. Replacement characters fall from
 511 to 498, explicit gaps remain 68, and all sampled structural scores remain
@@ -72,18 +70,10 @@ several symbols can collapse into one blank text run.
 
 ## Current gates
 
-The active tranche is not shipped yet. Implementation commit
-`d5b902b45084738fe7ed6a275c3dfbf8c02db3bc` has full-paper, focused,
-share-contract, reproducible MCPB, packed-smoke, and native Mac evidence.
-The complete suite passed 1,983 tests and hit one unrelated timing assertion;
-that exact 22-test lifecycle file then passed three consecutive reruns.
-
-Before merging or installing it:
-
-1. Obtain an independent exact-commit review.
-2. Push and merge through a reviewed PR.
-3. Rebuild from public master, install that exact artifact, and repeat
-   installed-copy and Shannon proof.
+The v0.9.1 release and installed-copy gates are complete. The next code target
+is the alpha alignment problem, but only if it can preserve exact source-item
+placement when PDF.js collapses several alpha controls into one blank run. The
+64-minus and 5-comma groups remain blocked on missing companion evidence.
 
 Mat has authorized routine merge and installation. A new public release should
 still be based on the complete checks above. No public reply to Kepano has been
@@ -92,7 +82,7 @@ honestly solved enough to help him; progress alone is not a reason to ping him.
 
 ## Fast recovery commands
 
-Run from the active worktree:
+Run from a fresh clean worktree based on current `origin/master`:
 
 ```sh
 git status --short
