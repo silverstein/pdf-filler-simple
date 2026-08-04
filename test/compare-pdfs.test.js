@@ -249,6 +249,35 @@ describe("compare_pdfs deterministic product", () => {
     })]);
   }, 30_000);
 
+  it("preserves truthful clipped or off-page PDF.js evidence coordinates", async () => {
+    async function makeOffPagePdf(fileName, text) {
+      const pdf = await PDFDocument.create();
+      const page = pdf.addPage([300, 180]);
+      const font = await pdf.embedFont(StandardFonts.Helvetica);
+      page.drawText(text, { x: 30, y: 100, size: 18, font });
+      const filename = path.join(tempDirectory, fileName);
+      await fs.writeFile(filename, await pdf.save());
+      return filename;
+    }
+    const before = await makeOffPagePdf("off-page-before.pdf", "Packaged PDF Tools smoke test");
+    const after = await makeOffPagePdf("off-page-after.pdf", "Packaged PDF Tools revised smoke test");
+    const result = await client.callTool({
+      name: "compare_pdfs",
+      arguments: {
+        before_pdf_path: before,
+        after_pdf_path: after,
+        include_visual: false,
+        max_output_characters: 200_000,
+      },
+    });
+    expect(result.isError).not.toBe(true);
+    const evidence = result.structuredContent.observations.find(item => item.channel === "text"
+      && item.display_region[0] + item.display_region[2] > item.page_box[2]);
+    expect(evidence).toBeTruthy();
+    expect(evidence.display_region[0] + evidence.display_region[2])
+      .toBeGreaterThan(evidence.page_box[2]);
+  }, 30_000);
+
   it("rejects unknown input and scrubs path and password sentinels", async () => {
     const inputSentinel = "SECRET_UNKNOWN_INPUT_SENTINEL";
     const unknown = await client.callTool({

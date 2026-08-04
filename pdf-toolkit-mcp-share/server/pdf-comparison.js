@@ -1057,9 +1057,9 @@ export function validatePdfComparisonSemantics(payload) {
     }
     const [x, y, width, height] = observation.display_region;
     const [, , pageWidth, pageHeight] = observation.page_box;
-    if (x < 0 || y < 0 || width <= 0 || height <= 0
-      || x + width > pageWidth + 0.001 || y + height > pageHeight + 0.001) {
-      semanticError(`${observation.id} region is outside its page box`);
+    if (![x, y, width, height, pageWidth, pageHeight].every(Number.isFinite)
+      || width <= 0 || height <= 0 || pageWidth <= 0 || pageHeight <= 0) {
+      semanticError(`${observation.id} display region is invalid`);
     }
     if (observation.native_region !== null) {
       const [, , nativeWidth, nativeHeight] = observation.native_region;

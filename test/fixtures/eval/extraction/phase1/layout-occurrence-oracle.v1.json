@@ -91,8 +91,8 @@
     {
       "role": "pdf_comparison_module",
       "path": "server/pdf-comparison.js",
-      "bytes": 56566,
-      "sha256": "cf598d139bf5fa8f3614e4029918148550f4b51b9291b1b3717703edaddcb745"
+      "bytes": 56584,
+      "sha256": "72d4911773bce66ce8a9f698cf3cfc3b2e53e80e9dbc185e7cb0642e37941b4d"
     },
     {
       "role": "pdf_observations_module",
@@ -113,7 +113,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "8fbb2709c3be79f858aa91c80714e4bf5dd404d0550f1cadfcdd5c8d19e194f9",
+  "validator_source_set_sha256": "03fe70aa1d8cd4f249bb4b393217e068b0ee244513775e1cdc3e34608ac24b45",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",

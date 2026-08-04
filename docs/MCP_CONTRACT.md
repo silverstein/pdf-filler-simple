@@ -124,6 +124,9 @@ parser, observation digest, page count, and pre/post immutability evidence for
 both inputs. It aligns pages without resolving repeated-page ambiguity, emits
 source-bound observations and typed changes across seven coverage channels,
 and keeps widgets under the form channel rather than ordinary annotations.
+Evidence display regions preserve PDF.js viewport coordinates even when PDF
+content is clipped or lies partly outside the CropBox; consumers clip those
+regions for display rather than rewriting the source coordinates.
 Default-material suppressions are retained as reversible typed decisions;
 forensic mode reports them. A complete result means the requested channels
 were observed under this policy. It never sets an equivalence claim, and an
