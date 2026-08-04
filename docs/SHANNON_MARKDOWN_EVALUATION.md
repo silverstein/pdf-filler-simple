@@ -29,6 +29,12 @@ order, paragraph continuity, equations, footnotes, table topology,
 omission/duplication, evidence, latency, memory, and artifact size separate. It
 never blends them into an overall score.
 
+Equation anchors must occur on their declared source page, in order, within a
+200-character span, with token boundaries. Table-header terms must occur in the
+actual Markdown header row rather than elsewhere in a table. The source PDF and
+candidate executable run from private verified snapshots; the PDF Tools runtime
+files are revalidated after every repetition.
+
 The sampled oracle is deliberately narrow. A missing anchor can identify a
 regression, but a passing anchor set cannot prove complete 55-page fidelity.
 
