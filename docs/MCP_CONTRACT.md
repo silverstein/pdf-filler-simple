@@ -113,9 +113,12 @@ points are ordered anchor-top, terminal-top, anchor-bottom, terminal-bottom;
 they are not polygon winding order. `line_height` is the modeled TextLayer
 font-height vector, not a font-size or ink-height measurement.
 Stable item, line, and nonsemantic flow-block references support conservative
-reading order without claiming paragraphs or document structure. Raster-only,
-mixed, hidden, clipped, duplicate, and OCR-overlay gaps remain explicit. The
-tool does not render, OCR, infer tables, or claim arbitrary schema extraction,
+reading order without claiming paragraphs or document structure. Version 1.2
+also retains bounded, axis-aligned solid-mask rectangle evidence with exact
+source-operation and transform provenance. Those rectangles are neutral paint
+evidence, not inferred rules or cells. Raster-only, mixed, hidden, clipped,
+duplicate, and OCR-overlay gaps remain explicit. The tool does not render, OCR,
+infer tables, or claim arbitrary schema extraction,
 and every item, character, or output limit is fail-closed with truncation
 metadata. Its coordinates must not be passed to `render_pdf_region` or signing
 tools.
@@ -124,10 +127,13 @@ tools.
 deterministic UTF-8 Markdown. It preserves supported text and conservative
 reading order, escapes Markdown and HTML control syntax, and promotes headings
 or list markers only when the retained text and geometry support them. It
-reconstructs a table only when every row fills every recurring detected column
-and the first row carries real header evidence, and it emits a link only for a
-source-validated external http or https annotation target that maps to exactly
-one contiguous run of text on one line. Ruling lines, merged or spanning cells,
+reconstructs a table only when every row fills every recurring detected
+column, or when one unambiguous complete closed grid can be established from
+the bounded solid-mask rectangle evidence. Every retained grid item must fit
+exactly one cell, and either route requires real first-row header evidence. It
+emits a link only for a source-validated external http or https annotation
+target that maps to exactly one contiguous run of text on one line. Stroked,
+incomplete, or ambiguous grids, merged or spanning cells, cell artwork,
 internal destinations, actions, other URL schemes, and ambiguous or partially
 covered labels stay escaped text and are reported as typed gaps. It does not
 run OCR, render image content, or use an external model. Raster, mixed,

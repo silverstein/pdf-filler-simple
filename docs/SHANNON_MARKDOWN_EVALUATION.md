@@ -40,7 +40,11 @@ regression, but a passing anchor set cannot prove complete 55-page fidelity.
 The current PDF Tools result finds all four sampled page-local equation anchors,
 but that token result does not prove faithful equation topology. Damaged arrows,
 minus signs, scripts, summation limits, and fraction bars remain separate known
-gaps; see `docs/evidence/shannon-math-operator-spacing-2026-08.md`.
+gaps; see `docs/evidence/shannon-math-operator-spacing-2026-08.md`. The sampled
+Table I now has one qualifying four-column, five-data-row Markdown table. That
+result establishes the bounded ruled grid and text-to-cell assignment, not
+faithful formulas or mini-graphs inside those cells; see
+`docs/evidence/shannon-ruled-table-topology-2026-08.md`.
 
 ## Reproduction
 
