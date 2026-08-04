@@ -11,9 +11,11 @@ every retained text item fits exactly one cell, an isolated `TABLE I` caption
 is directly above it, and the shallow first row supplies independent uppercase
 header evidence.
 
-The renderer fails closed for missing rules, crossing text, multiple candidate
-grids, absent captions, weak headers, tiny bands, and merged or spanning cells.
-It does not interpret stroked paths, cell artwork, formulas, or mini-graphs.
+The renderer fails closed when the observed rules do not form one unambiguous
+complete grid, when aligned partial dividers evidence merged or spanning cells,
+or when text crosses the inferred cells. It also refuses multiple candidate
+grids, absent captions, weak headers, tiny bands, and overlarge grids. It does
+not interpret stroked paths, cell artwork, formulas, or mini-graphs.
 Several mathematical symbols within the Shannon table therefore remain
 damaged even though their row and column membership is now useful. The
 Markdown renderer identity is `pdf-tools.layout-markdown-renderer` version

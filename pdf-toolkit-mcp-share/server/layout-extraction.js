@@ -1015,7 +1015,7 @@ function collectPaintedRectangles(operators, pdfjsLib, viewportTransform, pageNu
         id: `p${String(pageNumber).padStart(4, "0")}-r${String(operationIndex + 1).padStart(6, "0")}`,
         source_operation_index: operationIndex,
         source_kind: "solid_color_image_mask",
-        graphics_transform: current.map(round),
+        graphics_transform: [...current],
         quad: geometry.quad,
         bbox: geometry.bbox,
       });

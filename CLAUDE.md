@@ -149,8 +149,9 @@ row carries header evidence (typographic or a non-recurring first-row band);
 it may also use a complete closed grid of bounded axis-aligned solid-mask
 rectangles when every text item fits exactly one cell and independent caption
 and header evidence are present;
-overlapping grids, body-row bands, merged or spanning cells, ambiguous
-assignments, and line-segment-only rulings all abandon with typed gaps
+overlapping grids, body-row bands, aligned partial dividers that evidence
+merged or spanning cells, ambiguous assignments, and line-segment-only rulings
+all abandon with typed gaps
 (`TABLE_TOPOLOGY_UNKNOWN`, `TABLE_RULING_UNSUPPORTED`). A text layer that is
 present but suspect (replacement-character, private-use, or C1-control
 density) is flagged with `TEXT_INTEGRITY_SUSPECT` and routed to vision while

@@ -132,10 +132,11 @@ column, or when one unambiguous complete closed grid can be established from
 the bounded solid-mask rectangle evidence. Every retained grid item must fit
 exactly one cell, and either route requires real first-row header evidence. It
 emits a link only for a source-validated external http or https annotation
-target that maps to exactly one contiguous run of text on one line. Stroked,
-incomplete, or ambiguous grids, merged or spanning cells, cell artwork,
+target that maps to exactly one contiguous run of text on one line. Unsupported
+text from stroked, incomplete, or ambiguous grids, aligned partial dividers,
 internal destinations, actions, other URL schemes, and ambiguous or partially
-covered labels stay escaped text and are reported as typed gaps. It does not
+covered labels stays escaped and is reported as a typed gap. Cell artwork is
+omitted and reported as a vector-content gap. It does not
 run OCR, render image content, or use an external model. Raster, mixed,
 vector, failed, caller-limit-truncated, invalid-geometry, and output-omission
 cases are represented as typed gaps and

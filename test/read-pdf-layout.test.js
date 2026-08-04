@@ -910,6 +910,29 @@ describe("read_pdf_layout MCP tool", () => {
       .rejects.toThrow(/painted_rectangles|operator evidence differs/);
   });
 
+  it("retains the full painted-rectangle transform under large UserUnit scaling", async () => {
+    const graphicsTransform = [1.23456, 0, 0, -0.5, 100.12345, 700.67891];
+    const viewport = {
+      scale: 75,
+      width: 45_900,
+      height: 59_400,
+      transform: [75, 0, 0, -75, 0, 59_400],
+    };
+    const config = {
+      userUnit: 75,
+      viewport,
+      items: [textItem({ text: "Scaled", x: 110, top: 100 })],
+      operations: [4, 6, 7, 5],
+      operatorArgs: [null, graphicsTransform, [], null],
+    };
+    const { result, bytes } = await runFake([config]);
+    expect(result.pages[0].painted_rectangles.items[0].graphics_transform).toEqual(graphicsTransform);
+    expect(() => validatePdfLayoutSemantics(result, { sourceBytes: bytes })).not.toThrow();
+    const { pdfjs } = fakePdfjs([config]);
+    await expect(validatePdfLayoutSourceEvidence(result, { pdfjsLib: pdfjs, sourceBytes: bytes }))
+      .resolves.toBe(result);
+  });
+
   it("caps painted rectangle evidence without accepting it as complete", async () => {
     const operations = [];
     const operatorArgs = [];
