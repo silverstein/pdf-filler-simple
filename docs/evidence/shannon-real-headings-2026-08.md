@@ -2,9 +2,9 @@
 
 ## Outcome
 
-PDF Tools now recognizes conservative, source-backed document structure for a
-first-page title, `INTRODUCTION`, numbered or Roman-numeral `APPENDIX` markers,
-and uppercase `PART` markers with titles. The renderer identity is now
+PDF Tools now recognizes conservative, source-backed document structure for at
+most one strongest first-page title, `INTRODUCTION`, numbered or Roman-numeral
+`APPENDIX` markers, and uppercase `PART` markers with titles. The renderer identity is now
 `pdf-tools.layout-markdown-renderer` version `1.4.0`.
 
 On the same hash-bound 55-page Shannon document used by the preceding runs,
@@ -19,17 +19,17 @@ external dependency.
 
 ## Clean run
 
-- Evaluated commit: `73ee358`
+- Evaluated commit: `9b56f0b`
 - Source PDF SHA-256:
   `6e4e3411984f3edf99dbfe8b941cb5e8a321379ff0cae6ae5c1f592ad8882ca8`
 - Heading-guardrail report SHA-256:
   `4489c23f5c19d17e93f8a4d689cc6106e26390082b945fb7b2cebb42ea2a03fd`
 - Real-heading report SHA-256:
-  `dee4bc622597c6036a0293eed93094715f0af2bb26c74ee86fb1e6f15b5d7e63`
+  `4a6bdad3000026603f47cb6c1146cde0481d572fc950259957d46d8cef049a68`
 - Repetitions: three fresh processes per candidate
 - PDF Tools Markdown deterministic across repetitions: `true`
-- Median PDF Tools elapsed time: 3720.48 ms
-- Median PDF Tools maximum RSS: 287,064,064 bytes
+- Median PDF Tools elapsed time: 4426.301 ms
+- Median PDF Tools maximum RSS: 295,993,344 bytes
 
 ## Metric comparison
 
