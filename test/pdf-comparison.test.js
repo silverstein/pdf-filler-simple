@@ -168,6 +168,63 @@ describe("PDF comparison primitives", () => {
     }
   });
 
+  it("rejects fractional off-page regions before applying the one-pixel mask border", () => {
+    const cases = [
+      { region: [-0.5, 1, 0.25, 1], pixel: [0, 2] },
+      { region: [8.25, 1, 0.25, 1], pixel: [11, 2] },
+      { region: [2, -0.5, 1, 0.25], pixel: [4, 0] },
+      { region: [2, 4.25, 1, 0.25], pixel: [4, 5] },
+      { region: [-0.5, -0.5, 0.25, 0.25], pixel: [0, 0] },
+      { region: [8.25, -0.5, 0.25, 0.25], pixel: [11, 0] },
+      { region: [-0.5, 4.25, 0.25, 0.25], pixel: [0, 5] },
+      { region: [8.25, 4.25, 0.25, 0.25], pixel: [11, 5] },
+    ];
+    for (const { region, pixel: [x, y] } of cases) {
+      const before = render(12, 6);
+      const after = render(12, 6);
+      after.binary[(y * 12 + x) * 4] = 20;
+      const baseline = diffComparisonRgba(before, after);
+      expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region))
+        .toEqual(baseline);
+    }
+  });
+
+  it("pads fractional partially intersecting regions without masking disjoint edge residuals", () => {
+    const cases = [
+      { region: [-0.25, 1, 0.5, 1], masked: [0, 2], visible: [4, 2] },
+      { region: [7.75, 1, 0.5, 1], masked: [11, 2], visible: [7, 2] },
+      { region: [2, -0.25, 1, 0.5], masked: [4, 0], visible: [4, 4] },
+      { region: [2, 3.75, 1, 0.5], masked: [4, 5], visible: [4, 1] },
+    ];
+    for (const { region, masked, visible } of cases) {
+      const before = render(12, 6);
+      const after = render(12, 6);
+      for (const [x, y] of [masked, visible]) after.binary[(y * 12 + x) * 4] = 20;
+      expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region))
+        .toMatchObject({ raw_changed_pixels: 1 });
+    }
+  });
+
+  it("ignores malformed, degenerate, and wholly off-page extreme regions", () => {
+    const before = render(12, 6);
+    const after = render(12, 6);
+    after.binary[(3 * 12 + 6) * 4] = 20;
+    const baseline = diffComparisonRgba(before, after);
+    for (const region of [
+      null,
+      [],
+      [Number.NaN, 0, 1, 1],
+      [0, Number.POSITIVE_INFINITY, 1, 1],
+      [0, 0, 0, 1],
+      [0, 0, 1, -1],
+      [Number.MAX_VALUE, 0, Number.MAX_VALUE, 1],
+      [-Number.MAX_VALUE, 0, 1, 1],
+    ]) {
+      expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region))
+        .toEqual(baseline);
+    }
+  });
+
   it("marks visual coverage unavailable when any requested native render is unavailable", () => {
     const supported = { status: "supported", reason_codes: [] };
     const document = side => ({

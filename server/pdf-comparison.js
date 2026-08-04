@@ -341,6 +341,11 @@ function comparisonIgnoredPixelMask(render, regions) {
   for (const region of regions) {
     if (!Array.isArray(region) || region.length !== 4 || !region.every(Number.isFinite)
       || region[2] <= 0 || region[3] <= 0) continue;
+    const regionRight = region[0] + region[2];
+    const regionBottom = region[1] + region[3];
+    if (regionRight <= 0 || regionBottom <= 0
+      || region[0] >= render.width / render.scale
+      || region[1] >= render.height / render.scale) continue;
     const x0 = clamp(Math.floor(region[0] * render.scale) - 1, render.width);
     const y0 = clamp(Math.floor(region[1] * render.scale) - 1, render.height);
     const x1 = clamp(Math.ceil((region[0] + region[2]) * render.scale) + 1, render.width);
