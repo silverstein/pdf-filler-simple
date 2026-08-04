@@ -67,8 +67,9 @@ recovery during an experiment, and a 64-occurrence minus variant lacks two
 qualified witness glyphs. Do not register either by guess.
 
 The active clean full repository run passed 1,886 tests with 79 intentional
-skips and zero failures. The clean Shannon evaluation ran three fresh
-repetitions with byte-identical Markdown. Its report SHA-256 is
+skips and zero failures. The separate native Mac safety suite passed 62 with 9
+intentional skips and zero failures. The clean Shannon evaluation ran three
+fresh repetitions with byte-identical Markdown. Its report SHA-256 is
 `a785b07f9638be5419319330bb9102fe53b40259e3432f528aec83d6cf95d502`,
 stored outside the repository at:
 
@@ -78,6 +79,12 @@ The active MCPB passed its packed smoke test and grew by only 2,075 bytes
 (approximately 0.0028%) over PR #61. First-party documentation, tests, and
 maintainer scripts, plus private evaluation outputs, are excluded from the
 distributable package.
+
+Native Claude Desktop installation remains outstanding. The currently enabled
+PDF Toolkit is an older build. A verified pre-install backup exists at
+`/Users/silverbook/Library/Application Support/Claude/PDF Tools Host Validation Backups/20260804T141500Z-pre-pr62`;
+Claude's app-control bridge failed twice before any install action, so do not
+claim installed-host proof.
 
 As of this handoff, PR #62 is an open draft stacked on PR #61. Local
 verification is the available evidence; do not silently upgrade that into
