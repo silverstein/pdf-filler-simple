@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.5.0",
+  version: "1.6.0",
 });
 
 // Bounded geometric table inference. A run of adjacent lines is treated as a
@@ -45,6 +45,7 @@ const GAP_CODES = new Set([
 const LIMITATIONS = Object.freeze([
   "Headings are emitted only from consistent enlarged font metrics or centered English-language source structure with section spacing for a first-page title, introduction, part, or appendix. Ambiguous, very short, or unsupported heading styles remain body text.",
   "A geometrically overlapping initial capital may be joined to its following uppercase word remainder. Line-end hyphens are preserved because source geometry cannot reliably distinguish a split word from an intentional compound. The source Extraction IR retains the original lines.",
+  "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a differently styled single-letter variable follows on the same baseline with a small positive geometric gap. General equations, scripts, fraction bars, and damaged mathematical glyphs remain source reading-order text rather than being guessed.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
   "Tables are reconstructed only from text-item column geometry, and only when every row fills every detected column and the first row is typographically distinct enough to evidence a header, because a Markdown table imposes header semantics. Ruling lines and merged or spanning cells are not interpreted, and table-like content that fails either test remains escaped reading-order text reported as a conversion gap.",
@@ -269,8 +270,8 @@ function rewritesLineStructure(line) {
     || /^(\d{1,3})([.)])\s+(.+)$/u.test(text);
 }
 
-function renderLine(line, headingLevel) {
-  const text = line.text.trim();
+function renderLine(line, headingLevel, sourceText = line.text) {
+  const text = sourceText.trim();
   if (headingLevel) return `${"#".repeat(headingLevel)} ${escapePlainMarkdown(text)}`;
   const bullet = text.match(/^[\u2022\u2023\u25e6\u2043\u2219]\s+(.+)$/u);
   if (bullet) return `- ${escapePlainMarkdown(bullet[1])}`;
@@ -480,6 +481,77 @@ function lineCells(line, itemById) {
       && typeof item.text === "string"
       && item.text.trim().length > 0
       && Number.isFinite(itemStartX(item)));
+}
+
+const COMPACT_MATH_PUNCTUATION = /^[()[\]{},.;:+\-*/=∞∑∫]+$/u;
+
+function compactMathItemText(value) {
+  const text = String(value).trim();
+  return text === "log"
+    || /^\p{L}$/u.test(text)
+    || /^\p{N}$/u.test(text)
+    || COMPACT_MATH_PUNCTUATION.test(text);
+}
+
+function sameMathBaseline(left, right) {
+  const leftHeight = left.line_height;
+  const rightHeight = right.line_height;
+  return Number.isFinite(left.y)
+    && Number.isFinite(right.y)
+    && Number.isFinite(leftHeight)
+    && Number.isFinite(rightHeight)
+    && leftHeight > 0
+    && rightHeight > 0
+    && Math.abs(left.y - right.y) <= Math.max(leftHeight, rightHeight) * 0.1;
+}
+
+function operatorVariableGap(left, right) {
+  const leftX = itemStartX(left);
+  const rightX = itemStartX(right);
+  const leftWidth = left.bbox && Number.isFinite(left.bbox.width) ? left.bbox.width : left.width;
+  if (!Number.isFinite(leftX) || !Number.isFinite(rightX) || !Number.isFinite(leftWidth)) return null;
+  return rightX - (leftX + leftWidth);
+}
+
+/**
+ * Restore one visible operator boundary that the layout IR can prove without
+ * interpreting equation topology. PDF.js may expose roman "log" and its
+ * following italic variable as separate same-baseline items whose positive
+ * gap is smaller than the general prose-spacing threshold. This projection is
+ * intentionally much narrower than lowering that threshold for every line.
+ */
+function mathOperatorSpacedText(row, { headingLevel, linked }) {
+  const { line, cells } = row;
+  if (headingLevel || linked || rewritesLineStructure(line)
+    || line.direction !== "ltr" || line.text.length > 80
+    || cells.length < 2 || cells.length > 16
+    || cells.some(item => !compactMathItemText(item.text) || containsUnsafeText(item.text))) return null;
+  const offsets = itemOffsets(line, cells);
+  if (offsets === null) return null;
+  const insertions = [];
+  for (let index = 0; index < cells.length - 1; index += 1) {
+    const operator = cells[index];
+    const variable = cells[index + 1];
+    if (operator.text.trim() !== "log"
+      || !/^\p{L}$/u.test(variable.text.trim())
+      || operator.font_name === null
+      || variable.font_name === null
+      || operator.font_name === variable.font_name
+      || !sameMathBaseline(operator, variable)) continue;
+    const gap = operatorVariableGap(operator, variable);
+    const height = Math.max(operator.line_height, variable.line_height);
+    if (!(gap > height * 0.05 && gap <= height * 0.25)) continue;
+    const from = offsets[index].end;
+    const to = offsets[index + 1].start;
+    if (from !== to || /\s/u.test(line.text.slice(from, to))) continue;
+    insertions.push(from);
+  }
+  if (insertions.length === 0) return null;
+  let text = line.text;
+  for (const offset of insertions.sort((left, right) => right - left)) {
+    text = `${text.slice(0, offset)} ${text.slice(offset)}`;
+  }
+  return text;
 }
 
 function columnAnchors(rows) {
@@ -773,6 +845,7 @@ function joinParagraphContinuity(records) {
 }
 
 function renderPage(page) {
+  const itemById = new Map(page.raw_items.map(item => [item.id, item]));
   const headings = headingLevels(page);
   const analysis = segmentPageLines(page);
   const linkState = analyzePageLinks(page, analysis, headings);
@@ -786,10 +859,14 @@ function renderPage(page) {
           const linked = renderLinkedLine(line, offsets, spans);
           if (linked !== null) return { text: linked, line, joinable: false };
         }
+        const mathText = mathOperatorSpacedText(
+          { line, cells: lineCells(line, itemById) },
+          { headingLevel: headings.get(line.id), linked: Boolean(spans?.length) },
+        );
         return {
-          text: renderLine(line, headings.get(line.id)),
+          text: renderLine(line, headings.get(line.id), mathText ?? line.text),
           line,
-          joinable: !headings.get(line.id) && !rewritesLineStructure(line),
+          joinable: mathText === null && !headings.get(line.id) && !rewritesLineStructure(line),
         };
       })
   ));

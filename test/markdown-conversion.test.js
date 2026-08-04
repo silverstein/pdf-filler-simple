@@ -37,6 +37,25 @@ function textItem(text, { top, fontSize = 12, left = 50, eol = true } = {}) {
   };
 }
 
+function positionedTextItem(text, {
+  top,
+  left,
+  width,
+  fontSize = 10,
+  fontName = "f1",
+  eol = false,
+} = {}) {
+  return {
+    str: text,
+    dir: "ltr",
+    width,
+    height: fontSize,
+    transform: [fontSize, 0, 0, fontSize, left, 792 - top - fontSize],
+    fontName,
+    hasEOL: eol,
+  };
+}
+
 function centeredTextItem(text, { top, fontSize = 12 } = {}) {
   const width = Math.max(20, text.length * fontSize * 0.5);
   return textItem(text, { top, fontSize, left: (612 - width) / 2 });
@@ -52,7 +71,10 @@ function fakePdfjs(pageConfigs) {
       if (config.textError) throw config.textError;
       return {
         items: config.items ?? [],
-        styles: { f1: { fontFamily: "Test Sans", ascent: 0.8, descent: -0.2, vertical: false } },
+        styles: {
+          f1: { fontFamily: "Test Sans", ascent: 0.8, descent: -0.2, vertical: false },
+          f2: { fontFamily: "Test Serif", ascent: 0.8, descent: -0.2, vertical: false },
+        },
       };
     },
     getOperatorList: async () => ({ fnArray: config.operations ?? [] }),
@@ -167,6 +189,53 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).toContain("T\n");
     expect(result.markdown).toContain("H = p log p\n");
     expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:�|T|H = p log p)$/gmu);
+  });
+
+  it("restores only a geometrically proven space after a separate log operator", async () => {
+    const layout = await validatedSyntheticLayout([
+      { items: [
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, fontName: "f2" }),
+        positionedTextItem("(", { top: 100, left: 120.9, width: 3.84 }),
+        positionedTextItem("T", { top: 100, left: 124.74, width: 5.56, fontName: "f2" }),
+        positionedTextItem(")", { top: 100, left: 131, width: 3.84, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("p", { top: 100, left: 100, width: 5, fontName: "f2" }),
+        positionedTextItem("i", { top: 103.52, left: 105.04, width: 2.057, fontSize: 7.4, fontName: "f2" }),
+        positionedTextItem(" ", { top: 100, left: 107.1, width: 1.7 }),
+        positionedTextItem("log", { top: 100, left: 108.8, width: 12.8 }),
+        positionedTextItem("p", { top: 100, left: 123.319, width: 5, fontName: "f2" }),
+        positionedTextItem("i", { top: 103.52, left: 128.36, width: 2.057, fontSize: 7.4, fontName: "f2", eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("cata", { top: 100, left: 100, width: 16 }),
+        positionedTextItem("log", { top: 100, left: 116, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 129.8, width: 6.67, fontName: "f2", eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("logN", { top: 100, left: 100, width: 20, fontName: "f2", eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("Noise", { top: 100, left: 113.8, width: 22, fontName: "f2", eol: true }),
+      ] },
+    ]);
+    const originalLines = layout.pages.map(page => page.lines.map(line => line.text));
+    const result = renderPdfLayoutToMarkdown(layout);
+
+    expect(result.markdown).toContain("log N(T)");
+    expect(result.markdown).toContain("pi log pi");
+    expect(result.markdown).toContain("catalogN");
+    expect(result.markdown).toContain("logN\n");
+    expect(result.markdown).toContain("logNoise");
+    expect(layout.pages.map(page => page.lines.map(line => line.text))).toEqual(originalLines);
+    expect(originalLines[0]).toContain("logN(T)");
+    expect(validateMarkdownConversionSemantics(result, { layout })).toBe(result);
   });
 
   it("recognizes conservative document structure without promoting lookalike equations", async () => {
