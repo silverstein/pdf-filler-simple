@@ -112,17 +112,55 @@ function scorePresence(normalized, values, key) {
   return { expected: details.length, found: details.filter(item => item.present).length, details };
 }
 
-function scoreEquations(normalized, oracle) {
-  const details = oracle.equation_anchors.map(tokens => {
+function markdownPages(markdown) {
+  const source = String(markdown ?? "");
+  const markers = [...source.matchAll(/<!--\s*(?:PDF\s+)?page\s+(\d+)\s*-->/giu)];
+  return new Map(markers.map((marker, index) => [
+    Number(marker[1]),
+    normalizeShannonText(source.slice(marker.index, markers[index + 1]?.index ?? source.length)),
+  ]));
+}
+
+function normalizedTokenIndex(haystack, needle, offset) {
+  const isWordCharacter = value => typeof value === "string" && /[\p{L}\p{N}]/u.test(value);
+  let cursor = offset;
+  while (cursor <= haystack.length - needle.length) {
+    const found = haystack.indexOf(needle, cursor);
+    if (found < 0) return -1;
+    const leftBoundary = !isWordCharacter(needle[0]) || !isWordCharacter(haystack[found - 1]);
+    const rightBoundary = !isWordCharacter(needle.at(-1)) || !isWordCharacter(haystack[found + needle.length]);
+    if (leftBoundary && rightBoundary) return found;
+    cursor = found + 1;
+  }
+  return -1;
+}
+
+function scoreEquations(markdown, oracle) {
+  const pages = markdownPages(markdown);
+  const maximumSpan = oracle.equation_max_span_characters;
+  const details = oracle.equation_anchors.map(anchor => {
+    const normalized = pages.get(anchor.page) ?? "";
+    const targets = anchor.tokens.map(normalizeShannonText);
     let cursor = 0;
+    let firstOffset = null;
     const missing = [];
-    for (const token of tokens) {
-      const target = normalizeShannonText(token);
-      const found = normalized.indexOf(target, cursor);
-      if (found < 0) missing.push(token);
-      else cursor = found + target.length;
+    for (const [index, target] of targets.entries()) {
+      const found = normalizedTokenIndex(normalized, target, cursor);
+      if (found < 0 || (firstOffset !== null && found + target.length - firstOffset > maximumSpan)) {
+        missing.push(anchor.tokens[index]);
+      } else {
+        if (firstOffset === null) firstOffset = found;
+        cursor = found + target.length;
+      }
     }
-    return { tokens, present_in_order: missing.length === 0, missing_or_reordered: missing };
+    return {
+      page: anchor.page,
+      tokens: anchor.tokens,
+      maximum_span_characters: maximumSpan,
+      observed_span_characters: missing.length === 0 && firstOffset !== null ? cursor - firstOffset : null,
+      present_in_order: missing.length === 0,
+      missing_or_reordered: missing,
+    };
   });
   return { expected: details.length, found: details.filter(item => item.present_in_order).length, details };
 }
@@ -152,8 +190,10 @@ function scoreTable(markdown, normalized, oracle) {
     term,
     present: normalized.includes(normalizeShannonText(term)),
   }));
-  const qualifying = tables.filter(table => oracle.table.required_header_terms
-    .every(term => table.normalized.includes(normalizeShannonText(term))));
+  const qualifying = tables.filter(table => {
+    const normalizedHeader = normalizeShannonText(table.rows[0]);
+    return oracle.table.required_header_terms.every(term => normalizedHeader.includes(normalizeShannonText(term)));
+  });
   return {
     label_present: labelOffset >= 0,
     markdown_table_count: tables.length,
@@ -189,7 +229,7 @@ export function scoreShannonMarkdown({ markdown, oracle, evidence }) {
     heading_hierarchy: scoreHeadings(markdown, oracle),
     reading_order: scoreOrderedAnchors(normalized, oracle),
     paragraph_continuity: scorePresence(normalized, oracle.paragraph_continuity, "phrase"),
-    equations: scoreEquations(normalized, oracle),
+    equations: scoreEquations(markdown, oracle),
     footnotes: scorePresence(normalized, oracle.footnote_anchors, "anchor"),
     table_topology: scoreTable(markdown, normalized, oracle),
     omissions_and_duplication: scoreDuplication(normalized, oracle),
