@@ -19,6 +19,7 @@ import {
   runRendererPolicy,
   runSystemCommand,
 } from "../server/pdfjs-worker.js";
+import { createTestTempDirectory } from "./helpers/temp-directory.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
@@ -260,9 +261,7 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
   });
 
   it("binds comparison masking to the producer's exact unrounded viewport", async () => {
-    const root = await fs.realpath(
-      await fs.mkdtemp(path.join(REPO_ROOT, ".pdfjs-comparison-view-")),
-    );
+    const root = await createTestTempDirectory(REPO_ROOT, "pdfjs-comparison-view");
     roots.push(root);
     const pdfPath = path.join(root, "fractional-raster-boundary.pdf");
     const pdf = await PDFDocument.create();
