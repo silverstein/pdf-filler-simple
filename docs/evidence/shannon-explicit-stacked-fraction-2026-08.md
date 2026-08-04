@@ -102,22 +102,27 @@ ten-page conversion chunk.
   `33ea0d18a9bff9eb11aa0109a5c63b2169f92e6de30572c496a795091a449326`.
 - Complete clean repository suite: 1,889 passed, 80 intentionally skipped,
   zero failed.
+- Reproducible packed MCPB:
+  `/Users/silverbook/Sites/pdf-tools-extraction-sidecars/pdf-toolkit-fraction-a6a2f79.mcpb`;
+  73,645,475 bytes, 3,000 files, SHA-256
+  `fa4431ca17894413484a5e940283b99ec6458e35031dee083a96b6fb4898287d`.
+  Two clean isolated builds were byte-identical; peak isolated-build RSS was
+  856,176 KiB.
+- Packed-copy smoke on macOS arm64: 40 tools, 14 prompts, canonical resources,
+  PDF-lib mutation, and native raster rendering passed.
 
 The first complete clean attempt had one timing-sensitive macOS Docling
 process-supervision assertion fail after 1,888 passes. That unrelated check
 passed immediately in isolation, and the second complete clean run passed with
 the counts above. No PDF conversion test failed in either run.
 
-Reproducible packed-MCPB and packed-copy smoke proof remains required before a
-draft PR is opened.
-
 ## Claim boundary
 
-This work is stacked above draft PR #63. It is not merged, released, packed,
-installed, or shipped. It does not prove general fraction reconstruction,
-equation reconstruction, mathematical layout fidelity, OCR, hidden/clipped
-text fidelity, cross-platform behavior, release readiness, or that Kepano's
-complete issue is solved.
+This work is stacked above draft PR #63. It is packed for review, but is not
+merged, released, installed, or shipped. It does not prove general fraction
+reconstruction, equation reconstruction, mathematical layout fidelity, OCR,
+hidden/clipped text fidelity, cross-platform behavior, release readiness, or
+that Kepano's complete issue is solved.
 
 The remaining paragraph miss is an ordinary literal line-end hyphen in
 `ap-` / `proximately`. The same paper contains intentional compounds with
