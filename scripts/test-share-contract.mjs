@@ -721,6 +721,7 @@ async function main() {
     );
 
     for (const relativePath of [
+      "server/accessibility-inspection.js",
       "server/bounded-pdf-file.js",
       "server/helpers.js",
       "server/index.js",

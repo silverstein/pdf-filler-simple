@@ -299,6 +299,7 @@ describe("MCPB static declarations", () => {
 
   it("keeps every committed share runtime file byte-identical to its source", async () => {
     for (const filename of [
+      "accessibility-inspection.js",
       "bounded-pdf-file.js",
       "pdf-comparison.js",
       "index.js",

@@ -24,6 +24,7 @@ const SHARE_FILES = [
   "install.sh",
   "package-lock.json",
   "package.json",
+  "server/accessibility-inspection.js",
   "server/bounded-pdf-file.js",
   "server/helpers.js",
   "server/index.js",
@@ -352,6 +353,10 @@ async function syncSharePackage() {
     throw new Error("dist-ui/index.html is missing. Run `npm run build:ui` before packaging the share bundle.");
   }
   await Promise.all([
+    fs.copyFile(
+      path.join(PROJECT_ROOT, "server", "accessibility-inspection.js"),
+      path.join(shareServerDir, "accessibility-inspection.js"),
+    ),
     fs.copyFile(
       path.join(PROJECT_ROOT, "server", "bounded-pdf-file.js"),
       path.join(shareServerDir, "bounded-pdf-file.js"),
