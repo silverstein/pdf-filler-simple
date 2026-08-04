@@ -681,6 +681,21 @@ describe("layout Markdown renderer", () => {
         positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
         positionedTextItem("Noise", { top: 100, left: 113.8, width: 22, fontName: "f2", eol: true }),
       ] },
+      { items: [
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, fontName: "f2" }),
+        positionedTextItem("=", { top: 100, left: 121, width: 7.8 }),
+        positionedTextItem("5", { top: 100, left: 130, width: 5, eol: true }),
+      ] },
+      { items: [
+        positionedTextItem("x", { top: 80, left: 100, width: 5, fontName: "f2" }),
+        positionedTextItem("=", { top: 80, left: 106, width: 7.8 }),
+        positionedTextItem("1", { top: 80, left: 115, width: 5, eol: true }),
+        positionedTextItem("log", { top: 100, left: 100, width: 12.8 }),
+        positionedTextItem("N", { top: 100, left: 113.8, width: 6.67, fontName: "f2" }),
+        positionedTextItem("(", { top: 100, left: 120.9, width: 3.84 }),
+        positionedTextItem(")", { top: 100, left: 124.74, width: 3.84, eol: true }),
+      ] },
     ]);
     const originalLines = layout.pages.map(page => page.lines.map(line => line.text));
     const result = renderPdfLayoutToMarkdown(layout);
@@ -692,6 +707,8 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown.split("\n").filter(line => line === "logN")).toHaveLength(3);
     expect(result.markdown).toContain("slogan");
     expect(result.markdown).toContain("logNoise");
+    expect(result.markdown).toContain("logN=5");
+    expect(result.markdown).toContain("x=1\nlogN()");
     expect(layout.pages.map(page => page.lines.map(line => line.text))).toEqual(originalLines);
     expect(originalLines[0]).toContain("logN(T)");
     expect(validateMarkdownConversionSemantics(result, { layout })).toBe(result);

@@ -534,18 +534,26 @@ function operatorVariableGap(left, right) {
   return rightX - (leftX + leftWidth);
 }
 
-function hasSmallerOffsetScript(cells) {
-  const heights = cells.map(item => item.line_height).filter(Number.isFinite);
-  const ys = cells.map(item => item.y).filter(Number.isFinite);
-  if (heights.length !== cells.length || ys.length !== cells.length) return false;
-  const baseHeight = Math.max(...heights);
-  const baselineY = Math.min(...ys.filter((_y, index) => heights[index] >= baseHeight * 0.9));
-  return cells.some(item => item.line_height <= baseHeight * 0.8
-    && Math.abs(item.y - baselineY) >= baseHeight * 0.2);
+function hasAttachedSmallerOffsetScript(cells, variableIndex) {
+  const variable = cells[variableIndex];
+  const script = cells[variableIndex + 1];
+  if (!variable || !script
+    || !/^\p{L}$/u.test(variable.text.trim())
+    || !/^[\p{L}\p{N}]+$/u.test(script.text.trim())
+    || !Number.isFinite(variable.line_height)
+    || !Number.isFinite(script.line_height)
+    || !Number.isFinite(variable.y)
+    || !Number.isFinite(script.y)) return false;
+  const gap = operatorVariableGap(variable, script);
+  return script.line_height <= variable.line_height * 0.8
+    && Math.abs(script.y - variable.y) >= variable.line_height * 0.2
+    && gap !== null
+    && gap >= -variable.line_height * 0.05
+    && gap <= variable.line_height * 0.25;
 }
 
-function rowHasExplicitEquationOperator(row) {
-  return row.cells.some(item => /^(?:=|[+\-−×÷∑∫∞])$/u.test(item.text.trim()));
+function rowHasSpecificMathOperator(row) {
+  return row.cells.some(item => /^(?:Lim|Max|Min|[∑∫∞])$/u.test(item.text.trim()));
 }
 
 function nearbyEquationEvidence(rows, rowIndex) {
@@ -558,7 +566,7 @@ function nearbyEquationEvidence(rows, rowIndex) {
     if (candidate.line.column_index !== row.line.column_index
       || candidate.line.direction !== "ltr"
       || candidate.line.text.length > 80
-      || !candidate.cells.some(item => /^(?:=|Lim|Max|Min|[∑∫∞])$/u.test(item.text.trim()))) continue;
+      || !rowHasSpecificMathOperator(candidate)) continue;
     const verticalDistance = Math.abs(candidate.line.y - row.line.y);
     const height = Math.max(candidate.line.height, row.line.height);
     const horizontalGap = Math.max(
@@ -571,9 +579,9 @@ function nearbyEquationEvidence(rows, rowIndex) {
   return false;
 }
 
-function hasIndependentMathLayoutEvidence(row, rows, rowIndex) {
-  return hasSmallerOffsetScript(row.cells)
-    || rowHasExplicitEquationOperator(row)
+function hasIndependentMathLayoutEvidence(row, operatorIndex, rows, rowIndex) {
+  return hasAttachedSmallerOffsetScript(row.cells, operatorIndex + 1)
+    || rowHasSpecificMathOperator(row)
     || (row.cells.some(item => /^[()]$/u.test(item.text.trim()))
       && nearbyEquationEvidence(rows, rowIndex));
 }
@@ -596,8 +604,7 @@ function mathOperatorSpacedText(row, {
   if (headingLevel || linked || unsafePage || rewritesLineStructure(line)
     || line.direction !== "ltr" || line.text.length > 80
     || cells.length < 2 || cells.length > 16
-    || cells.some(item => !compactMathItemText(item.text) || containsUnsafeText(item.text))
-    || !hasIndependentMathLayoutEvidence(row, rows, rowIndex)) return null;
+    || cells.some(item => !compactMathItemText(item.text) || containsUnsafeText(item.text))) return null;
   const offsets = itemOffsets(line, cells);
   if (offsets === null) return null;
   const insertions = [];
@@ -609,7 +616,8 @@ function mathOperatorSpacedText(row, {
       || operator.font_name === null
       || variable.font_name === null
       || operator.font_name === variable.font_name
-      || !sameMathBaseline(operator, variable)) continue;
+      || !sameMathBaseline(operator, variable)
+      || !hasIndependentMathLayoutEvidence(row, index, rows, rowIndex)) continue;
     const gap = operatorVariableGap(operator, variable);
     const height = Math.max(operator.line_height, variable.line_height);
     if (!(gap > height * 0.05 && gap <= height * 0.25)) continue;
