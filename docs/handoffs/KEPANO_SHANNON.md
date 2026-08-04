@@ -20,13 +20,14 @@ refusing unsupported guesses.
 
 ## Shipped state
 
-PDF Tools v0.9.1 is public:
-`https://github.com/Open-Document-Alliance/PDF-Tools/releases/tag/v0.9.1`.
+PDF Tools v0.9.2 is public:
+`https://github.com/Open-Document-Alliance/PDF-Tools/releases/tag/v0.9.2`.
 It includes the cumulative Shannon extraction work, the PDF comparison product,
-and the 59-character remaining qualified Type-3 batch.
+the 59-character remaining qualified Type-3 batch, 49 source-supported alpha
+recoveries, and the exact-page-bound comparison safety repair.
 
-- v0.9.1 release commit:
-  `da82eca8ae36f2013ff1871421991167cd80df03`.
+- v0.9.2 release commit:
+  `c2f2853e2362d724c6744e8a60026ad3d1974e7e`.
 - The release MCPB was downloaded, hash-checked, installed in Claude Desktop,
   loaded successfully, and tested from the installed copy.
 - Exactly one current PDF Tools identity remained enabled after installation.
@@ -39,11 +40,10 @@ and the 59-character remaining qualified Type-3 batch.
 PR #68 landed the 59-character batch and PR #69 prepared v0.9.1. The old
 stacked PRs #55 through #64 remain closed as superseded. Do not resume them.
 
-## Alpha candidate ready for integration
+## Alpha recovery shipped in v0.9.2
 
-- Candidate branch: `agent/shannon-alpha-alignment` in the collision-free
-  `pdf-tools-shannon-alpha` worktree, based on public `master` commit
-  `cb585b9e158e9b76feada053ca36511e40d62a55`.
+- Historical implementation branch: `agent/shannon-alpha-alignment` in the
+  collision-free `pdf-tools-shannon-alpha` worktree.
 - The old `agent/shannon-remaining-type3` worktree is historical after PR #68.
 
 The shipped v0.9.1 tranche adds 59 exact recoveries from nine already qualified
@@ -70,13 +70,11 @@ seven empty end-of-line items, one bundled control run, and one unqualified
 variant. A recovered whitespace glyph can contribute text but cannot create
 new table-structure evidence by itself.
 
-Before this candidate is merged, the released v0.9.1 census strictly recovers
-1,111 of 1,240 officially named Type-3 occurrences. Its 129 remaining
-occurrences are:
+The released v0.9.2 census strictly recovers 1,160 of 1,240 officially named
+Type-3 occurrences. Its 80 remaining occurrences are:
 
 - 64 minuses with a target fingerprint but no two qualified companion glyphs;
-- 60 alpha symbols across three variants whose source control characters are
-  collapsed into ordinary-looking whitespace by PDF.js;
+- 11 alpha cases that fail the source-alignment rules;
 - 5 commas without two qualified companion glyphs.
 
 Do not register any remaining group by guess. Alpha now has a reviewed,
@@ -85,17 +83,16 @@ companion evidence.
 
 ## Current gates
 
-The alpha implementation, independent review, merge, reproducible package,
-packed smoke, Claude installation, host discovery, installed-copy smoke, and
-installed Shannon proof are complete. PR #71 merged as
-`cce500f693df597160ae21f332ec1292dd9ee5c6`. The public release and Kepano
-reply remain the next decisions. The 64-minus and 5-comma groups remain blocked
-on missing companion evidence.
+The implementation, independent review, merge, reproducible package, public
+v0.9.2 release, exact public re-download, Claude installation, registry match,
+host discovery, installed-copy smoke, and installed Shannon proof are complete.
+PR #73 merged as `c2f2853e2362d724c6744e8a60026ad3d1974e7e`.
 
-Mat has authorized routine merge and installation. A new public release should
-still be based on the complete checks above. No public reply to Kepano has been
-sent. A reply is worthwhile only when the remaining paper-wide issue is
-honestly solved enough to help him; progress alone is not a reason to ping him.
+No public reply to Kepano has been sent yet. A concise reply may now point him
+to the public repository and v0.9.2 while honestly saying that the named paper
+is substantially improved, not universally or mathematically reconstructed.
+The 64-minus and 5-comma groups remain blocked on missing companion evidence;
+11 alpha cases intentionally abstain under the alignment rules.
 
 ## Fast recovery commands
 
