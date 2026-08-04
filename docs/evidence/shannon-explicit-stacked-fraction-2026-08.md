@@ -90,6 +90,8 @@ ten-page conversion chunk.
 
 ## Verification state
 
+- Evaluated implementation/evidence commit:
+  `a6a2f79aaeb292d9dc8f65433feaf00ca7ea3705`.
 - Focused renderer, contract, bakeoff, conversion, and extraction-oracle bank:
   134 passed, 6 intentionally skipped, zero failed.
 - Renderer-only suite: 46/46 passed, including eight negative fraction pages.
@@ -98,9 +100,16 @@ ten-page conversion chunk.
 - Transactional share contract: 40 tools, 14 prompts, 112 SBOM components,
   native raster image; SHA-256
   `33ea0d18a9bff9eb11aa0109a5c63b2169f92e6de30572c496a795091a449326`.
+- Complete clean repository suite: 1,889 passed, 80 intentionally skipped,
+  zero failed.
 
-The complete repository suite and reproducible packed-MCPB smoke must be run
-from the committed clean draft before a draft PR is opened.
+The first complete clean attempt had one timing-sensitive macOS Docling
+process-supervision assertion fail after 1,888 passes. That unrelated check
+passed immediately in isolation, and the second complete clean run passed with
+the counts above. No PDF conversion test failed in either run.
+
+Reproducible packed-MCPB and packed-copy smoke proof remains required before a
+draft PR is opened.
 
 ## Claim boundary
 
