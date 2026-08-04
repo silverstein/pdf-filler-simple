@@ -14,6 +14,10 @@ import {
 const SOURCE_SHA = "a".repeat(40);
 const ORIGIN_SHA = "b".repeat(40);
 const GENERATED_AT = "2026-07-28T12:34:56.000Z";
+const CURRENT_PACKAGE_VERSION = JSON.parse(await fs.readFile(
+  new URL("../package.json", import.meta.url),
+  "utf8",
+)).version;
 const temporaryDirectories = [];
 const ACTIVE_STATUSES = new Set(["open", "in_progress", "blocked", "deferred"]);
 
@@ -203,7 +207,7 @@ async function makeTemporaryDirectory() {
 
 async function makeReleaseEvidence({
   sourceCommit = SOURCE_SHA,
-  packageVersion = "0.8.6",
+  packageVersion = CURRENT_PACKAGE_VERSION,
   knownLimitations = [],
   mutateReceipt = null,
 } = {}) {
