@@ -1513,6 +1513,10 @@ async function nativeRenderPage(bytes, password, options) {
       );
       const buffer = canvas.toBuffer("image/png");
       return pngResult(buffer, {
+        comparison_view: {
+          raw_width_pixels: viewport.width,
+          raw_height_pixels: viewport.height,
+        },
         height: pixels.height,
         height_points: geometry.height,
         page_geometry: pageGeometry,

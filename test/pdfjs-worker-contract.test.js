@@ -5,9 +5,11 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { PDFDocument, PDFName, PDFNumber } from "pdf-lib";
 import {
   hashBoundedPdfFileSafely,
 } from "../server/bounded-pdf-file.js";
+import { diffComparisonRgba } from "../server/pdf-comparison.js";
 import {
   createPdfjsSubprocessRequest,
   runPdfjsSubprocess,
@@ -17,6 +19,7 @@ import {
   runRendererPolicy,
   runSystemCommand,
 } from "../server/pdfjs-worker.js";
+import { createTestTempDirectory } from "./helpers/temp-directory.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
@@ -256,6 +259,51 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
       expect(systemPage.renderer).toBe("macos-quicklook");
     }
   });
+
+  it("binds comparison masking to the producer's exact unrounded viewport", async () => {
+    const root = await createTestTempDirectory(REPO_ROOT, "pdfjs-comparison-view");
+    roots.push(root);
+    const pdfPath = path.join(root, "fractional-raster-boundary.pdf");
+    const pdf = await PDFDocument.create();
+    pdf.addPage([100.0000001, 50.2]);
+    const nonAssociativePage = pdf.addPage([67.32371565966767, 50]);
+    nonAssociativePage.node.set(
+      PDFName.of("UserUnit"),
+      PDFNumber.of(1.0001428571428572),
+    );
+    await fs.writeFile(pdfPath, await pdf.save());
+
+    const renderPage = async page => await run("render_comparison_page", {
+      page,
+      max_dimension_px: null,
+      renderer_policy: "native",
+      scale_override: 1.5,
+    }, null, await sourceBinding(pdfPath));
+    const roundedBoundary = await renderPage(1);
+    expect(roundedBoundary.page_view.width_points).toBe(100);
+    expect(roundedBoundary.comparison_view.raw_width_pixels).toBeGreaterThan(150);
+    expect(roundedBoundary.width).toBe(151);
+
+    const rendered = await renderPage(2);
+    expect(rendered.page_view).toMatchObject({
+      width_points: 67.333333,
+      user_unit: 1.000143,
+    });
+    expect(rendered.comparison_view.raw_width_pixels).toBe(101);
+    expect(rendered.width).toBe(101);
+    expect(rendered.width).toBe(Math.ceil(rendered.comparison_view.raw_width_pixels));
+
+    const before = { ...rendered, binary: Buffer.from(rendered.binary) };
+    const after = { ...rendered, binary: Buffer.from(rendered.binary) };
+    for (const [x, y] of [[2, 2], [9, 2]]) {
+      const offset = (y * rendered.width + x) * 4;
+      after.binary[offset] = before.binary[offset] > 127 ? 0 : 255;
+    }
+    expect(diffComparisonRgba(before, after)).toMatchObject({ raw_changed_pixels: 2 });
+    expect(diffComparisonRgba(before, after, [[0, 0, 3, 3]])).toMatchObject({
+      raw_changed_pixels: 1,
+    });
+  }, 30_000);
 
   it("runs page operators and signature text heuristics inside the worker", async () => {
     const analysis = await run("analyze_pages", { max_pages: 200 });
