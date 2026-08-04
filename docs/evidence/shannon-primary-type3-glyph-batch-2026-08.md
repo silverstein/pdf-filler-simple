@@ -92,6 +92,8 @@ each target plus two witness digests.
   across 5/6 complete groups, paragraphs 2/4, equations 4/4, footnotes 4/4,
   and one qualifying Table I topology. `TABLE I` remains duplicated.
 - Full repository suite: 1,886 passed, 79 intentionally skipped, zero failed.
+- Separate native macOS/Node safety suite: 62 passed, 9 intentionally skipped,
+  zero failed.
 - Transactional share contract: 40 tools, 14 prompts, 112 SBOM components;
   SHA-256
   `957b534b598c87555790d835f8b69fb7d40f83259ceaf119c55add79b379d4ba`.
@@ -106,6 +108,13 @@ The full suite was run in a subshell with ordinary mode-022 file creation
 because Silverbook's caller uses private mode-077 creation and one existing
 portable-symlink test explicitly expects the ordinary macOS mode. No machine
 setting was changed.
+
+The exact bundle has not yet been installed over Silverbook's currently enabled
+older PDF Toolkit build. A verified recovery backup was created at
+`/Users/silverbook/Library/Application Support/Claude/PDF Tools Host Validation Backups/20260804T141500Z-pre-pr62`,
+but Claude's app-control bridge failed to start twice before any installation
+action. Native Claude Desktop installation and chat-level use therefore remain
+an explicit human-assisted gate.
 
 This evidence does not prove general Type-3 decoding, formula reconstruction,
 OCR, full mathematical fidelity, native Claude Desktop behavior, Windows or
