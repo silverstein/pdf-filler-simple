@@ -23,11 +23,13 @@ to replace it with a newly invented benchmark.
 
 ## Verified current state
 
-- Worktree:
-  `/Users/silverbook/Sites/pdf-tools-worktrees/codex-shannon-type3-glyphs`
-- Branch: `codex/shannon-type3-glyphs`
-- Published tip before this handoff:
-  `8490db5e51a6c52babacad2a89d79a1cb9ad97cb`
+- Active worktree:
+  `/Users/silverbook/Sites/pdf-tools-worktrees/codex-shannon-type3-next`
+- Active branch: `codex/shannon-type3-next`
+- Clean implementation checkpoint:
+  `578f517c90f21c073673e6668421368374f7cf55`
+- Publication status: local only; the next stacked draft PR has not yet been
+  opened.
 - Current draft stack, reviewed from bottom to top:
   - PR #59, `Restore proven mathematical operator spacing`
   - PR #60, `Recover bounded ruled table topology`
@@ -47,17 +49,33 @@ Examples now include `−8.69`, `0.411`, `t/2`, and `ω`. All sampled heading,
 reading-order, paragraph, equation-anchor, footnote, and table-topology metrics
 remain unchanged.
 
-The clean full repository run passed 1,883 tests with 79 intentional skips and
-zero failures. The clean Shannon evaluation ran three fresh repetitions with
-byte-identical Markdown. Its report SHA-256 is
-`f6502c3312b69cf0eb997817da59a536fe56a0189f9a5d5f54453dc653bc6b69`,
+The active next tranche adds 1,021 exact recoveries from nine primary glyph
+groups: 345 periods, 315 commas, 216 minuses, 55 pi characters, 27 rho
+characters, 27 square roots, 22 greater-or-equal characters, 8 slashes, and 6
+omega characters. Production recovery now totals 1,052 exact characters from
+13 registered groups. Replacement characters fall from 831 to 511 while all
+sampled structural scores remain unchanged.
+
+The complete two-lane census observes all 4,437 Type-3 occurrences. It safely
+links 4,427 and explicitly abstains on 10 ambiguous raw-font links. Of 1,240
+officially named occurrences, 1,052 are strictly recovered and 188 remain
+visible and unchanged. In particular, 60 alpha occurrences remain unresolved
+because the source control character interfered with an existing exact
+recovery during an experiment, and a 64-occurrence minus variant lacks two
+qualified witness glyphs. Do not register either by guess.
+
+The active clean full repository run passed 1,886 tests with 79 intentional
+skips and zero failures. The clean Shannon evaluation ran three fresh
+repetitions with byte-identical Markdown. Its report SHA-256 is
+`a785b07f9638be5419319330bb9102fe53b40259e3432f528aec83d6cf95d502`,
 stored outside the repository at:
 
-`/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-type3-final-20260803-clean-7851bb4`
+`/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-primary-type3-final-20260803-clean-578f517`
 
-The final MCPB passed its packed smoke test and grew by only 23,395 bytes
-(0.032%) over PR #60. Documentation, tests, scripts, and private evaluation
-outputs are excluded from the distributable package.
+The active MCPB passed its packed smoke test and grew by only 2,075 bytes
+(approximately 0.0028%) over PR #61. First-party documentation, tests, and
+maintainer scripts, plus private evaluation outputs, are excluded from the
+distributable package.
 
 As of this handoff, PRs #60 and #61 are open, mergeable drafts with no reviewer
 comments and no GitHub checks reported. Local verification is the available
@@ -66,14 +84,15 @@ proof.
 
 ## Current decision boundary
 
-PR #61 is the current review target. Do not wander off to locate a different
-Kepano PDF. First recover the exact state above from Git and the evidence
-record, inspect the draft, and preserve its narrow safety claim.
+The active branch is the next review target and should become a draft PR stacked
+on PR #61 only after its final independent review. Do not wander off to locate
+a different Kepano PDF. First recover the exact state above from Git and the
+evidence record, inspect the draft, and preserve its narrow safety claim.
 
-The feature honestly proves four exact recoveries from a narrowly qualified
-class of legacy Computer Modern Type-3 fonts. It does not prove general Type-3
-decoding, formula reconstruction, OCR, or faithful mathematical notation
-throughout the paper.
+The stack honestly proves bounded exact recoveries from qualified legacy
+Computer Modern Type-3 glyph groups. It does not prove general Type-3 decoding,
+formula reconstruction, OCR, or faithful mathematical notation throughout the
+paper.
 
 Do not merge, release, or reply publicly to Kepano without Mat's explicit
 authorization. No Kepano reply has been sent. A reply is worthwhile only if
@@ -93,7 +112,7 @@ shasum -a 256 /Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-entr
 The focused feature checks are:
 
 ```sh
-npm test -- --run test/convert-pdf-to-markdown.test.js test/markdown-conversion.test.js test/mcp-contract.test.js test/pdfjs-worker-contract.test.js test/read-pdf-layout.test.js test/eval/markdown-bakeoff.test.js test/eval/extraction-phase1-layout-evidence.test.js
+PDF_TOOLS_SHANNON_SOURCE=/Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-entropy.pdf npm test -- --run test/shannon-type3-live.test.js test/type3-glyph-inventory.test.js test/pdfjs-worker-contract.test.js test/read-pdf-layout.test.js test/eval/extraction-phase1-layout-evidence.test.js
 ```
 
 The clean Shannon runner command is:
@@ -102,8 +121,9 @@ The clean Shannon runner command is:
 node scripts/eval-run-shannon-markdown-bakeoff.mjs --source /Users/silverbook/Sites/pdf-tools-extraction-sidecars/shannon-entropy.pdf --pdf-inspector-root /Users/silverbook/Sites/pdf-tools-extraction-sidecars/pdf-inspector-1c32e4bd691b --output-dir /absolute/new/output-directory-outside-the-repository
 ```
 
-Use a new output directory for every run. The detailed evidence record is
-`docs/evidence/shannon-qualified-type3-glyphs-2026-08.md`.
+Use a new output directory for every run. The active detailed evidence record
+is `docs/evidence/shannon-primary-type3-glyph-batch-2026-08.md`; the preceding
+record is `docs/evidence/shannon-qualified-type3-glyphs-2026-08.md`.
 
 ## Working with Mat
 
