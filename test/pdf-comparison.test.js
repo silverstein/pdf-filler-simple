@@ -26,11 +26,17 @@ function page(pageNumber, text, { width = 100, height = 100, rotation = 0 } = {}
   };
 }
 
-function render(width, height, fill = 0) {
+function render(width, height, fill = 0, requestedRegion = {
+  x: 0,
+  y: 0,
+  width: width / 1.5,
+  height: height / 1.5,
+}) {
   return {
     width,
     height,
     scale: 1.5,
+    requested_region: requestedRegion,
     binary: Buffer.alloc(width * height * 4, fill),
   };
 }
@@ -165,6 +171,79 @@ describe("PDF comparison primitives", () => {
       [0, 10, 3, 3],
     ]) {
       expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region)).toEqual(baseline);
+    }
+  });
+
+  it("rejects fractional off-page regions before applying the one-pixel mask border", () => {
+    const cases = [
+      { region: [-0.5, 1, 0.25, 1], pixel: [0, 2] },
+      { region: [8.25, 1, 0.25, 1], pixel: [11, 2] },
+      { region: [2, -0.5, 1, 0.25], pixel: [4, 0] },
+      { region: [2, 4.25, 1, 0.25], pixel: [4, 5] },
+      { region: [-0.5, -0.5, 0.25, 0.25], pixel: [0, 0] },
+      { region: [8.25, -0.5, 0.25, 0.25], pixel: [11, 0] },
+      { region: [-0.5, 4.25, 0.25, 0.25], pixel: [0, 5] },
+      { region: [8.25, 4.25, 0.25, 0.25], pixel: [11, 5] },
+    ];
+    for (const { region, pixel: [x, y] } of cases) {
+      const before = render(12, 6);
+      const after = render(12, 6);
+      after.binary[(y * 12 + x) * 4] = 20;
+      const baseline = diffComparisonRgba(before, after);
+      expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region))
+        .toEqual(baseline);
+    }
+  });
+
+  it("uses exact page points instead of rounded raster dimensions at right and bottom edges", () => {
+    const requestedRegion = { x: 0, y: 0, width: 8.1, height: 4.1 };
+    const cases = [
+      { region: [8.2, 1, 0.2, 1], pixel: [12, 3] },
+      { region: [2, 4.2, 1, 0.2], pixel: [4, 6] },
+    ];
+    for (const { region, pixel: [x, y] } of cases) {
+      const before = render(13, 7, 0, requestedRegion);
+      const after = render(13, 7, 0, requestedRegion);
+      after.binary[(y * 13 + x) * 4] = 20;
+      const baseline = diffComparisonRgba(before, after);
+      expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region))
+        .toEqual(baseline);
+    }
+  });
+
+  it("pads fractional partially intersecting regions without masking disjoint edge residuals", () => {
+    const cases = [
+      { region: [-0.25, 1, 0.5, 1], masked: [0, 2], visible: [4, 2] },
+      { region: [7.75, 1, 0.5, 1], masked: [11, 2], visible: [7, 2] },
+      { region: [2, -0.25, 1, 0.5], masked: [4, 0], visible: [4, 4] },
+      { region: [2, 3.75, 1, 0.5], masked: [4, 5], visible: [4, 1] },
+    ];
+    for (const { region, masked, visible } of cases) {
+      const before = render(12, 6);
+      const after = render(12, 6);
+      for (const [x, y] of [masked, visible]) after.binary[(y * 12 + x) * 4] = 20;
+      expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region))
+        .toMatchObject({ raw_changed_pixels: 1 });
+    }
+  });
+
+  it("ignores malformed, degenerate, and wholly off-page extreme regions", () => {
+    const before = render(12, 6);
+    const after = render(12, 6);
+    after.binary[(3 * 12 + 6) * 4] = 20;
+    const baseline = diffComparisonRgba(before, after);
+    for (const region of [
+      null,
+      [],
+      [Number.NaN, 0, 1, 1],
+      [0, Number.POSITIVE_INFINITY, 1, 1],
+      [0, 0, 0, 1],
+      [0, 0, 1, -1],
+      [Number.MAX_VALUE, 0, Number.MAX_VALUE, 1],
+      [-Number.MAX_VALUE, 0, 1, 1],
+    ]) {
+      expect(diffComparisonRgba(before, after, [region]), JSON.stringify(region))
+        .toEqual(baseline);
     }
   });
 
