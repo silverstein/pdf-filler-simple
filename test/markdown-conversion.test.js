@@ -25,14 +25,14 @@ function multiply(left, right) {
   ];
 }
 
-function textItem(text, { top, fontSize = 12, left = 50, eol = true } = {}) {
+function textItem(text, { top, fontSize = 12, left = 50, fontName = "f1", eol = true } = {}) {
   return {
     str: text,
     dir: "ltr",
     width: Math.max(20, text.length * fontSize * 0.5),
     height: fontSize,
     transform: [fontSize, 0, 0, fontSize, left, 792 - top - fontSize],
-    fontName: "f1",
+    fontName,
     hasEOL: eol,
   };
 }
@@ -364,7 +364,7 @@ describe("layout Markdown renderer", () => {
     // invocation, so any unreviewed serialized delta fails this regression.
     const serialized = JSON.stringify(pinnable);
     expect(createHash("sha256").update(serialized).digest("hex"))
-      .toBe("01182c0a1fc5e0cf112e9c1c8e00959406b67e32e4b31820cc3ad66395c50deb");
+      .toBe("cd29e33513f44fc6d7e9e48e3400a0ca236834410f34629bcf25bd27ee37ce64");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,
@@ -372,7 +372,7 @@ describe("layout Markdown renderer", () => {
     })).toBe(NON_RECT_EXPECTED);
     expect(result.renderer).toEqual({
       name: "pdf-tools.layout-markdown-renderer",
-      version: "1.10.0",
+      version: "1.11.0",
     });
     expect(result.gaps[0].message).toMatch(/beyond reconstructed ruled or bounded solid-mask table grids/);
     expect(result.limitations.some(value => value.includes("clean ruled-rectangle grid evidence"))).toBe(true);
@@ -1081,6 +1081,79 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).toMatch(/^## PART IV: THE CONTINUOUS CHANNEL$/mu);
     expect(result.markdown).toMatch(/^## APPENDIX 7$/mu);
     expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:PART I = H|INTRODUCTION = H)$/gmu);
+  });
+
+  it("recognizes left-aligned numbered research-paper sections from spacing and font contrast", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        textItem("Opening body text establishes the ordinary font", { top: 40, left: 108, fontSize: 10 }),
+        textItem("1 Introduction", { top: 80, left: 108, fontSize: 12, fontName: "f2" }),
+        textItem("First paragraph under the main section heading", { top: 105, left: 108, fontSize: 10 }),
+        textItem("More body evidence keeps the body font dominant", { top: 120, left: 108, fontSize: 10 }),
+        textItem("3.2 Attention", { top: 160, left: 108, fontSize: 10, fontName: "f2" }),
+        textItem("Body beneath the subsection continues normally", { top: 185, left: 108, fontSize: 10 }),
+        textItem("3.2.1 Scaled Dot-Product Attention", { top: 225, left: 108, fontSize: 10, fontName: "f2" }),
+        textItem("Final body line preserves the ordinary reading flow", { top: 250, left: 108, fontSize: 10 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toMatch(/^## 1 Introduction$/mu);
+    expect(result.markdown).toMatch(/^### 3\.2 Attention$/mu);
+    expect(result.markdown).toMatch(/^#### 3\.2\.1 Scaled Dot-Product Attention$/mu);
+  });
+
+  it("recognizes numbered small-caps sections without relying on a different font resource", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        textItem("Ordinary body text establishes the page font", { top: 40, left: 108, fontSize: 10 }),
+        positionedTextItem("1", { top: 80, left: 108, width: 6, fontSize: 12, fontName: "f1" }),
+        positionedTextItem("I", { top: 80, left: 126, width: 4, fontSize: 12, fontName: "f1" }),
+        positionedTextItem("NTRODUCTION", { top: 82, left: 131, width: 72, fontSize: 9.5, fontName: "f1", eol: true }),
+        textItem("First body line below the small-caps section", { top: 105, left: 108, fontSize: 10 }),
+        textItem("Second ordinary line keeps the page font dominant", { top: 120, left: 108, fontSize: 10 }),
+        textItem("Third ordinary line completes body evidence", { top: 135, left: 108, fontSize: 10 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toMatch(/^## 1 INTRODUCTION$/mu);
+  });
+
+  it("refuses numbered-heading lookalikes without every structural witness", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        textItem("Ordinary body evidence begins on this line", { top: 40, left: 108, fontSize: 10 }),
+        textItem("2 Background", { top: 55, left: 108, fontSize: 10 }),
+        textItem("Ordinary prose immediately follows without a section break", { top: 70, left: 108, fontSize: 10 }),
+        textItem("3 Model Architecture", { top: 110, left: 160, fontSize: 12, fontName: "f2" }),
+        textItem("Another ordinary line anchors the body margin", { top: 135, left: 108, fontSize: 10 }),
+        textItem("4 Results.", { top: 175, left: 108, fontSize: 12, fontName: "f2" }),
+        textItem("5 Training", { top: 215, left: 108, fontSize: 14, fontName: "f2" }),
+        textItem("Closing ordinary body evidence", { top: 240, left: 108, fontSize: 10 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:2 Background|3 Model Architecture|4 Results\.|5 Training)$/gmu);
+  });
+
+  it("does not promote narrow vertical page labels as oversized headings", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        positionedTextItem("arXiv:1706.03762v7 [cs.CL] 2 Aug 2023", {
+          top: 80, left: 16, width: 20, fontSize: 120, fontName: "f2",
+        }),
+        textItem("First body line", { top: 220, left: 108, fontSize: 10 }),
+        textItem("Second body line", { top: 240, left: 108, fontSize: 10 }),
+        textItem("Third body line", { top: 260, left: 108, fontSize: 10 }),
+        textItem("Fourth body line", { top: 280, left: 108, fontSize: 10 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toContain("arXiv:1706.03762v7 \\[cs&#46;CL\\] 2 Aug 2023");
+    expect(result.markdown).not.toMatch(/^#{1,6}\s+arXiv:/gmu);
   });
 
   it("emits at most one first-page H1 when a title and subtitle share the strongest style", async () => {
