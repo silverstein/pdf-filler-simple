@@ -260,10 +260,22 @@ export const SERIAL_RESOURCE_TEST_SUITES = Object.freeze([
       + "contention.",
   }),
   Object.freeze({
+    file: "test/mcp-contract.test.js",
+    reason: "Loads and compares both committed runtimes and exercises their MCP "
+      + "contracts; sibling-suite contention exhausted an existing five-second "
+      + "contract window that passed unchanged with an exclusive worker.",
+  }),
+  Object.freeze({
     file: "test/pdfjs-worker-contract.test.js",
     reason: "Exercises PDF.js worker lifecycle and process teardown; sibling-"
       + "suite contention exhausted its existing five-second contract windows, "
       + "while the unchanged suite passed with an exclusive worker.",
+  }),
+  Object.freeze({
+    file: "test/read-pdf-layout.test.js",
+    reason: "Exercises repeated real PDF.js layout, geometry, and encrypted-PDF "
+      + "MCP paths; sibling-suite contention exhausted three existing five-"
+      + "second windows that passed unchanged with an exclusive worker.",
   }),
 ]);
 

@@ -580,7 +580,9 @@ describe("aggregate test-runner contract", () => {
       "test/eval/extraction-phase1-publisher.test.js",
       "test/eval/extraction-phase1-scorer.test.js",
       "test/fuzz-malformed-pdfs.test.js",
+      "test/mcp-contract.test.js",
       "test/pdfjs-worker-contract.test.js",
+      "test/read-pdf-layout.test.js",
     ]);
     expect(SERIAL_RESOURCE_TEST_SUITES.every(suite =>
       Object.isFrozen(suite) && suite.reason.length > 0)).toBe(true);
