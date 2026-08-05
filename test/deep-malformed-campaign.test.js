@@ -143,6 +143,9 @@ describe(`deep malformed campaign (${SCALE} scale)`, () => {
     expect(new Set(fixtures.map(f => f.bytes.toString("latin1"))).size).toBe(fixtures.length);
   });
 
+  // This is an identity proof, not a latency assertion. Rebuilding every
+  // compressed fixture can exceed Vitest's generic 5-second timeout when the
+  // ordinary project is exercising several process-heavy files in parallel.
   it("keeps targeted supervised-row generation identical to the campaign corpus", () => {
     expect(fixtures.map(fixture => fixture.name)).toEqual(DEEP_FIXTURE_NAMES);
     for (const fixture of fixtures) {
@@ -155,7 +158,7 @@ describe(`deep malformed campaign (${SCALE} scale)`, () => {
       expect(targeted.note).toBe(fixture.note);
       expect(targeted.bytes).toEqual(fixture.bytes);
     }
-  });
+  }, 30_000);
 
   it("keeps every deep fixture small enough to pass the input size limits", () => {
     // The whole premise: these are cheap to accept and expensive to honor, so

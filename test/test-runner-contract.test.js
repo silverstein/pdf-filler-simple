@@ -546,10 +546,9 @@ describe("aggregate test-runner contract", () => {
       maxWorkers: 1,
       sequence: { groupOrder: 1 },
     });
-    // The native supervisor suite races real process lifetimes against the
-    // supervisor's sealed 20ms sampling-revalidation budget, so it must have
-    // the host to itself: exclusive worker, no file parallelism, and the last
-    // group so no sibling project runs beside it.
+    // Resource-sensitive native and embedded-host suites must have the host to
+    // themselves: exclusive worker, no file parallelism, and the last group so
+    // no sibling project runs beside them.
     expect(byName.get("serial-native")).toMatchObject({
       include: SERIAL_NATIVE_TEST_FILES,
       pool: "forks",

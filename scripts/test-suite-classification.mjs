@@ -225,6 +225,13 @@ export const SOURCE_IDENTITY_TEST_FILES = Object.freeze(
 
 export const SERIAL_NATIVE_TEST_SUITES = Object.freeze([
   Object.freeze({
+    file: "test/pdfjs-subprocess-boundary.test.js",
+    reason: "Exercises the embedded Electron worker boundary and real macOS "
+      + "system renderer inside bounded test windows; sibling-worker load can "
+      + "delay those operations past Vitest's generic timeout and leave the "
+      + "shared in-process queue occupied for following assertions.",
+  }),
+  Object.freeze({
     file: "test/eval/docling-macos-supervisor.test.js",
     reason: "Races real process lifetimes against the supervisor's sealed 20ms "
       + "sampling-revalidation budget; sibling-worker scheduler starvation can "

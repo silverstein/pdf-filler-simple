@@ -204,7 +204,10 @@ export function makeDeepMalformedFixtures({ scale = "full", only = null } = {}) 
     throw new Error("Unknown deep malformed fixture name");
   }
   const wanted = name => only === null || only === name;
-  const deepDepth = scale === "quick" ? 2_000 : 50_000;
+  // Keep the quick arm above the product's 256-level limit but below the
+  // dependency parser's opaque-object fallback, so it exercises our guard
+  // instead of being discarded as an unreachable invalid object.
+  const deepDepth = scale === "quick" ? 1_000 : 50_000;
   const pageTreeDepth = scale === "quick" ? 500 : 5_000;
   const inflateBytes = scale === "quick" ? 4 << 20 : 512 << 20;
   const nestedDepth = scale === "quick" ? 4 : 12;
