@@ -134,6 +134,9 @@ lines from Adam's chart-heavy page 7 and three false H1 diagram labels from
 Attention pages 13 through 15. It preserves both true titles and the complete
 39/39 numbered-heading result. Shannon remains byte-identical with unchanged
 sampled quality.
+Exact compatibility repair tip `bec9fb4683aca1384391e7d8b3b43aaa7eef326d`
+preserves a true first-page `CONTENTS` title after the full-suite regression
+check without weakening the chart-label guard.
 
 The detailed evidence is
 `docs/evidence/general-numbered-research-headings-2026-08.md`. This is a
