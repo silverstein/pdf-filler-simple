@@ -1196,6 +1196,21 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:Input-Input|Figure 2:|Ordinary prose|Another full|The final)/gmu);
   });
 
+  it("preserves an exact centered first-page contents title", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        centeredTextItem("CONTENTS", { top: 50, fontSize: 18 }),
+        textItem("Preface ... ii", { top: 90, left: 108, fontSize: 10 }),
+        textItem("Chapter 1: Scope ... 1", { top: 110, left: 108, fontSize: 10 }),
+        textItem("Chapter 2: Inputs ... 7", { top: 130, left: 108, fontSize: 10 }),
+        textItem("Chapter 3: Methods ... 12", { top: 150, left: 108, fontSize: 10 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toMatch(/^# CONTENTS$/mu);
+  });
+
   it("emits at most one first-page H1 when a title and subtitle share the strongest style", async () => {
     const layout = await validatedSyntheticLayout([{
       items: [

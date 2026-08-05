@@ -312,8 +312,9 @@ function numberedSectionHeadingLevel(page, evidence, index, bodyHeight, bodyFont
 function structuralHeadingLevel(page, evidence, index, bodyHeight) {
   const line = evidence[index].line;
   const text = line.text.trim();
-  if (!headingTextEligible(text) || !lineIsCentered(page, line)
-    || !hasSectionBreakBefore(page, evidence, index, bodyHeight)) return null;
+  if (page.page === 1 && text === "CONTENTS" && headingTextEligible(text)) return 1;
+  if (!headingTextEligible(text) || !lineIsCentered(page, line)) return null;
+  if (!hasSectionBreakBefore(page, evidence, index, bodyHeight)) return null;
   if (page.page === 1 && text === "INTRODUCTION") return 2;
   if (/^PART\s+[IVXLCDM]+:\s+.+$/u.test(text) && text === text.toLocaleUpperCase("en-US")) return 2;
   if (/^APPENDIX\s+(?:\d+|[IVXLCDM]+)$/u.test(text)) return 2;
