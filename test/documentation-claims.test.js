@@ -10,7 +10,7 @@ const CURRENT_PRODUCT_SURFACES = [
   "AGENTS.md",
   "docs/MAINTAINERS.md",
   "docs/SUPPORT.md",
-  "docs/releases/v0.9.4.md",
+  "docs/releases/v0.9.5.md",
   "pdf-toolkit-mcp-share/README.md",
   "manifest.json",
   "manifest.mcpb.json",
@@ -149,7 +149,7 @@ describe("documentation capability claims", () => {
       }
     }
 
-    expect(CURRENT_PRODUCT_SURFACES).toContain("docs/releases/v0.9.4.md");
+    expect(CURRENT_PRODUCT_SURFACES).toContain("docs/releases/v0.9.5.md");
     expect(CURRENT_PRODUCT_SURFACES.some(relativePath => /evaluation/i.test(relativePath))).toBe(false);
 
     for (const relativePath of ["package.json", "pdf-toolkit-mcp-share/package.json"]) {
