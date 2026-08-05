@@ -48,12 +48,10 @@ export default defineConfig(({ command, mode }) => ({
       {
         extends: true,
         test: {
-          // The native supervisor suite races real process lifetimes against
-          // the supervisor's sealed 20ms sampling-revalidation budget, so its
-          // observation windows cannot be widened in the tests alone. It runs
-          // serialized after the parallel group, with the host to itself, so
-          // scheduler starvation from sibling workers cannot delay the first
-          // sample past a candidate child's lifetime.
+          // Resource-sensitive host suites run after the parallel group with
+          // an exclusive worker. This keeps sibling load from starving the
+          // native supervisor's sealed sampling window or the embedded-host
+          // PDF.js worker and system-renderer boundaries.
           name: "serial-native",
           root: ".",
           include: SERIAL_NATIVE_TEST_FILES,
