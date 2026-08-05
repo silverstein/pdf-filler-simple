@@ -1,0 +1,210 @@
+import path from "node:path";
+import { describe, expect, it } from "vitest";
+import { hashBoundedPdfFileSafely } from "../server/bounded-pdf-file.js";
+import { renderPdfLayoutToMarkdown } from "../server/markdown-conversion.js";
+import {
+  createPdfjsSubprocessRequest,
+  runPdfjsSubprocess,
+} from "../server/pdfjs-subprocess.js";
+
+const ATTENTION_SOURCE = process.env.PDF_TOOLS_ATTENTION_SOURCE;
+const ADAM_SOURCE = process.env.PDF_TOOLS_ADAM_SOURCE;
+const BERT_SOURCE = process.env.PDF_TOOLS_BERT_SOURCE;
+
+async function renderExternalPdf(sourcePath, expectedSha256, pageCount = 15) {
+  const sourceFile = await hashBoundedPdfFileSafely(sourcePath, 250 * 1024 * 1024, {
+    assertPathAllowed: candidate => candidate,
+  });
+  expect(sourceFile.sha256).toBe(expectedSha256);
+  const source = {
+    canonical_path: sourceFile.canonicalPath,
+    file_identity: sourceFile.fileIdentity,
+    sha256: sourceFile.sha256,
+    size_bytes: sourceFile.sizeBytes,
+  };
+  const markdown = [];
+  for (let startPage = 1; startPage <= pageCount; startPage += 5) {
+    const endPage = Math.min(pageCount, startPage + 4);
+    const response = await runPdfjsSubprocess(createPdfjsSubprocessRequest({
+      operation: "extract_layout_for_markdown",
+      source,
+      password: null,
+      allowedDirectories: [path.dirname(sourcePath)],
+      options: {
+        source_path: sourcePath,
+        source_file_name: path.basename(sourcePath),
+        start_page: startPage,
+        end_page: endPage,
+        max_items: 5000,
+        max_characters: 100_000,
+        max_output_characters: 200_000,
+      },
+    }), { timeoutMs: 30_000 });
+    markdown.push(renderPdfLayoutToMarkdown(response.layout, {
+      includePageBoundaries: true,
+      maxMarkdownBytes: 200_000,
+    }).markdown);
+  }
+  return markdown.join("\n\n");
+}
+
+function numberedHeadings(markdown) {
+  return [...markdown.matchAll(/^#{2,4}\s+(\d{1,3}(?:\.\d{1,3}){0,2}\s+.+)$/gmu)]
+    .map(match => match[1]);
+}
+
+function contentHeadings(markdown) {
+  return [...markdown.matchAll(/^(#{1,6})\s+(.+)$/gmu)]
+    .map(match => `${match[1]} ${match[2]}`)
+    .filter(heading => heading !== "## Conversion gaps" && heading !== "## Conversion limitations");
+}
+
+describe("external numbered research-paper headings", () => {
+  it.runIf(Boolean(ATTENTION_SOURCE))("recovers the complete numbered hierarchy in Attention Is All You Need", async () => {
+    const markdown = await renderExternalPdf(
+      ATTENTION_SOURCE,
+      "bdfaa68d8984f0dc02beaca527b76f207d99b666d31d1da728ee0728182df697",
+    );
+    expect(numberedHeadings(markdown)).toEqual([
+      "1 Introduction",
+      "2 Background",
+      "3 Model Architecture",
+      "3.1 Encoder and Decoder Stacks",
+      "3.2 Attention",
+      "3.2.1 Scaled Dot-Product Attention",
+      "3.2.2 Multi-Head Attention",
+      "3.2.3 Applications of Attention in our Model",
+      "3.3 Position-wise Feed-Forward Networks",
+      "3.4 Embeddings and Softmax",
+      "3.5 Positional Encoding",
+      "4 Why Self-Attention",
+      "5 Training",
+      "5.1 Training Data and Batching",
+      "5.2 Hardware and Schedule",
+      "5.3 Optimizer",
+      "5.4 Regularization",
+      "6 Results",
+      "6.1 Machine Translation",
+      "6.2 Model Variations",
+      "6.3 English Constituency Parsing",
+      "7 Conclusion",
+    ]);
+    expect(markdown).toMatch(/^# Attention Is All You Need$/mu);
+    expect(markdown).not.toMatch(/^#{1,6}\s+arXiv:/gmu);
+    expect(contentHeadings(markdown)).toEqual([
+      "# Attention Is All You Need",
+      "## 1 Introduction",
+      "## 2 Background",
+      "## 3 Model Architecture",
+      "### 3.1 Encoder and Decoder Stacks",
+      "### 3.2 Attention",
+      "#### 3.2.1 Scaled Dot-Product Attention",
+      "#### 3.2.2 Multi-Head Attention",
+      "#### 3.2.3 Applications of Attention in our Model",
+      "### 3.3 Position-wise Feed-Forward Networks",
+      "### 3.4 Embeddings and Softmax",
+      "### 3.5 Positional Encoding",
+      "## 4 Why Self-Attention",
+      "## 5 Training",
+      "### 5.1 Training Data and Batching",
+      "### 5.2 Hardware and Schedule",
+      "### 5.3 Optimizer",
+      "### 5.4 Regularization",
+      "## 6 Results",
+      "### 6.1 Machine Translation",
+      "### 6.2 Model Variations",
+      "### 6.3 English Constituency Parsing",
+      "## 7 Conclusion",
+    ]);
+  }, 60_000);
+
+  it.runIf(Boolean(ADAM_SOURCE))("recovers only the currently proven Adam small-caps main sections", async () => {
+    const markdown = await renderExternalPdf(
+      ADAM_SOURCE,
+      "eab9c73ae2ceda884b94830bda99312254bac4806f6c9f045cbab90721ecda31",
+    );
+    expect(numberedHeadings(markdown)).toEqual([
+      "1 INTRODUCTION",
+      "2 ALGORITHM",
+      "2.1 ADAM’S UPDATE RULE",
+      "3 INITIALIZATION BIAS CORRECTION",
+      "4 CONVERGENCE ANALYSIS",
+      "5 RELATED WORK",
+      "6 EXPERIMENTS",
+      "6.1 EXPERIMENT: LOGISTIC REGRESSION",
+      "6.2 EXPERIMENT: MULTI-LAYER NEURAL NETWORKS",
+      "6.3 EXPERIMENT: CONVOLUTIONAL NEURAL NETWORKS",
+      "6.4 EXPERIMENT: BIAS-CORRECTION TERM",
+      "7 EXTENSIONS",
+      "7.1 ADAMAX",
+      "7.2 TEMPORAL AVERAGING",
+      "8 CONCLUSION",
+      "10 APPENDIX",
+      "10.1 CONVERGENCE PROOF",
+    ]);
+    expect(markdown).not.toMatch(/^#{1,6}\s+arXiv:/gmu);
+    expect(contentHeadings(markdown)).toEqual([
+      "# ADAM: A METHOD FOR STOCHASTIC OPTIMIZATION",
+      "## 1 INTRODUCTION",
+      "## 2 ALGORITHM",
+      "### 2.1 ADAM’S UPDATE RULE",
+      "## 3 INITIALIZATION BIAS CORRECTION",
+      "## 4 CONVERGENCE ANALYSIS",
+      "## 5 RELATED WORK",
+      "## 6 EXPERIMENTS",
+      "### 6.1 EXPERIMENT: LOGISTIC REGRESSION",
+      "### 6.2 EXPERIMENT: MULTI-LAYER NEURAL NETWORKS",
+      "### 6.3 EXPERIMENT: CONVOLUTIONAL NEURAL NETWORKS",
+      "### 6.4 EXPERIMENT: BIAS-CORRECTION TERM",
+      "## 7 EXTENSIONS",
+      "### 7.1 ADAMAX",
+      "### 7.2 TEMPORAL AVERAGING",
+      "## 8 CONCLUSION",
+      "## 10 APPENDIX",
+      "### 10.1 CONVERGENCE PROOF",
+    ]);
+  }, 60_000);
+
+  it.runIf(Boolean(BERT_SOURCE))("recovers the complete BERT hierarchy across both columns and its appendices", async () => {
+    const markdown = await renderExternalPdf(
+      BERT_SOURCE,
+      "5692a5514787a8c6727b4ff3b726a3385798bc68e12138d1d4af83947e2acf6e",
+      16,
+    );
+    expect(contentHeadings(markdown)).toEqual([
+      "# BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding",
+      "## 1 Introduction",
+      "## 2 Related Work",
+      "### 2.1 Unsupervised Feature-based Approaches",
+      "### 2.2 Unsupervised Fine-tuning Approaches",
+      "### 2.3 Transfer Learning from Supervised Data",
+      "## 3 BERT",
+      "### 3.1 Pre-training BERT",
+      "### 3.2 Fine-tuning BERT",
+      "## 4 Experiments",
+      "### 4.1 GLUE",
+      "### 4.2 SQuAD v1.1",
+      "### 4.3 SQuAD v2.0",
+      "### 4.4 SWAG",
+      "## 5 Ablation Studies",
+      "### 5.1 Effect of Pre-training Tasks",
+      "### 5.2 Effect of Model Size",
+      "### 5.3 Feature-based Approach with BERT",
+      "## 6 Conclusion",
+      "## Appendix for “BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding”",
+      "## A Additional Details for BERT",
+      "### A.1 Illustration of the Pre-training Tasks",
+      "### A.2 Pre-training Procedure",
+      "### A.3 Fine-tuning Procedure",
+      "### A.4 Comparison of BERT, ELMo ,and OpenAI GPT",
+      "### A.5 Illustrations of Fine-tuning on Different Tasks",
+      "## B Detailed Experimental Setup",
+      "### B.1 Detailed Descriptions for the GLUE Benchmark Experiments.",
+      "## C Additional Ablation Studies",
+      "### C.1 Effect of Number of Training Steps",
+      "### C.2 Ablation for Different Masking Procedures",
+    ]);
+    expect(markdown).not.toMatch(/^#{1,6}\s+(?:arXiv:|Figure\s|Table\s|Next Sentence Prediction|No NSP:)/gmu);
+    expect(markdown).not.toContain("\uFFFD");
+  }, 60_000);
+});

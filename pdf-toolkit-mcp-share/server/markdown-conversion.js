@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.10.0",
+  version: "1.14.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.4.0";
 
@@ -69,7 +69,7 @@ const GAP_CODES = new Set([
 ]);
 
 const LIMITATIONS = Object.freeze([
-  "Headings are emitted only from consistent enlarged font metrics or centered English-language source structure with section spacing for a first-page title, introduction, part, or appendix. Ambiguous, very short, or unsupported heading styles remain body text.",
+  "Headings are emitted only from consistent enlarged font metrics, centered English-language source structure with section spacing, or numbered or lettered research-paper structure at an established body margin with spacing plus font, size, or exact small-caps evidence. Wrapped heading lines are joined only from matching font and height, a very small vertical gap, and bounded alignment. Narrow vertical labels and ambiguous, very short, or unsupported heading styles remain body text.",
   "A geometrically overlapping initial capital may be joined to its following uppercase word remainder. Line-end hyphens are preserved because source geometry cannot reliably distinguish a split word from an intentional compound. The source Extraction IR retains the original lines.",
   "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different source font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. A missing prose-to-variable space is restored only when a multiword prose item, a separate uppercase letter from a different source font resource, and continuing prose from the original prose font share one baseline with distinct positive boundary gaps, and the same letter/font pair occurs in a nearby compact equation on the same page and column. An inline single-digit stacked fraction is rendered only when consecutive same-font source items, explicit source whitespace, smaller exactly aligned numerator and denominator digits, ordinary prose on both sides, and exactly one thin matching solid-mask bar agree. A small version-pinned registry may recover a legacy Computer Modern Type-3 character only after an exact official-metric family match, exact target and two-witness glyph-program matches, and a complete operator/text sequence binding. General equations, scripts, other fraction bars, unregistered raster variants, and other damaged mathematical glyphs remain source reading-order text rather than being guessed.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
@@ -181,6 +181,7 @@ function lineFontEvidence(page) {
       consistentHeight: heights.length > 0
         && Math.max(...heights) - Math.min(...heights) <= Math.max(0.5, median(heights) * 0.1),
       consistentFont: fontNames.size === 1 && !fontNames.has(null),
+      fontName: fontNames.size === 1 ? [...fontNames][0] : null,
     };
   });
 }
@@ -194,7 +195,7 @@ function headingTextEligible(value) {
 }
 
 function titleCaseHeading(value) {
-  const words = String(value).trim().match(/[\p{L}\p{N}]+/gu) ?? [];
+  const words = String(value).trim().match(/[\p{L}\p{N}]+(?:-[\p{L}\p{N}]+)*/gu) ?? [];
   if (words.length < 3 || words.length > 15) return false;
   const minorWords = new Set(["a", "an", "and", "as", "at", "by", "for", "in", "of", "on", "or", "the", "to"]);
   return words.every((word, index) => {
@@ -223,11 +224,158 @@ function hasSectionBreakBefore(page, evidence, index, bodyHeight) {
   return gap >= Math.max(line.height, bodyHeight) * 1.15;
 }
 
+function hasNumberedSectionBreakBefore(page, evidence, index, bodyHeight) {
+  const line = evidence[index].line;
+  if (index === 0) {
+    return Number.isFinite(page.geometry?.display_height)
+      && line.y >= page.geometry.display_height * 0.07;
+  }
+  const previous = evidence[index - 1].line;
+  const gap = line.y - (previous.y + previous.height);
+  return gap >= Math.max(line.height, bodyHeight) * 0.8;
+}
+
+function dominantBodyFont(page, bodyHeight) {
+  const weights = new Map();
+  for (const item of page.raw_items) {
+    if (item.is_whitespace || !Number.isFinite(item.line_height)
+      || Math.abs(item.line_height - bodyHeight) > bodyHeight * 0.1
+      || typeof item.font_name !== "string") continue;
+    const weight = (item.text.match(/[\p{L}\p{N}]/gu) ?? []).length;
+    if (weight > 0) weights.set(item.font_name, (weights.get(item.font_name) ?? 0) + weight);
+  }
+  return [...weights.entries()].sort((left, right) => right[1] - left[1] || left[0].localeCompare(right[0]))[0]?.[0] ?? null;
+}
+
+function bodyLeftAligned(evidence, bodyHeight, line) {
+  const bodyLines = evidence.filter(({ line, height }) => (
+    Number.isFinite(height)
+    && Math.abs(height - bodyHeight) <= bodyHeight * 0.1
+    && line.text.trim().length >= 20
+  )).map(({ line }) => line.x).filter(Number.isFinite);
+  return Number.isFinite(line.x)
+    && bodyLines.filter(x => Math.abs(x - line.x) <= Math.max(4, bodyHeight)).length >= 3;
+}
+
+function lineIsBodyColumnCentered(page, evidence, bodyHeight, line) {
+  const pageWidth = page.geometry?.display_width;
+  if (!Number.isFinite(pageWidth)) return false;
+  const lineCenter = line.x + line.width / 2;
+  const sameHalf = candidate => (candidate.x + candidate.width / 2 < pageWidth / 2)
+    === (lineCenter < pageWidth / 2);
+  const prose = evidence.filter(({ line: candidate, height }) => (
+    Number.isFinite(height)
+    && Math.abs(height - bodyHeight) <= bodyHeight * 0.1
+    && candidate.width >= pageWidth * 0.25
+    && (candidate.text.match(/[\p{L}\p{N}]/gu) ?? []).length >= 20
+    && sameHalf(candidate)
+  )).map(({ line: candidate }) => candidate);
+  if (prose.length < 3) return false;
+  const columnCenter = (median(prose.map(candidate => candidate.x))
+    + median(prose.map(candidate => candidate.x + candidate.width))) / 2;
+  return Math.abs(lineCenter - columnCenter) <= Math.max(4, line.height);
+}
+
+function pageBodyHeight(page, evidence) {
+  const heights = evidence.map(value => value.height).filter(Number.isFinite);
+  const pageWidth = page.geometry?.display_width;
+  if (!Number.isFinite(pageWidth)) return median(heights);
+  const proseHeights = evidence.filter(({ line, height }) => (
+    Number.isFinite(height)
+    && line.width >= pageWidth * 0.25
+    && (line.text.match(/[\p{L}\p{N}]/gu) ?? []).length >= 20
+  )).map(value => value.height);
+  return proseHeights.length >= 3 ? median(proseHeights) : median(heights);
+}
+
+function hasBodyTextAfter(page, evidence, index, bodyHeight) {
+  const next = evidence[index + 1];
+  if (!next || !Number.isFinite(page.geometry?.display_width) || !Number.isFinite(next.height)) return false;
+  const gap = next.line.y - (evidence[index].line.y + evidence[index].line.height);
+  return next.height >= bodyHeight * 0.9
+    && next.height <= bodyHeight * 1.1
+    && (next.line.text.match(/[\p{L}\p{N}]/gu) ?? []).length >= 10
+    && gap >= 0
+    && gap <= bodyHeight * 8;
+}
+
+function smallCapsNumberedHeadingEvidence(page, line, bodyHeight, headingWords) {
+  if (headingWords !== headingWords.toLocaleUpperCase("en-US")) return false;
+  const itemById = new Map(page.raw_items.map(item => [item.id, item]));
+  const items = line.item_ids.map(id => itemById.get(id)).filter(item => item && !item.is_whitespace);
+  const heights = items.map(item => item.line_height).filter(Number.isFinite);
+  const fontNames = new Set(items.map(item => item.font_name));
+  if (heights.length < 3 || fontNames.size !== 1 || fontNames.has(null)) return false;
+  const minimum = Math.min(...heights);
+  const maximum = Math.max(...heights);
+  const enlargedInitials = minimum >= bodyHeight * 0.9
+    && minimum <= bodyHeight * 1.05
+    && maximum >= bodyHeight * 1.15
+    && maximum <= bodyHeight * 1.3
+    && maximum / minimum >= 1.15;
+  const bodySizedInitials = minimum >= bodyHeight * 0.75
+    && minimum <= bodyHeight * 0.85
+    && maximum >= bodyHeight * 0.95
+    && maximum <= bodyHeight * 1.05
+    && maximum / minimum >= 1.2
+    && maximum / minimum <= 1.3;
+  return enlargedInitials || bodySizedInitials;
+}
+
+function numberedSectionHeadingLevel(page, evidence, index, bodyHeight, bodyFontName) {
+  const { line, height, consistentHeight, consistentFont, fontName } = evidence[index];
+  const text = line.text.trim();
+  const match = text.match(/^(?:(\d{1,3})(?:\.(\d{1,3}))?(?:\.(\d{1,3}))?|([A-Z])(?:\.(\d{1,3}))?)\s+([\p{Lu}][^\n]{1,100})$/u);
+  const pageWidth = page.geometry?.display_width;
+  const contrastingFontEvidence = consistentHeight && consistentFont && fontName && fontName !== bodyFontName
+    && Number.isFinite(height) && height >= bodyHeight * 0.95 && height <= bodyHeight * 1.35;
+  const enlargedTextEvidence = consistentHeight && consistentFont
+    && Number.isFinite(height) && height >= bodyHeight * 1.08 && height <= bodyHeight * 1.35;
+  const smallCapsEvidence = match
+    ? smallCapsNumberedHeadingEvidence(page, line, bodyHeight, match[6])
+    : false;
+  if (!match || !headingTextEligible(text) || /[.!?;:]$/u.test(text)
+    || (!contrastingFontEvidence && !enlargedTextEvidence && !smallCapsEvidence)
+    || !Number.isFinite(pageWidth) || line.width < line.height * 2 || line.width > pageWidth * 0.7
+    || !bodyLeftAligned(evidence, bodyHeight, line)
+    || !hasNumberedSectionBreakBefore(page, evidence, index, bodyHeight)) return null;
+  if (match[4] !== undefined) return match[5] === undefined ? 2 : 3;
+  return match[3] === undefined ? (match[2] === undefined ? 2 : 3) : 4;
+}
+
+function wrappedResearchTitleLevel(page, evidence, index, bodyHeight, bodyFontName) {
+  const first = evidence[index];
+  if (!first.consistentHeight || !first.consistentFont || !first.fontName
+    || !Number.isFinite(first.height)
+    || first.height < bodyHeight * 1.08 || first.height > bodyHeight * 1.35
+    || (first.fontName === bodyFontName && first.height < bodyHeight * 1.15)
+    || !lineIsBodyColumnCentered(page, evidence, bodyHeight, first.line)
+    || !hasSectionBreakBefore(page, evidence, index, bodyHeight)
+    || /^(?:Figure|Table|Algorithm)\b/iu.test(first.line.text.trim())) return null;
+  let end = index;
+  while (end < evidence.length - 1 && end - index < 2) {
+    const current = evidence[end];
+    const next = evidence[end + 1];
+    const gap = next.line.y - (current.line.y + current.line.height);
+    if (!next.consistentHeight || !next.consistentFont
+      || next.fontName !== first.fontName
+      || !Number.isFinite(next.height)
+      || Math.abs(next.height - first.height) > first.height * 0.05
+      || gap < 0 || gap > Math.max(4, bodyHeight * 0.5)
+      || !lineIsBodyColumnCentered(page, evidence, bodyHeight, next.line)) break;
+    end += 1;
+  }
+  if (end === index || !hasBodyTextAfter(page, evidence, end, bodyHeight)) return null;
+  const text = evidence.slice(index, end + 1).map(item => item.line.text.trim()).join(" ");
+  return headingTextEligible(text) && titleCaseHeading(text) ? 2 : null;
+}
+
 function structuralHeadingLevel(page, evidence, index, bodyHeight) {
   const line = evidence[index].line;
   const text = line.text.trim();
-  if (!headingTextEligible(text) || !lineIsCentered(page, line)
-    || !hasSectionBreakBefore(page, evidence, index, bodyHeight)) return null;
+  if (page.page === 1 && text === "CONTENTS" && headingTextEligible(text)) return 1;
+  if (!headingTextEligible(text) || !lineIsCentered(page, line)) return null;
+  if (!hasSectionBreakBefore(page, evidence, index, bodyHeight)) return null;
   if (page.page === 1 && text === "INTRODUCTION") return 2;
   if (/^PART\s+[IVXLCDM]+:\s+.+$/u.test(text) && text === text.toLocaleUpperCase("en-US")) return 2;
   if (/^APPENDIX\s+(?:\d+|[IVXLCDM]+)$/u.test(text)) return 2;
@@ -239,11 +387,20 @@ function structuralHeadingLevels(page, evidence, bodyHeight) {
     const level = structuralHeadingLevel(page, evidence, index, bodyHeight);
     return level === null ? [] : [[line.id, level]];
   }));
+  const bodyFontName = dominantBodyFont(page, bodyHeight);
+  for (let index = 0; index < evidence.length; index += 1) {
+    const level = numberedSectionHeadingLevel(page, evidence, index, bodyHeight, bodyFontName);
+    if (level !== null) structural.set(evidence[index].line.id, level);
+    const wrappedLevel = wrappedResearchTitleLevel(page, evidence, index, bodyHeight, bodyFontName);
+    if (wrappedLevel !== null) structural.set(evidence[index].line.id, wrappedLevel);
+  }
   if (page.page !== 1) return structural;
-  const titleCandidates = evidence.slice(0, 3).filter(({ line, height }) => (
+  const titleCandidates = evidence.filter(({ line, height }) => (
     headingTextEligible(line.text)
     && titleCaseHeading(line.text)
     && lineIsCentered(page, line)
+    && Number.isFinite(page.geometry?.display_height)
+    && line.y <= page.geometry.display_height * 0.35
     && Number.isFinite(height)
     && height >= bodyHeight * 1.2
   ));
@@ -261,17 +418,20 @@ function headingLevels(page) {
   const evidence = lineFontEvidence(page);
   const heights = evidence.map(value => value.height).filter(Number.isFinite);
   if (heights.length < 4) return new Map();
-  const bodyHeight = median(heights);
+  const bodyHeight = pageBodyHeight(page, evidence);
   const structural = structuralHeadingLevels(page, evidence, bodyHeight);
   const bodyEvidence = heights.filter(height => Math.abs(height - bodyHeight) <= bodyHeight * 0.1);
   if (bodyEvidence.length < 3) return structural;
-  const candidates = evidence.filter(({ line, height, consistentHeight, consistentFont }) => (
+  const candidates = evidence.filter(({ line, height, consistentHeight, consistentFont }, index) => (
     consistentHeight
       && consistentFont
       && height >= bodyHeight * 1.5
       && line.text.length > 0
       && line.text.length <= 120
       && headingTextEligible(line.text)
+      && hasBodyTextAfter(page, evidence, index, bodyHeight)
+      && line.width >= line.height * 2
+      && height <= bodyHeight * 4
       && !/[.!?;]$/u.test(line.text)
       && !/^\s*(?:[\u2022\u2023\u25e6\u2043\u2219]|\d{1,3}[.)])\s+/u.test(line.text)
   ));
@@ -286,6 +446,31 @@ function headingLevels(page) {
     }
   }
   return combined;
+}
+
+function headingContinuationIds(page, headings) {
+  const evidence = lineFontEvidence(page);
+  const bodyHeight = pageBodyHeight(page, evidence);
+  const continuations = new Set();
+  for (let index = 0; index < evidence.length - 1; index += 1) {
+    const current = evidence[index];
+    const next = evidence[index + 1];
+    if ((!headings.has(current.line.id) && !continuations.has(current.line.id)) || headings.has(next.line.id)
+      || !current.consistentHeight || !next.consistentHeight
+      || !current.consistentFont || !next.consistentFont
+      || current.fontName !== next.fontName
+      || !Number.isFinite(current.height) || !Number.isFinite(next.height)
+      || Math.abs(current.height - next.height) > current.height * 0.05
+      || !headingTextEligible(next.line.text)) continue;
+    const gap = next.line.y - (current.line.y + current.line.height);
+    const aligned = (next.line.x >= current.line.x - Math.max(4, bodyHeight * 0.25)
+        && next.line.x - current.line.x <= bodyHeight * 3)
+      || (lineIsCentered(page, current.line) && lineIsCentered(page, next.line));
+    if (gap >= 0 && gap <= Math.max(4, bodyHeight * 0.5) && aligned) {
+      continuations.add(next.line.id);
+    }
+  }
+  return continuations;
 }
 
 /**
@@ -1937,12 +2122,30 @@ function joinParagraphContinuity(records) {
   return joined;
 }
 
+function joinHeadingContinuations(records) {
+  const joined = [];
+  for (const record of records) {
+    const previous = joined[joined.length - 1];
+    if (record.headingContinuation && previous?.headingLevel) {
+      joined[joined.length - 1] = {
+        ...previous,
+        text: `${previous.text} ${record.text}`,
+        sourceText: `${previous.sourceText} ${record.sourceText}`,
+      };
+    } else {
+      joined.push(record);
+    }
+  }
+  return joined;
+}
+
 function renderPage(page, {
   compact = false,
   pageBoundaryBefore = false,
   pageBoundaryAfter = false,
 } = {}) {
   const headings = headingLevels(page);
+  const headingContinuations = headingContinuationIds(page, headings);
   const analysis = segmentPageLines(page);
   const linkState = analyzePageLinks(page, analysis, headings);
   const unsafePage = analysis.tableReason !== null
@@ -1968,7 +2171,8 @@ function renderPage(page, {
         if (fractionPlan.skipped.has(line.id)) return [];
         const spans = linkState.spansByLine.get(line.id);
         const offsets = linkState.offsetsByLine.get(line.id);
-        if (spans && spans.length > 0 && offsets && !headings.get(line.id)) {
+        if (spans && spans.length > 0 && offsets && !headings.get(line.id)
+          && !headingContinuations.has(line.id)) {
           const linked = renderLinkedLine(line, offsets, spans);
           if (linked !== null) {
             return {
@@ -2001,10 +2205,12 @@ function renderPage(page, {
           normalizable: true,
           line,
           joinable: projectedText === null && !headings.get(line.id) && !rewritesLineStructure(line),
+          headingLevel: headings.get(line.id),
+          headingContinuation: headingContinuations.has(line.id),
         };
       });
   });
-  const entries = joinParagraphContinuity(records);
+  const entries = joinParagraphContinuity(joinHeadingContinuations(records));
   const normalized = compact
     ? normalizePlainLines(entries, { page: page.page, pageBoundaryBefore, pageBoundaryAfter })
     : { lines: entries.map(entry => entry.text), normalizations: emptyNormalizations() };

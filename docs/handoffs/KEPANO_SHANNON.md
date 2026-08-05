@@ -113,6 +113,62 @@ is substantially improved, not universally or mathematically reconstructed.
 Eleven alpha cases intentionally abstain under the alignment rules. Do not
 claim the paper or arbitrary mathematical PDFs are completely solved.
 
+## Post-v0.9.4 cross-paper candidate
+
+Branch `agent/general-numbered-headings`, implementation commit
+`b74d110f2faad440c24915bb4f62546d6b5221da`, broadens the heading work beyond
+Shannon. It merged in PR #81 as
+`945c94376d5d254b8d38b7b33af29e04d5ebc703`. The follow-up branch
+`agent/split-numbered-headings`, exact implementation
+`fbf5db638360f2e511950ef03e5b6332a39ee972`, completes Adam's exact same-font
+small-caps pattern. Across two additional public research papers the combined
+candidate recovers all 39 genuinely numbered headings that v0.9.4 missed and
+removes both false headings caused by vertical arXiv margin labels. Attention
+is 22/22 and Adam is 17/17; Adam's References title is visibly unnumbered and
+stays unnumbered. Shannon's existing sampled quality is unchanged across three
+complete, byte-identical 55-page runs.
+
+The separate chart/diagram guard branch `agent/chart-heading-guard`, exact
+implementation `e90e0ed57f308e46a7ca6507c13b0d1bc7172890`, removes eleven false H1
+lines from Adam's chart-heavy page 7 and three false H1 diagram labels from
+Attention pages 13 through 15. It preserves both true titles and the complete
+39/39 numbered-heading result. Shannon remains byte-identical with unchanged
+sampled quality.
+Exact compatibility repair tip `bec9fb4683aca1384391e7d8b3b43aaa7eef326d`
+preserves a true first-page `CONTENTS` title after the full-suite regression
+check without weakening the chart-label guard.
+
+The detailed evidence is
+`docs/evidence/general-numbered-research-headings-2026-08.md`. This is a
+merge-quality candidate, not a reason on its own to publish v0.9.5. Keep the
+installed and public package on exact v0.9.4 until a worthy release bundle is
+ready.
+
+A fourth independent trial now uses the 16-page BERT paper, an ACL-style
+two-column document with tables, figures, wrapped headings, and lettered
+appendices. Pre-trial master recovered only 6 of its 31 content headings. The
+candidate recovers all 31 with the correct hierarchy, including the full
+two-line title, the centered three-line appendix title, and A/B/C appendix
+structure, while leaving the vertical arXiv stamp, chart labels, and inline
+bold labels as plain text. The exact PDF is
+hash-locked at
+`5692a5514787a8c6727b4ff3b726a3385798bc68e12138d1d4af83947e2acf6e`;
+the candidate Markdown is 86,071 bytes with zero replacement characters, zero
+explicit gaps, and SHA-256
+`b6ddd6dcf982a4c7cea5418d9ed93b5af64413ce34d74e36e298cebb744c06c5`.
+This is worthy merge evidence, but it remains deliberately unreleased pending
+the rest of the v0.9.5 bundle and independent review.
+
+Maintainer retest requests for the current v0.9.4 package are open at:
+
+- Windows issue #42:
+  `https://github.com/Open-Document-Alliance/PDF-Tools/issues/42#issuecomment-5186253739`
+- macOS stable-tool exposure issue #47:
+  `https://github.com/Open-Document-Alliance/PDF-Tools/issues/47#issuecomment-5186253859`
+
+Do not reply to Kepano yet. First merge the chart/diagram guard cleanly. A
+later reply should point to a tested public release, not unreleased master.
+
 ## Fast recovery commands
 
 Run from a fresh clean worktree based on current `origin/master`:

@@ -62,11 +62,20 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-08-04: Markdown renderer 1.9.0 restores only narrowly source-supported
 // boundaries between multiword prose and a separate uppercase math variable.
 // 2026-08-04: Markdown renderer 1.10.0 interprets only explicitly barred,
-// single-digit stacked fractions in an ordinary prose sandwich. The final
-// combined contract digest is refreshed after the integration replay.
+// single-digit stacked fractions in an ordinary prose sandwich.
+// 2026-08-04: Markdown renderer 1.11.0 recognizes fail-closed numbered
+// research headings and rejects narrow vertical labels.
+// 2026-08-04: Markdown renderer 1.12.0 accepts the second exact same-font
+// small-caps height relationship when heading initials match the body height.
+// 2026-08-04: Markdown renderer 1.13.0 uses wide prose to estimate body height
+// on chart-heavy pages and requires generic enlarged headings to lead text.
+// 2026-08-04: Markdown renderer 1.14.0 recognizes independently established
+// body margins in two-column papers, lettered appendices, and wrapped headings.
 // 2026-08-04: additive deterministic compare_pdfs contract with source-bound
 // evidence, exact whole-document limits, and typed channel coverage.
-const TOOL_CONTRACT_SHA256 = "ccd2dd7eb7680084c8a762b541cd0632ef33475754e53397cb677e9915bcd206";
+// 2026-08-05: additive bounded inspect_pdf_accessibility contract with explicit
+// machine-profile, human-review, and conformance-abstention boundaries.
+const TOOL_CONTRACT_SHA256 = "d9c225a5b72694d73dc0064a28fecf76a5bedf27121b04e656b86f055ced9313";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
