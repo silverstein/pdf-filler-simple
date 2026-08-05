@@ -113,6 +113,34 @@ is substantially improved, not universally or mathematically reconstructed.
 Eleven alpha cases intentionally abstain under the alignment rules. Do not
 claim the paper or arbitrary mathematical PDFs are completely solved.
 
+## Post-v0.9.4 cross-paper candidate
+
+Branch `agent/general-numbered-headings`, implementation commit
+`b74d110f2faad440c24915bb4f62546d6b5221da`, broadens the heading work beyond
+Shannon. On two additional public research papers it recovers 31 of 40 numbered
+headings that v0.9.4 missed and removes both false headings caused by vertical
+arXiv margin labels. Attention is 22/22; Adam is deliberately 9/18 because its
+remaining subsection numbers and titles are split across source lines or
+blocks. Shannon's existing sampled quality is unchanged across three complete,
+byte-identical 55-page runs.
+
+The detailed evidence is
+`docs/evidence/general-numbered-research-headings-2026-08.md`. This is a
+merge-quality candidate, not a reason on its own to publish v0.9.5. Keep the
+installed and public package on exact v0.9.4 until a worthy release bundle is
+ready.
+
+Maintainer retest requests for the current v0.9.4 package are open at:
+
+- Windows issue #42:
+  `https://github.com/Open-Document-Alliance/PDF-Tools/issues/42#issuecomment-5186253739`
+- macOS stable-tool exposure issue #47:
+  `https://github.com/Open-Document-Alliance/PDF-Tools/issues/47#issuecomment-5186253859`
+
+Do not reply to Kepano yet. First merge this candidate cleanly and preserve the
+honest boundary above; a later reply should point to a tested public release,
+not unreleased master.
+
 ## Fast recovery commands
 
 Run from a fresh clean worktree based on current `origin/master`:
