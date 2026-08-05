@@ -12,9 +12,13 @@ if (!process.argv[2] || !process.argv[3]) {
 }
 
 const EXPECTED_SOURCE_SHA256 = "6e4e3411984f3edf99dbfe8b941cb5e8a321379ff0cae6ae5c1f592ad8882ca8";
-const EXPECTED_MARKDOWN_SHA256 = "2e7e4fb71d0ea116a352eb1aa1ed1b06c089969643073394d82e23eb5f6ffee3";
+const EXPECTED_MARKDOWN_SHA256 = "723ca1614c6516ee698c596aab6acb84c0437983e6f96c1f871dea9668b79985";
 const EXPECTED_TOOL_CONTRACT_SHA256 = "109df9e468513e07377804bff842ac9c398923d88dc07c0ffd68c12a8c075e82";
 const EXPECTED_PAGE_COUNT = 55;
+const EXPECTED_GAP_COUNT = 68;
+const EXPECTED_REPLACEMENT_CHARACTER_COUNT = 434;
+const EXPECTED_ALPHA_COUNT = 49;
+const EXPECTED_MARKDOWN_BYTES = 182565;
 const PAGE_SPAN = 10;
 
 function sha256(bytes) {
@@ -93,11 +97,20 @@ try {
 const markdown = chunks.map(chunk => chunk.markdown).join("\n\n");
 const markdownSha256 = sha256(Buffer.from(markdown, "utf8"));
 const alphaCount = [...markdown].filter(character => character === "α").length;
+const gapCount = chunks.reduce((total, chunk) => total + chunk.gaps.length, 0);
+const replacementCharacterCount = [...markdown].filter(character => character === "\uFFFD").length;
+const markdownBytes = Buffer.byteLength(markdown, "utf8");
 assert(
   markdownSha256 === EXPECTED_MARKDOWN_SHA256,
   `Installed Shannon Markdown differs from the reviewed output: expected ${EXPECTED_MARKDOWN_SHA256}, received ${markdownSha256}`,
 );
-assert(alphaCount === 49, `Installed Shannon alpha count differs: expected 49, received ${alphaCount}`);
+assert(alphaCount === EXPECTED_ALPHA_COUNT, `Installed Shannon alpha count differs: expected ${EXPECTED_ALPHA_COUNT}, received ${alphaCount}`);
+assert(gapCount === EXPECTED_GAP_COUNT, `Installed Shannon gap count differs: expected ${EXPECTED_GAP_COUNT}, received ${gapCount}`);
+assert(
+  replacementCharacterCount === EXPECTED_REPLACEMENT_CHARACTER_COUNT,
+  `Installed Shannon replacement-character count differs: expected ${EXPECTED_REPLACEMENT_CHARACTER_COUNT}, received ${replacementCharacterCount}`,
+);
+assert(markdownBytes === EXPECTED_MARKDOWN_BYTES, `Installed Shannon byte count differs: expected ${EXPECTED_MARKDOWN_BYTES}, received ${markdownBytes}`);
 
 process.stdout.write(`${JSON.stringify({
   installed_extension: extensionDirectory,
@@ -105,10 +118,10 @@ process.stdout.write(`${JSON.stringify({
   page_count: EXPECTED_PAGE_COUNT,
   page_calls: chunks.map(chunk => chunk.provenance.layout.page_range),
   conversion_statuses: [...new Set(chunks.map(chunk => chunk.conversion_status))].sort(),
-  total_gap_count: chunks.reduce((total, chunk) => total + chunk.gaps.length, 0),
-  replacement_character_count: [...markdown].filter(character => character === "\uFFFD").length,
+  total_gap_count: gapCount,
+  replacement_character_count: replacementCharacterCount,
   alpha_count: alphaCount,
-  markdown_bytes: Buffer.byteLength(markdown, "utf8"),
+  markdown_bytes: markdownBytes,
   markdown_sha256: markdownSha256,
   elapsed_ms: Number(process.hrtime.bigint() - started) / 1e6,
 }, null, 2)}\n`);

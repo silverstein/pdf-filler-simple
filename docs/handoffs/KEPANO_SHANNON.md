@@ -20,19 +20,22 @@ refusing unsupported guesses.
 
 ## Shipped state
 
-PDF Tools v0.9.3 is public:
-`https://github.com/Open-Document-Alliance/PDF-Tools/releases/tag/v0.9.3`.
+PDF Tools v0.9.4 is public:
+`https://github.com/Open-Document-Alliance/PDF-Tools/releases/tag/v0.9.4`.
 It includes the cumulative Shannon extraction work, the PDF comparison product,
-the 59-character remaining qualified Type-3 batch, 49 source-supported alpha
-recoveries, and the final fail-closed comparison-geometry hardening.
+49 source-supported alpha recoveries, the final fail-closed comparison-geometry
+hardening, and safe recovery of the final 64 minus signs and five commas.
 
-- v0.9.3 release commit:
-  `8c3c00cd854b6ac3a6ef09e8ef15bfd0bef08b21`.
+- v0.9.4 release commit:
+  `50f3ccc378856611ef22d86e507bd10740edc33a`.
 - The release MCPB was downloaded, hash-checked, installed in Claude Desktop,
   loaded successfully, and tested from the installed copy.
 - Exactly one current PDF Tools identity remained enabled after installation.
-- Installed Shannon conversion: 55 pages, 498 replacement characters, 68
-  explicit gaps, exact reviewed Markdown SHA-256.
+- Installed Shannon conversion: 55 pages, 434 replacement characters, 49
+  recovered alpha symbols, 68 explicit gaps, 182,565 bytes, and exact reviewed
+  Markdown SHA-256
+  `723ca1614c6516ee698c596aab6acb84c0437983e6f96c1f871dea9668b79985`.
+- The named but unrecovered Type-3 census is now 11, down from 80 in v0.9.3.
 - Current sampled quality: headings 14/14, reading order 24/24, paragraphs
   3/4, equations 4/4, footnotes 4/4, one qualifying table, and zero false
   equation headings.
@@ -82,9 +85,9 @@ alpha had a reviewed source-bound alignment design while the minus and comma
 groups still lacked sufficient companion evidence. The candidate below closes
 the latter evidence gap.
 
-## Qualified 69-character candidate
+## Qualified 69-character recovery shipped in v0.9.4
 
-Commit `942d80405d4949033765f7e5c49c16467c27f9f7` supplies the missing companion
+Implementation commit `942d80405d4949033765f7e5c49c16467c27f9f7` supplies the missing companion
 evidence for all 64 minus signs and all five commas. It reduces the named but
 unrecovered census from 80 to 11; the only remaining named cases are the eleven
 alpha placements that deliberately fail the alignment rules.
@@ -99,20 +102,16 @@ an independent exact-commit review accepted the fail-closed evidence. See
 ## Current gates
 
 The implementation, independent review, merge, reproducible package, public
-v0.9.3 release, exact public re-download, Claude installation, registry match,
+v0.9.4 release, exact public re-download, Claude installation, registry match,
 host discovery, installed-copy smoke, and installed Shannon proof are complete.
-PR #75 landed the final comparison-geometry repair. PR #76 merged the v0.9.3
-release as `8c3c00cd854b6ac3a6ef09e8ef15bfd0bef08b21`.
-
-The 69-character Shannon candidate is implemented, independently accepted,
-and fully tested. Merge, release packaging, public installation, and installed
-Shannon proof remain pending.
+PR #78 landed the 69-character Shannon recovery. PR #79 merged the v0.9.4
+release as `50f3ccc378856611ef22d86e507bd10740edc33a`.
 
 No public reply to Kepano has been sent yet. A concise reply may now point him
-to the public repository and v0.9.3 while honestly saying that the named paper
+to the public repository and v0.9.4 while honestly saying that the named paper
 is substantially improved, not universally or mathematically reconstructed.
-The 64-minus and 5-comma groups remain blocked on missing companion evidence;
-11 alpha cases intentionally abstain under the alignment rules.
+Eleven alpha cases intentionally abstain under the alignment rules. Do not
+claim the paper or arbitrary mathematical PDFs are completely solved.
 
 ## Fast recovery commands
 
