@@ -59,6 +59,16 @@ async function expectMcpError(operation, code) {
   throw new Error(`Expected MCP error ${code}, but operation succeeded`);
 }
 
+export function validatePackedDiscovery(tools) {
+  if (!Array.isArray(tools)
+    || tools.length !== 42
+    || !tools.some(tool => tool.name === "render_pdf_page")
+    || !tools.some(tool => tool.name === "compare_pdfs")
+    || !tools.some(tool => tool.name === "inspect_pdf_accessibility")) {
+    throw new Error("Packed server discovery differs from the current 42-tool contract");
+  }
+}
+
 async function main() {
   const bundlePath = path.resolve(process.argv[2] || path.join(REPO_ROOT, "pdf-toolkit-mcp.mcpb"));
   const tempRoot = mkdtempSync(path.join(tmpdir(), "pdf-tools-mcpb-smoke-"));
@@ -104,11 +114,7 @@ async function main() {
     const tools = await client.listTools();
     const prompts = await client.listPrompts();
     const resources = await client.listResources();
-    if (tools.tools.length !== 41
-      || !tools.tools.some(tool => tool.name === "render_pdf_page")
-      || !tools.tools.some(tool => tool.name === "compare_pdfs")) {
-      throw new Error("Packed server did not expose render_pdf_page and compare_pdfs");
-    }
+    validatePackedDiscovery(tools.tools);
     if (prompts.prompts.length !== 14 || resources.resources.length !== 1) {
       throw new Error(
         `Packed discovery mismatch: ${prompts.prompts.length} prompts, ` +
@@ -279,7 +285,9 @@ async function main() {
   }
 }
 
-main().catch(error => {
-  console.error(`Packed MCPB smoke failed: ${error.message}`);
-  process.exitCode = 1;
-});
+if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(`Packed MCPB smoke failed: ${error.message}`);
+    process.exitCode = 1;
+  });
+}
