@@ -128,6 +128,16 @@ is 22/22 and Adam is 17/17; Adam's References title is visibly unnumbered and
 stays unnumbered. Shannon's existing sampled quality is unchanged across three
 complete, byte-identical 55-page runs.
 
+The separate chart/diagram guard branch `agent/chart-heading-guard`, exact
+implementation `e90e0ed57f308e46a7ca6507c13b0d1bc7172890`, removes eleven false H1
+lines from Adam's chart-heavy page 7 and three false H1 diagram labels from
+Attention pages 13 through 15. It preserves both true titles and the complete
+39/39 numbered-heading result. Shannon remains byte-identical with unchanged
+sampled quality.
+Exact compatibility repair tip `bec9fb4683aca1384391e7d8b3b43aaa7eef326d`
+preserves a true first-page `CONTENTS` title after the full-suite regression
+check without weakening the chart-label guard.
+
 The detailed evidence is
 `docs/evidence/general-numbered-research-headings-2026-08.md`. This is a
 merge-quality candidate, not a reason on its own to publish v0.9.5. Keep the
@@ -141,9 +151,8 @@ Maintainer retest requests for the current v0.9.4 package are open at:
 - macOS stable-tool exposure issue #47:
   `https://github.com/Open-Document-Alliance/PDF-Tools/issues/47#issuecomment-5186253859`
 
-Do not reply to Kepano yet. First merge the follow-up candidate cleanly and
-address or explicitly accept the pre-existing chart-page false-heading issue;
-a later reply should point to a tested public release, not unreleased master.
+Do not reply to Kepano yet. First merge the chart/diagram guard cleanly. A
+later reply should point to a tested public release, not unreleased master.
 
 ## Fast recovery commands
 

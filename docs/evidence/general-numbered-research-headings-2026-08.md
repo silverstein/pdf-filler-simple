@@ -80,11 +80,34 @@ tall vertical labels.
 Adam's eight previously missed subsections use the same source line, font, left
 edge, section break, and exact two-level small-caps geometry as the already
 recognized sections. The follow-up accepts that exact relationship without
-joining fragments or guessing text. The generic large-font detector still has
-pre-existing false headings on Adam's chart-heavy page 7; that is recorded as
-separate follow-up work and is not concealed by the numbered-heading result.
-Tables, figures, equations, and complete mathematical reconstruction are
-outside this claim.
+joining fragments or guessing text. Tables, figures, equations, and complete
+mathematical reconstruction are outside this claim.
+
+## Chart and diagram heading guard
+
+Exact follow-up implementation
+`e90e0ed57f308e46a7ca6507c13b0d1bc7172890`, with exact compatibility repair
+tip `bec9fb4683aca1384391e7d8b3b43aaa7eef326d`, fixes a separate generic-heading
+failure exposed by the cross-paper review:
+
+- Adam page 7: eleven ordinary chart captions or prose lines falsely emitted as
+  H1 become plain text
+- Attention pages 13 through 15: three `Input-Input Layer5` diagram labels
+  falsely emitted as H1 become plain text
+- Both true paper titles remain H1
+- Attention remains 22/22 and Adam remains 17/17 for genuinely numbered
+  headings, with no other content headings
+
+The guard estimates ordinary body height from wide prose when a page contains
+many tiny chart labels. A generic enlarged-font heading must also be followed
+by a normal text line. The numbered-heading path remains independent. A bounded
+first-page title scan preserves centered title-case titles that appear after a
+short attribution preamble.
+
+The live tests now pin every content heading in both papers, not only the
+numbered subset, so a new chart or diagram false heading fails the test.
+The compatibility repair preserves the exact first-page structural title
+`CONTENTS`; it does not reopen generic chart-label promotion.
 
 ## Verification
 
@@ -104,5 +127,17 @@ outside this claim.
   `3c067c231ac77f4a5d0c7cfae6d3d8b55c880cc5f217d6d6bba8d3a1ac3fb1ec`;
   all three Markdown runs remain byte-identical at the previously recorded
   SHA-256 and all sampled quality scores remain unchanged
+- Chart-guard focused checks: 157 passed, 6 skipped; real-paper checks 2/2;
+  reproducible share contract passed with SHA-256
+  `30b320f8cca0b2a95a06671c75bc37961b3bb6f2cae408b88b763dc714b96e13`
+- Final focused bank after the contents-title repair: 166 passed, 6 skipped;
+  the aggregate suite passed 1,998 checks and exposed one real contents-title
+  regression plus three resource-load timeouts. After the repair, the exact
+  heading/baseline bank passed 77/77, the worker file 13/13, and the malformed
+  campaign 114/114 in isolated runs.
+- Chart-guard Shannon report SHA-256:
+  `6cf36e04778c9baf04f309c08954c1910434f2a0588b91f57fc93804a26f8171`;
+  all three 55-page Markdown outputs remain byte-identical at SHA-256
+  `2c4773511afe32d99ef44311406dbfeac42f4b3923696ef0fc59da56088eabe9`
 
 No public release or Kepano reply is authorized by this evidence alone.

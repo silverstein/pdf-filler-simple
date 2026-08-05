@@ -51,6 +51,12 @@ function numberedHeadings(markdown) {
     .map(match => match[1]);
 }
 
+function contentHeadings(markdown) {
+  return [...markdown.matchAll(/^(#{1,6})\s+(.+)$/gmu)]
+    .map(match => `${match[1]} ${match[2]}`)
+    .filter(heading => heading !== "## Conversion gaps" && heading !== "## Conversion limitations");
+}
+
 describe("external numbered research-paper headings", () => {
   it.runIf(Boolean(ATTENTION_SOURCE))("recovers the complete numbered hierarchy in Attention Is All You Need", async () => {
     const markdown = await renderExternalPdf(
@@ -83,6 +89,31 @@ describe("external numbered research-paper headings", () => {
     ]);
     expect(markdown).toMatch(/^# Attention Is All You Need$/mu);
     expect(markdown).not.toMatch(/^#{1,6}\s+arXiv:/gmu);
+    expect(contentHeadings(markdown)).toEqual([
+      "# Attention Is All You Need",
+      "## 1 Introduction",
+      "## 2 Background",
+      "## 3 Model Architecture",
+      "### 3.1 Encoder and Decoder Stacks",
+      "### 3.2 Attention",
+      "#### 3.2.1 Scaled Dot-Product Attention",
+      "#### 3.2.2 Multi-Head Attention",
+      "#### 3.2.3 Applications of Attention in our Model",
+      "### 3.3 Position-wise Feed-Forward Networks",
+      "### 3.4 Embeddings and Softmax",
+      "### 3.5 Positional Encoding",
+      "## 4 Why Self-Attention",
+      "## 5 Training",
+      "### 5.1 Training Data and Batching",
+      "### 5.2 Hardware and Schedule",
+      "### 5.3 Optimizer",
+      "### 5.4 Regularization",
+      "## 6 Results",
+      "### 6.1 Machine Translation",
+      "### 6.2 Model Variations",
+      "### 6.3 English Constituency Parsing",
+      "## 7 Conclusion",
+    ]);
   }, 60_000);
 
   it.runIf(Boolean(ADAM_SOURCE))("recovers only the currently proven Adam small-caps main sections", async () => {
@@ -110,5 +141,25 @@ describe("external numbered research-paper headings", () => {
       "10.1 CONVERGENCE PROOF",
     ]);
     expect(markdown).not.toMatch(/^#{1,6}\s+arXiv:/gmu);
+    expect(contentHeadings(markdown)).toEqual([
+      "# ADAM: A METHOD FOR STOCHASTIC OPTIMIZATION",
+      "## 1 INTRODUCTION",
+      "## 2 ALGORITHM",
+      "### 2.1 ADAM’S UPDATE RULE",
+      "## 3 INITIALIZATION BIAS CORRECTION",
+      "## 4 CONVERGENCE ANALYSIS",
+      "## 5 RELATED WORK",
+      "## 6 EXPERIMENTS",
+      "### 6.1 EXPERIMENT: LOGISTIC REGRESSION",
+      "### 6.2 EXPERIMENT: MULTI-LAYER NEURAL NETWORKS",
+      "### 6.3 EXPERIMENT: CONVOLUTIONAL NEURAL NETWORKS",
+      "### 6.4 EXPERIMENT: BIAS-CORRECTION TERM",
+      "## 7 EXTENSIONS",
+      "### 7.1 ADAMAX",
+      "### 7.2 TEMPORAL AVERAGING",
+      "## 8 CONCLUSION",
+      "## 10 APPENDIX",
+      "### 10.1 CONVERGENCE PROOF",
+    ]);
   }, 60_000);
 });

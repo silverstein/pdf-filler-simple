@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.12.0",
+  version: "1.13.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.4.0";
 
@@ -245,6 +245,29 @@ function bodyLeftEdge(evidence, bodyHeight) {
   return bodyLines.length > 0 ? median(bodyLines) : null;
 }
 
+function pageBodyHeight(page, evidence) {
+  const heights = evidence.map(value => value.height).filter(Number.isFinite);
+  const pageWidth = page.geometry?.display_width;
+  if (!Number.isFinite(pageWidth)) return median(heights);
+  const proseHeights = evidence.filter(({ line, height }) => (
+    Number.isFinite(height)
+    && line.width >= pageWidth * 0.25
+    && (line.text.match(/[\p{L}\p{N}]/gu) ?? []).length >= 20
+  )).map(value => value.height);
+  return proseHeights.length >= 3 ? median(proseHeights) : median(heights);
+}
+
+function hasBodyTextAfter(page, evidence, index, bodyHeight) {
+  const next = evidence[index + 1];
+  if (!next || !Number.isFinite(page.geometry?.display_width) || !Number.isFinite(next.height)) return false;
+  const gap = next.line.y - (evidence[index].line.y + evidence[index].line.height);
+  return next.height >= bodyHeight * 0.9
+    && next.height <= bodyHeight * 1.1
+    && (next.line.text.match(/[\p{L}\p{N}]/gu) ?? []).length >= 10
+    && gap >= 0
+    && gap <= bodyHeight * 8;
+}
+
 function smallCapsNumberedHeadingEvidence(page, line, bodyHeight, headingWords) {
   if (headingWords !== headingWords.toLocaleUpperCase("en-US")) return false;
   const itemById = new Map(page.raw_items.map(item => [item.id, item]));
@@ -289,8 +312,9 @@ function numberedSectionHeadingLevel(page, evidence, index, bodyHeight, bodyFont
 function structuralHeadingLevel(page, evidence, index, bodyHeight) {
   const line = evidence[index].line;
   const text = line.text.trim();
-  if (!headingTextEligible(text) || !lineIsCentered(page, line)
-    || !hasSectionBreakBefore(page, evidence, index, bodyHeight)) return null;
+  if (page.page === 1 && text === "CONTENTS" && headingTextEligible(text)) return 1;
+  if (!headingTextEligible(text) || !lineIsCentered(page, line)) return null;
+  if (!hasSectionBreakBefore(page, evidence, index, bodyHeight)) return null;
   if (page.page === 1 && text === "INTRODUCTION") return 2;
   if (/^PART\s+[IVXLCDM]+:\s+.+$/u.test(text) && text === text.toLocaleUpperCase("en-US")) return 2;
   if (/^APPENDIX\s+(?:\d+|[IVXLCDM]+)$/u.test(text)) return 2;
@@ -309,10 +333,12 @@ function structuralHeadingLevels(page, evidence, bodyHeight) {
     if (level !== null) structural.set(evidence[index].line.id, level);
   }
   if (page.page !== 1) return structural;
-  const titleCandidates = evidence.slice(0, 3).filter(({ line, height }) => (
+  const titleCandidates = evidence.filter(({ line, height }) => (
     headingTextEligible(line.text)
     && titleCaseHeading(line.text)
     && lineIsCentered(page, line)
+    && Number.isFinite(page.geometry?.display_height)
+    && line.y <= page.geometry.display_height * 0.35
     && Number.isFinite(height)
     && height >= bodyHeight * 1.2
   ));
@@ -330,17 +356,18 @@ function headingLevels(page) {
   const evidence = lineFontEvidence(page);
   const heights = evidence.map(value => value.height).filter(Number.isFinite);
   if (heights.length < 4) return new Map();
-  const bodyHeight = median(heights);
+  const bodyHeight = pageBodyHeight(page, evidence);
   const structural = structuralHeadingLevels(page, evidence, bodyHeight);
   const bodyEvidence = heights.filter(height => Math.abs(height - bodyHeight) <= bodyHeight * 0.1);
   if (bodyEvidence.length < 3) return structural;
-  const candidates = evidence.filter(({ line, height, consistentHeight, consistentFont }) => (
+  const candidates = evidence.filter(({ line, height, consistentHeight, consistentFont }, index) => (
     consistentHeight
       && consistentFont
       && height >= bodyHeight * 1.5
       && line.text.length > 0
       && line.text.length <= 120
       && headingTextEligible(line.text)
+      && hasBodyTextAfter(page, evidence, index, bodyHeight)
       && line.width >= line.height * 2
       && height <= bodyHeight * 4
       && !/[.!?;]$/u.test(line.text)
