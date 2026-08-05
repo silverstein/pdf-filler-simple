@@ -20,14 +20,14 @@ refusing unsupported guesses.
 
 ## Shipped state
 
-PDF Tools v0.9.2 is public:
-`https://github.com/Open-Document-Alliance/PDF-Tools/releases/tag/v0.9.2`.
+PDF Tools v0.9.3 is public:
+`https://github.com/Open-Document-Alliance/PDF-Tools/releases/tag/v0.9.3`.
 It includes the cumulative Shannon extraction work, the PDF comparison product,
 the 59-character remaining qualified Type-3 batch, 49 source-supported alpha
-recoveries, and the exact-page-bound comparison safety repair.
+recoveries, and the final fail-closed comparison-geometry hardening.
 
-- v0.9.2 release commit:
-  `c2f2853e2362d724c6744e8a60026ad3d1974e7e`.
+- v0.9.3 release commit:
+  `8c3c00cd854b6ac3a6ef09e8ef15bfd0bef08b21`.
 - The release MCPB was downloaded, hash-checked, installed in Claude Desktop,
   loaded successfully, and tested from the installed copy.
 - Exactly one current PDF Tools identity remained enabled after installation.
@@ -84,12 +84,13 @@ companion evidence.
 ## Current gates
 
 The implementation, independent review, merge, reproducible package, public
-v0.9.2 release, exact public re-download, Claude installation, registry match,
+v0.9.3 release, exact public re-download, Claude installation, registry match,
 host discovery, installed-copy smoke, and installed Shannon proof are complete.
-PR #73 merged as `c2f2853e2362d724c6744e8a60026ad3d1974e7e`.
+PR #75 landed the final comparison-geometry repair. PR #76 merged the v0.9.3
+release as `8c3c00cd854b6ac3a6ef09e8ef15bfd0bef08b21`.
 
 No public reply to Kepano has been sent yet. A concise reply may now point him
-to the public repository and v0.9.2 while honestly saying that the named paper
+to the public repository and v0.9.3 while honestly saying that the named paper
 is substantially improved, not universally or mathematically reconstructed.
 The 64-minus and 5-comma groups remain blocked on missing companion evidence;
 11 alpha cases intentionally abstain under the alignment rules.
