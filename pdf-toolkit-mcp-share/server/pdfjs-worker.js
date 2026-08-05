@@ -2,7 +2,8 @@ import { createRequire } from "node:module";
 import { createHash } from "node:crypto";
 import { spawn } from "node:child_process";
 import { closeSync, existsSync, writeSync } from "node:fs";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import {
@@ -1442,21 +1443,26 @@ async function systemRenderPage(bytes, password, options) {
     maxDimensionPx: options.max_dimension_px,
   });
   validateCanvasDimensions(renderedView.width * scale, renderedView.height * scale);
-  const sourcePath = path.join(process.cwd(), "system-page.pdf");
-  const outputPath = path.join(process.cwd(), "system-page.pdf.png");
+  let renderDirectory = null;
+  let renderError = null;
+  let renderResult = null;
   try {
+    renderDirectory = await mkdtemp(path.join(tmpdir(), "pdf-tools-system-render-"));
+    await chmod(renderDirectory, 0o700);
+    const sourcePath = path.join(renderDirectory, "source.pdf");
+    const outputPath = path.join(renderDirectory, "source.pdf.png");
     await writeSinglePagePdf(bytes, options.page, password, sourcePath, pdfCropBox);
     const maximumDimension = Math.max(
       1,
       Math.round(Math.max(renderedView.width, renderedView.height) * scale),
     );
     await runSystemCommand("/usr/bin/qlmanage", [
-      "-t", "-s", String(maximumDimension), "-o", process.cwd(), sourcePath,
+      "-t", "-s", String(maximumDimension), "-o", renderDirectory, sourcePath,
     ]);
     const buffer = await readFile(outputPath);
     const pixels = pngDimensions(buffer);
     validateCanvasDimensions(pixels.width, pixels.height);
-    return pngResult(buffer, {
+    renderResult = pngResult(buffer, {
       height: pixels.height,
       height_points: geometry.height,
       renderer: "macos-quicklook",
@@ -1471,12 +1477,25 @@ async function systemRenderPage(bytes, password, options) {
       width: pixels.width,
       width_points: geometry.width,
     });
-  } finally {
-    await Promise.all([
-      rm(sourcePath, { force: true }),
-      rm(outputPath, { force: true }),
-    ]);
+  } catch (error) {
+    renderError = error?.code === PDF_RESOURCE_LIMIT_CODE
+      ? error
+      : new Error("The macOS system PDF renderer could not render this page.");
   }
+  if (renderDirectory !== null) {
+    try {
+      await rm(renderDirectory, {
+        force: true,
+        maxRetries: 3,
+        recursive: true,
+        retryDelay: 25,
+      });
+    } catch {
+      throw resourceLimitError("system_renderer_cleanup_unproven");
+    }
+  }
+  if (renderError !== null) throw renderError;
+  return renderResult;
 }
 
 async function nativeRenderPage(bytes, password, options) {
