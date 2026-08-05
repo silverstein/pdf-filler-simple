@@ -53,6 +53,7 @@ const threadSystemCommandWaiters = new Map();
 let systemChildTermination = null;
 let systemChildTerminationHandlersInstalled = false;
 let systemRenderShutdownStarted = false;
+let systemRenderShutdownTerminal = false;
 let systemCommandSpawnCount = 0;
 let nextThreadSystemCommandId = 1;
 
@@ -1255,7 +1256,11 @@ async function terminateActiveSystemChildren() {
 }
 
 function systemRendererShutdownError() {
-  return resourceLimitError("system_renderer_shutdown");
+  return resourceLimitError(
+    systemRenderShutdownTerminal
+      ? "system_renderer_shutdown_terminal"
+      : "system_renderer_shutdown",
+  );
 }
 
 function assertSystemRendererRunning() {
@@ -1328,13 +1333,25 @@ export async function withPrivateSystemRenderWorkspace(operation) {
   return renderResult;
 }
 
-export async function beginPdfjsWorkerSystemShutdown() {
+export function poisonPdfjsWorkerSystemRenderer() {
+  systemRenderShutdownTerminal = true;
+  systemRenderShutdownStarted = true;
+}
+
+export async function beginPdfjsWorkerSystemShutdown({ terminal = false } = {}) {
+  if (typeof terminal !== "boolean") {
+    throw new TypeError("terminal must be a boolean.");
+  }
+  if (terminal) poisonPdfjsWorkerSystemRenderer();
   systemRenderShutdownStarted = true;
   await terminateActiveSystemChildren();
   await awaitSystemRenderWorkspaceCleanup();
 }
 
 export function reopenPdfjsWorkerSystemRenderer() {
+  if (systemRenderShutdownTerminal) {
+    throw resourceLimitError("system_renderer_shutdown_terminal");
+  }
   if (activeSystemChildren.size > 0 || activeSystemRenderWorkspaces.size > 0) {
     throw resourceLimitError("system_renderer_shutdown_incomplete");
   }
@@ -1347,11 +1364,12 @@ export function snapshotPdfjsWorkerSystemRendererState() {
     active_children: activeSystemChildren.size,
     active_workspaces: activeSystemRenderWorkspaces.size,
     spawn_count: systemCommandSpawnCount,
+    terminal: systemRenderShutdownTerminal,
   };
 }
 
 export function forceTerminateAllPdfjsWorkerSystemChildren() {
-  systemRenderShutdownStarted = true;
+  poisonPdfjsWorkerSystemRenderer();
   for (const child of activeSystemChildren) killSystemChild(child);
 }
 
@@ -1366,7 +1384,7 @@ export function installSystemChildTerminationHandlers() {
   for (const [signal, exitCode] of exitCodes) {
     process.once(signal, () => {
       if (systemChildTermination !== null) return;
-      systemChildTermination = beginPdfjsWorkerSystemShutdown();
+      systemChildTermination = beginPdfjsWorkerSystemShutdown({ terminal: true });
       void systemChildTermination.finally(() => process.exit(exitCode));
     });
   }

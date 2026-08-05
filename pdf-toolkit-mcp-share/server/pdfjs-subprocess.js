@@ -44,6 +44,7 @@ let inProcessWorkerModulePromise = null;
 let inProcessWorkerModule = null;
 let inProcessCanvasGuardInstalled = false;
 let shutdownInProgress = false;
+let shutdownTerminal = false;
 let gracefulShutdownPromise = null;
 
 export function selectPdfjsIsolationMode({
@@ -1162,6 +1163,19 @@ export async function settleAllShutdownOperations(operations) {
   if (failure !== null) throw failure;
 }
 
+function poisonPdfjsShutdown() {
+  shutdownTerminal = true;
+  shutdownInProgress = true;
+  if (inProcessWorkerModule !== null) {
+    inProcessWorkerModule.poisonPdfjsWorkerSystemRenderer();
+  } else if (inProcessWorkerModulePromise !== null) {
+    void inProcessWorkerModulePromise.then(
+      worker => worker.poisonPdfjsWorkerSystemRenderer(),
+      () => {},
+    );
+  }
+}
+
 export function terminateAllPdfjsSubprocesses({
   reopenAfterSuccessfulDrain = false,
   shutdownTimeoutMs = OPERATION_SHUTDOWN_TIMEOUT_MS,
@@ -1170,7 +1184,11 @@ export function terminateAllPdfjsSubprocesses({
     throw new TypeError("reopenAfterSuccessfulDrain must be a boolean.");
   }
   boundedInteger(shutdownTimeoutMs, "shutdownTimeoutMs", 1, 60_000);
+  if (!reopenAfterSuccessfulDrain) poisonPdfjsShutdown();
   if (gracefulShutdownPromise !== null) return gracefulShutdownPromise;
+  if (shutdownTerminal && reopenAfterSuccessfulDrain) {
+    return Promise.reject(resourceLimitError("worker_shutdown_terminal"));
+  }
   shutdownInProgress = true;
   const shutdownError = resourceLimitError("worker_shutdown_in_progress");
   for (const waiter of [...queuedOperations]) waiter.reject(shutdownError);
@@ -1185,11 +1203,13 @@ export function terminateAllPdfjsSubprocesses({
   let inProcessTermination = [];
   if (inProcessWorkerModule !== null) {
     inProcessWorkerAtShutdown = Promise.resolve(inProcessWorkerModule);
-    inProcessTermination = [inProcessWorkerModule.beginPdfjsWorkerSystemShutdown()];
+    inProcessTermination = [inProcessWorkerModule.beginPdfjsWorkerSystemShutdown({
+      terminal: shutdownTerminal,
+    })];
   } else if (inProcessWorkerModulePromise !== null) {
     inProcessWorkerAtShutdown = inProcessWorkerModulePromise;
     inProcessTermination = [inProcessWorkerModulePromise.then(
-      worker => worker.beginPdfjsWorkerSystemShutdown(),
+      worker => worker.beginPdfjsWorkerSystemShutdown({ terminal: shutdownTerminal }),
     )];
   }
   gracefulShutdownPromise = (async () => {
@@ -1218,11 +1238,17 @@ export function terminateAllPdfjsSubprocesses({
           ?.value
         ?? null;
       if (failure !== null) throw failure;
+      if (reopenAfterSuccessfulDrain && shutdownTerminal) {
+        throw resourceLimitError("worker_shutdown_terminal");
+      }
       if (reopenAfterSuccessfulDrain && inProcessWorkerAtShutdown !== null) {
         const worker = await inProcessWorkerAtShutdown;
         worker.reopenPdfjsWorkerSystemRenderer();
       }
       successfulDrain = true;
+    } catch (error) {
+      poisonPdfjsShutdown();
+      throw error;
     } finally {
       clearTimeout(timer);
       gracefulShutdownPromise = null;
@@ -1240,7 +1266,7 @@ export function terminateAllPdfjsSubprocesses({
 }
 
 export function forceTerminateAllPdfjsSubprocesses() {
-  shutdownInProgress = true;
+  poisonPdfjsShutdown();
   for (const { child } of activeChildren) {
     signalChild(child, "SIGKILL");
   }
