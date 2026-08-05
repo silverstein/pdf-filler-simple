@@ -77,9 +77,24 @@ Type-3 occurrences. Its 80 remaining occurrences are:
 - 11 alpha cases that fail the source-alignment rules;
 - 5 commas without two qualified companion glyphs.
 
-Do not register any remaining group by guess. Alpha now has a reviewed,
-source-bound alignment design; the minus and comma groups still lack sufficient
-companion evidence.
+Do not register any remaining group by guess. At the v0.9.2 release point,
+alpha had a reviewed source-bound alignment design while the minus and comma
+groups still lacked sufficient companion evidence. The candidate below closes
+the latter evidence gap.
+
+## Qualified 69-character candidate
+
+Commit `942d80405d4949033765f7e5c49c16467c27f9f7` supplies the missing companion
+evidence for all 64 minus signs and all five commas. It reduces the named but
+unrecovered census from 80 to 11; the only remaining named cases are the eleven
+alpha placements that deliberately fail the alignment rules.
+
+Three clean full-paper runs are byte-identical at Markdown SHA-256
+`723ca1614c6516ee698c596aab6acb84c0437983e6f96c1f871dea9668b79985`.
+The candidate changes exactly 69 characters and preserves every sampled
+structural score. The complete repository gate passes with zero failures, and
+an independent exact-commit review accepted the fail-closed evidence. See
+`docs/evidence/shannon-minus-comma-final-2026-08.md`.
 
 ## Current gates
 
@@ -88,6 +103,10 @@ v0.9.3 release, exact public re-download, Claude installation, registry match,
 host discovery, installed-copy smoke, and installed Shannon proof are complete.
 PR #75 landed the final comparison-geometry repair. PR #76 merged the v0.9.3
 release as `8c3c00cd854b6ac3a6ef09e8ef15bfd0bef08b21`.
+
+The 69-character Shannon candidate is implemented, independently accepted,
+and fully tested. Merge, release packaging, public installation, and installed
+Shannon proof remain pending.
 
 No public reply to Kepano has been sent yet. A concise reply may now point him
 to the public repository and v0.9.3 while honestly saying that the named paper
