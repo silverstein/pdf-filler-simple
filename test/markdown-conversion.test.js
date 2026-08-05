@@ -364,7 +364,7 @@ describe("layout Markdown renderer", () => {
     // invocation, so any unreviewed serialized delta fails this regression.
     const serialized = JSON.stringify(pinnable);
     expect(createHash("sha256").update(serialized).digest("hex"))
-      .toBe("8543161d1af6514352da5b73db66c493167b7d851124def6870ba0590ec01716");
+      .toBe("a0d64f0c2fbd9b39685a9e2ae1fff3af5a5ff7cba40c70411f0d3d4cc0986ab0");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,
@@ -372,7 +372,7 @@ describe("layout Markdown renderer", () => {
     })).toBe(NON_RECT_EXPECTED);
     expect(result.renderer).toEqual({
       name: "pdf-tools.layout-markdown-renderer",
-      version: "1.12.0",
+      version: "1.13.0",
     });
     expect(result.gaps[0].message).toMatch(/beyond reconstructed ruled or bounded solid-mask table grids/);
     expect(result.limitations.some(value => value.includes("clean ruled-rectangle grid evidence"))).toBe(true);
@@ -1171,6 +1171,29 @@ describe("layout Markdown renderer", () => {
 
     expect(result.markdown).toContain("arXiv:1706.03762v7 \\[cs&#46;CL\\] 2 Aug 2023");
     expect(result.markdown).not.toMatch(/^#{1,6}\s+arXiv:/gmu);
+  });
+
+  it("does not let dense chart labels redefine ordinary prose as headings", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        textItem("Input-Input Layer5", { top: 20, left: 108, fontSize: 20 }),
+        textItem("0", { top: 40, left: 120, fontSize: 4 }),
+        textItem("20", { top: 46, left: 140, fontSize: 4 }),
+        textItem("40", { top: 52, left: 160, fontSize: 4 }),
+        textItem("60", { top: 58, left: 180, fontSize: 4 }),
+        textItem("80", { top: 64, left: 200, fontSize: 4 }),
+        textItem("100", { top: 70, left: 220, fontSize: 4 }),
+        textItem("training cost", { top: 76, left: 240, fontSize: 4 }),
+        textItem("Adam", { top: 82, left: 260, fontSize: 4 }),
+        textItem("Figure 2: Training results for the complete experiment", { top: 120, left: 108, fontSize: 10 }),
+        textItem("Ordinary prose continues beneath the chart without a heading", { top: 140, left: 108, fontSize: 10 }),
+        textItem("Another full body line explains the experimental comparison", { top: 155, left: 108, fontSize: 10 }),
+        textItem("The final body line preserves the page reading flow", { top: 170, left: 108, fontSize: 10 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).not.toMatch(/^#{1,6}\s+(?:Input-Input|Figure 2:|Ordinary prose|Another full|The final)/gmu);
   });
 
   it("emits at most one first-page H1 when a title and subtitle share the strongest style", async () => {
