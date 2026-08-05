@@ -6,6 +6,7 @@ import { hashTrustedRegularFile } from "./extraction-phase1-artifacts.js";
 export const PHASE1_EXECUTION_COMPANION_ID = "pdf-tools.extraction-phase1-execution-companion.v1";
 export const PHASE1_CROSS_DEVICE_RECEIPT_ID = "pdf-tools.extraction-phase1-cross-device-receipt.v1";
 export const PHASE1_COMPANION_SOURCE_ROLES = Object.freeze([
+  "accessibility_inspection_module",
   "artifact_config_schema",
   "artifact_inventory_schema",
   "artifact_module",
@@ -42,6 +43,7 @@ export const PHASE1_COMPANION_SOURCE_ROLES = Object.freeze([
   "type3_cm_reference_module",
 ]);
 export const PHASE1_COMPANION_SOURCE_PATHS = Object.freeze({
+  accessibility_inspection_module: "server/accessibility-inspection.js",
   artifact_config_schema: "test/fixtures/eval/extraction/phase1/artifact-config.schema.json",
   artifact_inventory_schema: "test/fixtures/eval/extraction/phase1/artifact-inventory.schema.json",
   artifact_module: "test/eval/extraction-phase1-artifacts.js",

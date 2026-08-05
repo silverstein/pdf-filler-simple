@@ -24,6 +24,7 @@ const PATHS = Object.freeze({
   layoutOracleSchema: path.join(PHASE1_ROOT, "layout-occurrence-oracle.schema.json"),
 });
 const SOURCE_PATHS = Object.freeze({
+  accessibility_inspection_module: "server/accessibility-inspection.js",
   generator_script: "scripts/eval-generate-extraction-layout-oracle.mjs",
   layout_evidence_module: "test/eval/extraction-phase1-layout-evidence.js",
   layout_extraction_module: "server/layout-extraction.js",

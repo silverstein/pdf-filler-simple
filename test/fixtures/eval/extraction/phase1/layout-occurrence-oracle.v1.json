@@ -35,10 +35,16 @@
   },
   "validator_sources": [
     {
+      "role": "accessibility_inspection_module",
+      "path": "server/accessibility-inspection.js",
+      "bytes": 22849,
+      "sha256": "2cb0a2d7dd89427a07962df502e861f2d8f77057d5762b58abdeb66d05aaad70"
+    },
+    {
       "role": "generator_script",
       "path": "scripts/eval-generate-extraction-layout-oracle.mjs",
-      "bytes": 11603,
-      "sha256": "5c7ae782e25491d04ed92cf7700d7eacffe5a12b56d5d422164341cdd121057d"
+      "bytes": 11676,
+      "sha256": "1ced236149949ea580f426aea06a79308b6f59b159bd01c8cd08f7224de76df6"
     },
     {
       "role": "layout_evidence_module",
@@ -61,8 +67,8 @@
     {
       "role": "layout_oracle_schema",
       "path": "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
-      "bytes": 7265,
-      "sha256": "79efe6392a92cc5b3b0100f572dd476bc3b8e9cb8886d8c2edcebacbe56f0b09"
+      "bytes": 7300,
+      "sha256": "f64553ee61d32080aa4da02ee5722744c42cc8cd82ef85d97e8ad889d4a13ca7"
     },
     {
       "role": "markdown_conversion_module",
@@ -73,8 +79,8 @@
     {
       "role": "output_schemas_module",
       "path": "server/output-schemas.js",
-      "bytes": 48015,
-      "sha256": "39f98158583218c3e46a9936fb7d1d4809d934f7eb457ea2d16c54198032f9e7"
+      "bytes": 51704,
+      "sha256": "0d21ae99a04c700e856e04c805c5b792aa34f3f21fe84bae705fbadcea68af65"
     },
     {
       "role": "package_json",
@@ -113,7 +119,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "16052336512af1e1d382b541a6b7a20001e4f243a2c8df3603e36d688a272cc0",
+  "validator_source_set_sha256": "9cdf43e2b320fec73ec1fab7df841aa4064397dd1ea00da3071ac14151c95b2d",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",
