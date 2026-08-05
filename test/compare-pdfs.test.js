@@ -149,7 +149,7 @@ describe("compare_pdfs deterministic product", () => {
 
   it("retains independent page and same-page visual changes alongside semantic text changes", async () => {
     async function makeMixedChangePdf(fileName, balance, rectangleColor, rectanglePage = 2) {
-      const pdf = await PDFDocument.create();
+      const pdf = await PDFDocument.create({ updateMetadata: false });
       const font = await pdf.embedFont(StandardFonts.Helvetica);
       const first = pdf.addPage([400, 400]);
       first.drawText(`Current account balance: USD ${balance}`, {
