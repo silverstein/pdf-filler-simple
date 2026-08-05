@@ -129,6 +129,41 @@ describe("bounded accessibility inspection primitive", () => {
     expect(result.result).toBe("findings_detected");
   });
 
+  it("distinguishes explicit false flags from absent values with bounded codes", async () => {
+    const document = await PDFDocument.create();
+    document.addPage([300, 200]);
+    document.catalog.set(
+      PDFName.of("MarkInfo"),
+      document.context.obj({ Marked: false }),
+    );
+    document.catalog.set(
+      PDFName.of("ViewerPreferences"),
+      document.context.obj({ DisplayDocTitle: false }),
+    );
+    const explicitFalse = await inspectPdfAccessibilityBytes(
+      Buffer.from(await document.save({ addDefaultPage: false })),
+      { source_file_name: "explicit-false.pdf" },
+    );
+    const absentDocument = await PDFDocument.create();
+    absentDocument.addPage([300, 200]);
+    const absent = await inspectPdfAccessibilityBytes(
+      Buffer.from(await absentDocument.save({ addDefaultPage: false })),
+      { source_file_name: "absent.pdf" },
+    );
+    const byId = result => Object.fromEntries(
+      result.checks.map(item => [item.id, item.observation_code]),
+    );
+
+    expect(byId(explicitFalse)).toMatchObject({
+      catalog_marked_true: "FALSE",
+      display_document_title_true: "FALSE",
+    });
+    expect(byId(absent)).toMatchObject({
+      catalog_marked_true: "ABSENT_OR_WRONG_TYPE",
+      display_document_title_true: "ABSENT_OR_WRONG_TYPE",
+    });
+  });
+
   it("records a bounded PDF/UA self-declaration without changing checks or conclusions", async () => {
     const bytes = await fs.readFile(path.join(ACCESSIBILITY_FIXTURES, "claim-only.pdf"));
     const result = await inspectPdfAccessibilityBytes(bytes, {
@@ -157,11 +192,19 @@ describe("bounded accessibility inspection primitive", () => {
     expect(first.inspection_status).toBe("partial");
     expect(first.result).toBe("indeterminate");
     expect(first.checks[0]).toMatchObject({ id: "parseable_pdf", status: "missing" });
+    expect(first.checks[0].observation_code).toBe("PARSE_FAILED");
     expect(first.checks.slice(1).every(check => (
-      check.status === "unavailable" && check.reason_code === "STRICT_PARSE_FAILED"
+      check.status === "unavailable"
+      && check.observation_code === "NOT_INSPECTED"
+      && check.reason_code === "STRICT_PARSE_FAILED"
     ))).toBe(true);
     expect(JSON.stringify(first)).not.toContain("/private/var/");
     expect(JSON.stringify(first)).toBe(JSON.stringify(second));
+    const forgedReason = clone(first);
+    forgedReason.checks[1].reason_code = "FORGED_REASON";
+    expect(() => validateAccessibilityInspectionResult(forgedReason)).toThrow(
+      "unavailable reason code is invalid",
+    );
   });
 
   it("abstains on encrypted input with one fixed path-free error and no findings", async () => {
@@ -209,6 +252,7 @@ describe("bounded accessibility inspection primitive", () => {
       value => { value.summary.observed -= 1; },
       value => { [value.checks[0], value.checks[1]] = [value.checks[1], value.checks[0]]; },
       value => { value.checks[0].id = value.checks[1].id; },
+      value => { value.checks[0].observation_code = "PARSE_FAILED"; },
       value => { value.inspection_status = "partial"; },
       value => { value.result = "findings_detected"; },
       value => { value.human_review.status = "not_required"; },

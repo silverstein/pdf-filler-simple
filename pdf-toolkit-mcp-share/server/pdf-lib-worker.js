@@ -1515,7 +1515,6 @@ async function reopenSource(binding) {
 }
 
 async function inspectAccessibilitySource(bytes, binding) {
-  assertBoundedPdfStructure(bytes);
   let document;
   try {
     document = await PDFDocument.load(bytes, { updateMetadata: false });
@@ -1526,6 +1525,7 @@ async function inspectAccessibilitySource(bytes, binding) {
       source_file_name: path.basename(binding.canonical_path),
     });
   }
+  assertBoundedPdfStructure(bytes);
   assertSafeParsedPdfDecodeChains(document);
   assertSafeParsedPdfComplexity(document);
   enforceSafeParsedPdfGraph(document);

@@ -808,7 +808,7 @@ async function readStageOutput(output) {
   }
 }
 
-async function revalidateSources(sources) {
+async function revalidateSources(sources, { requirePdfHeader = true } = {}) {
   for (const source of sources) {
     const current = await hashBoundedPdfFileSafely(
       source.canonical_path,
@@ -817,6 +817,7 @@ async function revalidateSources(sources) {
         assertPathAllowed(candidate) {
           if (path.resolve(candidate) !== source.canonical_path) throw new Error("Source path binding changed.");
         },
+        requirePdfHeader,
       },
     );
     if (current.canonicalPath !== source.canonical_path
@@ -1004,7 +1005,7 @@ async function runPdfLibOperation(request, consumeStage, {
       base.operation,
       base.sources,
     );
-    await revalidateSources(base.sources);
+    await revalidateSources(base.sources, { requirePdfHeader: !readOnly });
     if (readOnly) {
       if (outputs.length !== 0) throw resourceError("read_only_operation_staged_output");
       await cleanup();

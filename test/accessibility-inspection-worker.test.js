@@ -9,6 +9,7 @@ import {
   PDF_RESOURCE_LIMIT_CODE,
   createPdfLibInspectionRequest,
   runPdfLibInspection,
+  runPdfLibMutation,
   terminateAllPdfLibMutations,
   terminateAllPdfLibOperations,
 } from "../server/pdf-lib-subprocess.js";
@@ -217,6 +218,64 @@ describe("isolated read-only PDF-lib accessibility operation", () => {
       message: "Encrypted PDF inspection is unavailable because this operation does not accept a password.",
     });
     expect(error.message).not.toContain(sourcePath);
+  });
+
+  it("allows headerless read-only classification while mutation revalidation still rejects it", async () => {
+    const malformedBytes = Buffer.from("not a PDF /private/var/folders/parser-canary");
+    const { source } = await sourceBinding(malformedBytes, "malformed.pdf");
+    const inspection = await runPdfLibInspection({
+      operation: "inspect_pdf_accessibility",
+      sources: [source],
+    });
+    expect(inspection).toMatchObject({
+      inspection_status: "partial",
+      result: "indeterminate",
+    });
+    expect(inspection.checks[0]).toMatchObject({
+      id: "parseable_pdf",
+      status: "missing",
+      observation_code: "PARSE_FAILED",
+    });
+    expect(inspection.checks.slice(1).every(item => (
+      item.status === "unavailable"
+      && item.observation_code === "NOT_INSPECTED"
+      && item.reason_code === "STRICT_PARSE_FAILED"
+    ))).toBe(true);
+
+    const stagedBytes = await fs.readFile(SCREEN_PASS_FIXTURE);
+    const mutationWorker = await workerScript(`
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+const chunks = [];
+for await (const chunk of process.stdin) chunks.push(chunk);
+const request = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+const output = Buffer.from(${JSON.stringify(stagedBytes.toString("base64"))}, "base64");
+const filename = "output-0001.pdf";
+const outputPath = request.stage_directory + "/" + filename;
+await fs.writeFile(outputPath, output, { flag: "wx", mode: 0o600 });
+const stats = await fs.lstat(outputPath, { bigint: true });
+process.stdout.write(JSON.stringify({
+  protocol_version: 1,
+  operation: request.operation,
+  status: "ok",
+  manifest: [{
+    filename,
+    size_bytes: output.length,
+    sha256: createHash("sha256").update(output).digest("hex"),
+    file_identity: { device: String(stats.dev), inode: String(stats.ino) },
+  }],
+  result: {},
+}));
+await monitor.stop();
+`);
+    await expect(runPdfLibMutation({
+      operation: "rotate_pdf_pages",
+      sources: [source],
+      options: { degrees: 90, pages: [] },
+      password: null,
+    }, async () => ({}), { workerPath: mutationWorker })).rejects.toMatchObject({
+      code: "PDF_INVALID_HEADER",
+    });
   });
 
   it("revalidates the exact source after a successful worker response and cleans the private directory", async () => {

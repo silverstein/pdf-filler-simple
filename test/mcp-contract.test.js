@@ -66,7 +66,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // combined contract digest is refreshed after the integration replay.
 // 2026-08-04: additive deterministic compare_pdfs contract with source-bound
 // evidence, exact whole-document limits, and typed channel coverage.
-const TOOL_CONTRACT_SHA256 = "109df9e468513e07377804bff842ac9c398923d88dc07c0ffd68c12a8c075e82";
+const TOOL_CONTRACT_SHA256 = "ccd2dd7eb7680084c8a762b541cd0632ef33475754e53397cb677e9915bcd206";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -105,6 +105,7 @@ const TOOL_EFFECT_ANNOTATIONS = {
   fill_pdf: CLOSED_IDEMPOTENT_OVERWRITE,
   bulk_fill_from_csv: CLOSED_IDEMPOTENT_OVERWRITE,
   compare_pdfs: CLOSED_READ,
+  inspect_pdf_accessibility: CLOSED_READ,
   save_profile: CLOSED_IDEMPOTENT_OVERWRITE,
   load_profile: CLOSED_READ,
   list_profiles: CLOSED_READ,
@@ -359,7 +360,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(41);
+    expect(tools).toHaveLength(42);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))

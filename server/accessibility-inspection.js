@@ -24,34 +24,74 @@ export const ACCESSIBILITY_INSPECTION_CHECKS = Object.freeze([
   Object.freeze({
     id: "parseable_pdf",
     limitation_code: "PARSE_DOES_NOT_ESTABLISH_TAG_SEMANTICS",
+    observation_codes: Object.freeze({
+      observed: Object.freeze(["PARSE_SUCCEEDED"]),
+      missing: Object.freeze(["PARSE_FAILED"]),
+      unavailable: Object.freeze([]),
+    }),
   }),
   Object.freeze({
     id: "catalog_marked_true",
     limitation_code: "MARKED_FLAG_IS_NOT_TAG_QUALITY_EVIDENCE",
+    observation_codes: Object.freeze({
+      observed: Object.freeze(["TRUE"]),
+      missing: Object.freeze(["FALSE", "ABSENT_OR_WRONG_TYPE"]),
+      unavailable: Object.freeze(["NOT_INSPECTED"]),
+    }),
   }),
   Object.freeze({
     id: "document_language_present",
     limitation_code: "LANGUAGE_VALUE_AND_CHANGES_NOT_ASSESSED",
+    observation_codes: Object.freeze({
+      observed: Object.freeze(["NONEMPTY_TEXT"]),
+      missing: Object.freeze(["BLANK_OR_CONTROL_ONLY", "ABSENT_OR_WRONG_TYPE"]),
+      unavailable: Object.freeze(["NOT_INSPECTED"]),
+    }),
   }),
   Object.freeze({
     id: "document_title_present",
     limitation_code: "TITLE_MEANING_NOT_ASSESSED",
+    observation_codes: Object.freeze({
+      observed: Object.freeze(["NONEMPTY_TEXT"]),
+      missing: Object.freeze(["BLANK_OR_CONTROL_ONLY", "ABSENT_OR_WRONG_TYPE"]),
+      unavailable: Object.freeze(["NOT_INSPECTED"]),
+    }),
   }),
   Object.freeze({
     id: "display_document_title_true",
     limitation_code: "VIEWER_PREFERENCE_SIGNAL_ONLY",
+    observation_codes: Object.freeze({
+      observed: Object.freeze(["TRUE"]),
+      missing: Object.freeze(["FALSE", "ABSENT_OR_WRONG_TYPE"]),
+      unavailable: Object.freeze(["NOT_INSPECTED"]),
+    }),
   }),
   Object.freeze({
     id: "structure_tree_root_dictionary_present",
     limitation_code: "STRUCTURE_ROOT_CONTENTS_NOT_VALIDATED",
+    observation_codes: Object.freeze({
+      observed: Object.freeze(["DICTIONARY_PRESENT"]),
+      missing: Object.freeze(["ABSENT_OR_WRONG_TYPE"]),
+      unavailable: Object.freeze(["NOT_INSPECTED"]),
+    }),
   }),
   Object.freeze({
     id: "structure_root_k_entry_resolves",
     limitation_code: "STRUCTURE_HIERARCHY_ROLES_AND_ORDER_NOT_VALIDATED",
+    observation_codes: Object.freeze({
+      observed: Object.freeze(["ENTRY_RESOLVES"]),
+      missing: Object.freeze(["ENTRY_ABSENT_OR_UNRESOLVED"]),
+      unavailable: Object.freeze(["NOT_INSPECTED"]),
+    }),
   }),
   Object.freeze({
     id: "structure_parent_tree_entry_resolves",
     limitation_code: "PARENT_TREE_NUMBER_TREE_AND_MAPPINGS_NOT_VALIDATED",
+    observation_codes: Object.freeze({
+      observed: Object.freeze(["ENTRY_RESOLVES"]),
+      missing: Object.freeze(["ENTRY_ABSENT_OR_UNRESOLVED"]),
+      unavailable: Object.freeze(["NOT_INSPECTED"]),
+    }),
   }),
 ]);
 export const ACCESSIBILITY_INSPECTION_UNRESOLVED_AREAS = Object.freeze([
@@ -89,6 +129,12 @@ const CONCLUSION_KEYS = Object.freeze([
 const MAX_XMP_BYTES = 256 * 1024;
 const SHA256_PATTERN = /^[a-f0-9]{64}$/;
 const PDF_LIB_ENCRYPTED_ERROR_MESSAGE = new EncryptedPDFError().message;
+const CHECK_UNAVAILABLE_REASON_CODES = new Set(["STRICT_PARSE_FAILED"]);
+const IDENTIFICATION_UNAVAILABLE_REASON_CODES = new Set([
+  "COMPRESSED_METADATA_NOT_INSPECTED",
+  "METADATA_SIZE_LIMIT",
+  "STRICT_PARSE_FAILED",
+]);
 
 export class AccessibilityInspectionError extends Error {
   constructor(code, message) {
@@ -96,6 +142,53 @@ export class AccessibilityInspectionError extends Error {
     this.name = "AccessibilityInspectionError";
     this.code = code;
   }
+}
+
+export function publicAccessibilityInspectionError(error) {
+  if (error?.code === "path_policy_denied") {
+    return {
+      code: "path_policy_denied",
+      message: "The requested PDF path is not permitted.",
+    };
+  }
+  if (error?.code === "PDF_RESOURCE_LIMIT_EXCEEDED") {
+    return {
+      code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+      message:
+        "PDF processing exceeded its isolated resource budget. "
+        + "The operation was stopped and the main PDF Tools server remains available. "
+        + "Try a smaller or simpler PDF.",
+    };
+  }
+  if (error?.code === "PDF_ENCRYPTED_INSPECTION_UNAVAILABLE") {
+    return {
+      code: "PDF_ENCRYPTED_INSPECTION_UNAVAILABLE",
+      message:
+        "Encrypted PDF inspection is unavailable because this operation does not accept a password.",
+    };
+  }
+  if (error?.code === "PDF_INPUT_TOO_LARGE") {
+    return {
+      code: "PDF_INPUT_TOO_LARGE",
+      message: "The requested PDF exceeds the bounded accessibility inspection file-size limit.",
+    };
+  }
+  if (["ENOENT", "ENOTDIR", "EACCES", "EPERM"].includes(error?.code)) {
+    return {
+      code: "PDF_UNAVAILABLE",
+      message: "The requested local PDF is unavailable for accessibility signal inspection.",
+    };
+  }
+  if (error instanceof TypeError) {
+    return {
+      code: "tool_execution_failed",
+      message: "The inspect_pdf_accessibility arguments are invalid.",
+    };
+  }
+  return {
+    code: "PDF_ACCESSIBILITY_INSPECTION_UNAVAILABLE",
+    message: "PDF accessibility signal inspection is unavailable for this document.",
+  };
 }
 
 function plainObject(value, label) {
@@ -175,10 +268,13 @@ function entryResolves(context, owner, key) {
   }
 }
 
-function check(id, status, reasonCode = null) {
+function check(id, status, observationCode, reasonCode = null) {
   const definition = CHECK_DEFINITION_BY_ID.get(id);
   if (!definition || !["observed", "missing", "unavailable"].includes(status)) {
     throw new TypeError("Accessibility inspection check construction is invalid.");
+  }
+  if (!definition.observation_codes[status].includes(observationCode)) {
+    throw new TypeError("Accessibility inspection observation code is invalid.");
   }
   if (reasonCode !== null
       && (typeof reasonCode !== "string" || !/^[A-Z][A-Z0-9_]{1,127}$/.test(reasonCode))) {
@@ -187,6 +283,7 @@ function check(id, status, reasonCode = null) {
   return {
     id,
     status,
+    observation_code: observationCode,
     limitation_code: definition.limitation_code,
     reason_code: reasonCode,
   };
@@ -194,8 +291,26 @@ function check(id, status, reasonCode = null) {
 
 function unavailableDependentChecks(reasonCode) {
   return ACCESSIBILITY_INSPECTION_CHECKS.slice(1).map(definition =>
-    check(definition.id, "unavailable", reasonCode)
+    check(definition.id, "unavailable", "NOT_INSPECTED", reasonCode)
   );
+}
+
+function booleanSignal(value) {
+  if (value === true) return { status: "observed", observationCode: "TRUE" };
+  if (value === false) return { status: "missing", observationCode: "FALSE" };
+  return { status: "missing", observationCode: "ABSENT_OR_WRONG_TYPE" };
+}
+
+function textSignal(value) {
+  if (meaningfulText(value)) {
+    return { status: "observed", observationCode: "NONEMPTY_TEXT" };
+  }
+  return {
+    status: "missing",
+    observationCode: typeof value === "string"
+      ? "BLANK_OR_CONTROL_ONLY"
+      : "ABSENT_OR_WRONG_TYPE",
+  };
 }
 
 function readSelfDeclaredIdentification(document) {
@@ -319,7 +434,7 @@ export async function inspectPdfAccessibilityBytes(bytes, options = {}) {
       bytes,
       fileName,
       [
-        check("parseable_pdf", "missing"),
+        check("parseable_pdf", "missing", "PARSE_FAILED"),
         ...unavailableDependentChecks("STRICT_PARSE_FAILED"),
       ],
       {
@@ -340,20 +455,39 @@ export async function inspectPdfAccessibilityBytes(bytes, options = {}) {
   try {
     title = document.getTitle();
   } catch {}
+  const marked = booleanSignal(booleanValue(context, markInfo, "Marked"));
+  const documentLanguage = textSignal(language);
+  const documentTitle = textSignal(title);
+  const displayDocumentTitle = booleanSignal(
+    booleanValue(context, viewerPreferences, "DisplayDocTitle"),
+  );
+  const structureRootPresent = Boolean(structureRoot);
+  const structureRootKResolves = entryResolves(context, structureRoot, "K");
+  const structureParentTreeResolves = entryResolves(context, structureRoot, "ParentTree");
   const checks = [
-    check("parseable_pdf", "observed"),
-    check("catalog_marked_true", booleanValue(context, markInfo, "Marked") === true ? "observed" : "missing"),
-    check("document_language_present", meaningfulText(language) ? "observed" : "missing"),
-    check("document_title_present", meaningfulText(title) ? "observed" : "missing"),
+    check("parseable_pdf", "observed", "PARSE_SUCCEEDED"),
+    check("catalog_marked_true", marked.status, marked.observationCode),
+    check("document_language_present", documentLanguage.status, documentLanguage.observationCode),
+    check("document_title_present", documentTitle.status, documentTitle.observationCode),
     check(
       "display_document_title_true",
-      booleanValue(context, viewerPreferences, "DisplayDocTitle") === true ? "observed" : "missing",
+      displayDocumentTitle.status,
+      displayDocumentTitle.observationCode,
     ),
-    check("structure_tree_root_dictionary_present", structureRoot ? "observed" : "missing"),
-    check("structure_root_k_entry_resolves", entryResolves(context, structureRoot, "K") ? "observed" : "missing"),
+    check(
+      "structure_tree_root_dictionary_present",
+      structureRootPresent ? "observed" : "missing",
+      structureRootPresent ? "DICTIONARY_PRESENT" : "ABSENT_OR_WRONG_TYPE",
+    ),
+    check(
+      "structure_root_k_entry_resolves",
+      structureRootKResolves ? "observed" : "missing",
+      structureRootKResolves ? "ENTRY_RESOLVES" : "ENTRY_ABSENT_OR_UNRESOLVED",
+    ),
     check(
       "structure_parent_tree_entry_resolves",
-      entryResolves(context, structureRoot, "ParentTree") ? "observed" : "missing",
+      structureParentTreeResolves ? "observed" : "missing",
+      structureParentTreeResolves ? "ENTRY_RESOLVES" : "ENTRY_ABSENT_OR_UNRESOLVED",
     ),
   ];
   return createResult(bytes, fileName, checks, readSelfDeclaredIdentification(document));
@@ -390,7 +524,11 @@ export function validateAccessibilityInspectionResult(value) {
     throw new TypeError("checks must contain exactly eight entries.");
   }
   for (const [index, item] of value.checks.entries()) {
-    exactKeys(item, ["id", "limitation_code", "reason_code", "status"], `checks[${index}]`);
+    exactKeys(
+      item,
+      ["id", "limitation_code", "observation_code", "reason_code", "status"],
+      `checks[${index}]`,
+    );
     exactString(item.id, CHECK_IDS[index], `checks[${index}].id`);
     exactString(
       item.limitation_code,
@@ -400,12 +538,20 @@ export function validateAccessibilityInspectionResult(value) {
     if (!["observed", "missing", "unavailable"].includes(item.status)) {
       throw new TypeError(`checks[${index}].status is invalid.`);
     }
+    if (!CHECK_DEFINITION_BY_ID.get(item.id).observation_codes[item.status]
+      .includes(item.observation_code)) {
+      throw new TypeError(`checks[${index}].observation_code is invalid.`);
+    }
     if (item.reason_code !== null
         && (typeof item.reason_code !== "string" || !/^[A-Z][A-Z0-9_]{1,127}$/.test(item.reason_code))) {
       throw new TypeError(`checks[${index}].reason_code is invalid.`);
     }
     if (item.status === "unavailable" && item.reason_code === null) {
       throw new TypeError(`checks[${index}] unavailable status requires a reason code.`);
+    }
+    if (item.status === "unavailable"
+        && !CHECK_UNAVAILABLE_REASON_CODES.has(item.reason_code)) {
+      throw new TypeError(`checks[${index}] unavailable reason code is invalid.`);
     }
     if (item.status !== "unavailable" && item.reason_code !== null) {
       throw new TypeError(`checks[${index}] reason code contradicts its status.`);
@@ -456,7 +602,7 @@ export function validateAccessibilityInspectionResult(value) {
     }
     if (identification.status === "unavailable") {
       if (typeof identification.reason_code !== "string"
-          || !/^[A-Z][A-Z0-9_]{1,127}$/.test(identification.reason_code)) {
+          || !IDENTIFICATION_UNAVAILABLE_REASON_CODES.has(identification.reason_code)) {
         throw new TypeError("Unavailable self-declared identification requires a reason code.");
       }
     } else if (identification.reason_code !== null) {

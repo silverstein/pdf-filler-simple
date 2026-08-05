@@ -122,6 +122,10 @@
       "description": "Rearrange the pages of a PDF in a new order"
     },
     {
+      "name": "inspect_pdf_accessibility",
+      "description": "Inspect eight shallow catalog-level accessibility signals with source binding, fixed limitations, and required human review"
+    },
+    {
       "name": "compare_pdfs",
       "description": "Deterministically compare two whole local PDFs with source-bound semantic, text, structure, form, annotation, metadata, and optional visual evidence"
     },

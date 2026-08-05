@@ -135,7 +135,12 @@ export async function screenPdfAccessibility(candidatePath, { evidence } = {}) {
     : inspection.checks;
   const findings = productChecks.map(item => {
     const [ruleId, description] = ruleProjection.get(item.id);
-    return finding(ruleId, item.status === "observed", description, item.status);
+    return finding(
+      ruleId,
+      item.status === "observed",
+      description,
+      item.observation_code,
+    );
   });
   const failures = findings.filter(item => !item.passed).map(item => item.id);
   const screen = {
@@ -152,6 +157,9 @@ export async function screenPdfAccessibility(candidatePath, { evidence } = {}) {
       },
     },
     limitations: [
+      ...(inspection.inspection_status === "partial"
+        ? ["No accessibility properties beyond basic PDF parseability were inspected because strict parsing failed."]
+        : []),
       "This is a shallow catalog-level screen, not a PDF/UA validator.",
       "It does not evaluate semantic tag correctness, reading order, alternate text quality, table structure, contrast, scripting, assistive-technology behavior, or any human-verifiable requirement.",
       "A PDF/UA identification entry is a self-declaration and is recorded only as an observation.",

@@ -6,6 +6,7 @@ import {
   validateRenderObservationSemantics,
 } from "./pdf-observations.js";
 import { validatePdfComparisonSemantics } from "./pdf-comparison.js";
+import { validateAccessibilityInspectionResult } from "./accessibility-inspection.js";
 
 const string = { type: "string" };
 const number = { type: "number" };
@@ -96,6 +97,43 @@ const comparisonSource = object({
 const comparisonCoverage = object({
   status: enumString(["supported", "partial", "unavailable"]),
   reason_codes: stringArray,
+});
+const accessibilityCheck = object({
+  id: enumString([
+    "parseable_pdf",
+    "catalog_marked_true",
+    "document_language_present",
+    "document_title_present",
+    "display_document_title_true",
+    "structure_tree_root_dictionary_present",
+    "structure_root_k_entry_resolves",
+    "structure_parent_tree_entry_resolves",
+  ]),
+  status: enumString(["observed", "missing", "unavailable"]),
+  observation_code: enumString([
+    "PARSE_SUCCEEDED",
+    "PARSE_FAILED",
+    "TRUE",
+    "FALSE",
+    "NONEMPTY_TEXT",
+    "BLANK_OR_CONTROL_ONLY",
+    "DICTIONARY_PRESENT",
+    "ABSENT_OR_WRONG_TYPE",
+    "ENTRY_RESOLVES",
+    "ENTRY_ABSENT_OR_UNRESOLVED",
+    "NOT_INSPECTED",
+  ]),
+  limitation_code: enumString([
+    "PARSE_DOES_NOT_ESTABLISH_TAG_SEMANTICS",
+    "MARKED_FLAG_IS_NOT_TAG_QUALITY_EVIDENCE",
+    "LANGUAGE_VALUE_AND_CHANGES_NOT_ASSESSED",
+    "TITLE_MEANING_NOT_ASSESSED",
+    "VIEWER_PREFERENCE_SIGNAL_ONLY",
+    "STRUCTURE_ROOT_CONTENTS_NOT_VALIDATED",
+    "STRUCTURE_HIERARCHY_ROLES_AND_ORDER_NOT_VALIDATED",
+    "PARENT_TREE_NUMBER_TREE_AND_MAPPINGS_NOT_VALIDATED",
+  ]),
+  reason_code: nullable({ const: "STRICT_PARSE_FAILED" }),
 });
 const comparisonImmutability = object({
   initial_sha256: sha256Digest,
@@ -333,6 +371,16 @@ const pdfIdentityError = object({
       "PDF_INPUT_TOO_LARGE",
       "PDF_INVALID_HEADER",
       "PDF_UNAVAILABLE",
+    ]),
+  }),
+});
+const pdfAccessibilityInspectionError = object({
+  status: { const: "failed" },
+  error: object({
+    error_schema_version: { const: 1 },
+    code: enumString([
+      "PDF_ACCESSIBILITY_INSPECTION_UNAVAILABLE",
+      "PDF_ENCRYPTED_INSPECTION_UNAVAILABLE",
     ]),
   }),
 });
@@ -1007,6 +1055,57 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     identity_method: { const: "race_aware_descriptor_sha256" },
     pdf_parsed: { const: false },
   }),
+  inspect_pdf_accessibility: object({
+    schema_version: { const: "pdf-tools.accessibility-inspection-result/1.0.0" },
+    engine: object({
+      name: { const: "pdf-tools.structural-review-screen" },
+      version: { const: "1.0.0" },
+    }),
+    parser: object({ name: { const: "pdf-lib" }, version: { const: "1.17.1" } }),
+    source: object({
+      file_name: { type: "string", minLength: 1, maxLength: 255 },
+      size_bytes: { type: "integer", minimum: 1 },
+      sha256: sha256Digest,
+    }),
+    inspection_status: enumString(["complete", "partial"]),
+    result: enumString(["findings_detected", "no_findings_detected", "indeterminate"]),
+    checks: {
+      type: "array",
+      items: accessibilityCheck,
+      minItems: 8,
+      maxItems: 8,
+    },
+    summary: object({
+      total: { const: 8 },
+      observed: { type: "integer", minimum: 0, maximum: 8 },
+      missing: { type: "integer", minimum: 0, maximum: 8 },
+      unavailable: { type: "integer", minimum: 0, maximum: 8 },
+      text: string,
+    }),
+    self_declared_identification: object({
+      status: enumString(["observed", "not_observed", "unavailable"]),
+      part: nullable({ type: "integer", minimum: 1, maximum: 99 }),
+      revision: nullable({ type: "integer", minimum: 1, maximum: 9999 }),
+      reason_code: nullable(enumString([
+        "COMPRESSED_METADATA_NOT_INSPECTED",
+        "METADATA_SIZE_LIMIT",
+        "STRICT_PARSE_FAILED",
+      ])),
+    }),
+    machine_profile_validation: object({ status: { const: "not_run" } }),
+    human_review: object({
+      status: { const: "required" },
+      unresolved_areas: stringArray,
+    }),
+    conclusions: object({
+      pdfua_conformance: { const: "not_established" },
+      wcag_conformance: { const: "not_established" },
+      certification: { const: "not_established" },
+      legal_compliance: { const: "not_established" },
+      document_accessibility: { const: "not_established" },
+    }),
+    limitations: stringArray,
+  }),
   compare_pdfs: object({
     schema_version: { const: "1.0" },
     engine: object({
@@ -1273,6 +1372,11 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
 
 const specialErrorSchemas = {
   compare_pdfs: [layoutPasswordError, pdfResourceLimitError, pdfIdentityError, pdfComparisonError],
+  inspect_pdf_accessibility: [
+    pdfResourceLimitError,
+    pdfIdentityError,
+    pdfAccessibilityInspectionError,
+  ],
   get_pdf_identity: [pdfIdentityError],
   get_pdf_info: [layoutPasswordError, pdfResourceLimitError, pdfIdentityError],
   validate_pdf: [validationFailure],
@@ -1339,6 +1443,7 @@ const errorValidators = new Map(Object.entries(TOOL_ERROR_OUTPUT_SCHEMAS).map(
 const standardErrorValidator = validatorProvider.getValidator(standardError);
 const semanticSuccessValidators = new Map([
   ["compare_pdfs", validatePdfComparisonSemantics],
+  ["inspect_pdf_accessibility", validateAccessibilityInspectionResult],
   ["read_pdf_layout", validatePdfLayoutSemantics],
   ["convert_pdf_to_markdown", validateMarkdownConversionSemantics],
   ["get_pdf_info", validatePdfObservationSemantics],
