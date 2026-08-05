@@ -208,16 +208,44 @@ describe.each(RUNTIMES)("$name accessibility inspection MCP contract", ({ root }
 });
 
 describe("installed accessibility inspection smoke contract", () => {
+  const requiredWiring = [
+    "const accessibility = await first.client.callTool({",
+    'name: "inspect_pdf_accessibility"',
+    "accessibility.structuredContent?.source?.file_name === path.basename(textFixture)",
+    "accessibility.structuredContent?.source?.size_bytes === textFixtureBytes.length",
+    "accessibility.structuredContent?.source?.sha256",
+    'accessibility.structuredContent?.checks?.length === 8',
+    'accessibility.structuredContent?.summary?.total === 8',
+    'accessibility.structuredContent?.machine_profile_validation?.status === "not_run"',
+    'accessibility.structuredContent?.human_review?.status === "required"',
+    '.every(value => value === "not_established")',
+    "accessibility_receipt: accessibilityReceipt",
+  ];
+
+  function assertInstalledSmokeWiring(smoke) {
+    for (const required of requiredWiring) {
+      if (!smoke.includes(required)) throw new Error(`Installed smoke omitted required wiring: ${required}`);
+    }
+  }
+
   it("executes the tool and asserts exact source binding and bounded conclusions", async () => {
     const smoke = await fs.readFile(
       path.join(REPO_ROOT, "scripts/macos-claude-installed-smoke.mjs"),
       "utf8",
     );
-    expect(smoke).toContain('name: "inspect_pdf_accessibility"');
-    expect(smoke).toContain("accessibility.structuredContent?.source?.size_bytes === textFixtureBytes.length");
-    expect(smoke).toContain('accessibility.structuredContent?.checks?.length === 8');
-    expect(smoke).toContain('accessibility.structuredContent?.human_review?.status === "required"');
-    expect(smoke).toContain('.every(value => value === "not_established")');
+    expect(() => assertInstalledSmokeWiring(smoke)).not.toThrow();
     expect(smoke).toContain("same_session_calls: 9");
+  });
+
+  it("fails its contract check when any receipt field wiring is removed", async () => {
+    const smoke = await fs.readFile(
+      path.join(REPO_ROOT, "scripts/macos-claude-installed-smoke.mjs"),
+      "utf8",
+    );
+    for (const required of requiredWiring) {
+      const mutated = smoke.replace(required, "REMOVED_WIRING");
+      expect(mutated).not.toBe(smoke);
+      expect(() => assertInstalledSmokeWiring(mutated)).toThrow(/omitted required wiring/);
+    }
   });
 });

@@ -30,9 +30,17 @@ const rasterFixture = path.join(fixtureDirectory, "synthetic-raster-only.pdf");
 const mutationDirectory = path.join(fixtureDirectory, "mutation-output");
 const toolNames = [];
 const EXPECTED_TOOL_CONTRACT_SHA256 = "ccd2dd7eb7680084c8a762b541cd0632ef33475754e53397cb677e9915bcd206";
+const ACCESSIBILITY_CONCLUSION_KEYS = Object.freeze([
+  "certification",
+  "document_accessibility",
+  "legal_compliance",
+  "pdfua_conformance",
+  "wcag_conformance",
+]);
 let toolContractSha256;
 let structuredToolCount;
 let markdownHash;
+let accessibilityReceipt;
 
 function textContent(result) {
   return (result.content || [])
@@ -141,10 +149,32 @@ try {
       && accessibility.structuredContent?.summary?.total === 8
       && accessibility.structuredContent?.machine_profile_validation?.status === "not_run"
       && accessibility.structuredContent?.human_review?.status === "required"
+      && Object.keys(accessibility.structuredContent?.conclusions || {}).sort().length
+        === ACCESSIBILITY_CONCLUSION_KEYS.length
+      && Object.keys(accessibility.structuredContent?.conclusions || {}).sort()
+        .every((key, index) => key === ACCESSIBILITY_CONCLUSION_KEYS[index])
       && Object.values(accessibility.structuredContent?.conclusions || {})
         .every(value => value === "not_established"),
     "inspect_pdf_accessibility did not preserve its bounded review and conclusion contract",
   );
+  accessibilityReceipt = {
+    schema_version: "pdf-tools.accessibility-smoke-receipt/1.0.0",
+    tool: "inspect_pdf_accessibility",
+    source: {
+      file_name: accessibility.structuredContent.source.file_name,
+      size_bytes: accessibility.structuredContent.source.size_bytes,
+      sha256: accessibility.structuredContent.source.sha256,
+    },
+    check_count: accessibility.structuredContent.checks.length,
+    summary_total: accessibility.structuredContent.summary.total,
+    machine_profile_validation: accessibility.structuredContent.machine_profile_validation.status,
+    human_review: accessibility.structuredContent.human_review.status,
+    conclusions: Object.fromEntries(
+      ACCESSIBILITY_CONCLUSION_KEYS.map(
+        key => [key, accessibility.structuredContent.conclusions[key]],
+      ),
+    ),
+  };
 
   const textRead = await first.client.callTool({
     name: "read_pdf_content",
@@ -239,4 +269,5 @@ process.stdout.write(`${JSON.stringify({
   markdown_sha256: markdownHash,
   raster_png_sha256: rasterHash,
   mutation_files: mutationFiles,
+  accessibility_receipt: accessibilityReceipt,
 }, null, 2)}\n`);
