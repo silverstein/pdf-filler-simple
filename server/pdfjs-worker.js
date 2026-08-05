@@ -55,6 +55,7 @@ let systemChildTerminationHandlersInstalled = false;
 let systemRenderShutdownStarted = false;
 let systemRenderShutdownTerminal = false;
 let systemCommandSpawnCount = 0;
+let systemRendererControllerShutdownProbe = null;
 let nextThreadSystemCommandId = 1;
 
 const OPERATION_OPTION_KEYS = new Map([
@@ -1263,8 +1264,25 @@ function systemRendererShutdownError() {
   );
 }
 
+function controllerShutdownInProgress() {
+  if (systemRendererControllerShutdownProbe === null) return false;
+  try {
+    const result = systemRendererControllerShutdownProbe();
+    return typeof result === "boolean" ? result : true;
+  } catch {
+    return true;
+  }
+}
+
+function assertSystemRendererControllerRunning() {
+  if (controllerShutdownInProgress()) {
+    throw resourceLimitError("system_renderer_controller_shutdown");
+  }
+}
+
 function assertSystemRendererRunning() {
   if (systemRenderShutdownStarted) throw systemRendererShutdownError();
+  assertSystemRendererControllerRunning();
 }
 
 function registerSystemRenderWorkspace() {
@@ -1338,6 +1356,16 @@ export function poisonPdfjsWorkerSystemRenderer() {
   systemRenderShutdownStarted = true;
 }
 
+export function bindPdfjsWorkerSystemRendererControllerProbe(probe) {
+  if (typeof probe !== "function") {
+    throw new TypeError("system renderer controller probe must be a function.");
+  }
+  if (systemRendererControllerShutdownProbe !== null) {
+    throw new TypeError("system renderer controller probe is already bound.");
+  }
+  systemRendererControllerShutdownProbe = probe;
+}
+
 export async function beginPdfjsWorkerSystemShutdown({ terminal = false } = {}) {
   if (typeof terminal !== "boolean") {
     throw new TypeError("terminal must be a boolean.");
@@ -1352,6 +1380,7 @@ export function reopenPdfjsWorkerSystemRenderer() {
   if (systemRenderShutdownTerminal) {
     throw resourceLimitError("system_renderer_shutdown_terminal");
   }
+  assertSystemRendererControllerRunning();
   if (activeSystemChildren.size > 0 || activeSystemRenderWorkspaces.size > 0) {
     throw resourceLimitError("system_renderer_shutdown_incomplete");
   }
@@ -1363,6 +1392,7 @@ export function snapshotPdfjsWorkerSystemRendererState() {
     admission_closed: systemRenderShutdownStarted,
     active_children: activeSystemChildren.size,
     active_workspaces: activeSystemRenderWorkspaces.size,
+    controller_shutdown: controllerShutdownInProgress(),
     spawn_count: systemCommandSpawnCount,
     terminal: systemRenderShutdownTerminal,
   };

@@ -763,10 +763,22 @@ process.stdout.write(${JSON.stringify(success())});
       await executeStarted;
       shutdown = terminateAllPdfjsSubprocesses({ reopenAfterSuccessfulDrain: true });
       void shutdown.catch(() => {});
+      let rawReopenFailure;
+      try {
+        workerModule.reopenPdfjsWorkerSystemRenderer();
+      } catch (error) {
+        rawReopenFailure = error;
+      }
+      expect(rawReopenFailure).toMatchObject({
+        code: PDF_RESOURCE_LIMIT_CODE,
+        reason: "system_renderer_controller_shutdown",
+      });
+      expect(rawReopenFailure.message).not.toContain(renderRequest.source.canonical_path);
       expect(workerModule.snapshotPdfjsWorkerSystemRendererState()).toMatchObject({
         admission_closed: true,
         active_children: 0,
         active_workspaces: 0,
+        controller_shutdown: true,
         spawn_count: initialState.spawn_count,
       });
       expect(await settlementBeforeDelay(shutdown)).toBe("pending");
@@ -777,6 +789,7 @@ process.stdout.write(${JSON.stringify(success())});
         admission_closed: true,
         active_children: 0,
         active_workspaces: 0,
+        controller_shutdown: true,
         spawn_count: initialState.spawn_count,
       });
       const workspacesDuringCleanup = (await fs.readdir(os.tmpdir()))
@@ -800,6 +813,7 @@ process.stdout.write(${JSON.stringify(success())});
         admission_closed: false,
         active_children: 0,
         active_workspaces: 0,
+        controller_shutdown: false,
         spawn_count: initialState.spawn_count,
       });
       let reopenedDirectory = null;
@@ -817,6 +831,72 @@ process.stdout.write(${JSON.stringify(success())});
       if (shutdown !== undefined) await shutdown.catch(() => {});
     }
   });
+
+  it.each(["throws", "non_boolean"])(
+    "fails closed when the bound controller probe %s and rejects rebinding",
+    async mode => {
+      const workerUrl = pathToFileURL(
+        path.resolve("server/pdfjs-worker.js"),
+      ).href;
+      const result = await runNodeFixture(`
+import {
+  bindPdfjsWorkerSystemRendererControllerProbe,
+  reopenPdfjsWorkerSystemRenderer,
+  snapshotPdfjsWorkerSystemRendererState,
+  withPrivateSystemRenderWorkspace,
+} from ${JSON.stringify(workerUrl)};
+
+const mode = process.argv[2];
+bindPdfjsWorkerSystemRendererControllerProbe(
+  mode === "throws"
+    ? () => { throw new Error("untrusted probe failure"); }
+    : () => "not a boolean",
+);
+let callbackCalls = 0;
+let admissionFailure;
+try {
+  await withPrivateSystemRenderWorkspace(async () => { callbackCalls += 1; });
+} catch (error) {
+  admissionFailure = error;
+}
+let reopenFailure;
+try { reopenPdfjsWorkerSystemRenderer(); } catch (error) { reopenFailure = error; }
+let rebindFailure;
+try {
+  bindPdfjsWorkerSystemRendererControllerProbe(() => false);
+} catch (error) {
+  rebindFailure = error;
+}
+console.log(JSON.stringify({
+  admission: { code: admissionFailure?.code, reason: admissionFailure?.reason },
+  callbackCalls,
+  rebind: { message: rebindFailure?.message, name: rebindFailure?.name },
+  reopen: { code: reopenFailure?.code, reason: reopenFailure?.reason },
+  state: snapshotPdfjsWorkerSystemRendererState(),
+}));
+`, [mode]);
+      expect(result).toMatchObject({ code: 0, signal: null });
+      const receipt = JSON.parse(result.stdout.trim().split("\n").at(-1));
+      expect(receipt.admission).toEqual({
+        code: PDF_RESOURCE_LIMIT_CODE,
+        reason: "system_renderer_controller_shutdown",
+      });
+      expect(receipt.reopen).toEqual({
+        code: PDF_RESOURCE_LIMIT_CODE,
+        reason: "system_renderer_controller_shutdown",
+      });
+      expect(receipt.callbackCalls).toBe(0);
+      expect(receipt.rebind).toEqual({
+        message: "system renderer controller probe is already bound.",
+        name: "TypeError",
+      });
+      expect(receipt.state).toMatchObject({
+        active_children: 0,
+        active_workspaces: 0,
+        controller_shutdown: true,
+      });
+    },
+  );
 
   it("keeps outer and inner admission closed after a bounded shutdown timeout", async () => {
     const sourceRequest = await createThreadPdfRequest();

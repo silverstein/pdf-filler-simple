@@ -905,6 +905,7 @@ async function runThreadWorker({
 
 async function loadInProcessWorkerModule() {
   inProcessWorkerModulePromise ??= import("./pdfjs-worker.js").then(worker => {
+    worker.bindPdfjsWorkerSystemRendererControllerProbe(() => shutdownInProgress);
     inProcessWorkerModule = worker;
     return worker;
   });
@@ -1214,7 +1215,6 @@ export function terminateAllPdfjsSubprocesses({
   }
   gracefulShutdownPromise = (async () => {
     let timer;
-    let successfulDrain = false;
     try {
       const timeout = new Promise((_, reject) => {
         timer = setTimeout(
@@ -1241,25 +1241,21 @@ export function terminateAllPdfjsSubprocesses({
       if (reopenAfterSuccessfulDrain && shutdownTerminal) {
         throw resourceLimitError("worker_shutdown_terminal");
       }
-      if (reopenAfterSuccessfulDrain && inProcessWorkerAtShutdown !== null) {
-        const worker = await inProcessWorkerAtShutdown;
-        worker.reopenPdfjsWorkerSystemRenderer();
+      if (reopenAfterSuccessfulDrain) {
+        if (activeOperations.size !== 0 || queuedOperations.length !== 0) {
+          throw resourceLimitError("worker_shutdown_incomplete");
+        }
+        shutdownInProgress = false;
+        if (inProcessWorkerAtShutdown !== null) {
+          inProcessWorkerModule.reopenPdfjsWorkerSystemRenderer();
+        }
       }
-      successfulDrain = true;
     } catch (error) {
       poisonPdfjsShutdown();
       throw error;
     } finally {
       clearTimeout(timer);
       gracefulShutdownPromise = null;
-      if (
-        successfulDrain
-        && reopenAfterSuccessfulDrain
-        && activeOperations.size === 0
-        && queuedOperations.length === 0
-      ) {
-        shutdownInProgress = false;
-      }
     }
   })();
   return gracefulShutdownPromise;
