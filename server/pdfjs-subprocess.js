@@ -41,6 +41,7 @@ const activeChildren = new Set();
 const activeThreadWorkers = new Set();
 const activeThreadSystemChildren = new Set();
 let inProcessWorkerModulePromise = null;
+let inProcessWorkerModule = null;
 let inProcessCanvasGuardInstalled = false;
 let shutdownInProgress = false;
 let gracefulShutdownPromise = null;
@@ -902,7 +903,10 @@ async function runThreadWorker({
 }
 
 async function loadInProcessWorkerModule() {
-  inProcessWorkerModulePromise ??= import("./pdfjs-worker.js");
+  inProcessWorkerModulePromise ??= import("./pdfjs-worker.js").then(worker => {
+    inProcessWorkerModule = worker;
+    return worker;
+  });
   return await inProcessWorkerModulePromise;
 }
 
@@ -1158,7 +1162,14 @@ export async function settleAllShutdownOperations(operations) {
   if (failure !== null) throw failure;
 }
 
-export function terminateAllPdfjsSubprocesses() {
+export function terminateAllPdfjsSubprocesses({
+  reopenAfterSuccessfulDrain = false,
+  shutdownTimeoutMs = OPERATION_SHUTDOWN_TIMEOUT_MS,
+} = {}) {
+  if (typeof reopenAfterSuccessfulDrain !== "boolean") {
+    throw new TypeError("reopenAfterSuccessfulDrain must be a boolean.");
+  }
+  boundedInteger(shutdownTimeoutMs, "shutdownTimeoutMs", 1, 60_000);
   if (gracefulShutdownPromise !== null) return gracefulShutdownPromise;
   shutdownInProgress = true;
   const shutdownError = resourceLimitError("worker_shutdown_in_progress");
@@ -1170,18 +1181,25 @@ export function terminateAllPdfjsSubprocesses() {
     .map(worker => Promise.resolve().then(() => worker.terminate()));
   const threadChildTerminations = [...activeThreadSystemChildren]
     .map(child => terminateTrackedChild(child));
-  const inProcessTermination = inProcessWorkerModulePromise === null
-    ? []
-    : [inProcessWorkerModulePromise.then(
-        worker => worker.terminateAllPdfjsWorkerSystemChildren(),
-      )];
+  let inProcessWorkerAtShutdown = null;
+  let inProcessTermination = [];
+  if (inProcessWorkerModule !== null) {
+    inProcessWorkerAtShutdown = Promise.resolve(inProcessWorkerModule);
+    inProcessTermination = [inProcessWorkerModule.beginPdfjsWorkerSystemShutdown()];
+  } else if (inProcessWorkerModulePromise !== null) {
+    inProcessWorkerAtShutdown = inProcessWorkerModulePromise;
+    inProcessTermination = [inProcessWorkerModulePromise.then(
+      worker => worker.beginPdfjsWorkerSystemShutdown(),
+    )];
+  }
   gracefulShutdownPromise = (async () => {
     let timer;
+    let successfulDrain = false;
     try {
       const timeout = new Promise((_, reject) => {
         timer = setTimeout(
           () => reject(resourceLimitError("worker_shutdown_timeout")),
-          OPERATION_SHUTDOWN_TIMEOUT_MS,
+          shutdownTimeoutMs,
         );
         timer.unref();
       });
@@ -1200,10 +1218,20 @@ export function terminateAllPdfjsSubprocesses() {
           ?.value
         ?? null;
       if (failure !== null) throw failure;
+      if (reopenAfterSuccessfulDrain && inProcessWorkerAtShutdown !== null) {
+        const worker = await inProcessWorkerAtShutdown;
+        worker.reopenPdfjsWorkerSystemRenderer();
+      }
+      successfulDrain = true;
     } finally {
       clearTimeout(timer);
       gracefulShutdownPromise = null;
-      if (activeOperations.size === 0 && queuedOperations.length === 0) {
+      if (
+        successfulDrain
+        && reopenAfterSuccessfulDrain
+        && activeOperations.size === 0
+        && queuedOperations.length === 0
+      ) {
         shutdownInProgress = false;
       }
     }

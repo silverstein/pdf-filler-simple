@@ -53,6 +53,7 @@ const threadSystemCommandWaiters = new Map();
 let systemChildTermination = null;
 let systemChildTerminationHandlersInstalled = false;
 let systemRenderShutdownStarted = false;
+let systemCommandSpawnCount = 0;
 let nextThreadSystemCommandId = 1;
 
 const OPERATION_OPTION_KEYS = new Map([
@@ -1327,16 +1328,26 @@ export async function withPrivateSystemRenderWorkspace(operation) {
   return renderResult;
 }
 
-export async function terminateAllPdfjsWorkerSystemChildren() {
+export async function beginPdfjsWorkerSystemShutdown() {
   systemRenderShutdownStarted = true;
-  try {
-    await terminateActiveSystemChildren();
-    await awaitSystemRenderWorkspaceCleanup();
-  } finally {
-    if (activeSystemRenderWorkspaces.size === 0) {
-      systemRenderShutdownStarted = false;
-    }
+  await terminateActiveSystemChildren();
+  await awaitSystemRenderWorkspaceCleanup();
+}
+
+export function reopenPdfjsWorkerSystemRenderer() {
+  if (activeSystemChildren.size > 0 || activeSystemRenderWorkspaces.size > 0) {
+    throw resourceLimitError("system_renderer_shutdown_incomplete");
   }
+  systemRenderShutdownStarted = false;
+}
+
+export function snapshotPdfjsWorkerSystemRendererState() {
+  return {
+    admission_closed: systemRenderShutdownStarted,
+    active_children: activeSystemChildren.size,
+    active_workspaces: activeSystemRenderWorkspaces.size,
+    spawn_count: systemCommandSpawnCount,
+  };
 }
 
 export function forceTerminateAllPdfjsWorkerSystemChildren() {
@@ -1355,7 +1366,7 @@ export function installSystemChildTerminationHandlers() {
   for (const [signal, exitCode] of exitCodes) {
     process.once(signal, () => {
       if (systemChildTermination !== null) return;
-      systemChildTermination = terminateAllPdfjsWorkerSystemChildren();
+      systemChildTermination = beginPdfjsWorkerSystemShutdown();
       void systemChildTermination.finally(() => process.exit(exitCode));
     });
   }
@@ -1383,6 +1394,7 @@ export async function runSystemCommand(command, args, {
     return await runThreadSystemCommand(command, args, timeoutMs);
   }
   await new Promise((resolve, reject) => {
+    systemCommandSpawnCount += 1;
     const child = spawnProcess(command, args, {
       cwd: workingDirectory,
       env: {

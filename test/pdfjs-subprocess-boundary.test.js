@@ -90,6 +90,28 @@ async function settlementBeforeDelay(promise, delayMs = 100) {
   }
 }
 
+async function runNodeFixture(body, args = []) {
+  const workerPath = await fixtureWorker(body);
+  return await new Promise((resolve, reject) => {
+    const child = spawn(process.execPath, [workerPath, ...args], {
+      cwd: process.cwd(),
+      env: process.env,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", chunk => stdout.push(chunk));
+    child.stderr.on("data", chunk => stderr.push(chunk));
+    child.once("error", reject);
+    child.once("close", (code, signal) => resolve({
+      code,
+      signal,
+      stderr: Buffer.concat(stderr).toString("utf8"),
+      stdout: Buffer.concat(stdout).toString("utf8"),
+    }));
+  });
+}
+
 function request(operation = "read_content", options = { max_pages: null }) {
   return createPdfjsSubprocessRequest({
     operation,
@@ -616,7 +638,7 @@ process.stdout.write(${JSON.stringify(success())});
       code: "PDFJS_SUBPROCESS_FAILED",
     });
     const renderer = JSON.parse(await waitForFile(rendererInfoPath));
-    await terminateAllPdfjsSubprocesses();
+    await terminateAllPdfjsSubprocesses({ reopenAfterSuccessfulDrain: true });
     await operation;
     expect(() => process.kill(renderer.pid, 0)).toThrow(
       expect.objectContaining({ code: "ESRCH" }),
@@ -659,7 +681,9 @@ process.stdout.write(${JSON.stringify(success())});
     });
     void queued.catch(() => {});
     let shutdownSettled = false;
-    const shutdown = terminateAllPdfjsSubprocesses().finally(() => {
+    const shutdown = terminateAllPdfjsSubprocesses({
+      reopenAfterSuccessfulDrain: true,
+    }).finally(() => {
       shutdownSettled = true;
     });
     expect(await settlementBeforeDelay(shutdown)).toBe("pending");
@@ -677,6 +701,222 @@ process.stdout.write(${JSON.stringify(success())});
     expect(spawnCalls).toBe(0);
     expect(removedDirectories).toHaveLength(1);
     await expect(fs.access(removedDirectories[0])).rejects.toMatchObject({ code: "ENOENT" });
+  });
+
+  it("holds the in-process renderer gate through the execute-to-workspace shutdown race", async () => {
+    if (process.platform !== "darwin") return;
+    const renderRequest = await createThreadPdfRequest({
+      operation: "render_page",
+      options: {
+        max_dimension_px: 512,
+        page: 1,
+        renderer_policy: "system",
+        scale_override: null,
+      },
+    });
+    const workerModule = await import("../server/pdfjs-worker.js");
+    const initialState = workerModule.snapshotPdfjsWorkerSystemRendererState();
+    const initialWorkspaces = new Set(
+      (await fs.readdir(os.tmpdir()))
+        .filter(name => name.startsWith("pdf-tools-system-render-")),
+    );
+    const originalLoad = PDFDocument.load;
+    let loadCalls = 0;
+    let releaseExecute;
+    let markExecuteStarted;
+    const executeStarted = new Promise(resolve => {
+      markExecuteStarted = resolve;
+    });
+    const executeRelease = new Promise(resolve => {
+      releaseExecute = resolve;
+    });
+    let releaseCleanup;
+    let markCleanupStarted;
+    const cleanupStarted = new Promise(resolve => {
+      markCleanupStarted = resolve;
+    });
+    const cleanupRelease = new Promise(resolve => {
+      releaseCleanup = resolve;
+    });
+    let operationDirectory = null;
+    PDFDocument.load = async function heldPdfLoad(...args) {
+      loadCalls += 1;
+      if (loadCalls === 1) {
+        markExecuteStarted();
+        await executeRelease;
+      }
+      return await originalLoad.apply(this, args);
+    };
+    let operation;
+    let shutdown;
+    try {
+      operation = runPdfjsSubprocess(renderRequest, {
+        isolationMode: "in_process",
+        removeOperationDirectory: async (directory, options) => {
+          operationDirectory = directory;
+          markCleanupStarted();
+          await cleanupRelease;
+          await fs.rm(directory, options);
+        },
+      });
+      void operation.catch(() => {});
+      await executeStarted;
+      shutdown = terminateAllPdfjsSubprocesses({ reopenAfterSuccessfulDrain: true });
+      void shutdown.catch(() => {});
+      expect(workerModule.snapshotPdfjsWorkerSystemRendererState()).toMatchObject({
+        admission_closed: true,
+        active_children: 0,
+        active_workspaces: 0,
+        spawn_count: initialState.spawn_count,
+      });
+      expect(await settlementBeforeDelay(shutdown)).toBe("pending");
+      releaseExecute();
+      await cleanupStarted;
+      expect(await settlementBeforeDelay(shutdown)).toBe("pending");
+      expect(workerModule.snapshotPdfjsWorkerSystemRendererState()).toMatchObject({
+        admission_closed: true,
+        active_children: 0,
+        active_workspaces: 0,
+        spawn_count: initialState.spawn_count,
+      });
+      const workspacesDuringCleanup = (await fs.readdir(os.tmpdir()))
+        .filter(name => name.startsWith("pdf-tools-system-render-"));
+      expect(new Set(workspacesDuringCleanup)).toEqual(initialWorkspaces);
+      releaseCleanup();
+      let operationFailure;
+      try {
+        await operation;
+      } catch (error) {
+        operationFailure = error;
+      }
+      expect(operationFailure).toMatchObject({
+        code: PDF_RESOURCE_LIMIT_CODE,
+        reason: "system_renderer_shutdown",
+      });
+      expect(operationFailure.message).not.toContain(renderRequest.source.canonical_path);
+      expect(operationFailure.message).not.toContain(operationDirectory);
+      await expect(shutdown).resolves.toBeUndefined();
+      expect(workerModule.snapshotPdfjsWorkerSystemRendererState()).toMatchObject({
+        admission_closed: false,
+        active_children: 0,
+        active_workspaces: 0,
+        spawn_count: initialState.spawn_count,
+      });
+      let reopenedDirectory = null;
+      await workerModule.withPrivateSystemRenderWorkspace(async ({ renderDirectory }) => {
+        reopenedDirectory = renderDirectory;
+        await fs.writeFile(path.join(renderDirectory, "bounded.txt"), "reopened");
+      });
+      await expect(fs.access(reopenedDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.access(operationDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    } finally {
+      PDFDocument.load = originalLoad;
+      releaseExecute?.();
+      releaseCleanup?.();
+      if (operation !== undefined) await operation.catch(() => {});
+      if (shutdown !== undefined) await shutdown.catch(() => {});
+    }
+  });
+
+  it("keeps outer and inner admission closed after a bounded shutdown timeout", async () => {
+    const sourceRequest = await createThreadPdfRequest();
+    const subprocessUrl = pathToFileURL(
+      path.resolve("server/pdfjs-subprocess.js"),
+    ).href;
+    const workerUrl = pathToFileURL(
+      path.resolve("server/pdfjs-worker.js"),
+    ).href;
+    const result = await runNodeFixture(`
+import {
+  PDF_RESOURCE_LIMIT_CODE,
+  runPdfjsSubprocess,
+  terminateAllPdfjsSubprocesses,
+} from ${JSON.stringify(subprocessUrl)};
+import {
+  snapshotPdfjsWorkerSystemRendererState,
+  withPrivateSystemRenderWorkspace,
+} from ${JSON.stringify(workerUrl)};
+
+const request = JSON.parse(process.argv[2]);
+await runPdfjsSubprocess(request, { isolationMode: "in_process" });
+let releasePreSpawn;
+let markPreSpawnStarted;
+const preSpawnStarted = new Promise(resolve => { markPreSpawnStarted = resolve; });
+const preSpawnRelease = new Promise(resolve => { releasePreSpawn = resolve; });
+const held = runPdfjsSubprocess(request, {
+  beforeSpawn: async () => {
+    markPreSpawnStarted();
+    await preSpawnRelease;
+  },
+  isolationMode: "in_process",
+});
+void held.catch(() => {});
+await preSpawnStarted;
+let shutdownFailure;
+const keepalive = setInterval(() => {}, 1000);
+try {
+  await terminateAllPdfjsSubprocesses({ shutdownTimeoutMs: 20 });
+} catch (error) {
+  shutdownFailure = error;
+} finally {
+  clearInterval(keepalive);
+}
+let outerFailure;
+try {
+  await runPdfjsSubprocess(request, { isolationMode: "in_process" });
+} catch (error) {
+  outerFailure = error;
+}
+let innerFailure;
+try {
+  await withPrivateSystemRenderWorkspace(async () => {
+    throw new Error("closed inner admission executed its callback");
+  });
+} catch (error) {
+  innerFailure = error;
+}
+releasePreSpawn();
+let heldFailure;
+try {
+  await held;
+} catch (error) {
+  heldFailure = error;
+}
+const state = snapshotPdfjsWorkerSystemRendererState();
+console.log(JSON.stringify({
+  held: { code: heldFailure?.code, reason: heldFailure?.reason },
+  inner: { code: innerFailure?.code, message: innerFailure?.message, reason: innerFailure?.reason },
+  outer: { code: outerFailure?.code, message: outerFailure?.message, reason: outerFailure?.reason },
+  resourceCode: PDF_RESOURCE_LIMIT_CODE,
+  shutdown: { code: shutdownFailure?.code, reason: shutdownFailure?.reason },
+  state,
+}));
+`, [JSON.stringify(sourceRequest)]);
+    expect(result).toMatchObject({ code: 0, signal: null });
+    const receipt = JSON.parse(result.stdout.trim().split("\n").at(-1));
+    expect(receipt.shutdown).toEqual({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason: "worker_shutdown_timeout",
+    });
+    expect(receipt.held).toEqual({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason: "worker_shutdown_in_progress",
+    });
+    expect(receipt.outer).toMatchObject({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason: "worker_shutdown_in_progress",
+    });
+    expect(receipt.inner).toMatchObject({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason: "system_renderer_shutdown",
+    });
+    expect(receipt.outer.message).not.toContain(sourceRequest.source.canonical_path);
+    expect(receipt.inner.message).not.toContain(sourceRequest.source.canonical_path);
+    expect(receipt.state).toMatchObject({
+      admission_closed: true,
+      active_children: 0,
+      active_workspaces: 0,
+    });
   });
 
   it("does not spawn a late worker-thread system-command frame after shutdown starts", async () => {
@@ -737,7 +977,7 @@ process.stdout.write(${JSON.stringify(success())});
     });
     void operation.catch(() => {});
     await workerReady;
-    const shutdown = terminateAllPdfjsSubprocesses();
+    const shutdown = terminateAllPdfjsSubprocesses({ reopenAfterSuccessfulDrain: true });
     await expect(operation).rejects.toMatchObject({ code: PDF_RESOURCE_LIMIT_CODE });
     await expect(shutdown).resolves.toBeUndefined();
     expect(spawnCalls).toBe(0);
@@ -745,50 +985,102 @@ process.stdout.write(${JSON.stringify(success())});
   });
 
   it("propagates a typed cleanup failure only after the shutdown drain settles", async () => {
-    let releasePreSpawn;
-    let markPreSpawnStarted;
-    const preSpawnStarted = new Promise(resolve => {
-      markPreSpawnStarted = resolve;
-    });
-    const preSpawnRelease = new Promise(resolve => {
-      releasePreSpawn = resolve;
-    });
-    let removedDirectory = null;
-    const operation = runPdfjsSubprocess(request(), {
-      beforeSpawn: async () => {
-        markPreSpawnStarted();
-        await preSpawnRelease;
-      },
-      removeOperationDirectory: async (directory, options) => {
-        removedDirectory = directory;
-        await fs.rm(directory, options);
-        throw new Error(`forced cleanup receipt failure at ${directory}`);
-      },
-      spawnProcess() {
-        throw new Error("shutdown gate reopened before cleanup");
-      },
-    });
-    void operation.catch(() => {});
-    await preSpawnStarted;
-    const shutdown = terminateAllPdfjsSubprocesses();
-    void shutdown.catch(() => {});
-    releasePreSpawn();
-    await expect(operation).rejects.toMatchObject({
+    const sourceRequest = await createThreadPdfRequest();
+    const subprocessUrl = pathToFileURL(
+      path.resolve("server/pdfjs-subprocess.js"),
+    ).href;
+    const workerUrl = pathToFileURL(
+      path.resolve("server/pdfjs-worker.js"),
+    ).href;
+    const result = await runNodeFixture(`
+import { rm } from "node:fs/promises";
+import {
+  runPdfjsSubprocess,
+  terminateAllPdfjsSubprocesses,
+} from ${JSON.stringify(subprocessUrl)};
+import {
+  snapshotPdfjsWorkerSystemRendererState,
+  withPrivateSystemRenderWorkspace,
+} from ${JSON.stringify(workerUrl)};
+
+const request = JSON.parse(process.argv[2]);
+await runPdfjsSubprocess(request, { isolationMode: "in_process" });
+let releasePreSpawn;
+let markPreSpawnStarted;
+const preSpawnStarted = new Promise(resolve => { markPreSpawnStarted = resolve; });
+const preSpawnRelease = new Promise(resolve => { releasePreSpawn = resolve; });
+let removedDirectory = null;
+const operation = runPdfjsSubprocess(request, {
+  beforeSpawn: async () => {
+    markPreSpawnStarted();
+    await preSpawnRelease;
+  },
+  isolationMode: "in_process",
+  removeOperationDirectory: async (directory, options) => {
+    removedDirectory = directory;
+    await rm(directory, options);
+    throw new Error("forced cleanup receipt failure");
+  },
+});
+void operation.catch(() => {});
+await preSpawnStarted;
+const shutdown = terminateAllPdfjsSubprocesses();
+void shutdown.catch(() => {});
+releasePreSpawn();
+let operationFailure;
+try { await operation; } catch (error) { operationFailure = error; }
+let shutdownFailure;
+try { await shutdown; } catch (error) { shutdownFailure = error; }
+let outerFailure;
+try {
+  await runPdfjsSubprocess(request, { isolationMode: "in_process" });
+} catch (error) {
+  outerFailure = error;
+}
+let innerFailure;
+try {
+  await withPrivateSystemRenderWorkspace(async () => {
+    throw new Error("closed inner admission executed its callback");
+  });
+} catch (error) {
+  innerFailure = error;
+}
+console.log(JSON.stringify({
+  inner: { code: innerFailure?.code, message: innerFailure?.message, reason: innerFailure?.reason },
+  operation: { code: operationFailure?.code, reason: operationFailure?.reason },
+  outer: { code: outerFailure?.code, message: outerFailure?.message, reason: outerFailure?.reason },
+  removedDirectory,
+  shutdown: { code: shutdownFailure?.code, message: shutdownFailure?.message, reason: shutdownFailure?.reason },
+  state: snapshotPdfjsWorkerSystemRendererState(),
+}));
+`, [JSON.stringify(sourceRequest)]);
+    expect(result).toMatchObject({ code: 0, signal: null });
+    const receipt = JSON.parse(result.stdout.trim().split("\n").at(-1));
+    expect(receipt.operation).toEqual({
       code: PDF_RESOURCE_LIMIT_CODE,
       reason: "operation_directory_cleanup_unproven",
     });
-    let shutdownFailure;
-    try {
-      await shutdown;
-    } catch (error) {
-      shutdownFailure = error;
-    }
-    expect(shutdownFailure).toMatchObject({
+    expect(receipt.shutdown).toMatchObject({
       code: PDF_RESOURCE_LIMIT_CODE,
       reason: "operation_directory_cleanup_unproven",
     });
-    expect(shutdownFailure.message).not.toContain(removedDirectory);
-    await expect(fs.access(removedDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+    expect(receipt.outer).toMatchObject({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason: "worker_shutdown_in_progress",
+    });
+    expect(receipt.inner).toMatchObject({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason: "system_renderer_shutdown",
+    });
+    expect(receipt.shutdown.message).not.toContain(receipt.removedDirectory);
+    expect(receipt.outer.message).not.toContain(sourceRequest.source.canonical_path);
+    expect(receipt.inner.message).not.toContain(sourceRequest.source.canonical_path);
+    expect(receipt.state).toMatchObject({
+      admission_closed: true,
+      active_children: 0,
+      active_workspaces: 0,
+    });
+    await expect(fs.access(receipt.removedDirectory)).rejects.toMatchObject({ code: "ENOENT" });
   });
 
   it("waits for every subsystem cleanup before propagating one rejection", async () => {
