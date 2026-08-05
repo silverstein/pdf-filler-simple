@@ -32,14 +32,16 @@ labels such as the arXiv margin stamp.
   `eab9c73ae2ceda884b94830bda99312254bac4806f6c9f045cbab90721ecda31`
 - Pages: 15
 - Visually checked rendered pages: 1, 2, and 9
-- v0.9.4: 0 of 18 labeled numbered headings; the vertical arXiv label was
+- v0.9.4: 0 of 17 genuinely numbered headings; the vertical arXiv label was
   falsely a heading
-- Candidate: 9 of 18 numbered headings, covering only the proven single-line
-  small-caps main sections; the vertical arXiv label is not a heading
+- First candidate: 9 of 17 numbered headings
+- Follow-up candidate: 17 of 17, using the same exact two-size small-caps
+  relationship already present in the first nine; the unnumbered References
+  title remains unnumbered and the vertical arXiv label is not a heading
 - Candidate Markdown SHA-256:
-  `503c3471ae7f1c4c408d8ea9158741c11c66bb6eaa1eca40646440e3d6676215`
+  `b015c3a552e428e649f1f6fd5445f2490fc8deb95d9efdabe261ee9a44bfb11a`
 
-Across the two papers, numbered-heading recall moves from 0 of 40 to 31 of 40,
+Across the two papers, numbered-heading recall moves from 0 of 39 to 39 of 39,
 and false arXiv-label headings move from two to zero.
 
 ## Content preservation
@@ -75,11 +77,14 @@ bounded width and height, and either a consistent distinct font or exact
 same-font small-caps geometry. It rejects terminal punctuation and narrow,
 tall vertical labels.
 
-Adam's nine remaining numbered subsections stay plain text because their
-numbers and titles are split into separate source lines or blocks. Joining
-those fragments needs separate evidence and is not guessed here. Tables,
-figures, equations, and complete mathematical reconstruction are outside this
-claim.
+Adam's eight previously missed subsections use the same source line, font, left
+edge, section break, and exact two-level small-caps geometry as the already
+recognized sections. The follow-up accepts that exact relationship without
+joining fragments or guessing text. The generic large-font detector still has
+pre-existing false headings on Adam's chart-heavy page 7; that is recorded as
+separate follow-up work and is not concealed by the numbered-heading result.
+Tables, figures, equations, and complete mathematical reconstruction are
+outside this claim.
 
 ## Verification
 
@@ -90,5 +95,14 @@ claim.
 - Focused comparison check: 12/12 passed when rerun alone; the earlier
   full-suite metadata mismatch did not reproduce
 - Refreshed extraction-layout oracle checks: 21 passed, 6 skipped
+- Follow-up exact implementation commit:
+  `fbf5db638360f2e511950ef03e5b6332a39ee972`
+- Follow-up focused checks: 156 passed, 6 skipped; real-paper checks 2/2;
+  reproducible share contract passed with 41 tools, 14 prompts, and 112 SBOM
+  components
+- Follow-up Shannon report SHA-256:
+  `3c067c231ac77f4a5d0c7cfae6d3d8b55c880cc5f217d6d6bba8d3a1ac3fb1ec`;
+  all three Markdown runs remain byte-identical at the previously recorded
+  SHA-256 and all sampled quality scores remain unchanged
 
 No public release or Kepano reply is authorized by this evidence alone.

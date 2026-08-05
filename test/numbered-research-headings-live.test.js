@@ -93,13 +93,21 @@ describe("external numbered research-paper headings", () => {
     expect(numberedHeadings(markdown)).toEqual([
       "1 INTRODUCTION",
       "2 ALGORITHM",
+      "2.1 ADAM’S UPDATE RULE",
       "3 INITIALIZATION BIAS CORRECTION",
       "4 CONVERGENCE ANALYSIS",
       "5 RELATED WORK",
       "6 EXPERIMENTS",
+      "6.1 EXPERIMENT: LOGISTIC REGRESSION",
+      "6.2 EXPERIMENT: MULTI-LAYER NEURAL NETWORKS",
+      "6.3 EXPERIMENT: CONVOLUTIONAL NEURAL NETWORKS",
+      "6.4 EXPERIMENT: BIAS-CORRECTION TERM",
       "7 EXTENSIONS",
+      "7.1 ADAMAX",
+      "7.2 TEMPORAL AVERAGING",
       "8 CONCLUSION",
       "10 APPENDIX",
+      "10.1 CONVERGENCE PROOF",
     ]);
     expect(markdown).not.toMatch(/^#{1,6}\s+arXiv:/gmu);
   }, 60_000);

@@ -364,7 +364,7 @@ describe("layout Markdown renderer", () => {
     // invocation, so any unreviewed serialized delta fails this regression.
     const serialized = JSON.stringify(pinnable);
     expect(createHash("sha256").update(serialized).digest("hex"))
-      .toBe("cd29e33513f44fc6d7e9e48e3400a0ca236834410f34629bcf25bd27ee37ce64");
+      .toBe("8543161d1af6514352da5b73db66c493167b7d851124def6870ba0590ec01716");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,
@@ -372,7 +372,7 @@ describe("layout Markdown renderer", () => {
     })).toBe(NON_RECT_EXPECTED);
     expect(result.renderer).toEqual({
       name: "pdf-tools.layout-markdown-renderer",
-      version: "1.11.0",
+      version: "1.12.0",
     });
     expect(result.gaps[0].message).toMatch(/beyond reconstructed ruled or bounded solid-mask table grids/);
     expect(result.limitations.some(value => value.includes("clean ruled-rectangle grid evidence"))).toBe(true);
@@ -1118,6 +1118,23 @@ describe("layout Markdown renderer", () => {
     const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
 
     expect(result.markdown).toMatch(/^## 1 INTRODUCTION$/mu);
+  });
+
+  it("recognizes numbered small-caps subsections whose initials match the body height", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        textItem("Ordinary body text establishes the page font", { top: 40, left: 108, fontSize: 10 }),
+        positionedTextItem("6.1", { top: 80, left: 108, width: 14, fontSize: 10, fontName: "f1" }),
+        positionedTextItem("E", { top: 80, left: 132, width: 6, fontSize: 10, fontName: "f1" }),
+        positionedTextItem("XPERIMENT", { top: 82, left: 139, width: 48, fontSize: 8, fontName: "f1", eol: true }),
+        textItem("First ordinary line below the subsection", { top: 105, left: 108, fontSize: 10 }),
+        textItem("Second ordinary line keeps the body height stable", { top: 120, left: 108, fontSize: 10 }),
+        textItem("Third ordinary line completes body evidence", { top: 135, left: 108, fontSize: 10 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toMatch(/^### 6\.1 EXPERIMENT$/mu);
   });
 
   it("refuses numbered-heading lookalikes without every structural witness", async () => {
