@@ -61,12 +61,12 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // independently qualified exact legacy Computer Modern Type-3 glyphs.
 // 2026-08-04: Markdown renderer 1.9.0 restores only narrowly source-supported
 // boundaries between multiword prose and a separate uppercase math variable.
-// 2026-08-04: Markdown renderer 1.11.0 interprets only explicitly barred,
+// 2026-08-04: Markdown renderer 1.12.0 interprets only explicitly barred,
 // single-digit stacked fractions in an ordinary prose sandwich. The final
 // combined contract digest is refreshed after the integration replay.
 // 2026-08-04: additive deterministic compare_pdfs contract with source-bound
 // evidence, exact whole-document limits, and typed channel coverage.
-const TOOL_CONTRACT_SHA256 = "77564e375ce70f9696d25bf5d1887cb105891a3096ee8b6777cf57572e1ba7f2";
+const TOOL_CONTRACT_SHA256 = "91342726919adc874a2af77997cafae9d95c656246c7a3c2800b0372dbeafef0";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

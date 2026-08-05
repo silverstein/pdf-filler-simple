@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.11.0",
+  version: "1.12.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.4.0";
 
@@ -254,11 +254,18 @@ function smallCapsNumberedHeadingEvidence(page, line, bodyHeight, headingWords) 
   if (heights.length < 3 || fontNames.size !== 1 || fontNames.has(null)) return false;
   const minimum = Math.min(...heights);
   const maximum = Math.max(...heights);
-  return minimum >= bodyHeight * 0.9
+  const enlargedInitials = minimum >= bodyHeight * 0.9
     && minimum <= bodyHeight * 1.05
     && maximum >= bodyHeight * 1.15
     && maximum <= bodyHeight * 1.3
     && maximum / minimum >= 1.15;
+  const bodySizedInitials = minimum >= bodyHeight * 0.75
+    && minimum <= bodyHeight * 0.85
+    && maximum >= bodyHeight * 0.95
+    && maximum <= bodyHeight * 1.05
+    && maximum / minimum >= 1.2
+    && maximum / minimum <= 1.3;
+  return enlargedInitials || bodySizedInitials;
 }
 
 function numberedSectionHeadingLevel(page, evidence, index, bodyHeight, bodyFontName, bodyLeft) {
