@@ -223,6 +223,54 @@ export const SOURCE_IDENTITY_TEST_FILES = Object.freeze(
   SOURCE_IDENTITY_TEST_SUITES.map(suite => suite.file),
 );
 
+export const SERIAL_RESOURCE_TEST_SUITES = Object.freeze([
+  Object.freeze({
+    file: "test/compare-pdfs.test.js",
+    reason: "Exercises multiple PDF.js comparison renders that exceeded their "
+      + "existing per-test budgets only under sibling-suite contention and "
+      + "passed unchanged with an exclusive worker.",
+  }),
+  Object.freeze({
+    file: "test/eval/comparison-product-baseline.test.js",
+    reason: "Runs the full comparison-product baseline and approached its "
+      + "sealed 240-second suite budget under sibling-suite contention.",
+  }),
+  Object.freeze({
+    file: "test/eval/extraction-phase0.test.js",
+    reason: "Runs extraction bakeoff fixtures that exceeded their existing "
+      + "per-test budgets only under sibling-suite contention and passed "
+      + "unchanged with an exclusive worker.",
+  }),
+  Object.freeze({
+    file: "test/eval/extraction-phase1-publisher.test.js",
+    reason: "Publishes extraction evidence through asynchronous fixture work; "
+      + "sibling-suite contention caused timeouts and cleanup races that did "
+      + "not reproduce with an exclusive worker.",
+  }),
+  Object.freeze({
+    file: "test/eval/extraction-phase1-scorer.test.js",
+    reason: "Scores extraction fixtures through asynchronous PDF work; "
+      + "sibling-suite contention caused timeouts and cleanup races that did "
+      + "not reproduce with an exclusive worker.",
+  }),
+  Object.freeze({
+    file: "test/fuzz-malformed-pdfs.test.js",
+    reason: "Runs the bounded malformed-PDF campaign for several minutes and "
+      + "exceeded its existing per-test budgets only under sibling-suite "
+      + "contention.",
+  }),
+  Object.freeze({
+    file: "test/pdfjs-worker-contract.test.js",
+    reason: "Exercises PDF.js worker lifecycle and process teardown; sibling-"
+      + "suite contention exhausted its existing five-second contract windows, "
+      + "while the unchanged suite passed with an exclusive worker.",
+  }),
+]);
+
+export const SERIAL_RESOURCE_TEST_FILES = Object.freeze(
+  SERIAL_RESOURCE_TEST_SUITES.map(suite => suite.file),
+);
+
 export const SERIAL_NATIVE_TEST_SUITES = Object.freeze([
   Object.freeze({
     file: "test/pdfjs-subprocess-boundary.test.js",

@@ -28,6 +28,8 @@ import {
   REAL_CHECKOUT_SOURCE_IDENTITY_BINDERS,
   REVIEWED_COMPUTED_MODULE_LOADS,
   SERIAL_NATIVE_TEST_FILES,
+  SERIAL_RESOURCE_TEST_FILES,
+  SERIAL_RESOURCE_TEST_SUITES,
   SOURCE_IDENTITY_TEST_FILES,
   SOURCE_IDENTITY_TEST_SUITES,
   SOURCE_IDENTITY_TRANSITIVE_MODULES,
@@ -513,7 +515,7 @@ describe("aggregate test-runner contract", () => {
     );
   });
 
-  it("runs ordinary tests before the exclusive source-identity and serial-native projects", () => {
+  it("runs ordinary tests before the exclusive resource, source-identity, and native projects", () => {
     const config = viteConfigFactory({ command: "build", mode: "test" });
     expect(config.test.exclude).toEqual([
       ...configDefaults.exclude,
@@ -522,8 +524,9 @@ describe("aggregate test-runner contract", () => {
     const projects = config.test.projects ?? [];
     expect(projects.map(project => project.test?.name)).toEqual([
       "ordinary",
-      "serial-native",
+      "serial-resource",
       "source-identity",
+      "serial-native",
     ]);
     expect(projects.every(project => project.extends === true)).toBe(true);
     const byName = new Map(projects.map(project => [project.test?.name, project.test]));
@@ -536,15 +539,24 @@ describe("aggregate test-runner contract", () => {
       ...configDefaults.exclude,
       ...NODE_TEST_FILES,
       ...SOURCE_IDENTITY_TEST_FILES,
+      ...SERIAL_RESOURCE_TEST_FILES,
       ...SERIAL_NATIVE_TEST_FILES,
     ]);
+    expect(byName.get("serial-resource")).toMatchObject({
+      include: SERIAL_RESOURCE_TEST_FILES,
+      pool: "forks",
+      isolate: true,
+      fileParallelism: false,
+      maxWorkers: 1,
+      sequence: { groupOrder: 1 },
+    });
     expect(byName.get("source-identity")).toMatchObject({
       include: SOURCE_IDENTITY_TEST_FILES,
       pool: "forks",
       isolate: true,
       fileParallelism: false,
       maxWorkers: 1,
-      sequence: { groupOrder: 1 },
+      sequence: { groupOrder: 2 },
     });
     // Resource-sensitive native and embedded-host suites must have the host to
     // themselves: exclusive worker, no file parallelism, and the last group so
@@ -555,10 +567,33 @@ describe("aggregate test-runner contract", () => {
       isolate: true,
       fileParallelism: false,
       maxWorkers: 1,
-      sequence: { groupOrder: 2 },
+      sequence: { groupOrder: 3 },
     });
     const orders = projects.map(project => project.test?.sequence?.groupOrder);
     expect(new Set(orders).size).toBe(orders.length);
+    expect(Object.isFrozen(SERIAL_RESOURCE_TEST_SUITES)).toBe(true);
+    expect(Object.isFrozen(SERIAL_RESOURCE_TEST_FILES)).toBe(true);
+    expect(SERIAL_RESOURCE_TEST_FILES).toEqual([
+      "test/compare-pdfs.test.js",
+      "test/eval/comparison-product-baseline.test.js",
+      "test/eval/extraction-phase0.test.js",
+      "test/eval/extraction-phase1-publisher.test.js",
+      "test/eval/extraction-phase1-scorer.test.js",
+      "test/fuzz-malformed-pdfs.test.js",
+      "test/pdfjs-worker-contract.test.js",
+    ]);
+    expect(SERIAL_RESOURCE_TEST_SUITES.every(suite =>
+      Object.isFrozen(suite) && suite.reason.length > 0)).toBe(true);
+    expect(SERIAL_RESOURCE_TEST_FILES).toEqual(
+      [...SERIAL_RESOURCE_TEST_FILES].sort(),
+    );
+    expect(new Set(SERIAL_RESOURCE_TEST_FILES).size).toBe(
+      SERIAL_RESOURCE_TEST_FILES.length,
+    );
+    expect(SERIAL_RESOURCE_TEST_FILES.every(file =>
+      !SOURCE_IDENTITY_TEST_FILES.includes(file)
+      && !SERIAL_NATIVE_TEST_FILES.includes(file)
+      && !NODE_TEST_FILES.includes(file))).toBe(true);
   });
 
   it("exposes explicit aggregate and native runner scripts", async () => {
