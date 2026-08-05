@@ -69,9 +69,11 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // small-caps height relationship when heading initials match the body height.
 // 2026-08-04: Markdown renderer 1.13.0 uses wide prose to estimate body height
 // on chart-heavy pages and requires generic enlarged headings to lead text.
+// 2026-08-04: Markdown renderer 1.14.0 recognizes independently established
+// body margins in two-column papers, lettered appendices, and wrapped headings.
 // 2026-08-04: additive deterministic compare_pdfs contract with source-bound
 // evidence, exact whole-document limits, and typed channel coverage.
-const TOOL_CONTRACT_SHA256 = "5953b963a95d73056b8bd27341aad62200fecf9c434af3db6601ee978081dce4";
+const TOOL_CONTRACT_SHA256 = "7087e97e1be2f6a52138517d66169177aa08ca5017f69235af33e62603b54c9e";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

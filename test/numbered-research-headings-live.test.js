@@ -9,8 +9,9 @@ import {
 
 const ATTENTION_SOURCE = process.env.PDF_TOOLS_ATTENTION_SOURCE;
 const ADAM_SOURCE = process.env.PDF_TOOLS_ADAM_SOURCE;
+const BERT_SOURCE = process.env.PDF_TOOLS_BERT_SOURCE;
 
-async function renderExternalPdf(sourcePath, expectedSha256) {
+async function renderExternalPdf(sourcePath, expectedSha256, pageCount = 15) {
   const sourceFile = await hashBoundedPdfFileSafely(sourcePath, 250 * 1024 * 1024, {
     assertPathAllowed: candidate => candidate,
   });
@@ -22,7 +23,8 @@ async function renderExternalPdf(sourcePath, expectedSha256) {
     size_bytes: sourceFile.sizeBytes,
   };
   const markdown = [];
-  for (const [startPage, endPage] of [[1, 5], [6, 10], [11, 15]]) {
+  for (let startPage = 1; startPage <= pageCount; startPage += 5) {
+    const endPage = Math.min(pageCount, startPage + 4);
     const response = await runPdfjsSubprocess(createPdfjsSubprocessRequest({
       operation: "extract_layout_for_markdown",
       source,
@@ -161,5 +163,48 @@ describe("external numbered research-paper headings", () => {
       "## 10 APPENDIX",
       "### 10.1 CONVERGENCE PROOF",
     ]);
+  }, 60_000);
+
+  it.runIf(Boolean(BERT_SOURCE))("recovers the complete BERT hierarchy across both columns and its appendices", async () => {
+    const markdown = await renderExternalPdf(
+      BERT_SOURCE,
+      "5692a5514787a8c6727b4ff3b726a3385798bc68e12138d1d4af83947e2acf6e",
+      16,
+    );
+    expect(contentHeadings(markdown)).toEqual([
+      "# BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding",
+      "## 1 Introduction",
+      "## 2 Related Work",
+      "### 2.1 Unsupervised Feature-based Approaches",
+      "### 2.2 Unsupervised Fine-tuning Approaches",
+      "### 2.3 Transfer Learning from Supervised Data",
+      "## 3 BERT",
+      "### 3.1 Pre-training BERT",
+      "### 3.2 Fine-tuning BERT",
+      "## 4 Experiments",
+      "### 4.1 GLUE",
+      "### 4.2 SQuAD v1.1",
+      "### 4.3 SQuAD v2.0",
+      "### 4.4 SWAG",
+      "## 5 Ablation Studies",
+      "### 5.1 Effect of Pre-training Tasks",
+      "### 5.2 Effect of Model Size",
+      "### 5.3 Feature-based Approach with BERT",
+      "## 6 Conclusion",
+      "## Appendix for “BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding”",
+      "## A Additional Details for BERT",
+      "### A.1 Illustration of the Pre-training Tasks",
+      "### A.2 Pre-training Procedure",
+      "### A.3 Fine-tuning Procedure",
+      "### A.4 Comparison of BERT, ELMo ,and OpenAI GPT",
+      "### A.5 Illustrations of Fine-tuning on Different Tasks",
+      "## B Detailed Experimental Setup",
+      "### B.1 Detailed Descriptions for the GLUE Benchmark Experiments.",
+      "## C Additional Ablation Studies",
+      "### C.1 Effect of Number of Training Steps",
+      "### C.2 Ablation for Different Masking Procedures",
+    ]);
+    expect(markdown).not.toMatch(/^#{1,6}\s+(?:arXiv:|Figure\s|Table\s|Next Sentence Prediction|No NSP:)/gmu);
+    expect(markdown).not.toContain("\uFFFD");
   }, 60_000);
 });

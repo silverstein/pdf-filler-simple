@@ -5,9 +5,9 @@ Date: 2026-08-04 (America/Los_Angeles)
 ## Decision
 
 The candidate is safe to merge as a general extraction improvement, but it is
-not a release by itself. It recovers numbered research-paper headings only when
-the PDF supplies consistent geometric evidence, and it rejects narrow vertical
-labels such as the arXiv margin stamp.
+not a release by itself. It recovers numbered and lettered research-paper
+headings only when the PDF supplies consistent geometric evidence, and it
+rejects narrow vertical labels such as the arXiv margin stamp.
 
 ## Public sources
 
@@ -44,6 +44,28 @@ labels such as the arXiv margin stamp.
 Across the two papers, numbered-heading recall moves from 0 of 39 to 39 of 39,
 and false arXiv-label headings move from two to zero.
 
+### BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding
+
+- Source: `https://arxiv.org/pdf/1810.04805`
+- PDF SHA-256:
+  `5692a5514787a8c6727b4ff3b726a3385798bc68e12138d1d4af83947e2acf6e`
+- Pages: 16
+- Visually checked rendered pages: 1, 2, 8, 12, 13, and 16
+- Pre-trial master: 6 of 31 content headings
+- Candidate: 31 of 31 content headings with the correct hierarchy, including
+  the wrapped two-line title, the centered three-line appendix title, both body
+  columns, six numbered main sections, numbered subsections, and lettered A/B/C
+  appendix sections and subsections
+- Candidate Markdown: 86,071 bytes, zero replacement characters, zero explicit
+  gaps, SHA-256
+  `b6ddd6dcf982a4c7cea5418d9ed93b5af64413ce34d74e36e298cebb744c06c5`
+- The vertical arXiv stamp, figure and table labels, diagram text, and inline
+  bold labels remain plain text rather than headings
+
+Across Attention, Adam, and BERT, the candidate now pins every visually proven
+research-paper heading: 39 of 39 in the first two papers and 31 of 31 content
+headings in the independent two-column BERT trial.
+
 ## Content preservation
 
 After removing only Markdown heading markers and the expected renderer
@@ -71,11 +93,14 @@ the expected renderer limitation-line revision.
 
 ## Fail-closed boundary
 
-The numbered-heading path accepts one to three numeric hierarchy levels and an
-uppercase-leading title. It requires body-left alignment, a section break,
-bounded width and height, and either a consistent distinct font or exact
-same-font small-caps geometry. It rejects terminal punctuation and narrow,
-tall vertical labels.
+The research-heading path accepts one to three numeric hierarchy levels or an
+uppercase letter with one numeric subsection level and an uppercase-leading
+title. It requires an independently established body margin, a section break,
+bounded width and height, and either a consistent distinct font, a small
+enlargement, or exact same-font small-caps geometry. A continuation is joined
+only when the source supplies the same font and height, a very small vertical
+gap, and tightly bounded horizontal alignment. Narrow, tall vertical labels
+remain rejected.
 
 Adam's eight previously missed subsections use the same source line, font, left
 edge, section break, and exact two-level small-caps geometry as the already
@@ -139,5 +164,30 @@ The compatibility repair preserves the exact first-page structural title
   `6cf36e04778c9baf04f309c08954c1910434f2a0588b91f57fc93804a26f8171`;
   all three 55-page Markdown outputs remain byte-identical at SHA-256
   `2c4773511afe32d99ef44311406dbfeac42f4b3923696ef0fc59da56088eabe9`
+- Fourth-paper live check: BERT 31/31 content headings, zero false content
+  headings, zero replacement characters, and zero explicit gaps; focused
+  renderer and live-paper checks passed after refreshing the renderer-version
+  oracle.
+- Final focused bank with all three public research papers and the refreshed
+  extraction-integrity oracle: 167 passed and 6
+  optional checks skipped.
+- Reproducible share contract: 41 tools, 14 prompts, 112 SBOM components, and
+  SHA-256
+  `132c9c3f45551be58794819ff09ab9d1744b45ff5c0e8792ca13b261355d9148`.
+- Fourth-paper Shannon replay report SHA-256:
+  `6b389f586d1171317d7fd7161001addfd75fb23642cdaea7e584938f1ce58620`;
+  all three complete 55-page outputs are byte-identical at Markdown SHA-256
+  `4cdc3a17728bb07100752ad841745a5ecf49a0aade0cd39af69bca899217e203`.
+  Shannon's extracted content remains byte-identical to the prior candidate;
+  only the renderer's heading-limitations disclosure changes.
+- The installed-copy Shannon checker was refreshed to the renderer 1.14 tool
+  contract and output identity, then passed against the exact candidate
+  runtime: 55 pages, 68 gaps, 434 replacement characters, 49 recovered alpha
+  symbols, 183,927 bytes, and Markdown SHA-256
+  `4cdc3a17728bb07100752ad841745a5ecf49a0aade0cd39af69bca899217e203`.
+- The aggregate suite stalled after unrelated extraction-evaluation failures
+  under parallel load, including a missing optional native canvas binding in
+  this fresh worktree. Those files are outside the Markdown renderer path; the
+  exact focused banks above and the reproducible share contract pass.
 
 No public release or Kepano reply is authorized by this evidence alone.

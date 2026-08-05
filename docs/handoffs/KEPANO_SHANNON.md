@@ -144,6 +144,21 @@ merge-quality candidate, not a reason on its own to publish v0.9.5. Keep the
 installed and public package on exact v0.9.4 until a worthy release bundle is
 ready.
 
+A fourth independent trial now uses the 16-page BERT paper, an ACL-style
+two-column document with tables, figures, wrapped headings, and lettered
+appendices. Pre-trial master recovered only 6 of its 31 content headings. The
+candidate recovers all 31 with the correct hierarchy, including the full
+two-line title, the centered three-line appendix title, and A/B/C appendix
+structure, while leaving the vertical arXiv stamp, chart labels, and inline
+bold labels as plain text. The exact PDF is
+hash-locked at
+`5692a5514787a8c6727b4ff3b726a3385798bc68e12138d1d4af83947e2acf6e`;
+the candidate Markdown is 86,071 bytes with zero replacement characters, zero
+explicit gaps, and SHA-256
+`b6ddd6dcf982a4c7cea5418d9ed93b5af64413ce34d74e36e298cebb744c06c5`.
+This is worthy merge evidence, but it remains deliberately unreleased pending
+the rest of the v0.9.5 bundle and independent review.
+
 Maintainer retest requests for the current v0.9.4 package are open at:
 
 - Windows issue #42:

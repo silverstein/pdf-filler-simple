@@ -364,7 +364,7 @@ describe("layout Markdown renderer", () => {
     // invocation, so any unreviewed serialized delta fails this regression.
     const serialized = JSON.stringify(pinnable);
     expect(createHash("sha256").update(serialized).digest("hex"))
-      .toBe("a0d64f0c2fbd9b39685a9e2ae1fff3af5a5ff7cba40c70411f0d3d4cc0986ab0");
+      .toBe("2018dbcf0869d5fdbd7beec2a1b4620363a0029d04f4bc380ec7c68a0f36d01f");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,
@@ -372,7 +372,7 @@ describe("layout Markdown renderer", () => {
     })).toBe(NON_RECT_EXPECTED);
     expect(result.renderer).toEqual({
       name: "pdf-tools.layout-markdown-renderer",
-      version: "1.13.0",
+      version: "1.14.0",
     });
     expect(result.gaps[0].message).toMatch(/beyond reconstructed ruled or bounded solid-mask table grids/);
     expect(result.limitations.some(value => value.includes("clean ruled-rectangle grid evidence"))).toBe(true);
@@ -1101,6 +1101,83 @@ describe("layout Markdown renderer", () => {
     expect(result.markdown).toMatch(/^## 1 Introduction$/mu);
     expect(result.markdown).toMatch(/^### 3\.2 Attention$/mu);
     expect(result.markdown).toMatch(/^#### 3\.2\.1 Scaled Dot-Product Attention$/mu);
+  });
+
+  it("recognizes numbered headings at either established body margin in a two-column paper", async () => {
+    const body = (left, suffix) => [
+      textItem(`First ordinary body line in ${suffix}`, { top: 40, left, fontSize: 10 }),
+      textItem(`Second ordinary body line in ${suffix}`, { top: 55, left, fontSize: 10 }),
+      textItem(`Third ordinary body line in ${suffix}`, { top: 70, left, fontSize: 10 }),
+    ];
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        ...body(108, "the left column"),
+        textItem("2 Related Work", { top: 110, left: 108, fontSize: 12, fontName: "f2" }),
+        textItem("Body beneath the left section heading", { top: 135, left: 108, fontSize: 10 }),
+        ...body(360, "the right column"),
+        textItem("4 Experiments", { top: 110, left: 360, fontSize: 12, fontName: "f2" }),
+        textItem("Body beneath the right section heading", { top: 135, left: 360, fontSize: 10 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toMatch(/^## 2 Related Work$/mu);
+    expect(result.markdown).toMatch(/^## 4 Experiments$/mu);
+  });
+
+  it("recognizes lettered research-paper appendix headings", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        textItem("Opening ordinary body line establishes the font", { top: 40, left: 108, fontSize: 10 }),
+        textItem("Second ordinary body line establishes the margin", { top: 55, left: 108, fontSize: 10 }),
+        textItem("Third ordinary body line establishes the margin", { top: 70, left: 108, fontSize: 10 }),
+        textItem("A Additional Details", { top: 110, left: 108, fontSize: 12, fontName: "f2" }),
+        textItem("Body beneath the appendix heading continues", { top: 135, left: 108, fontSize: 10 }),
+        textItem("A.1 Pre-training Procedure", { top: 175, left: 108, fontSize: 10, fontName: "f2" }),
+        textItem("Body beneath the appendix subsection continues", { top: 200, left: 108, fontSize: 10 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toMatch(/^## A Additional Details$/mu);
+    expect(result.markdown).toMatch(/^### A\.1 Pre-training Procedure$/mu);
+  });
+
+  it("joins visibly wrapped title and appendix heading lines", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        centeredTextItem("BERT: Pre-training of Bidirectional Transformers for", { top: 30, fontSize: 16, fontName: "f2" }),
+        centeredTextItem("Language Understanding", { top: 47, fontSize: 16, fontName: "f2" }),
+        centeredTextItem("Research Authors", { top: 70, fontSize: 8, fontName: "f3" }),
+        textItem("First ordinary body line establishes the font", { top: 90, left: 108, fontSize: 10 }),
+        textItem("Second ordinary body line establishes the margin", { top: 105, left: 108, fontSize: 10 }),
+        textItem("Third ordinary body line establishes the margin", { top: 120, left: 108, fontSize: 10 }),
+        textItem("A.4 Comparison of BERT, ELMo, and", { top: 160, left: 108, fontSize: 10, fontName: "f2" }),
+        textItem("OpenAI GPT", { top: 170, left: 108, fontSize: 10, fontName: "f2" }),
+        textItem("Body beneath the wrapped appendix heading", { top: 190, left: 108, fontSize: 10 }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toMatch(/^# BERT: Pre-training of Bidirectional Transformers for Language Understanding$/mu);
+    expect(result.markdown).toMatch(/^### A\.4 Comparison of BERT, ELMo, and OpenAI GPT$/mu);
+  });
+
+  it("recognizes a wrapped title centered within an established body column", async () => {
+    const layout = await validatedSyntheticLayout([{
+      items: [
+        positionedTextItem("First ordinary body line establishes this column", { top: 40, left: 72, width: 180, fontSize: 10, eol: true }),
+        positionedTextItem("Second ordinary body line establishes this column", { top: 55, left: 72, width: 180, fontSize: 10, eol: true }),
+        positionedTextItem("Third ordinary body line establishes this column", { top: 70, left: 72, width: 180, fontSize: 10, eol: true }),
+        positionedTextItem("Appendix for BERT: Pre-training of", { top: 110, left: 82, width: 160, fontSize: 12, fontName: "f2", eol: true }),
+        positionedTextItem("Deep Bidirectional Transformers for", { top: 122, left: 92, width: 140, fontSize: 12, fontName: "f2", eol: true }),
+        positionedTextItem("Language Understanding", { top: 134, left: 102, width: 120, fontSize: 12, fontName: "f2", eol: true }),
+        positionedTextItem("Body beneath the wrapped column title continues", { top: 160, left: 72, width: 180, fontSize: 10, eol: true }),
+      ],
+    }]);
+    const result = renderPdfLayoutToMarkdown(layout, { includePageBoundaries: false });
+
+    expect(result.markdown).toMatch(/^## Appendix for BERT: Pre-training of Deep Bidirectional Transformers for Language Understanding$/mu);
   });
 
   it("recognizes numbered small-caps sections without relying on a different font resource", async () => {
