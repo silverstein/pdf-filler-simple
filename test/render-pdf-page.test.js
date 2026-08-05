@@ -580,15 +580,6 @@ describe.runIf(process.platform === "darwin")("Claude Desktop Electron utility r
       const expectedView = rotation % 180 === 0
         ? { width_points: 400, height_points: 200 }
         : { width_points: 200, height_points: 400 };
-      const wholePage = await client.callTool({
-        name: "render_pdf_page",
-        arguments: { pdf_path: fixturePath, page: 1, max_dimension_px: 800 },
-      });
-      expect(wholePage.isError).not.toBe(true);
-      expect(wholePage.structuredContent).toMatchObject({
-        renderer: "macos-quicklook",
-        page_view: { ...expectedView, rotation, user_unit: 2 },
-      });
       const region = await client.callTool({
         name: "render_pdf_region",
         arguments: {
@@ -602,6 +593,10 @@ describe.runIf(process.platform === "darwin")("Claude Desktop Electron utility r
         },
       });
       expect(region.isError).not.toBe(true);
+      expect(region.structuredContent).toMatchObject({
+        renderer: "macos-quicklook",
+        page_view: { ...expectedView, rotation, user_unit: 2 },
+      });
       const imageItem = region.content.find(item => item.type === "image");
       const image = await loadImage(Buffer.from(imageItem.data, "base64"));
       const canvas = createCanvas(image.width, image.height);

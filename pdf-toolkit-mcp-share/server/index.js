@@ -1255,7 +1255,7 @@ function rejectUnissuedCursor(request, method) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.9.4",
+    version: "0.9.5",
   },
   {
     capabilities: {
