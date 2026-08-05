@@ -339,6 +339,10 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
   });
 
   it("does not mistake an inaccessible child leaving the group for disappearance", async () => {
+    // The child can escape before the first process-group snapshot while still
+    // being discovered by the supervisor's separate child enumeration. The
+    // injected EPERM, fail-closed result, and surviving sentinel prove this
+    // path; the multiple-live-children test above pins the group count itself.
     const sentinel = path.join(root, "sampling-escape-eperm-sentinel");
     const result = await runFault(
       "sampling_escape_eperm",
@@ -353,7 +357,6 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       controller_failure: "enumeration",
       observations: { original_process_group_empty: true },
     });
-    expect(result.evidence.observations.max_group_members).toBeGreaterThan(1);
     await waitForFile(sentinel, 2500);
   });
 
