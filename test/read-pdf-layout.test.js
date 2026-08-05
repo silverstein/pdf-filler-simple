@@ -17,6 +17,7 @@ import {
   validatePdfLayoutSemantics,
   validatePdfLayoutSourceEvidence,
 } from "../server/layout-extraction.js";
+import { CM_WITNESS_CODEPOINTS } from "../server/type3-cm-reference.js";
 import {
   TOOL_OUTPUT_SCHEMAS,
   TOOL_SUCCESS_OUTPUT_SCHEMAS,
@@ -102,6 +103,9 @@ describe("qualified legacy Type-3 glyph evidence", () => {
     expect(digest(await fs.readFile(shareModule))).toBe(provenance.outputs["pdf-toolkit-mcp-share/server/type3-cm-reference.js"]);
     expect(provenance.visual_labels["computer-modern-math-italic"][33]).toBe("omega");
     expect(provenance.visual_labels["computer-modern-math-symbol"][0]).toBe("minus");
+    expect(provenance.visual_labels["computer-modern-math-symbol"][6]).toBe("plus-or-minus-witness");
+    expect(provenance.visual_labels["computer-modern-math-symbol"][33]).toBe("right-arrow-witness");
+    expect(CM_WITNESS_CODEPOINTS["computer-modern-math-symbol"]).toEqual({ 6: "±", 33: "→" });
   });
 });
 

@@ -9,3 +9,7 @@ export const CM_CODEPOINTS = Object.freeze({
   "computer-modern-math-italic": Object.freeze({ 11: "α", 25: "π", 26: "ρ", 33: "ω", 58: ".", 59: ",", 61: "/" }),
   "computer-modern-math-symbol": Object.freeze({ 0: "−", 21: "≥", 112: "√" }),
 });
+
+export const CM_WITNESS_CODEPOINTS = Object.freeze({
+  "computer-modern-math-symbol": Object.freeze({ 6: "±", 33: "→" }),
+});

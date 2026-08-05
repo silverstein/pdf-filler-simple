@@ -207,8 +207,8 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
       .filter(item => Array.isArray(item.glyph_recoveries));
     expect(recoveredItems).toEqual(expect.arrayContaining([
       expect.objectContaining({
-        source_text: "\u0000\u0015p",
-        text: "−\u0015p",
+        source_text: "\u0000\u0006!\u0015p",
+        text: "−\u0006!\u0015p",
         glyph_recoveries: [expect.objectContaining({
           registry_id: "cmsy-ctan-type3-minus-v1",
           target_unicode: "−",

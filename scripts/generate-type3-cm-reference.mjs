@@ -75,6 +75,10 @@ function requireSourceDefinitions(mfRoot) {
     ["romms.mf", /cmchar "Virgule \(slash\)";\s*beginchar\(oct"075"/u],
     ["symbol.mf", /minus=oct"000"/u],
     ["sym.mf", /iff known minus: cmchar "Minus sign";\s*beginarithchar\(minus\)/u],
+    ["symbol.mf", /plus_minus=oct"006"/u],
+    ["sym.mf", /iff known plus_minus: cmchar "Plus-or-minus sign";\s*beginarithchar\(plus_minus\)/u],
+    ["symbol.mf", /right_arrow=oct"041"/u],
+    ["sym.mf", /iff known right_arrow: cmchar "Rightward arrow";[\s\S]*?beginchar\(right_arrow,/u],
     ["symbol.mf", /geq=oct"025"/u],
     ["sym.mf", /iff known geq: cmchar "Greater than or equal to sign";[\s\S]*?beginchar\(geq,/u],
     ["symbol.mf", /cmchar "Radical sign";\s*beginchar\(oct"160"/u],
@@ -106,6 +110,9 @@ function generateMetricModule(tfmRoot, archiveSha256) {
     + `export const CM_CODEPOINTS = Object.freeze({\n`
     + `  "computer-modern-math-italic": Object.freeze({ 11: "α", 25: "π", 26: "ρ", 33: "ω", 58: ".", 59: ",", 61: "/" }),\n`
     + `  "computer-modern-math-symbol": Object.freeze({ 0: "−", 21: "≥", 112: "√" }),\n`
+    + `});\n\n`
+    + `export const CM_WITNESS_CODEPOINTS = Object.freeze({\n`
+    + `  "computer-modern-math-symbol": Object.freeze({ 6: "±", 33: "→" }),\n`
     + `});\n`;
 }
 
@@ -117,8 +124,8 @@ function generateFixture(type3Root, output) {
     "72 730 moveto (cmmi10: 0B alpha, 19 pi, 1A rho, 21 omega, 3A period, 3B comma, 3D slash) show",
     "/cmmi10 findfont 30 scalefont setfont 72 680 moveto <0B191A213A3B3D> show",
     "/Helvetica findfont 10 scalefont setfont",
-    "72 630 moveto (cmsy10: 00 minus, 15 greater-or-equal, 70 square-root) show",
-    "/cmsy10 findfont 30 scalefont setfont 72 580 moveto <001570> show",
+    "72 630 moveto (cmsy10: 00 minus, 06 plus-or-minus witness, 21 right-arrow witness, 15 greater-or-equal, 70 square-root) show",
+    "/cmsy10 findfont 30 scalefont setfont 72 580 moveto <0006211570> show",
     "showpage",
   ].join(" ");
   execFileSync("gs", [
@@ -179,7 +186,7 @@ try {
     },
     visual_labels: {
       "computer-modern-math-italic": { 11: "alpha", 25: "pi", 26: "rho", 33: "omega", 58: "period", 59: "comma", 61: "slash" },
-      "computer-modern-math-symbol": { 0: "minus", 21: "greater-or-equal", 112: "square-root" },
+      "computer-modern-math-symbol": { 0: "minus", 6: "plus-or-minus-witness", 21: "greater-or-equal", 33: "right-arrow-witness", 112: "square-root" },
     },
   };
   fs.writeFileSync(OUTPUT_PROVENANCE, `${JSON.stringify(provenance, null, 2)}\n`);

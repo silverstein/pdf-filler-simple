@@ -18,7 +18,7 @@ describe("Type-3 maintainer inventory", () => {
     const report = JSON.parse(stdout);
     expect(report).toMatchObject({
       schema: "pdf-tools.type3-glyph-inventory.v1",
-      occurrence_count: 10,
+      occurrence_count: 12,
       abstentions: [],
       source: { page_count: 1 },
     });
@@ -32,6 +32,18 @@ describe("Type-3 maintainer inventory", () => {
         family: "computer-modern-math-symbol",
         original_char_code: 0,
         intended_unicode: "−",
+        count: 1,
+      }),
+      expect.objectContaining({
+        family: "computer-modern-math-symbol",
+        original_char_code: 6,
+        intended_unicode: null,
+        count: 1,
+      }),
+      expect.objectContaining({
+        family: "computer-modern-math-symbol",
+        original_char_code: 33,
+        intended_unicode: null,
         count: 1,
       }),
     ]));

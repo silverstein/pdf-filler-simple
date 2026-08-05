@@ -20,9 +20,9 @@
     "qpdf": "qpdf version 12.3.2\nRun qpdf --copyright to see copyright and license information."
   },
   "outputs": {
-    "server/type3-cm-reference.js": "df7869d18c1a7c433cae0518cfa48c9d22f13a74c58b3f7424b36d286bf61e5b",
-    "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "df7869d18c1a7c433cae0518cfa48c9d22f13a74c58b3f7424b36d286bf61e5b",
-    "test/fixtures/eval/extraction/type3-cm-reference.pdf": "e4ebba6ac1bb381288281cd261c8475eacdd1a4cf44d0b4e2f327436b33276ff"
+    "server/type3-cm-reference.js": "e0abf4ba31a9d657bee0c6783701fc2f13ad62dc198e9aac5ae0ae58d6c751fa",
+    "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "e0abf4ba31a9d657bee0c6783701fc2f13ad62dc198e9aac5ae0ae58d6c751fa",
+    "test/fixtures/eval/extraction/type3-cm-reference.pdf": "7533d527ec58afb4c10cdac24ca42853085eeaf9d371c344e015c0fd74f377eb"
   },
   "visual_labels": {
     "computer-modern-math-italic": {
@@ -36,7 +36,9 @@
     },
     "computer-modern-math-symbol": {
       "0": "minus",
+      "6": "plus-or-minus-witness",
       "21": "greater-or-equal",
+      "33": "right-arrow-witness",
       "112": "square-root"
     }
   }
