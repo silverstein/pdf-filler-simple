@@ -117,12 +117,16 @@ claim the paper or arbitrary mathematical PDFs are completely solved.
 
 Branch `agent/general-numbered-headings`, implementation commit
 `b74d110f2faad440c24915bb4f62546d6b5221da`, broadens the heading work beyond
-Shannon. On two additional public research papers it recovers 31 of 40 numbered
-headings that v0.9.4 missed and removes both false headings caused by vertical
-arXiv margin labels. Attention is 22/22; Adam is deliberately 9/18 because its
-remaining subsection numbers and titles are split across source lines or
-blocks. Shannon's existing sampled quality is unchanged across three complete,
-byte-identical 55-page runs.
+Shannon. It merged in PR #81 as
+`945c94376d5d254b8d38b7b33af29e04d5ebc703`. The follow-up branch
+`agent/split-numbered-headings`, exact implementation
+`fbf5db638360f2e511950ef03e5b6332a39ee972`, completes Adam's exact same-font
+small-caps pattern. Across two additional public research papers the combined
+candidate recovers all 39 genuinely numbered headings that v0.9.4 missed and
+removes both false headings caused by vertical arXiv margin labels. Attention
+is 22/22 and Adam is 17/17; Adam's References title is visibly unnumbered and
+stays unnumbered. Shannon's existing sampled quality is unchanged across three
+complete, byte-identical 55-page runs.
 
 The detailed evidence is
 `docs/evidence/general-numbered-research-headings-2026-08.md`. This is a
@@ -137,9 +141,9 @@ Maintainer retest requests for the current v0.9.4 package are open at:
 - macOS stable-tool exposure issue #47:
   `https://github.com/Open-Document-Alliance/PDF-Tools/issues/47#issuecomment-5186253859`
 
-Do not reply to Kepano yet. First merge this candidate cleanly and preserve the
-honest boundary above; a later reply should point to a tested public release,
-not unreleased master.
+Do not reply to Kepano yet. First merge the follow-up candidate cleanly and
+address or explicitly accept the pre-existing chart-page false-heading issue;
+a later reply should point to a tested public release, not unreleased master.
 
 ## Fast recovery commands
 
