@@ -127,10 +127,11 @@ read-only operation. Its annotation tuple is `R=T, D=F, I=T, O=F` because the
 handler reads one allowlisted PDF, retains no output, and has no network or
 other open-world effect.
 
-Focused current-candidate evidence on 2026-08-05:
+Focused integrated-candidate evidence on 2026-08-05:
 
-- `test/mcp-contract.test.js`: 43 tests passed within the focused nine-file run;
+- 15 Vitest files: 199 tests passed and 6 intentionally skipped;
+- `test/mcp-contract.test.js`: all 43 tests passed within that run;
 - live MCP discovery: 42 unique tools, including 38 structured tools;
-- complete discovery SHA-256: `ccd2dd7eb7680084c8a762b541cd0632ef33475754e53397cb677e9915bcd206`;
+- complete discovery SHA-256: `d9c225a5b72694d73dc0064a28fecf76a5bedf27121b04e656b86f055ced9313`;
 - source/share runtime byte comparison: identical;
 - dependency versions: `pdf-lib` 1.17.1 and `pdfjs-dist` 5.4.624 unchanged.
