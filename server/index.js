@@ -71,6 +71,7 @@ import {
   createPdfjsSubprocessRequest,
   forceTerminateAllPdfjsSubprocesses,
   runPdfjsSubprocess,
+  settleAllShutdownOperations,
   terminateAllPdfjsSubprocesses,
 } from "./pdfjs-subprocess.js";
 import {
@@ -1522,7 +1523,7 @@ for (const [signal, exitCode] of new Map([
 ])) {
   process.once(signal, () => {
     if (workerShutdown !== null) return;
-    workerShutdown = Promise.all([
+    workerShutdown = settleAllShutdownOperations([
       terminateAllPdfjsSubprocesses(),
       terminateAllPdfLibMutations(),
     ]);

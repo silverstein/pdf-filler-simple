@@ -48,9 +48,11 @@ const SYSTEM_COMMAND_TIMEOUT_MS = 15_000;
 const PDF_RESOURCE_LIMIT_CODE = "PDF_RESOURCE_LIMIT_EXCEEDED";
 const _require = createRequire(import.meta.url);
 const activeSystemChildren = new Set();
+const activeSystemRenderWorkspaces = new Set();
 const threadSystemCommandWaiters = new Map();
 let systemChildTermination = null;
 let systemChildTerminationHandlersInstalled = false;
+let systemRenderShutdownStarted = false;
 let nextThreadSystemCommandId = 1;
 
 const OPERATION_OPTION_KEYS = new Map([
@@ -1251,11 +1253,94 @@ async function terminateActiveSystemChildren() {
   }));
 }
 
+function systemRendererShutdownError() {
+  return resourceLimitError("system_renderer_shutdown");
+}
+
+function assertSystemRendererRunning() {
+  if (systemRenderShutdownStarted) throw systemRendererShutdownError();
+}
+
+function registerSystemRenderWorkspace() {
+  let settle;
+  const lifecycle = {
+    completion: new Promise(resolve => {
+      settle = resolve;
+    }),
+  };
+  activeSystemRenderWorkspaces.add(lifecycle);
+  return cleanupError => {
+    activeSystemRenderWorkspaces.delete(lifecycle);
+    settle(cleanupError);
+  };
+}
+
+async function awaitSystemRenderWorkspaceCleanup() {
+  const cleanupErrors = [];
+  while (activeSystemRenderWorkspaces.size > 0) {
+    const completed = await Promise.all(
+      [...activeSystemRenderWorkspaces].map(lifecycle => lifecycle.completion),
+    );
+    cleanupErrors.push(...completed.filter(error => error !== null));
+  }
+  if (cleanupErrors.length > 0) throw cleanupErrors[0];
+}
+
+export async function withPrivateSystemRenderWorkspace(operation) {
+  if (typeof operation !== "function") {
+    throw new TypeError("system render workspace operation must be a function.");
+  }
+  assertSystemRendererRunning();
+  const completeLifecycle = registerSystemRenderWorkspace();
+  let renderDirectory = null;
+  let renderError = null;
+  let renderResult = null;
+  try {
+    renderDirectory = await mkdtemp(path.join(tmpdir(), "pdf-tools-system-render-"));
+    await chmod(renderDirectory, 0o700);
+    assertSystemRendererRunning();
+    renderResult = await operation({
+      assertSystemRendererRunning,
+      renderDirectory,
+    });
+  } catch (error) {
+    renderError = error?.code === PDF_RESOURCE_LIMIT_CODE
+      ? error
+      : new Error("The macOS system PDF renderer could not render this page.");
+  }
+  let cleanupError = null;
+  if (renderDirectory !== null) {
+    try {
+      await rm(renderDirectory, {
+        force: true,
+        maxRetries: 3,
+        recursive: true,
+        retryDelay: 25,
+      });
+    } catch {
+      cleanupError = resourceLimitError("system_renderer_cleanup_unproven");
+    }
+  }
+  completeLifecycle(cleanupError);
+  if (cleanupError !== null) throw cleanupError;
+  if (renderError !== null) throw renderError;
+  return renderResult;
+}
+
 export async function terminateAllPdfjsWorkerSystemChildren() {
-  await terminateActiveSystemChildren();
+  systemRenderShutdownStarted = true;
+  try {
+    await terminateActiveSystemChildren();
+    await awaitSystemRenderWorkspaceCleanup();
+  } finally {
+    if (activeSystemRenderWorkspaces.size === 0) {
+      systemRenderShutdownStarted = false;
+    }
+  }
 }
 
 export function forceTerminateAllPdfjsWorkerSystemChildren() {
+  systemRenderShutdownStarted = true;
   for (const child of activeSystemChildren) killSystemChild(child);
 }
 
@@ -1270,7 +1355,7 @@ export function installSystemChildTerminationHandlers() {
   for (const [signal, exitCode] of exitCodes) {
     process.once(signal, () => {
       if (systemChildTermination !== null) return;
-      systemChildTermination = terminateActiveSystemChildren();
+      systemChildTermination = terminateAllPdfjsWorkerSystemChildren();
       void systemChildTermination.finally(() => process.exit(exitCode));
     });
   }
@@ -1279,9 +1364,14 @@ export function installSystemChildTerminationHandlers() {
 export async function runSystemCommand(command, args, {
   spawnProcess = spawn,
   timeoutMs = SYSTEM_COMMAND_TIMEOUT_MS,
+  workingDirectory = process.cwd(),
 } = {}) {
   boundedString(command, "system command", 32_768);
   boundedInteger(timeoutMs, "system command timeout", 100, 30_000);
+  boundedString(workingDirectory, "system command working directory", 32_768);
+  if (!path.isAbsolute(workingDirectory)) {
+    throw new TypeError("system command working directory must be absolute.");
+  }
   if (
     !Array.isArray(args)
     || args.length > 128
@@ -1294,12 +1384,12 @@ export async function runSystemCommand(command, args, {
   }
   await new Promise((resolve, reject) => {
     const child = spawnProcess(command, args, {
-      cwd: process.cwd(),
+      cwd: workingDirectory,
       env: {
         PATH: process.env.PATH ?? "",
         HOME: process.env.HOME ?? "",
         LANG: process.env.LANG ?? "",
-        TMPDIR: process.cwd(),
+        TMPDIR: workingDirectory,
       },
       shell: false,
       stdio: ["ignore", "pipe", "pipe"],
@@ -1443,26 +1533,25 @@ async function systemRenderPage(bytes, password, options) {
     maxDimensionPx: options.max_dimension_px,
   });
   validateCanvasDimensions(renderedView.width * scale, renderedView.height * scale);
-  let renderDirectory = null;
-  let renderError = null;
-  let renderResult = null;
-  try {
-    renderDirectory = await mkdtemp(path.join(tmpdir(), "pdf-tools-system-render-"));
-    await chmod(renderDirectory, 0o700);
+  return await withPrivateSystemRenderWorkspace(async ({
+    assertSystemRendererRunning,
+    renderDirectory,
+  }) => {
     const sourcePath = path.join(renderDirectory, "source.pdf");
     const outputPath = path.join(renderDirectory, "source.pdf.png");
     await writeSinglePagePdf(bytes, options.page, password, sourcePath, pdfCropBox);
+    assertSystemRendererRunning();
     const maximumDimension = Math.max(
       1,
       Math.round(Math.max(renderedView.width, renderedView.height) * scale),
     );
     await runSystemCommand("/usr/bin/qlmanage", [
       "-t", "-s", String(maximumDimension), "-o", renderDirectory, sourcePath,
-    ]);
+    ], { workingDirectory: renderDirectory });
     const buffer = await readFile(outputPath);
     const pixels = pngDimensions(buffer);
     validateCanvasDimensions(pixels.width, pixels.height);
-    renderResult = pngResult(buffer, {
+    return pngResult(buffer, {
       height: pixels.height,
       height_points: geometry.height,
       renderer: "macos-quicklook",
@@ -1477,25 +1566,7 @@ async function systemRenderPage(bytes, password, options) {
       width: pixels.width,
       width_points: geometry.width,
     });
-  } catch (error) {
-    renderError = error?.code === PDF_RESOURCE_LIMIT_CODE
-      ? error
-      : new Error("The macOS system PDF renderer could not render this page.");
-  }
-  if (renderDirectory !== null) {
-    try {
-      await rm(renderDirectory, {
-        force: true,
-        maxRetries: 3,
-        recursive: true,
-        retryDelay: 25,
-      });
-    } catch {
-      throw resourceLimitError("system_renderer_cleanup_unproven");
-    }
-  }
-  if (renderError !== null) throw renderError;
-  return renderResult;
+  });
 }
 
 async function nativeRenderPage(bytes, password, options) {

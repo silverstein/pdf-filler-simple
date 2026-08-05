@@ -112,6 +112,29 @@ function spawnRenderHost(hostPath, id, sourcePath, triggerPath, readyDirectory) 
   return { child, outcome };
 }
 
+function spawnLifecycleHost(hostPath, args) {
+  const child = spawn(process.execPath, [hostPath, ...args], {
+    cwd: REPO_ROOT,
+    env: {
+      ...process.env,
+      TEMP: path.dirname(hostPath),
+      TMP: path.dirname(hostPath),
+      TMPDIR: path.dirname(hostPath),
+    },
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  hosts.add(child);
+  const stdout = collectBounded(child.stdout, child);
+  const stderr = collectBounded(child.stderr, child);
+  return {
+    child,
+    outcome: once(child, "close").then(([code, signal]) => {
+      hosts.delete(child);
+      return { code, signal, stderr: stderr(), stdout: stdout() };
+    }),
+  };
+}
+
 async function systemRenderDirectories() {
   return (await fs.readdir(os.tmpdir()))
     .filter(name => name.startsWith(SYSTEM_RENDER_PREFIX))
@@ -227,6 +250,11 @@ console.log(JSON.stringify({
         });
       }
       expect(await systemRenderDirectories()).toEqual(beforeDirectories);
+      for (const filename of ["system-page.pdf", "system-page.pdf.png", "source.pdf"]) {
+        await expect(fs.access(path.join(REPO_ROOT, filename))).rejects.toMatchObject({
+          code: "ENOENT",
+        });
+      }
     }, 60_000);
 
     it("does not disclose a private workspace path when workspace creation fails", async () => {
@@ -249,6 +277,121 @@ console.log(JSON.stringify({
       });
       expect(failure.message).not.toContain(root);
       expect(failure.message).not.toContain(SYSTEM_RENDER_PREFIX);
+    });
+
+    it("closes the pre-spawn gate and cleans its registered workspace before SIGTERM exit", async () => {
+      const root = await temporaryRoot();
+      const readyPath = path.join(root, "ready");
+      const releasePath = path.join(root, "release");
+      const workspacePath = path.join(root, "workspace.json");
+      const spawnedPath = path.join(root, "spawned");
+      const hostPath = path.join(root, "pre-spawn-host.mjs");
+      const workerModule = pathToFileURL(
+        path.join(REPO_ROOT, "server/pdfjs-worker.js"),
+      ).href;
+      await fs.writeFile(hostPath, `
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import {
+  installSystemChildTerminationHandlers,
+  withPrivateSystemRenderWorkspace,
+} from ${JSON.stringify(workerModule)};
+const [readyPath, releasePath, workspacePath, spawnedPath] = process.argv.slice(2);
+installSystemChildTerminationHandlers();
+void withPrivateSystemRenderWorkspace(async ({
+  assertSystemRendererRunning,
+  renderDirectory,
+}) => {
+  await fs.writeFile(path.join(renderDirectory, "source.pdf"), "sensitive", { mode: 0o600 });
+  await fs.writeFile(workspacePath, JSON.stringify({ renderDirectory }), { mode: 0o600 });
+  await fs.writeFile(readyPath, "ready", { mode: 0o600 });
+  for (;;) {
+    try { await fs.access(releasePath); break; }
+    catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+      await new Promise(resolve => setTimeout(resolve, 5));
+    }
+  }
+  assertSystemRendererRunning();
+  await fs.writeFile(spawnedPath, "spawned", { mode: 0o600 });
+}).catch(() => {});
+setInterval(() => {}, 1000);
+`, { mode: 0o600 });
+
+      const host = spawnLifecycleHost(hostPath, [
+        readyPath,
+        releasePath,
+        workspacePath,
+        spawnedPath,
+      ]);
+      await waitForFile(readyPath);
+      const { renderDirectory } = JSON.parse(await fs.readFile(workspacePath, "utf8"));
+      await expect(fs.access(path.join(renderDirectory, "source.pdf"))).resolves.toBeUndefined();
+      expect(host.child.kill("SIGTERM")).toBe(true);
+      await new Promise(resolve => setTimeout(resolve, 25));
+      await fs.writeFile(releasePath, "release", { mode: 0o600 });
+      await expect(host.outcome).resolves.toMatchObject({ code: 143, signal: null });
+      await expect(fs.access(renderDirectory)).rejects.toMatchObject({ code: "ENOENT" });
+      await expect(fs.access(spawnedPath)).rejects.toMatchObject({ code: "ENOENT" });
+    });
+
+    it("waits for in-flight child close and private cleanup before SIGTERM exit", async () => {
+      const root = await temporaryRoot();
+      const rendererPath = path.join(root, "renderer.mjs");
+      const rendererReceiptPath = path.join(root, "renderer.json");
+      const workspacePath = path.join(root, "workspace.json");
+      const hostPath = path.join(root, "active-child-host.mjs");
+      await fs.writeFile(rendererPath, `
+import fs from "node:fs";
+fs.writeFileSync(process.argv[2], JSON.stringify({
+  cwd: process.cwd(),
+  pid: process.pid,
+  tmpdir: process.env.TMPDIR ?? null,
+}));
+process.on("SIGTERM", () => {});
+setInterval(() => {}, 1000);
+`, { mode: 0o600 });
+      const workerModule = pathToFileURL(
+        path.join(REPO_ROOT, "server/pdfjs-worker.js"),
+      ).href;
+      await fs.writeFile(hostPath, `
+import { promises as fs } from "node:fs";
+import path from "node:path";
+import {
+  installSystemChildTerminationHandlers,
+  runSystemCommand,
+  withPrivateSystemRenderWorkspace,
+} from ${JSON.stringify(workerModule)};
+const [rendererPath, rendererReceiptPath, workspacePath] = process.argv.slice(2);
+installSystemChildTerminationHandlers();
+void withPrivateSystemRenderWorkspace(async ({ renderDirectory }) => {
+  await fs.writeFile(path.join(renderDirectory, "source.pdf"), "sensitive", { mode: 0o600 });
+  await fs.writeFile(workspacePath, JSON.stringify({ renderDirectory }), { mode: 0o600 });
+  await runSystemCommand(process.execPath, [rendererPath, rendererReceiptPath], {
+    timeoutMs: 30000,
+    workingDirectory: renderDirectory,
+  });
+}).catch(() => {});
+setInterval(() => {}, 1000);
+`, { mode: 0o600 });
+
+      const host = spawnLifecycleHost(hostPath, [
+        rendererPath,
+        rendererReceiptPath,
+        workspacePath,
+      ]);
+      await waitForFile(rendererReceiptPath);
+      const renderer = JSON.parse(await fs.readFile(rendererReceiptPath, "utf8"));
+      const { renderDirectory } = JSON.parse(await fs.readFile(workspacePath, "utf8"));
+      expect(await fs.realpath(renderer.cwd)).toBe(await fs.realpath(renderDirectory));
+      expect(renderer.tmpdir).toBe(renderDirectory);
+      await expect(fs.access(path.join(renderDirectory, "source.pdf"))).resolves.toBeUndefined();
+      expect(host.child.kill("SIGTERM")).toBe(true);
+      await expect(host.outcome).resolves.toMatchObject({ code: 143, signal: null });
+      expect(() => process.kill(renderer.pid, 0)).toThrow(
+        expect.objectContaining({ code: "ESRCH" }),
+      );
+      await expect(fs.access(renderDirectory)).rejects.toMatchObject({ code: "ENOENT" });
     });
   },
 );
