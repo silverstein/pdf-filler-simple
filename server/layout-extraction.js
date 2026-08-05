@@ -5,6 +5,7 @@ import {
   CM_CODEPOINTS,
   CM_TFM_METRICS,
   CM_TFM_REFERENCE_VERSION,
+  CM_WITNESS_CODEPOINTS,
 } from "./type3-cm-reference.js";
 
 const IR_NAME = "pdf-tools.extraction-ir";
@@ -232,6 +233,32 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     ]),
   }),
   Object.freeze({
+    id: "cmmi-pk-raster-comma-7c69e2-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 59,
+    source_unicode: ";",
+    target_unicode: ",",
+    charproc_sha256: "7c69e2ebf2eec772599fae11d278adcc3c88472af6279f9801865628040d981b",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 58, charproc_sha256: "cdf3cbb1bd7626495858ebacb74816ba82ac139458edf75c6d737f6b121b65fe" }),
+      Object.freeze({ original_char_code: 61, charproc_sha256: "dfa9c162caf4e99dafd16ca5d87e90f89d44c29312a2675e89aa789c5355d63e" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmsy-pk-raster-minus-0c8b34-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-witness-v2",
+    family: "computer-modern-math-symbol",
+    original_char_code: 0,
+    source_unicode: "\u0000",
+    target_unicode: "−",
+    charproc_sha256: "0c8b34a3281f9e8e91b2d955f952a50d187cd06c432be27c015b78570e645e9d",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 6, charproc_sha256: "b68b24c69a8802a7e57a1cabaa7c1153a0a305e5d29ba308b78d60c16a5464b7" }),
+      Object.freeze({ original_char_code: 33, charproc_sha256: "6ff1e08b5364a8ce02ac2390691fdfb1f2e532bd0a1dac95d01a155bbce482fc" }),
+    ]),
+  }),
+  Object.freeze({
     id: "cmsy-pk-raster-minus-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
     family: "computer-modern-math-symbol",
@@ -409,7 +436,8 @@ for (const entry of TYPE3_RECOVERY_REGISTRY) {
   if (CM_CODEPOINTS[entry.family]?.[entry.original_char_code] !== entry.target_unicode) {
     throw new Error(`Type-3 registry ${entry.id} disagrees with the official Computer Modern encoding`);
   }
-  if (entry.witnesses.length < 2 || entry.witnesses.some(witness => !CM_CODEPOINTS[entry.family]?.[witness.original_char_code])) {
+  const officialWitnesses = { ...CM_CODEPOINTS[entry.family], ...CM_WITNESS_CODEPOINTS[entry.family] };
+  if (entry.witnesses.length < 2 || entry.witnesses.some(witness => !officialWitnesses[witness.original_char_code])) {
     throw new Error(`Type-3 registry ${entry.id} lacks two official Computer Modern witnesses`);
   }
 }
@@ -1004,7 +1032,11 @@ export function inspectType3GlyphEvidenceForPage({ textContent, operators, pdfjs
     }
     const family = uniqueComputerModernFamily(rawFont.widths);
     const official = family ? CM_CODEPOINTS[family] : null;
-    const mappedCodeCharprocSha256 = official ? Object.fromEntries(Object.keys(official)
+    const witnessCodes = family ? CM_WITNESS_CODEPOINTS[family] : null;
+    const mappedCodeCharprocSha256 = official ? Object.fromEntries([...new Set([
+      ...Object.keys(official),
+      ...Object.keys(witnessCodes ?? {}),
+    ])]
       .map(Number)
       .sort((left, right) => left - right)
       .map(code => [code, charProcDigestForCode(font, rawFont, code)])) : {};
