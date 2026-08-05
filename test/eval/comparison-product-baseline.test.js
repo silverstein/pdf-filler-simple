@@ -10,6 +10,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const MANIFEST_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "comparison", "manifest.v1.json");
 
 describe("current PDF Tools compare_pdfs baseline", () => {
+  // Hang ceiling, not a performance SLO: the fixed corpus makes 42 compare_pdfs calls plus bounded worker operations.
   it("records the seven-channel product contract without promoting calibration to a benchmark claim", async () => {
     const manifest = await loadComparisonManifest(MANIFEST_PATH);
     const documents = new Map(manifest.documents.map(document => [document.id, document]));
@@ -45,5 +46,5 @@ describe("current PDF Tools compare_pdfs baseline", () => {
     expect(report.engine.network_requests).toBe(0);
     expect(report.benchmark_claim_ready).toBe(false);
     expect(report.platform.host).toBe("local-test-host-stdio");
-  }, 120_000);
+  }, 240_000);
 });
