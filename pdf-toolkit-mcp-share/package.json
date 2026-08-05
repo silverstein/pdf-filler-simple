@@ -1,6 +1,6 @@
 {
   "name": "pdf-tools",
-  "version": "0.9.5",
+  "version": "0.9.6",
   "description": "PDF Tools MCP server for Cursor and other stdio MCP hosts",
   "type": "module",
   "main": "server/index.js",
