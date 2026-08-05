@@ -1,8 +1,10 @@
-# MCP tool-annotation audit — 2026-07-21
+# MCP tool-annotation audit: 2026-07-21
 
-This is the handler-by-handler evidence behind PDF Tools' 41 MCP
-`ToolAnnotations`. It covers the source runtime and the byte-identical share
-runtime. It is a risk declaration for host UX, not an authorization boundary.
+This living audit is the handler-by-handler evidence behind PDF Tools' current
+42 MCP `ToolAnnotations`. It covers the source runtime and the byte-identical
+share runtime. It is a risk declaration for host UX, not an authorization
+boundary. The original 2026-07-21 verification numbers remain below as
+historical evidence for the then-current 41-tool surface.
 
 ## Semantics used
 
@@ -70,6 +72,7 @@ not idempotent.
 | `rotate_pdf_pages` | F | T | T | F | Deterministically writes rotated output and can replace an existing destination. |
 | `reorder_pdf_pages` | F | T | T | F | Deterministically writes reordered output and can replace an existing destination. |
 | `get_pdf_info` | T | F | T | F | Reads local file and PDF metadata. |
+| `inspect_pdf_accessibility` | T | F | T | F | Reads eight bounded catalog-level signals from one local PDF in isolated memory and retains no output. |
 | `compare_pdfs` | T | F | T | F | Reads and compares two bounded local PDFs in memory without retaining output or mutating either source. |
 | `apply_page_plan` | F | T | T | F | Deterministically writes reordered/rotated/subset output and can replace an existing destination. |
 | `get_page_analysis` | T | F | T | F | Reads and analyzes local PDF pages without saving mutations. |
@@ -86,7 +89,7 @@ not idempotent.
 
 ## Regression proof
 
-`test/mcp-contract.test.js` contains the same exhaustive 41-tool matrix and
+`test/mcp-contract.test.js` contains the same exhaustive 42-tool matrix and
 compares all four effect hints for both runtime copies after live MCP
 discovery. It also binds the complete discovery payload to an updated SHA-256,
 so a title, description, schema, metadata, or annotation change requires
@@ -97,7 +100,8 @@ This matrix deliberately makes no claim that annotations enforce policy. Path
 allowlists, PDF mutation guards, signing-intent validation, backups, and host
 approval remain the actual controls.
 
-Verification on Node `22.22.3`:
+Historical verification recorded on 2026-07-21 with Node `22.22.3` for the
+then-current 41-tool surface:
 
 - focused live source/share contract: 1 file, 30 tests passed;
 - full suite: 27 files, 308 tests passed;
@@ -105,7 +109,7 @@ Verification on Node `22.22.3`:
 - source/share runtime byte comparison: identical;
 - dependency manifests and the protected `pdfjs-dist` pin: unchanged.
 
-## Addendum — 2026-08-03 (extraction-intelligence epic, pdf-toolkit-mcp-zyx)
+## Addendum: 2026-08-03 (extraction-intelligence epic, pdf-toolkit-mcp-zyx)
 
 The epic extended the structured outputs of `read_pdf_layout`,
 `convert_pdf_to_markdown`, `get_page_analysis`, and `read_pdf_content`
@@ -115,3 +119,18 @@ normalizations) and added the optional `compact` input argument to
 no `readOnlyHint`, `destructiveHint`, `idempotentHint`, or `openWorldHint`
 value changes. The advertised tool-contract digest changes are recorded with
 dated entries in `test/mcp-contract.test.js`.
+
+## Addendum: 2026-08-05
+
+The current candidate adds `inspect_pdf_accessibility` as a local, bounded,
+read-only operation. Its annotation tuple is `R=T, D=F, I=T, O=F` because the
+handler reads one allowlisted PDF, retains no output, and has no network or
+other open-world effect.
+
+Focused current-candidate evidence on 2026-08-05:
+
+- `test/mcp-contract.test.js`: 43 tests passed within the focused nine-file run;
+- live MCP discovery: 42 unique tools, including 38 structured tools;
+- complete discovery SHA-256: `ccd2dd7eb7680084c8a762b541cd0632ef33475754e53397cb677e9915bcd206`;
+- source/share runtime byte comparison: identical;
+- dependency versions: `pdf-lib` 1.17.1 and `pdfjs-dist` 5.4.624 unchanged.
