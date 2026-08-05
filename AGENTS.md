@@ -14,7 +14,7 @@ separate example to locate.
 - `example-fw9.pdf`: Sample form for smoke tests. Keep anonymized assets only.
 
 ### Tools currently shipped
-- `display_pdf`, `list_pdfs`, `read_pdf_fields`, `fill_pdf`, `bulk_fill_from_csv`, `save_profile`, `load_profile`, `list_profiles`, `fill_with_profile`, `extract_to_csv`, `validate_pdf`, `read_pdf_content`, `read_pdf_layout`, `convert_pdf_to_markdown`, `get_pdf_info`, `compare_pdfs`, `render_pdf_page`, `render_pdf_region`, `get_pdf_resource_uri`, `read_pdf_bytes` (app-only).
+- `display_pdf`, `list_pdfs`, `read_pdf_fields`, `fill_pdf`, `bulk_fill_from_csv`, `save_profile`, `load_profile`, `list_profiles`, `fill_with_profile`, `extract_to_csv`, `validate_pdf`, `read_pdf_content`, `read_pdf_layout`, `convert_pdf_to_markdown`, `get_pdf_info`, `inspect_pdf_accessibility`, `compare_pdfs`, `render_pdf_page`, `render_pdf_region`, `get_pdf_resource_uri`, `read_pdf_bytes` (app-only).
 
 `get_pdf_info` returns bounded source-bound observations. Widget annotations
 belong to form fields; ordinary annotations remain separate and their targets
@@ -24,6 +24,12 @@ Render-region inputs are top-left PDF.js viewport points after CropBox,
 rotation, and UserUnit, not MediaBox-relative signing coordinates. The macOS
 system renderer uses the same view mapping for whole pages and regions and
 reports raw pixels unavailable.
+
+`inspect_pdf_accessibility` performs a bounded, local, read-only review of
+exactly eight shallow catalog-level signals in an unencrypted PDF. It binds
+observations to the source SHA-256, distinguishes missing from unavailable
+signals, and always requires human review. It does not establish PDF/UA,
+WCAG, certification, legal, or document-accessibility conclusions.
 
 `compare_pdfs` performs a bounded, local, read-only whole-document comparison
 of two PDFs with at most 20 pages each. It binds observations and evidence to

@@ -37,6 +37,7 @@ an `isError` result is never forced through a success schema.
 | `get_page_analysis` | bounded page analysis with explicit provenance, operator counts, and a `classification` rollup (`document_kind`, typed `pages_needing_vision`, explicit `pages_not_analyzed`) |
 | `get_pdf_identity` | parser-independent canonical path, byte length, and SHA-256 |
 | `get_pdf_info` | bounded source-bound page, metadata, form-widget, and inert annotation observations with typed coverage, exact accounting, and a full-envelope digest |
+| `inspect_pdf_accessibility` | source-bound eight-signal structural review with bounded observation and reason codes, fixed limitations, required human review, and `not_established` conclusions |
 | `get_pdf_resource_uri` | resource URI and local file metadata |
 | `list_signatures` | saved signature summaries, including an empty array |
 | `load_signature` | signature metadata and optional preview |
@@ -66,6 +67,12 @@ wire contract that discovery does not publish.
 invalid PDF header, input over 250 MiB, and a file or pathname that changed
 during hashing. Path-policy denial remains the shared structured error.
 
+`inspect_pdf_accessibility` returns bounded partial or indeterminate results
+for malformed input and a fixed, path-free error for encrypted input. The
+encrypted branch exposes no findings. Shared path-policy, file-availability,
+source-identity, and isolated-resource errors remain structured and do not
+include parser diagnostics or passwords.
+
 `compare_pdfs` has stable structured failures for page-cap refusal, source
 identity races, password requirements or rejection, unsupported parsing,
 filesystem policy denial, unavailable inputs, output-cap refusal, and internal
@@ -90,7 +97,7 @@ before loading the target PDF, writing output, or changing active-document
 state.
 
 The executable source of truth is `server/output-schemas.js`. The MCP contract
-tests assert this complete 37/4 matrix, compile every schema through the pinned
+tests assert this complete 38/4 matrix, compile every schema through the pinned
 SDK validator, reject newer unsupported JSON Schema keywords, exercise live
 success and error branches, and require byte-identical source/share runtime
 files.

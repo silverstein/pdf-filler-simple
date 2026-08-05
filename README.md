@@ -99,6 +99,7 @@ content, so the complete workflow is not necessarily zero egress.
 - Extract structured data to CSV
 - Inspect page-level details like orientation, text presence, images, and likely blank pages
 - Review source-bound page geometry, bounded metadata, form widgets, ordinary annotations, and file identity
+- Inspect exactly eight shallow catalog-level accessibility signals with explicit missing or unavailable states and required human review
 
 PDF Tools does not currently bundle an OCR engine. Text reads use the PDF.js
 text layer. If the selected `read_pdf_content` result contains no text, the tool
@@ -113,6 +114,11 @@ SHA-256, keeps widget annotations separate from ordinary annotations, and
 returns link or action targets only as inert values. Page and region renders
 report page geometry, coordinate spaces, renderer policy, the PNG SHA-256,
 and raw RGBA SHA-256 availability.
+
+`inspect_pdf_accessibility` is a bounded structural-review screen for an
+unencrypted local PDF. It does not run veraPDF, assess tag semantics or
+assistive-technology behavior, or establish PDF/UA, WCAG, certification,
+legal, or document-accessibility conclusions.
 
 Region-render inputs are top-left PDF.js viewport points after CropBox,
 rotation, and UserUnit. They are not MediaBox-relative signing-zone
@@ -219,6 +225,7 @@ that same view and reports raw pixels unavailable.
 - `extract_to_csv`
 - `get_pdf_identity`
 - `get_pdf_info`
+- `inspect_pdf_accessibility`
 - `get_page_analysis`
 
 ### Active Document and Host Helpers

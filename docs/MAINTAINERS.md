@@ -249,7 +249,7 @@ mcp__<display_name, spaces underscored, non [A-Za-z0-9_-] stripped>__<tool_name>
 Identifiers over **64 characters** fail in the host. This shipped as a real
 defect (issue #44): the original benefit-led directory title
 `PDF Tools - Fill, Sign, Merge, Split, Extract` normalizes to 41 characters and
-pushes 13 of the current 40 tool identifiers past the ceiling.
+pushes 14 of the current 41 packed tool identifiers past the ceiling.
 
 The naming strategy is therefore **dual**:
 
@@ -261,11 +261,11 @@ The naming strategy is therefore **dual**:
 
 Budgets are computed by `scripts/tool-identifier-budget.mjs` and gated in
 `test/mcp-contract.test.js`. Current margins against the longest tool name
-(`convert_pdf_to_markdown`, 23 characters):
+(`inspect_pdf_accessibility`, 25 characters):
 
-- `PDF Tools` — longest identifier 39, headroom 25
-- `PDF Tools: Fill, Sign & Edit` — longest identifier 55, headroom 9
-- Original long title — longest identifier 71, 13 identifiers over the limit
+- `PDF Tools`: longest identifier 41, headroom 23
+- `PDF Tools: Fill, Sign & Edit`: longest identifier 57, headroom 7
+- Original long title: longest identifier 73, 14 identifiers over the limit
 
 **The trap when adding a tool.** The shipped short brand has generous headroom,
 so a new long tool name will not break it and every host-facing check stays
@@ -660,6 +660,9 @@ Run these after any tool or packaging change:
 - `get_pdf_info` on example-fw9.pdf - verify exact source SHA-256, page geometry, form widgets, ordinary-annotation separation, and coverage
 - `get_pdf_info` on a non-form PDF - verify empty supported form and annotation channels rather than fabricated unavailability
 - `get_pdf_info` on an encrypted PDF - verify typed missing/wrong password errors do not expose password or document observations
+- `inspect_pdf_accessibility` on normal, explicit-false, and absent-signal fixtures: verify eight ordered checks, exact source binding, fixed `not_established` conclusions, required human review, and no file change
+- `inspect_pdf_accessibility` on malformed non-PDF input: verify a partial or indeterminate result, seven unavailable checks, and no parser diagnostic or path disclosure
+- `inspect_pdf_accessibility` on encrypted input: verify the fixed error, no findings, and no password or path disclosure
 - `render_pdf_page` and `render_pdf_region` - verify the PNG SHA-256 against returned image bytes and raw-pixel availability against the renderer
 - Render a fixture with nonzero MediaBox/CropBox origins, rotation, and UserUnit - verify native regions use PDF.js viewport points and the macOS system path fails closed
 - Precede one required/read-only field with 500 orphan Widget annotations - verify the real field retains flags `3`, every widget is counted, and coverage is partial
