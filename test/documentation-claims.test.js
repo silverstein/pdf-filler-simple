@@ -10,6 +10,10 @@ const CURRENT_PRODUCT_SURFACES = [
   "AGENTS.md",
   "docs/MAINTAINERS.md",
   "docs/SUPPORT.md",
+  // The normative MCP contract went a full cycle asserting a prompt-argument
+  // isolation boundary that had been deleted, because this list did not
+  // include it.
+  "docs/MCP_CONTRACT.md",
   "docs/releases/v0.9.5.md",
   "pdf-toolkit-mcp-share/README.md",
   "manifest.json",

@@ -192,78 +192,78 @@
       "name": "view_and_analyze_pdf",
       "description": "Open and analyze any PDF document",
       "arguments": ["focus"],
-      "text": "I'll open your PDF in the interactive viewer and analyze it, focusing on ${arguments.focus}. I can extract key findings, summarize sections, answer questions about specific pages, pull out structured data, and identify form fields if present."
+      "text": "Use PDF Tools to open a PDF stored on this computer and analyze it, focusing on ${arguments.focus}. If I haven't given you a path, start by listing the PDFs in my Documents folder so I can pick one. Then extract key findings, summarize sections, answer questions about specific pages, pull out structured data, and identify form fields if present."
     },
     {
       "name": "research_paper_analysis",
       "description": "Analyze & summarize research papers",
       "arguments": ["focus_area"],
-      "text": "I'll open your research paper in the interactive viewer and analyze it, focusing on ${arguments.focus_area}. I can extract key findings and methodology, identify research gaps, create chapter-by-chapter summaries, pull out all citations, and generate a literature review outline."
+      "text": "Use PDF Tools to analyze a research paper stored on this computer, focusing on ${arguments.focus_area}. If I haven't given you a path, start by listing the PDFs in my Documents folder so I can pick one. Extract the key findings and methodology, identify research gaps, summarize it chapter by chapter, pull out the citations, and draft a literature review outline."
     },
     {
       "name": "contract_comparison",
       "description": "Compare legal documents & contracts",
       "arguments": ["comparison_focus"],
-      "text": "I'll compare multiple contracts or legal documents, focusing on ${arguments.comparison_focus}. I'll highlight changed clauses, modified terms, added/removed sections, pricing differences, liability changes, and create a comparison summary."
+      "text": "Use PDF Tools to compare contracts or legal documents stored on this computer, focusing on ${arguments.comparison_focus}. If I haven't given you their paths, start by listing the PDFs in my Documents folder so I can pick them. Highlight changed clauses, modified terms, added or removed sections, pricing differences, and liability changes, then summarize the comparison."
     },
     {
       "name": "financial_report_extraction",
       "description": "Extract data from financial statements",
       "arguments": ["output_format"],
-      "text": "I'll extract and analyze data from your financial PDFs including all tables and key metrics. I'll convert the data to ${arguments.output_format} format for analysis, with specific page references for all extracted information."
+      "text": "Use PDF Tools to extract and analyze data from financial PDFs stored on this computer, including tables and key metrics. If I haven't given you a path, start by listing the PDFs in my Documents folder so I can pick one. Convert what you extract to ${arguments.output_format} format, cite the page for the values you extract, and tell me plainly about anything you could not extract."
     },
     {
       "name": "document_qa_session",
       "description": "Interactive Q&A about your documents",
       "arguments": ["initial_question"],
-      "text": "Let's discuss your PDF document. Starting with: ${arguments.initial_question}. I can find specific information, explain complex sections, cross-reference different parts, extract quotes with page numbers, and answer 'what if' scenarios."
+      "text": "Use PDF Tools to open a PDF stored on this computer so we can discuss it. My first question is: ${arguments.initial_question}. If I haven't given you a path, start by listing the PDFs in my Documents folder so I can pick one. Find specific information, explain complex sections, cross-reference different parts, and quote passages with their page numbers."
     },
     {
       "name": "bulk_invoice_processing",
       "description": "Process multiple invoices into structured data",
       "arguments": ["folder_path", "output_format"],
-      "text": "I'll process all invoice PDFs in ${arguments.folder_path} and create a unified dataset in ${arguments.output_format} format. I'll extract vendor names, invoice numbers, dates, line items, totals, tax amounts, and payment terms."
+      "text": "Use PDF Tools to process the invoice PDFs in the folder ${arguments.folder_path} on this computer and build a unified dataset in ${arguments.output_format} format. Start by listing the PDFs in that folder so I can see what you found. Extract vendor names, invoice numbers, dates, line items, totals, tax amounts, and payment terms, and tell me about any invoice you could not read."
     },
     {
       "name": "technical_documentation_summary",
       "description": "Summarize technical manuals & documentation",
       "arguments": ["summary_type"],
-      "text": "I'll analyze your technical documentation and create ${arguments.summary_type}. I'll extract code examples, create reference guides, identify implementation steps, and summarize troubleshooting sections."
+      "text": "Use PDF Tools to analyze technical documentation stored on this computer and create ${arguments.summary_type}. If I haven't given you a path, start by listing the PDFs in my Documents folder so I can pick one. Extract the code examples, build a reference guide, identify the implementation steps, and summarize the troubleshooting sections."
     },
     {
       "name": "fill_w9_business",
       "description": "Fill W-9 for business entity",
-      "text": "I'll open your W-9 in the interactive viewer so you can see it, then fill it for your business. I need: Business legal name, DBA/trade name (if different), business type (LLC/Corp/Partnership), tax classification, EIN, and business address. I'll properly check the correct tax classification boxes and ensure the form meets IRS requirements."
+      "text": "Use PDF Tools to fill out a W-9 stored on this computer for my business. Start by listing the PDFs in my Documents folder so I can point you at the right form, then read its fields. Ask me for the business legal name, the DBA or trade name if it differs, the business type (LLC, corporation, partnership), the tax classification, the EIN, and the business address. Check the correct tax classification boxes and tell me about any required field you could not fill."
     },
     {
       "name": "batch_invoices",
       "description": "Process multiple invoices",
-      "text": "I'll help you batch process invoices. Point me to the folder containing your invoice PDFs. I can: extract all amounts and dates, create a summary spreadsheet, identify missing information, calculate totals by vendor/date/category. What specific data do you need extracted?"
+      "text": "Use PDF Tools to batch process invoice PDFs stored on this computer. Start by listing the PDFs in my Documents folder so I can confirm which ones to use, or I'll name a different folder. Extract the amounts and dates, build a summary spreadsheet, flag missing information, total them by vendor, date, and category, and tell me about any invoice you could not read. Ask me which fields matter most before you start."
     },
     {
       "name": "rental_application",
       "description": "Fill rental application",
-      "text": "I'll open your rental application in the viewer and help complete it. Have ready: personal info, employment history (3 years), income verification, previous addresses (3 years), references, vehicle info, and emergency contact. I'll ensure all required fields are filled and flag any that need supporting documents."
+      "text": "Use PDF Tools to help me complete a rental application stored on this computer. Start by listing the PDFs in my Documents folder so I can point you at the right form, then read its fields. I'll have ready my personal details, three years of employment history, income verification, three years of previous addresses, references, vehicle information, and an emergency contact. Fill every required field and flag the ones that need supporting documents."
     },
     {
       "name": "extract_1099_data",
       "description": "Extract data from 1099 forms",
-      "text": "I'll extract all data from your 1099 forms (1099-NEC, 1099-MISC, 1099-DIV, 1099-INT, etc.) and create a tax summary. I'll organize by payer, identify the type of income, sum totals by category, and format it for easy import into tax software."
+      "text": "Use PDF Tools to extract the data from 1099 forms stored on this computer (1099-NEC, 1099-MISC, 1099-DIV, 1099-INT and similar) and build a tax summary. Start by listing the PDFs in my Documents folder so I can confirm which ones to use. Organize by payer, identify the type of income, total each category, format it for import into tax software, and tell me about anything you could not read."
     },
     {
       "name": "merge_documents",
       "description": "Combine multiple PDFs into one document",
-      "text": "I'll merge your PDF files into a single document. Just tell me which files to combine and where to save the result. I'll preserve the page order and show you the merged result in the viewer so you can verify it looks right. PDF file operations happen locally; content I inspect is handled under your MCP host or model provider's data terms."
+      "text": "Use PDF Tools to merge PDF files stored on this computer into one document. Start by listing the PDFs in my Documents folder so I can choose which ones to combine, then ask me where to save the result. Preserve the page order, and afterwards report the page count and the output path so I can check it. File operations happen locally; content you inspect is handled under my MCP host or model provider's data terms."
     },
     {
       "name": "split_large_document",
       "description": "Split a PDF into smaller files",
-      "text": "I'll split your PDF into separate files. You can specify exact page ranges (e.g., pages 1-10, 11-20) or split at regular intervals (e.g., every 5 pages). I'll save each section as its own PDF file. Great for breaking up large reports, separating chapters, or extracting specific sections."
+      "text": "Use PDF Tools to split a PDF stored on this computer into separate files. If I haven't given you a path, start by listing the PDFs in my Documents folder so I can pick one. I'll either give you exact page ranges (for example pages 1-10 and 11-20) or ask you to split at a regular interval (for example every 5 pages). Save each section as its own PDF and tell me where you wrote them."
     },
     {
       "name": "organize_scanned_pages",
       "description": "Rotate and reorder scanned PDF pages",
-      "text": "I'll help fix up your scanned PDF. I can rotate sideways or upside-down pages (90°, 180°, or 270°), and reorder pages that were scanned out of sequence. I'll show you the result in the viewer so you can confirm everything looks right before saving."
+      "text": "Use PDF Tools to fix up a scanned PDF stored on this computer. If I haven't given you a path, start by listing the PDFs in my Documents folder so I can pick one. Rotate the pages I tell you are sideways or upside-down (90, 180, or 270 degrees) and reorder pages that were scanned out of sequence. Tell me the page order and rotations you plan to apply before you save, so I can confirm them."
     }
   ],
   "user_config": {
