@@ -163,7 +163,11 @@ describe("render_pdf_page MCP tool", () => {
         size_bytes: sourceBytes.length,
       },
       raw_pixel_status: "available",
-      renderer_policy: "native_with_system_fallback",
+      // The system-renderer fallback is a macOS capability, so pdfjsRendererPolicy
+      // reports plain "native" everywhere else. The hardcoded darwin value failed
+      // on every non-darwin host; it stayed hidden because the aggregate gate runs
+      // on macOS.
+      renderer_policy: process.platform === "darwin" ? "native_with_system_fallback" : "native",
     });
     expect(result.structuredContent.png_sha256)
       .toBe(createHash("sha256").update(Buffer.from(image.data, "base64")).digest("hex"));
