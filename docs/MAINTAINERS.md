@@ -629,6 +629,64 @@ When publishing, update versions together:
 Do not commit binary artifacts (zip, mcpb) to main. Attach them to
 releases instead.
 
+## Native canvas inside an embedded host (Windows rendering)
+
+Page rasterization (`render_pdf_page`, `render_pdf_region`) needs the
+`@napi-rs/canvas` native binding. Inside an embedded Electron host such as Claude
+Desktop, loading it is gated.
+
+**Default: on for Windows, off everywhere else.** macOS keeps the block because it
+has a working system-renderer fallback anyway and is the only platform where a
+canvas-attributed failure was ever observed. Linux keeps it for want of a single
+datapoint.
+
+`PDF_TOOLS_EMBEDDED_NATIVE_CANVAS` overrides the default:
+
+| Value | Effect |
+|---|---|
+| `1` | always allow, on any platform, and deliberately bypasses the crash latch below so a latched install can be retried |
+| `0` | always block, on any platform (kill switch) |
+| unset | platform default: allow on `win32`, block elsewhere |
+
+Set it where the server is configured. Under MCPB that is the extension
+manifest's `server.mcp_config.env`; **a user-scope environment variable does not
+reach the server subprocess.**
+
+### Why there is a crash latch
+
+The failure being guarded against is not an exception. A native `dlopen` that
+destabilises Electron hard-crashes the host, so no `try`/`catch` can see it and
+an in-process retry loop would crash on every launch.
+
+So the recovery is durable across process death. `server/pdfjs-subprocess.js`
+writes and `fsync`s a marker to `<profiles dir>/native-canvas-attempt.json`
+immediately before the load, and removes it immediately after the load returns
+**or throws**. A marker still present at the next load therefore means a previous
+attempt began and the process never came back, and native canvas latches off for
+that install.
+
+A load that raises does **not** latch. That path is a recoverable environment
+problem such as a missing VC++ runtime or an architecture mismatch, and the host
+is intact, so it stays retryable.
+
+If the marker cannot be written at all, the load is refused. Without the marker
+a crash could not be detected, and failing closed is the entire point.
+
+**To clear a latched install:** delete `native-canvas-attempt.json` from the
+profiles directory, or set `PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=1`.
+
+### Evidence behind the win32 default
+
+CI run `31051499142` (artifact `windows-render-probe.json`): block in force →
+error; block lifted → `renderer: "native-canvas"`. Reproduced on a real Windows 11
+machine running Claude Desktop 1.25927.0 on 2026-08-06. `.github/workflows/windows-render-probe.mjs`
+asserts all three arms — kill switch blocks, platform default renders natively on
+win32 and stays blocked elsewhere, explicit opt-in renders.
+
+The known crash-shaped precedent is macOS-only and was not a crash: an
+`ERR_DLOPEN_FAILED` because the binding's code signature carries a different Team
+ID from the host process. It has no Windows analogue.
+
 ## Manual test checklist
 
 Run these after any tool or packaging change:

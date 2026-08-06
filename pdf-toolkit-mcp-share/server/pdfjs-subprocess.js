@@ -1,7 +1,16 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { chmod, lstat, mkdtemp, realpath, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
@@ -912,36 +921,160 @@ async function loadInProcessWorkerModule() {
   return await inProcessWorkerModulePromise;
 }
 
-// The in-process native-canvas block is precautionary, inherited from the
-// worker-thread path where Electron measurably crashed. No measurement shows
-// the native binding crashing on the utility-process main thread, and blocking
-// it is what leaves an embedded host with no renderer when there is no system
-// fallback, which is the Windows shape. PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=1
-// lifts the block so that can be measured on a real host before the default
-// changes. The renderer policy already falls back to the system renderer, so
-// an unsafe native attempt degrades rather than failing the call.
-function embeddedNativeCanvasAllowed() {
-  return process.env.PDF_TOOLS_EMBEDDED_NATIVE_CANVAS === "1";
+// Native canvas inside an embedded (Electron) host.
+//
+// History, because the reasoning matters more than the switch. The block was
+// inherited from the worker-thread path, and that one was itself precautionary:
+// it came from an Electron documentation warning that loading native modules
+// from a worker can crash the process, not from an observed crash. The one
+// canvas failure actually measured was macOS-specific and was not a crash at all
+// - ERR_DLOPEN_FAILED because the binding's code signature has a different Team
+// ID from the host process (docs/CLAUDE_DESKTOP_TEST_RUN_2026-04-23.md:394).
+// That has no Windows analogue.
+//
+// Blocking it is what leaves an embedded host with no renderer when there is no
+// system fallback, which is the Windows shape. An earlier version of this
+// comment claimed "the renderer policy already falls back to the system
+// renderer, so an unsafe native attempt degrades rather than failing the call."
+// That is FALSE off macOS: index.js's pdfjsRendererPolicy() returns bare
+// "native" for every non-darwin platform, so on Windows and Linux there is
+// nothing to degrade to.
+//
+// Measured 2026-08-06 on Windows 11 / Claude Desktop 1.25927.0, and independently
+// in CI (run 31051499142, artifact windows-render-probe.json: block in force ->
+// error, block lifted -> renderer "native-canvas"): with the block lifted the
+// binding loads and renders, with no host instability observed.
+//
+// That is not enough on its own to trust a default, because the failure this
+// guards against is a hard host crash that no in-process handler can catch. So
+// the default is win32-only and is backed by the crash-survival latch below.
+// Where the crash-survival marker lives. Mirrors index.js's PROFILES_DIR so the
+// marker sits with the rest of this server's durable state, and stays overridable
+// for tests.
+export function nativeCanvasMarkerPath(env = process.env) {
+  const configured = typeof env.DEFAULT_PROFILES_DIR === "string"
+    && env.DEFAULT_PROFILES_DIR
+    && !env.DEFAULT_PROFILES_DIR.includes("${")
+    ? env.DEFAULT_PROFILES_DIR
+    : join(homedir(), ".pdf-toolkit-files");
+  return join(configured, "native-canvas-attempt.json");
+}
+
+// A dlopen that destabilises Electron hard-crashes the host rather than raising,
+// so no in-process handler can catch it. The only recoverable design is one that
+// survives process death: write a marker immediately before the load, remove it
+// immediately after the load returns. A marker found at startup therefore means a
+// previous load began and the process never came back, and native canvas latches
+// off for this install.
+function armNativeCanvasAttempt(markerPath) {
+  try {
+    mkdirSync(dirname(markerPath), { recursive: true });
+    // Write and fsync: a marker still sitting in the page cache when the host
+    // dies would defeat the whole mechanism.
+    const handle = openSync(markerPath, "w");
+    try {
+      writeFileSync(handle, JSON.stringify({
+        attempted_at: new Date().toISOString(),
+        platform: process.platform,
+        arch: process.arch,
+        pid: process.pid,
+      }));
+      fsyncSync(handle);
+    } finally {
+      closeSync(handle);
+    }
+    return true;
+  } catch {
+    // If the marker cannot be written we cannot detect a crash, so do not
+    // attempt the load at all. Failing closed is the point of the exercise.
+    return false;
+  }
+}
+
+function clearNativeCanvasAttempt(markerPath) {
+  try {
+    rmSync(markerPath, { force: true });
+  } catch {
+    // Leaving a stale marker only costs a conservative latch on the next boot.
+  }
+}
+
+export function nativeCanvasLatched(markerPath = nativeCanvasMarkerPath()) {
+  try {
+    const raw = readFileSync(markerPath, "utf8");
+    return raw.length > 0;
+  } catch {
+    return false;
+  }
+}
+
+// Policy, in order:
+//   PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=0  always blocks (kill switch)
+//   PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=1  always allows, and deliberately bypasses
+//                                       the latch so an operator can retry after
+//                                       a crash without deleting state by hand
+//   a latched marker                    blocks
+//   win32                               allows
+//   everything else                     blocks
+//
+// win32 only. macOS keeps the block: it is the largest installed base, it has a
+// working system-renderer fallback anyway, and it is the one platform where a
+// canvas-attributed Electron failure was actually observed. Linux keeps the
+// block for want of a single datapoint.
+export function embeddedNativeCanvasAllowed({
+  env = process.env,
+  platform = process.platform,
+  markerPath = null,
+} = {}) {
+  const override = env.PDF_TOOLS_EMBEDDED_NATIVE_CANVAS;
+  if (override === "0") return false;
+  if (override === "1") return true;
+  if (nativeCanvasLatched(markerPath ?? nativeCanvasMarkerPath(env))) return false;
+  return platform === "win32";
 }
 
 function installInProcessCanvasNativeGuard() {
-  if (embeddedNativeCanvasAllowed()) return;
   if (inProcessCanvasGuardInstalled) return;
   inProcessCanvasGuardInstalled = true;
   const originalDlopen = process.dlopen;
   process.dlopen = function guardedDlopen(module, filename, ...args) {
     const normalizedFilename = String(filename ?? "").replaceAll("\\", "/");
-    if (
-      normalizedFilename.includes("/node_modules/@napi-rs/canvas")
-      || /\/skia\.[^/]+\.node$/i.test(normalizedFilename)
-    ) {
+    const isNativeCanvas = normalizedFilename.includes("/node_modules/@napi-rs/canvas")
+      || /\/skia\.[^/]+\.node$/i.test(normalizedFilename);
+    if (!isNativeCanvas) {
+      return originalDlopen.call(this, module, filename, ...args);
+    }
+
+    // Re-evaluated per load, not cached at install time, so a latch written by a
+    // previous boot is honoured and an operator override takes effect.
+    if (!embeddedNativeCanvasAllowed()) {
       const error = new Error(
         "The native canvas binding is disabled in this embedded PDF host.",
       );
       error.code = "PDFJS_EMBEDDED_NATIVE_CANVAS_DISABLED";
       throw error;
     }
-    return originalDlopen.call(this, module, filename, ...args);
+
+    const markerPath = nativeCanvasMarkerPath();
+    if (!armNativeCanvasAttempt(markerPath)) {
+      const error = new Error(
+        "The native canvas binding is disabled in this embedded PDF host "
+          + "because its crash-recovery marker could not be written.",
+      );
+      error.code = "PDFJS_EMBEDDED_NATIVE_CANVAS_DISABLED";
+      throw error;
+    }
+    try {
+      const loaded = originalDlopen.call(this, module, filename, ...args);
+      // Survived the load. A raised error is also survival: the host is intact,
+      // so it must not latch and permanently disable a recoverable failure such
+      // as a missing VC++ runtime or an architecture mismatch.
+      clearNativeCanvasAttempt(markerPath);
+      return loaded;
+    } catch (error) {
+      clearNativeCanvasAttempt(markerPath);
+      throw error;
+    }
   };
 }
 
