@@ -150,7 +150,9 @@ function generateMetricModule(tfmRoot, archiveSha256) {
     + `    25: "π", 26: "ρ", 27: "σ", 28: "τ", 33: "ω", 39: "φ",\n`
     + `    58: ".", 59: ",", 60: "<", 61: "/", 62: ">",\n`
     + `  }),\n`
-    + `  "computer-modern-math-symbol": Object.freeze({ 0: "−", 1: "·", 20: "≤", 21: "≥", 48: "′", 106: "|", 112: "√" }),\n`
+    + `  "computer-modern-math-symbol": Object.freeze({\n`
+    + `    0: "−", 1: "·", 6: "±", 20: "≤", 21: "≥", 33: "→", 48: "′", 106: "|", 112: "√",\n`
+    + `  }),\n`
     + `  "computer-modern-math-extension": Object.freeze({\n`
     + `    0: "(", 1: ")", 2: "[", 3: "]",\n`
     + `    16: "(", 17: ")", 18: "(", 19: ")", 20: "[", 21: "]",\n`
@@ -158,7 +160,9 @@ function generateMetricModule(tfmRoot, archiveSha256) {
     + `  }),\n`
     + `});\n\n`
     + `export const CM_WITNESS_CODEPOINTS = Object.freeze({\n`
-    + `  "computer-modern-math-symbol": Object.freeze({ 6: "±", 33: "→" }),\n`
+    + `  // Plus-or-minus and the rightward arrow were corroboration-only while no\n`
+    + `  // reviewed raster backed them. Both are now enrolled above and stay usable\n`
+    + `  // as witnesses from there, so nothing is witness-only today.\n`
     + `});\n`;
 }
 
@@ -237,8 +241,8 @@ try {
         33: "omega", 39: "variant-phi", 58: "period", 59: "comma", 60: "less", 61: "slash", 62: "greater",
       },
       "computer-modern-math-symbol": {
-        0: "minus", 1: "centered-dot", 6: "plus-or-minus-witness", 20: "less-or-equal",
-        21: "greater-or-equal", 33: "right-arrow-witness", 48: "prime", 106: "vertical", 112: "square-root",
+        0: "minus", 1: "centered-dot", 6: "plus-or-minus", 20: "less-or-equal",
+        21: "greater-or-equal", 33: "right-arrow", 48: "prime", 106: "vertical", 112: "square-root",
       },
       "computer-modern-math-extension": {
         0: "big-left-parenthesis", 1: "big-right-parenthesis", 2: "big-left-bracket", 3: "big-right-bracket",

@@ -11,7 +11,9 @@ export const CM_CODEPOINTS = Object.freeze({
     25: "π", 26: "ρ", 27: "σ", 28: "τ", 33: "ω", 39: "φ",
     58: ".", 59: ",", 60: "<", 61: "/", 62: ">",
   }),
-  "computer-modern-math-symbol": Object.freeze({ 0: "−", 1: "·", 20: "≤", 21: "≥", 48: "′", 106: "|", 112: "√" }),
+  "computer-modern-math-symbol": Object.freeze({
+    0: "−", 1: "·", 6: "±", 20: "≤", 21: "≥", 33: "→", 48: "′", 106: "|", 112: "√",
+  }),
   "computer-modern-math-extension": Object.freeze({
     0: "(", 1: ")", 2: "[", 3: "]",
     16: "(", 17: ")", 18: "(", 19: ")", 20: "[", 21: "]",
@@ -20,5 +22,7 @@ export const CM_CODEPOINTS = Object.freeze({
 });
 
 export const CM_WITNESS_CODEPOINTS = Object.freeze({
-  "computer-modern-math-symbol": Object.freeze({ 6: "±", 33: "→" }),
+  // Plus-or-minus and the rightward arrow were corroboration-only while no
+  // reviewed raster backed them. Both are now enrolled above and stay usable
+  // as witnesses from there, so nothing is witness-only today.
 });

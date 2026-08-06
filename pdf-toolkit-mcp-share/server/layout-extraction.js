@@ -928,6 +928,49 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
       Object.freeze({ original_char_code: 82, charproc_sha256: "e5fa9eb07a6e6807fb2ef29b805950074c1095fec2dbdc857ba9f46e4fbaaf77" }),
     ]),
   }),
+  // ABSTAIN 0x11 n=13 2fd7e5e9: raster not visually reviewed
+  // ABSTAIN 0x12 n=16 194bccf1: raster not visually reviewed
+  // ABSTAIN 0x1b n=15 dae3aa06: raster not visually reviewed
+  // ABSTAIN 0x6 n=4 4dedb554: raster not visually reviewed
+  Object.freeze({
+    id: "cmsy-pk-raster-plus-or-minus-b68b24-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-symbol",
+    original_char_code: 6,
+    source_unicode: "\u0006",
+    target_unicode: "±",
+    charproc_sha256: "b68b24c69a8802a7e57a1cabaa7c1153a0a305e5d29ba308b78d60c16a5464b7",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 0, charproc_sha256: "0c8b34a3281f9e8e91b2d955f952a50d187cd06c432be27c015b78570e645e9d" }),
+      Object.freeze({ original_char_code: 33, charproc_sha256: "6ff1e08b5364a8ce02ac2390691fdfb1f2e532bd0a1dac95d01a155bbce482fc" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmsy-pk-raster-right-arrow-7d300b-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-symbol",
+    original_char_code: 33,
+    source_unicode: "!",
+    target_unicode: "→",
+    charproc_sha256: "7d300b0750eccc0a4a46dc4308474d519a19002749ea7ed11bdba2daeaaf4776",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 0, charproc_sha256: "fb1f6bf10138511bcefade47467b3e2f9ae691ab3dab097914be1f0f66305470" }),
+      Object.freeze({ original_char_code: 1, charproc_sha256: "33077f6f9b7f5c5631bd3cb7bbfc79b4da1fbd929b23f6e08e55c90566608c7a" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmsy-pk-raster-right-arrow-6ff1e0-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-symbol",
+    original_char_code: 33,
+    source_unicode: "!",
+    target_unicode: "→",
+    charproc_sha256: "6ff1e08b5364a8ce02ac2390691fdfb1f2e532bd0a1dac95d01a155bbce482fc",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 0, charproc_sha256: "0c8b34a3281f9e8e91b2d955f952a50d187cd06c432be27c015b78570e645e9d" }),
+      Object.freeze({ original_char_code: 6, charproc_sha256: "b68b24c69a8802a7e57a1cabaa7c1153a0a305e5d29ba308b78d60c16a5464b7" }),
+    ]),
+  }),
 ]);
 const TYPE3_RECOVERY_BY_ID = new Map(TYPE3_RECOVERY_REGISTRY.map(entry => [entry.id, entry]));
 

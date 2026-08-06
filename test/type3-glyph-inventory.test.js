@@ -37,13 +37,13 @@ describe("Type-3 maintainer inventory", () => {
       expect.objectContaining({
         family: "computer-modern-math-symbol",
         original_char_code: 6,
-        intended_unicode: null,
+        intended_unicode: "±",
         count: 1,
       }),
       expect.objectContaining({
         family: "computer-modern-math-symbol",
         original_char_code: 33,
-        intended_unicode: null,
+        intended_unicode: "→",
         count: 1,
       }),
     ]));

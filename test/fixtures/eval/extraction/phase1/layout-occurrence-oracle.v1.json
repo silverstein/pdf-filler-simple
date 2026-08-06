@@ -55,14 +55,14 @@
     {
       "role": "layout_extraction_module",
       "path": "server/layout-extraction.js",
-      "bytes": 222321,
-      "sha256": "97a80e50c9d259f900ccbea30220cf14dcf4cb7020365eebf0850baf8322d03d"
+      "bytes": 224538,
+      "sha256": "2375b82747e1fccb2179612b161a16894af8bca65b17ade29405291a947d859e"
     },
     {
       "role": "type3_cm_reference_module",
       "path": "server/type3-cm-reference.js",
-      "bytes": 73046,
-      "sha256": "5e290f142a82a369f652eb85a330d1d2ef4d680b3eea5d2d16d9a3cfe28facec"
+      "bytes": 73219,
+      "sha256": "563630093fc0fc567fe5b2e5bf1f353a30c077a961b1bb53daa727751688010a"
     },
     {
       "role": "layout_oracle_schema",
@@ -119,7 +119,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "89996f18e463305d455f832ca79874b9c7d4540297e268b6c1ed9683bedead1b",
+  "validator_source_set_sha256": "c1aa67896eda32ba3065d9d1931495ec1e9b5d6f57b9c621287a5c6bc5e9f919",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",
