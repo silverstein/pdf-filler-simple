@@ -172,7 +172,7 @@ function generateFixture(type3Root, output) {
     "72 730 moveto (cmmi10: 0B alpha, 19 pi, 1A rho, 21 omega, 3A period, 3B comma, 3D slash) show",
     "/cmmi10 findfont 30 scalefont setfont 72 680 moveto <0B191A213A3B3D> show",
     "/Helvetica findfont 10 scalefont setfont",
-    "72 630 moveto (cmsy10: 00 minus, 06 plus-or-minus witness, 21 right-arrow witness, 15 greater-or-equal, 70 square-root) show",
+    "72 630 moveto (cmsy10: 00 minus, 06 plus-or-minus, 21 right-arrow, 15 greater-or-equal, 70 square-root) show",
     "/cmsy10 findfont 30 scalefont setfont 72 580 moveto <0006211570> show",
     "showpage",
   ].join(" ");
@@ -232,7 +232,15 @@ try {
       "pdf-toolkit-mcp-share/server/type3-cm-reference.js": sha256(fs.readFileSync(OUTPUT_SHARE_MODULE)),
       "test/fixtures/eval/extraction/type3-cm-reference.pdf": sha256(fs.readFileSync(OUTPUT_FIXTURE)),
     },
-    visual_labels: {
+    // The fixture draws only the slots listed in fixture_demonstrated_slots.
+    // reviewed_slot_labels covers every enrolled slot, each confirmed against
+    // its rendered source raster rather than against this fixture, so the two
+    // are recorded separately instead of one field implying the other.
+    fixture_demonstrated_slots: {
+      "computer-modern-math-italic": [11, 25, 26, 33, 58, 59, 61],
+      "computer-modern-math-symbol": [0, 6, 20, 21, 112],
+    },
+    reviewed_slot_labels: {
       "computer-modern-math-italic": {
         1: "Delta", 11: "alpha", 14: "delta", 15: "epsilon", 17: "eta", 18: "theta",
         21: "lambda", 22: "mu", 23: "nu", 25: "pi", 26: "rho", 27: "sigma", 28: "tau",

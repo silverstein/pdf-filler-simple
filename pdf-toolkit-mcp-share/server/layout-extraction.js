@@ -247,7 +247,7 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
   }),
   Object.freeze({
     id: "cmsy-pk-raster-minus-0c8b34-v1",
-    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-witness-v2",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
     family: "computer-modern-math-symbol",
     original_char_code: 0,
     source_unicode: "\u0000",

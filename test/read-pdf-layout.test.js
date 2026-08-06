@@ -101,10 +101,18 @@ describe("qualified legacy Type-3 glyph evidence", () => {
     expect(digest(await fs.readFile(fixture))).toBe(provenance.outputs["test/fixtures/eval/extraction/type3-cm-reference.pdf"]);
     expect(digest(await fs.readFile(module))).toBe(provenance.outputs["server/type3-cm-reference.js"]);
     expect(digest(await fs.readFile(shareModule))).toBe(provenance.outputs["pdf-toolkit-mcp-share/server/type3-cm-reference.js"]);
-    expect(provenance.visual_labels["computer-modern-math-italic"][33]).toBe("omega");
-    expect(provenance.visual_labels["computer-modern-math-symbol"][0]).toBe("minus");
-    expect(provenance.visual_labels["computer-modern-math-symbol"][6]).toBe("plus-or-minus");
-    expect(provenance.visual_labels["computer-modern-math-symbol"][33]).toBe("right-arrow");
+    expect(provenance.reviewed_slot_labels["computer-modern-math-italic"][33]).toBe("omega");
+    expect(provenance.reviewed_slot_labels["computer-modern-math-symbol"][0]).toBe("minus");
+    expect(provenance.reviewed_slot_labels["computer-modern-math-symbol"][6]).toBe("plus-or-minus");
+    expect(provenance.reviewed_slot_labels["computer-modern-math-symbol"][33]).toBe("right-arrow");
+    // The fixture is the labeled artifact, so what it actually draws is pinned
+    // separately from what has been reviewed. Enrolling a slot must not quietly
+    // imply this PDF demonstrates it.
+    expect(provenance.fixture_demonstrated_slots).toEqual({
+      "computer-modern-math-italic": [11, 25, 26, 33, 58, 59, 61],
+      "computer-modern-math-symbol": [0, 6, 20, 21, 112],
+    });
+    expect(Object.values(provenance.fixture_demonstrated_slots).flat()).toHaveLength(12);
     // Both were corroboration-only until a reviewed raster backed them. They are
     // enrolled now, and an enrolled codepoint is still usable as a witness, so
     // no slot is witness-only.
