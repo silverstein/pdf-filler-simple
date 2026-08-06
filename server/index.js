@@ -40,6 +40,7 @@ import {
   validateStructuredToolResult,
   withToolOutputSchema,
 } from "./output-schemas.js";
+import { publicAccessibilityInspectionError } from "./accessibility-inspection.js";
 import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
 import { validatePdfLayoutSemantics } from "./layout-extraction.js";
 import {
@@ -70,11 +71,13 @@ import {
   createPdfjsSubprocessRequest,
   forceTerminateAllPdfjsSubprocesses,
   runPdfjsSubprocess,
+  settleAllShutdownOperations,
   terminateAllPdfjsSubprocesses,
 } from "./pdfjs-subprocess.js";
 import {
   PDF_LIB_MUTATION_TOOL_NAMES,
   forceTerminateAllPdfLibMutations,
+  runPdfLibInspection,
   runPdfLibMutation,
   terminateAllPdfLibMutations,
 } from "./pdf-lib-subprocess.js";
@@ -1255,7 +1258,7 @@ function rejectUnissuedCursor(request, method) {
 const server = new Server(
   {
     name: "pdf-tools",
-    version: "0.9.5",
+    version: "0.9.6",
   },
   {
     capabilities: {
@@ -1376,6 +1379,10 @@ async function bindPdfjsSubprocessSource(resolvedPath) {
     sha256: source.sha256,
     size_bytes: source.sizeBytes,
   };
+}
+
+async function bindPdfLibInspectionSource(resolvedPath) {
+  return bindPdfjsSubprocessSource(resolvedPath);
 }
 
 async function runPdfjsOperation(resolvedPath, {
@@ -1516,7 +1523,7 @@ for (const [signal, exitCode] of new Map([
 ])) {
   process.once(signal, () => {
     if (workerShutdown !== null) return;
-    workerShutdown = Promise.all([
+    workerShutdown = settleAllShutdownOperations([
       terminateAllPdfjsSubprocesses(),
       terminateAllPdfLibMutations(),
     ]);
@@ -3311,6 +3318,29 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             resourceUri: "ui://pdf-toolkit/viewer"
           }
         }
+      },
+      {
+        name: "inspect_pdf_accessibility",
+        description: "Inspect an unencrypted bounded local PDF for exactly eight shallow catalog-level accessibility signals. Returns exact missing or unavailable observations, a source SHA-256 binding, fixed limitations, and areas requiring qualified human review. This structural review does not run veraPDF, assess tag semantics or assistive-technology behavior, edit the PDF, or establish PDF/UA, WCAG, certification, legal-compliance, or document-accessibility conclusions.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            pdf_path: {
+              type: "string",
+              maxLength: 32768,
+              description: "Absolute path or ~/ path to the unencrypted local PDF file.",
+            },
+          },
+          required: ["pdf_path"],
+        },
+        annotations: {
+          title: "Inspect PDF Accessibility Signals",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
       },
       {
         name: "compare_pdfs",
@@ -5572,6 +5602,42 @@ async function handleToolCall(request) {
             ...payload,
           },
         };
+      }
+
+      case "inspect_pdf_accessibility": {
+        try {
+          const inspectionArgs = requireArgumentObject(args, "inspect_pdf_accessibility");
+          const unknownArgument = Object.keys(inspectionArgs)
+            .find(argument => argument !== "pdf_path");
+          if (unknownArgument) {
+            throw new TypeError("inspect_pdf_accessibility received an unknown argument.");
+          }
+          const pdfPath = requireStringArgument(
+            inspectionArgs.pdf_path,
+            "pdf_path",
+            { maxLength: 32_768 },
+          );
+          const resolvedPath = resolvePath(pdfPath);
+          const source = await bindPdfLibInspectionSource(resolvedPath);
+          const payload = await runPdfLibInspection({
+            operation: "inspect_pdf_accessibility",
+            sources: [source],
+          });
+          return {
+            content: [{
+              type: "text",
+              text: [
+                `Structural review status: ${payload.inspection_status}.`,
+                `Reviewed 8 shallow catalog-level signals: ${payload.summary.observed} observed, ${payload.summary.missing} missing, ${payload.summary.unavailable} unavailable.`,
+                "Qualified human review is required.",
+                "PDF/UA, WCAG, certification, legal compliance, and document accessibility are not established.",
+              ].join("\n"),
+            }],
+            structuredContent: payload,
+          };
+        } catch (error) {
+          return createTypedToolError(publicAccessibilityInspectionError(error));
+        }
       }
 
       case "compare_pdfs": {

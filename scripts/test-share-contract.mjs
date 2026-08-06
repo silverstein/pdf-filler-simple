@@ -721,6 +721,7 @@ async function main() {
     );
 
     for (const relativePath of [
+      "server/accessibility-inspection.js",
       "server/bounded-pdf-file.js",
       "server/helpers.js",
       "server/index.js",
@@ -802,7 +803,7 @@ async function main() {
     const { tools } = await client.listTools();
     const { prompts } = await client.listPrompts();
     const { resources } = await client.listResources();
-    if (tools.length !== 41 || prompts.length !== 14 || resources.length !== 1) {
+    if (tools.length !== 42 || prompts.length !== 14 || resources.length !== 1) {
       throw new Error(
         `Unexpected discovery counts: ${tools.length} tools, ${prompts.length} prompts, ${resources.length} resources`,
       );

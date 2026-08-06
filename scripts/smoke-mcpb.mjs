@@ -26,6 +26,13 @@ const CMAP_ORACLE_PROVENANCE = JSON.parse(readFileSync(
   path.join(REPO_ROOT, "test/fixtures/eval/extraction/oracles/layout-unijis-vertical.provenance.json"),
   "utf8",
 ));
+const ACCESSIBILITY_CONCLUSION_KEYS = Object.freeze([
+  "certification",
+  "document_accessibility",
+  "legal_compliance",
+  "pdfua_conformance",
+  "wcag_conformance",
+]);
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -57,6 +64,67 @@ async function expectMcpError(operation, code) {
     throw new Error(`Expected MCP error ${code}, received ${error?.code}: ${error?.message}`);
   }
   throw new Error(`Expected MCP error ${code}, but operation succeeded`);
+}
+
+export function validatePackedDiscovery(tools) {
+  if (!Array.isArray(tools)
+    || tools.length !== 42
+    || !tools.some(tool => tool.name === "render_pdf_page")
+    || !tools.some(tool => tool.name === "compare_pdfs")
+    || !tools.some(tool => tool.name === "inspect_pdf_accessibility")) {
+    throw new Error("Packed server discovery differs from the current 42-tool contract");
+  }
+}
+
+export function validateAccessibilitySmokeResult(result, expectedSource) {
+  if (!expectedSource
+    || typeof expectedSource.file_name !== "string"
+    || expectedSource.file_name.length < 1
+    || path.basename(expectedSource.file_name) !== expectedSource.file_name
+    || path.win32.basename(expectedSource.file_name) !== expectedSource.file_name
+    || !Number.isSafeInteger(expectedSource.size_bytes)
+    || expectedSource.size_bytes < 1
+    || !/^[a-f0-9]{64}$/.test(expectedSource.sha256 ?? "")) {
+    throw new Error("Packed accessibility smoke expected source binding is invalid");
+  }
+  const value = result?.structuredContent;
+  if (result?.isError === true || !value) {
+    throw new Error("Packed accessibility smoke tool call failed");
+  }
+  if (value.source?.file_name !== expectedSource.file_name
+    || value.source?.size_bytes !== expectedSource.size_bytes
+    || value.source?.sha256 !== expectedSource.sha256) {
+    throw new Error("Packed accessibility smoke source binding is invalid");
+  }
+  if (!Array.isArray(value.checks)
+    || value.checks.length !== 8
+    || value.summary?.total !== 8
+    || value.machine_profile_validation?.status !== "not_run"
+    || value.human_review?.status !== "required") {
+    throw new Error("Packed accessibility smoke bounded review is invalid");
+  }
+  const conclusionKeys = Object.keys(value.conclusions ?? {}).sort();
+  if (conclusionKeys.length !== ACCESSIBILITY_CONCLUSION_KEYS.length
+    || conclusionKeys.some((key, index) => key !== ACCESSIBILITY_CONCLUSION_KEYS[index])
+    || conclusionKeys.some(key => value.conclusions[key] !== "not_established")) {
+    throw new Error("Packed accessibility smoke conclusion boundary is invalid");
+  }
+  return {
+    schema_version: "pdf-tools.accessibility-smoke-receipt/1.0.0",
+    tool: "inspect_pdf_accessibility",
+    source: {
+      file_name: value.source.file_name,
+      size_bytes: value.source.size_bytes,
+      sha256: value.source.sha256,
+    },
+    check_count: value.checks.length,
+    summary_total: value.summary.total,
+    machine_profile_validation: value.machine_profile_validation.status,
+    human_review: value.human_review.status,
+    conclusions: Object.fromEntries(
+      ACCESSIBILITY_CONCLUSION_KEYS.map(key => [key, value.conclusions[key]]),
+    ),
+  };
 }
 
 async function main() {
@@ -104,11 +172,7 @@ async function main() {
     const tools = await client.listTools();
     const prompts = await client.listPrompts();
     const resources = await client.listResources();
-    if (tools.tools.length !== 41
-      || !tools.tools.some(tool => tool.name === "render_pdf_page")
-      || !tools.tools.some(tool => tool.name === "compare_pdfs")) {
-      throw new Error("Packed server did not expose render_pdf_page and compare_pdfs");
-    }
+    validatePackedDiscovery(tools.tools);
     if (prompts.prompts.length !== 14 || resources.resources.length !== 1) {
       throw new Error(
         `Packed discovery mismatch: ${prompts.prompts.length} prompts, ` +
@@ -136,6 +200,16 @@ async function main() {
     if (byteResult.isError || byteResult.structuredContent?.byteCount !== 8) {
       throw new Error("Packed generic-client read_pdf_bytes compatibility check failed");
     }
+    const fixtureBytes = readFileSync(fixturePath);
+    const accessibility = await client.callTool({
+      name: "inspect_pdf_accessibility",
+      arguments: { pdf_path: fixturePath },
+    });
+    const accessibilityReceipt = validateAccessibilitySmokeResult(accessibility, {
+      file_name: path.basename(fixturePath),
+      size_bytes: fixtureBytes.length,
+      sha256: sha256(fixtureBytes),
+    });
     const layout = await client.callTool({
       name: "read_pdf_layout",
       arguments: { pdf_path: fixturePath, max_output_characters: 200000 },
@@ -271,15 +345,18 @@ async function main() {
     console.log(
       `Packed MCPB smoke passed on ${process.platform}/${process.arch}: ${tools.tools.length} tools, ` +
         `${prompts.prompts.length} prompts, canonical resources, verified PDF-lib mutation, ` +
-        `source-bound compare_pdfs, native raster image.`,
+        `source-bound accessibility and compare_pdfs, native raster image.`,
     );
+    console.log(JSON.stringify({ accessibility_receipt: accessibilityReceipt }));
   } finally {
     await transport?.close();
     rmSync(tempRoot, { recursive: true, force: true });
   }
 }
 
-main().catch(error => {
-  console.error(`Packed MCPB smoke failed: ${error.message}`);
-  process.exitCode = 1;
-});
+if (path.resolve(process.argv[1] ?? "") === fileURLToPath(import.meta.url)) {
+  main().catch(error => {
+    console.error(`Packed MCPB smoke failed: ${error.message}`);
+    process.exitCode = 1;
+  });
+}

@@ -73,7 +73,9 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // body margins in two-column papers, lettered appendices, and wrapped headings.
 // 2026-08-04: additive deterministic compare_pdfs contract with source-bound
 // evidence, exact whole-document limits, and typed channel coverage.
-const TOOL_CONTRACT_SHA256 = "7087e97e1be2f6a52138517d66169177aa08ca5017f69235af33e62603b54c9e";
+// 2026-08-05: additive bounded inspect_pdf_accessibility contract with explicit
+// machine-profile, human-review, and conformance-abstention boundaries.
+const TOOL_CONTRACT_SHA256 = "d9c225a5b72694d73dc0064a28fecf76a5bedf27121b04e656b86f055ced9313";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -112,6 +114,7 @@ const TOOL_EFFECT_ANNOTATIONS = {
   fill_pdf: CLOSED_IDEMPOTENT_OVERWRITE,
   bulk_fill_from_csv: CLOSED_IDEMPOTENT_OVERWRITE,
   compare_pdfs: CLOSED_READ,
+  inspect_pdf_accessibility: CLOSED_READ,
   save_profile: CLOSED_IDEMPOTENT_OVERWRITE,
   load_profile: CLOSED_READ,
   list_profiles: CLOSED_READ,
@@ -306,6 +309,7 @@ describe("MCPB static declarations", () => {
 
   it("keeps every committed share runtime file byte-identical to its source", async () => {
     for (const filename of [
+      "accessibility-inspection.js",
       "bounded-pdf-file.js",
       "pdf-comparison.js",
       "index.js",
@@ -365,7 +369,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(41);
+    expect(tools).toHaveLength(42);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))

@@ -38,6 +38,7 @@ function sameSet(left, right) {
 function confusionMetrics(results) {
   const families = {};
   for (const result of results) {
+    if (result.evaluation_status !== "completed") continue;
     const expected = new Set(result.expected_failure_ids);
     for (const finding of result.assessment.screen.findings) {
       const family = finding.rule_family;
@@ -82,7 +83,29 @@ export async function runAccessibilityEvaluation({
   for (const fixture of fixtures) {
     const candidatePath = await resolveAccessibilityFixturePath(resolvedManifest, fixture);
     const bytes = await fs.readFile(candidatePath);
-    const assessment = await screenPdfAccessibility(candidatePath);
+    let assessment;
+    try {
+      assessment = await screenPdfAccessibility(candidatePath);
+    } catch (error) {
+      if (error?.code !== "PDF_ENCRYPTED_INSPECTION_UNAVAILABLE") throw error;
+      results.push({
+        id: fixture.id,
+        partition: fixture.partition,
+        sha256_matches: digest(bytes) === fixture.sha256,
+        expected_failure_ids: fixture.expected.expected_failure_ids,
+        exact_failures_match: false,
+        exact_rule_families_match: false,
+        evaluation_status: "abstained",
+        abstention: {
+          code: "PDF_ENCRYPTED_INSPECTION_UNAVAILABLE",
+          message:
+            "Encrypted PDF inspection is unavailable because this operation does not accept a password.",
+        },
+        expectation_met: false,
+        assessment: null,
+      });
+      continue;
+    }
     const actualFailureFamilies = [...new Set(assessment.screen.findings
       .filter(finding => !finding.passed)
       .map(finding => finding.rule_family))];
@@ -111,6 +134,8 @@ export async function runAccessibilityEvaluation({
       expected_failure_ids: fixture.expected.expected_failure_ids,
       exact_failures_match: exactFailuresMatch,
       exact_rule_families_match: exactFamiliesMatch,
+      evaluation_status: "completed",
+      abstention: null,
       expectation_met: expectationMet,
       assessment,
     });

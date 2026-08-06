@@ -35,10 +35,16 @@
   },
   "validator_sources": [
     {
+      "role": "accessibility_inspection_module",
+      "path": "server/accessibility-inspection.js",
+      "bytes": 22849,
+      "sha256": "2cb0a2d7dd89427a07962df502e861f2d8f77057d5762b58abdeb66d05aaad70"
+    },
+    {
       "role": "generator_script",
       "path": "scripts/eval-generate-extraction-layout-oracle.mjs",
-      "bytes": 11603,
-      "sha256": "5c7ae782e25491d04ed92cf7700d7eacffe5a12b56d5d422164341cdd121057d"
+      "bytes": 11676,
+      "sha256": "1ced236149949ea580f426aea06a79308b6f59b159bd01c8cd08f7224de76df6"
     },
     {
       "role": "layout_evidence_module",
@@ -61,8 +67,8 @@
     {
       "role": "layout_oracle_schema",
       "path": "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
-      "bytes": 7265,
-      "sha256": "79efe6392a92cc5b3b0100f572dd476bc3b8e9cb8886d8c2edcebacbe56f0b09"
+      "bytes": 7300,
+      "sha256": "f64553ee61d32080aa4da02ee5722744c42cc8cd82ef85d97e8ad889d4a13ca7"
     },
     {
       "role": "markdown_conversion_module",
@@ -73,20 +79,20 @@
     {
       "role": "output_schemas_module",
       "path": "server/output-schemas.js",
-      "bytes": 48015,
-      "sha256": "92a0bfa8258dec7340d1f97a149fdb466fbb6a1f31e41d4c65c70ed704bb0624"
+      "bytes": 51704,
+      "sha256": "865e1d3e56f47f55bee663a150314e818ed71d24ce28636d2401896038001cac"
     },
     {
       "role": "package_json",
       "path": "package.json",
       "bytes": 2704,
-      "sha256": "06ab24dd0c74c3661402933fdf2cbfa3044bc9493ca12ca9df978691cfd2521f"
+      "sha256": "8abd7cf4e5a12b4ebc251a4ee924c4a017770fcd53b4bd047aa8ddcb6b223cfc"
     },
     {
       "role": "package_lock",
       "path": "package-lock.json",
       "bytes": 119051,
-      "sha256": "65973c1683615acd2ee5c061812a0e228aa347cc530f9121f67cac7b60442f20"
+      "sha256": "bf4f5392b56eac250b5342e6265cf94e3091876f8f5d601a5d4cd1554faa74a3"
     },
     {
       "role": "pdf_comparison_module",
@@ -113,7 +119,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "9fecf8717e52a98dff78c4b819cd60f36e25bd48d724d9089b1a6ddd48394ea9",
+  "validator_source_set_sha256": "a6f901e48ec1bc057e93ab3a409553efc6b751fd97a670f5a5c92b3994cea8c3",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",

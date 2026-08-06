@@ -27,7 +27,7 @@ template discovery is also unsupported and deterministically returns JSON-RPC
 
 ### Tools
 
-The runtime returns 41 uniquely named tools. Every tool has an object input
+The runtime returns 42 uniquely named tools. Every tool has an object input
 schema plus `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, and
 `openWorldHint` annotations. Annotations are user-interface hints, never an
 authorization boundary; path allowlists and signature-intent checks remain the
@@ -36,7 +36,7 @@ every tool in both runtime copies. The handler evidence and classification
 rules are recorded in
 [`TOOL_ANNOTATION_AUDIT_2026-07-21.md`](TOOL_ANNOTATION_AUDIT_2026-07-21.md).
 
-The source manifest lists all 41 tools. The packed MCPB manifest lists the 40
+The source manifest lists all 42 tools. The packed MCPB manifest lists the 41
 normal model-workflow tools and omits `read_pdf_bytes`, whose runtime metadata
 marks it `ui.visibility: ["app"]`. `tools_generated: true` explicitly tells MCPB
 hosts that runtime discovery includes an additional tool. That visibility hint
@@ -45,7 +45,7 @@ a generic MCP client can still discover and call `read_pdf_bytes`. It is not an
 authorization or confidentiality boundary. Filesystem allowlists and the tool's
 bounded reads remain the enforced controls.
 
-Thirty-seven tool handlers advertise strict `outputSchema` contracts and return
+Thirty-eight tool handlers advertise strict `outputSchema` contracts and return
 `structuredContent`. They also return a human-readable `content` text block so
 non-Apps and older clients remain usable. Successful structured output is
 validated before it leaves the server, with separate generic and tool-specific
@@ -60,6 +60,15 @@ decrypt the PDF, so an encrypted document can be identified before a password
 is available. Structured failures distinguish path denial, unavailable files,
 invalid PDF headers, oversized inputs, and retryable identity races.
 
+`inspect_pdf_accessibility` performs a local read-only structural review of an
+unencrypted PDF. It reports exactly eight shallow catalog-level signals, one
+source descriptor with SHA-256, and no output files. Each signal is observed,
+missing, or unavailable with bounded reason codes. Machine validation is fixed
+at `not_run`, human review is required, and PDF/UA, WCAG, certification, legal,
+and document-accessibility conclusions remain `not_established`. Encrypted
+inputs return a fixed abstention without findings. The tool does not run
+veraPDF or assess tag semantics or assistive-technology behavior.
+
 The trajectory harness preserves `tool-contracts.v1.json` and
 `tool-contracts.v2.json` for their frozen evidence. The v2 jobs remain bound to
 the reviewed v2 40-tool projection that introduced `get_pdf_identity`.
@@ -68,7 +77,7 @@ exact-output-identity preconditions. New evaluation suites must bind v3
 explicitly. The grader selects the allowlisted contract and trust registry
 declared by each suite, so historical evidence remains valid under its original
 stack and is not silently rescored. The six existing trajectory jobs do not
-constitute behavioral trajectory coverage of all 41 tools.
+constitute behavioral trajectory coverage of all 42 tools.
 `get_pdf_identity` is covered by its contract, handler, filesystem-race, and
 agent-workflow tests rather than by those six retained jobs.
 

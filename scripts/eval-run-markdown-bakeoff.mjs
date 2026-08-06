@@ -39,6 +39,15 @@ const REQUIRED_OPTIONS = [
   "--receipt-schema-sha256",
 ];
 
+export function validateMarkdownDiscovery(tools) {
+  if (!Array.isArray(tools)
+    || tools.length !== 42
+    || !tools.some(tool => tool.name === "convert_pdf_to_markdown")
+    || !tools.some(tool => tool.name === "inspect_pdf_accessibility")) {
+    throw new Error("Packed Markdown bakeoff discovery differs from the current 42-tool contract");
+  }
+}
+
 export function canonicalJson(value) {
   if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
   if (value && typeof value === "object") {
@@ -256,9 +265,7 @@ async function runOne({ extensionRoot, fixtureRoot, fixturePath, outputRoot, bin
     pid = transport.pid;
     if (!Number.isSafeInteger(pid) || pid < 1) throw new Error("Packed Markdown server PID is unavailable");
     const discovery = await client.listTools();
-    if (discovery.tools.length !== 41 || !discovery.tools.some(tool => tool.name === "convert_pdf_to_markdown")) {
-      throw new Error("Packed Markdown bakeoff discovery differs from the approved 41-tool contract");
-    }
+    validateMarkdownDiscovery(discovery.tools);
     const result = await client.callTool({
       name: "convert_pdf_to_markdown",
       arguments: {

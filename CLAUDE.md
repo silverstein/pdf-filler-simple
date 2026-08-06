@@ -118,16 +118,17 @@ qualification. Then perform manual host runs against `example-fw9.pdf`:
 19. **rotate_pdf_pages** - Rotate pages by 90, 180, or 270 degrees
 20. **reorder_pdf_pages** - Rearrange the pages of a PDF into a new order
 21. **get_pdf_info** - Get source-bound page geometry, bounded metadata, form widgets, and inert ordinary annotations with explicit coverage
-22. **compare_pdfs** - Compare two immutable PDFs across semantic, text, structure, form, annotation, metadata, and visual channels with source-bound evidence
-23. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
-24. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
-25. **fetch_pdf_from_url** - Download a PDF from a URL to the user's local machine (bypasses Claude's WebFetch sandbox)
-26. **create_signature** - Save a reusable typed or image signature
-27. **list_signatures** - List saved signatures
-28. **add_signature_field** - Draw a "Sign here" placeholder box (does NOT sign)
-29. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent; see Signature Architecture below)
-30. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
-31. **detect_signature_zones** - Locate signature, initials, printed-name, and date zones with coordinates. Use apply_signature for signatures and initials, and apply_text for names and dates.
+22. **inspect_pdf_accessibility** - Inspect exactly eight shallow catalog-level accessibility signals with source binding, bounded abstention, and required human review
+23. **compare_pdfs** - Compare two immutable PDFs across semantic, text, structure, form, annotation, metadata, and visual channels with source-bound evidence
+24. **apply_page_plan** - Reorder, rotate, and delete pages in one pass (saves as new file)
+25. **get_page_analysis** - Analyze pages for blank detection, orientation, text content, images
+26. **fetch_pdf_from_url** - Download a PDF from a URL to the user's local machine (bypasses Claude's WebFetch sandbox)
+27. **create_signature** - Save a reusable typed or image signature
+28. **list_signatures** - List saved signatures
+29. **add_signature_field** - Draw a "Sign here" placeholder box (does NOT sign)
+30. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent; see Signature Architecture below)
+31. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
+32. **detect_signature_zones** - Locate signature, initials, printed-name, and date zones with coordinates. Use apply_signature for signatures and initials, and apply_text for names and dates.
 
 ### Current Extraction Boundary
 
@@ -152,6 +153,12 @@ keeps page, metadata, form-widget, and ordinary-annotation coverage separate.
 Annotation URLs, destinations, and actions are never opened. Render results
 report the source identity, page geometry, coordinate spaces, renderer policy,
 PNG digest, and native raw-pixel digest availability.
+
+`inspect_pdf_accessibility` reads an unencrypted PDF without editing it and
+reports exactly eight shallow catalog-level signals as observed, missing, or
+unavailable. Machine validation remains `not_run`, human review is required,
+and PDF/UA, WCAG, certification, legal, and document-accessibility conclusions
+remain `not_established`.
 
 `render_pdf_region` uses top-left PDF.js viewport points after CropBox,
 rotation, and UserUnit. Do not pass MediaBox-relative signature-zone or signing

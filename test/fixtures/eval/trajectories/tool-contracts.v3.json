@@ -3,9 +3,9 @@
   "contract_id": "pdf-tools.trajectory.tool-contracts.v3",
   "runtime": {
     "name": "pdf-tools",
-    "version": "0.9.5"
+    "version": "0.9.6"
   },
-  "tools_sha256": "8a11b629b715ccdeb00c20f0b5ed86026ad5a047da51edea10c24ab55b1a1aa0",
+  "tools_sha256": "c5b752a58ccd18ef8872cb0fc42c5cd246280594e657be41ab072f25d3975d36",
   "tools": [
     {
       "name": "add_signature_field",
@@ -984,6 +984,23 @@
             "pdf_path": "/Users/alice/Documents/report.pdf"
           }
         ]
+      }
+    },
+    {
+      "name": "inspect_pdf_accessibility",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "maxLength": 32768,
+            "description": "Absolute path or ~/ path to the unencrypted local PDF file."
+          }
+        },
+        "required": [
+          "pdf_path"
+        ],
+        "additionalProperties": false
       }
     },
     {

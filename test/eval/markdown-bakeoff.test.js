@@ -11,6 +11,7 @@ import { prepareDoclingMacHandoffForTest } from "./extraction-docling-handoff.js
 import {
   canonicalJson,
   runMarkdownBakeoff,
+  validateMarkdownDiscovery,
   validateFixtureBindings,
   validateMarkdownResult,
 } from "../../scripts/eval-run-markdown-bakeoff.mjs";
@@ -49,11 +50,12 @@ async function handle(message) {
     return;
   }
   if (message.method === "tools/list") {
-    const tools = Array.from({ length: 39 }, (_, index) => ({
+    const tools = Array.from({ length: 40 }, (_, index) => ({
       name: "fixture_tool_" + String(index + 1).padStart(2, "0"),
       inputSchema: { type: "object" },
     }));
     tools.push({ name: "convert_pdf_to_markdown", inputSchema: { type: "object" } });
+    tools.push({ name: "inspect_pdf_accessibility", inputSchema: { type: "object" } });
     send(message.id, { tools });
     return;
   }
@@ -112,6 +114,25 @@ process.stdin.on("data", chunk => {
   }
 });
 `;
+
+describe("Markdown bakeoff discovery binding", () => {
+  const currentTools = [
+    ...Array.from({ length: 40 }, (_, index) => ({ name: `fixture_tool_${index}` })),
+    { name: "convert_pdf_to_markdown" },
+    { name: "inspect_pdf_accessibility" },
+  ];
+
+  it("accepts only the current 42-tool discovery", () => {
+    expect(() => validateMarkdownDiscovery(currentTools)).not.toThrow();
+    expect(() => validateMarkdownDiscovery(currentTools.slice(1))).toThrow(/42-tool contract/);
+  });
+
+  it("requires both current lane tools", () => {
+    expect(() => validateMarkdownDiscovery(
+      currentTools.map(tool => tool.name === "inspect_pdf_accessibility" ? { name: "stale_tool" } : tool),
+    )).toThrow(/42-tool contract/);
+  });
+});
 
 async function createFakeArtifact(root, label = "approved", mutateSource = false) {
   const staging = path.join(root, `packed-staging-${label}`);

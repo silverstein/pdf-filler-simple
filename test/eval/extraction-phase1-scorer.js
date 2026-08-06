@@ -31,6 +31,7 @@ const EXACT_POLICY_KEYS = ["allowed_gap_reasons", "expected_decision", "field_pa
 const EXACT_TRUTH_LEAF_KEYS = ["contract_path", "disposition", "fact_support", "field_path", "value"];
 const EXACT_FACT_SUPPORT_KEYS = ["fact_ids", "mode"];
 export const PHASE1_SCORER_LOCAL_SOURCE_PATHS = Object.freeze({
+  accessibility_inspection_module: "server/accessibility-inspection.js",
   artifact_config_schema: "test/fixtures/eval/extraction/phase1/artifact-config.schema.json",
   artifact_inventory_schema: "test/fixtures/eval/extraction/phase1/artifact-inventory.schema.json",
   artifact_module: "test/eval/extraction-phase1-artifacts.js",

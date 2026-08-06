@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { chmod, mkdtemp, rm } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
 
@@ -17,6 +17,7 @@ const DEFAULT_MAX_OLD_SPACE_MB = 384;
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_QUEUED_OPERATIONS = 8;
 const TERMINATION_GRACE_MS = 1000;
+const OPERATION_SHUTDOWN_TIMEOUT_MS = 15_000;
 const PDFJS_OPERATIONS = new Set([
   "analyze_pages",
   "detect_signature_zones",
@@ -35,11 +36,16 @@ const WORKER_ERROR = Symbol("pdfjs-worker-error");
 
 let activeOperationCount = 0;
 const queuedOperations = [];
+const activeOperations = new Set();
 const activeChildren = new Set();
 const activeThreadWorkers = new Set();
 const activeThreadSystemChildren = new Set();
 let inProcessWorkerModulePromise = null;
+let inProcessWorkerModule = null;
 let inProcessCanvasGuardInstalled = false;
+let shutdownInProgress = false;
+let shutdownTerminal = false;
+let gracefulShutdownPromise = null;
 
 export function selectPdfjsIsolationMode({
   electronVersion = process.versions.electron ?? null,
@@ -370,6 +376,7 @@ function removeQueuedOperation(waiter) {
 
 function releaseOperationSlot() {
   activeOperationCount = Math.max(0, activeOperationCount - 1);
+  if (shutdownInProgress) return;
   while (queuedOperations.length > 0 && activeOperationCount < 1) {
     const waiter = queuedOperations.shift();
     if (waiter.settled) continue;
@@ -383,6 +390,7 @@ function releaseOperationSlot() {
 
 async function acquireOperationSlot(deadlineAt, signal) {
   if (signal?.aborted) throw abortError();
+  if (shutdownInProgress) throw resourceLimitError("worker_shutdown_in_progress");
   if (activeOperationCount < 1) {
     activeOperationCount += 1;
     return releaseOperationSlot;
@@ -393,6 +401,7 @@ async function acquireOperationSlot(deadlineAt, signal) {
   return await new Promise((resolve, reject) => {
     const waiter = {
       onAbort: null,
+      reject: null,
       resolve,
       settled: false,
       signal,
@@ -406,6 +415,7 @@ async function acquireOperationSlot(deadlineAt, signal) {
       signal?.removeEventListener("abort", waiter.onAbort);
       reject(error);
     };
+    waiter.reject = rejectWaiter;
     waiter.onAbort = () => rejectWaiter(abortError());
     signal?.addEventListener("abort", waiter.onAbort, { once: true });
     waiter.timer = setTimeout(
@@ -612,7 +622,55 @@ async function runThreadWorker({
       }));
     };
 
-    const runSystemCommand = message => {
+    const validateQuickLookRequest = async args => {
+      try {
+        if (
+          args.length !== 6
+          || args[0] !== "-t"
+          || args[1] !== "-s"
+          || !/^\d{1,5}$/.test(args[2])
+          || Number(args[2]) < 1
+          || Number(args[2]) > 8192
+          || args[3] !== "-o"
+          || basename(args[4]) === args[4]
+          || basename(args[5]) !== "source.pdf"
+          || !basename(args[4]).startsWith("pdf-tools-system-render-")
+        ) {
+          throw new Error("invalid Quick Look request shape");
+        }
+        const [
+          canonicalOperationDirectory,
+          canonicalOutputDirectory,
+          canonicalSourcePath,
+          outputStats,
+          sourceStats,
+        ] = await Promise.all([
+          realpath(operationDirectory),
+          realpath(args[4]),
+          realpath(args[5]),
+          lstat(args[4]),
+          lstat(args[5]),
+        ]);
+        if (
+          outputStats.isSymbolicLink()
+          || !outputStats.isDirectory()
+          || sourceStats.isSymbolicLink()
+          || !sourceStats.isFile()
+          || sourceStats.size < 1
+          || sourceStats.size > 250 * 1024 * 1024
+          || dirname(canonicalOutputDirectory) !== canonicalOperationDirectory
+          || dirname(canonicalSourcePath) !== canonicalOutputDirectory
+        ) {
+          throw new Error("Quick Look paths leave the operation directory");
+        }
+      } catch {
+        throw subprocessFailure(
+          "The PDF.js worker requested an invalid Quick Look workspace.",
+        );
+      }
+    };
+
+    const runSystemCommand = async message => {
       exactKeys(
         message,
         ["args", "command", "id", "kind", "timeout_ms"],
@@ -629,11 +687,15 @@ async function runThreadWorker({
       }
       boundedInteger(message.id, "PDF.js system-command id", 1, 2 ** 31 - 1);
       boundedInteger(message.timeout_ms, "PDF.js system-command timeout", 100, 30_000);
-      if (terminationStarted) throw abortError();
+      if (shutdownInProgress || terminationStarted) throw abortError();
+      if (message.command === "/usr/bin/qlmanage") {
+        await validateQuickLookRequest(message.args);
+      }
+      if (shutdownInProgress || terminationStarted) throw abortError();
       if (systemChildren.size >= 1) {
         throw resourceLimitError("system_renderer_concurrency_limit");
       }
-      return new Promise((resolveCommand, rejectCommand) => {
+      return await new Promise((resolveCommand, rejectCommand) => {
         let child;
         let settled = false;
         let timedOut = false;
@@ -842,7 +904,11 @@ async function runThreadWorker({
 }
 
 async function loadInProcessWorkerModule() {
-  inProcessWorkerModulePromise ??= import("./pdfjs-worker.js");
+  inProcessWorkerModulePromise ??= import("./pdfjs-worker.js").then(worker => {
+    worker.bindPdfjsWorkerSystemRendererControllerProbe(() => shutdownInProgress);
+    inProcessWorkerModule = worker;
+    return worker;
+  });
   return await inProcessWorkerModulePromise;
 }
 
@@ -902,6 +968,7 @@ async function runInProcessWorker({
   if (signal?.aborted) throw abortError();
   installInProcessCanvasNativeGuard();
   const workerModule = await loadInProcessWorkerModule();
+  if (shutdownInProgress) throw resourceLimitError("worker_shutdown_in_progress");
   const operationResult = await workerModule.executePdfjsWorkerRequest(request);
   if (signal?.aborted) throw abortError();
   const encodedResult = Buffer.from(JSON.stringify(operationResult.result), "utf8");
@@ -941,6 +1008,8 @@ export async function runPdfjsSubprocess(request, {
   spawnProcess = spawn,
   isolationMode = DEFAULT_ISOLATION_MODE,
   workerClass = Worker,
+  beforeSpawn = null,
+  removeOperationDirectory = rm,
   signal = null,
 } = {}) {
   const requestBytes = validateRequest(request);
@@ -951,18 +1020,36 @@ export async function runPdfjsSubprocess(request, {
   boundedInteger(maxOldSpaceMb, "maxOldSpaceMb", 64, 4096);
   nonEmptyString(workerPath, "workerPath");
   nonEmptyString(executable, "executable");
+  if (beforeSpawn !== null && typeof beforeSpawn !== "function") {
+    throw new TypeError("beforeSpawn must be a function or null.");
+  }
+  if (typeof removeOperationDirectory !== "function") {
+    throw new TypeError("removeOperationDirectory must be a function.");
+  }
   if (!["in_process", "subprocess", "worker_thread"].includes(isolationMode)) {
     throw new TypeError("isolationMode must be in_process, subprocess, or worker_thread.");
   }
+  if (shutdownInProgress) throw resourceLimitError("worker_shutdown_in_progress");
 
   const deadlineAt = Date.now() + timeoutMs;
-  const releaseSlot = await acquireOperationSlot(deadlineAt, signal);
+  let settleOperation;
+  const operationSettlement = new Promise(resolve => {
+    settleOperation = resolve;
+  });
+  activeOperations.add(operationSettlement);
+  let releaseSlot = null;
   let operationDirectory = null;
   let operationError = null;
   let result;
   try {
+    releaseSlot = await acquireOperationSlot(deadlineAt, signal);
+    if (shutdownInProgress) throw resourceLimitError("worker_shutdown_in_progress");
     operationDirectory = await mkdtemp(join(tmpdir(), "pdf-tools-pdfjs-"));
     await chmod(operationDirectory, 0o700);
+    if (shutdownInProgress) throw resourceLimitError("worker_shutdown_in_progress");
+    if (signal?.aborted) throw abortError();
+    if (beforeSpawn !== null) await beforeSpawn();
+    if (shutdownInProgress) throw resourceLimitError("worker_shutdown_in_progress");
     if (signal?.aborted) throw abortError();
     const remainingMs = deadlineAt - Date.now();
     if (remainingMs < 100) throw resourceLimitError("worker_queue_timeout");
@@ -1011,15 +1098,18 @@ export async function runPdfjsSubprocess(request, {
   let cleanupError = null;
   if (operationDirectory !== null) {
     try {
-      await rm(operationDirectory, { force: true, recursive: true });
+      await removeOperationDirectory(operationDirectory, { force: true, recursive: true });
     } catch (error) {
       cleanupError = error;
     }
   }
-  releaseSlot();
-  if (cleanupError) {
-    throw resourceLimitError("operation_directory_cleanup_unproven", cleanupError);
-  }
+  if (releaseSlot !== null) releaseSlot();
+  const finalCleanupError = cleanupError
+    ? resourceLimitError("operation_directory_cleanup_unproven", cleanupError)
+    : null;
+  activeOperations.delete(operationSettlement);
+  settleOperation(finalCleanupError);
+  if (finalCleanupError) throw finalCleanupError;
   if (operationError) throw operationError;
   return result;
 }
@@ -1043,35 +1133,136 @@ export function createPdfjsSubprocessRequest({
   return request;
 }
 
-export async function terminateAllPdfjsSubprocesses() {
-  const inProcessWorker = inProcessWorkerModulePromise === null
-    ? null
-    : await inProcessWorkerModulePromise;
-  await Promise.all([
-    ...[...activeChildren].map(async ({ child }) => {
-      const closed = new Promise(resolve => child.once("close", resolve));
-      signalChild(child, "SIGTERM");
-      const escalation = setTimeout(
-        () => signalChild(child, "SIGKILL"),
-        TERMINATION_GRACE_MS,
-      );
-      escalation.unref();
-      await closed;
+function terminateTrackedChild(child) {
+  return new Promise(resolve => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
+    const escalation = setTimeout(
+      () => signalChild(child, "SIGKILL"),
+      TERMINATION_GRACE_MS,
+    );
+    escalation.unref();
+    child.once("close", () => {
       clearTimeout(escalation);
-    }),
-    ...[...activeThreadWorkers].map(worker => worker.terminate()),
-    inProcessWorker?.terminateAllPdfjsWorkerSystemChildren(),
-  ]);
-  await Promise.all(
-    [...activeThreadSystemChildren].map(async child => {
-      const closed = new Promise(resolve => child.once("close", resolve));
-      signalChild(child, "SIGKILL");
-      await closed;
-    }),
-  );
+      resolve();
+    });
+    signalChild(child, "SIGTERM");
+  });
+}
+
+export async function settleAllShutdownOperations(operations) {
+  if (
+    !Array.isArray(operations)
+    || operations.some(operation => operation === null || typeof operation?.then !== "function")
+  ) {
+    throw new TypeError("shutdown operations must be promises.");
+  }
+  const settled = await Promise.allSettled(operations);
+  const failure = settled.find(outcome => outcome.status === "rejected")?.reason ?? null;
+  if (failure !== null) throw failure;
+}
+
+function poisonPdfjsShutdown() {
+  shutdownTerminal = true;
+  shutdownInProgress = true;
+  if (inProcessWorkerModule !== null) {
+    inProcessWorkerModule.poisonPdfjsWorkerSystemRenderer();
+  } else if (inProcessWorkerModulePromise !== null) {
+    void inProcessWorkerModulePromise.then(
+      worker => worker.poisonPdfjsWorkerSystemRenderer(),
+      () => {},
+    );
+  }
+}
+
+export function terminateAllPdfjsSubprocesses({
+  reopenAfterSuccessfulDrain = false,
+  shutdownTimeoutMs = OPERATION_SHUTDOWN_TIMEOUT_MS,
+} = {}) {
+  if (typeof reopenAfterSuccessfulDrain !== "boolean") {
+    throw new TypeError("reopenAfterSuccessfulDrain must be a boolean.");
+  }
+  boundedInteger(shutdownTimeoutMs, "shutdownTimeoutMs", 1, 60_000);
+  if (!reopenAfterSuccessfulDrain) poisonPdfjsShutdown();
+  if (gracefulShutdownPromise !== null) return gracefulShutdownPromise;
+  if (shutdownTerminal && reopenAfterSuccessfulDrain) {
+    return Promise.reject(resourceLimitError("worker_shutdown_terminal"));
+  }
+  shutdownInProgress = true;
+  const shutdownError = resourceLimitError("worker_shutdown_in_progress");
+  for (const waiter of [...queuedOperations]) waiter.reject(shutdownError);
+  const operations = [...activeOperations];
+  const childTerminations = [...activeChildren]
+    .map(({ child }) => terminateTrackedChild(child));
+  const threadTerminations = [...activeThreadWorkers]
+    .map(worker => Promise.resolve().then(() => worker.terminate()));
+  const threadChildTerminations = [...activeThreadSystemChildren]
+    .map(child => terminateTrackedChild(child));
+  let inProcessWorkerAtShutdown = null;
+  let inProcessTermination = [];
+  if (inProcessWorkerModule !== null) {
+    inProcessWorkerAtShutdown = Promise.resolve(inProcessWorkerModule);
+    inProcessTermination = [inProcessWorkerModule.beginPdfjsWorkerSystemShutdown({
+      terminal: shutdownTerminal,
+    })];
+  } else if (inProcessWorkerModulePromise !== null) {
+    inProcessWorkerAtShutdown = inProcessWorkerModulePromise;
+    inProcessTermination = [inProcessWorkerModulePromise.then(
+      worker => worker.beginPdfjsWorkerSystemShutdown({ terminal: shutdownTerminal }),
+    )];
+  }
+  gracefulShutdownPromise = (async () => {
+    let timer;
+    try {
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(resourceLimitError("worker_shutdown_timeout")),
+          shutdownTimeoutMs,
+        );
+        timer.unref();
+      });
+      const settled = await Promise.race([
+        Promise.allSettled([
+          ...childTerminations,
+          ...threadTerminations,
+          ...threadChildTerminations,
+          ...inProcessTermination,
+          ...operations,
+        ]),
+        timeout,
+      ]);
+      const failure = settled.find(outcome => outcome.status === "rejected")?.reason
+        ?? settled.find(outcome => outcome.status === "fulfilled" && outcome.value instanceof Error)
+          ?.value
+        ?? null;
+      if (failure !== null) throw failure;
+      if (reopenAfterSuccessfulDrain && shutdownTerminal) {
+        throw resourceLimitError("worker_shutdown_terminal");
+      }
+      if (reopenAfterSuccessfulDrain) {
+        if (activeOperations.size !== 0 || queuedOperations.length !== 0) {
+          throw resourceLimitError("worker_shutdown_incomplete");
+        }
+        shutdownInProgress = false;
+        if (inProcessWorkerAtShutdown !== null) {
+          inProcessWorkerModule.reopenPdfjsWorkerSystemRenderer();
+        }
+      }
+    } catch (error) {
+      poisonPdfjsShutdown();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      gracefulShutdownPromise = null;
+    }
+  })();
+  return gracefulShutdownPromise;
 }
 
 export function forceTerminateAllPdfjsSubprocesses() {
+  poisonPdfjsShutdown();
   for (const { child } of activeChildren) {
     signalChild(child, "SIGKILL");
   }

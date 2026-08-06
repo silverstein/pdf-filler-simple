@@ -35,6 +35,11 @@ import {
   stampTextOnPage,
 } from "./helpers.js";
 import {
+  AccessibilityInspectionError,
+  inspectPdfAccessibilityBytes,
+  validateAccessibilityInspectionResult,
+} from "./accessibility-inspection.js";
+import {
   PDF_MERGE_MAX_TOTAL_BYTES,
   PDF_MUTATION_MAX_FILE_BYTES,
   pdfMutationFileLimitError,
@@ -99,6 +104,7 @@ const OPERATIONS = new Set([
   "bulk_fill_from_csv",
   "fill_pdf",
   "fill_with_profile",
+  "inspect_pdf_accessibility",
   "merge_pdfs",
   "prepare_signing_packet",
   "reorder_pdf_pages",
@@ -108,6 +114,7 @@ const OPERATIONS = new Set([
 const OPTION_KEYS = new Map([
   ["fill_pdf", ["field_data"]],
   ["fill_with_profile", ["field_data"]],
+  ["inspect_pdf_accessibility", []],
   ["bulk_fill_from_csv", ["records"]],
   ["merge_pdfs", []],
   ["split_pdf", ["page_ranges"]],
@@ -188,6 +195,9 @@ function validateRequest(request) {
   if (request.password !== null
       && (typeof request.password !== "string" || request.password.length < 1 || request.password.length > 4096)) {
     throw new TypeError("password is invalid.");
+  }
+  if (request.operation === "inspect_pdf_accessibility" && request.password !== null) {
+    throw new TypeError("inspect_pdf_accessibility does not accept a password.");
   }
   if (!request.options || typeof request.options !== "object" || Array.isArray(request.options)) {
     throw new TypeError("options must be an object.");
@@ -1504,6 +1514,34 @@ async function reopenSource(binding) {
   );
 }
 
+async function inspectAccessibilitySource(bytes, binding) {
+  let document;
+  try {
+    document = await PDFDocument.load(bytes, { updateMetadata: false });
+  } catch {
+    // The pure primitive owns fixed encrypted abstention and malformed-result
+    // classification. It never includes a parser diagnostic in either path.
+    return inspectPdfAccessibilityBytes(bytes, {
+      source_file_name: path.basename(binding.canonical_path),
+    });
+  }
+  assertBoundedPdfStructure(bytes);
+  assertSafeParsedPdfDecodeChains(document);
+  assertSafeParsedPdfComplexity(document);
+  enforceSafeParsedPdfGraph(document);
+  try {
+    validatePageTree(document);
+  } catch (error) {
+    throw new AccessibilityInspectionError(
+      "PDF_ACCESSIBILITY_INSPECTION_UNAVAILABLE",
+      "PDF accessibility signal inspection is unavailable for this malformed document.",
+    );
+  }
+  return validateAccessibilityInspectionResult(await inspectPdfAccessibilityBytes(bytes, {
+    source_file_name: path.basename(binding.canonical_path),
+  }));
+}
+
 function formInfo(document) {
   try {
     const fields = document.getForm().getFields().map(field => {
@@ -1570,7 +1608,9 @@ async function execute(request) {
   const options = request.options;
   let outputs = [];
   let result = {};
-  if (["fill_pdf", "fill_with_profile"].includes(request.operation)) {
+  if (request.operation === "inspect_pdf_accessibility") {
+    result = await inspectAccessibilitySource(sourceBytes[0], request.sources[0]);
+  } else if (["fill_pdf", "fill_with_profile"].includes(request.operation)) {
     const document = await loadPdf(sourceBytes[0], request.password);
     const expectedPageCount = document.getPageCount();
     const expectedPageRotations = normalizedPageRotations(document);
@@ -1753,6 +1793,12 @@ async function execute(request) {
     })];
   }
   if (outputs.length > MAX_OUTPUTS) throw resourceError("too_many_outputs", "Mutation produced too many outputs.");
+  if (request.operation === "inspect_pdf_accessibility" && outputs.length !== 0) {
+    throw new TypeError("Read-only inspection cannot stage output.");
+  }
+  if (request.operation !== "inspect_pdf_accessibility" && outputs.length < 1) {
+    throw new TypeError("Mutation operations must stage at least one output.");
+  }
   return { outputs, result };
 }
 
@@ -1798,7 +1844,7 @@ async function stageOutputs(stageDirectory, outputBytes) {
   return manifest;
 }
 
-export async function executePdfLibMutationRequest(request) {
+export async function executePdfLibOperationRequest(request) {
   validateRequest(request);
   const { outputs, result } = await execute(request);
   const manifest = await stageOutputs(request.stage_directory, outputs);
@@ -1809,6 +1855,13 @@ export async function executePdfLibMutationRequest(request) {
     manifest,
     result,
   };
+}
+
+export async function executePdfLibMutationRequest(request) {
+  if (request?.operation === "inspect_pdf_accessibility") {
+    throw new TypeError("Read-only inspection is not a mutation request.");
+  }
+  return executePdfLibOperationRequest(request);
 }
 
 function errorResponse(error, request) {
@@ -1840,7 +1893,7 @@ async function threadMain() {
   const request = threadWorkerData?.request ?? null;
   let response;
   try {
-    response = await executePdfLibMutationRequest(request);
+    response = await executePdfLibOperationRequest(request);
     boundedControlBytes(response);
   } catch (error) {
     response = errorResponse(error, request);
@@ -1865,7 +1918,7 @@ async function main() {
       chunks.push(Buffer.from(chunk));
     }
     request = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    const response = await executePdfLibMutationRequest(request);
+    const response = await executePdfLibOperationRequest(request);
     writeSync(1, boundedControlBytes(response));
   } catch (error) {
     writeSync(1, boundedControlBytes(errorResponse(error, request)));

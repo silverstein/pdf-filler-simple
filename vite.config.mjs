@@ -4,7 +4,11 @@ import { defineConfig } from "vite";
 import { viteSingleFile } from "vite-plugin-singlefile";
 import { configDefaults } from "vitest/config";
 import { NODE_TEST_FILES } from "./scripts/node-test-files.mjs";
-import { SERIAL_NATIVE_TEST_FILES, SOURCE_IDENTITY_TEST_FILES } from "./scripts/test-suite-classification.mjs";
+import {
+  SERIAL_NATIVE_TEST_FILES,
+  SERIAL_RESOURCE_TEST_FILES,
+  SOURCE_IDENTITY_TEST_FILES,
+} from "./scripts/test-suite-classification.mjs";
 import { createMcpBridgePlugin } from "./ui/dev/bridge-plugin.mjs";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -38,11 +42,49 @@ export default defineConfig(({ command, mode }) => ({
             ...configDefaults.exclude,
             ...NODE_TEST_FILES,
             ...SOURCE_IDENTITY_TEST_FILES,
+            ...SERIAL_RESOURCE_TEST_FILES,
             ...SERIAL_NATIVE_TEST_FILES,
           ],
           pool: "forks",
           isolate: true,
           sequence: { groupOrder: 0 },
+        },
+      },
+      {
+        extends: true,
+        test: {
+          // Proven resource-heavy suites run unchanged with an exclusive
+          // worker. This preserves their existing budgets and assertions while
+          // removing sibling-suite contention and its cleanup-race cascades.
+          name: "serial-resource",
+          root: ".",
+          include: SERIAL_RESOURCE_TEST_FILES,
+          exclude: [
+            ...configDefaults.exclude,
+            ...NODE_TEST_FILES,
+          ],
+          pool: "forks",
+          isolate: true,
+          fileParallelism: false,
+          maxWorkers: 1,
+          sequence: { groupOrder: 1 },
+        },
+      },
+      {
+        extends: true,
+        test: {
+          name: "source-identity",
+          root: ".",
+          include: SOURCE_IDENTITY_TEST_FILES,
+          exclude: [
+            ...configDefaults.exclude,
+            ...NODE_TEST_FILES,
+          ],
+          pool: "forks",
+          isolate: true,
+          fileParallelism: false,
+          maxWorkers: 1,
+          sequence: { groupOrder: 2 },
         },
       },
       {
@@ -63,24 +105,7 @@ export default defineConfig(({ command, mode }) => ({
           isolate: true,
           fileParallelism: false,
           maxWorkers: 1,
-          sequence: { groupOrder: 2 },
-        },
-      },
-      {
-        extends: true,
-        test: {
-          name: "source-identity",
-          root: ".",
-          include: SOURCE_IDENTITY_TEST_FILES,
-          exclude: [
-            ...configDefaults.exclude,
-            ...NODE_TEST_FILES,
-          ],
-          pool: "forks",
-          isolate: true,
-          fileParallelism: false,
-          maxWorkers: 1,
-          sequence: { groupOrder: 1 },
+          sequence: { groupOrder: 3 },
         },
       },
     ],
