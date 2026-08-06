@@ -435,7 +435,7 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     family: "computer-modern-math-symbol",
     original_char_code: 1,
     source_unicode: "\u0001",
-    target_unicode: "·",
+    target_unicode: "⋅",
     charproc_sha256: "33077f6f9b7f5c5631bd3cb7bbfc79b4da1fbd929b23f6e08e55c90566608c7a",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 0, charproc_sha256: "fb1f6bf10138511bcefade47467b3e2f9ae691ab3dab097914be1f0f66305470" }),
@@ -689,8 +689,6 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
       Object.freeze({ original_char_code: 3, charproc_sha256: "2810f1eec224c30a86c790b2b990953f0b54f28f9a32a035649784962b075cb5" }),
     ]),
   }),
-  // ABSTAIN 0x52 n=2 e5fa9eb0: only 1 official witness(es) in its font
-  // ABSTAIN 0x5a n=92 4a183fac: only 1 official witness(es) in its font
   Object.freeze({
     id: "cmmi-pk-raster-Delta-762215-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
@@ -756,7 +754,6 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
       Object.freeze({ original_char_code: 14, charproc_sha256: "b41124da800ba2c4ed342b553c9433dc8b0eaf4e6228dab9901d6f9cd4e4449d" }),
     ]),
   }),
-  // ABSTAIN 0x11 n=13 2fd7e5e9: raster not visually reviewed
   Object.freeze({
     id: "cmmi-pk-raster-eta-a19a51-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
@@ -770,7 +767,6 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
       Object.freeze({ original_char_code: 14, charproc_sha256: "b41124da800ba2c4ed342b553c9433dc8b0eaf4e6228dab9901d6f9cd4e4449d" }),
     ]),
   }),
-  // ABSTAIN 0x12 n=16 194bccf1: raster not visually reviewed
   Object.freeze({
     id: "cmmi-pk-raster-theta-700332-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
@@ -836,7 +832,6 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
       Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
     ]),
   }),
-  // ABSTAIN 0x1b n=15 dae3aa06: raster not visually reviewed
   Object.freeze({
     id: "cmmi-pk-raster-sigma-94bd43-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
@@ -877,32 +872,6 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     ]),
   }),
   Object.freeze({
-    id: "cmmi-pk-raster-less-cdaa6f-v1",
-    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
-    family: "computer-modern-math-italic",
-    original_char_code: 60,
-    source_unicode: "<",
-    target_unicode: "<",
-    charproc_sha256: "cdaa6fb50b7e6fe4c5a6944e2692a531bed491498e37902c410a2f42111aef60",
-    witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 1, charproc_sha256: "762215421d47ca10bd29483ca69c105402ef88b6c80b7c4b1072e10a81fc14cc" }),
-      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
-    ]),
-  }),
-  Object.freeze({
-    id: "cmmi-pk-raster-greater-e628e6-v1",
-    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
-    family: "computer-modern-math-italic",
-    original_char_code: 62,
-    source_unicode: ">",
-    target_unicode: ">",
-    charproc_sha256: "e628e6dd6668c7ef2d888c06ed2479206a26a30f33217f98102affc1ffac053e",
-    witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 1, charproc_sha256: "762215421d47ca10bd29483ca69c105402ef88b6c80b7c4b1072e10a81fc14cc" }),
-      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
-    ]),
-  }),
-  Object.freeze({
     id: "cmex-pk-raster-textstyle-integral-e5fa9e-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
     family: "computer-modern-math-extension",
@@ -928,10 +897,6 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
       Object.freeze({ original_char_code: 82, charproc_sha256: "e5fa9eb07a6e6807fb2ef29b805950074c1095fec2dbdc857ba9f46e4fbaaf77" }),
     ]),
   }),
-  // ABSTAIN 0x11 n=13 2fd7e5e9: raster not visually reviewed
-  // ABSTAIN 0x12 n=16 194bccf1: raster not visually reviewed
-  // ABSTAIN 0x1b n=15 dae3aa06: raster not visually reviewed
-  // ABSTAIN 0x6 n=4 4dedb554: raster not visually reviewed
   Object.freeze({
     id: "cmsy-pk-raster-plus-or-minus-b68b24-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
@@ -990,7 +955,16 @@ for (const entry of TYPE3_RECOVERY_REGISTRY) {
   // enrolled outside it. That is strictly more of the font's evidence than the
   // two-witness rule asks for, not less.
   const footprint = entry.complete_font_enrollment ?? null;
-  if (entry.witnesses.length >= 2) continue;
+  if (footprint && [...new Set(footprint)].some(code => CM_CODEPOINTS[entry.family]?.[code] === undefined)) {
+    throw new Error(`Type-3 registry ${entry.id} declares an unenrolled code in its font footprint`);
+  }
+  if (entry.witnesses.length >= 2) {
+    // A footprint is only meaningful as the single-witness escape hatch. Left on
+    // a two-witness entry it would silently contradict the matcher and make the
+    // entry permanently unreachable, so reject it here instead.
+    if (footprint) throw new Error(`Type-3 registry ${entry.id} declares a font footprint it does not need`);
+    continue;
+  }
   const declared = new Set(footprint ?? []);
   const expected = new Set([entry.original_char_code, ...entry.witnesses.map(witness => witness.original_char_code)]);
   if (entry.witnesses.length !== 1

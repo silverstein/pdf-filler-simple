@@ -117,8 +117,6 @@ function requireSourceDefinitions(mfRoot) {
     ["greekl.mf", /cmchar "Lowercase Greek sigma";\s*beginchar\(oct"033"/u],
     ["greekl.mf", /cmchar "Lowercase Greek tau";\s*beginchar\(oct"034"/u],
     ["greekl.mf", /cmchar "Variant lowercase Greek phi";\s*beginchar\(oct"047"/u],
-    ["romms.mf", /cmchar "Less than sign";[\s\S]*?beginchar\("<"/u],
-    ["romms.mf", /cmchar "Greater than sign";[\s\S]*?beginchar\(">"/u],
   ];
   const sources = new Map();
   for (const [filename, pattern] of checks) {
@@ -148,10 +146,10 @@ function generateMetricModule(tfmRoot, archiveSha256) {
     + `  "computer-modern-math-italic": Object.freeze({\n`
     + `    1: "Δ", 11: "α", 14: "δ", 15: "ϵ", 17: "η", 18: "θ", 21: "λ", 22: "μ", 23: "ν",\n`
     + `    25: "π", 26: "ρ", 27: "σ", 28: "τ", 33: "ω", 39: "φ",\n`
-    + `    58: ".", 59: ",", 60: "<", 61: "/", 62: ">",\n`
+    + `    58: ".", 59: ",", 61: "/",\n`
     + `  }),\n`
     + `  "computer-modern-math-symbol": Object.freeze({\n`
-    + `    0: "−", 1: "·", 6: "±", 20: "≤", 21: "≥", 33: "→", 48: "′", 106: "|", 112: "√",\n`
+    + `    0: "−", 1: "⋅", 6: "±", 20: "≤", 21: "≥", 33: "→", 48: "′", 106: "|", 112: "√",\n`
     + `  }),\n`
     + `  "computer-modern-math-extension": Object.freeze({\n`
     + `    0: "(", 1: ")", 2: "[", 3: "]",\n`
@@ -238,7 +236,7 @@ try {
       "computer-modern-math-italic": {
         1: "Delta", 11: "alpha", 14: "delta", 15: "epsilon", 17: "eta", 18: "theta",
         21: "lambda", 22: "mu", 23: "nu", 25: "pi", 26: "rho", 27: "sigma", 28: "tau",
-        33: "omega", 39: "variant-phi", 58: "period", 59: "comma", 60: "less", 61: "slash", 62: "greater",
+        33: "omega", 39: "variant-phi", 58: "period", 59: "comma", 61: "slash",
       },
       "computer-modern-math-symbol": {
         0: "minus", 1: "centered-dot", 6: "plus-or-minus", 20: "less-or-equal",

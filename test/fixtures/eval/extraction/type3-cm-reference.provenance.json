@@ -20,8 +20,8 @@
     "qpdf": "qpdf version 12.3.2\nRun qpdf --copyright to see copyright and license information."
   },
   "outputs": {
-    "server/type3-cm-reference.js": "563630093fc0fc567fe5b2e5bf1f353a30c077a961b1bb53daa727751688010a",
-    "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "563630093fc0fc567fe5b2e5bf1f353a30c077a961b1bb53daa727751688010a",
+    "server/type3-cm-reference.js": "bdbea1a2e27ca41e5962968942d5b6cecc13a3f144859687656b4c13602eaeb4",
+    "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "bdbea1a2e27ca41e5962968942d5b6cecc13a3f144859687656b4c13602eaeb4",
     "test/fixtures/eval/extraction/type3-cm-reference.pdf": "7533d527ec58afb4c10cdac24ca42853085eeaf9d371c344e015c0fd74f377eb"
   },
   "visual_labels": {
@@ -43,9 +43,7 @@
       "39": "variant-phi",
       "58": "period",
       "59": "comma",
-      "60": "less",
-      "61": "slash",
-      "62": "greater"
+      "61": "slash"
     },
     "computer-modern-math-symbol": {
       "0": "minus",
