@@ -232,13 +232,20 @@ try {
       "pdf-toolkit-mcp-share/server/type3-cm-reference.js": sha256(fs.readFileSync(OUTPUT_SHARE_MODULE)),
       "test/fixtures/eval/extraction/type3-cm-reference.pdf": sha256(fs.readFileSync(OUTPUT_FIXTURE)),
     },
-    // The fixture draws only the slots listed in fixture_demonstrated_slots.
-    // reviewed_slot_labels covers every enrolled slot, each confirmed against
-    // its rendered source raster rather than against this fixture, so the two
-    // are recorded separately instead of one field implying the other.
-    fixture_demonstrated_slots: {
+    // What the fixture draws is not what it proves. CTAN ps-type3 fonts carry
+    // /Widths pre-rounded to integer 1/1000 em, lossy by up to three units,
+    // while metricScaleInterval requires one scale to fit every observed code
+    // within half a unit. The cmmi10 glyphs below are drawn but do not resolve
+    // to a family at all, and the cmsy10 set resolves only because five codes
+    // happen to admit a common scale. Real dvips documents round once from the
+    // TFM at one raster resolution and are unaffected. Record both facts rather
+    // than letting the drawn set imply a demonstrated capability.
+    fixture_drawn_slots: {
       "computer-modern-math-italic": [11, 25, 26, 33, 58, 59, 61],
-      "computer-modern-math-symbol": [0, 6, 20, 21, 112],
+      "computer-modern-math-symbol": [0, 6, 21, 33, 112],
+    },
+    fixture_family_resolving_slots: {
+      "computer-modern-math-symbol": [0, 6, 21, 33, 112],
     },
     reviewed_slot_labels: {
       "computer-modern-math-italic": {

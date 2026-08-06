@@ -24,7 +24,7 @@
     "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "bdbea1a2e27ca41e5962968942d5b6cecc13a3f144859687656b4c13602eaeb4",
     "test/fixtures/eval/extraction/type3-cm-reference.pdf": "48cdf824d560387daf6c6a9ed81caa1d393134fbc49b5c87d79d6e2653ff68f5"
   },
-  "fixture_demonstrated_slots": {
+  "fixture_drawn_slots": {
     "computer-modern-math-italic": [
       11,
       25,
@@ -37,8 +37,17 @@
     "computer-modern-math-symbol": [
       0,
       6,
-      20,
       21,
+      33,
+      112
+    ]
+  },
+  "fixture_family_resolving_slots": {
+    "computer-modern-math-symbol": [
+      0,
+      6,
+      21,
+      33,
       112
     ]
   },

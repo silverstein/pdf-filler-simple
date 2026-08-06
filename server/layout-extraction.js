@@ -944,16 +944,26 @@ for (const entry of TYPE3_RECOVERY_REGISTRY) {
     throw new Error(`Type-3 registry ${entry.id} disagrees with the official Computer Modern encoding`);
   }
   const officialWitnesses = { ...CM_CODEPOINTS[entry.family], ...CM_WITNESS_CODEPOINTS[entry.family] };
-  if (entry.witnesses.some(witness => !officialWitnesses[witness.original_char_code])) {
+  if (entry.witnesses.some(witness => officialWitnesses[witness.original_char_code] === undefined)) {
     throw new Error(`Type-3 registry ${entry.id} lacks official Computer Modern witnesses`);
+  }
+  // Corroboration only means anything if it comes from a different glyph. A
+  // witness that repeats the entry's own code makes the witness digest check
+  // the same comparison as the target digest check, and it collapses the
+  // footprint set below so a single-witness entry could pass on no independent
+  // evidence at all.
+  const witnessCodes = entry.witnesses.map(witness => witness.original_char_code);
+  if (new Set([entry.original_char_code, ...witnessCodes]).size !== witnessCodes.length + 1) {
+    throw new Error(`Type-3 registry ${entry.id} reuses its own or a repeated witness code`);
   }
   // Two independent witnesses are the default corroboration. A dvips subset can
   // legitimately hold fewer official glyphs than that: an integrals-only cmex
   // font carries exactly two. Such an entry may name a single witness only by
   // declaring its font's complete official footprint, which the matcher then
   // requires to be present and matching in full and to have nothing else
-  // enrolled outside it. That is strictly more of the font's evidence than the
-  // two-witness rule asks for, not less.
+  // enrolled outside it. That is not uniformly stronger than two witnesses: a
+  // font holding more enrolled glyphs fails the footprint test and recovers
+  // nothing, so the exception is narrow and tied to one subsetting shape.
   const footprint = entry.complete_font_enrollment ?? null;
   if (footprint && [...new Set(footprint)].some(code => CM_CODEPOINTS[entry.family]?.[code] === undefined)) {
     throw new Error(`Type-3 registry ${entry.id} declares an unenrolled code in its font footprint`);

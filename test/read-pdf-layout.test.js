@@ -108,11 +108,21 @@ describe("qualified legacy Type-3 glyph evidence", () => {
     // The fixture is the labeled artifact, so what it actually draws is pinned
     // separately from what has been reviewed. Enrolling a slot must not quietly
     // imply this PDF demonstrates it.
-    expect(provenance.fixture_demonstrated_slots).toEqual({
+    expect(provenance.fixture_drawn_slots).toEqual({
       "computer-modern-math-italic": [11, 25, 26, 33, 58, 59, 61],
-      "computer-modern-math-symbol": [0, 6, 20, 21, 112],
+      "computer-modern-math-symbol": [0, 6, 21, 33, 112],
     });
-    expect(Object.values(provenance.fixture_demonstrated_slots).flat()).toHaveLength(12);
+    // Drawn is not resolved. The cmmi10 half of this fixture does not classify,
+    // so the resolving set must stay a strict subset and must never be assumed
+    // equal to the drawn set.
+    expect(provenance.fixture_family_resolving_slots).toEqual({
+      "computer-modern-math-symbol": [0, 6, 21, 33, 112],
+    });
+    const drawn = Object.values(provenance.fixture_drawn_slots).flat();
+    const resolving = Object.values(provenance.fixture_family_resolving_slots).flat();
+    expect(drawn).toHaveLength(12);
+    expect(resolving.length).toBeLessThan(drawn.length);
+    expect(resolving.every(code => drawn.includes(code))).toBe(true);
     // Both were corroboration-only until a reviewed raster backed them. They are
     // enrolled now, and an enrolled codepoint is still usable as a witness, so
     // no slot is witness-only.

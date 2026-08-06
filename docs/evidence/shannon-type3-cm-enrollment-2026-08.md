@@ -56,7 +56,8 @@ evidence. It is now rebound and was run against the real document.
 | Registry entries | 28 | 67 |
 | Enrolled Computer Modern families | 2 | 3 |
 | Reviewed enrolled slots | 10 | 39 |
-| Slots the labeled fixture demonstrates | 12 | 12 |
+| Slots the labeled fixture draws | 12 | 12 |
+| Of those, slots that resolve to a family | 5 | 5 |
 | Replacement characters in Table I | 8 | 0 |
 | Integral signs rendered as `Z` | 92 | 0 |
 | `H0` occurrences that should read `H′` | 11 | 0 |
@@ -88,9 +89,10 @@ matching, which is how the batch caught that `cmex` `oct"024"` is
 `\bigg left bracket` rather than `\Big left bracket`.
 
 Every enrolled raster was additionally rendered out of the source document and
-inspected before enrollment, and the provenance record separates the two kinds
-of evidence: `fixture_demonstrated_slots` lists only what the labeled fixture
-PDF actually draws, and `reviewed_slot_labels` lists every enrolled slot.
+inspected before enrollment, and the provenance record separates the kinds
+of evidence: `fixture_drawn_slots` lists what the labeled fixture PDF draws,
+`fixture_family_resolving_slots` the strict subset of those that actually
+classify, and `reviewed_slot_labels` every enrolled slot.
 
 ## The single-witness exception
 
@@ -123,12 +125,27 @@ its own two-witness entry.
 
 ## Known gaps
 
-- The labeled fixture still demonstrates only the original twelve slots.
-  Adding `cmex10` to its Ghostscript program made every glyph in the generated
-  PDF fall back to an ambiguous family, including slots that resolved before.
-  The fixture is left reproducing its committed digest and the cause is under
-  investigation; it is not known whether it also affects ordinary multi-font
-  TeX documents.
+- The labeled fixture is a weaker artifact than its name suggests, and the
+  cause is now known. CTAN `ps-type3` fonts carry `/Widths` pre-rounded to
+  integer 1/1000 em, lossy by up to three units, while `metricScaleInterval`
+  requires a single scale factor to fit every observed code within half a unit.
+  Because that constraint is a conjunction, adding drawn codes shrinks the
+  feasible interval monotonically. The committed fixture's five cmsy10 codes
+  survive it; its seven cmmi10 codes do not and have never resolved to a family
+  at all. Adding `cmex10` did not break anything specific to `cmex` — expanding
+  the cmsy10 code list alone reproduces the failure with `cmex10` never loaded,
+  and loading three Type-3 fonts while drawing the original two works fine, so
+  font count and resource-dictionary ambiguity are not involved.
+
+  Real documents are unaffected: dvips rounds once from the TFM at one raster
+  resolution, so Shannon's `/T23` fits twenty-three codes into a nonempty
+  interval and resolves uniquely. The `±0.5` tolerance is load-bearing evidence
+  for that real case and should not be loosened to accommodate a metric source
+  the toolkit does not otherwise consume. The fix is to generate the labeled
+  reference from dvips PK-derived Type-3 fonts rather than `ps-type3`, which
+  would let it demonstrate cmmi10, cmsy10, and cmex10 slots — something the
+  current fixture cannot do even for cmmi10. Until then the provenance records
+  `fixture_drawn_slots` and `fixture_family_resolving_slots` separately.
 - `render_pdf_page` and `render_pdf_region` still perform no recognition, and
   no OCR engine is bundled. Mini-graphs inside Table I remain stroked vector
   content reported as a coverage gap.
