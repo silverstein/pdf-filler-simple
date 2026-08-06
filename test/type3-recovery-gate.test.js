@@ -1,5 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
+import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { uniqueComputerModernFamily } from "../server/layout-extraction.js";
@@ -94,13 +95,14 @@ function mutateEntry(source, id, mutateEntrySource) {
 beforeAll(async () => {
   layoutSource = await fs.readFile(LAYOUT_MODULE, "utf8");
   registryEntries = parseRegistryEntries(layoutSource);
-  // Keep the copies inside test/ so Node resolves node_modules from the repo
-  // root; a dot-prefixed directory stays out of vitest's test glob.
-  scratchDirectory = await fs.mkdtemp(path.join(REPO_ROOT, "test", ".type3-gate-"));
+  // Use the repo's central allocator rather than a private mkdtemp, so this
+  // suite stays out of the reviewed scratch-allocator inventory. The copies
+  // must live inside the checkout for Node to resolve node_modules.
+  scratchDirectory = await createTestTempDirectory(REPO_ROOT, "type3-gate");
 });
 
 afterAll(async () => {
-  if (scratchDirectory) await fs.rm(scratchDirectory, { recursive: true, force: true });
+  if (scratchDirectory) await removeTestTempDirectory(scratchDirectory);
 });
 
 describe("Computer Modern math-extension enrollment", () => {
