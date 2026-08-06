@@ -20,19 +20,32 @@
     "qpdf": "qpdf version 12.3.2\nRun qpdf --copyright to see copyright and license information."
   },
   "outputs": {
-    "server/type3-cm-reference.js": "db082fe9c245fb5950456e7b4b3045438824342f5c8a040cb8733cbf35aa2ea6",
-    "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "db082fe9c245fb5950456e7b4b3045438824342f5c8a040cb8733cbf35aa2ea6",
+    "server/type3-cm-reference.js": "5e290f142a82a369f652eb85a330d1d2ef4d680b3eea5d2d16d9a3cfe28facec",
+    "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "5e290f142a82a369f652eb85a330d1d2ef4d680b3eea5d2d16d9a3cfe28facec",
     "test/fixtures/eval/extraction/type3-cm-reference.pdf": "7533d527ec58afb4c10cdac24ca42853085eeaf9d371c344e015c0fd74f377eb"
   },
   "visual_labels": {
     "computer-modern-math-italic": {
+      "1": "Delta",
       "11": "alpha",
+      "14": "delta",
+      "15": "epsilon",
+      "17": "eta",
+      "18": "theta",
+      "21": "lambda",
+      "22": "mu",
+      "23": "nu",
       "25": "pi",
       "26": "rho",
+      "27": "sigma",
+      "28": "tau",
       "33": "omega",
+      "39": "variant-phi",
       "58": "period",
       "59": "comma",
-      "61": "slash"
+      "60": "less",
+      "61": "slash",
+      "62": "greater"
     },
     "computer-modern-math-symbol": {
       "0": "minus",

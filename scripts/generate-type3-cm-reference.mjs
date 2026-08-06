@@ -105,6 +105,20 @@ function requireSourceDefinitions(mfRoot) {
     ["bigdel.mf", /cmchar "\\bigg right bracket";\s*beginchar\(oct"025"/u],
     ["bigop.mf", /cmchar "\\textstyle integral sign";\s*beginchar\(oct"122"/u],
     ["bigop.mf", /cmchar "\\displaystyle integral sign";\s*beginchar\(oct"132"/u],
+    // Computer Modern math italic letters and relations beyond the first batch.
+    ["greeku.mf", /cmchar "Uppercase Greek Delta";\s*beginchar\(oct"001"/u],
+    ["greekl.mf", /cmchar "Lowercase Greek delta";\s*beginchar\(oct"016"/u],
+    ["greekl.mf", /cmchar "Lowercase Greek epsilon";\s*beginchar\(oct"017"/u],
+    ["greekl.mf", /cmchar "Lowercase Greek eta";\s*beginchar\(oct"021"/u],
+    ["greekl.mf", /cmchar "Lowercase Greek theta";\s*beginchar\(oct"022"/u],
+    ["greekl.mf", /cmchar "Lowercase Greek lambda";\s*beginchar\(oct"025"/u],
+    ["greekl.mf", /cmchar "Lowercase Greek mu";\s*beginchar\(oct"026"/u],
+    ["greekl.mf", /cmchar "Lowercase Greek nu";\s*beginchar\(oct"027"/u],
+    ["greekl.mf", /cmchar "Lowercase Greek sigma";\s*beginchar\(oct"033"/u],
+    ["greekl.mf", /cmchar "Lowercase Greek tau";\s*beginchar\(oct"034"/u],
+    ["greekl.mf", /cmchar "Variant lowercase Greek phi";\s*beginchar\(oct"047"/u],
+    ["romms.mf", /cmchar "Less than sign";[\s\S]*?beginchar\("<"/u],
+    ["romms.mf", /cmchar "Greater than sign";[\s\S]*?beginchar\(">"/u],
   ];
   const sources = new Map();
   for (const [filename, pattern] of checks) {
@@ -131,7 +145,11 @@ function generateMetricModule(tfmRoot, archiveSha256) {
     + `export const CM_TFM_REFERENCE_VERSION = "ctan-cm-tfm-${archiveSha256.slice(0, 12)}";\n\n`
     + `export const CM_TFM_METRICS = Object.freeze(${payload});\n\n`
     + `export const CM_CODEPOINTS = Object.freeze({\n`
-    + `  "computer-modern-math-italic": Object.freeze({ 11: "α", 25: "π", 26: "ρ", 33: "ω", 58: ".", 59: ",", 61: "/" }),\n`
+    + `  "computer-modern-math-italic": Object.freeze({\n`
+    + `    1: "Δ", 11: "α", 14: "δ", 15: "ϵ", 17: "η", 18: "θ", 21: "λ", 22: "μ", 23: "ν",\n`
+    + `    25: "π", 26: "ρ", 27: "σ", 28: "τ", 33: "ω", 39: "φ",\n`
+    + `    58: ".", 59: ",", 60: "<", 61: "/", 62: ">",\n`
+    + `  }),\n`
     + `  "computer-modern-math-symbol": Object.freeze({ 0: "−", 1: "·", 20: "≤", 21: "≥", 48: "′", 106: "|", 112: "√" }),\n`
     + `  "computer-modern-math-extension": Object.freeze({\n`
     + `    0: "(", 1: ")", 2: "[", 3: "]",\n`
@@ -213,7 +231,11 @@ try {
       "test/fixtures/eval/extraction/type3-cm-reference.pdf": sha256(fs.readFileSync(OUTPUT_FIXTURE)),
     },
     visual_labels: {
-      "computer-modern-math-italic": { 11: "alpha", 25: "pi", 26: "rho", 33: "omega", 58: "period", 59: "comma", 61: "slash" },
+      "computer-modern-math-italic": {
+        1: "Delta", 11: "alpha", 14: "delta", 15: "epsilon", 17: "eta", 18: "theta",
+        21: "lambda", 22: "mu", 23: "nu", 25: "pi", 26: "rho", 27: "sigma", 28: "tau",
+        33: "omega", 39: "variant-phi", 58: "period", 59: "comma", 60: "less", 61: "slash", 62: "greater",
+      },
       "computer-modern-math-symbol": {
         0: "minus", 1: "centered-dot", 6: "plus-or-minus-witness", 20: "less-or-equal",
         21: "greater-or-equal", 33: "right-arrow-witness", 48: "prime", 106: "vertical", 112: "square-root",

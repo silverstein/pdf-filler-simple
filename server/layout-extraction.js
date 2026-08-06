@@ -691,6 +691,243 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
   }),
   // ABSTAIN 0x52 n=2 e5fa9eb0: only 1 official witness(es) in its font
   // ABSTAIN 0x5a n=92 4a183fac: only 1 official witness(es) in its font
+  Object.freeze({
+    id: "cmmi-pk-raster-Delta-762215-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 1,
+    source_unicode: "\u0001",
+    target_unicode: "Δ",
+    charproc_sha256: "762215421d47ca10bd29483ca69c105402ef88b6c80b7c4b1072e10a81fc14cc",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+      Object.freeze({ original_char_code: 14, charproc_sha256: "a5a76e73ff8dec163f779ae9cbcb92f18349e41fb4ce34f2e6a443c5aff1ef56" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-delta-a5a76e-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 14,
+    source_unicode: "\u000e",
+    target_unicode: "δ",
+    charproc_sha256: "a5a76e73ff8dec163f779ae9cbcb92f18349e41fb4ce34f2e6a443c5aff1ef56",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 1, charproc_sha256: "762215421d47ca10bd29483ca69c105402ef88b6c80b7c4b1072e10a81fc14cc" }),
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-delta-b41124-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 14,
+    source_unicode: "\u000e",
+    target_unicode: "δ",
+    charproc_sha256: "b41124da800ba2c4ed342b553c9433dc8b0eaf4e6228dab9901d6f9cd4e4449d",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "bab8aeb78893a19704c95538c54764abaae0cfe9d84812825f718e7687432f63" }),
+      Object.freeze({ original_char_code: 15, charproc_sha256: "7c62980ea7b423af3bfd7f14a2b5efa95b4dd23f611c1a013ef7b7fd57cefb51" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-epsilon-376b93-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 15,
+    source_unicode: "\u000f",
+    target_unicode: "ϵ",
+    charproc_sha256: "376b93ca5b31fec7270e1c4ea1425de0c60c37146b03f2c5f9de6b979209462a",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 1, charproc_sha256: "762215421d47ca10bd29483ca69c105402ef88b6c80b7c4b1072e10a81fc14cc" }),
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-epsilon-7c6298-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 15,
+    source_unicode: "\u000f",
+    target_unicode: "ϵ",
+    charproc_sha256: "7c62980ea7b423af3bfd7f14a2b5efa95b4dd23f611c1a013ef7b7fd57cefb51",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "bab8aeb78893a19704c95538c54764abaae0cfe9d84812825f718e7687432f63" }),
+      Object.freeze({ original_char_code: 14, charproc_sha256: "b41124da800ba2c4ed342b553c9433dc8b0eaf4e6228dab9901d6f9cd4e4449d" }),
+    ]),
+  }),
+  // ABSTAIN 0x11 n=13 2fd7e5e9: raster not visually reviewed
+  Object.freeze({
+    id: "cmmi-pk-raster-eta-a19a51-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 17,
+    source_unicode: "\u0011",
+    target_unicode: "η",
+    charproc_sha256: "a19a510f4227807eab4664f0736e8e6258fe26dcc46d7ac8d0c7a378691237cf",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "bab8aeb78893a19704c95538c54764abaae0cfe9d84812825f718e7687432f63" }),
+      Object.freeze({ original_char_code: 14, charproc_sha256: "b41124da800ba2c4ed342b553c9433dc8b0eaf4e6228dab9901d6f9cd4e4449d" }),
+    ]),
+  }),
+  // ABSTAIN 0x12 n=16 194bccf1: raster not visually reviewed
+  Object.freeze({
+    id: "cmmi-pk-raster-theta-700332-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 18,
+    source_unicode: "\u0012",
+    target_unicode: "θ",
+    charproc_sha256: "700332af231f58b628cd690de8f32a0604206fdbfd85a5a9fe18846044fda42b",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "bab8aeb78893a19704c95538c54764abaae0cfe9d84812825f718e7687432f63" }),
+      Object.freeze({ original_char_code: 14, charproc_sha256: "b41124da800ba2c4ed342b553c9433dc8b0eaf4e6228dab9901d6f9cd4e4449d" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-lambda-25c0ac-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 21,
+    source_unicode: "\u0015",
+    target_unicode: "λ",
+    charproc_sha256: "25c0ac6215a1b5e1a1df1a3d643e7465f92f6708d5ba8030eefe30c4378cb3a2",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 1, charproc_sha256: "762215421d47ca10bd29483ca69c105402ef88b6c80b7c4b1072e10a81fc14cc" }),
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-lambda-2023b7-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 21,
+    source_unicode: "\u0015",
+    target_unicode: "λ",
+    charproc_sha256: "2023b726a9e1f2d0e2d551201dec4d7c14bca4a7fd3367e17b2e8d1421a573f5",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "bab8aeb78893a19704c95538c54764abaae0cfe9d84812825f718e7687432f63" }),
+      Object.freeze({ original_char_code: 14, charproc_sha256: "b41124da800ba2c4ed342b553c9433dc8b0eaf4e6228dab9901d6f9cd4e4449d" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-mu-2c7d9c-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 22,
+    source_unicode: "\u0016",
+    target_unicode: "μ",
+    charproc_sha256: "2c7d9c60cea80cf491a5990df64a392b80506682bd8732664129d36f2f51cdb6",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 1, charproc_sha256: "762215421d47ca10bd29483ca69c105402ef88b6c80b7c4b1072e10a81fc14cc" }),
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-nu-f46329-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 23,
+    source_unicode: "\u0017",
+    target_unicode: "ν",
+    charproc_sha256: "f463297f1a37674d79d82c72d69f9b7c2c0fcbe71a450af43b9876cba82e91b2",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 1, charproc_sha256: "762215421d47ca10bd29483ca69c105402ef88b6c80b7c4b1072e10a81fc14cc" }),
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+    ]),
+  }),
+  // ABSTAIN 0x1b n=15 dae3aa06: raster not visually reviewed
+  Object.freeze({
+    id: "cmmi-pk-raster-sigma-94bd43-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 27,
+    source_unicode: "\u001b",
+    target_unicode: "σ",
+    charproc_sha256: "94bd43b8371d7d511c5adbbce53cb99f894fc15e2ba084ddd5bddb00a65ca02a",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "bab8aeb78893a19704c95538c54764abaae0cfe9d84812825f718e7687432f63" }),
+      Object.freeze({ original_char_code: 14, charproc_sha256: "b41124da800ba2c4ed342b553c9433dc8b0eaf4e6228dab9901d6f9cd4e4449d" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-tau-53992a-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 28,
+    source_unicode: "\u001c",
+    target_unicode: "τ",
+    charproc_sha256: "53992a8aa4b2134eee16941856f5e38adf6181e4c5f80354097626905cbf69a7",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 1, charproc_sha256: "762215421d47ca10bd29483ca69c105402ef88b6c80b7c4b1072e10a81fc14cc" }),
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-variant-phi-117a85-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 39,
+    source_unicode: "'",
+    target_unicode: "φ",
+    charproc_sha256: "117a85afcd9bbddb35a7be9228c55001a0cc97e38df0402f2e8817ea96b33d2e",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 1, charproc_sha256: "762215421d47ca10bd29483ca69c105402ef88b6c80b7c4b1072e10a81fc14cc" }),
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-less-cdaa6f-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 60,
+    source_unicode: "<",
+    target_unicode: "<",
+    charproc_sha256: "cdaa6fb50b7e6fe4c5a6944e2692a531bed491498e37902c410a2f42111aef60",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 1, charproc_sha256: "762215421d47ca10bd29483ca69c105402ef88b6c80b7c4b1072e10a81fc14cc" }),
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-greater-e628e6-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 62,
+    source_unicode: ">",
+    target_unicode: ">",
+    charproc_sha256: "e628e6dd6668c7ef2d888c06ed2479206a26a30f33217f98102affc1ffac053e",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 1, charproc_sha256: "762215421d47ca10bd29483ca69c105402ef88b6c80b7c4b1072e10a81fc14cc" }),
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmex-pk-raster-textstyle-integral-e5fa9e-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-extension",
+    original_char_code: 82,
+    source_unicode: "R",
+    target_unicode: "∫",
+    charproc_sha256: "e5fa9eb07a6e6807fb2ef29b805950074c1095fec2dbdc857ba9f46e4fbaaf77",
+    complete_font_enrollment: Object.freeze([82, 90]),
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 90, charproc_sha256: "4a183facdfcc364d036490de4893001dd292baad2d6a9e22cff0d81d92b6bf5b" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmex-pk-raster-displaystyle-integral-4a183f-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-extension",
+    original_char_code: 90,
+    source_unicode: "Z",
+    target_unicode: "∫",
+    charproc_sha256: "4a183facdfcc364d036490de4893001dd292baad2d6a9e22cff0d81d92b6bf5b",
+    complete_font_enrollment: Object.freeze([82, 90]),
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 82, charproc_sha256: "e5fa9eb07a6e6807fb2ef29b805950074c1095fec2dbdc857ba9f46e4fbaaf77" }),
+    ]),
+  }),
 ]);
 const TYPE3_RECOVERY_BY_ID = new Map(TYPE3_RECOVERY_REGISTRY.map(entry => [entry.id, entry]));
 
@@ -699,7 +936,25 @@ for (const entry of TYPE3_RECOVERY_REGISTRY) {
     throw new Error(`Type-3 registry ${entry.id} disagrees with the official Computer Modern encoding`);
   }
   const officialWitnesses = { ...CM_CODEPOINTS[entry.family], ...CM_WITNESS_CODEPOINTS[entry.family] };
-  if (entry.witnesses.length < 2 || entry.witnesses.some(witness => !officialWitnesses[witness.original_char_code])) {
+  if (entry.witnesses.some(witness => !officialWitnesses[witness.original_char_code])) {
+    throw new Error(`Type-3 registry ${entry.id} lacks official Computer Modern witnesses`);
+  }
+  // Two independent witnesses are the default corroboration. A dvips subset can
+  // legitimately hold fewer official glyphs than that: an integrals-only cmex
+  // font carries exactly two. Such an entry may name a single witness only by
+  // declaring its font's complete official footprint, which the matcher then
+  // requires to be present and matching in full and to have nothing else
+  // enrolled outside it. That is strictly more of the font's evidence than the
+  // two-witness rule asks for, not less.
+  const footprint = entry.complete_font_enrollment ?? null;
+  if (entry.witnesses.length >= 2) continue;
+  const declared = new Set(footprint ?? []);
+  const expected = new Set([entry.original_char_code, ...entry.witnesses.map(witness => witness.original_char_code)]);
+  if (entry.witnesses.length !== 1
+    || !footprint
+    || declared.size !== expected.size
+    || [...expected].some(code => !declared.has(code))
+    || [...declared].some(code => officialWitnesses[code] === undefined)) {
     throw new Error(`Type-3 registry ${entry.id} lacks two official Computer Modern witnesses`);
   }
 }
@@ -1144,6 +1399,22 @@ function charProcDigestForCode(font, rawFont, code) {
   return type3CharProcSha256(font?.charProcOperatorList?.[glyphId]);
 }
 
+/**
+ * True when the font carries a drawable raster for exactly the declared
+ * officially enrolled codes of its family and for no other enrolled code. A
+ * single-witness entry relies on this so that its reduced corroboration is
+ * still the whole of the evidence its font can offer.
+ */
+function fontMatchesCompleteEnrollment(font, rawFont, family, declaredCodes) {
+  const declared = new Set(declaredCodes);
+  for (const key of Object.keys(CM_CODEPOINTS[family] ?? {})) {
+    const code = Number(key);
+    const present = charProcDigestForCode(font, rawFont, code) !== null;
+    if (present !== declared.has(code)) return false;
+  }
+  return true;
+}
+
 function collectType3GlyphRecoveries({ textContent, operators, pdfjsPage, pdfLibPage, pdfjsLib }) {
   const operatorEvidence = operatorGlyphTokens(operators, pdfjsPage, pdfjsLib);
   if (!operatorEvidence) return new Map();
@@ -1178,6 +1449,8 @@ function collectType3GlyphRecoveries({ textContent, operators, pdfjsPage, pdfLib
       if (targetDigest !== registry.charproc_sha256) continue;
       const witnessDigests = registry.witnesses.map(witness => charProcDigestForCode(font, rawFont, witness.original_char_code));
       if (witnessDigests.some((digest, index) => digest !== registry.witnesses[index].charproc_sha256)) continue;
+      if (registry.complete_font_enrollment
+        && !fontMatchesCompleteEnrollment(font, rawFont, family, registry.complete_font_enrollment)) continue;
       for (const token of fontTokens) {
         const glyph = token.glyph;
         if (glyph.originalCharCode !== registry.original_char_code || glyph.unicode !== registry.source_unicode) continue;
@@ -1315,7 +1588,9 @@ export function inspectType3GlyphEvidenceForPage({ textContent, operators, pdfjs
         && entry.source_unicode === token.glyph.unicode
         && entry.target_unicode === official?.[code]
         && entry.charproc_sha256 === digest
-        && entry.witnesses.every(witness => mappedCodeCharprocSha256[witness.original_char_code] === witness.charproc_sha256))
+        && entry.witnesses.every(witness => mappedCodeCharprocSha256[witness.original_char_code] === witness.charproc_sha256)
+        && (!entry.complete_font_enrollment
+          || fontMatchesCompleteEnrollment(font, rawFont, family, entry.complete_font_enrollment)))
         .map(entry => entry.id)
         .sort();
       occurrences.push({
