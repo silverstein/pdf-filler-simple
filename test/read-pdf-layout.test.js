@@ -107,22 +107,37 @@ describe("qualified legacy Type-3 glyph evidence", () => {
     expect(provenance.reviewed_slot_labels["computer-modern-math-symbol"][33]).toBe("right-arrow");
     // The fixture is the labeled artifact, so what it actually draws is pinned
     // separately from what has been reviewed. Enrolling a slot must not quietly
-    // imply this PDF demonstrates it.
-    expect(provenance.fixture_drawn_slots).toEqual({
-      "computer-modern-math-italic": [11, 25, 26, 33, 58, 59, 61],
-      "computer-modern-math-symbol": [0, 6, 21, 33, 112],
-    });
-    // Drawn is not resolved. The cmmi10 half of this fixture does not classify,
-    // so the resolving set must stay a strict subset and must never be assumed
-    // equal to the drawn set.
-    expect(provenance.fixture_family_resolving_slots).toEqual({
-      "computer-modern-math-symbol": [0, 6, 21, 33, 112],
-    });
-    const drawn = Object.values(provenance.fixture_drawn_slots).flat();
-    const resolving = Object.values(provenance.fixture_family_resolving_slots).flat();
-    expect(drawn).toHaveLength(12);
-    expect(resolving.length).toBeLessThan(drawn.length);
-    expect(resolving.every(code => drawn.includes(code))).toBe(true);
+    // imply this PDF demonstrates it. Both slot sets are measured out of the
+    // emitted PDF by the generator, so this checks them against the shipped
+    // encoding tables rather than against a second copy of the same numbers:
+    // a wrong literal in the provenance cannot satisfy CM_CODEPOINTS.
+    const families = Object.keys(CM_CODEPOINTS);
+    expect(families).toEqual([
+      "computer-modern-math-italic",
+      "computer-modern-math-symbol",
+      "computer-modern-math-extension",
+    ]);
+    expect(Object.keys(provenance.fixture_drawn_slots)).toEqual(families);
+    for (const family of families) {
+      const enrolled = Object.keys(CM_CODEPOINTS[family]).map(Number).sort((left, right) => left - right);
+      const drawnSlots = provenance.fixture_drawn_slots[family];
+      const undrawableSlots = provenance.fixture_undrawable_slots[family];
+      // Every enrolled slot is accounted for exactly once: either the fixture
+      // draws it, or the CTAN ps-type3 widths cannot co-draw it without
+      // costing its font a family. Neither list may quietly lose a slot.
+      expect([...drawnSlots, ...undrawableSlots].sort((left, right) => left - right)).toEqual(enrolled);
+      expect(Object.keys(provenance.reviewed_slot_labels[family]).map(Number).sort((left, right) => left - right))
+        .toEqual(enrolled);
+      expect(drawnSlots.length).toBeGreaterThan(1);
+      // Drawn is still not the same claim as resolved. It happens to hold for
+      // every drawn slot in this revision, which has to be asserted rather
+      // than assumed, and is re-measured from the PDF itself in
+      // test/type3-glyph-inventory.test.js.
+      expect(provenance.fixture_family_resolving_slots[family]).toEqual(drawnSlots);
+    }
+    // Coarse regression guard on the size of the demonstration, so a
+    // regenerated fixture that silently drew fewer slots would fail here.
+    expect(Object.values(provenance.fixture_drawn_slots).flat()).toHaveLength(21);
     // Both were corroboration-only until a reviewed raster backed them. They are
     // enrolled now, and an enrolled codepoint is still usable as a witness, so
     // no slot is witness-only.

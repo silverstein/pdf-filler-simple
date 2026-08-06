@@ -22,17 +22,19 @@
   "outputs": {
     "server/type3-cm-reference.js": "bdbea1a2e27ca41e5962968942d5b6cecc13a3f144859687656b4c13602eaeb4",
     "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "bdbea1a2e27ca41e5962968942d5b6cecc13a3f144859687656b4c13602eaeb4",
-    "test/fixtures/eval/extraction/type3-cm-reference.pdf": "48cdf824d560387daf6c6a9ed81caa1d393134fbc49b5c87d79d6e2653ff68f5"
+    "test/fixtures/eval/extraction/type3-cm-reference.pdf": "710c10a41d29fcc15058f03dda08b492797dce831f90e6fdf92f82ee524b437c"
   },
   "fixture_drawn_slots": {
     "computer-modern-math-italic": [
       11,
-      25,
-      26,
+      14,
+      15,
+      21,
+      22,
+      27,
       33,
       58,
-      59,
-      61
+      59
     ],
     "computer-modern-math-symbol": [
       0,
@@ -40,15 +42,70 @@
       21,
       33,
       112
+    ],
+    "computer-modern-math-extension": [
+      2,
+      3,
+      18,
+      19,
+      20,
+      21,
+      82
     ]
   },
   "fixture_family_resolving_slots": {
+    "computer-modern-math-italic": [
+      11,
+      14,
+      15,
+      21,
+      22,
+      27,
+      33,
+      58,
+      59
+    ],
     "computer-modern-math-symbol": [
       0,
       6,
       21,
       33,
       112
+    ],
+    "computer-modern-math-extension": [
+      2,
+      3,
+      18,
+      19,
+      20,
+      21,
+      82
+    ]
+  },
+  "fixture_undrawable_slots": {
+    "computer-modern-math-italic": [
+      1,
+      17,
+      18,
+      23,
+      25,
+      26,
+      28,
+      39,
+      61
+    ],
+    "computer-modern-math-symbol": [
+      1,
+      20,
+      48,
+      106
+    ],
+    "computer-modern-math-extension": [
+      0,
+      1,
+      16,
+      17,
+      90
     ]
   },
   "reviewed_slot_labels": {
