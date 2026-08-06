@@ -61,8 +61,8 @@
     {
       "role": "type3_cm_reference_module",
       "path": "server/type3-cm-reference.js",
-      "bytes": 73202,
-      "sha256": "bdbea1a2e27ca41e5962968942d5b6cecc13a3f144859687656b4c13602eaeb4"
+      "bytes": 73224,
+      "sha256": "59ddf76aa7cfca1247cd2eb44c0768bfb4f7f326d7847280bb63103b5959cfda"
     },
     {
       "role": "layout_oracle_schema",
@@ -119,7 +119,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "441b6a489e54968e315f88af0cd50e256641f5c6e294a2c94cd97aafa3fcd3d5",
+  "validator_source_set_sha256": "f79c19f4d9b377e363e3336a365f9d4a4f5df0704a72f03895e930c3833ce468",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",

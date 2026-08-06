@@ -20,93 +20,112 @@
     "qpdf": "qpdf version 12.3.2\nRun qpdf --copyright to see copyright and license information."
   },
   "outputs": {
-    "server/type3-cm-reference.js": "bdbea1a2e27ca41e5962968942d5b6cecc13a3f144859687656b4c13602eaeb4",
-    "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "bdbea1a2e27ca41e5962968942d5b6cecc13a3f144859687656b4c13602eaeb4",
-    "test/fixtures/eval/extraction/type3-cm-reference.pdf": "710c10a41d29fcc15058f03dda08b492797dce831f90e6fdf92f82ee524b437c"
+    "server/type3-cm-reference.js": "59ddf76aa7cfca1247cd2eb44c0768bfb4f7f326d7847280bb63103b5959cfda",
+    "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "59ddf76aa7cfca1247cd2eb44c0768bfb4f7f326d7847280bb63103b5959cfda",
+    "test/fixtures/eval/extraction/type3-cm-reference.pdf": "6df7c4f585808954531b0a4824bb32dfaa5571812575aad90b9895fb8eea5844"
   },
   "fixture_drawn_slots": {
     "computer-modern-math-italic": [
+      1,
       11,
       14,
       15,
+      17,
+      18,
       21,
       22,
+      23,
+      25,
+      26,
       27,
+      28,
       33,
+      39,
       58,
-      59
+      59,
+      61
     ],
     "computer-modern-math-symbol": [
       0,
+      1,
       6,
+      20,
       21,
       33,
+      48,
+      106,
       112
     ],
     "computer-modern-math-extension": [
+      0,
+      1,
       2,
       3,
+      16,
+      17,
       18,
       19,
       20,
       21,
-      82
+      26,
+      27,
+      82,
+      90
     ]
   },
   "fixture_family_resolving_slots": {
     "computer-modern-math-italic": [
+      1,
       11,
       14,
       15,
+      17,
+      18,
       21,
       22,
+      23,
+      25,
+      26,
       27,
+      28,
       33,
+      39,
       58,
-      59
+      59,
+      61
     ],
     "computer-modern-math-symbol": [
       0,
+      1,
       6,
+      20,
       21,
       33,
+      48,
+      106,
       112
     ],
     "computer-modern-math-extension": [
+      0,
+      1,
       2,
       3,
+      16,
+      17,
       18,
       19,
       20,
       21,
-      82
+      26,
+      27,
+      82,
+      90
     ]
   },
   "fixture_undrawable_slots": {
-    "computer-modern-math-italic": [
-      1,
-      17,
-      18,
-      23,
-      25,
-      26,
-      28,
-      39,
-      61
-    ],
-    "computer-modern-math-symbol": [
-      1,
-      20,
-      48,
-      106
-    ],
-    "computer-modern-math-extension": [
-      0,
-      1,
-      16,
-      17,
-      90
-    ]
+    "computer-modern-math-italic": [],
+    "computer-modern-math-symbol": [],
+    "computer-modern-math-extension": []
   },
   "reviewed_slot_labels": {
     "computer-modern-math-italic": {
@@ -151,6 +170,8 @@
       "19": "bigg-right-parenthesis",
       "20": "bigg-left-bracket",
       "21": "bigg-right-bracket",
+      "26": "bigg-left-curly-brace",
+      "27": "bigg-right-curly-brace",
       "82": "textstyle-integral",
       "90": "displaystyle-integral"
     }

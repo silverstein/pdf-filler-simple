@@ -4,6 +4,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 import { beforeAll, describe, expect, it } from "vitest";
+import { CM_CODEPOINTS } from "../server/type3-cm-reference.js";
 
 const execFileAsync = promisify(execFile);
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -34,9 +35,12 @@ describe("Type-3 maintainer inventory", () => {
   it("keeps whitespace-like legacy glyph controls and reports explicit omissions", () => {
     expect(report).toMatchObject({
       schema: "pdf-tools.type3-glyph-inventory.v1",
-      occurrence_count: 21,
+      occurrence_count: 41,
       abstentions: [],
-      source: { page_count: 1 },
+      // Page 1 is the original single-page reference, unchanged. Page 2 carries
+      // the further embedded fonts that let the remaining enrolled slots be
+      // drawn without widening the metric tolerance.
+      source: { page_count: 2 },
     });
     expect(report.groups).toEqual(expect.arrayContaining([
       expect.objectContaining({
@@ -101,6 +105,15 @@ describe("Type-3 maintainer inventory", () => {
     });
     expect(measured).toEqual(provenance.fixture_drawn_slots);
     expect(measured).toEqual(provenance.fixture_family_resolving_slots);
+    // The headline claim of the artifact: every enrolled slot of every enrolled
+    // family is demonstrated here, measured out of the PDF rather than read
+    // back out of the provenance record that the same run wrote.
+    for (const [family, codepoints] of Object.entries(CM_CODEPOINTS)) {
+      expect(measured[family], `${family} is not demonstrated at all`).toEqual(
+        Object.keys(codepoints).map(Number).sort((left, right) => left - right),
+      );
+    }
+    expect(Object.keys(measured).sort()).toEqual(Object.keys(CM_CODEPOINTS).sort());
   });
 
   it("rejects ambiguous command-line input", async () => {

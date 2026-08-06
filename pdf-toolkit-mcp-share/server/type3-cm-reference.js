@@ -17,6 +17,7 @@ export const CM_CODEPOINTS = Object.freeze({
   "computer-modern-math-extension": Object.freeze({
     0: "(", 1: ")", 2: "[", 3: "]",
     16: "(", 17: ")", 18: "(", 19: ")", 20: "[", 21: "]",
+    26: "{", 27: "}",
     82: "∫", 90: "∫",
   }),
 });

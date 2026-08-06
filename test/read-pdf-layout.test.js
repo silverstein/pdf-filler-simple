@@ -126,6 +126,10 @@ describe("qualified legacy Type-3 glyph evidence", () => {
       // draws it, or the CTAN ps-type3 widths cannot co-draw it without
       // costing its font a family. Neither list may quietly lose a slot.
       expect([...drawnSlots, ...undrawableSlots].sort((left, right) => left - right)).toEqual(enrolled);
+      // As of this revision the fixture draws all of them: the family's slots
+      // are partitioned across several embedded fonts, so nothing is left over.
+      expect(undrawableSlots).toEqual([]);
+      expect(drawnSlots).toEqual(enrolled);
       expect(Object.keys(provenance.reviewed_slot_labels[family]).map(Number).sort((left, right) => left - right))
         .toEqual(enrolled);
       expect(drawnSlots.length).toBeGreaterThan(1);
@@ -137,7 +141,7 @@ describe("qualified legacy Type-3 glyph evidence", () => {
     }
     // Coarse regression guard on the size of the demonstration, so a
     // regenerated fixture that silently drew fewer slots would fail here.
-    expect(Object.values(provenance.fixture_drawn_slots).flat()).toHaveLength(21);
+    expect(Object.values(provenance.fixture_drawn_slots).flat()).toHaveLength(41);
     // Both were corroboration-only until a reviewed raster backed them. They are
     // enrolled now, and an enrolled codepoint is still usable as a witness, so
     // no slot is witness-only.

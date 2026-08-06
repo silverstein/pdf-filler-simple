@@ -55,9 +55,9 @@ evidence. It is now rebound and was run against the real document.
 | Strict Type-3 recovered occurrences | 1229 | 1816 |
 | Registry entries | 28 | 67 |
 | Enrolled Computer Modern families | 2 | 3 |
-| Reviewed enrolled slots | 10 | 39 |
-| Slots the labeled fixture draws | 12 | 21 |
-| Of those, slots that resolve to a family | 5 | 21 |
+| Reviewed enrolled slots | 10 | 41 |
+| Slots the labeled fixture draws | 12 | 41 |
+| Of those, slots that resolve to a family | 5 | 41 |
 | Families the labeled fixture demonstrates | 1 | 3 |
 | Replacement characters in Table I | 8 | 0 |
 | Integral signs rendered as `Z` | 92 | 0 |
@@ -93,9 +93,9 @@ Every enrolled raster was additionally rendered out of the source document and
 inspected before enrollment, and the provenance record separates the kinds
 of evidence: `fixture_drawn_slots` lists what the labeled fixture PDF draws,
 `fixture_family_resolving_slots` the subset of those that actually classify,
-`fixture_undrawable_slots` the enrolled slots the fixture cannot draw, and
-`reviewed_slot_labels` every enrolled slot. The first two are no longer
-written by hand. `measureFixture` in the generator reads the Type-3 fonts back
+`fixture_undrawable_slots` the enrolled slots the fixture cannot draw — empty
+for every family as of this revision — and `reviewed_slot_labels` every
+enrolled slot. The first two are no longer written by hand. `measureFixture` in the generator reads the Type-3 fonts back
 out of the emitted PDF and asks the shipped resolver what each one classifies
 as, and `test/type3-glyph-inventory.test.js` re-measures the same fact through
 `scripts/inventory-type3-glyphs.mjs` and requires the recorded lists to be
@@ -131,36 +131,88 @@ its own two-witness entry.
   They mapped a character to itself, changed no output, and only added
   digest-match surface.
 
+## Closing the fixture coverage gap
+
+The labeled reference now draws and resolves **every** enrolled slot of all
+three families: 18 math italic, 9 math symbol, and 14 math extension, 41 in
+total, with `fixture_undrawable_slots` empty for every family.
+
+The obstruction was never the detector. CTAN `ps-type3` fonts carry `/Widths`
+pre-rounded to integer 1/1000 em, lossy against the TFM by up to three units,
+while `metricScaleInterval` requires a single scale factor to fit every
+observed code within half a unit. That constraint is a conjunction over the
+codes **one embedded font** draws, so it tightens monotonically as a single
+font draws more of its family. Nothing about it tightens as a *document*
+embeds more fonts.
+
+So the fix is more fonts, not a wider tolerance. Each family's enrolled slots
+are partitioned into disjoint groups, each carried by its own embedded Type-3
+font whose as-shipped widths still admit one scale that no other Computer
+Modern family admits:
+
+| Font instance | Slots |
+| --- | --- |
+| `cmmi10` (page 1, unchanged) | 11, 14, 15, 21, 22, 27, 33, 58, 59 |
+| `cmmi5` | 17, 23 |
+| `cmmi6` | 1, 18, 25, 26, 28, 39, 61 |
+| `cmsy10` (page 1, unchanged) | 0, 6, 21, 33, 112 |
+| `cmsy8` | 1, 20 |
+| `cmsy5` | 48, 106 |
+| `cmex10` (page 1, unchanged) | 2, 3, 18, 19, 20, 21, 82 |
+| `cmex10-braces` | 16, 17, 26, 27 |
+| `cmex10-outer` | 0, 1, 90 |
+
+Every slot is drawn exactly once. A family may spread its groups across
+several official design sizes, which is what a real math document does anyway
+— the fingerprint identifies the family, not the design size. `cmex10` has no
+other design size, so its two extra groups are second and third `definefont`
+embeddings of the same official program under different PostScript names;
+Ghostscript emits them as separate Type-3 font objects carrying the same CTAN
+CharProcs, and `linkedRawType3Font` still links each drawn run to exactly one
+of them because the drawn code sets are disjoint.
+
+Page 1 is held byte-for-byte at what the previous revision emitted, cmsy10
+draw order included, so the CharProc digests and the exact text run that
+qualified `cmsy-ctan-type3-minus-v1` are unchanged and it still recovers.
+Everything new is on page 2.
+
+Two slots were enrolled to make this work: `cmex` `oct"032"` and `oct"033"`,
+the `\bigg` left and right curly braces. They are self-contained delimiters of
+exactly the class already enrolled, they are asserted against `bigdel.mf` in
+`requireSourceDefinitions` like every other slot, and they are also the only
+`cmex10` codes whose as-shipped widths pin the family alongside the two `\Big`
+parentheses at slots 16 and 17. Without them those two parentheses have no
+co-drawable partner at all and would have stayed undrawable.
+
+Two alternatives were rejected:
+
+- **Rewriting the emitted `/Widths` from the pinned TFM.** It does make every
+  enrolled slot of all three fonts resolve, but the width reaches the PDF as
+  the `wx` operand of the CharProc's `d1`, so it is inside the CharProc digest:
+  every glyph digest in the fixture would then describe a font no producer
+  emits, and `cmsy-ctan-type3-minus-v1` — which is qualified against this
+  fixture precisely so a real `ps-type3` document can match it — would go dead.
+- **Loosening the `±0.5` tolerance.** It is load-bearing evidence for real
+  documents and was not touched. Real documents are unaffected by the rounding
+  either way: dvips rounds once from the TFM at one raster resolution, so
+  Shannon's `/T23` fits twenty-three codes into a nonempty interval and
+  resolves uniquely.
+
+A labeled reference built from synthesized dvips PK-derived Type-3 fonts was
+also considered and rejected as unnecessary: it would have replaced byte-exact
+official CTAN font programs with hand-built ones, weakening the fixture's other
+job as real CharProc-digest evidence, in exchange for coverage that embedding
+more official fonts already provides.
+
+Verified with
+`node scripts/inventory-type3-glyphs.mjs --source test/fixtures/eval/extraction/type3-cm-reference.pdf`:
+41 occurrences, 41 classified, 0 unclassified, 0 officially unnamed, 0
+omitted, no abstentions, and `cmsy-ctan-type3-minus-v1` still strictly
+recovered. The layout occurrence oracle was regenerated; its only diff is the
+`server/type3-cm-reference.js` source identity.
+
 ## Known gaps
 
-- The labeled fixture now demonstrates all three enrolled families — 9 cmmi10,
-  5 cmsy10, and 7 cmex10 slots, every one of which resolves — but it still
-  cannot draw every enrolled slot at once. CTAN `ps-type3` fonts carry
-  `/Widths` pre-rounded to integer 1/1000 em, lossy against the TFM by up to
-  three units, while `metricScaleInterval` requires a single scale factor to
-  fit every observed code within half a unit. Because that constraint is a
-  conjunction, adding drawn codes shrinks the feasible interval monotonically,
-  so each font draws a maximum subset of its enrolled slots that still admits
-  one scale. The excluded slots are recorded as `fixture_undrawable_slots`.
-  cmsy10 keeps the exact five codes the previous revision drew, in the same
-  order, so the CharProc digests that qualified `cmsy-ctan-type3-minus-v1` stay
-  bound to the same bytes.
-
-  Rewriting the emitted `/Widths` from the pinned TFM was evaluated and
-  rejected. It does make every enrolled slot of all three fonts resolve, but
-  the width reaches the PDF as the `wx` operand of the CharProc's `d1`, so it
-  is inside the CharProc digest: every glyph digest in the fixture would then
-  describe a font no producer emits, and `cmsy-ctan-type3-minus-v1` — which is
-  qualified against this fixture precisely so a real `ps-type3` document can
-  match it — would go dead. Keeping the fonts byte-exact keeps the fixture
-  usable as digest evidence, which is its other job.
-
-  Real documents are unaffected by the rounding either way: dvips rounds once
-  from the TFM at one raster resolution, so Shannon's `/T23` fits twenty-three
-  codes into a nonempty interval and resolves uniquely. The `±0.5` tolerance is
-  load-bearing evidence for that real case and was not loosened. A labeled
-  reference built from dvips PK-derived Type-3 fonts would be able to draw
-  every enrolled slot, and remains the way to close the remaining gap.
 - `render_pdf_page` and `render_pdf_region` still perform no recognition, and
   no OCR engine is bundled. Mini-graphs inside Table I remain stroked vector
   content reported as a coverage gap.

@@ -118,6 +118,13 @@ describe("Computer Modern math-extension enrollment", () => {
       19: ")",
       20: "[",
       21: "]",
+      // The two \bigg curly braces from bigdel.mf. They are self-contained
+      // delimiters of the class already enrolled here, and they are also the
+      // only cmex10 codes whose as-shipped ps-type3 widths pin the family
+      // alongside the two \Big parentheses, so enrolling them is what lets the
+      // labeled fixture demonstrate slots 16 and 17.
+      26: "{",
+      27: "}",
       82: "∫",
       90: "∫",
     });

@@ -35,6 +35,12 @@ const REVIEWED_SLOT_LABELS = {
     0: "big-left-parenthesis", 1: "big-right-parenthesis", 2: "big-left-bracket", 3: "big-right-bracket",
     16: "Big-left-parenthesis", 17: "Big-right-parenthesis", 18: "bigg-left-parenthesis", 19: "bigg-right-parenthesis",
     20: "bigg-left-bracket", 21: "bigg-right-bracket",
+    // The two \bigg curly braces are self-contained delimiters of exactly the
+    // class already enrolled here, and they are also the only cmex10 codes
+    // whose as-shipped ps-type3 width pins the family alongside the two \Big
+    // parentheses. Enrolling them is what lets the fixture demonstrate slots
+    // 16 and 17 instead of recording them as undrawable.
+    26: "bigg-left-curly-brace", 27: "bigg-right-curly-brace",
     82: "textstyle-integral", 90: "displaystyle-integral",
   },
 };
@@ -54,17 +60,33 @@ const REVIEWED_SLOT_LABELS = {
  * The cost of keeping the fonts exact is that ps-type3 /Widths are
  * pre-rounded to integer 1/1000 em, lossy against the TFM by up to three
  * units, while metricScaleInterval needs one scale to fit every observed code
- * within half a unit. That constraint is a conjunction, so a font cannot draw
- * all of its enrolled slots at once. Each set below is the unique
- * maximum-cardinality subset of the family's enrolled slots whose as-shipped
- * widths still admit a single scale, except cmsy10, which keeps the set the
- * previous revision drew so its already-qualified CharProc digests stay bound
- * to the same bytes. Enrolled slots outside these sets are recorded as
- * `fixture_undrawable_slots` rather than quietly dropped.
+ * within half a unit. That constraint is a conjunction, so one font instance
+ * cannot draw all of its family's enrolled slots at once, and the ±0.5
+ * tolerance is load-bearing evidence for real documents that must not be
+ * loosened to make it fit.
+ *
+ * The fit is computed per embedded Type-3 font over the codes that font
+ * actually draws, so the way out is more fonts rather than a wider tolerance.
+ * Each family's enrolled slots are partitioned below into disjoint groups,
+ * each carried by its own embedded font, and each group's as-shipped widths
+ * admit one scale that no other Computer Modern family admits. Every enrolled
+ * slot is therefore drawn exactly once, by a font that resolves. A family may
+ * spread its groups across several official design sizes — a math document
+ * that embeds cmmi10, cmmi6, and cmmi5 is ordinary, and the fingerprint
+ * identifies the family rather than the design size — while cmex10 is the
+ * only extension face, so its two extra groups are separate embeddings of the
+ * same official program under different PostScript names.
+ *
+ * Page 1 is held byte-for-byte at what the previous revision emitted, down to
+ * the cmsy10 draw order, so the CharProc digests that qualified
+ * `cmsy-ctan-type3-minus-v1` stay bound to the same bytes in the same text
+ * run. Everything new is drawn on page 2.
  */
 const FIXTURE_FONTS = [
   {
+    page: 1,
     font: "cmmi10",
+    instance: "cmmi10",
     family: "computer-modern-math-italic",
     codes: [11, 14, 15, 21, 22, 27, 33, 58, 59],
     size: 30,
@@ -73,15 +95,70 @@ const FIXTURE_FONTS = [
     // Draw order, not sorted order: the previous revision drew these five in
     // this sequence, and holding the byte sequence keeps the text run that
     // qualifies `cmsy-ctan-type3-minus-v1` identical.
+    page: 1,
     font: "cmsy10",
+    instance: "cmsy10",
     family: "computer-modern-math-symbol",
     codes: [0, 6, 33, 21, 112],
     size: 30,
   },
   {
+    page: 1,
     font: "cmex10",
+    instance: "cmex10",
     family: "computer-modern-math-extension",
     codes: [2, 3, 18, 19, 20, 21, 82],
+    size: 20,
+  },
+  {
+    page: 2,
+    font: "cmmi5",
+    instance: "cmmi5",
+    family: "computer-modern-math-italic",
+    codes: [17, 23],
+    size: 30,
+  },
+  {
+    page: 2,
+    font: "cmmi6",
+    instance: "cmmi6",
+    family: "computer-modern-math-italic",
+    codes: [1, 18, 25, 26, 28, 39, 61],
+    size: 30,
+  },
+  {
+    page: 2,
+    font: "cmsy8",
+    instance: "cmsy8",
+    family: "computer-modern-math-symbol",
+    codes: [1, 20],
+    size: 30,
+  },
+  {
+    page: 2,
+    font: "cmsy5",
+    instance: "cmsy5",
+    family: "computer-modern-math-symbol",
+    codes: [48, 106],
+    size: 30,
+  },
+  {
+    // cmex10 has no other design size, so the remaining two extension groups
+    // are second and third embeddings of the same official font program,
+    // renamed at definefont time. The CharProc bytes stay the CTAN ones.
+    page: 2,
+    font: "cmex10",
+    instance: "cmex10-braces",
+    family: "computer-modern-math-extension",
+    codes: [16, 17, 26, 27],
+    size: 20,
+  },
+  {
+    page: 2,
+    font: "cmex10",
+    instance: "cmex10-outer",
+    family: "computer-modern-math-extension",
+    codes: [0, 1, 90],
     size: 20,
   },
 ];
@@ -170,6 +247,8 @@ function requireSourceDefinitions(mfRoot) {
     ["bigdel.mf", /cmchar "\\bigg right parenthesis";\s*beginchar\(oct"023"/u],
     ["bigdel.mf", /cmchar "\\bigg left bracket";\s*beginchar\(oct"024"/u],
     ["bigdel.mf", /cmchar "\\bigg right bracket";\s*beginchar\(oct"025"/u],
+    ["bigdel.mf", /cmchar "\\bigg left curly brace";\s*beginchar\(oct"032"/u],
+    ["bigdel.mf", /cmchar "\\bigg right curly brace";\s*beginchar\(oct"033"/u],
     ["bigop.mf", /cmchar "\\textstyle integral sign";\s*beginchar\(oct"122"/u],
     ["bigop.mf", /cmchar "\\displaystyle integral sign";\s*beginchar\(oct"132"/u],
     // Computer Modern math italic letters and relations beyond the first batch.
@@ -221,6 +300,7 @@ function generateMetricModule(tfmRoot, archiveSha256) {
     + `  "computer-modern-math-extension": Object.freeze({\n`
     + `    0: "(", 1: ")", 2: "[", 3: "]",\n`
     + `    16: "(", 17: ")", 18: "(", 19: ")", 20: "[", 21: "]",\n`
+    + `    26: "{", 27: "}",\n`
     + `    82: "∫", 90: "∫",\n`
     + `  }),\n`
     + `});\n\n`
@@ -257,15 +337,20 @@ function labelLines(text, maxCharacters) {
   return lines;
 }
 
-function generateFixture(type3Root, output) {
-  const rawOutput = `${output}.ghostscript-tmp`;
+/**
+ * Emits the PostScript for one page of labeled slots. Page 1 is deliberately
+ * emitted from the same code path and the same starting cursor the single-page
+ * revision used, so its program text — and therefore its content stream and
+ * every CharProc it pulls in — is unchanged.
+ */
+function pageProgram(entries, heading) {
   const program = [
     "/Helvetica findfont 10 scalefont setfont",
-    "72 748 moveto (Official CTAN Computer Modern Type3 labeled reference) show",
+    `72 748 moveto (${heading}) show`,
   ];
   let cursor = 730;
-  for (const entry of FIXTURE_FONTS) {
-    const label = `${entry.font}: ${entry.codes
+  for (const entry of entries) {
+    const label = `${entry.instance}: ${entry.codes
       .map(code => `${hexByte(code)} ${REVIEWED_SLOT_LABELS[entry.family][code]}`)
       .join(", ")}`;
     program.push("/Helvetica findfont 10 scalefont setfont");
@@ -274,18 +359,64 @@ function generateFixture(type3Root, output) {
       cursor -= 12;
     }
     cursor -= entry.size;
-    program.push(`/${entry.font} findfont ${entry.size} scalefont setfont`);
+    program.push(`/${entry.instance} findfont ${entry.size} scalefont setfont`);
     program.push(`72 ${cursor} moveto <${entry.codes.map(hexByte).join("")}> show`);
     cursor -= entry.size * 2;
   }
   program.push("showpage");
-  execFileSync("gs", [
-    "-q", "-dBATCH", "-dNOPAUSE", "-dOmitInfoDate=true", "-dOmitID=true",
-    "-sDEVICE=pdfwrite", "-dEmbedAllFonts=true", "-dSubsetFonts=false",
-    `-sOutputFile=${rawOutput}`,
-    ...FIXTURE_FONTS.flatMap(entry => ["-f", path.join(type3Root, `${entry.font}.ps`)]),
-    "-c", program.join(" "),
-  ]);
+  return program;
+}
+
+/**
+ * A second or later embedding of the same official font program. Only the
+ * PostScript font name differs, so Ghostscript emits a separate Type-3 font
+ * object carrying the same CTAN CharProcs and the same as-shipped /Widths.
+ */
+function renamedFontProgram(entry) {
+  return [
+    `/${entry.font} findfont dup length 2 add dict copy`,
+    `dup /FontName /${entry.instance} put`,
+    `/${entry.instance} exch definefont pop`,
+  ];
+}
+
+function generateFixture(type3Root, output) {
+  const rawOutput = `${output}.ghostscript-tmp`;
+  const pageNumbers = [...new Set(FIXTURE_FONTS.map(entry => entry.page))].sort((left, right) => left - right);
+  const program = [];
+  for (const pageNumber of pageNumbers) {
+    const entries = FIXTURE_FONTS.filter(entry => entry.page === pageNumber);
+    // Renames are emitted just before the page that first needs them, so page
+    // 1 is produced from exactly the interpreter state the previous revision
+    // produced it from.
+    for (const entry of entries) {
+      if (entry.instance !== entry.font) program.push(...renamedFontProgram(entry));
+    }
+    program.push(...pageProgram(
+      entries,
+      pageNumber === 1
+        ? "Official CTAN Computer Modern Type3 labeled reference"
+        : `Official CTAN Computer Modern Type3 labeled reference, continued on page ${pageNumber}`,
+    ));
+  }
+  // Ghostscript caps the length of a single -c argument, and the drawing
+  // program is now longer than that cap, so it is handed over as its own
+  // PostScript file instead. It is executed after every font file, exactly
+  // where the -c argument used to run.
+  const programFile = `${output}.ghostscript-program-tmp.ps`;
+  fs.writeFileSync(programFile, `${program.join("\n")}\n`);
+  try {
+    execFileSync("gs", [
+      "-q", "-dBATCH", "-dNOPAUSE", "-dOmitInfoDate=true", "-dOmitID=true",
+      "-sDEVICE=pdfwrite", "-dEmbedAllFonts=true", "-dSubsetFonts=false",
+      `-sOutputFile=${rawOutput}`,
+      ...[...new Set(FIXTURE_FONTS.map(entry => entry.font))]
+        .flatMap(font => ["-f", path.join(type3Root, `${font}.ps`)]),
+      "-f", programFile,
+    ]);
+  } finally {
+    fs.rmSync(programFile, { force: true });
+  }
   execFileSync("qpdf", [
     "--remove-info", "--remove-metadata", "--deterministic-id",
     rawOutput, output,
@@ -329,16 +460,23 @@ async function measureFixture(output) {
   }
   const drawnSlots = {};
   const resolvingSlots = {};
+  const ascending = (left, right) => left - right;
+  const record = (slots, family, codes) => {
+    slots[family] = [...(slots[family] ?? []), ...codes].sort(ascending);
+    if (new Set(slots[family]).size !== slots[family].length) {
+      throw new Error(`${family} draws a slot more than once`);
+    }
+  };
   for (const entry of FIXTURE_FONTS) {
-    const codes = [...entry.codes].sort((left, right) => left - right);
+    const codes = [...entry.codes].sort(ascending);
     const matches = measured.filter(font => font.drawn.join() === codes.join());
-    if (matches.length !== 1) throw new Error(`${entry.font} did not emit exactly the declared glyph set`);
-    drawnSlots[entry.family] = codes;
+    if (matches.length !== 1) throw new Error(`${entry.instance} did not emit exactly the declared glyph set`);
+    record(drawnSlots, entry.family, codes);
     if (matches[0].family === null) continue;
     if (matches[0].family !== entry.family) {
-      throw new Error(`${entry.font} resolved to ${matches[0].family}, not ${entry.family}`);
+      throw new Error(`${entry.instance} resolved to ${matches[0].family}, not ${entry.family}`);
     }
-    resolvingSlots[entry.family] = codes;
+    record(resolvingSlots, entry.family, codes);
   }
   if (measured.length !== FIXTURE_FONTS.length) throw new Error("Unexpected Type-3 font count in the fixture");
   return { drawnSlots, resolvingSlots };
@@ -405,17 +543,17 @@ try {
     // test/type3-glyph-inventory.test.js re-measures that independently.
     fixture_drawn_slots: drawnSlots,
     fixture_family_resolving_slots: resolvingSlots,
-    // Enrolled slots the labeled reference cannot draw. CTAN ps-type3 /Widths
-    // are pre-rounded to integer 1/1000 em, lossy against the TFM by up to
-    // three units, and metricScaleInterval needs one scale to fit every
-    // observed code within half a unit, so adding any of these to its font
-    // empties the feasible interval and costs the whole font its family. They
-    // are recorded here so the drawn set is not mistaken for the enrolled set.
-    fixture_undrawable_slots: Object.fromEntries(FIXTURE_FONTS.map(entry => [
-      entry.family,
-      Object.keys(REVIEWED_SLOT_LABELS[entry.family])
+    // Enrolled slots no embedded font in the labeled reference draws. Every
+    // list is empty as of this revision: the enrolled slots of each family are
+    // partitioned across several embedded fonts, and each group's as-shipped
+    // ps-type3 widths still admit one unique scale. The field stays so a
+    // future enrollment that no group can absorb has to appear here rather
+    // than let the drawn set be mistaken for the enrolled set.
+    fixture_undrawable_slots: Object.fromEntries(Object.keys(drawnSlots).map(family => [
+      family,
+      Object.keys(REVIEWED_SLOT_LABELS[family])
         .map(Number)
-        .filter(code => !entry.codes.includes(code))
+        .filter(code => !drawnSlots[family].includes(code))
         .sort((left, right) => left - right),
     ])),
     reviewed_slot_labels: REVIEWED_SLOT_LABELS,
