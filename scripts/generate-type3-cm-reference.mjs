@@ -152,11 +152,8 @@ function generateFixture(type3Root, output) {
     "72 730 moveto (cmmi10: 0B alpha, 19 pi, 1A rho, 21 omega, 3A period, 3B comma, 3D slash) show",
     "/cmmi10 findfont 30 scalefont setfont 72 680 moveto <0B191A213A3B3D> show",
     "/Helvetica findfont 10 scalefont setfont",
-    "72 630 moveto (cmsy10: 00 minus, 01 centered-dot, 06 plus-or-minus witness, 14 less-or-equal, 15 greater-or-equal, 21 right-arrow witness, 30 prime, 6A vertical, 70 square-root) show",
-    "/cmsy10 findfont 30 scalefont setfont 72 580 moveto <000106141521306A70> show",
-    "/Helvetica findfont 10 scalefont setfont",
-    "72 530 moveto (cmex10: 00-03 big paren and bracket, 10-15 larger paren and bracket, 52 textstyle integral, 5A displaystyle integral) show",
-    "/cmex10 findfont 30 scalefont setfont 72 470 moveto <00010203101112131415525A> show",
+    "72 630 moveto (cmsy10: 00 minus, 06 plus-or-minus witness, 21 right-arrow witness, 15 greater-or-equal, 70 square-root) show",
+    "/cmsy10 findfont 30 scalefont setfont 72 580 moveto <0006211570> show",
     "showpage",
   ].join(" ");
   execFileSync("gs", [
@@ -165,7 +162,6 @@ function generateFixture(type3Root, output) {
     `-sOutputFile=${rawOutput}`,
     "-f", path.join(type3Root, "cmmi10.ps"),
     "-f", path.join(type3Root, "cmsy10.ps"),
-    "-f", path.join(type3Root, "cmex10.ps"),
     "-c", program,
   ]);
   execFileSync("qpdf", [
