@@ -61,6 +61,7 @@ function parseTfm(filename) {
 function encodingFamily(filename) {
   if (/^(?:cmmi|cmmib)/u.test(filename)) return "computer-modern-math-italic";
   if (/^(?:cmsy|cmbsy)/u.test(filename)) return "computer-modern-math-symbol";
+  if (/^cmex/u.test(filename)) return "computer-modern-math-extension";
   return `unsupported:${filename.replace(/\.tfm$/u, "")}`;
 }
 
@@ -82,6 +83,28 @@ function requireSourceDefinitions(mfRoot) {
     ["symbol.mf", /geq=oct"025"/u],
     ["sym.mf", /iff known geq: cmchar "Greater than or equal to sign";[\s\S]*?beginchar\(geq,/u],
     ["symbol.mf", /cmchar "Radical sign";\s*beginchar\(oct"160"/u],
+    ["symbol.mf", /cdot=oct"001"/u],
+    ["sym.mf", /iff known cdot: cmchar "Period raised to axis height";/u],
+    ["symbol.mf", /leq=oct"024"/u],
+    ["symbol.mf", /vertical=oct"152"/u],
+    ["sym.mf", /iff known vertical: cmchar "Vertical line";/u],
+    ["symbol.mf", /cmchar "Prime symbol \(intended as superscript only\)";\s*beginchar\(oct"060"/u],
+    // Computer Modern math extension. Only self-contained delimiters and
+    // operators are enrolled; the extensible top, bottom, and module pieces are
+    // fragments of a built-up delimiter rather than characters, so they stay
+    // unmapped and are reported instead of guessed.
+    ["bigdel.mf", /cmchar "\\big left parenthesis";\s*beginchar\(oct"000"/u],
+    ["bigdel.mf", /cmchar "\\big right parenthesis";\s*beginchar\(oct"001"/u],
+    ["bigdel.mf", /cmchar "\\big left bracket";\s*beginchar\(oct"002"/u],
+    ["bigdel.mf", /cmchar "\\big right bracket";\s*beginchar\(oct"003"/u],
+    ["bigdel.mf", /cmchar "\\Big left parenthesis";\s*beginchar\(oct"020"/u],
+    ["bigdel.mf", /cmchar "\\Big right parenthesis";\s*beginchar\(oct"021"/u],
+    ["bigdel.mf", /cmchar "\\bigg left parenthesis";\s*beginchar\(oct"022"/u],
+    ["bigdel.mf", /cmchar "\\bigg right parenthesis";\s*beginchar\(oct"023"/u],
+    ["bigdel.mf", /cmchar "\\bigg left bracket";\s*beginchar\(oct"024"/u],
+    ["bigdel.mf", /cmchar "\\bigg right bracket";\s*beginchar\(oct"025"/u],
+    ["bigop.mf", /cmchar "\\textstyle integral sign";\s*beginchar\(oct"122"/u],
+    ["bigop.mf", /cmchar "\\displaystyle integral sign";\s*beginchar\(oct"132"/u],
   ];
   const sources = new Map();
   for (const [filename, pattern] of checks) {
@@ -109,7 +132,12 @@ function generateMetricModule(tfmRoot, archiveSha256) {
     + `export const CM_TFM_METRICS = Object.freeze(${payload});\n\n`
     + `export const CM_CODEPOINTS = Object.freeze({\n`
     + `  "computer-modern-math-italic": Object.freeze({ 11: "α", 25: "π", 26: "ρ", 33: "ω", 58: ".", 59: ",", 61: "/" }),\n`
-    + `  "computer-modern-math-symbol": Object.freeze({ 0: "−", 21: "≥", 112: "√" }),\n`
+    + `  "computer-modern-math-symbol": Object.freeze({ 0: "−", 1: "·", 20: "≤", 21: "≥", 48: "′", 106: "|", 112: "√" }),\n`
+    + `  "computer-modern-math-extension": Object.freeze({\n`
+    + `    0: "(", 1: ")", 2: "[", 3: "]",\n`
+    + `    16: "(", 17: ")", 18: "(", 19: ")", 20: "[", 21: "]",\n`
+    + `    82: "∫", 90: "∫",\n`
+    + `  }),\n`
     + `});\n\n`
     + `export const CM_WITNESS_CODEPOINTS = Object.freeze({\n`
     + `  "computer-modern-math-symbol": Object.freeze({ 6: "±", 33: "→" }),\n`
@@ -124,8 +152,11 @@ function generateFixture(type3Root, output) {
     "72 730 moveto (cmmi10: 0B alpha, 19 pi, 1A rho, 21 omega, 3A period, 3B comma, 3D slash) show",
     "/cmmi10 findfont 30 scalefont setfont 72 680 moveto <0B191A213A3B3D> show",
     "/Helvetica findfont 10 scalefont setfont",
-    "72 630 moveto (cmsy10: 00 minus, 06 plus-or-minus witness, 21 right-arrow witness, 15 greater-or-equal, 70 square-root) show",
-    "/cmsy10 findfont 30 scalefont setfont 72 580 moveto <0006211570> show",
+    "72 630 moveto (cmsy10: 00 minus, 01 centered-dot, 06 plus-or-minus witness, 14 less-or-equal, 15 greater-or-equal, 21 right-arrow witness, 30 prime, 6A vertical, 70 square-root) show",
+    "/cmsy10 findfont 30 scalefont setfont 72 580 moveto <000106141521306A70> show",
+    "/Helvetica findfont 10 scalefont setfont",
+    "72 530 moveto (cmex10: 00-03 big paren and bracket, 10-15 larger paren and bracket, 52 textstyle integral, 5A displaystyle integral) show",
+    "/cmex10 findfont 30 scalefont setfont 72 470 moveto <00010203101112131415525A> show",
     "showpage",
   ].join(" ");
   execFileSync("gs", [
@@ -134,6 +165,7 @@ function generateFixture(type3Root, output) {
     `-sOutputFile=${rawOutput}`,
     "-f", path.join(type3Root, "cmmi10.ps"),
     "-f", path.join(type3Root, "cmsy10.ps"),
+    "-f", path.join(type3Root, "cmex10.ps"),
     "-c", program,
   ]);
   execFileSync("qpdf", [
@@ -186,7 +218,16 @@ try {
     },
     visual_labels: {
       "computer-modern-math-italic": { 11: "alpha", 25: "pi", 26: "rho", 33: "omega", 58: "period", 59: "comma", 61: "slash" },
-      "computer-modern-math-symbol": { 0: "minus", 6: "plus-or-minus-witness", 21: "greater-or-equal", 33: "right-arrow-witness", 112: "square-root" },
+      "computer-modern-math-symbol": {
+        0: "minus", 1: "centered-dot", 6: "plus-or-minus-witness", 20: "less-or-equal",
+        21: "greater-or-equal", 33: "right-arrow-witness", 48: "prime", 106: "vertical", 112: "square-root",
+      },
+      "computer-modern-math-extension": {
+        0: "big-left-parenthesis", 1: "big-right-parenthesis", 2: "big-left-bracket", 3: "big-right-bracket",
+        16: "Big-left-parenthesis", 17: "Big-right-parenthesis", 18: "bigg-left-parenthesis", 19: "bigg-right-parenthesis",
+        20: "bigg-left-bracket", 21: "bigg-right-bracket",
+        82: "textstyle-integral", 90: "displaystyle-integral",
+      },
     },
   };
   fs.writeFileSync(OUTPUT_PROVENANCE, `${JSON.stringify(provenance, null, 2)}\n`);

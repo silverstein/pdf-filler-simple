@@ -20,9 +20,9 @@
     "qpdf": "qpdf version 12.3.2\nRun qpdf --copyright to see copyright and license information."
   },
   "outputs": {
-    "server/type3-cm-reference.js": "e0abf4ba31a9d657bee0c6783701fc2f13ad62dc198e9aac5ae0ae58d6c751fa",
-    "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "e0abf4ba31a9d657bee0c6783701fc2f13ad62dc198e9aac5ae0ae58d6c751fa",
-    "test/fixtures/eval/extraction/type3-cm-reference.pdf": "7533d527ec58afb4c10cdac24ca42853085eeaf9d371c344e015c0fd74f377eb"
+    "server/type3-cm-reference.js": "db082fe9c245fb5950456e7b4b3045438824342f5c8a040cb8733cbf35aa2ea6",
+    "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "db082fe9c245fb5950456e7b4b3045438824342f5c8a040cb8733cbf35aa2ea6",
+    "test/fixtures/eval/extraction/type3-cm-reference.pdf": "0c489dd5856b570513758f15a5daca4834af279e698a158762b987330ef58eb5"
   },
   "visual_labels": {
     "computer-modern-math-italic": {
@@ -36,10 +36,28 @@
     },
     "computer-modern-math-symbol": {
       "0": "minus",
+      "1": "centered-dot",
       "6": "plus-or-minus-witness",
+      "20": "less-or-equal",
       "21": "greater-or-equal",
       "33": "right-arrow-witness",
+      "48": "prime",
+      "106": "vertical",
       "112": "square-root"
+    },
+    "computer-modern-math-extension": {
+      "0": "big-left-parenthesis",
+      "1": "big-right-parenthesis",
+      "2": "big-left-bracket",
+      "3": "big-right-bracket",
+      "16": "Big-left-parenthesis",
+      "17": "Big-right-parenthesis",
+      "18": "bigg-left-parenthesis",
+      "19": "bigg-right-parenthesis",
+      "20": "bigg-left-bracket",
+      "21": "bigg-right-bracket",
+      "82": "textstyle-integral",
+      "90": "displaystyle-integral"
     }
   }
 }
