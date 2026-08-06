@@ -936,7 +936,25 @@ for (const entry of TYPE3_RECOVERY_REGISTRY) {
     throw new Error(`Type-3 registry ${entry.id} disagrees with the official Computer Modern encoding`);
   }
   const officialWitnesses = { ...CM_CODEPOINTS[entry.family], ...CM_WITNESS_CODEPOINTS[entry.family] };
-  if (entry.witnesses.length < 2 || entry.witnesses.some(witness => !officialWitnesses[witness.original_char_code])) {
+  if (entry.witnesses.some(witness => !officialWitnesses[witness.original_char_code])) {
+    throw new Error(`Type-3 registry ${entry.id} lacks official Computer Modern witnesses`);
+  }
+  // Two independent witnesses are the default corroboration. A dvips subset can
+  // legitimately hold fewer official glyphs than that: an integrals-only cmex
+  // font carries exactly two. Such an entry may name a single witness only by
+  // declaring its font's complete official footprint, which the matcher then
+  // requires to be present and matching in full and to have nothing else
+  // enrolled outside it. That is strictly more of the font's evidence than the
+  // two-witness rule asks for, not less.
+  const footprint = entry.complete_font_enrollment ?? null;
+  if (entry.witnesses.length >= 2) continue;
+  const declared = new Set(footprint ?? []);
+  const expected = new Set([entry.original_char_code, ...entry.witnesses.map(witness => witness.original_char_code)]);
+  if (entry.witnesses.length !== 1
+    || !footprint
+    || declared.size !== expected.size
+    || [...expected].some(code => !declared.has(code))
+    || [...declared].some(code => officialWitnesses[code] === undefined)) {
     throw new Error(`Type-3 registry ${entry.id} lacks two official Computer Modern witnesses`);
   }
 }
@@ -1381,6 +1399,22 @@ function charProcDigestForCode(font, rawFont, code) {
   return type3CharProcSha256(font?.charProcOperatorList?.[glyphId]);
 }
 
+/**
+ * True when the font carries a drawable raster for exactly the declared
+ * officially enrolled codes of its family and for no other enrolled code. A
+ * single-witness entry relies on this so that its reduced corroboration is
+ * still the whole of the evidence its font can offer.
+ */
+function fontMatchesCompleteEnrollment(font, rawFont, family, declaredCodes) {
+  const declared = new Set(declaredCodes);
+  for (const key of Object.keys(CM_CODEPOINTS[family] ?? {})) {
+    const code = Number(key);
+    const present = charProcDigestForCode(font, rawFont, code) !== null;
+    if (present !== declared.has(code)) return false;
+  }
+  return true;
+}
+
 function collectType3GlyphRecoveries({ textContent, operators, pdfjsPage, pdfLibPage, pdfjsLib }) {
   const operatorEvidence = operatorGlyphTokens(operators, pdfjsPage, pdfjsLib);
   if (!operatorEvidence) return new Map();
@@ -1415,6 +1449,8 @@ function collectType3GlyphRecoveries({ textContent, operators, pdfjsPage, pdfLib
       if (targetDigest !== registry.charproc_sha256) continue;
       const witnessDigests = registry.witnesses.map(witness => charProcDigestForCode(font, rawFont, witness.original_char_code));
       if (witnessDigests.some((digest, index) => digest !== registry.witnesses[index].charproc_sha256)) continue;
+      if (registry.complete_font_enrollment
+        && !fontMatchesCompleteEnrollment(font, rawFont, family, registry.complete_font_enrollment)) continue;
       for (const token of fontTokens) {
         const glyph = token.glyph;
         if (glyph.originalCharCode !== registry.original_char_code || glyph.unicode !== registry.source_unicode) continue;
@@ -1552,7 +1588,9 @@ export function inspectType3GlyphEvidenceForPage({ textContent, operators, pdfjs
         && entry.source_unicode === token.glyph.unicode
         && entry.target_unicode === official?.[code]
         && entry.charproc_sha256 === digest
-        && entry.witnesses.every(witness => mappedCodeCharprocSha256[witness.original_char_code] === witness.charproc_sha256))
+        && entry.witnesses.every(witness => mappedCodeCharprocSha256[witness.original_char_code] === witness.charproc_sha256)
+        && (!entry.complete_font_enrollment
+          || fontMatchesCompleteEnrollment(font, rawFont, family, entry.complete_font_enrollment)))
         .map(entry => entry.id)
         .sort();
       occurrences.push({
