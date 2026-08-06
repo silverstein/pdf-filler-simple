@@ -124,13 +124,13 @@ function markCollapsedAlpha(item) {
     font_name: item.font_name,
     registry_id: "cmmi-pk-raster-alpha-e688a8-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
-    charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259",
-    witness_charproc_sha256: [
-      "780b04fa47830ca782211b86dbedfe0adec0445bdf94d538bfe7adde08ed9445",
-      "1500df39391626d02f9e98132f991f71899612069298e52340e12fb65590836f",
+    glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093",
+    witness_glyph_sha256: [
+      "751c36c470d1f0292b9d39de8cfec243d0e1e4ca3b2a2648676a8048cdf75322",
+      "ff3b8028f135ce4dbf41a3e3fa8415f54615e9c3e7253d13e9070a71679ccebc",
     ],
     tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
-    canonicalizer_version: "pdfjs-charproc-json-v1",
+    glyph_evidence_version: "pdfjs-type3-glyph-evidence-v2",
   }];
   item.geometry_provenance.formula = "pdfjs_collapsed_type3_operator_advance_box_approximation";
   item.geometry_provenance.advance_source = "operator_advance_width";

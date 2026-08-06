@@ -83,6 +83,9 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-08-07: list_pdfs gains an offset parameter so a flat folder holding
 // more than 200 PDFs is fully reachable, and its description states the cap
 // and the paging. Previously c65cd62a1d46c6b5837aa7bf12a1851717e4b09dc274182dcb07dac982e8fc64.
+// 2026-08-06: read_pdf_layout glyph-recovery evidence is re-keyed onto the
+// decoded Type-3 image mask, renaming charproc_sha256/witness_charproc_sha256/
+// canonicalizer_version to glyph_sha256/witness_glyph_sha256/glyph_evidence_version.
 const TOOL_CONTRACT_SHA256 = "a594a3a23f6722fb121b9d2a57bad03fc60fda5e352583f07139d191914c8d52";
 
 const CLOSED_READ = Object.freeze({

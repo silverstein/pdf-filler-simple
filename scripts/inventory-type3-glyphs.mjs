@@ -91,8 +91,8 @@ async function main() {
         occurrence.original_char_code,
         occurrence.source_unicode,
         occurrence.intended_unicode,
-        occurrence.charproc_sha256,
-        occurrence.mapped_code_charproc_sha256,
+        occurrence.glyph_sha256,
+        occurrence.mapped_code_glyph_sha256,
         occurrence.registry_evidence_match_ids,
       ]);
       if (!groups.has(key)) groups.set(key, { ...occurrence, count: 0, pages: new Set(), locations_by_page: {} });
@@ -110,18 +110,18 @@ async function main() {
       source_unicode_codepoints: scalarLabel(group.source_unicode),
       intended_unicode: group.intended_unicode,
       intended_unicode_codepoints: scalarLabel(group.intended_unicode),
-      charproc_sha256: group.charproc_sha256,
-      mapped_code_charproc_sha256: group.mapped_code_charproc_sha256,
+      glyph_sha256: group.glyph_sha256,
+      mapped_code_glyph_sha256: group.mapped_code_glyph_sha256,
       registry_evidence_match_ids: group.registry_evidence_match_ids,
       count: group.count,
       pages: [...group.pages].sort((left, right) => left - right),
       locations_by_page: group.locations_by_page,
       tfm_reference_version: group.tfm_reference_version,
-      canonicalizer_version: group.canonicalizer_version,
+      glyph_evidence_version: group.glyph_evidence_version,
     })).sort((left, right) => right.count - left.count
       || String(left.family).localeCompare(String(right.family))
       || left.original_char_code - right.original_char_code
-      || String(left.charproc_sha256).localeCompare(String(right.charproc_sha256)));
+      || String(left.glyph_sha256).localeCompare(String(right.glyph_sha256)));
     const abstentionGroups = new Map();
     for (const abstention of abstentions) {
       const key = canonicalJson([abstention.reason, abstention.family ?? null]);

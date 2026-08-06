@@ -13,6 +13,7 @@ import {
   extractPdfLayout,
   pdfjsFactoryDirectory,
   type3CharProcSha256,
+  type3GlyphEvidenceSha256,
   uniqueComputerModernFamily,
   validatePdfLayoutSemantics,
   validatePdfLayoutSourceEvidence,
@@ -68,6 +69,100 @@ describe("qualified legacy Type-3 glyph evidence", () => {
       "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
     );
     expect(type3CharProcSha256({ fnArray: [49], argsArray: [new Float32Array(100001)] })).toBeNull();
+  });
+
+  /**
+   * The shipped recovery key. `minusCharProc` is a real dvipdfmx-shaped Type-3
+   * glyph: one 41x3 inline image mask, placed by a `cm` inside a `q`/`Q`, under
+   * a y-flipping FontMatrix. Everything asserted below is a property of the
+   * decoded mask, and everything varied below is a property of the producer.
+   */
+  describe("producer-independent Type-3 glyph shape key", () => {
+    // PDF.js operator numbers, taken from the pinned build rather than typed,
+    // so an upstream renumbering fails here instead of silently keying on the
+    // wrong operators.
+    let OPS = null;
+    beforeAll(async () => {
+      ({ OPS } = await import("pdfjs-dist/legacy/build/pdf.mjs"));
+    });
+    const FLIPPED = [1, 0, 0, -1, 0, 0];
+
+    it("keys the same raster identically across producer idiom and placement", () => {
+      const key = type3GlyphEvidenceSha256(minusCharProc(), FLIPPED, OPS);
+      expect(key).toMatch(/^[0-9a-f]{64}$/);
+
+      // Same mask, moved: a different producer would not put the bitmap at the
+      // same offset, and the old CharProc digest folded that offset in.
+      const moved = minusCharProc();
+      moved.argsArray[2] = [41, 0, 0, 3, 12, 30.25];
+      expect(type3GlyphEvidenceSha256(moved, FLIPPED, OPS)).toBe(key);
+
+      // Same mask, no q/Q wrapper and different declared glyph metrics: the
+      // dvips idiom rather than the dvipdfmx one.
+      const bare = {
+        fnArray: [OPS.setCharWidthAndBounds, OPS.transform, OPS.constructPath],
+        argsArray: [[52, 0, 0, 0, 41, 3], [41, 0, 0, 3, 0, 0], minusCharProc().argsArray[3]],
+      };
+      expect(type3GlyphEvidenceSha256(bare, [1, 0, 0, 1, 0, 0], OPS)).toBe(key);
+
+      // The v1 CharProc digests of the same three programs all differ, which
+      // is exactly the portability defect this key exists to remove.
+      expect(new Set([minusCharProc(), moved, bare].map(type3CharProcSha256)).size).toBe(3);
+    });
+
+    it("refuses to conflate a different raster, mirror, or grid", () => {
+      const key = type3GlyphEvidenceSha256(minusCharProc(), FLIPPED, OPS);
+      const oneBit = minusCharProc();
+      oneBit.argsArray[3][1][0][14] = 0;
+      expect(type3GlyphEvidenceSha256(oneBit, FLIPPED, OPS)).not.toBe(key);
+      // An unflipped FontMatrix paints the stored rows the other way up, so the
+      // same samples are a different glyph and must key differently. The 41x3
+      // bar above is its own mirror image, so this needs an asymmetric raster:
+      // an L filling row 0 column 0 and all of row 1 of a 2x2 grid.
+      const asymmetric = () => ({
+        fnArray: [OPS.setCharWidthAndBounds, OPS.transform, OPS.constructPath],
+        argsArray: [
+          [4, 0, 0, 0, 2, 2],
+          [2, 0, 0, 2, 0, 0],
+          [94, [new Float32Array([
+            0, 0, 1, 1, 0.5, 1, 1, 0.5, 0.5, 1, 1, 0.5, 1, 1, 0, 1, 0, 0,
+          ])], new Float32Array([0, 0, 2, 2])],
+        ],
+      });
+      const upright = type3GlyphEvidenceSha256(asymmetric(), [1, 0, 0, 1, 0, 0], OPS);
+      const mirrored = type3GlyphEvidenceSha256(asymmetric(), FLIPPED, OPS);
+      expect(upright).toMatch(/^[0-9a-f]{64}$/);
+      expect(mirrored).not.toBe(upright);
+      // Mirrored twice is the identity, so the normalisation is a genuine
+      // orientation fix and not an arbitrary relabelling.
+      expect(type3GlyphEvidenceSha256(asymmetric(), [-1, 0, 0, -1, 0, 0], OPS))
+        .not.toBe(mirrored);
+      const wider = minusCharProc();
+      wider.argsArray[3][2] = new Float32Array([0, 0, 82, 3]);
+      expect(type3GlyphEvidenceSha256(wider, FLIPPED, OPS)).not.toBe(key);
+      // A mask key and an operator-lane key are domain-separated and cannot
+      // collide even when they cover the same glyph program.
+      expect(key).not.toBe(type3CharProcSha256(minusCharProc()));
+    });
+
+    it("falls back to the exact operator digest for a program it cannot decode", () => {
+      const outline = { fnArray: [OPS.setCharWidthAndBounds, OPS.fill], argsArray: [[52, 0, 0, 0, 4, 4], null] };
+      const outlineKey = type3GlyphEvidenceSha256(outline, FLIPPED, OPS);
+      expect(outlineKey).toMatch(/^[0-9a-f]{64}$/);
+      expect(outlineKey).not.toBe(type3CharProcSha256(outline));
+      // Two painted objects are not a single decodable mask, and a rotated
+      // placement has no unambiguous mirror decomposition. Both leave the mask
+      // lane rather than being keyed on a guess.
+      const twice = minusCharProc();
+      twice.fnArray = [...twice.fnArray, 91];
+      twice.argsArray = [...twice.argsArray, minusCharProc().argsArray[3]];
+      expect(type3GlyphEvidenceSha256(twice, FLIPPED, OPS)).toBe(
+        type3GlyphEvidenceSha256({ fnArray: twice.fnArray, argsArray: twice.argsArray }, [0, 1, -1, 0, 0, 0], OPS),
+      );
+      const rotated = type3GlyphEvidenceSha256(minusCharProc(), [0, 1, -1, 0, 0, 0], OPS);
+      expect(rotated).not.toBe(type3GlyphEvidenceSha256(minusCharProc(), FLIPPED, OPS));
+      expect(type3GlyphEvidenceSha256(null, FLIPPED, OPS)).toBeNull();
+    });
   });
 
   it("requires one unique official Computer Modern encoding family", () => {
@@ -1343,13 +1438,13 @@ describe("Extraction IR hostile reconstruction", () => {
       font_name: item.font_name,
       registry_id: "cmsy-pk-raster-minus-v1",
       qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
-      charproc_sha256: "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
-      witness_charproc_sha256: [
-        "b57ae2e4cf2525371916a1a4bcf0c55165b9230b1038f2d5451cdbbad5a51dcc",
-        "0c8ca6c662e9ca24f90a61f53206ea0719476473861471a1b04bf489b3cc37a3",
+      glyph_sha256: "3f6fdf2abc68f5693f9ea7cdec4d94214a57fb953fb66c747b86dd1f6293d807",
+      witness_glyph_sha256: [
+        "73a2cec4aa27d5042b9f4275179fbf2bb7b99413537597ede0537b7f19c8384c",
+        "f15e035b5867fbee9918125e49566e00b94dcd8422649079c87207e94f7a9e63",
       ],
       tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
-      canonicalizer_version: "pdfjs-charproc-json-v1",
+      glyph_evidence_version: "pdfjs-type3-glyph-evidence-v2",
     }];
     expect(() => validatePdfLayoutSemantics(forged)).toThrow(/registry evidence is invalid/);
   });
@@ -1377,13 +1472,13 @@ describe("Extraction IR hostile reconstruction", () => {
       font_name: item.font_name,
       registry_id: "cmsy-pk-raster-minus-v1",
       qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
-      charproc_sha256: "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
-      witness_charproc_sha256: [
-        "b57ae2e4cf2525371916a1a4bcf0c55165b9230b1038f2d5451cdbbad5a51dcc",
-        "0c8ca6c662e9ca24f90a61f53206ea0719476473861471a1b04bf489b3cc37a3",
+      glyph_sha256: "3f6fdf2abc68f5693f9ea7cdec4d94214a57fb953fb66c747b86dd1f6293d807",
+      witness_glyph_sha256: [
+        "73a2cec4aa27d5042b9f4275179fbf2bb7b99413537597ede0537b7f19c8384c",
+        "f15e035b5867fbee9918125e49566e00b94dcd8422649079c87207e94f7a9e63",
       ],
       tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
-      canonicalizer_version: "pdfjs-charproc-json-v1",
+      glyph_evidence_version: "pdfjs-type3-glyph-evidence-v2",
     }];
     forged.pages[0].lines[0].text = "−";
     forged.pages[0].flow_text = "−";

@@ -30,7 +30,7 @@
     }
   },
   "layout_contract_bindings": {
-    "layout_output_schema_sha256": "55cd7faeb1d5d84710416cedbf3ebd131d861c0451051328c427469e7e91fb3f",
+    "layout_output_schema_sha256": "32a19880d173639311152afdded7791981144b5e0c22d796e69fb9ee12b71182",
     "layout_evidence_contract_sha256": "39cb7e89cd65558bb661ebc0edab517dabc9398908750de6c3b56d511b887bef"
   },
   "validator_sources": [
@@ -55,8 +55,8 @@
     {
       "role": "layout_extraction_module",
       "path": "server/layout-extraction.js",
-      "bytes": 226574,
-      "sha256": "67985913e8ea78c85deee53efb1a8d273fe82ac9522e052f3d56b60b3fdab434"
+      "bytes": 241647,
+      "sha256": "7d85c75d77f3a7b860f214c3e65ca82321d5a121c675fd9403cea251a6eeddc4"
     },
     {
       "role": "type3_cm_reference_module",
@@ -79,8 +79,8 @@
     {
       "role": "output_schemas_module",
       "path": "server/output-schemas.js",
-      "bytes": 51704,
-      "sha256": "865e1d3e56f47f55bee663a150314e818ed71d24ce28636d2401896038001cac"
+      "bytes": 51699,
+      "sha256": "e8f4b2fc99a58a28c9466a86c944efd03842bd946945c5b7cfc274a19fab0b57"
     },
     {
       "role": "package_json",
@@ -119,7 +119,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "f79c19f4d9b377e363e3336a365f9d4a4f5df0704a72f03895e930c3833ce468",
+  "validator_source_set_sha256": "0a5f70dacb1ab47b8be38ce92fe562a81472fdaa3cbfbbf2a846a99bab042c1b",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",

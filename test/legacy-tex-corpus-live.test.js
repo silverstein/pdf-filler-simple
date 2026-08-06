@@ -13,14 +13,32 @@ import { uniqueComputerModernFamily } from "../server/layout-extraction.js";
  * baseline.
  *
  * Nothing in this file describes desired behaviour. Every recorded
- * `strict_recovery_count` here is zero, and that zero IS the defect this
+ * `strict_recovery_count` here is still zero, and that zero IS the defect this
  * corpus exists to track: PDF Tools recovers Computer Modern Type-3 bitmap
  * mathematics on the Shannon document and recovers none of it on any of these
  * five, even though they are the same fonts drawn by the same era of
- * toolchain. Three of the four cr.yp.to papers do not even resolve a font
- * family, and none of the four links a single glyph occurrence to a raw
- * Type-3 font. The numbers below are what the shipped code does today,
- * measured, not what it should do.
+ * toolchain. The numbers below are what the shipped code does today, measured,
+ * not what it should do.
+ *
+ * Two of the three stacked causes have since been removed, and the baseline
+ * was raised to record that:
+ *
+ *   1. The linker used to drop zero-width slots from a font's width map while
+ *      still demanding an exact width match for every drawn glyph, so a single
+ *      legitimately zero-width glyph voided the whole font. All four
+ *      Ghostscript 6.52 papers linked exactly nothing; they now link 52,493
+ *      occurrences between them.
+ *   2. The recovery key used to be the CharProc operator list, which folds in
+ *      the producer's idiom and the per-glyph placement matrix. It is now the
+ *      decoded image mask.
+ *
+ * What is left is the third cause, and it is why every recovery count here is
+ * still zero: none of these documents resolves a Computer Modern family for
+ * the fonts that carry its mathematics — three of the four cr.yp.to papers
+ * resolve no family at all — and the one document that does resolve families
+ * for ten fonts (astro-ph) rasterised them at its own PK resolution, which
+ * matches no enrolled shape. Producer-independent family identification from
+ * matched shape sets is the next step, not this one.
  *
  * Interface: one directory variable, `PDF_TOOLS_LEGACY_CORPUS_DIR`, holding
  * all five documents under the fixed basenames listed in DOCUMENTS. A single
@@ -91,8 +109,8 @@ const BASELINE = Object.freeze({
     layout_admissible_font_count: 19,
     computer_modern_family_font_count: 0,
     observed_type3_occurrence_count: 78175,
-    linked_type3_occurrence_count: 0,
-    omitted_type3_occurrence_count: 78175,
+    linked_type3_occurrence_count: 5440,
+    omitted_type3_occurrence_count: 72735,
     classified_occurrence_count: 0,
     officially_named_occurrence_count: 0,
     registry_evidence_occurrence_count: 0,
@@ -108,8 +126,8 @@ const BASELINE = Object.freeze({
     layout_admissible_font_count: 10,
     computer_modern_family_font_count: 0,
     observed_type3_occurrence_count: 40704,
-    linked_type3_occurrence_count: 0,
-    omitted_type3_occurrence_count: 40704,
+    linked_type3_occurrence_count: 7484,
+    omitted_type3_occurrence_count: 33220,
     classified_occurrence_count: 0,
     officially_named_occurrence_count: 0,
     registry_evidence_occurrence_count: 0,
@@ -125,8 +143,8 @@ const BASELINE = Object.freeze({
     layout_admissible_font_count: 18,
     computer_modern_family_font_count: 0,
     observed_type3_occurrence_count: 92502,
-    linked_type3_occurrence_count: 0,
-    omitted_type3_occurrence_count: 92502,
+    linked_type3_occurrence_count: 17335,
+    omitted_type3_occurrence_count: 75167,
     classified_occurrence_count: 0,
     officially_named_occurrence_count: 0,
     registry_evidence_occurrence_count: 0,
@@ -134,34 +152,35 @@ const BASELINE = Object.freeze({
     abstention_reasons: Object.freeze(["raw_type3_font_link_ambiguous_or_unavailable"]),
   }),
   "sf": Object.freeze({
+    // Exactly one sf font resolves a Computer Modern family, and the ten
+    // occurrences it now classifies still recover nothing: their rasters are
+    // this document's own PK resolution and match no enrolled shape.
     producer: "GNU Ghostscript 6.52",
     creator: null,
     page_count: 15,
     size_bytes: 268946,
     type3_font_count: 16,
     layout_admissible_font_count: 15,
-    // Exactly one sf font does resolve a Computer Modern family, and it still
-    // recovers nothing, because no occurrence in this document ever links to a
-    // raw font in the first place. Family resolution is not the only block.
     computer_modern_family_font_count: 1,
     observed_type3_occurrence_count: 74271,
-    linked_type3_occurrence_count: 0,
-    omitted_type3_occurrence_count: 74271,
-    classified_occurrence_count: 0,
-    officially_named_occurrence_count: 0,
+    linked_type3_occurrence_count: 22234,
+    omitted_type3_occurrence_count: 52037,
+    classified_occurrence_count: 10,
+    officially_named_occurrence_count: 2,
     registry_evidence_occurrence_count: 0,
     strict_recovery_count: 0,
     abstention_reasons: Object.freeze(["raw_type3_font_link_ambiguous_or_unavailable"]),
   }),
   "astro-ph-9402001": Object.freeze({
+    // 18 of the 22 fonts carry a /ToUnicode and are deliberately left to
+    // PDF.js, so 10 fonts whose widths do fingerprint a Computer Modern
+    // family never become link candidates. This document is unaffected by
+    // the zero-width linker fix: its drawn glyphs all had positive widths.
     producer: "GPL Ghostscript GIT PRERELEASE 9.22",
     creator: "dvips 5.518",
     page_count: 37,
     size_bytes: 929486,
     type3_font_count: 22,
-    // 18 of the 22 fonts carry a /ToUnicode and are refused by the linker's
-    // admission rules outright, so 10 fonts whose widths do fingerprint a
-    // Computer Modern family never become link candidates.
     layout_admissible_font_count: 4,
     computer_modern_family_font_count: 10,
     observed_type3_occurrence_count: 100114,
@@ -169,9 +188,6 @@ const BASELINE = Object.freeze({
     omitted_type3_occurrence_count: 100070,
     classified_occurrence_count: 12,
     officially_named_occurrence_count: 11,
-    // The study's second cause, isolated: codes are preserved and 11
-    // occurrences carry an official Unicode mapping, yet not one matches any
-    // registry CharProc digest, so nothing is recovered.
     registry_evidence_occurrence_count: 0,
     strict_recovery_count: 0,
     abstention_reasons: Object.freeze(["raw_type3_font_link_ambiguous_or_unavailable"]),
@@ -196,11 +212,13 @@ function type3FontDictionaries(pdfLibDocument) {
 }
 
 /**
- * Positive-width slots of a Type-3 font, built the way the shipped
- * `rawType3Fonts` builds them — zero widths dropped, because
- * `metricScaleInterval` cannot fit a scale to an observed zero. Measured here
- * independently of that private helper so the baseline records a document
- * fact rather than a re-export of the code under study.
+ * Positive-width slots of a Type-3 font: the view the shipped `rawType3Fonts`
+ * hands to the family fingerprint, with zero widths dropped because
+ * `metricScaleInterval` cannot fit a scale to an observed zero. The linker
+ * keeps those zeros — that is the fix this baseline records — but the
+ * fingerprint must not see them. Measured here independently of that private
+ * helper so the baseline records a document fact rather than a re-export of
+ * the code under study.
  */
 function positiveWidthSlots(font) {
   const first = font.lookup(PDFName.of("FirstChar"), PDFNumber)?.asNumber();
@@ -217,11 +235,14 @@ function positiveWidthSlots(font) {
   return widths.size > 0 ? { first, last, widths } : null;
 }
 
-/** Mirrors the admission rules `rawType3Fonts` applies before a font is even
- * a link candidate: no `/ToUnicode`, codes confined to 0..127, a well-formed
- * `/Widths`, and a present `/Encoding /Differences` array. This is a close
- * mirror rather than that private helper itself, so the figure it produces is
- * a readable document fact and not a re-export of the code under study. */
+/** Mirrors the rules that decide whether a font can be the *answer* the
+ * linker returns: no `/ToUnicode`, codes confined to 0..127, a well-formed
+ * `/Widths`, and a present `/Encoding /Differences` array. Every other Type-3
+ * font on the page is still parsed and still competes for the link, so a
+ * glyph set matching two fonts abstains rather than picking the recoverable
+ * one; only the winner has to clear this bar. This is a close mirror rather
+ * than that private helper itself, so the figure it produces is a readable
+ * document fact and not a re-export of the code under study. */
 function layoutAdmissible(context, font, slots) {
   if (font.has(PDFName.of("ToUnicode"))) return false;
   if (!slots || slots.last > 127) return false;
@@ -366,9 +387,12 @@ describe.runIf(Boolean(CORPUS_DIR))("legacy dvips-era Computer Modern Type-3 cor
     ).toBe(0);
 
     // The four cr.yp.to papers are the hardest case: GNU Ghostscript 6.52
-    // repacks glyph names to /a0 /a1 /a2..., and not one of their 285,652
-    // observed occurrences even links to a raw Type-3 font, so the pipeline
-    // never reaches the family fingerprint or any CharProc digest at all.
+    // repacks glyph names to /a0 /a1 /a2.... Their 285,652 observed
+    // occurrences used to link to a raw Type-3 font exactly zero times,
+    // because every one of these fonts declares at least one zero-width slot
+    // and the linker treated a declared zero as a missing width. They now
+    // link, which is the whole of what the linker fix bought; what they still
+    // cannot do is put a Computer Modern family behind the link.
     const ghostscript652 = measured.filter(entry => entry.producer === "GNU Ghostscript 6.52");
     expect(ghostscript652).toHaveLength(4);
     expect(ghostscript652.reduce((sum, entry) => sum + entry.observed_type3_occurrence_count, 0))
@@ -376,9 +400,14 @@ describe.runIf(Boolean(CORPUS_DIR))("legacy dvips-era Computer Modern Type-3 cor
     for (const entry of ghostscript652) {
       expect(
         entry.linked_type3_occurrence_count,
-        "a Ghostscript 6.52 paper now links Type-3 occurrences: update the recorded baseline deliberately",
-      ).toBe(0);
-      expect(entry.classified_occurrence_count).toBe(0);
+        "a Ghostscript 6.52 paper stopped linking Type-3 occurrences: the zero-width linker fix regressed",
+      ).toBeGreaterThan(0);
     }
+    // Family resolution, not linking, is what now blocks the four papers, and
+    // it blocks all but ten of their linked occurrences.
+    expect(
+      ghostscript652.reduce((sum, entry) => sum + entry.classified_occurrence_count, 0),
+      "a Ghostscript 6.52 paper now classifies more occurrences into a Computer Modern family: update the recorded baseline deliberately",
+    ).toBe(10);
   }, 600_000);
 });

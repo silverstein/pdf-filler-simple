@@ -653,10 +653,10 @@ const layoutGlyphRecovery = object({
   font_name: nullable(string),
   registry_id: string,
   qualification: string,
-  charproc_sha256: string,
-  witness_charproc_sha256: stringArray,
+  glyph_sha256: string,
+  witness_glyph_sha256: stringArray,
   tfm_reference_version: string,
-  canonicalizer_version: string,
+  glyph_evidence_version: string,
 });
 const layoutRawItemProperties = {
   id: string,
