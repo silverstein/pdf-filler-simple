@@ -936,6 +936,58 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
       Object.freeze({ original_char_code: 6, charproc_sha256: "b68b24c69a8802a7e57a1cabaa7c1153a0a305e5d29ba308b78d60c16a5464b7" }),
     ]),
   }),
+  Object.freeze({
+    id: "cmmi-pk-raster-eta-2fd7e5-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 17,
+    source_unicode: "\u0011",
+    target_unicode: "η",
+    charproc_sha256: "2fd7e5e9b50a6e5116b22bf8cc472eaaeccdc66b09680cbc8a67a9f10544f8da",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+      Object.freeze({ original_char_code: 25, charproc_sha256: "780b04fa47830ca782211b86dbedfe0adec0445bdf94d538bfe7adde08ed9445" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-theta-194bcc-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 18,
+    source_unicode: "\u0012",
+    target_unicode: "θ",
+    charproc_sha256: "194bccf1b8ad8839f03bf6ebb90cf67cc7c97c8e386f21189d59900109299e58",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+      Object.freeze({ original_char_code: 25, charproc_sha256: "780b04fa47830ca782211b86dbedfe0adec0445bdf94d538bfe7adde08ed9445" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmmi-pk-raster-sigma-dae3aa-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-italic",
+    original_char_code: 27,
+    source_unicode: "\u001b",
+    target_unicode: "σ",
+    charproc_sha256: "dae3aa06efc876bfa8242e02ad384046ce039fca3ff87523faab17bce15a75de",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 11, charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259" }),
+      Object.freeze({ original_char_code: 25, charproc_sha256: "780b04fa47830ca782211b86dbedfe0adec0445bdf94d538bfe7adde08ed9445" }),
+    ]),
+  }),
+  Object.freeze({
+    id: "cmsy-pk-raster-plus-or-minus-4dedb5-v1",
+    qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+    family: "computer-modern-math-symbol",
+    original_char_code: 6,
+    source_unicode: "\u0006",
+    target_unicode: "±",
+    charproc_sha256: "4dedb5543e5ab5817e06920d50b7983b3febaf06c22feeb83bdbb3d8449e2c3c",
+    witnesses: Object.freeze([
+      Object.freeze({ original_char_code: 0, charproc_sha256: "fb1f6bf10138511bcefade47467b3e2f9ae691ab3dab097914be1f0f66305470" }),
+      Object.freeze({ original_char_code: 21, charproc_sha256: "05b4a9d88c1df64b3ac339ae6bb7ed82383b93bb08512842452db43453a28970" }),
+    ]),
+  }),
 ]);
 const TYPE3_RECOVERY_BY_ID = new Map(TYPE3_RECOVERY_REGISTRY.map(entry => [entry.id, entry]));
 
