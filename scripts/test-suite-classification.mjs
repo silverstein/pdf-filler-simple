@@ -83,6 +83,7 @@ export const CHECKOUT_LOCAL_MUTATING_TEST_SUITES = Object.freeze([
   "test/render-pdf-page.test.js",
   "test/signatures.test.js",
   "test/temp-directory.test.js",
+  "test/type3-recovery-gate.test.js",
   "test/validate-pdf.test.js",
   "test/xfa-guards.test.js",
 ]);
@@ -180,6 +181,15 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
       "bfb22ac97868fe7bb9a1d7da4651099c672c2ac8fec83b6b51340bbeb36dd305",
     ]),
     reason: "Loads a verified generated controller outside the checkout.",
+  }),
+  Object.freeze({
+    file: "test/type3-recovery-gate.test.js",
+    count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
+    fingerprints: Object.freeze([
+      "49ea2a4c75eea36e13ac9eeb361b35d5e909e755cd06a0aa72d07cf6a5621683",
+    ]),
+    reason: "Imports deliberately malformed copies of the recovery module to prove each Type-3 registry startup invariant rejects.",
   }),
   Object.freeze({
     file: "vendor/qpdf-wasm/smoke.mjs",

@@ -17,7 +17,7 @@ import {
   validatePdfLayoutSemantics,
   validatePdfLayoutSourceEvidence,
 } from "../server/layout-extraction.js";
-import { CM_WITNESS_CODEPOINTS } from "../server/type3-cm-reference.js";
+import { CM_CODEPOINTS, CM_WITNESS_CODEPOINTS } from "../server/type3-cm-reference.js";
 import {
   TOOL_OUTPUT_SCHEMAS,
   TOOL_SUCCESS_OUTPUT_SCHEMAS,
@@ -101,11 +101,53 @@ describe("qualified legacy Type-3 glyph evidence", () => {
     expect(digest(await fs.readFile(fixture))).toBe(provenance.outputs["test/fixtures/eval/extraction/type3-cm-reference.pdf"]);
     expect(digest(await fs.readFile(module))).toBe(provenance.outputs["server/type3-cm-reference.js"]);
     expect(digest(await fs.readFile(shareModule))).toBe(provenance.outputs["pdf-toolkit-mcp-share/server/type3-cm-reference.js"]);
-    expect(provenance.visual_labels["computer-modern-math-italic"][33]).toBe("omega");
-    expect(provenance.visual_labels["computer-modern-math-symbol"][0]).toBe("minus");
-    expect(provenance.visual_labels["computer-modern-math-symbol"][6]).toBe("plus-or-minus-witness");
-    expect(provenance.visual_labels["computer-modern-math-symbol"][33]).toBe("right-arrow-witness");
-    expect(CM_WITNESS_CODEPOINTS["computer-modern-math-symbol"]).toEqual({ 6: "±", 33: "→" });
+    expect(provenance.reviewed_slot_labels["computer-modern-math-italic"][33]).toBe("omega");
+    expect(provenance.reviewed_slot_labels["computer-modern-math-symbol"][0]).toBe("minus");
+    expect(provenance.reviewed_slot_labels["computer-modern-math-symbol"][6]).toBe("plus-or-minus");
+    expect(provenance.reviewed_slot_labels["computer-modern-math-symbol"][33]).toBe("right-arrow");
+    // The fixture is the labeled artifact, so what it actually draws is pinned
+    // separately from what has been reviewed. Enrolling a slot must not quietly
+    // imply this PDF demonstrates it. Both slot sets are measured out of the
+    // emitted PDF by the generator, so this checks them against the shipped
+    // encoding tables rather than against a second copy of the same numbers:
+    // a wrong literal in the provenance cannot satisfy CM_CODEPOINTS.
+    const families = Object.keys(CM_CODEPOINTS);
+    expect(families).toEqual([
+      "computer-modern-math-italic",
+      "computer-modern-math-symbol",
+      "computer-modern-math-extension",
+    ]);
+    expect(Object.keys(provenance.fixture_drawn_slots)).toEqual(families);
+    for (const family of families) {
+      const enrolled = Object.keys(CM_CODEPOINTS[family]).map(Number).sort((left, right) => left - right);
+      const drawnSlots = provenance.fixture_drawn_slots[family];
+      const undrawableSlots = provenance.fixture_undrawable_slots[family];
+      // Every enrolled slot is accounted for exactly once: either the fixture
+      // draws it, or the CTAN ps-type3 widths cannot co-draw it without
+      // costing its font a family. Neither list may quietly lose a slot.
+      expect([...drawnSlots, ...undrawableSlots].sort((left, right) => left - right)).toEqual(enrolled);
+      // As of this revision the fixture draws all of them: the family's slots
+      // are partitioned across several embedded fonts, so nothing is left over.
+      expect(undrawableSlots).toEqual([]);
+      expect(drawnSlots).toEqual(enrolled);
+      expect(Object.keys(provenance.reviewed_slot_labels[family]).map(Number).sort((left, right) => left - right))
+        .toEqual(enrolled);
+      expect(drawnSlots.length).toBeGreaterThan(1);
+      // Drawn is still not the same claim as resolved. It happens to hold for
+      // every drawn slot in this revision, which has to be asserted rather
+      // than assumed, and is re-measured from the PDF itself in
+      // test/type3-glyph-inventory.test.js.
+      expect(provenance.fixture_family_resolving_slots[family]).toEqual(drawnSlots);
+    }
+    // Coarse regression guard on the size of the demonstration, so a
+    // regenerated fixture that silently drew fewer slots would fail here.
+    expect(Object.values(provenance.fixture_drawn_slots).flat()).toHaveLength(41);
+    // Both were corroboration-only until a reviewed raster backed them. They are
+    // enrolled now, and an enrolled codepoint is still usable as a witness, so
+    // no slot is witness-only.
+    expect(CM_WITNESS_CODEPOINTS["computer-modern-math-symbol"]).toBeUndefined();
+    expect(CM_CODEPOINTS["computer-modern-math-symbol"][6]).toBe("±");
+    expect(CM_CODEPOINTS["computer-modern-math-symbol"][33]).toBe("→");
   });
 });
 

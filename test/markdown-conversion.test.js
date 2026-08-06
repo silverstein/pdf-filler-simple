@@ -364,7 +364,7 @@ describe("layout Markdown renderer", () => {
     // invocation, so any unreviewed serialized delta fails this regression.
     const serialized = JSON.stringify(pinnable);
     expect(createHash("sha256").update(serialized).digest("hex"))
-      .toBe("2018dbcf0869d5fdbd7beec2a1b4620363a0029d04f4bc380ec7c68a0f36d01f");
+      .toBe("cb581702fc7339b3eea5f15f31e49c907639622ef7c571b22870538598853572");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,
