@@ -600,11 +600,17 @@ export function parseAllowedDirectoryArgs(argv = []) {
   const markerIndex = argv.indexOf("--allowed-directories");
   if (markerIndex === -1) return null;
 
-  return argv
-    .slice(markerIndex + 1)
-    .filter(argument => typeof argument === "string")
-    .map(argument => argument.trim())
-    .filter(argument => argument && !argument.includes("${"));
+  const values = [];
+  for (const argument of argv.slice(markerIndex + 1)) {
+    if (typeof argument !== "string") continue;
+    // Stop at the next option so an unrelated flag can never be mistaken for a
+    // filesystem permission.
+    if (argument.startsWith("--")) break;
+    const trimmed = argument.trim();
+    if (!trimmed || trimmed.includes("${")) continue;
+    values.push(trimmed);
+  }
+  return values;
 }
 
 // Validate a signature name to prevent path traversal or weird filenames.

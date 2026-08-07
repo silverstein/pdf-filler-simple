@@ -234,14 +234,25 @@ function assertPathAllowed(resolvedPath) {
 
   if (!isAllowed) {
     const allowed = ALLOWED_DIRECTORIES.map((directory) => directory.display).join(", ");
+    // Two distinct states. An empty allowed set means nothing configured us,
+    // which cannot arise once defaults are gone unless the host supplied
+    // nothing at all, so it names the mechanisms instead of a set it does not
+    // have. Otherwise the message reports the configured set and the attempted
+    // path, because a user who cannot see what was allowed cannot fix it.
     const error = new Error(
-      `This server is only allowed to access: ${allowed}. ` +
-      `Tried to access: ${resolvedPath}. ` +
-      "The allowed list must be set where this server is configured, and it replaces " +
-      "these defaults rather than adding to them, so include the folders you still need. " +
-      "Hosts with a settings UI expose it as allowed_directories; otherwise set the " +
-      "--allowed-directories argument, which takes precedence, or the ALLOWED_DIRECTORIES " +
-      "environment variable, which applies only when that argument is absent."
+      ALLOWED_DIRECTORIES.length === 0
+        ? "No allowed directories are configured, so this server refused the request. "
+          + "Set the allowed list where this server is configured. Hosts with a settings UI "
+          + "expose it as allowed_directories; otherwise set the --allowed-directories argument, "
+          + "which takes precedence, or the ALLOWED_DIRECTORIES environment variable, which "
+          + "applies only when that argument is absent."
+        : `This server is only allowed to access: ${allowed}. ` +
+          `Tried to access: ${resolvedPath}. ` +
+          "The allowed list must be set where this server is configured, and it replaces " +
+          "these defaults rather than adding to them, so include the folders you still need. " +
+          "Hosts with a settings UI expose it as allowed_directories; otherwise set the " +
+          "--allowed-directories argument, which takes precedence, or the ALLOWED_DIRECTORIES " +
+          "environment variable, which applies only when that argument is absent."
     );
     error.code = "path_policy_denied";
     throw error;
@@ -1332,11 +1343,6 @@ const PROFILES_DIR = envPathOrDefault("DEFAULT_PROFILES_DIR", path.join(homedir(
 const SIGNATURES_DIR = path.join(PROFILES_DIR, "signatures");
 const BACKUPS_DIR = path.join(PROFILES_DIR, "backups");
 const OLD_PROFILES_DIR = path.join(homedir(), ".pdf-filler-profiles");
-const DEFAULT_ALLOWED_DIRECTORIES = [
-  path.join(homedir(), "Documents"),
-  path.join(homedir(), "Downloads"),
-  path.join(homedir(), "Desktop"),
-];
 
 function parsePathListValue(value) {
   if (!value || value.includes("${")) return null;
@@ -1347,7 +1353,14 @@ function parsePathListValue(value) {
   if (trimmed.startsWith("[")) {
     try {
       const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) return parsed.filter(item => typeof item === "string");
+      if (Array.isArray(parsed)) {
+        // An empty entry would resolve to the working directory, so it is
+        // dropped rather than treated as a permission.
+        return parsed
+          .filter(item => typeof item === "string")
+          .map(item => item.trim())
+          .filter(item => item && !item.includes("${"));
+      }
     } catch {}
   }
 
@@ -1364,22 +1377,20 @@ function parsePathListValue(value) {
     .filter(Boolean);
 }
 
-function envPathListOrDefault(name, fallbackPaths) {
-  return parsePathListValue(process.env[name]) || fallbackPaths;
-}
-
+// The allowed set is established only by explicit configuration. A host that
+// substitutes nothing — every Agent Plugins 1.0.0 client, and any MCPB host
+// whose substitution failed — leaves this empty, and an empty set denies every
+// user path rather than silently granting the home folders. Failing closed is
+// the point: an unexpanded template means we were never configured, which is
+// not a reason to choose a boundary on the user's behalf.
 function buildAllowedDirectories() {
   const argumentDirectories = parseAllowedDirectoryArgs(process.argv.slice(2));
   const configuredDirectories = argumentDirectories?.length
     ? argumentDirectories
-    : envPathListOrDefault("ALLOWED_DIRECTORIES", DEFAULT_ALLOWED_DIRECTORIES);
-  const directories = [
-    ...configuredDirectories,
-    PROFILES_DIR,
-  ];
+    : parsePathListValue(process.env.ALLOWED_DIRECTORIES) ?? [];
 
   const seen = new Set();
-  return directories
+  return configuredDirectories
     .map((directory) => normalizeUserPath(directory))
     .map((directory) => ({
       display: directory,
@@ -1394,6 +1405,19 @@ function buildAllowedDirectories() {
 }
 
 const ALLOWED_DIRECTORIES = buildAllowedDirectories();
+
+// Where a tool browses when the caller names no directory. An explicitly
+// configured value always wins. Otherwise prefer the first allowed directory
+// over a home folder, which is no longer granted by default: falling back to an
+// ungranted path would refuse a request the caller never actually made.
+function defaultDirectoryWithin(configuredValue, envName) {
+  const explicit = process.env[envName];
+  if (explicit && !explicit.includes("${")) return configuredValue;
+  return ALLOWED_DIRECTORIES[0]?.display ?? configuredValue;
+}
+const DEFAULT_PDF_DIRECTORY = defaultDirectoryWithin(DEFAULT_PDF_DIR, "DEFAULT_PDF_DIR");
+const DEFAULT_DOWNLOAD_DIRECTORY = defaultDirectoryWithin(DEFAULT_DOWNLOAD_DIR, "DEFAULT_DOWNLOAD_DIR");
+
 const PDFJS_TOOL_NAMES = new Set([
   "convert_pdf_to_markdown",
   "compare_pdfs",
@@ -3878,7 +3902,7 @@ async function handleToolCall(request) {
   try {
     switch (name) {
       case "list_pdfs": {
-        const directory = resolvePath(args.directory || DEFAULT_PDF_DIR);
+        const directory = resolvePath(args.directory || DEFAULT_PDF_DIRECTORY);
         // Every prompt template opens with this call, so a missing folder is the
         // first thing a user can hit on a fresh install. A raw ENOENT scandir
         // string is not something they can act on, and it is especially likely
@@ -6608,7 +6632,7 @@ async function handleToolCall(request) {
         //   1. caller-supplied destination_dir (one-off override)
         //   2. user_config.download_directory from the extension settings UI
         //   3. helper's internal default (~/Downloads)
-        const resolvedDestDir = resolvePath(destination_dir || DEFAULT_DOWNLOAD_DIR);
+        const resolvedDestDir = resolvePath(destination_dir || DEFAULT_DOWNLOAD_DIRECTORY);
 
         const result = await downloadPdfFromUrl(url, {
           filename,
