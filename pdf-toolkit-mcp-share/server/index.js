@@ -1476,6 +1476,10 @@ function grantsAccessToOwnConfig(directories, configPath) {
   return directories.some(directory => isPathInsideDirectory(canonicalConfig, directory.canonical));
 }
 
+// Which precedence layer actually supplied the active set. Reported by
+// get_allowed_directories so an operator can tell where to change it.
+let ALLOWED_DIRECTORY_SOURCE = "none";
+
 function buildAllowedDirectories() {
   const configPath = pluginDataConfigPath();
   const argumentDirectories = parseAllowedDirectoryArgs(process.argv.slice(2));
@@ -1484,11 +1488,15 @@ function buildAllowedDirectories() {
   let configuredDirectories;
   if (argumentDirectories?.length) {
     configuredDirectories = argumentDirectories;
+    ALLOWED_DIRECTORY_SOURCE = "argument";
   } else if (environmentDirectories?.length) {
     configuredDirectories = environmentDirectories;
+    ALLOWED_DIRECTORY_SOURCE = "environment";
   } else {
     ensurePluginDataConfigTemplate(configPath);
-    configuredDirectories = readPluginDataConfig(configPath) ?? [];
+    const fromConfig = readPluginDataConfig(configPath);
+    configuredDirectories = fromConfig ?? [];
+    ALLOWED_DIRECTORY_SOURCE = fromConfig?.length ? "config_file" : "none";
   }
 
   const seen = new Set();
@@ -1510,6 +1518,7 @@ function buildAllowedDirectories() {
       `[pdf-tools] The allowed directories reach ${configPath}, which would let this `
       + "server rewrite its own boundary. No directories are allowed until that entry is removed.",
     );
+    ALLOWED_DIRECTORY_SOURCE = "refused_self_granting";
     return [];
   }
   return resolved;
@@ -3703,6 +3712,21 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           readOnlyHint: false,
           destructiveHint: true,
           idempotentHint: false,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "get_allowed_directories",
+        description: "Report which folders this server may read and write, which configuration layer supplied them, and where the stored configuration file lives. Answers without touching the filesystem, so it works before anything is configured. Use it to explain a path refusal or to tell the user where to change the boundary. It reports the boundary; it cannot change it.",
+        inputSchema: {
+          type: "object",
+          properties: {}
+        },
+        annotations: {
+          title: "Get Allowed Directories",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
           openWorldHint: false
         }
       },
@@ -6243,6 +6267,28 @@ async function handleToolCall(request) {
             style: signatureRecord.style,
             path: sigPath,
             bytes: bytesOnDisk,
+          },
+        };
+      }
+
+      case "get_allowed_directories": {
+        // Reporting the boundary is not reaching past it, so this answers even
+        // when nothing is configured — which is exactly when it is most needed.
+        const directories = ALLOWED_DIRECTORIES.map(directory => directory.display);
+        const configured = directories.length > 0;
+        const summary = configured
+          ? `Allowed folders (${ALLOWED_DIRECTORY_SOURCE.replace(/_/g, " ")}):\n${directories.join("\n")}`
+          : PLUGIN_DATA_CONFIG_PATH
+            ? `No folders are allowed yet. List them in ${PLUGIN_DATA_CONFIG_PATH} under "allowedDirectories", then restart this server.`
+            : "No folders are allowed yet, and no configuration file location is available. Set the --allowed-directories argument or the ALLOWED_DIRECTORIES environment variable where this server is configured.";
+
+        return {
+          content: [{ type: "text", text: summary }],
+          structuredContent: {
+            directories,
+            configured,
+            source: ALLOWED_DIRECTORY_SOURCE,
+            config_path: PLUGIN_DATA_CONFIG_PATH ?? null,
           },
         };
       }

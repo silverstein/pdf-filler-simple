@@ -129,6 +129,7 @@ qualification. Then perform manual host runs against `example-fw9.pdf`:
 30. **apply_signature** - Stamp a saved signature at a location (requires explicit human intent; see Signature Architecture below)
 31. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
 32. **detect_signature_zones** - Locate signature, initials, printed-name, and date zones with coordinates. Use apply_signature for signatures and initials, and apply_text for names and dates.
+33. **get_allowed_directories** - Report the folders this server may reach, which configuration layer supplied them, and where the stored config file lives. Read-only; it cannot change the boundary.
 
 ### Current Extraction Boundary
 

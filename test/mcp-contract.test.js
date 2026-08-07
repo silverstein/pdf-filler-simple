@@ -90,7 +90,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // grid, with no matrix of any kind taking part, so every published digest
 // changed and the extraction IR went to 1.5.0. Previously
 // dafeaf19570eece1bb3901f883ea456216b7f46ea6872b80a9eb205c24b9e45f.
-const TOOL_CONTRACT_SHA256 = "b980fc09c3b9c886f01e08b82fe67df569e5cafa5471dd4c3e549ac6d8e26fc0";
+const TOOL_CONTRACT_SHA256 = "53d965e366b16adf2a0fa90dfe837ca98d29a8f41c1adf8b9e8f661ea3bb7d95";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -157,6 +157,7 @@ const TOOL_EFFECT_ANNOTATIONS = {
   apply_page_plan: CLOSED_IDEMPOTENT_OVERWRITE,
   get_page_analysis: CLOSED_READ,
   create_signature: CLOSED_NON_IDEMPOTENT_OVERWRITE,
+  get_allowed_directories: CLOSED_READ,
   list_signatures: CLOSED_READ,
   load_signature: CLOSED_READ,
   add_signature_field: CLOSED_NON_IDEMPOTENT_OVERWRITE,
@@ -371,7 +372,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(42);
+    expect(tools).toHaveLength(43);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))
