@@ -1289,6 +1289,12 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     path: string,
     bytes: integer,
   }),
+  get_allowed_directories: object({
+    directories: arrayOf(string),
+    configured: { type: "boolean" },
+    source: enumString(["argument", "environment", "config_file", "none", "refused_self_granting"]),
+    config_path: nullable(string),
+  }),
   list_signatures: object({
     signatures: arrayOf(object({
       name: string,

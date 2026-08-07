@@ -74,6 +74,7 @@ export const CHECKOUT_LOCAL_MUTATING_TEST_SUITES = Object.freeze([
   "test/fetch-pdf-from-url.test.js",
   "test/fuzz-malformed-pdfs.test.js",
   "test/get-page-analysis.test.js",
+  "test/get-allowed-directories.test.js",
   "test/get-pdf-info.test.js",
   "test/golden-set-placement.test.js",
   "test/integration.test.js",
