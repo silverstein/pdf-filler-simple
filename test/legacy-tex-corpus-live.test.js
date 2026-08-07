@@ -37,8 +37,66 @@ import { uniqueComputerModernFamily } from "../server/layout-extraction.js";
  * the fonts that carry its mathematics — three of the four cr.yp.to papers
  * resolve no family at all — and the one document that does resolve families
  * for ten fonts (astro-ph) rasterised them at its own PK resolution, which
- * matches no enrolled shape. Producer-independent family identification from
- * matched shape sets is the next step, not this one.
+ * matches no enrolled shape.
+ *
+ * Identifying the family from the set of matched glyph SHAPES, rather than
+ * from `widths[code]`, was investigated as the way through and was measured to
+ * be a dead end. It is recorded here so it is not attempted again blind. Four
+ * findings, each measured on these exact documents:
+ *
+ *   a. There is no bitmap reference to match against. The pinned official CTAN
+ *      `cm/ps-type3` fonts are cubic-Bézier OUTLINE programs: all 41 glyph
+ *      programs of the labeled reference fixture take the exact-operator
+ *      evidence lane and none takes the image-mask lane. `cm/mf.zip` is
+ *      METAFONT source, and turning it into the PK rasters these documents
+ *      actually carry needs a METAFONT run at a mode and resolution that no
+ *      document here records.
+ *   b. Bridging outline to bitmap is never exact, and no threshold separates
+ *      right from wrong. Rasterising the official CTAN outline for cmmi alpha
+ *      across 225,225 combinations of resolution (60-110 px/em in 0.05 steps),
+ *      alpha threshold, and sub-pixel offset reproduced the Shannon document's
+ *      reviewed alpha raster's ink box 241 times and its bits ZERO times; the
+ *      closest was 72 of 1748 pixels wrong, 4.1%. Repeating that against three
+ *      Shannon rasters of known identity, scoring every one of the 41 reference
+ *      slots that could reproduce the target's ink box at any resolution, the
+ *      correct slot's best agreement was 4.3% wrong for alpha, 2.1% for omega
+ *      and 14.5% for sigma, while the best WRONG slot reached 20.1% for alpha
+ *      and 24.5% for sigma. So a threshold has to admit 14.5% to identify
+ *      sigma and reject 20.1% to not misread alpha — a 1.4x window, already
+ *      that narrow against a reference holding 41 of the roughly 9,600 (font,
+ *      slot) pairs Computer Modern actually has. Widening the reference can
+ *      only close the window further. That is a similarity threshold that
+ *      could misfire, which is the guess this pipeline abstains rather than
+ *      make.
+ *   c. Even an exact matcher would not determine a family. One digest in the
+ *      shipped registry already stands at two different (family, slot) pairs:
+ *      the same bitmap is `cmmi-pk-raster-period-2df559-v1` (math-italic slot
+ *      58, ".") and `cmsy-pk-raster-centered-dot-33077f-v1` (math-symbol slot
+ *      1, "⋅"). Shape identifies a code only once the family is already known,
+ *      which is the direction the shipped matcher runs in and the opposite of
+ *      the direction proposed.
+ *   d. There is no cross-document anchor either. The mask key is genuinely
+ *      producer-independent — the four cr.yp.to papers share 387 to 440 of
+ *      their 451 to 581 distinct inked shapes with each other, being one PK
+ *      library at 720 dpi — but they share exactly ONE shape with Shannon
+ *      (600 dpi) and none at all with astro-ph (300 dpi), and that one shared
+ *      shape is a 41x3 solid rectangle, a fraction rule rather than a
+ *      character.
+ *
+ * Independently of all of that, the four Ghostscript 6.52 papers could not
+ * recover through the shipped safeguards even given a perfect shape matcher.
+ * That producer splits every character into TWO Type-3 glyphs: an inked glyph
+ * declaring `0 0 llx lly urx ury d1`, advance zero, and a separate ink-free
+ * advance glyph declaring `w 0 0 0 0 0 d1`. Read straight out of the bytes the
+ * split is total — 584/457/537/530 inked CharProcs, every one of them zero
+ * advance, against 98/99/102/106 advance-only CharProcs, no exceptions — so
+ * the inked codes and the positive-width codes are disjoint sets. Positive
+ * width pinning therefore rejects every inked code in these four documents by
+ * construction, and the family fingerprint can only ever see spacer advances
+ * at renumbered codes. That is what `sf` demonstrates: its one family-resolving
+ * font pins `cmsy5` off just two such advances, and the two occurrences it
+ * officially names mean nothing. Only the missing digest match keeps that
+ * coincidence out of the output.
  *
  * Interface: one directory variable, `PDF_TOOLS_LEGACY_CORPUS_DIR`, holding
  * all five documents under the fixed basenames listed in DOCUMENTS. A single
