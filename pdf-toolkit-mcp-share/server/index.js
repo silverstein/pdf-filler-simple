@@ -1238,21 +1238,26 @@ function parseListOffset(rawOffset) {
 }
 
 // Values are substituted into a user-role message with no isolation, so this
-// rejects control and invisible characters that a reader could not see.
+// rejects control and invisible characters a reader could not see.
 //
 // It is deliberately NOT a defence against instruction-shaped text: a plain
 // sentence saying "ignore the above" passes, by design, and docs/MCP_CONTRACT.md
 // states that clients must not source these arguments from untrusted content.
 //
-// One range beyond the original set: U+E0000-E007F, the Tags block, which
-// encodes arbitrary hidden ASCII and has no legitimate use in prose in any
-// language. A wider sweep was tried and reverted: it included U+FE0F, the emoji
-// presentation selector, which rejected ordinary input such as a warning sign or
-// a check mark, and U+E0100-E01EF and U+061C, which are legitimate in CJK and
-// Arabic. Breaking real text to close part of a class that still has thousands
-// of members is a bad trade. Anything added here must be checked against
-// test/prompt-argument-charset.test.js first.
-const PROMPT_ARGUMENT_UNSAFE_CONTROLS = /[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]|[\u{e0000}-\u{e007f}]/u;
+// This is the set that has shipped for months. Widening it was tried twice and
+// reverted both times, because each attempt broke ordinary input for a marginal
+// gain against a threat the contract already places out of scope:
+//   U+FE00-FE0F   contains U+FE0F, the emoji presentation selector, so it
+//                 rejected a warning sign, a check mark, a heart, keycap digits
+//   U+E0100-E01EF, U+061C   legitimate in CJK and in Arabic
+//   U+E0000-E007F (Tags)   encodes hidden ASCII, but is also the encoding for
+//                 the England, Scotland and Wales flag emoji
+//
+// Known and accepted limitation, inherited and not introduced here: the
+// \u200b-\u200f range rejects U+200C and U+200D, so Persian and Devanagari ZWNJ
+// and every ZWJ emoji sequence are refused. Fixing that means narrowing this
+// range, not widening it, and needs its own change with its own evidence.
+const PROMPT_ARGUMENT_UNSAFE_CONTROLS = /[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u;
 const RESOURCE_NOT_FOUND_ERROR_CODE = -32002;
 
 function validatedPromptArguments(prompt, suppliedArguments = {}) {
@@ -3959,10 +3964,8 @@ async function handleToolCall(request) {
           if (error?.code === "ENOENT") {
             throw new Error(
               `No folder exists at ${directory}. `
-              + `Give me the folder your PDFs are actually in. `
-              + `To change it permanently, set both the default PDFs folder and `
-              + `the allowed directories in this server's configuration; `
-              + `setting only the default leaves the new folder outside the allowed set.`,
+              + `Tell me the folder your PDFs are actually in, `
+              + `or change the default PDFs folder in this extension's settings.`,
             );
           }
           if (error?.code === "ENOTDIR") {
