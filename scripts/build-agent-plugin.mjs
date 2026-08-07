@@ -146,9 +146,9 @@ async function main() {
     const { files, bytes } = directoryStats(outputDir);
     console.error(`[plugin] done: ${files} files, ${(bytes / 1024 / 1024).toFixed(1)} MB uncompressed`);
     console.error(`[plugin] layout: plugin.json, mcp.json, server/, skills/, node_modules/, dist-ui/`);
-    console.error(`[plugin] note: a fresh install has no allowed directories and refuses file`);
-    console.error(`[plugin]       operations until configured. In-band configuration under`);
-    console.error(`[plugin]       Agent Plugins (via \${PLUGIN_DATA}) is the next step, not this build.`);
+    console.error(`[plugin] note: a fresh install allows no directories. On first run the server`);
+    console.error(`[plugin]       writes \${PLUGIN_DATA}/config.json and every refusal names that`);
+    console.error(`[plugin]       path; the user lists their folders there and restarts.`);
   } finally {
     rmSync(stagingDir, { recursive: true, force: true });
   }
