@@ -3,6 +3,7 @@ import { once } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -27,6 +28,7 @@ import {
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(import.meta.url);
 const TWO_COLUMN = path.join(REPO_ROOT, "test/fixtures/eval/extraction/synthetic/two-column-order.pdf");
 const MIXED = path.join(REPO_ROOT, "test/fixtures/eval/extraction/synthetic/mixed-text-raster.pdf");
 const ROTATED_CROP = path.join(REPO_ROOT, "test/fixtures/golden-forms/rotated-signature.pdf");
@@ -72,18 +74,22 @@ describe("qualified legacy Type-3 glyph evidence", () => {
   });
 
   /**
-   * The shipped recovery key. `minusCharProc` is a real dvipdfmx-shaped Type-3
-   * glyph: one 41x3 inline image mask, placed by a `cm` inside a `q`/`Q`, under
-   * a y-flipping FontMatrix. Everything asserted below is a property of the
-   * decoded mask, and everything varied below is a property of the producer.
+   * The shipped recovery key: the stored sample grid of a Type-3 glyph's inline
+   * image mask, cropped to its ink. `minusCharProc` is a real dvipdfmx-shaped
+   * Type-3 glyph: one 41x3 inline image mask, placed by a `cm` inside a `q`/`Q`,
+   * under a y-flipping FontMatrix. Everything asserted below is a property of
+   * the decoded mask, and everything varied below is a property of the producer.
    */
   describe("producer-independent Type-3 glyph shape key", () => {
     // PDF.js operator numbers, taken from the pinned build rather than typed,
     // so an upstream renumbering fails here instead of silently keying on the
-    // wrong operators.
+    // wrong operators. The module itself is kept so the built fixtures below
+    // are parsed by the same pinned build the server uses.
+    let pdfjsLib = null;
     let OPS = null;
     beforeAll(async () => {
-      ({ OPS } = await import("pdfjs-dist/legacy/build/pdf.mjs"));
+      pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      ({ OPS } = pdfjsLib);
     });
     const FLIPPED = [1, 0, 0, -1, 0, 0];
 
@@ -110,33 +116,238 @@ describe("qualified legacy Type-3 glyph evidence", () => {
       expect(new Set([minusCharProc(), moved, bare].map(type3CharProcSha256)).size).toBe(3);
     });
 
-    it("refuses to conflate a different raster, mirror, or grid", () => {
+    /**
+     * The defect this replaces a pair of tests for.
+     *
+     * The withdrawn revision keyed on `sign(FontMatrix x CharProc cm)` and
+     * called the result the glyph's painted orientation. It is not: the text
+     * matrix and the page CTM are the other half of that product and neither is
+     * reachable from inside a CharProc. Two producers that render a
+     * pixel-identical glyph by splitting the y-flip differently between the
+     * FontMatrix and the text matrix — which is exactly how a dvipdfmx-shaped
+     * document and a Ghostscript-shaped one differ — got different keys.
+     *
+     * So this builds both documents rather than asserting on a hand-picked
+     * raster: the same eight mask bytes, reached through genuinely different
+     * producer idioms, landing on the page in exactly the same place.
+     */
+    describe("two producers, one bitmap", () => {
+      // An asymmetric 8x8 "F": not its own mirror in either axis, so a key that
+      // reorients the grid cannot pass these by accident.
+      const INK_ROWS = Object.freeze([0xfe, 0x80, 0x80, 0xf8, 0x80, 0x80, 0x80, 0x80]);
+
+      const streamObject = (data) => Buffer.concat([
+        Buffer.from(`<< /Length ${data.length} >>\nstream\n`, "latin1"),
+        data,
+        Buffer.from("\nendstream", "latin1"),
+      ]);
+
+      function assemblePdf(bodies) {
+        const header = Buffer.from("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n", "latin1");
+        const chunks = [header];
+        const offsets = [];
+        let offset = header.length;
+        bodies.forEach((body, index) => {
+          const prefix = Buffer.from(`${index + 1} 0 obj\n`, "latin1");
+          const suffix = Buffer.from("\nendobj\n", "latin1");
+          offsets.push(offset);
+          chunks.push(prefix, body, suffix);
+          offset += prefix.length + body.length + suffix.length;
+        });
+        let xref = `xref\n0 ${bodies.length + 1}\n0000000000 65535 f \n`;
+        for (const value of offsets) xref += `${String(value).padStart(10, "0")} 00000 n \n`;
+        xref += `trailer\n<< /Size ${bodies.length + 1} /Root 1 0 R >>\n`
+          + `startxref\n${offset}\n%%EOF\n`;
+        chunks.push(Buffer.from(xref, "latin1"));
+        return new Uint8Array(Buffer.concat(chunks));
+      }
+
+      function buildType3MaskPdf({ fontMatrix, glyphName, charCode, charProc, textMatrix }) {
+        return assemblePdf([
+          Buffer.from("<< /Type /Catalog /Pages 2 0 R >>", "latin1"),
+          Buffer.from("<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "latin1"),
+          Buffer.from("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+            + "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>", "latin1"),
+          // No page-level `cm`, and a font size of 1, so the only placement the
+          // page contributes is the text matrix asserted on below.
+          streamObject(Buffer.from(
+            `BT /F1 1 Tf ${textMatrix.join(" ")} Tm `
+            + `<${charCode.toString(16).padStart(2, "0")}> Tj ET\n`,
+            "latin1",
+          )),
+          Buffer.from("<< /Type /Font /Subtype /Type3 /FontBBox [0 0 8 8] "
+            + `/FontMatrix [${fontMatrix.join(" ")}] /CharProcs 6 0 R `
+            + `/Encoding << /Type /Encoding /Differences [${charCode} /${glyphName}] >> `
+            + `/FirstChar ${charCode} /LastChar ${charCode} /Widths [10] `
+            + "/Resources << >> >>", "latin1"),
+          Buffer.from(`<< /${glyphName} 7 0 R >>`, "latin1"),
+          streamObject(charProc),
+        ]);
+      }
+
+      // dvipdfmx-shaped: a `q`/`Q` wrapper, an upright hundredths FontMatrix,
+      // the default /Decode, and raw binary samples (0 paints, so the bytes are
+      // the complement of the ink).
+      const dvipdfmxCharProc = (rows = INK_ROWS) => Buffer.concat([
+        Buffer.from("1000 0 0 0 800 800 d1\nq 800 0 0 800 0 0 cm\n"
+          + "BI /IM true /W 8 /H 8 /BPC 1 ID ", "latin1"),
+        Buffer.from(rows.map(row => ~row & 0xff)),
+        Buffer.from("\nEI\nQ\n", "latin1"),
+      ]);
+      // Ghostscript-shaped: no wrapper, a y-flipping unit FontMatrix, an
+      // inverted /Decode, and ASCIIHex-filtered samples (1 paints, so the bytes
+      // are the ink itself). Every byte of this program differs from the one
+      // above; the mask they decode to does not.
+      const ghostscriptCharProc = (rows = INK_ROWS) => Buffer.concat([
+        Buffer.from("10 0 0 -8 8 0 d1\n8 0 0 8 0 -8 cm\n"
+          + "BI /IM true /W 8 /H 8 /BPC 1 /D [1 0] /F /AHx ID ", "latin1"),
+        Buffer.from(`${Buffer.from(rows).toString("hex")}>`, "latin1"),
+        Buffer.from("\nEI\n", "latin1"),
+      ]);
+
+      const DVIPDFMX = Object.freeze({
+        fontMatrix: [0.01, 0, 0, 0.01, 0, 0],
+        glyphName: "shape",
+        charCode: 65,
+        textMatrix: [1, 0, 0, 1, 20, 60],
+      });
+      const GHOSTSCRIPT = Object.freeze({
+        fontMatrix: [1, 0, 0, -1, 0, 0],
+        glyphName: "Fbitmap",
+        charCode: 97,
+        textMatrix: [1, 0, 0, -1, 20, 68],
+      });
+
+      const compose = (outer, inner) => [
+        outer[0] * inner[0] + outer[2] * inner[1],
+        outer[1] * inner[0] + outer[3] * inner[1],
+        outer[0] * inner[2] + outer[2] * inner[3],
+        outer[1] * inner[2] + outer[3] * inner[3],
+        outer[0] * inner[4] + outer[2] * inner[5] + outer[4],
+        outer[1] * inner[4] + outer[3] * inner[5] + outer[5],
+      ];
+
+      /**
+       * Loads one built document through the pinned PDF.js and reports what the
+       * key is computed from, plus the two matrices that decide where the glyph
+       * actually lands. Nothing here is hand-typed: the CharProc operator list,
+       * the FontMatrix, and the text matrix all come back out of the parser.
+       */
+      async function measureBuiltDocument(bytes) {
+        const packageDirectory = path.dirname(require.resolve("pdfjs-dist/package.json"));
+        const document = await pdfjsLib.getDocument({
+          data: bytes,
+          useWorkerFetch: false,
+          isEvalSupported: false,
+          cMapUrl: pdfjsFactoryDirectory(path.join(packageDirectory, "cmaps")),
+          cMapPacked: true,
+          standardFontDataUrl: pdfjsFactoryDirectory(path.join(packageDirectory, "standard_fonts")),
+        }).promise;
+        try {
+          const page = await document.getPage(1);
+          const operators = await page.getOperatorList();
+          let fontId = null;
+          let fontSize = null;
+          let textMatrix = null;
+          let pageTransforms = 0;
+          for (let index = 0; index < operators.fnArray.length; index += 1) {
+            const operation = operators.fnArray[index];
+            const args = operators.argsArray[index];
+            if (operation === OPS.setFont) [fontId, fontSize] = args;
+            if (operation === OPS.setTextMatrix) textMatrix = [...args[0]];
+            if (operation === OPS.transform) pageTransforms += 1;
+          }
+          const font = page.commonObjs.get(fontId);
+          const entries = Object.entries(font.charProcOperatorList ?? {});
+          expect(entries).toHaveLength(1);
+          const [, charProc] = entries[0];
+          // The CharProc-local matrix the mask lane's guard inspects: the
+          // FontMatrix composed with this glyph program's own `cm`.
+          let local = [...font.fontMatrix];
+          for (let index = 0; index < charProc.fnArray.length; index += 1) {
+            if (charProc.fnArray[index] === OPS.transform) {
+              local = compose(local, charProc.argsArray[index]);
+            }
+          }
+          return {
+            font_size: fontSize,
+            page_transform_count: pageTransforms,
+            font_matrix: [...font.fontMatrix],
+            local_matrix: local,
+            placement: compose(textMatrix, local),
+            evidence_sha256: type3GlyphEvidenceSha256(charProc, font.fontMatrix, OPS),
+            charproc_sha256: type3CharProcSha256(charProc),
+          };
+        } finally {
+          await document.destroy();
+        }
+      }
+
+      const measureIdiom = (idiom, charProc) =>
+        measureBuiltDocument(buildType3MaskPdf({ ...idiom, charProc }));
+
+      it("gives one bitmap one key across two producer idioms that paint it identically", async () => {
+        const dvipdfmx = await measureIdiom(DVIPDFMX, dvipdfmxCharProc());
+        const ghostscript = await measureIdiom(GHOSTSCRIPT, ghostscriptCharProc());
+
+        // Both documents put the same 8x8 mask on the same eight points of the
+        // page, at the same scale and the same way up, so any renderer produces
+        // identical pixels. Nothing outside the text matrix moves the glyph:
+        // there is no page-level `cm` and the font size is 1 in both.
+        for (const measured of [dvipdfmx, ghostscript]) {
+          expect(measured.page_transform_count).toBe(0);
+          expect(measured.font_size).toBe(1);
+        }
+        expect(dvipdfmx.placement).toEqual([8, 0, 0, 8, 20, 60]);
+        expect(ghostscript.placement).toEqual(dvipdfmx.placement);
+
+        // They are nonetheless different programs from different producers, and
+        // they split that identical placement across the FontMatrix, the `cm`
+        // and the text matrix in opposite ways. The withdrawn key read the sign
+        // of `local_matrix` and so separated them; this asserts the two signs
+        // really are opposite, so the test cannot pass vacuously.
+        expect(dvipdfmx.font_matrix).not.toEqual(ghostscript.font_matrix);
+        expect(Math.sign(dvipdfmx.local_matrix[3]))
+          .toBe(-Math.sign(ghostscript.local_matrix[3]));
+        expect(dvipdfmx.charproc_sha256).not.toBe(ghostscript.charproc_sha256);
+
+        expect(dvipdfmx.evidence_sha256).toMatch(/^[0-9a-f]{64}$/);
+        expect(ghostscript.evidence_sha256).toBe(dvipdfmx.evidence_sha256);
+      });
+
+      it("still separates two bitmaps that differ, in either axis or in ink", async () => {
+        const baseline = (await measureIdiom(DVIPDFMX, dvipdfmxCharProc())).evidence_sha256;
+        const keyOf = async rows => {
+          // Measured through both producers every time, so a variant that only
+          // one idiom separates would fail here rather than look distinct.
+          const first = await measureIdiom(DVIPDFMX, dvipdfmxCharProc(rows));
+          const second = await measureIdiom(GHOSTSCRIPT, ghostscriptCharProc(rows));
+          expect(second.evidence_sha256).toBe(first.evidence_sha256);
+          return first.evidence_sha256;
+        };
+
+        const oneBitFewer = [...INK_ROWS];
+        oneBitFewer[0] &= ~0x02;
+        const upsideDown = [...INK_ROWS].reverse();
+        const backToFront = INK_ROWS.map(row => {
+          let flipped = 0;
+          for (let bit = 0; bit < 8; bit += 1) if (row & (1 << bit)) flipped |= 128 >> bit;
+          return flipped;
+        });
+
+        const distinct = await Promise.all([oneBitFewer, upsideDown, backToFront].map(keyOf));
+        // Reversing the stored rows or the stored columns is a different
+        // bitmap, not a different view of this one, and must not collide with
+        // it or with each other.
+        expect(new Set([baseline, ...distinct]).size).toBe(4);
+      });
+    });
+
+    it("refuses to conflate a different raster or a different grid", () => {
       const key = type3GlyphEvidenceSha256(minusCharProc(), FLIPPED, OPS);
       const oneBit = minusCharProc();
       oneBit.argsArray[3][1][0][14] = 0;
       expect(type3GlyphEvidenceSha256(oneBit, FLIPPED, OPS)).not.toBe(key);
-      // An unflipped FontMatrix paints the stored rows the other way up, so the
-      // same samples are a different glyph and must key differently. The 41x3
-      // bar above is its own mirror image, so this needs an asymmetric raster:
-      // an L filling row 0 column 0 and all of row 1 of a 2x2 grid.
-      const asymmetric = () => ({
-        fnArray: [OPS.setCharWidthAndBounds, OPS.transform, OPS.constructPath],
-        argsArray: [
-          [4, 0, 0, 0, 2, 2],
-          [2, 0, 0, 2, 0, 0],
-          [94, [new Float32Array([
-            0, 0, 1, 1, 0.5, 1, 1, 0.5, 0.5, 1, 1, 0.5, 1, 1, 0, 1, 0, 0,
-          ])], new Float32Array([0, 0, 2, 2])],
-        ],
-      });
-      const upright = type3GlyphEvidenceSha256(asymmetric(), [1, 0, 0, 1, 0, 0], OPS);
-      const mirrored = type3GlyphEvidenceSha256(asymmetric(), FLIPPED, OPS);
-      expect(upright).toMatch(/^[0-9a-f]{64}$/);
-      expect(mirrored).not.toBe(upright);
-      // Mirrored twice is the identity, so the normalisation is a genuine
-      // orientation fix and not an arbitrary relabelling.
-      expect(type3GlyphEvidenceSha256(asymmetric(), [-1, 0, 0, -1, 0, 0], OPS))
-        .not.toBe(mirrored);
       const wider = minusCharProc();
       wider.argsArray[3][2] = new Float32Array([0, 0, 82, 3]);
       expect(type3GlyphEvidenceSha256(wider, FLIPPED, OPS)).not.toBe(key);
@@ -145,14 +356,42 @@ describe("qualified legacy Type-3 glyph evidence", () => {
       expect(key).not.toBe(type3CharProcSha256(minusCharProc()));
     });
 
+    /**
+     * A mask with no ink has no shape, so it cannot be keyed as one. Left
+     * unguarded it cropped to 0x0 and every blank glyph of every font hashed to
+     * the single digest of an empty buffer.
+     */
+    it("sends an inkless mask to the placement-bearing operator lane", () => {
+      // A degenerate loop: two coincident vertical edges of opposite winding,
+      // which is a well-formed traced outline that fills nothing.
+      const blank = metrics => ({
+        fnArray: [OPS.setCharWidthAndBounds, OPS.transform, OPS.constructPath],
+        argsArray: [
+          metrics,
+          [41, 0, 0, 3, 0, 0],
+          [94, [new Float32Array([0, 0, 1, 1, 0, 0, 1, 0, 1, 4])], new Float32Array([0, 0, 41, 3])],
+        ],
+      });
+      const inked = type3GlyphEvidenceSha256(minusCharProc(), FLIPPED, OPS);
+      const first = type3GlyphEvidenceSha256(blank([52, 0, 0, 0, 41, 3]), FLIPPED, OPS);
+      const second = type3GlyphEvidenceSha256(blank([31, 0, 0, 0, 41, 3]), FLIPPED, OPS);
+      expect(first).toMatch(/^[0-9a-f]{64}$/);
+      expect(first).not.toBe(inked);
+      // The mask lane ignores declared metrics, so two blank programs that
+      // differ only there proves the fallback actually happened.
+      expect(second).not.toBe(first);
+      expect(first).not.toBe(type3CharProcSha256(blank([52, 0, 0, 0, 41, 3])));
+    });
+
     it("falls back to the exact operator digest for a program it cannot decode", () => {
       const outline = { fnArray: [OPS.setCharWidthAndBounds, OPS.fill], argsArray: [[52, 0, 0, 0, 4, 4], null] };
       const outlineKey = type3GlyphEvidenceSha256(outline, FLIPPED, OPS);
       expect(outlineKey).toMatch(/^[0-9a-f]{64}$/);
       expect(outlineKey).not.toBe(type3CharProcSha256(outline));
-      // Two painted objects are not a single decodable mask, and a rotated
-      // placement has no unambiguous mirror decomposition. Both leave the mask
-      // lane rather than being keyed on a guess.
+      // Two painted objects are not a single decodable mask, and a CharProc
+      // that rotates its own bitmap is outside the plain axis-aligned bitmap
+      // idiom the mask lane is held to. Both take the operator digest instead
+      // of being keyed on a guess.
       const twice = minusCharProc();
       twice.fnArray = [...twice.fnArray, 91];
       twice.argsArray = [...twice.argsArray, minusCharProc().argsArray[3]];
@@ -702,14 +941,14 @@ describe("read_pdf_layout MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(JSON.stringify(first.structuredContent)).toBe(JSON.stringify(second.structuredContent));
     expect(first.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.4.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.5.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       source: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
       id_scope: {
         kind: "source_parser_ir_options",
         source_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         parser_version: "5.4.624",
-        ir_version: "1.4.0",
+        ir_version: "1.5.0",
         max_output_characters: 200000,
       },
       page_range: { requested_start_page: 1, requested_end_page: 1, start_page: 1, end_page: 1, total_pages: 1 },
@@ -1440,8 +1679,8 @@ describe("Extraction IR hostile reconstruction", () => {
       qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
       glyph_sha256: "3f6fdf2abc68f5693f9ea7cdec4d94214a57fb953fb66c747b86dd1f6293d807",
       witness_glyph_sha256: [
-        "73a2cec4aa27d5042b9f4275179fbf2bb7b99413537597ede0537b7f19c8384c",
-        "f15e035b5867fbee9918125e49566e00b94dcd8422649079c87207e94f7a9e63",
+        "cf5071eb6c006bc80cf9399c28dc00f7e12d8e7f090942de46cb06d404481dd6",
+        "da5345f465509486a66762b6cf8918a3ba5c937f4ca8c7bc4657f4f905d0b4be",
       ],
       tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
       glyph_evidence_version: "pdfjs-type3-glyph-evidence-v2",
@@ -1474,8 +1713,8 @@ describe("Extraction IR hostile reconstruction", () => {
       qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
       glyph_sha256: "3f6fdf2abc68f5693f9ea7cdec4d94214a57fb953fb66c747b86dd1f6293d807",
       witness_glyph_sha256: [
-        "73a2cec4aa27d5042b9f4275179fbf2bb7b99413537597ede0537b7f19c8384c",
-        "f15e035b5867fbee9918125e49566e00b94dcd8422649079c87207e94f7a9e63",
+        "cf5071eb6c006bc80cf9399c28dc00f7e12d8e7f090942de46cb06d404481dd6",
+        "da5345f465509486a66762b6cf8918a3ba5c937f4ca8c7bc4657f4f905d0b4be",
       ],
       tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
       glyph_evidence_version: "pdfjs-type3-glyph-evidence-v2",

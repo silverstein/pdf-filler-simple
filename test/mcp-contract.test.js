@@ -50,7 +50,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // source text as escaped body text.
 // 2026-08-03: convert_pdf_to_markdown renderer 1.4.0 adds conservative
 // source-backed title, introduction, part, and appendix structure.
-// 2026-08-03: convert_pdf_to_markdown renderer 1.5.0 adds bounded drop-cap
+// 2026-08-03: convert_pdf_to_markdown renderer 1.4.0 adds bounded drop-cap
 // continuation while preserving ordinary printed line-end hyphens.
 // 2026-08-03: convert_pdf_to_markdown renderer 1.6.0 adds bounded, local
 // math-operator spacing with explicit limitations.
@@ -86,6 +86,10 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-08-06: read_pdf_layout glyph-recovery evidence is re-keyed onto the
 // decoded Type-3 image mask, renaming charproc_sha256/witness_charproc_sha256/
 // canonicalizer_version to glyph_sha256/witness_glyph_sha256/glyph_evidence_version.
+// 2026-08-06: the Type-3 glyph evidence key became the stored image-mask sample
+// grid, with no matrix of any kind taking part, so every published digest
+// changed and the extraction IR went to 1.5.0. Previously
+// dafeaf19570eece1bb3901f883ea456216b7f46ea6872b80a9eb205c24b9e45f.
 const TOOL_CONTRACT_SHA256 = "a594a3a23f6722fb121b9d2a57bad03fc60fda5e352583f07139d191914c8d52";
 
 const CLOSED_READ = Object.freeze({
@@ -423,7 +427,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.4.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.5.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       page_range: { start_page: 1, end_page: 1 },
     });

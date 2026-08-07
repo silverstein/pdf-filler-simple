@@ -184,7 +184,7 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
     };
     const layout = await run("extract_layout", common);
     expect(layout.layout).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.4.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.5.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       pages: expect.any(Array),
     });

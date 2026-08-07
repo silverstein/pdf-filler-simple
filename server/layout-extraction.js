@@ -9,7 +9,7 @@ import {
 } from "./type3-cm-reference.js";
 
 const IR_NAME = "pdf-tools.extraction-ir";
-const IR_VERSION = "1.4.0";
+const IR_VERSION = "1.5.0";
 /*
  * IR_VERSION pin sweep (all must remain aligned):
  * - server/layout-extraction.js: IR_VERSION and EXTRACTION_IR_IDENTITY
@@ -17,7 +17,14 @@ const IR_VERSION = "1.4.0";
  * - server/markdown-conversion.js: supported layout identity
  * - test/read-pdf-layout.test.js, test/convert-pdf-to-markdown.test.js,
  *   test/mcp-contract.test.js, and test/pdfjs-worker-contract.test.js
- * - pdf-toolkit-mcp-share/server/layout-extraction.js and output-schemas.js
+ * - scripts/smoke-mcpb.mjs and scripts/test-share-contract.mjs
+ * - pdf-toolkit-mcp-share/server/layout-extraction.js, markdown-conversion.js,
+ *   and output-schemas.js
+ *
+ * 1.5.0: the Type-3 glyph evidence key is the stored image-mask sample grid.
+ * The published digests under glyph_sha256 and witness_glyph_sha256 all
+ * changed, and those two fields plus glyph_evidence_version replaced the
+ * charproc-named fields of 1.4.0.
  */
 const INTERNAL_SOURCE_REPLAY = Symbol("pdf-layout-internal-source-replay");
 const INTERNAL_MARKDOWN_PROJECTION = Symbol("pdf-layout-internal-markdown-projection");
@@ -59,13 +66,16 @@ const MAX_PAINTED_RECTANGLES = 500;
 /*
  * Type-3 glyph evidence keys.
  *
- * v2 keys a legacy bitmap glyph on its decoded image mask instead of on the
- * CharProc operator list. The operator list folds in the producer's idiom, the
- * inline-image filter it chose, and the per-glyph placement matrix, none of
- * which are properties of the glyph: two documents carrying a pixel-identical
- * Computer Modern raster hashed differently under v1 and now hash the same.
- * Non-mask glyph programs keep the exact operator digest under a separate
- * domain tag, so the two lanes can never satisfy each other's registry entries.
+ * v2 keys a legacy bitmap glyph on the stored samples of its decoded image
+ * mask instead of on the CharProc operator list. The operator list folds in the
+ * producer's idiom, the inline-image filter it chose, and the per-glyph
+ * placement matrix, none of which are properties of the glyph: two documents
+ * carrying a pixel-identical Computer Modern raster hashed differently under v1
+ * and now hash the same. No matrix takes part in the key, because the matrices
+ * that decide painted orientation are not all reachable from inside a CharProc
+ * and keying on the reachable half is what made v1 producer-dependent. Non-mask
+ * glyph programs keep the exact operator digest under a separate domain tag, so
+ * the two lanes can never satisfy each other's registry entries.
  */
 const TYPE3_GLYPH_EVIDENCE_VERSION = "pdfjs-type3-glyph-evidence-v2";
 const TYPE3_MASK_EVIDENCE_DOMAIN = "type3-glyph-image-mask-v1";
@@ -86,11 +96,11 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 11,
     source_unicode: "\u000b",
     target_unicode: "α",
-    glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093",
+    glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47",
     allow_collapsed_whitespace: true,
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 25, glyph_sha256: "751c36c470d1f0292b9d39de8cfec243d0e1e4ca3b2a2648676a8048cdf75322" }),
-      Object.freeze({ original_char_code: 26, glyph_sha256: "ff3b8028f135ce4dbf41a3e3fa8415f54615e9c3e7253d13e9070a71679ccebc" }),
+      Object.freeze({ original_char_code: 25, glyph_sha256: "9554966ab58edc060791bd02f04513a8da4a749f80a943d2daa3460a393fee7f" }),
+      Object.freeze({ original_char_code: 26, glyph_sha256: "eaa7d3cbe50f3ec7903d72addc77f88a471c1dfdc2fd9eb02ce0fbf800068507" }),
     ]),
   }),
   Object.freeze({
@@ -102,8 +112,8 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     target_unicode: ".",
     glyph_sha256: "2ed87b069c99482d0823c085da9c199582e6e4b51172a2b360d9b6652066e3ae",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 59, glyph_sha256: "65e5727a8eb6528fe7013fcf6f2522e93c65ee868f0315850cefd2992e5b7e5b" }),
-      Object.freeze({ original_char_code: 61, glyph_sha256: "2406e228edd78d0d53cc29b48a3154626a47c6fda6b01450cf2c1155cd6b81f7" }),
+      Object.freeze({ original_char_code: 59, glyph_sha256: "b06ab15c9fa4160e3448e0d4cf7e0c6aa1ff13b5dd01ab1406df95d77c279a53" }),
+      Object.freeze({ original_char_code: 61, glyph_sha256: "44505b10d5f364c73f92f52606205ba2fa27a7f96d4dc41c8ba311cc2bc3ffe3" }),
     ]),
   }),
   Object.freeze({
@@ -113,10 +123,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 59,
     source_unicode: ";",
     target_unicode: ",",
-    glyph_sha256: "65e5727a8eb6528fe7013fcf6f2522e93c65ee868f0315850cefd2992e5b7e5b",
+    glyph_sha256: "b06ab15c9fa4160e3448e0d4cf7e0c6aa1ff13b5dd01ab1406df95d77c279a53",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 58, glyph_sha256: "2ed87b069c99482d0823c085da9c199582e6e4b51172a2b360d9b6652066e3ae" }),
-      Object.freeze({ original_char_code: 61, glyph_sha256: "2406e228edd78d0d53cc29b48a3154626a47c6fda6b01450cf2c1155cd6b81f7" }),
+      Object.freeze({ original_char_code: 61, glyph_sha256: "44505b10d5f364c73f92f52606205ba2fa27a7f96d4dc41c8ba311cc2bc3ffe3" }),
     ]),
   }),
   Object.freeze({
@@ -126,10 +136,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 25,
     source_unicode: "\u0019",
     target_unicode: "π",
-    glyph_sha256: "751c36c470d1f0292b9d39de8cfec243d0e1e4ca3b2a2648676a8048cdf75322",
+    glyph_sha256: "9554966ab58edc060791bd02f04513a8da4a749f80a943d2daa3460a393fee7f",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
-      Object.freeze({ original_char_code: 26, glyph_sha256: "ff3b8028f135ce4dbf41a3e3fa8415f54615e9c3e7253d13e9070a71679ccebc" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
+      Object.freeze({ original_char_code: 26, glyph_sha256: "eaa7d3cbe50f3ec7903d72addc77f88a471c1dfdc2fd9eb02ce0fbf800068507" }),
     ]),
   }),
   Object.freeze({
@@ -139,10 +149,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 26,
     source_unicode: "\u001a",
     target_unicode: "ρ",
-    glyph_sha256: "ff3b8028f135ce4dbf41a3e3fa8415f54615e9c3e7253d13e9070a71679ccebc",
+    glyph_sha256: "eaa7d3cbe50f3ec7903d72addc77f88a471c1dfdc2fd9eb02ce0fbf800068507",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
-      Object.freeze({ original_char_code: 25, glyph_sha256: "751c36c470d1f0292b9d39de8cfec243d0e1e4ca3b2a2648676a8048cdf75322" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
+      Object.freeze({ original_char_code: 25, glyph_sha256: "9554966ab58edc060791bd02f04513a8da4a749f80a943d2daa3460a393fee7f" }),
     ]),
   }),
   Object.freeze({
@@ -152,10 +162,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 33,
     source_unicode: "!",
     target_unicode: "ω",
-    glyph_sha256: "4c740569ca05e182025cfeb2d99d35f6c2655f7674b919fe2f145a33ff4ffdd1",
+    glyph_sha256: "d88e2217762ec495c847bbc7535cfa5a3b083590190c185788dfd69929affa24",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
-      Object.freeze({ original_char_code: 25, glyph_sha256: "751c36c470d1f0292b9d39de8cfec243d0e1e4ca3b2a2648676a8048cdf75322" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
+      Object.freeze({ original_char_code: 25, glyph_sha256: "9554966ab58edc060791bd02f04513a8da4a749f80a943d2daa3460a393fee7f" }),
     ]),
   }),
   Object.freeze({
@@ -165,10 +175,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 61,
     source_unicode: "=",
     target_unicode: "/",
-    glyph_sha256: "2406e228edd78d0d53cc29b48a3154626a47c6fda6b01450cf2c1155cd6b81f7",
+    glyph_sha256: "44505b10d5f364c73f92f52606205ba2fa27a7f96d4dc41c8ba311cc2bc3ffe3",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 58, glyph_sha256: "2ed87b069c99482d0823c085da9c199582e6e4b51172a2b360d9b6652066e3ae" }),
-      Object.freeze({ original_char_code: 59, glyph_sha256: "65e5727a8eb6528fe7013fcf6f2522e93c65ee868f0315850cefd2992e5b7e5b" }),
+      Object.freeze({ original_char_code: 59, glyph_sha256: "b06ab15c9fa4160e3448e0d4cf7e0c6aa1ff13b5dd01ab1406df95d77c279a53" }),
     ]),
   }),
   Object.freeze({
@@ -180,8 +190,8 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     target_unicode: "−",
     glyph_sha256: "68b4a1e125aa58ed3e798029190dbf4e2f3937030f921cd995cf7c8ad2f2eedc",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 21, glyph_sha256: "d2622641d0fa27eba18c91fd6333cfad66cbc23918a88854242d2f0f4c6ca968" }),
-      Object.freeze({ original_char_code: 112, glyph_sha256: "f57899424fb6b62d3a54288b4fb0f41a9edc7b8e17bbd41f0a1e1fac6b743196" }),
+      Object.freeze({ original_char_code: 21, glyph_sha256: "520751dc437215219c1269212ade701dc57b1484416b9bad9ef3da2806bb53e9" }),
+      Object.freeze({ original_char_code: 112, glyph_sha256: "0ecbc7bd327017ee4719d7fa1e0b097bdd7b06557f8a39e11aa7c10a8a408218" }),
     ]),
   }),
   Object.freeze({
@@ -191,10 +201,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 21,
     source_unicode: "\u0015",
     target_unicode: "≥",
-    glyph_sha256: "d2622641d0fa27eba18c91fd6333cfad66cbc23918a88854242d2f0f4c6ca968",
+    glyph_sha256: "520751dc437215219c1269212ade701dc57b1484416b9bad9ef3da2806bb53e9",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 0, glyph_sha256: "68b4a1e125aa58ed3e798029190dbf4e2f3937030f921cd995cf7c8ad2f2eedc" }),
-      Object.freeze({ original_char_code: 112, glyph_sha256: "f57899424fb6b62d3a54288b4fb0f41a9edc7b8e17bbd41f0a1e1fac6b743196" }),
+      Object.freeze({ original_char_code: 112, glyph_sha256: "0ecbc7bd327017ee4719d7fa1e0b097bdd7b06557f8a39e11aa7c10a8a408218" }),
     ]),
   }),
   Object.freeze({
@@ -204,10 +214,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 112,
     source_unicode: "p",
     target_unicode: "√",
-    glyph_sha256: "f57899424fb6b62d3a54288b4fb0f41a9edc7b8e17bbd41f0a1e1fac6b743196",
+    glyph_sha256: "0ecbc7bd327017ee4719d7fa1e0b097bdd7b06557f8a39e11aa7c10a8a408218",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 0, glyph_sha256: "68b4a1e125aa58ed3e798029190dbf4e2f3937030f921cd995cf7c8ad2f2eedc" }),
-      Object.freeze({ original_char_code: 21, glyph_sha256: "d2622641d0fa27eba18c91fd6333cfad66cbc23918a88854242d2f0f4c6ca968" }),
+      Object.freeze({ original_char_code: 21, glyph_sha256: "520751dc437215219c1269212ade701dc57b1484416b9bad9ef3da2806bb53e9" }),
     ]),
   }),
   Object.freeze({
@@ -217,10 +227,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 33,
     source_unicode: "!",
     target_unicode: "ω",
-    glyph_sha256: "ce4f89e61b842053344c92603d0588263e0118e0321411ae3f798b2f39445fe2",
+    glyph_sha256: "776ec8ccac079e545eeadd4abc00c0384bfd5f8ffe976e754d832ca527aba9f3",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "e9705ccd52613dd5c8dcbff8618f9d825f88b29a9ddcedc01532fd7ba217385f" }),
-      Object.freeze({ original_char_code: 25, glyph_sha256: "fa64dc2c1de162435601ca8107e3a5027cc9dd3ca9d0aaa6998e5736c3f9564a" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "a8e84e0d932585f5ea43e57c1c6aa2ddc349dbf9c95f25dde63d953281094aed" }),
+      Object.freeze({ original_char_code: 25, glyph_sha256: "8844ed36948e6f388a823fa06d5165b38e5c00b68d0a9196c4875d3a5ed4147c" }),
     ]),
   }),
   Object.freeze({
@@ -232,8 +242,8 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     target_unicode: ".",
     glyph_sha256: "8520f46225db90fbb8c41a8ffe4ced238a45f80f3dd74acf4d9b12ec29598513",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 59, glyph_sha256: "67bc7d266ae458bb1c5cf497d1de03ccbc4b85d03457ef2a54e7aa9e91b2ef6a" }),
-      Object.freeze({ original_char_code: 61, glyph_sha256: "7604ca52d40535d2c7205e425d56cb07e19c388dc6ff5806ffe87cc9d811c025" }),
+      Object.freeze({ original_char_code: 59, glyph_sha256: "76bea2467b789bea3b7bf4585d0bea146aa54cf04448d992013837d2febb8ab7" }),
+      Object.freeze({ original_char_code: 61, glyph_sha256: "6564b30a30b414b35c8f5c892e3d63ece09a101e911109fac83f4bff95dc04b5" }),
     ]),
   }),
   Object.freeze({
@@ -243,10 +253,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 61,
     source_unicode: "=",
     target_unicode: "/",
-    glyph_sha256: "7604ca52d40535d2c7205e425d56cb07e19c388dc6ff5806ffe87cc9d811c025",
+    glyph_sha256: "6564b30a30b414b35c8f5c892e3d63ece09a101e911109fac83f4bff95dc04b5",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 58, glyph_sha256: "8520f46225db90fbb8c41a8ffe4ced238a45f80f3dd74acf4d9b12ec29598513" }),
-      Object.freeze({ original_char_code: 59, glyph_sha256: "67bc7d266ae458bb1c5cf497d1de03ccbc4b85d03457ef2a54e7aa9e91b2ef6a" }),
+      Object.freeze({ original_char_code: 59, glyph_sha256: "76bea2467b789bea3b7bf4585d0bea146aa54cf04448d992013837d2febb8ab7" }),
     ]),
   }),
   Object.freeze({
@@ -256,10 +266,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 59,
     source_unicode: ";",
     target_unicode: ",",
-    glyph_sha256: "67bc7d266ae458bb1c5cf497d1de03ccbc4b85d03457ef2a54e7aa9e91b2ef6a",
+    glyph_sha256: "76bea2467b789bea3b7bf4585d0bea146aa54cf04448d992013837d2febb8ab7",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 58, glyph_sha256: "8520f46225db90fbb8c41a8ffe4ced238a45f80f3dd74acf4d9b12ec29598513" }),
-      Object.freeze({ original_char_code: 61, glyph_sha256: "7604ca52d40535d2c7205e425d56cb07e19c388dc6ff5806ffe87cc9d811c025" }),
+      Object.freeze({ original_char_code: 61, glyph_sha256: "6564b30a30b414b35c8f5c892e3d63ece09a101e911109fac83f4bff95dc04b5" }),
     ]),
   }),
   Object.freeze({
@@ -271,7 +281,7 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     target_unicode: "−",
     glyph_sha256: "ed5df416bb312c2b49ed8936f226016a28e9a09fa52aba56281dd6a8a5430d19",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 6, glyph_sha256: "4734e344eca1f8f73183a34504c1068146b425815a2a8ef6aa00a18dfd45d9a2" }),
+      Object.freeze({ original_char_code: 6, glyph_sha256: "4dd026f859f9674351763f1eec5d88e6ef486555ea12f8eb6a433b1a95238a19" }),
       Object.freeze({ original_char_code: 33, glyph_sha256: "a818ff8e95ae122382e0f0198e875400f4cc07ef1115dbe936ad5dd37933c4d4" }),
     ]),
   }),
@@ -284,8 +294,8 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     target_unicode: "−",
     glyph_sha256: "3f6fdf2abc68f5693f9ea7cdec4d94214a57fb953fb66c747b86dd1f6293d807",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 21, glyph_sha256: "73a2cec4aa27d5042b9f4275179fbf2bb7b99413537597ede0537b7f19c8384c" }),
-      Object.freeze({ original_char_code: 112, glyph_sha256: "f15e035b5867fbee9918125e49566e00b94dcd8422649079c87207e94f7a9e63" }),
+      Object.freeze({ original_char_code: 21, glyph_sha256: "cf5071eb6c006bc80cf9399c28dc00f7e12d8e7f090942de46cb06d404481dd6" }),
+      Object.freeze({ original_char_code: 112, glyph_sha256: "da5345f465509486a66762b6cf8918a3ba5c937f4ca8c7bc4657f4f905d0b4be" }),
     ]),
   }),
   Object.freeze({
@@ -310,8 +320,8 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     target_unicode: ".",
     glyph_sha256: "8520f46225db90fbb8c41a8ffe4ced238a45f80f3dd74acf4d9b12ec29598513",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 59, glyph_sha256: "5363832452620aa888b74219c2a632d1e58a27060bffb1cf6392bf5b2fad8316" }),
-      Object.freeze({ original_char_code: 61, glyph_sha256: "f1c63f92441a1dc720dac5d5d39e38da21d397d81e32c4a87a5bfa34c50b8f8d" }),
+      Object.freeze({ original_char_code: 59, glyph_sha256: "be90d1c78149ab81005db5ce23c2ad819399c82bc16bdc7b41de5a3e3a2ee494" }),
+      Object.freeze({ original_char_code: 61, glyph_sha256: "7102f7980d961e8217c684332b9fe84a9a9f31290153ccf1ee784ffb16527665" }),
     ]),
   }),
   Object.freeze({
@@ -321,10 +331,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 59,
     source_unicode: ";",
     target_unicode: ",",
-    glyph_sha256: "5363832452620aa888b74219c2a632d1e58a27060bffb1cf6392bf5b2fad8316",
+    glyph_sha256: "be90d1c78149ab81005db5ce23c2ad819399c82bc16bdc7b41de5a3e3a2ee494",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 58, glyph_sha256: "8520f46225db90fbb8c41a8ffe4ced238a45f80f3dd74acf4d9b12ec29598513" }),
-      Object.freeze({ original_char_code: 61, glyph_sha256: "f1c63f92441a1dc720dac5d5d39e38da21d397d81e32c4a87a5bfa34c50b8f8d" }),
+      Object.freeze({ original_char_code: 61, glyph_sha256: "7102f7980d961e8217c684332b9fe84a9a9f31290153ccf1ee784ffb16527665" }),
     ]),
   }),
   Object.freeze({
@@ -334,10 +344,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 61,
     source_unicode: "=",
     target_unicode: "/",
-    glyph_sha256: "f1c63f92441a1dc720dac5d5d39e38da21d397d81e32c4a87a5bfa34c50b8f8d",
+    glyph_sha256: "7102f7980d961e8217c684332b9fe84a9a9f31290153ccf1ee784ffb16527665",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 58, glyph_sha256: "8520f46225db90fbb8c41a8ffe4ced238a45f80f3dd74acf4d9b12ec29598513" }),
-      Object.freeze({ original_char_code: 59, glyph_sha256: "5363832452620aa888b74219c2a632d1e58a27060bffb1cf6392bf5b2fad8316" }),
+      Object.freeze({ original_char_code: 59, glyph_sha256: "be90d1c78149ab81005db5ce23c2ad819399c82bc16bdc7b41de5a3e3a2ee494" }),
     ]),
   }),
   Object.freeze({
@@ -347,11 +357,11 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 11,
     source_unicode: "\u000b",
     target_unicode: "α",
-    glyph_sha256: "6092e20a2f8a4925449780db726c4912ccee956a094589d3cb63ede3b5d7383b",
+    glyph_sha256: "afd53079aef8914177830dd32a4751df81d06ef083e4d1a0fc641896dc827fb4",
     allow_collapsed_whitespace: true,
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 25, glyph_sha256: "38b7cc2fac5858dfd6acc1c7936eb874900c61299c8758edc607cb91cbd68b39" }),
-      Object.freeze({ original_char_code: 26, glyph_sha256: "8271aed349c3127895bf7d96b57c83fd62b03cc6c9c9428e600a58b269899365" }),
+      Object.freeze({ original_char_code: 25, glyph_sha256: "ef3b94ad4d1be76d84c62c89da120449668fd9b47cd120922110a9a7977c45f0" }),
+      Object.freeze({ original_char_code: 26, glyph_sha256: "a98c60dd17ef1c118bbdd5ae57e81f7a5cc843450fa650017b64372445a3a5a4" }),
     ]),
   }),
   Object.freeze({
@@ -361,10 +371,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 25,
     source_unicode: "\u0019",
     target_unicode: "π",
-    glyph_sha256: "38b7cc2fac5858dfd6acc1c7936eb874900c61299c8758edc607cb91cbd68b39",
+    glyph_sha256: "ef3b94ad4d1be76d84c62c89da120449668fd9b47cd120922110a9a7977c45f0",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "6092e20a2f8a4925449780db726c4912ccee956a094589d3cb63ede3b5d7383b" }),
-      Object.freeze({ original_char_code: 26, glyph_sha256: "8271aed349c3127895bf7d96b57c83fd62b03cc6c9c9428e600a58b269899365" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "afd53079aef8914177830dd32a4751df81d06ef083e4d1a0fc641896dc827fb4" }),
+      Object.freeze({ original_char_code: 26, glyph_sha256: "a98c60dd17ef1c118bbdd5ae57e81f7a5cc843450fa650017b64372445a3a5a4" }),
     ]),
   }),
   Object.freeze({
@@ -374,10 +384,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 26,
     source_unicode: "\u001a",
     target_unicode: "ρ",
-    glyph_sha256: "8271aed349c3127895bf7d96b57c83fd62b03cc6c9c9428e600a58b269899365",
+    glyph_sha256: "a98c60dd17ef1c118bbdd5ae57e81f7a5cc843450fa650017b64372445a3a5a4",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "6092e20a2f8a4925449780db726c4912ccee956a094589d3cb63ede3b5d7383b" }),
-      Object.freeze({ original_char_code: 25, glyph_sha256: "38b7cc2fac5858dfd6acc1c7936eb874900c61299c8758edc607cb91cbd68b39" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "afd53079aef8914177830dd32a4751df81d06ef083e4d1a0fc641896dc827fb4" }),
+      Object.freeze({ original_char_code: 25, glyph_sha256: "ef3b94ad4d1be76d84c62c89da120449668fd9b47cd120922110a9a7977c45f0" }),
     ]),
   }),
   Object.freeze({
@@ -387,11 +397,11 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 11,
     source_unicode: "\u000b",
     target_unicode: "α",
-    glyph_sha256: "e9705ccd52613dd5c8dcbff8618f9d825f88b29a9ddcedc01532fd7ba217385f",
+    glyph_sha256: "a8e84e0d932585f5ea43e57c1c6aa2ddc349dbf9c95f25dde63d953281094aed",
     allow_collapsed_whitespace: true,
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 25, glyph_sha256: "fa64dc2c1de162435601ca8107e3a5027cc9dd3ca9d0aaa6998e5736c3f9564a" }),
-      Object.freeze({ original_char_code: 26, glyph_sha256: "509f130688569e2b0b333a102fcaee164efdc687a94db9d7a40c928009129431" }),
+      Object.freeze({ original_char_code: 25, glyph_sha256: "8844ed36948e6f388a823fa06d5165b38e5c00b68d0a9196c4875d3a5ed4147c" }),
+      Object.freeze({ original_char_code: 26, glyph_sha256: "4cbdb66a4c77a8d3544a862526cbf6918a1575df24ee425489fd4266aeaf0f2d" }),
     ]),
   }),
   Object.freeze({
@@ -401,10 +411,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 25,
     source_unicode: "\u0019",
     target_unicode: "π",
-    glyph_sha256: "fa64dc2c1de162435601ca8107e3a5027cc9dd3ca9d0aaa6998e5736c3f9564a",
+    glyph_sha256: "8844ed36948e6f388a823fa06d5165b38e5c00b68d0a9196c4875d3a5ed4147c",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "e9705ccd52613dd5c8dcbff8618f9d825f88b29a9ddcedc01532fd7ba217385f" }),
-      Object.freeze({ original_char_code: 26, glyph_sha256: "509f130688569e2b0b333a102fcaee164efdc687a94db9d7a40c928009129431" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "a8e84e0d932585f5ea43e57c1c6aa2ddc349dbf9c95f25dde63d953281094aed" }),
+      Object.freeze({ original_char_code: 26, glyph_sha256: "4cbdb66a4c77a8d3544a862526cbf6918a1575df24ee425489fd4266aeaf0f2d" }),
     ]),
   }),
   Object.freeze({
@@ -414,10 +424,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 26,
     source_unicode: "\u001a",
     target_unicode: "ρ",
-    glyph_sha256: "509f130688569e2b0b333a102fcaee164efdc687a94db9d7a40c928009129431",
+    glyph_sha256: "4cbdb66a4c77a8d3544a862526cbf6918a1575df24ee425489fd4266aeaf0f2d",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "e9705ccd52613dd5c8dcbff8618f9d825f88b29a9ddcedc01532fd7ba217385f" }),
-      Object.freeze({ original_char_code: 25, glyph_sha256: "fa64dc2c1de162435601ca8107e3a5027cc9dd3ca9d0aaa6998e5736c3f9564a" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "a8e84e0d932585f5ea43e57c1c6aa2ddc349dbf9c95f25dde63d953281094aed" }),
+      Object.freeze({ original_char_code: 25, glyph_sha256: "8844ed36948e6f388a823fa06d5165b38e5c00b68d0a9196c4875d3a5ed4147c" }),
     ]),
   }),
   Object.freeze({
@@ -427,10 +437,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 21,
     source_unicode: "\u0015",
     target_unicode: "≥",
-    glyph_sha256: "73a2cec4aa27d5042b9f4275179fbf2bb7b99413537597ede0537b7f19c8384c",
+    glyph_sha256: "cf5071eb6c006bc80cf9399c28dc00f7e12d8e7f090942de46cb06d404481dd6",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 0, glyph_sha256: "3f6fdf2abc68f5693f9ea7cdec4d94214a57fb953fb66c747b86dd1f6293d807" }),
-      Object.freeze({ original_char_code: 112, glyph_sha256: "f15e035b5867fbee9918125e49566e00b94dcd8422649079c87207e94f7a9e63" }),
+      Object.freeze({ original_char_code: 112, glyph_sha256: "da5345f465509486a66762b6cf8918a3ba5c937f4ca8c7bc4657f4f905d0b4be" }),
     ]),
   }),
   Object.freeze({
@@ -440,10 +450,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 112,
     source_unicode: "p",
     target_unicode: "√",
-    glyph_sha256: "f15e035b5867fbee9918125e49566e00b94dcd8422649079c87207e94f7a9e63",
+    glyph_sha256: "da5345f465509486a66762b6cf8918a3ba5c937f4ca8c7bc4657f4f905d0b4be",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 0, glyph_sha256: "3f6fdf2abc68f5693f9ea7cdec4d94214a57fb953fb66c747b86dd1f6293d807" }),
-      Object.freeze({ original_char_code: 21, glyph_sha256: "73a2cec4aa27d5042b9f4275179fbf2bb7b99413537597ede0537b7f19c8384c" }),
+      Object.freeze({ original_char_code: 21, glyph_sha256: "cf5071eb6c006bc80cf9399c28dc00f7e12d8e7f090942de46cb06d404481dd6" }),
     ]),
   }),
   Object.freeze({
@@ -456,7 +466,7 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     glyph_sha256: "2ed87b069c99482d0823c085da9c199582e6e4b51172a2b360d9b6652066e3ae",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 0, glyph_sha256: "68b4a1e125aa58ed3e798029190dbf4e2f3937030f921cd995cf7c8ad2f2eedc" }),
-      Object.freeze({ original_char_code: 6, glyph_sha256: "009835b7eda7745c9e2e167ce0ed1b5e4ff9063af4c92280dffab3213f07e395" }),
+      Object.freeze({ original_char_code: 6, glyph_sha256: "f7b39315fb585e4066816ab2d3d3d07e1b1d79bb9a30fdae7fbf5588d2873906" }),
     ]),
   }),
   Object.freeze({
@@ -466,7 +476,7 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 20,
     source_unicode: "\u0014",
     target_unicode: "≤",
-    glyph_sha256: "b7694606e91a2a5ad7ad6b16032289f5f4bcca7d7528ef93759e39908c68d8c4",
+    glyph_sha256: "1f5c8de996c9b3c20c6503052f62d18022e4b97537957d565a0b3668c3c4918d",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 0, glyph_sha256: "68b4a1e125aa58ed3e798029190dbf4e2f3937030f921cd995cf7c8ad2f2eedc" }),
       Object.freeze({ original_char_code: 1, glyph_sha256: "2ed87b069c99482d0823c085da9c199582e6e4b51172a2b360d9b6652066e3ae" }),
@@ -479,10 +489,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 48,
     source_unicode: "0",
     target_unicode: "′",
-    glyph_sha256: "a24e8c43c1c680cc6c2a676adb046c59ca00ebe5116ed583b37f3b1d6a39cc66",
+    glyph_sha256: "70c2850ba731163e1e74c60f354ca5407181fd97b75b500deba6e92fe068f6ea",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 0, glyph_sha256: "ed5df416bb312c2b49ed8936f226016a28e9a09fa52aba56281dd6a8a5430d19" }),
-      Object.freeze({ original_char_code: 6, glyph_sha256: "4734e344eca1f8f73183a34504c1068146b425815a2a8ef6aa00a18dfd45d9a2" }),
+      Object.freeze({ original_char_code: 6, glyph_sha256: "4dd026f859f9674351763f1eec5d88e6ef486555ea12f8eb6a433b1a95238a19" }),
     ]),
   }),
   Object.freeze({
@@ -713,10 +723,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 1,
     source_unicode: "\u0001",
     target_unicode: "Δ",
-    glyph_sha256: "30552b3ff5ae9fae4095b2a791d73b448221a488c7b6ede9ddfb6852f474a052",
+    glyph_sha256: "d3461f539f11089075b8a98c57a23114902418575458cb92fad483e950129164",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
-      Object.freeze({ original_char_code: 14, glyph_sha256: "8d55a727feda11508e29c3b5c500d64dc58ce7b6fdb3d9776ef1e0d2df7888a3" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
+      Object.freeze({ original_char_code: 14, glyph_sha256: "b2f587826f470886f73db237c0dcc326ea588e176bee087052b5ee7fec6e4cd6" }),
     ]),
   }),
   Object.freeze({
@@ -726,10 +736,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 14,
     source_unicode: "\u000e",
     target_unicode: "δ",
-    glyph_sha256: "8d55a727feda11508e29c3b5c500d64dc58ce7b6fdb3d9776ef1e0d2df7888a3",
+    glyph_sha256: "b2f587826f470886f73db237c0dcc326ea588e176bee087052b5ee7fec6e4cd6",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 1, glyph_sha256: "30552b3ff5ae9fae4095b2a791d73b448221a488c7b6ede9ddfb6852f474a052" }),
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
+      Object.freeze({ original_char_code: 1, glyph_sha256: "d3461f539f11089075b8a98c57a23114902418575458cb92fad483e950129164" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
     ]),
   }),
   Object.freeze({
@@ -739,10 +749,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 14,
     source_unicode: "\u000e",
     target_unicode: "δ",
-    glyph_sha256: "40e6d476435323a686a4ef5f02ac43f6b6b5e3612887c18105b82575e76e2e9b",
+    glyph_sha256: "e8cb8e148c83465beb80f9a888fecb2b5b9a0e4625701b97cc149ffc893ed1ed",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "6092e20a2f8a4925449780db726c4912ccee956a094589d3cb63ede3b5d7383b" }),
-      Object.freeze({ original_char_code: 15, glyph_sha256: "8692c50f6e5d1605e52e3d414ad4c285a583d11bcfff2f7a3be93bee06117de5" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "afd53079aef8914177830dd32a4751df81d06ef083e4d1a0fc641896dc827fb4" }),
+      Object.freeze({ original_char_code: 15, glyph_sha256: "cb992b6a906e74dce8a20f585dc7c3befd47b7f99356f6e0acfeff69b324a367" }),
     ]),
   }),
   Object.freeze({
@@ -752,10 +762,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 15,
     source_unicode: "\u000f",
     target_unicode: "ϵ",
-    glyph_sha256: "da7780d95a5aea753d5de0f042903c2e96618c719283db449cd0476c5e74a6a4",
+    glyph_sha256: "c05d44175c21bf871787e49b7e44630f1424dec624ed460442d05060a67283df",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 1, glyph_sha256: "30552b3ff5ae9fae4095b2a791d73b448221a488c7b6ede9ddfb6852f474a052" }),
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
+      Object.freeze({ original_char_code: 1, glyph_sha256: "d3461f539f11089075b8a98c57a23114902418575458cb92fad483e950129164" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
     ]),
   }),
   Object.freeze({
@@ -765,10 +775,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 15,
     source_unicode: "\u000f",
     target_unicode: "ϵ",
-    glyph_sha256: "8692c50f6e5d1605e52e3d414ad4c285a583d11bcfff2f7a3be93bee06117de5",
+    glyph_sha256: "cb992b6a906e74dce8a20f585dc7c3befd47b7f99356f6e0acfeff69b324a367",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "6092e20a2f8a4925449780db726c4912ccee956a094589d3cb63ede3b5d7383b" }),
-      Object.freeze({ original_char_code: 14, glyph_sha256: "40e6d476435323a686a4ef5f02ac43f6b6b5e3612887c18105b82575e76e2e9b" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "afd53079aef8914177830dd32a4751df81d06ef083e4d1a0fc641896dc827fb4" }),
+      Object.freeze({ original_char_code: 14, glyph_sha256: "e8cb8e148c83465beb80f9a888fecb2b5b9a0e4625701b97cc149ffc893ed1ed" }),
     ]),
   }),
   Object.freeze({
@@ -778,10 +788,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 17,
     source_unicode: "\u0011",
     target_unicode: "η",
-    glyph_sha256: "8a211c038232f3e28545e3d2f4a42ebd349a8cc27e45bc0a6775b4cd105cfb9c",
+    glyph_sha256: "9d63d43c9de79f2045762af5a19d73f86c29c9dfbbb96ca3913f7a7d3fe83255",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "6092e20a2f8a4925449780db726c4912ccee956a094589d3cb63ede3b5d7383b" }),
-      Object.freeze({ original_char_code: 14, glyph_sha256: "40e6d476435323a686a4ef5f02ac43f6b6b5e3612887c18105b82575e76e2e9b" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "afd53079aef8914177830dd32a4751df81d06ef083e4d1a0fc641896dc827fb4" }),
+      Object.freeze({ original_char_code: 14, glyph_sha256: "e8cb8e148c83465beb80f9a888fecb2b5b9a0e4625701b97cc149ffc893ed1ed" }),
     ]),
   }),
   Object.freeze({
@@ -791,10 +801,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 18,
     source_unicode: "\u0012",
     target_unicode: "θ",
-    glyph_sha256: "1687afb884c912cf4555cef231572f37ac3eabe87344bc993fc3880d5eabdd2a",
+    glyph_sha256: "2f363c697c4ee84b7785dc606f0b38c93d8f4d63ea076784943858eae5c58859",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "6092e20a2f8a4925449780db726c4912ccee956a094589d3cb63ede3b5d7383b" }),
-      Object.freeze({ original_char_code: 14, glyph_sha256: "40e6d476435323a686a4ef5f02ac43f6b6b5e3612887c18105b82575e76e2e9b" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "afd53079aef8914177830dd32a4751df81d06ef083e4d1a0fc641896dc827fb4" }),
+      Object.freeze({ original_char_code: 14, glyph_sha256: "e8cb8e148c83465beb80f9a888fecb2b5b9a0e4625701b97cc149ffc893ed1ed" }),
     ]),
   }),
   Object.freeze({
@@ -804,10 +814,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 21,
     source_unicode: "\u0015",
     target_unicode: "λ",
-    glyph_sha256: "bdf1508d236990157b905ae312c6daf9452a27e2e15f0d239e174047d700327f",
+    glyph_sha256: "41831967f0efef3f08cc7cdc544673323d526955d54eb70a02c0759c7fd4a2ff",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 1, glyph_sha256: "30552b3ff5ae9fae4095b2a791d73b448221a488c7b6ede9ddfb6852f474a052" }),
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
+      Object.freeze({ original_char_code: 1, glyph_sha256: "d3461f539f11089075b8a98c57a23114902418575458cb92fad483e950129164" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
     ]),
   }),
   Object.freeze({
@@ -817,10 +827,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 21,
     source_unicode: "\u0015",
     target_unicode: "λ",
-    glyph_sha256: "50a0ec752f73c00a5126d9e2ac8c9d3b97058ebd24e08570f18a994cad8702bd",
+    glyph_sha256: "75980da7a10a36beb8fccf4970e9295c03fe44be69bf167dacfdead776e5163f",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "6092e20a2f8a4925449780db726c4912ccee956a094589d3cb63ede3b5d7383b" }),
-      Object.freeze({ original_char_code: 14, glyph_sha256: "40e6d476435323a686a4ef5f02ac43f6b6b5e3612887c18105b82575e76e2e9b" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "afd53079aef8914177830dd32a4751df81d06ef083e4d1a0fc641896dc827fb4" }),
+      Object.freeze({ original_char_code: 14, glyph_sha256: "e8cb8e148c83465beb80f9a888fecb2b5b9a0e4625701b97cc149ffc893ed1ed" }),
     ]),
   }),
   Object.freeze({
@@ -830,10 +840,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 22,
     source_unicode: "\u0016",
     target_unicode: "μ",
-    glyph_sha256: "58753b33f3d1d72955b0f1ef1777c5455c5ba37588f5fd88a0271ddcc0f46a75",
+    glyph_sha256: "9bb6e58efa558b61d35a7d6c83ee5d6404c734858f689177a6527efe04065404",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 1, glyph_sha256: "30552b3ff5ae9fae4095b2a791d73b448221a488c7b6ede9ddfb6852f474a052" }),
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
+      Object.freeze({ original_char_code: 1, glyph_sha256: "d3461f539f11089075b8a98c57a23114902418575458cb92fad483e950129164" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
     ]),
   }),
   Object.freeze({
@@ -843,10 +853,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 23,
     source_unicode: "\u0017",
     target_unicode: "ν",
-    glyph_sha256: "d56aaf7b101a1a8f54fb062c3176637576fc6d46c262c250b1082d5c606853c7",
+    glyph_sha256: "6f42ddf03199aeb21b3487177b315979b4afafe5f3a499805c49bf5bd46d719e",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 1, glyph_sha256: "30552b3ff5ae9fae4095b2a791d73b448221a488c7b6ede9ddfb6852f474a052" }),
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
+      Object.freeze({ original_char_code: 1, glyph_sha256: "d3461f539f11089075b8a98c57a23114902418575458cb92fad483e950129164" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
     ]),
   }),
   Object.freeze({
@@ -856,10 +866,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 27,
     source_unicode: "\u001b",
     target_unicode: "σ",
-    glyph_sha256: "c9a619efc5cd6a08c8ca09b92aca0d61391929ca7846322b4baf0d3f38edc5d8",
+    glyph_sha256: "06ec7ab10994040dc4927dbc3da9884ebf14f0da502e9240cdaec07d1443998d",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "6092e20a2f8a4925449780db726c4912ccee956a094589d3cb63ede3b5d7383b" }),
-      Object.freeze({ original_char_code: 14, glyph_sha256: "40e6d476435323a686a4ef5f02ac43f6b6b5e3612887c18105b82575e76e2e9b" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "afd53079aef8914177830dd32a4751df81d06ef083e4d1a0fc641896dc827fb4" }),
+      Object.freeze({ original_char_code: 14, glyph_sha256: "e8cb8e148c83465beb80f9a888fecb2b5b9a0e4625701b97cc149ffc893ed1ed" }),
     ]),
   }),
   Object.freeze({
@@ -869,10 +879,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 28,
     source_unicode: "\u001c",
     target_unicode: "τ",
-    glyph_sha256: "10338ccd15eb973844cbbc07005a82aa702020cd2910adb162e71870fc67f82a",
+    glyph_sha256: "c01bf46eb9a8d19c7fb57d94905839c2fc2ba40450c736e8996ccd72948fa4ab",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 1, glyph_sha256: "30552b3ff5ae9fae4095b2a791d73b448221a488c7b6ede9ddfb6852f474a052" }),
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
+      Object.freeze({ original_char_code: 1, glyph_sha256: "d3461f539f11089075b8a98c57a23114902418575458cb92fad483e950129164" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
     ]),
   }),
   Object.freeze({
@@ -882,10 +892,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 39,
     source_unicode: "'",
     target_unicode: "φ",
-    glyph_sha256: "4231ef8441ffbc9e7bc7693f3ec28d2de301d0edc6f9df6f69968a95af266e97",
+    glyph_sha256: "31ddaca9be2bbf03dd58481b7516a3447a4ce89938ce2d99067b37805e08debd",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 1, glyph_sha256: "30552b3ff5ae9fae4095b2a791d73b448221a488c7b6ede9ddfb6852f474a052" }),
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
+      Object.freeze({ original_char_code: 1, glyph_sha256: "d3461f539f11089075b8a98c57a23114902418575458cb92fad483e950129164" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
     ]),
   }),
   Object.freeze({
@@ -895,10 +905,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 82,
     source_unicode: "R",
     target_unicode: "∫",
-    glyph_sha256: "58d503ac1ab67ecadd8e1ec07991a8338ddd452f5c3069dcba0ebe52e42fb3ee",
+    glyph_sha256: "362d48887daf303c09269e0fbc69db2338f062ce758cd9e242d3306f9f0c1952",
     complete_font_enrollment: Object.freeze([82, 90]),
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 90, glyph_sha256: "063d12bd3f8fba24a0375a5da378e3a0acb6195c42f91625ea0798dba6545ed7" }),
+      Object.freeze({ original_char_code: 90, glyph_sha256: "e5844045853943e3424dc224e60ba1217a509b2cc8e20f67a3504b141ed3c9c9" }),
     ]),
   }),
   Object.freeze({
@@ -908,10 +918,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 90,
     source_unicode: "Z",
     target_unicode: "∫",
-    glyph_sha256: "063d12bd3f8fba24a0375a5da378e3a0acb6195c42f91625ea0798dba6545ed7",
+    glyph_sha256: "e5844045853943e3424dc224e60ba1217a509b2cc8e20f67a3504b141ed3c9c9",
     complete_font_enrollment: Object.freeze([82, 90]),
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 82, glyph_sha256: "58d503ac1ab67ecadd8e1ec07991a8338ddd452f5c3069dcba0ebe52e42fb3ee" }),
+      Object.freeze({ original_char_code: 82, glyph_sha256: "362d48887daf303c09269e0fbc69db2338f062ce758cd9e242d3306f9f0c1952" }),
     ]),
   }),
   Object.freeze({
@@ -921,7 +931,7 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 6,
     source_unicode: "\u0006",
     target_unicode: "±",
-    glyph_sha256: "4734e344eca1f8f73183a34504c1068146b425815a2a8ef6aa00a18dfd45d9a2",
+    glyph_sha256: "4dd026f859f9674351763f1eec5d88e6ef486555ea12f8eb6a433b1a95238a19",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 0, glyph_sha256: "ed5df416bb312c2b49ed8936f226016a28e9a09fa52aba56281dd6a8a5430d19" }),
       Object.freeze({ original_char_code: 33, glyph_sha256: "a818ff8e95ae122382e0f0198e875400f4cc07ef1115dbe936ad5dd37933c4d4" }),
@@ -950,7 +960,7 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     glyph_sha256: "a818ff8e95ae122382e0f0198e875400f4cc07ef1115dbe936ad5dd37933c4d4",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 0, glyph_sha256: "ed5df416bb312c2b49ed8936f226016a28e9a09fa52aba56281dd6a8a5430d19" }),
-      Object.freeze({ original_char_code: 6, glyph_sha256: "4734e344eca1f8f73183a34504c1068146b425815a2a8ef6aa00a18dfd45d9a2" }),
+      Object.freeze({ original_char_code: 6, glyph_sha256: "4dd026f859f9674351763f1eec5d88e6ef486555ea12f8eb6a433b1a95238a19" }),
     ]),
   }),
   Object.freeze({
@@ -960,10 +970,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 17,
     source_unicode: "\u0011",
     target_unicode: "η",
-    glyph_sha256: "712ac34ba1c3de89b2c233171e58eaa55e54ebcb0d4cec1609a788fa90eef047",
+    glyph_sha256: "b92c6fb549abb85d45c5ef490227e3accba0f512901b57fb72079a7232ed51fe",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
-      Object.freeze({ original_char_code: 25, glyph_sha256: "751c36c470d1f0292b9d39de8cfec243d0e1e4ca3b2a2648676a8048cdf75322" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
+      Object.freeze({ original_char_code: 25, glyph_sha256: "9554966ab58edc060791bd02f04513a8da4a749f80a943d2daa3460a393fee7f" }),
     ]),
   }),
   Object.freeze({
@@ -973,10 +983,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 18,
     source_unicode: "\u0012",
     target_unicode: "θ",
-    glyph_sha256: "38d2baa791ebd167d9d328153bd4cabcb722c833e759315f3a398537e0f57e03",
+    glyph_sha256: "23102a1771564bb5329a4dbceb26cb3c92ee878dc907664891121ffd96cd4924",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
-      Object.freeze({ original_char_code: 25, glyph_sha256: "751c36c470d1f0292b9d39de8cfec243d0e1e4ca3b2a2648676a8048cdf75322" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
+      Object.freeze({ original_char_code: 25, glyph_sha256: "9554966ab58edc060791bd02f04513a8da4a749f80a943d2daa3460a393fee7f" }),
     ]),
   }),
   Object.freeze({
@@ -986,10 +996,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 27,
     source_unicode: "\u001b",
     target_unicode: "σ",
-    glyph_sha256: "de609d12d1935bc3ff128046fa3c5f4330689ded53c9fc7a179a0b7c368f9f9a",
+    glyph_sha256: "dfba03d4b605f4ae62fd08d5829cc2e26549f0f40d2d2b9a11adf2db1046a10a",
     witnesses: Object.freeze([
-      Object.freeze({ original_char_code: 11, glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093" }),
-      Object.freeze({ original_char_code: 25, glyph_sha256: "751c36c470d1f0292b9d39de8cfec243d0e1e4ca3b2a2648676a8048cdf75322" }),
+      Object.freeze({ original_char_code: 11, glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47" }),
+      Object.freeze({ original_char_code: 25, glyph_sha256: "9554966ab58edc060791bd02f04513a8da4a749f80a943d2daa3460a393fee7f" }),
     ]),
   }),
   Object.freeze({
@@ -999,10 +1009,10 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     original_char_code: 6,
     source_unicode: "\u0006",
     target_unicode: "±",
-    glyph_sha256: "009835b7eda7745c9e2e167ce0ed1b5e4ff9063af4c92280dffab3213f07e395",
+    glyph_sha256: "f7b39315fb585e4066816ab2d3d3d07e1b1d79bb9a30fdae7fbf5588d2873906",
     witnesses: Object.freeze([
       Object.freeze({ original_char_code: 0, glyph_sha256: "68b4a1e125aa58ed3e798029190dbf4e2f3937030f921cd995cf7c8ad2f2eedc" }),
-      Object.freeze({ original_char_code: 21, glyph_sha256: "d2622641d0fa27eba18c91fd6333cfad66cbc23918a88854242d2f0f4c6ca968" }),
+      Object.freeze({ original_char_code: 21, glyph_sha256: "520751dc437215219c1269212ade701dc57b1484416b9bad9ef3da2806bb53e9" }),
     ]),
   }),
 ]);
@@ -1157,13 +1167,26 @@ function type3GlyphImageMask(charProc, fontMatrix, ops) {
   if (!Number.isInteger(width) || !Number.isInteger(height) || width <= 0 || height <= 0) return null;
   if (width * height > MAX_TYPE3_GLYPH_MASK_PIXELS) return null;
   if (path.length > MAX_TYPE3_GLYPH_MASK_PATH_NODES) return null;
-  // Only an axis-aligned, non-degenerate placement has an unambiguous mirror
-  // decomposition; a rotated or skewed glyph program is left unrecognized.
+  // Exactly what this checks: the CharProc-local matrix, meaning the font's
+  // FontMatrix composed with the `cm` chain written inside this one glyph
+  // program. Exactly what it does NOT check, and cannot: the text matrix and
+  // the graphics CTM in force at the `Tj` that draws the glyph. Those are set
+  // by the page content stream outside the CharProc and are invisible here, so
+  // nothing below is a statement about the orientation the glyph is finally
+  // painted in.
+  //
+  // That gap is deliberate rather than tolerated. The key is the stored sample
+  // grid, which no matrix anywhere can alter, so painted orientation is not an
+  // input to it. This check survives only to hold the mask lane to the plain
+  // axis-aligned, non-degenerate scale-or-reflection bitmap idiom every
+  // enrolled entry was qualified on: a glyph program that rotates, shears, or
+  // collapses its own bitmap is a different construction and is keyed by the
+  // exact operator digest instead of by this lane.
   if (Math.abs(transform[1]) > 1e-9 || Math.abs(transform[2]) > 1e-9) return null;
   if (!(Math.abs(transform[0]) > 0) || !(Math.abs(transform[3]) > 0)) return null;
   const bits = fillAxisAlignedLatticePath(path, width, height);
   if (!bits) return null;
-  return { width, height, bits, mirror_x: transform[0] < 0, mirror_y: transform[3] < 0 };
+  return { width, height, bits };
 }
 
 function fillAxisAlignedLatticePath(path, width, height) {
@@ -1200,8 +1223,8 @@ function fillAxisAlignedLatticePath(path, width, height) {
     if (index + 1 >= path.length) return null;
     const x = lattice(path[index], width);
     // PDF.js emits the traced outline y-up in the unit square, so unit y 1 is
-    // image row 0. Reading it back as a row index keeps the grid in the
-    // stored sample order and leaves orientation to the canonical step.
+    // image row 0. Reading it back as a row index recovers the grid in the
+    // stored sample order, which is the order the key is taken in.
     const y = lattice(1 - path[index + 1], height);
     index += 2;
     if (x === null || y === null) return null;
@@ -1233,14 +1256,34 @@ function fillAxisAlignedLatticePath(path, width, height) {
 }
 
 /**
- * The producer-independent form of a decoded mask: mirrored back into the
- * orientation it is actually painted in, then cropped to its own ink. What is
- * deliberately dropped is everything a second producer would have chosen
- * differently for the same glyph — the placement matrix, the blank padding
- * around the ink, and the operator idiom that carried them.
+ * The producer-independent form of a decoded mask: the stored sample grid,
+ * cropped to its own ink.
+ *
+ * The grid as stored is the canonical form on purpose. It is the one thing in
+ * a Type-3 bitmap glyph that is a property of the glyph and of nothing else:
+ * every matrix that could reorient it — the CharProc's own `cm`, the font's
+ * FontMatrix, the text matrix, the page CTM — is chosen by the producer or by
+ * the page that draws the character, and only the first two are even reachable
+ * from inside a CharProc. Normalizing to painted orientation would therefore
+ * mean keying partly on data this function cannot see, and did: an earlier
+ * revision folded in `sign(FontMatrix x cm)` and gave two documents different
+ * keys for a pixel-identical comma.
+ *
+ * The accepted consequence is that a glyph painted rotated or reflected keys
+ * the same as the upright one. That is the correct answer for text set at an
+ * angle, which is still the same character. Where it could be wrong is a font
+ * that reuses one bitmap for two characters by reflecting it — the classic
+ * matched-parenthesis trick — and that case is already refused by the
+ * shape-code injectivity rule below: one shape standing at two enrolled codes
+ * of a font is ambiguous evidence and recovers nothing.
+ *
+ * Also deliberately dropped: the blank padding around the ink and the operator
+ * idiom that carried the samples. An inkless mask has no shape to key at all
+ * and is rejected here rather than collapsing every blank glyph of every font
+ * onto one digest.
  */
 function canonicalType3MaskBits(mask) {
-  const { width, height, bits, mirror_x: mirrorX, mirror_y: mirrorY } = mask;
+  const { width, height, bits } = mask;
   let top = height;
   let bottom = -1;
   let left = width;
@@ -1248,26 +1291,20 @@ function canonicalType3MaskBits(mask) {
   for (let row = 0; row < height; row += 1) {
     for (let column = 0; column < width; column += 1) {
       if (!bits[row * width + column]) continue;
-      const visualRow = mirrorY ? height - 1 - row : row;
-      const visualColumn = mirrorX ? width - 1 - column : column;
-      if (visualRow < top) top = visualRow;
-      if (visualRow > bottom) bottom = visualRow;
-      if (visualColumn < left) left = visualColumn;
-      if (visualColumn > right) right = visualColumn;
+      if (row < top) top = row;
+      if (row > bottom) bottom = row;
+      if (column < left) left = column;
+      if (column > right) right = column;
     }
   }
-  if (bottom < 0) return { width: 0, height: 0, packed: Buffer.alloc(0) };
+  if (bottom < 0) return null;
   const inkWidth = right - left + 1;
   const inkHeight = bottom - top + 1;
   const stride = (inkWidth + 7) >> 3;
   const packed = Buffer.alloc(stride * inkHeight);
   for (let row = 0; row < inkHeight; row += 1) {
     for (let column = 0; column < inkWidth; column += 1) {
-      const visualRow = top + row;
-      const visualColumn = left + column;
-      const sourceRow = mirrorY ? height - 1 - visualRow : visualRow;
-      const sourceColumn = mirrorX ? width - 1 - visualColumn : visualColumn;
-      if (bits[sourceRow * width + sourceColumn]) packed[row * stride + (column >> 3)] |= 128 >> (column & 7);
+      if (bits[(top + row) * width + left + column]) packed[row * stride + (column >> 3)] |= 128 >> (column & 7);
     }
   }
   return { width: inkWidth, height: inkHeight, packed };
@@ -1276,24 +1313,25 @@ function canonicalType3MaskBits(mask) {
 /**
  * The recovery key for one Type-3 glyph program.
  *
- * A glyph whose body is a single decoded image mask is keyed on the mask
- * itself, so the same Computer Modern raster keys identically no matter which
- * dvips-era toolchain packed it, which filter it was compressed with, or where
- * the producer placed it inside the glyph box. Anything else — an outline
- * CharProc, a multi-object program, a rotated placement — falls back to the
- * exact canonicalized operator digest, which is narrower but never wrong. The
- * two lanes are domain-separated, so a mask digest can never satisfy an
- * operator-keyed registry entry or the reverse.
+ * A glyph whose body is a single decoded image mask carrying ink is keyed on
+ * the stored mask grid, so the same Computer Modern raster keys identically no
+ * matter which dvips-era toolchain packed it, which filter it was compressed
+ * with, or where and which way round the producer placed it inside the glyph
+ * box. Anything else — an outline CharProc, a multi-object program, a glyph
+ * program that rotates or shears its own bitmap, an inkless mask with no shape
+ * to key — falls back to the exact canonicalized operator digest, which is
+ * narrower but never wrong. The two lanes are domain-separated, so a mask
+ * digest can never satisfy an operator-keyed registry entry or the reverse.
  */
 export function type3GlyphEvidenceSha256(charProc, fontMatrix, ops) {
   const mask = type3GlyphImageMask(charProc, fontMatrix, ops);
-  if (!mask) {
+  const canonical = mask ? canonicalType3MaskBits(mask) : null;
+  if (!canonical) {
     const operators = type3CharProcSha256(charProc);
     return operators === null
       ? null
       : createHash("sha256").update(`${TYPE3_CHARPROC_EVIDENCE_DOMAIN}:${operators}`).digest("hex");
   }
-  const canonical = canonicalType3MaskBits(mask);
   return createHash("sha256")
     .update(`${TYPE3_MASK_EVIDENCE_DOMAIN}:${canonical.width}x${canonical.height}:`)
     .update(canonical.packed)
@@ -1737,9 +1775,19 @@ function linkedRawType3Font(fontId, fontTokens, rawFonts) {
 
 /*
  * One glyph program is looked up once per registry entry that names it and
- * again for the enrolled-shape index, so the decode is memoized on the PDF.js
- * CharProc object itself. PDF.js caches Type-3 font objects per document, so
- * the same object comes back on every page the font is used on.
+ * again for the enrolled-shape index, so the decode is memoized. PDF.js caches
+ * Type-3 font objects per document, so the same font object comes back on
+ * every page the font is used on.
+ *
+ * The cache is keyed on the font and then the glyph id, not on the CharProc
+ * object alone, because the digest is a function of all three of the
+ * arguments below and only the CharProc is an object identity. A font owns
+ * exactly one FontMatrix and one CharProc for a given glyph id, so keying on
+ * the pair covers both; keying on a CharProc that two fonts happened to share
+ * would not, since the two fonts can declare different FontMatrix values and
+ * the matrix decides whether the mask lane is admissible at all. `ops` is the
+ * operator table of the single pinned PDF.js build loaded in this process and
+ * is therefore constant for the cache's lifetime.
  */
 const type3GlyphEvidenceCache = new WeakMap();
 
@@ -1748,10 +1796,15 @@ function type3GlyphEvidenceForCode(font, rawFont, code, ops) {
   if (typeof glyphId !== "string") return null;
   const charProc = font?.charProcOperatorList?.[glyphId];
   if (!charProc || typeof charProc !== "object") return null;
-  const cached = type3GlyphEvidenceCache.get(charProc);
+  let byGlyphId = type3GlyphEvidenceCache.get(font);
+  if (byGlyphId === undefined) {
+    byGlyphId = new Map();
+    type3GlyphEvidenceCache.set(font, byGlyphId);
+  }
+  const cached = byGlyphId.get(glyphId);
   if (cached !== undefined) return cached;
   const digest = type3GlyphEvidenceSha256(charProc, font?.fontMatrix, ops);
-  type3GlyphEvidenceCache.set(charProc, digest);
+  byGlyphId.set(glyphId, digest);
   return digest;
 }
 

@@ -124,10 +124,10 @@ function markCollapsedAlpha(item) {
     font_name: item.font_name,
     registry_id: "cmmi-pk-raster-alpha-e688a8-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
-    glyph_sha256: "31c3617c687647586397cd1efa5cfcdd0ae1ea108242960caabb736e76bda093",
+    glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47",
     witness_glyph_sha256: [
-      "751c36c470d1f0292b9d39de8cfec243d0e1e4ca3b2a2648676a8048cdf75322",
-      "ff3b8028f135ce4dbf41a3e3fa8415f54615e9c3e7253d13e9070a71679ccebc",
+      "9554966ab58edc060791bd02f04513a8da4a749f80a943d2daa3460a393fee7f",
+      "eaa7d3cbe50f3ec7903d72addc77f88a471c1dfdc2fd9eb02ce0fbf800068507",
     ],
     tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
     glyph_evidence_version: "pdfjs-type3-glyph-evidence-v2",
@@ -363,8 +363,10 @@ describe("layout Markdown renderer", () => {
     // Pin the complete normalized envelope, not a value derived from a second
     // invocation, so any unreviewed serialized delta fails this regression.
     const serialized = JSON.stringify(pinnable);
+    // Previously cb581702fc7339b3eea5f15f31e49c907639622ef7c571b22870538598853572,
+    // before the extraction IR version in the provenance envelope became 1.5.0.
     expect(createHash("sha256").update(serialized).digest("hex"))
-      .toBe("cb581702fc7339b3eea5f15f31e49c907639622ef7c571b22870538598853572");
+      .toBe("e5a35996c69239297339bc97433b52d6595caf5c360becb12d793828a78bd8b2");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,
