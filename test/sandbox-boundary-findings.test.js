@@ -7,10 +7,10 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import { parseAllowedDirectoryArgs } from "../server/helpers.js";
 import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
-// These tests encode the allowed-directory boundary we intend to enforce on a
-// host that supplies no user configuration, which is every Agent Plugins 1.0.0
-// client. They are expected to fail against the current implementation; each
-// failure is the evidence for one finding.
+// The allowed-directory boundary as enforced on a host that supplies no user
+// configuration, which is every Agent Plugins 1.0.0 client. Each case failed
+// against the implementation that preceded it; the wording of a refusal is
+// owned by test/allowed-directories.test.js, not here.
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.join(__dirname, "..");
@@ -195,6 +195,107 @@ describe("sandbox boundary: allowed-set parsing", () => {
 
     expect(structuredErrorCode(result)).toBe("path_policy_denied");
     expect(textFromToolResult(result)).not.toContain("example-fw9.pdf");
+  }, 30_000);
+});
+
+describe("sandbox boundary: default directory when the caller names none", () => {
+  let client;
+  let transport;
+  let tempDirectory;
+  let firstAllowed;
+  let secondAllowed;
+
+  beforeAll(async () => {
+    tempDirectory = await createTestTempDirectory(REPO_ROOT, "sandbox-default-directory");
+    firstAllowed = path.join(tempDirectory, "first-allowed");
+    secondAllowed = path.join(tempDirectory, "second-allowed");
+    await fs.mkdir(firstAllowed, { recursive: true });
+    await fs.mkdir(secondAllowed, { recursive: true });
+    await fs.copyFile(EXAMPLE_PDF, path.join(firstAllowed, "first.pdf"));
+    await fs.copyFile(EXAMPLE_PDF, path.join(secondAllowed, "second.pdf"));
+
+    // A home directory that exists and holds a PDF, but was never allowed.
+    const unallowedHomeDocuments = path.join(tempDirectory, "home", "Documents");
+    await fs.mkdir(unallowedHomeDocuments, { recursive: true });
+    await fs.copyFile(EXAMPLE_PDF, path.join(unallowedHomeDocuments, "never-allowed.pdf"));
+
+    ({ client, transport } = await connectServer({
+      name: "pdf-tools-default-directory-client",
+      env: {
+        HOME: path.join(tempDirectory, "home"),
+        USERPROFILE: path.join(tempDirectory, "home"),
+        ALLOWED_DIRECTORIES: [firstAllowed, secondAllowed].join(path.delimiter),
+        DEFAULT_PROFILES_DIR: path.join(tempDirectory, "profiles"),
+      },
+    }));
+  }, 30_000);
+
+  afterAll(async () => {
+    try {
+      await transport?.close();
+    } finally {
+      await removeTestTempDirectory(tempDirectory);
+    }
+  });
+
+  it("browses an allowed directory rather than refusing a path the caller never named", async () => {
+    const result = await client.callTool({ name: "list_pdfs", arguments: {} });
+
+    // Regression guard: once the home folders stopped being granted by
+    // default, an unconfigured browsing default resolved to an ungranted home
+    // directory and refused a request that named no path at all.
+    expect(structuredErrorCode(result)).toBeUndefined();
+    expect(textFromToolResult(result)).toContain("first.pdf");
+  }, 30_000);
+
+  it("never falls back to an unallowed home directory", async () => {
+    const result = await client.callTool({ name: "list_pdfs", arguments: {} });
+
+    expect(textFromToolResult(result)).not.toContain("never-allowed.pdf");
+  }, 30_000);
+});
+
+describe("sandbox boundary: an explicit browsing default wins", () => {
+  let client;
+  let transport;
+  let tempDirectory;
+  let firstAllowed;
+  let configuredDefault;
+
+  beforeAll(async () => {
+    tempDirectory = await createTestTempDirectory(REPO_ROOT, "sandbox-explicit-default");
+    firstAllowed = path.join(tempDirectory, "first-allowed");
+    configuredDefault = path.join(tempDirectory, "configured-default");
+    await fs.mkdir(firstAllowed, { recursive: true });
+    await fs.mkdir(configuredDefault, { recursive: true });
+    await fs.copyFile(EXAMPLE_PDF, path.join(firstAllowed, "first.pdf"));
+    await fs.copyFile(EXAMPLE_PDF, path.join(configuredDefault, "configured.pdf"));
+
+    ({ client, transport } = await connectServer({
+      name: "pdf-tools-explicit-default-client",
+      env: {
+        HOME: path.join(tempDirectory, "home"),
+        ALLOWED_DIRECTORIES: [firstAllowed, configuredDefault].join(path.delimiter),
+        DEFAULT_PDF_DIR: configuredDefault,
+        DEFAULT_PROFILES_DIR: path.join(tempDirectory, "profiles"),
+      },
+    }));
+  }, 30_000);
+
+  afterAll(async () => {
+    try {
+      await transport?.close();
+    } finally {
+      await removeTestTempDirectory(tempDirectory);
+    }
+  });
+
+  it("prefers the configured browsing default over the first allowed directory", async () => {
+    const result = await client.callTool({ name: "list_pdfs", arguments: {} });
+
+    const text = textFromToolResult(result);
+    expect(text).toContain("configured.pdf");
+    expect(text).not.toContain("first.pdf");
   }, 30_000);
 });
 
