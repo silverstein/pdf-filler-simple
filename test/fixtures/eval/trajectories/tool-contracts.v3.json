@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.9.6"
   },
-  "tools_sha256": "c5b752a58ccd18ef8872cb0fc42c5cd246280594e657be41ab072f25d3975d36",
+  "tools_sha256": "ee9eb99327a9b218e581f45ab54adfe2224fa36036d00525c9ddcd9a1e84a202",
   "tools": [
     {
       "name": "add_signature_field",
@@ -1010,7 +1010,12 @@
         "properties": {
           "directory": {
             "type": "string",
-            "description": "Directory path to search for PDFs (default: ~/Documents). Must be a local filesystem path."
+            "description": "Directory path to search for PDFs. Defaults to the configured PDFs folder. Must be a local filesystem path."
+          },
+          "offset": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Skip this many PDFs before listing. Use it to page through a folder holding more than 200 PDFs; the response reports the true total."
           }
         }
       }
