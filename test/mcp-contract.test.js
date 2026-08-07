@@ -80,7 +80,10 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // uncapped listing put ~38k tokens of filenames into the conversation for a
 // 2,000-PDF folder. Previously
 // d9c225a5b72694d73dc0064a28fecf76a5bedf27121b04e656b86f055ced9313.
-const TOOL_CONTRACT_SHA256 = "c65cd62a1d46c6b5837aa7bf12a1851717e4b09dc274182dcb07dac982e8fc64";
+// 2026-08-07: list_pdfs gains an offset parameter so a flat folder holding
+// more than 200 PDFs is fully reachable, and its description states the cap
+// and the paging. Previously c65cd62a1d46c6b5837aa7bf12a1851717e4b09dc274182dcb07dac982e8fc64.
+const TOOL_CONTRACT_SHA256 = "a594a3a23f6722fb121b9d2a57bad03fc60fda5e352583f07139d191914c8d52";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

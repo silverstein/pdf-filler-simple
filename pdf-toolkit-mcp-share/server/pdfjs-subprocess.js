@@ -938,8 +938,7 @@ async function loadInProcessWorkerModule() {
 //
 // That is not enough on its own to trust a default, because the failure this
 // guards against is a hard host crash that no in-process handler can catch. So
-// the default is win32-only and is backed by the crash-survival latch below.
-// The default stays OFF everywhere, and the flag stays a pure opt-in.
+// the default stays OFF everywhere and the flag stays a pure opt-in.
 //
 // A win32 default was implemented and reverted. An adversarial review showed the
 // crash-survival latch backing it did not hold: it cleared its marker the moment

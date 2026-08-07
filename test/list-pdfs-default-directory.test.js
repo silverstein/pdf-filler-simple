@@ -166,8 +166,8 @@ describe("list_pdfs output is bounded", () => {
     expect(result.isError).not.toBe(true);
     // The true total is reported even though it is not all shown.
     expect(text).toContain(`Found ${FILE_COUNT} PDF files`);
-    expect(text).toContain("Showing the first 200");
-    expect(text).toContain(`${FILE_COUNT - 200} not shown`);
+    expect(text).toContain(`Showing 1 to 200 of ${FILE_COUNT}`);
+    expect(text).toContain("offset 200");
     const listed = text.split("\n").filter(line => line.endsWith(".pdf"));
     expect(listed).toHaveLength(200);
   }, 60_000);
@@ -188,4 +188,113 @@ describe("list_pdfs output is bounded", () => {
     expect(first).toContain("scan-0000.pdf");
     expect(first).not.toContain(`scan-${String(FILE_COUNT - 1).padStart(4, "0")}.pdf`);
   }, 60_000);
+});
+
+describe("first-run and paging behaviour", () => {
+  // Regressions found by adversarial review of the merged tree: a missing
+  // default folder returned a raw ENOENT scandir string as the first thing a
+  // user ever saw, and the 200 cap had no escape hatch for a flat folder.
+  let tmp;
+  let soloDir;
+  let client;
+  let transport;
+  const MANY = 205;
+
+  beforeAll(async () => {
+    tmp = await createTestTempDirectory(REPO_ROOT, "list-pdfs-firstrun");
+    const many = path.join(tmp, "many");
+    const empty = path.join(tmp, "empty");
+    await fs.mkdir(many, { recursive: true });
+    await fs.mkdir(empty, { recursive: true });
+    await fs.mkdir(path.join(tmp, "home"), { recursive: true });
+    await Promise.all(Array.from({ length: MANY }, (_, i) =>
+      fs.writeFile(path.join(many, `scan-${String(i).padStart(4, "0")}.pdf`), "%PDF-1.7\n")));
+    soloDir = path.join(tmp, "solo");
+    await fs.mkdir(soloDir, { recursive: true });
+    await fs.copyFile(EXAMPLE_PDF, path.join(soloDir, "only-one.pdf"));
+
+    client = new Client({ name: "pdf-tools-firstrun-client", version: "1.0.0" });
+    transport = new StdioClientTransport({
+      command: process.execPath,
+      args: [path.join(REPO_ROOT, "server", "index.js")],
+      cwd: REPO_ROOT,
+      env: {
+        HOME: path.join(tmp, "home"),
+        USERPROFILE: path.join(tmp, "home"),
+        ALLOWED_DIRECTORIES: [many, empty, path.join(tmp, "solo"), path.join(tmp, "absent")].join(path.delimiter),
+        DEFAULT_PDF_DIR: many,
+        DEFAULT_PROFILES_DIR: path.join(tmp, "profiles"),
+      },
+      stderr: "pipe",
+    });
+    await client.connect(transport);
+  }, 60_000);
+
+  afterAll(async () => {
+    try {
+      await transport?.close();
+    } finally {
+      await removeTestTempDirectory(tmp);
+    }
+  });
+
+  it("explains a missing folder instead of surfacing a raw errno", async () => {
+    const result = await client.callTool({
+      name: "list_pdfs",
+      arguments: { directory: path.join(tmp, "absent") },
+    });
+    const text = textFromToolResult(result);
+    expect(text).not.toContain("ENOENT");
+    expect(text).not.toContain("scandir");
+    expect(text).toContain("No folder exists at");
+  }, 30_000);
+
+  it("names the folder it searched when it finds nothing", async () => {
+    const result = await client.callTool({
+      name: "list_pdfs",
+      arguments: { directory: path.join(tmp, "empty") },
+    });
+    const text = textFromToolResult(result);
+    expect(text).toContain(path.join(tmp, "empty"));
+    // The old "Found 0 PDF files:" told the user nothing about where it looked.
+    expect(text).not.toMatch(/Found 0 PDF files:\s*$/);
+  }, 30_000);
+
+  it("pages past the cap so no file is permanently unreachable", async () => {
+    const first = textFromToolResult(await client.callTool({ name: "list_pdfs", arguments: {} }));
+    expect(first).toContain(`Found ${MANY} PDF files`);
+    expect(first).toContain("Showing 1 to 200");
+    expect(first).toContain("offset 200");
+    // The last file sorts last and is therefore invisible without paging.
+    const lastName = `scan-${String(MANY - 1).padStart(4, "0")}.pdf`;
+    expect(first).not.toContain(lastName);
+
+    const second = textFromToolResult(await client.callTool({
+      name: "list_pdfs",
+      arguments: { offset: 200 },
+    }));
+    expect(second).toContain(lastName);
+    expect(second).toContain(`Showing 201 to ${MANY} of ${MANY}`);
+    expect(second).toContain("end of the list");
+  }, 30_000);
+
+  it("reports an offset past the end rather than an empty listing", async () => {
+    const text = textFromToolResult(await client.callTool({
+      name: "list_pdfs",
+      arguments: { offset: 10_000 },
+    }));
+    expect(text).toContain("past the end of the list");
+  }, 30_000);
+
+  it("keeps the below-cap format byte-identical to the historical output", async () => {
+    // Pins the exact legacy string so a future refactor cannot quietly change
+    // what ordinary folders return.
+    const result = await client.callTool({
+      name: "list_pdfs",
+      arguments: { directory: soloDir },
+    });
+    expect(textFromToolResult(result)).toBe(
+      `Found 1 PDF files:\n${path.join(soloDir, "only-one.pdf")}`,
+    );
+  }, 30_000);
 });
