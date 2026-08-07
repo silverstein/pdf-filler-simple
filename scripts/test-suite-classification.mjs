@@ -80,6 +80,7 @@ export const CHECKOUT_LOCAL_MUTATING_TEST_SUITES = Object.freeze([
   "test/list-pdfs-default-directory.test.js",
   "test/metadata-provenance.test.js",
   "test/mutation-input-limits.test.js",
+  "test/path-handler-toctou.test.js",
   "test/pdfjs-worker-contract.test.js",
   "test/render-pdf-page.test.js",
   "test/sandbox-boundary-findings.test.js",

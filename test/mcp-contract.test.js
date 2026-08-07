@@ -575,10 +575,15 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
       arguments: { pdf_path: specialPdf },
     });
     expect(uriResult.isError).not.toBe(true);
-    const expectedUri = pathToPdfResourceUri(specialPdf);
+    // The URI names the canonical file, not the name the caller happened to
+    // use, so it cannot be repointed by replacing a link between this call and
+    // the resources/read that follows it. On macOS the canonical form differs
+    // from the requested one whenever a temp root sits under a symlink.
+    const canonicalPdf = await fs.realpath(specialPdf);
+    const expectedUri = pathToPdfResourceUri(canonicalPdf);
     expect(uriResult.structuredContent).toMatchObject({
       uri: expectedUri,
-      pdf_path: specialPdf,
+      pdf_path: canonicalPdf,
     });
     expect(expectedUri).not.toContain(" ");
     expect(expectedUri).not.toContain("#");

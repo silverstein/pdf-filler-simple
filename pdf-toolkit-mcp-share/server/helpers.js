@@ -1668,6 +1668,10 @@ async function bindAtomicOutputDirectory(
     };
   } catch (error) {
     if (error?.code === "ATOMIC_OUTPUT_DIRECTORY_CHANGED") throw error;
+    // A refusal is not a race. Rewrapping it as a directory change would tell
+    // the caller to retry an operation the policy will never allow, and would
+    // hide the real reason it stopped.
+    if (error?.code === "path_policy_denied") throw error;
     throw atomicOutputDirectoryChangedError(error);
   }
 }
@@ -1703,6 +1707,10 @@ async function assertAtomicOutputDirectory(binding, assertPathAllowed, fileSyste
     await assertPathAllowed(canonicalAfter);
   } catch (error) {
     if (error?.code === "ATOMIC_OUTPUT_DIRECTORY_CHANGED") throw error;
+    // A refusal is not a race. Rewrapping it as a directory change would tell
+    // the caller to retry an operation the policy will never allow, and would
+    // hide the real reason it stopped.
+    if (error?.code === "path_policy_denied") throw error;
     throw atomicOutputDirectoryChangedError(error);
   }
 }
