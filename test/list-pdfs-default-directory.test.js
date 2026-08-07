@@ -108,16 +108,11 @@ describe("list_pdfs with no directory argument", () => {
     expect(text).not.toContain("in-default-dir.pdf");
   }, 30_000);
 
-  it("reports structured results the assistant can act on", async () => {
-    // The prompts ask the user to pick a file from this listing, so the result
-    // has to carry the filename in a usable form, not just prose.
+  it("returns the path in a form the assistant can pass to the next tool", async () => {
+    // The prompts ask the user to pick from this listing and then act on it, so
+    // the response must carry a usable absolute path, not a bare filename.
     const result = await client.callTool({ name: "list_pdfs", arguments: {} });
-    const structured = result.structuredContent;
-    if (structured) {
-      expect(JSON.stringify(structured)).toContain("in-default-dir.pdf");
-    } else {
-      expect(textFromToolResult(result)).toContain("in-default-dir.pdf");
-    }
+    expect(textFromToolResult(result)).toContain(path.join(DEFAULT_DIR, "in-default-dir.pdf"));
   }, 30_000);
 });
 

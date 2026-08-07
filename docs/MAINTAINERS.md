@@ -631,61 +631,30 @@ releases instead.
 
 ## Native canvas inside an embedded host (Windows rendering)
 
-Page rasterization (`render_pdf_page`, `render_pdf_region`) needs the
-`@napi-rs/canvas` native binding. Inside an embedded Electron host such as Claude
-Desktop, loading it is gated.
+Page rasterization (`render_pdf_page`, `render_pdf_region`) needs the `@napi-rs/canvas` native binding. Inside an embedded Electron host such as Claude Desktop, loading it is blocked by default on every platform. `PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=1` lifts the block; any other value, including unset, leaves it in force.
 
-**Default: on for Windows, off everywhere else.** macOS keeps the block because it
-has a working system-renderer fallback anyway and is the only platform where a
-canvas-attributed failure was ever observed. Linux keeps it for want of a single
-datapoint.
+Set it where the server is configured. Under MCPB that is the extension manifest's `server.mcp_config.env`.
 
-`PDF_TOOLS_EMBEDDED_NATIVE_CANVAS` overrides the default:
+### What is known
 
-| Value | Effect |
-|---|---|
-| `1` | always allow, on any platform, and deliberately bypasses the crash latch below so a latched install can be retried |
-| `0` | always block, on any platform (kill switch) |
-| unset | platform default: allow on `win32`, block elsewhere |
+CI run `31051499142` (artifact `windows-render-probe.json`, expires 2026-11-03) recorded, on a Windows runner: block in force gives an error and no renderer; block lifted gives `renderer: "native-canvas"`. That probe simulates the embedded host under plain Node (`.github/workflows/windows-render-probe.mjs:12-16`), so it cannot observe a `dlopen` that hard-crashes Electron rather than raising. A single manual session on Windows 11 with Claude Desktop 1.25927.0 on 2026-08-06 rendered successfully with the block lifted; that session was not captured to an evidence file, so treat it as an unreplicated observation.
 
-Set it where the server is configured. Under MCPB that is the extension
-manifest's `server.mcp_config.env`; **a user-scope environment variable does not
-reach the server subprocess.**
+The block's origin is precautionary rather than measured. It was inherited from the worker-thread path, whose guard came from an Electron documentation warning (`94a2819`). The one canvas failure that was actually measured is macOS-specific and is not a crash: `ERR_DLOPEN_FAILED` because the binding's code signature has a different Team ID from the host process (`docs/CLAUDE_DESKTOP_TEST_RUN_2026-04-23.md:394`). That has no Windows analogue.
 
-### Why there is a crash latch
+Blocking it is what leaves Windows and Linux with no renderer at all, because `pdfjsRendererPolicy()` (`server/index.js:1541-1548`) returns a bare `"native"` policy off macOS with no system-renderer fallback to degrade to.
 
-The failure being guarded against is not an exception. A native `dlopen` that
-destabilises Electron hard-crashes the host, so no `try`/`catch` can see it and
-an in-process retry loop would crash on every launch.
+### Why the default has not been flipped
 
-So the recovery is durable across process death. `server/pdfjs-subprocess.js`
-writes and `fsync`s a marker to `<profiles dir>/native-canvas-attempt.json`
-immediately before the load, and removes it immediately after the load returns
-**or throws**. A marker still present at the next load therefore means a previous
-attempt began and the process never came back, and native canvas latches off for
-that install.
+A win32 default was implemented and reverted after review. The crash-survival latch backing it did not hold:
 
-A load that raises does **not** latch. That path is a recoverable environment
-problem such as a missing VC++ runtime or an architecture mismatch, and the host
-is intact, so it stays retryable.
+- It cleared its marker the moment `dlopen` returned, covering only the link step — the one step there is already positive evidence for — and leaving first draw and teardown, where this class of instability actually appears, unprotected.
+- It had no lock and no ownership. Two servers sharing a home directory could erase each other's in-flight marker, and surviving concurrent use is the specific bar stated publicly on issue #42.
+- Its remediation strings were unreachable. `@napi-rs/canvas` swallows a `dlopen` throw into its own "Cannot find native binding" text, which `canvasDependencyError` (`server/pdfjs-worker.js:1172-1178`) then rewrites into the generic unavailable-renderer message, so a latched install, an unconfigurable install, and a genuinely broken one are indistinguishable to a user.
+- Its tests asserted the policy function against files the tests themselves wrote. Making the arm and clear functions no-ops left all of them passing.
 
-If the marker cannot be written at all, the load is refused. Without the marker
-a crash could not be detected, and failing closed is the entire point.
+**Before flipping this default, at minimum:** a marker that survives past first successful render; per-process ownership or locking; a remediation string that actually reaches the user; a test that drives `installInProcessCanvasNativeGuard` with an injected `dlopen` and asserts state in the returned, thrown, and never-returned cases; a latch arm in the Windows probe that can still record a result when the child crashes; and sustained plus concurrent evidence on a real host, since that is what was promised publicly.
 
-**To clear a latched install:** delete `native-canvas-attempt.json` from the
-profiles directory, or set `PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=1`.
-
-### Evidence behind the win32 default
-
-CI run `31051499142` (artifact `windows-render-probe.json`): block in force →
-error; block lifted → `renderer: "native-canvas"`. Reproduced on a real Windows 11
-machine running Claude Desktop 1.25927.0 on 2026-08-06. `.github/workflows/windows-render-probe.mjs`
-asserts all three arms — kill switch blocks, platform default renders natively on
-win32 and stays blocked elsewhere, explicit opt-in renders.
-
-The known crash-shaped precedent is macOS-only and was not a crash: an
-`ERR_DLOPEN_FAILED` because the binding's code signature carries a different Team
-ID from the host process. It has no Windows analogue.
+Note also that `.github/workflows/windows-render.yml` is `workflow_dispatch` only, so none of this is gated on any PR or push.
 
 ## Manual test checklist
 

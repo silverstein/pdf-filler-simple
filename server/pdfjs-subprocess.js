@@ -1,16 +1,7 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import {
-  closeSync,
-  fsyncSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
 import { chmod, lstat, mkdtemp, realpath, rm } from "node:fs/promises";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
@@ -948,133 +939,47 @@ async function loadInProcessWorkerModule() {
 // That is not enough on its own to trust a default, because the failure this
 // guards against is a hard host crash that no in-process handler can catch. So
 // the default is win32-only and is backed by the crash-survival latch below.
-// Where the crash-survival marker lives. Mirrors index.js's PROFILES_DIR so the
-// marker sits with the rest of this server's durable state, and stays overridable
-// for tests.
-export function nativeCanvasMarkerPath(env = process.env) {
-  const configured = typeof env.DEFAULT_PROFILES_DIR === "string"
-    && env.DEFAULT_PROFILES_DIR
-    && !env.DEFAULT_PROFILES_DIR.includes("${")
-    ? env.DEFAULT_PROFILES_DIR
-    : join(homedir(), ".pdf-toolkit-files");
-  return join(configured, "native-canvas-attempt.json");
-}
-
-// A dlopen that destabilises Electron hard-crashes the host rather than raising,
-// so no in-process handler can catch it. The only recoverable design is one that
-// survives process death: write a marker immediately before the load, remove it
-// immediately after the load returns. A marker found at startup therefore means a
-// previous load began and the process never came back, and native canvas latches
-// off for this install.
-function armNativeCanvasAttempt(markerPath) {
-  try {
-    mkdirSync(dirname(markerPath), { recursive: true });
-    // Write and fsync: a marker still sitting in the page cache when the host
-    // dies would defeat the whole mechanism.
-    const handle = openSync(markerPath, "w");
-    try {
-      writeFileSync(handle, JSON.stringify({
-        attempted_at: new Date().toISOString(),
-        platform: process.platform,
-        arch: process.arch,
-        pid: process.pid,
-      }));
-      fsyncSync(handle);
-    } finally {
-      closeSync(handle);
-    }
-    return true;
-  } catch {
-    // If the marker cannot be written we cannot detect a crash, so do not
-    // attempt the load at all. Failing closed is the point of the exercise.
-    return false;
-  }
-}
-
-function clearNativeCanvasAttempt(markerPath) {
-  try {
-    rmSync(markerPath, { force: true });
-  } catch {
-    // Leaving a stale marker only costs a conservative latch on the next boot.
-  }
-}
-
-export function nativeCanvasLatched(markerPath = nativeCanvasMarkerPath()) {
-  try {
-    const raw = readFileSync(markerPath, "utf8");
-    return raw.length > 0;
-  } catch {
-    return false;
-  }
-}
-
-// Policy, in order:
-//   PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=0  always blocks (kill switch)
-//   PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=1  always allows, and deliberately bypasses
-//                                       the latch so an operator can retry after
-//                                       a crash without deleting state by hand
-//   a latched marker                    blocks
-//   win32                               allows
-//   everything else                     blocks
+// The default stays OFF everywhere, and the flag stays a pure opt-in.
 //
-// win32 only. macOS keeps the block: it is the largest installed base, it has a
-// working system-renderer fallback anyway, and it is the one platform where a
-// canvas-attributed Electron failure was actually observed. Linux keeps the
-// block for want of a single datapoint.
-export function embeddedNativeCanvasAllowed({
-  env = process.env,
-  platform = process.platform,
-  markerPath = null,
-} = {}) {
-  const override = env.PDF_TOOLS_EMBEDDED_NATIVE_CANVAS;
-  if (override === "0") return false;
-  if (override === "1") return true;
-  if (nativeCanvasLatched(markerPath ?? nativeCanvasMarkerPath(env))) return false;
-  return platform === "win32";
+// A win32 default was implemented and reverted. An adversarial review showed the
+// crash-survival latch backing it did not hold: it cleared its marker the moment
+// dlopen returned, so it covered only the link step, which is the one step two
+// positive datapoints already exist for. The instability this guards against in
+// a Chromium process that already has its own Skia characteristically appears at
+// first draw or teardown, both of which were left unprotected. The mechanism
+// also had no lock and no ownership, so two servers sharing one home directory
+// could erase each other's in-flight marker, and concurrency was the exact
+// condition named publicly on issue #42 as a prerequisite for flipping.
+//
+// Do not flip this default again without, at minimum: a marker that survives
+// past first successful render, per-process ownership or locking, a remediation
+// string that actually reaches the user (the current one is swallowed by
+// @napi-rs/canvas's own "Cannot find native binding" text and rewritten by
+// canvasDependencyError), and a test that drives installInProcessCanvasNativeGuard
+// with an injected dlopen instead of asserting the policy function against files
+// the test wrote itself.
+export function embeddedNativeCanvasAllowed({ env = process.env } = {}) {
+  return env.PDF_TOOLS_EMBEDDED_NATIVE_CANVAS === "1";
 }
 
 function installInProcessCanvasNativeGuard() {
+  if (embeddedNativeCanvasAllowed()) return;
   if (inProcessCanvasGuardInstalled) return;
   inProcessCanvasGuardInstalled = true;
   const originalDlopen = process.dlopen;
   process.dlopen = function guardedDlopen(module, filename, ...args) {
     const normalizedFilename = String(filename ?? "").replaceAll("\\", "/");
-    const isNativeCanvas = normalizedFilename.includes("/node_modules/@napi-rs/canvas")
-      || /\/skia\.[^/]+\.node$/i.test(normalizedFilename);
-    if (!isNativeCanvas) {
-      return originalDlopen.call(this, module, filename, ...args);
-    }
-
-    // Re-evaluated per load, not cached at install time, so a latch written by a
-    // previous boot is honoured and an operator override takes effect.
-    if (!embeddedNativeCanvasAllowed()) {
+    if (
+      normalizedFilename.includes("/node_modules/@napi-rs/canvas")
+      || /\/skia\.[^/]+\.node$/i.test(normalizedFilename)
+    ) {
       const error = new Error(
         "The native canvas binding is disabled in this embedded PDF host.",
       );
       error.code = "PDFJS_EMBEDDED_NATIVE_CANVAS_DISABLED";
       throw error;
     }
-
-    const markerPath = nativeCanvasMarkerPath();
-    if (!armNativeCanvasAttempt(markerPath)) {
-      const error = new Error(
-        "The native canvas binding is disabled in this embedded PDF host "
-          + "because its crash-recovery marker could not be written.",
-      );
-      error.code = "PDFJS_EMBEDDED_NATIVE_CANVAS_DISABLED";
-      throw error;
-    }
-    try {
-      const loaded = originalDlopen.call(this, module, filename, ...args);
-      // Survived the load. A raised error is also survival: the host is intact,
-      // so it must not latch and permanently disable a recoverable failure such
-      // as a missing VC++ runtime or an architecture mismatch.
-      clearNativeCanvasAttempt(markerPath);
-      return loaded;
-    } catch (error) {
-      clearNativeCanvasAttempt(markerPath);
-      throw error;
-    }
+    return originalDlopen.call(this, module, filename, ...args);
   };
 }
 

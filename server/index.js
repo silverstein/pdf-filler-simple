@@ -3870,8 +3870,10 @@ async function handleToolCall(request) {
           .filter(file => file.toLowerCase().endsWith('.pdf'))
           // readdir order is filesystem-dependent, so sort before any cap:
           // an unsorted truncation would show a different arbitrary subset on
-          // each call and on each machine.
-          .sort((left, right) => left.localeCompare(right, "en"))
+          // each call. Plain codepoint comparison rather than localeCompare,
+          // which is not a total order (it can return 0 for distinct strings)
+          // and varies with the host Node's ICU build.
+          .sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
           .map(file => path.join(directory, file));
 
         // Every prompt template opens by listing this directory, so an

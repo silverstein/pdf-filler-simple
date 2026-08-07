@@ -51,13 +51,7 @@ async function probe(label, extraEnv) {
 
 const optIn = process.env.PDF_TOOLS_EMBEDDED_NATIVE_CANVAS === "1";
 const results = [
-  // "0", not "". Native canvas now defaults ON for win32, so an empty value
-  // means allowed here and this arm would stop being a control.
   await probe("embedded host, block in force", {
-    PDF_TOOLS_EMBEDDED_NATIVE_CANVAS: "0",
-  }),
-  // The win32 default with no override at all. This is what a real user gets.
-  await probe("embedded host, platform default", {
     PDF_TOOLS_EMBEDDED_NATIVE_CANVAS: "",
   }),
 ];
@@ -90,18 +84,7 @@ const failures = [];
 
 const blocked = results.find(entry => entry.label.endsWith("block in force"));
 if (!blocked || !blocked.is_error) {
-  failures.push("PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=0 did not block native canvas.");
-}
-
-const platformDefault = results.find(entry => entry.label.endsWith("platform default"));
-if (process.platform === "win32") {
-  if (!platformDefault || platformDefault.is_error) {
-    failures.push("Native canvas is expected to be ON by default on win32, but the default arm failed.");
-  } else if (platformDefault.renderer !== "native-canvas") {
-    failures.push(`win32 default rendered via "${platformDefault.renderer}", expected "native-canvas".`);
-  }
-} else if (platformDefault && !platformDefault.is_error) {
-  failures.push(`Native canvas is expected to stay OFF by default on ${process.platform}, but it rendered.`);
+  failures.push("The default did not block native canvas in the embedded host.");
 }
 
 if (optIn) {
