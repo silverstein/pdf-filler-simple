@@ -267,6 +267,46 @@ function resolvePath(inputPath) {
   return assertPathAllowed(normalizeUserPath(inputPath));
 }
 
+// resolvePath returns the caller's path, not the file the policy check accepted,
+// so a handler that opens that string can be sent somewhere else by a symlink
+// swapped in afterwards. This returns the canonical path instead, which names
+// one file and cannot be repointed by replacing a link. Use it wherever the
+// resolved path is then handed to the filesystem or to another process.
+function resolveCanonicalPath(inputPath) {
+  if (!inputPath) return inputPath;
+  const canonicalPath = canonicalizePathForPolicy(normalizeUserPath(inputPath));
+  assertPathAllowed(canonicalPath);
+  return canonicalPath;
+}
+
+const NOFOLLOW_READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+
+// Open a canonical path for reading and prove the descriptor is the same
+// regular file that was inspected a moment earlier. O_NOFOLLOW refuses a final
+// component that became a symlink after canonicalization; the identity compare
+// catches a replacement that reused the name. Callers own closing the handle.
+async function openCanonicalRegularFile(canonicalPath) {
+  const beforeStat = await fs.lstat(canonicalPath);
+  if (beforeStat.isSymbolicLink() || !beforeStat.isFile()) {
+    throw new Error(`Not a regular file: ${path.basename(canonicalPath)}`);
+  }
+  const handle = await fs.open(canonicalPath, NOFOLLOW_READ_FLAGS);
+  try {
+    const descriptorStat = await handle.stat();
+    if (
+      !descriptorStat.isFile()
+      || descriptorStat.dev !== beforeStat.dev
+      || descriptorStat.ino !== beforeStat.ino
+    ) {
+      throw new Error("The file changed while it was being opened. Retry the request.");
+    }
+    return { handle, stat: descriptorStat };
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
 async function bindOutputPathForTransaction(outputPath) {
   const parentPath = await fs.realpath(path.dirname(outputPath));
   assertPathAllowed(parentPath);
@@ -5231,14 +5271,15 @@ async function handleToolCall(request) {
 
       case "get_pdf_resource_uri": {
         const { pdf_path } = args;
-        const resolvedPath = resolvePath(pdf_path);
-        
+        // A resource URI outlives this call, so it must name the file that was
+        // checked rather than a link that can be repointed before it is read.
+        const resolvedPath = resolveCanonicalPath(pdf_path);
+
         try {
-          // Verify the file exists
-          await fs.access(resolvedPath);
-          
-          // Get file info
-          const stats = await fs.stat(resolvedPath);
+          const stats = await fs.lstat(resolvedPath);
+          if (stats.isSymbolicLink() || !stats.isFile()) {
+            throw new Error(`Not a regular file: ${path.basename(resolvedPath)}`);
+          }
           const fileName = path.basename(resolvedPath);
           const fileSizeKB = (stats.size / 1024).toFixed(2);
           
@@ -5461,18 +5502,19 @@ async function handleToolCall(request) {
 
       case "read_pdf_bytes": {
         const { pdf_path, offset, byteCount } = args;
-        const resolvedPath = resolvePath(pdf_path);
+        const resolvedPath = resolveCanonicalPath(pdf_path);
         const MAX_CHUNK = 524288; // 512KB max per chunk
         const clampedByteCount = Math.min(byteCount || MAX_CHUNK, MAX_CHUNK);
 
-        const stats = await fs.stat(resolvedPath);
-        const totalBytes = stats.size;
-        const clampedOffset = Math.min(offset || 0, totalBytes);
-        const end = Math.min(clampedOffset + clampedByteCount, totalBytes);
-
         let fileHandle;
         try {
-          fileHandle = await fs.open(resolvedPath, "r");
+          // Size comes from the open descriptor rather than a separate stat of
+          // the name, so the bytes read are the file that was checked.
+          const opened = await openCanonicalRegularFile(resolvedPath);
+          fileHandle = opened.handle;
+          const totalBytes = opened.stat.size;
+          const clampedOffset = Math.min(offset || 0, totalBytes);
+          const end = Math.min(clampedOffset + clampedByteCount, totalBytes);
           const buffer = Buffer.alloc(end - clampedOffset);
           await fileHandle.read(buffer, 0, buffer.length, clampedOffset);
 
@@ -6671,10 +6713,16 @@ async function handleToolCall(request) {
         if (!rawPath || typeof rawPath !== "string") {
           throw new Error("'path' is required and must be a string.");
         }
-        const resolved = resolvePath(rawPath);
+        // The canonical path is what gets handed to a platform process, so a
+        // link cannot make that process act on a file outside the allowed set.
+        const resolved = resolveCanonicalPath(rawPath);
         // Existence check first — better error than spawn failure.
-        try { await fs.access(resolved); } catch {
+        let revealStat;
+        try { revealStat = await fs.lstat(resolved); } catch {
           throw new Error(`File not found: ${resolved}`);
+        }
+        if (revealStat.isSymbolicLink()) {
+          throw new Error(`Not a regular file or folder: ${path.basename(resolved)}`);
         }
 
         const plat = osPlatform();
