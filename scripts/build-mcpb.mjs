@@ -75,7 +75,7 @@ const FIRST_PARTY_TEXT_FILES = [
   "README.md",
   "manifest.mcpb.json",
 ];
-const NATIVE_TARGETS = [
+export const NATIVE_TARGETS = [
   {
     packageName: "@napi-rs/canvas-darwin-arm64",
     binary: "skia.darwin-arm64.node",
@@ -903,7 +903,10 @@ function verifyStagedProductionGraph(stagingDir, packages) {
   return { expected, packagedNativeAssetPaths };
 }
 
-function prepareCleanStage() {
+// Exported so the Agent Plugins bundle can reuse the identical staging —
+// locked deps, verified native packages, secret scan, symlink ban — instead of
+// a second, drifting implementation. Behaviour is unchanged for the MCPB build.
+export function prepareCleanStage() {
   const stagingDir = mkdtempSync(path.join(tmpdir(), "pdf-tools-mcpb-"));
   const downloadDir = path.join(stagingDir, ".native-packages");
   const npmCommand = process.platform === "win32" ? "npm.cmd" : "npm";

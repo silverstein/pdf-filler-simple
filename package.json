@@ -35,7 +35,8 @@
     "test:all": "node scripts/run-all-test-suites.mjs",
     "test:pdf-lib-worker": "vitest run test/pdf-lib-subprocess-boundary.test.js test/pdf-lib-worker-contract.test.js test/output-schema.test.js test/input-validation.test.js test/save-lifecycle.test.js",
     "test:node-native": "node scripts/run-node-test-suites.mjs",
-    "test:concurrent": "node scripts/test-concurrent-suites.mjs"
+    "test:concurrent": "node scripts/test-concurrent-suites.mjs",
+    "build:plugin": "node scripts/build-agent-plugin.mjs"
   },
   "repository": {
     "type": "git",
