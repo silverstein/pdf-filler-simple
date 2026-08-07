@@ -132,6 +132,10 @@ Focused integrated-candidate evidence on 2026-08-05:
 - 15 Vitest files: 199 tests passed and 6 intentionally skipped;
 - `test/mcp-contract.test.js`: all 43 tests passed within that run;
 - live MCP discovery: 42 unique tools, including 38 structured tools;
-- complete discovery SHA-256: `d9c225a5b72694d73dc0064a28fecf76a5bedf27121b04e656b86f055ced9313`;
+- complete discovery SHA-256: `d9c225a5b72694d73dc0064a28fecf76a5bedf27121b04e656b86f055ced9313`
+  (as measured on 2026-08-05; superseded on 2026-08-07 by
+  `a594a3a23f6722fb121b9d2a57bad03fc60fda5e352583f07139d191914c8d52` when
+  `list_pdfs` gained an `offset` parameter, this line is kept as the record of
+  what was measured then, not as a current value);
 - source/share runtime byte comparison: identical;
 - dependency versions: `pdf-lib` 1.17.1 and `pdfjs-dist` 5.4.624 unchanged.

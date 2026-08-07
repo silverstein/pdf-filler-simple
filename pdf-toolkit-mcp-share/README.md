@@ -84,7 +84,7 @@ host gate; a Linux-only smoke run does not establish Windows compatibility.
 Once installed, ask Claude in Cursor:
 - *"Read the form fields in this PDF file"*
 - *"Fill this W-9 form with my business information"* 
-- *"List all PDFs in my Documents folder"*
+- *"List the PDFs in my Documents folder"*
 - *"Create a profile with my personal info for future forms"*
 - *"Fill 50 PDFs using data from this spreadsheet"*
 - *"Read the content of this PDF document"*
