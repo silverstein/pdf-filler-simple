@@ -1172,21 +1172,23 @@ function type3GlyphImageMask(charProc, fontMatrix, ops) {
   // program. Exactly what it does NOT check, and cannot: the text matrix and
   // the graphics CTM in force at the `Tj` that draws the glyph. Those are set
   // by the page content stream outside the CharProc and are invisible here, so
-  // nothing below is a statement about the orientation the glyph is finally
-  // painted in.
+  // the absolute orientation the glyph is finally painted in is not knowable
+  // from a CharProc, and nothing here claims to know it.
   //
-  // That gap is deliberate rather than tolerated. The key is the stored sample
-  // grid, which no matrix anywhere can alter, so painted orientation is not an
-  // input to it. This check survives only to hold the mask lane to the plain
-  // axis-aligned, non-degenerate scale-or-reflection bitmap idiom every
-  // enrolled entry was qualified on: a glyph program that rotates, shears, or
-  // collapses its own bitmap is a different construction and is keyed by the
-  // exact operator digest instead of by this lane.
+  // Two things come out of the matrix. First, admissibility: the mask lane is
+  // held to the plain axis-aligned, non-degenerate scale-or-reflection bitmap
+  // idiom every enrolled entry was qualified on, so a glyph program that
+  // rotates, shears, or collapses its own bitmap is a different construction
+  // and is keyed by the exact operator digest instead. Second, the sign of the
+  // CharProc-local determinant, which is not part of the key — it is
+  // producer-dependent in absolute terms — but is comparable between two
+  // glyphs of the same font. `type3FontPaintOrientation` uses it for exactly
+  // that and nothing else.
   if (Math.abs(transform[1]) > 1e-9 || Math.abs(transform[2]) > 1e-9) return null;
   if (!(Math.abs(transform[0]) > 0) || !(Math.abs(transform[3]) > 0)) return null;
   const bits = fillAxisAlignedLatticePath(path, width, height);
   if (!bits) return null;
-  return { width, height, bits };
+  return { width, height, bits, paint_orientation: Math.sign(transform[0] * transform[3]) };
 }
 
 function fillAxisAlignedLatticePath(path, width, height) {
@@ -1271,11 +1273,26 @@ function fillAxisAlignedLatticePath(path, width, height) {
  *
  * The accepted consequence is that a glyph painted rotated or reflected keys
  * the same as the upright one. That is the correct answer for text set at an
- * angle, which is still the same character. Where it could be wrong is a font
- * that reuses one bitmap for two characters by reflecting it — the classic
- * matched-parenthesis trick — and that case is already refused by the
- * shape-code injectivity rule below: one shape standing at two enrolled codes
- * of a font is ambiguous evidence and recovers nothing.
+ * angle, which is still the same character. Where it is wrong is a reflection
+ * that turns the shape into a *different* enrolled character, and Computer
+ * Modern has those: 16 of the shipped registry digests — eight mirror pairs,
+ * the parenthesis and bracket pairs of the two enrolled cmex fonts — are the
+ * exact horizontal mirror of another shipped digest. Measured, by mirroring
+ * every registry grid the reference document resolves and looking the result
+ * back up. A CharProc holding the stored raster of `]` but painting it
+ * reflected paints `[`, and the grid alone cannot tell the two apart.
+ *
+ * Shape-code injectivity does not refuse that case, and an earlier revision of
+ * this comment wrongly claimed it did. Injectivity asks whether one shape
+ * stands at two enrolled codes of the font. The reflected glyph stands at one
+ * code holding one raster; its mirror image lives at a different code holding
+ * a different, genuinely mirrored raster. Both codes are injective and both
+ * recover, one of them as the wrong character. Demonstrated on the Shannon
+ * reference document by negating the x scale of a single CMEX CharProc `cm`
+ * while leaving its mask bytes byte-identical.
+ *
+ * What refuses it is `type3FontPaintOrientation`: reflection relative to the
+ * font's own siblings is detectable without knowing any absolute orientation.
  *
  * Also deliberately dropped: the blank padding around the ink and the operator
  * idiom that carried the samples. An inkless mask has no shape to key at all
@@ -1322,10 +1339,20 @@ function canonicalType3MaskBits(mask) {
  * to key — falls back to the exact canonicalized operator digest, which is
  * narrower but never wrong. The two lanes are domain-separated, so a mask
  * digest can never satisfy an operator-keyed registry entry or the reverse.
+ *
+ * `fontPaintOrientation` is the one sign every mask-lane glyph of this font
+ * agrees on, from `type3FontPaintOrientation`, and is required for the mask
+ * lane rather than optional: a caller with no font-wide answer gets the
+ * operator lane, which is the safe direction. A glyph whose own CharProc-local
+ * determinant sign disagrees with its siblings is reflected relative to them
+ * and is refused the grid key.
  */
-export function type3GlyphEvidenceSha256(charProc, fontMatrix, ops) {
+export function type3GlyphEvidenceSha256(charProc, fontMatrix, ops, fontPaintOrientation) {
   const mask = type3GlyphImageMask(charProc, fontMatrix, ops);
-  const canonical = mask ? canonicalType3MaskBits(mask) : null;
+  const oriented = mask !== null
+    && (fontPaintOrientation === 1 || fontPaintOrientation === -1)
+    && mask.paint_orientation === fontPaintOrientation;
+  const canonical = oriented ? canonicalType3MaskBits(mask) : null;
   if (!canonical) {
     const operators = type3CharProcSha256(charProc);
     return operators === null
@@ -1791,6 +1818,69 @@ function linkedRawType3Font(fontId, fontTokens, rawFonts) {
  */
 const type3GlyphEvidenceCache = new WeakMap();
 
+const type3FontPaintOrientationCache = new WeakMap();
+
+/**
+ * The single paint convention every mask-lane glyph of one embedded font
+ * agrees on, as `1` or `-1`, or `null` when the font has none.
+ *
+ * The grid key deliberately discards orientation, which is right — the stored
+ * samples are the glyph and the matrices around them are the producer. But it
+ * leaves reflection unpoliced, and in Computer Modern reflection is not a
+ * harmless re-orientation of the same character: mirroring the `]` raster
+ * paints a `[`, and both are separately enrolled. So orientation has to be
+ * checked somewhere, and the only place it can be checked honestly is between
+ * glyphs of one font.
+ *
+ * The comparison is the sign of the CharProc-local determinant — FontMatrix
+ * composed with the glyph's own `cm`. That sign is meaningless in absolute
+ * terms, because producers split the flip differently: the Shannon reference
+ * document carries it in `FontMatrix [1 0 0 -1]` and gives every glyph of
+ * every one of its 24 Type-3 fonts sign -1, while other dvips-era producers
+ * leave FontMatrix upright and come out uniformly +1. Keying on it, or
+ * demanding a particular value of it, would make the same painted glyph key
+ * two ways — the exact producer dependence the grid key exists to remove.
+ * Comparing it *within* one font asks a different and answerable question: a
+ * font sets all of its bitmaps the same way round, so a glyph whose sign
+ * differs from its siblings is reflected relative to them, whatever absolute
+ * convention the producer chose.
+ *
+ * Unanimity, not a majority, because a majority is a vote an adversary can
+ * win by flipping more glyphs, and because most legacy fonts here carry one to
+ * four mask glyphs, where a majority is not defined. A font that disagrees
+ * with itself has no convention to normalize against and gets no grid keys at
+ * all; every glyph falls to the operator digest and abstains.
+ *
+ * Measured, not assumed: all 24 embedded Type-3 fonts of the Shannon
+ * reference document and all 92 of the five legacy TeX corpus documents are
+ * unanimous, and none of the 116 is mixed. Mirroring one CMEX CharProc `cm`
+ * makes exactly its own font mixed and nothing else.
+ *
+ * The scan covers every entry of `charProcOperatorList`, which PDF.js builds
+ * eagerly from the whole /CharProcs dictionary when the font is loaded rather
+ * than lazily per drawn glyph, so the answer is a property of the font and not
+ * of which page happened to be extracted first.
+ */
+export function type3FontPaintOrientation(font, ops) {
+  const cached = type3FontPaintOrientationCache.get(font);
+  if (cached !== undefined) return cached;
+  const charProcs = font?.charProcOperatorList;
+  let orientation = null;
+  if (charProcs && typeof charProcs === "object") {
+    for (const glyphId of Object.keys(charProcs)) {
+      const mask = type3GlyphImageMask(charProcs[glyphId], font?.fontMatrix, ops);
+      if (mask === null) continue;
+      if (orientation === null) orientation = mask.paint_orientation;
+      else if (orientation !== mask.paint_orientation) {
+        orientation = null;
+        break;
+      }
+    }
+  }
+  type3FontPaintOrientationCache.set(font, orientation);
+  return orientation;
+}
+
 function type3GlyphEvidenceForCode(font, rawFont, code, ops) {
   const glyphId = rawFont.codeToGlyph.get(code);
   if (typeof glyphId !== "string") return null;
@@ -1803,7 +1893,7 @@ function type3GlyphEvidenceForCode(font, rawFont, code, ops) {
   }
   const cached = byGlyphId.get(glyphId);
   if (cached !== undefined) return cached;
-  const digest = type3GlyphEvidenceSha256(charProc, font?.fontMatrix, ops);
+  const digest = type3GlyphEvidenceSha256(charProc, font?.fontMatrix, ops, type3FontPaintOrientation(font, ops));
   byGlyphId.set(glyphId, digest);
   return digest;
 }

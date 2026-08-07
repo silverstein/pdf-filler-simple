@@ -6,22 +6,27 @@
 zero is a defect, not an intention.**
 
 The Computer Modern Type-3 recovery that works on Shannon's 1948 paper does
-not transfer. A study across 11 dvips-era PDFs and 560,754 Type-3 glyph
-occurrences matched 0 of 29 eligible occurrences against any registry digest.
-This document binds five of those PDFs as a pinned, measured corpus so the
-gap has an executable size instead of an anecdote, and so any later work has
-something it must visibly move.
+not transfer. Five dvips-era PDFs carrying 385,766 Type-3 glyph occurrences
+recover **0 characters**. This document binds them as a pinned, measured
+corpus so the gap has an executable size instead of an anecdote, and so any
+later work has something it must visibly move.
 
 Four of the five are D. J. Bernstein papers from cr.yp.to, produced by
 `GNU Ghostscript 6.52`, which repacks glyph names to `/a0 /a1 /a2…`. On these
 `pdftotext` yields literal noise and PDF Tools recovers nothing — not one
-character, and not even a font family for three of the four. The fifth is an
-arXiv paper where the TeX character codes *are* preserved and 11 occurrences
-do carry an official Unicode mapping, and it still recovers nothing, which
-isolates the digest problem from the code-packing problem.
+character, and only one Computer Modern family across all four. The fifth is
+an arXiv paper where the TeX character codes *are* preserved and 11
+occurrences do carry an official Unicode mapping, and it still recovers
+nothing, which isolates the shape problem from the code-packing problem.
 
-Nothing in the recovery path was changed to produce this record. The corpus
-was measured through the shipped code exactly as it stands.
+Nothing in the recovery path was weakened to produce this record. The corpus
+is measured through the shipped code exactly as it stands.
+
+**Revision note.** The first version of this document was written before the
+linker fix and before the recovery key was moved off the CharProc operator
+list, and its measured table and causal account were both left stale by those
+two changes. The table below and the section that follows it now match the
+shipped product. The headline has not moved: recovery is still zero.
 
 ## The corpus
 
@@ -45,6 +50,10 @@ document-level census of every Type-3 font dictionary reachable from a page's
 `/Resources /Font`, deduplicated by indirect reference, asked of the shipped
 `uniqueComputerModernFamily` resolver over its positive-width slots.
 
+Every figure below is the `measured` object a real run printed, and is the
+same object `test/legacy-tex-corpus-live.test.js` asserts. Nothing here is
+typed by hand on both sides of an assertion.
+
 | Metric | pippenger | nfscircuit | m3 | sf | astro-ph-9402001 |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | Pages | 21 | 11 | 19 | 15 | 37 |
@@ -53,57 +62,131 @@ document-level census of every Type-3 font dictionary reachable from a page's
 | — admissible to the font linker | 19 | 10 | 18 | 15 | 4 |
 | — resolving a Computer Modern family | 0 | 0 | 0 | **1** | **10** |
 | Observed Type-3 occurrences | 78,175 | 40,704 | 92,502 | 74,271 | 100,114 |
-| Linked to a raw Type-3 font | 0 | 0 | 0 | 0 | 44 |
-| Omitted, unlinked | 78,175 | 40,704 | 92,502 | 74,271 | 100,070 |
-| Classified into a family | 0 | 0 | 0 | 0 | 12 |
-| Officially Unicode-mapped | 0 | 0 | 0 | 0 | 11 |
+| Linked to a raw Type-3 font | **5,440** | **7,484** | **17,335** | **22,234** | 44 |
+| Omitted, unlinked | 72,735 | 33,220 | 75,167 | 52,037 | 100,070 |
+| Classified into a family | 0 | 0 | 0 | **10** | 12 |
+| Officially Unicode-mapped | 0 | 0 | 0 | **2** | 11 |
 | Matching a registry digest | 0 | 0 | 0 | 0 | 0 |
 | **Strictly recovered** | **0** | **0** | **0** | **0** | **0** |
 
 Corpus totals: 385,766 observed Type-3 glyph occurrences, 92 Type-3 fonts,
-44 linked occurrences, 11 officially Unicode-mapped occurrences, and **0
-recovered characters**. The single abstention reason reported for every
+52,537 linked occurrences, 22 classified, 13 officially Unicode-mapped, and
+**0 recovered characters**. The single abstention reason reported for every
 document is `raw_type3_font_link_ambiguous_or_unavailable`.
 
 ## Why nothing recovers
 
-The study named two causes. Measuring the corpus found a third that sits
-upstream of both, and the three stack.
+Two of the three original causes have been removed, and the table above
+records what removing them bought. Neither bought a single character.
 
-**1. A zero-width slot voids the whole font.** `rawType3Fonts` builds a font's
-width map with `if (width > 0) widths.set(code, width)`, dropping zero-width
-slots — correctly, since `metricScaleInterval` cannot fit a scale factor to an
-observed zero. But `linkedRawType3Font` then demands
-`raw.widths.get(code) === width` for *every* code the page actually drew,
-including the zero-width ones, where the lookup returns `undefined`. One drawn
-zero-width glyph therefore eliminates every candidate and abstains the entire
-font. Every Type-3 font in all four Ghostscript 6.52 papers — 22, 12, 20 and
-16 of them respectively — carries at least one zero-width slot. Replaying the
-linker over `pippenger.pdf` pages 1–5 with the shipped rule links 0 of 16
-font-page pairs; retaining the zero-width slots links 7. This is why 285,652
-occurrences across the four papers reach neither the family fingerprint nor
-any CharProc digest.
+**Fixed: a zero-width slot no longer voids the whole font.** `rawType3Fonts`
+used to build one width map with `if (width > 0) widths.set(code, width)`,
+and `linkedRawType3Font` then demanded `raw.widths.get(code) === width` for
+every code the page drew — including the zero-width ones, where the lookup
+returned `undefined`. One drawn zero-width glyph eliminated every candidate
+and abstained the entire font, and every Type-3 font in all four Ghostscript
+6.52 papers declares at least one zero-width slot. There are now two width
+views: `widths` keeps every declared slot for the linker, because a declared
+zero is a fact about the font, and `metricWidths` keeps only the positive
+slots for the TFM fingerprint, because `metricScaleInterval` cannot fit a
+scale to an observed zero. The four papers went from 0 linked occurrences to
+5,440 / 7,484 / 17,335 / 22,234.
 
-**2. The family fingerprint does not survive repacking.** Of those same 7
-font-page pairs that would link, 0 resolve a Computer Modern family:
-`uniqueComputerModernFamily` matches `widths[code]` against TFM widths
-slot-for-slot, and Ghostscript 6.52 has repacked the codes. Fixing cause 1
-alone recovers nothing. Only one font in the whole Bernstein set — one in
-`sf.pdf` — fingerprints a family at all, and it still recovers nothing
-because its occurrences never link.
+**Fixed: the key no longer folds in the producer's idiom.** The recovery key
+used to be the CharProc operator list, which carries the producer's operator
+idiom and the per-glyph placement `cm`. It is now the decoded image mask's
+stored sample grid, cropped to its ink, so the same raster keys identically
+across toolchains. This is what let `sf` classify 10 occurrences and
+officially name 2.
 
-**3. `/ToUnicode` presence excludes a font outright.** `rawType3Fonts` skips
-any Type-3 font carrying a `/ToUnicode`. In `astro-ph-9402001.pdf` 18 of 22
-fonts do, which is why only 4 fonts are admissible while 10 fingerprint a
-Computer Modern family, and why 100,070 of 100,114 occurrences are omitted.
+**Still open, and why every figure above is still zero.** Three obstacles
+remain, and they are not the same obstacle for the two producers.
 
-**4. The digest does not transfer even when everything else does.** The 44
-occurrences that do link in the arXiv paper produce 12 classified and 11
-officially Unicode-mapped occurrences — and 0 registry digest matches. The
-CharProc SHA-256 folds in PK resolution, producer operator idiom, and the
-per-glyph placement `cm` matrix, so a raster that is the same Computer Modern
-character hashes differently under a different producer. This is the cause the
-study named, isolated here from the other three.
+1. *Family resolution does not survive glyph repacking.*
+   `uniqueComputerModernFamily` matches declared widths against TFM widths
+   slot for slot, and Ghostscript 6.52 has renumbered the codes. Across the
+   four Bernstein papers exactly one font — in `sf.pdf` — fingerprints a
+   family at all, off just two spacer advances, and the two occurrences it
+   officially names mean nothing. Only the missing shape match keeps that
+   coincidence out of the output.
+
+2. *Positive-width pinning rejects the Bernstein papers by construction.*
+   Ghostscript 6.52 splits every character into two Type-3 glyphs: an inked
+   glyph declaring `0 0 llx lly urx ury d1` with advance zero, and a separate
+   ink-free advance glyph declaring `w 0 0 0 0 0 d1`. Read straight out of the
+   bytes the split is total — 584 / 457 / 537 / 530 inked CharProcs, every one
+   of them zero advance, against 98 / 99 / 102 / 106 advance-only CharProcs,
+   no exceptions. The inked codes and the positive-width codes are disjoint
+   sets, so a recovered code can never be an inked code in these four
+   documents, and the family fingerprint can only ever see spacer advances at
+   renumbered codes. This is a safeguard doing its job, not a bug: a code with
+   no advance is invisible to the fingerprint that qualified the family.
+
+3. *The rasters themselves do not match.* `astro-ph-9402001.pdf` is the clean
+   case — codes preserved, 10 fonts fingerprinting a family, 11 occurrences
+   officially Unicode-mapped — and it still matches 0 registry digests,
+   because it rasterised Computer Modern at its own PK resolution (300 dpi
+   against Shannon's 600) and no enrolled shape is that shape. Its remaining
+   18 of 22 fonts carry their own `/ToUnicode` and are deliberately left to
+   PDF.js, which is why only 4 fonts are admissible to the linker while 10
+   fingerprint a family. Those 18 are not discarded: they stay in the page's
+   link-uniqueness pool as competitors, so a font matching both them and a
+   recoverable font is reported ambiguous rather than resolved in favour of
+   recovery.
+
+## The shape-keyed family identification dead end
+
+Identifying the family from matched glyph *shapes*, rather than from
+`widths[code]`, was the obvious way past obstacle 1. It was investigated and
+measured to be a dead end. Recorded here so it is not attempted again blind.
+All four findings are measured on these exact documents.
+
+- **There is no bitmap reference to match against.** The pinned official CTAN
+  `cm/ps-type3` fonts are cubic-Bézier *outline* programs: all 41 glyph
+  programs of the labeled reference fixture take the exact-operator evidence
+  lane and none takes the image-mask lane. `cm/mf.zip` is METAFONT source, and
+  turning it into the PK rasters these documents carry needs a METAFONT run at
+  a mode and resolution no document here records.
+- **Bridging outline to bitmap is never exact, and no threshold separates
+  right from wrong.** Rasterising the official CTAN outline for cmmi alpha
+  across 225,225 combinations of resolution (60–110 px/em in 0.05 steps),
+  alpha threshold and sub-pixel offset reproduced the Shannon reviewed alpha
+  raster's ink box 241 times and its bits **zero** times; the closest was 72
+  of 1,748 pixels wrong, 4.1%. Scored against three Shannon rasters of known
+  identity over every reference slot that could reproduce the target's ink
+  box, the correct slot's best agreement was 4.3% wrong for alpha, 2.1% for
+  omega and 14.5% for sigma, while the best *wrong* slot reached 20.1% for
+  alpha and 24.5% for sigma. A threshold would have to admit 14.5% and reject
+  20.1% — a 1.4x window, already that narrow against a reference holding 41 of
+  Computer Modern's roughly 9,600 (font, slot) pairs. Widening the reference
+  can only close it further.
+- **An exact matcher would still not determine a family.** One digest in the
+  shipped registry already stands at two different (family, slot) pairs: the
+  same bitmap is `cmmi-pk-raster-period-2df559-v1` (math-italic slot 58, ".")
+  and `cmsy-pk-raster-centered-dot-33077f-v1` (math-symbol slot 1, "⋅"). Shape
+  identifies a code only once the family is known, which is the direction the
+  shipped matcher already runs in and the opposite of the direction proposed.
+- **There is no cross-document anchor either.** The mask key is genuinely
+  producer-independent — the four cr.yp.to papers share 387 to 440 of their
+  451 to 581 distinct inked shapes with each other, being one PK library at
+  720 dpi — but they share exactly **one** shape with Shannon (600 dpi) and
+  **none** with astro-ph (300 dpi), and that one shared shape is a 41x3 solid
+  rectangle, a fraction rule rather than a character.
+
+## Safeguards this corpus confirms are not what blocks it
+
+Recording these so a later attempt does not spend effort loosening a rule
+that is not in its way. Each was measured against the corpus:
+
+- **Per-font paint orientation.** A font whose mask-lane glyphs disagree on
+  their CharProc-local determinant sign gets no grid keys. All 92 embedded
+  Type-3 fonts of this corpus are unanimous, as are all 24 of Shannon's, so
+  this rule refuses nothing here. See
+  `docs/evidence/type3-reflected-paint-2026-08.md`.
+- **Shape-code injectivity.** No corpus document reaches a registry digest at
+  all, so no match is lost to a shape standing at two enrolled codes.
+- **The `/ToUnicode` deferral.** Removing it would not recover astro-ph: the
+  18 deferred fonts fail on rasters, not on eligibility.
 
 ## Binding
 
@@ -135,6 +218,10 @@ before anything else, then an exact assertion on observed behaviour.
   recorded baseline"; an improvement fails with "improved … update the
   recorded baseline deliberately". Both directions were verified to fire by
   temporarily perturbing a recorded figure.
+- **Linker regression fence.** The corpus-level test additionally asserts that
+  each Ghostscript 6.52 paper still links a positive number of occurrences, so
+  the zero-width linker fix cannot silently regress back to the 0/0/0/0 state
+  this document originally recorded.
 
 The suite needs no entry in `scripts/test-suite-classification.mjs`: it
 allocates no checkout-local scratch and so does not reach
@@ -156,7 +243,7 @@ PDF_TOOLS_LEGACY_CORPUS_DIR=/tmp/legacy-tex-corpus \
   npx vitest run test/legacy-tex-corpus-live.test.js
 ```
 
-Observed: 1 file passed, 6 tests passed, 4.6s.
+Observed: 1 file passed, 6 tests passed.
 
 Per-document census, outside the suite:
 
@@ -169,6 +256,9 @@ node scripts/inventory-type3-glyphs.mjs --source /tmp/legacy-tex-corpus/pippenge
 - This is the gap. Zero recovered characters across 385,766 legacy Type-3
   glyph occurrences is the tracked defect, and raising any figure in the
   measured-baseline table is the work this record exists to measure.
+- Linking is not recovery. 52,537 occurrences now link where none did, and
+  that bought no characters. A future change that raises the linked count
+  without raising the recovered count has not moved this baseline.
 - No OCR engine is bundled, and none of the above depends on one. Every glyph
   in this corpus is drawn by an embedded Type-3 font whose Computer Modern
   identity is recoverable from metrics and raster bytes alone.
