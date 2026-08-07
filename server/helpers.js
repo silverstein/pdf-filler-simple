@@ -1607,6 +1607,38 @@ const PDF_OUTPUT_LOCK_CANDIDATE_PATTERN = /^\.pdf-tools-output-transaction\.lock
 const PDF_OUTPUT_STALE_LOCK_PATTERN = /^\.pdf-tools-output-transaction\.lock\.stale-[a-f0-9-]+$/;
 const PDF_OUTPUT_LOCK_OWNER_NAME = "owner.json";
 const NOFOLLOW_READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+
+// Open a canonical path for reading and prove the descriptor is the same
+// regular file that was inspected a moment earlier. O_NOFOLLOW refuses a final
+// component that became a symlink after canonicalization; the device/inode
+// compare refuses a replacement that reused the name in the window between the
+// lstat and the open (CWE-367). The caller owns closing the returned handle.
+//
+// fsOps is injected so this window can be forced in a test: a filesystem whose
+// open() reaches a different inode than the preceding lstat() must be rejected
+// here rather than read.
+export async function openVerifiedRegularFile(fsOps, canonicalPath) {
+  const beforeStat = await fsOps.lstat(canonicalPath);
+  if (beforeStat.isSymbolicLink() || !beforeStat.isFile()) {
+    throw new Error(`Not a regular file: ${path.basename(canonicalPath)}`);
+  }
+  const handle = await fsOps.open(canonicalPath, NOFOLLOW_READ_FLAGS);
+  try {
+    const descriptorStat = await handle.stat();
+    if (
+      !descriptorStat.isFile()
+      || descriptorStat.dev !== beforeStat.dev
+      || descriptorStat.ino !== beforeStat.ino
+    ) {
+      throw new Error("The file changed while it was being opened. Retry the request.");
+    }
+    return { handle, stat: descriptorStat };
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
 const RECOVERY_DIRECTORY_GUARD_FAILURE = Symbol("recoveryDirectoryGuardFailure");
 const JOURNAL_EXPECTATION_FAILURE = Symbol("journalExpectationFailure");
 const JOURNAL_PUBLISHED_EXPECTATION = Symbol("journalPublishedExpectation");

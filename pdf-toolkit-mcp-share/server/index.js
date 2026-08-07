@@ -279,33 +279,9 @@ function resolveCanonicalPath(inputPath) {
   return canonicalPath;
 }
 
-const NOFOLLOW_READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
-
-// Open a canonical path for reading and prove the descriptor is the same
-// regular file that was inspected a moment earlier. O_NOFOLLOW refuses a final
-// component that became a symlink after canonicalization; the identity compare
-// catches a replacement that reused the name. Callers own closing the handle.
-async function openCanonicalRegularFile(canonicalPath) {
-  const beforeStat = await fs.lstat(canonicalPath);
-  if (beforeStat.isSymbolicLink() || !beforeStat.isFile()) {
-    throw new Error(`Not a regular file: ${path.basename(canonicalPath)}`);
-  }
-  const handle = await fs.open(canonicalPath, NOFOLLOW_READ_FLAGS);
-  try {
-    const descriptorStat = await handle.stat();
-    if (
-      !descriptorStat.isFile()
-      || descriptorStat.dev !== beforeStat.dev
-      || descriptorStat.ino !== beforeStat.ino
-    ) {
-      throw new Error("The file changed while it was being opened. Retry the request.");
-    }
-    return { handle, stat: descriptorStat };
-  } catch (error) {
-    await handle.close().catch(() => {});
-    throw error;
-  }
-}
+// openVerifiedRegularFile lives in helpers.js so its device/inode identity
+// check can be exercised with an injected filesystem. Handlers here pass the
+// real fs.
 
 async function bindOutputPathForTransaction(outputPath) {
   const parentPath = await fs.realpath(path.dirname(outputPath));
@@ -701,6 +677,7 @@ import {
   writePdfOutputAtomic,
   writePdfOutputsAtomic,
   MIN_TEXT_CHARS_WITH_IMAGES,
+  openVerifiedRegularFile,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
@@ -5510,7 +5487,7 @@ async function handleToolCall(request) {
         try {
           // Size comes from the open descriptor rather than a separate stat of
           // the name, so the bytes read are the file that was checked.
-          const opened = await openCanonicalRegularFile(resolvedPath);
+          const opened = await openVerifiedRegularFile(fs, resolvedPath);
           fileHandle = opened.handle;
           const totalBytes = opened.stat.size;
           const clampedOffset = Math.min(offset || 0, totalBytes);
