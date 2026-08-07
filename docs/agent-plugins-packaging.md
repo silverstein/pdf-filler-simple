@@ -146,7 +146,11 @@ Adding `mcp.json` is gated on the portable allowed-directories work and a publis
 
 **Implementation status.** Requirements 1, 2, 3, and 7 are implemented on this branch, along with the non-greedy argument parsing in requirement 8. The allowed set is now established only by explicit configuration, an unexpanded placeholder is treated as absent configuration rather than as a reason to substitute defaults, the private store is no longer a general user-path allowance, and refusals name neither the allowed set nor the attempted path.
 
-Still unimplemented: the `${PLUGIN_DATA}` config-file layer, the read/narrow tool, the `(dev, ino)` deny for the config file, and roots intersection (requirements 4, 5, 6). Those are only needed once a plugin actually ships a `mcp.json`, and they should not be written speculatively ahead of it.
+The `${PLUGIN_DATA}` config-file layer is now implemented too, along with the self-escalation guard from requirement 5. `${PLUGIN_DATA}/config.json` is the lowest precedence layer, below the CLI flag and the environment variable, and layers are never merged. On first run the server writes a template with an empty list, and every refusal names that exact path, so a fresh install is actionable rather than merely safe. A set that would reach the config file is refused whole rather than trimmed, because an allowed set containing its own config lets a write tool rewrite the boundary on the next launch.
+
+Widening deliberately remains a human action: the config file is edited by the operator, not by a tool. A tool that can widen its own sandbox is a privilege-escalation path, and document text is untrusted input this server already refuses to take instructions from.
+
+Still unimplemented: a read-only tool reporting the active set and its source, runtime narrowing, and roots intersection (requirements 4 and 6). The read-only tool is the next useful increment; it was kept out of the config work because adding a tool moves the tool-contract digest and the pinned tool count, which deserves its own change.
 
 One consequence to carry into release notes: a host that previously relied on the implicit home-folder grant now receives a refusal until directories are configured. That is the intended behavior, and it is a behavior change for existing installs.
 
