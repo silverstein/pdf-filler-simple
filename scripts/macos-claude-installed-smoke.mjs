@@ -29,7 +29,7 @@ const textFixture = path.join(fixtureDirectory, "synthetic-text-two-page.pdf");
 const rasterFixture = path.join(fixtureDirectory, "synthetic-raster-only.pdf");
 const mutationDirectory = path.join(fixtureDirectory, "mutation-output");
 const toolNames = [];
-const EXPECTED_TOOL_CONTRACT_SHA256 = "a594a3a23f6722fb121b9d2a57bad03fc60fda5e352583f07139d191914c8d52";
+const EXPECTED_TOOL_CONTRACT_SHA256 = "b980fc09c3b9c886f01e08b82fe67df569e5cafa5471dd4c3e549ac6d8e26fc0";
 const ACCESSIBILITY_CONCLUSION_KEYS = Object.freeze([
   "certification",
   "document_accessibility",
