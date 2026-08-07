@@ -68,7 +68,13 @@ The following are in scope and genuinely interesting to us:
   published `.mcpb` artifact or share bundle, or that breaks the reproducibility
   of those builds.
 - **Information disclosure.** Passwords for encrypted documents, file contents,
-  or local paths leaking into logs, error messages, tool output, or metadata.
+  or local paths travelling beyond the caller that supplied them, or persisting
+  after the request: into logs, saved PDF metadata, build artifacts, or a
+  response to a different requester. Passwords are never echoed anywhere.
+  A refusal that names the configured allowed directories and the path just
+  requested is deliberate rather than a leak — the caller supplied one and
+  configured the other, so neither is new to them, and a boundary a user cannot
+  see is a boundary they cannot correct.
 
 ## Out of scope
 
