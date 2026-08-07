@@ -246,7 +246,14 @@ describe("first-run and paging behaviour", () => {
     const text = textFromToolResult(result);
     expect(text).not.toContain("ENOENT");
     expect(text).not.toContain("scandir");
-    expect(text).toContain("No folder exists at");
+    // The whole sentence, not a fragment: a previous version of this message
+    // carried a false clause that survived because only "No folder exists at"
+    // was asserted.
+    expect(text).toContain(
+      `No folder exists at ${path.join(tmp, "absent")}. `
+      + "Tell me the folder your PDFs are actually in, "
+      + "or change the default PDFs folder in this extension's settings.",
+    );
   }, 30_000);
 
   it("names the folder it searched when it finds nothing", async () => {
