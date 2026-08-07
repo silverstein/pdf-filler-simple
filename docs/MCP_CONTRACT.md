@@ -278,7 +278,11 @@ the `text/html;profile=mcp-app` media type.
 PDF file resources are dynamic and therefore are not included in
 `resources/list`. `get_pdf_resource_uri` applies the filesystem allowlist, then
 encodes the absolute platform path as one percent-encoded segment under the
-canonical `pdf://local/` authority. The symmetric decoder handles POSIX,
+canonical `pdf://local/` authority. The encoded path is the canonical one, and
+`pdf_path` reports the same value, so a URI that outlives the call still names
+the file the allowlist accepted rather than a name that can be repointed before
+`resources/read` runs. Where the requested path traverses a symlink the two
+differ: on macOS a temp root under `/var` reports `/private/var`. The symmetric decoder handles POSIX,
 Windows-drive, UNC, Unicode, and RFC 3986 reserved characters without allowing
 URI query/fragment ambiguity. `resources/read` re-applies the allowlist before
 returning the PDF as an `application/pdf` blob. Schema-valid string URIs that
