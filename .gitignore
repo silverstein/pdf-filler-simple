@@ -50,3 +50,4 @@ pdf-toolkit-mcp.zip
 .dolt/
 *.db
 windows-render-probe.json
+dist-plugin/

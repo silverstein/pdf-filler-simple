@@ -89,14 +89,13 @@ The cost of that is real and must be stated rather than hidden: `PLUGIN_DATA` is
 
 ### 2. Native dependencies with no install lifecycle
 
-`@napi-rs/canvas` resolves to one of eleven platform packages, and the specification has no install or build hook. Two options:
+`@napi-rs/canvas` resolves to one of eleven platform packages, and the specification has no install or build hook.
 
-| Option | Cost | Risk |
-|---|---|---|
-| Publish a scoped npm package, `command: "npx"` | One publish per release | Requires network at first run; npm resolves the correct native binary |
-| Vendor every platform package under `PLUGIN_ROOT` | Very large package | No network needed; we own platform coverage, as MCPB already does |
+**Resolved: vendor into the plugin directory, no npm.** An earlier draft weighed publishing a scoped npm package and launching via `command: "npx"`. That was the wrong call — npm is not an Agent Plugins distribution channel at all (distribution is a git repo, a local directory, or a client marketplace; there is no registry), and `npx` would require a publish and a network round-trip at first run. `command: "node"` with the server carried under `${PLUGIN_ROOT}` needs neither.
 
-`pdf-tools` and `pdf-toolkit-mcp` are both taken on npm by unrelated projects, so a scoped name is required either way.
+The bundle is built by `scripts/build-agent-plugin.mjs` (`npm run build:plugin`), which reuses the MCPB build's `prepareCleanStage` verbatim — the same locked production dependencies, integrity-verified native canvas packages, secret scan, and symlink ban that gate the shipped `.mcpb`. It then drops the MCPB `manifest.json`, writes `plugin.json` and `mcp.json`, and copies the workflow skill. Reusing the stage rather than reimplementing it is deliberate: a second bundler would drift from the first.
+
+Coverage matches the MCPB — the same five native platforms — so rasterization works everywhere the MCPB does, at roughly 175 MB unpacked. A smaller no-render variant (server plus a `PDF_RENDERER_UNAVAILABLE` message on the two render tools, ~33 MB) is a planned `--platforms` flag on the same builder, not yet implemented. `pdf-tools` and `pdf-toolkit-mcp` are both taken on npm by unrelated projects, which is now moot.
 
 ### 3. Package containment
 
