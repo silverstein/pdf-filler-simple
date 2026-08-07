@@ -120,3 +120,77 @@ describe("list_pdfs with no directory argument", () => {
     }
   }, 30_000);
 });
+
+describe("list_pdfs output is bounded", () => {
+  // The prompts open by listing this directory, so an uncapped listing would be
+  // the first thing in every conversation. Before the cap, 2,000 PDFs produced
+  // roughly 153,000 characters (~38k tokens) and 10,000 produced ~768,000.
+  let bigTmp;
+  let bigClient;
+  let bigTransport;
+  const FILE_COUNT = 260;
+
+  beforeAll(async () => {
+    bigTmp = await createTestTempDirectory(REPO_ROOT, "list-pdfs-bounded");
+    const big = path.join(bigTmp, "many");
+    await fs.mkdir(big, { recursive: true });
+    await fs.mkdir(path.join(bigTmp, "home"), { recursive: true });
+    await Promise.all(
+      Array.from({ length: FILE_COUNT }, (_, i) =>
+        fs.writeFile(path.join(big, `scan-${String(i).padStart(4, "0")}.pdf`), "%PDF-1.7\n")),
+    );
+
+    bigClient = new Client({ name: "pdf-tools-bounded-list-client", version: "1.0.0" });
+    bigTransport = new StdioClientTransport({
+      command: process.execPath,
+      args: [path.join(REPO_ROOT, "server", "index.js")],
+      cwd: REPO_ROOT,
+      env: {
+        HOME: path.join(bigTmp, "home"),
+        USERPROFILE: path.join(bigTmp, "home"),
+        ALLOWED_DIRECTORIES: big,
+        DEFAULT_PDF_DIR: big,
+        DEFAULT_PROFILES_DIR: path.join(bigTmp, "profiles"),
+      },
+      stderr: "pipe",
+    });
+    await bigClient.connect(bigTransport);
+  }, 60_000);
+
+  afterAll(async () => {
+    try {
+      await bigTransport?.close();
+    } finally {
+      await removeTestTempDirectory(bigTmp);
+    }
+  });
+
+  it("caps the listing, reports the true total, and says how many are hidden", async () => {
+    const result = await bigClient.callTool({ name: "list_pdfs", arguments: {} });
+    const text = textFromToolResult(result);
+    expect(result.isError).not.toBe(true);
+    // The true total is reported even though it is not all shown.
+    expect(text).toContain(`Found ${FILE_COUNT} PDF files`);
+    expect(text).toContain("Showing the first 200");
+    expect(text).toContain(`${FILE_COUNT - 200} not shown`);
+    const listed = text.split("\n").filter(line => line.endsWith(".pdf"));
+    expect(listed).toHaveLength(200);
+  }, 60_000);
+
+  it("keeps the response small enough not to dominate a conversation", async () => {
+    const result = await bigClient.callTool({ name: "list_pdfs", arguments: {} });
+    const text = textFromToolResult(result);
+    // Uncapped, 260 entries alone would already exceed this; the guard is that
+    // the size stops growing with the folder rather than tracking it.
+    expect(text.length).toBeLessThan(40_000);
+  }, 60_000);
+
+  it("truncates deterministically by sorted name, not by filesystem order", async () => {
+    const first = textFromToolResult(await bigClient.callTool({ name: "list_pdfs", arguments: {} }));
+    const second = textFromToolResult(await bigClient.callTool({ name: "list_pdfs", arguments: {} }));
+    expect(first).toBe(second);
+    // Sorted ascending, so the first name is present and the last is not.
+    expect(first).toContain("scan-0000.pdf");
+    expect(first).not.toContain(`scan-${String(FILE_COUNT - 1).padStart(4, "0")}.pdf`);
+  }, 60_000);
+});

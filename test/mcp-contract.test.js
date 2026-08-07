@@ -75,7 +75,12 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // evidence, exact whole-document limits, and typed channel coverage.
 // 2026-08-05: additive bounded inspect_pdf_accessibility contract with explicit
 // machine-profile, human-review, and conformance-abstention boundaries.
-const TOOL_CONTRACT_SHA256 = "d9c225a5b72694d73dc0064a28fecf76a5bedf27121b04e656b86f055ced9313";
+// 2026-08-07: list_pdfs states its 200-path cap and sorted order in its
+// description, because the prompt templates open by calling it and an
+// uncapped listing put ~38k tokens of filenames into the conversation for a
+// 2,000-PDF folder. Previously
+// d9c225a5b72694d73dc0064a28fecf76a5bedf27121b04e656b86f055ced9313.
+const TOOL_CONTRACT_SHA256 = "c65cd62a1d46c6b5837aa7bf12a1851717e4b09dc274182dcb07dac982e8fc64";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

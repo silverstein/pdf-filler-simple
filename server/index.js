@@ -1183,6 +1183,10 @@ const PROMPT_TEMPLATES = [
 ];
 
 const PROMPT_ARGUMENT_MAX_LENGTH = 1024;
+// Cap on how many paths one list_pdfs call returns. Large enough that an
+// ordinary folder is never truncated, small enough that a folder holding years
+// of scanned documents cannot flood the conversation before any work starts.
+const LIST_PDFS_MAX_RESULTS = 200;
 const PROMPT_ARGUMENT_UNSAFE_CONTROLS = /[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u;
 const RESOURCE_NOT_FOUND_ERROR_CODE = -32002;
 
@@ -2483,7 +2487,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
     tools: [
       {
         name: "list_pdfs",
-        description: "List all PDF files in a directory. This tool operates on the user's local filesystem — all paths must be absolute paths on the user's machine (e.g. /Users/name/Documents/), NOT paths on Claude's container (/mnt/...).",
+        description: "List PDF files in a directory, sorted by name, returning at most 200 paths and reporting the true total when more exist. This tool operates on the user's local filesystem — all paths must be absolute paths on the user's machine (e.g. /Users/name/Documents/), NOT paths on Claude's container (/mnt/...).",
         inputSchema: {
           type: "object",
           properties: {
@@ -3864,8 +3868,35 @@ async function handleToolCall(request) {
         const files = await fs.readdir(directory);
         const pdfFiles = files
           .filter(file => file.toLowerCase().endsWith('.pdf'))
+          // readdir order is filesystem-dependent, so sort before any cap:
+          // an unsorted truncation would show a different arbitrary subset on
+          // each call and on each machine.
+          .sort((left, right) => left.localeCompare(right, "en"))
           .map(file => path.join(directory, file));
-        
+
+        // Every prompt template opens by listing this directory, so an
+        // uncapped listing is the first thing that happens in a conversation.
+        // Measured against the previous unbounded format: 2,000 PDFs produced
+        // about 153,000 characters, roughly 38,000 tokens, and 10,000 produced
+        // about 768,000. A Documents folder holding years of scanned invoices
+        // is exactly this product's user, so the entry point could consume a
+        // whole context window before any work began.
+        const shown = pdfFiles.slice(0, LIST_PDFS_MAX_RESULTS);
+        const truncated = pdfFiles.length - shown.length;
+        if (truncated > 0) {
+          return {
+            content: [
+              {
+                type: "text",
+                text: `Found ${pdfFiles.length} PDF files in ${directory}. `
+                  + `Showing the first ${shown.length}, sorted by name; `
+                  + `${truncated} not shown.\n${shown.join('\n')}\n\n`
+                  + `Pass a more specific directory to narrow this list.`
+              }
+            ],
+          };
+        }
+
         return {
           content: [
             {
