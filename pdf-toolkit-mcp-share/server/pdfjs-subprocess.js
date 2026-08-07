@@ -912,16 +912,54 @@ async function loadInProcessWorkerModule() {
   return await inProcessWorkerModulePromise;
 }
 
-// The in-process native-canvas block is precautionary, inherited from the
-// worker-thread path where Electron measurably crashed. No measurement shows
-// the native binding crashing on the utility-process main thread, and blocking
-// it is what leaves an embedded host with no renderer when there is no system
-// fallback, which is the Windows shape. PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=1
-// lifts the block so that can be measured on a real host before the default
-// changes. The renderer policy already falls back to the system renderer, so
-// an unsafe native attempt degrades rather than failing the call.
-function embeddedNativeCanvasAllowed() {
-  return process.env.PDF_TOOLS_EMBEDDED_NATIVE_CANVAS === "1";
+// Native canvas inside an embedded (Electron) host.
+//
+// History, because the reasoning matters more than the switch. The block was
+// inherited from the worker-thread path, and that one was itself precautionary:
+// it came from an Electron documentation warning that loading native modules
+// from a worker can crash the process, not from an observed crash. The one
+// canvas failure actually measured was macOS-specific and was not a crash at all
+// - ERR_DLOPEN_FAILED because the binding's code signature has a different Team
+// ID from the host process (docs/CLAUDE_DESKTOP_TEST_RUN_2026-04-23.md:394).
+// That has no Windows analogue.
+//
+// Blocking it is what leaves an embedded host with no renderer when there is no
+// system fallback, which is the Windows shape. An earlier version of this
+// comment claimed "the renderer policy already falls back to the system
+// renderer, so an unsafe native attempt degrades rather than failing the call."
+// That is FALSE off macOS: index.js's pdfjsRendererPolicy() returns bare
+// "native" for every non-darwin platform, so on Windows and Linux there is
+// nothing to degrade to.
+//
+// Measured 2026-08-06 on Windows 11 / Claude Desktop 1.25927.0, and independently
+// in CI (run 31051499142, artifact windows-render-probe.json: block in force ->
+// error, block lifted -> renderer "native-canvas"): with the block lifted the
+// binding loads and renders, with no host instability observed.
+//
+// That is not enough on its own to trust a default, because the failure this
+// guards against is a hard host crash that no in-process handler can catch. So
+// the default is win32-only and is backed by the crash-survival latch below.
+// The default stays OFF everywhere, and the flag stays a pure opt-in.
+//
+// A win32 default was implemented and reverted. An adversarial review showed the
+// crash-survival latch backing it did not hold: it cleared its marker the moment
+// dlopen returned, so it covered only the link step, which is the one step two
+// positive datapoints already exist for. The instability this guards against in
+// a Chromium process that already has its own Skia characteristically appears at
+// first draw or teardown, both of which were left unprotected. The mechanism
+// also had no lock and no ownership, so two servers sharing one home directory
+// could erase each other's in-flight marker, and concurrency was the exact
+// condition named publicly on issue #42 as a prerequisite for flipping.
+//
+// Do not flip this default again without, at minimum: a marker that survives
+// past first successful render, per-process ownership or locking, a remediation
+// string that actually reaches the user (the current one is swallowed by
+// @napi-rs/canvas's own "Cannot find native binding" text and rewritten by
+// canvasDependencyError), and a test that drives installInProcessCanvasNativeGuard
+// with an injected dlopen instead of asserting the policy function against files
+// the test wrote itself.
+export function embeddedNativeCanvasAllowed({ env = process.env } = {}) {
+  return env.PDF_TOOLS_EMBEDDED_NATIVE_CANVAS === "1";
 }
 
 function installInProcessCanvasNativeGuard() {

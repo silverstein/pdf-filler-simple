@@ -241,15 +241,29 @@ candidate before deletion or reordering.
 The 14 manifest prompt templates are first-class MCP prompts. Runtime
 discovery preserves manifest order, names, descriptions, and argument names.
 Every declared argument is required because every one is interpolated into its
-template. `prompts/get` returns one user message. User-provided values are
-bounded to 1,024 characters, reject C0/C1 and common invisible/bidirectional
-format characters, and are serialized in an explicit JSON data block. The task section refers to
-argument names instead of splicing values into operative instructions. The
-boundary tells the consuming model never to follow commands embedded in the
-data. This reduces prompt-injection ambiguity but does not make arbitrary
-untrusted input safe by itself; clients should keep prompt invocation
-user-controlled and avoid sourcing arguments from untrusted documents without
-their own review.
+template. `prompts/get` returns one user message: the declared template with argument
+values substituted in place, and nothing else added.
+
+User-provided values are bounded to 1,024 characters, and reject non-strings,
+C0/C1 and common invisible/bidirectional format characters, and `${` template
+markers. That input validation is the **only** boundary applied to them.
+
+Values are substituted directly into the message text, so a value becomes part
+of an operative instruction carrying the `user` role. **Clients must keep prompt
+invocation user-controlled and must not source arguments from untrusted
+documents, tool output, or model output without their own review.**
+
+Earlier versions isolated values in a delimited JSON block referenced by name.
+That was removed because it made the feature unusable, not because it was
+unnecessary: Claude Desktop validates the `prompts/get` response against the
+manifest-declared text and refuses any addition with "content validation
+failed. Rejecting response to prevent potential prompt injection", so the
+prompt never attaches. Measured against Claude Desktop 1.25927.0 on Windows 11,
+2026-08-06; a delimited block, an appended JSON object, and a single appended
+plain sentence were each refused, while unadorned substitution attached.
+Server-side isolation is therefore not available under that host, and any
+future attempt to reintroduce it must be re-measured against a real host
+before it is shipped.
 
 Missing arguments, unknown arguments, and unknown prompt names return JSON-RPC
 `-32602` (`Invalid params`). Adding or removing a prompt requires updating both

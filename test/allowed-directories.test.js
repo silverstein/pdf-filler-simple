@@ -84,7 +84,11 @@ describe("allowed_directories sandbox", () => {
     });
 
     const text = textFromToolResult(result);
-    expect(text).toContain("This extension is only allowed to access");
+    // "server", not "extension": this runs under any MCP client, and the
+    // denial message is one of the few strings a user reads verbatim.
+    expect(text).toContain("This server is only allowed to access");
+    // The list replaces the defaults, so the message has to say so.
+    expect(text).toContain("replaces");
     expect(text).toContain(ALLOWED_DIR);
     expect(text).toContain(EXAMPLE_PDF);
   }, 30_000);

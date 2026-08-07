@@ -77,13 +77,24 @@ for (const entry of results) {
   if (entry.detail) console.log(`  detail: ${entry.detail}`);
 }
 
-// The job's purpose is evidence, so it fails only when the opt-in was
-// exercised and still could not render. That is the outcome that would mean
-// Windows cannot be supported by lifting the block alone.
+// Assert every arm, not just the opt-in. A control that is recorded but never
+// checked is not a control: this job previously would have stayed green if the
+// kill switch had silently stopped blocking.
+const failures = [];
+
+const blocked = results.find(entry => entry.label.endsWith("block in force"));
+if (!blocked || !blocked.is_error) {
+  failures.push("The default did not block native canvas in the embedded host.");
+}
+
 if (optIn) {
   const lifted = results.find(entry => entry.label.endsWith("block lifted"));
   if (!lifted || lifted.is_error) {
-    console.error("Windows render remains unavailable with the block lifted.");
-    process.exit(1);
+    failures.push("Windows render remains unavailable with the block lifted.");
   }
+}
+
+if (failures.length > 0) {
+  for (const failure of failures) console.error(failure);
+  process.exit(1);
 }
