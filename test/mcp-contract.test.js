@@ -303,6 +303,12 @@ describe("MCPB static declarations", () => {
   });
 
   it("keeps every committed share runtime file byte-identical to its source", async () => {
+    // Enumerated rather than globbed so adding a server file is a deliberate act,
+    // but the enumeration had drifted: pdf-observations.js and
+    // pdf-lib-rss-monitor.js shipped in the mirror unguarded. The count
+    // assertion below fails if another one is added without being listed.
+    const shareServer = path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "server");
+    const mirrored = (await fs.readdir(shareServer)).filter(name => name.endsWith(".js")).sort();
     for (const filename of [
       "accessibility-inspection.js",
       "bounded-pdf-file.js",
@@ -318,6 +324,8 @@ describe("MCPB static declarations", () => {
       "pdf-lib-worker.js",
       "pdfjs-subprocess.js",
       "pdfjs-worker.js",
+      "pdf-lib-rss-monitor.js",
+      "pdf-observations.js",
       "resource-uri.js",
       "stderr-suppression.js",
     ]) {
@@ -325,6 +333,9 @@ describe("MCPB static declarations", () => {
       const share = await fs.readFile(path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "server", filename));
       expect(share, filename).toEqual(source);
     }
+    // A new server file must be added to the list above, not silently shipped
+    // in the mirror unchecked. Two already had been.
+    expect(mirrored).toHaveLength(18);
     const sourceUi = await fs.readFile(path.join(REPO_ROOT, "dist-ui", "index.html"));
     const shareUi = await fs.readFile(
       path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "dist-ui", "index.html"),
