@@ -37,6 +37,7 @@ describe("list_pdfs with no directory argument", () => {
     await fs.mkdir(DEFAULT_DIR, { recursive: true });
     await fs.mkdir(OTHER_ALLOWED_DIR, { recursive: true });
     await fs.mkdir(profileDir, { recursive: true });
+    await fs.mkdir(path.join(TMP_DIR, "home"), { recursive: true });
 
     await fs.copyFile(EXAMPLE_PDF, path.join(DEFAULT_DIR, "in-default-dir.pdf"));
     await fs.copyFile(EXAMPLE_PDF, path.join(OTHER_ALLOWED_DIR, "in-other-dir.pdf"));
@@ -48,6 +49,12 @@ describe("list_pdfs with no directory argument", () => {
       args: [path.join(REPO_ROOT, "server", "index.js")],
       cwd: REPO_ROOT,
       env: {
+        // Isolate HOME. DEFAULT_PDF_DIR falls back to `homedir()/Documents`, so
+        // without this a regression that ignores the variable could still pass
+        // by reading the operator's real Documents folder, and the suite would
+        // touch a directory outside its temp root.
+        HOME: path.join(TMP_DIR, "home"),
+        USERPROFILE: path.join(TMP_DIR, "home"),
         // Both directories are allowed, so anything the default resolves to is
         // reachable. This isolates "which directory did it pick" from "was it
         // permitted", which would otherwise confound the assertion.
