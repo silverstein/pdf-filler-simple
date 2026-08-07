@@ -28,6 +28,16 @@ list, and its measured table and causal account were both left stale by those
 two changes. The table below and the section that follows it now match the
 shipped product. The headline has not moved: recovery is still zero.
 
+**Route status.** Both routes past this baseline have since been investigated
+to a conclusion and both are closed. Shape-to-family is ill-posed — recorded
+below under "The shape-keyed family identification dead end". Every
+metric-derived route is closed too, including the reconstruct-the-advance-from-
+the-spacer route that this document's obstacle 2 left open in principle: see
+`docs/evidence/legacy-tex-metric-routes-closed-2026-08.md`. Read that record
+before attempting anything on the four Ghostscript 6.52 papers. It does not
+soften the zeros here; it establishes that they are a property of what that
+producer emitted.
+
 ## The corpus
 
 The documents are third-party and are deliberately **not** committed to this
@@ -122,6 +132,17 @@ remain, and they are not the same obstacle for the two producers.
    renumbered codes. This is a safeguard doing its job, not a bug: a code with
    no advance is invisible to the fingerprint that qualified the family.
 
+   The obvious follow-up — recover each inked glyph's advance from the spacer
+   that follows it, then fingerprint as usual — was investigated and is closed.
+   The spacer carries an inter-glyph *displacement*, not an advance, and it is
+   not a function of the inked glyph: in one fourteen-glyph show operation of
+   `pippenger.pdf` the letter `t` takes displacements 33, 54, 29 and 30. Worse,
+   the font object being fingerprinted is not a TeX font at all but a glyph
+   cache page holding 171 / 168 / 168 / 164 inked glyphs, more than the 128
+   slots any Computer Modern font has, so no font-level identification of any
+   kind can work here. Full measurements in
+   `docs/evidence/legacy-tex-metric-routes-closed-2026-08.md`.
+
 3. *The rasters themselves do not match.* `astro-ph-9402001.pdf` is the clean
    case — codes preserved, 10 fonts fingerprinting a family, 11 occurrences
    officially Unicode-mapped — and it still matches 0 registry digests,
@@ -172,6 +193,12 @@ All four findings are measured on these exact documents.
   720 dpi — but they share exactly **one** shape with Shannon (600 dpi) and
   **none** with astro-ph (300 dpi), and that one shared shape is a 41x3 solid
   rectangle, a fraction rule rather than a character.
+
+With the metric routes closed as well, the only remaining theoretical route to
+the four Ghostscript 6.52 papers is an external labelled bitmap reference — a
+METAFONT run at each document's own mode and resolution — which no document
+here records and nothing in this repository can pin. That is the boundary of
+the problem, not planned work.
 
 ## Safeguards this corpus confirms are not what blocks it
 
@@ -255,13 +282,24 @@ node scripts/inventory-type3-glyphs.mjs --source /tmp/legacy-tex-corpus/pippenge
 
 - This is the gap. Zero recovered characters across 385,766 legacy Type-3
   glyph occurrences is the tracked defect, and raising any figure in the
-  measured-baseline table is the work this record exists to measure.
+  measured-baseline table is the work this record exists to measure. For the
+  four Ghostscript 6.52 papers that work now has no known route; that is a
+  finding about the producer, recorded in
+  `docs/evidence/legacy-tex-metric-routes-closed-2026-08.md`, and not a reason
+  to stop calling the zero a defect.
 - Linking is not recovery. 52,537 occurrences now link where none did, and
   that bought no characters. A future change that raises the linked count
   without raising the recovered count has not moved this baseline.
-- No OCR engine is bundled, and none of the above depends on one. Every glyph
-  in this corpus is drawn by an embedded Type-3 font whose Computer Modern
-  identity is recoverable from metrics and raster bytes alone.
+- No OCR engine is bundled, and none of the above depends on one. This was
+  once written here as "every glyph in this corpus is drawn by an embedded
+  Type-3 font whose Computer Modern identity is recoverable from metrics and
+  raster bytes alone." That is now known to be false for the four Ghostscript
+  6.52 papers, and it is the single most important correction to this record:
+  their Computer Modern identity is **not** derivable from the metrics and
+  structure their producer wrote into the file, by any route measured. See
+  `docs/evidence/legacy-tex-metric-routes-closed-2026-08.md`. It remains true
+  of `astro-ph-9402001.pdf`, whose codes and metrics are intact and whose only
+  obstacle is its 300 dpi rasters.
 - The corpus documents are not committed. The digests above are the only
   binding; a re-fetch that produces different bytes must be treated as a
   different document, not as a changed baseline.

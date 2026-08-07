@@ -39,6 +39,11 @@ import { uniqueComputerModernFamily } from "../server/layout-extraction.js";
  * for ten fonts (astro-ph) rasterised them at its own PK resolution, which
  * matches no enrolled shape.
  *
+ * Both routes past that third cause have since been investigated to a
+ * conclusion and both are closed. Findings (a)-(d) below close the shape
+ * route; findings (e)-(g) close every metric-derived route. Read them before
+ * attempting anything here.
+ *
  * Identifying the family from the set of matched glyph SHAPES, rather than
  * from `widths[code]`, was investigated as the way through and was measured to
  * be a dead end. It is recorded here so it is not attempted again blind. Four
@@ -97,6 +102,70 @@ import { uniqueComputerModernFamily } from "../server/layout-extraction.js";
  * font pins `cmsy5` off just two such advances, and the two occurrences it
  * officially names mean nothing. Only the missing digest match keeps that
  * coincidence out of the output.
+ *
+ * The obvious way around THAT — reconstruct each inked glyph's advance from
+ * the spacer that follows it, then fingerprint as usual — was also measured,
+ * and it closes the last metric-derived route to these four documents. Three
+ * findings, all measured on these exact documents and recorded in full in
+ * `docs/evidence/legacy-tex-metric-routes-closed-2026-08.md`:
+ *
+ *   e. The spacer does not carry a per-character advance. It carries an
+ *      inter-glyph DISPLACEMENT — advance plus interword space plus kern plus
+ *      grid rounding — which is not a function of the inked glyph. Only
+ *      53.0/77.4/59.1/51.3% of inked occurrences are followed by a spacer at
+ *      all; in pippenger 7,725 of 15,010 show operations (51.5%) hold one
+ *      inked glyph and no spacer, the run-final displacement having been
+ *      folded into the following `Td`. Where a spacer does follow, the map is
+ *      many-to-many: 222 of pippenger's 333 inked codes with a spacer partner
+ *      take more than one spacer code, and the modal displacement for a code
+ *      accounts for only 43.7-46.8% of its observations. Ground truth from a
+ *      decoded page-1 line settles it: in ONE fourteen-glyph show operation
+ *      the letter `t` takes displacements 33, 54, 29 and 30, while `.`, `I`
+ *      and `w` each report exactly 51 because they only ever occur before a
+ *      word space. That is the word space, not the letter.
+ *   f. Granting a perfect solution to both blockers at once still fits
+ *      nothing. Taking the 15 ground-truth roman characters read off page 1 of
+ *      pippenger and placing them at their TRUE OT1 slots with their best-case
+ *      reconstructed advances, ZERO Computer Modern metrics fit at ±0.5, ±1,
+ *      ±2, ±3, ±5, ±8 or ±12 — out to 24x the shipped ±0.5 tolerance, under
+ *      both the min and the mode statistic. The per-character implied scale
+ *      against cmr10 ranges 66.6 px/em (`n`) to 183.6 px/em (`.`), and one
+ *      font cannot be drawn at two scales, so there is no signal to loosen a
+ *      tolerance toward.
+ *   g. The category error, which would have defeated both of the above
+ *      anyway. Ghostscript 6.52 does not emit one Type-3 font per TeX font; it
+ *      emits GLYPH CACHE PAGES. Each of the four documents contains one Type-3
+ *      font — `9 0 R` in all four — carrying 171/168/168/164 inked glyphs,
+ *      more than the 128 slots any Computer Modern font has. In pippenger's
+ *      `9 0 R`, code 10 is the small roman `I` (mask 21x41) and code 49 is the
+ *      large bold `I` (mask 39x69), same object. "This font's family" has no
+ *      answer, so no font-level identification of any kind — metric or shape —
+ *      can work for this producer.
+ *
+ * And the abstention is demonstrably right rather than merely cautious. The
+ * one stable metric candidate in the whole corpus, m3's `408 0 R`, fits cmmi7
+ * under min, mode AND max, at a scale that puts a 7 pt metric at 10.4 pt. Its
+ * seven unique width-pins predict `L`, `M`, `i`, `w`, `l`, `psi` and `varphi`.
+ * Rendered, the mask pinned to capital `L` is an x-height box with no
+ * ascender; the one pinned to `M` is 47 px wide against a 113-unit advance
+ * (0.42, where pippenger's real bold `M` is 0.94) and descends below the
+ * baseline; the one pinned to `l` is a superscript raster drawn entirely above
+ * the baseline. The line that font helps draw is
+ * `4x² + 1x³ + 5x⁴ + 9x⁵ ∈ R[x] → R[x][y]/(x²−y)`, set by five different
+ * Type-3 fonts — one per raster size the cache needed, which is finding (g)
+ * again. Shipping the metric route would have emitted those seven letters in
+ * place of digits and exponents.
+ *
+ * So every recovery figure below is zero because every metric-derived route
+ * and the shape route are both closed, and the closure is a property of what
+ * GNU Ghostscript 6.52 wrote into these files rather than a limit on effort.
+ * The only remaining theoretical route is an external labelled bitmap
+ * reference — a METAFONT run at each document's own mode and resolution —
+ * which no document here records and nothing in this repository can pin. None
+ * of this makes the zeros acceptable; it records why they are here. And none
+ * of it applies to astro-ph-9402001.pdf, which preserves its TeX codes,
+ * fingerprints ten fonts correctly, and fails for the unrelated reason in (a)
+ * and obstacle 3: its rasters are 300 dpi and match no enrolled shape.
  *
  * Interface: one directory variable, `PDF_TOOLS_LEGACY_CORPUS_DIR`, holding
  * all five documents under the fixed basenames listed in DOCUMENTS. A single
@@ -462,7 +531,12 @@ describe.runIf(Boolean(CORPUS_DIR))("legacy dvips-era Computer Modern Type-3 cor
       ).toBeGreaterThan(0);
     }
     // Family resolution, not linking, is what now blocks the four papers, and
-    // it blocks all but ten of their linked occurrences.
+    // it blocks all but ten of their linked occurrences. It blocks them
+    // permanently: their Type-3 objects are glyph cache pages holding more
+    // inked glyphs than any Computer Modern font has slots, so no font-level
+    // family answer exists to be found. See findings (e)-(g) in this file's
+    // header and docs/evidence/legacy-tex-metric-routes-closed-2026-08.md.
+    // Raising this number would mean a coincidence got through, not a fix.
     expect(
       ghostscript652.reduce((sum, entry) => sum + entry.classified_occurrence_count, 0),
       "a Ghostscript 6.52 paper now classifies more occurrences into a Computer Modern family: update the recorded baseline deliberately",
