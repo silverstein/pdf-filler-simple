@@ -83,7 +83,14 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-08-07: list_pdfs gains an offset parameter so a flat folder holding
 // more than 200 PDFs is fully reachable, and its description states the cap
 // and the paging. Previously c65cd62a1d46c6b5837aa7bf12a1851717e4b09dc274182dcb07dac982e8fc64.
-const TOOL_CONTRACT_SHA256 = "a594a3a23f6722fb121b9d2a57bad03fc60fda5e352583f07139d191914c8d52";
+// 2026-08-06: read_pdf_layout glyph-recovery evidence is re-keyed onto the
+// decoded Type-3 image mask, renaming charproc_sha256/witness_charproc_sha256/
+// canonicalizer_version to glyph_sha256/witness_glyph_sha256/glyph_evidence_version.
+// 2026-08-06: the Type-3 glyph evidence key became the stored image-mask sample
+// grid, with no matrix of any kind taking part, so every published digest
+// changed and the extraction IR went to 1.5.0. Previously
+// dafeaf19570eece1bb3901f883ea456216b7f46ea6872b80a9eb205c24b9e45f.
+const TOOL_CONTRACT_SHA256 = "b980fc09c3b9c886f01e08b82fe67df569e5cafa5471dd4c3e549ac6d8e26fc0";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -420,7 +427,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.4.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.5.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       page_range: { start_page: 1, end_page: 1 },
     });

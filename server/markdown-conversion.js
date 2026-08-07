@@ -8,7 +8,7 @@ const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
   version: "1.14.0",
 });
-const SUPPORTED_LAYOUT_IR_VERSION = "1.4.0";
+const SUPPORTED_LAYOUT_IR_VERSION = "1.5.0";
 
 // Bounded geometric table inference. A run of adjacent lines is treated as a
 // table only when every row fills every detected column, so ragged or

@@ -124,13 +124,13 @@ function markCollapsedAlpha(item) {
     font_name: item.font_name,
     registry_id: "cmmi-pk-raster-alpha-e688a8-v1",
     qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
-    charproc_sha256: "e688a83f98433c841694f990aabafe5245cfc9320f584d7f70da706f0eeba259",
-    witness_charproc_sha256: [
-      "780b04fa47830ca782211b86dbedfe0adec0445bdf94d538bfe7adde08ed9445",
-      "1500df39391626d02f9e98132f991f71899612069298e52340e12fb65590836f",
+    glyph_sha256: "55bb60d8560069c0650380cf09cdd023866ca4b91bb92b2fe4b45a056da1bf47",
+    witness_glyph_sha256: [
+      "9554966ab58edc060791bd02f04513a8da4a749f80a943d2daa3460a393fee7f",
+      "eaa7d3cbe50f3ec7903d72addc77f88a471c1dfdc2fd9eb02ce0fbf800068507",
     ],
     tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
-    canonicalizer_version: "pdfjs-charproc-json-v1",
+    glyph_evidence_version: "pdfjs-type3-glyph-evidence-v2",
   }];
   item.geometry_provenance.formula = "pdfjs_collapsed_type3_operator_advance_box_approximation";
   item.geometry_provenance.advance_source = "operator_advance_width";
@@ -363,8 +363,10 @@ describe("layout Markdown renderer", () => {
     // Pin the complete normalized envelope, not a value derived from a second
     // invocation, so any unreviewed serialized delta fails this regression.
     const serialized = JSON.stringify(pinnable);
+    // Previously cb581702fc7339b3eea5f15f31e49c907639622ef7c571b22870538598853572,
+    // before the extraction IR version in the provenance envelope became 1.5.0.
     expect(createHash("sha256").update(serialized).digest("hex"))
-      .toBe("cb581702fc7339b3eea5f15f31e49c907639622ef7c571b22870538598853572");
+      .toBe("e5a35996c69239297339bc97433b52d6595caf5c360becb12d793828a78bd8b2");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,

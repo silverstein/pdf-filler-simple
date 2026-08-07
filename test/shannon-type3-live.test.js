@@ -106,9 +106,9 @@ describe("external Shannon Type-3 recovery", () => {
       "cmsy-pk-raster-centered-dot-33077f-v1": 66,
       "cmsy-pk-raster-greater-equal-05b4a9-v1": 22,
       "cmsy-pk-raster-greater-equal-b57ae2-v1": 1,
-      "cmsy-pk-raster-less-or-equal-90da52-v1": 35,
+      "cmsy-pk-raster-less-or-equal-90da52-v1": 36,
       "cmsy-pk-raster-minus-0c8b34-v1": 64,
-      "cmsy-pk-raster-minus-fb1f6b-v1": 216,
+      "cmsy-pk-raster-minus-fb1f6b-v1": 222,
       "cmsy-pk-raster-minus-v1": 14,
       "cmsy-pk-raster-plus-or-minus-4dedb5-v1": 4,
       "cmsy-pk-raster-plus-or-minus-b68b24-v1": 1,
@@ -116,7 +116,7 @@ describe("external Shannon Type-3 recovery", () => {
       "cmsy-pk-raster-right-arrow-6ff1e0-v1": 16,
       "cmsy-pk-raster-right-arrow-7d300b-v1": 19,
       "cmsy-pk-raster-square-root-0c8ca6-v1": 1,
-      "cmsy-pk-raster-square-root-772f49-v1": 27,
+      "cmsy-pk-raster-square-root-772f49-v1": 28,
       "cmsy-pk-raster-vertical-6ab8a7-v1": 32,
     });
   }, 60_000);

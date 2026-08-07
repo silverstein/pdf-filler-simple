@@ -51,7 +51,10 @@ function parseRegistryEntries(source) {
       complete_font_enrollment: footprint
         ? footprint[1].split(",").map(value => Number(value.trim()))
         : null,
+      glyph_sha256: /glyph_sha256: "([0-9a-f]{64})"/.exec(head)?.[1] ?? null,
       witness_codes: [...tail.matchAll(/original_char_code: (\d+)/g)].map(match => Number(match[1])),
+      witnesses: [...tail.matchAll(/original_char_code: (\d+), glyph_sha256: "([0-9a-f]{64})"/g)]
+        .map(match => ({ original_char_code: Number(match[1]), glyph_sha256: match[2] })),
       source: text,
     };
   });
@@ -274,5 +277,106 @@ describe("Type-3 registry startup invariants", () => {
         "    complete_font_enrollment: Object.freeze([6, 0, 33]),\n    witnesses: Object.freeze([\n",
       ),
     ))).rejects.toThrow(`Type-3 registry ${TWO_WITNESS_ID} declares a font footprint it does not need`);
+  });
+});
+
+/**
+ * The two corroboration rules the matcher applies to every registry entry
+ * before it recovers anything.
+ *
+ * Both are module-private, and both sit behind `collectType3GlyphRecoveries`,
+ * which needs a real page carrying real enrolled Computer Modern rasters to
+ * reach — rasters this repository deliberately does not vendor. So these drive
+ * `matchingRegistryEntries` directly, through the same source-copy import the
+ * startup-invariant tests above use, with one test-only export appended. The
+ * module under test is still the shipped source text: delete either rule from
+ * server/layout-extraction.js and the copy loses it too.
+ *
+ * `enrolled` is what `enrolledGlyphEvidence` builds — every officially
+ * enrolled code the font actually draws, mapped to its glyph digest — and
+ * `rawFont` is consulted only for `metricWidths`, so a Map is the whole of it.
+ */
+describe("Type-3 registry match corroboration", () => {
+  // Two witnesses, so no complete_font_enrollment footprint to satisfy and the
+  // fixture below is the entry's whole evidence.
+  const ENTRY_ID = "cmmi-pk-raster-alpha-e688a8-v1";
+  const FAMILY = "computer-modern-math-italic";
+  let matchingRegistryEntries = null;
+  let entry = null;
+
+  const fixture = () => {
+    const enrolled = new Map([[entry.original_char_code, entry.glyph_sha256]]);
+    const metricWidths = new Map([[entry.original_char_code, 45]]);
+    for (const witness of entry.witnesses) {
+      enrolled.set(witness.original_char_code, witness.glyph_sha256);
+      metricWidths.set(witness.original_char_code, 41);
+    }
+    return { enrolled, rawFont: { metricWidths } };
+  };
+
+  const matchedIds = ({ enrolled, rawFont }) =>
+    matchingRegistryEntries(enrolled, rawFont, FAMILY).map(match => match.id);
+
+  beforeAll(async () => {
+    ({ matchingRegistryEntries } = await importMutatedLayoutModule(
+      "matcher-exposed",
+      source => `${source}\nexport { matchingRegistryEntries };\n`,
+    ));
+    entry = registryEntryById(ENTRY_ID);
+    expect(entry.glyph_sha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(entry.witnesses).toHaveLength(2);
+    expect(entry.complete_font_enrollment).toBeNull();
+    // The positive control every case below is measured against. Without it a
+    // safeguard could look enforced while the fixture simply never matched.
+    expect(matchedIds(fixture())).toContain(ENTRY_ID);
+  });
+
+  /**
+   * Shape-code injectivity. The grid key drops the placement matrix, and
+   * placement is what tells a Computer Modern period from a centred dot — the
+   * same nine-by-nine blob at two heights. So the shape has to identify the
+   * code on its own within its own font.
+   */
+  it("recovers nothing when one shape stands at two enrolled codes of the font", () => {
+    const contested = fixture();
+    // Code 12 is an officially enrolled math-italic slot that this entry does
+    // not name, now carrying the entry's own shape. Pinned with a positive
+    // width so nothing but injectivity can be doing the refusing.
+    expect(contested.enrolled.has(12)).toBe(false);
+    contested.enrolled.set(12, entry.glyph_sha256);
+    contested.rawFont.metricWidths.set(12, 45);
+    expect(matchedIds(contested)).not.toContain(ENTRY_ID);
+  });
+
+  it("recovers nothing when a witness shape stands at two enrolled codes", () => {
+    const contested = fixture();
+    contested.enrolled.set(12, entry.witnesses[0].glyph_sha256);
+    contested.rawFont.metricWidths.set(12, 41);
+    expect(matchedIds(contested)).not.toContain(ENTRY_ID);
+  });
+
+  /**
+   * Positive-width pinning. Keeping zero-width slots in the linker's width map
+   * is what lets a legacy font link at all, but it also lets a drawn glyph
+   * reach the registry with no advance behind it, and a zero advance is
+   * invisible to the TFM fingerprint that qualified the family. Every code the
+   * match rests on must be one the fingerprint could actually see.
+   */
+  it("recovers nothing when the recovered code carries no positive declared width", () => {
+    const unpinned = fixture();
+    // Still drawn, still the right shape — only its declared advance is zero,
+    // so `metricWidths` never held it.
+    unpinned.rawFont.metricWidths.delete(entry.original_char_code);
+    expect(unpinned.enrolled.get(entry.original_char_code)).toBe(entry.glyph_sha256);
+    expect(matchedIds(unpinned)).not.toContain(ENTRY_ID);
+  });
+
+  it("recovers nothing when a witness carries no positive declared width", () => {
+    for (const witness of entry.witnesses) {
+      const unpinned = fixture();
+      unpinned.rawFont.metricWidths.delete(witness.original_char_code);
+      expect(unpinned.enrolled.get(witness.original_char_code)).toBe(witness.glyph_sha256);
+      expect(matchedIds(unpinned)).not.toContain(ENTRY_ID);
+    }
   });
 });
