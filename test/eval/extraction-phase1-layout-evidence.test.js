@@ -79,7 +79,8 @@ describe("Phase 1 scorer-only layout occurrence oracle", () => {
     expect(new AjvJsonSchemaValidator().getValidator(schema)(retained)).toMatchObject({ valid: true });
     expect(retained.pdfjs_version).toBe("5.4.624");
     expect(retained.validator_sources.map(item => item.role)).toEqual([
-      "accessibility_inspection_module", "generator_script", "layout_evidence_module", "layout_extraction_module", "type3_cm_reference_module", "layout_oracle_schema",
+      "accessibility_inspection_module", "generator_script", "layout_evidence_module", "layout_extraction_module", "type3_cm_reference_module", "type3_cm_pk_reference_module",
+      "layout_oracle_schema",
       "markdown_conversion_module", "output_schemas_module", "package_json", "package_lock",
       "pdf_comparison_module", "pdf_observations_module", "pdfjs_package", "scoring_oracle_schema",
     ]);

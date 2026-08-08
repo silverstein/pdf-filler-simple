@@ -7,6 +7,10 @@ import {
   CM_TFM_REFERENCE_VERSION,
   CM_WITNESS_CODEPOINTS,
 } from "./type3-cm-reference.js";
+import {
+  CM_PK_REFERENCE_FACES,
+  CM_PK_REFERENCE_QUALIFICATION,
+} from "./type3-cm-pk-reference.js";
 
 const IR_NAME = "pdf-tools.extraction-ir";
 const IR_VERSION = "1.5.0";
@@ -1016,9 +1020,139 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
     ]),
   }),
 ]);
-const TYPE3_RECOVERY_BY_ID = new Map(TYPE3_RECOVERY_REGISTRY.map(entry => [entry.id, entry]));
 
-for (const entry of TYPE3_RECOVERY_REGISTRY) {
+/*
+ * The second enrollment lane: Computer Modern rasters GENERATED from the
+ * pinned CTAN METAFONT sources rather than read off one document and reviewed.
+ *
+ * Entries above carry `ctan-cm-encoding-plus-reviewed-pk-raster-v1`: a human
+ * looked at a raster the Shannon document actually contains, recognised the
+ * character, and enrolled that document's own bytes. That is honest evidence
+ * and it is also evidence about one document. Entries built here carry
+ * `ctan-cm-metafont-generated-pk-v1`, which is a different and stronger
+ * class: the raster is what Knuth's own sources produce at a pinned
+ * rasterisation setting, nobody looked at a picture, and the whole chain —
+ * archive digest, per-face source digest, METAFONT and GFtoPK versions, the
+ * four pinned numbers — is recorded in
+ * `test/fixtures/eval/extraction/type3-cm-pk-reference.provenance.json` and
+ * reproducible from `scripts/generate-type3-cm-pk-reference.mjs`. The two
+ * strings are deliberately different so a consumer can tell which kind of
+ * evidence a recovery rests on.
+ *
+ * The generated table is a per-face map from officially enrolled slot to mask
+ * digest. It is not itself a set of registry entries, because an entry also
+ * needs its corroboration fixed in advance: the semantic validator re-derives
+ * `witness_glyph_sha256` from the named entry, so witnesses cannot be chosen
+ * at match time. Two entry shapes are built from each face, and the pair of
+ * shapes is what makes the expansion safe.
+ *
+ * WHY THIS CANNOT COLLIDE WITH THE REVIEWED LANE, OR WITH ITSELF.
+ * `matchingRegistryEntries` drops a code that two entries both match, so an
+ * over-eager expansion here would *delete* recoveries rather than add them.
+ * Two entries can only both match one code if they carry the same
+ * `glyph_sha256`, since each is compared against the one digest the font has
+ * at that code. Three rules follow, and together they are exhaustive:
+ *
+ *   1. A generated entry is skipped outright when the reviewed lane already
+ *      holds the same (family, code, digest). That is the only way a
+ *      generated entry could collide with a reviewed one, so the reviewed
+ *      lane keeps every recovery it has today, unchanged and under its own
+ *      qualification.
+ *   2. The `solo` shape declares `complete_font_enrollment: [code, witness]`,
+ *      so it fires only for a font drawing exactly those two enrolled slots.
+ *      Two solo entries with different witnesses demand different complete
+ *      footprints and are mutually exclusive; a solo and a `duo` are mutually
+ *      exclusive because a duo needs three enrolled slots present and a solo
+ *      needs exactly two. Solo entries are what recover a heavily subsetted
+ *      dvips font, which is the common shape: astro-ph/9402001's one
+ *      recoverable Computer Modern font draws exactly two enrolled slots.
+ *   3. The `duo` shape carries two witnesses and no footprint, and is emitted
+ *      only when its (family, code, digest) occurs in exactly one generated
+ *      face. Two duo entries for one code would otherwise be able to pick
+ *      different witness codes and both match.
+ *
+ * Identical tuples produced by two faces are collapsed to one entry, so a
+ * shape shared by two design sizes is enrolled once.
+ */
+function generatedPkRecoveryEntries() {
+  const reviewedTriples = new Set(TYPE3_RECOVERY_REGISTRY.map(
+    entry => `${entry.family}:${entry.original_char_code}:${entry.glyph_sha256}`,
+  ));
+  const facesByTriple = new Map();
+  for (const record of CM_PK_REFERENCE_FACES) {
+    for (const [code, digest] of Object.entries(record.codes)) {
+      const triple = `${record.family}:${code}:${digest}`;
+      facesByTriple.set(triple, (facesByTriple.get(triple) ?? 0) + 1);
+    }
+  }
+  const byTuple = new Map();
+  const remember = (record, code, digest, kind, witnessCodes, footprint) => {
+    const witnesses = witnessCodes.map(witness => Object.freeze({
+      original_char_code: witness,
+      glyph_sha256: record.codes[witness],
+    }));
+    const tuple = `${record.family}:${code}:${digest}:${kind}:`
+      + witnesses.map(witness => `${witness.original_char_code}=${witness.glyph_sha256}`).join(",");
+    if (byTuple.has(tuple)) return;
+    byTuple.set(tuple, Object.freeze({
+      id: `${record.face}-${record.profile}-pk-c${code}-${kind}-w${witnessCodes.join("_")}-v1`,
+      qualification: CM_PK_REFERENCE_QUALIFICATION,
+      family: record.family,
+      original_char_code: code,
+      source_unicode: String.fromCharCode(code),
+      target_unicode: CM_CODEPOINTS[record.family][code],
+      glyph_sha256: digest,
+      witnesses: Object.freeze(witnesses),
+      ...(footprint ? { complete_font_enrollment: Object.freeze(footprint) } : {}),
+    }));
+  };
+  for (const record of CM_PK_REFERENCE_FACES) {
+    const codes = Object.keys(record.codes).map(Number).sort((left, right) => left - right);
+    for (const code of codes) {
+      const digest = record.codes[code];
+      if (CM_CODEPOINTS[record.family]?.[code] === undefined) continue;
+      if (reviewedTriples.has(`${record.family}:${code}:${digest}`)) continue;
+      const others = codes.filter(candidate => candidate !== code);
+      for (const witness of others) remember(record, code, digest, "solo", [witness], [code, witness]);
+      if (others.length >= 2 && facesByTriple.get(`${record.family}:${code}:${digest}`) === 1) {
+        remember(record, code, digest, "duo", others.slice(0, 2), null);
+      }
+    }
+  }
+  return [...byTuple.values()];
+}
+
+const TYPE3_GENERATED_PK_REGISTRY = Object.freeze(generatedPkRecoveryEntries());
+/**
+ * Every enrollment record the matcher can use, reviewed and generated
+ * together. Exported so the recovery gate can assert the mutual-exclusion
+ * argument above against the entries actually built, rather than against a
+ * second copy of the reasoning written out in the test.
+ */
+export const TYPE3_RECOVERY_ENTRIES = Object.freeze([
+  ...TYPE3_RECOVERY_REGISTRY,
+  ...TYPE3_GENERATED_PK_REGISTRY,
+]);
+const TYPE3_ALL_RECOVERY_ENTRIES = TYPE3_RECOVERY_ENTRIES;
+const TYPE3_RECOVERY_BY_ID = new Map(TYPE3_ALL_RECOVERY_ENTRIES.map(entry => [entry.id, entry]));
+if (TYPE3_RECOVERY_BY_ID.size !== TYPE3_ALL_RECOVERY_ENTRIES.length) {
+  throw new Error("Type-3 recovery entries do not have unique identifiers");
+}
+/*
+ * Entries are looked up by the (family, code) pair the font is being asked
+ * about rather than by scanning, because the generated lane is thousands of
+ * entries and the scan runs once per Type-3 font per page. An entry whose
+ * `original_char_code` the font does not draw could never pass
+ * `evidenceIdentifiesCode`, so indexing on it changes nothing but the cost.
+ */
+const TYPE3_RECOVERY_BY_FAMILY_CODE = new Map();
+for (const entry of TYPE3_ALL_RECOVERY_ENTRIES) {
+  const key = `${entry.family}:${entry.original_char_code}`;
+  if (!TYPE3_RECOVERY_BY_FAMILY_CODE.has(key)) TYPE3_RECOVERY_BY_FAMILY_CODE.set(key, []);
+  TYPE3_RECOVERY_BY_FAMILY_CODE.get(key).push(entry);
+}
+
+for (const entry of TYPE3_ALL_RECOVERY_ENTRIES) {
   if (CM_CODEPOINTS[entry.family]?.[entry.original_char_code] !== entry.target_unicode) {
     throw new Error(`Type-3 registry ${entry.id} disagrees with the official Computer Modern encoding`);
   }
@@ -1328,6 +1462,28 @@ function canonicalType3MaskBits(mask) {
 }
 
 /**
+ * The mask-lane recovery key for one decoded 1-bit grid, keyed on the ink box
+ * alone so a glyph keys the same however much blank margin its producer left
+ * around it.
+ *
+ * Exported because the generated Computer Modern ground-truth reference has to
+ * key METAFONT output with exactly this function rather than a re-implementation
+ * of it: `scripts/generate-type3-cm-pk-reference.mjs` decodes a PK raster to the
+ * same row-major 1-bit grid a Type-3 image mask decodes to and hashes it here.
+ * A second copy of this arithmetic would be a second thing to keep in step, and
+ * a silent drift between the two would enrol digests that no document can ever
+ * match.
+ */
+export function type3MaskGridSha256(width, height, bits) {
+  const canonical = canonicalType3MaskBits({ width, height, bits });
+  if (!canonical) return null;
+  return createHash("sha256")
+    .update(`${TYPE3_MASK_EVIDENCE_DOMAIN}:${canonical.width}x${canonical.height}:`)
+    .update(canonical.packed)
+    .digest("hex");
+}
+
+/**
  * The recovery key for one Type-3 glyph program.
  *
  * A glyph whose body is a single decoded image mask carrying ink is keyed on
@@ -1352,17 +1508,14 @@ export function type3GlyphEvidenceSha256(charProc, fontMatrix, ops, fontPaintOri
   const oriented = mask !== null
     && (fontPaintOrientation === 1 || fontPaintOrientation === -1)
     && mask.paint_orientation === fontPaintOrientation;
-  const canonical = oriented ? canonicalType3MaskBits(mask) : null;
-  if (!canonical) {
+  const grid = oriented ? type3MaskGridSha256(mask.width, mask.height, mask.bits) : null;
+  if (grid === null) {
     const operators = type3CharProcSha256(charProc);
     return operators === null
       ? null
       : createHash("sha256").update(`${TYPE3_CHARPROC_EVIDENCE_DOMAIN}:${operators}`).digest("hex");
   }
-  return createHash("sha256")
-    .update(`${TYPE3_MASK_EVIDENCE_DOMAIN}:${canonical.width}x${canonical.height}:`)
-    .update(canonical.packed)
-    .digest("hex");
+  return grid;
 }
 
 function fontEncodingDifferences(font, context) {
@@ -1972,16 +2125,17 @@ function fontMatchesCompleteEnrollment(enrolled, family, declaredCodes) {
  */
 function matchingRegistryEntries(enrolled, rawFont, family) {
   const byCode = new Map();
-  for (const registry of TYPE3_RECOVERY_REGISTRY) {
-    if (registry.family !== family) continue;
-    if (!metricPinnedCode(rawFont, registry.original_char_code)) continue;
-    if (!evidenceIdentifiesCode(enrolled, registry.original_char_code, registry.glyph_sha256)) continue;
-    if (registry.witnesses.some(witness => !metricPinnedCode(rawFont, witness.original_char_code)
-      || !evidenceIdentifiesCode(enrolled, witness.original_char_code, witness.glyph_sha256))) continue;
-    if (registry.complete_font_enrollment
-      && !fontMatchesCompleteEnrollment(enrolled, family, registry.complete_font_enrollment)) continue;
-    if (!byCode.has(registry.original_char_code)) byCode.set(registry.original_char_code, []);
-    byCode.get(registry.original_char_code).push(registry);
+  for (const code of enrolled.keys()) {
+    for (const registry of TYPE3_RECOVERY_BY_FAMILY_CODE.get(`${family}:${code}`) ?? []) {
+      if (!metricPinnedCode(rawFont, registry.original_char_code)) continue;
+      if (!evidenceIdentifiesCode(enrolled, registry.original_char_code, registry.glyph_sha256)) continue;
+      if (registry.witnesses.some(witness => !metricPinnedCode(rawFont, witness.original_char_code)
+        || !evidenceIdentifiesCode(enrolled, witness.original_char_code, witness.glyph_sha256))) continue;
+      if (registry.complete_font_enrollment
+        && !fontMatchesCompleteEnrollment(enrolled, family, registry.complete_font_enrollment)) continue;
+      if (!byCode.has(registry.original_char_code)) byCode.set(registry.original_char_code, []);
+      byCode.get(registry.original_char_code).push(registry);
+    }
   }
   return [...byCode.values()].filter(entries => entries.length === 1).map(entries => entries[0]);
 }

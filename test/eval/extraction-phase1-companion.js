@@ -40,6 +40,7 @@ export const PHASE1_COMPANION_SOURCE_ROLES = Object.freeze([
   "request_schema",
   "response_schema",
   "runner_script",
+  "type3_cm_pk_reference_module",
   "type3_cm_reference_module",
 ]);
 export const PHASE1_COMPANION_SOURCE_PATHS = Object.freeze({
@@ -59,6 +60,7 @@ export const PHASE1_COMPANION_SOURCE_PATHS = Object.freeze({
   layout_evidence_module: "test/eval/extraction-phase1-layout-evidence.js",
   layout_extraction_module: "server/layout-extraction.js",
   type3_cm_reference_module: "server/type3-cm-reference.js",
+  type3_cm_pk_reference_module: "server/type3-cm-pk-reference.js",
   layout_output_schemas_module: "server/output-schemas.js",
   markdown_conversion_module: "server/markdown-conversion.js",
   mcp_sdk_package: "node_modules/@modelcontextprotocol/sdk/package.json",

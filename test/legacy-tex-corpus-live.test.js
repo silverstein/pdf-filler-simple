@@ -9,18 +9,22 @@ import { describe, expect, it } from "vitest";
 import { uniqueComputerModernFamily } from "../server/layout-extraction.js";
 
 /**
- * Legacy dvips-era Computer Modern Type-3 corpus, bound as a pinned failing
- * baseline.
+ * Legacy dvips-era Computer Modern Type-3 corpus, bound as a pinned baseline.
  *
- * Nothing in this file describes desired behaviour. Every recorded
- * `strict_recovery_count` here is still zero, and that zero IS the defect this
+ * Nothing in this file describes desired behaviour. Four of the five documents
+ * still record `strict_recovery_count: 0`, and those zeros ARE the defect this
  * corpus exists to track: PDF Tools recovers Computer Modern Type-3 bitmap
- * mathematics on the Shannon document and recovers none of it on any of these
- * five, even though they are the same fonts drawn by the same era of
- * toolchain. The numbers below are what the shipped code does today, measured,
- * not what it should do.
+ * mathematics on the Shannon document and recovers almost none of it here,
+ * even though they are the same fonts drawn by the same era of toolchain. The
+ * numbers below are what the shipped code does today, measured, not what it
+ * should do.
  *
- * Two of the three stacked causes have since been removed, and the baseline
+ * The fifth, astro-ph-9402001, now recovers eleven occurrences. That is the
+ * first non-zero figure this corpus has ever carried and it came from closing
+ * finding (a): see that document's baseline entry, and the "generated PK
+ * ground truth" paragraph after finding (d).
+ *
+ * Three of the four stacked causes have since been removed, and the baseline
  * was raised to record that:
  *
  *   1. The linker used to drop zero-width slots from a font's width map while
@@ -31,31 +35,44 @@ import { uniqueComputerModernFamily } from "../server/layout-extraction.js";
  *   2. The recovery key used to be the CharProc operator list, which folds in
  *      the producer's idiom and the per-glyph placement matrix. It is now the
  *      decoded image mask.
+ *   3. Enrolled shapes used to come only from reviewed rasters of one document,
+ *      so a document rasterised at any other setting matched nothing. There is
+ *      now a generated reference as well; see below.
  *
- * What is left is the third cause, and it is why every recovery count here is
- * still zero: none of these documents resolves a Computer Modern family for
- * the fonts that carry its mathematics — three of the four cr.yp.to papers
- * resolve no family at all — and the one document that does resolve families
- * for ten fonts (astro-ph) rasterised them at its own PK resolution, which
- * matches no enrolled shape.
+ * What is left is the fourth cause, and it is why four of these five counts
+ * are still zero: those four documents resolve no Computer Modern family at
+ * all for the fonts that carry their mathematics. astro-ph does resolve
+ * families for ten fonts, and it is the one document here that recovers.
  *
- * Both routes past that third cause have since been investigated to a
- * conclusion and both are closed. Findings (a)-(d) below close the shape
- * route; findings (e)-(g) close every metric-derived route. Read them before
- * attempting anything here.
+ * Both routes past that fourth cause have been investigated to a conclusion.
+ * Findings (a)-(d) below were the shape route; (a) has since been closed by
+ * building the missing reference, and (b)-(d) still stand as reasons not to
+ * bridge outline to bitmap or to identify a family from shapes. Findings
+ * (e)-(g) close every metric-derived route. Read them before attempting
+ * anything here.
  *
  * Identifying the family from the set of matched glyph SHAPES, rather than
  * from `widths[code]`, was investigated as the way through and was measured to
  * be a dead end. It is recorded here so it is not attempted again blind. Four
  * findings, each measured on these exact documents:
  *
- *   a. There is no bitmap reference to match against. The pinned official CTAN
- *      `cm/ps-type3` fonts are cubic-Bézier OUTLINE programs: all 41 glyph
- *      programs of the labeled reference fixture take the exact-operator
- *      evidence lane and none takes the image-mask lane. `cm/mf.zip` is
- *      METAFONT source, and turning it into the PK rasters these documents
- *      actually carry needs a METAFONT run at a mode and resolution that no
- *      document here records.
+ *   a. CLOSED. There used to be no bitmap reference to match against. The
+ *      pinned official CTAN `cm/ps-type3` fonts are cubic-Bézier OUTLINE
+ *      programs: all 41 glyph programs of the labeled reference fixture take
+ *      the exact-operator evidence lane and none takes the image-mask lane.
+ *      `cm/mf.zip` is METAFONT source, and turning it into the PK rasters
+ *      these documents actually carry needs a METAFONT run at a resolution
+ *      and device setting that no document here records. What was missing was
+ *      the setting, not the capability, and the setting is recoverable by
+ *      search rather than by reading it out of the file: there are only 83
+ *      distinct (blacker, fillin, o_correction) triples in all of `modes.mf`,
+ *      and a candidate is accepted only when its output is BIT-IDENTICAL to a
+ *      real document's raster under the shipped mask key. Two settings pass
+ *      that test — 600 dpi with (.25, 0, 1) for the Shannon reference and 300
+ *      dpi with (0, .2, .6) for astro-ph — and both are pinned in
+ *      `scripts/generate-type3-cm-pk-reference.mjs`. Note that this is the
+ *      opposite of finding (b): nothing here is scored for similarity, a
+ *      setting either reproduces a document's bytes exactly or it is not used.
  *   b. Bridging outline to bitmap is never exact, and no threshold separates
  *      right from wrong. Rasterising the official CTAN outline for cmmi alpha
  *      across 225,225 combinations of resolution (60-110 px/em in 0.05 steps),
@@ -87,6 +104,32 @@ import { uniqueComputerModernFamily } from "../server/layout-extraction.js";
  *      (600 dpi) and none at all with astro-ph (300 dpi), and that one shared
  *      shape is a 41x3 solid rectangle, a fraction rule rather than a
  *      character.
+ *
+ * GENERATED PK GROUND TRUTH, which is what (a) turned into. The reference is
+ * `server/type3-cm-pk-reference.js`: 470 mask digests covering all 41 enrolled
+ * slots of all 17 Computer Modern math faces at both pinned settings, built by
+ * `scripts/generate-type3-cm-pk-reference.mjs` from the pinned CTAN
+ * `cm/mf.zip` and recorded in
+ * `test/fixtures/eval/extraction/type3-cm-pk-reference.provenance.json`. It
+ * enrolls under its own qualification string,
+ * `ctan-cm-metafont-generated-pk-v1`, because it is a different class of
+ * evidence from the reviewed rasters: nobody looked at a picture, and the
+ * whole chain from archive digest to emitted digest is reproducible. Two
+ * independent checks on it, both measured:
+ *
+ *   - It reproduces 48 of the 69 mask-lane (family, slot, digest) triples the
+ *     reviewed lane holds, bit for bit, having never seen them. The other 21
+ *     are Shannon's magnified font instances; sweeping 500, 657, 720, 864 and
+ *     1037 dpi at the same three scalars reproduces 5 more, so extra pinned
+ *     resolutions are the obvious next increment and each would carry the same
+ *     exact-reproduction justification. The 70th reviewed triple is
+ *     `cmsy-ctan-type3-minus-v1`, which is an OUTLINE program on the
+ *     exact-operator lane and can never be reproduced from a PK raster.
+ *   - Within a family, not one of its 447 distinct digests stands at two
+ *     different slots. Eight stand in two families at once, and all eight are
+ *     the pair finding (c) already names — math-italic "." against math-symbol
+ *     "⋅" — which is harmless because the matcher pins the family from the TFM
+ *     fingerprint before it ever looks at a shape.
  *
  * Independently of all of that, the four Ghostscript 6.52 papers could not
  * recover through the shipped safeguards even given a perfect shape matcher.
@@ -156,16 +199,22 @@ import { uniqueComputerModernFamily } from "../server/layout-extraction.js";
  * again. Shipping the metric route would have emitted those seven letters in
  * place of digits and exponents.
  *
- * So every recovery figure below is zero because every metric-derived route
- * and the shape route are both closed, and the closure is a property of what
- * GNU Ghostscript 6.52 wrote into these files rather than a limit on effort.
- * The only remaining theoretical route is an external labelled bitmap
- * reference — a METAFONT run at each document's own mode and resolution —
- * which no document here records and nothing in this repository can pin. None
- * of this makes the zeros acceptable; it records why they are here. And none
- * of it applies to astro-ph-9402001.pdf, which preserves its TeX codes,
- * fingerprints ten fonts correctly, and fails for the unrelated reason in (a)
- * and obstacle 3: its rasters are 300 dpi and match no enrolled shape.
+ * So the four Ghostscript 6.52 figures below are zero because every
+ * metric-derived route and every shape route into them is closed, and the
+ * closure is a property of what GNU Ghostscript 6.52 wrote into these files
+ * rather than a limit on effort. The generated PK reference does not help them
+ * and was never going to: those four re-rasterised from Type 1 outlines rather
+ * than passing PK through, which is directly visible in the bytes — 318 of
+ * pippenger's 738 masks have a blank border, which a PK raster cannot have
+ * because PK stores the ink box, and the ink runs one to three pixels wider
+ * than the Computer Modern design. Even a perfect reference would then meet
+ * finding (g), which has no answer at all. None of this makes the zeros
+ * acceptable; it records why they are here.
+ *
+ * And none of it applies to astro-ph-9402001.pdf, which preserves its TeX
+ * codes, fingerprints ten fonts correctly, and used to fail only for the
+ * reason in (a). With (a) closed it recovers, and its remaining ceiling is
+ * the /ToUnicode deferral rather than any shortage of enrolled shapes.
  *
  * Interface: one directory variable, `PDF_TOOLS_LEGACY_CORPUS_DIR`, holding
  * all five documents under the fixed basenames listed in DOCUMENTS. A single
@@ -303,6 +352,18 @@ const BASELINE = Object.freeze({
     // PDF.js, so 10 fonts whose widths do fingerprint a Computer Modern
     // family never become link candidates. This document is unaffected by
     // the zero-width linker fix: its drawn glyphs all had positive widths.
+    //
+    // This is the one document in the corpus that recovers. Its single
+    // linkable Computer Modern font, `247 0 R`, draws exactly two officially
+    // enrolled math-symbol slots — code 0 and code 48 — and both are bit-exact
+    // to cmsy7 as METAFONT builds it from the pinned CTAN sources at 300 dpi
+    // with blacker 0, fillin .2, o_correction .6. That is finding (a) below
+    // being answered rather than worked around: the external labelled bitmap
+    // reference now exists, generated and pinned, so the eleven minus signs
+    // recover through the ordinary two-glyph corroboration rule under
+    // `ctan-cm-metafont-generated-pk-v1`. The remaining 100,070 omitted
+    // occurrences are the /ToUnicode deferral, which is a safeguard rather
+    // than a gap, and no amount of reference coverage will change it.
     producer: "GPL Ghostscript GIT PRERELEASE 9.22",
     creator: "dvips 5.518",
     page_count: 37,
@@ -315,8 +376,8 @@ const BASELINE = Object.freeze({
     omitted_type3_occurrence_count: 100070,
     classified_occurrence_count: 12,
     officially_named_occurrence_count: 11,
-    registry_evidence_occurrence_count: 0,
-    strict_recovery_count: 0,
+    registry_evidence_occurrence_count: 11,
+    strict_recovery_count: 11,
     abstention_reasons: Object.freeze(["raw_type3_font_link_ambiguous_or_unavailable"]),
   }),
 });
@@ -498,7 +559,7 @@ describe.runIf(Boolean(CORPUS_DIR))("legacy dvips-era Computer Modern Type-3 cor
    * Corpus-level statement of the gap, so the headline claim is asserted once
    * rather than only implied by five per-document blocks.
    */
-  it("recovers nothing at all across the whole corpus", async () => {
+  it("recovers only astro-ph's eleven minus signs across the whole corpus", async () => {
     const measured = [];
     for (const document of DOCUMENTS) measured.push((await measureDocument(document)).measured);
     expect(measured).toHaveLength(DOCUMENTS.length);
@@ -508,10 +569,22 @@ describe.runIf(Boolean(CORPUS_DIR))("legacy dvips-era Computer Modern Type-3 cor
     expect(total("observed_type3_occurrence_count")).toBeGreaterThan(300_000);
     expect(total("type3_font_count")).toBeGreaterThan(50);
 
+    /*
+     * Eleven, and all eleven from one document. Every other recovery-shaped
+     * figure in this corpus is still zero, so the corpus remains a record of
+     * the gap rather than of the fix. Moving this number in either direction
+     * is a deliberate, reviewable edit: down is a regression in the generated
+     * PK lane, up is either more coverage or a coincidence getting through,
+     * and the per-document blocks above say which.
+     */
     expect(
       total("strict_recovery_count"),
-      "the legacy corpus now recovers something: this is the tracked defect being fixed, so update the recorded baseline deliberately",
-    ).toBe(0);
+      "the legacy corpus recovery total moved: this is the tracked defect being fixed, so update the recorded baseline deliberately",
+    ).toBe(11);
+    expect(
+      measured.filter(entry => entry.strict_recovery_count > 0),
+      "more than one corpus document now recovers: update the recorded baseline deliberately",
+    ).toHaveLength(1);
 
     // The four cr.yp.to papers are the hardest case: GNU Ghostscript 6.52
     // repacks glyph names to /a0 /a1 /a2.... Their 285,652 observed

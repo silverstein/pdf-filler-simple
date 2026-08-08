@@ -46,6 +46,7 @@ export const PHASE1_SCORER_LOCAL_SOURCE_PATHS = Object.freeze({
   layout_evidence_module: "test/eval/extraction-phase1-layout-evidence.js",
   layout_extraction_module: "server/layout-extraction.js",
   type3_cm_reference_module: "server/type3-cm-reference.js",
+  type3_cm_pk_reference_module: "server/type3-cm-pk-reference.js",
   layout_oracle: "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.v1.json",
   layout_oracle_generator: "scripts/eval-generate-extraction-layout-oracle.mjs",
   layout_oracle_schema: "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
