@@ -66,13 +66,27 @@ async function expectMcpError(operation, code) {
   throw new Error(`Expected MCP error ${code}, but operation succeeded`);
 }
 
+// Derived from manifest.json rather than pinned as a literal. The literal went
+// stale when a tool was added: the count was updated in the mcp-contract test
+// but not here or in the share contract, and both of those run outside the
+// gate, so packed qualification failed against a tree that was actually
+// correct. The manifest is the same authority the contract test checks names
+// against, and the floor keeps a truncated manifest from emptying the check.
+export function packedToolContractSize() {
+  const manifest = JSON.parse(readFileSync(path.join(REPO_ROOT, "manifest.json"), "utf8"));
+  const declared = Array.isArray(manifest?.tools) ? manifest.tools.length : 0;
+  if (declared < 20) throw new Error(`manifest.json declares an implausible tool count: ${declared}`);
+  return declared;
+}
+
 export function validatePackedDiscovery(tools) {
+  const expected = packedToolContractSize();
   if (!Array.isArray(tools)
-    || tools.length !== 43
+    || tools.length !== expected
     || !tools.some(tool => tool.name === "render_pdf_page")
     || !tools.some(tool => tool.name === "compare_pdfs")
     || !tools.some(tool => tool.name === "inspect_pdf_accessibility")) {
-    throw new Error("Packed server discovery differs from the current 43-tool contract");
+    throw new Error(`Packed server discovery differs from the current ${expected}-tool contract`);
   }
 }
 

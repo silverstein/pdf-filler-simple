@@ -3,6 +3,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import {
+  packedToolContractSize,
   validateAccessibilitySmokeResult,
   validatePackedDiscovery,
 } from "../scripts/smoke-mcpb.mjs";
@@ -10,23 +11,37 @@ import {
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 describe("packed MCPB discovery binding", () => {
+  // Both the fixture size and the expected message are derived from the same
+  // manifest the validator reads. They used to be the literal 42 on both sides,
+  // so when a tool was added the test and the script agreed with each other and
+  // disagreed with the product, and packed qualification failed against a tree
+  // that was correct.
+  const expectedSize = packedToolContractSize();
+  const contractPattern = new RegExp(`${expectedSize}-tool contract`);
+  const SMOKE_CRITICAL = ["render_pdf_page", "compare_pdfs", "inspect_pdf_accessibility"];
   const currentTools = [
-    ...Array.from({ length: 40 }, (_, index) => ({ name: `fixture_tool_${index}` })),
-    { name: "render_pdf_page" },
-    { name: "compare_pdfs" },
-    { name: "inspect_pdf_accessibility" },
+    ...Array.from({ length: expectedSize - SMOKE_CRITICAL.length }, (_, index) => ({ name: `fixture_tool_${index}` })),
+    ...SMOKE_CRITICAL.map(name => ({ name })),
   ];
 
-  it("accepts only the current 43-tool discovery", () => {
+  it("derives its size from the shipped manifest rather than a literal", async () => {
+    const manifest = JSON.parse(await fs.readFile(path.join(REPO_ROOT, "manifest.json"), "utf8"));
+    expect(expectedSize).toBe(manifest.tools.length);
+    expect(expectedSize).toBeGreaterThan(20);
+    expect(currentTools).toHaveLength(expectedSize);
+  });
+
+  it("accepts exactly the current discovery and nothing shorter", () => {
     expect(() => validatePackedDiscovery(currentTools)).not.toThrow();
-    expect(() => validatePackedDiscovery(currentTools.slice(1))).toThrow(/43-tool contract/);
+    expect(() => validatePackedDiscovery(currentTools.slice(1))).toThrow(contractPattern);
+    expect(() => validatePackedDiscovery([...currentTools, { name: "extra_tool" }])).toThrow(contractPattern);
   });
 
   it("requires every smoke-critical tool", () => {
-    for (const required of ["render_pdf_page", "compare_pdfs", "inspect_pdf_accessibility"]) {
+    for (const required of SMOKE_CRITICAL) {
       expect(() => validatePackedDiscovery(
         currentTools.map(tool => tool.name === required ? { name: "stale_tool" } : tool),
-      )).toThrow(/43-tool contract/);
+      )).toThrow(contractPattern);
     }
   });
 });
