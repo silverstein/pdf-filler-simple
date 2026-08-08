@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.9.6"
   },
-  "tools_sha256": "ee9eb99327a9b218e581f45ab54adfe2224fa36036d00525c9ddcd9a1e84a202",
+  "tools_sha256": "eeef340721ec2b52e05d01509e9e6698c79ee4323873677a7e72d03693fb87f9",
   "tools": [
     {
       "name": "add_signature_field",
@@ -889,6 +889,13 @@
     },
     {
       "name": "get_active_document",
+      "input_schema": {
+        "type": "object",
+        "properties": {}
+      }
+    },
+    {
+      "name": "get_allowed_directories",
       "input_schema": {
         "type": "object",
         "properties": {}

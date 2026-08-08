@@ -1132,31 +1132,31 @@ const PROMPT_TEMPLATES = [
     name: "view_and_analyze_pdf",
     description: "Open and analyze any PDF document",
     arguments: ["focus"],
-    text: "Use PDF Tools to open a PDF stored on this computer and analyze it, focusing on ${arguments.focus}. If I haven't given you a path, start by listing the PDFs you can see so I can pick one. Then extract key findings, summarize sections, answer questions about specific pages, pull out structured data, and identify form fields if present.",
+    text: "Use PDF Tools to open a PDF stored on this computer and analyze it, focusing on ${arguments.focus}. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Then extract key findings, summarize sections, answer questions about specific pages, pull out structured data, and identify form fields if present.",
   },
   {
     name: "research_paper_analysis",
     description: "Analyze & summarize research papers",
     arguments: ["focus_area"],
-    text: "Use PDF Tools to analyze a research paper stored on this computer, focusing on ${arguments.focus_area}. If I haven't given you a path, start by listing the PDFs you can see so I can pick one. Extract the key findings and methodology, identify research gaps, summarize it chapter by chapter, pull out the citations, and draft a literature review outline.",
+    text: "Use PDF Tools to analyze a research paper stored on this computer, focusing on ${arguments.focus_area}. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Extract the key findings and methodology, identify research gaps, summarize it chapter by chapter, pull out the citations, and draft a literature review outline.",
   },
   {
     name: "contract_comparison",
     description: "Compare legal documents & contracts",
     arguments: ["comparison_focus"],
-    text: "Use PDF Tools to compare contracts or legal documents stored on this computer, focusing on ${arguments.comparison_focus}. If I haven't given you their paths, start by listing the PDFs you can see so I can pick them. Highlight changed clauses, modified terms, added or removed sections, pricing differences, and liability changes, then summarize the comparison.",
+    text: "Use PDF Tools to compare contracts or legal documents stored on this computer, focusing on ${arguments.comparison_focus}. If I haven't given you their paths, start by listing the PDFs in my default folder so I can pick them. Highlight changed clauses, modified terms, added or removed sections, pricing differences, and liability changes, then summarize the comparison.",
   },
   {
     name: "financial_report_extraction",
     description: "Extract data from financial statements",
     arguments: ["output_format"],
-    text: "Use PDF Tools to extract and analyze data from financial PDFs stored on this computer, including tables and key metrics. If I haven't given you a path, start by listing the PDFs you can see so I can pick one. Convert what you extract to ${arguments.output_format} format, cite the page for the values you extract, and tell me plainly about anything you could not extract.",
+    text: "Use PDF Tools to extract and analyze data from financial PDFs stored on this computer, including tables and key metrics. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Convert what you extract to ${arguments.output_format} format, cite the page for the values you extract, and tell me plainly about anything you could not extract.",
   },
   {
     name: "document_qa_session",
     description: "Interactive Q&A about your documents",
     arguments: ["initial_question"],
-    text: "Use PDF Tools to open a PDF stored on this computer so we can discuss it. My first question is: ${arguments.initial_question}. If I haven't given you a path, start by listing the PDFs you can see so I can pick one. Find specific information, explain complex sections, cross-reference different parts, and quote passages with their page numbers.",
+    text: "Use PDF Tools to open a PDF stored on this computer so we can discuss it. My first question is: ${arguments.initial_question}. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Find specific information, explain complex sections, cross-reference different parts, and quote passages with their page numbers.",
   },
   {
     name: "bulk_invoice_processing",
@@ -1168,49 +1168,49 @@ const PROMPT_TEMPLATES = [
     name: "technical_documentation_summary",
     description: "Summarize technical manuals & documentation",
     arguments: ["summary_type"],
-    text: "Use PDF Tools to analyze technical documentation stored on this computer and create ${arguments.summary_type}. If I haven't given you a path, start by listing the PDFs you can see so I can pick one. Extract the code examples, build a reference guide, identify the implementation steps, and summarize the troubleshooting sections.",
+    text: "Use PDF Tools to analyze technical documentation stored on this computer and create ${arguments.summary_type}. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Extract the code examples, build a reference guide, identify the implementation steps, and summarize the troubleshooting sections.",
   },
   {
     name: "fill_w9_business",
     description: "Fill W-9 for business entity",
     arguments: [],
-    text: "Use PDF Tools to fill out a W-9 stored on this computer for my business. If I haven't already given you the file, start by listing the PDFs you can see so I can point you at the right form, then read its fields. Ask me for the business legal name, the DBA or trade name if it differs, the business type (LLC, corporation, partnership), the tax classification, the EIN, and the business address. Check the correct tax classification boxes and tell me about any required field you could not fill.",
+    text: "Use PDF Tools to fill out a W-9 stored on this computer for my business. If I haven't already given you the file, start by listing the PDFs in my default folder so I can point you at the right form, then read its fields. Ask me for the business legal name, the DBA or trade name if it differs, the business type (LLC, corporation, partnership), the tax classification, the EIN, and the business address. Check the correct tax classification boxes and tell me about any required field you could not fill.",
   },
   {
     name: "batch_invoices",
     description: "Process multiple invoices",
     arguments: [],
-    text: "Use PDF Tools to batch process invoice PDFs stored on this computer. If I haven't already named them, start by listing the PDFs you can see so I can confirm which ones to use, or I'll name a different folder. Extract the amounts and dates, build a summary spreadsheet, flag missing information, total them by vendor, date, and category, and tell me about any invoice you could not read. Ask me which fields matter most before you start.",
+    text: "Use PDF Tools to batch process invoice PDFs stored on this computer. If I haven't already named them, start by listing the PDFs in my default folder so I can confirm which ones to use, or I'll name the folder they are in. Extract the amounts and dates, build a summary spreadsheet, flag missing information, total them by vendor, date, and category, and tell me about any invoice you could not read. Ask me which fields matter most before you start.",
   },
   {
     name: "rental_application",
     description: "Fill rental application",
     arguments: [],
-    text: "Use PDF Tools to help me complete a rental application stored on this computer. If I haven't already given you the file, start by listing the PDFs you can see so I can point you at the right form, then read its fields. I'll have ready my personal details, three years of employment history, income verification, three years of previous addresses, references, vehicle information, and an emergency contact. Fill every required field and flag the ones that need supporting documents.",
+    text: "Use PDF Tools to help me complete a rental application stored on this computer. If I haven't already given you the file, start by listing the PDFs in my default folder so I can point you at the right form, then read its fields. I'll have ready my personal details, three years of employment history, income verification, three years of previous addresses, references, vehicle information, and an emergency contact. Fill every required field and flag the ones that need supporting documents.",
   },
   {
     name: "extract_1099_data",
     description: "Extract data from 1099 forms",
     arguments: [],
-    text: "Use PDF Tools to extract the data from 1099 forms stored on this computer (1099-NEC, 1099-MISC, 1099-DIV, 1099-INT and similar) and build a tax summary. If I haven't already named them, start by listing the PDFs you can see so I can confirm which ones to use. Organize by payer, identify the type of income, total each category, format it for import into tax software, and tell me about anything you could not read.",
+    text: "Use PDF Tools to extract the data from 1099 forms stored on this computer (1099-NEC, 1099-MISC, 1099-DIV, 1099-INT and similar) and build a tax summary. If I haven't already named them, start by listing the PDFs in my default folder so I can confirm which ones to use. Organize by payer, identify the type of income, total each category, format it for import into tax software, and tell me about anything you could not read.",
   },
   {
     name: "merge_documents",
     description: "Combine multiple PDFs into one document",
     arguments: [],
-    text: "Use PDF Tools to merge PDF files stored on this computer into one document. If I haven't already named them, start by listing the PDFs you can see so I can choose which ones to combine, then ask me where to save the result. Preserve the page order, and afterwards report the page count and the output path so I can check it. File operations happen locally; content you inspect is handled under my MCP host or model provider's data terms.",
+    text: "Use PDF Tools to merge PDF files stored on this computer into one document. If I haven't already named them, start by listing the PDFs in my default folder so I can choose which ones to combine, then ask me where to save the result. Preserve the page order, and afterwards report the page count and the output path so I can check it. File operations happen locally; content you inspect is handled under my MCP host or model provider's data terms.",
   },
   {
     name: "split_large_document",
     description: "Split a PDF into smaller files",
     arguments: [],
-    text: "Use PDF Tools to split a PDF stored on this computer into separate files. If I haven't given you a path, start by listing the PDFs you can see so I can pick one. I'll either give you exact page ranges (for example pages 1-10 and 11-20) or ask you to split at a regular interval (for example every 5 pages). Save each section as its own PDF and tell me where you wrote them.",
+    text: "Use PDF Tools to split a PDF stored on this computer into separate files. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. I'll either give you exact page ranges (for example pages 1-10 and 11-20) or ask you to split at a regular interval (for example every 5 pages). Save each section as its own PDF and tell me where you wrote them.",
   },
   {
     name: "organize_scanned_pages",
     description: "Rotate and reorder scanned PDF pages",
     arguments: [],
-    text: "Use PDF Tools to fix up a scanned PDF stored on this computer. If I haven't given you a path, start by listing the PDFs you can see so I can pick one. Rotate the pages I tell you are sideways or upside-down (90, 180, or 270 degrees) and reorder pages that were scanned out of sequence. Tell me the page order and rotations you plan to apply before you save, so I can confirm them.",
+    text: "Use PDF Tools to fix up a scanned PDF stored on this computer. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Rotate the pages I tell you are sideways or upside-down (90, 180, or 270 degrees) and reorder pages that were scanned out of sequence. Tell me the page order and rotations you plan to apply before you save, so I can confirm them.",
   },
 ];
 
@@ -1219,16 +1219,49 @@ const PROMPT_ARGUMENT_MAX_LENGTH = 1024;
 // ordinary folder is never truncated, small enough that a folder holding years
 // of scanned documents cannot flood the conversation before any work starts.
 const LIST_PDFS_MAX_RESULTS = 200;
-// Values are substituted straight into a user-role message with no isolation,
-// so this regex is the only barrier left between a caller-supplied argument and
-// an operative instruction. Added beyond the original set:
-//   U+061C   ARABIC LETTER MARK, a bidi control MCP_CONTRACT already claims to reject
-//   U+180E   MONGOLIAN VOWEL SEPARATOR, historically a zero-width space
-//   U+3164   HANGUL FILLER and U+FFA0, blank glyphs usable as invisible padding
-//   U+FE00-FE0F, U+E0100-E01EF   variation selectors, render invisibly
-//   U+E0000-E007F   the Tags block, which encodes arbitrary hidden ASCII and is
-//                   the standard channel for smuggling an instruction past a human
-const PROMPT_ARGUMENT_UNSAFE_CONTROLS = /[\u0000-\u001f\u007f-\u009f\u00ad\u061c\u180e\u200b-\u200f\u2028-\u202e\u2060-\u206f\u3164\ufe00-\ufe0f\ufeff\uffa0]|[\u{e0000}-\u{e007f}]|[\u{e0100}-\u{e01ef}]/u;
+
+// Shared by list_pdfs. Returns a non-negative integer, or throws with a message
+// naming what arrived, so a caller that sends the wrong type finds out.
+function parseListOffset(rawOffset) {
+  if (rawOffset === undefined || rawOffset === null) return 0;
+  const value = typeof rawOffset === "string" && rawOffset.trim() !== ""
+    ? Number(rawOffset)
+    : rawOffset;
+  if (typeof value !== "number" || !Number.isFinite(value) || !Number.isInteger(value)) {
+    throw new Error(
+      `offset must be a whole number, received ${JSON.stringify(rawOffset)}.`,
+    );
+  }
+  if (value < 0) {
+    throw new Error(`offset must be zero or greater, received ${value}.`);
+  }
+  if (value > Number.MAX_SAFE_INTEGER) {
+    throw new Error(`offset is too large.`);
+  }
+  return value;
+}
+
+// Values are substituted into a user-role message with no isolation, so this
+// rejects control and invisible characters a reader could not see.
+//
+// It is deliberately NOT a defence against instruction-shaped text: a plain
+// sentence saying "ignore the above" passes, by design, and docs/MCP_CONTRACT.md
+// states that clients must not source these arguments from untrusted content.
+//
+// This is the set that has shipped for months. Widening it was tried twice and
+// reverted both times, because each attempt broke ordinary input for a marginal
+// gain against a threat the contract already places out of scope:
+//   U+FE00-FE0F   contains U+FE0F, the emoji presentation selector, so it
+//                 rejected a warning sign, a check mark, a heart, keycap digits
+//   U+E0100-E01EF, U+061C   legitimate in CJK and in Arabic
+//   U+E0000-E007F (Tags)   encodes hidden ASCII, but is also the encoding for
+//                 the England, Scotland and Wales flag emoji
+//
+// Known and accepted limitation, inherited and not introduced here: the
+// \u200b-\u200f range rejects U+200C and U+200D, so Persian and Devanagari ZWNJ
+// and every ZWJ emoji sequence are refused. Fixing that means narrowing this
+// range, not widening it, and needs its own change with its own evidence.
+const PROMPT_ARGUMENT_UNSAFE_CONTROLS = /[\u0000-\u001f\u007f-\u009f\u00ad\u200b-\u200f\u2028-\u202e\u2060-\u206f\ufeff]/u;
 const RESOURCE_NOT_FOUND_ERROR_CODE = -32002;
 
 function validatedPromptArguments(prompt, suppliedArguments = {}) {
@@ -4050,8 +4083,8 @@ async function handleToolCall(request) {
           if (error?.code === "ENOENT") {
             throw new Error(
               `No folder exists at ${directory}. `
-              + `Give me the folder your PDFs are actually in, `
-              + `or set the PDFs folder in this extension's settings.`,
+              + `Tell me the folder your PDFs are actually in, `
+              + `or change the default PDFs folder in this extension's settings.`,
             );
           }
           if (error?.code === "ENOTDIR") {
@@ -4083,7 +4116,11 @@ async function handleToolCall(request) {
         // flat folder of thousands of date-named scans would have its newest
         // files permanently unreachable, since the sort is ascending and
         // "narrow the directory" is impossible when they are all in one folder.
-        const offset = Number.isInteger(args.offset) && args.offset > 0 ? args.offset : 0;
+        // The SDK does not enforce inputSchema, so validate here. A numeric string
+        // is coerced, because models stringify numbers routinely; anything else
+        // is refused loudly rather than silently paging to zero, which would
+        // return page one alongside an instruction to request page one again.
+        const offset = parseListOffset(args.offset);
         const shown = pdfFiles.slice(offset, offset + LIST_PDFS_MAX_RESULTS);
         const remaining = pdfFiles.length - offset - shown.length;
 
@@ -4128,16 +4165,15 @@ async function handleToolCall(request) {
 
         const position = `${offset + 1} to ${offset + shown.length} of ${pdfFiles.length}`;
         const more = remaining > 0
-          ? ` To see the next ${Math.min(remaining, LIST_PDFS_MAX_RESULTS)}, call this tool again `
-            + `with offset ${offset + shown.length}.`
-          : ` That is the end of the list.`;
+          ? `To see the next ${Math.min(remaining, LIST_PDFS_MAX_RESULTS)}, call this tool again `
+            + `with offset ${offset + shown.length}, or narrow the search with a more specific directory.`
+          : `That is the end of the list.`;
         return {
           content: [
             {
               type: "text",
               text: `Found ${pdfFiles.length} PDF files in ${directory}. `
                 + `Showing ${position}, sorted by name.\n${shown.join('\n')}\n\n`
-                + `Narrow the search with a more specific directory,`
                 + `${more}`
             }
           ],

@@ -103,6 +103,14 @@ jobs:
         shell: bash
         run: npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb
 
+      # test/deep-malformed-native-windows-portable.test.js is gated to win32 in
+      # scripts/node-test-files.mjs and omitted on darwin and linux, so it does
+      # not run in local verification or in the macOS release gate. Without this
+      # step it ran nowhere at all: twelve tests that existed and never executed.
+      - name: Native test partition on win32-x64
+        shell: bash
+        run: npm run test:node-native
+
       - name: Layout diagnostic probe (always, full responses)
         if: always()
         shell: bash

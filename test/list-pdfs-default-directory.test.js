@@ -246,7 +246,14 @@ describe("first-run and paging behaviour", () => {
     const text = textFromToolResult(result);
     expect(text).not.toContain("ENOENT");
     expect(text).not.toContain("scandir");
-    expect(text).toContain("No folder exists at");
+    // The whole sentence, not a fragment: a previous version of this message
+    // carried a false clause that survived because only "No folder exists at"
+    // was asserted.
+    expect(text).toContain(
+      `No folder exists at ${path.join(tmp, "absent")}. `
+      + "Tell me the folder your PDFs are actually in, "
+      + "or change the default PDFs folder in this extension's settings.",
+    );
   }, 30_000);
 
   it("names the folder it searched when it finds nothing", async () => {
@@ -265,6 +272,12 @@ describe("first-run and paging behaviour", () => {
     expect(first).toContain(`Found ${MANY} PDF files`);
     expect(first).toContain("Showing 1 to 200");
     expect(first).toContain("offset 200");
+    // Pin the whole sentence: the previous wording shipped a comma splice
+    // ("...directory, To see the next 200...") because only fragments were asserted.
+    expect(first).toContain(
+      "To see the next 5, call this tool again with offset 200, "
+      + "or narrow the search with a more specific directory.",
+    );
     // The last file sorts last and is therefore invisible without paging.
     const lastName = `scan-${String(MANY - 1).padStart(4, "0")}.pdf`;
     expect(first).not.toContain(lastName);
@@ -275,7 +288,7 @@ describe("first-run and paging behaviour", () => {
     }));
     expect(second).toContain(lastName);
     expect(second).toContain(`Showing 201 to ${MANY} of ${MANY}`);
-    expect(second).toContain("end of the list");
+    expect(second).toContain("That is the end of the list.");
   }, 30_000);
 
   it("reports an offset past the end rather than an empty listing", async () => {
