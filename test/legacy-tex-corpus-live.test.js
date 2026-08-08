@@ -204,12 +204,22 @@ import { uniqueComputerModernFamily } from "../server/layout-extraction.js";
  * closure is a property of what GNU Ghostscript 6.52 wrote into these files
  * rather than a limit on effort. The generated PK reference does not help them
  * and was never going to: those four re-rasterised from Type 1 outlines rather
- * than passing PK through, which is directly visible in the bytes — 318 of
- * pippenger's 738 masks have a blank border, which a PK raster cannot have
- * because PK stores the ink box, and the ink runs one to three pixels wider
- * than the Computer Modern design. Even a perfect reference would then meet
- * finding (g), which has no answer at all. None of this makes the zeros
- * acceptable; it records why they are here.
+ * than passing PK through, which is directly visible in the bytes. 253 of
+ * pippenger's 584 decodable single-mask glyph programs carry a blank outer
+ * edge — equivalently, an ink box strictly smaller than the declared mask; the
+ * two counts coincide exactly, and no mask in the corpus is blank on all four
+ * edges. The same census over the other three is 184/457, 220/537 and 231/530.
+ * That is not something GFtoPK's output can have: GFtoPK writes each
+ * character's ink box as its bounding box, so a PK-derived raster is tight on
+ * all four sides. (The PK container itself would happily carry a padded box;
+ * the constraint is the producer's, not the format's.) The counter-examples
+ * agree — 0 of astro-ph's 588 masks, 0 of the Shannon document's 125, and 0 of
+ * the 4,352 PK rasters `scripts/generate-type3-cm-pk-reference.mjs` decodes,
+ * that last one asserted by the generator itself and recorded as
+ * `metafont.decoded_pk_rasters_with_blank_border`. On top of that the ink runs
+ * one to three pixels wider than the Computer Modern design. Even a perfect
+ * reference would then meet finding (g), which has no answer at all. None of
+ * this makes the zeros acceptable; it records why they are here.
  *
  * And none of it applies to astro-ph-9402001.pdf, which preserves its TeX
  * codes, fingerprints ten fonts correctly, and used to fail only for the

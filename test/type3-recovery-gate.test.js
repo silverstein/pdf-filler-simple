@@ -189,6 +189,10 @@ describe("shipped Type-3 recovery registry consistency", () => {
     expect(registryEntries.every(entry => entry.witness_codes.length >= 1)).toBe(true);
     const singleWitness = registryEntries.filter(entry => entry.witness_codes.length === 1);
     expect(singleWitness.length).toBeGreaterThan(0);
+    // Scoped to the reviewed lane on purpose. The generated lane emits
+    // single-witness entries for other families, and the invariant that holds
+    // of the WHOLE shipped set is asserted separately below, over
+    // TYPE3_RECOVERY_ENTRIES rather than over this parse.
     expect(singleWitness.every(entry => entry.family === CMEX_FAMILY)).toBe(true);
   });
 
@@ -426,6 +430,24 @@ describe("generated Computer Modern PK enrollment", () => {
       .toEqual(new Set(provenance.profiles.map(profile => profile.id)));
   });
 
+  it("carries a rectangle census naming only slots it keys", () => {
+    let censused = 0;
+    for (const record of CM_PK_REFERENCE_FACES) {
+      expect(Array.isArray(record.solid), `${record.face}@${record.profile} has no rectangle census`).toBe(true);
+      expect([...record.solid].sort((left, right) => left - right)).toEqual(record.solid);
+      expect(new Set(record.solid).size).toBe(record.solid.length);
+      for (const code of record.solid) {
+        expect(record.codes[code], `${record.face}@${record.profile} calls unkeyed slot ${code} a rectangle`)
+          .toMatch(/^[0-9a-f]{64}$/u);
+        censused += 1;
+      }
+    }
+    // Computer Modern really does contain featureless rectangles — the math
+    // minus and the vertical bar. A census that found none would make every
+    // assertion below vacuous.
+    expect(censused).toBeGreaterThan(10);
+  });
+
   it("keeps every generated record inside the shipped enrollment schema", () => {
     for (const entry of generated) {
       expect(entry.target_unicode).toBe(CM_CODEPOINTS[entry.family][entry.original_char_code]);
@@ -437,6 +459,115 @@ describe("generated Computer Modern PK enrollment", () => {
         expect(witness.original_char_code).not.toBe(entry.original_char_code);
         expect(CM_CODEPOINTS[entry.family][witness.original_char_code]).toBeDefined();
       }
+    }
+  });
+});
+
+/**
+ * Invariants over the ENTRY SET THAT SHIPS, reviewed and generated together.
+ *
+ * The distinction matters and has already cost something once. The reviewed
+ * registry's own rule — that a single-witness entry is a cmex entry — is
+ * asserted above against a parse of the registry literal, and when the
+ * generated lane began emitting single-witness entries for other families that
+ * assertion went on passing while saying nothing about what the runtime
+ * actually loads. Everything here reads TYPE3_RECOVERY_ENTRIES.
+ */
+describe("shipped Type-3 entry set", () => {
+  const solidDigests = new Set(CM_PK_REFERENCE_FACES.flatMap(
+    record => record.solid.map(code => record.codes[code]),
+  ));
+  const evidenceDigests = entry => [
+    entry.glyph_sha256,
+    ...entry.witnesses.map(witness => witness.glyph_sha256),
+  ];
+
+  it("finds a real population of featureless rectangles to reason about", () => {
+    expect(solidDigests.size).toBeGreaterThan(10);
+    // Non-vacuity for the rule below: rectangles are not merely absent from
+    // the shipped entries, they are present and carried by entries that also
+    // hold a shaped raster.
+    const restingPartlyOnRectangle = TYPE3_RECOVERY_ENTRIES.filter(
+      entry => evidenceDigests(entry).some(digest => solidDigests.has(digest)),
+    );
+    expect(restingPartlyOnRectangle.length).toBeGreaterThan(10);
+  });
+
+  it("never rests an entry on featureless rectangles alone", () => {
+    /*
+     * A solid rectangle's mask digest is decided entirely by its width and
+     * height, so it distinguishes nothing that a synthesised rule font of the
+     * same pixel size would not also produce. An entry whose own raster and
+     * every witness are rectangles has no shape evidence at all, and 22 such
+     * entries — cmsy code 0 against code 106 and the reverse, across eleven
+     * face records — were emitted before this rule existed.
+     */
+    for (const entry of TYPE3_RECOVERY_ENTRIES) {
+      expect(
+        evidenceDigests(entry).every(digest => solidDigests.has(digest)),
+        `${entry.id} recovers a character from featureless rectangles alone`,
+      ).toBe(false);
+    }
+  });
+
+  it("refuses exactly the all-rectangle pairs the reference can form", () => {
+    const shippedIds = new Set(TYPE3_RECOVERY_ENTRIES.map(entry => entry.id));
+    const refused = [];
+    for (const record of CM_PK_REFERENCE_FACES) {
+      for (const code of record.solid) {
+        for (const witness of record.solid) {
+          if (witness === code) continue;
+          refused.push(`${record.face}-${record.profile}-pk-c${code}-solo-w${witness}-v1`);
+        }
+      }
+    }
+    expect(refused.length).toBeGreaterThan(10);
+    for (const id of refused) expect(shippedIds.has(id), `${id} still ships`).toBe(false);
+    /*
+     * And the rule is a scalpel, not a hammer. astro-ph/9402001's math minus
+     * IS a solid bar; what saves it is code 48, a diagonal prime stroke, so
+     * its evidence set is not all rectangles and the entry survives.
+     */
+    const astro = TYPE3_RECOVERY_ENTRIES.find(
+      entry => entry.id === "cmsy7-300-b0-f20-o60-pk-c0-solo-w48-v1",
+    );
+    expect(astro, "the astro-ph math-minus enrollment is missing").toBeTruthy();
+    expect(solidDigests.has(astro.glyph_sha256)).toBe(true);
+    expect(astro.witnesses).toHaveLength(1);
+    expect(solidDigests.has(astro.witnesses[0].glyph_sha256)).toBe(false);
+  });
+
+  it("gives every single-witness entry a footprint of exactly its own code and its witness", () => {
+    const singleWitness = TYPE3_RECOVERY_ENTRIES.filter(entry => entry.witnesses.length === 1);
+    expect(singleWitness.length).toBeGreaterThan(0);
+    for (const entry of singleWitness) {
+      expect(entry.complete_font_enrollment, `${entry.id} declares no footprint`).toBeTruthy();
+      expect(
+        [...new Set(entry.complete_font_enrollment)].sort((left, right) => left - right),
+        `${entry.id} footprint is not {own code} union {witness code}`,
+      ).toEqual(
+        [...new Set([entry.original_char_code, entry.witnesses[0].original_char_code])]
+          .sort((left, right) => left - right),
+      );
+    }
+    // The lane split: single-witness entries are cmex in the reviewed lane and
+    // footprint-bounded generated entries everywhere else. Asserted so the
+    // reviewed lane cannot quietly grow one for another family.
+    const reviewedSingleWitness = singleWitness.filter(
+      entry => entry.qualification !== CM_PK_REFERENCE_QUALIFICATION,
+    );
+    expect(reviewedSingleWitness.length).toBeGreaterThan(0);
+    expect(new Set(reviewedSingleWitness.map(entry => entry.family))).toEqual(new Set([CMEX_FAMILY]));
+  });
+
+  it("never puts a footprint on an entry that carries two witnesses", () => {
+    const twoWitness = TYPE3_RECOVERY_ENTRIES.filter(entry => entry.witnesses.length >= 2);
+    expect(twoWitness.length).toBeGreaterThan(0);
+    for (const entry of twoWitness) {
+      expect(
+        entry.complete_font_enrollment,
+        `${entry.id} has two witnesses and does not need a footprint`,
+      ).toBeUndefined();
     }
   });
 });

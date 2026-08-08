@@ -21,7 +21,7 @@ archive digest to emitted digest is recorded and reproducible.
 | --- | ---: | ---: |
 | Enrollment lanes | 1 reviewed | 1 reviewed + 1 generated |
 | Enrolled mask digests from generated ground truth | 0 | 470 |
-| Generated enrollment records built at load | 0 | 6,330 (5,934 `solo` + 396 `duo`) |
+| Generated enrollment records built at load | 0 | 6,308 (5,912 `solo` + 396 `duo`) |
 | Shannon strictly recovered occurrences | 1,872 | 1,872 |
 | astro-ph-9402001 strictly recovered occurrences | **0** | **11** |
 | Legacy corpus strictly recovered occurrences | **0** | **11** |
@@ -38,7 +38,7 @@ of two settings. Faces outside the three families the recovery path supports
 proves the whole archive rasterises, but only the 17 math faces contribute
 digests. 34 face records, 470 digests — every one of the 41 officially
 enrolled slots of every math face, at both settings. Total run time about 19
-seconds; the shipped table is 38 KB and the runtime gains no dependency.
+seconds; the shipped table is 39 KB and the runtime gains no dependency.
 
 `MFINPUTS`, not `TEXINPUTS`. METAFONT resolves `input cmr10` through MFINPUTS.
 Setting TEXINPUTS instead leaves MFINPUTS at its default, TeX Live's own
@@ -123,6 +123,23 @@ Two measurements, both on the shipped table:
   looks at a shape at all. The generator removes any digest that would stand
   at two slots of one family; on this table that count is zero, and the
   removal is recorded in the provenance so a future widening cannot hide one.
+- **No record rests on featureless rectangles alone.** 20 of the 447 distinct
+  digests are solid filled rectangles: Computer Modern's math minus at cmsy
+  code 0 and its vertical bar at code 106, at ten pixel sizes each. A solid
+  rectangle's digest is decided entirely by two integers, so it is not shape
+  evidence — any producer drawing a rule of that size produces it. Eleven face
+  records key both and nothing else a heavily subsetted font would need, and
+  the first construction emitted 22 `solo` records from them whose whole case
+  was "a solid block corroborated by another solid block". A Ghostscript-
+  synthesised rule font would have been transcribed as `−` and `|` with no gap
+  reported. `server/layout-extraction.js` now refuses any record whose own
+  raster and every witness are rectangles, using the per-face `solid` census
+  the generator measures on the raster it hashes. The rule is stated over the
+  whole evidence set rather than over the witnesses alone, because the
+  question is whether the case reduces to integers, not which slot the shape
+  sits in. It costs exactly those 22 records and keeps astro-ph's 11
+  recoveries: that document's minus IS an 18x2 solid bar, but its witness at
+  code 48 is a 7x15 diagonal prime stroke.
 
 Only unflipped rasters are enrolled. A vertically mirrored variant of every
 glyph was measured against both Shannon and astro-ph: across 14,610 mask
@@ -220,8 +237,12 @@ no amount of additional reference coverage moves them.
 
 The four GNU Ghostscript 6.52 papers stay at zero and are out of scope for
 this lane. That producer re-rasterised from Type 1 outlines rather than
-passing dvips PK through — 318 of pippenger's 738 masks have a blank border,
-which a PK raster cannot have because PK stores the ink box, and the ink runs
+passing dvips PK through — 253 of pippenger's 584 decodable single-mask glyph
+programs carry a blank outer edge, against 0 of astro-ph's 588, 0 of the
+Shannon document's 125 and 0 of the 4,352 rasters this reference decodes.
+GFtoPK writes each character's ink box as its bounding box, so its output is
+tight on all four sides; the padding is the producer's, not something the PK
+container forbids. On top of that the ink runs
 one to three pixels wider than the Computer Modern design. Behind that sits
 the glyph-cache-page category error recorded in
 `docs/evidence/legacy-tex-metric-routes-closed-2026-08.md`, which has no

@@ -295,10 +295,30 @@ the shape, not a reason to stop requiring the metric.
 
 It was never going to, and the reason is visible in their bytes rather than in
 the reference. GNU Ghostscript 6.52 re-rasterised these documents from Type 1
-outlines instead of passing dvips PK bitmaps through: 318 of pippenger's 738
-masks have a blank border, which a PK raster cannot have because PK stores the
-ink box, and the ink runs one to three pixels wider than the Computer Modern
-design. Behind that sits finding (g), the glyph-cache-page category error,
+outlines instead of passing dvips PK bitmaps through, and the tell is a blank
+outer edge on the mask:
+
+| document | decodable single-mask glyph programs | with a blank outer edge |
+| --- | --- | --- |
+| pippenger | 584 | 253 |
+| nfscircuit | 457 | 184 |
+| m3 | 537 | 220 |
+| sf | 530 | 231 |
+| astro-ph-9402001 | 588 | 0 |
+| Shannon reference | 125 | 0 |
+
+"Blank outer edge" and "ink box strictly smaller than the declared mask" are
+the same set here — the two counts coincide exactly in every column — and no
+mask in the corpus is blank on all four edges. GFtoPK's output cannot have
+one: it writes each character's ink box as its bounding box, so a PK-derived
+raster is tight on all four sides. The constraint is the producer's rather
+than the container's; PK itself would carry a padded box happily enough.
+`scripts/generate-type3-cm-pk-reference.mjs` asserts the same property over
+the 4,352 rasters it decodes and records the result as
+`metafont.decoded_pk_rasters_with_blank_border`, which is 0.
+
+On top of that the ink runs one to three pixels wider than the Computer Modern
+design. Behind both sits finding (g), the glyph-cache-page category error,
 which has no answer at all. These four are out of scope for this lane.
 
 ## Safeguards this corpus confirms are not what blocks it

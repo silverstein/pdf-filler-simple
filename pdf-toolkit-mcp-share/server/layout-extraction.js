@@ -1073,13 +1073,61 @@ const TYPE3_RECOVERY_REGISTRY = Object.freeze([
  *
  * Identical tuples produced by two faces are collapsed to one entry, so a
  * shape shared by two design sizes is enrolled once.
+ *
+ * NO ENTRY MAY REST ON RECTANGLES ALONE.
+ * Twenty of the reference's distinct digests are featureless filled
+ * rectangles: Computer Modern's math minus at cmsy code 0 and its vertical bar
+ * at code 106, at ten design sizes each. A solid rectangle's digest is decided
+ * entirely by two integers, so it is not really shape evidence — any producer
+ * that draws a rule of that pixel size produces that digest. Eleven face
+ * records key both, and the naive construction emitted 22 `solo` entries from
+ * them — each code against the other — whose whole case was "a solid block,
+ * corroborated by another solid block". A Ghostscript-synthesised rule
+ * font with a horizontal rule at code 0 and a vertical rule at code 106 would
+ * have been transcribed as `−` and `|` with no gap reported.
+ *
+ * So an entry is built only when at least one raster in its evidence set — its
+ * own glyph or one of its witnesses — is NOT a solid rectangle. Stated over
+ * the evidence set rather than over the witnesses alone because the
+ * distinguishing question is whether the whole case reduces to integers, not
+ * which slot the shape sits in: a rectangle recovered against a shaped witness
+ * is sound (the witness's exact digest is what identifies the font, and the
+ * family pin, the metric pin and the complete-font footprint all still apply),
+ * and a shaped glyph recovered against a rectangular witness is sound for the
+ * same reason. Only the all-rectangle case is refused, and refusing it defeats
+ * the rule-font attack outright, because a font of nothing but rules can never
+ * supply the non-rectangular member.
+ *
+ * This does keep astro-ph/9402001's math-minus recoveries: that font's minus
+ * IS an 18x2 solid bar, but it is corroborated by code 48, a 7x15 diagonal
+ * prime stroke, so the evidence set is not all rectangles.
+ *
+ * `record.solid` is generated alongside the digests by
+ * `scripts/generate-type3-cm-pk-reference.mjs`, which measures it on the same
+ * decoded raster it hashes.
  */
 function generatedPkRecoveryEntries() {
   const reviewedTriples = new Set(TYPE3_RECOVERY_REGISTRY.map(
     entry => `${entry.family}:${entry.original_char_code}:${entry.glyph_sha256}`,
   ));
   const facesByTriple = new Map();
+  const solidByRecord = new Map();
   for (const record of CM_PK_REFERENCE_FACES) {
+    // The rectangle census is load-bearing for the rule below, so a reference
+    // that does not carry one — or carries one naming a slot it does not key —
+    // is refused at load rather than quietly treated as "no rectangles here".
+    if (!Array.isArray(record.solid)) {
+      throw new Error(`Generated Computer Modern record ${record.face}@${record.profile} declares no rectangle census`);
+    }
+    for (const code of record.solid) {
+      if (record.codes[code] === undefined) {
+        throw new Error(
+          `Generated Computer Modern record ${record.face}@${record.profile}`
+          + ` calls unkeyed slot ${code} a rectangle`,
+        );
+      }
+    }
+    solidByRecord.set(record, new Set(record.solid));
     for (const [code, digest] of Object.entries(record.codes)) {
       const triple = `${record.family}:${code}:${digest}`;
       facesByTriple.set(triple, (facesByTriple.get(triple) ?? 0) + 1);
@@ -1087,6 +1135,10 @@ function generatedPkRecoveryEntries() {
   }
   const byTuple = new Map();
   const remember = (record, code, digest, kind, witnessCodes, footprint) => {
+    // The whole evidence set is two integers per raster and nothing else.
+    // Refused: see the block comment above.
+    const solid = solidByRecord.get(record);
+    if (solid.has(code) && witnessCodes.every(witness => solid.has(witness))) return;
     const witnesses = witnessCodes.map(witness => Object.freeze({
       original_char_code: witness,
       glyph_sha256: record.codes[witness],

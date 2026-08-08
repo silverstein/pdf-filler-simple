@@ -49,6 +49,8 @@
     "rasterisation_attempts": 152,
     "rasterisations_completed": 152,
     "rasterisations_failed": [],
+    "decoded_pk_rasters": 4352,
+    "decoded_pk_rasters_with_blank_border": 0,
     "face_source_sha256": {
       "cmb10": "dcd5b756cb144afd1bf86a0091a296359418f501109bfb8ffcdf513d31965a51",
       "cmbsy10": "8c3e14a642295148174e3e1b2aa4ff576441a9bcd74a6853c67797f93b17a472",
@@ -132,10 +134,12 @@
     "enrolled_face_records": 34,
     "emitted_digest_count": 470,
     "slot_ambiguous_digests_removed": 0,
-    "slot_ambiguous_slot_groups": []
+    "slot_ambiguous_slot_groups": [],
+    "cross_family_digests": 8,
+    "solid_rectangle_digests": 20
   },
   "outputs": {
-    "server/type3-cm-pk-reference.js": "5353db33f41b40a36d18919f0c1cc9f57bf4dad812d7a7edaf0fad165a167567",
-    "pdf-toolkit-mcp-share/server/type3-cm-pk-reference.js": "5353db33f41b40a36d18919f0c1cc9f57bf4dad812d7a7edaf0fad165a167567"
+    "server/type3-cm-pk-reference.js": "6146a784ce83afbd89c40c435a961320752859253f26279780199eb7000f57dd",
+    "pdf-toolkit-mcp-share/server/type3-cm-pk-reference.js": "6146a784ce83afbd89c40c435a961320752859253f26279780199eb7000f57dd"
   }
 }

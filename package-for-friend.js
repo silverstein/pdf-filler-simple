@@ -15,7 +15,15 @@ const OUTPUT_FILE = path.join(PROJECT_ROOT, "pdf-toolkit-mcp.zip");
 const ARCHIVE_EPOCH = new Date("1980-01-01T00:00:00.000Z");
 const SBOM_FILENAME = "SBOM.cdx.json";
 const PROVENANCE_FILENAME = "SHARE-PROVENANCE.json";
-const SHARE_FILES = [
+/*
+ * Every path the share archive carries. The `server/` entries are also the
+ * only list of server modules the share bundle is copied from — see
+ * `SHARE_SERVER_FILES` below — so a new module under `server/` has exactly one
+ * place to be added here, and `test/packager-server-coverage.test.js` fails
+ * until it is. Omitting one used to ship a bundle whose entry point could not
+ * resolve its own imports.
+ */
+export const SHARE_FILES = [
   "README.md",
   "configure-cursor.sh",
   "dist-ui/index.html",
@@ -41,9 +49,20 @@ const SHARE_FILES = [
   "server/pdfjs-worker.js",
   "server/resource-uri.js",
   "server/stderr-suppression.js",
+  "server/type3-cm-pk-reference.js",
   "server/type3-cm-reference.js",
   "smart-install.sh",
 ];
+/**
+ * The server modules the share bundle mirrors, derived from SHARE_FILES so the
+ * copy step and the archive manifest can never name different sets.
+ */
+export const SHARE_SERVER_FILES = SHARE_FILES.filter(relativePath => relativePath.startsWith("server/"));
+/**
+ * Everything the share bundle copies verbatim out of this repository. The
+ * share contract asserts byte parity for exactly these paths.
+ */
+export const SHARE_MIRRORED_FILES = [...SHARE_SERVER_FILES, "dist-ui/index.html"];
 const EXECUTABLE_SHARE_FILES = new Set([
   "configure-cursor.sh",
   "install-transactional.sh",
@@ -352,72 +371,16 @@ async function syncSharePackage() {
   } catch {
     throw new Error("dist-ui/index.html is missing. Run `npm run build:ui` before packaging the share bundle.");
   }
-  await Promise.all([
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "accessibility-inspection.js"),
-      path.join(shareServerDir, "accessibility-inspection.js"),
-    ),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "bounded-pdf-file.js"),
-      path.join(shareServerDir, "bounded-pdf-file.js"),
-    ),
-    fs.copyFile(path.join(PROJECT_ROOT, "server", "index.js"), path.join(shareServerDir, "index.js")),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "layout-extraction.js"),
-      path.join(shareServerDir, "layout-extraction.js"),
-    ),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "type3-cm-reference.js"),
-      path.join(shareServerDir, "type3-cm-reference.js"),
-    ),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "markdown-conversion.js"),
-      path.join(shareServerDir, "markdown-conversion.js"),
-    ),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "markdown-output-transaction.js"),
-      path.join(shareServerDir, "markdown-output-transaction.js"),
-    ),
-    fs.copyFile(path.join(PROJECT_ROOT, "server", "helpers.js"), path.join(shareServerDir, "helpers.js")),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "output-schemas.js"),
-      path.join(shareServerDir, "output-schemas.js"),
-    ),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "pdf-comparison.js"),
-      path.join(shareServerDir, "pdf-comparison.js"),
-    ),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "pdf-observations.js"),
-      path.join(shareServerDir, "pdf-observations.js"),
-    ),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "pdf-lib-rss-monitor.js"),
-      path.join(shareServerDir, "pdf-lib-rss-monitor.js"),
-    ),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "pdf-lib-subprocess.js"),
-      path.join(shareServerDir, "pdf-lib-subprocess.js"),
-    ),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "pdf-lib-worker.js"),
-      path.join(shareServerDir, "pdf-lib-worker.js"),
-    ),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "pdfjs-subprocess.js"),
-      path.join(shareServerDir, "pdfjs-subprocess.js"),
-    ),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "pdfjs-worker.js"),
-      path.join(shareServerDir, "pdfjs-worker.js"),
-    ),
-    fs.copyFile(path.join(PROJECT_ROOT, "server", "resource-uri.js"), path.join(shareServerDir, "resource-uri.js")),
-    fs.copyFile(
-      path.join(PROJECT_ROOT, "server", "stderr-suppression.js"),
-      path.join(shareServerDir, "stderr-suppression.js"),
-    ),
-    fs.copyFile(path.join(PROJECT_ROOT, "dist-ui", "index.html"), path.join(shareUiDir, "index.html")),
-  ]);
+  /*
+   * Mirrored verbatim from SHARE_MIRRORED_FILES rather than from a second
+   * hand-written list. The two used to be maintained separately, and a server
+   * module added to one but not the other produced a bundle whose entry point
+   * could not resolve its own imports.
+   */
+  await Promise.all(SHARE_MIRRORED_FILES.map(relativePath => fs.copyFile(
+    path.join(PROJECT_ROOT, ...relativePath.split("/")),
+    path.join(SOURCE_DIR, ...relativePath.split("/")),
+  )));
 
   const sharePackage = {
     name: rootPackage.name,
