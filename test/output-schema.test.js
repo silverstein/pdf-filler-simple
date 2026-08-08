@@ -34,6 +34,7 @@ const STRUCTURED_TOOLS = [
   "fill_pdf",
   "fill_with_profile",
   "get_active_document",
+  "get_allowed_directories",
   "get_page_analysis",
   "get_pdf_identity",
   "get_pdf_info",
@@ -144,11 +145,11 @@ describe("output schema definitions", () => {
     expect(rejected.structuredContent.error.code).toBe("internal_validation_error");
   });
 
-  it("covers the exact 38 structured tools and no text-only tool", () => {
+  it("covers the exact 39 structured tools and no text-only tool", () => {
     expect(Object.keys(TOOL_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_ERROR_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
-    expect(STRUCTURED_TOOLS).toHaveLength(38);
+    expect(STRUCTURED_TOOLS).toHaveLength(39);
     expect(TEXT_ONLY_TOOLS).toHaveLength(4);
   });
 

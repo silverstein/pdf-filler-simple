@@ -24,7 +24,7 @@ import {
   degrees as pdfDegrees,
 } from "pdf-lib";
 import { fileURLToPath } from "url";
-import { constants as fsConstants, existsSync, realpathSync } from "fs";
+import { constants as fsConstants, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "fs";
 import fs from "fs/promises";
 import path from "path";
 import { homedir, platform as osPlatform } from "os";
@@ -242,10 +242,14 @@ function assertPathAllowed(resolvedPath) {
     const error = new Error(
       ALLOWED_DIRECTORIES.length === 0
         ? "No allowed directories are configured, so this server refused the request. "
-          + "Set the allowed list where this server is configured. Hosts with a settings UI "
-          + "expose it as allowed_directories; otherwise set the --allowed-directories argument, "
-          + "which takes precedence, or the ALLOWED_DIRECTORIES environment variable, which "
-          + "applies only when that argument is absent."
+          + (PLUGIN_DATA_CONFIG_PATH
+            ? `List the folders you want reachable in ${PLUGIN_DATA_CONFIG_PATH}, under `
+              + "\"allowedDirectories\", then restart this server. That file is edited by you, "
+              + "not by the assistant."
+            : "Set the allowed list where this server is configured. Hosts with a settings UI "
+              + "expose it as allowed_directories; otherwise set the --allowed-directories argument, "
+              + "which takes precedence, or the ALLOWED_DIRECTORIES environment variable, which "
+              + "applies only when that argument is absent.")
         : `This server is only allowed to access: ${allowed}. ` +
           `Tried to access: ${resolvedPath}. ` +
           "The allowed list must be set where this server is configured, and it replaces " +
@@ -1433,14 +1437,103 @@ function parsePathListValue(value) {
 // user path rather than silently granting the home folders. Failing closed is
 // the point: an unexpanded template means we were never configured, which is
 // not a reason to choose a boundary on the user's behalf.
+// Agent Plugins 1.0.0 has no user-configuration mechanism and expands only
+// ${PLUGIN_ROOT} and ${PLUGIN_DATA}, so a plugin install can reach neither the
+// CLI flag nor the environment variable a host would otherwise set. PLUGIN_DATA
+// is the one location that specification guarantees exists, stays writable, and
+// survives plugin updates, which makes it the only place a stored allowed set
+// can live. It is the lowest layer: a host that does supply configuration is
+// stating an intent a stored file must not override.
+const PLUGIN_DATA_CONFIG_NAME = "config.json";
+
+function pluginDataConfigPath() {
+  const pluginData = process.env.PLUGIN_DATA;
+  if (!pluginData || pluginData.includes("${")) return null;
+  return path.join(path.resolve(pluginData), PLUGIN_DATA_CONFIG_NAME);
+}
+
+// A fresh install has nothing configured and must refuse every path. Writing
+// the template turns "configure the allowed directories somehow" into a named
+// file the user can open. Editing it is a human action the agent cannot
+// perform, which is what keeps widening off the agent's own authority.
+function ensurePluginDataConfigTemplate(configPath) {
+  if (!configPath || existsSync(configPath)) return;
+  try {
+    mkdirSync(path.dirname(configPath), { recursive: true });
+    writeFileSync(
+      configPath,
+      JSON.stringify({
+        _comment: "Folders this server may read and write. Absolute paths only. "
+          + "It replaces any built-in default rather than adding to it, so list every "
+          + "folder you need. Restart the server after editing.",
+        allowedDirectories: [],
+      }, null, 2) + "\n",
+      { mode: 0o600 },
+    );
+  } catch {
+    // A read-only or unwritable PLUGIN_DATA is the host's business. Failing to
+    // write a hint must never be louder than the refusal it was meant to explain.
+  }
+}
+
+// Returns the configured list, or null when this layer supplies nothing. A
+// malformed file returns an empty list rather than null, to say "configured,
+// badly" rather than "not configured". Today both end at an empty set because
+// this is the lowest layer, so the distinction is defensive rather than
+// observable; it matters the moment anything is added below it.
+function readPluginDataConfig(configPath) {
+  if (!configPath || !existsSync(configPath)) return null;
+  let parsed;
+  try {
+    parsed = JSON.parse(readFileSync(configPath, "utf8"));
+  } catch {
+    console.error(`[pdf-tools] ${configPath} is not valid JSON. No directories are allowed until it is fixed.`);
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.allowedDirectories)) {
+    console.error(`[pdf-tools] ${configPath} needs an "allowedDirectories" array. No directories are allowed until it is fixed.`);
+    return [];
+  }
+  return parsed.allowedDirectories
+    .filter(entry => typeof entry === "string")
+    .map(entry => entry.trim())
+    .filter(entry => entry && !entry.includes("${"));
+}
+
+// A set that reaches the config file lets any write tool rewrite the sandbox on
+// the next launch. Refuse the whole set rather than dropping the entry, so the
+// operator learns the boundary is wrong instead of quietly losing one folder.
+function grantsAccessToOwnConfig(directories, configPath) {
+  if (!configPath) return false;
+  const canonicalConfig = canonicalizePathForPolicy(configPath);
+  return directories.some(directory => isPathInsideDirectory(canonicalConfig, directory.canonical));
+}
+
+// Which precedence layer actually supplied the active set. Reported by
+// get_allowed_directories so an operator can tell where to change it.
+let ALLOWED_DIRECTORY_SOURCE = "none";
+
 function buildAllowedDirectories() {
+  const configPath = pluginDataConfigPath();
   const argumentDirectories = parseAllowedDirectoryArgs(process.argv.slice(2));
-  const configuredDirectories = argumentDirectories?.length
-    ? argumentDirectories
-    : parsePathListValue(process.env.ALLOWED_DIRECTORIES) ?? [];
+  const environmentDirectories = parsePathListValue(process.env.ALLOWED_DIRECTORIES);
+
+  let configuredDirectories;
+  if (argumentDirectories?.length) {
+    configuredDirectories = argumentDirectories;
+    ALLOWED_DIRECTORY_SOURCE = "argument";
+  } else if (environmentDirectories?.length) {
+    configuredDirectories = environmentDirectories;
+    ALLOWED_DIRECTORY_SOURCE = "environment";
+  } else {
+    ensurePluginDataConfigTemplate(configPath);
+    const fromConfig = readPluginDataConfig(configPath);
+    configuredDirectories = fromConfig ?? [];
+    ALLOWED_DIRECTORY_SOURCE = fromConfig?.length ? "config_file" : "none";
+  }
 
   const seen = new Set();
-  return configuredDirectories
+  const resolved = configuredDirectories
     .map((directory) => normalizeUserPath(directory))
     .map((directory) => ({
       display: directory,
@@ -1452,8 +1545,19 @@ function buildAllowedDirectories() {
       seen.add(key);
       return true;
     });
+
+  if (grantsAccessToOwnConfig(resolved, configPath)) {
+    console.error(
+      `[pdf-tools] The allowed directories reach ${configPath}, which would let this `
+      + "server rewrite its own boundary. No directories are allowed until that entry is removed.",
+    );
+    ALLOWED_DIRECTORY_SOURCE = "refused_self_granting";
+    return [];
+  }
+  return resolved;
 }
 
+const PLUGIN_DATA_CONFIG_PATH = pluginDataConfigPath();
 const ALLOWED_DIRECTORIES = buildAllowedDirectories();
 
 // Where a tool browses when the caller names no directory. An explicitly
@@ -3641,6 +3745,21 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           readOnlyHint: false,
           destructiveHint: true,
           idempotentHint: false,
+          openWorldHint: false
+        }
+      },
+      {
+        name: "get_allowed_directories",
+        description: "Report which folders this server may read and write, which configuration layer supplied them, and where the stored configuration file lives. Answers without touching the filesystem, so it works before anything is configured. Use it to explain a path refusal or to tell the user where to change the boundary. It reports the boundary; it cannot change it.",
+        inputSchema: {
+          type: "object",
+          properties: {}
+        },
+        annotations: {
+          title: "Get Allowed Directories",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
           openWorldHint: false
         }
       },
@@ -6184,6 +6303,28 @@ async function handleToolCall(request) {
             style: signatureRecord.style,
             path: sigPath,
             bytes: bytesOnDisk,
+          },
+        };
+      }
+
+      case "get_allowed_directories": {
+        // Reporting the boundary is not reaching past it, so this answers even
+        // when nothing is configured — which is exactly when it is most needed.
+        const directories = ALLOWED_DIRECTORIES.map(directory => directory.display);
+        const configured = directories.length > 0;
+        const summary = configured
+          ? `Allowed folders (${ALLOWED_DIRECTORY_SOURCE.replace(/_/g, " ")}):\n${directories.join("\n")}`
+          : PLUGIN_DATA_CONFIG_PATH
+            ? `No folders are allowed yet. List them in ${PLUGIN_DATA_CONFIG_PATH} under "allowedDirectories", then restart this server.`
+            : "No folders are allowed yet, and no configuration file location is available. Set the --allowed-directories argument or the ALLOWED_DIRECTORIES environment variable where this server is configured.";
+
+        return {
+          content: [{ type: "text", text: summary }],
+          structuredContent: {
+            directories,
+            configured,
+            source: ALLOWED_DIRECTORY_SOURCE,
+            config_path: PLUGIN_DATA_CONFIG_PATH ?? null,
           },
         };
       }

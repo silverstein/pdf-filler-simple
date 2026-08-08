@@ -134,7 +134,7 @@ Focused integrated-candidate evidence on 2026-08-05:
 - live MCP discovery: 42 unique tools, including 38 structured tools;
 - complete discovery SHA-256: `d9c225a5b72694d73dc0064a28fecf76a5bedf27121b04e656b86f055ced9313`
   (as measured on 2026-08-05; superseded on 2026-08-07 by
-  `b980fc09c3b9c886f01e08b82fe67df569e5cafa5471dd4c3e549ac6d8e26fc0` when
+  `53d965e366b16adf2a0fa90dfe837ca98d29a8f41c1adf8b9e8f661ea3bb7d95` when
   `list_pdfs` gained an `offset` parameter, this line is kept as the record of
   what was measured then, not as a current value);
 - source/share runtime byte comparison: identical;

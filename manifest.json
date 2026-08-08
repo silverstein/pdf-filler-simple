@@ -18,7 +18,36 @@
   "documentation": "https://github.com/Open-Document-Alliance/PDF-Tools/blob/master/README.md",
   "support": "https://github.com/Open-Document-Alliance/PDF-Tools/issues",
   "license": "MIT",
-  "keywords": ["pdf", "markdown", "merge", "split", "rotate", "reorder", "viewer", "interactive", "search", "research", "academic", "analyze", "compare", "extract", "documentation", "contracts", "forms", "fill", "sign", "signature", "date", "url", "download", "render", "w9", "1099", "tax", "invoice"],
+  "keywords": [
+    "pdf",
+    "markdown",
+    "merge",
+    "split",
+    "rotate",
+    "reorder",
+    "viewer",
+    "interactive",
+    "search",
+    "research",
+    "academic",
+    "analyze",
+    "compare",
+    "extract",
+    "documentation",
+    "contracts",
+    "forms",
+    "fill",
+    "sign",
+    "signature",
+    "date",
+    "url",
+    "download",
+    "render",
+    "w9",
+    "1099",
+    "tax",
+    "invoice"
+  ],
   "icon": "icon.png",
   "tools": [
     {
@@ -150,6 +179,10 @@
       "description": "Save a reusable typed-name or image signature to ~/.pdf-toolkit-files/signatures/"
     },
     {
+      "name": "get_allowed_directories",
+      "description": "Report which folders this server may read and write, which configuration layer supplied them, and where the stored configuration file lives"
+    },
+    {
       "name": "list_signatures",
       "description": "List all saved signatures"
     },
@@ -194,43 +227,58 @@
     {
       "name": "view_and_analyze_pdf",
       "description": "Open and analyze any PDF document",
-      "arguments": ["focus"],
+      "arguments": [
+        "focus"
+      ],
       "text": "Use PDF Tools to open a PDF stored on this computer and analyze it, focusing on ${arguments.focus}. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Then extract key findings, summarize sections, answer questions about specific pages, pull out structured data, and identify form fields if present."
     },
     {
       "name": "research_paper_analysis",
       "description": "Analyze & summarize research papers",
-      "arguments": ["focus_area"],
+      "arguments": [
+        "focus_area"
+      ],
       "text": "Use PDF Tools to analyze a research paper stored on this computer, focusing on ${arguments.focus_area}. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Extract the key findings and methodology, identify research gaps, summarize it chapter by chapter, pull out the citations, and draft a literature review outline."
     },
     {
       "name": "contract_comparison",
       "description": "Compare legal documents & contracts",
-      "arguments": ["comparison_focus"],
+      "arguments": [
+        "comparison_focus"
+      ],
       "text": "Use PDF Tools to compare contracts or legal documents stored on this computer, focusing on ${arguments.comparison_focus}. If I haven't given you their paths, start by listing the PDFs in my default folder so I can pick them. Highlight changed clauses, modified terms, added or removed sections, pricing differences, and liability changes, then summarize the comparison."
     },
     {
       "name": "financial_report_extraction",
       "description": "Extract data from financial statements",
-      "arguments": ["output_format"],
+      "arguments": [
+        "output_format"
+      ],
       "text": "Use PDF Tools to extract and analyze data from financial PDFs stored on this computer, including tables and key metrics. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Convert what you extract to ${arguments.output_format} format, cite the page for the values you extract, and tell me plainly about anything you could not extract."
     },
     {
       "name": "document_qa_session",
       "description": "Interactive Q&A about your documents",
-      "arguments": ["initial_question"],
+      "arguments": [
+        "initial_question"
+      ],
       "text": "Use PDF Tools to open a PDF stored on this computer so we can discuss it. My first question is: ${arguments.initial_question}. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Find specific information, explain complex sections, cross-reference different parts, and quote passages with their page numbers."
     },
     {
       "name": "bulk_invoice_processing",
       "description": "Process multiple invoices into structured data",
-      "arguments": ["folder_path", "output_format"],
+      "arguments": [
+        "folder_path",
+        "output_format"
+      ],
       "text": "Use PDF Tools to process the invoice PDFs in the folder ${arguments.folder_path} on this computer and build a unified dataset in ${arguments.output_format} format. Start by listing the PDFs in that folder so I can see what you found. Extract vendor names, invoice numbers, dates, line items, totals, tax amounts, and payment terms, and tell me about any invoice you could not read."
     },
     {
       "name": "technical_documentation_summary",
       "description": "Summarize technical manuals & documentation",
-      "arguments": ["summary_type"],
+      "arguments": [
+        "summary_type"
+      ],
       "text": "Use PDF Tools to analyze technical documentation stored on this computer and create ${arguments.summary_type}. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Extract the code examples, build a reference guide, identify the implementation steps, and summarize the troubleshooting sections."
     },
     {
