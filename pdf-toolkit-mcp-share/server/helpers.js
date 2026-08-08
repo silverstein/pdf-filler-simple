@@ -596,6 +596,26 @@ export function failedPdfFormValidation({ pdfPath = null, fileName = null } = {}
 // separate command arguments. Keep the marker explicit so ordinary MCP hosts
 // can continue using environment variables without treating unrelated CLI
 // arguments as filesystem permissions.
+// A host may hand us a path that still contains a placeholder. Two kinds arrive
+// and they are not the same thing.
+//
+// `${HOME}` and `${USERPROFILE}` are *resolvable*: they name the running user's
+// home directory, which this process already knows. Claude Desktop expands them
+// in manifest-authored env strings but not inside `user_config` default values,
+// so a user who never opened the settings sends us a literal `${HOME}/Documents`
+// on every platform. Measured on Windows Claude Desktop 1.26832.0.
+//
+// `${user_config.*}` is *unresolvable*: it means the host did not substitute the
+// user's configuration and we genuinely do not know what was intended. That must
+// still be rejected, because guessing a boundary the user never chose is the
+// fail-open this replaced.
+export function expandHostPlaceholders(value) {
+  if (typeof value !== "string" || !value.includes("${")) return value;
+  return value
+    .replaceAll("${HOME}", homedir())
+    .replaceAll("${USERPROFILE}", homedir());
+}
+
 export function parseAllowedDirectoryArgs(argv = []) {
   const markerIndex = argv.indexOf("--allowed-directories");
   if (markerIndex === -1) return null;
@@ -606,7 +626,7 @@ export function parseAllowedDirectoryArgs(argv = []) {
     // Stop at the next option so an unrelated flag can never be mistaken for a
     // filesystem permission.
     if (argument.startsWith("--")) break;
-    const trimmed = argument.trim();
+    const trimmed = expandHostPlaceholders(argument.trim());
     if (!trimmed || trimmed.includes("${")) continue;
     values.push(trimmed);
   }

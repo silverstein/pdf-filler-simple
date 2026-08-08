@@ -670,6 +670,7 @@ import {
   assertXfaMutationAllowed,
   computeIoU,
   getRegionPixelRect,
+  expandHostPlaceholders,
   parseAllowedDirectoryArgs,
   validatePdfFormFields,
   failedPdfFormValidation,
@@ -1385,8 +1386,10 @@ const server = new Server(
 // "${user_config.X}" would reach us and break readdir. Treat any template-
 // shaped value as unset and fall through to the safe home-dir default.
 function envPathOrDefault(name, fallback) {
-  const val = process.env[name];
-  if (!val) return fallback;
+  const raw = process.env[name];
+  if (!raw) return fallback;
+  const val = expandHostPlaceholders(raw);
+  // Still templated after expansion means the host did not resolve it.
   if (val.includes("${")) return fallback;
   return val;
 }
@@ -1398,7 +1401,8 @@ const SIGNATURES_DIR = path.join(PROFILES_DIR, "signatures");
 const BACKUPS_DIR = path.join(PROFILES_DIR, "backups");
 const OLD_PROFILES_DIR = path.join(homedir(), ".pdf-filler-profiles");
 
-function parsePathListValue(value) {
+function parsePathListValue(rawValue) {
+  const value = expandHostPlaceholders(rawValue);
   if (!value || value.includes("${")) return null;
 
   const trimmed = value.trim();
@@ -1412,7 +1416,7 @@ function parsePathListValue(value) {
         // dropped rather than treated as a permission.
         return parsed
           .filter(item => typeof item === "string")
-          .map(item => item.trim())
+          .map(item => expandHostPlaceholders(item.trim()))
           .filter(item => item && !item.includes("${"));
       }
     } catch {}
@@ -1496,7 +1500,7 @@ function readPluginDataConfig(configPath) {
   }
   return parsed.allowedDirectories
     .filter(entry => typeof entry === "string")
-    .map(entry => entry.trim())
+    .map(entry => expandHostPlaceholders(entry.trim()))
     .filter(entry => entry && !entry.includes("${"));
 }
 
