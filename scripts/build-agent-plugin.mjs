@@ -28,20 +28,66 @@ const PACKAGE_JSON = JSON.parse(
   (await import("fs")).readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
 );
 
+const PLUGIN_MANIFEST_NAME = "pdf-tools";
+const PLUGIN_DESCRIPTION =
+  "Local PDF workflow: inspect, fill, sign, merge, split, extract, render, and validate PDFs on your machine. Bundles the server and its evidence-first workflow.";
+
 const PLUGIN_MANIFEST = {
   $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
-  name: "pdf-tools",
+  name: PLUGIN_MANIFEST_NAME,
   version: PACKAGE_JSON.version,
-  description:
-    "Local PDF workflow: inspect, fill, sign, merge, split, extract, render, and validate PDFs on your machine. Bundles the server and its evidence-first workflow.",
+  description: PLUGIN_DESCRIPTION,
   author: {
     name: "Open Document Alliance",
-    url: "https://github.com/Open-Document-Alliance",
+    url: "https://www.opendocuments.ai",
   },
-  homepage: "https://github.com/Open-Document-Alliance/PDF-Tools",
+  // The install-facing page, not the source tree: this is what a plugin
+  // browser links to, and the reader has just installed and needs the
+  // first-run and troubleshooting notes.
+  homepage: "https://github.com/Open-Document-Alliance/pdf-tools-plugin",
   repository: "https://github.com/Open-Document-Alliance/PDF-Tools",
   license: "MIT",
   keywords: ["pdf", "forms", "signature", "extraction", "accessibility", "mcp"],
+};
+
+// The Agent Plugins manifest schema is closed and carries no icon or
+// presentation field, so a plugin shipping only `plugin.json` renders in a
+// host's plugin browser with a placeholder icon, no description, and an empty
+// website field. That metadata belongs in a namespaced sibling manifest.
+// Measured against the 180 plugins in OpenAI's curated marketplace on
+// 2026-08-09: 179 set `interface.logo` and 177 set `interface.composerIcon`,
+// PNG in 167 and 150 cases. This follows that convention rather than inventing
+// one, and it is emitted here so a release cannot silently drop it.
+const CODEX_MANIFEST = {
+  name: PLUGIN_MANIFEST_NAME,
+  version: PACKAGE_JSON.version,
+  description: PLUGIN_DESCRIPTION,
+  author: { name: "Open Document Alliance", url: "https://www.opendocuments.ai" },
+  homepage: "https://github.com/Open-Document-Alliance/pdf-tools-plugin",
+  repository: "https://github.com/Open-Document-Alliance/PDF-Tools",
+  license: "MIT",
+  keywords: ["pdf", "forms", "signature", "extraction", "accessibility", "mcp"],
+  skills: "./skills/",
+  mcpServers: "./mcp.json",
+  interface: {
+    displayName: "PDF Tools",
+    shortDescription: "Local PDF workstation: read, fill, sign, compare, convert.",
+    longDescription:
+      "Work with PDFs on your own machine. Read text and layout with real coordinates, convert to Markdown with evidence-backed tables, fill and validate forms, merge, split and reorder pages, compare two documents across several channels, place signatures, and inspect accessibility signals. Files are never uploaded, and the extension only opens folders you have listed.",
+    developerName: "Open Document Alliance",
+    category: "Productivity",
+    capabilities: ["Document workflows", "Forms", "Extraction", "Safety checks"],
+    websiteURL: "https://github.com/Open-Document-Alliance/pdf-tools-plugin",
+    privacyPolicyURL: "https://www.opendocuments.ai/privacy-policy",
+    termsOfServiceURL: "https://www.opendocuments.ai/terms-of-service",
+    logo: "./assets/pdf-tools.png",
+    composerIcon: "./assets/pdf-tools.png",
+    defaultPrompt: [
+      "Read this PDF and tell me what is in it.",
+      "Fill this form from my saved profile, then read the fields back.",
+      "Compare these two PDFs and state every coverage gap.",
+    ],
+  },
 };
 
 const MCP_CONFIG = {
@@ -135,6 +181,17 @@ async function main() {
     writeFileSync(path.join(stagingDir, "mcp.json"), JSON.stringify(MCP_CONFIG, null, 2) + "\n");
     cpSync(SKILLS_SOURCE, path.join(stagingDir, "skills"), { recursive: true });
 
+    // Listing presentation for hosts that read a namespaced sibling manifest.
+    const iconSource = path.join(REPO_ROOT, "icon.png");
+    if (!existsSync(iconSource)) throw new Error(`plugin icon not found at ${iconSource}`);
+    mkdirSync(path.join(stagingDir, "assets"), { recursive: true });
+    cpSync(iconSource, path.join(stagingDir, "assets", "pdf-tools.png"));
+    mkdirSync(path.join(stagingDir, ".codex-plugin"), { recursive: true });
+    writeFileSync(
+      path.join(stagingDir, ".codex-plugin", "plugin.json"),
+      JSON.stringify(CODEX_MANIFEST, null, 2) + "\n",
+    );
+
     console.error("[plugin] smoke-launching the staged server over stdio…");
     await smokeLaunch(stagingDir);
     console.error("[plugin] server listed tools from its own directory.");
@@ -145,7 +202,7 @@ async function main() {
 
     const { files, bytes } = directoryStats(outputDir);
     console.error(`[plugin] done: ${files} files, ${(bytes / 1024 / 1024).toFixed(1)} MB uncompressed`);
-    console.error(`[plugin] layout: plugin.json, mcp.json, server/, skills/, node_modules/, dist-ui/`);
+    console.error(`[plugin] layout: plugin.json, mcp.json, .codex-plugin/, assets/, server/, skills/, node_modules/, dist-ui/`);
     console.error(`[plugin] note: a fresh install allows no directories. On first run the server`);
     console.error(`[plugin]       writes \${PLUGIN_DATA}/config.json and every refusal names that`);
     console.error(`[plugin]       path; the user lists their folders there and restarts.`);
