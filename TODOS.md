@@ -32,6 +32,54 @@ Bundles URL fetch + signature tooling into one "agent can now download, fill, an
 - Requires `LUMIN_API_KEY` env var
 - Needs API spec from Max
 
+### Extraction pre-flight: make the routing signal a first-class cheap call
+
+The server already computes whether a page needs vision — `read_pages_without_text`
+from `read_pdf_content`, the `classification` rollup and typed
+`pages_needing_vision` reasons from `get_page_analysis`. Today those only come
+back as a byproduct of an operation the caller has already paid for. An agent
+deciding *whether to spend* on a 300-page scan has to do the expensive read first
+to learn it was the wrong move.
+
+Expose the same determination as a bounded, cheap call: text-layer inspection
+only, no rasterization, no OCR, no full extraction. It answers one question —
+which pages carry a usable text layer, which need vision, and which could not be
+assessed — using the typed reasons and explicit `pages_not_analyzed` scope that
+already exist, so it adds a route rather than a new claim.
+
+Value is highest exactly where cost is highest: large scanned documents, mixed
+text/raster files, and any agent loop choosing between a local read and a
+vision-capable model. It also gives `convert_pdf_to_markdown` and the comparison
+lane a way to refuse early with a reason instead of producing thin output.
+
+Constraints: it must not rasterize, must reuse the existing routing vocabulary
+rather than inventing a second one, and must never report confidence numbers —
+statuses and typed reasons only, consistent with the current extraction boundary.
+
+### Optional OCR through a caller-supplied endpoint, still bundling none
+
+OCR has sat in this list as planned-but-unshipped for a while, and the reason is
+sound: bundling an engine would add a large native dependency to an artifact that
+already carries five platform binaries, and it would weaken the local-only story
+that is a real differentiator.
+
+There is a middle path. Accept an optional, explicitly configured OCR endpoint —
+absent by default, never bundled, never contacted unless a user configures it —
+and merge its output with the native text layer rather than replacing it. The
+default install keeps today's behaviour and today's honest boundary: no OCR, and
+raster pages reported as unrecognized rather than silently empty.
+
+This turns "no OCR" from a dead end into a documented extension point without
+changing what ships. It pairs naturally with the pre-flight above: the pre-flight
+says which pages need vision, and the endpoint, when configured, is one way to
+serve them.
+
+Constraints: no engine in the artifact; no network call without explicit
+configuration; the boundary language must continue to state plainly that the
+local runtime performs no text recognition; and OCR-derived text must be
+distinguishable in output from native text-layer extraction, since the two do not
+carry the same evidence.
+
 ### 10/10 vision follow-ups (post-v0.8.x)
 - `analyze_form_gaps` — per-field semantic classification + suggested search queries ("who handles waste for {address}" → route to Gmail/Drive/Stripe MCPs)
 - Three-state field sidebar in `display_pdf`: filled / missing-known / missing-unknown with inline search-query dispatch
