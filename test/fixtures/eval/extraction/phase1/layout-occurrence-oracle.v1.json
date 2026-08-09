@@ -43,8 +43,8 @@
     {
       "role": "generator_script",
       "path": "scripts/eval-generate-extraction-layout-oracle.mjs",
-      "bytes": 11676,
-      "sha256": "1ced236149949ea580f426aea06a79308b6f59b159bd01c8cd08f7224de76df6"
+      "bytes": 11969,
+      "sha256": "e4a95029285bbe2e6a5c777c81e5e74fe0c84ab6d9e7047bdc318961080fd192"
     },
     {
       "role": "layout_evidence_module",
@@ -55,8 +55,8 @@
     {
       "role": "layout_extraction_module",
       "path": "server/layout-extraction.js",
-      "bytes": 249759,
-      "sha256": "f2cbbb7f0e0af9fee0429dbc709ecf51756e59a92d8d836d5d5f4464b6ece967"
+      "bytes": 260732,
+      "sha256": "4ec9d63d624ac92a395a52fb9336f0ac16343818dd1396f857573c5c7d4e73ee"
     },
     {
       "role": "type3_cm_reference_module",
@@ -65,10 +65,16 @@
       "sha256": "59ddf76aa7cfca1247cd2eb44c0768bfb4f7f326d7847280bb63103b5959cfda"
     },
     {
+      "role": "type3_cm_pk_reference_module",
+      "path": "server/type3-cm-pk-reference.js",
+      "bytes": 39981,
+      "sha256": "6146a784ce83afbd89c40c435a961320752859253f26279780199eb7000f57dd"
+    },
+    {
       "role": "layout_oracle_schema",
       "path": "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
-      "bytes": 7300,
-      "sha256": "f64553ee61d32080aa4da02ee5722744c42cc8cd82ef85d97e8ad889d4a13ca7"
+      "bytes": 7332,
+      "sha256": "9ce2ab32b587dec317d00c8fa25cefeb623c3acf9fdb0412b23e6f25131f9140"
     },
     {
       "role": "markdown_conversion_module",
@@ -119,7 +125,7 @@
       "sha256": "6e4429db62fcbe1dd73141d8c20a48b564d41f8bf8920d88775846995e1daf94"
     }
   ],
-  "validator_source_set_sha256": "a27a546e015bbbe1095add00744ab08bc52690f3516d7657de708efbfceec0c9",
+  "validator_source_set_sha256": "587e0c07c616c778a848947d1e3c00a3f4f1bbc300f686830b1cfab825df623a",
   "pdfjs_version": "5.4.624",
   "generation_contract": {
     "source_path": "source.pdf",

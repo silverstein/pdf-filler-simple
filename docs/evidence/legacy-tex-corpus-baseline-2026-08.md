@@ -2,22 +2,23 @@
 
 ## Outcome
 
-**This is a failing baseline. Every recovery figure in it is zero, and every
-zero is a defect, not an intention.**
+**This is still a failing baseline. Four of its five recovery figures are
+zero, and every zero is a defect, not an intention.**
 
 The Computer Modern Type-3 recovery that works on Shannon's 1948 paper does
 not transfer. Five dvips-era PDFs carrying 385,766 Type-3 glyph occurrences
-recover **0 characters**. This document binds them as a pinned, measured
-corpus so the gap has an executable size instead of an anecdote, and so any
-later work has something it must visibly move.
+recover **11 characters** between them, all of them in one document. This
+document binds them as a pinned, measured corpus so the gap has an executable
+size instead of an anecdote, and so any later work has something it must
+visibly move.
 
 Four of the five are D. J. Bernstein papers from cr.yp.to, produced by
 `GNU Ghostscript 6.52`, which repacks glyph names to `/a0 /a1 /a2…`. On these
 `pdftotext` yields literal noise and PDF Tools recovers nothing — not one
 character, and only one Computer Modern family across all four. The fifth is
-an arXiv paper where the TeX character codes *are* preserved and 11
-occurrences do carry an official Unicode mapping, and it still recovers
-nothing, which isolates the shape problem from the code-packing problem.
+an arXiv paper where the TeX character codes *are* preserved, and it is the
+one that moved: its 11 officially mapped occurrences now recover, against the
+generated Computer Modern PK reference described below.
 
 Nothing in the recovery path was weakened to produce this record. The corpus
 is measured through the shipped code exactly as it stands.
@@ -26,7 +27,17 @@ is measured through the shipped code exactly as it stands.
 linker fix and before the recovery key was moved off the CharProc operator
 list, and its measured table and causal account were both left stale by those
 two changes. The table below and the section that follows it now match the
-shipped product. The headline has not moved: recovery is still zero.
+shipped product.
+
+**Revision note, generated PK reference.** Obstacle 3 below — "the rasters
+themselves do not match" — has since been closed for astro-ph. The missing
+external labelled bitmap reference now exists: `server/type3-cm-pk-reference.js`,
+built by `scripts/generate-type3-cm-pk-reference.mjs` from the pinned CTAN
+`cm/mf.zip` through METAFONT and `gftopk`, enrolled under its own
+qualification string `ctan-cm-metafont-generated-pk-v1`. astro-ph went from 0
+to 11 strictly recovered occurrences. The four Ghostscript 6.52 papers are
+unaffected and are expected to stay at zero; see "Why the generated reference
+does not reach the four Ghostscript 6.52 papers".
 
 **Route status.** Both routes past this baseline have since been investigated
 to a conclusion and both are closed. Shape-to-family is ill-posed — recorded
@@ -76,12 +87,12 @@ typed by hand on both sides of an assertion.
 | Omitted, unlinked | 72,735 | 33,220 | 75,167 | 52,037 | 100,070 |
 | Classified into a family | 0 | 0 | 0 | **10** | 12 |
 | Officially Unicode-mapped | 0 | 0 | 0 | **2** | 11 |
-| Matching a registry digest | 0 | 0 | 0 | 0 | 0 |
-| **Strictly recovered** | **0** | **0** | **0** | **0** | **0** |
+| Matching a registry digest | 0 | 0 | 0 | 0 | **11** |
+| **Strictly recovered** | **0** | **0** | **0** | **0** | **11** |
 
 Corpus totals: 385,766 observed Type-3 glyph occurrences, 92 Type-3 fonts,
 52,537 linked occurrences, 22 classified, 13 officially Unicode-mapped, and
-**0 recovered characters**. The single abstention reason reported for every
+**11 recovered characters**. The single abstention reason reported for every
 document is `raw_type3_font_link_ambiguous_or_unavailable`.
 
 ## Why nothing recovers
@@ -143,11 +154,13 @@ remain, and they are not the same obstacle for the two producers.
    kind can work here. Full measurements in
    `docs/evidence/legacy-tex-metric-routes-closed-2026-08.md`.
 
-3. *The rasters themselves do not match.* `astro-ph-9402001.pdf` is the clean
-   case — codes preserved, 10 fonts fingerprinting a family, 11 occurrences
-   officially Unicode-mapped — and it still matches 0 registry digests,
-   because it rasterised Computer Modern at its own PK resolution (300 dpi
-   against Shannon's 600) and no enrolled shape is that shape. Its remaining
+3. *The rasters themselves did not match — CLOSED for astro-ph.*
+   `astro-ph-9402001.pdf` is the clean case — codes preserved, 10 fonts
+   fingerprinting a family, 11 occurrences officially Unicode-mapped — and it
+   used to match 0 registry digests, because it rasterised Computer Modern at
+   its own PK resolution (300 dpi against Shannon's 600) and no enrolled shape
+   was that shape. The generated reference supplies that shape and all 11
+   recover. Its remaining
    18 of 22 fonts carry their own `/ToUnicode` and are deliberately left to
    PDF.js, which is why only 4 fonts are admissible to the linker while 10
    fingerprint a family. Those 18 are not discarded: they stay in the page's
@@ -162,12 +175,17 @@ Identifying the family from matched glyph *shapes*, rather than from
 measured to be a dead end. Recorded here so it is not attempted again blind.
 All four findings are measured on these exact documents.
 
-- **There is no bitmap reference to match against.** The pinned official CTAN
-  `cm/ps-type3` fonts are cubic-Bézier *outline* programs: all 41 glyph
-  programs of the labeled reference fixture take the exact-operator evidence
-  lane and none takes the image-mask lane. `cm/mf.zip` is METAFONT source, and
-  turning it into the PK rasters these documents carry needs a METAFONT run at
-  a mode and resolution no document here records.
+- **There was no bitmap reference to match against — now there is.** The
+  pinned official CTAN `cm/ps-type3` fonts are cubic-Bézier *outline*
+  programs: all 41 glyph programs of the labeled reference fixture take the
+  exact-operator evidence lane and none takes the image-mask lane. `cm/mf.zip`
+  is METAFONT source, and turning it into the PK rasters these documents carry
+  needs a METAFONT run at a resolution and device setting no document here
+  records. What was missing was the setting, not the capability, and the
+  setting is findable by exhaustive search rather than by reading it out of
+  the file. See "The generated Computer Modern PK reference" below. This does
+  not reopen the next three findings: nothing in the generated reference is
+  scored for similarity, and it does not identify a family from shapes.
 - **Bridging outline to bitmap is never exact, and no threshold separates
   right from wrong.** Rasterising the official CTAN outline for cmmi alpha
   across 225,225 combinations of resolution (60–110 px/em in 0.05 steps),
@@ -194,11 +212,114 @@ All four findings are measured on these exact documents.
   **none** with astro-ph (300 dpi), and that one shared shape is a 41x3 solid
   rectangle, a fraction rule rather than a character.
 
-With the metric routes closed as well, the only remaining theoretical route to
-the four Ghostscript 6.52 papers is an external labelled bitmap reference — a
-METAFONT run at each document's own mode and resolution — which no document
-here records and nothing in this repository can pin. That is the boundary of
-the problem, not planned work.
+With the metric routes closed as well, the last theoretical route to the four
+Ghostscript 6.52 papers was an external labelled bitmap reference. That
+reference has since been built, and it does not reach them either; the reason
+is below.
+
+## The generated Computer Modern PK reference
+
+`scripts/generate-type3-cm-pk-reference.mjs` downloads the pinned CTAN
+`cm/mf.zip`, verifies its SHA-256, points **`MFINPUTS`** (not `TEXINPUTS`, or
+METAFONT silently uses TeX Live's own Computer Modern sources) at the extracted
+archive, runs METAFONT over all 76 Computer Modern faces at each pinned
+setting, converts with `gftopk`, decodes the PK bitmaps in-repo, and keys each
+glyph with the shipped Type-3 mask-lane key. It ships a digest table,
+`server/type3-cm-pk-reference.js`, never bitmaps, and the runtime gains no new
+dependency: generation is maintainer-side.
+
+**What is pinned is four numbers per setting, not a mode name.** A METAFONT
+raster is decided by the resolution and by `blacker`, `fillin` and
+`o_correction`. Mode names are entries in `modes.mf`, a TeX Live component
+this repository does not pin; the numbers are what METAFONT consumes. There
+are only 83 distinct triples in all of `modes.mf`, so the setting a document
+used is recoverable by sweeping them and keeping only those whose output is
+**bit-identical** to the document's own rasters under the shipped key. Two
+settings pass:
+
+| Setting | Resolution | `blacker` | `fillin` | `o_correction` | Equivalent `modes.mf` name | Exact-reproduction evidence |
+| --- | ---: | ---: | ---: | ---: | --- | --- |
+| `600-b25-f0-o1` | 600 | .25 | 0 | 1 | `ljfour` | Shannon's own rasters |
+| `300-b0-f20-o60` | 300 | 0 | .2 | .6 | `cx` | astro-ph's own rasters |
+
+The generator proves the mode name is only a label: it builds `cmmi10` from
+two unrelated base modes with the same four overrides and fails the run unless
+the decoded rasters are identical. It compares decoded rasters rather than
+font files because METAFONT stamps the run clock into the generic font, so a
+byte comparison would differ on every run and would fail spuriously across a
+second boundary. Both digests are recorded in
+`test/fixtures/eval/extraction/type3-cm-pk-reference.provenance.json`, along
+with the METAFONT and GFtoPK banners, the archive digest, a per-face source
+digest for all 76 faces, and the emitted digest count.
+
+**Scale and safety.** 152 rasterisations produce 470 enrolled digests across
+34 face records — every one of the 41 officially enrolled slots of all 17
+Computer Modern math faces, at both settings. Two independent checks:
+
+- The reference reproduces **48 of the 69** mask-lane (family, slot, digest)
+  triples the reviewed lane holds, bit for bit, having never seen them. The
+  other 21 are Shannon's magnified font instances; sweeping 500, 657, 720, 864
+  and 1037 dpi at the same three scalars reproduces 5 more, so additional
+  pinned resolutions are the obvious next increment and each would carry the
+  same exact-reproduction justification. The 70th reviewed entry,
+  `cmsy-ctan-type3-minus-v1`, is an outline program on the exact-operator lane
+  and can never be reproduced from a PK raster.
+- Not one of the reference's 447 distinct digests stands at two different
+  slots of the same family. Eight stand in two families at once, and all eight
+  are the math-italic "." against math-symbol "⋅" pair the third finding above
+  already names, which is harmless because the matcher pins the family from
+  the TFM fingerprint before it looks at a shape at all.
+
+**Why it cannot cost a recovery.** `matchingRegistryEntries` drops a code that
+two entries both match, so a careless expansion would delete recoveries rather
+than add them. Two entries can only both match a code if they carry the same
+`glyph_sha256`. Generated entries therefore (a) yield outright wherever the
+reviewed lane already holds the same (family, slot, digest), (b) use a
+`complete_font_enrollment` footprint of exactly two slots for the
+heavily-subsetted case, so two of them demand incompatible footprints, and
+(c) emit the two-witness form only where the (family, slot, digest) occurs in
+exactly one generated face. `test/type3-recovery-gate.test.js` asserts the
+resulting mutual-exclusion property pairwise over the whole shipped registry,
+reviewed and generated together.
+
+**Positive-width pinning still applies to generated entries.** The generated
+reference carries no metrics at all — a PK raster is pure shape — so it cannot
+substitute for the pin, and the pin's purpose is unchanged: it ties a
+recovered slot to the same positive advance that the TFM fingerprint used to
+choose the family in the first place. Dropping it for this lane would let a
+zero-advance slot recover inside a font whose family was fingerprinted
+entirely from other slots. The stronger shape evidence is a reason to trust
+the shape, not a reason to stop requiring the metric.
+
+## Why the generated reference does not reach the four Ghostscript 6.52 papers
+
+It was never going to, and the reason is visible in their bytes rather than in
+the reference. GNU Ghostscript 6.52 re-rasterised these documents from Type 1
+outlines instead of passing dvips PK bitmaps through, and the tell is a blank
+outer edge on the mask:
+
+| document | decodable single-mask glyph programs | with a blank outer edge |
+| --- | --- | --- |
+| pippenger | 584 | 253 |
+| nfscircuit | 457 | 184 |
+| m3 | 537 | 220 |
+| sf | 530 | 231 |
+| astro-ph-9402001 | 588 | 0 |
+| Shannon reference | 125 | 0 |
+
+"Blank outer edge" and "ink box strictly smaller than the declared mask" are
+the same set here — the two counts coincide exactly in every column — and no
+mask in the corpus is blank on all four edges. GFtoPK's output cannot have
+one: it writes each character's ink box as its bounding box, so a PK-derived
+raster is tight on all four sides. The constraint is the producer's rather
+than the container's; PK itself would carry a padded box happily enough.
+`scripts/generate-type3-cm-pk-reference.mjs` asserts the same property over
+the 4,352 rasters it decodes and records the result as
+`metafont.decoded_pk_rasters_with_blank_border`, which is 0.
+
+On top of that the ink runs one to three pixels wider than the Computer Modern
+design. Behind both sits finding (g), the glyph-cache-page category error,
+which has no answer at all. These four are out of scope for this lane.
 
 ## Safeguards this corpus confirms are not what blocks it
 
@@ -210,10 +331,18 @@ that is not in its way. Each was measured against the corpus:
   Type-3 fonts of this corpus are unanimous, as are all 24 of Shannon's, so
   this rule refuses nothing here. See
   `docs/evidence/type3-reflected-paint-2026-08.md`.
-- **Shape-code injectivity.** No corpus document reaches a registry digest at
-  all, so no match is lost to a shape standing at two enrolled codes.
-- **The `/ToUnicode` deferral.** Removing it would not recover astro-ph: the
-  18 deferred fonts fail on rasters, not on eligibility.
+- **Shape-code injectivity.** The one corpus font that reaches a registry
+  digest draws two enrolled slots with two different shapes, so no match is
+  lost to a shape standing at two enrolled codes. Three of the four
+  Ghostscript 6.52 papers reach no digest at all.
+- **The `/ToUnicode` deferral.** This IS what now bounds astro-ph, and it is a
+  safeguard rather than a gap. 18 of its 22 Type-3 fonts carry a producer-
+  supplied `/ToUnicode`; PDF Tools leaves those to PDF.js rather than
+  overriding a valid mapping. Only 4 fonts are link candidates, exactly one of
+  them fingerprints a Computer Modern family, and that font accounts for all
+  12 classified and all 11 recovered occurrences. No amount of additional
+  reference coverage moves the other 100,070 occurrences; only revisiting the
+  deferral would, and that is a different decision from this one.
 
 ## Binding
 
@@ -280,13 +409,22 @@ node scripts/inventory-type3-glyphs.mjs --source /tmp/legacy-tex-corpus/pippenge
 
 ## Known gaps
 
-- This is the gap. Zero recovered characters across 385,766 legacy Type-3
+- This is still the gap. 11 recovered characters across 385,766 legacy Type-3
   glyph occurrences is the tracked defect, and raising any figure in the
   measured-baseline table is the work this record exists to measure. For the
-  four Ghostscript 6.52 papers that work now has no known route; that is a
-  finding about the producer, recorded in
+  four Ghostscript 6.52 papers that work has no known route; that is a finding
+  about the producer, recorded in
   `docs/evidence/legacy-tex-metric-routes-closed-2026-08.md`, and not a reason
   to stop calling the zero a defect.
+- astro-ph's remaining ceiling is not the reference. Its one recoverable font
+  draws two enrolled slots and both now match exactly; the other 100,070
+  occurrences sit behind the `/ToUnicode` deferral. Enrolling more Computer
+  Modern slots or more pinned resolutions will not move them.
+- The generated reference covers the 41 officially enrolled slots and no more.
+  Its 470 digests are all that the current `CM_CODEPOINTS` enrolment admits,
+  even though METAFONT emitted 128 slots for each of 152 rasterisations.
+  Widening the enrolment is a separate, reviewed decision about Unicode
+  mappings, not a property of this reference.
 - Linking is not recovery. 52,537 occurrences now link where none did, and
   that bought no characters. A future change that raises the linked count
   without raising the recovered count has not moved this baseline.

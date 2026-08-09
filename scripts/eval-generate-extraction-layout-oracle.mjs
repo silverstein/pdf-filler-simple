@@ -29,6 +29,10 @@ const SOURCE_PATHS = Object.freeze({
   layout_evidence_module: "test/eval/extraction-phase1-layout-evidence.js",
   layout_extraction_module: "server/layout-extraction.js",
   type3_cm_reference_module: "server/type3-cm-reference.js",
+  // The generated Computer Modern PK ground truth is a second enrollment
+  // source for the same recovery path, so a change to it changes what the
+  // oracle can observe just as surely as a change to the metric table does.
+  type3_cm_pk_reference_module: "server/type3-cm-pk-reference.js",
   layout_oracle_schema: "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
   markdown_conversion_module: "server/markdown-conversion.js",
   output_schemas_module: "server/output-schemas.js",

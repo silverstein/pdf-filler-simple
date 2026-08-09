@@ -720,27 +720,22 @@ async function main() {
       "SBOM dependency-edge omission was not rejected",
     );
 
-    for (const relativePath of [
-      "server/accessibility-inspection.js",
-      "server/bounded-pdf-file.js",
-      "server/helpers.js",
-      "server/index.js",
-      "server/layout-extraction.js",
-      "server/type3-cm-reference.js",
-      "server/markdown-conversion.js",
-      "server/markdown-output-transaction.js",
-      "server/output-schemas.js",
-      "server/pdf-comparison.js",
-      "server/pdf-observations.js",
-      "server/pdf-lib-rss-monitor.js",
-      "server/pdf-lib-subprocess.js",
-      "server/pdf-lib-worker.js",
-      "server/pdfjs-subprocess.js",
-      "server/pdfjs-worker.js",
-      "server/resource-uri.js",
-      "server/stderr-suppression.js",
-      "dist-ui/index.html",
-    ]) {
+    /*
+     * Derived from the packager's own manifest rather than copied into a third
+     * hand-written list. A hand-written copy could only ever be a subset of
+     * what shipped, so a server module missing from the packager was also
+     * missing here and the parity sweep passed over its absence.
+     * `test/packager-server-coverage.test.js` is what pins that manifest to
+     * the real contents of `server/`.
+     */
+    const mirroredFiles = packager.SHARE_MIRRORED_FILES;
+    assertEqual(
+      mirroredFiles.includes("dist-ui/index.html")
+        && mirroredFiles.filter(file => file.startsWith("server/")).length >= 19,
+      true,
+      "Share mirror manifest is too small to be the real one",
+    );
+    for (const relativePath of mirroredFiles) {
       assertEqual(
         sha256(readFileSync(path.join(sourcePackageRoot, ...relativePath.split("/")))),
         sha256(readFileSync(path.join(REPO_ROOT, relativePath))),
@@ -803,7 +798,21 @@ async function main() {
     const { tools } = await client.listTools();
     const { prompts } = await client.listPrompts();
     const { resources } = await client.listResources();
-    if (tools.length !== 43 || prompts.length !== 14 || resources.length !== 1) {
+    /*
+     * Derived from manifest.json rather than typed here. Hard-coded counts
+     * drifted: the 43rd tool landed with test/mcp-contract.test.js updated and
+     * this literal left at 42, and because the share contract is a release
+     * step outside `npm test` the stale number sat undetected. manifest.json
+     * is the same authority test/mcp-contract.test.js checks tool names
+     * against, so the two can no longer disagree.
+     */
+    const manifest = JSON.parse(readFileSync(path.join(REPO_ROOT, "manifest.json"), "utf8"));
+    const expectedTools = manifest.tools.length;
+    const expectedPrompts = manifest.prompts.length;
+    if (!(expectedTools > 40) || !(expectedPrompts > 10)) {
+      throw new Error("manifest.json does not declare a plausible tool and prompt surface");
+    }
+    if (tools.length !== expectedTools || prompts.length !== expectedPrompts || resources.length !== 1) {
       throw new Error(
         `Unexpected discovery counts: ${tools.length} tools, ${prompts.length} prompts, ${resources.length} resources`,
       );

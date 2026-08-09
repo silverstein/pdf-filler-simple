@@ -48,7 +48,18 @@ const DEFAULT_OUTPUT = path.join(REPO_ROOT, "pdf-toolkit-mcp.mcpb");
 const MCPB_VERSION = "2.1.2";
 const FFLATE_VERSION = "0.8.3";
 const PROTECTED_PDFJS_VERSION = "5.4.624";
-const SERVER_FILES = [
+/*
+ * Every module the production archive stages under `server/`. This is an
+ * explicit allow-list rather than a directory walk so nothing untracked can
+ * reach a shipped artifact, and `verifyStagedProductionGraph` asserts the
+ * staged tree EQUALS it. That equality made an omission invisible: a module
+ * left out of this list was simply absent from the archive, the staged tree
+ * still matched the (short) list, the build passed, and the extension failed
+ * at startup on an unresolvable import.
+ * `test/packager-server-coverage.test.js` closes that hole by requiring this
+ * list to be exactly the contents of `server/`.
+ */
+export const SERVER_FILES = [
   "accessibility-inspection.js",
   "bounded-pdf-file.js",
   "helpers.js",
@@ -66,6 +77,7 @@ const SERVER_FILES = [
   "pdfjs-worker.js",
   "resource-uri.js",
   "stderr-suppression.js",
+  "type3-cm-pk-reference.js",
   "type3-cm-reference.js",
 ];
 const FIRST_PARTY_TEXT_FILES = [
