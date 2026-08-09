@@ -117,20 +117,20 @@ process.stdin.on("data", chunk => {
 
 describe("Markdown bakeoff discovery binding", () => {
   const currentTools = [
-    ...Array.from({ length: 40 }, (_, index) => ({ name: `fixture_tool_${index}` })),
+    ...Array.from({ length: 41 }, (_, index) => ({ name: `fixture_tool_${index}` })),
     { name: "convert_pdf_to_markdown" },
     { name: "inspect_pdf_accessibility" },
   ];
 
-  it("accepts only the current 42-tool discovery", () => {
+  it("accepts only the current 43-tool discovery", () => {
     expect(() => validateMarkdownDiscovery(currentTools)).not.toThrow();
-    expect(() => validateMarkdownDiscovery(currentTools.slice(1))).toThrow(/42-tool contract/);
+    expect(() => validateMarkdownDiscovery(currentTools.slice(1))).toThrow(/43-tool contract/);
   });
 
   it("requires both current lane tools", () => {
     expect(() => validateMarkdownDiscovery(
       currentTools.map(tool => tool.name === "inspect_pdf_accessibility" ? { name: "stale_tool" } : tool),
-    )).toThrow(/42-tool contract/);
+    )).toThrow(/43-tool contract/);
   });
 });
 
