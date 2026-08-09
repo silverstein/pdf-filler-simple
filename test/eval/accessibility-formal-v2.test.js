@@ -460,10 +460,16 @@ describe.sequential("bounded process groups", () => {
   });
 
   it("kills and reports a stubborn descendant after its leader exits", async () => {
+    // The leader must not exit until the descendant actually exists. spawn() is
+    // asynchronous, so a fixed timer raced the fork: under a loaded parallel
+    // run the leader could exit first, leaving nothing for the cleanup path to
+    // observe and failing on descendant_observed_after_leader_close. Waiting
+    // for the spawn event removes the assumption rather than lengthening it.
     const script = [
       "const {spawn}=require('node:child_process');",
-      "spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)\"],{stdio:'ignore'});",
-      "setTimeout(()=>process.exit(0),200);",
+      "const child=spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)\"],{stdio:'ignore'});",
+      "child.on('spawn',()=>{setTimeout(()=>process.exit(0),50);});",
+      "child.on('error',()=>{process.exit(1);});",
     ].join("");
     const result = await runBoundedProcess(process.execPath, ["-e", script], {
       ...boundedOptions(),
