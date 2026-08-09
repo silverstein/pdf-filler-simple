@@ -42,6 +42,23 @@ const typedSlot = (...segments) => segments
   .join("\n")
   + (segments.length > 0 ? "\n" : "");
 
+// Build the cross-reference-stream fixture in the test rather than committing
+// a binary: pdf-lib's own object-stream writer emits a conforming /Type /XRef
+// dictionary, and only its /W array is rewritten. The /W array sits after the
+// byte offset that startxref points at, so rewriting it cannot disturb any
+// other structure the parser depends on.
+async function xrefStreamPdfWithByteWidths(widths) {
+  const document = await PDFDocument.create();
+  document.addPage([200, 200]);
+  const written = Buffer.from(await document.save({ useObjectStreams: true }));
+  const text = written.toString("latin1");
+  if (!/\/Type\s*\/XRef/.test(text) || !/\/W\s*\[[^\]]*\]/.test(text)) {
+    throw new Error("pdf-lib no longer writes a cross-reference stream with a /W array.");
+  }
+  if (widths === null) return written;
+  return Buffer.from(text.replace(/\/W\s*\[[^\]]*\]/, widths), "latin1");
+}
+
 function sparseDeclarationAcrossBoundary(prefix, suffix) {
   const header = Buffer.from("%PDF-1.7\n", "ascii");
   const declarationPrefix = Buffer.from(prefix, "ascii");
@@ -243,6 +260,126 @@ endobj
 %%EOF
 `, "ascii");
     expect(() => assertBoundedPdfStructure(bytes)).not.toThrow();
+  });
+
+  // Hopding/pdf-lib#1776 (CWE-190): PDFXRefStreamParser copies /W straight
+  // into its per-entry read loops. The upstream fix (PR #1781) is unmerged and
+  // the issue was closed by a stale bot, so the bound is ours to enforce.
+  // Measured against the pinned pdf-lib 1.17.1: on a ~1 KiB file, /W [1 2e8 1]
+  // holds PDFDocument.load for 3.9s, /W [1 1e9 1] for 198s, and /W [1 2e9 1]
+  // for over 400s, with resident memory flat near 160 MiB throughout. A
+  // flat-memory spin is invisible to the RSS monitor, so before this bound the
+  // only thing between a hostile document and a wedged worker was the 30s
+  // subprocess deadline.
+  describe("cross-reference stream byte widths", () => {
+    it.each([
+      ["a width beyond the Table 17 field size", "/W [100 100 100]"],
+      ["a width that overflows the accumulator", "/W [1 2000000000 1]"],
+      ["a width beyond safe integer precision", "/W [1 9007199254740991 1]"],
+      ["a hostile width spelled as a PDF real", "/W [1 2000000000.0 1]"],
+      ["a width longer than one structure token", `/W [1 ${"9".repeat(300)} 1]`],
+      ["a negative width", "/W [-1 -1 -1]"],
+      ["a width one byte past the field bound", "/W [1 9 2]"],
+    ])("rejects %s before pdf-lib parsing", async (_kind, hostileWidths) => {
+      const bytes = await xrefStreamPdfWithByteWidths(hostileWidths);
+      expect(() => assertBoundedPdfStructure(bytes)).toThrow(expect.objectContaining({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "unsafe_xref_byte_width",
+      }));
+      await expect(loadPdfForMutation(bytes)).rejects.toThrow(expect.objectContaining({
+        reason: "unsafe_xref_byte_width",
+      }));
+    });
+
+    it("checks the widths when /Type /XRef is written after /W", () => {
+      const bytes = Buffer.from(`%PDF-1.7
+2 0 obj
+<< /W [ 1 2000000000 1 ] /Size 3 /Index [0 3] /Type /XRef /Length 0 >>
+stream
+endstream
+endobj
+%%EOF
+`, "ascii");
+      expect(() => assertBoundedPdfStructure(bytes)).toThrow(expect.objectContaining({
+        reason: "unsafe_xref_byte_width",
+      }));
+    });
+
+    it("accepts the real cross-reference stream widths this repository ships", async () => {
+      const fw9 = await fs.readFile(path.join(REPO_ROOT, "example-fw9.pdf"));
+      expect(fw9.toString("latin1")).toMatch(/\/Type\s*\/XRef/);
+      expect(fw9.toString("latin1")).toMatch(/\/W\s*\[\s*1 3 2\s*\]/);
+      expect(() => assertBoundedPdfStructure(fw9)).not.toThrow();
+      await expect(loadPdfForMutation(fw9)).resolves.toBeDefined();
+
+      const written = await xrefStreamPdfWithByteWidths(null);
+      expect(() => assertBoundedPdfStructure(written)).not.toThrow();
+    });
+
+    it.each([
+      ["the widest conforming entry", "/W [8 8 8]"],
+      ["a non-canonical real spelling", "/W [1.0 4.0 2.0]"],
+      ["a short width array", "/W [1 2]"],
+    ])("accepts %s", async (_kind, widths) => {
+      const bytes = await xrefStreamPdfWithByteWidths(widths);
+      expect(() => assertBoundedPdfStructure(bytes)).not.toThrow();
+    });
+
+    // The shared structure lexer treats an unpaired "<" or "(" as the start of
+    // a hex or literal string and skips to the next ">" or ")". Compressed
+    // payload bytes contain those characters routinely, which silently
+    // swallowed the following cross-reference dictionary until the byte-width
+    // pass was given its own stream-skipping view of the file.
+    it.each([
+      ["an unpaired hex-string opener", "<"],
+      ["an unpaired literal-string opener", "("],
+      ["a comment opener", "%"],
+    ])("still sees the widths behind a payload containing %s", (_kind, opener) => {
+      const payload = Buffer.from(`${opener}${"·".repeat(40)}`, "latin1");
+      const bytes = Buffer.concat([
+        Buffer.from(`%PDF-1.7\n1 0 obj\n<< /Length ${payload.length} >>\nstream\n`, "ascii"),
+        payload,
+        Buffer.from(`\nendstream\nendobj\n2 0 obj
+<< /Type /XRef /W [ 1 2000000000 1 ] /Size 3 /Index [0 3] /Length 0 >>
+stream
+endstream
+endobj
+%%EOF
+`, "ascii"),
+      ]);
+      expect(() => assertBoundedPdfStructure(bytes)).toThrow(expect.objectContaining({
+        reason: "unsafe_xref_byte_width",
+      }));
+    });
+
+    it("is not desynchronized by a dictionary-closing spelling inside a string value", () => {
+      const bytes = Buffer.from(`%PDF-1.7
+2 0 obj
+<< /Type /XRef /Note (>> << >>) /W [ 1 2000000000 1 ] /Size 3 /Index [0 3] /Length 0 >>
+stream
+endstream
+endobj
+%%EOF
+`, "ascii");
+      expect(() => assertBoundedPdfStructure(bytes)).toThrow(expect.objectContaining({
+        reason: "unsafe_xref_byte_width",
+      }));
+    });
+
+    it("does not mistake a CIDFont glyph-width array for cross-reference byte widths", () => {
+      const bytes = Buffer.from(`%PDF-1.7
+1 0 obj
+<< /Type /Font /Subtype /CIDFontType2 /W [ 120 [ 400 325 500 ] 200 300 722 ] >>
+endobj
+2 0 obj
+<< /Type /XRef /W [ 1 2 1 ] /Size 3 /Index [0 3] /Length 0 >>
+stream
+endstream
+endobj
+%%EOF
+`, "ascii");
+      expect(() => assertBoundedPdfStructure(bytes)).not.toThrow();
+    });
   });
 
   it("inspects parsed stream dictionaries, not comments, strings, or raw payload spellings", async () => {
