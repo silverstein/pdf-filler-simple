@@ -186,9 +186,10 @@ configured-MCP trajectories or native-host product evidence.
 ### Executable trajectory contracts v1 and v2
 
 The first executable L5 contract lives in the frozen
-`test/fixtures/eval/trajectories/jobs.v1.json`. The current 40-tool contract is
-`test/fixtures/eval/trajectories/jobs.v2.json`. Both version the same six
-public-safe jobs:
+`test/fixtures/eval/trajectories/jobs.v1.json`. The newest executable job set is
+`test/fixtures/eval/trajectories/jobs.v2.json`, which binds the frozen 40-tool
+`tool-contracts.v2.json` projection rather than the live runtime surface. Both
+version the same six public-safe jobs:
 inspect-and-answer, fill-and-validate, compare-and-explain, safe page mutation,
 prepare-for-signature, and path-policy error recovery. Each job declares:
 
@@ -204,8 +205,9 @@ prepare-for-signature, and path-policy error recovery. Each job declares:
 The six job IDs deliberately remain `pdf-tools.trajectory.v1.*` in v2 because
 they are stable task identities, not evidence-version identities. V2 trial,
 run, event, step, and result IDs use a separate namespace. The v2 suite validates
-every invoked tool against the complete 40-tool runtime contract, but these six
-jobs are not behavioral trajectory coverage for all 40 tools. In particular,
+every invoked tool against the complete 40-tool v2 contract, but these six
+jobs are not behavioral trajectory coverage for even those 40 tools, and the
+live runtime surface has grown past them. In particular,
 `get_pdf_identity` has separate contract, handler, and workflow tests and is not
 invoked by the six retained trajectory jobs.
 
