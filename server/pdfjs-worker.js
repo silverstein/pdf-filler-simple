@@ -19,6 +19,7 @@ import {
   getPageBoxGeometry,
   getPageRenderScale,
   isPdfLibEncryptedError,
+  PDF_LIB_ENCRYPTED_MESSAGE,
   validatePdfRegionBox,
 } from "./helpers.js";
 import {
@@ -1510,8 +1511,22 @@ export async function runSystemCommand(command, args, {
   });
 }
 
+// Rendering and page analysis decrypt their text through PDF.js but still take
+// page geometry from pdf-lib, which cannot decrypt anything. Left raw, pdf-lib's
+// own error tells the caller to retry with { ignoreEncryption: true }, which
+// produces an unusable document — advice that cannot work. Report the real
+// limit instead.
+async function loadPdfLibGeometry(bytes, password) {
+  try {
+    return await PDFDocument.load(bytes, password ? { password } : {});
+  } catch (error) {
+    if (isPdfLibEncryptedError(error)) throw new Error(PDF_LIB_ENCRYPTED_MESSAGE);
+    throw error;
+  }
+}
+
 async function writeSinglePagePdf(bytes, pageNumber, password, targetPath, cropBox = null) {
-  const source = await PDFDocument.load(bytes, password ? { password } : {});
+  const source = await loadPdfLibGeometry(bytes, password);
   const target = await PDFDocument.create();
   const [page] = await target.copyPages(source, [pageNumber - 1]);
   if (cropBox !== null) {
@@ -1565,7 +1580,7 @@ async function systemRenderPage(bytes, password, options) {
   if (process.platform !== "darwin") {
     throw new Error("The macOS system PDF renderer is unavailable on this platform.");
   }
-  const geometryDocument = await PDFDocument.load(bytes, password ? { password } : {});
+  const geometryDocument = await loadPdfLibGeometry(bytes, password);
   if (options.page > geometryDocument.getPageCount()) {
     throw new Error(
       `Page ${options.page} is out of range (1-${geometryDocument.getPageCount()}).`,
@@ -1630,7 +1645,7 @@ async function systemRenderPage(bytes, password, options) {
 }
 
 async function nativeRenderPage(bytes, password, options) {
-  const geometryDocument = await PDFDocument.load(bytes, password ? { password } : {});
+  const geometryDocument = await loadPdfLibGeometry(bytes, password);
   if (options.page > geometryDocument.getPageCount()) {
     throw new Error(
       `Page ${options.page} is out of range (1-${geometryDocument.getPageCount()}).`,
@@ -1777,7 +1792,7 @@ async function renderComparisonPage(bytes, password, options) {
 }
 
 async function nativeRenderRegion(bytes, password, options) {
-  const geometryDocument = await PDFDocument.load(bytes, password ? { password } : {});
+  const geometryDocument = await loadPdfLibGeometry(bytes, password);
   if (options.page > geometryDocument.getPageCount()) {
     throw new Error(
       `Page ${options.page} is out of range (1-${geometryDocument.getPageCount()}).`,
@@ -1920,7 +1935,7 @@ async function renderRegion(bytes, password, options) {
 
 async function analyzePages(bytes, password, options) {
   const pdfjs = await loadPdfjs();
-  const pdfDocument = await PDFDocument.load(bytes, password ? { password } : {});
+  const pdfDocument = await loadPdfLibGeometry(bytes, password);
   return {
     analysis: await analyzePdfPages({
       pdfLibPages: pdfDocument.getPages(),
@@ -1953,31 +1968,46 @@ async function signatureZones(bytes, password) {
     scanAcroForm = false;
     recordWarning({ code: "ENCRYPTED_ACROFORM_SCAN_UNAVAILABLE" });
   }
-  const zones = await detectSignatureZones({
-    pdfDoc: pdfDocument,
-    pdfBytes: bytes,
-    pdfjsLib: pdfjs,
-    password,
-    onWarning: recordWarning,
-    scanAcroForm,
-  });
-  return {
-    page_geometry: pdfDocument.getPages().map((page, index) => {
-      const box = getPageBoxGeometry(page);
-      return {
-        height: box.height,
-        origin_x: box.originX,
-        origin_y: box.originY,
-        page: index + 1,
-        width: box.width,
-      };
-    }),
-    warning_counts: [...warningCounts.entries()].map(([code, occurrences]) => ({
-      code,
-      occurrences,
-    })),
-    zones,
+  const buildResult = async () => {
+    const zones = await detectSignatureZones({
+      pdfDoc: pdfDocument,
+      pdfBytes: bytes,
+      pdfjsLib: pdfjs,
+      password,
+      onWarning: recordWarning,
+      scanAcroForm,
+    });
+    return {
+      page_geometry: pdfDocument.getPages().map((page, index) => {
+        const box = getPageBoxGeometry(page);
+        return {
+          height: box.height,
+          origin_x: box.originX,
+          origin_y: box.originY,
+          page: index + 1,
+          width: box.width,
+        };
+      }),
+      warning_counts: [...warningCounts.entries()].map(([code, occurrences]) => ({
+        code,
+        occurrences,
+      })),
+      zones,
+    };
   };
+  if (scanAcroForm) return await buildResult();
+  // On the ignoreEncryption fallback pdf-lib may hand back a document whose
+  // page tree cannot be read at all — AES-256 fails with "Expected instance of
+  // PDFDict". Report the real limit rather than that internal detail.
+  try {
+    return await buildResult();
+  } catch (error) {
+    // A genuine PDF.js password failure still has to reach the caller as
+    // itself: a missing or wrong password is the one case where asking for the
+    // password is the correct advice.
+    if (error?.name === "PasswordException" || typeof error?.code === "string") throw error;
+    throw new Error(PDF_LIB_ENCRYPTED_MESSAGE);
+  }
 }
 
 async function performOperation(request, sourceBytes) {

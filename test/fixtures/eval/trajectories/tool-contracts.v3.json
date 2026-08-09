@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.10.0"
   },
-  "tools_sha256": "eeef340721ec2b52e05d01509e9e6698c79ee4323873677a7e72d03693fb87f9",
+  "tools_sha256": "53c4f2e1bd63613694f7ca93fe2387219e1e04e3beceaaeeb2faf1cd1f0b69ee",
   "tools": [
     {
       "name": "add_signature_field",
@@ -50,7 +50,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           },
           "force_xfa": {
             "type": "boolean",
@@ -132,7 +132,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           },
           "force_xfa": {
             "type": "boolean",
@@ -243,7 +243,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           },
           "expected_output_identity": {
             "type": "object",
@@ -345,7 +345,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           },
           "expected_output_identity": {
             "type": "object",
@@ -409,7 +409,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           },
           "force_xfa": {
             "type": "boolean",
@@ -474,12 +474,12 @@
           "before_password": {
             "type": "string",
             "maxLength": 4096,
-            "description": "Optional password for the earlier PDF."
+            "description": "Optional password for the earlier PDF. Password for encrypted PDFs. PDF.js uses it, but this operation also loads page geometry with pdf-lib, which cannot decrypt PDFs, so an encrypted document still fails with the correct password."
           },
           "after_password": {
             "type": "string",
             "maxLength": 4096,
-            "description": "Optional password for the later PDF."
+            "description": "Optional password for the later PDF. Password for encrypted PDFs. PDF.js uses it, but this operation also loads page geometry with pdf-lib, which cannot decrypt PDFs, so an encrypted document still fails with the correct password."
           },
           "mode": {
             "type": "string",
@@ -645,7 +645,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Password for encrypted PDFs. PDF.js uses it, but this operation also loads page geometry with pdf-lib, which cannot decrypt PDFs, so an encrypted document still fails with the correct password."
           }
         },
         "required": [
@@ -788,7 +788,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           },
           "force_xfa": {
             "type": "boolean",
@@ -851,7 +851,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           },
           "expected_output_identity": {
             "type": "object",
@@ -912,7 +912,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Password for encrypted PDFs. PDF.js uses it, but this operation also loads page geometry with pdf-lib, which cannot decrypt PDFs, so an encrypted document still fails with the correct password."
           }
         },
         "required": [
@@ -1089,7 +1089,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional, applied to all inputs)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           },
           "expected_output_identity": {
             "type": "object",
@@ -1183,7 +1183,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           },
           "force_xfa": {
             "type": "boolean",
@@ -1283,7 +1283,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           }
         },
         "required": [
@@ -1392,7 +1392,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)."
+            "description": "Password for encrypted PDFs. PDF.js uses it, but this operation also loads page geometry with pdf-lib, which cannot decrypt PDFs, so an encrypted document still fails with the correct password."
           }
         },
         "required": [
@@ -1442,7 +1442,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)."
+            "description": "Password for encrypted PDFs. PDF.js uses it, but this operation also loads page geometry with pdf-lib, which cannot decrypt PDFs, so an encrypted document still fails with the correct password."
           }
         },
         "required": [
@@ -1488,7 +1488,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           },
           "expected_output_identity": {
             "type": "object",
@@ -1565,7 +1565,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           },
           "expected_output_identity": {
             "type": "object",
@@ -1702,7 +1702,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           },
           "expected_output_identities": {
             "type": "array",
@@ -1758,7 +1758,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for encrypted PDFs (optional)"
+            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
           }
         },
         "required": [

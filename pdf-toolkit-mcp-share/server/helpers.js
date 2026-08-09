@@ -20,6 +20,32 @@ import {
 } from "pdf-lib";
 
 const PDF_LIB_ENCRYPTED_ERROR_MESSAGE = new EncryptedPDFError().message;
+
+// pdf-lib 1.17.1 ships no decryption at all: PDFDocument.load has no password
+// option, and { ignoreEncryption: true } yields an unusable document. Any
+// operation that reaches pdf-lib therefore fails on an encrypted PDF no matter
+// what password the caller supplies, so the error must say that instead of
+// asking for the password again. PDF.js does decrypt, so the read tools that
+// route only through PDF.js are named as the working alternative.
+export const PDF_LIB_ENCRYPTED_MESSAGE =
+  "This PDF is encrypted and this operation cannot decrypt it: it reads the file with pdf-lib, "
+  + "which has no decryption support, so supplying a password here will not help. "
+  + "Decrypt the file first (for example with qpdf) and retry. "
+  + "To read an encrypted PDF as it is, use read_pdf_layout, convert_pdf_to_markdown, "
+  + "or get_pdf_info, which accept a password and decrypt with PDF.js.";
+
+// Parameter text for tools whose only PDF reader is pdf-lib. The argument is
+// still accepted so existing callers do not break, but it can never be used.
+export const PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION =
+  "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt "
+  + "encrypted PDFs. Decrypt the document before calling this tool.";
+
+// Parameter text for tools that decrypt with PDF.js for one part of their work
+// but still load page geometry through pdf-lib, which stops on encryption.
+export const PDF_LIB_GEOMETRY_PASSWORD_DESCRIPTION =
+  "Password for encrypted PDFs. PDF.js uses it, but this operation also loads page geometry with "
+  + "pdf-lib, which cannot decrypt PDFs, so an encrypted document still fails with the correct password.";
+
 const PDF_FIELD_VALIDATION_SCHEMA_VERSION = "1.0";
 const UNSUPPORTED_DIRECTORY_FSYNC_ERRORS = new Set([
   "EINVAL",

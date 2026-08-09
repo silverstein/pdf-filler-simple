@@ -602,7 +602,7 @@ async function loadPdfBytes(pdfBytes, password = null) {
     pdfDoc = await PDFDocument.load(pdfBytes, password ? { password } : {});
   } catch (error) {
     if (error.message?.includes("password") || error.message?.includes("encrypt")) {
-      throw new Error("PDF is password-protected. Please provide the correct password using the 'password' parameter.");
+      throw new Error(PDF_LIB_ENCRYPTED_MESSAGE);
     }
     throw new Error(invalidPdfMessage, { cause: error });
   }
@@ -683,6 +683,9 @@ import {
   writePdfOutputsAtomic,
   MIN_TEXT_CHARS_WITH_IMAGES,
   openVerifiedRegularFile,
+  PDF_LIB_ENCRYPTED_MESSAGE,
+  PDF_LIB_GEOMETRY_PASSWORD_DESCRIPTION,
+  PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
@@ -2671,6 +2674,22 @@ async function fillPdfBytes(pdfBytes, fieldData, password = null) {
   return await fillPdfDocumentFields(await loadPdfBytes(pdfBytes, password), fieldData);
 }
 
+// read_pdf_content, read_pdf_pages, and search_pdf_text decrypt through PDF.js
+// but expose no password argument, so PDF.js's stock "provide it with the
+// password parameter" advice names an input those tools cannot accept. Name the
+// read tools that do take one instead.
+const PDFJS_NO_PASSWORD_ARGUMENT_MESSAGE =
+  "This PDF is encrypted and this tool accepts no password. Use read_pdf_layout, "
+  + "convert_pdf_to_markdown, or get_pdf_info, which do accept a password, or decrypt "
+  + "the file first (for example with qpdf) and retry.";
+
+function passwordlessReadError(error) {
+  if (!["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"].includes(error?.code)) return error;
+  const replacement = new Error(PDFJS_NO_PASSWORD_ARGUMENT_MESSAGE);
+  replacement.code = error.code;
+  return replacement;
+}
+
 // List available tools
 server.setRequestHandler(ListToolsRequestSchema, async (request) => {
   rejectUnissuedCursor(request, "tools/list");
@@ -2713,7 +2732,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional)"
+              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
             }
           },
           required: ["pdf_path"]
@@ -2751,7 +2770,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional)"
+              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
             },
             force_xfa: {
               type: "boolean",
@@ -2793,7 +2812,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional)"
+              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
             },
             force_xfa: {
               type: "boolean",
@@ -2896,7 +2915,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional)"
+              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
             },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -2948,7 +2967,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional)"
+              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
             }
           },
           required: ["pdf_path"]
@@ -3107,7 +3126,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional)."
+              description: PDF_LIB_GEOMETRY_PASSWORD_DESCRIPTION,
             }
           },
           required: ["pdf_path"],
@@ -3163,7 +3182,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional)."
+              description: PDF_LIB_GEOMETRY_PASSWORD_DESCRIPTION,
             }
           },
           required: ["pdf_path", "page", "x", "y", "width", "height"],
@@ -3414,7 +3433,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional, applied to all inputs)"
+              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
             },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3453,7 +3472,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional)"
+              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
             },
             expected_output_identities: EXPECTED_OUTPUT_IDENTITIES_INPUT_SCHEMA
           },
@@ -3492,7 +3511,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional)"
+              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
             },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3532,7 +3551,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional)"
+              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
             },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3583,8 +3602,8 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           properties: {
             before_pdf_path: { type: "string", description: "Absolute path to the earlier PDF." },
             after_pdf_path: { type: "string", description: "Absolute path to the later PDF." },
-            before_password: { type: "string", maxLength: 4096, description: "Optional password for the earlier PDF." },
-            after_password: { type: "string", maxLength: 4096, description: "Optional password for the later PDF." },
+            before_password: { type: "string", maxLength: 4096, description: `Optional password for the earlier PDF. ${PDF_LIB_GEOMETRY_PASSWORD_DESCRIPTION}` },
+            after_password: { type: "string", maxLength: 4096, description: `Optional password for the later PDF. ${PDF_LIB_GEOMETRY_PASSWORD_DESCRIPTION}` },
             mode: { type: "string", enum: ["default_material", "forensic"], description: "Presentation mode. Default: default_material." },
             max_pages: { type: "integer", minimum: 1, maximum: 20, description: "Whole-document page ceiling for each input. Default: 10." },
             include_visual: { type: "boolean", description: "Request canonical raw-pixel visual comparison. Default: true." },
@@ -3672,7 +3691,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional)"
+              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
             },
             force_xfa: {
               type: "boolean",
@@ -3702,7 +3721,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: "Password for encrypted PDFs (optional)"
+              description: PDF_LIB_GEOMETRY_PASSWORD_DESCRIPTION,
             }
           },
           required: ["pdf_path"]
@@ -3821,7 +3840,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               type: "boolean",
               description: "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures."
             },
-            password: { type: "string", description: "Password for encrypted PDFs (optional)" },
+            password: { type: "string", description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION },
             force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA data will be stripped by pdf-lib." },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3886,7 +3905,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               type: "boolean",
               description: "Deprecated compatibility field. true is accepted as a no-op when the destination does not exist or output_path identifies the same canonical document as pdf_path. It never authorizes replacing a distinct existing output; that requires expected_output_identity."
             },
-            password: { type: "string", description: "Password for encrypted PDFs (optional)" },
+            password: { type: "string", description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path", "output_path", "signature_name", "page", "x", "y", "width", "height", "user_intent_statement", "user_confirmed_at"]
@@ -3932,7 +3951,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               type: "boolean",
               description: "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures."
             },
-            password: { type: "string", description: "Password for encrypted PDFs (optional)" },
+            password: { type: "string", description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION },
             force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped." },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3967,7 +3986,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               type: "boolean",
               description: "Deprecated compatibility field. true is accepted as a no-op when the destination does not exist or output_path identifies the same canonical document as pdf_path. It never authorizes replacing a distinct existing output; that requires expected_output_identity."
             },
-            password: { type: "string", description: "Password for encrypted PDFs (optional)" },
+            password: { type: "string", description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path", "output_path", "page", "x", "y", "width", "height", "text"]
@@ -3987,7 +4006,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           type: "object",
           properties: {
             pdf_path: { type: "string", description: "Path to the PDF file" },
-            password: { type: "string", description: "Password for encrypted PDFs (optional)" }
+            password: { type: "string", description: PDF_LIB_GEOMETRY_PASSWORD_DESCRIPTION }
           },
           required: ["pdf_path"]
         },
@@ -4521,7 +4540,10 @@ async function handleToolCall(request) {
         for (const pdfPath of pdf_paths) {
           const resolvedPdfPath = resolvePath(pdfPath);
           const pdfBytes = await fs.readFile(resolvedPdfPath);
-          const pdfDoc = await PDFDocument.load(pdfBytes);
+          // Via loadPdfBytes so an encrypted input reports the honest pdf-lib
+          // limit instead of pdf-lib's raw "use ignoreEncryption" advice, which
+          // does not work on an encrypted document.
+          const pdfDoc = await loadPdfBytes(pdfBytes);
           const form = pdfDoc.getForm();
           const fields = form.getFields();
           
@@ -4888,6 +4910,7 @@ async function handleToolCall(request) {
               },
             });
           }
+          error = passwordlessReadError(error);
           return createTypedToolError({
             message: `Error reading PDF file: ${error.message}`,
             content: [{
@@ -4975,6 +4998,7 @@ async function handleToolCall(request) {
           };
         } catch (error) {
           if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
+          error = passwordlessReadError(error);
           return createTypedToolError({
             message: `Error reading PDF pages: ${error.message}\n\nPlease ensure the file path is correct and the requested page range is valid.`,
           });
@@ -5399,6 +5423,7 @@ async function handleToolCall(request) {
           };
         } catch (error) {
           if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
+          error = passwordlessReadError(error);
           return createTypedToolError({
             message: `Error searching PDF text: ${error.message}\n\nPlease ensure the file path is correct and the query is valid.`,
           });
@@ -6034,6 +6059,19 @@ async function handleToolCall(request) {
             structuredContent: payload,
           };
         } catch (error) {
+          // The comparison classifier turns any unrecognized Error into
+          // "arguments or PDF inputs are invalid", which is false when the
+          // inputs were fine and only pdf-lib's inability to decrypt stopped
+          // the run. Say what actually happened.
+          // PDF_PARSE_FAILED is the closest code the sealed comparison error
+          // enum already carries; adding a new one would change an oracle-bound
+          // schema module. The message states the real cause either way.
+          if (error?.message === PDF_LIB_ENCRYPTED_MESSAGE) {
+            return createTypedToolError({
+              code: "PDF_PARSE_FAILED",
+              message: PDF_LIB_ENCRYPTED_MESSAGE,
+            });
+          }
           return createTypedToolError(publicPdfComparisonError(error));
         }
       }

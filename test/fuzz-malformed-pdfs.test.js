@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { PDFDocument } from "pdf-lib";
+import { PDF_LIB_ENCRYPTED_MESSAGE } from "../server/helpers.js";
 import {
   createTestTempDirectory,
   removeTestTempDirectory,
@@ -833,9 +834,10 @@ describe.each(RUNTIMES)("$name malformed PDF containment", ({ root }) => {
         },
       });
       expect(result.isError, "encrypted password behavior").toBe(true);
-      expect(result.content?.[0]?.text).toBe(
-        "Error: PDF is password-protected. Please provide the correct password using the 'password' parameter.",
-      );
+      // pdf-lib cannot decrypt, so the same honest refusal is correct for a
+      // missing, wrong, and correct password. test/encrypted-pdf-password-truth
+      // .test.js owns the wording; this only pins that the three cases agree.
+      expect(result.content?.[0]?.text).toBe(`Error: ${PDF_LIB_ENCRYPTED_MESSAGE}`);
       if (password !== undefined) {
         expect(result.content?.[0]?.text).not.toContain(password);
       }

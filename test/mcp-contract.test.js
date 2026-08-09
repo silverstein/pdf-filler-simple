@@ -90,7 +90,14 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // grid, with no matrix of any kind taking part, so every published digest
 // changed and the extraction IR went to 1.5.0. Previously
 // dafeaf19570eece1bb3901f883ea456216b7f46ea6872b80a9eb205c24b9e45f.
-const TOOL_CONTRACT_SHA256 = "53d965e366b16adf2a0fa90dfe837ca98d29a8f41c1adf8b9e8f661ea3bb7d95";
+// 2026-08-09: every `password` argument now states what its own tool can do
+// with it. pdf-lib 1.17.1 has no decryption, so the tools that read only
+// through pdf-lib say the argument is accepted but never used, and the tools
+// that decrypt with PDF.js but still load geometry through pdf-lib say the
+// document fails anyway. Only read_pdf_layout, convert_pdf_to_markdown, and
+// get_pdf_info keep an unqualified password parameter, because only they work.
+// Previously 53d965e366b16adf2a0fa90dfe837ca98d29a8f41c1adf8b9e8f661ea3bb7d95.
+const TOOL_CONTRACT_SHA256 = "59af94a52312b299f57f9f5ab8e18b5de626d2502aa18f47438d7a1ce66e2c1c";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

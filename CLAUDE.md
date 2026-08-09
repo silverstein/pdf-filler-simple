@@ -18,7 +18,7 @@ PDF Toolkit is a Claude Desktop extension (MCPB) and MCP server that enables aut
 - Read form fields from PDFs (text, checkboxes, dropdowns, radio buttons)
 - Fill PDF forms programmatically
 - Save filled PDFs to new files
-- Password-protected PDF support
+- Password-protected PDF reading through PDF.js only (see `## Password Support`); no pdf-lib path can decrypt
 - Bulk fill from CSV files
 - Profile system for reusable data
 - Extract data from PDFs to CSV
@@ -53,16 +53,41 @@ The project uses ES modules (`"type": "module"` in package.json):
 
 ## Password Support
 
-Password functionality for encrypted PDFs is implemented across all relevant tools:
-- `read_pdf_fields`
-- `fill_pdf`
-- `bulk_fill_from_csv`
-- `fill_with_profile`
-- `validate_pdf`
-- `read_pdf_layout`
-- `convert_pdf_to_markdown`
+**Only PDF.js decrypts. pdf-lib does not.** `pdf-lib` 1.17.1 ships no decryption
+of any kind: `PDFDocument.load` has no `password` option, it throws
+`EncryptedPDFError` on an encrypted document, and `{ ignoreEncryption: true }`
+returns an unusable document that fails on the first page access. Every tool
+that reaches pdf-lib therefore fails on an encrypted PDF regardless of the
+password supplied. `pdfjs-dist` 5.4.624 does accept `{ password }` and opens the
+same document correctly.
 
-Pass the optional `password` parameter when working with protected PDFs.
+Measured against an AES-256 PDF produced with
+`qpdf --encrypt --user-password=secret --owner-password=secret --bits=256`:
+
+| Tool | PDF reader | Password support |
+| --- | --- | --- |
+| `read_pdf_layout` | PDF.js | Real. Succeeds; reports a `RAW_PAGE_GEOMETRY_UNAVAILABLE` gap because raw geometry comes from pdf-lib. |
+| `convert_pdf_to_markdown` | PDF.js | Real. Same partial-coverage gap. |
+| `get_pdf_info` | PDF.js | Real. Same partial-coverage gap. |
+| `read_pdf_fields` | pdf-lib | None. Accepts `password`, cannot use it. |
+| `fill_pdf` | pdf-lib | None. Accepts `password`, cannot use it. |
+| `bulk_fill_from_csv` | pdf-lib | None. Accepts `password`, cannot use it. |
+| `fill_with_profile` | pdf-lib | None. Accepts `password`, cannot use it. |
+| `validate_pdf` | pdf-lib | None. Accepts `password`, cannot use it. |
+| `merge_pdfs`, `split_pdf`, `rotate_pdf_pages`, `reorder_pdf_pages`, `apply_page_plan` | pdf-lib worker | None. Accept `password`, cannot use it. |
+| `add_signature_field`, `apply_signature`, `prepare_signing_packet`, `apply_text` | pdf-lib worker | None. Accept `password`, cannot use it. |
+| `render_pdf_page`, `render_pdf_region`, `get_page_analysis` | PDF.js plus pdf-lib geometry | None in practice. PDF.js uses the password, but the pdf-lib geometry load still fails. |
+| `detect_signature_zones` | PDF.js plus pdf-lib geometry | None in practice. It degrades through `ignoreEncryption` and succeeds only on the committed header-malformed R4 oracle; a well-formed AES-128 or AES-256 file fails. |
+| `compare_pdfs` | PDF.js plus pdf-lib geometry | None. With `include_visual` it reports the pdf-lib limit; without it, the run still ends in `internal_validation_error` (pre-existing, unrelated to the password). |
+| `extract_to_csv` | pdf-lib | None. No `password` parameter exists. |
+| `read_pdf_content`, `read_pdf_pages`, `search_pdf_text` | PDF.js | None reachable. No `password` parameter exists, so an encrypted PDF cannot be opened. |
+| `inspect_pdf_accessibility` | pdf-lib | None, and it says so: it rejects a `password` argument outright. |
+
+Pass the optional `password` parameter only to `read_pdf_layout`,
+`convert_pdf_to_markdown`, and `get_pdf_info`. For anything else, decrypt the
+document first (for example with `qpdf --decrypt`) and operate on the plaintext
+copy. Adding decryption to the write paths means replacing or supplementing
+pdf-lib, which is an open dependency decision, not a bug fix.
 
 ## Development Commands
 
@@ -243,7 +268,8 @@ Reuse existing helpers in `server/index.js`:
 
 ### Error Handling
 - Provide clear, actionable error messages
-- Handle password-protected PDFs gracefully
+- Handle password-protected PDFs gracefully, and never tell a caller to supply a
+  password on a path that cannot use one (see `## Password Support`)
 - Guide users to correct tools (e.g., "use 'read_pdf_fields' to see available fields")
 
 ### Security
@@ -258,7 +284,11 @@ Reuse existing helpers in `server/index.js`:
 Ensure ESM syntax is used throughout (`import`/`export`). Check that `package.json` has `"type": "module"`.
 
 ### Password-protected PDF errors
-Pass the `password` parameter to relevant tools. The error message should indicate if a password is required.
+Pass the `password` parameter only to `read_pdf_layout`, `convert_pdf_to_markdown`,
+and `get_pdf_info`; they are the tools whose reader (PDF.js) can decrypt. Any
+other tool reaches pdf-lib and reports that it cannot decrypt the document no
+matter what password is supplied — decrypt the file first. The regression guard
+for this is `test/encrypted-pdf-password-truth.test.js`.
 
 ### MCPB not loading in Claude Desktop
 1. Ensure `npm run build:mcpb` and the platform's `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb` completed successfully
