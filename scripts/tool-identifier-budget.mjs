@@ -8,8 +8,12 @@
  *
  * Identifiers longer than 64 characters fail in the host. That is not a
  * cosmetic limit: it shipped as a real defect (issue #44), where the original
- * benefit-led directory title pushed 13 of the current 40 tool identifiers past
- * the ceiling and broke tool exposure.
+ * benefit-led directory title pushed a large share of the packed tool
+ * identifiers past the ceiling and broke tool exposure. The exact number is
+ * deliberately not written here: it moves with every tool added, and this
+ * module already computes it. `docs/MAINTAINERS.md` carries the current figures
+ * and `test/documentation-claims.test.js` fails when they drift from what this
+ * module reports.
  *
  * The fix was a short packaged runtime brand, but the discovery value of a
  * descriptive title is real, so the naming strategy is dual:
