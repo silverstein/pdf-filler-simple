@@ -603,7 +603,11 @@ export function failedPdfFormValidation({ pdfPath = null, fileName = null } = {}
 // home directory, which this process already knows. Claude Desktop expands them
 // in manifest-authored env strings but not inside `user_config` default values,
 // so a user who never opened the settings sends us a literal `${HOME}/Documents`
-// on every platform. Measured on Windows Claude Desktop 1.26832.0.
+// on every platform. Measured on Windows Claude Desktop 1.26832.0, and on macOS
+// 1.26832.0 by replaying the host's own substitution against a real install —
+// the substitution code is shared, so this is not a per-platform accident.
+// test/host-mcp-config-substitution.test.js binds the manifest shape that makes
+// it true.
 //
 // `${user_config.*}` is *unresolvable*: it means the host did not substitute the
 // user's configuration and we genuinely do not know what was intended. That must
