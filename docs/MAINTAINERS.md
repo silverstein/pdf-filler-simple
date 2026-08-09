@@ -122,12 +122,31 @@ packaging, tests, and release evidence ship together.
 
 ## Tool inventory (current)
 
-Tools are listed in `CLAUDE.md` and in `server/index.js`. Keep the list
-stable and in sync across:
+`manifest.json` owns the registered tool set and `server/output-schemas.js`
+owns which of those tools advertise an `outputSchema`. Five documents write a
+tool inventory down, and "keep them in sync" was never an instruction anyone
+could follow, because three of the five are deliberately partial. Two rules
+apply instead, and `test/documentation-claims.test.js` enforces both.
 
-- `CLAUDE.md` tool list
-- README tool list
-- Actual tool registrations in `server/index.js`
+**An inventory that presents itself as complete must be complete.** These
+enumerate exactly the registered set, and adding a tool without adding it here
+turns the suite red:
+
+- `README.md`, under `## Core Tools`
+- `AGENTS.md`, under `### Tools currently shipped`
+- `docs/OUTPUT_SCHEMAS.md`, the discovery matrix, which enumerates exactly the
+  tools carrying an `outputSchema` plus a named text-only remainder
+
+**A partial inventory must say so, and must name no tool that does not exist.**
+These are selections by design and may lag the registered set, but a phantom
+name in either is a false capability claim and fails the suite:
+
+- `CLAUDE.md`, under `## Core Available Tools`
+- `pdf-toolkit-mcp-share/README.md`, under `## Tools Available`
+
+The selection marker is itself load-bearing. Delete the sentence that says a
+list is partial and the completeness rule starts applying to it, so a selection
+cannot quietly be promoted into a false claim of the whole surface.
 
 ## Zone coordinates and the viewer page box
 

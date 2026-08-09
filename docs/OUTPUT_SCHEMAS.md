@@ -34,6 +34,7 @@ an `isError` result is never forced through a success schema.
 | `fill_pdf` | active document and field-fill outcome |
 | `fill_with_profile` | active document and profile-fill outcome |
 | `get_active_document` | empty or populated active-document state |
+| `get_allowed_directories` | resolved directory list, whether any were configured, which configuration layer supplied them, and the stored configuration path |
 | `get_page_analysis` | bounded page analysis with explicit provenance, operator counts, and a `classification` rollup (`document_kind`, typed `pages_needing_vision`, explicit `pages_not_analyzed`) |
 | `get_pdf_identity` | parser-independent canonical path, byte length, and SHA-256 |
 | `get_pdf_info` | bounded source-bound page, metadata, form-widget, and inert annotation observations with typed coverage, exact accounting, and a full-envelope digest |
@@ -55,6 +56,7 @@ an `isError` result is never forced through a success schema.
 | `rotate_pdf_pages` | active output document and rotation outcome |
 | `search_pdf_text` | bounded page matches |
 | `set_active_document` | populated active-document state |
+| `split_pdf` | input path, output directory, and the page range and page count of every file written |
 | `validate_pdf` | versioned PDF field-validation result |
 
 The following four tools remain intentionally text-only and therefore do not
@@ -97,7 +99,7 @@ before loading the target PDF, writing output, or changing active-document
 state.
 
 The executable source of truth is `server/output-schemas.js`. The MCP contract
-tests assert this complete 38/4 matrix, compile every schema through the pinned
-SDK validator, reject newer unsupported JSON Schema keywords, exercise live
-success and error branches, and require byte-identical source/share runtime
-files.
+tests assert this complete matrix of 39 structured tools and four text-only
+tools, compile every schema through the pinned SDK validator, reject newer
+unsupported JSON Schema keywords, exercise live success and error branches, and
+require byte-identical source/share runtime files.
