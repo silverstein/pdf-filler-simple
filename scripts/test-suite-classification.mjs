@@ -70,6 +70,7 @@ export const CHECKOUT_LOCAL_MUTATING_TEST_SUITES = Object.freeze([
   "test/csv-roundtrip.test.js",
   "test/deep-malformed-campaign.test.js",
   "test/detect-signature-zones-tool.test.js",
+  "test/encrypted-pdf-password-truth.test.js",
   "test/eval/codex-comparison-controller.test.js",
   "test/fetch-pdf-from-url.test.js",
   "test/fuzz-malformed-pdfs.test.js",

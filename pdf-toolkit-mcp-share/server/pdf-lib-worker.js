@@ -31,6 +31,7 @@ import {
   detectExistingSignatures,
   drawSignatureFieldOnPage,
   parsePageRanges,
+  PDF_LIB_ENCRYPTED_MESSAGE,
   stampSignatureOnPage,
   stampTextOnPage,
 } from "./helpers.js";
@@ -1665,7 +1666,7 @@ export async function loadPdfForMutation(bytes, password) {
     document = await PDFDocument.load(bytes, password ? { password } : {});
   } catch (error) {
     if (error.message?.includes("password") || error.message?.includes("encrypt")) {
-      throw new Error("PDF is password-protected. Please provide the correct password using the 'password' parameter.");
+      throw new Error(PDF_LIB_ENCRYPTED_MESSAGE);
     }
     throw new Error("Failed to load PDF: the file is malformed, incomplete, or unsupported.", { cause: error });
   }
