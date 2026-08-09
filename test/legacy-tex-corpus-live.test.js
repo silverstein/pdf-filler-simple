@@ -226,6 +226,22 @@ import { uniqueComputerModernFamily } from "../server/layout-extraction.js";
  * reason in (a). With (a) closed it recovers, and its remaining ceiling is
  * the /ToUnicode deferral rather than any shortage of enrolled shapes.
  *
+ *   h. Extending the reference past the three math families to the OT1 text
+ *      encoding was measured and refused. At 17,597 generated digests over 76
+ *      faces it would gain 72 characters across this corpus and the Shannon
+ *      document together, and 0.25% of eligible occurrences over 110 harvested
+ *      wild documents, because the producers whose rasters match are the ones
+ *      that also kept their encoding. See
+ *      `docs/evidence/legacy-tex-ot1-text-no-go-2026-08.md`.
+ *   i. astro-ph's own figures below rose from 44 linked / 11 recovered when
+ *      the linker learned to read a lowercase `#hh` PDF name escape that
+ *      pdf-lib's `decodeText()` leaves undecoded. That is a linking fix, not a
+ *      new evidence class; the recovered characters are still only cmsy7's
+ *      minus and prime. The defect it exposes underneath — a producer
+ *      /ToUnicode that maps ligature glyphs into C0 — is recorded with its
+ *      measurements in `docs/evidence/legacy-tex-ligature-tounicode-2026-08.md`
+ *      and is NOT fixed.
+ *
  * Interface: one directory variable, `PDF_TOOLS_LEGACY_CORPUS_DIR`, holding
  * all five documents under the fixed basenames listed in DOCUMENTS. A single
  * variable was chosen over five because five separate variables permit a
@@ -369,11 +385,25 @@ const BASELINE = Object.freeze({
     // to cmsy7 as METAFONT builds it from the pinned CTAN sources at 300 dpi
     // with blacker 0, fillin .2, o_correction .6. That is finding (a) below
     // being answered rather than worked around: the external labelled bitmap
-    // reference now exists, generated and pinned, so the eleven minus signs
-    // recover through the ordinary two-glyph corroboration rule under
-    // `ctan-cm-metafont-generated-pk-v1`. The remaining 100,070 omitted
-    // occurrences are the /ToUnicode deferral, which is a safeguard rather
-    // than a gap, and no amount of reference coverage will change it.
+    // reference now exists, generated and pinned, so the minus signs and
+    // primes recover through the ordinary two-glyph corroboration rule under
+    // `ctan-cm-metafont-generated-pk-v1`.
+    //
+    // The figures below rose from 44 linked / 11 recovered when
+    // `type3GlyphNameCandidates` taught the linker to read a lowercase `#hh`
+    // PDF name escape that pdf-lib's `decodeText()` leaves undecoded. This
+    // producer names each glyph after its own raw encoding byte, so `247 0 R`
+    // writes `/#00` and `/#30`; the linker used to compare pdf-lib's literal
+    // `#00` against PDF.js's one-character name and reject the font on every
+    // page where a glyph with such a name was drawn. Nothing about the
+    // evidence changed — the same font, the same two bit-exact cmsy7 rasters,
+    // the same registry entries — only how many of the document's pages the
+    // font could be identified on. The recovered characters are still only
+    // `−` and `′`.
+    //
+    // The remaining 100,022 omitted occurrences are the /ToUnicode deferral,
+    // which is a safeguard rather than a gap, and no amount of reference
+    // coverage will change it.
     producer: "GPL Ghostscript GIT PRERELEASE 9.22",
     creator: "dvips 5.518",
     page_count: 37,
@@ -382,12 +412,12 @@ const BASELINE = Object.freeze({
     layout_admissible_font_count: 4,
     computer_modern_family_font_count: 10,
     observed_type3_occurrence_count: 100114,
-    linked_type3_occurrence_count: 44,
-    omitted_type3_occurrence_count: 100070,
-    classified_occurrence_count: 12,
-    officially_named_occurrence_count: 11,
-    registry_evidence_occurrence_count: 11,
-    strict_recovery_count: 11,
+    linked_type3_occurrence_count: 92,
+    omitted_type3_occurrence_count: 100022,
+    classified_occurrence_count: 60,
+    officially_named_occurrence_count: 32,
+    registry_evidence_occurrence_count: 32,
+    strict_recovery_count: 32,
     abstention_reasons: Object.freeze(["raw_type3_font_link_ambiguous_or_unavailable"]),
   }),
 });
@@ -569,7 +599,7 @@ describe.runIf(Boolean(CORPUS_DIR))("legacy dvips-era Computer Modern Type-3 cor
    * Corpus-level statement of the gap, so the headline claim is asserted once
    * rather than only implied by five per-document blocks.
    */
-  it("recovers only astro-ph's eleven minus signs across the whole corpus", async () => {
+  it("recovers only astro-ph's cmsy7 minus signs and primes across the whole corpus", async () => {
     const measured = [];
     for (const document of DOCUMENTS) measured.push((await measureDocument(document)).measured);
     expect(measured).toHaveLength(DOCUMENTS.length);
@@ -580,7 +610,8 @@ describe.runIf(Boolean(CORPUS_DIR))("legacy dvips-era Computer Modern Type-3 cor
     expect(total("type3_font_count")).toBeGreaterThan(50);
 
     /*
-     * Eleven, and all eleven from one document. Every other recovery-shaped
+     * Thirty-two, and all thirty-two from one document: 29 minus signs and 3
+     * primes, all from astro-ph's `247 0 R`. Every other recovery-shaped
      * figure in this corpus is still zero, so the corpus remains a record of
      * the gap rather than of the fix. Moving this number in either direction
      * is a deliberate, reviewable edit: down is a regression in the generated
@@ -590,7 +621,7 @@ describe.runIf(Boolean(CORPUS_DIR))("legacy dvips-era Computer Modern Type-3 cor
     expect(
       total("strict_recovery_count"),
       "the legacy corpus recovery total moved: this is the tracked defect being fixed, so update the recorded baseline deliberately",
-    ).toBe(11);
+    ).toBe(32);
     expect(
       measured.filter(entry => entry.strict_recovery_count > 0),
       "more than one corpus document now recovers: update the recorded baseline deliberately",

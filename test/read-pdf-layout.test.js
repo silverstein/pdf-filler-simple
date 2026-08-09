@@ -689,6 +689,127 @@ describe("qualified legacy Type-3 glyph evidence", () => {
     }
   });
 
+  /**
+   * A /Differences glyph name is bytes, and PDF names escape an irregular byte
+   * as `#` plus two hexadecimal digits in either letter case. pdf-lib's
+   * `decodeText()` unescapes digits and UPPERCASE A-F only, so the linker sees
+   * a different string from PDF.js exactly when a producer wrote lowercase hex
+   * — which dvips-era Ghostscript does for every Computer Modern glyph it
+   * names after its own raw encoding byte.
+   *
+   * Both readings are asserted, because they pull in opposite directions and a
+   * fix for one is the obvious way to break the other. `/#0b` is an escape
+   * pdf-lib missed and its glyph is really U+000B; `/#230b` is an escaped
+   * `#` and its glyph is really the three-character name `#0b`, which pdf-lib
+   * and PDF.js already agree on. Unescaping every residual `#hh` would link
+   * the first and break the second.
+   */
+  describe("hex-escaped Type-3 glyph names", () => {
+    const MASK_ROWS = Object.freeze([0xfe, 0x80, 0x80, 0xf8, 0x80, 0x80, 0x80, 0x80]);
+    const escapedCharProc = Buffer.concat([
+      Buffer.from("1000 0 0 0 800 800 d1\nq 800 0 0 800 0 0 cm\n"
+        + "BI /IM true /W 8 /H 8 /BPC 1 ID ", "latin1"),
+      Buffer.from(MASK_ROWS.map(row => ~row & 0xff)),
+      Buffer.from("\nEI\nQ\n", "latin1"),
+    ]);
+
+    /**
+     * One page, one Type-3 font, two drawn codes, and `names` written verbatim
+     * into both the /Differences array and the /CharProcs dictionary so the
+     * fixture varies nothing but the on-disk spelling of the glyph name.
+     */
+    function buildEscapedNamePdf(names) {
+      return assemblePdf([
+        Buffer.from("<< /Type /Catalog /Pages 2 0 R >>", "latin1"),
+        Buffer.from("<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "latin1"),
+        Buffer.from("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+          + "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>", "latin1"),
+        streamObject(Buffer.from("BT /F1 1 Tf 1 0 0 1 20 60 Tm <4142> Tj ET\n", "latin1")),
+        Buffer.from("<< /Type /Font /Subtype /Type3 /FontBBox [0 0 8 8] "
+          + "/FontMatrix [0.01 0 0 0.01 0 0] /CharProcs 6 0 R "
+          + `/Encoding << /Type /Encoding /Differences [65 /${names[0]} /${names[1]}] >> `
+          + "/FirstChar 65 /LastChar 66 /Widths [10 10] /Resources << >> >>", "latin1"),
+        Buffer.from(`<< /${names[0]} 7 0 R /${names[1]} 7 0 R >>`, "latin1"),
+        streamObject(escapedCharProc),
+      ]);
+    }
+
+    async function inspectEscapedNames(names) {
+      const bytes = buildEscapedNamePdf(names);
+      const pdfLibDocument = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+      const packageDirectory = path.dirname(require.resolve("pdfjs-dist/package.json"));
+      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      const document = await pdfjsLib.getDocument({
+        data: bytes,
+        useWorkerFetch: false,
+        isEvalSupported: false,
+        cMapUrl: pdfjsFactoryDirectory(path.join(packageDirectory, "cmaps")),
+        cMapPacked: true,
+        standardFontDataUrl: pdfjsFactoryDirectory(path.join(packageDirectory, "standard_fonts")),
+      }).promise;
+      try {
+        const page = await document.getPage(1);
+        const [textContent, operators] = await Promise.all([
+          page.getTextContent({ includeMarkedContent: false, disableNormalization: false }),
+          page.getOperatorList(),
+        ]);
+        const inventory = inspectType3GlyphEvidenceForPage({
+          textContent,
+          operators,
+          pdfjsPage: page,
+          pdfLibPage: pdfLibDocument.getPage(0),
+          pdfjsLib,
+        });
+        return {
+          occurrence_count: inventory.occurrences.length,
+          digests: inventory.occurrences.map(occurrence => occurrence.glyph_sha256),
+          unlinked: inventory.omissions
+            .filter(omission => omission.reason === "raw_type3_font_link_ambiguous_or_unavailable")
+            .reduce((total, omission) => total + omission.count, 0),
+        };
+      } finally {
+        await document.destroy();
+      }
+    }
+
+    it("links a font whose names are plain and keys both drawn glyphs", async () => {
+      // Positive control: no escape anywhere, so nothing below can pass
+      // because the fixture never links in the first place.
+      const plain = await inspectEscapedNames(["upright", "sibling"]);
+      expect(plain.unlinked).toBe(0);
+      expect(plain.occurrence_count).toBe(2);
+      expect(plain.digests.every(digest => typeof digest === "string" && digest.length === 64)).toBe(true);
+    });
+
+    it("links a font whose names are lowercase hex escapes pdf-lib leaves undecoded", async () => {
+      const escaped = await inspectEscapedNames(["#0b", "#0c"]);
+      expect(escaped.unlinked).toBe(0);
+      expect(escaped.occurrence_count).toBe(2);
+      // Same font, same rasters: resolving the name must not change what the
+      // glyph keys to, only whether the font can be found at all.
+      const plain = await inspectEscapedNames(["upright", "sibling"]);
+      expect(escaped.digests).toEqual(plain.digests);
+    });
+
+    it("links a font whose names really are three characters beginning with a hash", async () => {
+      // `/#230b` is an escaped hash, so the glyph's name is `#0b`. pdf-lib and
+      // PDF.js already agree here; re-unescaping the residual would break it.
+      const literal = await inspectEscapedNames(["#230b", "#230c"]);
+      expect(literal.unlinked).toBe(0);
+      expect(literal.occurrence_count).toBe(2);
+    });
+
+    it("keys nothing when one code's two readings both name a CharProcs entry", async () => {
+      // A font that writes /#230b for one code and /#0b for another gives
+      // pdf-lib the same string, `#0b`, for the first, whose two readings then
+      // both exist in /CharProcs. Which raster belongs to the code is no longer
+      // decidable, so no digest is offered for it.
+      const collided = await inspectEscapedNames(["#230b", "#0b"]);
+      expect(collided.occurrence_count).toBe(2);
+      expect(collided.digests[0]).toBeNull();
+    });
+  });
+
   it("keeps ordinary punctuation and already-correct Unicode byte-for-byte unchanged", async () => {
     const { result } = await runFake([{ items: [textItem({ text: "!:=,-−", x: 20, top: 20 })] }]);
     const item = result.pages[0].raw_items[0];

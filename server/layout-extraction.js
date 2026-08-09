@@ -1570,6 +1570,51 @@ export function type3GlyphEvidenceSha256(charProc, fontMatrix, ops, fontPaintOri
   return grid;
 }
 
+/*
+ * The glyph name a /Differences entry really carries, as PDF.js sees it.
+ *
+ * PDF names escape an irregular byte as `#` plus two hexadecimal digits, and
+ * ISO 32000-1 7.3.5 allows either letter case. pdf-lib's `decodeText()`
+ * unescapes with `/#([\dABCDEF]{2})/g` — digits and UPPERCASE A-F only — so a
+ * producer that writes lowercase hex leaves the escape sitting in the decoded
+ * string. dvips-era Ghostscript names each Computer Modern glyph after its own
+ * raw encoding byte, so a text font's ligature slots arrive as `/#0b`, `/#0c`,
+ * `/#0d`, `/#0e` and pdf-lib reports the three-character strings `#0b`, `#0c`,
+ * … while PDF.js keys the same CharProcs entries by the one-character names
+ * U+000B, U+000C, and so on. `linkedRawType3Font` compares the two and the
+ * whole font fails to link, which costs it every recovery and every census
+ * row it would otherwise have.
+ *
+ * A residual escape cannot simply be unescaped again, because the same
+ * three characters can be the glyph's real name. A producer that means the
+ * literal name `#0B` writes `/#230B`; pdf-lib decodes the `#23` to `#` and
+ * stops, and PDF.js decodes it exactly the same way, so both agree on `#0B`
+ * and unescaping once more would break a font that links today. The Shannon
+ * reference document is that case: all 29 of its escaped Type-3 glyph names
+ * are `/#23`-prefixed, and blanket re-unescaping drops its linked occurrences
+ * from 4,437 to 766.
+ *
+ * The two cases are separated exactly, not heuristically. pdf-lib already
+ * consumed every escape whose digits are `[0-9A-F]`, so a residual `#hh` can
+ * only be an escape pdf-lib missed when at least one of its digits is
+ * lowercase `a-f`. `#0b` therefore came from a raw `/#0b`; `#0B`, `#28` and
+ * `#2328` could not have, and are left alone. Both readings are offered to the
+ * linker rather than one being chosen, so a font is still only linked when the
+ * name PDF.js reports is one pdf-lib's bytes can actually produce.
+ *
+ * Measured on the corpus: astro-ph/9402001 goes from 7,019 to 100,108 of its
+ * 100,114 drawn Type-3 occurrences attributable to a font dictionary, and
+ * three further harvested documents recover in the same way, while Shannon and
+ * the four Ghostscript 6.52 documents are unchanged to the occurrence.
+ */
+function type3GlyphNameCandidates(decodedName) {
+  const unescaped = decodedName.replace(
+    /#(?=[0-9a-fA-F]{2})([0-9a-fA-F]{2})/gu,
+    (escape, digits) => (/[a-f]/u.test(digits) ? String.fromCharCode(Number.parseInt(digits, 16)) : escape),
+  );
+  return unescaped === decodedName ? Object.freeze([decodedName]) : Object.freeze([decodedName, unescaped]);
+}
+
 function fontEncodingDifferences(font, context) {
   const encoding = context.lookup(font.get(PDFName.of("Encoding")), PDFDict);
   const differences = encoding?.lookup(PDFName.of("Differences"), PDFArray);
@@ -1581,7 +1626,7 @@ function fontEncodingDifferences(font, context) {
     if (value instanceof PDFNumber) {
       code = value.asNumber();
     } else if (value instanceof PDFName && Number.isSafeInteger(code) && code >= 0 && code <= 255) {
-      codeToGlyph.set(code, value.decodeText());
+      codeToGlyph.set(code, type3GlyphNameCandidates(value.decodeText()));
       code += 1;
     } else {
       return null;
@@ -2000,7 +2045,7 @@ function linkedRawType3Font(fontId, fontTokens, rawFonts) {
     if (typeof glyph.operatorListId === "string") glyphIds.set(glyph.originalCharCode, glyph.operatorListId);
   }
   const candidates = rawFonts.filter(raw => [...observed].every(([code, width]) => raw.widths.get(code) === width)
-    && [...glyphIds].every(([code, glyphId]) => raw.codeToGlyph.get(code) === glyphId));
+    && [...glyphIds].every(([code, glyphId]) => raw.codeToGlyph.get(code)?.includes(glyphId) === true));
   if (candidates.length !== 1 || !candidates[0].recoverable) return null;
   return candidates[0];
 }
@@ -2087,9 +2132,16 @@ export function type3FontPaintOrientation(font, ops) {
 }
 
 function type3GlyphEvidenceForCode(font, rawFont, code, ops) {
-  const glyphId = rawFont.codeToGlyph.get(code);
-  if (typeof glyphId !== "string") return null;
-  const charProc = font?.charProcOperatorList?.[glyphId];
+  // A /Differences name has one reading unless pdf-lib left a lowercase hex
+  // escape in it (see `type3GlyphNameCandidates`), in which case the second
+  // reading is the escape resolved. Whichever one names a real CharProcs entry
+  // is the glyph PDF.js drew; if both do, the font gives one name two meanings
+  // and there is nothing honest to key on.
+  const names = (rawFont.codeToGlyph.get(code) ?? [])
+    .filter(name => typeof name === "string" && typeof font?.charProcOperatorList?.[name] === "object" && font.charProcOperatorList[name] !== null);
+  if (names.length !== 1) return null;
+  const glyphId = names[0];
+  const charProc = font.charProcOperatorList[glyphId];
   if (!charProc || typeof charProc !== "object") return null;
   let byGlyphId = type3GlyphEvidenceCache.get(font);
   if (byGlyphId === undefined) {
