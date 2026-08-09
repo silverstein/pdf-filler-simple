@@ -55,6 +55,24 @@ const MAX_STAGE_TOTAL_BYTES = 1024 * 1024 * 1024;
 const MAX_OUTPUTS = 1000;
 const MAX_REASONABLE_OBJECT_NUMBER = 2_000_000;
 const MAX_STRUCTURE_TOKEN_BYTES = 128;
+// ISO 32000-1:2008, Table 17: every element of a cross-reference stream's /W
+// array is the byte count of one cross-reference field. Eight bytes already
+// exceed the integer precision pdf-lib accumulates those bytes into, so no
+// conforming producer can need more.
+const MAX_XREF_FIELD_BYTES = 8;
+// pdf-lib's PDFXRefStreamParser consumes W[0] + W[1] + W[2] bytes per entry.
+const MAX_XREF_ENTRY_BYTES = 3 * MAX_XREF_FIELD_BYTES;
+// Only the first three /W elements ever become loop bounds, so retaining a
+// short prefix checks everything that matters and keeps a /W array with
+// millions of hostile elements from being materialized by this guard itself.
+const MAX_TRACKED_XREF_WIDTHS = 8;
+// A hostile file can nest dictionaries as deeply as its bytes allow, so the
+// per-dictionary tracking below keeps only a bounded window of open frames.
+const MAX_TRACKED_DICT_DEPTH = 512;
+// A PDF real, which pdf-lib will still coerce into a loop bound. The lexer
+// classifies anything containing a decimal point as a word, so byte widths
+// have to be recognized here rather than only from integer tokens.
+const PDF_REAL_NUMBER = /^[+-]?(?:\d+\.?\d*|\.\d+)$/;
 const MAX_STREAM_FILTER_CHAIN_LENGTH = 4;
 const MAX_EXPANDING_FILTER_STAGES = 2;
 const MAX_PARSED_DIRECT_DEPTH = 256;
@@ -369,12 +387,44 @@ function decodePdfName(bytes, start, end) {
   return value;
 }
 
+const PDF_ENDSTREAM_KEYWORD = Buffer.from("endstream", "ascii");
+
+// Resolve the end of one stream payload the way pdf-lib's own parser does:
+// trust a direct /Length only when the bytes it points past really are the
+// endstream keyword, and otherwise fall back to searching for that keyword.
+// A payload that misleads this also misleads pdf-lib, so the two views of a
+// document cannot be made to disagree about where structure resumes.
+function skipPdfStreamPayload(bytes, offset, declaredLength) {
+  let start = offset;
+  if (bytes[start] === 0x0d) start += 1;
+  if (bytes[start] === 0x0a) start += 1;
+  if (declaredLength !== null && start + declaredLength <= bytes.length) {
+    let probe = start + declaredLength;
+    while (probe < bytes.length && isPdfWhitespace(bytes[probe])) probe += 1;
+    if (bytes.subarray(probe, probe + PDF_ENDSTREAM_KEYWORD.length)
+      .equals(PDF_ENDSTREAM_KEYWORD)) {
+      return probe;
+    }
+  }
+  const found = bytes.indexOf(PDF_ENDSTREAM_KEYWORD, start);
+  return found < 0 ? bytes.length : found;
+}
+
 // This lexer retains only a bounded token and a handful of parser states. It
 // deliberately ignores comments and PDF string objects, where structural
 // spellings are data. Whitespace and comments may be arbitrarily long, so a
 // sparse declaration cannot evade the guard by crossing a fixed-size overlap.
-function* pdfStructureTokens(bytes) {
+//
+// By default stream payloads are tokenized too, because pdf-lib resynchronizes
+// inside a payload whose /Length lies and will parse object headers out of it.
+// skipStreamPayloads is for the cross-reference byte-width pass, which needs
+// the structural view pdf-lib's parser itself acts on: a single unpaired "<"
+// or "(" in compressed payload bytes otherwise swallows every following token
+// up to the next ">" or ")", which is enough to hide a whole xref dictionary.
+function* pdfStructureTokens(bytes, { skipStreamPayloads = false } = {}) {
   let offset = 0;
+  let expectLengthValue = false;
+  let declaredLength = null;
   while (offset < bytes.length) {
     const byte = bytes[offset];
     if (isPdfWhitespace(byte)) {
@@ -411,11 +461,15 @@ function* pdfStructureTokens(bytes) {
       while (offset < bytes.length && !isPdfWhitespace(bytes[offset]) && !isPdfDelimiter(bytes[offset])) {
         offset += 1;
       }
-      yield {
+      const nameToken = {
         type: "name",
         value: decodePdfName(bytes, start, offset),
         overlong: offset - start > MAX_STRUCTURE_TOKEN_BYTES,
       };
+      yield nameToken;
+      if (skipStreamPayloads) {
+        expectLengthValue = !nameToken.overlong && nameToken.value === "Length";
+      }
       continue;
     }
     if (isPdfDelimiter(byte)) {
@@ -439,16 +493,160 @@ function* pdfStructureTokens(bytes) {
     }
     const length = offset - start;
     if (digitLength === 0) allDigits = false;
-    yield {
+    const token = {
       type: allDigits ? "integer" : "word",
       value: bytes.subarray(start, Math.min(offset, start + MAX_STRUCTURE_TOKEN_BYTES)).toString("latin1"),
       overlong: length > MAX_STRUCTURE_TOKEN_BYTES,
       digitLength: allDigits ? digitLength : 0,
     };
+    yield token;
+    if (!skipStreamPayloads) continue;
+    if (expectLengthValue) {
+      expectLengthValue = false;
+      const value = token.type === "integer" && token.digitLength <= 15
+        ? Number(token.value)
+        : null;
+      declaredLength = Number.isSafeInteger(value) && value >= 0 ? value : null;
+      continue;
+    }
+    if (token.type === "word" && !token.overlong && token.value === "stream") {
+      offset = skipPdfStreamPayload(bytes, offset, declaredLength);
+      declaredLength = null;
+    }
+  }
+}
+
+// pdf-lib 1.17.1 reads a cross-reference stream's /W byte widths straight
+// into the loop bounds of PDFXRefStreamParser.parseEntries without any range
+// check, so /W [1 2000000000 1] spins that loop for billions of iterations on
+// a one-kilobyte file while resident memory stays flat. The RSS monitor cannot
+// see a flat-memory spin, which leaves only the subprocess deadline between a
+// hostile document and a wedged worker. The defect is Hopding/pdf-lib#1776
+// (CWE-190); the fix in PR #1781 is unmerged and the issue was closed
+// untouched by a stale bot, so the bound has to live on our side of the
+// parser. The reasoning ported from that PR is the ISO 32000-1:2008 Table 17
+// range check below; the premature end-of-stream handling it also adds is not
+// reproducible from here, because a bounded /W can never read past a bounded
+// entry count.
+function assertBoundedXRefStreamByteWidths(bytes) {
+  const rejectByteWidth = detail => {
+    throw resourceError(
+      "unsafe_xref_byte_width",
+      `PDF declares an unsafe cross-reference stream byte width (${detail}); `
+      + "mutation was stopped before parsing.",
+    );
+  };
+  // The loop bound pdf-lib derives is the numeric magnitude, so magnitude is
+  // what has to be bounded. A non-canonical spelling such as 1.0 stays
+  // acceptable; 2000000000.0 does not.
+  const byteWidthNumber = token => {
+    if (token.overlong) return Number.POSITIVE_INFINITY;
+    if (token.type === "integer") return Number(token.value);
+    if (token.type === "word" && PDF_REAL_NUMBER.test(token.value)) return Number(token.value);
+    return null;
+  };
+  const assertByteWidths = widths => {
+    let entryBytes = 0;
+    for (let index = 0; index < widths.length; index += 1) {
+      const { raw, value } = widths[index];
+      if (!Number.isFinite(value) || value < 0 || value > MAX_XREF_FIELD_BYTES) {
+        rejectByteWidth(`/W[${index}] = ${raw}`);
+      }
+      if (index < 3) entryBytes += value;
+    }
+    if (entryBytes > MAX_XREF_ENTRY_BYTES) {
+      rejectByteWidth(`/W implies a ${entryBytes}-byte entry`);
+    }
+  };
+  const dictStack = [];
+  let untrackedDictDepth = 0;
+  let expectTypeValue = false;
+  let widthState = "idle";
+  let widthFrame = null;
+  let widthDepth = 0;
+  let widthValues = null;
+  let widthMalformed = false;
+  const resetWidthCollection = () => {
+    widthState = "idle";
+    widthFrame = null;
+    widthDepth = 0;
+    widthValues = null;
+    widthMalformed = false;
+  };
+
+  for (const token of pdfStructureTokens(bytes, { skipStreamPayloads: true })) {
+    // Bind each /W array to the dictionary that declares it so a CIDFont /W
+    // glyph-width array, whose legitimate elements are far larger than eight,
+    // is never mistaken for a cross-reference stream's byte widths. The widths
+    // are checked when the dictionary closes, because /Type /XRef may be
+    // written after /W.
+    if (expectTypeValue) {
+      if (token.type === "name" && !token.overlong && token.value === "XRef") {
+        const frame = dictStack.at(-1);
+        if (frame) frame.xrefStream = true;
+      }
+      expectTypeValue = false;
+    }
+    if (widthState === "bracket") {
+      if (token.type === "delimiter" && token.value === "[") {
+        widthState = "collect";
+        widthDepth = 1;
+        widthValues = [];
+        widthMalformed = false;
+      } else {
+        resetWidthCollection();
+      }
+    } else if (widthState === "collect") {
+      if (token.type === "delimiter" && token.value === "[") {
+        widthDepth += 1;
+        widthMalformed = true;
+      } else if (token.type === "delimiter" && token.value === "]") {
+        widthDepth -= 1;
+        if (widthDepth === 0) {
+          if (widthFrame && !widthMalformed) widthFrame.widths = widthValues;
+          resetWidthCollection();
+        }
+      } else if (widthDepth === 1) {
+        // A non-numeric element makes pdf-lib's own W.lookup(idx, PDFNumber)
+        // throw inside the constructor, before parseEntries runs, so such an
+        // array needs no bound from here.
+        const value = byteWidthNumber(token);
+        if (value === null) widthMalformed = true;
+        else if (widthValues.length < MAX_TRACKED_XREF_WIDTHS) {
+          widthValues.push({ raw: token.value, value });
+        }
+      }
+    }
+    if (token.type === "delimiter" && token.value === "<<") {
+      if (dictStack.length < MAX_TRACKED_DICT_DEPTH) {
+        dictStack.push({ xrefStream: false, widths: null });
+      } else {
+        untrackedDictDepth += 1;
+      }
+    } else if (token.type === "delimiter" && token.value === ">>") {
+      if (untrackedDictDepth > 0) {
+        untrackedDictDepth -= 1;
+      } else {
+        const frame = dictStack.pop();
+        if (frame === widthFrame) resetWidthCollection();
+        if (frame?.xrefStream && frame.widths) assertByteWidths(frame.widths);
+      }
+    }
+    if (token.type === "name" && !token.overlong) {
+      if (token.value === "Type") expectTypeValue = true;
+      if (token.value === "W" && dictStack.length > 0) {
+        widthState = "bracket";
+        widthFrame = dictStack.at(-1);
+        widthDepth = 0;
+        widthValues = null;
+        widthMalformed = false;
+      }
+    }
   }
 }
 
 export function assertBoundedPdfStructure(bytes) {
+  assertBoundedXRefStreamByteWidths(bytes);
   const densityLimit = Math.min(
     MAX_REASONABLE_OBJECT_NUMBER,
     Math.max(100_000, bytes.length * 32),
