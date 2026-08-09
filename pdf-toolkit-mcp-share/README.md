@@ -95,6 +95,10 @@ Once installed, ask Claude in Cursor:
 - *"Rotate page 3 by 90 degrees"*
 
 ## Tools Available
+This page names a selection, not the whole surface: the server registers 43
+tools. The root `README.md` lists every one, and `docs/OUTPUT_SCHEMAS.md`
+carries their structured output contracts.
+
 - **display_pdf** - Interactive PDF viewer with search and form sidebar
 - **list_pdfs** - List PDF files in directories
 - **read_pdf_fields** - Read form fields from PDFs

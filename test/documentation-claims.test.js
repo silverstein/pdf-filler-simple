@@ -345,7 +345,15 @@ describe("documentation capability claims", () => {
  * those docs must use a live count unless its context explicitly marks it as
  * frozen v1/v2 evidence.
  */
-const COUNT_CLAIM_SURFACES = ["docs/MCP_CONTRACT.md", "docs/MAINTAINERS.md"];
+const COUNT_CLAIM_SURFACES = [
+  "docs/MCP_CONTRACT.md",
+  "docs/MAINTAINERS.md",
+  // Added after `docs/OUTPUT_SCHEMAS.md` was found claiming "this complete 38/4
+  // matrix" over a 37-row table against a live 39/4. Scoping the original sweep
+  // to the two files that had already drifted left the next one unguarded.
+  "docs/OUTPUT_SCHEMAS.md",
+  "pdf-toolkit-mcp-share/README.md",
+];
 
 /**
  * Qualifiers that may sit between a number and the counted noun. Deliberately a
@@ -521,5 +529,258 @@ describe("documentation tool-count claims", () => {
       [42, 43, 39, 15],
     ).map(entry => entry.split(" (context:")[0]);
     expect(found).toEqual(expected);
+  });
+});
+
+/*
+ * Tool-name inventories.
+ *
+ * The count binding above stops a documented *number* from drifting. It says
+ * nothing about the lists themselves, and the lists had drifted further than
+ * the numbers had. `docs/OUTPUT_SCHEMAS.md` presents a "Discovery matrix" and
+ * calls it complete; it omitted `get_allowed_directories` and `split_pdf`, so
+ * the normative statement of the wire contract told a host integrator that two
+ * shipped tools return no `structuredContent` when both advertise a schema.
+ * `README.md` omitted two tools and listed a third twice, and `AGENTS.md` said
+ * "Tools currently shipped" over twenty-one of forty-three.
+ *
+ * `docs/MAINTAINERS.md` did carry an instruction to keep the lists in sync, and
+ * it was unfollowable: it named two of the five inventories, and three of the
+ * five are deliberately partial, so "in sync" was not a property any of them
+ * could have had.
+ *
+ * The rule below replaces it. A partial inventory is legitimate but must say it
+ * is partial, and may never name a tool that does not exist. Everything else is
+ * read as a claim about the whole surface and must be exactly the registered
+ * set. The selection marker is load-bearing in both directions: deleting the
+ * sentence that declares a list partial promotes it into a completeness claim
+ * and the same test then requires it to be complete, so a selection cannot be
+ * quietly upgraded into a false one.
+ */
+const TOOL_INVENTORIES = [
+  {
+    label: "README.md `## Core Tools`",
+    file: "README.md",
+    start: "## Core Tools",
+    end: "## Build From Source",
+    // Bullets only. `### Viewer and Reading` and the trailing prose on the
+    // `convert_pdf_to_markdown` line must not be read as entries.
+    entry: /^-\s+`([a-z_][a-z0-9_]*)`/gm,
+    completenessStatement: /this list is complete/i,
+  },
+  {
+    label: "AGENTS.md `### Tools currently shipped`",
+    file: "AGENTS.md",
+    start: "### Tools currently shipped",
+    end: "## Build, Test, and Development Commands",
+    // The paragraphs after the list discuss individual tools in backticks;
+    // anchoring to the bullet keeps those out of the inventory.
+    entry: /^-\s+(?:`([a-z_][a-z0-9_]*)`(?:,\s*)?)+/gm,
+    entryWithin: /`([a-z_][a-z0-9_]*)`/g,
+    completenessStatement: /not a selection/i,
+  },
+  {
+    label: "docs/OUTPUT_SCHEMAS.md discovery matrix",
+    file: "docs/OUTPUT_SCHEMAS.md",
+    start: "## Discovery matrix",
+    end: "The executable source of truth",
+    entry: /^\|\s+`([a-z_][a-z0-9_]*)`\s+\|/gm,
+    // The matrix enumerates the tools that advertise a schema, not every tool.
+    registeredKey: "structured",
+    completenessStatement: /this complete matrix of/i,
+  },
+  {
+    label: "CLAUDE.md `## Core Available Tools`",
+    file: "CLAUDE.md",
+    start: "## Core Available Tools",
+    end: "### Current Extraction Boundary",
+    entry: /^\d+\.\s+\*\*([a-z_][a-z0-9_]*)\*\*/gm,
+    selectionMarker: /\(selected;/i,
+  },
+  {
+    label: "pdf-toolkit-mcp-share/README.md `## Tools Available`",
+    file: "pdf-toolkit-mcp-share/README.md",
+    start: "## Tools Available",
+    end: "### Current Extraction Boundary",
+    entry: /^-\s+(?:\*\*([a-z_][a-z0-9_]*)\*\*(?:\s*\/\s*)?)+/gm,
+    entryWithin: /\*\*([a-z_][a-z0-9_]*)\*\*/g,
+    selectionMarker: /names a selection, not the whole surface/i,
+  },
+];
+
+function inventorySection({ file, start, end }, contents) {
+  const startIndex = contents.indexOf(start);
+  if (startIndex === -1) {
+    throw new Error(`${file}: inventory heading ${JSON.stringify(start)} is gone`);
+  }
+  const endIndex = contents.indexOf(end, startIndex + start.length);
+  if (endIndex === -1) {
+    throw new Error(`${file}: inventory terminator ${JSON.stringify(end)} is gone`);
+  }
+  return contents.slice(startIndex + start.length, endIndex);
+}
+
+function inventoryEntries(inventory, section) {
+  const names = [];
+  for (const match of section.matchAll(inventory.entry)) {
+    if (inventory.entryWithin) {
+      for (const inner of match[0].matchAll(inventory.entryWithin)) {
+        names.push(inner[1]);
+      }
+    } else {
+      names.push(match[1]);
+    }
+  }
+  return names;
+}
+
+/**
+ * The whole rule, as one function, so the table-driven test below can falsify
+ * it directly instead of only through the five live documents.
+ */
+function inventoryViolations({ label, names, registered, declaresSelection }) {
+  const violations = [];
+
+  const duplicates = [...new Set(names.filter((name, index) => names.indexOf(name) !== index))];
+  if (duplicates.length > 0) {
+    violations.push(`${label}: lists ${duplicates.join(", ")} more than once`);
+  }
+
+  const phantom = names.filter(name => !registered.includes(name));
+  if (phantom.length > 0) {
+    violations.push(`${label}: names unregistered tools ${phantom.join(", ")}`);
+  }
+
+  if (!declaresSelection) {
+    const missing = registered.filter(name => !names.includes(name));
+    if (missing.length > 0) {
+      violations.push(`${label}: presents a complete inventory but omits ${missing.join(", ")}`);
+    }
+  }
+
+  return violations;
+}
+
+describe("documented tool inventories", () => {
+  async function liveInventoryInputs() {
+    const sourceManifest = JSON.parse(await readRepositoryFile("manifest.json"));
+    const packedManifest = JSON.parse(await readRepositoryFile("manifest.mcpb.json"));
+    const registered = sourceManifest.tools.map(tool => tool.name);
+    const structured = Object.keys(TOOL_OUTPUT_SCHEMAS);
+    return {
+      registered,
+      structured,
+      textOnly: registered.filter(name => !structured.includes(name)),
+      appOnly: registered.filter(
+        name => !packedManifest.tools.some(tool => tool.name === name),
+      ),
+    };
+  }
+
+  it("keeps every documented inventory complete, or declared partial and free of phantom tools", async () => {
+    const { registered, structured } = await liveInventoryInputs();
+    const violations = [];
+
+    for (const inventory of TOOL_INVENTORIES) {
+      const contents = await readRepositoryFile(inventory.file);
+      const section = inventorySection(inventory, contents);
+      const names = inventoryEntries(inventory, section);
+
+      expect(names.length, `${inventory.label}: matched no entries`).toBeGreaterThan(0);
+
+      // Read from the document, not from this config, so the marker is
+      // load-bearing in the way `docs/MAINTAINERS.md` says it is: delete the
+      // sentence declaring a list partial and the completeness rule applies to
+      // it on the next run.
+      const declaresSelection = Boolean(inventory.selectionMarker)
+        && inventory.selectionMarker.test(contents);
+
+      if (inventory.completenessStatement) {
+        expect(contents, `${inventory.label}: completeness statement is gone`)
+          .toMatch(inventory.completenessStatement);
+      }
+
+      violations.push(...inventoryViolations({
+        label: inventory.label,
+        names,
+        registered: inventory.registeredKey === "structured" ? structured : registered,
+        declaresSelection,
+      }));
+    }
+
+    expect(violations).toEqual([]);
+  });
+
+  it("states the live structured and text-only split in the output-schema contract", async () => {
+    const { structured, textOnly } = await liveInventoryInputs();
+    const outputSchemas = normalizeWhitespace(await readRepositoryFile("docs/OUTPUT_SCHEMAS.md"));
+
+    expect(outputSchemas).toContain(
+      `this complete matrix of ${structured.length} structured tools and ${spellNumber(textOnly.length)} text-only tools`,
+    );
+    expect(outputSchemas).toContain(
+      `The following ${spellNumber(textOnly.length)} tools remain intentionally text-only`,
+    );
+
+    // The named remainder must be exactly the tools with no advertised schema.
+    // A tool that quietly loses its schema would otherwise appear in neither
+    // half of a document that claims to cover both.
+    const declared = [...outputSchemas
+      .slice(outputSchemas.indexOf("remain intentionally text-only"))
+      .slice(0, 240)
+      .matchAll(/`([a-z_][a-z0-9_]*)`/g)]
+      .map(match => match[1]);
+    expect([...declared].sort()).toEqual([...textOnly].sort());
+  });
+
+  it("states the live app-only tool count where CLAUDE.md declares its selection", async () => {
+    const { appOnly } = await liveInventoryInputs();
+    const developmentGuide = await readRepositoryFile("CLAUDE.md");
+    expect(developmentGuide).toContain(`(selected; ${appOnly.length} app-only)`);
+  });
+
+  it("keeps the maintainer rule pointing at every inventory it governs", async () => {
+    // The previous instruction named two of the five lists. A rule that governs
+    // an inventory nobody wrote down is how the OUTPUT_SCHEMAS matrix drifted.
+    const maintainers = await readRepositoryFile("docs/MAINTAINERS.md");
+    const missing = TOOL_INVENTORIES
+      .filter(inventory => !maintainers.includes(inventory.file))
+      .map(inventory => inventory.file);
+    expect(missing).toEqual([]);
+  });
+
+  it.each([
+    [
+      "complete inventory that is complete",
+      { names: ["a", "b"], registered: ["a", "b"], declaresSelection: false },
+      [],
+    ],
+    [
+      "complete inventory missing a registered tool",
+      { names: ["a"], registered: ["a", "b"], declaresSelection: false },
+      ["x: presents a complete inventory but omits b"],
+    ],
+    [
+      "declared selection missing a registered tool",
+      { names: ["a"], registered: ["a", "b"], declaresSelection: true },
+      [],
+    ],
+    [
+      "selection promoted to a completeness claim by dropping its marker",
+      { names: ["a"], registered: ["a", "b"], declaresSelection: false },
+      ["x: presents a complete inventory but omits b"],
+    ],
+    [
+      "declared selection naming a tool that does not exist",
+      { names: ["a", "ghost"], registered: ["a", "b"], declaresSelection: true },
+      ["x: names unregistered tools ghost"],
+    ],
+    [
+      "inventory listing the same tool twice",
+      { names: ["a", "b", "a"], registered: ["a", "b"], declaresSelection: false },
+      ["x: lists a more than once"],
+    ],
+  ])("%s", (_label, input, expected) => {
+    expect(inventoryViolations({ label: "x", ...input })).toEqual(expected);
   });
 });

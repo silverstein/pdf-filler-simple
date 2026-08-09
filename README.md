@@ -176,6 +176,10 @@ that same view and reports raw pixels unavailable.
 
 ## Core Tools
 
+This list is complete: it names every tool the server registers. One of them,
+`read_pdf_bytes`, is available only to the in-app viewer and is not packed into
+the `.mcpb` manifest that ordinary model workflows discover.
+
 ### Viewer and Reading
 
 - `display_pdf`
@@ -223,6 +227,7 @@ that same view and reports raw pixels unavailable.
 ### Extraction and Analysis
 
 - `extract_to_csv`
+- `compare_pdfs`
 - `get_pdf_identity`
 - `get_pdf_info`
 - `inspect_pdf_accessibility`
@@ -232,7 +237,7 @@ that same view and reports raw pixels unavailable.
 
 - `get_active_document`
 - `set_active_document`
-- `get_pdf_resource_uri`
+- `get_allowed_directories`
 - `read_pdf_bytes`
 - `reveal_in_finder`
 
