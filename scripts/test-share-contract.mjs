@@ -803,7 +803,7 @@ async function main() {
     const { tools } = await client.listTools();
     const { prompts } = await client.listPrompts();
     const { resources } = await client.listResources();
-    if (tools.length !== 42 || prompts.length !== 14 || resources.length !== 1) {
+    if (tools.length !== 43 || prompts.length !== 14 || resources.length !== 1) {
       throw new Error(
         `Unexpected discovery counts: ${tools.length} tools, ${prompts.length} prompts, ${resources.length} resources`,
       );
