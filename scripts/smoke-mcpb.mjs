@@ -68,11 +68,11 @@ async function expectMcpError(operation, code) {
 
 export function validatePackedDiscovery(tools) {
   if (!Array.isArray(tools)
-    || tools.length !== 42
+    || tools.length !== 43
     || !tools.some(tool => tool.name === "render_pdf_page")
     || !tools.some(tool => tool.name === "compare_pdfs")
     || !tools.some(tool => tool.name === "inspect_pdf_accessibility")) {
-    throw new Error("Packed server discovery differs from the current 42-tool contract");
+    throw new Error("Packed server discovery differs from the current 43-tool contract");
   }
 }
 
