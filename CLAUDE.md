@@ -43,15 +43,20 @@ PDF Toolkit is a Claude Desktop extension (MCPB) and MCP server that enables aut
 - `example-fw9.pdf` - Sample form for smoke tests. Keep anonymized assets only.
 - `docs/MAINTAINERS.md` - Maintainer onboarding and operations
 - `docs/RELEASE.md` - Release checklist
-- `server/qpdf-decrypt.js` - The only module that loads the qpdf runtime, and
-  the only path by which PDF Tools decrypts. Owns the password rules, the `/P`
-  permission enforcement, and the encrypted-input size cap. See
-  `## Password Support`.
+- `server/qpdf-decrypt.js` - The only path by which PDF Tools decrypts. Owns the
+  password rules, the `/P` permission enforcement, the encrypted-input size cap,
+  the one-at-a-time queue, and the 30-second deadline. It does not run qpdf
+  itself. See `## Password Support`.
+- `server/qpdf-decrypt-worker.js` - The worker thread that does. The only module
+  that loads the qpdf runtime, and never on the server's own thread. Decides
+  nothing: it runs the two qpdf passes the wrapper asks for and reports opaque
+  reason codes.
 - `vendor/qpdf-wasm/` - Reproducible QPDF WebAssembly build recipe. The
   promoted artifact under `vendor/qpdf-wasm/runtime/` is shipped in both the
   MCPB and the share ZIP at that same path, and is loaded by **exactly one
-  module**, `server/qpdf-decrypt.js` — a second importer would bypass its
-  safety rules and fails the artifact test. Do not
+  module**, `server/qpdf-decrypt-worker.js`, which is started from exactly one
+  place, `server/qpdf-decrypt.js` — a second importer, or a second starter,
+  would bypass the safety rules and fails the artifact test. Do not
   hand-edit `runtime/` or `runtime.provenance.json`; regenerate them with
   `node scripts/vendor-qpdf-wasm-runtime.mjs <extracted-build-directory>`.
   `npm run qpdf-wasm:verify` is a ~45-minute Docker release gate and must stay
@@ -76,10 +81,42 @@ on an encrypted PDF regardless of the password supplied. `pdfjs-dist` 5.4.624
 does accept `{ password }` and opens the same document correctly.
 
 `read_pdf_fields`, `validate_pdf`, and `extract_to_csv` decrypt through the
-vendored qpdf WebAssembly runtime in `server/qpdf-decrypt.js` before handing
-plaintext to pdf-lib. They qualify because they only ever read: none of them
-writes a PDF back, so none can re-encrypt a document or alter its protection.
-Decrypted bytes stay in memory and are never written to disk.
+vendored qpdf WebAssembly runtime before handing plaintext to pdf-lib. They
+qualify because they only ever read: none of them writes a PDF back, so none can
+re-encrypt a document or alter its protection. Decrypted bytes stay in memory
+and are never written to disk.
+
+**Decryption runs on a worker thread, never on the server's.** qpdf-wasm's
+`callMain` is synchronous and cannot be interrupted by the thread that called
+it, so an in-process `setTimeout` deadline could not fire until the work it was
+meant to bound had already finished. Since the size cap bounds *bytes* while
+qpdf's cost tracks *objects*, a lawful 14.3 MiB encrypted document built from
+800,000 tiny objects spends over five seconds inside one `callMain` — and
+nothing bounds object count. `server/qpdf-decrypt.js` therefore starts
+`server/qpdf-decrypt-worker.js` per request and destroys it with
+`worker.terminate()`, which is the only thing that actually stops WebAssembly
+mid-flight. Measured: deadlines of 100 ms, 250 ms, 1 s, 2.5 s and 4 s against
+that document each land within ~60 ms of themselves, and the process then burns
+under 1 ms of further CPU over the next 2 seconds — against the 4 seconds of CPU
+the same decrypt costs when it is allowed to finish.
+
+**Deadline: 30 seconds**, matching `DEFAULT_TIMEOUT_MS` in
+`server/pdf-lib-subprocess.js`. It bounds how long a hostile document may hold
+the decryption queue and a core, not how long the server is unresponsive — the
+server's thread is free throughout. Plaintext crosses no new boundary: the
+worker is a thread in the same process and hands the decrypted bytes over
+through `postMessage`'s transfer list, which moves ownership of the same pages
+rather than serializing them. Routing decryption into the existing pdf-lib
+*child process* would have reused proven containment but forced plaintext
+through a pipe or a staged file, which is exactly what the design avoids.
+
+Isolation costs a roughly constant **45-65 ms per decryption** — worker start,
+a fresh runtime instantiation, and the message round trip. Measured on
+macOS/arm64: an 84 KB document goes from 32 ms to 81 ms, a 1 MB one from 68 ms
+to 110 ms, and a 14.6 MiB one from 671 ms to 734 ms. Back-to-back decryptions
+pay an extra ~55 ms because the queue is held until the previous worker is gone,
+which is deliberate: one qpdf heap at a time is what the size cap assumes.
+Isolation does **not** improve the memory picture; see the size-cap note below.
 
 **The scope rule.** Decryption is not a "remove the password" facility:
 
@@ -108,6 +145,20 @@ below the 250 MiB `PDF_MUTATION_MAX_FILE_BYTES`. Decryption costs roughly
 `16 x input + 45 MB` of peak RSS, so 16 MiB keeps a full read inside the
 1024 MiB the project already treats as too much. Oversized input gets a clear
 size message rather than an out-of-memory kill.
+
+**Do not raise the cap on the strength of worker isolation.** The hypothesis
+that a terminated worker would reclaim the WebAssembly heap where in-process GC
+could not does not survive measurement on macOS/arm64. After one 14.6 MiB
+decrypt and a forced-GC settle, the in-process arrangement retains ~190 MB over
+baseline and the worker arrangement retains ~260 MB: terminating the thread
+returns *less* to the OS than collecting the module did, because the freed pages
+stay mapped. Neither arrangement accumulates — eight consecutive near-cap
+decrypts plateau at ~370 MB in-process and ~350 MB in workers rather than
+summing — so a per-file cap is still sufficient and `extract_to_csv` still needs
+no aggregate bound. What the cap is derived from is the *peak* of a single
+decrypt, which isolation leaves essentially unchanged (~315 MB in a worker
+versus ~333 MB in-process), so there is no measurement here that licenses a
+larger number.
 
 Measured against an AES-256 PDF produced with
 `qpdf --encrypt --user-password=secret --owner-password=secret --bits=256`:

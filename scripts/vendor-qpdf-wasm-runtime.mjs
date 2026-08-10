@@ -183,10 +183,14 @@ async function main() {
     redistribution: "allowed while the complete notice directory travels with the runtime",
     integration_status:
       "Packaged into the MCPB and the share ZIP, and loaded by exactly one module: "
-      + "server/qpdf-decrypt.js. It decrypts encrypted PDFs in memory for the read-only tools "
+      + "server/qpdf-decrypt-worker.js, which runs only on a worker thread that "
+      + "server/qpdf-decrypt.js starts, bounds by a wall-clock deadline, and destroys once the "
+      + "document is decrypted or the deadline expires. The runtime is synchronous and cannot be "
+      + "interrupted from the thread that called it, so destroying that thread is the only real "
+      + "way to stop it. It decrypts encrypted PDFs in memory for the read-only tools "
       + "read_pdf_fields, validate_pdf and extract_to_csv, which never write a PDF back. No write "
       + "path loads it, nothing re-encrypts or rewrites a document with it, and decrypted bytes "
-      + "are never written to disk.",
+      + "are transferred between threads within the one process and never written to disk.",
     generator: {
       path: posixRelative(REPO_ROOT, generatorPath),
       sha256: canonicalLfSha256(await fs.readFile(generatorPath)),
