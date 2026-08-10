@@ -11,8 +11,12 @@ packaged tree before any tool was allowed to rely on it.
 
 Exactly one module: `server/qpdf-decrypt.js`. It decrypts encrypted PDFs in
 memory for the three read-only tools — `read_pdf_fields`, `validate_pdf` and
-`extract_to_csv` — that never write a PDF back, so nothing here can re-encrypt
-a document or change its protection. It implements the production wrapper this
+`extract_to_csv` — and for the mutation tools, which additionally use it to
+restore a source's own encryption onto the changed document before it is
+written. Re-protection uses `--copy-encryption`, so the only protection it can
+write is the one the document already had: nothing here mints, removes or
+weakens protection, and a document that cannot be faithfully re-protected fails
+the operation rather than being written out decrypted. It implements the production wrapper this
 README asks for below: callers receive plaintext bytes and a permission
 decision, never the module or its `FS`. Passwords reach QPDF through
 `--password-file=` in the module's private MEMFS, never through argv, and QPDF

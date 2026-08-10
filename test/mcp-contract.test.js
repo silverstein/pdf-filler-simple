@@ -105,7 +105,16 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // takes a list of documents, and one password cannot serve a list. Every other
 // pdf-lib-only tool keeps the unchanged "cannot decrypt" text. Previously
 // fef092d0e306a33839f249d0cf121519d723981aaf3872119d8668d2001cb62f.
-const TOOL_CONTRACT_SHA256 = "b237e957d3eb3333442bc79f071dc8e9e74f6abee3880c835aa09b62487ce68d";
+//
+// 2026-08-10: the twelve mutation tools can now decrypt as well, so their
+// password arguments stop claiming pdf-lib cannot decrypt. The new text says
+// what those tools actually do — decrypt, change, and save the document with
+// exactly the encryption and permissions it already had — states the
+// encrypted-input size limit, and says that the owner password is required
+// when the document's own permissions deny the change being made. No tool
+// gains or loses a parameter. Previously
+// b237e957d3eb3333442bc79f071dc8e9e74f6abee3880c835aa09b62487ce68d.
+const TOOL_CONTRACT_SHA256 = "565e4e6c9debad5b16b148acb5cac2814d93c1c3085b50fa7b62754acc8ec01a";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

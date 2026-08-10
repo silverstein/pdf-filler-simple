@@ -43,6 +43,12 @@ import {
   validateAccessibilityInspectionResult,
 } from "./accessibility-inspection.js";
 import {
+  decryptPdfForWrite,
+  ENCRYPTED_WRITE_OPERATIONS,
+  mergeProtectionRefusal,
+  reprotectPdfAfterWrite,
+} from "./qpdf-decrypt.js";
+import {
   PDF_MERGE_MAX_TOTAL_BYTES,
   PDF_MUTATION_MAX_FILE_BYTES,
   pdfMutationFileLimitError,
@@ -1884,7 +1890,6 @@ export async function loadPdfForMutation(bytes, password) {
   return document;
 }
 
-const loadPdf = loadPdfForMutation;
 
 async function reopenSource(binding) {
   return withBoundedPdfFileSafely(
@@ -1999,7 +2004,145 @@ function fillFields(document, data, { objectErrors = false } = {}) {
   return { filledFields, errors };
 }
 
-async function execute(request) {
+/*
+ * Encrypted documents on the write path.
+ *
+ * All three phases — decrypt, mutate, re-protect — run here, inside the
+ * isolated pdf-lib worker, and that placement is forced rather than chosen.
+ * A mutation's output is written to the private stage directory on disk before
+ * the parent ever sees it, so if protection were restored anywhere later than
+ * this process the staged file would be plaintext on disk. Re-protection
+ * therefore has to happen before `stageOutputs`, which puts QPDF in here; and
+ * once QPDF is in here, decrypting here too keeps the plaintext from ever
+ * crossing a process boundary.
+ *
+ * QPDF itself still runs on its own thread, exactly as it does for the
+ * read-only tools: `server/qpdf-decrypt.js` starts one worker per phase and
+ * destroys it. That is not merely inherited. A synchronous `callMain` on this
+ * thread would block the RSS monitor's heartbeat, and the parent kills a child
+ * whose monitor stalls for 250 ms — well under the ~1.6 s a legitimate
+ * near-cap decrypt takes — so running QPDF inline here would turn ordinary
+ * encrypted documents into spurious resource-limit kills.
+ *
+ * Where the plaintext is, at every moment:
+ *
+ *   - The ciphertext is read from disk into this process, as before.
+ *   - It is transferred into a QPDF thread, decrypted inside the WebAssembly
+ *     heap, and the plaintext is transferred back here. That thread is then
+ *     destroyed.
+ *   - pdf-lib parses and mutates the plaintext in this process's heap.
+ *   - The mutated plaintext and the original ciphertext are transferred into a
+ *     second QPDF thread, which restores the original protection and is then
+ *     destroyed.
+ *   - Only the re-protected ciphertext reaches `stageOutputs`, and so only
+ *     ciphertext is ever written to disk.
+ *
+ * On every failure path — a refusal, a deadline, an RSS breach, SIGTERM,
+ * SIGKILL — this process dies or unwinds with the plaintext still only in
+ * memory, and the parent removes the operation directory regardless. There is
+ * no path on which a decrypted document is staged, and no fallback that writes
+ * plaintext when re-protection fails: an encrypted input yields an encrypted
+ * output or no output at all.
+ */
+function createProtection(request) {
+  return {
+    operation: request.operation,
+    password: request.password,
+    // Every source gets an entry, encrypted or not, because `merge_pdfs` has
+    // to be able to tell "all protected the same way" from "some protected".
+    sources: new Map(),
+  };
+}
+
+/**
+ * Loads one mutation source, decrypting it first if pdf-lib refuses it as
+ * encrypted.
+ *
+ * pdf-lib is always tried first, so an unencrypted document pays nothing: no
+ * QPDF module is instantiated and no extra parse happens. The encrypted branch
+ * is entered only after pdf-lib has said the document is encrypted, which is
+ * the same detection the read path uses.
+ */
+async function loadMutationSource(protection, bytes) {
+  if (!ENCRYPTED_WRITE_OPERATIONS[protection.operation]) {
+    // Not a mutation that may decrypt; behave exactly as before.
+    return loadPdfForMutation(bytes, protection.password);
+  }
+  const known = protection.sources.get(bytes);
+  if (known?.plaintext) return loadPdfForMutation(known.plaintext, null);
+  try {
+    const document = await loadPdfForMutation(bytes, protection.password);
+    if (!protection.sources.has(bytes)) protection.sources.set(bytes, null);
+    return document;
+  } catch (error) {
+    if (error?.message !== PDF_LIB_ENCRYPTED_MESSAGE) throw error;
+  }
+  const decrypted = await decryptPdfForWrite(bytes, protection.password, protection.operation);
+  protection.sources.set(bytes, {
+    reference: bytes,
+    encryption: decrypted.encryption,
+    plaintext: decrypted.plaintext,
+    release: decrypted.release,
+    // The rebuild-style operations bind a copied page's null-reference
+    // provenance to a digest of the bytes its source was parsed from. For a
+    // decrypted document those bytes are the plaintext, not the file on disk,
+    // so the on-disk digest would not describe what pdf-lib actually read.
+    // The binding to the file itself is not weakened by this: `reopenSource`
+    // and the parent's `revalidateSources` both still verify the encrypted
+    // source by device, inode, size and digest.
+    parsedSha256: createHash("sha256").update(decrypted.plaintext).digest("hex"),
+  });
+  return loadPdfForMutation(decrypted.plaintext, null);
+}
+
+/**
+ * The digest of the bytes a source was actually parsed from: the plaintext for
+ * a decrypted document, and the file's own digest otherwise.
+ */
+function parsedSourceAuthority(protection, bytes, binding) {
+  return protection.sources.get(bytes)?.parsedSha256 ?? binding.sha256;
+}
+
+/** The protection every output of this request must carry, or `null`. */
+function requiredProtection(protection) {
+  const opened = [...protection.sources.values()];
+  const refusal = mergeProtectionRefusal(opened.map(entry => entry?.encryption ?? null));
+  if (refusal) throw refusal;
+  return opened.find(entry => entry !== null) ?? null;
+}
+
+/**
+ * Restores the source's protection onto every output, before anything is
+ * staged. Returns the bytes that will actually be written.
+ */
+async function protectOutputs(protection, outputs) {
+  const required = requiredProtection(protection);
+  if (!required) return outputs;
+  const protectedOutputs = [];
+  for (const bytes of outputs) {
+    protectedOutputs.push(await reprotectPdfAfterWrite(
+      bytes,
+      required.reference,
+      protection.password,
+      required.encryption,
+    ));
+    // The mutated bytes are a decrypted copy of the document and are no longer
+    // needed once they have been protected. Overwriting them here is the same
+    // best-effort narrowing the decrypted source gets: it shortens the window
+    // in which plaintext is readable in this process rather than closing it.
+    if (ArrayBuffer.isView(bytes)) bytes.fill(0);
+  }
+  return protectedOutputs;
+}
+
+/** Overwrites every decrypted buffer this request produced. */
+function releaseProtection(protection) {
+  for (const entry of protection.sources.values()) {
+    try { entry?.release?.(); } catch { /* Already released. */ }
+  }
+}
+
+async function execute(request, protection) {
   const sourceBytes = await Promise.all(request.sources.map(reopenSource));
   const options = request.options;
   let outputs = [];
@@ -2007,7 +2150,7 @@ async function execute(request) {
   if (request.operation === "inspect_pdf_accessibility") {
     result = await inspectAccessibilitySource(sourceBytes[0], request.sources[0]);
   } else if (["fill_pdf", "fill_with_profile"].includes(request.operation)) {
-    const document = await loadPdf(sourceBytes[0], request.password);
+    const document = await loadMutationSource(protection, sourceBytes[0]);
     const expectedPageCount = document.getPageCount();
     const expectedPageRotations = normalizedPageRotations(document);
     const fill = fillFields(document, options.field_data);
@@ -2019,7 +2162,7 @@ async function execute(request) {
   } else if (request.operation === "bulk_fill_from_csv") {
     const rows = [];
     for (const record of options.records) {
-      const document = await loadPdf(sourceBytes[0], request.password);
+      const document = await loadMutationSource(protection, sourceBytes[0]);
       const expectedPageCount = document.getPageCount();
       const expectedPageRotations = normalizedPageRotations(document);
       const fill = fillFields(document, record);
@@ -2036,19 +2179,19 @@ async function execute(request) {
     let pages = 0;
     const expectedPageRotations = [];
     for (const [sourceIndex, bytes] of sourceBytes.entries()) {
-      const source = await loadPdf(bytes, request.password);
+      const source = await loadMutationSource(protection, bytes);
       if (sourceBytes.length > 1) metadata.push(captureMergeDescriptiveMetadata(source));
       else {
         copyPdfDocumentMetadataForRebuiltOutput(
           target,
           source,
-          request.sources[sourceIndex].sha256,
+          parsedSourceAuthority(protection, bytes, request.sources[sourceIndex]),
         );
       }
       const indices = source.getPageIndices();
       expectedPageRotations.push(...normalizedPageRotations(source));
       await copyPdfPagesForRebuiltOutput(target, source, indices, {
-        sourceAuthorityLabel: request.sources[sourceIndex].sha256,
+        sourceAuthorityLabel: parsedSourceAuthority(protection, bytes, request.sources[sourceIndex]),
       });
       pages += indices.length;
     }
@@ -2062,21 +2205,21 @@ async function execute(request) {
     })];
     result = { total_pages: pages, omitted_fields: consensus.omittedFields, form_info: formInfo(target) };
   } else if (request.operation === "split_pdf") {
-    const source = await loadPdf(sourceBytes[0], request.password);
+    const source = await loadMutationSource(protection, sourceBytes[0]);
     const ranges = parsePageRanges(options.page_ranges, source.getPageCount());
     for (const [start, end] of ranges) {
       const target = await PDFDocument.create();
       copyPdfDocumentMetadataForRebuiltOutput(
         target,
         source,
-        request.sources[0].sha256,
+        parsedSourceAuthority(protection, sourceBytes[0], request.sources[0]),
       );
       await copyPdfPagesForRebuiltOutput(
         target,
         source,
         Array.from({ length: end - start + 1 }, (_, index) => start - 1 + index),
         {
-          sourceAuthorityLabel: request.sources[0].sha256,
+          sourceAuthorityLabel: parsedSourceAuthority(protection, sourceBytes[0], request.sources[0]),
         },
       );
       if (target.getPageCount() < 1) throw new Error("split_pdf produced an empty effective page range.");
@@ -2088,7 +2231,7 @@ async function execute(request) {
     }
     result = { ranges };
   } else if (request.operation === "rotate_pdf_pages") {
-    const document = await loadPdf(sourceBytes[0], request.password);
+    const document = await loadMutationSource(protection, sourceBytes[0]);
     const all = document.getPages();
     const expectedPageCount = all.length;
     const expectedPageRotations = normalizedPageRotations(document);
@@ -2112,7 +2255,7 @@ async function execute(request) {
     })];
     result = { rotated_pages: targetIndices.length, form_info: formInfo(document) };
   } else if (["reorder_pdf_pages", "apply_page_plan"].includes(request.operation)) {
-    const source = await loadPdf(sourceBytes[0], request.password);
+    const source = await loadMutationSource(protection, sourceBytes[0]);
     const order = options.page_order;
     if (!Array.isArray(order) || order.length < 1) throw new Error("page_order has no effective output pages.");
     const total = source.getPageCount();
@@ -2135,10 +2278,10 @@ async function execute(request) {
     copyPdfDocumentMetadataForRebuiltOutput(
       target,
       source,
-      request.sources[0].sha256,
+      parsedSourceAuthority(protection, sourceBytes[0], request.sources[0]),
     );
     await copyPdfPagesForRebuiltOutput(target, source, order.map(page => page - 1), {
-      sourceAuthorityLabel: request.sources[0].sha256,
+      sourceAuthorityLabel: parsedSourceAuthority(protection, sourceBytes[0], request.sources[0]),
       mutatePage(page, index) {
         const rotation = options.rotations?.[String(order[index])];
         if (rotation) page.setRotation(degrees((page.getRotation().angle + rotation) % 360));
@@ -2155,7 +2298,7 @@ async function execute(request) {
       form_info: formInfo(target),
     };
   } else {
-    const document = await loadPdf(sourceBytes[0], request.password);
+    const document = await loadMutationSource(protection, sourceBytes[0]);
     const expectedPageCount = document.getPageCount();
     const expectedPageRotations = normalizedPageRotations(document);
     assertMayResave(document, options.allow_resign, request.operation === "apply_signature" ? "re-sign" : "modify");
@@ -2242,15 +2385,26 @@ async function stageOutputs(stageDirectory, outputBytes) {
 
 export async function executePdfLibOperationRequest(request) {
   validateRequest(request);
-  const { outputs, result } = await execute(request);
-  const manifest = await stageOutputs(request.stage_directory, outputs);
-  return {
-    protocol_version: PROTOCOL_VERSION,
-    operation: request.operation,
-    status: "ok",
-    manifest,
-    result,
-  };
+  const protection = createProtection(request);
+  try {
+    const { outputs, result } = await execute(request, protection);
+    // Protection is restored before anything reaches the stage, so a decrypted
+    // document is never written to disk even momentarily. A failure here
+    // stages nothing at all rather than falling back to plaintext.
+    const manifest = await stageOutputs(
+      request.stage_directory,
+      await protectOutputs(protection, outputs),
+    );
+    return {
+      protocol_version: PROTOCOL_VERSION,
+      operation: request.operation,
+      status: "ok",
+      manifest,
+      result,
+    };
+  } finally {
+    releaseProtection(protection);
+  }
 }
 
 export async function executePdfLibMutationRequest(request) {

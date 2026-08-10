@@ -87,6 +87,7 @@ export const CHECKOUT_LOCAL_MUTATING_TEST_SUITES = Object.freeze([
   "test/path-handler-toctou.test.js",
   "test/pdfjs-worker-contract.test.js",
   "test/plugin-data-config.test.js",
+  "test/qpdf-reprotect-write-paths.test.js",
   "test/render-pdf-page.test.js",
   "test/sandbox-boundary-findings.test.js",
   "test/signatures.test.js",
@@ -236,6 +237,18 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
     reason: "Loads the committed QPDF runtime to encrypt its own AES-256, AES-128 and RC4-128 "
       + "fixtures, so the decryption suite exercises real encrypted documents without committing "
       + "binaries.",
+  }),
+  Object.freeze({
+    file: "test/qpdf-reprotect-write-paths.test.js",
+    count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
+    fingerprints: Object.freeze([
+      "948c7080973dbfd1901b9e7904f3a2abcc2c968427f868cd50096046ad532df5",
+    ]),
+    reason: "Loads the committed QPDF runtime to encrypt its own fixtures and to inspect the "
+      + "written output independently of the product, so the claim that a mutation restored a "
+      + "document's own protection is checked against the runtime rather than against the code "
+      + "that made it.",
   }),
   Object.freeze({
     file: "test/type3-recovery-gate.test.js",

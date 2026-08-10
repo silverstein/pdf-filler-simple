@@ -55,6 +55,7 @@ import {
 } from "./pdf-comparison.js";
 import {
   PDF_DECRYPTABLE_PASSWORD_DESCRIPTION,
+  PDF_REPROTECTING_PASSWORD_DESCRIPTION,
   PdfDecryptionError,
   decryptPdfForRead,
   forceTerminateAllDecryptionWorkers,
@@ -734,7 +735,6 @@ import {
   openVerifiedRegularFile,
   PDF_LIB_ENCRYPTED_MESSAGE,
   PDF_LIB_GEOMETRY_PASSWORD_DESCRIPTION,
-  PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
@@ -2873,7 +2873,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             force_xfa: {
               type: "boolean",
@@ -2915,7 +2915,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             force_xfa: {
               type: "boolean",
@@ -3018,7 +3018,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3536,7 +3536,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3575,7 +3575,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             expected_output_identities: EXPECTED_OUTPUT_IDENTITIES_INPUT_SCHEMA
           },
@@ -3614,7 +3614,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3654,7 +3654,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3794,7 +3794,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             force_xfa: {
               type: "boolean",
@@ -3943,7 +3943,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               type: "boolean",
               description: "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures."
             },
-            password: { type: "string", description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION },
+            password: { type: "string", description: PDF_REPROTECTING_PASSWORD_DESCRIPTION },
             force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA data will be stripped by pdf-lib." },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -4008,7 +4008,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               type: "boolean",
               description: "Deprecated compatibility field. true is accepted as a no-op when the destination does not exist or output_path identifies the same canonical document as pdf_path. It never authorizes replacing a distinct existing output; that requires expected_output_identity."
             },
-            password: { type: "string", description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION },
+            password: { type: "string", description: PDF_REPROTECTING_PASSWORD_DESCRIPTION },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path", "output_path", "signature_name", "page", "x", "y", "width", "height", "user_intent_statement", "user_confirmed_at"]
@@ -4054,7 +4054,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               type: "boolean",
               description: "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures."
             },
-            password: { type: "string", description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION },
+            password: { type: "string", description: PDF_REPROTECTING_PASSWORD_DESCRIPTION },
             force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped." },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -4089,7 +4089,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               type: "boolean",
               description: "Deprecated compatibility field. true is accepted as a no-op when the destination does not exist or output_path identifies the same canonical document as pdf_path. It never authorizes replacing a distinct existing output; that requires expected_output_identity."
             },
-            password: { type: "string", description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION },
+            password: { type: "string", description: PDF_REPROTECTING_PASSWORD_DESCRIPTION },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path", "output_path", "page", "x", "y", "width", "height", "text"]
