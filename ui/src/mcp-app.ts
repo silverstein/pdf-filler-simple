@@ -39,9 +39,23 @@ import {
   parsePdfToolLoadData,
 } from "./tool-result";
 
-// PDF.js worker — inline as blob URL for single-file build
-import PdfWorker from "pdfjs-dist/build/pdf.worker.mjs?url";
-pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker;
+// Bundle the worker INTO this component rather than pointing pdf.js at a
+// separate URL.
+//
+// `?url` made Vite emit the worker as a ~2.7 MB `data:text/javascript` module
+// and set it as workerSrc. ChatGPT desktop's component sandbox refuses to load
+// a secondary `data:` module, so `new Worker(dataUrl, {type:"module"})` failed,
+// pdf.js fell back to its fake worker, and that fallback re-imported the same
+// rejected URL. The user saw "Setting up fake worker failed: Failed to fetch
+// dynamically imported module". Claude Desktop happened to allow it, which is
+// why this survived until the viewer was first run on a non-Anthropic host.
+//
+// Importing the module for its side effect registers
+// globalThis.pdfjsWorker.WorkerMessageHandler at the top level, which is the
+// branch pdf.js takes when it needs no URL at all. Nothing is fetched, so no
+// host CSP or sandbox policy is involved. Do not reintroduce `?url` here; a
+// regression test asserts the built bundle contains no data: worker URL.
+import "pdfjs-dist/build/pdf.worker.mjs";
 
 const MAX_CHUNK_BYTES = 524288; // 512KB — must match server
 const MAX_MODEL_CONTEXT_LENGTH = 15000;
