@@ -2,12 +2,14 @@ import { createHash } from "node:crypto";
 import { closeSync, writeSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
 import {
   isMainThread,
   parentPort as threadParentPort,
   workerData as threadWorkerData,
 } from "node:worker_threads";
+import { createInflate } from "node:zlib";
 import {
   PDFArray,
   PDFDict,
@@ -81,6 +83,15 @@ const MAX_PARSED_CONTAINER_VISITS = 1_000_000;
 const MAX_PDF_GRAPH_EDGES = 2_000_000;
 const MAX_PDF_GRAPH_PENDING = 1_000_000;
 const MAX_SPEC_NULL_REFERENCE_SAMPLE = 32;
+// Object streams contain serialized non-stream objects, and pdf-lib's writer
+// groups only 50 objects into each one. A decoded object stream above 16 MiB is
+// therefore far outside ordinary writer output. More importantly, the pinned
+// parser eagerly materializes it before our post-parse 128 MiB stream probe can
+// run: a measured 256 MiB object stream drove RSS above 4.3 GiB. Keeping this
+// ceiling at 16 MiB leaves useful headroom inside the worker's 384 MiB V8 old-
+// space budget while preserving large PDFs whose bulk lives in image/content
+// streams rather than in one serialized-object container.
+const MAX_DECODED_OBJECT_STREAM_BYTES = 16 * 1024 * 1024;
 const MIN_DECODED_STREAM_BUDGET_BYTES = 16 * 1024 * 1024;
 const MAX_DECODED_STREAM_BUDGET_BYTES = 128 * 1024 * 1024;
 const MAX_DECODE_EXPANSION_RATIO = 512;
@@ -395,7 +406,7 @@ const PDF_ENDSTREAM_KEYWORD = Buffer.from("endstream", "ascii");
 // endstream keyword, and otherwise fall back to searching for that keyword.
 // A payload that misleads this also misleads pdf-lib, so the two views of a
 // document cannot be made to disagree about where structure resumes.
-function skipPdfStreamPayload(bytes, offset, declaredLength) {
+function resolvePdfStreamPayload(bytes, offset, declaredLength) {
   let start = offset;
   if (bytes[start] === 0x0d) start += 1;
   if (bytes[start] === 0x0a) start += 1;
@@ -404,11 +415,12 @@ function skipPdfStreamPayload(bytes, offset, declaredLength) {
     while (probe < bytes.length && isPdfWhitespace(bytes[probe])) probe += 1;
     if (bytes.subarray(probe, probe + PDF_ENDSTREAM_KEYWORD.length)
       .equals(PDF_ENDSTREAM_KEYWORD)) {
-      return probe;
+      return { payloadStart: start, payloadEnd: start + declaredLength, resumeAt: probe };
     }
   }
   const found = bytes.indexOf(PDF_ENDSTREAM_KEYWORD, start);
-  return found < 0 ? bytes.length : found;
+  const end = found < 0 ? bytes.length : found;
+  return { payloadStart: start, payloadEnd: end, resumeAt: end };
 }
 
 // This lexer retains only a bounded token and a handful of parser states. It
@@ -500,9 +512,12 @@ function* pdfStructureTokens(bytes, { skipStreamPayloads = false } = {}) {
       overlong: length > MAX_STRUCTURE_TOKEN_BYTES,
       digitLength: allDigits ? digitLength : 0,
     };
-    yield token;
-    if (!skipStreamPayloads) continue;
+    if (!skipStreamPayloads) {
+      yield token;
+      continue;
+    }
     if (expectLengthValue) {
+      yield token;
       expectLengthValue = false;
       const value = token.type === "integer" && token.digitLength <= 15
         ? Number(token.value)
@@ -511,8 +526,187 @@ function* pdfStructureTokens(bytes, { skipStreamPayloads = false } = {}) {
       continue;
     }
     if (token.type === "word" && !token.overlong && token.value === "stream") {
-      offset = skipPdfStreamPayload(bytes, offset, declaredLength);
+      const { payloadStart, payloadEnd, resumeAt } = resolvePdfStreamPayload(
+        bytes,
+        offset,
+        declaredLength,
+      );
+      yield { ...token, payloadStart, payloadEnd };
+      offset = resumeAt;
       declaredLength = null;
+      continue;
+    }
+    yield token;
+  }
+}
+
+function collectPreparseStreamDecodes(bytes) {
+  const streams = [];
+  const dictionaries = [];
+  let lastClosedDictionary = null;
+  const markMalformedValue = frame => {
+    if (frame?.pendingKey === "Type") frame.typeAmbiguous = true;
+    if (frame?.pendingKey === "Filter") frame.filterAmbiguous = true;
+    if (frame) frame.pendingKey = null;
+  };
+  for (const token of pdfStructureTokens(bytes, { skipStreamPayloads: true })) {
+    const frame = dictionaries.at(-1);
+    if (token.type === "delimiter" && token.value === "<<") {
+      markMalformedValue(frame);
+      dictionaries.push({
+        type: null,
+        typeAmbiguous: false,
+        filters: null,
+        filterAmbiguous: false,
+        filterArray: false,
+        pendingKey: null,
+      });
+      lastClosedDictionary = null;
+      continue;
+    }
+    if (token.type === "delimiter" && token.value === ">>") {
+      const closing = dictionaries.pop() ?? null;
+      markMalformedValue(closing);
+      lastClosedDictionary = closing;
+      continue;
+    }
+    if (frame?.filterArray) {
+      if (token.type === "delimiter" && token.value === "]") {
+        frame.filterArray = false;
+        frame.pendingKey = null;
+      } else if (token.type === "name" && !token.overlong) {
+        frame.filters.push(token.value);
+      } else {
+        frame.filterAmbiguous = true;
+      }
+      lastClosedDictionary = null;
+      continue;
+    }
+    if (frame?.pendingKey === "Type") {
+      if (token.type === "name" && !token.overlong) frame.type = token.value;
+      else frame.typeAmbiguous = true;
+      frame.pendingKey = null;
+      lastClosedDictionary = null;
+      continue;
+    }
+    if (frame?.pendingKey === "Filter") {
+      if (token.type === "name" && !token.overlong) {
+        frame.filters = [token.value];
+        frame.pendingKey = null;
+      } else if (token.type === "delimiter" && token.value === "[") {
+        frame.filters = [];
+        frame.filterArray = true;
+      } else {
+        frame.filterAmbiguous = true;
+        frame.pendingKey = null;
+      }
+      lastClosedDictionary = null;
+      continue;
+    }
+    if (frame && token.type === "name" && !token.overlong
+        && (token.value === "Type" || token.value === "Filter")) {
+      frame.pendingKey = token.value;
+      lastClosedDictionary = null;
+      continue;
+    }
+    if (token.type === "word" && token.value === "stream"
+        && Number.isSafeInteger(token.payloadStart)
+        && Number.isSafeInteger(token.payloadEnd)) {
+      if (lastClosedDictionary) {
+        streams.push({
+          ...lastClosedDictionary,
+          payloadStart: token.payloadStart,
+          payloadEnd: token.payloadEnd,
+        });
+      }
+      lastClosedDictionary = null;
+      continue;
+    }
+    lastClosedDictionary = null;
+  }
+  return streams;
+}
+
+async function countFlateBytesWithinLimit(payload, maximumDecodedBytes) {
+  const source = Readable.from((function* compressedChunks() {
+    for (let offset = 0; offset < payload.length; offset += DECODE_INSPECTION_CHUNK_BYTES) {
+      yield payload.subarray(offset, offset + DECODE_INSPECTION_CHUNK_BYTES);
+    }
+  })());
+  const decoder = createInflate({ chunkSize: DECODE_INSPECTION_CHUNK_BYTES });
+  source.pipe(decoder);
+  let decodedBytes = 0;
+  try {
+    for await (const chunk of decoder) {
+      decodedBytes += chunk.length;
+      if (decodedBytes > maximumDecodedBytes) {
+        throw resourceError(
+          "unsafe_object_stream_expansion",
+          `PDF object stream exceeds the ${maximumDecodedBytes}-byte decoded ceiling; `
+          + "mutation was stopped before parsing.",
+        );
+      }
+    }
+    return decodedBytes;
+  } finally {
+    source.destroy();
+    decoder.destroy();
+  }
+}
+
+export async function assertBoundedPdfStreamDecodes(bytes, {
+  maximumDecodedObjectStreamBytes = MAX_DECODED_OBJECT_STREAM_BYTES,
+} = {}) {
+  if (!(bytes instanceof Uint8Array)
+      || !Number.isSafeInteger(maximumDecodedObjectStreamBytes)
+      || maximumDecodedObjectStreamBytes < 1
+      || maximumDecodedObjectStreamBytes > MAX_DECODED_OBJECT_STREAM_BYTES) {
+    throw new TypeError("Decoded object-stream inspection options are invalid.");
+  }
+  const rejectUnsupportedObjectStream = detail => {
+    throw resourceError(
+      "unsafe_object_stream_decode",
+      `PDF object stream cannot be decoded within a deterministic byte budget (${detail}); `
+      + "mutation was stopped before parsing.",
+    );
+  };
+  for (const stream of collectPreparseStreamDecodes(bytes)) {
+    if (stream.typeAmbiguous) {
+      rejectUnsupportedObjectStream("indirect or malformed Type");
+    }
+    const objectStream = stream.type === "ObjStm";
+    // Content and image streams are not decoded eagerly by PDFDocument.load;
+    // they remain covered by the existing parsed-stream probe. Re-decoding
+    // them here would add full-document work without closing the object-stream
+    // allocation gap this preflight exists to cover.
+    if (!objectStream) continue;
+    if (stream.filterAmbiguous) {
+      rejectUnsupportedObjectStream("indirect or malformed Filter");
+    }
+    const filters = stream.filters?.map(value => FILTER_NAME_ALIASES.get(value) ?? value) ?? [];
+    if (filters.length === 0) {
+      if (stream.payloadEnd - stream.payloadStart > maximumDecodedObjectStreamBytes) {
+        throw resourceError(
+          "unsafe_object_stream_expansion",
+          `PDF object stream exceeds the ${maximumDecodedObjectStreamBytes}-byte decoded ceiling; `
+          + "mutation was stopped before parsing.",
+        );
+      }
+      continue;
+    }
+    if (filters.length !== 1 || filters[0] !== "FlateDecode") {
+      rejectUnsupportedObjectStream("unsupported Filter chain");
+    }
+    try {
+      await countFlateBytesWithinLimit(
+        bytes.subarray(stream.payloadStart, stream.payloadEnd),
+        maximumDecodedObjectStreamBytes,
+      );
+    } catch (error) {
+      if (error?.code === RESOURCE_CODE) throw error;
+      // A malformed stream that fails before reaching the ceiling remains the
+      // parser's responsibility. The preflight exists only to prevent an
+      // otherwise valid expanding decode from allocating past its budget.
     }
   }
 }
@@ -1618,6 +1812,7 @@ export async function savePdfDocumentSafely(document, options = {}) {
   let verified;
   let graphAfterSave;
   try {
+    await assertBoundedPdfStreamDecodes(bytes);
     verified = await PDFDocument.load(bytes, { updateMetadata: false });
     graphAfterSave = enforceSafeParsedPdfGraph(
       verified,
@@ -1661,6 +1856,7 @@ export async function savePdfDocumentSafely(document, options = {}) {
 
 export async function loadPdfForMutation(bytes, password) {
   assertBoundedPdfStructure(bytes);
+  await assertBoundedPdfStreamDecodes(bytes);
   let document;
   try {
     document = await PDFDocument.load(bytes, password ? { password } : {});
@@ -1714,6 +1910,8 @@ async function reopenSource(binding) {
 }
 
 async function inspectAccessibilitySource(bytes, binding) {
+  assertBoundedPdfStructure(bytes);
+  await assertBoundedPdfStreamDecodes(bytes);
   let document;
   try {
     document = await PDFDocument.load(bytes, { updateMetadata: false });
@@ -1724,7 +1922,6 @@ async function inspectAccessibilitySource(bytes, binding) {
       source_file_name: path.basename(binding.canonical_path),
     });
   }
-  assertBoundedPdfStructure(bytes);
   assertSafeParsedPdfDecodeChains(document);
   assertSafeParsedPdfComplexity(document);
   enforceSafeParsedPdfGraph(document);
