@@ -78,3 +78,33 @@ describe("viewer worker is self-contained", () => {
     expect(html).not.toMatch(/workerSrc\s*=\s*["'`](?:data:|blob:|https?:|\.\/)/);
   });
 });
+
+/**
+ * A failing viewer must say enough to diagnose itself.
+ *
+ * When the `data:` worker was refused by a sandboxed host, the surfaced message
+ * was only "Failed to fetch dynamically imported module" with no indication of
+ * which asset, which scheme, or whether a worker was registered at all. That
+ * cost hours. The error surface now reports the pdf.js version, the workerSrc
+ * scheme and length, and whether the worker is registered in-realm.
+ */
+describe("viewer errors carry diagnostic context", () => {
+  let html;
+  try {
+    html = readFileSync(VIEWER_HTML, "utf-8");
+  } catch {
+    // dist-ui not built yet — skip gracefully
+  }
+
+  it("reports whether the worker is registered in-realm", () => {
+    if (!html) return;
+    expect(html).toContain("worker NOT registered in-realm");
+  });
+
+  it("reports the workerSrc scheme rather than dumping the URL", () => {
+    if (!html) return;
+    // The URL itself can be megabytes of base64; the scheme and length are the
+    // diagnostic parts.
+    expect(html).toContain("workerSrc unset");
+  });
+});
