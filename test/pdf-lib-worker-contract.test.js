@@ -13,10 +13,12 @@ import {
   PDFName,
   PDFRawStream,
   PDFRef,
+  PDFString,
 } from "pdf-lib";
 import {
   __testOnlyCopyPdfPagesForRebuiltOutput,
   assertBoundedPdfStructure,
+  assertBoundedPdfStreamDecodes,
   assertSafeParsedPdfComplexity,
   assertSafeParsedPdfDecodeChains,
   enforceSafeParsedPdfGraph,
@@ -57,6 +59,20 @@ async function xrefStreamPdfWithByteWidths(widths) {
   }
   if (widths === null) return written;
   return Buffer.from(text.replace(/\/W\s*\[[^\]]*\]/, widths), "latin1");
+}
+
+// Keep the expansion fixture reproducible and tied to the exact parser/writer
+// combination under test. A referenced PDFString is eligible for pdf-lib's
+// own object-stream writer, which emits the same eager /ObjStm decode path the
+// production loader uses.
+async function pdfLibObjectStreamExpansionPdf(decodedStringBytes) {
+  const document = await PDFDocument.create();
+  document.addPage([100, 100]);
+  const ref = document.context.register(PDFString.of("A".repeat(decodedStringBytes)));
+  document.catalog.set(PDFName.of("ExpansionFixture"), ref);
+  const bytes = Buffer.from(await document.save({ useObjectStreams: true }));
+  expect(bytes.toString("latin1")).toMatch(/\/Type\s*\/ObjStm/);
+  return bytes;
 }
 
 function sparseDeclarationAcrossBoundary(prefix, suffix) {
@@ -136,6 +152,84 @@ afterEach(async () => {
 });
 
 describe("pdf-lib mutation worker contract", () => {
+  describe("pre-parse object-stream expansion budget", () => {
+    it("refuses a pdf-lib-written object stream above the production ceiling", {
+      timeout: 30_000,
+    }, async () => {
+      const bytes = await pdfLibObjectStreamExpansionPdf(17 * 1024 * 1024);
+      await expect(assertBoundedPdfStreamDecodes(bytes)).rejects.toMatchObject({
+        name: "PdfResourceLimitError",
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "unsafe_object_stream_expansion",
+      });
+    });
+
+    it("runs the decoded ceiling before the production mutation parser", {
+      timeout: 30_000,
+    }, async () => {
+      const bytes = await pdfLibObjectStreamExpansionPdf(17 * 1024 * 1024);
+      await expect(loadPdfForMutation(bytes)).rejects.toMatchObject({
+        reason: "unsafe_object_stream_expansion",
+      });
+    });
+
+    it("enforces an injected small ceiling without coupling the test to a huge allocation", async () => {
+      const bytes = await pdfLibObjectStreamExpansionPdf(2 * 1024 * 1024);
+      await expect(assertBoundedPdfStreamDecodes(bytes, {
+        maximumDecodedObjectStreamBytes: 1024 * 1024,
+      })).rejects.toMatchObject({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "unsafe_object_stream_expansion",
+      });
+    });
+
+    it("accepts a highly compressible object stream below the byte ceiling", async () => {
+      const bytes = await pdfLibObjectStreamExpansionPdf(8 * 1024 * 1024);
+      expect(bytes.length).toBeLessThan(32 * 1024);
+      await expect(assertBoundedPdfStreamDecodes(bytes)).resolves.toBeUndefined();
+      await expect(loadPdfForMutation(bytes)).resolves.toBeDefined();
+    });
+
+    it("accepts an ordinary pdf-lib object-stream PDF", async () => {
+      const document = await PDFDocument.create();
+      for (let index = 0; index < 100; index += 1) document.addPage([200, 200]);
+      const bytes = Buffer.from(await document.save({ useObjectStreams: true }));
+      await expect(assertBoundedPdfStreamDecodes(bytes)).resolves.toBeUndefined();
+      await expect(loadPdfForMutation(bytes)).resolves.toBeDefined();
+    });
+
+    it("accepts an ordinary well-formed compressed content stream", async () => {
+      const bytes = flateContentPdf(4 * 1024 * 1024);
+      await expect(assertBoundedPdfStreamDecodes(bytes)).resolves.toBeUndefined();
+      await expect(loadPdfForMutation(bytes)).resolves.toBeDefined();
+    });
+
+    it("leaves a non-object stream with an image-only filter to existing controls", async () => {
+      const bytes = parsedStreamPdf("/DCTDecode", { payload: "not-decoded-by-this-preflight" });
+      await expect(assertBoundedPdfStreamDecodes(bytes)).resolves.toBeUndefined();
+    });
+
+    it.each([
+      ["an indirect Type", "/Type 5 0 R /Filter /FlateDecode"],
+      ["an indirect Filter", "/Type /ObjStm /Filter 5 0 R"],
+      ["an unsupported object-stream filter", "/Type /ObjStm /Filter /LZWDecode"],
+    ])("fails closed before parsing %s", async (_label, declaration) => {
+      const payload = zlib.deflateSync(Buffer.from("5 0 (safe)", "ascii"));
+      const bytes = buildPdf([
+        [1, "<< /Type /Catalog /Pages 2 0 R >>"],
+        [2, "<< /Type /Pages /Kids [3 0 R] /Count 1 >>"],
+        [3, "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] /Resources <<>> >>"],
+        [4, `<< ${declaration} /N 1 /First 4 /Length ${payload.length} >>`
+          + `\nstream\n${payload.toString("latin1")}\nendstream`],
+        [5, "/FlateDecode"],
+      ], 1);
+      await expect(assertBoundedPdfStreamDecodes(bytes)).rejects.toMatchObject({
+        code: "PDF_RESOURCE_LIMIT_EXCEEDED",
+        reason: "unsafe_object_stream_decode",
+      });
+    });
+  });
+
   it.each([
     "sparse-high-object-numbers",
     "sparse-xref-range-overflow",
