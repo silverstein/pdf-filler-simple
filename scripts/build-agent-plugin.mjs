@@ -29,8 +29,13 @@ const PACKAGE_JSON = JSON.parse(
 );
 
 const PLUGIN_MANIFEST_NAME = "pdf-tools";
+// Leads with the words a person actually types. A user asking to "open a PDF"
+// was told the assistant had no filesystem access, while this server was
+// installed and holding 43 tools that do exactly that: the host matches a
+// request against this string before any tool is loaded, and the previous
+// wording ("inspect, fill, sign, merge...") shared no words with the request.
 const PLUGIN_DESCRIPTION =
-  "Local PDF workflow: inspect, fill, sign, merge, split, extract, render, and validate PDFs on your machine. Bundles the server and its evidence-first workflow.";
+  "Open any PDF already on your computer and work with it: read and search it in an interactive viewer, fill and sign forms, extract text and data, merge, split, and compare documents. Your files never leave your machine.";
 
 const PLUGIN_MANIFEST = {
   $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
