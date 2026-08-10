@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "artifact_id": "pdf-tools.runtime.qpdf-wasm.v1",
+  "ownership": "Open Document Alliance reproducible build of pinned third-party sources",
+  "license": "Apache-2.0 (qpdf) plus the additional bundled notices in runtime/licenses/manifest.json",
+  "privacy": "Compiled third-party source only; no personal data and no PDF content",
+  "redistribution": "allowed while the complete notice directory travels with the runtime",
+  "integration_status": "Packaged into the MCPB and the share ZIP. No PDF Tools tool loads, executes, or depends on this runtime yet, and no tool schema or error message references it.",
+  "generator": {
+    "path": "scripts/vendor-qpdf-wasm-runtime.mjs",
+    "sha256": "87d7865c008316b7c4f3795d52c228e33a829c014c264bcf56d0c222f85dd782",
+    "hash_contract": "SHA-256 of UTF-8 generator source after CRLF or CR line endings are normalized to LF",
+    "runtime": "Node.js standard library only",
+    "command": "node scripts/vendor-qpdf-wasm-runtime.mjs <extracted-build-directory>"
+  },
+  "build": {
+    "recipe_directory": "vendor/qpdf-wasm",
+    "source_date_epoch": 1769277252,
+    "network": "every Docker build stage runs with --network=none",
+    "crypto_provider": "qpdf native; neither OpenSSL nor GnuTLS is linked",
+    "toolchain": {
+      "name": "Emscripten SDK",
+      "version": "6.0.3",
+      "platform": "linux/amd64",
+      "image": "emscripten/emsdk",
+      "digest": "sha256:2a7a41cd7e2065b30ba389c8db0fbeaebd7ec06bb4e20f23cab8ba92180f25c7",
+      "upstream": "https://github.com/emscripten-core/emscripten/releases/tag/6.0.3"
+    },
+    "sources": [
+      {
+        "name": "qpdf",
+        "version": "12.3.2",
+        "filename": "qpdf-12.3.2.tar.gz",
+        "url": "https://github.com/qpdf/qpdf/releases/download/v12.3.2/qpdf-12.3.2.tar.gz",
+        "sha256": "6cba2f9f2cd887d905faeb99e0e51a307b217920d1bbf3e9cfbb2e8178a2deda"
+      },
+      {
+        "name": "zlib",
+        "version": "1.3.2",
+        "filename": "zlib-1.3.2.tar.gz",
+        "url": "https://github.com/madler/zlib/releases/download/v1.3.2/zlib-1.3.2.tar.gz",
+        "sha256": "bb329a0a2cd0274d05519d61c667c062e06990d72e125ee2dfa8de64f0119d16"
+      },
+      {
+        "name": "libjpeg-turbo",
+        "version": "3.2.0",
+        "filename": "libjpeg-turbo-3.2.0.tar.gz",
+        "url": "https://github.com/libjpeg-turbo/libjpeg-turbo/releases/download/3.2.0/libjpeg-turbo-3.2.0.tar.gz",
+        "sha256": "6f30092cef9fb839779646608f4ee14ae3cbac989c47fa05e841b0841f09878e"
+      }
+    ]
+  },
+  "reproduction": {
+    "release_gate": {
+      "command": "npm run qpdf-wasm:verify",
+      "requires": "Docker",
+      "cost": "Two clean --no-cache --network=none linux/amd64 builds; roughly 45 minutes under x86-64 emulation on Apple Silicon",
+      "scope": "Rebuilds from pinned sources, requires the two builds to be byte-identical, checks them against expected-output.json, and runs the Node smoke",
+      "cadence": "Release and nightly only. Deliberately excluded from `npm test`."
+    },
+    "developer_gate": {
+      "command": "npm test -- test/qpdf-wasm-runtime-artifact.test.js",
+      "requires": "Nothing beyond Node",
+      "cost": "Sub-second",
+      "scope": "Binds the committed runtime bytes to expected-output.json and the notice manifest, asserts both packager allow-lists cover the directory exactly, and instantiates the committed module to encrypt, reject a wrong password, decrypt, and structurally check a PDF",
+      "cadence": "Every `npm test`."
+    },
+    "promotion": {
+      "command": "node scripts/vendor-qpdf-wasm-runtime.mjs <extracted-build-directory>",
+      "scope": "Re-derives this record; refuses any build that does not already reproduce expected-output.json"
+    }
+  },
+  "expected_output_contract": {
+    "path": "vendor/qpdf-wasm/expected-output.json",
+    "sha256": "62f5be592edf295f57484080b617177074b0a65e5543ccfeb8013c3007980ade",
+    "artifacts": {
+      "qpdf.mjs": {
+        "bytes": 34382,
+        "sha256": "0c087b0d6ed0b57dd24a8b82e081207809dd97edff618d753c39a5639dcdc7c3"
+      },
+      "qpdf.wasm": {
+        "bytes": 2450542,
+        "sha256": "36830fb93e3f8a8a9bf4e8352b8b9b5f9ef1a25702b2eeaae0b52ab0b6746e6f"
+      }
+    }
+  },
+  "notices": {
+    "manifest_path": "vendor/qpdf-wasm/runtime/licenses/manifest.json",
+    "hash_contract": "SHA-256 of each notice after CRLF or CR line endings are normalized to LF",
+    "components": [
+      {
+        "component": "qpdf 12.3.2",
+        "spdx": "Apache-2.0",
+        "file": "licenses/QPDF-LICENSE.txt",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30"
+      },
+      {
+        "component": "qpdf 12.3.2 bundled-code notices",
+        "spdx": "LicenseRef-QPDF-Notice",
+        "file": "licenses/QPDF-NOTICE.md",
+        "sha256": "b207f65a9e5491195ded63b2941199b19a4d30148871f2742c88eae7bfc513a6"
+      },
+      {
+        "component": "zlib 1.3.2",
+        "spdx": "Zlib",
+        "file": "licenses/ZLIB-LICENSE.txt",
+        "sha256": "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2"
+      },
+      {
+        "component": "libjpeg-turbo 3.2.0",
+        "spdx": "BSD-3-Clause AND IJG AND Zlib",
+        "file": "licenses/LIBJPEG-TURBO-LICENSE.md",
+        "sha256": "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579"
+      },
+      {
+        "component": "Emscripten 6.0.3 generated runtime",
+        "spdx": "MIT OR NCSA",
+        "file": "licenses/EMSCRIPTEN-LICENSE.txt",
+        "sha256": "620a78084fc7ca97c0b5dea9abf891f3ffcadfdbf305276f099c9c4e12fc1d86"
+      },
+      {
+        "component": "musl bundled by Emscripten 6.0.3",
+        "spdx": "MIT AND BSD-2-Clause AND BSD-3-Clause",
+        "file": "licenses/MUSL-COPYRIGHT.txt",
+        "sha256": "b870108ec5e7790e9f9919064f1b9421d62d5f9b0e6c230c6adf7ea2da62e97b"
+      },
+      {
+        "component": "compiler-rt bundled by Emscripten 6.0.3",
+        "spdx": "Apache-2.0 WITH LLVM-exception",
+        "file": "licenses/COMPILER-RT-LICENSE.txt",
+        "sha256": "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d"
+      },
+      {
+        "component": "libc++ bundled by Emscripten 6.0.3",
+        "spdx": "Apache-2.0 WITH LLVM-exception",
+        "file": "licenses/LIBCXX-LICENSE.txt",
+        "sha256": "539dd7aed86e8a4f12cbdd0e6c50c189c7d74847e4fecc64ce2c6ee3a01da38b"
+      },
+      {
+        "component": "libc++abi bundled by Emscripten 6.0.3",
+        "spdx": "Apache-2.0 WITH LLVM-exception",
+        "file": "licenses/LIBCXXABI-LICENSE.txt",
+        "sha256": "e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c"
+      },
+      {
+        "component": "libunwind bundled by Emscripten 6.0.3",
+        "spdx": "Apache-2.0 WITH LLVM-exception",
+        "file": "licenses/LIBUNWIND-LICENSE.txt",
+        "sha256": "b5efebcaca80879234098e52d1725e6d9eb8fb96a19fce625d39184b705f7b6d"
+      }
+    ]
+  },
+  "runtime_assets": {
+    "directory": "vendor/qpdf-wasm/runtime",
+    "shipped_in": [
+      "pdf-toolkit-mcp.mcpb",
+      "pdf-toolkit-mcp.zip"
+    ],
+    "archive_path_note": "Both packagers stage this directory at the identical archive path, so the repository path, the MCPB path, and the share ZIP path are the same string.",
+    "files": [
+      {
+        "path": "vendor/qpdf-wasm/runtime/BUILD-INPUTS.json",
+        "sha256": "2290fb8dfa4fcb4ee86863b08eaf76941f93865b79567e56c4b87d27a8123241",
+        "size_bytes": 1255
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/THIRD_PARTY_VERSIONS.txt",
+        "sha256": "3ddd6112d28f0bbf739c368b965514de35b0db7891460d26a59d3743b9c59763",
+        "size_bytes": 144
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/licenses/COMPILER-RT-LICENSE.txt",
+        "sha256": "1a8f1058753f1ba890de984e48f0242a3a5c29a6a8f2ed9fd813f36985387e8d",
+        "size_bytes": 16708
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/licenses/EMSCRIPTEN-LICENSE.txt",
+        "sha256": "620a78084fc7ca97c0b5dea9abf891f3ffcadfdbf305276f099c9c4e12fc1d86",
+        "size_bytes": 5093
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/licenses/LIBCXX-LICENSE.txt",
+        "sha256": "539dd7aed86e8a4f12cbdd0e6c50c189c7d74847e4fecc64ce2c6ee3a01da38b",
+        "size_bytes": 16703
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/licenses/LIBCXXABI-LICENSE.txt",
+        "sha256": "e2b35be49f7284a45b7baca8fc7b3ab7440e7902392b2528a457816b5bb2a15c",
+        "size_bytes": 16706
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/licenses/LIBJPEG-TURBO-LICENSE.md",
+        "sha256": "ba6bceebcba0fdd35488477c2cca8c4632ce82c74dbfbc87d886ce6fc4433579",
+        "size_bytes": 6077
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/licenses/LIBUNWIND-LICENSE.txt",
+        "sha256": "b5efebcaca80879234098e52d1725e6d9eb8fb96a19fce625d39184b705f7b6d",
+        "size_bytes": 16706
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/licenses/MUSL-COPYRIGHT.txt",
+        "sha256": "b870108ec5e7790e9f9919064f1b9421d62d5f9b0e6c230c6adf7ea2da62e97b",
+        "size_bytes": 6196
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/licenses/QPDF-LICENSE.txt",
+        "sha256": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "size_bytes": 11358
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/licenses/QPDF-NOTICE.md",
+        "sha256": "b207f65a9e5491195ded63b2941199b19a4d30148871f2742c88eae7bfc513a6",
+        "size_bytes": 2729
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/licenses/ZLIB-LICENSE.txt",
+        "sha256": "e32ff4e00d9d94930537635291da39e7e612703334bf6fde8c7f1686fe8a45a2",
+        "size_bytes": 1002
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/licenses/manifest.json",
+        "sha256": "aa8cb0982c2a2575623bf3750b25b0d1386e7cb36eeb7be728ed8a9b4b96d5c5",
+        "size_bytes": 2429
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/qpdf.mjs",
+        "sha256": "0c087b0d6ed0b57dd24a8b82e081207809dd97edff618d753c39a5639dcdc7c3",
+        "size_bytes": 34382
+      },
+      {
+        "path": "vendor/qpdf-wasm/runtime/qpdf.wasm",
+        "sha256": "36830fb93e3f8a8a9bf4e8352b8b9b5f9ef1a25702b2eeaae0b52ab0b6746e6f",
+        "size_bytes": 2450542
+      }
+    ]
+  }
+}

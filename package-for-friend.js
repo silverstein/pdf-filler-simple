@@ -6,6 +6,11 @@ import { promises as fs } from "fs";
 import os from "os";
 import path from "path";
 import { fileURLToPath } from "url";
+import {
+  QPDF_WASM_RUNTIME_FILES,
+  verifyQpdfWasmRuntime,
+} from "./scripts/qpdf-wasm-runtime.mjs";
+export { QPDF_WASM_RUNTIME_FILES } from "./scripts/qpdf-wasm-runtime.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = path.dirname(SCRIPT_PATH);
@@ -52,6 +57,12 @@ export const SHARE_FILES = [
   "server/type3-cm-pk-reference.js",
   "server/type3-cm-reference.js",
   "smart-install.sh",
+  /*
+   * The QPDF WebAssembly runtime and its complete notice directory, derived
+   * from the committed provenance record rather than transcribed. It is
+   * packaged and licence-complete; nothing under `server/` imports it yet.
+   */
+  ...QPDF_WASM_RUNTIME_FILES,
 ];
 /**
  * The server modules the share bundle mirrors, derived from SHARE_FILES so the
@@ -62,7 +73,11 @@ export const SHARE_SERVER_FILES = SHARE_FILES.filter(relativePath => relativePat
  * Everything the share bundle copies verbatim out of this repository. The
  * share contract asserts byte parity for exactly these paths.
  */
-export const SHARE_MIRRORED_FILES = [...SHARE_SERVER_FILES, "dist-ui/index.html"];
+export const SHARE_MIRRORED_FILES = [
+  ...SHARE_SERVER_FILES,
+  "dist-ui/index.html",
+  ...QPDF_WASM_RUNTIME_FILES,
+];
 const EXECUTABLE_SHARE_FILES = new Set([
   "configure-cursor.sh",
   "install-transactional.sh",
@@ -377,10 +392,13 @@ async function syncSharePackage() {
    * module added to one but not the other produced a bundle whose entry point
    * could not resolve its own imports.
    */
-  await Promise.all(SHARE_MIRRORED_FILES.map(relativePath => fs.copyFile(
-    path.join(PROJECT_ROOT, ...relativePath.split("/")),
-    path.join(SOURCE_DIR, ...relativePath.split("/")),
-  )));
+  verifyQpdfWasmRuntime(PROJECT_ROOT, "checkout");
+  await Promise.all(SHARE_MIRRORED_FILES.map(async relativePath => {
+    const target = path.join(SOURCE_DIR, ...relativePath.split("/"));
+    await fs.mkdir(path.dirname(target), { recursive: true });
+    await fs.copyFile(path.join(PROJECT_ROOT, ...relativePath.split("/")), target);
+  }));
+  verifyQpdfWasmRuntime(SOURCE_DIR, "share source tree");
 
   const sharePackage = {
     name: rootPackage.name,
@@ -418,6 +436,9 @@ async function stageSharePackage(stageRoot, sharePackage, shareLock) {
     await fs.chmod(targetPath, canonicalArchiveMode(relativePath));
     fileHashes[relativePath] = sha256(await fs.readFile(targetPath));
   }
+  // What the ZIP is built from, checked against the reproducible-build hash
+  // contract rather than against another copy of the same file list.
+  verifyQpdfWasmRuntime(stagedPackageRoot, "staged share package");
 
   const sbom = generateCycloneDxSbom(shareLock, sharePackage);
   const sbomPath = path.join(stagedPackageRoot, SBOM_FILENAME);

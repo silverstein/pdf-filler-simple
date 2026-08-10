@@ -152,3 +152,15 @@ This MCP server lets Claude directly:
 - Render scanned PDF pages or regions for visual inspection
 
 Perfect for W-9s, job applications, contracts, invoices, research papers, and general PDF processing.
+
+## Third-party notices
+This bundle carries a vendored QPDF WebAssembly runtime at
+`vendor/qpdf-wasm/runtime/`. No tool loads it yet; it is packaged ahead of the
+integration that will use it. qpdf is Apache-2.0, and the complete notice set
+(qpdf, zlib, libjpeg-turbo, the Emscripten generated runtime, musl,
+compiler-rt, libc++, libc++abi and libunwind) is in
+`vendor/qpdf-wasm/runtime/licenses/`,
+bound to its SHA-256 hashes by that directory's `manifest.json`. Keep the
+directory intact if you redistribute this bundle. The npm dependencies keep
+their own licences inside `node_modules/` after installation, and
+`SBOM.cdx.json` inventories those npm packages only.

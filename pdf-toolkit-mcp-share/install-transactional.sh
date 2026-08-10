@@ -90,6 +90,7 @@ REQUIRED_ITEMS=(
     "package.json"
     "server"
     "smart-install.sh"
+    "vendor"
 )
 
 for item in "${REQUIRED_ITEMS[@]}"; do

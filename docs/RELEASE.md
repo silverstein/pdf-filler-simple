@@ -15,11 +15,32 @@ Update these files together:
 ```
 npm ci
 npm run test:all
+npm run qpdf-wasm:verify
 npm run build:mcpb
 npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb
 node package-for-friend.js
 npm run test:contract:share
 ```
+
+`qpdf-wasm:verify` is the only step here that needs Docker and the only one
+that takes about 45 minutes; under x86-64 emulation on Apple Silicon it is the
+long pole of the whole checklist. It rebuilds the vendored QPDF WebAssembly
+runtime twice from pinned sources with build-stage networking disabled and
+requires both results to equal `vendor/qpdf-wasm/expected-output.json` byte for
+byte. It is deliberately excluded from `npm test` and from `npm run test:all`,
+which instead run the sub-second
+`test/qpdf-wasm-runtime-artifact.test.js`: that suite pins the committed
+runtime to the same contract, to the pinned source hashes, and to the notice
+manifest, and loads the committed module to prove it still works — but it does
+not rebuild, so only this release step proves the artifact is still
+reproducible from source. Run it nightly if a release is not imminent. If the
+runtime has not changed since the last verified release, a recorded prior run
+is acceptable evidence; if `vendor/qpdf-wasm/` changed at all, it is not.
+
+Promote a rebuilt runtime with
+`node scripts/vendor-qpdf-wasm-runtime.mjs <extracted-build-directory>`, which
+regenerates `vendor/qpdf-wasm/runtime.provenance.json`. Never hand-edit that
+file.
 
 `build:mcpb` uses repository-pinned MCPB 2.1.2 to validate two clean production
 stages, installs the five locked native targets into each, and produces both

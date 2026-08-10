@@ -24,6 +24,11 @@ import { spawnSync } from "child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { readCentralDirectory } from "./mcpb-archive.mjs";
+import {
+  QPDF_WASM_RUNTIME_DIRECTORY,
+  QPDF_WASM_RUNTIME_FILES,
+  verifyQpdfWasmRuntime,
+} from "./qpdf-wasm-runtime.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -127,6 +132,28 @@ function populatePackageBuildRoot(buildRoot) {
   for (const filename of ["package-for-friend.js", "package.json", "package-lock.json"]) {
     copyFileSync(path.join(REPO_ROOT, filename), path.join(buildRoot, filename));
   }
+  /*
+   * The packager derives its QPDF WASM manifest from the committed provenance
+   * and mirrors the runtime out of the checkout, so the isolated build root
+   * has to carry both. Only the runtime and its provenance are copied, not the
+   * whole recipe: `vendor/qpdf-wasm/sources/` holds fetched upstream tarballs
+   * that are ignored by Git and irrelevant to packaging.
+   */
+  mkdirSync(path.join(buildRoot, "scripts"), { recursive: true });
+  copyFileSync(
+    path.join(REPO_ROOT, "scripts", "qpdf-wasm-runtime.mjs"),
+    path.join(buildRoot, "scripts", "qpdf-wasm-runtime.mjs"),
+  );
+  mkdirSync(path.join(buildRoot, "vendor", "qpdf-wasm"), { recursive: true });
+  copyFileSync(
+    path.join(REPO_ROOT, "vendor", "qpdf-wasm", "runtime.provenance.json"),
+    path.join(buildRoot, "vendor", "qpdf-wasm", "runtime.provenance.json"),
+  );
+  cpSync(
+    path.join(REPO_ROOT, "vendor", "qpdf-wasm", "runtime"),
+    path.join(buildRoot, "vendor", "qpdf-wasm", "runtime"),
+    { recursive: true },
+  );
   for (const directory of ["server", "dist-ui", "pdf-toolkit-mcp-share"]) {
     cpSync(path.join(REPO_ROOT, directory), path.join(buildRoot, directory), { recursive: true });
   }
@@ -742,6 +769,40 @@ async function main() {
         `Archive/source parity failed for ${relativePath}`,
       );
     }
+    /*
+     * The archived QPDF WASM runtime, checked against the reproducible-build
+     * hash contract rather than only against the repository copy, so an
+     * archive that faithfully mirrors a drifted checkout still fails.
+     */
+    verifyQpdfWasmRuntime(sourcePackageRoot, "extracted share archive");
+
+    /*
+     * `install-transactional.sh` copies a hand-written allow-list of top-level
+     * items and silently drops anything absent from it, which is how a shipped
+     * directory becomes a missing one at the user's machine. Derived from the
+     * packager manifest here so the two cannot disagree.
+     */
+    const installerSource = readFileSync(
+      path.join(sourcePackageRoot, "install-transactional.sh"),
+      "utf8",
+    );
+    const requiredItemsBlock = /REQUIRED_ITEMS=\(([^)]*)\)/.exec(installerSource);
+    if (!requiredItemsBlock) throw new Error("install-transactional.sh no longer declares REQUIRED_ITEMS");
+    const requiredItems = new Set(
+      [...requiredItemsBlock[1].matchAll(/"([^"]+)"/g)].map(match => match[1]),
+    );
+    if (requiredItems.size < 12) {
+      throw new Error(`install-transactional.sh REQUIRED_ITEMS is too small to be the real one: ${requiredItems.size}`);
+    }
+    for (const relativePath of [...packager.SHARE_FILES, "SBOM.cdx.json", "SHARE-PROVENANCE.json"]) {
+      const topLevel = relativePath.split("/")[0];
+      if (!requiredItems.has(topLevel)) {
+        throw new Error(
+          `install-transactional.sh would silently drop ${relativePath}: `
+          + `REQUIRED_ITEMS does not carry ${topLevel}`,
+        );
+      }
+    }
 
     assertEqual(sharePackage.dependencies["pdfjs-dist"], "5.4.624", "pdfjs-dist manifest pin changed");
     for (const [dependencyName, expectedVersion] of Object.entries(PROTECTED_DIRECT_DEPENDENCIES)) {
@@ -835,6 +896,40 @@ async function main() {
       if (bytes.length !== asset.size_bytes || sha256(bytes) !== asset.sha256) {
         throw new Error(`Share runtime PDF.js asset does not match oracle provenance: ${asset.path}`);
       }
+    }
+    /*
+     * The QPDF WASM runtime as it exists after a real transactional install,
+     * then actually instantiated from that installed location. Presence alone
+     * is not the property worth asserting: an artifact that ships but cannot
+     * be loaded from where it landed is the failure this check exists for.
+     * Nothing under `server/` imports it yet; this proves the packaging is
+     * sound before anything depends on it.
+     */
+    verifyQpdfWasmRuntime(packageRoot, "installed share package");
+    const qpdfSmoke = spawnSync(
+      process.execPath,
+      [
+        path.join(REPO_ROOT, "vendor", "qpdf-wasm", "smoke.mjs"),
+        path.join(packageRoot, ...QPDF_WASM_RUNTIME_DIRECTORY.split("/")),
+        fixturePath,
+      ],
+      { encoding: "utf8", cwd: packageRoot },
+    );
+    if (qpdfSmoke.status !== 0) {
+      throw new Error(
+        `Installed share QPDF WASM runtime did not load: ${qpdfSmoke.stderr || qpdfSmoke.stdout}`,
+      );
+    }
+    const qpdfEvidence = JSON.parse(qpdfSmoke.stdout);
+    if (qpdfEvidence.qpdf_version !== "12.3.2"
+      || qpdfEvidence.decrypt_status !== 0
+      || qpdfEvidence.check_status !== 0
+      || qpdfEvidence.wrong_password_status === 0
+      || qpdfEvidence.wrong_password_created_output !== false) {
+      throw new Error(`Installed share QPDF WASM runtime smoke failed: ${qpdfSmoke.stdout}`);
+    }
+    if (QPDF_WASM_RUNTIME_FILES.length < 15) {
+      throw new Error("QPDF WASM runtime manifest is too small to include its notice directory");
     }
     const layout = await client.callTool({
       name: "read_pdf_layout",

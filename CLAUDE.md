@@ -43,6 +43,14 @@ PDF Toolkit is a Claude Desktop extension (MCPB) and MCP server that enables aut
 - `example-fw9.pdf` - Sample form for smoke tests. Keep anonymized assets only.
 - `docs/MAINTAINERS.md` - Maintainer onboarding and operations
 - `docs/RELEASE.md` - Release checklist
+- `vendor/qpdf-wasm/` - Reproducible QPDF WebAssembly build recipe. The
+  promoted artifact under `vendor/qpdf-wasm/runtime/` is shipped in both the
+  MCPB and the share ZIP at that same path, but **no tool loads it**. Do not
+  hand-edit `runtime/` or `runtime.provenance.json`; regenerate them with
+  `node scripts/vendor-qpdf-wasm-runtime.mjs <extracted-build-directory>`.
+  `npm run qpdf-wasm:verify` is a ~45-minute Docker release gate and must stay
+  out of `npm test`; the fast binding lives in
+  `test/qpdf-wasm-runtime-artifact.test.js`.
 
 ## Module Format: ESM
 

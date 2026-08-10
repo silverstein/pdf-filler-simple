@@ -325,3 +325,14 @@ be silently omitted.
 ## License
 
 MIT
+
+### Third-party notices
+
+The MCPB and the share ZIP both carry a vendored QPDF WebAssembly runtime at
+`vendor/qpdf-wasm/runtime/`. No tool loads it yet; it is packaged ahead of the
+integration that will use it. qpdf is Apache-2.0, and the complete notice set
+(qpdf, zlib, libjpeg-turbo, the Emscripten generated runtime, musl,
+compiler-rt, libc++, libc++abi and libunwind) ships beside it in
+`vendor/qpdf-wasm/runtime/licenses/`, bound to its SHA-256 hashes by
+`licenses/manifest.json`. The npm dependencies keep their own licences inside
+`node_modules/`, including the PDF.js, Foxit and Liberation font notices.

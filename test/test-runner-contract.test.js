@@ -8,6 +8,7 @@ import { describe, expect, it, vi } from "vitest";
 import { configDefaults } from "vitest/config";
 import viteConfigFactory from "../vite.config.mjs";
 import { extractModuleLoadEvidence } from "../scripts/javascript-module-load-evidence.mjs";
+import { QPDF_WASM_RUNTIME_DIRECTORY } from "../scripts/qpdf-wasm-runtime.mjs";
 import {
   NODE_TEST_FILES,
   NODE_TEST_SUITES,
@@ -87,6 +88,22 @@ const sourceExtensions = Object.freeze([
   ".tsx",
 ]);
 
+/*
+ * Third-party generated output that happens to live inside the checkout. Both
+ * copies of the vendored QPDF WebAssembly runtime carry an Emscripten-
+ * generated, Closure-minified `qpdf.mjs`, and parsing those for import
+ * evidence is both meaningless and slow enough to exhaust this suite's sealed
+ * five-second window. They are excluded for the same reason `node_modules` and
+ * `dist-ui` are: they are not repository source, they are build output. Their
+ * integrity is asserted instead by their SHA-256 contract in
+ * `test/qpdf-wasm-runtime-artifact.test.js`, and nothing under `server/` may
+ * import them, which that suite also enforces.
+ */
+const GENERATED_THIRD_PARTY_DIRECTORIES = new Set([
+  QPDF_WASM_RUNTIME_DIRECTORY,
+  `pdf-toolkit-mcp-share/${QPDF_WASM_RUNTIME_DIRECTORY}`,
+]);
+
 async function findJavaScriptSourceFiles(directory) {
   const matches = [];
   const entries = await fs.readdir(directory, { withFileTypes: true });
@@ -108,6 +125,14 @@ async function findJavaScriptSourceFiles(directory) {
       continue;
     }
     const absolutePath = path.join(directory, entry.name);
+    if (
+      entry.isDirectory()
+      && GENERATED_THIRD_PARTY_DIRECTORIES.has(
+        path.relative(repoRoot, absolutePath).split(path.sep).join("/"),
+      )
+    ) {
+      continue;
+    }
     if (entry.isDirectory()) {
       matches.push(...await findJavaScriptSourceFiles(absolutePath));
       continue;
