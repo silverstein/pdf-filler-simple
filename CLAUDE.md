@@ -43,9 +43,15 @@ PDF Toolkit is a Claude Desktop extension (MCPB) and MCP server that enables aut
 - `example-fw9.pdf` - Sample form for smoke tests. Keep anonymized assets only.
 - `docs/MAINTAINERS.md` - Maintainer onboarding and operations
 - `docs/RELEASE.md` - Release checklist
+- `server/qpdf-decrypt.js` - The only module that loads the qpdf runtime, and
+  the only path by which PDF Tools decrypts. Owns the password rules, the `/P`
+  permission enforcement, and the encrypted-input size cap. See
+  `## Password Support`.
 - `vendor/qpdf-wasm/` - Reproducible QPDF WebAssembly build recipe. The
   promoted artifact under `vendor/qpdf-wasm/runtime/` is shipped in both the
-  MCPB and the share ZIP at that same path, but **no tool loads it**. Do not
+  MCPB and the share ZIP at that same path, and is loaded by **exactly one
+  module**, `server/qpdf-decrypt.js` — a second importer would bypass its
+  safety rules and fails the artifact test. Do not
   hand-edit `runtime/` or `runtime.provenance.json`; regenerate them with
   `node scripts/vendor-qpdf-wasm-runtime.mjs <extracted-build-directory>`.
   `npm run qpdf-wasm:verify` is a ~45-minute Docker release gate and must stay
@@ -61,13 +67,47 @@ The project uses ES modules (`"type": "module"` in package.json):
 
 ## Password Support
 
-**Only PDF.js decrypts. pdf-lib does not.** `pdf-lib` 1.17.1 ships no decryption
-of any kind: `PDFDocument.load` has no `password` option, it throws
-`EncryptedPDFError` on an encrypted document, and `{ ignoreEncryption: true }`
-returns an unusable document that fails on the first page access. Every tool
-that reaches pdf-lib therefore fails on an encrypted PDF regardless of the
-password supplied. `pdfjs-dist` 5.4.624 does accept `{ password }` and opens the
-same document correctly.
+**pdf-lib does not decrypt. PDF.js does, and three read-only tools now do too
+via qpdf.** `pdf-lib` 1.17.1 ships no decryption of any kind: `PDFDocument.load`
+has no `password` option, it throws `EncryptedPDFError` on an encrypted
+document, and `{ ignoreEncryption: true }` returns an unusable document that
+fails on the first page access. Every tool that reaches pdf-lib therefore fails
+on an encrypted PDF regardless of the password supplied. `pdfjs-dist` 5.4.624
+does accept `{ password }` and opens the same document correctly.
+
+`read_pdf_fields`, `validate_pdf`, and `extract_to_csv` decrypt through the
+vendored qpdf WebAssembly runtime in `server/qpdf-decrypt.js` before handing
+plaintext to pdf-lib. They qualify because they only ever read: none of them
+writes a PDF back, so none can re-encrypt a document or alter its protection.
+Decrypted bytes stay in memory and are never written to disk.
+
+**The scope rule.** Decryption is not a "remove the password" facility:
+
+- Correct password supplied → decrypt and proceed.
+- Wrong password supplied → fail, saying the password was not accepted. The
+  empty string counts as *no password*, so it cannot be used to claim
+  credentialed access to a document whose user password is empty. A password
+  containing a line break is refused outright: it cannot be represented in the
+  single-line password file that keeps passwords off the command line.
+- **No password supplied, document opens with an empty user password** (the
+  owner-locked shape: opens freely, `/P` denies modification) → proceed only if
+  `/P` grants `extract`; otherwise refuse, naming the denied permission. qpdf
+  can decrypt, edit, and re-lock such a document with identical `/P` and `/R`
+  and no password at all, and PDF Tools must not become a tool for that.
+- Not encrypted → unchanged. pdf-lib is tried first, so no qpdf module is
+  instantiated and there is no measurable cost.
+
+All three require `/P` bit 5 (`extract`, content copying), because all three
+copy document content out. The `accessibility` bit is not accepted as a
+substitute — it is granted almost universally and nothing can verify the caller
+is assistive technology — and neither is `modifyforms`, which authorizes filling
+a form, not reading what is already in it.
+
+**Size cap.** Encrypted inputs are capped at **16 MiB**, separate from and far
+below the 250 MiB `PDF_MUTATION_MAX_FILE_BYTES`. Decryption costs roughly
+`16 x input + 45 MB` of peak RSS, so 16 MiB keeps a full read inside the
+1024 MiB the project already treats as too much. Oversized input gets a clear
+size message rather than an out-of-memory kill.
 
 Measured against an AES-256 PDF produced with
 `qpdf --encrypt --user-password=secret --owner-password=secret --bits=256`:
@@ -77,25 +117,27 @@ Measured against an AES-256 PDF produced with
 | `read_pdf_layout` | PDF.js | Real. Succeeds; reports a `RAW_PAGE_GEOMETRY_UNAVAILABLE` gap because raw geometry comes from pdf-lib. |
 | `convert_pdf_to_markdown` | PDF.js | Real. Same partial-coverage gap. |
 | `get_pdf_info` | PDF.js | Real. Same partial-coverage gap. |
-| `read_pdf_fields` | pdf-lib | None. Accepts `password`, cannot use it. |
+| `read_pdf_fields` | qpdf + pdf-lib | **Real.** Decrypts with the password; without one, reads only if `/P` allows `extract`. 16 MiB cap. |
 | `fill_pdf` | pdf-lib | None. Accepts `password`, cannot use it. |
 | `bulk_fill_from_csv` | pdf-lib | None. Accepts `password`, cannot use it. |
 | `fill_with_profile` | pdf-lib | None. Accepts `password`, cannot use it. |
-| `validate_pdf` | pdf-lib | None. Accepts `password`, cannot use it. |
+| `validate_pdf` | qpdf + pdf-lib | **Real.** Same rule and cap as `read_pdf_fields`. |
 | `merge_pdfs`, `split_pdf`, `rotate_pdf_pages`, `reorder_pdf_pages`, `apply_page_plan` | pdf-lib worker | None. Accept `password`, cannot use it. |
 | `add_signature_field`, `apply_signature`, `prepare_signing_packet`, `apply_text` | pdf-lib worker | None. Accept `password`, cannot use it. |
 | `render_pdf_page`, `render_pdf_region`, `get_page_analysis` | PDF.js plus pdf-lib geometry | None in practice. PDF.js uses the password, but the pdf-lib geometry load still fails. |
 | `detect_signature_zones` | PDF.js plus pdf-lib geometry | None in practice. It degrades through `ignoreEncryption` and succeeds only on the committed header-malformed R4 oracle; a well-formed AES-128 or AES-256 file fails. |
 | `compare_pdfs` | PDF.js plus pdf-lib geometry | None. With `include_visual` it reports the pdf-lib limit; without it, the run still ends in `internal_validation_error` (pre-existing, unrelated to the password). |
-| `extract_to_csv` | pdf-lib | None. No `password` parameter exists. |
+| `extract_to_csv` | qpdf + pdf-lib | **Partial.** No `password` parameter (one password cannot serve a list of documents), so it reads an encrypted document only when that document opens without a password and its `/P` allows `extract`. |
 | `read_pdf_content`, `read_pdf_pages`, `search_pdf_text` | PDF.js | None reachable. No `password` parameter exists, so an encrypted PDF cannot be opened. |
 | `inspect_pdf_accessibility` | pdf-lib | None, and it says so: it rejects a `password` argument outright. |
 
-Pass the optional `password` parameter only to `read_pdf_layout`,
-`convert_pdf_to_markdown`, and `get_pdf_info`. For anything else, decrypt the
-document first (for example with `qpdf --decrypt`) and operate on the plaintext
-copy. Adding decryption to the write paths means replacing or supplementing
-pdf-lib, which is an open dependency decision, not a bug fix.
+Pass the optional `password` parameter to `read_pdf_layout`,
+`convert_pdf_to_markdown`, `get_pdf_info`, `read_pdf_fields`, and
+`validate_pdf`. For anything else, decrypt the document first (for example with
+`qpdf --decrypt`) and operate on the plaintext copy. Adding decryption to the
+**write** paths is a separate, harder problem: a write path must re-encrypt to
+preserve the source's protection, which is exactly the capability the scope
+rule above withholds. It remains an open decision, not a bug fix.
 
 ## Development Commands
 

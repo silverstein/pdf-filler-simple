@@ -54,6 +54,11 @@ import {
   publicPdfComparisonError,
 } from "./pdf-comparison.js";
 import {
+  PDF_DECRYPTABLE_PASSWORD_DESCRIPTION,
+  PdfDecryptionError,
+  decryptPdfForRead,
+} from "./qpdf-decrypt.js";
+import {
   PDF_MUTATION_MAX_FILE_BYTES,
   assertDanglingPdfInputAlias,
   assertCanonicalRecoveryDirectory,
@@ -594,34 +599,77 @@ function validateLoadedPdfStructure(pdfDoc, pdfBytes) {
   return pdfDoc;
 }
 
-async function loadPdfBytes(pdfBytes, password = null) {
+/**
+ * Loads bytes through pdf-lib, optionally decrypting first.
+ *
+ * pdf-lib is always tried first, so an unencrypted document pays nothing for
+ * this path: no QPDF module is instantiated and no extra parse happens. Only
+ * once pdf-lib has refused the document as encrypted, and only for an
+ * operation named in `ENCRYPTED_READ_OPERATIONS`, is the decrypting path
+ * entered at all.
+ *
+ * `decryptFor` is the opt-in. Passing it means "this operation only reads, and
+ * is allowed to decrypt subject to the rules in server/qpdf-decrypt.js".
+ * Without it the behaviour is exactly what it was: the honest pdf-lib message.
+ *
+ * When decryption happens the caller is handed a `releaseDecryptedBytes` and
+ * must call it once it has finished reading `pdfDoc`. pdf-lib copies the input
+ * during parsing, so releasing afterwards does not disturb the loaded
+ * document.
+ */
+async function loadPdfBytes(pdfBytes, password = null, { decryptFor = null } = {}) {
   const invalidPdfMessage = "Failed to load PDF: the file is malformed, incomplete, or unsupported.";
   let pdfDoc;
   try {
     pdfDoc = await PDFDocument.load(pdfBytes, password ? { password } : {});
   } catch (error) {
     if (error.message?.includes("password") || error.message?.includes("encrypt")) {
-      throw new Error(PDF_LIB_ENCRYPTED_MESSAGE);
+      if (!decryptFor) throw new Error(PDF_LIB_ENCRYPTED_MESSAGE);
+      return loadEncryptedPdfBytes(pdfBytes, password, decryptFor, invalidPdfMessage);
     }
     throw new Error(invalidPdfMessage, { cause: error });
   }
-  return validateLoadedPdfStructure(pdfDoc, pdfBytes);
+  return { pdfDoc: validateLoadedPdfStructure(pdfDoc, pdfBytes), releaseDecryptedBytes: () => {} };
 }
 
-async function loadPdf(inputPath, password = null) {
+/**
+ * The encrypted branch of `loadPdfBytes`. Decrypts in memory, parses the
+ * plaintext, and releases the plaintext immediately if parsing fails so a
+ * malformed decrypted document does not leave it sitting in the heap.
+ */
+async function loadEncryptedPdfBytes(pdfBytes, password, decryptFor, invalidPdfMessage) {
+  const decrypted = await decryptPdfForRead(pdfBytes, password, decryptFor);
+  let pdfDoc;
+  try {
+    pdfDoc = await PDFDocument.load(decrypted.plaintext);
+    // Validated against the plaintext, because that is the byte sequence this
+    // document was actually parsed from.
+    validateLoadedPdfStructure(pdfDoc, decrypted.plaintext);
+  } catch (error) {
+    decrypted.release();
+    if (error?.message === invalidPdfMessage) throw error;
+    throw new Error(invalidPdfMessage, { cause: error });
+  }
+  return { pdfDoc, releaseDecryptedBytes: () => decrypted.release() };
+}
+
+async function loadPdf(inputPath, password = null, { decryptFor = null } = {}) {
   const {
     resolvedPath,
     pdfBytes,
     fileIdentity,
     inputRecoveryBinding,
   } = await readPdfInputWithRecovery(inputPath);
-  const pdfDoc = await loadPdfBytes(pdfBytes, password);
+  const { pdfDoc, releaseDecryptedBytes } = await loadPdfBytes(pdfBytes, password, { decryptFor });
   return {
     pdfDoc,
     resolvedPath,
+    // Always the bytes as they are on disk. A decrypted copy is never returned
+    // here and never reaches a caller that might persist it.
     pdfBytes,
     fileIdentity,
     inputRecoveryBinding,
+    releaseDecryptedBytes,
   };
 }
 
@@ -2716,7 +2764,10 @@ async function fillPdfDocumentFields(pdfDoc, fieldData) {
 }
 
 async function fillPdfBytes(pdfBytes, fieldData, password = null) {
-  return await fillPdfDocumentFields(await loadPdfBytes(pdfBytes, password), fieldData);
+  // No `decryptFor`: filling writes the document back, so it stays on the
+  // honest pdf-lib limit rather than the decrypting path.
+  const { pdfDoc } = await loadPdfBytes(pdfBytes, password);
+  return await fillPdfDocumentFields(pdfDoc, fieldData);
 }
 
 // read_pdf_content, read_pdf_pages, and search_pdf_text decrypt through PDF.js
@@ -2777,7 +2828,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_DECRYPTABLE_PASSWORD_DESCRIPTION,
             }
           },
           required: ["pdf_path"]
@@ -3012,7 +3063,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_DECRYPTABLE_PASSWORD_DESCRIPTION,
             }
           },
           required: ["pdf_path"]
@@ -4250,13 +4301,20 @@ async function handleToolCall(request) {
 
       case "read_pdf_fields": {
         const { pdf_path, password } = args;
-        const { pdfDoc, resolvedPath } = await loadPdf(pdf_path, password);
+        // Read-only: this never writes the PDF back, so it may decrypt.
+        const { pdfDoc, resolvedPath, releaseDecryptedBytes } = await loadPdf(
+          pdf_path,
+          password,
+          { decryptFor: "read_pdf_fields" },
+        );
         noteDocumentOpened(resolvedPath);
 
         const form = pdfDoc.getForm();
         const fields = form.getFields();
-        
-        const fieldInfo = fields.map(field => {
+
+        let fieldInfo;
+        try {
+          fieldInfo = fields.map(field => {
           const name = field.getName();
           let type = "unknown";
           let options = [];
@@ -4282,8 +4340,13 @@ async function handleToolCall(request) {
           }
           
           return { name, type, options, currentValue };
-        });
-        
+          });
+        } finally {
+          // Every value has been copied out of the document, so any decrypted
+          // plaintext can go now rather than at the end of the response build.
+          releaseDecryptedBytes();
+        }
+
         const payload = await buildActiveDocumentPayload(resolvedPath, 1, {
           fields: fieldInfo,
           fieldCount: fields.length,
@@ -4585,33 +4648,43 @@ async function handleToolCall(request) {
         for (const pdfPath of pdf_paths) {
           const resolvedPdfPath = resolvePath(pdfPath);
           const pdfBytes = await fs.readFile(resolvedPdfPath);
-          // Via loadPdfBytes so an encrypted input reports the honest pdf-lib
-          // limit instead of pdf-lib's raw "use ignoreEncryption" advice, which
-          // does not work on an encrypted document.
-          const pdfDoc = await loadPdfBytes(pdfBytes);
+          // Read-only: this writes a CSV, never a PDF, so it may decrypt. The
+          // tool takes a list of documents and no password — one password
+          // could not serve a list — so the only encrypted documents it can
+          // read are those that open without one and whose own permissions
+          // allow extraction. Anything else is refused by name.
+          const { pdfDoc, releaseDecryptedBytes } = await loadPdfBytes(pdfBytes, null, {
+            decryptFor: "extract_to_csv",
+          });
           const form = pdfDoc.getForm();
           const fields = form.getFields();
-          
+
           const rowData = { _filename: path.basename(pdfPath) };
-          
-          for (const field of fields) {
-            const fieldName = field.getName();
-            allFieldNames.add(fieldName);
-            
-            try {
-              if (field.constructor.name.includes('TextField')) {
-                rowData[fieldName] = field.getText() || "";
-              } else if (field.constructor.name.includes('CheckBox')) {
-                rowData[fieldName] = field.isChecked() ? "yes" : "no";
-              } else if (field.constructor.name.includes('RadioGroup') || 
-                         field.constructor.name.includes('Dropdown')) {
-                rowData[fieldName] = field.getSelected() || "";
+
+          try {
+            for (const field of fields) {
+              const fieldName = field.getName();
+              allFieldNames.add(fieldName);
+
+              try {
+                if (field.constructor.name.includes('TextField')) {
+                  rowData[fieldName] = field.getText() || "";
+                } else if (field.constructor.name.includes('CheckBox')) {
+                  rowData[fieldName] = field.isChecked() ? "yes" : "no";
+                } else if (field.constructor.name.includes('RadioGroup') ||
+                           field.constructor.name.includes('Dropdown')) {
+                  rowData[fieldName] = field.getSelected() || "";
+                }
+              } catch (e) {
+                rowData[fieldName] = "";
               }
-            } catch (e) {
-              rowData[fieldName] = "";
             }
+          } finally {
+            // Released per document, so a long list never holds more than one
+            // decrypted document in memory at a time.
+            releaseDecryptedBytes();
           }
-          
+
           allData.push(rowData);
         }
         
@@ -4647,13 +4720,21 @@ async function handleToolCall(request) {
         const { pdf_path, password } = args;
         let resolvedPath = null;
         try {
-          const loaded = await loadPdf(pdf_path, password);
+          // Read-only: this never writes the PDF back, so it may decrypt.
+          const loaded = await loadPdf(pdf_path, password, { decryptFor: "validate_pdf" });
           resolvedPath = loaded.resolvedPath;
-          const fields = loaded.pdfDoc.getForm().getFields();
-          const validation = validatePdfFormFields(fields, {
-            pdfPath: resolvedPath,
-            fileName: path.basename(resolvedPath),
-          });
+          let validation;
+          try {
+            const fields = loaded.pdfDoc.getForm().getFields();
+            validation = validatePdfFormFields(fields, {
+              pdfPath: resolvedPath,
+              fileName: path.basename(resolvedPath),
+            });
+          } finally {
+            // The report is fully materialized above; nothing below reads the
+            // document again, so any decrypted plaintext can go now.
+            loaded.releaseDecryptedBytes();
+          }
 
           const requiredSummary = validation.required_fields_complete === null
             ? "UNKNOWN"
@@ -4715,17 +4796,27 @@ async function handleToolCall(request) {
             content: [{ type: "text", text: message.join("\n") }],
             structuredContent: validation,
           };
-        } catch {
+        } catch (error) {
           const validation = failedPdfFormValidation({
             pdfPath: resolvedPath,
             fileName: path.basename(String(pdf_path || "unknown.pdf")),
           });
+          // "Verify the path/password and retry" is useless advice when the
+          // reason is already known and actionable: a password the document
+          // rejected, or permissions that deny the read. Those messages are
+          // fixed strings built here, never QPDF output, so passing them
+          // through leaks nothing.
+          const reason = error instanceof PdfDecryptionError
+            || error?.message === PDF_LIB_ENCRYPTED_MESSAGE
+            ? error.message
+            : null;
           return {
             content: [{
               type: "text",
-              text:
-                `Error: PDF field validation failed for ${validation.file_name}. ` +
-                "Do not interpret this as an empty or complete form. Verify the path/password and retry.",
+              text: reason
+                ? `Error: PDF field validation failed for ${validation.file_name}. ${reason}`
+                : `Error: PDF field validation failed for ${validation.file_name}. `
+                  + "Do not interpret this as an empty or complete form. Verify the path/password and retry.",
             }],
             structuredContent: validation,
             isError: true,

@@ -52,6 +52,7 @@ export const SHARE_FILES = [
   "server/pdf-lib-worker.js",
   "server/pdfjs-subprocess.js",
   "server/pdfjs-worker.js",
+  "server/qpdf-decrypt.js",
   "server/resource-uri.js",
   "server/stderr-suppression.js",
   "server/type3-cm-pk-reference.js",

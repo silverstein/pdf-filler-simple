@@ -97,7 +97,15 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // document fails anyway. Only read_pdf_layout, convert_pdf_to_markdown, and
 // get_pdf_info keep an unqualified password parameter, because only they work.
 // Previously 53d965e366b16adf2a0fa90dfe837ca98d29a8f41c1adf8b9e8f661ea3bb7d95.
-const TOOL_CONTRACT_SHA256 = "fef092d0e306a33839f249d0cf121519d723981aaf3872119d8668d2001cb62f";
+// 2026-08-10: read_pdf_fields and validate_pdf can now decrypt, through the
+// vendored qpdf runtime, so their password arguments stop saying the argument
+// is never used. The new text also states the encrypted-input size limit and
+// that a document which opens without a password is still read only if its own
+// permissions allow extraction. extract_to_csv gains no password parameter: it
+// takes a list of documents, and one password cannot serve a list. Every other
+// pdf-lib-only tool keeps the unchanged "cannot decrypt" text. Previously
+// fef092d0e306a33839f249d0cf121519d723981aaf3872119d8668d2001cb62f.
+const TOOL_CONTRACT_SHA256 = "b237e957d3eb3333442bc79f071dc8e9e74f6abee3880c835aa09b62487ce68d";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -342,6 +350,7 @@ describe("MCPB static declarations", () => {
       "pdfjs-worker.js",
       "pdf-lib-rss-monitor.js",
       "pdf-observations.js",
+      "qpdf-decrypt.js",
       "resource-uri.js",
       "stderr-suppression.js",
     ]) {
@@ -351,7 +360,7 @@ describe("MCPB static declarations", () => {
     }
     // A new server file must be added to the list above, not silently shipped
     // in the mirror unchecked. Two already had been.
-    expect(mirrored).toHaveLength(19);
+    expect(mirrored).toHaveLength(20);
     const sourceUi = await fs.readFile(path.join(REPO_ROOT, "dist-ui", "index.html"));
     const shareUi = await fs.readFile(
       path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "dist-ui", "index.html"),

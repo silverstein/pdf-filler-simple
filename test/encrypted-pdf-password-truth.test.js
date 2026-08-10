@@ -37,6 +37,13 @@ const WRONG_PASSWORD = "encrypted-truth-wrong-2026";
 // PDF.js. The honest pdf-lib message is allowed to name these and nothing else.
 const PDFJS_PASSWORD_TOOLS = Object.freeze(["convert_pdf_to_markdown", "get_pdf_info", "read_pdf_layout"]);
 
+// Tools that read through pdf-lib but decrypt first, via the vendored qpdf
+// runtime in server/qpdf-decrypt.js. They are read-only — none writes a PDF
+// back — which is why they are allowed to decrypt at all. Their password
+// argument is genuinely usable, so the "cannot decrypt" text would be a lie on
+// them and this suite must not require it.
+const DECRYPTING_PASSWORD_TOOLS = Object.freeze(["read_pdf_fields", "validate_pdf"]);
+
 function probeQpdf() {
   try {
     const probe = spawnSync("qpdf", ["--version"], { encoding: "utf8" });
@@ -160,33 +167,51 @@ describe.skipIf(!QPDF.available)("encrypted PDF password truthfulness (qpdf pres
     expect(namedTools).toEqual([...PDFJS_PASSWORD_TOOLS]);
   });
 
-  it("fails every pdf-lib reader identically whether or not a password is sent", async () => {
-    // read_pdf_fields loads in-process; fill_pdf loads inside the pdf-lib
-    // worker subprocess. Both copies of the loader must tell the same truth.
-    const attempts = [
-      { name: "read_pdf_fields", base: { pdf_path: encryptedPath } },
-      {
-        name: "fill_pdf",
-        base: { pdf_path: encryptedPath, field_data: {}, output_path: path.join(tempDirectory, "filled.pdf") },
-      },
-    ];
-    for (const attempt of attempts) {
-      for (const password of [undefined, WRONG_PASSWORD, USER_PASSWORD]) {
-        const result = await callTool(attempt.name, {
-          ...attempt.base,
-          ...(password === undefined ? {} : { password }),
-        });
-        const label = `${attempt.name} password=${password ?? "(omitted)"}`;
-        expect(result.isError, label).toBe(true);
-        expect(toolText(result), label).toBe(`Error: ${PDF_LIB_ENCRYPTED_MESSAGE}`);
-        if (password !== undefined) {
-          expect(toolText(result), label).not.toContain(password);
-        }
+  it("still fails every pdf-lib WRITE path identically whether or not a password is sent", async () => {
+    // fill_pdf loads inside the pdf-lib worker subprocess and writes the
+    // document back. Decryption is scoped to reads precisely because a write
+    // path would have to re-encrypt to preserve the source's protection, so
+    // this must keep reporting the honest pdf-lib limit.
+    for (const password of [undefined, WRONG_PASSWORD, USER_PASSWORD]) {
+      const result = await callTool("fill_pdf", {
+        pdf_path: encryptedPath,
+        field_data: {},
+        output_path: path.join(tempDirectory, "filled.pdf"),
+        ...(password === undefined ? {} : { password }),
+      });
+      const label = `fill_pdf password=${password ?? "(omitted)"}`;
+      expect(result.isError, label).toBe(true);
+      expect(toolText(result), label).toBe(`Error: ${PDF_LIB_ENCRYPTED_MESSAGE}`);
+      if (password !== undefined) {
+        expect(toolText(result), label).not.toContain(password);
       }
     }
     // The correct password must not have produced an output file either.
     await expect(fs.access(path.join(tempDirectory, "filled.pdf"))).rejects.toThrow();
   }, 90_000);
+
+  it("tells the truth on the read paths that now decrypt, and never echoes the password", async () => {
+    // These used to be covered by the blanket "every pdf-lib reader fails"
+    // assertion above. They decrypt now, so the truthfulness requirement moves
+    // rather than disappears: each outcome must describe what actually
+    // happened, and no outcome may contain the password.
+    for (const tool of DECRYPTING_PASSWORD_TOOLS) {
+      const accepted = await callTool(tool, { pdf_path: encryptedPath, password: USER_PASSWORD });
+      expect(accepted.isError, `${tool} with the correct password`).not.toBe(true);
+      expect(toolText(accepted), `${tool} must not echo the password`).not.toContain(USER_PASSWORD);
+
+      const rejected = await callTool(tool, { pdf_path: encryptedPath, password: WRONG_PASSWORD });
+      expect(toolText(rejected), `${tool} with a wrong password`).toMatch(/password was not accepted/i);
+      expect(toolText(rejected), `${tool} must not echo the password`).not.toContain(WRONG_PASSWORD);
+      // The old "supply the correct password" advice must not come back in the
+      // one case where it is still wrong to imply pdf-lib could use it.
+      expect(toolText(rejected), `${tool} must not cite the pdf-lib limit`)
+        .not.toContain(PDF_LIB_ENCRYPTED_MESSAGE);
+
+      const omitted = await callTool(tool, { pdf_path: encryptedPath });
+      expect(toolText(omitted), `${tool} with no password`).toMatch(/cannot be opened without a password/i);
+    }
+  }, 120_000);
 
   it("opens the same document with the same password on every tool the message names", async () => {
     // Binds the advice to behavior: if one of these stops working, the message
@@ -236,6 +261,15 @@ describe.skipIf(!QPDF.available)("encrypted PDF password truthfulness (qpdf pres
       if (typeof description !== "string") continue;
       if (PDFJS_PASSWORD_TOOLS.includes(tool.name)) {
         expect(description, `${tool.name} password description`).not.toMatch(/pdf-lib/);
+        continue;
+      }
+      if (DECRYPTING_PASSWORD_TOOLS.includes(tool.name)) {
+        // These decrypt, so they must NOT carry the "cannot decrypt" text —
+        // the same drift guard, pointing the other way.
+        expect(description, `${tool.name} password description`).not.toMatch(/cannot decrypt/i);
+        expect(description, `${tool.name} password description`).not.toMatch(/never used/i);
+        // and must still state the limits that do apply.
+        expect(description, `${tool.name} password description`).toMatch(/permissions allow/i);
         continue;
       }
       expect(description, `${tool.name} password description`).toMatch(/pdf-lib/);

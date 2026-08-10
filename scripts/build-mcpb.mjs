@@ -84,6 +84,7 @@ export const SERVER_FILES = [
   "pdf-observations.js",
   "pdfjs-subprocess.js",
   "pdfjs-worker.js",
+  "qpdf-decrypt.js",
   "resource-uri.js",
   "stderr-suppression.js",
   "type3-cm-pk-reference.js",

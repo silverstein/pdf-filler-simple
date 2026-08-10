@@ -193,22 +193,44 @@ describe("qpdf-wasm runtime provenance", () => {
     expect(QPDF_WASM_RUNTIME_PROVENANCE_PATH).toBe("vendor/qpdf-wasm/runtime.provenance.json");
   });
 
-  it("does not claim the runtime is wired into any tool", async () => {
-    expect(QPDF_WASM_RUNTIME_PROVENANCE.integration_status).toMatch(/No PDF Tools tool loads/);
-    /*
-     * `server/` already names qpdf in prose, telling a user to decrypt an
-     * encrypted file externally before retrying. What must stay absent is any
-     * reference to the packaged runtime itself: this phase ships the artifact
-     * and nothing more, so the moment a server module reaches for it the
-     * provenance claim above stops being true.
-     */
+  /*
+   * This assertion used to require that *no* `server/` module referenced the
+   * runtime, which was the correct statement while the artifact shipped
+   * unintegrated. Read-only decryption made it false on purpose, so it is
+   * narrowed rather than dropped: the runtime is now reachable, from exactly
+   * one module.
+   *
+   * That single-module property is the thing worth guarding. The wrapper is
+   * where the password rules, the permission rules and the size cap live, and
+   * where the vendored README's requirement that callers never receive the raw
+   * module or its `FS` is enforced. A second `server/` module loading the
+   * runtime directly would bypass all of it, which is why that has to fail
+   * here rather than in review.
+   */
+  it("is reachable from exactly one server module, which owns the safety rules", async () => {
+    expect(QPDF_WASM_RUNTIME_PROVENANCE.integration_status)
+      .toMatch(/server\/qpdf-decrypt\.js/);
+    const referencing = [];
     for (const filename of await fs.readdir(path.join(REPO_ROOT, "server"))) {
       const source = await fs.readFile(path.join(REPO_ROOT, "server", filename), "utf8");
-      for (const forbidden of ["qpdf-wasm", "qpdf.mjs", "qpdf.wasm", QPDF_WASM_RUNTIME_DIRECTORY]) {
-        expect(source, `server/${filename} reaches for the unintegrated qpdf runtime`)
-          .not.toContain(forbidden);
+      for (const marker of ["qpdf-wasm", "qpdf.mjs", "qpdf.wasm", QPDF_WASM_RUNTIME_DIRECTORY]) {
+        if (source.includes(marker)) {
+          referencing.push(`server/${filename}`);
+          break;
+        }
       }
     }
+    expect(referencing).toEqual(["server/qpdf-decrypt.js"]);
+
+    const wrapper = await fs.readFile(path.join(REPO_ROOT, "server", "qpdf-decrypt.js"), "utf8");
+    // The module and its filesystem stay inside the wrapper: nothing it
+    // exports hands a caller the raw Emscripten object or `FS`.
+    expect(wrapper).not.toMatch(/export[^\n]*\b(createQpdf|FS)\b/);
+    // Passwords reach QPDF through a file in the module's private in-memory
+    // filesystem, never through argv, where they would be readable from the
+    // process command line and echoed by QPDF's own usage diagnostics.
+    expect(wrapper).toContain("--password-file=");
+    expect(wrapper).not.toMatch(/"--password=|`--password=/);
   });
 });
 
