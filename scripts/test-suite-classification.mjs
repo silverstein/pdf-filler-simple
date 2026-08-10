@@ -98,6 +98,18 @@ export const CHECKOUT_LOCAL_MUTATING_TEST_SUITES = Object.freeze([
 
 export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
   Object.freeze({
+    // The byte-identical share mirror of server/qpdf-decrypt.js below. Same
+    // load, same fingerprint; the two entries must not diverge.
+    file: "pdf-toolkit-mcp-share/server/qpdf-decrypt.js",
+    count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
+    fingerprints: Object.freeze([
+      "689d1575decd28551f1043e7b853740985cba96c87102c4a834cae9b1da7d52e",
+    ]),
+    reason: "Share-tree mirror of server/qpdf-decrypt.js, which loads the vendored QPDF "
+      + "WebAssembly runtime from a fixed repository-relative path.",
+  }),
+  Object.freeze({
     file: "scripts/eval-calibrate-docling-supervisor.mjs",
     count: 1,
     kinds: Object.freeze(["dynamic-import"]),
@@ -182,6 +194,17 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
     reason: "Loads a packaged share artifact from an isolated build root.",
   }),
   Object.freeze({
+    file: "server/qpdf-decrypt.js",
+    count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
+    fingerprints: Object.freeze([
+      "689d1575decd28551f1043e7b853740985cba96c87102c4a834cae9b1da7d52e",
+    ]),
+    reason: "Loads the vendored QPDF WebAssembly runtime from a fixed repository-relative path "
+      + "resolved against import.meta.url. The specifier is computed rather than literal so that "
+      + "test-time bundlers leave the Emscripten output alone; it resolves its own .wasm sibling.",
+  }),
+  Object.freeze({
     file: "test/eval/extraction-docling-handoff.js",
     count: 1,
     kinds: Object.freeze(["dynamic-import"]),
@@ -189,6 +212,17 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
       "bfb22ac97868fe7bb9a1d7da4651099c672c2ac8fec83b6b51340bbeb36dd305",
     ]),
     reason: "Loads a verified generated controller outside the checkout.",
+  }),
+  Object.freeze({
+    file: "test/qpdf-decrypt-read-only.test.js",
+    count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
+    fingerprints: Object.freeze([
+      "948c7080973dbfd1901b9e7904f3a2abcc2c968427f868cd50096046ad532df5",
+    ]),
+    reason: "Loads the committed QPDF runtime to encrypt its own AES-256, AES-128 and RC4-128 "
+      + "fixtures, so the decryption suite exercises real encrypted documents without committing "
+      + "binaries.",
   }),
   Object.freeze({
     file: "test/type3-recovery-gate.test.js",

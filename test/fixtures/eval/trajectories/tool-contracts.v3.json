@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.10.0"
   },
-  "tools_sha256": "53c4f2e1bd63613694f7ca93fe2387219e1e04e3beceaaeeb2faf1cd1f0b69ee",
+  "tools_sha256": "6994d2bc14788f888437f1e0ee25ce0bbd4219be95f58de50ec90237021fa375",
   "tools": [
     {
       "name": "add_signature_field",
@@ -1283,7 +1283,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory to complete this read (encrypted inputs are limited to 16 MiB). Leave it unset for an unencrypted document. An encrypted document that opens without a password is still read only if its own permissions allow content extraction; PDF Tools does not override them."
           }
         },
         "required": [
@@ -1758,7 +1758,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory to complete this read (encrypted inputs are limited to 16 MiB). Leave it unset for an unencrypted document. An encrypted document that opens without a password is still read only if its own permissions allow content extraction; PDF Tools does not override them."
           }
         },
         "required": [

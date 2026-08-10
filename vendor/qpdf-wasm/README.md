@@ -3,10 +3,27 @@
 This directory contains a reproducible, ODA-controlled build of the QPDF
 command-line interface for Node.js WebAssembly. The generated JavaScript and
 WebAssembly are shipped in both the MCPB and the share ZIP, from
-`vendor/qpdf-wasm/runtime/`, but no PDF Tools tool loads, executes, or depends
-on them yet. Packaging is deliberately a separate step from integration: the
-artifact is proven to arrive intact and loadable in a packaged tree before any
-tool is allowed to rely on it.
+`vendor/qpdf-wasm/runtime/`. Packaging was deliberately a separate step from
+integration: the artifact was proven to arrive intact and loadable in a
+packaged tree before any tool was allowed to rely on it.
+
+## Who loads it
+
+Exactly one module: `server/qpdf-decrypt.js`. It decrypts encrypted PDFs in
+memory for the three read-only tools — `read_pdf_fields`, `validate_pdf` and
+`extract_to_csv` — that never write a PDF back, so nothing here can re-encrypt
+a document or change its protection. It implements the production wrapper this
+README asks for below: callers receive plaintext bytes and a permission
+decision, never the module or its `FS`. Passwords reach QPDF through
+`--password-file=` in the module's private MEMFS, never through argv, and QPDF
+diagnostics are never passed through to a caller.
+
+The single-importer property is asserted by
+`test/qpdf-wasm-runtime-artifact.test.js`. A second `server/` module reaching
+for the runtime directly would bypass the password rules, the `/P` permission
+enforcement and the encrypted-input size cap, so it fails there rather than in
+review. See the `## Password Support` section of `CLAUDE.md` for the scope
+rule those checks implement.
 
 ## What ships
 
@@ -171,22 +188,52 @@ known runtime and static-library license texts are retained.
 
 ## Production gates
 
-Packaging the artifact is done. Integration is not, and packaging does not
-authorize it. Before any PDF Tools tool loads this runtime:
+The gate list below was written before any integration. Read-only decryption
+satisfies part of it; the rest still stands, and several items gate the *write*
+path specifically, which has not been attempted.
 
-- adversarially review the wrapper and password handling;
-- enforce encrypted-document permissions explicitly;
-- preserve source encryption on every successful mutation;
-- set and test PDF size, memory, warning, and execution-time limits;
-- test malformed and hostile PDFs, including recursion and page-tree cases;
-- test correct, missing, wrong, user, and owner passwords;
-- test backup, journal, concurrency, and atomic-output behavior;
-- add qpdf, zlib and libjpeg-turbo to the share bundle's CycloneDX SBOM. The
-  notice inventories are now verified automatically in the source tree, the
+Met by the read-only integration:
+
+- **enforce encrypted-document permissions explicitly** — `/P` `extract` is
+  required whenever the caller supplied no accepted password, and the refusal
+  names the denied permission;
+- **PDF size and memory limits** — encrypted inputs are capped at 16 MiB,
+  separate from the 250 MiB mutation cap, derived from a measured
+  `16 x input + 45 MB` peak RSS;
+- **correct, missing, wrong, user, and owner passwords** — all five are tested,
+  including the case that matters most: a wrong password against a document
+  whose user password is empty must fail rather than open;
+- **malformed and hostile PDFs** — truncated, headerless, empty, non-PDF, and
+  body-shredded encrypted inputs are tested to produce a fixed message and
+  never echo QPDF output;
+- **backup, journal, concurrency, and atomic-output behavior** — not
+  applicable: these tools write no PDF. Plaintext never reaches the disk.
+
+Still open:
+
+- **adversarially review the wrapper and password handling.** The wrapper is
+  written to be reviewable and is covered by tests, but no adversarial review
+  by a second person has happened.
+- **warning and execution-time limits.** Neither exists. `callMain` is a
+  synchronous WebAssembly call and cannot be interrupted from the calling
+  thread, so a real timeout needs the operation moved to a worker. Today the
+  only bound on the work is the 16 MiB input cap. This is a smaller change in
+  posture than it sounds — pdf-lib parsing on the same path is also
+  synchronous and unbounded — but qpdf is a much larger parser, and the gate is
+  not met.
+- **recursion and page-tree hostile cases.** Covered downstream of decryption
+  by the existing page-tree validation, which runs on the plaintext, but not
+  yet driven adversarially through the decrypting path itself.
+- **preserve source encryption on every successful mutation.** Untouched, and
+  deliberately so. No write path loads this runtime. Re-encryption is the
+  capability the scope rule withholds, because it is what would turn the
+  owner-locked shape into a permissions-circumvention tool.
+- **add qpdf, zlib and libjpeg-turbo to the share bundle's CycloneDX SBOM.**
+  The notice inventories are verified automatically in the source tree, the
   MCPB and the share ZIP, and `SHARE-PROVENANCE.json` hashes every shipped
   file, but `SBOM.cdx.json` is generated from `package-lock.json` and therefore
-  still describes npm packages only; and
-- repeat the native Claude Desktop host smoke on supported platforms.
+  still describes npm packages only.
+- **repeat the native Claude Desktop host smoke on supported platforms.**
 
 The protected `pdfjs-dist` dependency remains exactly 5.4.624. This recipe does
 not change or replace it.

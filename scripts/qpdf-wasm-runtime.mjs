@@ -17,9 +17,12 @@
  * instead of merely asserting that a file of the right name exists. That is
  * the check that distinguishes a shipped artifact from a present one.
  *
- * Nothing in `server/` imports this runtime. It is packaged and notice-
- * complete so that a later decryption integration has a shipped artifact to
- * build on; it is not wired into any tool.
+ * Exactly one module imports this runtime: `server/qpdf-decrypt.js`, which
+ * decrypts encrypted PDFs in memory for the read-only tools `read_pdf_fields`,
+ * `validate_pdf` and `extract_to_csv`. That single-importer property is
+ * asserted by `test/qpdf-wasm-runtime-artifact.test.js`, because the wrapper is
+ * where the password, permission and size rules live; a second importer would
+ * bypass all of them. No write path loads it.
  */
 
 import { createHash } from "node:crypto";

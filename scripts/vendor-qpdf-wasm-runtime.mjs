@@ -182,8 +182,11 @@ async function main() {
     privacy: "Compiled third-party source only; no personal data and no PDF content",
     redistribution: "allowed while the complete notice directory travels with the runtime",
     integration_status:
-      "Packaged into the MCPB and the share ZIP. No PDF Tools tool loads, executes, or depends on this "
-      + "runtime yet, and no tool schema or error message references it.",
+      "Packaged into the MCPB and the share ZIP, and loaded by exactly one module: "
+      + "server/qpdf-decrypt.js. It decrypts encrypted PDFs in memory for the read-only tools "
+      + "read_pdf_fields, validate_pdf and extract_to_csv, which never write a PDF back. No write "
+      + "path loads it, nothing re-encrypts or rewrites a document with it, and decrypted bytes "
+      + "are never written to disk.",
     generator: {
       path: posixRelative(REPO_ROOT, generatorPath),
       sha256: canonicalLfSha256(await fs.readFile(generatorPath)),
