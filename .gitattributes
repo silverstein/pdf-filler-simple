@@ -1,2 +1,10 @@
 *.pdf binary
+*.wasm binary
 .beads/issues.jsonl merge=ours
+
+# The vendored QPDF WebAssembly runtime and its notices are byte-exact build
+# output bound by vendor/qpdf-wasm/runtime.provenance.json. Any end-of-line or
+# whitespace normalisation would break that hash contract, in the checkout and
+# in the mirrored share tree alike.
+vendor/qpdf-wasm/runtime/** -text -whitespace
+pdf-toolkit-mcp-share/vendor/qpdf-wasm/runtime/** -text -whitespace

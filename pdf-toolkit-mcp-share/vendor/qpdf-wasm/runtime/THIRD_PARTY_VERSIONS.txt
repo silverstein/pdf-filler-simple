@@ -1,0 +1,4 @@
+qpdf 12.3.2
+zlib 1.3.2
+libjpeg-turbo 3.2.0
+Emscripten 6.0.3 linux/amd64 sha256:2a7a41cd7e2065b30ba389c8db0fbeaebd7ec06bb4e20f23cab8ba92180f25c7

@@ -35,7 +35,16 @@ import {
   isForbiddenArchivePath,
   PDFJS_EXCLUDED_DIRECTORIES,
 } from "./mcpb-packaging-policy.mjs";
+import {
+  QPDF_WASM_RUNTIME_ASSETS,
+  QPDF_WASM_RUNTIME_BINARY,
+  QPDF_WASM_RUNTIME_DIRECTORY,
+  QPDF_WASM_RUNTIME_ENTRY_POINT,
+  QPDF_WASM_RUNTIME_FILES,
+  verifyQpdfWasmRuntime,
+} from "./qpdf-wasm-runtime.mjs";
 export { isForbiddenArchivePath } from "./mcpb-packaging-policy.mjs";
+export { QPDF_WASM_RUNTIME_FILES } from "./qpdf-wasm-runtime.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -215,6 +224,17 @@ function copyRuntimeSource(stagingDir) {
   scanFirstPartyInputs();
   for (const filename of SERVER_FILES) copyRegularFile(`server/${filename}`, `server/${filename}`, stagingDir);
   copyRegularFile("dist-ui/index.html", "dist-ui/index.html", stagingDir);
+  /*
+   * The QPDF WebAssembly runtime is not first-party text, so it is bound by
+   * the reproducible-build hash contract instead of the secret scanner. The
+   * checkout is verified before anything is copied so a corrupted or
+   * locally-patched vendor tree fails here, with the offending path, rather
+   * than surfacing as a mismatched archive later.
+   */
+  verifyQpdfWasmRuntime(REPO_ROOT, "checkout");
+  for (const relativePath of QPDF_WASM_RUNTIME_FILES) {
+    copyRegularFile(relativePath, relativePath, stagingDir);
+  }
   for (const filename of ["icon.png", "LICENSE", "README.md", "package-lock.json"]) {
     copyRegularFile(filename, filename, stagingDir);
   }
@@ -857,6 +877,22 @@ function verifyStagedProductionGraph(stagingDir, packages) {
   if (JSON.stringify(uiFiles) !== JSON.stringify(["dist-ui/index.html"])) {
     throw new Error(`Staged UI inventory mismatch: ${uiFiles.join(", ")}`);
   }
+  /*
+   * The staged QPDF WASM runtime must be the whole reviewed directory and
+   * nothing else. Verified against the staged tree, not against the checkout,
+   * because the archive is written from the stage.
+   */
+  const stagedQpdfWasmFiles = paths.filter(filename =>
+    filename.startsWith(`${QPDF_WASM_RUNTIME_DIRECTORY}/`),
+  );
+  if (JSON.stringify([...stagedQpdfWasmFiles].sort()) !== JSON.stringify([...QPDF_WASM_RUNTIME_FILES].sort())) {
+    throw new Error(`Staged QPDF WASM runtime inventory mismatch: ${stagedQpdfWasmFiles.join(", ")}`);
+  }
+  const stagedVendorFiles = paths.filter(filename => filename.startsWith("vendor/"));
+  if (JSON.stringify([...stagedVendorFiles].sort()) !== JSON.stringify([...QPDF_WASM_RUNTIME_FILES].sort())) {
+    throw new Error(`Staged vendor inventory carries unreviewed files: ${stagedVendorFiles.join(", ")}`);
+  }
+  verifyQpdfWasmRuntime(stagingDir, "staged MCPB");
   for (const required of [
     "manifest.json",
     "package.json",
@@ -865,6 +901,7 @@ function verifyStagedProductionGraph(stagingDir, packages) {
     "node_modules/pdfjs-dist/legacy/build/pdf.mjs",
     "node_modules/pdfjs-dist/legacy/build/pdf.worker.mjs",
     ...CMAP_ORACLE_ASSETS.map(asset => asset.path),
+    ...QPDF_WASM_RUNTIME_FILES,
   ]) {
     if (!paths.includes(required)) throw new Error(`Staged MCPB is missing required runtime file: ${required}`);
   }
@@ -873,6 +910,15 @@ function verifyStagedProductionGraph(stagingDir, packages) {
     const file = expectedByPath.get(binding.path);
     if (!file || file.size !== binding.size_bytes || file.sha256 !== binding.sha256) {
       throw new Error(`Staged MCPB PDF.js asset does not match oracle provenance: ${binding.path}`);
+    }
+  }
+  // The manifest the canonical writer consumes, checked separately from the
+  // staged bytes on disk, so a manifest that describes something other than
+  // what was staged cannot reach the archive.
+  for (const binding of QPDF_WASM_RUNTIME_ASSETS) {
+    const file = expectedByPath.get(binding.path);
+    if (!file || file.size !== binding.size_bytes || file.sha256 !== binding.sha256) {
+      throw new Error(`Staged MCPB QPDF WASM asset does not match runtime provenance: ${binding.path}`);
     }
   }
   for (const filename of paths) {
@@ -1018,6 +1064,8 @@ function verifyCandidateWithPinnedMcpb(candidatePath) {
       "manifest.json",
       "server/index.js",
       "dist-ui/index.html",
+      QPDF_WASM_RUNTIME_ENTRY_POINT,
+      QPDF_WASM_RUNTIME_BINARY,
       ...canvasPolicy.packages.flatMap(target =>
         target.assets.map(asset =>
           `node_modules/${target.packageName}/${asset}`,
@@ -1029,6 +1077,13 @@ function verifyCandidateWithPinnedMcpb(candidatePath) {
         throw new Error(`Pinned MCPB unpack is missing required file: ${required}`);
       }
     }
+    /*
+     * Round-tripping the archive is the only place that proves the runtime a
+     * host will actually load is the reviewed one. An artifact that is present
+     * but truncated, or reassembled with a different compression path, fails
+     * here rather than at first use.
+     */
+    verifyQpdfWasmRuntime(unpacked, "unpacked MCPB");
     verifyCanvasNativeStageManifest(
       buildExpectedFileManifest(unpacked),
       canvasPolicy,
