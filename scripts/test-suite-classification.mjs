@@ -78,6 +78,7 @@ export const CHECKOUT_LOCAL_MUTATING_TEST_SUITES = Object.freeze([
   "test/get-allowed-directories.test.js",
   "test/get-pdf-info.test.js",
   "test/golden-set-placement.test.js",
+  "test/home-config-location.test.js",
   "test/host-placeholder-expansion.test.js",
   "test/integration.test.js",
   "test/list-pdfs-default-directory.test.js",
