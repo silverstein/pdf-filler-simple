@@ -29,16 +29,32 @@
  * following 2 seconds — against the 4 seconds of CPU the same decrypt burns
  * when it is allowed to finish. The work is killed, not abandoned.
  *
+ * ## The two things this thread is asked to do
+ *
+ * `decrypt` produces the plaintext of an encrypted document, after reporting
+ * what the document says about itself so the parent can apply its rules.
+ *
+ * `reprotect` is the write path's other half: it takes bytes a mutation
+ * produced and the original encrypted file, restores that original's
+ * protection onto them with `--copy-encryption`, and reads the result's own
+ * encryption back so the parent can prove the protection is unchanged rather
+ * than assume it. It never invents protection — the only encryption
+ * `--copy-encryption` can write is the reference document's own.
+ *
  * ## Where the plaintext lives
  *
  * In this process, and only in this process. The decrypted bytes are copied out
  * of the WebAssembly heap into a standalone `ArrayBuffer` and handed to the
  * parent through `postMessage`'s transfer list, which reassigns ownership of
  * the same pages rather than serializing them: no copy, no pipe, no file, no
- * process boundary. That is deliberate. Routing this through the existing
- * pdf-lib child process would have forced the plaintext across a real process
- * boundary — through a pipe or a staged temporary file — which is exactly the
- * property the original design set out to avoid.
+ * process boundary.
+ *
+ * For a mutation the parent is itself the isolated pdf-lib child rather than
+ * the server, and the same property holds there: the plaintext is decrypted
+ * into that child, mutated in that child, and re-protected before any bytes
+ * reach the child's stage directory. Handing plaintext from the server to the
+ * child instead would have forced it across a real process boundary — through
+ * a pipe or a staged temporary file — which is exactly what this avoids.
  *
  * The ciphertext and the password arrive by the same route and are zeroed here
  * before the worker is torn down. As the wrapper's header says, that shortens
@@ -51,13 +67,15 @@
  *
  * ## What this module is not allowed to decide
  *
- * Nothing. The password rules, the permission rules, the size cap and every
- * caller-visible message live in `server/qpdf-decrypt.js`. This module runs the
- * two QPDF invocations that module asks for, reports facts, and maps failures
- * to opaque reason codes. It never composes a message for a user, because QPDF
- * prefixes its diagnostics with `argv[0]` and echoes the virtual paths below.
+ * Nothing. The password rules, the permission rules, the size cap, the choice
+ * of which protection counts as unchanged, and every caller-visible message
+ * live in `server/qpdf-decrypt.js`. This module runs the QPDF invocations that
+ * module asks for, reports facts, and maps failures to opaque reason codes. It
+ * never composes a message for a user, because QPDF prefixes its diagnostics
+ * with `argv[0]` and echoes the virtual paths below.
  */
 
+import { createHash } from "node:crypto";
 import { parentPort, workerData } from "node:worker_threads";
 
 const QPDF_RUNTIME_RELATIVE_PATH = "../vendor/qpdf-wasm/runtime/qpdf.mjs";
@@ -68,6 +86,17 @@ const QPDF_RUNTIME_RELATIVE_PATH = "../vendor/qpdf-wasm/runtime/qpdf.mjs";
 const VIRTUAL_INPUT_PATH = "/in.pdf";
 const VIRTUAL_OUTPUT_PATH = "/out.pdf";
 const VIRTUAL_PASSWORD_PATH = "/pw";
+// Re-protection reads the original encrypted document as a reference and the
+// mutated plaintext as the body.
+const VIRTUAL_REFERENCE_PATH = "/ref.pdf";
+const VIRTUAL_PLAINTEXT_PATH = "/plain.pdf";
+// QPDF reads one argument per line from `@file`. It is the only channel that
+// can carry the reference document's password without putting it in `argv`:
+// unlike the input document, whose password has `--password-file`, the
+// `--copy-encryption` reference has no file-based password option at all.
+// Verified faithful for passwords containing spaces, leading and trailing
+// spaces, `=`, quotes, backslashes, non-ASCII characters, and the empty string.
+const VIRTUAL_ARGUMENTS_PATH = "/args";
 
 // The JSON inspection output is a few hundred bytes; QPDF diagnostics are a
 // few lines. Anything beyond this means the runtime is not behaving as built.
@@ -304,6 +333,87 @@ async function inspectEncryption(pdfBytes, password) {
     ownerPasswordMatched: parsed.ownerpasswordmatched,
     userPasswordMatched: parsed.userpasswordmatched,
     capabilities: parsed.capabilities,
+    // The stored protection itself, reported so the parent can decide whether
+    // a document can be faithfully re-protected and can prove afterwards that
+    // it was. `key` is deliberately not copied: it is the file encryption key,
+    // it is not needed for any decision, and it must not leave this thread.
+    parameters: encryptionParameters(parsed.parameters),
+    // A digest rather than the dictionary, so `/O`, `/U`, `/OE` and `/UE` can
+    // be compared without the key material itself leaving this thread.
+    encryptDictionary: encryptDictionaryDigest(pdfBytes),
+  };
+}
+
+/**
+ * A digest of the document's literal `/Encrypt` dictionary.
+ *
+ * QPDF's JSON reports `/P`, `/R`, `/V` and the crypt methods, but not `/O`,
+ * `/U`, `/OE` or `/UE` — the strings that actually encode the passwords. Two
+ * documents can therefore agree on every reported parameter and still be
+ * locked with different credentials, and a re-protection could in principle
+ * reproduce the parameters while changing the key material. Digesting the
+ * stored dictionary closes both gaps: it is compared before and after every
+ * re-protection, and across the sources of a merge.
+ *
+ * The `/Encrypt` dictionary is the one object a PDF may never hide inside an
+ * object stream — a reader has to parse it before it can decrypt anything — so
+ * it is always locatable in the clear. Anything this cannot resolve
+ * unambiguously yields `null`, and a `null` never compares equal to anything,
+ * so an unparseable dictionary refuses the operation instead of waving it
+ * through.
+ */
+function encryptDictionaryDigest(bytes) {
+  const text = Buffer.from(bytes).toString("latin1");
+  const references = [...text.matchAll(/\/Encrypt\s+(\d+)\s+(\d+)\s+R/g)];
+  if (references.length === 0) return null;
+  const [, objectNumber, generation] = references[references.length - 1];
+  const definition = new RegExp(
+    `(?:^|[^0-9])${objectNumber}\\s+${generation}\\s+obj\\b`,
+    "g",
+  );
+  let dictionary = null;
+  for (const match of text.matchAll(definition)) {
+    const start = text.indexOf("<<", match.index);
+    const end = text.indexOf("endobj", match.index);
+    if (start < 0 || end < 0 || start > end) continue;
+    const body = text.slice(start, end).trim();
+    // The standard security handler is the only one this build can reproduce.
+    // A public-key dictionary (/Adobe.PubSec) never matches, so it is refused
+    // here rather than silently re-protected as something else.
+    if (!body.includes("/Standard")) continue;
+    // A later revision of the same object number wins, matching how a reader
+    // resolves it.
+    dictionary = body;
+  }
+  if (dictionary === null) return null;
+  return createHash("sha256").update(dictionary, "latin1").digest("hex");
+}
+
+/**
+ * The subset of QPDF's reported encryption parameters that identifies the
+ * protection. Every field here is compared before and after a re-protection,
+ * so an omission would be a hole in that proof rather than a tidiness choice.
+ */
+function encryptionParameters(parameters) {
+  if (
+    !parameters
+    || !Number.isInteger(parameters.P)
+    || !Number.isInteger(parameters.R)
+    || !Number.isInteger(parameters.V)
+    || !Number.isInteger(parameters.bits)
+  ) {
+    throw new WorkerDecryptionFailure("malformed_inspection");
+  }
+  const method = key => (typeof parameters[key] === "string" ? parameters[key] : null);
+  return {
+    P: parameters.P,
+    R: parameters.R,
+    V: parameters.V,
+    bits: parameters.bits,
+    method: method("method"),
+    filemethod: method("filemethod"),
+    streammethod: method("streammethod"),
+    stringmethod: method("stringmethod"),
   };
 }
 
@@ -328,6 +438,64 @@ async function decrypt(pdfBytes, password) {
   return output;
 }
 
+/**
+ * Builds the `@file` argument list for a re-protection.
+ *
+ * `--copy-encryption` reproduces the reference document's `/O`, `/OE`, `/U`,
+ * `/UE`, `/P`, `/R`, `/V` and crypt filters verbatim — including an owner
+ * password this process never learned — and it also copies the reference's
+ * `/ID`. That last part is not incidental: for `/R` 4 and below the `/U` string
+ * is derived from `/ID[0]`, and the rebuild-style operations (`split_pdf`,
+ * `reorder_pdf_pages`, `apply_page_plan`, `merge_pdfs`) hand QPDF a document
+ * pdf-lib built from scratch, which carries a different `/ID` or none at all.
+ * Without QPDF restoring the reference's `/ID` those outputs would be encrypted
+ * with a `/U` that no longer matched the file, and would open for nobody.
+ *
+ * `--allow-weak-crypto` is passed only when the reference document is itself
+ * RC4. QPDF otherwise refuses to write RC4 at all, which would make this fail
+ * on exactly the documents it is meant to preserve. It cannot weaken anything:
+ * the only protection `--copy-encryption` can write is the reference's own, so
+ * the flag permits restoring weak protection that was already there and can
+ * never mint it.
+ */
+function reprotectionArgumentsFileBytes(password, allowWeakCrypto) {
+  if (/[\r\n]/.test(password)) {
+    throw new WorkerDecryptionFailure("password_unrepresentable");
+  }
+  const argumentLines = [];
+  if (allowWeakCrypto) argumentLines.push("--allow-weak-crypto");
+  argumentLines.push(`--copy-encryption=${VIRTUAL_REFERENCE_PATH}`);
+  argumentLines.push(`--encryption-file-password=${password}`);
+  return Buffer.from(`${argumentLines.join("\n")}\n`, "utf8");
+}
+
+/**
+ * Restores the reference document's protection onto mutated plaintext, then
+ * reads the result's own encryption back so the parent can prove the
+ * protection is the one it started with rather than assume it.
+ */
+async function reprotect(plaintextBytes, referenceBytes, password, allowWeakCrypto) {
+  const { status, output } = await runQpdf(
+    [`@${VIRTUAL_ARGUMENTS_PATH}`, VIRTUAL_PLAINTEXT_PATH, VIRTUAL_OUTPUT_PATH],
+    {
+      [VIRTUAL_PLAINTEXT_PATH]: plaintextBytes,
+      [VIRTUAL_REFERENCE_PATH]: referenceBytes,
+      [VIRTUAL_ARGUMENTS_PATH]: reprotectionArgumentsFileBytes(password ?? "", allowWeakCrypto),
+    },
+    VIRTUAL_OUTPUT_PATH,
+  );
+  if (!qpdfCompleted(status) || !output || output.length === 0) {
+    throw new WorkerDecryptionFailure("reprotect_failed");
+  }
+  // Inspected with the caller's own password, in a fresh module, so the report
+  // describes the bytes that are about to be staged.
+  const encryption = await inspectEncryption(output, password);
+  if (!encryption.encrypted) {
+    throw new WorkerDecryptionFailure("reprotect_produced_plaintext");
+  }
+  return { output, encryption };
+}
+
 /*
  * The request. One worker serves exactly one document, so the ciphertext and
  * the password arrive once, in `workerData`, and both phases read them from
@@ -339,9 +507,16 @@ async function decrypt(pdfBytes, password) {
  */
 const ciphertext = new Uint8Array(workerData.ciphertext);
 const password = workerData.password;
+// A re-protection carries a second body: the mutated plaintext to be protected.
+// It is absent for a decryption, which is the mode the read-only tools use.
+const plaintextRequest = workerData.plaintext ? new Uint8Array(workerData.plaintext) : null;
+const allowWeakCrypto = workerData.allowWeakCrypto === true;
 
 function zeroRequest() {
   ciphertext.fill(0);
+  // The mutated plaintext is the most sensitive thing this thread ever holds:
+  // it is the document's real content, already decrypted.
+  if (plaintextRequest) plaintextRequest.fill(0);
 }
 
 /**
@@ -353,7 +528,7 @@ function zeroRequest() {
  * the deadline expired — the parent terminates this thread and nothing further
  * runs here.
  */
-async function main() {
+async function decryptionRequest() {
   const encryption = await inspectEncryption(ciphertext, password);
 
   // The listener goes on before the report goes out, so the parent's answer
@@ -373,6 +548,40 @@ async function main() {
   // parent and this thread's reference is detached. There is no second copy to
   // wipe, and nothing is serialized.
   parentPort.postMessage({ kind: "decrypted", plaintext: plaintext.buffer }, [plaintext.buffer]);
+}
+
+/**
+ * The re-protection request. There is nothing to ask the parent here: the
+ * permission decision was made before the document was ever decrypted, and
+ * this phase only puts back protection that the document already had.
+ *
+ * The parent still compares the reported encryption against the source's own
+ * before anything is written, so a QPDF that quietly produced different
+ * protection is caught rather than trusted.
+ */
+async function reprotectionRequest() {
+  const { output, encryption } = await reprotect(
+    plaintextRequest,
+    ciphertext,
+    password,
+    allowWeakCrypto,
+  );
+  zeroRequest();
+  parentPort.postMessage(
+    { kind: "reprotected", ciphertext: output.buffer, encryption },
+    [output.buffer],
+  );
+}
+
+const REQUEST_MODES = {
+  decrypt: decryptionRequest,
+  reprotect: reprotectionRequest,
+};
+
+async function main() {
+  const run = REQUEST_MODES[workerData.mode ?? "decrypt"];
+  if (!run) throw new WorkerDecryptionFailure("protocol_violation");
+  await run();
 }
 
 main().catch(error => {

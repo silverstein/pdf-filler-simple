@@ -1,31 +1,35 @@
 /**
- * Decryption of encrypted PDFs for the read-only tools: the size cap, the
- * password rules, the permission rules, the queue, the deadline, and every
- * message a caller can see.
+ * Encrypted PDFs, in both directions: the size cap, the password rules, the
+ * permission rules, the queue, the deadline, the re-protection contract, and
+ * every message a caller can see.
  *
  * The QPDF runtime itself is not loaded here. It runs in a worker thread —
  * `server/qpdf-decrypt-worker.js`, the only module in the tree that loads it —
  * which this module starts, drives, bounds and destroys. See that file for why
- * the work cannot run on the server's own thread; see below for what this
- * module decides.
+ * the work cannot run on the calling thread; see below for what this module
+ * decides.
  *
- * pdf-lib 1.17.1 cannot decrypt anything, so every tool that reads through it
+ * pdf-lib 1.17.1 cannot decrypt anything, so every tool that goes through it
  * fails on an encrypted document no matter what password the caller supplies.
- * This module gives three of those tools — `read_pdf_fields`, `validate_pdf`
- * and `extract_to_csv` — a way through. All three only ever read: none of them
- * writes a PDF back, so nothing here can re-encrypt a document, change its
- * protection, or persist a decrypted copy.
+ * This module is the way through, for two groups of tools with two different
+ * rules:
+ *
+ *   - the read-only tools `read_pdf_fields`, `validate_pdf` and
+ *     `extract_to_csv`, which never write a PDF back; and
+ *   - the mutation tools in `ENCRYPTED_WRITE_OPERATIONS`, which do, and which
+ *     therefore also have to put the document's protection back afterwards.
  *
  * ## What this deliberately does not do
  *
- * It is not a "remove the password" facility. QPDF will decrypt an
- * owner-locked document — one that opens with an empty user password but whose
- * `/P` denies modification — without any password at all, and will re-lock it
- * afterwards with an identical `/P` and `/R`. Shipping that shape would make
- * PDF Tools a permissions-circumvention tool. So decryption is gated twice:
+ * It is not a "remove the password" facility, and there is no parameter that
+ * turns it into one. QPDF will decrypt an owner-locked document — one that
+ * opens with an empty user password but whose `/P` denies modification —
+ * without any password at all, and will re-lock it afterwards with an
+ * identical `/P` and `/R`. Shipping that shape would make PDF Tools a
+ * permissions-circumvention tool. So decryption is gated:
  *
  *   - a caller who supplies a password that the document accepts is acting on
- *     a credential they already hold, and proceeds; but
+ *     a credential they already hold, and proceeds *for a read*; but
  *   - a caller who supplies none, and merely benefits from the document's
  *     empty user password, proceeds only if the document's own `/P` grants the
  *     permission the operation needs, and is otherwise refused by name.
@@ -33,15 +37,44 @@
  * The empty string counts as *no password*, so the check above cannot be
  * sidestepped by passing `""` to a document whose user password is empty.
  *
- * Both gates are evaluated here, in the server, between the worker's two
- * phases. The worker reports what the document says about itself and then
- * waits; it is told to decrypt only after this module has decided that it may.
- * A refusal is therefore a refusal to do the work, not a decision to throw the
- * result away.
+ * The gates are evaluated here, between the worker's two phases. The worker
+ * reports what the document says about itself and then waits; it is told to
+ * decrypt only after this module has decided that it may. A refusal is
+ * therefore a refusal to do the work, not a decision to throw the result away.
+ *
+ * ## Reads and writes are gated differently, on purpose
+ *
+ * For a read, holding either password makes the caller the intended reader and
+ * that is the end of it. For a write it is not. A document whose `/P` says
+ * `modify: not allowed` is making an explicit statement about what may be done
+ * to it, and the owner password is precisely the credential that exists to
+ * authorise overriding that statement. So on the write path a *user* password
+ * does not satisfy a permission the document denies: only the owner password
+ * does, and authenticating as owner satisfies permissions by definition.
+ *
+ * Note that QPDF keeps reporting a document's declared capabilities as denied
+ * even when the owner password matched, so the owner check has to be made
+ * against `ownerPasswordMatched` rather than read out of the capabilities.
+ *
+ * ## Protection in, protection out
+ *
+ * A write path never changes a document's protection. After pdf-lib has
+ * produced the modified bytes, `reprotectPdfAfterWrite` restores the original
+ * `/Encrypt` with QPDF's `--copy-encryption`, which reproduces `/O`, `/OE`,
+ * `/U`, `/UE`, `/P`, `/R`, `/V`, `/ID` and the crypt filters verbatim —
+ * including an owner password nothing here ever learned. The result is then
+ * compared against the source's own protection, digest of the literal
+ * `/Encrypt` dictionary included, before the bytes are allowed anywhere near
+ * disk. Silent protection change is the failure this path exists to prevent,
+ * so it is asserted against rather than assumed away.
+ *
+ * There is deliberately no fallback. A document that cannot be faithfully
+ * re-protected fails the operation and writes nothing; an encrypted input
+ * yields an encrypted output or no output at all.
  *
  * ## Which permission bit
  *
- * All three tools require `extract` — `/P` bit 5, "copy or otherwise extract
+ * The read tools require `extract` — `/P` bit 5, "copy or otherwise extract
  * text and graphics". Every one of them copies document content out of the
  * document: `read_pdf_fields` returns field names and their current values,
  * `validate_pdf` reports field names and whether each is filled, and
@@ -57,6 +90,10 @@
  *     already in it. A document may permit filling while denying extraction,
  *     and honouring `modifyforms` here would hand back the values that
  *     `extract` was set to withhold.
+ *
+ * The mutation tools each require the bit that matches what they actually do
+ * to the file; see `ENCRYPTED_WRITE_OPERATIONS` for the mapping and why each
+ * one is what it is.
  *
  * ## Memory
  *
@@ -90,12 +127,19 @@
  * ## Plaintext handling
  *
  * Decrypted bytes exist only in memory and are never written to disk. They also
- * never leave this process: the worker is a thread, and the plaintext reaches
- * this module through `postMessage`'s transfer list, which moves ownership of
- * the same pages rather than serializing them. Nothing is copied, piped, or
- * staged to a file. That was an explicit property of the original in-process
- * design and isolation keeps it; routing decryption through the existing
- * pdf-lib *child process* instead would have given up exactly that.
+ * never leave the process that asked for them: the worker is a thread, and the
+ * plaintext reaches this module through `postMessage`'s transfer list, which
+ * moves ownership of the same pages rather than serializing them. Nothing is
+ * copied, piped, or staged to a file.
+ *
+ * This module runs in two hosts, and the property holds in both. For a read it
+ * runs in the server process. For a mutation it runs inside the isolated
+ * pdf-lib child, which is where the decrypt/mutate/re-protect sequence has to
+ * live: that child stages its output to a file on disk, so protection must be
+ * restored before staging, which puts QPDF in the child — and once QPDF is
+ * there, decrypting there too means the plaintext never crosses a process
+ * boundary either. Passing plaintext from the server to the child would have
+ * given up exactly the property this design was built to keep.
  *
  * The caller gets a `release()` and must call it once it has finished reading
  * the loaded document. Be honest about what that buys: `release()` overwrites
@@ -184,9 +228,92 @@ export const ENCRYPTED_READ_OPERATIONS = Object.freeze({
   }),
 });
 
+/**
+ * The mutations allowed to decrypt, and the `/P` capabilities each one needs.
+ *
+ * Adding an entry here grants a tool the ability to rewrite an encrypted
+ * document, so each mapping is justified against what the operation actually
+ * does to the file rather than against what its name suggests.
+ *
+ *   - Filling a form is `modifyforms` — `/P` bit 9, "fill in existing
+ *     interactive form fields". Not `modify`: a document written with
+ *     `--modify=form` permits form filling while denying general modification,
+ *     and requiring `modify` would refuse work its owner explicitly allowed.
+ *
+ *   - Page manipulation is `modifyassembly` — `/P` bit 11, "assemble the
+ *     document (insert, rotate, or delete pages)". That is exactly what these
+ *     operations do, and a document written with `--modify=assembly` permits it
+ *     while denying everything else.
+ *
+ *   - Stamping is `modify` — `/P` bit 4, "modify the contents of the
+ *     document". Deliberately *not* `modifyannotations` (bit 6). These tools
+ *     draw into the page content stream with pdf-lib's `drawRectangle`,
+ *     `drawText` and `drawImage`; none of them creates an annotation object or
+ *     touches `/Annots`. A document written with `--modify=annotate` denies
+ *     `modify` while permitting `modifyannotations`, and accepting the
+ *     annotation bit here would let PDF Tools burn content into a page whose
+ *     owner allowed only commenting.
+ *
+ *   - `prepare_signing_packet` both fills fields and draws boxes, so it needs
+ *     both capabilities and is refused if either is denied.
+ */
+export const ENCRYPTED_WRITE_OPERATIONS = Object.freeze({
+  fill_pdf: Object.freeze({
+    capabilities: Object.freeze(["modifyforms"]),
+    activity: "fill in its form fields",
+  }),
+  fill_with_profile: Object.freeze({
+    capabilities: Object.freeze(["modifyforms"]),
+    activity: "fill in its form fields from a profile",
+  }),
+  bulk_fill_from_csv: Object.freeze({
+    capabilities: Object.freeze(["modifyforms"]),
+    activity: "fill in its form fields from a CSV file",
+  }),
+  apply_page_plan: Object.freeze({
+    capabilities: Object.freeze(["modifyassembly"]),
+    activity: "reorder, rotate or delete its pages",
+  }),
+  merge_pdfs: Object.freeze({
+    capabilities: Object.freeze(["modifyassembly"]),
+    activity: "merge it with other documents",
+  }),
+  split_pdf: Object.freeze({
+    capabilities: Object.freeze(["modifyassembly"]),
+    activity: "split it into separate documents",
+  }),
+  rotate_pdf_pages: Object.freeze({
+    capabilities: Object.freeze(["modifyassembly"]),
+    activity: "rotate its pages",
+  }),
+  reorder_pdf_pages: Object.freeze({
+    capabilities: Object.freeze(["modifyassembly"]),
+    activity: "reorder its pages",
+  }),
+  add_signature_field: Object.freeze({
+    capabilities: Object.freeze(["modify"]),
+    activity: "draw a signature placeholder onto a page",
+  }),
+  apply_signature: Object.freeze({
+    capabilities: Object.freeze(["modify"]),
+    activity: "stamp a signature onto a page",
+  }),
+  apply_text: Object.freeze({
+    capabilities: Object.freeze(["modify"]),
+    activity: "stamp text onto a page",
+  }),
+  prepare_signing_packet: Object.freeze({
+    capabilities: Object.freeze(["modify", "modifyforms"]),
+    activity: "fill in its form fields and draw signature placeholders onto its pages",
+  }),
+});
+
 /** Human-readable names for the `/P` capabilities this module can require. */
 const CAPABILITY_LABELS = Object.freeze({
   extract: "content copying and extraction",
+  modify: "modifying the document's contents",
+  modifyforms: "filling in form fields",
+  modifyassembly: "assembling the document's pages",
 });
 
 export const PDF_ENCRYPTED_FILE_LIMIT_MESSAGE =
@@ -232,9 +359,70 @@ export function pdfPermissionDeniedMessage(operation) {
     + "If you hold the owner password, supply it in the 'password' parameter and retry.";
 }
 
+export const PDF_REPROTECT_FAILED_MESSAGE =
+  "This PDF is encrypted and its protection could not be restored to the modified copy, so "
+  + "nothing was written. PDF Tools re-applies the document's own encryption after a change and "
+  + "never writes an unprotected copy of a protected document. This can happen when a document "
+  + "uses a protection scheme this build cannot reproduce, such as public-key (certificate) "
+  + "security. Decrypt the file first (for example with qpdf), make the change, and re-protect it "
+  + "yourself.";
+
+export const PDF_REPROTECT_TIMEOUT_MESSAGE =
+  `Restoring this PDF's protection after the change did not finish within `
+  + `${PDF_DECRYPTION_TIMEOUT_MS / 1000} seconds and was stopped, so nothing was written. How long `
+  + "this takes depends on how many objects a document contains rather than on how large it is, so "
+  + "a small file can still exceed the limit.";
+
+export const PDF_REPROTECT_CHANGED_MESSAGE =
+  "This PDF is encrypted and the modified copy did not come back with exactly the protection the "
+  + "original had, so nothing was written. PDF Tools verifies that a document's permissions and "
+  + "encryption are unchanged before saving it, and refuses rather than write a document whose "
+  + "security differs from the original's.";
+
+export const PDF_MERGE_MIXED_ENCRYPTION_MESSAGE =
+  "These PDFs cannot be merged: they are not all protected the same way, so there is no single "
+  + "protection the merged document could carry. PDF Tools gives a merged document the encryption "
+  + "its sources share, and will not choose one source's protection over another's or drop it. "
+  + "Merge documents that share the same encryption and password, or decrypt them first and "
+  + "protect the result yourself.";
+
 /**
- * Parameter text for the three tools that can now decrypt. Replaces
- * `PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION`, which is false for exactly these.
+ * Refusal text for a mutation the document's own `/P` denies.
+ *
+ * Unlike the read path, holding the *user* password is not enough here: a
+ * document that says `modify: not allowed` is making an explicit statement, and
+ * the owner password is the credential that exists to authorise overriding it.
+ * The message therefore names the denied permission and says plainly which
+ * credential would authorise the work — without ever suggesting a way around
+ * the restriction.
+ */
+export function pdfWritePermissionDeniedMessage(operation, deniedCapabilities) {
+  const { activity } = ENCRYPTED_WRITE_OPERATIONS[operation];
+  const named = deniedCapabilities
+    .map(capability => `${CAPABILITY_LABELS[capability]} (/P '${capability}')`)
+    .join(" and ");
+  return `This PDF is encrypted and its permissions deny ${named}, so PDF Tools will not `
+    + `${activity}. Supplying the user password proves you may open the document, but not that you `
+    + "may override a restriction its owner set. If you hold the owner password, supply it in the "
+    + "'password' parameter and retry; that is the credential which authorises this change.";
+}
+
+/**
+ * Parameter text for the tools that can now decrypt, mutate and re-protect.
+ * These carried the "accepted but never used" text until they could actually
+ * use a password; nothing advertises that text any more.
+ */
+export const PDF_REPROTECTING_PASSWORD_DESCRIPTION =
+  "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted "
+  + `in memory, changed, and then saved with exactly the encryption and permissions it already had `
+  + `(encrypted inputs are limited to ${PDF_ENCRYPTED_MAX_FILE_BYTES / (1024 * 1024)} MiB). The `
+  + "protection is never removed, changed, or added by this tool. Leave it unset for an "
+  + "unencrypted document. If the document's own permissions deny the change being made, the owner "
+  + "password is required, because that is the credential which authorises overriding them.";
+
+/**
+ * Parameter text for the three read-only tools that can decrypt. They too
+ * once advertised a password they could not use.
  */
 export const PDF_DECRYPTABLE_PASSWORD_DESCRIPTION =
   "Password for an encrypted PDF. Supply the user or owner password and the document is "
@@ -420,23 +608,28 @@ function workerFailure(reason, suppliedPassword) {
  * the thread holds nothing anyone is waiting for. `teardown` resolves once the
  * worker is gone either way, and is what the queue holds.
  */
-function runDecryptionWorker(pdfBytes, suppliedPassword, rules, operation, timeoutMs) {
+/**
+ * The lifecycle every QPDF request shares: one worker, one deadline, and
+ * destruction on every exit path including success.
+ *
+ * `handleMessage` receives each worker message and the `settle` that ends the
+ * request; everything mode-specific lives there. The lifecycle itself — when
+ * the thread dies, when a failure may be reported, what the queue waits on —
+ * is identical for a decryption and a re-protection and is written once.
+ *
+ * Returns `{ outcome, teardown }`. A *failure* is not reported until the thread
+ * is actually dead, because "the deadline stopped this" has to mean it stopped;
+ * a *success* is reported as soon as its payload has arrived, because by then
+ * the thread holds nothing anyone is waiting for. `teardown` resolves once the
+ * worker is gone either way, and is what the queue holds.
+ */
+function runBoundedQpdfWorker({ workerData, transferList, timeoutMs, timeoutError, handleMessage }) {
   let markTornDown;
   const teardown = new Promise(resolveTeardown => { markTornDown = resolveTeardown; });
   const outcome = new Promise((resolve, reject) => {
-    // An exact copy, transferred to the worker. The caller's `pdfBytes` is the
-    // file as it is on disk and other code still holds it, so its backing store
-    // must not be detached; and a Node Buffer may be a window onto a shared
-    // pool, which must not be handed to another thread whatever the intent.
-    const ciphertext = new Uint8Array(pdfBytes.byteLength);
-    ciphertext.set(pdfBytes);
-
     let worker;
     try {
-      worker = new Worker(DECRYPTION_WORKER_URL, {
-        workerData: { ciphertext: ciphertext.buffer, password: suppliedPassword },
-        transferList: [ciphertext.buffer],
-      });
+      worker = new Worker(DECRYPTION_WORKER_URL, { workerData, transferList });
     } catch {
       markTornDown();
       reject(new PdfDecryptionError("worker_unavailable", PDF_DECRYPTION_FAILED_MESSAGE));
@@ -447,20 +640,17 @@ function runDecryptionWorker(pdfBytes, suppliedPassword, rules, operation, timeo
 
     let settled = false;
     let deadline = null;
-    // Retained from the inspection phase: it is what the permission rules were
-    // applied to, and the caller is entitled to see the same facts.
-    let inspectedEncryption = null;
     const settle = (error, value) => {
       if (settled) return;
       settled = true;
       if (deadline) clearTimeout(deadline);
-      // A success is handed over now: the plaintext is already in this thread's
+      // A success is handed over now: the payload is already in this thread's
       // memory and the worker's own copy was detached when it was transferred.
       if (!error) resolve(value);
       const done = () => {
         activeDecryptionWorkers.delete(worker);
-        // A failure waits: `decrypt_timeout` in particular must not be reported
-        // while the thread it is about is still running.
+        // A failure waits: a timeout in particular must not be reported while
+        // the thread it is about is still running.
         if (error) reject(error);
         markTornDown();
       };
@@ -474,7 +664,60 @@ function runDecryptionWorker(pdfBytes, suppliedPassword, rules, operation, timeo
       else done();
     };
 
-    worker.on("message", message => {
+    worker.on("message", message => handleMessage(message, settle, worker));
+    worker.once("messageerror", () => {
+      settle(new PdfDecryptionError("protocol_violation", PDF_DECRYPTION_FAILED_MESSAGE));
+    });
+    worker.once("error", () => {
+      settle(new PdfDecryptionError("worker_faulted", PDF_DECRYPTION_FAILED_MESSAGE));
+    });
+    worker.once("exit", () => {
+      // Only reachable when the thread died without reporting: an
+      // out-of-memory abort, or a fault the worker's own handler could not
+      // survive. A settled request has already terminated it.
+      settle(new PdfDecryptionError("worker_exited", PDF_DECRYPTION_FAILED_MESSAGE));
+    });
+
+    deadline = setTimeout(() => settle(timeoutError()), timeoutMs);
+    // The deadline must not be a reason for the process to stay alive; the
+    // worker it is guarding already is one.
+    deadline.unref();
+  });
+  return { outcome, teardown };
+}
+
+/**
+ * An exact copy of caller-owned bytes, safe to transfer.
+ *
+ * The caller's buffer is the file as it is on disk or a document another part
+ * of the process still holds, so its backing store must not be detached; and a
+ * Node Buffer may be a window onto a shared pool, which must not be handed to
+ * another thread whatever the intent.
+ */
+function transferableCopy(bytes) {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy;
+}
+
+/**
+ * Runs one document through one worker thread, under one deadline.
+ *
+ * The worker is destroyed on every exit path, success included. That is not
+ * tidiness: `worker.terminate()` is the only mechanism that stops a synchronous
+ * QPDF invocation already in flight, and it is why the work is out here at all.
+ */
+function runDecryptionWorker(pdfBytes, suppliedPassword, permit, timeoutMs) {
+  const ciphertext = transferableCopy(pdfBytes);
+  // Retained from the inspection phase: it is what the permission rules were
+  // applied to, and the caller is entitled to see the same facts.
+  let inspectedEncryption = null;
+  return runBoundedQpdfWorker({
+    workerData: { mode: "decrypt", ciphertext: ciphertext.buffer, password: suppliedPassword },
+    transferList: [ciphertext.buffer],
+    timeoutMs,
+    timeoutError: () => new PdfDecryptionError("decrypt_timeout", PDF_DECRYPTION_TIMEOUT_MESSAGE),
+    handleMessage(message, settle, worker) {
       if (message?.kind === "inspected") {
         const { encryption } = message;
         if (!encryption?.encrypted) {
@@ -487,10 +730,9 @@ function runDecryptionWorker(pdfBytes, suppliedPassword, rules, operation, timeo
           ));
           return;
         }
-        const credentialed = suppliedPassword !== null
-          && (encryption.ownerPasswordMatched || encryption.userPasswordMatched);
-        if (!credentialed && encryption.capabilities?.[rules.capability] !== true) {
-          settle(new PdfDecryptionError("permission_denied", pdfPermissionDeniedMessage(operation)));
+        const refusal = permit(encryption);
+        if (refusal) {
+          settle(refusal);
           return;
         }
         inspectedEncryption = encryption;
@@ -529,29 +771,42 @@ function runDecryptionWorker(pdfBytes, suppliedPassword, rules, operation, timeo
         return;
       }
       settle(new PdfDecryptionError("protocol_violation", PDF_DECRYPTION_FAILED_MESSAGE));
-    });
-
-    worker.once("messageerror", () => {
-      settle(new PdfDecryptionError("protocol_violation", PDF_DECRYPTION_FAILED_MESSAGE));
-    });
-    worker.once("error", () => {
-      settle(new PdfDecryptionError("worker_faulted", PDF_DECRYPTION_FAILED_MESSAGE));
-    });
-    worker.once("exit", () => {
-      // Only reachable when the thread died without reporting: an
-      // out-of-memory abort, or a fault the worker's own handler could not
-      // survive. A settled request has already terminated it.
-      settle(new PdfDecryptionError("worker_exited", PDF_DECRYPTION_FAILED_MESSAGE));
-    });
-
-    deadline = setTimeout(() => {
-      settle(new PdfDecryptionError("decrypt_timeout", PDF_DECRYPTION_TIMEOUT_MESSAGE));
-    }, timeoutMs);
-    // The deadline must not be a reason for the process to stay alive; the
-    // worker it is guarding already is one.
-    deadline.unref();
+    },
   });
-  return { outcome, teardown };
+}
+
+/** Runs one re-protection through one worker thread, under one deadline. */
+function runReprotectionWorker(plaintextBytes, referenceBytes, suppliedPassword, allowWeakCrypto, timeoutMs) {
+  const plaintext = transferableCopy(plaintextBytes);
+  const ciphertext = transferableCopy(referenceBytes);
+  return runBoundedQpdfWorker({
+    workerData: {
+      mode: "reprotect",
+      ciphertext: ciphertext.buffer,
+      plaintext: plaintext.buffer,
+      password: suppliedPassword,
+      allowWeakCrypto,
+    },
+    transferList: [ciphertext.buffer, plaintext.buffer],
+    timeoutMs,
+    timeoutError: () => new PdfDecryptionError("reprotect_timeout", PDF_REPROTECT_TIMEOUT_MESSAGE),
+    handleMessage(message, settle) {
+      if (message?.kind === "reprotected") {
+        const protectedBytes = Buffer.from(message.ciphertext);
+        if (protectedBytes.length === 0) {
+          settle(new PdfDecryptionError("reprotect_failed", PDF_REPROTECT_FAILED_MESSAGE));
+          return;
+        }
+        settle(null, { ciphertext: protectedBytes, encryption: message.encryption });
+        return;
+      }
+      if (message?.kind === "failed") {
+        settle(reprotectionFailure(message.reason));
+        return;
+      }
+      settle(new PdfDecryptionError("protocol_violation", PDF_REPROTECT_FAILED_MESSAGE));
+    },
+  });
 }
 
 /**
@@ -572,23 +827,201 @@ export async function decryptPdfForRead(pdfBytes, password, operation, options =
   return queueDecryption(() => decryptPdfForReadExclusively(pdfBytes, password, operation, options));
 }
 
-/** The body of `decryptPdfForRead`, run with the decryption queue held. */
-async function decryptPdfForReadExclusively(pdfBytes, password, operation, { timeoutMs } = {}) {
-  const rules = ENCRYPTED_READ_OPERATIONS[operation];
+/**
+ * Decrypts an encrypted PDF so one of the mutation operations can change it.
+ *
+ * Identical to `decryptPdfForRead` in every respect but the permission rule.
+ * For a read, holding either password makes the caller the intended reader and
+ * that is enough. For a write it is not: if the document's `/P` denies the
+ * permission the change needs, only the *owner* password authorises it.
+ * Authenticating as owner satisfies permissions by definition, which is why
+ * QPDF still reporting `modify: false` under an owner password is not consulted
+ * once `ownerPasswordMatched` is true.
+ *
+ * The returned `encryption` is what the re-protection is later checked against.
+ */
+export async function decryptPdfForWrite(pdfBytes, password, operation, options = {}) {
+  return queueDecryption(
+    () => decryptPdfForWriteExclusively(pdfBytes, password, operation, options),
+  );
+}
+
+/** The body of `decryptPdfForWrite`, run with the decryption queue held. */
+async function decryptPdfForWriteExclusively(pdfBytes, password, operation, { timeoutMs } = {}) {
+  const rules = ENCRYPTED_WRITE_OPERATIONS[operation];
   if (!rules) {
-    throw new TypeError(`Operation '${operation}' is not permitted to decrypt PDFs.`);
+    throw new TypeError(`Operation '${operation}' is not permitted to rewrite encrypted PDFs.`);
   }
-  if (!Buffer.isBuffer(pdfBytes) && !(pdfBytes instanceof Uint8Array)) {
+  const suppliedPassword = assertDecryptableRequest(pdfBytes, password);
+  return runDecryptionWorker(
+    pdfBytes,
+    suppliedPassword,
+    encryption => writePermissionRefusal(encryption, suppliedPassword, operation, rules),
+    resolveDecryptionDeadlineMs(timeoutMs),
+  );
+}
+
+/**
+ * The write permission rule, separated so it can be read — and tested —
+ * without a worker.
+ *
+ * Returns the refusal, or `null` if the mutation may proceed.
+ */
+export function writePermissionRefusal(encryption, suppliedPassword, operation, rules) {
+  // The owner password is the credential that authorises overriding /P, so
+  // holding it ends the question. Note that QPDF keeps reporting the
+  // document's declared capabilities as false even when the owner password
+  // matched, so this must be checked before, not through, the capabilities.
+  if (suppliedPassword !== null && encryption.ownerPasswordMatched) return null;
+  const denied = rules.capabilities
+    .filter(capability => encryption.capabilities?.[capability] !== true);
+  if (denied.length === 0) return null;
+  return new PdfDecryptionError(
+    "write_permission_denied",
+    pdfWritePermissionDeniedMessage(operation, denied),
+  );
+}
+
+/**
+ * Restores a document's own protection onto the bytes a mutation produced.
+ *
+ * `reference` is the original encrypted file. QPDF's `--copy-encryption`
+ * reproduces its `/O`, `/OE`, `/U`, `/UE`, `/P`, `/R`, `/V` and crypt filters
+ * verbatim — including an owner password nothing here ever learned — so the
+ * output carries the protection the document arrived with rather than new
+ * protection minted from the caller's password.
+ *
+ * The result is then compared against the source's own encryption before it is
+ * returned. A silently different `/P` is the failure this whole path exists to
+ * prevent, so it is asserted against rather than assumed away: if anything
+ * differs the operation fails and no bytes are handed back. There is
+ * deliberately no path that returns plaintext.
+ */
+export async function reprotectPdfAfterWrite(mutatedBytes, reference, password, sourceEncryption, options = {}) {
+  return queueDecryption(
+    () => reprotectPdfAfterWriteExclusively(mutatedBytes, reference, password, sourceEncryption, options),
+  );
+}
+
+function reprotectPdfAfterWriteExclusively(
+  mutatedBytes,
+  reference,
+  password,
+  sourceEncryption,
+  { timeoutMs } = {},
+) {
+  if (!isPdfByteContainer(mutatedBytes) || !isPdfByteContainer(reference)) {
+    throw new TypeError("Re-protection requires the mutated bytes and the original file.");
+  }
+  const suppliedPassword = normalizeSuppliedPassword(password);
+  if (suppliedPassword !== null && /[\r\n]/.test(suppliedPassword)) {
+    throw new PdfDecryptionError("password_unrepresentable", PDF_PASSWORD_UNREPRESENTABLE_MESSAGE);
+  }
+  // The mutated bytes are not size-capped against the encrypted-input ceiling:
+  // that cap governs what may be *decrypted*, and this document already was.
+  // What bounds this side is the mutation pipeline's own staging limits.
+  const { outcome, teardown } = runReprotectionWorker(
+    mutatedBytes,
+    reference,
+    suppliedPassword,
+    usesWeakCrypto(sourceEncryption),
+    resolveDecryptionDeadlineMs(timeoutMs),
+  );
+  // The verification is folded into `outcome` rather than awaited here, so the
+  // queue still holds until the worker is gone on the failing path too.
+  return {
+    outcome: outcome.then(produced => {
+      if (!sameProtection(sourceEncryption, produced.encryption)) {
+        throw new PdfDecryptionError("reprotect_changed_protection", PDF_REPROTECT_CHANGED_MESSAGE);
+      }
+      return produced.ciphertext;
+    }),
+    teardown,
+  };
+}
+
+/**
+ * Whether the document's protection is RC4, which QPDF refuses to write
+ * without being told to. Keyed off what QPDF reported about the source, so the
+ * flag is only ever set for a document that already used RC4.
+ */
+export function usesWeakCrypto(encryption) {
+  const parameters = encryption?.parameters;
+  if (!parameters) return false;
+  if (Number.isInteger(parameters.R) && parameters.R <= 3) return true;
+  return ["method", "filemethod", "streammethod", "stringmethod"]
+    .some(key => typeof parameters[key] === "string" && /rc4/i.test(parameters[key]));
+}
+
+/**
+ * Whether two inspections describe the same protection.
+ *
+ * Compares the literal `/Encrypt` dictionary — which is what `/O`, `/U`, `/OE`
+ * and `/UE` live in, and so what actually encodes the passwords — as well as
+ * every reported parameter and the supplied password's standing against the
+ * document. A dictionary that could not be resolved is `null`, and `null` is
+ * never equal to anything here, so an unreadable or non-standard security
+ * handler refuses rather than compares equal.
+ */
+export function sameProtection(source, produced) {
+  if (!source?.parameters || !produced?.parameters) return false;
+  if (typeof source.encryptDictionary !== "string"
+      || source.encryptDictionary !== produced.encryptDictionary) {
+    return false;
+  }
+  const identical = ["P", "R", "V", "bits", "method", "filemethod", "streammethod", "stringmethod"]
+    .every(key => source.parameters[key] === produced.parameters[key]);
+  return identical
+    && source.encrypted === produced.encrypted
+    && source.ownerPasswordMatched === produced.ownerPasswordMatched
+    && source.userPasswordMatched === produced.userPasswordMatched;
+}
+
+/**
+ * Whether a set of sources can be given one shared protection.
+ *
+ * `merge_pdfs` is the only operation with more than one source, and N sources
+ * with different or absent encryption make "the source's encryption"
+ * undefined. Rather than pick one, or quietly drop protection, the merge is
+ * refused unless every source is protected identically — same parameters, and
+ * the same standing for the supplied password, which is what makes them a
+ * single protection rather than a coincidence of settings.
+ */
+export function mergeProtectionRefusal(encryptions) {
+  const present = encryptions.filter(encryption => encryption !== null);
+  if (present.length === 0) return null;
+  if (present.length !== encryptions.length
+      || !present.every(encryption => sameProtection(present[0], encryption))) {
+    return new PdfDecryptionError(
+      "merge_mixed_encryption",
+      PDF_MERGE_MIXED_ENCRYPTION_MESSAGE,
+    );
+  }
+  return null;
+}
+
+function reprotectionFailure(reason) {
+  return new PdfDecryptionError(
+    typeof reason === "string" && reason.length > 0 ? reason : "reprotect_failed",
+    PDF_REPROTECT_FAILED_MESSAGE,
+  );
+}
+
+const isPdfByteContainer = bytes => Buffer.isBuffer(bytes) || bytes instanceof Uint8Array;
+
+/**
+ * The checks every decryption shares, applied before a thread is started for
+ * it: the size cap first, so an oversized input costs a length comparison
+ * rather than an out-of-memory kill, then the password's representability.
+ */
+function assertDecryptableRequest(pdfBytes, password) {
+  if (!isPdfByteContainer(pdfBytes)) {
     throw new TypeError("Encrypted PDF bytes must be a Buffer or Uint8Array.");
   }
   const suppliedPassword = normalizeSuppliedPassword(password);
-
-  // Checked before anything is instantiated, so an oversized input costs a
-  // length comparison rather than an out-of-memory kill.
   if (pdfBytes.length > PDF_ENCRYPTED_MAX_FILE_BYTES) {
     throw new PdfDecryptionError("encrypted_input_too_large", PDF_ENCRYPTED_FILE_LIMIT_MESSAGE);
   }
-
   // The worker hands QPDF the password through a single-line password file
   // rather than through argv, and QPDF reads the first line of it, so a
   // password containing a line break would be silently truncated and then
@@ -597,12 +1030,31 @@ async function decryptPdfForReadExclusively(pdfBytes, password, operation, { tim
   if (suppliedPassword !== null && /[\r\n]/.test(suppliedPassword)) {
     throw new PdfDecryptionError("password_unrepresentable", PDF_PASSWORD_UNREPRESENTABLE_MESSAGE);
   }
+  return suppliedPassword;
+}
+
+/** The body of `decryptPdfForRead`, run with the decryption queue held. */
+async function decryptPdfForReadExclusively(pdfBytes, password, operation, { timeoutMs } = {}) {
+  const rules = ENCRYPTED_READ_OPERATIONS[operation];
+  if (!rules) {
+    throw new TypeError(`Operation '${operation}' is not permitted to decrypt PDFs.`);
+  }
+  const suppliedPassword = assertDecryptableRequest(pdfBytes, password);
 
   return runDecryptionWorker(
     pdfBytes,
     suppliedPassword,
-    rules,
-    operation,
+    // A reader holding either password is the intended reader, so any
+    // credential satisfies the permission check. The write path deliberately
+    // does not accept that; see `writePermissionRefusal`.
+    encryption => {
+      const credentialed = suppliedPassword !== null
+        && (encryption.ownerPasswordMatched || encryption.userPasswordMatched);
+      if (!credentialed && encryption.capabilities?.[rules.capability] !== true) {
+        return new PdfDecryptionError("permission_denied", pdfPermissionDeniedMessage(operation));
+      }
+      return null;
+    },
     resolveDecryptionDeadlineMs(timeoutMs),
   );
 }

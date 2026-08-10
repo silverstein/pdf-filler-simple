@@ -25,6 +25,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   ENCRYPTED_READ_OPERATIONS,
   PDF_DECRYPTABLE_PASSWORD_DESCRIPTION,
+  PDF_REPROTECTING_PASSWORD_DESCRIPTION,
   PDF_ENCRYPTED_MAX_FILE_BYTES,
   PdfDecryptionError,
   decryptPdfForRead,
@@ -392,10 +393,12 @@ describe("read-only decryption through the MCP server", () => {
     // extract_to_csv takes a list of documents and therefore has no password
     // parameter; one password could not serve a list.
     expect(byName.get("extract_to_csv").inputSchema.properties).not.toHaveProperty("password");
-    // Every other password-bearing tool still reports the honest pdf-lib limit.
+    // The mutation tools decrypt too now, and say so with the contract that
+    // describes what they actually do: decrypt, change, and put the document's
+    // own protection back. No password-bearing tool claims it cannot decrypt.
     for (const name of ["fill_pdf", "fill_with_profile", "bulk_fill_from_csv"]) {
       expect(byName.get(name).inputSchema.properties.password.description, name)
-        .toMatch(/cannot decrypt/);
+        .toBe(PDF_REPROTECTING_PASSWORD_DESCRIPTION);
     }
   }, 30_000);
 
@@ -470,19 +473,24 @@ describe("read-only decryption through the MCP server", () => {
     await expect(fs.access(deniedCsv)).rejects.toMatchObject({ code: "ENOENT" });
   }, 60_000);
 
-  it("still reports the honest pdf-lib limit on a write path", async () => {
+  it("writes an encrypted document back still encrypted", async () => {
+    const filled = path.join(temporaryRoot, "filled.pdf");
     const result = await client.callTool({
       name: "fill_pdf",
       arguments: {
         pdf_path: fixturePaths.aes256,
-        output_path: path.join(temporaryRoot, "filled.pdf"),
+        output_path: filled,
         field_data: { anything: "value" },
         password: USER_PASSWORD,
       },
     });
-    // Decryption is scoped to reads. fill_pdf writes the document back, so it
-    // must not have gained the ability to open this file.
-    expect(textOf(result)).toContain(PDF_LIB_ENCRYPTED_MESSAGE);
+    // Decryption is no longer scoped to reads: a write path may open this file.
+    // What must never change is the protection it writes back, so the boundary
+    // this once asserted is now asserted on the output instead of the refusal.
+    expect(textOf(result)).not.toContain(PDF_LIB_ENCRYPTED_MESSAGE);
+    const written = await fs.readFile(filled);
+    expect(written.subarray(0, 1024).toString("latin1")).toContain("%PDF-");
+    expect(written.toString("latin1")).toContain("/Encrypt");
   }, 30_000);
 
   it("leaves unencrypted documents on exactly their previous behaviour", async () => {

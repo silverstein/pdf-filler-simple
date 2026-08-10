@@ -34,12 +34,6 @@ export const PDF_LIB_ENCRYPTED_MESSAGE =
   + "To read an encrypted PDF as it is, use read_pdf_layout, convert_pdf_to_markdown, "
   + "or get_pdf_info, which accept a password and decrypt with PDF.js.";
 
-// Parameter text for tools whose only PDF reader is pdf-lib. The argument is
-// still accepted so existing callers do not break, but it can never be used.
-export const PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION =
-  "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt "
-  + "encrypted PDFs. Decrypt the document before calling this tool.";
-
 // Parameter text for tools that decrypt with PDF.js for one part of their work
 // but still load page geometry through pdf-lib, which stops on encryption.
 export const PDF_LIB_GEOMETRY_PASSWORD_DESCRIPTION =

@@ -18,7 +18,7 @@ PDF Toolkit is a Claude Desktop extension (MCPB) and MCP server that enables aut
 - Read form fields from PDFs (text, checkboxes, dropdowns, radio buttons)
 - Fill PDF forms programmatically
 - Save filled PDFs to new files
-- Password-protected PDF reading through PDF.js only (see `## Password Support`); no pdf-lib path can decrypt
+- Password-protected PDFs: read through PDF.js or qpdf, and changed through qpdf with the document's own protection restored on save (see `## Password Support`)
 - Bulk fill from CSV files
 - Profile system for reusable data
 - Extract data from PDFs to CSV
@@ -46,10 +46,12 @@ PDF Toolkit is a Claude Desktop extension (MCPB) and MCP server that enables aut
 - `server/qpdf-decrypt.js` - The only path by which PDF Tools decrypts. Owns the
   password rules, the `/P` permission enforcement, the encrypted-input size cap,
   the one-at-a-time queue, and the 30-second deadline. It does not run qpdf
-  itself. See `## Password Support`.
+  itself. It also owns re-protection: restoring a source's own encryption onto
+  the bytes a mutation produced, and proving the protection is unchanged before
+  anything is written. See `## Password Support`.
 - `server/qpdf-decrypt-worker.js` - The worker thread that does. The only module
   that loads the qpdf runtime, and never on the server's own thread. Decides
-  nothing: it runs the two qpdf passes the wrapper asks for and reports opaque
+  nothing: it runs the qpdf passes the wrapper asks for and reports opaque
   reason codes.
 - `vendor/qpdf-wasm/` - Reproducible QPDF WebAssembly build recipe. The
   promoted artifact under `vendor/qpdf-wasm/runtime/` is shipped in both the
@@ -72,19 +74,47 @@ The project uses ES modules (`"type": "module"` in package.json):
 
 ## Password Support
 
-**pdf-lib does not decrypt. PDF.js does, and three read-only tools now do too
-via qpdf.** `pdf-lib` 1.17.1 ships no decryption of any kind: `PDFDocument.load`
-has no `password` option, it throws `EncryptedPDFError` on an encrypted
-document, and `{ ignoreEncryption: true }` returns an unusable document that
-fails on the first page access. Every tool that reaches pdf-lib therefore fails
-on an encrypted PDF regardless of the password supplied. `pdfjs-dist` 5.4.624
-does accept `{ password }` and opens the same document correctly.
+**pdf-lib does not decrypt. PDF.js does, and the qpdf runtime now does for both
+the read-only tools and the write tools.** `pdf-lib` 1.17.1 ships no decryption
+of any kind: `PDFDocument.load` has no `password` option, it throws
+`EncryptedPDFError` on an encrypted document, and `{ ignoreEncryption: true }`
+returns an unusable document that fails on the first page access. `pdfjs-dist`
+5.4.624 does accept `{ password }` and opens the same document correctly.
 
 `read_pdf_fields`, `validate_pdf`, and `extract_to_csv` decrypt through the
-vendored qpdf WebAssembly runtime before handing plaintext to pdf-lib. They
-qualify because they only ever read: none of them writes a PDF back, so none can
-re-encrypt a document or alter its protection. Decrypted bytes stay in memory
-and are never written to disk.
+vendored qpdf WebAssembly runtime before handing plaintext to pdf-lib. They only
+ever read: none writes a PDF back. Decrypted bytes stay in memory and are never
+written to disk.
+
+**The mutation tools decrypt too, and put the protection back.** Every tool in
+`PDF_LIB_MUTATION_TOOL_NAMES` decrypts its source, lets pdf-lib change the
+plaintext, and then restores the source's own encryption with qpdf's
+`--copy-encryption` before anything is written. That reproduces `/O`, `/OE`,
+`/U`, `/UE`, `/P`, `/R`, `/V`, `/ID` and the crypt filters verbatim, including
+an owner password the process never learned, and the result is verified against
+the source's protection before it is staged. Two rules follow:
+
+- **Protection in, protection out.** There is no `remove_password` or
+  `output_encryption` parameter, and no default to argue about. A document that
+  cannot be faithfully re-protected fails the operation; nothing ever writes a
+  decrypted copy of an encrypted document.
+- **A denied `/P` needs the owner password.** For a read, either password is
+  enough. For a write, if the document's permissions deny what the operation
+  does, only the owner password authorises it — the user password proves you may
+  open the document, not that you may override its owner. Each tool requires the
+  bit matching what it does: `modifyforms` to fill a form, `modifyassembly` for
+  page manipulation, `modify` for stamping (which draws into the page content
+  stream, so it is bit 4 and not the annotation bit). See
+  `ENCRYPTED_WRITE_OPERATIONS` in `server/qpdf-decrypt.js`.
+
+`merge_pdfs` refuses unless every source carries byte-identical protection,
+because N sources with different or absent encryption make "the source's
+encryption" undefined.
+
+All three phases run inside the isolated pdf-lib child, with qpdf on its own
+worker thread. That placement is forced: the child stages its output to disk, so
+protection has to be restored before staging, and decrypting in the same process
+then keeps plaintext from crossing any process boundary.
 
 **Decryption runs on a worker thread, never on the server's.** qpdf-wasm's
 `callMain` is synchronous and cannot be interrupted by the thread that called
@@ -106,9 +136,10 @@ the decryption queue and a core, not how long the server is unresponsive — the
 server's thread is free throughout. Plaintext crosses no new boundary: the
 worker is a thread in the same process and hands the decrypted bytes over
 through `postMessage`'s transfer list, which moves ownership of the same pages
-rather than serializing them. Routing decryption into the existing pdf-lib
-*child process* would have reused proven containment but forced plaintext
-through a pipe or a staged file, which is exactly what the design avoids.
+rather than serializing them. Handing plaintext *between* the server and the
+pdf-lib child would have forced it through a pipe or a staged file, which is
+exactly what the design avoids — so a mutation runs all three phases (decrypt,
+change, re-protect) inside the child, with the qpdf worker started there.
 
 Isolation costs a roughly constant **45-65 ms per decryption** — worker start,
 a fresh runtime instantiation, and the message round trip. Measured on
@@ -169,12 +200,12 @@ Measured against an AES-256 PDF produced with
 | `convert_pdf_to_markdown` | PDF.js | Real. Same partial-coverage gap. |
 | `get_pdf_info` | PDF.js | Real. Same partial-coverage gap. |
 | `read_pdf_fields` | qpdf + pdf-lib | **Real.** Decrypts with the password; without one, reads only if `/P` allows `extract`. 16 MiB cap. |
-| `fill_pdf` | pdf-lib | None. Accepts `password`, cannot use it. |
-| `bulk_fill_from_csv` | pdf-lib | None. Accepts `password`, cannot use it. |
-| `fill_with_profile` | pdf-lib | None. Accepts `password`, cannot use it. |
+| `fill_pdf` | qpdf + pdf-lib | **Real.** Decrypts, fills, and restores the document's own encryption. Needs `modifyforms`, or the owner password. 16 MiB cap. |
+| `bulk_fill_from_csv` | qpdf + pdf-lib | **Real.** Same rule as `fill_pdf`; every output is re-protected. |
+| `fill_with_profile` | qpdf + pdf-lib | **Real.** Same rule as `fill_pdf`. |
 | `validate_pdf` | qpdf + pdf-lib | **Real.** Same rule and cap as `read_pdf_fields`. |
-| `merge_pdfs`, `split_pdf`, `rotate_pdf_pages`, `reorder_pdf_pages`, `apply_page_plan` | pdf-lib worker | None. Accept `password`, cannot use it. |
-| `add_signature_field`, `apply_signature`, `prepare_signing_packet`, `apply_text` | pdf-lib worker | None. Accept `password`, cannot use it. |
+| `merge_pdfs`, `split_pdf`, `rotate_pdf_pages`, `reorder_pdf_pages`, `apply_page_plan` | qpdf + pdf-lib worker | **Real.** Need `modifyassembly`, or the owner password. `merge_pdfs` additionally refuses unless every source is protected identically. |
+| `add_signature_field`, `apply_signature`, `prepare_signing_packet`, `apply_text` | qpdf + pdf-lib worker | **Real.** Need `modify` (they draw into the page content stream); `prepare_signing_packet` needs `modifyforms` as well. |
 | `render_pdf_page`, `render_pdf_region`, `get_page_analysis` | PDF.js plus pdf-lib geometry | None in practice. PDF.js uses the password, but the pdf-lib geometry load still fails. |
 | `detect_signature_zones` | PDF.js plus pdf-lib geometry | None in practice. It degrades through `ignoreEncryption` and succeeds only on the committed header-malformed R4 oracle; a well-formed AES-128 or AES-256 file fails. |
 | `compare_pdfs` | PDF.js plus pdf-lib geometry | None. With `include_visual` it reports the pdf-lib limit; without it, the run still ends in `internal_validation_error` (pre-existing, unrelated to the password). |
@@ -385,11 +416,14 @@ Reuse existing helpers in `server/index.js`:
 Ensure ESM syntax is used throughout (`import`/`export`). Check that `package.json` has `"type": "module"`.
 
 ### Password-protected PDF errors
-Pass the `password` parameter only to `read_pdf_layout`, `convert_pdf_to_markdown`,
-and `get_pdf_info`; they are the tools whose reader (PDF.js) can decrypt. Any
-other tool reaches pdf-lib and reports that it cannot decrypt the document no
-matter what password is supplied — decrypt the file first. The regression guard
-for this is `test/encrypted-pdf-password-truth.test.js`.
+Most tools now accept a usable `password`: the PDF.js readers, the three
+qpdf-backed read tools, and every mutation tool. Check the table in "Password
+Support" above before assuming a tool cannot decrypt — a few still cannot,
+because they load page geometry through pdf-lib. If a write is refused with a
+named `/P` permission, that is deliberate: supply the owner password, which is
+the credential that authorises overriding the document's own restrictions. The
+regression guards are `test/encrypted-pdf-password-truth.test.js` and
+`test/qpdf-reprotect-write-paths.test.js`.
 
 ### MCPB not loading in Claude Desktop
 1. Ensure `npm run build:mcpb` and the platform's `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb` completed successfully

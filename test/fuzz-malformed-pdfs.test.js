@@ -833,13 +833,20 @@ describe.each(RUNTIMES)("$name malformed PDF containment", ({ root }) => {
           ...(password === undefined ? {} : { password }),
         },
       });
-      expect(result.isError, "encrypted password behavior").toBe(true);
-      // pdf-lib cannot decrypt, so the same honest refusal is correct for a
-      // missing, wrong, and correct password. test/encrypted-pdf-password-truth
-      // .test.js owns the wording; this only pins that the three cases agree.
-      expect(result.content?.[0]?.text).toBe(`Error: ${PDF_LIB_ENCRYPTED_MESSAGE}`);
+      // fill_pdf decrypts now, and restores the document's protection before
+      // saving, so the three cases no longer agree — they must each describe
+      // what actually happened. test/encrypted-pdf-password-truth.test.js owns
+      // the wording; this pins the containment property that matters here: a
+      // password is never echoed back, and only the correct one writes a file.
+      const text = result.content?.[0]?.text ?? "";
+      if (password === "oda-layout-user-2026") {
+        expect(result.isError, "correct password").not.toBe(true);
+      } else {
+        expect(result.isError, "missing or wrong password").toBe(true);
+        expect(text).not.toBe(`Error: ${PDF_LIB_ENCRYPTED_MESSAGE}`);
+      }
       if (password !== undefined) {
-        expect(result.content?.[0]?.text).not.toContain(password);
+        expect(text, "must never echo the password").not.toContain(password);
       }
     }
 
