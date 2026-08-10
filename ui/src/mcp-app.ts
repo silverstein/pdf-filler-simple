@@ -223,6 +223,7 @@ const loadingTextEl = $("loading-text");
 const progressBar = $("progress-bar");
 const errorEl = $("error");
 const errorMessageEl = $("error-message");
+const errorDetailEl = $("error-detail");
 const viewerEl = $("viewer");
 const canvasContainerEl = document.querySelector(".canvas-container") as HTMLElement;
 const canvasEl = $("pdf-canvas") as HTMLCanvasElement;
@@ -288,8 +289,47 @@ function showLoading(text: string) {
   viewerEl.style.display = "none";
 }
 
+// Runtime facts that identify which build is failing and why an asset load was
+// refused. Derived at runtime on purpose rather than injected at build time:
+// this repository gates on two clean builds being byte-identical, and baking a
+// timestamp or ambient commit into the bundle would break that.
+//
+// The workerSrc line is the one that matters. When the viewer shipped a
+// `data:` worker it rendered blank on a sandboxed host and the message said
+// only "Failed to fetch dynamically imported module", with no indication of
+// which asset or why. Reporting the scheme and length, rather than 2.7 MB of
+// base64, turns that into a one-glance diagnosis.
+function describeViewerEnvironment(): string {
+  const parts: string[] = [];
+  try {
+    if (pdfjsLib.version) parts.push(`pdf.js ${pdfjsLib.version}`);
+  } catch { /* version is best-effort */ }
+  try {
+    const source = pdfjsLib.GlobalWorkerOptions?.workerSrc;
+    if (source) {
+      const text = String(source);
+      const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(text)?.[0] ?? "relative";
+      parts.push(`workerSrc ${scheme} (${text.length} chars)`);
+    } else {
+      parts.push("workerSrc unset");
+    }
+  } catch { /* workerSrc is best-effort */ }
+  parts.push(
+    (globalThis as { pdfjsWorker?: unknown }).pdfjsWorker
+      ? "worker registered in-realm"
+      : "worker NOT registered in-realm",
+  );
+  return parts.join(" · ");
+}
+
 function showError(message: string) {
   errorMessageEl.textContent = message;
+  const detail = describeViewerEnvironment();
+  errorDetailEl.textContent = detail;
+  errorDetailEl.style.display = detail ? "block" : "none";
+  // Also to the console, where a host's devtools or log capture will keep it
+  // even if the surface is torn down.
+  console.error(`[viewer] ${message} | ${detail}`);
   loadingEl.style.display = "none";
   errorEl.style.display = "block";
   viewerEl.style.display = "none";
