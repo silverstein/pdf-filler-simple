@@ -1,6 +1,13 @@
 /**
- * Decryption of encrypted PDFs for the read-only tools, and the only module
- * under `server/` that loads the vendored QPDF WebAssembly runtime.
+ * Decryption of encrypted PDFs for the read-only tools: the size cap, the
+ * password rules, the permission rules, the queue, the deadline, and every
+ * message a caller can see.
+ *
+ * The QPDF runtime itself is not loaded here. It runs in a worker thread —
+ * `server/qpdf-decrypt-worker.js`, the only module in the tree that loads it —
+ * which this module starts, drives, bounds and destroys. See that file for why
+ * the work cannot run on the server's own thread; see below for what this
+ * module decides.
  *
  * pdf-lib 1.17.1 cannot decrypt anything, so every tool that reads through it
  * fails on an encrypted document no matter what password the caller supplies.
@@ -26,6 +33,12 @@
  * The empty string counts as *no password*, so the check above cannot be
  * sidestepped by passing `""` to a document whose user password is empty.
  *
+ * Both gates are evaluated here, in the server, between the worker's two
+ * phases. The worker reports what the document says about itself and then
+ * waits; it is told to decrypt only after this module has decided that it may.
+ * A refusal is therefore a refusal to do the work, not a decision to throw the
+ * result away.
+ *
  * ## Which permission bit
  *
  * All three tools require `extract` — `/P` bit 5, "copy or otherwise extract
@@ -47,52 +60,54 @@
  *
  * ## Memory
  *
- * QPDF-WASM costs roughly 16x the input size plus a ~45 MB baseline, and the
- * WebAssembly heap is not reliably returned to the OS within the process.
- * Encrypted inputs therefore get their own explicit, much lower size cap
- * (`PDF_ENCRYPTED_MAX_FILE_BYTES`) instead of the 250 MiB mutation cap, and
- * oversized ones are refused with a size message rather than being allowed to
- * run into an out-of-memory kill. See the constant for the measurements.
+ * QPDF-WASM costs roughly 16x the input size plus a ~45 MB baseline, which is
+ * why encrypted inputs get their own explicit, much lower size cap
+ * (`PDF_ENCRYPTED_MAX_FILE_BYTES`) instead of the 250 MiB mutation cap. See the
+ * constant for those measurements.
+ *
+ * Isolation was expected to improve on that, on the theory that a heap dying
+ * with its thread would be returned where an in-process collection was not. It
+ * does not, and the measurements say so plainly. On macOS/arm64, after a single
+ * 14.6 MiB decrypt and a forced-GC settle:
+ *
+ *   | arrangement | peak RSS | settled RSS | retained over baseline |
+ *   | ----------- | -------: | ----------: | ---------------------: |
+ *   | in-process  |   333 MB |      243 MB |                 188 MB |
+ *   | worker      |   315 MB |      315 MB |                 260 MB |
+ *
+ * Destroying the thread returns *less* than collecting the module did: the
+ * freed pages stay mapped in the process, so `terminate()` buys nothing here
+ * and costs about 70 MB of resting RSS. What neither arrangement does is
+ * accumulate — eight consecutive near-cap decrypts plateau at 373 MB
+ * in-process and 352 MB in workers rather than summing, because each new
+ * worker reuses the pages the last one released. So the per-file cap remains
+ * sufficient and `extract_to_csv` still needs no aggregate bound.
+ *
+ * The deadline is what isolation actually buys. The memory column is a cost,
+ * and a small one against the 1024 MiB budget, but it is not a saving and must
+ * not be read as one; see the size constant.
  *
  * ## Plaintext handling
  *
- * Decrypted bytes exist only in memory and are never written to disk. The
- * caller gets a `release()` and must call it once it has finished reading the
- * loaded document. Be honest about what that buys: `release()` overwrites the
- * Node buffer it handed out, but JavaScript cannot guarantee erasure. The
- * WebAssembly heap holds its own copies that only the module's own teardown
- * reclaims, the garbage collector may already have copied the buffer, and any
- * of those pages may have been written to swap. This reduces the window in
- * which plaintext is readable in the process; it does not eliminate it.
- */
-
-const QPDF_RUNTIME_RELATIVE_PATH = "../vendor/qpdf-wasm/runtime/qpdf.mjs";
-
-// Fixed paths inside the module's private in-memory filesystem. A fresh module
-// is created for every QPDF invocation, so these never collide across calls.
-const VIRTUAL_INPUT_PATH = "/in.pdf";
-const VIRTUAL_OUTPUT_PATH = "/out.pdf";
-const VIRTUAL_PASSWORD_PATH = "/pw";
-
-// The JSON inspection output is a few hundred bytes; QPDF diagnostics are a
-// few lines. Anything beyond this means the runtime is not behaving as built.
-const QPDF_OUTPUT_BYTE_CAP = 64 * 1024;
-
-/*
- * QPDF's documented exit codes. 3 means the operation completed but the file
- * needed recovery — a damaged cross-reference table, a stream whose declared
- * length was wrong, and so on. Real-world PDFs produce it often enough that
- * rejecting it would make this feature fail on documents QPDF read perfectly
- * well. It is accepted only when output was actually produced, and the
- * recovered document then still has to survive pdf-lib's parse and the page-
- * tree validation, so accepting a warning is not accepting a broken document.
+ * Decrypted bytes exist only in memory and are never written to disk. They also
+ * never leave this process: the worker is a thread, and the plaintext reaches
+ * this module through `postMessage`'s transfer list, which moves ownership of
+ * the same pages rather than serializing them. Nothing is copied, piped, or
+ * staged to a file. That was an explicit property of the original in-process
+ * design and isolation keeps it; routing decryption through the existing
+ * pdf-lib *child process* instead would have given up exactly that.
  *
- * 2 is a genuine error, and includes the one case that must stay
- * distinguishable: a password the document did not accept.
+ * The caller gets a `release()` and must call it once it has finished reading
+ * the loaded document. Be honest about what that buys: `release()` overwrites
+ * the Node buffer it handed out, but JavaScript cannot guarantee erasure. The
+ * garbage collector may already have copied the buffer, and any of those pages
+ * may have been written to swap. This reduces the window in which plaintext is
+ * readable in the process; it does not eliminate it. The WebAssembly heap's own
+ * copies are a smaller problem than they were, because the thread holding them
+ * is destroyed at the end of every request.
  */
-const QPDF_EXIT_SUCCESS = 0;
-const QPDF_EXIT_WARNINGS = 3;
-const qpdfCompleted = status => status === QPDF_EXIT_SUCCESS || status === QPDF_EXIT_WARNINGS;
+
+import { Worker } from "node:worker_threads";
 
 /**
  * The per-file ceiling for an encrypted input, deliberately separate from and
@@ -117,12 +132,37 @@ const qpdfCompleted = status => status === QPDF_EXIT_SUCCESS || status === QPDF_
  * no useful margin; that is the reason for the specific number rather than a
  * rounder, larger one.
  *
- * Repeated decryption within one process was measured not to accumulate: RSS
- * plateaus near the high-water mark of the single largest input rather than
- * summing, so a per-file cap is sufficient and `extract_to_csv` does not need
- * an additional aggregate bound.
+ * Isolation did not change any of that, and specifically did not earn a larger
+ * number. The peak of a single decrypt is what this cap is derived from, and
+ * the measurements in the module header put the worker's peak at 315 MB against
+ * 333 MB in-process — a few percent, not a factor. Repeated decryption still
+ * plateaus rather than accumulating, so `extract_to_csv` still needs no
+ * aggregate bound, but that was true before as well. Raising the cap would
+ * raise the peak against the same 1024 MiB budget, with nothing new to pay for
+ * it.
  */
 export const PDF_ENCRYPTED_MAX_FILE_BYTES = 16 * 1024 * 1024;
+
+/**
+ * The wall-clock ceiling on one decryption, enforced by destroying the worker
+ * thread that is running it.
+ *
+ * The size cap bounds input bytes; it does not bound work. QPDF's cost tracks
+ * the number of objects in a document, and object count is nearly free per
+ * byte: a 14.3 MiB encrypted file built from 800,000 tiny indirect objects —
+ * inside the cap — takes over five seconds, and there is no honest reason to
+ * believe five seconds is the worst a 16 MiB document can do.
+ *
+ * 30 seconds matches `DEFAULT_TIMEOUT_MS` in `server/pdf-lib-subprocess.js`,
+ * which is the number this codebase already uses for "a PDF operation that has
+ * not finished by now is not going to". It is generous against measurement —
+ * the slowest legitimate near-cap decrypt observed is 1.6 seconds, and the
+ * slowest constructed one 5.7 — and it can afford to be, because a decryption
+ * that runs long no longer blocks anything. The server's own thread is free the
+ * whole time; the deadline bounds how long a hostile document may occupy a
+ * queue slot and a CPU, not how long the server is unresponsive.
+ */
+export const PDF_DECRYPTION_TIMEOUT_MS = 30_000;
 
 /**
  * The operations allowed to decrypt, and the `/P` capability each one needs
@@ -172,6 +212,12 @@ export const PDF_DECRYPTION_FAILED_MESSAGE =
   "This PDF is encrypted and could not be decrypted: the document is malformed, incomplete, or "
   + "uses an encryption scheme this build does not support.";
 
+export const PDF_DECRYPTION_TIMEOUT_MESSAGE =
+  `Decrypting this PDF did not finish within ${PDF_DECRYPTION_TIMEOUT_MS / 1000} seconds and was `
+  + "stopped. How long decryption takes depends on how many objects a document contains rather "
+  + "than on how large it is, so a small file can still exceed the limit. Decrypt the file first "
+  + "(for example with qpdf) and retry with the decrypted copy.";
+
 /**
  * Refusal text for the owner-locked case. Names the denied permission, says
  * plainly that no password was supplied, and points at the one legitimate way
@@ -197,57 +243,27 @@ export const PDF_DECRYPTABLE_PASSWORD_DESCRIPTION =
   + "document. An encrypted document that opens without a password is still read only if its "
   + "own permissions allow content extraction; PDF Tools does not override them.";
 
+/**
+ * The deadline one request runs under.
+ *
+ * `timeoutMs` exists for tests, which need to watch the deadline fire without
+ * waiting out the real one. It can only ever tighten: anything larger than
+ * `PDF_DECRYPTION_TIMEOUT_MS`, and anything that is not a usable positive
+ * number, collapses to the product's own limit. There is deliberately no way
+ * to grant a document more time than the product allows.
+ */
+export function resolveDecryptionDeadlineMs(timeoutMs) {
+  return Number.isFinite(timeoutMs) && timeoutMs > 0
+    ? Math.min(timeoutMs, PDF_DECRYPTION_TIMEOUT_MS)
+    : PDF_DECRYPTION_TIMEOUT_MS;
+}
+
 export class PdfDecryptionError extends Error {
   constructor(reason, message) {
     super(message);
     this.name = "PdfDecryptionError";
     this.reason = reason;
   }
-}
-
-/**
- * Collects a QPDF output stream under a hard byte cap. The captured text is
- * used only to parse the inspection JSON and is never surfaced to a caller:
- * QPDF prefixes its diagnostics with `argv[0]` and echoes virtual paths, so
- * every failure below maps to a fixed message instead.
- */
-function boundedCapture() {
-  const lines = [];
-  let bytes = 0;
-  let overflowed = false;
-  return {
-    write(line) {
-      const text = String(line);
-      bytes += Buffer.byteLength(text, "utf8") + 1;
-      if (bytes > QPDF_OUTPUT_BYTE_CAP) {
-        overflowed = true;
-        return;
-      }
-      lines.push(text);
-    },
-    get overflowed() {
-      return overflowed;
-    },
-    text() {
-      return lines.join("\n");
-    },
-  };
-}
-
-/**
- * Builds the password file contents. QPDF's `--password-file` reads the first
- * line, which keeps the password out of `argv` — where it would otherwise be
- * visible to anything that can read the process's command line, and would be
- * echoed back by QPDF's own usage diagnostics.
- */
-function passwordFileBytes(password) {
-  // QPDF reads the first line of the file, so a password containing a line
-  // break would be silently truncated and then reported as "not accepted" —
-  // a confusing lie. Refuse it explicitly instead.
-  if (/[\r\n]/.test(password)) {
-    throw new PdfDecryptionError("password_unrepresentable", PDF_PASSWORD_UNREPRESENTABLE_MESSAGE);
-  }
-  return Buffer.from(`${password}\n`, "utf8");
 }
 
 /**
@@ -271,15 +287,53 @@ export function normalizeSuppliedPassword(password) {
   return password === "" ? null : password;
 }
 
-let runtimeFactoryPromise = null;
+const DECRYPTION_WORKER_URL = new URL("./qpdf-decrypt-worker.js", import.meta.url);
+
+let qpdfRuntimeReached = false;
+const activeDecryptionWorkers = new Set();
 
 /**
- * Whether this process has ever asked for the QPDF runtime. Exists so the
- * "an unencrypted document pays nothing" property can be asserted as a fact
- * rather than as a claim in a comment. It exposes no capability.
+ * Whether this process has ever started a decryption worker, and so has ever
+ * reached the QPDF runtime. Exists so the "an unencrypted document pays
+ * nothing" property can be asserted as a fact rather than as a claim in a
+ * comment. It exposes no capability.
+ *
+ * It is now a stronger fact than it was. The runtime is not merely unloaded
+ * until something is decrypted; the module that loads it is not on the server's
+ * import graph at all, and only ever runs on another thread.
  */
 export function isQpdfRuntimeLoaded() {
-  return runtimeFactoryPromise !== null;
+  return qpdfRuntimeReached;
+}
+
+/**
+ * Destroys every decryption worker that is still running. Called from the
+ * server's signal handlers: a worker thread keeps the process alive, and a
+ * decryption that has just started should not hold a shutdown open for the
+ * length of its deadline.
+ */
+export function terminateAllDecryptionWorkers() {
+  return Promise.all([...activeDecryptionWorkers].map(async worker => {
+    try {
+      await worker.terminate();
+    } catch {
+      // Already gone.
+    }
+  }));
+}
+
+/**
+ * The same, without waiting — for the `exit` handler, where nothing
+ * asynchronous can still run.
+ */
+export function forceTerminateAllDecryptionWorkers() {
+  for (const worker of activeDecryptionWorkers) {
+    try {
+      void worker.terminate();
+    } catch {
+      // Already gone.
+    }
+  }
 }
 
 /*
@@ -290,178 +344,220 @@ export function isQpdfRuntimeLoaded() {
  * encrypted reads would each be allowed 16 MiB and the budget the cap was
  * calculated against would be wrong by a factor of the concurrency. Queueing
  * makes the measured single-operation peak the real ceiling no matter how many
- * callers arrive at once.
+ * callers arrive at once, and it bounds the number of live worker threads to
+ * one along with it.
  *
  * A queued caller waits rather than fails: at the cap a decrypt is on the order
  * of a second, which is a far better outcome than an out-of-memory kill that
  * takes the whole server down. The queue never rejects, so one failing
- * operation cannot poison the chain for the next.
+ * operation cannot poison the chain for the next. The deadline below is what
+ * stops a hostile document from holding the queue indefinitely.
+ *
+ * The queue is held until the worker thread is *gone*, not until the caller has
+ * its answer. Those are different moments on the success path: the plaintext
+ * has already been transferred out, so the caller has no stake in the teardown,
+ * while the invariant that matters — one QPDF heap alive at a time — is exactly
+ * what the queue is for. Destroying a worker holding a decrypted document costs
+ * a measured 55-60 ms, and settling first takes that off the critical path of
+ * an idle-queue request. Back-to-back requests still pay it, in the queue,
+ * which is the correct place for it.
+ *
+ * A `run` here returns `{ outcome, teardown }`; `outcome` is what the caller
+ * gets, `teardown` is what the next caller waits on. A `run` that throws before
+ * a worker exists (the size cap, an unusable password) has neither, and simply
+ * rejects.
  */
 let decryptionQueue = Promise.resolve();
 
-function queueDecryption(operation) {
-  const result = decryptionQueue.then(operation, operation);
-  decryptionQueue = result.then(() => {}, () => {});
-  return result;
+function queueDecryption(run) {
+  const started = decryptionQueue.then(run, run);
+  decryptionQueue = started
+    .then(result => result?.teardown, () => {})
+    .then(() => {}, () => {});
+  return started.then(result => result.outcome);
 }
 
 /**
- * Resolves the runtime's ESM factory once per process. The factory is just a
- * function; each call below still instantiates its own module, so no QPDF
- * state, filesystem entry, or password crosses between requests.
+ * Turns a worker reason code into the caller-visible failure. The worker never
+ * composes a message: QPDF prefixes its diagnostics with `argv[0]` and echoes
+ * the virtual input path, so every failure maps to one of this module's own
+ * fixed strings here.
  *
- * The specifier is computed rather than literal so that test-time bundlers
- * leave the Emscripten output alone: it resolves its own `.wasm` sibling from
- * `import.meta.url` and has to be loaded as a plain Node module. The path is
- * identical in the checkout, the MCPB and the share ZIP, so this resolves the
- * same way in all three.
+ * `password_not_accepted` is the one code that splits, and it splits on
+ * something only this side knows: whether the caller supplied a password at
+ * all. The same QPDF failure means "you need a password" to one caller and
+ * "that password is wrong" to another.
  */
-async function loadQpdfFactory() {
-  if (!runtimeFactoryPromise) {
-    const runtimeUrl = new URL(QPDF_RUNTIME_RELATIVE_PATH, import.meta.url).href;
-    runtimeFactoryPromise = import(runtimeUrl).then(module => {
-      if (typeof module.default !== "function") {
-        throw new PdfDecryptionError("runtime_unavailable", PDF_DECRYPTION_FAILED_MESSAGE);
-      }
-      return module.default;
-    });
-    runtimeFactoryPromise.catch(() => {});
+function workerFailure(reason, suppliedPassword) {
+  if (reason === "password_not_accepted") {
+    return suppliedPassword === null
+      ? new PdfDecryptionError("password_required", PDF_PASSWORD_REQUIRED_MESSAGE)
+      : new PdfDecryptionError("password_rejected", PDF_PASSWORD_REJECTED_MESSAGE);
   }
-  return runtimeFactoryPromise;
-}
-
-/**
- * Runs one QPDF invocation in its own freshly instantiated module and tears it
- * down afterwards. Returns the exit status, the captured stdout, and the
- * requested output file if the run produced one.
- *
- * The module, its `FS`, and its raw exports never leave this function: the
- * vendored runtime's README is explicit that callers must be given a narrow
- * operation API rather than the module or its filesystem.
- */
-async function runQpdf(args, inputs, outputPath = null) {
-  const createQpdf = await loadQpdfFactory();
-  const stdout = boundedCapture();
-  const stderr = boundedCapture();
-  let qpdf = null;
-  let status;
-  let output = null;
-  try {
-    qpdf = await createQpdf({
-      print: line => stdout.write(line),
-      printErr: line => stderr.write(line),
-    });
-    for (const [virtualPath, bytes] of Object.entries(inputs)) {
-      qpdf.FS.writeFile(virtualPath, bytes);
-    }
-    try {
-      status = qpdf.callMain([...args]);
-    } catch (error) {
-      // Emscripten reports a normal `exit()` by throwing an object carrying
-      // the status. Anything without an integer status is a real fault.
-      if (!Number.isInteger(error?.status)) {
-        throw new PdfDecryptionError("qpdf_faulted", PDF_DECRYPTION_FAILED_MESSAGE);
-      }
-      status = error.status;
-    }
-    if (qpdfCompleted(status) && outputPath) {
-      output = Buffer.from(qpdf.FS.readFile(outputPath));
-    }
-  } catch (error) {
-    if (error instanceof PdfDecryptionError) throw error;
-    throw new PdfDecryptionError("qpdf_faulted", PDF_DECRYPTION_FAILED_MESSAGE);
-  } finally {
-    // Overwrite then unlink every virtual file, so the ciphertext, the
-    // password and any plaintext output stop being reachable through this
-    // module before it is dropped. Best effort by nature: the WebAssembly heap
-    // keeps its own copies until the module itself is collected.
-    if (qpdf) {
-      for (const virtualPath of [...Object.keys(inputs), ...(outputPath ? [outputPath] : [])]) {
-        try {
-          const existing = qpdf.FS.readFile(virtualPath);
-          qpdf.FS.writeFile(virtualPath, new Uint8Array(existing.length));
-          qpdf.FS.unlink(virtualPath);
-        } catch {
-          // The file may never have been created, or QPDF may have removed it.
-        }
-      }
-    }
-    qpdf = null;
+  if (reason === "password_unrepresentable") {
+    return new PdfDecryptionError(reason, PDF_PASSWORD_UNREPRESENTABLE_MESSAGE);
   }
-  if (stdout.overflowed || stderr.overflowed) {
-    throw new PdfDecryptionError("qpdf_output_overflow", PDF_DECRYPTION_FAILED_MESSAGE);
-  }
-  return { status, stdout: stdout.text(), stderr: stderr.text(), output };
-}
-
-/*
- * QPDF's own wording for a password that matched neither the user nor the
- * owner password. Matched internally only, to tell "this needs a password you
- * did not give" apart from "this file is broken" — advice that would otherwise
- * be wrong half the time. The matched text is never surfaced: QPDF prefixes
- * its diagnostics with argv[0] and echoes the virtual input path. If the
- * wording ever changes the classification falls back to the malformed message,
- * which is the safe direction: it never claims a password would help.
- */
-const QPDF_INVALID_PASSWORD_DIAGNOSTIC = "invalid password";
-
-/**
- * Reads the document's encryption state and effective permissions without
- * producing any decrypted output.
- */
-async function inspectEncryption(pdfBytes, password) {
-  const { status, stdout, stderr } = await runQpdf(
-    [
-      "--json=latest",
-      "--json-key=encrypt",
-      `--password-file=${VIRTUAL_PASSWORD_PATH}`,
-      VIRTUAL_INPUT_PATH,
-    ],
-    {
-      [VIRTUAL_INPUT_PATH]: pdfBytes,
-      [VIRTUAL_PASSWORD_PATH]: passwordFileBytes(password ?? ""),
-    },
+  // Every remaining code — unreadable_document, malformed_inspection,
+  // decrypt_failed, qpdf_faulted, qpdf_output_overflow, runtime_unavailable,
+  // protocol_violation — is a "this document did not decrypt" for the caller,
+  // and stays distinguishable only in `reason`.
+  return new PdfDecryptionError(
+    typeof reason === "string" && reason.length > 0 ? reason : "qpdf_faulted",
+    PDF_DECRYPTION_FAILED_MESSAGE,
   );
-  if (!qpdfCompleted(status)) {
-    // QPDF does not fall back to the empty password when a wrong one is given,
-    // so a supplied-but-wrong password fails here rather than opening the
-    // document by way of an empty user password. A malformed file fails here
-    // too, and must not be reported as needing a password.
-    if (!stderr.toLowerCase().includes(QPDF_INVALID_PASSWORD_DIAGNOSTIC)) {
-      throw new PdfDecryptionError("unreadable_document", PDF_DECRYPTION_FAILED_MESSAGE);
+}
+
+/**
+ * Runs one document through one worker thread, under one deadline.
+ *
+ * The worker is destroyed on every exit path, success included. That is not
+ * tidiness: `worker.terminate()` is the only mechanism that stops a synchronous
+ * QPDF invocation already in flight, and it is why the work is out here at all.
+ *
+ * Returns `{ outcome, teardown }`. A *failure* is not reported until the thread
+ * is actually dead, because "the deadline stopped this" has to mean it stopped;
+ * a *success* is reported as soon as the plaintext has arrived, because by then
+ * the thread holds nothing anyone is waiting for. `teardown` resolves once the
+ * worker is gone either way, and is what the queue holds.
+ */
+function runDecryptionWorker(pdfBytes, suppliedPassword, rules, operation, timeoutMs) {
+  let markTornDown;
+  const teardown = new Promise(resolveTeardown => { markTornDown = resolveTeardown; });
+  const outcome = new Promise((resolve, reject) => {
+    // An exact copy, transferred to the worker. The caller's `pdfBytes` is the
+    // file as it is on disk and other code still holds it, so its backing store
+    // must not be detached; and a Node Buffer may be a window onto a shared
+    // pool, which must not be handed to another thread whatever the intent.
+    const ciphertext = new Uint8Array(pdfBytes.byteLength);
+    ciphertext.set(pdfBytes);
+
+    let worker;
+    try {
+      worker = new Worker(DECRYPTION_WORKER_URL, {
+        workerData: { ciphertext: ciphertext.buffer, password: suppliedPassword },
+        transferList: [ciphertext.buffer],
+      });
+    } catch {
+      markTornDown();
+      reject(new PdfDecryptionError("worker_unavailable", PDF_DECRYPTION_FAILED_MESSAGE));
+      return;
     }
-    throw new PdfDecryptionError(
-      password === null ? "password_required" : "password_rejected",
-      password === null ? PDF_PASSWORD_REQUIRED_MESSAGE : PDF_PASSWORD_REJECTED_MESSAGE,
-    );
-  }
-  let parsed;
-  try {
-    parsed = JSON.parse(stdout)?.encrypt;
-  } catch {
-    throw new PdfDecryptionError("malformed_inspection", PDF_DECRYPTION_FAILED_MESSAGE);
-  }
-  if (
-    !parsed
-    || typeof parsed.encrypted !== "boolean"
-    || typeof parsed.ownerpasswordmatched !== "boolean"
-    || typeof parsed.userpasswordmatched !== "boolean"
-    || !parsed.capabilities
-    || typeof parsed.capabilities.extract !== "boolean"
-  ) {
-    throw new PdfDecryptionError("malformed_inspection", PDF_DECRYPTION_FAILED_MESSAGE);
-  }
-  return {
-    encrypted: parsed.encrypted,
-    ownerPasswordMatched: parsed.ownerpasswordmatched,
-    userPasswordMatched: parsed.userpasswordmatched,
-    capabilities: parsed.capabilities,
-  };
+    qpdfRuntimeReached = true;
+    activeDecryptionWorkers.add(worker);
+
+    let settled = false;
+    let deadline = null;
+    // Retained from the inspection phase: it is what the permission rules were
+    // applied to, and the caller is entitled to see the same facts.
+    let inspectedEncryption = null;
+    const settle = (error, value) => {
+      if (settled) return;
+      settled = true;
+      if (deadline) clearTimeout(deadline);
+      // A success is handed over now: the plaintext is already in this thread's
+      // memory and the worker's own copy was detached when it was transferred.
+      if (!error) resolve(value);
+      const done = () => {
+        activeDecryptionWorkers.delete(worker);
+        // A failure waits: `decrypt_timeout` in particular must not be reported
+        // while the thread it is about is still running.
+        if (error) reject(error);
+        markTornDown();
+      };
+      let termination = null;
+      try {
+        termination = worker.terminate();
+      } catch {
+        termination = null;
+      }
+      if (termination && typeof termination.then === "function") termination.then(done, done);
+      else done();
+    };
+
+    worker.on("message", message => {
+      if (message?.kind === "inspected") {
+        const { encryption } = message;
+        if (!encryption?.encrypted) {
+          // pdf-lib refused this document as encrypted but QPDF sees no
+          // encryption dictionary. The two disagree about what the file is, so
+          // decrypting it would be guessing.
+          settle(new PdfDecryptionError(
+            "encryption_state_disagreement",
+            PDF_DECRYPTION_FAILED_MESSAGE,
+          ));
+          return;
+        }
+        const credentialed = suppliedPassword !== null
+          && (encryption.ownerPasswordMatched || encryption.userPasswordMatched);
+        if (!credentialed && encryption.capabilities?.[rules.capability] !== true) {
+          settle(new PdfDecryptionError("permission_denied", pdfPermissionDeniedMessage(operation)));
+          return;
+        }
+        inspectedEncryption = encryption;
+        try {
+          worker.postMessage({ kind: "decrypt" });
+        } catch {
+          settle(new PdfDecryptionError("qpdf_faulted", PDF_DECRYPTION_FAILED_MESSAGE));
+        }
+        return;
+      }
+      if (message?.kind === "decrypted") {
+        // A view onto the transferred pages. No copy was made crossing the
+        // boundary and none is made here.
+        const plaintext = Buffer.from(message.plaintext);
+        if (plaintext.length === 0) {
+          settle(new PdfDecryptionError("decrypt_failed", PDF_DECRYPTION_FAILED_MESSAGE));
+          return;
+        }
+        let released = false;
+        settle(null, {
+          plaintext,
+          encryption: inspectedEncryption,
+          release() {
+            if (released) return;
+            released = true;
+            // See the module header: this shortens the window in which
+            // plaintext is readable in this process. It cannot guarantee
+            // erasure.
+            plaintext.fill(0);
+          },
+        });
+        return;
+      }
+      if (message?.kind === "failed") {
+        settle(workerFailure(message.reason, suppliedPassword));
+        return;
+      }
+      settle(new PdfDecryptionError("protocol_violation", PDF_DECRYPTION_FAILED_MESSAGE));
+    });
+
+    worker.once("messageerror", () => {
+      settle(new PdfDecryptionError("protocol_violation", PDF_DECRYPTION_FAILED_MESSAGE));
+    });
+    worker.once("error", () => {
+      settle(new PdfDecryptionError("worker_faulted", PDF_DECRYPTION_FAILED_MESSAGE));
+    });
+    worker.once("exit", () => {
+      // Only reachable when the thread died without reporting: an
+      // out-of-memory abort, or a fault the worker's own handler could not
+      // survive. A settled request has already terminated it.
+      settle(new PdfDecryptionError("worker_exited", PDF_DECRYPTION_FAILED_MESSAGE));
+    });
+
+    deadline = setTimeout(() => {
+      settle(new PdfDecryptionError("decrypt_timeout", PDF_DECRYPTION_TIMEOUT_MESSAGE));
+    }, timeoutMs);
+    // The deadline must not be a reason for the process to stay alive; the
+    // worker it is guarding already is one.
+    deadline.unref();
+  });
+  return { outcome, teardown };
 }
 
 /**
  * Decrypts an encrypted PDF for one of the read-only operations, subject to
- * the size cap, the password rules and the permission rules documented above.
+ * the size cap, the password rules, the permission rules and the deadline
+ * documented above.
  *
  * Returns `{ plaintext, encryption, release }`. The caller owns `release()`
  * and must call it once it has finished reading the document that was loaded
@@ -470,13 +566,14 @@ async function inspectEncryption(pdfBytes, password) {
  * @param {Buffer} pdfBytes  The encrypted file exactly as it is on disk.
  * @param {string|null} password  The caller-supplied password, if any.
  * @param {string} operation  A key of `ENCRYPTED_READ_OPERATIONS`.
+ * @param {{timeoutMs?: number}} [options]  See `resolveDecryptionDeadlineMs`.
  */
-export async function decryptPdfForRead(pdfBytes, password, operation) {
-  return queueDecryption(() => decryptPdfForReadExclusively(pdfBytes, password, operation));
+export async function decryptPdfForRead(pdfBytes, password, operation, options = {}) {
+  return queueDecryption(() => decryptPdfForReadExclusively(pdfBytes, password, operation, options));
 }
 
 /** The body of `decryptPdfForRead`, run with the decryption queue held. */
-async function decryptPdfForReadExclusively(pdfBytes, password, operation) {
+async function decryptPdfForReadExclusively(pdfBytes, password, operation, { timeoutMs } = {}) {
   const rules = ENCRYPTED_READ_OPERATIONS[operation];
   if (!rules) {
     throw new TypeError(`Operation '${operation}' is not permitted to decrypt PDFs.`);
@@ -492,50 +589,20 @@ async function decryptPdfForReadExclusively(pdfBytes, password, operation) {
     throw new PdfDecryptionError("encrypted_input_too_large", PDF_ENCRYPTED_FILE_LIMIT_MESSAGE);
   }
 
-  const encryption = await inspectEncryption(pdfBytes, suppliedPassword);
-  if (!encryption.encrypted) {
-    // pdf-lib refused this document as encrypted but QPDF sees no encryption
-    // dictionary. The two disagree about what the file is, so decrypting it
-    // would be guessing.
-    throw new PdfDecryptionError("encryption_state_disagreement", PDF_DECRYPTION_FAILED_MESSAGE);
+  // The worker hands QPDF the password through a single-line password file
+  // rather than through argv, and QPDF reads the first line of it, so a
+  // password containing a line break would be silently truncated and then
+  // reported as "not accepted" — a confusing lie. Refuse it here, before a
+  // thread is started for it.
+  if (suppliedPassword !== null && /[\r\n]/.test(suppliedPassword)) {
+    throw new PdfDecryptionError("password_unrepresentable", PDF_PASSWORD_UNREPRESENTABLE_MESSAGE);
   }
 
-  const credentialed = suppliedPassword !== null
-    && (encryption.ownerPasswordMatched || encryption.userPasswordMatched);
-  if (!credentialed && encryption.capabilities[rules.capability] !== true) {
-    throw new PdfDecryptionError(
-      "permission_denied",
-      pdfPermissionDeniedMessage(operation),
-    );
-  }
-
-  const { status, output } = await runQpdf(
-    [
-      `--password-file=${VIRTUAL_PASSWORD_PATH}`,
-      "--decrypt",
-      VIRTUAL_INPUT_PATH,
-      VIRTUAL_OUTPUT_PATH,
-    ],
-    {
-      [VIRTUAL_INPUT_PATH]: pdfBytes,
-      [VIRTUAL_PASSWORD_PATH]: passwordFileBytes(suppliedPassword ?? ""),
-    },
-    VIRTUAL_OUTPUT_PATH,
+  return runDecryptionWorker(
+    pdfBytes,
+    suppliedPassword,
+    rules,
+    operation,
+    resolveDecryptionDeadlineMs(timeoutMs),
   );
-  if (!qpdfCompleted(status) || !output || output.length === 0) {
-    throw new PdfDecryptionError("decrypt_failed", PDF_DECRYPTION_FAILED_MESSAGE);
-  }
-
-  let released = false;
-  return {
-    plaintext: output,
-    encryption,
-    release() {
-      if (released) return;
-      released = true;
-      // See the module header: this shortens the window in which plaintext is
-      // readable in this process. It cannot guarantee erasure.
-      output.fill(0);
-    },
-  };
 }

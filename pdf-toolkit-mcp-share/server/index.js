@@ -57,6 +57,8 @@ import {
   PDF_DECRYPTABLE_PASSWORD_DESCRIPTION,
   PdfDecryptionError,
   decryptPdfForRead,
+  forceTerminateAllDecryptionWorkers,
+  terminateAllDecryptionWorkers,
 } from "./qpdf-decrypt.js";
 import {
   PDF_MUTATION_MAX_FILE_BYTES,
@@ -1849,6 +1851,10 @@ for (const [signal, exitCode] of new Map([
     workerShutdown = settleAllShutdownOperations([
       terminateAllPdfjsSubprocesses(),
       terminateAllPdfLibMutations(),
+      // A decryption worker is a live thread and keeps the process alive. It
+      // has its own 30-second deadline, which is the wrong amount of time for a
+      // shutdown to wait on.
+      terminateAllDecryptionWorkers(),
     ]);
     void workerShutdown.finally(() => process.exit(exitCode));
   });
@@ -1856,6 +1862,7 @@ for (const [signal, exitCode] of new Map([
 process.once("exit", () => {
   forceTerminateAllPdfjsSubprocesses();
   forceTerminateAllPdfLibMutations();
+  forceTerminateAllDecryptionWorkers();
 });
 
 const backupPathByCanonical = new Map();

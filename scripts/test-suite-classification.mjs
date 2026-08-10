@@ -98,15 +98,15 @@ export const CHECKOUT_LOCAL_MUTATING_TEST_SUITES = Object.freeze([
 
 export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
   Object.freeze({
-    // The byte-identical share mirror of server/qpdf-decrypt.js below. Same
-    // load, same fingerprint; the two entries must not diverge.
-    file: "pdf-toolkit-mcp-share/server/qpdf-decrypt.js",
+    // The byte-identical share mirror of server/qpdf-decrypt-worker.js below.
+    // Same load, same fingerprint; the two entries must not diverge.
+    file: "pdf-toolkit-mcp-share/server/qpdf-decrypt-worker.js",
     count: 1,
     kinds: Object.freeze(["dynamic-import"]),
     fingerprints: Object.freeze([
       "689d1575decd28551f1043e7b853740985cba96c87102c4a834cae9b1da7d52e",
     ]),
-    reason: "Share-tree mirror of server/qpdf-decrypt.js, which loads the vendored QPDF "
+    reason: "Share-tree mirror of server/qpdf-decrypt-worker.js, which loads the vendored QPDF "
       + "WebAssembly runtime from a fixed repository-relative path.",
   }),
   Object.freeze({
@@ -194,7 +194,7 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
     reason: "Loads a packaged share artifact from an isolated build root.",
   }),
   Object.freeze({
-    file: "server/qpdf-decrypt.js",
+    file: "server/qpdf-decrypt-worker.js",
     count: 1,
     kinds: Object.freeze(["dynamic-import"]),
     fingerprints: Object.freeze([
@@ -202,7 +202,9 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
     ]),
     reason: "Loads the vendored QPDF WebAssembly runtime from a fixed repository-relative path "
       + "resolved against import.meta.url. The specifier is computed rather than literal so that "
-      + "test-time bundlers leave the Emscripten output alone; it resolves its own .wasm sibling.",
+      + "test-time bundlers leave the Emscripten output alone; it resolves its own .wasm sibling. "
+      + "This is the decryption worker thread rather than server/qpdf-decrypt.js: the runtime is "
+      + "synchronous, so it has to be loaded somewhere that can be destroyed on a deadline.",
   }),
   Object.freeze({
     file: "test/eval/extraction-docling-handoff.js",
@@ -212,6 +214,17 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
       "bfb22ac97868fe7bb9a1d7da4651099c672c2ac8fec83b6b51340bbeb36dd305",
     ]),
     reason: "Loads a verified generated controller outside the checkout.",
+  }),
+  Object.freeze({
+    file: "test/qpdf-decrypt-isolation.test.js",
+    count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
+    fingerprints: Object.freeze([
+      "948c7080973dbfd1901b9e7904f3a2abcc2c968427f868cd50096046ad532df5",
+    ]),
+    reason: "Loads the committed QPDF runtime to encrypt the deliberately pathological "
+      + "many-object fixture the decryption deadline is measured against, so a document built to "
+      + "be slow is generated rather than committed.",
   }),
   Object.freeze({
     file: "test/qpdf-decrypt-read-only.test.js",

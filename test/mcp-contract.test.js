@@ -351,6 +351,7 @@ describe("MCPB static declarations", () => {
       "pdf-lib-rss-monitor.js",
       "pdf-observations.js",
       "qpdf-decrypt.js",
+      "qpdf-decrypt-worker.js",
       "resource-uri.js",
       "stderr-suppression.js",
     ]) {
@@ -360,7 +361,7 @@ describe("MCPB static declarations", () => {
     }
     // A new server file must be added to the list above, not silently shipped
     // in the mirror unchecked. Two already had been.
-    expect(mirrored).toHaveLength(20);
+    expect(mirrored).toHaveLength(21);
     const sourceUi = await fs.readFile(path.join(REPO_ROOT, "dist-ui", "index.html"));
     const shareUi = await fs.readFile(
       path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "dist-ui", "index.html"),
