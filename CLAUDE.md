@@ -130,6 +130,7 @@ qualification. Then perform manual host runs against `example-fw9.pdf`:
 31. **prepare_signing_packet** - Fill form + add sign-here boxes in one pass
 32. **detect_signature_zones** - Locate signature, initials, printed-name, and date zones with coordinates. Use apply_signature for signatures and initials, and apply_text for names and dates.
 33. **get_allowed_directories** - Report the folders this server may reach, which configuration layer supplied them, and where the stored config file lives. Read-only; it cannot change the boundary.
+34. **configure_allowed_directories** - Add folders to the stored configuration on plugin-style installs, where the host offers no settings screen. Requires an explicit human intent statement naming each path. Writes the stored configuration only; the running session's boundary is never widened, so the change applies after a restart
 
 ### Current Extraction Boundary
 

@@ -34,6 +34,7 @@ an `isError` result is never forced through a success schema.
 | `fill_pdf` | active document and field-fill outcome |
 | `fill_with_profile` | active document and profile-fill outcome |
 | `get_active_document` | empty or populated active-document state |
+| `configure_allowed_directories` | which folders were added, which were already present, the stored configuration path, whether a restart is required, and the unchanged active set |
 | `get_allowed_directories` | resolved directory list, whether any were configured, which configuration layer supplied them, and the stored configuration path |
 | `get_page_analysis` | bounded page analysis with explicit provenance, operator counts, and a `classification` rollup (`document_kind`, typed `pages_needing_vision`, explicit `pages_not_analyzed`) |
 | `get_pdf_identity` | parser-independent canonical path, byte length, and SHA-256 |

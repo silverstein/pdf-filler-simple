@@ -1289,6 +1289,17 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     path: string,
     bytes: integer,
   }),
+  configure_allowed_directories: object({
+    added: arrayOf(string),
+    already_configured: arrayOf(string),
+    config_path: string,
+    restart_required: { type: "boolean" },
+    // Always true. Declared so a caller can read the promise off the contract
+    // rather than the prose: writing the stored configuration never widens the
+    // boundary the running session enforces.
+    active_directories_unchanged: { type: "boolean" },
+    active_directories: arrayOf(string),
+  }),
   get_allowed_directories: object({
     directories: arrayOf(string),
     configured: { type: "boolean" },

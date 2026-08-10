@@ -29,7 +29,7 @@ import fs from "fs/promises";
 import path from "path";
 import { homedir, platform as osPlatform } from "os";
 import { spawn } from "child_process";
-import { createHash, randomUUID } from "crypto";
+import { createHash, randomBytes, randomUUID } from "crypto";
 import {
   isUnavailableResourceError,
   pathToPdfResourceUri,
@@ -1458,8 +1458,22 @@ function pluginDataConfigPath() {
 
 // A fresh install has nothing configured and must refuse every path. Writing
 // the template turns "configure the allowed directories somehow" into a named
-// file the user can open. Editing it is a human action the agent cannot
-// perform, which is what keeps widening off the agent's own authority.
+// file the user can open.
+//
+// `configure_allowed_directories` can now write this file on the user's behalf,
+// because Agent Plugins defines no user-configuration surface at all and the
+// alternative was telling people to hand-edit JSON under a 64-character hex
+// path.
+//
+// Be precise about what that buys, because an adversarial review caught an
+// earlier comment here claiming more. What holds: the active set is read once
+// at startup and this tool never touches it, so a grant cannot widen the
+// session that asked for it. What does NOT hold: "a human approves it before it
+// takes effect." A host restarts this server on crash and on its own schedule,
+// so a persisted grant can become live with no human in the loop. The intent
+// statement is therefore an audit record of what was claimed, not proof that a
+// person agreed. Treat this as a convenience with provenance, and keep the
+// hand-edited file as the path for anyone who wants the stronger property.
 function ensurePluginDataConfigTemplate(configPath) {
   if (!configPath || existsSync(configPath)) return;
   try {
@@ -1502,6 +1516,134 @@ function readPluginDataConfig(configPath) {
     .filter(entry => typeof entry === "string")
     .map(entry => expandHostPlaceholders(entry.trim()))
     .filter(entry => entry && !entry.includes("${"));
+}
+
+// What this checks, stated honestly, because two adversarial reviews rejected
+// the earlier framing. The server receives a string from its caller. It cannot
+// know who wrote it, and it cannot tell agreement from refusal: "Do not allow
+// /x" satisfies every test below. So this is NOT consent, intent, or evidence
+// of a human decision, and nothing in this file should say it is.
+//
+// What it is: a caller-supplied justification that must name the exact folder
+// being granted, recorded in the configuration file so a person reading that
+// file later can see what was asserted when each folder was added. Requiring
+// the folder to appear as its own path token blocks the parent-escalation
+// route, where a sentence naming a child was reused to grant its parent. The
+// recency bound keeps a stale justification from being replayed indefinitely.
+// The real protection remains elsewhere: this cannot widen the running session,
+// and the folder itself must survive the overbroad and self-grant checks.
+const INTENT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const ISO_8601_INSTANT = /^\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}(:\d{2}(\.\d{1,9})?)?(Z|[+-]\d{2}:?\d{2})$/;
+
+// A substring test is not consent. An adversarial review broke the first draft
+// with it: the user says "allow /home/me/Documents/taxes/2025", the caller
+// submits "/home/me/Documents", and `includes` passes because the sentence
+// contains the parent as a prefix. The grant silently widens to everything in
+// Documents, using the user's own words as cover.
+//
+// So the statement is parsed into the paths it actually names, and the
+// requested directory has to be one of them. A path token ends at whitespace or
+// at punctuation that cannot appear mid-path in a sentence, and trailing
+// sentence punctuation is stripped.
+function pathsNamedIn(statement) {
+  const named = new Set();
+  for (const raw of statement.split(/[\s,;'"`()[\]{}<>]+/)) {
+    const token = raw.replace(/[.:!?]+$/, "");
+    if (!token || !path.isAbsolute(token)) continue;
+    named.add(token);
+    // A trailing separator is the same folder, not a different one.
+    if (token.length > 1 && token.endsWith(path.sep)) named.add(token.slice(0, -1));
+  }
+  return named;
+}
+
+function requireConfigurationIntent(statement, confirmedAt, directories, now) {
+  const trimmed = statement.trim();
+  if (trimmed.length < 12) {
+    throw new Error(
+      "'user_intent_statement' must be the user's own words asking for this folder, passed through verbatim. "
+      + "Ask them and pass their answer through verbatim; never write it for them.",
+    );
+  }
+  const named = pathsNamedIn(trimmed);
+  const missing = directories.filter(directory => {
+    const withoutTrailing = directory.length > 1 && directory.endsWith(path.sep)
+      ? directory.slice(0, -1)
+      : directory;
+    return !named.has(directory) && !named.has(withoutTrailing);
+  });
+  if (missing.length > 0) {
+    throw new Error(
+      `'user_intent_statement' must name each folder being allowed as its own path. Missing: ${missing.join(", ")}. `
+      + "A parent of a folder the user named does not count. Ask the user to confirm the exact folder, "
+      + "then pass their answer through verbatim.",
+    );
+  }
+  // Date.parse accepts a great deal that is not ISO-8601, including strings
+  // whose meaning depends on the host locale. The schema promises ISO-8601, so
+  // require it rather than accepting whatever parses.
+  if (!ISO_8601_INSTANT.test(confirmedAt.trim())) {
+    throw new Error(
+      "'user_confirmed_at' must be an ISO-8601 instant with a timezone, for example 2026-08-09T16:20:00Z.",
+    );
+  }
+  const confirmed = Date.parse(confirmedAt.trim());
+  if (Number.isNaN(confirmed)) {
+    throw new Error("'user_confirmed_at' is not a valid timestamp.");
+  }
+  if (confirmed > now) {
+    throw new Error("'user_confirmed_at' is in the future. Pass the time the user actually confirmed.");
+  }
+  if (now - confirmed > INTENT_MAX_AGE_MS) {
+    throw new Error("'user_confirmed_at' is more than 24 hours old. Ask the user to confirm again.");
+  }
+  return { statement: trimmed, confirmedAt: new Date(confirmed).toISOString() };
+}
+
+// Folders too broad to be a considered choice. Granting one of these is
+// indistinguishable from turning the boundary off, so refuse and make the
+// caller name something specific.
+//
+// The first draft recognised exactly two strings, the filesystem root and the
+// current user's home, which an adversarial review pointed out leaves /home,
+// /Users, /etc, /var, /usr and /tmp all reachable. Depth is the property that
+// actually matters: a directory shallow enough to contain other users' data or
+// the operating system is not a considered choice, whatever it is called.
+const OVERBROAD_ABSOLUTE_DIRECTORIES = new Set([
+  "/", "/home", "/Users", "/etc", "/var", "/usr", "/tmp", "/opt", "/srv", "/mnt", "/media",
+  "/private", "/System", "/Library", "/Applications", "/Volumes", "/bin", "/sbin", "/root", "/proc", "/dev",
+]);
+
+function rejectOverbroadDirectory(canonical) {
+  const parsed = path.parse(canonical);
+  if (canonical === parsed.root) {
+    throw new Error(`Refusing to allow the filesystem root (${canonical}). Name the specific folders you need.`);
+  }
+  const home = homedir();
+  if (home && canonicalizePathForPolicy(home) === canonical) {
+    throw new Error(
+      `Refusing to allow the whole home folder (${canonical}). Name the specific folders you need, `
+      + "such as its Documents or Desktop folder.",
+    );
+  }
+  const normalized = canonical.length > 1 && canonical.endsWith(path.sep)
+    ? canonical.slice(0, -1)
+    : canonical;
+  if (OVERBROAD_ABSOLUTE_DIRECTORIES.has(normalized)) {
+    throw new Error(
+      `Refusing to allow ${canonical}: it is a system or multi-user directory, which is not a considered choice. `
+      + "Name the specific folder you need inside it.",
+    );
+  }
+  // A one-segment directory on a Windows drive, C:\Users say, is the same
+  // problem in a different shape.
+  const depth = normalized.slice(parsed.root.length).split(/[\\/]+/).filter(Boolean).length;
+  if (depth <= 1 && home && !isPathInsideDirectory(normalized, canonicalizePathForPolicy(home))) {
+    throw new Error(
+      `Refusing to allow ${canonical}: a top-level directory outside your home folder is too broad. `
+      + "Name the specific folder you need inside it.",
+    );
+  }
 }
 
 // A set that reaches the config file lets any write tool rewrite the sandbox on
@@ -3751,6 +3893,34 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           idempotentHint: false,
           openWorldHint: false
         }
+      },
+      {
+        name: "configure_allowed_directories",
+        description:
+          "Add folders to the stored configuration this server reads at startup. Requires explicit human intent and only works where a stored configuration file exists, which is plugin-style installs. "
+          + "IT DOES NOT WIDEN THE CURRENT SESSION. The active boundary was read at startup and is not changed, so the folders you add apply only to a later run. Tell the user that plainly, and tell them a restart will apply it, because a restart is not necessarily something they perform.\n\n"
+          + "ASK THE USER FIRST AND PASS THEIR ANSWER THROUGH VERBATIM. The server cannot tell your words from theirs, so this is recorded as a claim, not verified as consent: it is written into the configuration file for a person to audit later. Never invent it. The statement must name each folder as its own path. "
+          + "On hosts that provide their own settings screen, such as Claude Desktop, this tool refuses and the user should use that screen instead.",
+        inputSchema: {
+          type: "object",
+          properties: {
+            directories: {
+              type: "array",
+              items: { type: "string" },
+              minItems: 1,
+              description: "Absolute paths of existing folders to add. Existing entries are kept; nothing is removed.",
+            },
+            user_intent_statement: {
+              type: "string",
+              description: "The user's own words asking for these folders, passed through verbatim. Must name each folder as its own path. Recorded for audit; the server cannot verify who wrote it, so never invent it.",
+            },
+            user_confirmed_at: {
+              type: "string",
+              description: "ISO-8601 instant with a timezone, when the user asked, within the last 24 hours.",
+            },
+          },
+          required: ["directories", "user_intent_statement", "user_confirmed_at"],
+        },
       },
       {
         name: "get_allowed_directories",
@@ -6311,6 +6481,225 @@ async function handleToolCall(request) {
         };
       }
 
+      case "configure_allowed_directories": {
+        if (!PLUGIN_DATA_CONFIG_PATH) {
+          throw new Error(
+            "There is no stored configuration file for this install, so this tool cannot change anything. "
+            + "This host configures the boundary itself: in Claude Desktop open Settings, then Extensions, "
+            + "then this extension, and edit Allowed PDF Directories. Otherwise set the --allowed-directories "
+            + "argument or the ALLOWED_DIRECTORIES environment variable where this server is configured.",
+          );
+        }
+
+        const args = requireArgumentObject(request.params.arguments, "configure_allowed_directories");
+        if (!Array.isArray(args.directories) || args.directories.length === 0) {
+          throw new Error("'directories' must be a non-empty array of absolute folder paths.");
+        }
+
+        const requested = args.directories.map((entry, index) => {
+          if (typeof entry !== "string" || !entry.trim()) {
+            throw new Error(`'directories[${index}]' must be a non-empty string.`);
+          }
+          const expanded = expandHostPlaceholders(entry.trim());
+          if (expanded.includes("${")) {
+            throw new Error(`'directories[${index}]' still contains an unresolved placeholder: ${entry}`);
+          }
+          if (!path.isAbsolute(expanded)) {
+            throw new Error(`'directories[${index}]' must be an absolute path. Got: ${entry}`);
+          }
+          return expanded;
+        });
+
+        // Intent is checked against what the user typed, before anything on disk
+        // is touched, so a refusal never leaves a half-written boundary.
+        requireConfigurationIntent(
+          requireStringArgument(args.user_intent_statement, "user_intent_statement"),
+          requireStringArgument(args.user_confirmed_at, "user_confirmed_at"),
+          requested,
+          Date.now(),
+        );
+
+        const canonicalConfig = canonicalizePathForPolicy(PLUGIN_DATA_CONFIG_PATH);
+        let configIdentity = null;
+        try {
+          const configStats = await fs.stat(PLUGIN_DATA_CONFIG_PATH);
+          configIdentity = { dev: configStats.dev, ino: configStats.ino };
+        } catch { /* not written yet; the pathname check below still applies */ }
+
+        const additions = [];
+        for (const directory of requested) {
+          let stats;
+          try {
+            stats = await fs.stat(directory);
+          } catch {
+            throw new Error(`Folder does not exist: ${directory}. Create it first, or check the path.`);
+          }
+          if (!stats.isDirectory()) throw new Error(`Not a folder: ${directory}`);
+
+          // Store what the checks below actually inspected. The first draft
+          // validated the canonical path and then wrote the requested one, so a
+          // symlink approved while pointing somewhere harmless could be
+          // repointed at / afterwards and the next startup would follow it.
+          // Persisting the resolved target means a later swap of the original
+          // name changes nothing about what was granted.
+          const canonical = canonicalizePathForPolicy(directory);
+          rejectOverbroadDirectory(canonical);
+          if (isPathInsideDirectory(canonicalConfig, canonical)) {
+            throw new Error(
+              `Refusing ${directory}: it contains this server's own configuration file, which would let any `
+              + "write tool rewrite the boundary on the next launch.",
+            );
+          }
+          // A pathname check alone misses a hard link: a second name for the
+          // same file inside an otherwise innocent folder is still that file.
+          //
+          // Granting a directory grants its descendants, so this walks the tree
+          // rather than the immediate children, which an earlier draft did.
+          // It fails closed: a subtree that cannot be read, or one too large to
+          // scan within the bound, is refused rather than assumed innocent,
+          // because a security check that cannot complete has not passed.
+          if (configIdentity) {
+            const MAX_ENTRIES_SCANNED = 20000;
+            let scanned = 0;
+            const pending = [canonical];
+            while (pending.length > 0) {
+              const current = pending.pop();
+              let entries;
+              try {
+                entries = await fs.readdir(current, { withFileTypes: true });
+              } catch (error) {
+                throw new Error(
+                  `Refusing ${directory}: cannot verify that it does not contain this server's own `
+                  + `configuration file, because ${current} could not be read (${error.code ?? "unreadable"}).`,
+                );
+              }
+              for (const entry of entries) {
+                if (++scanned > MAX_ENTRIES_SCANNED) {
+                  throw new Error(
+                    `Refusing ${directory}: it is too large to verify that it does not contain this server's `
+                    + "own configuration file. Name a smaller, more specific folder.",
+                  );
+                }
+                const child = path.join(current, entry.name);
+                if (entry.isDirectory()) {
+                  pending.push(child);
+                  continue;
+                }
+                // lstat, so a symlink is inspected rather than followed.
+                const candidate = await fs.lstat(child).catch(() => null);
+                if (candidate?.isFile()
+                  && candidate.dev === configIdentity.dev
+                  && candidate.ino === configIdentity.ino) {
+                  throw new Error(
+                    `Refusing ${directory}: ${child} is another name for this server's own configuration `
+                    + "file, which would let any write tool rewrite the boundary on the next launch.",
+                  );
+                }
+              }
+            }
+          }
+          additions.push({ requested: directory, canonical });
+        }
+
+        ensurePluginDataConfigTemplate(PLUGIN_DATA_CONFIG_PATH);
+        let stored;
+        try {
+          stored = JSON.parse(await fs.readFile(PLUGIN_DATA_CONFIG_PATH, "utf8"));
+        } catch {
+          throw new Error(
+            `${PLUGIN_DATA_CONFIG_PATH} is not valid JSON. Fix or delete it, then try again. `
+            + "Refusing to overwrite a file that may hold folders you configured by hand.",
+          );
+        }
+        if (!stored || typeof stored !== "object" || Array.isArray(stored)) {
+          throw new Error(`${PLUGIN_DATA_CONFIG_PATH} must contain a JSON object.`);
+        }
+
+        // Refuse rather than rewrite. Dropping entries we do not recognise
+        // would silently delete folders the user configured by hand, and a
+        // configuration tool that quietly narrows the boundary is as wrong as
+        // one that quietly widens it.
+        if (stored.allowedDirectories !== undefined && !Array.isArray(stored.allowedDirectories)) {
+          throw new Error(
+            `${PLUGIN_DATA_CONFIG_PATH} has an "allowedDirectories" that is not a list. `
+            + "Fix it by hand; refusing to replace a value you may have written deliberately.",
+          );
+        }
+        const existing = stored.allowedDirectories ?? [];
+        const unsupported = existing.filter(entry => typeof entry !== "string");
+        if (unsupported.length > 0) {
+          throw new Error(
+            `${PLUGIN_DATA_CONFIG_PATH} contains ${unsupported.length} entr${unsupported.length === 1 ? "y" : "ies"} `
+            + "that are not plain paths. Fix them by hand; refusing to drop entries you may have written deliberately.",
+          );
+        }
+
+        const already = new Set(existing.map(entry => canonicalizePathForPolicy(expandHostPlaceholders(entry))));
+        const accepted = additions.filter(entry => !already.has(entry.canonical));
+        const added = accepted.map(entry => entry.canonical);
+
+        stored.allowedDirectories = [...existing, ...added];
+        // Append rather than replace. The first draft kept only the most recent
+        // statement, so a later innocuous call erased the consent that had
+        // actually granted a sensitive folder. Nothing that only reports "no
+        // change" is recorded at all.
+        if (added.length > 0) {
+          const history = Array.isArray(stored._configurationHistory) ? stored._configurationHistory : [];
+          history.push({
+            user_intent_statement: String(args.user_intent_statement).trim(),
+            user_confirmed_at: new Date(Date.parse(String(args.user_confirmed_at).trim())).toISOString(),
+            requested: accepted.map(entry => entry.requested),
+            added,
+          });
+          stored._configurationHistory = history;
+        }
+
+        // Write through a temporary file and rename, so an interrupted write
+        // cannot leave the boundary unreadable.
+        //
+        // The name must be unpredictable and created exclusively. A review of
+        // the previous draft, which used `${config}.${pid}.tmp`, pointed out
+        // that a deterministic name lets a local actor pre-create it as a
+        // symlink: writeFile follows the link and truncates whatever it points
+        // at, before the rename ever runs. `wx` refuses to open an existing
+        // path of any kind, which closes that.
+        const temporary = `${PLUGIN_DATA_CONFIG_PATH}.${randomBytes(12).toString("hex")}.tmp`;
+        let handle;
+        try {
+          handle = await fs.open(temporary, "wx", 0o600);
+          await handle.writeFile(JSON.stringify(stored, null, 2) + "\n");
+          // Durability has to reach the disk before the rename claims it.
+          await handle.sync();
+        } finally {
+          await handle?.close().catch(() => {});
+        }
+        try {
+          await fs.rename(temporary, PLUGIN_DATA_CONFIG_PATH);
+        } catch (error) {
+          await fs.unlink(temporary).catch(() => {});
+          throw error;
+        }
+
+        // Deliberately not touching ALLOWED_DIRECTORIES. The boundary this
+        // session enforces stays exactly as the user last launched it.
+        const summary = added.length === 0
+          ? `Already configured, nothing changed. The stored configuration at ${PLUGIN_DATA_CONFIG_PATH} already lists: ${requested.join(", ")}.`
+          : `Added to ${PLUGIN_DATA_CONFIG_PATH}:\n${added.join("\n")}\n\n`
+            + "This does NOT affect the current session. Restart the server, then these folders will be reachable.";
+
+        return {
+          content: [{ type: "text", text: summary }],
+          structuredContent: {
+            added,
+            already_configured: requested.filter(directory => !added.includes(directory)),
+            config_path: PLUGIN_DATA_CONFIG_PATH,
+            restart_required: added.length > 0,
+            active_directories_unchanged: true,
+            active_directories: ALLOWED_DIRECTORIES.map(directory => directory.display),
+          },
+        };
+      }
+
       case "get_allowed_directories": {
         // Reporting the boundary is not reaching past it, so this answers even
         // when nothing is configured — which is exactly when it is most needed.
@@ -6319,7 +6708,15 @@ async function handleToolCall(request) {
         const summary = configured
           ? `Allowed folders (${ALLOWED_DIRECTORY_SOURCE.replace(/_/g, " ")}):\n${directories.join("\n")}`
           : PLUGIN_DATA_CONFIG_PATH
-            ? `No folders are allowed yet. List them in ${PLUGIN_DATA_CONFIG_PATH} under "allowedDirectories", then restart this server.`
+            // Deliberately not a paste-ready shell command. An adversarial
+            // review of an earlier draft pointed out two problems with one: a
+            // quote anywhere in PLUGIN_DATA_CONFIG_PATH turns the generated
+            // line into shell injection, and handing users a command that
+            // appends straight to allowedDirectories teaches them to bypass
+            // every check the configuration path applies. The file is the
+            // instruction; the user edits it themselves.
+            ? `No folders are allowed yet. Open this file and list the folders you want under "allowedDirectories", then restart:\n\n  ${PLUGIN_DATA_CONFIG_PATH}\n\n`
+              + `Absolute paths only. It replaces any default rather than adding to one, so list every folder you need.`
             : "No folders are allowed yet, and no configuration file location is available. Set the --allowed-directories argument or the ALLOWED_DIRECTORIES environment variable where this server is configured.";
 
         return {
