@@ -97,7 +97,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // document fails anyway. Only read_pdf_layout, convert_pdf_to_markdown, and
 // get_pdf_info keep an unqualified password parameter, because only they work.
 // Previously 53d965e366b16adf2a0fa90dfe837ca98d29a8f41c1adf8b9e8f661ea3bb7d95.
-const TOOL_CONTRACT_SHA256 = "59af94a52312b299f57f9f5ab8e18b5de626d2502aa18f47438d7a1ce66e2c1c";
+const TOOL_CONTRACT_SHA256 = "fef092d0e306a33839f249d0cf121519d723981aaf3872119d8668d2001cb62f";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

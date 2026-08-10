@@ -115,7 +115,9 @@ describe("get_allowed_directories", () => {
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent.configured).toBe(false);
     expect(result.structuredContent.directories).toEqual([]);
-    expect(result.structuredContent.config_path).toBe(path.join(emptyPluginData, "config.json"));
+    expect(result.structuredContent.config_path).toBe(
+      path.join(tempDirectory, "home", ".pdf-tools", "config.json"),
+    );
   }, 30_000);
 
   it("is annotated read-only and takes no arguments", async () => {
