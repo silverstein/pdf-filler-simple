@@ -126,8 +126,7 @@ describe("config file precedence", () => {
   });
 
   it("lets the environment variable win over the config file", async () => {
-    // The config file is the lowest layer. A host that does supply configuration
-    // is stating an intent the stored file should not override.
+    // A host-supplied value outranks stored configuration.
     const result = await withServer({
       name: "plugin-data-env-wins",
       env: {
@@ -246,27 +245,28 @@ describe("first-run bootstrap", () => {
     await removeTestTempDirectory(tempDirectory);
   });
 
-  it("writes a template config on first run and names it in the refusal", async () => {
+  it("writes the well-known home template on first run and names it in the refusal", async () => {
     const pluginData = path.join(tempDirectory, "fresh-install");
+    const home = path.join(tempDirectory, "home");
     await fs.mkdir(pluginData, { recursive: true });
-    const configPath = path.join(pluginData, "config.json");
+    const pluginConfigPath = path.join(pluginData, "config.json");
+    const configPath = path.join(home, ".pdf-tools", "config.json");
 
     const result = await withServer({
       name: "plugin-data-bootstrap",
-      env: { HOME: path.join(tempDirectory, "home"), PLUGIN_DATA: pluginData },
+      env: { HOME: home, PLUGIN_DATA: pluginData },
     }, client => client.callTool({
       name: "list_pdfs",
       arguments: { directory: tempDirectory },
     }));
 
     expect(structuredErrorCode(result)).toBe("path_policy_denied");
-    // A fresh install must not merely refuse; it must say where to fix it.
-    // Editing this file is a human action the agent cannot perform, which is
-    // what keeps widening off the agent's own authority.
+    // A fresh install must not merely refuse; it must say where to configure it.
     expect(textFromToolResult(result)).toContain(configPath);
 
     const written = JSON.parse(await fs.readFile(configPath, "utf8"));
     expect(written.allowedDirectories).toEqual([]);
+    await expect(fs.stat(pluginConfigPath)).rejects.toMatchObject({ code: "ENOENT" });
   }, 30_000);
 
   it("does not overwrite a config that already exists", async () => {
