@@ -4356,7 +4356,14 @@ async function handleToolCall(request) {
           content: [
             {
               type: "text",
-              text: `PDF has ${fields.length} form fields:\n${JSON.stringify(fieldInfo, null, 2)}`
+              // "0 form fields" reads as "this document has no form", which is
+              // often false: a questionnaire can be visibly full of blanks that
+              // were flattened into page content, or built with a form
+              // technology this parser does not enumerate. We measured AcroForm
+              // fields, so say AcroForm, and say what that does not rule out.
+              text: fields.length === 0
+                ? "This PDF has no AcroForm fields. That is not the same as having no form: visible blanks may have been flattened into the page, or built with a form technology this parser does not enumerate. Use read_pdf_content or the viewer to inspect what is actually on the page."
+                : `PDF has ${fields.length} AcroForm fields:\n${JSON.stringify(fieldInfo, null, 2)}`
             }
           ],
           structuredContent: payload,
