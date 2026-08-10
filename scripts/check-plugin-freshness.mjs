@@ -21,7 +21,14 @@ import path from "path";
 import { fileURLToPath } from "url";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const PROVENANCE_URL =
+// Read through the API rather than raw.githubusercontent.com. The raw host is
+// CDN-cached and served a commit five behind for minutes after a correct
+// publish, so the first version of this check called a freshly published plugin
+// stale. A checker that cries wolf right after the action it is meant to
+// confirm is worse than no checker.
+const PROVENANCE_API =
+  "https://api.github.com/repos/Open-Document-Alliance/pdf-tools-plugin/contents/PROVENANCE.md";
+const PROVENANCE_RAW =
   "https://raw.githubusercontent.com/Open-Document-Alliance/pdf-tools-plugin/main/PROVENANCE.md";
 
 // Everything the plugin build copies into the artifact. Keep this in step with
@@ -43,9 +50,25 @@ function git(args) {
   return execFileSync("git", args, { cwd: REPO_ROOT, encoding: "utf8" }).trim();
 }
 
+async function readPublishedProvenance() {
+  try {
+    const response = await fetch(PROVENANCE_API, {
+      headers: { accept: "application/vnd.github.raw", "user-agent": "pdf-tools-freshness" },
+    });
+    if (response.ok) return await response.text();
+    console.error(`[freshness] API returned ${response.status}; falling back to the raw host.`);
+  } catch (error) {
+    console.error(`[freshness] API unreachable (${error.message}); falling back to the raw host.`);
+  }
+  // The fallback may be stale by minutes. Say so rather than reporting a
+  // confident wrong answer.
+  console.error("[freshness] NOTE: the raw host is CDN-cached; a very recent publish may still read as stale.");
+  return await (await fetch(PROVENANCE_RAW)).text();
+}
+
 let provenance;
 try {
-  provenance = await (await fetch(PROVENANCE_URL)).text();
+  provenance = await readPublishedProvenance();
 } catch (error) {
   console.error(`[freshness] could not read published provenance: ${error.message}`);
   console.error("[freshness] cannot determine freshness; not treating that as fresh.");
