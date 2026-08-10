@@ -460,15 +460,30 @@ describe.sequential("bounded process groups", () => {
   });
 
   it("kills and reports a stubborn descendant after its leader exits", async () => {
-    // The leader must not exit until the descendant actually exists. spawn() is
-    // asynchronous, so a fixed timer raced the fork: under a loaded parallel
-    // run the leader could exit first, leaving nothing for the cleanup path to
-    // observe and failing on descendant_observed_after_leader_close. Waiting
-    // for the spawn event removes the assumption rather than lengthening it.
+    // Two separate races had to be removed here, both of the same shape: the
+    // test assumed something had happened by a certain time rather than waiting
+    // for it to happen.
+    //
+    // The first was the fork itself. spawn() is asynchronous, so a fixed timer
+    // let a loaded run exit the leader before the descendant existed, failing
+    // on descendant_observed_after_leader_close. Waiting for the spawn event
+    // fixed that.
+    //
+    // The second is subtler and is what this change removes. `spawn` fires when
+    // the process exists, not when its script has run. The descendant is only
+    // stubborn once it has installed its SIGTERM handler, and a starved host
+    // can take longer than the 50 ms that followed to get there. SIGTERM then
+    // arrives at a process still running default disposition, the descendant
+    // dies politely, and kill_signal_sent is false: the cleanup path behaved
+    // correctly, but the test was no longer testing a stubborn descendant.
+    //
+    // So the descendant now announces that its handler is installed, and the
+    // leader exits on that byte rather than on a timer. There is nothing left
+    // to tune, because there is no longer a duration being guessed.
     const script = [
       "const {spawn}=require('node:child_process');",
-      "const child=spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{});setInterval(()=>{},1000)\"],{stdio:'ignore'});",
-      "child.on('spawn',()=>{setTimeout(()=>process.exit(0),50);});",
+      "const child=spawn(process.execPath,['-e',\"process.on('SIGTERM',()=>{});setInterval(()=>{},1000);process.stdout.write('ready')\"],{stdio:['ignore','pipe','ignore']});",
+      "child.stdout.once('data',()=>{process.exit(0);});",
       "child.on('error',()=>{process.exit(1);});",
     ].join("");
     const result = await runBoundedProcess(process.execPath, ["-e", script], {
