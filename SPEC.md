@@ -1,35 +1,37 @@
-# SPEC — Verified Vision prerequisite: bounded ruling-segment evidence
+# SPEC — Verified vision B3: deterministic grid consistency
 
-Bead: `pdf-toolkit-mcp-14o.8`
-Branch: `codex/verified-vision-ruling-evidence`
-Stack base: B2 exact SHA `082120f` (which already carries local B0+B1).
+Bead: `pdf-toolkit-mcp-14o.4`
+Branch: `codex/verified-vision-b3`
+Stack base: ruling-evidence exact SHA `0598f7b` (local B0-B2 plus 14o.8).
 
 ## Objective
 
-Preserve the axis-aligned straight ruling segments that the PDF.js operator list already exposes, instead of retaining only closed rectangles and aggregate path counts. B3 needs this source-derived geometry to distinguish an authored merged header span from an invented cut that conserves identical text.
+Extend the source-replayed `verify_table_proposal` gate from B2 content/ordering predicates to a deterministic structural-consistency proof. Accept only a rectangular proposed grid whose assignments agree with every preserved source ruling segment. This proves consistency with available evidence, never unique topology.
 
-## Contract
+## Checks
 
-- Add `ruling_segments` to each Extraction IR page and bump the additive IR version from 1.5.0 to 1.6.0.
-- Each retained item records deterministic top-left PDF.js viewport points: orientation, start/end coordinates, and source operator index.
-- Retain only painted stroke-bearing straight segments after the exact graphics/display transform; reject curves, diagonals, degenerate lines, and non-finite geometry.
-- Normalize orientation and endpoint order; deduplicate within the existing 0.5-point ruling tolerance.
-- Bound each page with a named cap and typed observed/returned/truncated accounting.
-- A parser/operator failure yields unavailable evidence with no retained geometry. Output-budget omission yields unavailable+truncated and exact observed counts.
-- Extend the independent second parse so an available or typed-omitted claim must match a fresh operator-list replay.
-- Add the bounded segments to B1 proposal packets and their per-region truncation accounting. Existing abstention and default-off Markdown behavior remain unchanged.
+- **Rectangular grid:** proposed row/column spans must tile one bounded rectangle exactly once. Holes, overlaps, empty outer dimensions, duplicate anchors, and out-of-bounds spans reject.
+- **Global cuts:** source-replayed interior horizontal/vertical rulings define ordered cuts. Proposed dimensions and assigned item boxes must agree with those cuts; items cannot escape their proposed span.
+- **Ruling agreement:** for every source cut and every row/column band, a source segment must exist exactly when the proposal places a cell boundary there. A ruling may neither bisect a proposed cell nor be absent where the proposal invents a boundary.
+- **Header evidence:** a complete source ruling between proposed rows 0 and 1 is independent header-band evidence, alongside the existing taller-first-row predicate.
+- **Ambiguity:** regions without ruling-segment evidence remain structurally ambiguous and reject. The verifier is stateless and does not remember prior proposals; it derives this refusal from the regenerated source region itself.
 
-## Proof target
+## Wire contract
 
-On the synthetic line-ruled and merged-header fixtures, evidence must be deterministic and sufficient to observe that the vertical header cut is absent across the authored merged span while body-row cuts remain present. This lane exposes evidence only; B3 owns the proposal-vs-evidence decision.
+- Add typed B3 checks and rejection reasons; bump verifier identity to 0.2.0.
+- Update the claim boundary: accepted content is source-derived and the grid is consistent with all source-replayed geometry, but consistency is not uniqueness.
+- No numeric confidence, caller geometry/text, state, model, OCR, network, mutation, or acceptance based on packet evidence alone.
+- Existing B2 failures remain independently visible; B3 checks do not erase earlier reasons.
 
-## Constraints
+## Evidence target
 
-- No model, OCR, network, inference, numeric confidence, mutation, or public release.
-- No trust in B1 packet geometry: B2/B3 always regenerate it from source.
-- Source/share byte parity and all IR-version pins remain aligned.
-- Existing fields and fail-closed reconstruction behavior remain unchanged apart from the additive field/version.
+- The authored merged-header proposal accepts because x=372 has no header-band segment and the cell spans columns 1-2.
+- The text-conserving invented header cut rejects because it requires x=372 across row 0 where the source has no segment.
+- The line-table two-column merge rejects because x=372 bisects its merged second column.
+- The existing row split remains rejected by B2 line non-straddle.
+- Both borderless alternatives reject as ambiguous.
+- Report the seeded text-conserving catch delta explicitly: B2 structural predicates alone do not distinguish the authored/invented merged cut or the column merge; B3 ruling checks catch both.
 
 ## Acceptance
 
-Focused tests prove transformed line capture, diagonal/curve refusal, deterministic ordering/deduplication, cap/output-budget typing, independent replay tamper rejection, source/share schemas, exact fixture geometry, unchanged Markdown/gaps, and B1 packet propagation. Run layout, Markdown, B0-B2, source-replay, schema, packaging, and share gates before closing.
+Focused source-replay, verifier, adversarial baseline, schemas, source/share parity, tool-contract, packaging, and aggregate release gates pass on the exact committed tree. B3 remains local-only; integration, push, release, and public claim language remain protected gates.
