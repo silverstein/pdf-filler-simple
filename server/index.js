@@ -42,6 +42,10 @@ import {
 } from "./output-schemas.js";
 import { publicAccessibilityInspectionError } from "./accessibility-inspection.js";
 import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
+import {
+  normalizeTableProposalCells,
+  verifyTableProposalAgainstRegion,
+} from "./table-proposal-verification.js";
 import { validatePdfLayoutSemantics } from "./layout-extraction.js";
 import {
   buildRenderObservation,
@@ -1711,6 +1715,7 @@ const DEFAULT_DOWNLOAD_DIRECTORY = defaultDirectoryWithin(DEFAULT_DOWNLOAD_DIR, 
 
 const PDFJS_TOOL_NAMES = new Set([
   "convert_pdf_to_markdown",
+  "verify_table_proposal",
   "compare_pdfs",
   "detect_signature_zones",
   "get_page_analysis",
@@ -3359,6 +3364,50 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           idempotentHint: true,
           openWorldHint: false
         }
+      },
+      {
+        name: "verify_table_proposal",
+        description: "Deterministically check an untrusted table-structure proposal against a fresh, independently source-validated parse of the current PDF. The caller supplies only a B1 region/token identity and item-to-cell assignments; text, geometry, header evidence, and packet fields are regenerated from source bytes. Acceptance means source-derived content passed the B2 coverage, one-cell, row/column-order, and independent-header predicates. It does not prove unique topology; B3 grid-consistency checks remain required. No OCR, model, network, mutation, or numeric confidence.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            pdf_path: { type: "string", description: "Absolute path, or ~/ path, to the same local PDF used to obtain the proposal packet." },
+            password: { type: "string", description: "Password for an encrypted PDF, when required." },
+            region_id: { type: "string", pattern: "^p[1-9][0-9]*-t[1-9][0-9]*$", description: "Deterministic B1 abandoned-region identity, such as p1-t1." },
+            proposal_token: { type: "string", pattern: "^[a-f0-9]{64}$", description: "B1 SHA-256 token binding the source SHA-256, extraction IR version, and region identity." },
+            cells: {
+              type: "array",
+              minItems: 1,
+              maxItems: 1000,
+              description: "Untrusted structural assignments. Cell text is never accepted from the caller.",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  row: { type: "integer", minimum: 0, maximum: 999 },
+                  column: { type: "integer", minimum: 0, maximum: 999 },
+                  rowspan: { type: "integer", minimum: 1, maximum: 1000 },
+                  colspan: { type: "integer", minimum: 1, maximum: 1000 },
+                  item_ids: {
+                    type: "array",
+                    maxItems: 400,
+                    items: { type: "string", minLength: 1, maxLength: 128 },
+                  },
+                },
+                required: ["row", "column", "rowspan", "colspan", "item_ids"],
+              },
+            },
+          },
+          required: ["pdf_path", "region_id", "proposal_token", "cells"],
+        },
+        annotations: {
+          title: "Verify Table Proposal",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
       },
       {
         name: "render_pdf_page",
@@ -5520,6 +5569,113 @@ async function handleToolCall(request) {
             };
           }
           throw new Error(`Error converting PDF to Markdown: ${error.message}`, { cause: error });
+        }
+      }
+
+      case "verify_table_proposal": {
+        const verifyArgs = requireArgumentObject(args, "verify_table_proposal");
+        const allowedArguments = new Set([
+          "pdf_path",
+          "password",
+          "region_id",
+          "proposal_token",
+          "cells",
+        ]);
+        const unknownArgument = Object.keys(verifyArgs).find(name => !allowedArguments.has(name));
+        if (unknownArgument) throw new Error(`Unknown verify_table_proposal argument: ${unknownArgument}.`);
+        const pdfPath = requireStringArgument(verifyArgs.pdf_path, "pdf_path", { maxLength: 32768 });
+        const password = optionalStringArgument(verifyArgs.password, "password", { maxLength: 4096 });
+        const regionId = requireStringArgument(verifyArgs.region_id, "region_id", { maxLength: 64 });
+        const regionMatch = /^p([1-9][0-9]*)-t([1-9][0-9]*)$/.exec(regionId);
+        if (!regionMatch) throw new Error("region_id must match p{page}-t{ordinal} with positive integers.");
+        const page = Number(regionMatch[1]);
+        if (!Number.isSafeInteger(page) || page > 1000000) {
+          throw new Error("region_id page must be from 1 through 1000000.");
+        }
+        const proposalToken = requireStringArgument(
+          verifyArgs.proposal_token,
+          "proposal_token",
+          { maxLength: 64 },
+        );
+        if (!/^[a-f0-9]{64}$/.test(proposalToken)) {
+          throw new Error("proposal_token must be a lowercase 64-character SHA-256 hex digest.");
+        }
+        const cells = normalizeTableProposalCells(verifyArgs.cells);
+        if (!path.isAbsolute(expandUserPath(pdfPath))) {
+          throw new Error("pdf_path must be an absolute path or begin with ~/.");
+        }
+        const resolvedPath = resolvePath(pdfPath);
+        try {
+          // Use the widest supported single-page extraction limits. If the B1
+          // packet came from a narrower or truncated view, the verifier can see
+          // additional source items and reject missing coverage, never accept a
+          // convenient subset. The PDF.js worker performs the independent
+          // source-evidence replay before this result is returned.
+          const fileName = path.basename(resolvedPath);
+          const { result } = await runPdfjsOperation(resolvedPath, {
+            operation: "extract_layout_for_markdown",
+            password,
+            options: {
+              source_path: resolvedPath,
+              source_file_name: fileName,
+              start_page: page,
+              end_page: page,
+              max_items: 5000,
+              max_characters: 100000,
+              max_output_characters: 200000,
+            },
+          });
+          const rendered = renderPdfLayoutToMarkdown(result.layout, {
+            includePageBoundaries: true,
+            maxMarkdownBytes: 200000,
+            compact: false,
+            emitTableProposals: true,
+          });
+          const expectedProposalToken = createHash("sha256")
+            .update([
+              rendered.provenance.source.sha256,
+              rendered.provenance.layout.version,
+              regionId,
+            ].join("\n"), "utf8")
+            .digest("hex");
+          const region = rendered.table_proposal_regions.find(candidate => (
+            candidate.region_id === regionId
+          )) ?? null;
+          const payload = verifyTableProposalAgainstRegion({
+            source: {
+              file_name: rendered.provenance.source.file_name,
+              sha256: rendered.provenance.source.sha256,
+              size_bytes: rendered.provenance.source.size_bytes,
+            },
+            layout: {
+              name: rendered.provenance.layout.name,
+              version: rendered.provenance.layout.version,
+              parser_name: rendered.provenance.layout.parser_name,
+              parser_version: rendered.provenance.layout.parser_version,
+            },
+            regionId,
+            page,
+            region,
+            proposalToken,
+            expectedProposalToken,
+            cells,
+          });
+          const summary = payload.status === "accepted"
+            ? `Accepted proposal ${regionId} against a fresh source parse. Cell content was rebuilt only from the PDF text layer. Topology is not proven unique and still requires B3 grid-consistency checks.`
+            : `Rejected proposal ${regionId} against a fresh source parse: ${payload.reason_codes.join(", ")}. No table content was emitted.`;
+          return {
+            content: [{ type: "text", text: summary }],
+            structuredContent: payload,
+          };
+        } catch (error) {
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
+          const passwordCode = ["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"].includes(error?.code)
+            ? error.code
+            : null;
+          const message = `Error verifying table proposal: ${error.message}`;
+          return passwordCode
+            ? createTypedToolError({ message, code: passwordCode })
+            : createTypedToolError({ message });
         }
       }
 

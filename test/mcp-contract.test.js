@@ -136,7 +136,11 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // parses. No input schema changes, so the trajectory tool-contract fixture is
 // unaffected. Previously
 // f4d6e1eca85676a0830821871e2775d7ccbde1ba5d5a8ee396068b862b28610b.
-const TOOL_CONTRACT_SHA256 = "a4d831d49d97c8605c06bda0fccad7bcbd399106b9fb980040a1b5f25e7a1e4b";
+// 2026-08-11: add the read-only verify_table_proposal B2 contract. It accepts
+// only source identity plus structural item assignments, reparses the current
+// PDF, and publishes an explicit non-unique-topology claim boundary. Previously
+// a4d831d49d97c8605c06bda0fccad7bcbd399106b9fb980040a1b5f25e7a1e4b.
+const TOOL_CONTRACT_SHA256 = "c298e5a8bff0ea0645f5a5ae9054d22fe08d15dd8643949279f7d30f7dc8aa72";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -185,6 +189,7 @@ const TOOL_EFFECT_ANNOTATIONS = {
   read_pdf_content: CLOSED_READ,
   read_pdf_layout: CLOSED_READ,
   convert_pdf_to_markdown: CLOSED_IDEMPOTENT_OVERWRITE,
+  verify_table_proposal: CLOSED_READ,
   read_pdf_pages: CLOSED_READ,
   render_pdf_page: CLOSED_READ,
   render_pdf_region: CLOSED_READ,
@@ -392,7 +397,7 @@ describe("MCPB static declarations", () => {
     }
     // A new server file must be added to the list above, not silently shipped
     // in the mirror unchecked. Two already had been.
-    expect(mirrored).toHaveLength(21);
+    expect(mirrored).toHaveLength(22);
     const sourceUi = await fs.readFile(path.join(REPO_ROOT, "dist-ui", "index.html"));
     const shareUi = await fs.readFile(
       path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "dist-ui", "index.html"),
@@ -432,7 +437,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(43);
+    expect(tools).toHaveLength(44);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))

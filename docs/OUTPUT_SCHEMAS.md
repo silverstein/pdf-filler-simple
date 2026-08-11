@@ -27,6 +27,7 @@ an `isError` result is never forced through a success schema.
 | `compare_pdfs` | source-bound whole-document alignments, seven-channel coverage, evidence, typed changes, reversible presentation decisions, and an equivalence-claim boundary |
 | `create_signature` | saved signature metadata |
 | `convert_pdf_to_markdown` | deterministic Markdown, typed coverage gaps (incl. `TABLE_RULING_UNSUPPORTED`, `TEXT_INTEGRITY_SUSPECT`), `pages_needing_vision` routing, opt-in compact `normalizations` counts, provenance, optional verified UTF-8 output, and (opt-in `emit_table_proposals`) bounded `table_proposals` packets plus document-level region truncation for abandoned table regions |
+| `verify_table_proposal` | deterministic accepted/rejected B2 result bound to a fresh source parse, typed predicate failures, source/IR/region identity, per-check statuses, and source-derived cells only on acceptance; topology uniqueness and B3 grid consistency remain unproven |
 
 <!-- TODO(verified-vision B5): document the full `table_proposals` packet shape (region_id, page, bbox, coordinate_space, text_items, ruled_rects, painted_rectangles, header_hints, truncation, proposal_token), the sibling `table_proposals_truncation` counts, and the default-off / additive contract once B1 (emission) and B2 (verify_table_proposal) integrate. Wired in B1 (bead pdf-toolkit-mcp-14o.2). -->
 
@@ -106,7 +107,7 @@ before loading the target PDF, writing output, or changing active-document
 state.
 
 The executable source of truth is `server/output-schemas.js`. The MCP contract
-tests assert this complete matrix of 39 structured tools and four text-only
+tests assert this complete matrix of 40 structured tools and four text-only
 tools, compile every schema through the pinned SDK validator, reject newer
 unsupported JSON Schema keywords, exercise live success and error branches, and
 require byte-identical source/share runtime files.

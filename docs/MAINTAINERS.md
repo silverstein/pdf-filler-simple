@@ -268,7 +268,7 @@ mcp__<display_name, spaces underscored, non [A-Za-z0-9_-] stripped>__<tool_name>
 Identifiers over **64 characters** fail in the host. This shipped as a real
 defect (issue #44): the original benefit-led directory title
 `PDF Tools - Fill, Sign, Merge, Split, Extract` normalizes to 41 characters and
-pushes 15 of the current 42 packed tool identifiers past the ceiling.
+pushes 16 of the current 43 packed tool identifiers past the ceiling.
 
 The naming strategy is therefore **dual**:
 
@@ -284,7 +284,7 @@ Budgets are computed by `scripts/tool-identifier-budget.mjs` and gated in
 
 - `PDF Tools`: longest identifier 41, headroom 23
 - `PDF Tools: Fill, Sign & Edit`: longest identifier 57, headroom 7
-- Original long title: longest identifier 73, 15 identifiers over the limit
+- Original long title: longest identifier 73, 16 identifiers over the limit
 
 **The trap when adding a tool.** The shipped short brand has generous headroom,
 so a new long tool name will not break it and every host-facing check stays

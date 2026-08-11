@@ -7,6 +7,12 @@ import {
 } from "./pdf-observations.js";
 import { validatePdfComparisonSemantics } from "./pdf-comparison.js";
 import { validateAccessibilityInspectionResult } from "./accessibility-inspection.js";
+import {
+  TABLE_PROPOSAL_CLAIM_BOUNDARY,
+  TABLE_PROPOSAL_REASON_CODES,
+  TABLE_PROPOSAL_VERIFIER,
+  validateTableProposalVerificationResult,
+} from "./table-proposal-verification.js";
 
 const string = { type: "string" };
 const number = { type: "number" };
@@ -903,6 +909,59 @@ const tableProposal = object({
   truncation: tableProposalTruncation,
   proposal_token: sha256Digest,
 });
+const tableProposalCheckStatus = enumString(["passed", "failed", "not_run"]);
+const verifiedTableCell = object({
+  row: { type: "integer", minimum: 0 },
+  column: { type: "integer", minimum: 0 },
+  rowspan: { type: "integer", minimum: 1 },
+  colspan: { type: "integer", minimum: 1 },
+  item_ids: stringArray,
+  text: string,
+});
+const tableProposalVerification = object({
+  verifier: object({
+    name: { const: TABLE_PROPOSAL_VERIFIER.name },
+    version: { const: TABLE_PROPOSAL_VERIFIER.version },
+  }),
+  status: enumString(["accepted", "rejected"]),
+  reason_codes: arrayOf(enumString(TABLE_PROPOSAL_REASON_CODES)),
+  source: object({
+    file_name: string,
+    sha256: sha256Digest,
+    size_bytes: { type: "integer", minimum: 0 },
+  }),
+  layout: object({
+    name: { const: "pdf-tools.extraction-ir" },
+    version: { const: "1.5.0" },
+    parser_name: { const: "pdfjs-dist" },
+    parser_version: { const: "5.4.624" },
+  }),
+  region: object({
+    region_id: { type: "string", pattern: "^p[1-9][0-9]*-t[1-9][0-9]*$" },
+    page: { type: "integer", minimum: 1 },
+    abandonment_reason: nullable(enumString(["TABLE_TOPOLOGY_UNKNOWN", "TABLE_RULING_UNSUPPORTED"])),
+  }),
+  source_reparsed: { const: true },
+  checks: object({
+    token_binding: tableProposalCheckStatus,
+    region_evidence: tableProposalCheckStatus,
+    cell_input: tableProposalCheckStatus,
+    coverage: tableProposalCheckStatus,
+    one_cell: tableProposalCheckStatus,
+    row_non_straddle: tableProposalCheckStatus,
+    row_order: tableProposalCheckStatus,
+    column_order: tableProposalCheckStatus,
+    header_evidence: tableProposalCheckStatus,
+    content_source: tableProposalCheckStatus,
+  }),
+  table: nullable(object({
+    row_count: { type: "integer", minimum: 1 },
+    column_count: { type: "integer", minimum: 1 },
+    cells: arrayOf(verifiedTableCell),
+    content_origin: { const: "reparsed_pdf_text_layer" },
+  })),
+  claim_boundary: { const: TABLE_PROPOSAL_CLAIM_BOUNDARY },
+});
 
 export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
   read_pdf_fields: activeDocument(),
@@ -1046,6 +1105,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       "saved_output",
     ],
   ),
+  verify_table_proposal: tableProposalVerification,
   render_pdf_page: object({
     pdf_path: string,
     file_name: string,
@@ -1472,6 +1532,7 @@ const specialErrorSchemas = {
   read_pdf_pages: [pdfResourceLimitError],
   read_pdf_layout: [layoutPasswordError, pdfResourceLimitError],
   convert_pdf_to_markdown: [layoutPasswordError, pdfResourceLimitError],
+  verify_table_proposal: [layoutPasswordError, pdfResourceLimitError],
   render_pdf_page: [pdfResourceLimitError],
   render_pdf_region: [pdfResourceLimitError],
   search_pdf_text: [pdfResourceLimitError],
@@ -1534,6 +1595,7 @@ const semanticSuccessValidators = new Map([
   ["inspect_pdf_accessibility", validateAccessibilityInspectionResult],
   ["read_pdf_layout", validatePdfLayoutSemantics],
   ["convert_pdf_to_markdown", validateMarkdownConversionSemantics],
+  ["verify_table_proposal", validateTableProposalVerificationResult],
   ["get_pdf_info", validatePdfObservationSemantics],
   ["render_pdf_page", validateRenderObservationSemantics],
   ["render_pdf_region", validateRenderObservationSemantics],
