@@ -285,6 +285,104 @@ describe.skipIf(!QPDF.available)("encrypted PDF password truthfulness (qpdf pres
     }
   }, 90_000);
 
+  it("refuses an encrypted comparison usefully, rather than as an internal fault", async () => {
+    // compare_pdfs cannot decrypt: PDF.js gives it text, forms, annotations and
+    // metadata, but page geometry and page rendering go through pdf-lib. What
+    // it must never do is report that as an internal error, which is what it
+    // did whenever the visual channel was switched off and the encrypted
+    // observation's RAW_PAGE_GEOMETRY_UNAVAILABLE reached its structure
+    // channel. Both argument shapes are checked, because that is exactly the
+    // difference that used to change the answer.
+    for (const includeVisual of [true, false]) {
+      const result = await callTool("compare_pdfs", {
+        before_pdf_path: encryptedPath,
+        after_pdf_path: encryptedPath,
+        before_password: USER_PASSWORD,
+        after_password: USER_PASSWORD,
+        include_visual: includeVisual,
+      });
+      const text = toolText(result);
+      const label = `include_visual: ${includeVisual}`;
+      expect(result.isError, label).toBe(true);
+      expect(text, label).not.toMatch(/Internal output validation failed/);
+      expect(result.structuredContent.error.code, label)
+        .toBe("PDF_ENCRYPTED_COMPARISON_UNSUPPORTED");
+      // Same three obligations as every other refusal in this family: what was
+      // wrong, why the password cannot fix it, and where an encrypted document
+      // can actually be read.
+      expect(text, label).toContain("Both comparison inputs are encrypted");
+      expect(text, label).toMatch(/pdf-lib, which has no decryption support/);
+      expect(text, label).toMatch(/supplying a password here will not help/);
+      for (const named of PDFJS_PASSWORD_TOOLS) expect(text, `${label} ${named}`).toContain(named);
+      expect(text, label).not.toContain(USER_PASSWORD);
+      // The other way this refusal has been lost: re-reported as a generic
+      // argument fault, which is a false statement about a valid call.
+      expect(result.structuredContent.error.code, label).not.toBe("invalid_input");
+      expect(text, label).not.toContain("arguments or PDF inputs are invalid");
+    }
+  }, 180_000);
+
+  it("tells a caller who used 'password' that this tool names two", async () => {
+    // compare_pdfs is the only read tool that takes two documents and therefore
+    // two password arguments. Every other tool here takes `password`, so that
+    // is what a caller reaches for — and an unknown argument is refused with a
+    // message that used to name nothing at all, making a perfectly good call
+    // look like a broken document.
+    const result = await callTool("compare_pdfs", {
+      before_pdf_path: encryptedPath,
+      after_pdf_path: encryptedPath,
+      password: USER_PASSWORD,
+    });
+    const text = toolText(result);
+    expect(result.isError).toBe(true);
+    expect(text).toContain("before_password");
+    expect(text).toContain("after_password");
+    expect(text).not.toContain(USER_PASSWORD);
+  }, 60_000);
+
+  it("refuses a mixed-encryption merge with the two routes that would work", async () => {
+    // Encrypting two documents with one password does not give them one
+    // protection — the salts and /ID differ per run — so the merge is refused.
+    // The refusal has to say that, because "I used the same password" is
+    // exactly what the caller will have done.
+    const second = path.join(tempDirectory, "aes256-encrypted-second.pdf");
+    const encrypt = spawnSync("qpdf", [
+      "--encrypt", `--user-password=${USER_PASSWORD}`, `--owner-password=${USER_PASSWORD}`,
+      "--bits=256", "--", PLAINTEXT_PDF, second,
+    ], { encoding: "utf8" });
+    expect(encrypt.status, encrypt.stderr).toBe(0);
+
+    const refused = await callTool("merge_pdfs", {
+      input_paths: [encryptedPath, second],
+      output_path: path.join(tempDirectory, "merged-mixed.pdf"),
+      password: USER_PASSWORD,
+    });
+    const text = toolText(refused);
+    expect(refused.isError).toBe(true);
+    // Asserted on the served response at the MCP boundary. merge_pdfs raises
+    // this inside the isolated pdf-lib child, so the whole message has to
+    // survive a process boundary to reach the caller at all.
+    expect(text).toContain("not all protected the same way");
+    expect(text).toContain("Encrypting each source separately with the same password is not enough");
+    expect(text).toMatch(/byte-identical/);
+    expect(text).toMatch(/protect the merged file yourself/);
+    expect(text).not.toContain(USER_PASSWORD);
+    await expect(fs.access(path.join(tempDirectory, "merged-mixed.pdf"))).rejects.toThrow();
+
+    // And the route it names is real: copies of one protected document share
+    // one /Encrypt dictionary and merge.
+    const copy = path.join(tempDirectory, "aes256-encrypted-copy.pdf");
+    await fs.writeFile(copy, encryptedBytes);
+    const merged = path.join(tempDirectory, "merged-identical.pdf");
+    const accepted = await callTool("merge_pdfs", {
+      input_paths: [encryptedPath, copy],
+      output_path: merged,
+      password: USER_PASSWORD,
+    });
+    expect(accepted.isError, toolText(accepted)).not.toBe(true);
+    expect((await fs.readFile(merged)).toString("latin1")).toContain("/Encrypt");
+  }, 180_000);
+
   it("never advertises a usable password on a pdf-lib-backed tool", async () => {
     // The schema text is the other place the claim can drift.
     const { tools } = await client.listTools();

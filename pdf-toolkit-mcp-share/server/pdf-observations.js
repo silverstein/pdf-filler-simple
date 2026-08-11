@@ -13,6 +13,51 @@ export const PDF_OBSERVATION_LIMITS = Object.freeze({
   max_metadata_characters: 32_768,
 });
 
+/**
+ * Every coverage reason a document observation may carry, by channel.
+ *
+ * This vocabulary does not stay inside `get_pdf_info`. `compare_pdfs` copies
+ * each observation reason into one of its own channels with a `BEFORE_` or
+ * `AFTER_` prefix, and its semantics validator rejects a payload carrying a
+ * reason it does not recognise — which turned a perfectly good comparison of
+ * two encrypted documents into "Internal output validation failed", because
+ * `RAW_PAGE_GEOMETRY_UNAVAILABLE` had never been added to the comparison's
+ * copy of this list. So the list lives here, next to the code that emits it,
+ * `validatePdfObservationSemantics` rejects anything outside it, and
+ * `server/pdf-comparison.js` builds its own set from it rather than restating
+ * it. A reason added in one place and forgotten in the other is no longer
+ * expressible.
+ */
+export const PDF_OBSERVATION_COVERAGE_REASONS = Object.freeze({
+  pages: Object.freeze([
+    "OUTPUT_LIMIT_PAGES_OMITTED",
+    "PAGE_LIMIT_REACHED",
+    "PAGE_PARSE_PARTIAL",
+    "PAGE_PARSE_UNAVAILABLE",
+    "RAW_PAGE_GEOMETRY_UNAVAILABLE",
+  ]),
+  metadata: Object.freeze([
+    "METADATA_LIMIT_REACHED",
+    "METADATA_PARSE_UNAVAILABLE",
+    "OUTPUT_LIMIT_METADATA_OMITTED",
+  ]),
+  form_fields: Object.freeze([
+    "FIELD_LIMIT_REACHED",
+    "FORM_FIELD_PAGE_GEOMETRY_PARTIAL",
+    "FORM_FIELD_PAGE_LIMIT_REACHED",
+    "FORM_FIELD_PARSE_UNAVAILABLE",
+    "OUTPUT_LIMIT_FORM_FIELDS_OMITTED",
+    "WIDGET_OBSERVATION_LIMIT_REACHED",
+  ]),
+  annotations: Object.freeze([
+    "ANNOTATION_LIMIT_REACHED",
+    "ANNOTATION_PAGE_LIMIT_REACHED",
+    "ANNOTATION_PAGE_PARSE_PARTIAL",
+    "ANNOTATION_PARSE_UNAVAILABLE",
+    "OUTPUT_LIMIT_ANNOTATIONS_OMITTED",
+  ]),
+});
+
 const OBSERVATION_COORDINATE_SPACES = Object.freeze({
   display: "pdfjs_viewport_top_left_points",
   native: "pdf_user_space_bottom_left_points",
@@ -777,6 +822,16 @@ export function validatePdfObservationSemantics(payload) {
     `${channel} coverage reasons are not unique and sorted`);
     semanticAssertion(coverage.reason_codes.length > 0 || coverage.status === "supported",
       `${channel} unavailable or partial coverage has no reason`);
+    // Every reason has to be one this module publishes, because `compare_pdfs`
+    // inherits this vocabulary and refuses a reason it has never heard of. An
+    // unregistered reason fails here, on the tool that emitted it, instead of
+    // reappearing downstream as an internal validation error.
+    semanticAssertion(
+      coverage.reason_codes.every(
+        reason => PDF_OBSERVATION_COVERAGE_REASONS[channel].includes(reason),
+      ),
+      `${channel} coverage carries a reason outside the published vocabulary`,
+    );
     semanticAssertion(
       coverage.status === coverageStatus(channel, coverage.reason_codes, channelObservation[channel]),
       `${channel} coverage status does not follow its evidence and reasons`,

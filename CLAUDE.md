@@ -109,7 +109,13 @@ the source's protection before it is staged. Two rules follow:
 
 `merge_pdfs` refuses unless every source carries byte-identical protection,
 because N sources with different or absent encryption make "the source's
-encryption" undefined.
+encryption" undefined. The refusal names both routes that work — sources whose
+`/Encrypt` dictionary really is one dictionary (copies of one protected
+document, or the parts `split_pdf` made of it), or unprotected copies the
+caller re-protects afterwards — and names the trap, because encrypting two
+documents in two qpdf runs with one password does *not* produce one protection:
+`/O` and `/U` mix in per-run material (a random salt at `/R` 6, the document's
+own `/ID` at `/R` 4 and below).
 
 All three phases run inside the isolated pdf-lib child, with qpdf on its own
 worker thread. That placement is forced: the child stages its output to disk, so
@@ -221,7 +227,7 @@ Measured against an AES-256 PDF produced with
 | `add_signature_field`, `apply_signature`, `prepare_signing_packet`, `apply_text` | qpdf + pdf-lib worker | **Real.** Need `modify` (they draw into the page content stream); `prepare_signing_packet` needs `modifyforms` as well. |
 | `render_pdf_page`, `render_pdf_region`, `get_page_analysis` | PDF.js plus pdf-lib geometry | None in practice. PDF.js uses the password, but the pdf-lib geometry load still fails. |
 | `detect_signature_zones` | PDF.js plus pdf-lib geometry | None in practice. It degrades through `ignoreEncryption` and succeeds only on the committed header-malformed R4 oracle; a well-formed AES-128 or AES-256 file fails. |
-| `compare_pdfs` | PDF.js plus pdf-lib geometry | None. With `include_visual` it reports the pdf-lib limit; without it, the run still ends in `internal_validation_error` (pre-existing, unrelated to the password). |
+| `compare_pdfs` | PDF.js plus pdf-lib geometry | None, and it now says so once. Any encrypted input is refused as `PDF_ENCRYPTED_COMPARISON_UNSUPPORTED`, naming which side, whatever the passwords and `include_visual` say. It used to answer three different ways: "requires its password", the pdf-lib limit, or `internal_validation_error` when `include_visual` was false. |
 | `extract_to_csv` | qpdf + pdf-lib | **Partial.** No `password` parameter (one password cannot serve a list of documents), so it reads an encrypted document only when that document opens without a password and its `/P` allows `extract`. |
 | `read_pdf_content`, `read_pdf_pages`, `search_pdf_text` | PDF.js | None reachable. No `password` parameter exists, so an encrypted PDF cannot be opened. |
 | `inspect_pdf_accessibility` | pdf-lib | None, and it says so: it rejects a `password` argument outright. |
@@ -338,9 +344,14 @@ regions in that same PDF.js view, including nonzero origins, rotated CropBoxes,
 and UserUnit scaling, while reporting raw pixels unavailable.
 
 `compare_pdfs` reads both inputs through immutable source descriptors, refuses
-documents over 20 pages instead of comparing prefixes, and reports typed
-coverage for semantic, text, structure, form-field, annotation, metadata, and
-visual channels. Ambiguous repeated pages remain unresolved. The default mode
+documents over 20 pages instead of comparing prefixes, refuses an encrypted
+input outright — pdf-lib supplies its raw page geometry and its page renderer,
+and cannot decrypt, so no password helps — and reports typed coverage for
+semantic, text, structure, form-field, annotation, metadata, and visual
+channels. Its coverage vocabulary is derived from the document-observation
+vocabulary in `server/pdf-observations.js` rather than restated, because a
+reason present in one and missing from the other used to surface as
+`internal_validation_error`. Ambiguous repeated pages remain unresolved. The default mode
 may suppress reversible metadata or visual noise, while forensic mode reports
 it; neither mode claims that no reported changes proves document equivalence.
 

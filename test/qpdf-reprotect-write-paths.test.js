@@ -30,6 +30,7 @@ import {
 } from "../server/pdf-lib-subprocess.js";
 import {
   ENCRYPTED_WRITE_OPERATIONS,
+  PDF_MERGE_MIXED_ENCRYPTION_MESSAGE,
   mergeProtectionRefusal,
   sameProtection,
   usesWeakCrypto,
@@ -363,7 +364,79 @@ describe("merge_pdfs refuses when the sources' protection is not one protection"
     ).catch(error => error);
     expect(failure).toBeInstanceOf(Error);
     expect(failure.message).toContain("not all protected the same way");
+    // And this is precisely the trap the refusal has to name, because the
+    // caller did supply one password for both documents and will otherwise
+    // read "the same encryption" as "the same password" and retry.
+    expect(failure.message).toContain(
+      "Encrypting each source separately with the same password is not enough",
+    );
   }, 120_000);
+
+  /*
+   * The rule above is not negotiable; what a caller can do about it is. These
+   * cases pin the guidance itself, and then prove each named route works, so
+   * the message can never drift into advice that cannot be followed.
+   */
+  describe("the refusal tells the caller what would work", () => {
+    it("names why, what is wrong, and both routes that succeed", () => {
+      const message = PDF_MERGE_MIXED_ENCRYPTION_MESSAGE;
+      // What was wrong, and why it stops rather than choosing for the caller.
+      expect(message).toContain("not all protected the same way");
+      expect(message).toMatch(/will not choose one source's protection over another's or drop it/);
+      // Route one: sources whose stored protection really is one protection.
+      expect(message).toMatch(/byte-identical/);
+      expect(message).toMatch(/copies of one protected document/);
+      expect(message).toMatch(/split_pdf/);
+      // Route two: take the protection off first, and put it back yourself.
+      expect(message).toMatch(/decrypt every source first \(for example with qpdf\)/i);
+      expect(message).toMatch(/protect the merged file yourself/);
+      // The trap, with the reason it is a trap rather than a bare warning.
+      expect(message).toMatch(/same password is not enough/);
+      expect(message).toMatch(/\/R 6/);
+      expect(message).toMatch(/\/ID/);
+      expect(message).toMatch(/\/O and \/U/);
+      // It must not offer the one thing PDF Tools will never do.
+      expect(message).not.toMatch(/remove the password/i);
+    });
+
+    it("merges the pieces split_pdf makes of one protected document", async () => {
+      // Route one, as the message states it. split_pdf re-protects each part
+      // with --copy-encryption, so the parts carry the source's exact /Encrypt
+      // dictionary and are therefore one protection.
+      const source = fixtures.aes256;
+      const parts = await mutate(
+        "split_pdf",
+        [await bindSource(source)],
+        USER_PASSWORD,
+        { page_ranges: "1-2,3-4" },
+      );
+      expect(parts).toHaveLength(2);
+      expect(encryptDictionary(parts[0])).toBe(encryptDictionary(source));
+      expect(encryptDictionary(parts[1])).toBe(encryptDictionary(source));
+      const [merged] = await mutate(
+        "merge_pdfs",
+        [await bindSource(parts[0]), await bindSource(parts[1])],
+        USER_PASSWORD,
+        {},
+      );
+      await expectProtectionPreserved(source, merged, USER_PASSWORD, "merge split parts");
+    }, 180_000);
+
+    it("merges unprotected copies, which the caller may then protect", async () => {
+      // Route two. Decryption is the caller's step, so this stands in for it
+      // with the plaintext the fixtures were built from: the merge itself must
+      // succeed and produce an unprotected document, which is what leaves the
+      // caller free to protect the result however they choose.
+      const [merged] = await mutate(
+        "merge_pdfs",
+        [await bindSource(fixtures.plain), await bindSource(fixtures.plain)],
+        null,
+        {},
+      );
+      expect(encryptDictionary(merged)).toBeNull();
+      expect(await opensWith(merged, null)).toBe(true);
+    }, 120_000);
+  });
 });
 
 describe("the rules, without a worker", () => {
