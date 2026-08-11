@@ -393,6 +393,10 @@ const pdfComparisonError = object({
       "COMPARISON_PAGE_LIMIT_EXCEEDED",
       "COMPARISON_SOURCE_BINDING_MISMATCH",
       "COMPARISON_SOURCE_CHANGED",
+      // An encrypted input, which pdf-lib cannot decrypt for the page geometry
+      // and page rendering this comparison needs. Distinct from
+      // PDF_PARSE_FAILED because the document parsed perfectly well.
+      "PDF_ENCRYPTED_COMPARISON_UNSUPPORTED",
       "PDF_PARSE_FAILED",
       "invalid_input",
     ]),

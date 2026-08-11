@@ -434,12 +434,31 @@ export const PDF_REPROTECT_CHANGED_MESSAGE =
   + "encryption are unchanged before saving it, and refuses rather than write a document whose "
   + "security differs from the original's.";
 
+/*
+ * The refusal a caller sees when a merge's sources are not one protection.
+ *
+ * The rule itself is not negotiable — see `mergeProtectionRefusal` — so the
+ * whole job of this text is to leave the caller with something they can
+ * actually do. It names both routes that work, and it names the trap, because
+ * the obvious reading of "the same encryption" is "the same password" and that
+ * is not enough: `/Encrypt` stores `/O` and `/U`, which are derived from
+ * material that is fresh per encryption run — a random salt at `/R` 6, the
+ * document's own `/ID` at `/R` 4 and below — so two documents encrypted in two
+ * separate qpdf runs with one password still carry two different protections.
+ * A caller who is not told that will hit it, retry with the same password, and
+ * get the same refusal.
+ */
 export const PDF_MERGE_MIXED_ENCRYPTION_MESSAGE =
   "These PDFs cannot be merged: they are not all protected the same way, so there is no single "
   + "protection the merged document could carry. PDF Tools gives a merged document the encryption "
   + "its sources share, and will not choose one source's protection over another's or drop it. "
-  + "Merge documents that share the same encryption and password, or decrypt them first and "
-  + "protect the result yourself.";
+  + "Two routes work. Either merge sources whose /Encrypt dictionary is byte-identical — copies of "
+  + "one protected document, or pieces of one protected document, such as the parts split_pdf "
+  + "produces, which keep that document's exact encryption. Or decrypt every source first (for "
+  + "example with qpdf), merge the unprotected copies, and protect the merged file yourself. "
+  + "Encrypting each source separately with the same password is not enough: every encryption run "
+  + "mixes in fresh material — a random salt at /R 6, and the document's own /ID at /R 4 and "
+  + "below — so the stored /O and /U values differ even when the password you typed was identical.";
 
 /**
  * Refusal text for a mutation the document's own `/P` denies.

@@ -125,7 +125,18 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // tool never removes or weakens a document's protection. No tool gains or loses
 // a parameter, and no write description changes. Previously
 // 565e4e6c9debad5b16b148acb5cac2814d93c1c3085b50fa7b62754acc8ec01a.
-const TOOL_CONTRACT_SHA256 = "f4d6e1eca85676a0830821871e2775d7ccbde1ba5d5a8ee396068b862b28610b";
+//
+// 2026-08-10: compare_pdfs gains one advertised error code,
+// PDF_ENCRYPTED_COMPARISON_UNSUPPORTED. An encrypted comparison input was
+// reported three different ways depending on arguments the caller had no reason
+// to connect to encryption — "requires its password", the pdf-lib limit, or
+// "Internal output validation failed" when include_visual was false — and none
+// of them said which input it was or that no password can help. The refusal is
+// now one typed outcome. PDF_PARSE_FAILED would have been a lie: the document
+// parses. No input schema changes, so the trajectory tool-contract fixture is
+// unaffected. Previously
+// f4d6e1eca85676a0830821871e2775d7ccbde1ba5d5a8ee396068b862b28610b.
+const TOOL_CONTRACT_SHA256 = "a4d831d49d97c8605c06bda0fccad7bcbd399106b9fb980040a1b5f25e7a1e4b";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

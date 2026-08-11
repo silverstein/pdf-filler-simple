@@ -142,8 +142,11 @@ were observed under this policy. It never sets an equivalence claim, and an
 empty reported set is not proof that the files are semantically identical.
 
 Comparison refuses page-cap prefixes, changed sources, malformed PDFs,
-password failures, output-cap truncation, unknown input fields, and invalid
-internal semantics. Public errors use stable typed messages and do not include
+encrypted inputs, output-cap truncation, unknown input fields, and invalid
+internal semantics. Encryption is a single refusal rather than a password
+failure: PDF.js decrypts the text, form, annotation and metadata channels, but
+raw page geometry and page rendering go through pdf-lib, which cannot decrypt,
+so no password makes a comparison run and the refusal says so. Public errors use stable typed messages and do not include
 input paths, passwords, or lower-level parser and filesystem text. Native raw
 RGBA is the only visual comparison sensor; an unavailable native renderer is
 typed partial coverage rather than a system-renderer substitution.

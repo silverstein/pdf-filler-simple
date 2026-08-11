@@ -76,9 +76,13 @@ source-identity, and isolated-resource errors remain structured and do not
 include parser diagnostics or passwords.
 
 `compare_pdfs` has stable structured failures for page-cap refusal, source
-identity races, password requirements or rejection, unsupported parsing,
-filesystem policy denial, unavailable inputs, output-cap refusal, and internal
-validation failure. Success validates complete source-page alignment coverage,
+identity races, encrypted inputs, unsupported parsing, filesystem policy
+denial, unavailable inputs, output-cap refusal, and internal validation
+failure. An encrypted input is one refusal
+(`PDF_ENCRYPTED_COMPARISON_UNSUPPORTED`) whatever the password arguments say,
+because comparison takes raw page geometry and page rendering through pdf-lib,
+which cannot decrypt; the message names which input was protected and where an
+encrypted document can be read instead. Success validates complete source-page alignment coverage,
 known sorted coverage reasons, evidence geometry and digests, change/facet
 relations, summary counts, zero server network/persistence effects, and a full
 comparison-envelope digest before leaving the server.

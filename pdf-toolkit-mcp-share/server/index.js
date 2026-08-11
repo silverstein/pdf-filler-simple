@@ -49,8 +49,11 @@ import {
   validatePdfObservationSemantics,
 } from "./pdf-observations.js";
 import {
+  PDF_COMPARISON_ENCRYPTED_CODE,
   PDF_COMPARISON_RENDERER,
   buildPdfComparison,
+  isPdfComparisonEncryptedFailure,
+  pdfComparisonEncryptedError,
   publicPdfComparisonError,
 } from "./pdf-comparison.js";
 import {
@@ -1765,23 +1768,138 @@ function comparisonSourceChangedError() {
   return error;
 }
 
-async function inspectComparisonDocument(resolvedPath, {
-  side,
-  password,
-  maxPages,
-  includeVisual,
-}) {
-  const observed = await runPdfjsOperation(resolvedPath, {
-    operation: "observe_document",
-    password,
-    options: { max_pages: maxPages, max_output_characters: 200_000 },
-  });
+/**
+ * Whether an encrypted document is what stopped this comparison step.
+ *
+ * Three shapes mean the same thing here, and all three used to surface as
+ * something else. PDF.js reports a missing or rejected password, which is true
+ * but useless advice on this tool — no password makes an encrypted comparison
+ * run. pdf-lib's geometry step reports the honest "no decryption support"
+ * limit, which is the family message but does not say which input it was. And
+ * with `include_visual: false` neither fired at all: the comparison completed,
+ * carried `RAW_PAGE_GEOMETRY_UNAVAILABLE` into its structure channel, and was
+ * rejected by its own semantics validator as an internal fault.
+ */
+function comparisonEncryptionFailure(error, side) {
+  // `isPdfComparisonEncryptedFailure` covers the typed code and both message
+  // signatures, including one that has crossed a boundary which dropped its
+  // `code`. Matching on the message rather than on identity matters here: the
+  // pdf-lib limit is raised inside the PDF.js subprocess and travels back as
+  // text.
+  const encrypted = error?.code === "PASSWORD_REQUIRED"
+    || error?.code === "PASSWORD_INCORRECT"
+    || comparisonSawPdfLibEncryptionLimit(error)
+    || isPdfComparisonEncryptedFailure(error);
+  return encrypted ? pdfComparisonEncryptedError([side]) : null;
+}
+
+/**
+ * The shared pdf-lib "no decryption support" limit, matched wherever it came
+ * from.
+ *
+ * `includes` rather than `===`: the page renderer raises this inside the PDF.js
+ * subprocess, so it reaches the server as text that a boundary may have
+ * prefixed or annotated. An equality check that stops matching does not fail
+ * loudly — it silently reclassifies a true statement about encryption as
+ * `invalid_input`, "the arguments or PDF inputs are invalid", about a call
+ * whose arguments were fine.
+ */
+function comparisonSawPdfLibEncryptionLimit(error) {
+  return typeof error?.message === "string"
+    && error.message.includes(PDF_LIB_ENCRYPTED_MESSAGE);
+}
+
+/**
+ * Whether the document PDF.js just observed carries an `/Encrypt` dictionary.
+ *
+ * PDF.js reports the security handler's filter name for a protected document
+ * and `null` for an unprotected one, and the observation this comparison had to
+ * make anyway already carries it — so this costs nothing, needs no second
+ * parse, and does not depend on pdf-lib having been able to read the document.
+ * It is the case a password error never reaches: the caller supplied the right
+ * password, PDF.js opened the file, and the comparison would otherwise have run
+ * on geometry pdf-lib could not supply.
+ */
+function comparisonInputIsEncrypted(observation) {
+  const filterName = observation?.metadata?.info?.values?.EncryptFilterName;
+  return typeof filterName === "string" && filterName.length > 0;
+}
+
+async function observeComparisonDocument(resolvedPath, { side, password, maxPages }) {
+  let observed;
+  try {
+    observed = await runPdfjsOperation(resolvedPath, {
+      operation: "observe_document",
+      password,
+      options: { max_pages: maxPages, max_output_characters: 200_000 },
+    });
+  } catch (error) {
+    throw comparisonEncryptionFailure(error, side) ?? error;
+  }
   if (observed.result.pages.total_count > maxPages) {
     const error = new Error(`Comparison supports at most ${maxPages} pages per document.`);
     error.code = "COMPARISON_PAGE_LIMIT_EXCEEDED";
     throw error;
   }
   validatePdfObservationSemantics(observed.result);
+  if (comparisonInputIsEncrypted(observed.result)) throw pdfComparisonEncryptedError([side]);
+  return { side, observed };
+}
+
+/**
+ * Observes both inputs before either is inspected further.
+ *
+ * Encryption is the one failure worth collecting from both sides rather than
+ * reporting from the first: a caller with two protected documents should be
+ * told that once, not led through them one at a time. Every other failure still
+ * stops at the first input that raised it.
+ */
+async function observeComparisonDocuments(requests) {
+  const observations = [];
+  const encryptedSides = [];
+  for (const request of requests) {
+    try {
+      observations.push(await observeComparisonDocument(request.resolvedPath, request));
+    } catch (error) {
+      if (error?.code !== PDF_COMPARISON_ENCRYPTED_CODE) {
+        // Whichever input failed first still decides the answer, exactly as it
+        // did before: an encrypted `before` is reported even when `after` turns
+        // out to be unreadable, and an unreadable `before` is reported without
+        // `after` being consulted at all.
+        if (encryptedSides.length > 0) throw pdfComparisonEncryptedError(encryptedSides);
+        throw error;
+      }
+      encryptedSides.push(request.side);
+    }
+  }
+  if (encryptedSides.length > 0) throw pdfComparisonEncryptedError(encryptedSides);
+  return observations;
+}
+
+/**
+ * Layout and visual evidence for one already-observed comparison input.
+ *
+ * `observeComparisonDocument` has already refused an encrypted document, so
+ * nothing here should meet one — but the pdf-lib geometry step inside the page
+ * renderer can still raise the family's encryption message for a document whose
+ * `/Encrypt` dictionary the observation could not report (bounded metadata can
+ * omit a key). The wrapper below turns that into the same typed refusal rather
+ * than letting it fall through to "the arguments or PDF inputs are invalid".
+ */
+async function inspectComparisonDocument(resolvedPath, options) {
+  try {
+    return await inspectComparisonDocumentChannels(resolvedPath, options);
+  } catch (error) {
+    throw comparisonEncryptionFailure(error, options.side) ?? error;
+  }
+}
+
+async function inspectComparisonDocumentChannels(resolvedPath, {
+  side,
+  observed,
+  password,
+  includeVisual,
+}) {
   const layoutChunks = [];
   for (let startPage = 1; startPage <= observed.result.pages.total_count; startPage += 10) {
     const layoutChunk = await runPdfjsOperation(resolvedPath, {
@@ -6218,8 +6336,12 @@ async function handleToolCall(request) {
           const started = performance.now();
           const beforePath = resolvePath(beforePdfPath);
           const afterPath = resolvePath(afterPdfPath);
-          const before = await inspectComparisonDocument(beforePath, { side: "before", password: beforePassword, maxPages, includeVisual });
-          const after = await inspectComparisonDocument(afterPath, { side: "after", password: afterPassword, maxPages, includeVisual });
+          const [beforeObservation, afterObservation] = await observeComparisonDocuments([
+            { side: "before", resolvedPath: beforePath, password: beforePassword, maxPages },
+            { side: "after", resolvedPath: afterPath, password: afterPassword, maxPages },
+          ]);
+          const before = await inspectComparisonDocument(beforePath, { ...beforeObservation, password: beforePassword, includeVisual });
+          const after = await inspectComparisonDocument(afterPath, { ...afterObservation, password: afterPassword, includeVisual });
           const sourceImmutability = {
             before: await verifyComparisonSourceUnchanged(beforePath, before.initial_source),
             after: await verifyComparisonSourceUnchanged(afterPath, after.initial_source),
@@ -6241,20 +6363,17 @@ async function handleToolCall(request) {
             structuredContent: payload,
           };
         } catch (error) {
-          // The comparison classifier turns any unrecognized Error into
-          // "arguments or PDF inputs are invalid", which is false when the
-          // inputs were fine and only pdf-lib's inability to decrypt stopped
-          // the run. Say what actually happened.
-          // PDF_PARSE_FAILED is the closest code the sealed comparison error
-          // enum already carries; adding a new one would change an oracle-bound
-          // schema module. The message states the real cause either way.
-          if (error?.message === PDF_LIB_ENCRYPTED_MESSAGE) {
-            return createTypedToolError({
-              code: "PDF_PARSE_FAILED",
-              message: PDF_LIB_ENCRYPTED_MESSAGE,
-            });
-          }
-          return createTypedToolError(publicPdfComparisonError(error));
+          // `publicPdfComparisonError` recognises the comparison's own refusal
+          // by code *and* by message signature, so one that lost its `code`
+          // crossing a boundary still classifies. The pdf-lib limit is the one
+          // signal it cannot see — that constant lives in server/helpers.js and
+          // the comparison module's import graph is deliberately closed against
+          // it — so this layer translates it, and does so before the classifier
+          // can report a valid call as an invalid one.
+          const failure = comparisonSawPdfLibEncryptionLimit(error)
+            ? pdfComparisonEncryptedError([])
+            : error;
+          return createTypedToolError(publicPdfComparisonError(failure));
         }
       }
 
