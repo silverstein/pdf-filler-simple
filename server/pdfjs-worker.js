@@ -57,6 +57,11 @@ let systemRenderShutdownStarted = false;
 let systemRenderShutdownTerminal = false;
 let systemCommandSpawnCount = 0;
 let systemRendererControllerShutdownProbe = null;
+// Why the embedded-host guard last refused to load the native canvas binding.
+// Bound from pdfjs-subprocess.js, which owns that decision. It cannot travel on
+// the thrown error: @napi-rs/canvas catches whatever dlopen throws and reports
+// its own "Cannot find native binding" instead, discarding ours.
+let nativeCanvasBlockReasonProbe = null;
 let nextThreadSystemCommandId = 1;
 
 const OPERATION_OPTION_KEYS = new Map([
@@ -1367,6 +1372,48 @@ export function bindPdfjsWorkerSystemRendererControllerProbe(probe) {
   systemRendererControllerShutdownProbe = probe;
 }
 
+export function bindPdfjsWorkerNativeCanvasBlockReasonProbe(probe) {
+  if (typeof probe !== "function") {
+    throw new TypeError("native canvas block reason probe must be a function.");
+  }
+  if (nativeCanvasBlockReasonProbe !== null) {
+    throw new TypeError("native canvas block reason probe is already bound.");
+  }
+  nativeCanvasBlockReasonProbe = probe;
+}
+
+// Turn a refusal reason into something the user can act on.
+//
+// The generic unavailable-renderer message below is true but inert: it tells
+// someone their renderer is missing and that reinstalling will not help, and
+// then leaves them there. When the cause is the crash latch, there is a specific
+// thing to do, and this is the only place it can be said - the guard's own error
+// never survives @napi-rs/canvas.
+function nativeCanvasBlockRemediation() {
+  let reason = null;
+  try {
+    reason = nativeCanvasBlockReasonProbe?.() ?? null;
+  } catch {
+    // A probe that throws must not turn a renderer error into a probe error.
+    return "";
+  }
+  if (reason === "latched") {
+    return " Native page rendering was disabled automatically because a previous"
+      + " attempt to load it never returned, which usually means it crashed this"
+      + " host. Set PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=force to try it again.";
+  }
+  if (reason === "concurrent") {
+    return " Another PDF Tools server on this machine is loading the same binding"
+      + " right now. Retry in a moment.";
+  }
+  if (reason === "marker_unwritable") {
+    return " Native page rendering was refused because its crash-recovery marker"
+      + " could not be written, so a crash could not have been detected. Check"
+      + " that the profiles directory is writable.";
+  }
+  return "";
+}
+
 export async function beginPdfjsWorkerSystemShutdown({ terminal = false } = {}) {
   if (typeof terminal !== "boolean") {
     throw new TypeError("terminal must be a boolean.");
@@ -1740,7 +1787,11 @@ export async function runRendererPolicy(policy, {
       const unavailable = new Error(
         "No PDF page renderer is available in this host. The native canvas "
         + "binding is unavailable or blocked, and no system renderer fallback "
-        + "is configured. Reinstalling dependencies does not resolve this.",
+        + "is configured. Reinstalling dependencies does not resolve this."
+        // Appends nothing unless the embedded-host guard refused for a reason
+        // the user can act on, so the message every existing caller and the
+        // Windows CI probe assert against is byte-identical when it does not.
+        + nativeCanvasBlockRemediation(),
       );
       unavailable.code = "PDF_RENDERER_UNAVAILABLE";
       unavailable.cause = error;
