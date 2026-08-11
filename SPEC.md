@@ -1,75 +1,35 @@
-# SPEC — Verified Vision B2: source-replayed proposal verifier
+# SPEC — Verified Vision prerequisite: bounded ruling-segment evidence
 
-Bead: `pdf-toolkit-mcp-14o.3` (child of epic `pdf-toolkit-mcp-14o`)
-Branch: `codex/verified-vision-b2`
-Stack base: B1 exact SHA `b063563` plus B0 fixture commit `0532438`; both local-only and based on `origin/master` `0600e32`.
+Bead: `pdf-toolkit-mcp-14o.8`
+Branch: `codex/verified-vision-ruling-evidence`
+Stack base: B2 exact SHA `082120f` (which already carries local B0+B1).
 
 ## Objective
 
-Add a read-only `verify_table_proposal` tool. The caller submits only a source path, B1 region/token identity, and structural cell assignments. The tool reparses the current source PDF, regenerates the abandoned region from the validated extraction IR, and accepts only when the B2 renderer predicates pass.
+Preserve the axis-aligned straight ruling segments that the PDF.js operator list already exposes, instead of retaining only closed rectangles and aggregate path counts. B3 needs this source-derived geometry to distinguish an authored merged header span from an invented cut that conserves identical text.
 
-The tool never accepts caller-supplied text, geometry, header evidence, or packet contents. Accepted cell text is deterministically constructed from source text items.
+## Contract
 
-## Input contract
+- Add `ruling_segments` to each Extraction IR page and bump the additive IR version from 1.5.0 to 1.6.0.
+- Each retained item records deterministic top-left PDF.js viewport points: orientation, start/end coordinates, and source operator index.
+- Retain only painted stroke-bearing straight segments after the exact graphics/display transform; reject curves, diagonals, degenerate lines, and non-finite geometry.
+- Normalize orientation and endpoint order; deduplicate within the existing 0.5-point ruling tolerance.
+- Bound each page with a named cap and typed observed/returned/truncated accounting.
+- A parser/operator failure yields unavailable evidence with no retained geometry. Output-budget omission yields unavailable+truncated and exact observed counts.
+- Extend the independent second parse so an available or typed-omitted claim must match a fresh operator-list replay.
+- Add the bounded segments to B1 proposal packets and their per-region truncation accounting. Existing abstention and default-off Markdown behavior remain unchanged.
 
-- `pdf_path` (absolute or `~/`), optional `password`.
-- `region_id` in B1 form `p{page}-t{ordinal}`.
-- `proposal_token`: B1 SHA-256 binding over `(current source sha256, current IR version, region_id)`.
-- `cells[]`: bounded objects containing `row`, `column`, `rowspan`, `colspan`, and `item_ids[]`. No text or geometry input is accepted.
+## Proof target
 
-## B2 checks
+On the synthetic line-ruled and merged-header fixtures, evidence must be deterministic and sufficient to observe that the vertical header cut is absent across the authored merged span while body-row cuts remain present. This lane exposes evidence only; B3 owns the proposal-vs-evidence decision.
 
-1. Reparse the exact source through the existing PDF.js subprocess and independent source-evidence replay.
-2. Regenerate B1 proposal regions for the target page and bind the requested region by deterministic `region_id`.
-3. Recompute and constant-time compare the proposal token.
-4. Refuse truncated region evidence.
-5. Require every non-whitespace source item in the region exactly once: no unknown, duplicate, or missing item IDs.
-6. Require a source line's items to remain in one proposed row.
-7. Require proposed rows and columns to be monotone in source reading order.
-8. Require the existing independent first-row line-height evidence; the model cannot declare its own header.
-9. Construct accepted cell text only from source item text in source reading order and assert that construction before returning it.
+## Constraints
 
-B3 deliberately owns rectangular tiling, global x/y cut consistency, ruling-line agreement, and dual-valid ambiguity rejection. A B2 acceptance is therefore `renderer_predicates_passed`, not a final verified-table claim.
+- No model, OCR, network, inference, numeric confidence, mutation, or public release.
+- No trust in B1 packet geometry: B2/B3 always regenerate it from source.
+- Source/share byte parity and all IR-version pins remain aligned.
+- Existing fields and fail-closed reconstruction behavior remain unchanged apart from the additive field/version.
 
-## Result contract
+## Acceptance
 
-Return a typed, numeric-confidence-free result:
-
-- `status: "accepted" | "rejected"`
-- `reason_codes[]` from a bounded `TABLE_PROPOSAL_*` vocabulary
-- current source and IR identity, region identity, and `source_reparsed: true`
-- per-check `passed | failed | not_run` statuses
-- `table` only on acceptance, with source-derived cell text and source item IDs
-- an explicit claim boundary: content is source-derived; topology is not proven unique and still requires B3
-
-Token/region failures are ordinary typed rejections. Source I/O, password, resource, or semantic-validation failures remain typed tool errors under existing server policy.
-
-## Hard constraints
-
-- No model, OCR, network, mutation, saved output, session state, numeric confidence, or caller-supplied content.
-- Read-only/destructive false/idempotent true/open-world false annotations.
-- Named input bounds and strict unknown-argument rejection.
-- Source/share byte parity for every runtime file.
-- The pdfjs version and IR identity remain unchanged.
-- No public push, merge, release, external send, or claim-language approval in this lane.
-
-## Acceptance tests
-
-Add `test/verified-vision-verifier.test.js` and prove:
-
-1. Tool discovery and read-only annotations.
-2. A valid token is recomputed from the reparsed source, never trusted from packet fields.
-3. Source mutation/token mismatch rejects.
-4. Missing, duplicated, and unknown source items reject with distinct typed reasons.
-5. A source line split across proposed rows rejects.
-6. Non-monotone row/column assignments reject.
-7. Uniform-header evidence rejects the authored-looking borderless proposals.
-8. A pure unit case with independent taller-first-row evidence accepts and returns only source-derived content.
-9. Caller-supplied text/geometry and unknown arguments are refused.
-10. Deterministic repeated verification is byte-identical.
-
-Run the focused verifier suite, B0/B1 suites, conversion/Markdown regressions, share contract, and diff checks. Full `test:all` remains the B5 integration gate.
-
-## Definition of done
-
-The new tool is callable and schema-valid in source and share mirrors; it reparses source, binds token/region identity, passes the B2 predicates, returns deterministic typed rejection or source-derived acceptance, and makes no final topology claim. Exact-SHA focused/regression/share gates are green and Bead `14o.3` records the local evidence.
+Focused tests prove transformed line capture, diagonal/curve refusal, deterministic ordering/deduplication, cap/output-budget typing, independent replay tamper rejection, source/share schemas, exact fixture geometry, unchanged Markdown/gaps, and B1 packet propagation. Run layout, Markdown, B0-B2, source-replay, schema, packaging, and share gates before closing.
