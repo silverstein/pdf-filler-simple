@@ -48,6 +48,18 @@ of silently resolving a newer dependency graph.
 `SBOM.cdx.json` is a deterministic CycloneDX 1.6 inventory of the complete
 locked production graph plus the native components of the bundled QPDF
 WebAssembly runtime, each derived from its own pinned record.
+
+Every component states its licence terms. For npm packages the terms are the
+ones the package declares about itself, read out of the exact registry tarball
+the lockfile pins and marked `acknowledgement: "declared"`. A declaration the
+pinned SPDX licence list recognises is reported as a `license.id`; a compound
+declaration keeps its own operators as an SPDX `expression`, so a dual licence
+is never reduced to one half; anything else is reported as a `license.name`,
+which asserts nothing about SPDX. A package that declares no licence at all
+says `NOASSERTION` explicitly and carries a property saying what was looked for.
+Licence text that ships without naming an identifier is pointed at and hashed,
+never read and guessed at.
+
 `SHARE-PROVENANCE.json` binds the lockfile, SBOM, and
 packaged source files to SHA-256 digests. The SBOM is structurally and
 lock-coverage validated during packaging; this is not a claim of validation by

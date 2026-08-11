@@ -878,6 +878,40 @@ export function trimStagedProductionGraph(stagingDir) {
  * to the production graph `npm ci --omit=dev` actually staged, so the two
  * artifacts cannot describe different bills.
  */
+/**
+ * Every locked package path that is actually inside the staged archive, read
+ * off the staged tree rather than assumed from the lock. The MCPB is the one
+ * artifact that carries an installed `node_modules`, so it is the one artifact
+ * whose bill can say which components are genuinely present — and it does not
+ * carry all of them: six of the eleven `@napi-rs/canvas-*` targets are
+ * deliberately dropped, and marking those `optional` alongside the five that
+ * ship told a reader nothing about which was which.
+ */
+export function stagedPackagePaths(stagingDir, relativeRoot = "node_modules") {
+  const directory = path.join(stagingDir, ...relativeRoot.split("/"));
+  if (!existsSync(directory)) return new Set();
+  const paths = new Set();
+  const collect = packagePath => {
+    if (existsSync(path.join(stagingDir, ...packagePath.split("/"), "package.json"))) {
+      paths.add(packagePath);
+    }
+    for (const nested of stagedPackagePaths(stagingDir, `${packagePath}/node_modules`)) {
+      paths.add(nested);
+    }
+  };
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    if (entry.name.startsWith("@")) {
+      for (const scoped of readdirSync(path.join(directory, entry.name), { withFileTypes: true })) {
+        if (scoped.isDirectory()) collect(`${relativeRoot}/${entry.name}/${scoped.name}`);
+      }
+      continue;
+    }
+    collect(`${relativeRoot}/${entry.name}`);
+  }
+  return paths;
+}
+
 function writeStagedSbom(stagingDir) {
   const rootLock = JSON.parse(readFileSync(path.join(REPO_ROOT, "package-lock.json"), "utf8"));
   const productionLock = {
@@ -888,7 +922,14 @@ function writeStagedSbom(stagingDir) {
     ),
   };
   const stagedPackage = JSON.parse(readFileSync(path.join(stagingDir, "package.json"), "utf8"));
-  const sbom = generateCycloneDxSbom(productionLock, stagedPackage);
+  const installedPackagePaths = stagedPackagePaths(stagingDir);
+  const unknown = [...installedPackagePaths]
+    .filter(packagePath => !productionLock.packages[packagePath])
+    .sort();
+  if (unknown.length > 0) {
+    throw new Error(`Staged MCPB carries packages the reviewed production lock does not name: ${unknown.join(", ")}`);
+  }
+  const sbom = generateCycloneDxSbom(productionLock, stagedPackage, { installedPackagePaths });
   writeFileSync(path.join(stagingDir, SBOM_FILENAME), `${JSON.stringify(sbom, null, 2)}\n`);
   return sbom;
 }
