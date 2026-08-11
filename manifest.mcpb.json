@@ -112,7 +112,7 @@
     },
     {
       "name": "verify_table_proposal",
-      "description": "Reparse a local PDF and deterministically accept or reject an untrusted table proposal using source-bound B2 coverage, ordering, and independent-header checks; accepted content is rebuilt from the PDF text layer and topology is not proven unique"
+      "description": "Reparse a local PDF and accept an untrusted table structure only when source coverage, reading order, header evidence, rectangular-grid consistency, and available ruling geometry agree; accepted content and GFM Markdown are rebuilt from the PDF text layer, while topology is verified as consistent rather than proven unique"
     },
     {
       "name": "render_pdf_page",

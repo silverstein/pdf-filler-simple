@@ -27,9 +27,7 @@ an `isError` result is never forced through a success schema.
 | `compare_pdfs` | source-bound whole-document alignments, seven-channel coverage, evidence, typed changes, reversible presentation decisions, and an equivalence-claim boundary |
 | `create_signature` | saved signature metadata |
 | `convert_pdf_to_markdown` | deterministic Markdown, typed coverage gaps (incl. `TABLE_RULING_UNSUPPORTED`, `TEXT_INTEGRITY_SUSPECT`), `pages_needing_vision` routing, opt-in compact `normalizations` counts, provenance, optional verified UTF-8 output, and (opt-in `emit_table_proposals`) bounded `table_proposals` packets plus document-level region truncation for abandoned table regions |
-| `verify_table_proposal` | deterministic accepted/rejected B2 result bound to a fresh source parse, typed predicate failures, source/IR/region identity, per-check statuses, and source-derived cells only on acceptance; topology uniqueness and B3 grid consistency remain unproven |
-
-<!-- TODO(verified-vision B5): document the full `table_proposals` packet shape (region_id, page, bbox, coordinate_space, text_items, ruled_rects, painted_rectangles, header_hints, truncation, proposal_token), the sibling `table_proposals_truncation` counts, and the default-off / additive contract once B1 (emission) and B2 (verify_table_proposal) integrate. Wired in B1 (bead pdf-toolkit-mcp-14o.2). -->
+| `verify_table_proposal` | deterministic accepted/rejected result bound to a fresh source parse, typed B2 coverage/order/header and B3 grid/ruling/ambiguity checks, source/IR/region identity, and source-derived cells plus deterministic GFM only on acceptance; consistency is not proof of unique topology |
 
 | `detect_signature_zones` | detected coordinate zones |
 | `display_pdf` | active document and form summary |
@@ -68,6 +66,38 @@ advertise `outputSchema`: `list_pdfs`, `list_profiles`, `load_profile`,
 and `save_profile`. Their error results are also
 text-only; attaching an undeclared `structuredContent` error would create a
 wire contract that discovery does not publish.
+
+### Verified table proposal workflow
+
+`convert_pdf_to_markdown` emits `table_proposals` only when
+`emit_table_proposals: true` is requested and conversion abandons a bounded
+table region with `TABLE_TOPOLOGY_UNKNOWN` or `TABLE_RULING_UNSUPPORTED`.
+Each packet includes `region_id`, page, bounding box and coordinate space,
+source text items, ruled rectangles and ruling segments, painted rectangles,
+header hints, typed per-region truncation, and a `proposal_token` bound to the
+source SHA-256, extraction-IR version, and region identity.
+`table_proposals_truncation` reports observed, returned, and omitted region
+counts at the document level, so the 50-region cap cannot silently discard
+proposal evidence. The flag is additive and default-off: the original typed
+abstention remains, and output without the flag is byte-identical.
+
+`verify_table_proposal` accepts only the PDF path, packet identity, token, and
+untrusted item-to-cell assignments. It reparses the current source and
+regenerates text, geometry, header evidence, and rulings. The `checks` object
+reports token and region binding, cell validity, coverage, one-cell assignment,
+row non-straddle, row and column order, rectangular grid, cut consistency,
+ruling agreement, topology ambiguity, header evidence, and content source.
+A rejection has typed `reason_codes` and `table: null`. An acceptance includes
+source-derived structured cells and deterministic GFM with format, span
+projection, byte count, and SHA-256. Structured row and column spans remain
+authoritative; GFM places text once at the anchor and leaves continuation cells
+empty because GFM cannot represent spans.
+
+Acceptance establishes that emitted cell content came from the freshly parsed
+PDF text layer and that the proposed grid is consistent with the available
+source-replayed evidence. It does not establish unique topology, semantic
+correctness, OCR accuracy, or model quality. Borderless or otherwise ambiguous
+geometry continues to reject.
 
 `get_pdf_identity` adds exact structured error codes for an unavailable file,
 invalid PDF header, input over 250 MiB, and a file or pathname that changed

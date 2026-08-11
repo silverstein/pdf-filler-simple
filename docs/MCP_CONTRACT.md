@@ -198,7 +198,28 @@ omitted and reported as a vector-content gap. It does not
 run OCR, render image content, or use an external model. Raster, mixed,
 vector, failed, caller-limit-truncated, invalid-geometry, and output-omission
 cases are represented as typed gaps and
-cannot receive a complete conversion status. The converter consumes
+cannot receive a complete conversion status. With `emit_table_proposals: true`,
+each abandoned table region also carries one bounded packet containing source
+text items, ruled and painted geometry, header hints, typed truncation, and a
+token bound to the source hash, extraction-IR version, and region identity.
+Document-level observed, returned, and omitted counts make the 50-region cap
+explicit. This option is additive and default-off: it does not remove the
+abstention gap or change ordinary output.
+
+The read-only `verify_table_proposal` tool accepts only that region/token
+identity and untrusted item-to-cell assignments. It reparses the current PDF,
+regenerates all content and evidence, and requires complete one-cell coverage,
+conservative order, independent header evidence, a well-formed rectangular
+grid, consistent cuts, agreement with every available source ruling, and
+non-ambiguous topology. Rejection emits no cells or Markdown. Acceptance emits
+only freshly source-derived cells plus a deterministic GFM projection; because
+GFM cannot encode spans, structured spans remain authoritative while the
+projection uses anchor text and empty continuation cells. This proves
+source-backed content and consistency with the replayed evidence, not that the
+topology is unique or semantically correct. No OCR, model, network call, or
+numeric confidence is part of verification.
+
+The converter consumes
 source-validated evidence before the public `read_pdf_layout` response
 projection, so that response's 200,000-character cap cannot erase conversion
 input. Conversion remains bounded by caller item, character, page, deadline,
@@ -212,8 +233,6 @@ paths, so later parent renames or symlink replacements cannot redirect writes.
 The bound directory identity, exact UTF-8 output, and source PDF hash, size, and
 filesystem identity are revalidated before the transaction commits or deletes
 prior output bytes.
-
-<!-- TODO(verified-vision B5): fold the opt-in `emit_table_proposals` contract into this paragraph. When set, each abandoned table region (`TABLE_TOPOLOGY_UNKNOWN` / `TABLE_RULING_UNSUPPORTED`) also emits one bounded, deterministic `table_proposals` packet (region_id, page, bbox + coordinate_space, text_items, ruled_rects, painted_rectangles, header_hints, typed per-region truncation, and a source-and-IR-bound proposal_token) for a host model to propose a structure and a later read-only verifier (B2) to accept or reject. `table_proposals_truncation` reports complete/truncated document-level region counts so the 50-region cap never drops evidence silently. The flag is additive and default-off: the abstention gap is unchanged and the structured result stays byte-identical when it is absent. Wired in B1 (bead pdf-toolkit-mcp-14o.2). -->
 
 `read_pdf_content` exposes `extraction_status` as `complete`, `partial`, or
 `failed`. A text result is partial when it is page-limited or response-

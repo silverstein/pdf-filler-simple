@@ -49,9 +49,10 @@ function cellsFromReferences(packet, proposal) {
   }));
 }
 
-describe("verified-vision B2-B4 source-replayed table proposal verifier", () => {
+describe("verified-vision B2-B5 source-replayed table proposal verifier", () => {
   let client;
   let transport;
+  let fixtureManifest;
   let proposals;
   let borderlessPacket;
   let borderlessToken;
@@ -62,6 +63,10 @@ describe("verified-vision B2-B4 source-replayed table proposal verifier", () => 
   let mergedToken;
 
   beforeAll(async () => {
+    fixtureManifest = JSON.parse(await readFile(
+      path.join(FIXTURE_ROOT, "manifest.v1.json"),
+      "utf8",
+    ));
     proposals = JSON.parse(await readFile(
       path.join(FIXTURE_ROOT, "known-proposals.v1.json"),
       "utf8",
@@ -346,6 +351,93 @@ describe("verified-vision B2-B4 source-replayed table proposal verifier", () => 
       });
     }
   }, 45_000);
+
+  it("9b. measures the committed integration evidence with explicit denominators", async () => {
+    const fixtures = {
+      "pdf-tools.verified-vision.table-ruled-merged-negative": {
+        pdfPath: MERGED,
+        packet: mergedPacket,
+        token: mergedToken,
+      },
+      "pdf-tools.verified-vision.table-ruled-lines": {
+        pdfPath: LINES,
+        packet: linePacket,
+        token: lineToken,
+      },
+      "pdf-tools.verified-vision.table-borderless-ambiguous": {
+        pdfPath: BORDERLESS,
+        packet: borderlessPacket,
+        token: borderlessToken,
+      },
+    };
+    const outcomes = [];
+    for (const proposal of proposals) {
+      const fixture = fixtures[proposal.fixture_id];
+      const result = await verify(
+        fixture.pdfPath,
+        fixture.packet,
+        fixture.token,
+        cellsFromReferences(fixture.packet, proposal),
+      );
+      outcomes.push({ proposal, result: result.structuredContent });
+      expect(result.structuredContent.status).toBe(proposal.expected_verifier_outcome);
+      if (proposal.expected_verifier_outcome === "rejected") {
+        expect(result.structuredContent.table).toBeNull();
+        expect(result.content.map(part => part.text ?? "").join("\n"))
+          .toContain("No table content was emitted");
+      }
+    }
+
+    const accepted = outcomes.filter(({ result }) => result.status === "accepted");
+    const knownWrong = outcomes.filter(({ proposal }) => proposal.topology_truth === "known_wrong");
+    const ambiguous = outcomes.filter(({ proposal }) => proposal.topology_truth === "unresolved_by_source");
+    expect(accepted).toHaveLength(1);
+    expect(knownWrong).toHaveLength(3);
+    expect(knownWrong.every(({ result }) => result.status === "rejected")).toBe(true);
+    expect(ambiguous).toHaveLength(2);
+    expect(ambiguous.every(({ result }) => result.status === "rejected")).toBe(true);
+
+    const authored = accepted[0];
+    const expectedTexts = authored.proposal.cells.map(cell => (
+      cell.item_refs.map(reference => reference.text).join("")
+    ));
+    const actualTexts = authored.result.table.cells.map(cell => cell.text);
+    const sourceCharacters = expectedTexts.reduce((sum, text) => sum + text.length, 0);
+    const characterErrors = expectedTexts.reduce((sum, text, index) => {
+      const actual = actualTexts[index] ?? "";
+      const width = Math.max(text.length, actual.length);
+      let errors = 0;
+      for (let offset = 0; offset < width; offset++) {
+        if (text[offset] !== actual[offset]) errors++;
+      }
+      return sum + errors;
+    }, 0);
+    expect(actualTexts).toEqual(expectedTexts);
+    expect(actualTexts).toHaveLength(11);
+    expect(sourceCharacters).toBe(55);
+    expect(characterErrors).toBe(0);
+
+    const b2Checks = [
+      "coverage",
+      "one_cell",
+      "row_non_straddle",
+      "row_order",
+      "column_order",
+      "header_evidence",
+    ];
+    const caughtWithoutGridConsistency = knownWrong.filter(({ result }) => (
+      b2Checks.some(check => result.checks[check] === "failed")
+    ));
+    expect(caughtWithoutGridConsistency).toHaveLength(1);
+    expect(knownWrong).toHaveLength(3);
+
+    expect(fixtureManifest.claim_boundary).toMatchObject({
+      benchmark_claim_ready: false,
+      calibration_claim_ready: false,
+      production_claim_ready: false,
+      born_digital_only: true,
+    });
+  }, 60_000);
 
   it("10. B3 refuses grid holes, overlaps, excessive slot surfaces, and evidence-free topology", () => {
     const region = {

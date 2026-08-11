@@ -114,6 +114,16 @@ Python, a model, or the network. A complete status means the requested
 text-layer slice was converted under this bounded contract, not that
 the original PDF's visual or semantic structure was fully recovered.
 
+For an abandoned born-digital table, a host may opt into proposal packets and
+submit a structural assignment to `verify_table_proposal`. Treat the assignment
+as untrusted: the verifier reparses the source and accepts only when coverage,
+order, independent header evidence, rectangular-grid consistency, available
+rulings, and non-ambiguity all pass. Accepted cell text comes exclusively from
+the reparsed PDF text layer. Its GFM table is a convenience projection;
+structured spans are authoritative. Never describe an accepted result as proof
+of the one uniquely correct or semantically correct topology. Rejections and
+ordinary conversions remain fail-closed and emit no inferred table.
+
 Filesystem operations and rasterization happen locally, and PDF Tools does not
 upload files to a separate PDF service. Text, images, and metadata returned
 through MCP may still be processed under the selected host or model provider's

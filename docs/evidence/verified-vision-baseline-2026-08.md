@@ -1,6 +1,7 @@
 # Verified-vision adversarial baseline — 2026-08
 
-Status: B0 implementation candidate; synthetic baseline only
+Status: historical B0 synthetic baseline; superseded for integration evidence
+by `verified-vision-integration-2026-08.md`
 
 Control ref: `origin/master` at
 `0600e32466bdfb25552841b93686fb79069e8128`
