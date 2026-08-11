@@ -26,7 +26,10 @@ an `isError` result is never forced through a success schema.
 | `bulk_fill_from_csv` | row results and bounded record preview |
 | `compare_pdfs` | source-bound whole-document alignments, seven-channel coverage, evidence, typed changes, reversible presentation decisions, and an equivalence-claim boundary |
 | `create_signature` | saved signature metadata |
-| `convert_pdf_to_markdown` | deterministic Markdown, typed coverage gaps (incl. `TABLE_RULING_UNSUPPORTED`, `TEXT_INTEGRITY_SUSPECT`), `pages_needing_vision` routing, opt-in compact `normalizations` counts, provenance, and optional verified UTF-8 output |
+| `convert_pdf_to_markdown` | deterministic Markdown, typed coverage gaps (incl. `TABLE_RULING_UNSUPPORTED`, `TEXT_INTEGRITY_SUSPECT`), `pages_needing_vision` routing, opt-in compact `normalizations` counts, provenance, optional verified UTF-8 output, and (opt-in `emit_table_proposals`) bounded `table_proposals` packets for abandoned table regions |
+
+<!-- TODO(verified-vision B5): document the full `table_proposals` packet shape (region_id, page, bbox, coordinate_space, text_items, ruled_rects, painted_rectangles, header_hints, truncation, proposal_token) and its default-off / additive contract once B1 (emission) and B2 (verify_table_proposal) integrate. Wired in B1 (bead pdf-toolkit-mcp-14o.2). -->
+
 | `detect_signature_zones` | detected coordinate zones |
 | `display_pdf` | active document and form summary |
 | `extract_to_csv` | CSV counts, headers, and bounded row preview |

@@ -213,6 +213,8 @@ The bound directory identity, exact UTF-8 output, and source PDF hash, size, and
 filesystem identity are revalidated before the transaction commits or deletes
 prior output bytes.
 
+<!-- TODO(verified-vision B5): fold the opt-in `emit_table_proposals` contract into this paragraph. When set, each abandoned table region (`TABLE_TOPOLOGY_UNKNOWN` / `TABLE_RULING_UNSUPPORTED`) also emits one bounded, deterministic `table_proposals` packet (region_id, page, bbox + coordinate_space, text_items, ruled_rects, painted_rectangles, header_hints, typed truncation, and a source-and-IR-bound proposal_token) for a host model to propose a structure and a later read-only verifier (B2) to accept or reject. The flag is additive and default-off: the abstention gap is unchanged and the structured result stays byte-identical when it is absent. Wired in B1 (bead pdf-toolkit-mcp-14o.2). -->
+
 `read_pdf_content` exposes `extraction_status` as `complete`, `partial`, or
 `failed`. A text result is partial when it is page-limited or response-
 truncated. A successful first-page image fallback is also partial because it

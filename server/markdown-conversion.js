@@ -47,6 +47,18 @@ const RECT_CONTAINMENT_TOLERANCE = 2;
 // anything beyond this in BOTH axes is competing evidence, not a border.
 const RECT_MATERIAL_OVERLAP = 1;
 
+// Verified-vision (B1) proposal-packet emission. When a table region is
+// abandoned (TABLE_TOPOLOGY_UNKNOWN / TABLE_RULING_UNSUPPORTED), an opt-in flag
+// emits one bounded, deterministic descriptor per region so a host model can
+// propose a structure and a later read-only verifier (B2) can accept or reject
+// it. These are hard, named bounds mirroring the IR's max_items discipline;
+// over-cap descriptors report typed truncation rather than unbounded output.
+const TABLE_PROPOSAL_COORDINATE_SPACE = "pdfjs_viewport_top_left_points";
+const MAX_TABLE_PROPOSALS_PER_DOCUMENT = 50;
+export const MAX_TABLE_PROPOSAL_TEXT_ITEMS = 400;
+const MAX_TABLE_PROPOSAL_RULED_RECTS = 400;
+const MAX_TABLE_PROPOSAL_PAINTED_RECTS = 400;
+
 const MAX_MARKDOWN_BYTES_LIMIT = 200_000;
 const GAP_CODES = new Set([
   "CONTROL_CHARACTERS_SANITIZED",
@@ -1775,6 +1787,7 @@ function ruledGridSegment(page) {
 
 function segmentTextRows(page, rows, itemById, ruledClusters) {
   const segments = [];
+  const regions = [];
   let tableReason = null;
   let index = 0;
   while (index < rows.length) {
@@ -1803,21 +1816,29 @@ function segmentTextRows(page, rows, itemById, ruledClusters) {
         // Preserve the reason from the rect-evidence attempt. The text path
         // can independently see a header/topology failure, but it must not
         // overwrite a more specific rect-path failure and its gap detail.
+        let runReason = null;
         if (ruling?.reason === "topology") {
-          tableReason = "topology";
+          runReason = "topology";
         } else if (ruling?.reason === "header") {
-          tableReason = "header";
+          runReason = "header";
         } else if (ruling?.reason === "ruling_unsupported") {
-          tableReason = "ruling_unsupported";
+          runReason = "ruling_unsupported";
         } else if (tableLike) {
-          tableReason = grid && grid.every(Boolean) ? "header" : "topology";
+          runReason = grid && grid.every(Boolean) ? "header" : "topology";
+        }
+        // The abstention gap is unchanged: the page-level tableReason still
+        // takes the last abandoned run's reason exactly as before. The region
+        // list is purely additive and only consulted by the opt-in packet path.
+        if (runReason) {
+          tableReason = runReason;
+          regions.push({ run, reason: runReason });
         }
         segments.push({ kind: "text", rows: run });
       }
     }
     index = end;
   }
-  return { segments, tableReason };
+  return { segments, tableReason, regions };
 }
 
 /**
@@ -1834,7 +1855,11 @@ function segmentPageLines(page) {
   const ruled = ruledGridSegment(page);
   if (!ruled.segment) {
     const text = segmentTextRows(page, rows, itemById, ruledClusters);
-    return { segments: text.segments, tableReason: ruled.tableReason ?? text.tableReason };
+    return {
+      segments: text.segments,
+      tableReason: ruled.tableReason ?? text.tableReason,
+      regions: text.regions,
+    };
   }
   const remaining = rows.map((row, index) => ({ ...row, sourceIndex: index }))
     .filter(row => !ruled.segment.coveredLineIds.has(row.line.id));
@@ -1843,6 +1868,128 @@ function segmentPageLines(page) {
   return {
     segments: [...before.segments, ruled.segment, ...after.segments],
     tableReason: before.tableReason ?? after.tableReason,
+    regions: [...before.regions, ...after.regions],
+  };
+}
+
+function regionGapCode(reason) {
+  return reason === "ruling_unsupported" ? "TABLE_RULING_UNSUPPORTED" : "TABLE_TOPOLOGY_UNKNOWN";
+}
+
+function rectsOverlap(box, region) {
+  return box.x < region.x + region.width
+    && box.x + box.width > region.x
+    && box.y < region.y + region.height
+    && box.y + box.height > region.y;
+}
+
+function tableProposalTextItem(item) {
+  return {
+    id: item.id,
+    text: item.text,
+    reading_order_index: item.reading_order_index,
+    line_id: item.line_id ?? null,
+    column_index: item.column_index ?? null,
+    bbox: item.bbox ?? null,
+    quad: item.quad ?? null,
+    raw_transform: item.raw_transform ?? [],
+  };
+}
+
+// Line height is the one stable per-row visual metric the IR exposes, and the
+// first-row-band signal reuses the exact ratio the reconstruction path uses to
+// decide header evidence. B1 ships this evidence only; it never decides the
+// header, and reports no numeric confidence.
+function tableProposalHeaderHints(run) {
+  const firstRowHeight = rowHeight(run[0]);
+  const bodyHeights = run.slice(1).map(rowHeight).filter(Number.isFinite);
+  const bodyMedianHeight = bodyHeights.length > 0 ? median(bodyHeights) : null;
+  let band;
+  if (firstRowHeight === null || bodyMedianHeight === null) {
+    band = "unavailable";
+  } else if (bodyMedianHeight > 0 && firstRowHeight >= bodyMedianHeight * HEADER_HEIGHT_RATIO) {
+    band = "taller_than_body";
+  } else {
+    band = "not_distinguished";
+  }
+  return {
+    status: firstRowHeight === null && bodyMedianHeight === null ? "unavailable" : "available",
+    first_row_height: firstRowHeight,
+    body_median_height: bodyMedianHeight,
+    first_row_band: band,
+  };
+}
+
+/**
+ * Build one deterministic, bounded proposal-region descriptor for a table run
+ * the renderer abandoned. Pure over the page IR and the run; no token, no I/O,
+ * no time/RNG. The proposal_token that binds it to (source sha, IR version,
+ * region_id) is added by the handler, which owns the source identity. Exported
+ * for the bounded-truncation regression, which needs to force an over-cap
+ * region without synthesizing a full validated IR.
+ */
+export function buildTableProposalRegion(page, run, reason, ordinal) {
+  const itemById = new Map(page.raw_items.map(item => [item.id, item]));
+  let minX = Infinity;
+  let minY = Infinity;
+  let maxX = -Infinity;
+  let maxY = -Infinity;
+  for (const { line } of run) {
+    minX = Math.min(minX, line.x);
+    minY = Math.min(minY, line.y);
+    maxX = Math.max(maxX, line.x + line.width);
+    maxY = Math.max(maxY, line.y + line.height);
+  }
+  const bbox = { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
+
+  const allItems = [];
+  for (const { line } of run) {
+    for (const id of line.item_ids) {
+      const item = itemById.get(id);
+      if (item && item.geometry_valid && item.text_kind === "non_whitespace" && item.bbox) {
+        allItems.push(item);
+      }
+    }
+  }
+  const itemsTruncated = allItems.length > MAX_TABLE_PROPOSAL_TEXT_ITEMS;
+  const textItems = allItems.slice(0, MAX_TABLE_PROPOSAL_TEXT_ITEMS).map(tableProposalTextItem);
+
+  const ruledEvidence = page.ruled_rects && Array.isArray(page.ruled_rects.items)
+    ? page.ruled_rects.items.filter(rect => rectsOverlap(rect, bbox))
+    : [];
+  const ruledTruncated = ruledEvidence.length > MAX_TABLE_PROPOSAL_RULED_RECTS;
+  const ruledRects = ruledEvidence.slice(0, MAX_TABLE_PROPOSAL_RULED_RECTS).map(rect => ({
+    x: rect.x,
+    y: rect.y,
+    width: rect.width,
+    height: rect.height,
+    verb: rect.verb,
+  }));
+
+  const paintedEvidence = page.painted_rectangles && Array.isArray(page.painted_rectangles.items)
+    ? page.painted_rectangles.items.filter(painted => painted.bbox && rectsOverlap(painted.bbox, bbox))
+    : [];
+  const paintedTruncated = paintedEvidence.length > MAX_TABLE_PROPOSAL_PAINTED_RECTS;
+  const paintedRectangles = paintedEvidence.slice(0, MAX_TABLE_PROPOSAL_PAINTED_RECTS).map(painted => ({
+    id: painted.id,
+    bbox: painted.bbox,
+  }));
+
+  return {
+    region_id: `p${page.page}-t${ordinal}`,
+    page: page.page,
+    reason: regionGapCode(reason),
+    coordinate_space: TABLE_PROPOSAL_COORDINATE_SPACE,
+    bbox,
+    text_items: textItems,
+    ruled_rects: ruledRects,
+    painted_rectangles: paintedRectangles,
+    header_hints: tableProposalHeaderHints(run),
+    truncation: {
+      text_items: itemsTruncated ? "truncated" : "complete",
+      ruled_rects: ruledTruncated ? "truncated" : "complete",
+      painted_rectangles: paintedTruncated ? "truncated" : "complete",
+    },
   };
 }
 
@@ -2143,6 +2290,7 @@ function renderPage(page, {
   compact = false,
   pageBoundaryBefore = false,
   pageBoundaryAfter = false,
+  collectTableProposals = false,
 } = {}) {
   const headings = headingLevels(page);
   const headingContinuations = headingContinuationIds(page, headings);
@@ -2219,7 +2367,7 @@ function renderPage(page, {
     ? lines.join("\n")
     : "[No source-backed text was available on this page.]";
   const gaps = pageGaps(page, analysis, linkState);
-  return {
+  const rendered = {
     page: page.page,
     conversion_status: pageStatus(page, gaps),
     markdown,
@@ -2229,6 +2377,15 @@ function renderPage(page, {
     gaps,
     normalizations: normalized.normalizations,
   };
+  if (collectTableProposals) {
+    // Additive: this key is stripped from the page result and never affects
+    // markdown, gaps, or byte counts. It is only present when the opt-in flag
+    // is set, so the default page shape is byte-identical.
+    rendered.tableProposalRegions = analysis.regions.map(
+      (region, index) => buildTableProposalRegion(page, region.run, region.reason, index + 1),
+    );
+  }
+  return rendered;
 }
 
 function renderDocumentMarkdown(renderedPages, includePageBoundaries, gaps) {
@@ -2394,7 +2551,116 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
     );
     assertion(result.markdown === expectedMarkdown, "markdown does not match the bound layout IR");
   }
+
+  // Verified-vision proposal packets are additive and optional. The renderer
+  // emits token-free descriptors under `table_proposal_regions`; the handler
+  // re-keys them to `table_proposals` with a bound `proposal_token`. Validate
+  // whichever is present, sharing one descriptor contract.
+  if (result.table_proposal_regions !== undefined) {
+    validateTableProposals(result.table_proposal_regions, { requireToken: false });
+  }
+  if (result.table_proposals !== undefined) {
+    validateTableProposals(result.table_proposals, { requireToken: true });
+  }
   return result;
+}
+
+function isFiniteNumber(value) {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function validateTableProposalBox(box, label) {
+  assertion(box && typeof box === "object" && !Array.isArray(box), `${label} must be an object`);
+  assertion(isFiniteNumber(box.x) && isFiniteNumber(box.y), `${label} origin is invalid`);
+  assertion(isFiniteNumber(box.width) && box.width >= 0
+    && isFiniteNumber(box.height) && box.height >= 0, `${label} extent is invalid`);
+}
+
+function validateTableProposals(proposals, { requireToken }) {
+  assertion(Array.isArray(proposals), "table proposals must be an array");
+  assertion(proposals.length <= MAX_TABLE_PROPOSALS_PER_DOCUMENT,
+    "table proposals exceed the per-document cap");
+  const seen = new Set();
+  for (const proposal of proposals) {
+    assertion(proposal && typeof proposal === "object" && !Array.isArray(proposal),
+      "each table proposal must be an object");
+    assertion(typeof proposal.region_id === "string" && /^p[0-9]+-t[0-9]+$/.test(proposal.region_id),
+      "table proposal region_id is malformed");
+    assertion(!seen.has(proposal.region_id), `duplicate table proposal region_id ${proposal.region_id}`);
+    seen.add(proposal.region_id);
+    assertion(Number.isInteger(proposal.page) && proposal.page >= 1, "table proposal page is invalid");
+    assertion(proposal.region_id.startsWith(`p${proposal.page}-t`), "table proposal region_id does not bind its page");
+    assertion(["TABLE_TOPOLOGY_UNKNOWN", "TABLE_RULING_UNSUPPORTED"].includes(proposal.reason),
+      "table proposal reason must be a table abstention code");
+    assertion(proposal.coordinate_space === TABLE_PROPOSAL_COORDINATE_SPACE,
+      "table proposal coordinate_space mismatch");
+    validateTableProposalBox(proposal.bbox, `table proposal ${proposal.region_id} bbox`);
+
+    assertion(Array.isArray(proposal.text_items)
+      && proposal.text_items.length <= MAX_TABLE_PROPOSAL_TEXT_ITEMS,
+    "table proposal text_items exceed the cap");
+    for (const item of proposal.text_items) {
+      assertion(item && typeof item.id === "string" && typeof item.text === "string",
+        "table proposal text item identity is invalid");
+      assertion(Number.isInteger(item.reading_order_index) && item.reading_order_index >= 0,
+        "table proposal text item reading_order_index is invalid");
+      assertion(item.line_id === null || typeof item.line_id === "string",
+        "table proposal text item line_id is invalid");
+      assertion(item.column_index === null || Number.isInteger(item.column_index),
+        "table proposal text item column_index is invalid");
+      assertion(item.bbox === null || (typeof item.bbox === "object" && !Array.isArray(item.bbox)),
+        "table proposal text item bbox is invalid");
+      assertion(item.quad === null || (Array.isArray(item.quad) && item.quad.length === 4),
+        "table proposal text item quad is invalid");
+      assertion(Array.isArray(item.raw_transform) && item.raw_transform.length === 6,
+        "table proposal text item raw_transform is invalid");
+    }
+
+    assertion(Array.isArray(proposal.ruled_rects)
+      && proposal.ruled_rects.length <= MAX_TABLE_PROPOSAL_RULED_RECTS,
+    "table proposal ruled_rects exceed the cap");
+    for (const rect of proposal.ruled_rects) {
+      validateTableProposalBox(rect, `table proposal ${proposal.region_id} ruled rect`);
+      assertion(["fill", "stroke", "clip", "none"].includes(rect.verb),
+        "table proposal ruled rect verb is invalid");
+    }
+
+    assertion(Array.isArray(proposal.painted_rectangles)
+      && proposal.painted_rectangles.length <= MAX_TABLE_PROPOSAL_PAINTED_RECTS,
+    "table proposal painted_rectangles exceed the cap");
+    for (const painted of proposal.painted_rectangles) {
+      assertion(painted && typeof painted.id === "string", "table proposal painted rect id is invalid");
+      validateTableProposalBox(painted.bbox, `table proposal ${proposal.region_id} painted rect`);
+    }
+
+    const hints = proposal.header_hints;
+    assertion(hints && typeof hints === "object" && !Array.isArray(hints),
+      "table proposal header_hints must be an object");
+    assertion(["available", "unavailable"].includes(hints.status),
+      "table proposal header_hints status is invalid");
+    assertion(hints.first_row_height === null || isFiniteNumber(hints.first_row_height),
+      "table proposal header_hints first_row_height is invalid");
+    assertion(hints.body_median_height === null || isFiniteNumber(hints.body_median_height),
+      "table proposal header_hints body_median_height is invalid");
+    assertion(["taller_than_body", "not_distinguished", "unavailable"].includes(hints.first_row_band),
+      "table proposal header_hints first_row_band is invalid");
+
+    const truncation = proposal.truncation;
+    assertion(truncation && typeof truncation === "object" && !Array.isArray(truncation),
+      "table proposal truncation must be an object");
+    for (const key of ["text_items", "ruled_rects", "painted_rectangles"]) {
+      assertion(["complete", "truncated"].includes(truncation[key]),
+        `table proposal truncation.${key} is invalid`);
+    }
+
+    if (requireToken) {
+      assertion(typeof proposal.proposal_token === "string" && /^[a-f0-9]{64}$/.test(proposal.proposal_token),
+        "table proposal proposal_token is malformed");
+    } else {
+      assertion(proposal.proposal_token === undefined,
+        "renderer-stage table proposals must not carry a proposal_token");
+    }
+  }
 }
 
 /**
@@ -2411,6 +2677,7 @@ export function renderPdfLayoutToMarkdown(layout, {
   includePageBoundaries = true,
   maxMarkdownBytes = 50000,
   compact = false,
+  emitTableProposals = false,
 } = {}) {
   validatePdfLayoutSemantics(layout, { enforceOutputBudget: false });
   validateSupportedLayoutIdentity(layout);
@@ -2419,6 +2686,9 @@ export function renderPdfLayoutToMarkdown(layout, {
   }
   if (typeof compact !== "boolean") {
     throw new TypeError("compact must be a boolean.");
+  }
+  if (typeof emitTableProposals !== "boolean") {
+    throw new TypeError("emitTableProposals must be a boolean.");
   }
   if (!Number.isSafeInteger(maxMarkdownBytes)
     || maxMarkdownBytes < 1
@@ -2433,6 +2703,7 @@ export function renderPdfLayoutToMarkdown(layout, {
     // visual HTML marker. This also lets compact mode remove a trailing footer
     // number from a single-page selection.
     pageBoundaryAfter: true,
+    collectTableProposals: emitTableProposals,
   }));
   const gaps = renderedPages.flatMap(page => page.gaps);
   const markdown = renderDocumentMarkdown(renderedPages, includePageBoundaries, gaps);
@@ -2455,12 +2726,23 @@ export function renderPdfLayoutToMarkdown(layout, {
     markdown_bytes: markdownBytes,
     options: { include_page_boundaries: includePageBoundaries, compact },
     limits: { max_markdown_bytes: maxMarkdownBytes },
-    pages: renderedPages.map(({ markdown: _markdown, normalizations: _normalizations, ...page }) => page),
+    pages: renderedPages.map(({
+      markdown: _markdown,
+      normalizations: _normalizations,
+      tableProposalRegions: _tableProposalRegions,
+      ...page
+    }) => page),
     gaps,
     limitations: [...LIMITATIONS],
     normalizations: aggregateNormalizations(renderedPages),
     provenance: provenanceFromLayout(layout),
   };
+  if (emitTableProposals) {
+    // Document-order flatten, bounded by a named per-document cap. The handler
+    // adds each region's proposal_token; the renderer stays token-free and pure.
+    const regions = renderedPages.flatMap(page => page.tableProposalRegions ?? []);
+    result.table_proposal_regions = regions.slice(0, MAX_TABLE_PROPOSALS_PER_DOCUMENT);
+  }
   return validateMarkdownConversionSemantics(result, { layout });
 }
 

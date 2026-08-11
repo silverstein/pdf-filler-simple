@@ -849,6 +849,55 @@ const layoutPage = object({
   limitations: stringArray,
 });
 
+// Verified-vision (B1) proposal packet. Emitted only when the opt-in
+// emit_table_proposals flag is set; one bounded, deterministic descriptor per
+// abandoned table region. Typed statuses only, no numeric confidence.
+const tableProposalTextItem = object({
+  id: string,
+  text: string,
+  reading_order_index: { type: "integer", minimum: 0 },
+  line_id: nullable(string),
+  column_index: nullable(integer),
+  bbox: nullable(layoutBox),
+  quad: nullable({ type: "array", minItems: 4, maxItems: 4, items: layoutPoint }),
+  raw_transform: { type: "array", minItems: 6, maxItems: 6, items: nullable(number) },
+});
+const tableProposalRuledRect = object({
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  verb: enumString(["fill", "stroke", "clip", "none"]),
+});
+const tableProposalPaintedRect = object({
+  id: string,
+  bbox: layoutBox,
+});
+const tableProposalHeaderHints = object({
+  status: enumString(["available", "unavailable"]),
+  first_row_height: nullable(number),
+  body_median_height: nullable(number),
+  first_row_band: enumString(["taller_than_body", "not_distinguished", "unavailable"]),
+});
+const tableProposalTruncation = object({
+  text_items: enumString(["complete", "truncated"]),
+  ruled_rects: enumString(["complete", "truncated"]),
+  painted_rectangles: enumString(["complete", "truncated"]),
+});
+const tableProposal = object({
+  region_id: { type: "string", pattern: "^p[0-9]+-t[0-9]+$" },
+  page: { type: "integer", minimum: 1 },
+  reason: enumString(["TABLE_TOPOLOGY_UNKNOWN", "TABLE_RULING_UNSUPPORTED"]),
+  coordinate_space: { const: "pdfjs_viewport_top_left_points" },
+  bbox: layoutBox,
+  text_items: arrayOf(tableProposalTextItem),
+  ruled_rects: arrayOf(tableProposalRuledRect),
+  painted_rectangles: arrayOf(tableProposalPaintedRect),
+  header_hints: tableProposalHeaderHints,
+  truncation: tableProposalTruncation,
+  proposal_token: sha256Digest,
+});
+
 export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
   read_pdf_fields: activeDocument(),
   fill_pdf: activeDocument({ filled_fields: stringArray, fill_errors: stringArray }),
@@ -927,47 +976,69 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     truncation: layoutDocumentTruncation,
     limitations: stringArray,
   }),
-  convert_pdf_to_markdown: object({
-    renderer: object({
-      name: { const: "pdf-tools.layout-markdown-renderer" },
-      version: { const: "1.14.0" },
-    }),
-    conversion_status: enumString(["complete", "partial", "failed"]),
-    markdown: string,
-    markdown_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
-    markdown_bytes: { type: "integer", minimum: 0 },
-    options: object({ include_page_boundaries: boolean, compact: boolean }),
-    limits: object({ max_markdown_bytes: { type: "integer", minimum: 1, maximum: 200000 } }),
-    pages: arrayOf(markdownPage),
-    pages_needing_vision: arrayOf(visionRoutingPage),
-    gaps: arrayOf(markdownGap),
-    limitations: stringArray,
-    normalizations: object({
-      dot_leaders_collapsed: { type: "integer", minimum: 0 },
-      page_number_lines_removed: { type: "integer", minimum: 0 },
-      spaced_hyphens_joined: { type: "integer", minimum: 0 },
-      normalized_pages: integerArray,
-    }),
-    provenance: object({
-      source: object({
-        file_name: string,
-        sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
-        size_bytes: integer,
+  convert_pdf_to_markdown: object(
+    {
+      renderer: object({
+        name: { const: "pdf-tools.layout-markdown-renderer" },
+        version: { const: "1.14.0" },
       }),
-      layout: object({
-        name: { const: "pdf-tools.extraction-ir" },
-        version: { const: "1.5.0" },
-        parser_name: { const: "pdfjs-dist" },
-        parser_version: { const: "5.4.624" },
-        page_range: object({
-          start_page: integer,
-          end_page: integer,
-          total_pages: integer,
+      conversion_status: enumString(["complete", "partial", "failed"]),
+      markdown: string,
+      markdown_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      markdown_bytes: { type: "integer", minimum: 0 },
+      options: object({ include_page_boundaries: boolean, compact: boolean }),
+      limits: object({ max_markdown_bytes: { type: "integer", minimum: 1, maximum: 200000 } }),
+      pages: arrayOf(markdownPage),
+      pages_needing_vision: arrayOf(visionRoutingPage),
+      gaps: arrayOf(markdownGap),
+      limitations: stringArray,
+      normalizations: object({
+        dot_leaders_collapsed: { type: "integer", minimum: 0 },
+        page_number_lines_removed: { type: "integer", minimum: 0 },
+        spaced_hyphens_joined: { type: "integer", minimum: 0 },
+        normalized_pages: integerArray,
+      }),
+      provenance: object({
+        source: object({
+          file_name: string,
+          sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+          size_bytes: integer,
+        }),
+        layout: object({
+          name: { const: "pdf-tools.extraction-ir" },
+          version: { const: "1.5.0" },
+          parser_name: { const: "pdfjs-dist" },
+          parser_version: { const: "5.4.624" },
+          page_range: object({
+            start_page: integer,
+            end_page: integer,
+            total_pages: integer,
+          }),
         }),
       }),
-    }),
-    saved_output: markdownSavedOutput,
-  }),
+      saved_output: markdownSavedOutput,
+      // Present only when the opt-in emit_table_proposals flag is set, so it is
+      // deliberately excluded from the required list below to keep the
+      // default-off result byte-identical.
+      table_proposals: arrayOf(tableProposal),
+    },
+    [
+      "renderer",
+      "conversion_status",
+      "markdown",
+      "markdown_sha256",
+      "markdown_bytes",
+      "options",
+      "limits",
+      "pages",
+      "pages_needing_vision",
+      "gaps",
+      "limitations",
+      "normalizations",
+      "provenance",
+      "saved_output",
+    ],
+  ),
   render_pdf_page: object({
     pdf_path: string,
     file_name: string,

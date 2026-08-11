@@ -3345,6 +3345,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             max_markdown_bytes: { type: "integer", minimum: 256, maximum: 200000, description: "Maximum UTF-8 Markdown bytes. The conversion fails rather than cutting a line or Unicode sequence. Default: 50000." },
             include_page_boundaries: { type: "boolean", description: "Include deterministic HTML comments marking page boundaries. Default: true." },
             compact: { type: "boolean", description: "Opt into counted dot-leader, isolated page-number, and Unicode-letter spaced-hyphen normalizations. Default: false." },
+            emit_table_proposals: { type: "boolean", description: "Opt into emitting one bounded, deterministic table_proposals packet per abandoned table region (TABLE_TOPOLOGY_UNKNOWN or TABLE_RULING_UNSUPPORTED), carrying the region's text items, ruled and painted evidence, header hints, page, bbox, coordinate_space, and a source-and-IR-bound proposal_token so a host model can propose a structure for later read-only verification. Additive: the abstention gap is unchanged and default output stays byte-identical. Default: false." },
             output_path: { type: "string", description: "Optional absolute .md path, or ~/ path. The file is written only after complete bytes are staged and verified." },
             overwrite: { type: "boolean", description: "Replace an existing output_path only when its exact expected_output_identity is also supplied. Default: false." },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
@@ -5372,6 +5373,7 @@ async function handleToolCall(request) {
           "max_markdown_bytes",
           "include_page_boundaries",
           "compact",
+          "emit_table_proposals",
           "output_path",
           "overwrite",
           "expected_output_identity",
@@ -5383,6 +5385,7 @@ async function handleToolCall(request) {
         const outputPathArgument = optionalStringArgument(markdownArgs.output_path, "output_path", { maxLength: 32768 });
         const includePageBoundaries = optionalBooleanArgument(markdownArgs.include_page_boundaries, "include_page_boundaries", true);
         const compact = optionalBooleanArgument(markdownArgs.compact, "compact", false);
+        const emitTableProposals = optionalBooleanArgument(markdownArgs.emit_table_proposals, "emit_table_proposals", false);
         const overwrite = optionalBooleanArgument(markdownArgs.overwrite, "overwrite", false);
         const expectedOutputIdentity = normalizeExpectedOutputIdentity(
           markdownArgs.expected_output_identity,
@@ -5441,6 +5444,7 @@ async function handleToolCall(request) {
             includePageBoundaries,
             maxMarkdownBytes,
             compact,
+            emitTableProposals,
           });
           const pagesNeedingVision = deriveMarkdownVisionRouting(layout);
 
@@ -5461,10 +5465,31 @@ async function handleToolCall(request) {
             });
           }
 
+          // Verified-vision (B1): the renderer emits token-free region
+          // descriptors under `table_proposal_regions` only when opt-in. The
+          // handler owns source identity, so it binds each region to this exact
+          // document with a proposal_token = SHA-256 of a canonical
+          // (source sha256, IR version, region_id) string, and re-keys the
+          // descriptors to `table_proposals`. The intermediate key never
+          // reaches the payload. When the flag is off there is no key at all,
+          // so the structured result stays byte-identical to prior behavior.
+          const { table_proposal_regions: tableProposalRegions, ...renderedPayload } = rendered;
+          let tableProposals;
+          if (tableProposalRegions !== undefined) {
+            const tokenSourceSha256 = rendered.provenance.source.sha256;
+            const tokenIrVersion = rendered.provenance.layout.version;
+            tableProposals = tableProposalRegions.map(region => ({
+              ...region,
+              proposal_token: createHash("sha256")
+                .update([tokenSourceSha256, tokenIrVersion, region.region_id].join("\n"), "utf8")
+                .digest("hex"),
+            }));
+          }
           const payload = {
-            ...rendered,
+            ...renderedPayload,
             pages_needing_vision: pagesNeedingVision,
             saved_output: savedOutput,
+            ...(tableProposals !== undefined ? { table_proposals: tableProposals } : {}),
           };
           const summary = [
             `Converted pages ${layout.page_range.start_page}-${layout.page_range.end_page} of ${fileName} to deterministic Markdown.`,
