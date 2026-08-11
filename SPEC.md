@@ -1,7 +1,7 @@
 # SPEC — Verified Vision B1: proposal-packet emission
 
 Bead: `pdf-toolkit-mcp-14o.2` (child of epic `pdf-toolkit-mcp-14o`)
-Branch: `claude/verified-vision-b1-proposal-packet` (from `windows-canvas-latch` @ d734f74 — the branch that carries IR 1.5.0, painted_rectangles, and both table gap codes; master does NOT have this machinery yet).
+Branch: `claude/verified-vision-b1-proposal-packet` (refreshed onto `origin/master` @ 0600e32, which now carries IR 1.5.0, painted_rectangles, and both table gap codes; original implementation base was `windows-canvas-latch` @ d734f74).
 Lane host: silvercloud VM. node_modules is a symlink to the canonical clone — do NOT run npm/pnpm install here.
 
 ## Context (why this lane exists)
@@ -77,4 +77,4 @@ All six acceptance assertions pass; convert/markdown/share suites green; opt-in 
 
 - The 6 no-header-evidence real-world cases are where header misclassification (a text-conserving error) hides. B1 ships header evidence; it does not decide headers.
 - The packet is untrusted-input bait for B2: B2 must re-derive geometry from source bytes and must not trust packet contents. Do not design the packet in a way that tempts B2 to trust it.
-- Epic-level dependency: verified-vision (14o) depends on the extraction-intelligence machinery (IR 1.5.0, painted_rectangles) which is on `windows-canvas-latch`, not yet on `master`. Integration (B5) must target whatever branch carries that machinery.
+- Historical base correction: the first lane was moved from stale local `master` to `windows-canvas-latch` because the needed extraction machinery was absent from that local branch. Refreshed remote `origin/master` now contains the machinery, so that dependency is resolved. Any future refresh still changes the review SHA and requires fresh exact-SHA gates.
