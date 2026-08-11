@@ -344,7 +344,23 @@ setInterval(() => {}, 1000);
     );
   });
 
-  it("kills and reaps an active system renderer before the worker exits on SIGTERM", async () => {
+  // Each terminal signal promises one exit code, and a shutdown that kills its
+  // own renderer child must not report itself as a crash. Both halves failed on
+  // Node 20 before the shutdown fault guard landed, on every one of these three
+  // signals: the deliberately killed child rejected the host's top-level await,
+  // and Node's fatal path beat the deliberate exit, so an orderly shutdown left
+  // exit code 1 and a stack trace on stderr. Node 22 happened to win the same
+  // race the other way, which is why only Node 20 ever showed it. Read the exit
+  // status and the host's real stderr off the process rather than restating
+  // either, so the runtime that loses the race cannot pass.
+  it.each([
+    ["SIGHUP", 129],
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+  ])("kills and reaps an active system renderer before the worker exits on %s", async (
+    signal,
+    expectedExitCode,
+  ) => {
     if (process.platform === "win32") return;
     const { root, filename: rendererPath } = await fixtureScript(`
 import fs from "node:fs";
@@ -371,15 +387,22 @@ await runSystemCommand(process.execPath, [
     const host = spawn(process.execPath, [hostPath], {
       cwd: root,
       env: { HOME: root, LANG: "C", PATH: process.env.PATH ?? "" },
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "pipe"],
     });
     hosts.add(host);
+    const stderrChunks = [];
+    host.stderr.on("data", chunk => stderrChunks.push(chunk));
     const rendererPid = Number((await waitForFile(pidPath)).trim());
     const closed = once(host, "close");
-    expect(host.kill("SIGTERM")).toBe(true);
+    expect(host.kill(signal)).toBe(true);
     const [exitCode, exitSignal] = await closed;
     hosts.delete(host);
-    expect({ exitCode, exitSignal }).toEqual({ exitCode: 143, exitSignal: null });
+    const stderr = Buffer.concat(stderrChunks).toString("utf8");
+    expect({ exitCode, exitSignal, stderr }).toEqual({
+      exitCode: expectedExitCode,
+      exitSignal: null,
+      stderr: "",
+    });
     expect(() => process.kill(rendererPid, 0)).toThrow(
       expect.objectContaining({ code: "ESRCH" }),
     );
