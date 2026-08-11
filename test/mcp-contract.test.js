@@ -140,7 +140,7 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // only source identity plus structural item assignments, reparses the current
 // PDF, and publishes an explicit non-unique-topology claim boundary. Previously
 // a4d831d49d97c8605c06bda0fccad7bcbd399106b9fb980040a1b5f25e7a1e4b.
-const TOOL_CONTRACT_SHA256 = "3ef3d5de4b09e8cd13024f3872460f1c12a6abc96f0fc2f1bacfccbb7bfe699b";
+const TOOL_CONTRACT_SHA256 = "c245597fbea9a4bae0d143d823da77c73c055b7424e5817606ec88aa4ec1beec";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

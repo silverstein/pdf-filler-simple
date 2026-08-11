@@ -7,6 +7,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  evaluateTableGridConsistency,
   validateTableProposalVerificationResult,
   verifyTableProposalAgainstRegion,
 } from "../server/table-proposal-verification.js";
@@ -15,6 +16,7 @@ const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..
 const FIXTURE_ROOT = path.join(REPO_ROOT, "test/fixtures/eval/verified-vision");
 const BORDERLESS = path.join(FIXTURE_ROOT, "table-borderless-ambiguous.pdf");
 const LINES = path.join(FIXTURE_ROOT, "table-ruled-lines.pdf");
+const MERGED = path.join(FIXTURE_ROOT, "table-ruled-merged-negative.pdf");
 
 function tokenFor(packet, result) {
   return createHash("sha256")
@@ -56,6 +58,8 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
   let borderlessCells;
   let linePacket;
   let lineToken;
+  let mergedPacket;
+  let mergedToken;
 
   beforeAll(async () => {
     proposals = JSON.parse(await readFile(
@@ -89,6 +93,13 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
     });
     linePacket = lines.structuredContent.table_proposals[0];
     lineToken = tokenFor(linePacket, lines);
+
+    const merged = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: MERGED, max_markdown_bytes: 200000, emit_table_proposals: true },
+    });
+    mergedPacket = merged.structuredContent.table_proposals[0];
+    mergedToken = tokenFor(mergedPacket, merged);
   }, 30_000);
 
   afterAll(async () => {
@@ -199,6 +210,7 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
       );
       expect(result.structuredContent.status).toBe("rejected");
       expect(result.structuredContent.reason_codes).toContain("TABLE_PROPOSAL_HEADER_UNSUPPORTED");
+      expect(result.structuredContent.reason_codes).toContain("TABLE_PROPOSAL_TOPOLOGY_AMBIGUOUS");
       expect(result.structuredContent.table).toBeNull();
     }
   }, 30_000);
@@ -217,11 +229,16 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
       page: 1,
       reason: "TABLE_TOPOLOGY_UNKNOWN",
       text_items: [
-        { id: "i1", text: "NA", reading_order_index: 0, line_id: "l1" },
-        { id: "i2", text: "ME", reading_order_index: 1, line_id: "l1" },
-        { id: "i3", text: "VALUE", reading_order_index: 2, line_id: "l1" },
-        { id: "i4", text: "North", reading_order_index: 3, line_id: "l2" },
-        { id: "i5", text: "1200", reading_order_index: 4, line_id: "l2" },
+        { id: "i1", text: "NA", reading_order_index: 0, line_id: "l1", bbox: { x: 10, y: 10, width: 10, height: 8 } },
+        { id: "i2", text: "ME", reading_order_index: 1, line_id: "l1", bbox: { x: 21, y: 10, width: 10, height: 8 } },
+        { id: "i3", text: "VALUE", reading_order_index: 2, line_id: "l1", bbox: { x: 60, y: 10, width: 20, height: 8 } },
+        { id: "i4", text: "North", reading_order_index: 3, line_id: "l2", bbox: { x: 10, y: 40, width: 20, height: 8 } },
+        { id: "i5", text: "1200", reading_order_index: 4, line_id: "l2", bbox: { x: 60, y: 40, width: 20, height: 8 } },
+      ],
+      bbox: { x: 10, y: 10, width: 70, height: 38 },
+      ruling_segments: [
+        { orientation: "vertical", x1: 50, y1: 0, x2: 50, y2: 60, source_operator_index: 1 },
+        { orientation: "horizontal", x1: 0, y1: 30, x2: 90, y2: 30, source_operator_index: 2 },
       ],
       header_hints: { status: "available", first_row_band: "taller_than_body" },
       truncation: { text_items: "complete", ruled_rects: "complete", ruling_segments: "complete", painted_rectangles: "complete" },
@@ -246,10 +263,116 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
     expect(result.reason_codes).toEqual([]);
     expect(result.table.cells.map(cell => cell.text)).toEqual(["NAME", "VALUE", "North", "1200"]);
     expect(result.table.content_origin).toBe("reparsed_pdf_text_layer");
-    expect(result.claim_boundary).toContain("topology is not proven unique");
+    expect(result.claim_boundary).toContain("Consistency is not proof of unique topology");
   });
 
-  it("9. rejects caller-supplied text, geometry, and unknown top-level arguments", async () => {
+  it("9. B3 accepts the authored merged span and rejects both text-conserving topology errors", async () => {
+    const authored = proposals.find(proposal => proposal.id === "merged-span-authored-control");
+    const invented = proposals.find(proposal => proposal.id === "merged-span-invented-header-cut");
+    const columnMerge = proposals.find(proposal => proposal.id === "line-table-column-merge");
+
+    const authoredResult = await verify(
+      MERGED,
+      mergedPacket,
+      mergedToken,
+      cellsFromReferences(mergedPacket, authored),
+    );
+    expect(authoredResult.structuredContent.status).toBe("accepted");
+    expect(authoredResult.structuredContent.reason_codes).toEqual([]);
+    expect(authoredResult.structuredContent.table).toMatchObject({ row_count: 4, column_count: 3 });
+    expect(authoredResult.structuredContent.checks).toMatchObject({
+      rectangular_grid: "passed",
+      cut_line_consistency: "passed",
+      ruled_line_agreement: "passed",
+      topology_ambiguity: "passed",
+      header_evidence: "passed",
+    });
+
+    const inventedResult = await verify(
+      MERGED,
+      mergedPacket,
+      mergedToken,
+      cellsFromReferences(mergedPacket, invented),
+    );
+    expect(inventedResult.structuredContent.status).toBe("rejected");
+    expect(inventedResult.structuredContent.reason_codes).toContain("TABLE_PROPOSAL_RULING_CONFLICT");
+    expect(inventedResult.structuredContent.reason_codes).not.toContain("TABLE_PROPOSAL_HEADER_UNSUPPORTED");
+
+    const mergeResult = await verify(
+      LINES,
+      linePacket,
+      lineToken,
+      cellsFromReferences(linePacket, columnMerge),
+    );
+    expect(mergeResult.structuredContent.status).toBe("rejected");
+    expect(mergeResult.structuredContent.reason_codes).toEqual(expect.arrayContaining([
+      "TABLE_PROPOSAL_CUTS_INCONSISTENT",
+      "TABLE_PROPOSAL_RULING_CONFLICT",
+    ]));
+    expect(mergeResult.structuredContent.reason_codes).not.toContain("TABLE_PROPOSAL_HEADER_UNSUPPORTED");
+
+    // Incremental seeded catch delta: coverage/one-cell/order/header all pass
+    // these two text-conserving proposals; only B3's geometry checks reject.
+    for (const result of [inventedResult, mergeResult]) {
+      expect(result.structuredContent.checks).toMatchObject({
+        coverage: "passed",
+        one_cell: "passed",
+        row_non_straddle: "passed",
+        row_order: "passed",
+        column_order: "passed",
+        header_evidence: "passed",
+      });
+    }
+  }, 45_000);
+
+  it("10. B3 refuses grid holes, overlaps, excessive slot surfaces, and evidence-free topology", () => {
+    const region = {
+      bbox: { x: 0, y: 0, width: 100, height: 100 },
+      ruling_segments: [
+        { orientation: "vertical", x1: 50, y1: 0, x2: 50, y2: 100, source_operator_index: 1 },
+        { orientation: "horizontal", x1: 0, y1: 50, x2: 100, y2: 50, source_operator_index: 2 },
+      ],
+    };
+    const itemById = new Map([
+      ["i1", { id: "i1", bbox: { x: 10, y: 10, width: 10, height: 10 } }],
+      ["i2", { id: "i2", bbox: { x: 60, y: 60, width: 10, height: 10 } }],
+    ]);
+    const hole = evaluateTableGridConsistency({
+      region,
+      itemById,
+      cells: [
+        { row: 0, column: 0, rowspan: 1, colspan: 1, item_ids: ["i1"] },
+        { row: 1, column: 1, rowspan: 1, colspan: 1, item_ids: ["i2"] },
+      ],
+    });
+    expect(hole.reasons).toEqual(["TABLE_PROPOSAL_GRID_INVALID"]);
+
+    const overlap = evaluateTableGridConsistency({
+      region,
+      itemById,
+      cells: [
+        { row: 0, column: 0, rowspan: 1, colspan: 2, item_ids: ["i1"] },
+        { row: 0, column: 1, rowspan: 1, colspan: 1, item_ids: ["i2"] },
+      ],
+    });
+    expect(overlap.reasons).toEqual(["TABLE_PROPOSAL_GRID_INVALID"]);
+
+    const excessive = evaluateTableGridConsistency({
+      region,
+      itemById,
+      cells: [{ row: 0, column: 0, rowspan: 101, colspan: 100, item_ids: ["i1", "i2"] }],
+    });
+    expect(excessive.reasons).toEqual(["TABLE_PROPOSAL_GRID_INVALID"]);
+
+    const ambiguous = evaluateTableGridConsistency({
+      region: { ...region, ruling_segments: [] },
+      itemById,
+      cells: [{ row: 0, column: 0, rowspan: 1, colspan: 1, item_ids: ["i1", "i2"] }],
+    });
+    expect(ambiguous.reasons).toEqual(["TABLE_PROPOSAL_TOPOLOGY_AMBIGUOUS"]);
+  });
+
+  it("11. rejects caller-supplied text, geometry, and unknown top-level arguments", async () => {
     const textCells = structuredClone(borderlessCells);
     textCells[0].text = "invented";
     const textResult = await verify(BORDERLESS, borderlessPacket, borderlessToken, textCells);
@@ -270,7 +393,7 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
     expect(unknownResult.isError).toBe(true);
   }, 30_000);
 
-  it("10. is deterministic across repeated full source replays", async () => {
+  it("12. is deterministic across repeated full source replays", async () => {
     const first = await verify(BORDERLESS, borderlessPacket, borderlessToken, borderlessCells);
     const second = await verify(BORDERLESS, borderlessPacket, borderlessToken, borderlessCells);
     expect(JSON.stringify(second.structuredContent)).toBe(JSON.stringify(first.structuredContent));

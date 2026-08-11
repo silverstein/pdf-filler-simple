@@ -3367,7 +3367,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
       },
       {
         name: "verify_table_proposal",
-        description: "Deterministically check an untrusted table-structure proposal against a fresh, independently source-validated parse of the current PDF. The caller supplies only a B1 region/token identity and item-to-cell assignments; text, geometry, header evidence, and packet fields are regenerated from source bytes. Acceptance means source-derived content passed the B2 coverage, one-cell, row/column-order, and independent-header predicates. It does not prove unique topology; B3 grid-consistency checks remain required. No OCR, model, network, mutation, or numeric confidence.",
+        description: "Deterministically check an untrusted table-structure proposal against a fresh, independently source-validated parse of the current PDF. The caller supplies only a region/token identity and item-to-cell assignments; text, geometry, header evidence, and packet fields are regenerated from source bytes. Acceptance means source-derived content passed coverage and ordering checks and the rectangular grid agrees with every available source ruling segment. Borderless or otherwise ambiguous geometry rejects. Consistency does not prove unique topology. No OCR, model, network, mutation, or numeric confidence.",
         inputSchema: {
           type: "object",
           additionalProperties: false,
@@ -5661,7 +5661,7 @@ async function handleToolCall(request) {
             cells,
           });
           const summary = payload.status === "accepted"
-            ? `Accepted proposal ${regionId} against a fresh source parse. Cell content was rebuilt only from the PDF text layer. Topology is not proven unique and still requires B3 grid-consistency checks.`
+            ? `Accepted proposal ${regionId} against a fresh source parse. Cell content was rebuilt only from the PDF text layer, and the grid is consistent with every available source ruling segment. Consistency does not prove unique topology.`
             : `Rejected proposal ${regionId} against a fresh source parse: ${payload.reason_codes.join(", ")}. No table content was emitted.`;
           return {
             content: [{ type: "text", text: summary }],

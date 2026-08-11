@@ -2,11 +2,11 @@ import { timingSafeEqual } from "node:crypto";
 
 export const TABLE_PROPOSAL_VERIFIER = Object.freeze({
   name: "pdf-tools.table-proposal-verifier",
-  version: "0.1.0",
+  version: "0.2.0",
 });
 
 export const TABLE_PROPOSAL_CLAIM_BOUNDARY =
-  "Accepted cell content is constructed only from reparsed source text items and the proposal passed the B2 renderer predicates. Table topology is not proven unique and still requires the B3 grid-consistency checks.";
+  "Accepted cell content is constructed only from reparsed source text items, and the proposed grid is well formed and consistent with all source-replayed ruling geometry available. Consistency is not proof of unique topology; ambiguous or unsupported geometry is rejected.";
 
 export const TABLE_PROPOSAL_REASON_CODES = Object.freeze([
   "TABLE_PROPOSAL_TOKEN_MISMATCH",
@@ -21,10 +21,17 @@ export const TABLE_PROPOSAL_REASON_CODES = Object.freeze([
   "TABLE_PROPOSAL_ROW_ORDER",
   "TABLE_PROPOSAL_COLUMN_ORDER",
   "TABLE_PROPOSAL_HEADER_UNSUPPORTED",
+  "TABLE_PROPOSAL_GRID_INVALID",
+  "TABLE_PROPOSAL_CUTS_INCONSISTENT",
+  "TABLE_PROPOSAL_RULING_CONFLICT",
+  "TABLE_PROPOSAL_TOPOLOGY_AMBIGUOUS",
 ]);
 
 export const MAX_TABLE_PROPOSAL_CELLS = 1000;
 export const MAX_TABLE_PROPOSAL_ITEM_IDS_PER_CELL = 400;
+export const MAX_TABLE_PROPOSAL_GRID_SLOTS = 10_000;
+
+const RULING_TOLERANCE = 1;
 
 const CHECK_NAMES = Object.freeze([
   "token_binding",
@@ -35,6 +42,10 @@ const CHECK_NAMES = Object.freeze([
   "row_non_straddle",
   "row_order",
   "column_order",
+  "rectangular_grid",
+  "cut_line_consistency",
+  "ruled_line_agreement",
+  "topology_ambiguity",
   "header_evidence",
   "content_source",
 ]);
@@ -122,6 +133,200 @@ function orderCells(cells) {
 
 function addReason(reasons, reason) {
   if (!reasons.includes(reason)) reasons.push(reason);
+}
+
+function finiteBox(box) {
+  return box && typeof box === "object" && !Array.isArray(box)
+    && Number.isFinite(box.x) && Number.isFinite(box.y)
+    && Number.isFinite(box.width) && box.width >= 0
+    && Number.isFinite(box.height) && box.height >= 0;
+}
+
+function clusterRulingSegments(segments, orientation) {
+  const candidates = segments
+    .filter(segment => segment?.orientation === orientation)
+    .map(segment => ({
+      position: orientation === "vertical"
+        ? (segment.x1 + segment.x2) / 2 : (segment.y1 + segment.y2) / 2,
+      segment,
+    }))
+    .filter(candidate => Number.isFinite(candidate.position))
+    .sort((left, right) => left.position - right.position
+      || left.segment.source_operator_index - right.segment.source_operator_index);
+  const clusters = [];
+  for (const candidate of candidates) {
+    const cluster = clusters.at(-1);
+    if (cluster && Math.abs(candidate.position - cluster.position) <= RULING_TOLERANCE) {
+      cluster.segments.push(candidate.segment);
+      cluster.position = cluster.segments.reduce((sum, segment) => sum + (
+        orientation === "vertical" ? (segment.x1 + segment.x2) / 2 : (segment.y1 + segment.y2) / 2
+      ), 0) / cluster.segments.length;
+    } else {
+      clusters.push({ position: candidate.position, segments: [candidate.segment] });
+    }
+  }
+  return clusters;
+}
+
+function segmentCoversSample(segment, orientation, sample) {
+  const first = orientation === "vertical" ? segment.y1 : segment.x1;
+  const second = orientation === "vertical" ? segment.y2 : segment.x2;
+  return sample >= Math.min(first, second) - RULING_TOLERANCE
+    && sample <= Math.max(first, second) + RULING_TOLERANCE;
+}
+
+function gridOccupancy(cells) {
+  const rowCount = Math.max(0, ...cells.map(cell => cell.row + cell.rowspan));
+  const columnCount = Math.max(0, ...cells.map(cell => cell.column + cell.colspan));
+  if (rowCount < 1 || columnCount < 1 || rowCount * columnCount > MAX_TABLE_PROPOSAL_GRID_SLOTS) {
+    return { valid: false, rowCount, columnCount, slots: new Map() };
+  }
+  const slots = new Map();
+  let valid = true;
+  cells.forEach((cell, cellIndex) => {
+    if (cell.row + cell.rowspan > rowCount || cell.column + cell.colspan > columnCount) valid = false;
+    for (let row = cell.row; row < cell.row + cell.rowspan; row += 1) {
+      for (let column = cell.column; column < cell.column + cell.colspan; column += 1) {
+        const key = `${row}:${column}`;
+        if (slots.has(key)) valid = false;
+        else slots.set(key, cellIndex);
+      }
+    }
+  });
+  if (slots.size !== rowCount * columnCount) valid = false;
+  return { valid, rowCount, columnCount, slots };
+}
+
+function intervalSamples(region, cuts, axis) {
+  if (!finiteBox(region.bbox)) return null;
+  const start = axis === "x" ? region.bbox.x : region.bbox.y;
+  const end = start + (axis === "x" ? region.bbox.width : region.bbox.height);
+  const positions = cuts.map(cut => cut.position);
+  if (positions.some((position, index) => !Number.isFinite(position)
+    || (index > 0 && position <= positions[index - 1])
+    || position <= start - RULING_TOLERANCE
+    || position >= end + RULING_TOLERANCE)) return null;
+  const bounds = [start, ...positions, end];
+  return bounds.slice(0, -1).map((value, index) => (value + bounds[index + 1]) / 2);
+}
+
+function interiorRulingCuts(region, cuts, axis) {
+  if (!finiteBox(region.bbox)) return [];
+  const start = axis === "x" ? region.bbox.x : region.bbox.y;
+  const end = start + (axis === "x" ? region.bbox.width : region.bbox.height);
+  return cuts.filter(cut => cut.position > start + RULING_TOLERANCE
+    && cut.position < end - RULING_TOLERANCE);
+}
+
+function itemFitsCellCuts(item, cell, verticalCuts, horizontalCuts, rowCount, columnCount) {
+  if (!finiteBox(item.bbox)) return false;
+  const left = cell.column === 0 ? -Infinity : verticalCuts[cell.column - 1]?.position;
+  const rightIndex = cell.column + cell.colspan;
+  const right = rightIndex === columnCount ? Infinity : verticalCuts[rightIndex - 1]?.position;
+  const top = cell.row === 0 ? -Infinity : horizontalCuts[cell.row - 1]?.position;
+  const bottomIndex = cell.row + cell.rowspan;
+  const bottom = bottomIndex === rowCount ? Infinity : horizontalCuts[bottomIndex - 1]?.position;
+  if (![left, right, top, bottom].every(value => value === Infinity || value === -Infinity || Number.isFinite(value))) return false;
+  return item.bbox.x >= left - RULING_TOLERANCE
+    && item.bbox.x + item.bbox.width <= right + RULING_TOLERANCE
+    && item.bbox.y >= top - RULING_TOLERANCE
+    && item.bbox.y + item.bbox.height <= bottom + RULING_TOLERANCE;
+}
+
+/**
+ * Pure B3 proof over a source-regenerated region. Exported so the adversarial
+ * eval can quantify the incremental catch rate without exposing a public
+ * verifier bypass.
+ */
+export function evaluateTableGridConsistency({ region, cells, itemById }) {
+  const checks = {
+    rectangular_grid: "not_run",
+    cut_line_consistency: "not_run",
+    ruled_line_agreement: "not_run",
+    topology_ambiguity: "not_run",
+  };
+  const reasons = [];
+  const occupancy = gridOccupancy(cells);
+  checks.rectangular_grid = occupancy.valid ? "passed" : "failed";
+  if (!occupancy.valid) {
+    addReason(reasons, "TABLE_PROPOSAL_GRID_INVALID");
+    return { checks, reasons, ruledHeaderEvidence: false };
+  }
+
+  const rulingSegments = Array.isArray(region.ruling_segments) ? region.ruling_segments : [];
+  const verticalCuts = interiorRulingCuts(
+    region,
+    clusterRulingSegments(rulingSegments, "vertical"),
+    "x",
+  );
+  const horizontalCuts = interiorRulingCuts(
+    region,
+    clusterRulingSegments(rulingSegments, "horizontal"),
+    "y",
+  );
+  if (verticalCuts.length === 0 && horizontalCuts.length === 0) {
+    checks.topology_ambiguity = "failed";
+    addReason(reasons, "TABLE_PROPOSAL_TOPOLOGY_AMBIGUOUS");
+    return { checks, reasons, ruledHeaderEvidence: false };
+  }
+  checks.topology_ambiguity = "passed";
+
+  const columnSamples = intervalSamples(region, verticalCuts, "x");
+  const rowSamples = intervalSamples(region, horizontalCuts, "y");
+  const firstRowCut = horizontalCuts[0];
+  const sourceRuledHeaderEvidence = firstRowCut !== undefined
+    && Array.isArray(columnSamples)
+    && columnSamples.length > 0
+    && columnSamples.every(sample => firstRowCut.segments.some(segment => (
+      segmentCoversSample(segment, "horizontal", sample)
+    )));
+  const dimensionsMatch = verticalCuts.length === occupancy.columnCount - 1
+    && horizontalCuts.length === occupancy.rowCount - 1
+    && columnSamples?.length === occupancy.columnCount
+    && rowSamples?.length === occupancy.rowCount;
+  const itemsFit = dimensionsMatch && cells.every(cell => cell.item_ids.every(id => (
+    itemById.has(id)
+      && itemFitsCellCuts(
+        itemById.get(id),
+        cell,
+        verticalCuts,
+        horizontalCuts,
+        occupancy.rowCount,
+        occupancy.columnCount,
+      )
+  )));
+  checks.cut_line_consistency = dimensionsMatch && itemsFit ? "passed" : "failed";
+  if (checks.cut_line_consistency === "failed") {
+    addReason(reasons, "TABLE_PROPOSAL_CUTS_INCONSISTENT");
+    if (verticalCuts.length > occupancy.columnCount - 1
+      || horizontalCuts.length > occupancy.rowCount - 1) {
+      checks.ruled_line_agreement = "failed";
+      addReason(reasons, "TABLE_PROPOSAL_RULING_CONFLICT");
+    }
+    return { checks, reasons, ruledHeaderEvidence: sourceRuledHeaderEvidence };
+  }
+
+  let rulingConflict = false;
+  verticalCuts.forEach((cut, boundaryIndex) => {
+    rowSamples.forEach((sample, row) => {
+      const proposalHasBoundary = occupancy.slots.get(`${row}:${boundaryIndex}`)
+        !== occupancy.slots.get(`${row}:${boundaryIndex + 1}`);
+      const sourceHasBoundary = cut.segments.some(segment => segmentCoversSample(segment, "vertical", sample));
+      if (proposalHasBoundary !== sourceHasBoundary) rulingConflict = true;
+    });
+  });
+  horizontalCuts.forEach((cut, boundaryIndex) => {
+    columnSamples.forEach((sample, column) => {
+      const proposalHasBoundary = occupancy.slots.get(`${boundaryIndex}:${column}`)
+        !== occupancy.slots.get(`${boundaryIndex + 1}:${column}`);
+      const sourceHasBoundary = cut.segments.some(segment => segmentCoversSample(segment, "horizontal", sample));
+      if (proposalHasBoundary !== sourceHasBoundary) rulingConflict = true;
+    });
+  });
+  checks.ruled_line_agreement = rulingConflict ? "failed" : "passed";
+  if (rulingConflict) addReason(reasons, "TABLE_PROPOSAL_RULING_CONFLICT");
+
+  return { checks, reasons, ruledHeaderEvidence: sourceRuledHeaderEvidence };
 }
 
 /**
@@ -252,14 +457,24 @@ export function verifyTableProposalAgainstRegion({
   if (rowOrderInvalid) addReason(reasons, "TABLE_PROPOSAL_ROW_ORDER");
   if (columnOrderInvalid) addReason(reasons, "TABLE_PROPOSAL_COLUMN_ORDER");
 
+  let ruledHeaderEvidence = false;
+  const gridEligible = !invalidCell && !unknown && !duplicated && !missing;
+  if (gridEligible) {
+    const grid = evaluateTableGridConsistency({ region, cells: orderedCells, itemById });
+    Object.assign(checks, grid.checks);
+    for (const reason of grid.reasons) addReason(reasons, reason);
+    ruledHeaderEvidence = grid.ruledHeaderEvidence;
+  }
+
   const firstSourceLine = assignedItems[0]?.line_id ?? null;
   const firstSourceRows = assignedItems
     .filter(item => item.line_id === firstSourceLine)
     .map(item => assignments.get(item.id).row);
-  const headerEvidence = region.header_hints?.status === "available"
-    && region.header_hints.first_row_band === "taller_than_body"
-    && firstSourceRows.length > 0
-    && firstSourceRows.every(row => row === 0);
+  const firstLineIsHeader = firstSourceRows.length > 0 && firstSourceRows.every(row => row === 0);
+  const headerEvidence = firstLineIsHeader && (ruledHeaderEvidence || (
+    region.header_hints?.status === "available"
+      && region.header_hints.first_row_band === "taller_than_body"
+  ));
   checks.header_evidence = headerEvidence ? "passed" : "failed";
   if (!headerEvidence) addReason(reasons, "TABLE_PROPOSAL_HEADER_UNSUPPORTED");
 
@@ -359,7 +574,7 @@ export function validateTableProposalVerificationResult(result) {
     assertion(result.reason_codes.length === 0, "accepted table proposal cannot carry rejection reasons");
     assertion(result.table && Array.isArray(result.table.cells), "accepted table proposal must carry a table");
     assertion(CHECK_NAMES.every(name => result.checks[name] === "passed"),
-      "accepted table proposal must pass every B2 check");
+      "accepted table proposal must pass every verifier check");
     assertion(result.table.content_origin === "reparsed_pdf_text_layer",
       "accepted table content origin mismatch");
   } else {
