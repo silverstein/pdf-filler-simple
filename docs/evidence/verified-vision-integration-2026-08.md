@@ -94,8 +94,23 @@ Pre-commit integration checks:
   reproducible SHA-256
   `5a2b356babd2b3266fa37a990ba6c34365d229fa6feba38413ae57e31eb946aa`.
 
-The aggregate `npm run test:all` result is recorded after running it on the
-committed B5 integration tree.
+Aggregate result on exact clean integration checkpoint
+`ccf6a77d9b962704cbfc58041767b9fdabad7c80`:
+
+- `npm run test:all` completed its Vitest partition with 143 files passed, 9
+  failed, and 7 skipped; 2,360 tests passed, 21 failed, and 152 skipped.
+- Every failure was a pre-existing fixed wall-clock or test timeout under a
+  16-core shared host at approximately 48 load: 5-second, 10-second, 15-second,
+  180-second, or 240-second ceilings. The four exact 15-second assertions
+  missed their bounds by 5–15 ms. No verified-vision test or wrong-result
+  assertion failed.
+- Per the aggregate runner contract, the native partition did not run after
+  Vitest returned nonzero. Run separately on the same clean checkpoint,
+  `npm run test:node-native` passed 61 tests, skipped 10 platform-specific
+  tests, and failed 0.
+- Aggregate-gate resource stability is tracked separately as
+  `pdf-toolkit-mcp-an4`; this evidence does not relabel the red aggregate run as
+  a pass or weaken the containment deadlines.
 
 ## Claim boundary
 
