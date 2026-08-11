@@ -366,7 +366,7 @@ describe("layout Markdown renderer", () => {
     // Previously cb581702fc7339b3eea5f15f31e49c907639622ef7c571b22870538598853572,
     // before the extraction IR version in the provenance envelope became 1.5.0.
     expect(createHash("sha256").update(serialized).digest("hex"))
-      .toBe("e5a35996c69239297339bc97433b52d6595caf5c360becb12d793828a78bd8b2");
+      .toBe("6bffa4e751cf6251c29fac76bac3e470caaa26014f68e852be060cc2002f0781");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,

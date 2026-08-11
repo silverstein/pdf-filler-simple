@@ -748,6 +748,21 @@ const layoutRuledRects = object({
   returned_count: { type: "integer", minimum: 0 },
   items: arrayOf(layoutRuledRect),
 });
+const layoutRulingSegment = object({
+  orientation: enumString(["horizontal", "vertical"]),
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  source_operator_index: { type: "integer", minimum: 0 },
+});
+const layoutRulingSegments = object({
+  status: enumString(["available", "unavailable"]),
+  truncated: boolean,
+  observed_count: { type: "integer", minimum: 0 },
+  returned_count: { type: "integer", minimum: 0 },
+  items: arrayOf(layoutRulingSegment),
+});
 const layoutOperatorCounts = nullable(object({
   image_paint_ops: { type: "integer", minimum: 0 },
   path_segments: { type: "integer", minimum: 0 },
@@ -806,6 +821,7 @@ const layoutPage = object({
   has_image_operations: nullable(boolean),
   has_vector_paint_operations: nullable(boolean),
   ruled_rects: layoutRuledRects,
+  ruling_segments: layoutRulingSegments,
   text_integrity: layoutTextIntegrity,
   operator_counts: layoutOperatorCounts,
   painted_rectangles: layoutPaintedRectangles,
@@ -875,6 +891,14 @@ const tableProposalRuledRect = object({
   height: number,
   verb: enumString(["fill", "stroke", "clip", "none"]),
 });
+const tableProposalRulingSegment = object({
+  orientation: enumString(["horizontal", "vertical"]),
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  source_operator_index: { type: "integer", minimum: 0 },
+});
 const tableProposalPaintedRect = object({
   id: string,
   bbox: layoutBox,
@@ -888,6 +912,7 @@ const tableProposalHeaderHints = object({
 const tableProposalTruncation = object({
   text_items: enumString(["complete", "truncated"]),
   ruled_rects: enumString(["complete", "truncated"]),
+  ruling_segments: enumString(["complete", "truncated"]),
   painted_rectangles: enumString(["complete", "truncated"]),
 });
 const tableProposalsDocumentTruncation = object({
@@ -904,6 +929,7 @@ const tableProposal = object({
   bbox: layoutBox,
   text_items: arrayOf(tableProposalTextItem),
   ruled_rects: arrayOf(tableProposalRuledRect),
+  ruling_segments: arrayOf(tableProposalRulingSegment),
   painted_rectangles: arrayOf(tableProposalPaintedRect),
   header_hints: tableProposalHeaderHints,
   truncation: tableProposalTruncation,
@@ -932,7 +958,7 @@ const tableProposalVerification = object({
   }),
   layout: object({
     name: { const: "pdf-tools.extraction-ir" },
-    version: { const: "1.5.0" },
+    version: { const: "1.6.0" },
     parser_name: { const: "pdfjs-dist" },
     parser_version: { const: "5.4.624" },
   }),
@@ -1004,7 +1030,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     truncated: boolean,
   }),
   read_pdf_layout: object({
-    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.5.0" } }),
+    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.6.0" } }),
     parser: object({ name: { const: "pdfjs-dist" }, version: { const: "5.4.624" } }),
     source: object({
       pdf_path: string,
@@ -1016,7 +1042,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       kind: { const: "source_parser_ir_options" },
       source_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       parser_version: { const: "5.4.624" },
-      ir_version: { const: "1.5.0" },
+      ir_version: { const: "1.6.0" },
       requested_start_page: integer,
       requested_end_page: integer,
       max_items: integer,
@@ -1071,7 +1097,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
         }),
         layout: object({
           name: { const: "pdf-tools.extraction-ir" },
-          version: { const: "1.5.0" },
+          version: { const: "1.6.0" },
           parser_name: { const: "pdfjs-dist" },
           parser_version: { const: "5.4.624" },
           page_range: object({

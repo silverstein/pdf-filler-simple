@@ -208,7 +208,7 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
     const source = { file_name: "synthetic.pdf", sha256: "b".repeat(64), size_bytes: 123 };
     const layout = {
       name: "pdf-tools.extraction-ir",
-      version: "1.5.0",
+      version: "1.6.0",
       parser_name: "pdfjs-dist",
       parser_version: "5.4.624",
     };
@@ -224,7 +224,7 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
         { id: "i5", text: "1200", reading_order_index: 4, line_id: "l2" },
       ],
       header_hints: { status: "available", first_row_band: "taller_than_body" },
-      truncation: { text_items: "complete", ruled_rects: "complete", painted_rectangles: "complete" },
+      truncation: { text_items: "complete", ruled_rects: "complete", ruling_segments: "complete", painted_rectangles: "complete" },
     };
     const result = verifyTableProposalAgainstRegion({
       source,

@@ -8,7 +8,7 @@ const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
   version: "1.14.0",
 });
-const SUPPORTED_LAYOUT_IR_VERSION = "1.5.0";
+const SUPPORTED_LAYOUT_IR_VERSION = "1.6.0";
 
 // Bounded geometric table inference. A run of adjacent lines is treated as a
 // table only when every row fills every detected column, so ragged or
@@ -57,6 +57,7 @@ const TABLE_PROPOSAL_COORDINATE_SPACE = "pdfjs_viewport_top_left_points";
 export const MAX_TABLE_PROPOSALS_PER_DOCUMENT = 50;
 export const MAX_TABLE_PROPOSAL_TEXT_ITEMS = 400;
 const MAX_TABLE_PROPOSAL_RULED_RECTS = 400;
+const MAX_TABLE_PROPOSAL_RULING_SEGMENTS = 400;
 const MAX_TABLE_PROPOSAL_PAINTED_RECTS = 400;
 
 const MAX_MARKDOWN_BYTES_LIMIT = 200_000;
@@ -1883,6 +1884,21 @@ function rectsOverlap(box, region) {
     && box.y + box.height > region.y;
 }
 
+function rulingSegmentOverlapsRegion(segment, region) {
+  const regionRight = region.x + region.width;
+  const regionBottom = region.y + region.height;
+  if (segment.orientation === "horizontal") {
+    return segment.y1 >= region.y - RULE_AXIS_TOLERANCE
+      && segment.y1 <= regionBottom + RULE_AXIS_TOLERANCE
+      && segment.x2 >= region.x - RULE_AXIS_TOLERANCE
+      && segment.x1 <= regionRight + RULE_AXIS_TOLERANCE;
+  }
+  return segment.x1 >= region.x - RULE_AXIS_TOLERANCE
+    && segment.x1 <= regionRight + RULE_AXIS_TOLERANCE
+    && segment.y2 >= region.y - RULE_AXIS_TOLERANCE
+    && segment.y1 <= regionBottom + RULE_AXIS_TOLERANCE;
+}
+
 function tableProposalTextItem(item) {
   return {
     id: item.id,
@@ -1966,6 +1982,21 @@ export function buildTableProposalRegion(page, run, reason, ordinal) {
     verb: rect.verb,
   }));
 
+  const rulingEvidence = page.ruling_segments && Array.isArray(page.ruling_segments.items)
+    ? page.ruling_segments.items.filter(segment => rulingSegmentOverlapsRegion(segment, bbox))
+    : [];
+  const rulingTruncated = page.ruling_segments?.status !== "available"
+    || page.ruling_segments?.truncated === true
+    || rulingEvidence.length > MAX_TABLE_PROPOSAL_RULING_SEGMENTS;
+  const rulingSegments = rulingEvidence.slice(0, MAX_TABLE_PROPOSAL_RULING_SEGMENTS).map(segment => ({
+    orientation: segment.orientation,
+    x1: segment.x1,
+    y1: segment.y1,
+    x2: segment.x2,
+    y2: segment.y2,
+    source_operator_index: segment.source_operator_index,
+  }));
+
   const paintedEvidence = page.painted_rectangles && Array.isArray(page.painted_rectangles.items)
     ? page.painted_rectangles.items.filter(painted => painted.bbox && rectsOverlap(painted.bbox, bbox))
     : [];
@@ -1983,11 +2014,13 @@ export function buildTableProposalRegion(page, run, reason, ordinal) {
     bbox,
     text_items: textItems,
     ruled_rects: ruledRects,
+    ruling_segments: rulingSegments,
     painted_rectangles: paintedRectangles,
     header_hints: tableProposalHeaderHints(run),
     truncation: {
       text_items: itemsTruncated ? "truncated" : "complete",
       ruled_rects: ruledTruncated ? "truncated" : "complete",
+      ruling_segments: rulingTruncated ? "truncated" : "complete",
       painted_rectangles: paintedTruncated ? "truncated" : "complete",
     },
   };
@@ -2631,6 +2664,19 @@ function validateTableProposals(proposals, { requireToken }) {
         "table proposal ruled rect verb is invalid");
     }
 
+    assertion(Array.isArray(proposal.ruling_segments)
+      && proposal.ruling_segments.length <= MAX_TABLE_PROPOSAL_RULING_SEGMENTS,
+    "table proposal ruling_segments exceed the cap");
+    let priorRulingOperator = -1;
+    for (const segment of proposal.ruling_segments) {
+      assertion(segment && ["horizontal", "vertical"].includes(segment.orientation)
+        && [segment.x1, segment.y1, segment.x2, segment.y2].every(isFiniteNumber)
+        && Number.isInteger(segment.source_operator_index)
+        && segment.source_operator_index >= priorRulingOperator,
+      "table proposal ruling segment is invalid");
+      priorRulingOperator = segment.source_operator_index;
+    }
+
     assertion(Array.isArray(proposal.painted_rectangles)
       && proposal.painted_rectangles.length <= MAX_TABLE_PROPOSAL_PAINTED_RECTS,
     "table proposal painted_rectangles exceed the cap");
@@ -2654,7 +2700,7 @@ function validateTableProposals(proposals, { requireToken }) {
     const truncation = proposal.truncation;
     assertion(truncation && typeof truncation === "object" && !Array.isArray(truncation),
       "table proposal truncation must be an object");
-    for (const key of ["text_items", "ruled_rects", "painted_rectangles"]) {
+    for (const key of ["text_items", "ruled_rects", "ruling_segments", "painted_rectangles"]) {
       assertion(["complete", "truncated"].includes(truncation[key]),
         `table proposal truncation.${key} is invalid`);
     }

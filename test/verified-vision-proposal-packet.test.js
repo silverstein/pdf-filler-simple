@@ -121,6 +121,20 @@ describe("verified-vision proposal-packet emission (B1)", () => {
     // Ruled evidence intersecting the region is present; painted evidence is empty here.
     expect(packet.ruled_rects.length).toBe(1);
     expect(packet.ruled_rects[0].verb).toBe("stroke");
+    expect(packet.ruling_segments).toContainEqual({
+      orientation: "vertical",
+      x1: 372,
+      y1: 160,
+      x2: 372,
+      y2: 304,
+      source_operator_index: 19,
+    });
+    expect(packet.ruling_segments).not.toContainEqual(expect.objectContaining({
+      orientation: "vertical",
+      x1: 372,
+      y1: 112,
+      y2: 304,
+    }));
     expect(packet.painted_rectangles).toEqual([]);
 
     // Header hints ship the IR's own first-row-band signal, not a decision.
@@ -133,6 +147,7 @@ describe("verified-vision proposal-packet emission (B1)", () => {
     expect(packet.truncation).toEqual({
       text_items: "complete",
       ruled_rects: "complete",
+      ruling_segments: "complete",
       painted_rectangles: "complete",
     });
     expect(on.structuredContent.table_proposals_truncation).toEqual({
@@ -150,6 +165,18 @@ describe("verified-vision proposal-packet emission (B1)", () => {
       "TABLE_TOPOLOGY_UNKNOWN",
       "VECTOR_CONTENT_NOT_INTERPRETED",
     ]);
+  }, 30_000);
+
+  it("2b. preserves the authored full-height cut in the ordinary line-ruled packet", async () => {
+    const on = await convert(LINES, { emit_table_proposals: true });
+    expect(on.structuredContent.table_proposals[0].ruling_segments).toContainEqual({
+      orientation: "vertical",
+      x1: 372,
+      y1: 112,
+      x2: 372,
+      y2: 304,
+      source_operator_index: 19,
+    });
   }, 30_000);
 
   it("3. emits zero packets for the fixture that reconstructs", async () => {

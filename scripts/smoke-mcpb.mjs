@@ -232,7 +232,7 @@ async function main() {
       arguments: { pdf_path: fixturePath, max_output_characters: 200000 },
     });
     if (layout.isError
-      || layout.structuredContent?.ir?.version !== "1.5.0"
+      || layout.structuredContent?.ir?.version !== "1.6.0"
       || layout.structuredContent?.source?.size_bytes !== statSync(fixturePath).size) {
       throw new Error("Packed read_pdf_layout contract smoke failed");
     }
