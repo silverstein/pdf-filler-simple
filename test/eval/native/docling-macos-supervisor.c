@@ -874,6 +874,44 @@ static bool receive_testing_feedback(unsigned char expected) {
   return read_exact(testing_feedback_read, &observed, 1) &&
          observed == expected;
 }
+
+typedef enum {
+  TESTING_CONDITION_LEADER_TERMINAL,
+  TESTING_CONDITION_PID_REAPED,
+} testing_condition;
+
+/*
+ * Fault injectors that want the supervisor to observe an already-settled
+ * world must settle it here, before reporting the injected errno. Anything
+ * they wait for after reporting is charged to SAMPLE_REVALIDATION_BUDGET_NS,
+ * the sealed 20ms window the supervisor gets to re-prove an EPERM/ESRCH PID,
+ * which turns an injected outcome into a bet on host scheduling. Waiting
+ * first is charged to the outer campaign deadline instead. The bound is
+ * generous and failing it reports ETIMEDOUT, which no sampling-race errno
+ * set accepts, so an injector that never settles fails a test loudly rather
+ * than degrading into the ordinary decline.
+ */
+static bool wait_for_testing_condition(testing_condition condition,
+                                       pid_t pid) {
+  for (unsigned attempt = 0; attempt < 30000; attempt += 1) {
+    if (condition == TESTING_CONDITION_LEADER_TERMINAL) {
+      bool terminal = false;
+      if (!leader_has_exited(pid, &terminal)) {
+        return false;
+      }
+      if (terminal) {
+        return true;
+      }
+    } else if (kill(pid, 0) != 0 && errno == ESRCH) {
+      return true;
+    }
+    struct timespec delay = {.tv_sec = 0, .tv_nsec = 100000};
+    while (nanosleep(&delay, &delay) != 0 && errno == EINTR) {
+    }
+  }
+  errno = ETIMEDOUT;
+  return false;
+}
 #endif
 
 static bool sample_process_details(pid_t pid, pid_t pgid,
@@ -888,8 +926,19 @@ static bool sample_process_details(pid_t pid, pid_t pgid,
       return false;
     }
     notified = true;
-    struct timespec delay = {.tv_sec = 0, .tv_nsec = 20000000};
-    while (nanosleep(&delay, &delay) != 0 && errno == EINTR) {
+    /*
+     * Establish the state the supervisor is supposed to react to, rather
+     * than signalling the leader and sleeping a fixed span in the hope it
+     * wins the race. The previous fixed 20ms sleep was exactly one
+     * SAMPLE_REVALIDATION_BUDGET_NS long, so on a loaded host the leader
+     * had not reached its terminal state by the time the budget it has to
+     * be proven inside had already started, and a fault-determined
+     * acceptance silently became a host-determined one. Waiting here is
+     * charged to the outer campaign deadline instead: the revalidation
+     * budget does not start until this call returns.
+     */
+    if (!wait_for_testing_condition(TESTING_CONDITION_LEADER_TERMINAL, pid)) {
+      return false;
     }
     errno = ESRCH;
     return false;
@@ -943,8 +992,22 @@ static bool sample_process_details(pid_t pid, pid_t pgid,
         errno = EPERM;
         return false;
       }
+    } else if (strcmp(fault, "sampling_vanish_eperm") == 0) {
+      /*
+       * The property under test is "an EPERM PID may be accepted once, and
+       * only once, its absence has been proven twice over" -- not "a
+       * candidate child's 15ms sleep finishes inside the supervisor's 20ms
+       * revalidation budget". Make the absence real before reporting EPERM.
+       * The supervisor still has to run the entire two-probe vanish proof
+       * (source re-enumeration plus a signal probe) inside its sealed
+       * budget; it just no longer has to outrun the candidate to do so.
+       */
+      if (!wait_for_testing_condition(TESTING_CONDITION_PID_REAPED, pid)) {
+        return false;
+      }
+      errno = EPERM;
+      return false;
     } else if (strcmp(fault, "sampling_persistent_eperm") == 0 ||
-               strcmp(fault, "sampling_vanish_eperm") == 0 ||
                strcmp(fault, "sampling_escape_eperm") == 0 ||
                strcmp(fault, "sampling_outer_deadline_eperm") == 0) {
       errno = EPERM;

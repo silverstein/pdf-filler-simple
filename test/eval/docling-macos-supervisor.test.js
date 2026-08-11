@@ -114,52 +114,67 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
   // than CPU starvation went wrong and must still fail the suite.
   const SAMPLING_RACE_ERRNOS = [os.constants.errno.EPERM, os.constants.errno.ESRCH];
 
-  /**
-   * Assert every property of a supervised run that does not depend on host
-   * load, then assert the branch the supervisor actually took.
+  /*
+   * CONTAINMENT VS ACCEPTANCE -- the policy this family follows.
    *
-   * Certifying a run requires observing the whole process group inside a
-   * sealed sampling window. On a CPU-starved host the supervisor cannot always
-   * finish that observation, so it fails closed with `enumeration` instead of
-   * certifying what it could not see. That is the correct product behaviour,
-   * which makes the *outcome* a genuine disjunction rather than a constant.
+   * Containment is the contract. "Never certifies what it could not observe",
+   * "never leaks a live process group", "never escapes its session", "declines
+   * cleanly with a truthful reason", and "never emits candidate stdout without
+   * certifying" hold on every host under every load. They are asserted
+   * unconditionally by expectSupervisedInvariants, which every test in this
+   * family calls, and they are the only assertions that may sit outside a
+   * branch.
    *
-   * The disjunction is deliberately narrow. Everything load-independent -- the
-   * drained process group, the schema-valid envelope, the honest claim
-   * boundary, the acceptance biconditional, and the no-stdout-without-
-   * certification rule -- is asserted unconditionally, above the branch. The
-   * failure branch is pinned to one exact failure code and a closed errno set,
-   * so a supervisor that started failing closed for some *other* reason still
-   * fails the suite. Callers add the workload-specific observation assertions
-   * that hold in both branches.
+   * Acceptance is not a universal property, but it is also not automatically a
+   * host-dependent one. What determines whether it may be asserted flatly is
+   * *what decides the outcome*:
    *
-   * @returns {boolean} whether the supervisor certified the run
+   *   1. Host-determined runs -- a real churning workload under the production
+   *      binary, no injected fault. Certification requires completing an
+   *      observation inside a sealed window that a starved host can deny, so
+   *      the outcome is a genuine disjunction. Use expectContainedRun and keep
+   *      the test's own named property above the branch.
+   *
+   *   2. Fault-determined declines -- the injected fault makes declining
+   *      inevitable. Assert the exact failure code and errno with
+   *      expectDeclinedRun.
+   *
+   *   3. Fault-determined acceptances -- the injected fault is supposed to make
+   *      accepting inevitable. Assert it flatly with expectAcceptedRun. When
+   *      such a test flakes under load, the defect is in the injector, not in
+   *      the assertion: an injector must *establish* the state it wants the
+   *      supervisor to observe before reporting its errno, because everything
+   *      it waits for afterwards is charged to the product's sealed 20ms
+   *      SAMPLE_REVALIDATION_BUDGET_NS. Weakening these into disjunctions would
+   *      delete the suite's only coverage of the accept path, since a
+   *      starvation decline is indistinguishable from the decline their
+   *      sibling tests already assert.
+   *
+   * Consequence: no test here needs a quiet host to test what it is named for,
+   * and none is skipped. Category-1 tests keep a visible branch; every other
+   * test asserts one fixed outcome on any host.
    */
-  function expectContainedRun(result) {
+
+  /**
+   * The load-independent contract of a supervised run. Asserted by every test
+   * in this family, never inside a branch.
+   *
+   * `drained` and `escaped` are opt-in because a few tests deliberately
+   * exercise a run that could not be drained; leaving them unset asserts
+   * nothing rather than guessing.
+   */
+  function expectSupervisedInvariants(result, expected = {}) {
     const evidence = result.evidence;
     const observations = evidence.observations;
 
-    // Holds either way: the envelope is schema-valid and honestly labelled.
+    // The envelope is schema-valid and honestly labelled.
     expect(recordValidator(evidence)).toMatchObject({ valid: true });
     expect(evidence.claim_boundary).toContain("Sampled resource observations");
 
-    // Holds either way: nothing survived the run and nothing escaped. A
-    // supervisor that declines to certify must still leave no live process
-    // group behind.
-    expect(observations.original_process_group_empty).toBe(true);
-    expect(observations.escaped_session_detected).toBe(false);
-
-    // Holds either way: the supervisor really observed the group rather than
-    // giving up before looking at it.
-    expect(observations.sample_count).toBeGreaterThan(0);
-    expect(observations.max_group_members).toBeGreaterThan(0);
-    expect(observations.observed_process_identity_count)
-      .toBeGreaterThanOrEqual(observations.max_group_members);
-
-    // Holds either way: acceptance is exactly the conjunction of the clean
-    // observations, so neither branch can be reached by mislabelling the
-    // other. Duplicated from validateSupervisorEvidence on purpose -- the test
-    // keeps the invariant if the harness ever stops enforcing it.
+    // Acceptance is exactly the conjunction of the clean observations, so no
+    // branch can be reached by mislabelling another. Duplicated from
+    // validateSupervisorEvidence on purpose -- the test keeps the invariant if
+    // the harness ever stops enforcing it.
     expect(evidence.controller_accepted).toBe(
       evidence.controller_failure === "none"
       && evidence.controller_errno === 0
@@ -171,6 +186,77 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       && !observations.escaped_session_detected
       && observations.original_process_group_empty,
     );
+
+    // Candidate stdout is only ever released by a certified run.
+    if (!evidence.controller_accepted) {
+      expect(result.stdout).toHaveLength(0);
+    }
+
+    if (expected.drained !== undefined) {
+      expect(observations.original_process_group_empty).toBe(expected.drained);
+    }
+    if (expected.escaped !== undefined) {
+      expect(observations.escaped_session_detected).toBe(expected.escaped);
+    }
+  }
+
+  /**
+   * A fault-determined acceptance: the injected fault, not the host, decides
+   * the outcome, so acceptance is asserted flatly. See the policy note above.
+   */
+  function expectAcceptedRun(result, expected = {}) {
+    expectSupervisedInvariants(result, { drained: true, escaped: false, ...expected });
+    expect(result.evidence).toMatchObject({
+      controller_accepted: true,
+      controller_failure: "none",
+      controller_errno: 0,
+      leader: { exit_code: 0, signal: null },
+    });
+  }
+
+  /**
+   * A fault-determined decline: pinned to one exact failure code and errno, so
+   * a supervisor that starts failing closed for some *other* reason -- or that
+   * reports a truthless errno -- still fails the suite.
+   */
+  function expectDeclinedRun(result, failure, errno, expected = {}) {
+    expectSupervisedInvariants(result, { drained: true, ...expected });
+    expect(result.evidence).toMatchObject({
+      controller_accepted: false,
+      controller_failure: failure,
+      controller_errno: errno,
+    });
+    expect(result.stdout).toHaveLength(0);
+  }
+
+  /**
+   * A host-determined run: assert every load-independent property, then assert
+   * the branch the supervisor actually took.
+   *
+   * Certifying a run requires observing the whole process group inside a
+   * sealed sampling window. On a CPU-starved host the supervisor cannot always
+   * finish that observation, so it fails closed with `enumeration` instead of
+   * certifying what it could not see. That is the correct product behaviour,
+   * which makes the *outcome* a genuine disjunction rather than a constant.
+   *
+   * The disjunction is deliberately narrow. The failure branch is pinned to one
+   * exact failure code and a closed errno set. Callers add the workload-specific
+   * observation assertions that hold in both branches, above the branch.
+   *
+   * @returns {boolean} whether the supervisor certified the run
+   */
+  function expectContainedRun(result) {
+    const evidence = result.evidence;
+    const observations = evidence.observations;
+
+    expectSupervisedInvariants(result, { drained: true, escaped: false });
+
+    // Holds either way: the supervisor really observed the group rather than
+    // giving up before looking at it.
+    expect(observations.sample_count).toBeGreaterThan(0);
+    expect(observations.max_group_members).toBeGreaterThan(0);
+    expect(observations.observed_process_identity_count)
+      .toBeGreaterThanOrEqual(observations.max_group_members);
 
     if (evidence.controller_accepted) {
       expect(evidence.controller_failure).toBe("none");
@@ -185,7 +271,6 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
     // errno that names a sampling race, and never any candidate stdout.
     expect(evidence.controller_failure).toBe("enumeration");
     expect(SAMPLING_RACE_ERRNOS).toContain(evidence.controller_errno);
-    expect(result.stdout).toHaveLength(0);
     return false;
   }
 
@@ -250,19 +335,21 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
   });
 
   it("accepts only after sampling proves the reserved leader became terminal", async () => {
+    // The injector waits for the leader to actually become terminal before it
+    // reports ESRCH, so the supervisor's WNOWAIT proof is exercised on every
+    // host rather than only on one fast enough to finish the leader's exit
+    // inside SAMPLE_REVALIDATION_BUDGET_NS. Fault-determined acceptance:
+    // asserted flatly, never disjunctively.
     const result = await runFault(
       "sampling_terminal_leader",
       "terminal-during-sampling",
       [15],
       { sampleIntervalMs: 1 },
     );
-    expect(result.evidence).toMatchObject({
-      controller_accepted: true,
-      controller_failure: "none",
-      leader: { exit_code: 0, signal: null },
-      observations: { original_process_group_empty: true },
-    });
+    expectAcceptedRun(result);
     expect(result.evidence.observations.sample_count).toBeGreaterThan(0);
+    // The named property: acceptance came *through* the sampling race path,
+    // not by the injected ESRCH never firing.
     expect(result.evidence.observations.sample_race_count).toBeGreaterThan(0);
   });
 
@@ -312,11 +399,11 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
     ["crash", [], "leader_exit"],
   ])("fails closed for %s", async (mode, args, failure, overrides = {}) => {
     const result = await run(mode, args, overrides);
+    expectSupervisedInvariants(result, { drained: true, escaped: false });
     expect(result.stdout).toHaveLength(0);
     expect(result.evidence).toMatchObject({
       controller_accepted: false,
       controller_failure: failure,
-      observations: { original_process_group_empty: true },
     });
   });
 
@@ -343,11 +430,7 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       [1, 250],
       { sampleIntervalMs: 1 },
     );
-    expect(result.evidence).toMatchObject({
-      controller_accepted: true,
-      controller_failure: "none",
-      observations: { original_process_group_empty: true },
-    });
+    expectAcceptedRun(result);
     expect(result.evidence.observations.sample_race_count).toBeGreaterThan(0);
     expect(result.evidence.observations.observed_process_identity_count).toBeGreaterThan(1);
   });
@@ -359,13 +442,7 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       [1, 1000],
       { sampleIntervalMs: 1 },
     );
-    expect(result.stdout).toHaveLength(0);
-    expect(result.evidence).toMatchObject({
-      controller_accepted: false,
-      controller_errno: 1,
-      controller_failure: "enumeration",
-      observations: { original_process_group_empty: true },
-    });
+    expectDeclinedRun(result, "enumeration", os.constants.errno.EPERM);
     expect(result.evidence.observations.sample_race_count).toBeGreaterThan(0);
   });
 
@@ -376,33 +453,23 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       [1, 1000],
       { sampleIntervalMs: 1 },
     );
-    expect(result.stdout).toHaveLength(0);
-    expect(result.evidence).toMatchObject({
-      controller_accepted: false,
-      controller_errno: 3,
-      controller_failure: "enumeration",
-      observations: { original_process_group_empty: true },
-    });
+    expectDeclinedRun(result, "enumeration", os.constants.errno.ESRCH);
   });
 
   it("accepts sampling EPERM only after the real child is absent between two ESRCH probes", async () => {
-    // The child can be discovered by either the group snapshot or the separate
-    // child enumeration before it vanishes inside the supervisor's sealed 20ms
-    // sampling-revalidation budget (SAMPLE_REVALIDATION_BUDGET_NS). The latter
-    // is still a complete exercise of the vanish proof even when the group
-    // snapshot raced just before fork. Separate coverage above pins the group
-    // observation count for multiple live children.
+    // The injector waits for the real child to be gone *and reaped* before it
+    // reports EPERM, so the supervisor still has to run the entire two-probe
+    // vanish proof inside SAMPLE_REVALIDATION_BUDGET_NS -- it just no longer
+    // has to outrun the candidate's sleep to do it. This is the suite's only
+    // coverage of the accept side of the vanish proof; its sibling above
+    // asserts the decline, so a disjunction here would collapse the two.
     const result = await runFault(
       "sampling_vanish_eperm",
       "multiple-children",
       [1, 15],
       { sampleIntervalMs: 1 },
     );
-    expect(result.evidence).toMatchObject({
-      controller_accepted: true,
-      controller_failure: "none",
-      observations: { original_process_group_empty: true },
-    });
+    expectAcceptedRun(result);
     expect(result.evidence.observations.sample_race_count).toBeGreaterThan(0);
   });
 
@@ -413,13 +480,7 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       [15],
       { deadlineMs: 3000, sampleIntervalMs: 1 },
     );
-    expect(result.stdout).toHaveLength(0);
-    expect(result.evidence).toMatchObject({
-      controller_accepted: false,
-      controller_errno: 5,
-      controller_failure: "enumeration",
-      observations: { original_process_group_empty: true },
-    });
+    expectDeclinedRun(result, "enumeration", os.constants.errno.EIO);
     expect(result.evidence.observations.sample_race_count).toBeGreaterThan(0);
   });
 
@@ -428,6 +489,16 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
     // being discovered by the supervisor's separate child enumeration. The
     // injected EPERM, fail-closed result, and surviving sentinel prove this
     // path; the multiple-live-children test above pins the group count itself.
+    //
+    // KNOWN COVERAGE GAP (measured, pre-existing, not load-related). Because
+    // this PID resolves through the *children* source, its own enumeration
+    // already blocks: the escaped child is still a direct child of the leader,
+    // so source_contains_pid never returns 0. Deleting both ESRCH signal probes
+    // from prove_process_vanished -- so that source absence alone proves a PID
+    // gone -- leaves the whole suite green, idle and under contention alike.
+    // Closing it needs a fixture whose PID is discovered by the *group*
+    // snapshot and is absent from the group while still alive, e.g. an
+    // orphaned grandchild that setsid()s: no candidate mode produces one today.
     const sentinel = path.join(root, "sampling-escape-eperm-sentinel");
     const result = await runFault(
       "sampling_escape_eperm",
@@ -435,13 +506,7 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       [sentinel],
       { sampleIntervalMs: 1 },
     );
-    expect(result.stdout).toHaveLength(0);
-    expect(result.evidence).toMatchObject({
-      controller_accepted: false,
-      controller_errno: 1,
-      controller_failure: "enumeration",
-      observations: { original_process_group_empty: true },
-    });
+    expectDeclinedRun(result, "enumeration", os.constants.errno.EPERM);
     await waitForFile(sentinel, 2500);
   });
 
@@ -452,17 +517,41 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       [32, 1000],
       { deadlineMs: 3000, sampleIntervalMs: 1 },
     );
-    expect(result.stdout).toHaveLength(0);
-    expect(result.evidence).toMatchObject({
-      controller_accepted: false,
-      controller_errno: 1,
-      controller_failure: "enumeration",
-      observations: { original_process_group_empty: true },
-    });
-    expect(result.evidence.observations.max_group_members).toBe(33);
-    expect(result.evidence.observations.sample_race_count).toBeGreaterThan(2);
-    expect(result.evidence.observations.elapsed_continuous_ns)
-      .toBeLessThan(500 * 1e6);
+    const observations = result.evidence.observations;
+
+    // The setup really did present many independently inaccessible PIDs: the
+    // fault only arms on a snapshot of the full 33-member group, and each of
+    // the 32 children becomes inspectable again after only four probes.
+    expect(observations.max_group_members).toBe(33);
+
+    // The named property. Given one shared, monotonic budget the supervisor
+    // exhausts it partway through the group and fails closed. Given a budget
+    // that reset per PID, every child would clear its four probes inside its
+    // own fresh 20ms window and the run would be *certified*. So the decline
+    // -- with EPERM, the errno of the PIDs that were never re-proven -- is the
+    // discriminator, and it is load-independent: starving the host only makes
+    // the shared budget run out sooner.
+    expectDeclinedRun(result, "enumeration", os.constants.errno.EPERM);
+
+    // How *many* PIDs fit inside one 20ms budget is a measurement of host
+    // speed, not of the supervisor: idle this host fits four, under load one.
+    // The previous `sample_race_count > 2` therefore asserted the opposite of
+    // the property in the test name -- heavier load means stronger evidence of
+    // sharing but a smaller count -- and was the assertion that failed under
+    // contention. What is load-independent is the direction of the bound: with
+    // one shared budget the supervisor must run out *before* it has revalidated
+    // all 32 inaccessible children; with a per-PID budget it would revalidate
+    // every one of them.
+    expect(observations.sample_race_count).toBeGreaterThanOrEqual(1);
+    expect(observations.sample_race_count)
+      .toBeLessThan(observations.max_group_members - 1);
+
+    // The retired wall-clock bound (`elapsed_continuous_ns < 500ms`) is
+    // deliberately not replaced. The campaign clock is dominated by spawning
+    // and forking 33 processes -- 132ms idle, 477ms under contention on this
+    // host -- while the whole quantity under test is at most 20ms, so it could
+    // never have discriminated one budget from thirty-two. It only measured
+    // how loaded the host was.
   });
 
   it("blocks before disappearance proof when sampling reaches the outer deadline", async () => {
@@ -472,13 +561,7 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       [1, 1000],
       { deadlineMs: 100, sampleIntervalMs: 1 },
     );
-    expect(result.stdout).toHaveLength(0);
-    expect(result.evidence).toMatchObject({
-      controller_accepted: false,
-      controller_errno: 1,
-      controller_failure: "enumeration",
-      observations: { original_process_group_empty: true },
-    });
+    expectDeclinedRun(result, "enumeration", os.constants.errno.EPERM);
     expect(result.evidence.observations.elapsed_continuous_ns)
       .toBeGreaterThanOrEqual(100 * 1e6);
   });
@@ -502,10 +585,10 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
     const result = await run("leader-exit-live-descendant", [sentinel], {
       leaderExitGraceMs: 0,
     });
+    expectSupervisedInvariants(result, { drained: true, escaped: false });
     expect(result.evidence).toMatchObject({
       controller_accepted: false,
       controller_failure: "live_descendants",
-      observations: { original_process_group_empty: true },
     });
     await new Promise(resolve => setTimeout(resolve, 1000));
     await expect(fs.access(sentinel)).rejects.toThrow();
@@ -527,14 +610,12 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
         sampleIntervalMs: 5,
       },
     );
+    expectSupervisedInvariants(result, { drained: true, escaped: false });
     expect(result.stdout).toHaveLength(0);
     expect(result.evidence).toMatchObject({
       controller_accepted: false,
       controller_failure: "physical_footprint_limit",
-      observations: {
-        max_group_members: 2,
-        original_process_group_empty: true,
-      },
+      observations: { max_group_members: 2 },
     });
     expect(result.evidence.observations.observed_process_identity_count)
       .toBeGreaterThan(1);
@@ -549,14 +630,11 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
       leaderExitGraceMs: 1000,
       sampleIntervalMs: 5,
     });
+    expectSupervisedInvariants(result, { drained: true, escaped: true });
     expect(result.stdout).toHaveLength(0);
     expect(result.evidence).toMatchObject({
       controller_accepted: false,
       controller_failure: "escaped_session",
-      observations: {
-        escaped_session_detected: true,
-        original_process_group_empty: true,
-      },
     });
     expect(result.evidence.observations.max_group_members).toBe(2);
     expect(result.evidence.observations.observed_process_identity_count)
@@ -616,14 +694,11 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
         physicalFootprintMaxBytes: 64 * 1024 * 1024,
       },
     );
+    expectSupervisedInvariants(result, { drained: true, escaped: true });
     expect(result.stdout).toHaveLength(0);
     expect(result.evidence).toMatchObject({
       controller_accepted: false,
       controller_failure: "escaped_session",
-      observations: {
-        escaped_session_detected: true,
-        original_process_group_empty: true,
-      },
     });
     expect(result.evidence.observations.observed_process_identity_count)
       .toBeGreaterThanOrEqual(3);
@@ -634,13 +709,10 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
   it("detects an observed escaped session, rejects output, and kills the known child", async () => {
     const sentinel = path.join(root, "escaped-session-sentinel");
     const result = await run("escaped-session", [sentinel]);
+    expectSupervisedInvariants(result, { drained: true, escaped: true });
     expect(result.evidence).toMatchObject({
       controller_accepted: false,
       controller_failure: "escaped_session",
-      observations: {
-        escaped_session_detected: true,
-        original_process_group_empty: true,
-      },
     });
     await new Promise(resolve => setTimeout(resolve, 1500));
     await expect(fs.access(sentinel)).rejects.toThrow();
@@ -653,13 +725,10 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
   ])("reports cleanup failure without killing an escaped PID after the %s identity boundary changes", async fault => {
     const sentinel = path.join(root, `${fault}-sentinel`);
     const result = await runFault(fault, "escaped-session", [sentinel]);
+    expectSupervisedInvariants(result, { drained: true, escaped: true });
     expect(result.evidence).toMatchObject({
       controller_accepted: false,
       controller_failure: "cleanup",
-      observations: {
-        escaped_session_detected: true,
-        original_process_group_empty: true,
-      },
     });
     await waitForFile(sentinel, 2500);
   });
@@ -670,10 +739,10 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
     ["continuous_clock_jump", "deadline"],
   ])("rejects injected controller fault %s", async (fault, expectedFailure) => {
     const result = await runFault(fault);
+    expectSupervisedInvariants(result, { drained: true, escaped: false });
     expect(result.evidence).toMatchObject({
       controller_accepted: false,
       controller_failure: expectedFailure,
-      observations: { original_process_group_empty: true },
     });
   });
 
@@ -683,19 +752,18 @@ describe.runIf(RUNS_ON_DARWIN)("native macOS structured-extraction supervisor", 
     ["prelease_timeout", "child_setup", { deadlineMs: 100 }, 0],
   ])("publishes bounded lease-free evidence for %s", async (fault, expectedFailure, overrides, expectedStage) => {
     const result = await runFault(fault, "sleep", [5000], overrides);
+    expectSupervisedInvariants(result, { drained: true, escaped: false });
     expect(result.lease).toBeNull();
     expect(result.stdout).toHaveLength(0);
     expect(result.evidence).toMatchObject({
       controller_accepted: false,
       controller_failure: expectedFailure,
       child_setup_stage: expectedStage,
-      observations: { original_process_group_empty: true },
     });
     expect(
       result.evidence.leader.exit_code !== null
       || result.evidence.leader.signal !== null,
     ).toBe(true);
-    expect(recordValidator(result.evidence)).toMatchObject({ valid: true });
   });
 
   it("uses the parent-owned lease to clean up a crashed supervisor", async () => {
