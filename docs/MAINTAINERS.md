@@ -650,9 +650,32 @@ releases instead.
 
 ## Native canvas inside an embedded host (Windows rendering)
 
-Page rasterization (`render_pdf_page`, `render_pdf_region`) needs the `@napi-rs/canvas` native binding. Inside an embedded Electron host such as Claude Desktop, loading it is blocked by default on every platform. `PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=1` lifts the block; any other value, including unset, leaves it in force.
+Page rasterization (`render_pdf_page`, `render_pdf_region`) needs the `@napi-rs/canvas` native binding. Inside an embedded Electron host such as Claude Desktop, loading it is blocked by default on every platform.
 
-Set it where the server is configured. Under MCPB that is the extension manifest's `server.mcp_config.env`.
+| Value | Effect |
+|---|---|
+| unset | Blocked. The default on every platform. |
+| `1` | Opt in, **subject to the crash latch** below. |
+| `0` | Blocked unconditionally. Kill switch; beats everything. |
+| `force` | Allowed, bypassing the latch. How a latched install is recovered. |
+
+Set it where the server is configured. Under MCPB that is the extension manifest's `server.mcp_config.env`. A User-scope Windows environment variable does **not** reach the MCP server subprocess; the manifest is the only channel that works.
+
+`=1` deliberately respects the latch. In the reverted design the flag bypassed it, which meant the recovery mechanism could only ever run on a population that did not exist yet — the default was off, so nothing exercised it. Binding the flag to the latch instead puts today's Windows opt-in users on the same code path a future default would use, which is where the evidence for flipping has to come from.
+
+### The crash latch
+
+A `dlopen` that destabilises Electron hard-crashes the host rather than raising, so no in-process handler can see it and a naive retry crashes on every launch. Recovery therefore has to survive process death.
+
+The guard writes and `fsync`s a marker to `<profiles dir>/native-canvas-attempt.json` immediately before the load, and keeps it there through the first draw — it is cleared only when the request that triggered the load completes. A marker found at the next load means a previous process entered that window and never came back, so native canvas latches off for that install until someone sets `=force`.
+
+Three properties are worth knowing:
+
+- **A load that raises does not latch.** That is a recoverable environment problem such as a missing VC++ runtime; the host is intact and it must stay retryable.
+- **Markers are owned.** Each carries a random token held only in the arming process's memory, so no other server sharing the home directory can clear it. A marker whose pid is still alive reports `concurrent` — refused, but not latched, because nothing has died.
+- **Teardown is not covered, and this is not claimed away.** Holding the marker to process exit cannot distinguish a canvas crash from a user force-quitting the host, and force-quit is common enough that it would latch off nearly every install.
+
+`test/embedded-native-canvas-latch.test.js` drives the real guarded `process.dlopen` with an injected loader. Every guard in it has been checked to go red when removed, including the specific clear-on-link defect that got the first attempt reverted.
 
 ### What is known
 
@@ -664,14 +687,24 @@ Blocking it is what leaves Windows and Linux with no renderer at all, because `p
 
 ### Why the default has not been flipped
 
-A win32 default was implemented and reverted after review. The crash-survival latch backing it did not hold:
+A win32 default was implemented and reverted after review, because the crash-survival latch backing it did not hold. All four code-level defects that review found are now fixed:
 
-- It cleared its marker the moment `dlopen` returned, covering only the link step — the one step there is already positive evidence for — and leaving first draw and teardown, where this class of instability actually appears, unprotected.
-- It had no lock and no ownership. Two servers sharing a home directory could erase each other's in-flight marker, and surviving concurrent use is the specific bar stated publicly on issue #42.
-- Its remediation strings were unreachable. `@napi-rs/canvas` swallows a `dlopen` throw into its own "Cannot find native binding" text, which `canvasDependencyError` (`server/pdfjs-worker.js:1172-1178`) then rewrites into the generic unavailable-renderer message, so a latched install, an unconfigurable install, and a genuinely broken one are indistinguishable to a user.
-- Its tests asserted the policy function against files the tests themselves wrote. Making the arm and clear functions no-ops left all of them passing.
+| Defect in the reverted latch | Now |
+|---|---|
+| Cleared its marker the moment `dlopen` returned, covering only the link step — the one step there was already positive evidence for | The marker carries a phase and is cleared only when the request that triggered the load completes, so it spans link **and** first draw |
+| No lock and no ownership; two servers sharing a home directory could erase each other's in-flight marker | Each marker carries a token held only in the arming process's memory; a live foreign pid reports `concurrent` rather than being mistaken for a crash |
+| Remediation unreachable — `@napi-rs/canvas` swallows a `dlopen` throw into its own "Cannot find native binding" text, which `canvasDependencyError` then rewrites into the generic unavailable-renderer message | The reason travels out of band through a bound probe and is appended to the renderer error, so a latched install now says it is latched and how to recover |
+| Tests asserted the policy function against files the tests wrote; making arm and clear no-ops left them all passing | `test/embedded-native-canvas-latch.test.js` drives the real guarded `process.dlopen` with an injected loader, and every guard is checked to go red when removed |
 
-**Before flipping this default, at minimum:** a marker that survives past first successful render; per-process ownership or locking; a remediation string that actually reaches the user; a test that drives `installInProcessCanvasNativeGuard` with an injected `dlopen` and asserts state in the returned, thrown, and never-returned cases; a latch arm in the Windows probe that can still record a result when the child crashes; and sustained plus concurrent evidence on a real host, since that is what was promised publicly.
+**The default is still off, and the remaining gates are evidence, not code.** No amount of local work can supply them:
+
+- ≥20 renders across page sizes, plus a concurrent pair, on a real Windows Claude Desktop with no host crash
+- isolation mode observed as `in_process` for each — a run that took the subprocess path never installed this guard and proves nothing about it
+- the latch observed actually latching after at least one real host crash
+- a latch arm in the Windows probe that can still record a result when the child crashes — a hard crash currently takes the probe's own result file with it, which is the one outcome the probe most needs to capture
+- a Linux datapoint before Linux is included; macOS retested or explicitly excluded
+
+The switch itself is `NATIVE_CANVAS_DEFAULT_PLATFORMS` in `server/pdfjs-subprocess.js`, deliberately an empty array. Adding `"win32"` is the entire flip, and a test fails if it is added, so it cannot happen quietly.
 
 Note also that `.github/workflows/windows-render.yml` is `workflow_dispatch` only, so none of this is gated on any PR or push.
 
