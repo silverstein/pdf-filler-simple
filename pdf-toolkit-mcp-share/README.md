@@ -46,7 +46,9 @@ installer uses `npm ci --omit=dev --engine-strict`, so an install fails instead
 of silently resolving a newer dependency graph.
 
 `SBOM.cdx.json` is a deterministic CycloneDX 1.6 inventory of the complete
-locked production graph. `SHARE-PROVENANCE.json` binds the lockfile, SBOM, and
+locked production graph plus the native components of the bundled QPDF
+WebAssembly runtime, each derived from its own pinned record.
+`SHARE-PROVENANCE.json` binds the lockfile, SBOM, and
 packaged source files to SHA-256 digests. The SBOM is structurally and
 lock-coverage validated during packaging; this is not a claim of validation by
 an external CycloneDX schema validator.
@@ -155,12 +157,16 @@ Perfect for W-9s, job applications, contracts, invoices, research papers, and ge
 
 ## Third-party notices
 This bundle carries a vendored QPDF WebAssembly runtime at
-`vendor/qpdf-wasm/runtime/`. No tool loads it yet; it is packaged ahead of the
-integration that will use it. qpdf is Apache-2.0, and the complete notice set
+`vendor/qpdf-wasm/runtime/`. It decrypts password-protected documents for the
+tools that read and write them. qpdf is Apache-2.0, and the complete notice set
 (qpdf, zlib, libjpeg-turbo, the Emscripten generated runtime, musl,
 compiler-rt, libc++, libc++abi and libunwind) is in
 `vendor/qpdf-wasm/runtime/licenses/`,
 bound to its SHA-256 hashes by that directory's `manifest.json`. Keep the
 directory intact if you redistribute this bundle. The npm dependencies keep
 their own licences inside `node_modules/` after installation, and
-`SBOM.cdx.json` inventories those npm packages only.
+`SBOM.cdx.json` inventories both: the locked npm packages, and a component for
+each of those native pieces hung off the WebAssembly runtime that ships them.
+The Emscripten image that compiled the runtime is recorded there as build
+tooling rather than as a shipped component, because it is not inside the
+artifact.
