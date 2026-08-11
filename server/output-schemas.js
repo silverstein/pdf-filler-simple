@@ -884,6 +884,12 @@ const tableProposalTruncation = object({
   ruled_rects: enumString(["complete", "truncated"]),
   painted_rectangles: enumString(["complete", "truncated"]),
 });
+const tableProposalsDocumentTruncation = object({
+  status: enumString(["complete", "truncated"]),
+  observed_regions: integer,
+  returned_regions: integer,
+  omitted_regions: integer,
+});
 const tableProposal = object({
   region_id: { type: "string", pattern: "^p[0-9]+-t[0-9]+$" },
   page: { type: "integer", minimum: 1 },
@@ -1021,6 +1027,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       // deliberately excluded from the required list below to keep the
       // default-off result byte-identical.
       table_proposals: arrayOf(tableProposal),
+      table_proposals_truncation: tableProposalsDocumentTruncation,
     },
     [
       "renderer",

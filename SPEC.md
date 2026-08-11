@@ -52,7 +52,9 @@ Add `test/verified-vision-proposal-packet.test.js` (Vitest, ordinary project). A
 3. **No emission on success**: `table-ruled-grid.pdf` (reconstructs) emits zero packets.
 4. **Token binding**: `proposal_token` is a pure function of source sha + IR version + region_id; identical across two runs; differs across fixtures.
 5. **Determinism**: two runs byte-identical (packet JSON stable-ordered).
-6. **Bounded**: a synthetic/forced over-cap region emits typed truncation, not unbounded items.
+6. **Per-region bounded**: a synthetic/forced over-cap region emits typed truncation, not unbounded items.
+7. **Per-document bounded**: a forced over-cap region list emits reconciled returned/omitted counts instead of silently slicing packets.
+8. **Gap coverage fails closed**: an opt-in result cannot report a table-abandonment gap for a page while providing no source-bound proposal region for that page.
 
 Run gates in this worktree (must be green, paste real output in the handoff):
 - `npm test -- --run test/verified-vision-proposal-packet.test.js`
@@ -71,7 +73,7 @@ The intelligence fixtures above already exist and suffice for B1; B0's dedicated
 
 ## Definition of done
 
-All six acceptance assertions pass; convert/markdown/share suites green; opt-in default-off proven byte-identical; packet deterministic, bounded, token-bound, header-hint-bearing, and additive to (never a replacement for) the abstention gap. Hand back to control tower for review before integration (B5).
+All eight acceptance assertions pass; convert/markdown/share suites green; opt-in default-off proven byte-identical; packet deterministic, bounded at both region and document level, token-bound, header-hint-bearing, and additive to (never a replacement for) the abstention gap. Hand back to control tower for review before integration (B5).
 
 ## Adversarial notes carried from the plan
 

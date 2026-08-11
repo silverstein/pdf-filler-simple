@@ -54,7 +54,7 @@ const RECT_MATERIAL_OVERLAP = 1;
 // it. These are hard, named bounds mirroring the IR's max_items discipline;
 // over-cap descriptors report typed truncation rather than unbounded output.
 const TABLE_PROPOSAL_COORDINATE_SPACE = "pdfjs_viewport_top_left_points";
-const MAX_TABLE_PROPOSALS_PER_DOCUMENT = 50;
+export const MAX_TABLE_PROPOSALS_PER_DOCUMENT = 50;
 export const MAX_TABLE_PROPOSAL_TEXT_ITEMS = 400;
 const MAX_TABLE_PROPOSAL_RULED_RECTS = 400;
 const MAX_TABLE_PROPOSAL_PAINTED_RECTS = 400;
@@ -2556,11 +2556,17 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
   // emits token-free descriptors under `table_proposal_regions`; the handler
   // re-keys them to `table_proposals` with a bound `proposal_token`. Validate
   // whichever is present, sharing one descriptor contract.
-  if (result.table_proposal_regions !== undefined) {
-    validateTableProposals(result.table_proposal_regions, { requireToken: false });
-  }
-  if (result.table_proposals !== undefined) {
-    validateTableProposals(result.table_proposals, { requireToken: true });
+  const rendererProposals = result.table_proposal_regions;
+  const payloadProposals = result.table_proposals;
+  assertion(rendererProposals === undefined || payloadProposals === undefined,
+    "renderer and payload table proposals cannot coexist");
+  const proposals = rendererProposals ?? payloadProposals;
+  if (proposals !== undefined) {
+    validateTableProposals(proposals, { requireToken: payloadProposals !== undefined });
+    validateTableProposalDocumentTruncation(result.table_proposals_truncation, proposals);
+  } else {
+    assertion(result.table_proposals_truncation === undefined,
+      "table proposal truncation cannot exist without proposals");
   }
   return result;
 }
@@ -2663,6 +2669,52 @@ function validateTableProposals(proposals, { requireToken }) {
   }
 }
 
+function validateTableProposalDocumentTruncation(truncation, proposals) {
+  assertion(truncation && typeof truncation === "object" && !Array.isArray(truncation),
+    "table proposals truncation must be an object");
+  assertion(["complete", "truncated"].includes(truncation.status),
+    "table proposals truncation status is invalid");
+  for (const key of ["observed_regions", "returned_regions", "omitted_regions"]) {
+    assertion(Number.isSafeInteger(truncation[key]) && truncation[key] >= 0,
+      `table proposals truncation ${key} is invalid`);
+  }
+  assertion(truncation.returned_regions === proposals.length,
+    "table proposals truncation returned count mismatch");
+  assertion(truncation.observed_regions === truncation.returned_regions + truncation.omitted_regions,
+    "table proposals truncation counts do not reconcile");
+  assertion(truncation.returned_regions <= MAX_TABLE_PROPOSALS_PER_DOCUMENT,
+    "table proposals truncation exceeds the document cap");
+  assertion(truncation.status === (truncation.omitted_regions > 0 ? "truncated" : "complete"),
+    "table proposals truncation status does not match omitted regions");
+}
+
+export function validateTableProposalGapCoverage(gaps, regions) {
+  assertion(Array.isArray(gaps), "conversion gaps must be an array");
+  assertion(Array.isArray(regions), "table proposal regions must be an array");
+  const proposalPages = new Set(regions.map(region => region.page));
+  const uncoveredPages = [...new Set(gaps
+    .filter(gap => gap.code === "TABLE_TOPOLOGY_UNKNOWN" || gap.code === "TABLE_RULING_UNSUPPORTED")
+    .map(gap => gap.page))]
+    .filter(page => !proposalPages.has(page));
+  assertion(uncoveredPages.length === 0,
+    `table abandonment gaps lack proposal regions on pages ${uncoveredPages.join(", ")}`);
+}
+
+export function boundTableProposalRegions(regions) {
+  assertion(Array.isArray(regions), "table proposal regions must be an array");
+  const bounded = regions.slice(0, MAX_TABLE_PROPOSALS_PER_DOCUMENT);
+  const omitted = regions.length - bounded.length;
+  return {
+    regions: bounded,
+    truncation: {
+      status: omitted > 0 ? "truncated" : "complete",
+      observed_regions: regions.length,
+      returned_regions: bounded.length,
+      omitted_regions: omitted,
+    },
+  };
+}
+
 /**
  * Render an already source-validated PDF Tools layout IR to deterministic
  * Markdown. This function rechecks IR semantics but deliberately performs no
@@ -2740,8 +2792,15 @@ export function renderPdfLayoutToMarkdown(layout, {
   if (emitTableProposals) {
     // Document-order flatten, bounded by a named per-document cap. The handler
     // adds each region's proposal_token; the renderer stays token-free and pure.
-    const regions = renderedPages.flatMap(page => page.tableProposalRegions ?? []);
-    result.table_proposal_regions = regions.slice(0, MAX_TABLE_PROPOSALS_PER_DOCUMENT);
+    const observedRegions = renderedPages.flatMap(page => page.tableProposalRegions ?? []);
+    // A page-level abandonment gap without any source-bound region descriptor
+    // would make an opt-in result claim proposal coverage it did not provide.
+    // Fail closed before applying the document cap; genuine cap omissions are
+    // then reported by the typed truncation sibling below.
+    validateTableProposalGapCoverage(gaps, observedRegions);
+    const { regions, truncation } = boundTableProposalRegions(observedRegions);
+    result.table_proposal_regions = regions;
+    result.table_proposals_truncation = truncation;
   }
   return validateMarkdownConversionSemantics(result, { layout });
 }

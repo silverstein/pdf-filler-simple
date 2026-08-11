@@ -5,8 +5,11 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
+  boundTableProposalRegions,
   buildTableProposalRegion,
+  MAX_TABLE_PROPOSALS_PER_DOCUMENT,
   MAX_TABLE_PROPOSAL_TEXT_ITEMS,
+  validateTableProposalGapCoverage,
 } from "../server/markdown-conversion.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -67,6 +70,7 @@ describe("verified-vision proposal-packet emission (B1)", () => {
 
       // With the flag absent, the structured result carries no packet key at all.
       expect(Object.hasOwn(off.structuredContent, "table_proposals")).toBe(false);
+      expect(Object.hasOwn(off.structuredContent, "table_proposals_truncation")).toBe(false);
 
       // Markdown and its digest are untouched by the opt-in flag.
       expect(on.structuredContent.markdown).toBe(off.structuredContent.markdown);
@@ -74,7 +78,11 @@ describe("verified-vision proposal-packet emission (B1)", () => {
       expect(on.structuredContent.gaps).toEqual(off.structuredContent.gaps);
 
       // The packet is purely additive: stripping it reproduces the default result.
-      const { table_proposals: _packets, ...onWithoutPackets } = on.structuredContent;
+      const {
+        table_proposals: _packets,
+        table_proposals_truncation: _proposalTruncation,
+        ...onWithoutPackets
+      } = on.structuredContent;
       expect(onWithoutPackets).toEqual(off.structuredContent);
     }
   }, 60_000);
@@ -127,6 +135,12 @@ describe("verified-vision proposal-packet emission (B1)", () => {
       ruled_rects: "complete",
       painted_rectangles: "complete",
     });
+    expect(on.structuredContent.table_proposals_truncation).toEqual({
+      status: "complete",
+      observed_regions: 1,
+      returned_regions: 1,
+      omitted_regions: 0,
+    });
 
     // The token is present and well-formed.
     expect(packet.proposal_token).toMatch(/^[a-f0-9]{64}$/);
@@ -141,6 +155,12 @@ describe("verified-vision proposal-packet emission (B1)", () => {
   it("3. emits zero packets for the fixture that reconstructs", async () => {
     const on = await convert(GRID, { emit_table_proposals: true });
     expect(on.structuredContent.table_proposals).toEqual([]);
+    expect(on.structuredContent.table_proposals_truncation).toEqual({
+      status: "complete",
+      observed_regions: 0,
+      returned_regions: 0,
+      omitted_regions: 0,
+    });
     // Confirm this is the success path: the markdown carries a reconstructed table.
     expect(on.structuredContent.markdown.split("\n").some(line => /^\|.*\|$/.test(line))).toBe(true);
   }, 30_000);
@@ -250,5 +270,27 @@ describe("verified-vision proposal-packet emission (B1)", () => {
     // The retained items are the first cap-many in reading order, never sampled.
     expect(region.text_items[0].id).toBe("i0");
     expect(region.text_items.at(-1).id).toBe(`i${MAX_TABLE_PROPOSAL_TEXT_ITEMS - 1}`);
+  });
+
+  it("7. reports document-level omission instead of silently dropping over-cap regions", () => {
+    const observed = Array.from(
+      { length: MAX_TABLE_PROPOSALS_PER_DOCUMENT + 3 },
+      (_value, index) => ({ region_id: `p1-t${index + 1}` }),
+    );
+    const bounded = boundTableProposalRegions(observed);
+    expect(bounded.regions).toEqual(observed.slice(0, MAX_TABLE_PROPOSALS_PER_DOCUMENT));
+    expect(bounded.truncation).toEqual({
+      status: "truncated",
+      observed_regions: MAX_TABLE_PROPOSALS_PER_DOCUMENT + 3,
+      returned_regions: MAX_TABLE_PROPOSALS_PER_DOCUMENT,
+      omitted_regions: 3,
+    });
+  });
+
+  it("8. fails closed if an abandonment gap has no source-bound proposal region", () => {
+    const gaps = [{ code: "TABLE_TOPOLOGY_UNKNOWN", page: 2, message: "abandoned" }];
+    expect(() => validateTableProposalGapCoverage(gaps, []))
+      .toThrow("table abandonment gaps lack proposal regions on pages 2");
+    expect(() => validateTableProposalGapCoverage(gaps, [{ page: 2 }])).not.toThrow();
   });
 });
