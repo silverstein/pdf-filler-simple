@@ -602,6 +602,8 @@ bundled server, lists its tools, and requires native `render_pdf_page` output.
   1.6 JSON SBOM covering every locked production component and dependency
   edge. Packaging performs structural and exact lock-coverage validation; it
   does not claim external CycloneDX schema validation.
+- The same SBOM is generated for the MCPB and staged at its archive root, so
+  both shipped artifacts carry the same bill rather than only the share ZIP.
 - Requires exact canonical record parity with the root lock for every
   production package, including dependency edges, engine/platform metadata,
   transitives, and platform-specific optional packages.

@@ -49,7 +49,9 @@ byte-identical output from isolated build processes, exact stage/archive content
 canonical re-encoding, normalized ZIP
 metadata, safe unique paths, the protected `pdfjs-dist@5.4.624` legacy runtime,
 and pinned MCPB 2.1.2 `info`/`unpack` consumption before atomically replacing
-the prior artifact. External `unzip -t` is an additional check when available,
+the prior artifact. Each stage also gets a generated `SBOM.cdx.json` at its
+archive root, covering the locked production graph and the QPDF WebAssembly
+runtime's native components, so the MCPB carries the same bill as the share ZIP. External `unzip -t` is an additional check when available,
 not a Windows portability claim. The build reports its measured peak child RSS. Do not
 substitute a host-local global `mcpb pack` for release builds.
 

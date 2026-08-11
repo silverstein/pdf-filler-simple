@@ -52,6 +52,16 @@ The promotion refuses any build that does not already reproduce
 `expected-output.json`, so a locally patched artifact cannot become the shipped
 one.
 
+`scripts/qpdf-wasm-sbom.mjs` reads that same provenance record and derives the
+CycloneDX components both packagers put in `SBOM.cdx.json`: one component per
+pinned source, one per Emscripten-supplied library that is statically linked
+into `qpdf.wasm`, and one for the runtime artifact they all hang off. The
+Emscripten image itself is recorded as `metadata.tools`, not as a component —
+it built the artifact, it is not inside it. Nothing in that list is written by
+hand, so bumping a source in `sources.lock.json` and promoting the build is
+enough to move the bill of materials with it;
+`test/sbom-native-components.test.js` fails if it ever does not.
+
 ## Pinned baseline
 
 The complete input contract is in `sources.lock.json`:

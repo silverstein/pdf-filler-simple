@@ -85,6 +85,113 @@ function expectFailure(command, args, cwd, pattern, options = {}) {
   return result;
 }
 
+/*
+ * A second, independent reading of what the native half of the bill must look
+ * like — taken from the files that shipped inside the archive rather than from
+ * the generator that wrote the SBOM. `BUILD-INPUTS.json` is the pinned source
+ * set; `licenses/manifest.json` is every notice the runtime redistributes.
+ * Between them they say which native code ships, so between them they say how
+ * many components the SBOM owes and what each one must claim.
+ */
+function expectedNativeSbomShape(packageRoot) {
+  const runtimeDirectory = "vendor/qpdf-wasm/runtime";
+  const readRuntimeJson = relativePath => JSON.parse(readFileSync(
+    path.join(packageRoot, ...`${runtimeDirectory}/${relativePath}`.split("/")),
+    "utf8",
+  ));
+  const buildInputs = readRuntimeJson("BUILD-INPUTS.json");
+  const noticeManifest = readRuntimeJson("licenses/manifest.json");
+  const sourceKeys = new Set(buildInputs.sources.map(source => `${source.name} ${source.version}`));
+  const sources = buildInputs.sources.map(source => ({
+    name: source.name,
+    version: source.version,
+    sha256: source.sha256,
+    url: source.url,
+    spdx: noticeManifest.files.find(notice => notice.component === `${source.name} ${source.version}`)?.spdx,
+  }));
+  for (const source of sources) {
+    if (!source.spdx) {
+      throw new Error(`Shipped source ${source.name} ${source.version} has no licence notice in the archive`);
+    }
+  }
+  /*
+   * Every notice that is neither a pinned source's own notice nor a
+   * supplementary notice for one describes code the Emscripten toolchain
+   * linked into the artifact. That code ships, so it owes a component.
+   */
+  const toolchain = noticeManifest.files
+    .filter(notice => {
+      const supplementary = /^(.+?) (\d\S*) bundled-code notices$/.exec(notice.component);
+      if (supplementary) return false;
+      const primary = /^(.+?) (\d\S*)$/.exec(notice.component);
+      return !(primary && sourceKeys.has(`${primary[1]} ${primary[2]}`));
+    })
+    .map(notice => ({ component: notice.component, spdx: notice.spdx }));
+  if (toolchain.length === 0) {
+    throw new Error("Shipped notice manifest describes no toolchain-linked code, which cannot be right");
+  }
+  return {
+    sources,
+    toolchain,
+    // The pinned sources, the toolchain-linked libraries, and one component
+    // for the runtime artifact they are all compiled into.
+    componentCount: sources.length + toolchain.length + 1,
+  };
+}
+
+function assertNativeSbomCoverage(sbom, expectation) {
+  const byName = new Map(sbom.components.map(component => [`${component.name}@${component.version}`, component]));
+  for (const source of expectation.sources) {
+    const component = byName.get(`${source.name}@${source.version}`);
+    if (!component) {
+      throw new Error(`SBOM omits the shipped native source ${source.name} ${source.version}`);
+    }
+    assertEqual(
+      component.licenses?.[0]?.expression,
+      source.spdx,
+      `SBOM licence for ${source.name} disagrees with the notice that shipped with it`,
+    );
+    if (!component.hashes?.some(hash => hash.alg === "SHA-256" && hash.content === source.sha256)) {
+      throw new Error(`SBOM does not hash ${source.name} against its pinned source archive digest`);
+    }
+    if (!component.purl?.startsWith("pkg:")) {
+      throw new Error(`SBOM component for ${source.name} carries no package URL`);
+    }
+  }
+  const licenceExpressions = new Set(sbom.components.map(component => component.licenses?.[0]?.expression));
+  for (const entry of expectation.toolchain) {
+    if (!licenceExpressions.has(entry.spdx)) {
+      throw new Error(`SBOM has no component carrying the shipped notice for ${entry.component}`);
+    }
+  }
+  const runtime = sbom.components.find(component =>
+    component.externalReferences?.some(reference => reference.url?.endsWith("/qpdf.wasm")));
+  if (!runtime) throw new Error("SBOM has no component representing the shipped WebAssembly runtime");
+  const runtimeRef = runtime["bom-ref"];
+  const runtimeEdges = sbom.dependencies.find(entry => entry.ref === runtimeRef)?.dependsOn || [];
+  if (runtimeEdges.length !== expectation.componentCount - 1) {
+    throw new Error(
+      `SBOM native components do not all hang off the runtime: ${runtimeEdges.length} edges for `
+      + `${expectation.componentCount - 1} components`,
+    );
+  }
+  const rootRef = sbom.metadata.component["bom-ref"];
+  const rootEdges = sbom.dependencies.find(entry => entry.ref === rootRef)?.dependsOn || [];
+  if (!rootEdges.includes(runtimeRef)) {
+    throw new Error("SBOM does not attach the WebAssembly runtime to the application it ships inside");
+  }
+  const toolComponents = sbom.metadata?.tools?.components || [];
+  if (!toolComponents.some(tool => tool.type === "container")) {
+    throw new Error("SBOM does not record the pinned build image as build tooling");
+  }
+  const shippedRefs = new Set(sbom.components.map(component => component["bom-ref"]));
+  for (const tool of toolComponents) {
+    if (shippedRefs.has(tool["bom-ref"])) {
+      throw new Error(`SBOM lists build tooling as a shipped component: ${tool["bom-ref"]}`);
+    }
+  }
+}
+
 function walkFiles(root, relativeRoot = "") {
   const files = [];
   for (const entry of readdirSync(path.join(root, relativeRoot)).sort()) {
@@ -140,10 +247,12 @@ function populatePackageBuildRoot(buildRoot) {
    * that are ignored by Git and irrelevant to packaging.
    */
   mkdirSync(path.join(buildRoot, "scripts"), { recursive: true });
-  copyFileSync(
-    path.join(REPO_ROOT, "scripts", "qpdf-wasm-runtime.mjs"),
-    path.join(buildRoot, "scripts", "qpdf-wasm-runtime.mjs"),
-  );
+  for (const filename of ["qpdf-wasm-runtime.mjs", "qpdf-wasm-sbom.mjs"]) {
+    copyFileSync(
+      path.join(REPO_ROOT, "scripts", filename),
+      path.join(buildRoot, "scripts", filename),
+    );
+  }
   mkdirSync(path.join(buildRoot, "vendor", "qpdf-wasm"), { recursive: true });
   copyFileSync(
     path.join(REPO_ROOT, "vendor", "qpdf-wasm", "runtime.provenance.json"),
@@ -730,8 +839,20 @@ async function main() {
       throw new Error("SBOM evidence overstates its validation level");
     }
     packager.validateCycloneDxSbom(sbom, shareLock, sharePackage);
-    assertEqual(sbom.components.length, Object.keys(shareLock.packages).length - 1, "SBOM component coverage drifted");
-    assertEqual(sbom.dependencies.length, Object.keys(shareLock.packages).length, "SBOM dependency coverage drifted");
+    /*
+     * The expected size of the bill is derived on this side from the records
+     * that actually shipped inside the archive — the locked npm graph, plus
+     * the build inputs and notice manifest that travel with the WebAssembly
+     * runtime — not from the packager that produced the SBOM and not from a
+     * literal. A literal count goes stale the first time a source is added,
+     * and re-deriving it from the generator would only prove the generator
+     * agrees with itself.
+     */
+    const nativeExpectation = expectedNativeSbomShape(sourcePackageRoot);
+    const expectedComponents = Object.keys(shareLock.packages).length - 1 + nativeExpectation.componentCount;
+    assertEqual(sbom.components.length, expectedComponents, "SBOM component coverage drifted");
+    assertEqual(sbom.dependencies.length, expectedComponents + 1, "SBOM dependency coverage drifted");
+    assertNativeSbomCoverage(sbom, nativeExpectation);
     const missingComponentSbom = structuredClone(sbom);
     missingComponentSbom.components.pop();
     expectThrow(
