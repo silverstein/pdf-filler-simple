@@ -106,7 +106,7 @@ describe("canonical comparison observations", () => {
     })]);
   });
 
-  it("keeps frozen raw-RGBA truth digests exclusive to the reference renderer", () => {
+  it("treats frozen raw-RGBA truth digests as authoritative only on the reference renderer", () => {
     const observations = [];
     for (const pair of manifest.pairs) {
       const before = documents.get(pair.before_document_id);
@@ -136,9 +136,26 @@ describe("canonical comparison observations", () => {
       for (const item of present) expect(item.actual, item.label).toBe(item.frozen);
       return;
     }
+    // Off the reference renderer the frozen digests carry no authority, and
+    // that is the whole claim. Whether they happen to reproduce anyway is an
+    // observation, not a guarantee in either direction: a Linux runner
+    // reproduced every one of them byte for byte while its fingerprint
+    // mismatched, because the fingerprint binds platform, Node and N-API
+    // alongside the two library versions, and is therefore strictly narrower
+    // than the rasterization it identifies. Asserting divergence here made
+    // cross-platform determinism read as a failure. The sibling reference
+    // baseline already branches on whether raw visuals reproduced rather than
+    // requiring that they do not; this matches it.
     expect(rendererClassification.mismatches).toContain("renderer_fingerprint_sha256");
-    expect(present.some(item => item.actual !== item.frozen)).toBe(true);
-    expect(present.every(item => item.actual === item.frozen)).toBe(false);
+    // What does not depend on the renderer is which facets have a digest at
+    // all, so that stays asserted: a renderer may move the pixels, it may not
+    // change the shape of the evidence.
+    for (const item of present) {
+      expect(item.actual === null, `${item.label} observed presence`).toBe(item.frozen === null);
+      if (item.actual !== null) {
+        expect(item.actual, `${item.label} actual`).toMatch(/^[0-9a-f]{64}$/);
+      }
+    }
   });
 
   it("extracts page alignment, form, annotation, and metadata independently", () => {
