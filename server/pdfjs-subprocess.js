@@ -6,6 +6,7 @@ import {
   mkdirSync,
   openSync,
   readFileSync,
+  renameSync,
   rmSync,
   writeFileSync,
 } from "node:fs";
@@ -1009,9 +1010,20 @@ export function nativeCanvasMarkerPath(env = process.env) {
 
 function writeNativeCanvasMarker(markerPath, phase, token) {
   mkdirSync(dirname(markerPath), { recursive: true });
-  // Write *and* fsync. A marker still sitting in the page cache when the host
-  // dies is exactly the case this mechanism exists for, and would defeat it.
-  const handle = openSync(markerPath, "w");
+  // Write to a temp file and rename over the target, rather than truncating the
+  // target in place.
+  //
+  // Truncating is not survivable where it matters. `openSync(path, "w")` empties
+  // the file immediately, so a host that hard-crashes between the truncate and
+  // the completed write leaves a zero-length marker - and an empty marker reads
+  // as "no marker". For the arm that is harmless, because a crash there means
+  // dlopen never ran and nothing needs latching. For the phase advance it is a
+  // hole straight through the mechanism: it destroys a valid `linking` marker in
+  // order to write `drawing`, and a crash inside that window is exactly the
+  // link-to-first-draw crash this exists to catch. Renaming is atomic, so the
+  // marker on disk is always either the previous valid one or the new valid one.
+  const tempPath = `${markerPath}.${process.pid}.${token.slice(0, 8)}.tmp`;
+  const handle = openSync(tempPath, "w");
   try {
     writeFileSync(handle, JSON.stringify({
       phase,
@@ -1021,10 +1033,16 @@ function writeNativeCanvasMarker(markerPath, phase, token) {
       platform: process.platform,
       arch: process.arch,
     }));
+    // fsync the contents before the rename, otherwise the rename can land while
+    // the bytes are still only in the page cache.
     fsyncSync(handle);
   } finally {
     closeSync(handle);
   }
+  // If the write above threw, this is never reached and the temp file is left
+  // behind. That is inert: nothing ever reads a `.tmp` path, and the caller
+  // treats the throw as "could not arm" and refuses the load.
+  renameSync(tempPath, markerPath);
 }
 
 function processIsAlive(pid) {

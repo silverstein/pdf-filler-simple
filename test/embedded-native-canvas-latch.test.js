@@ -11,7 +11,15 @@
 // loader, and asserts on the marker the guard actually left on disk.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -141,6 +149,37 @@ describe("the marker survives past the link, which is the whole point", () => {
     settleNativeCanvasAttempt();
 
     expect(existsSync(markerPath())).toBe(false);
+  });
+
+  it("keeps the previous marker intact when the phase advance cannot be written", () => {
+    // The advance replaces a valid `linking` marker with a `drawing` one. If it
+    // truncated the file in place, a host crash inside that window would leave a
+    // zero-length marker - and an empty marker reads as "no marker", losing the
+    // latch at exactly the link-to-first-draw moment it exists to catch.
+    //
+    // The injected loader makes the profiles directory unwritable from inside
+    // the load, so the advance fails after the linking marker already exists.
+    const guarded = install({
+      dlopen: () => {
+        chmodSync(profilesDir, 0o500);
+        return "loaded";
+      },
+    });
+
+    guarded.call(process, {}, CANVAS_BINDING);
+    chmodSync(profilesDir, 0o700);
+
+    const marker = readMarker();
+    expect(marker.phase).toBe("linking");
+    expect(marker.token).toBeTruthy();
+  });
+
+  it("leaves no temp files behind after a completed cycle", () => {
+    const guarded = install({ dlopen: () => "loaded" });
+    guarded.call(process, {}, CANVAS_BINDING);
+    settleNativeCanvasAttempt();
+
+    expect(readdirSync(profilesDir).filter(name => name.endsWith(".tmp"))).toEqual([]);
   });
 
   it("matches a Windows skia path with backslashes", () => {
