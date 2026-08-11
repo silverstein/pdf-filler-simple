@@ -5661,7 +5661,7 @@ async function handleToolCall(request) {
             cells,
           });
           const summary = payload.status === "accepted"
-            ? `Accepted proposal ${regionId} against a fresh source parse. Cell content was rebuilt only from the PDF text layer, and the grid is consistent with every available source ruling segment. Consistency does not prove unique topology.`
+            ? `Accepted proposal ${regionId} against a fresh source parse. Cell content was rebuilt only from the PDF text layer, and the grid is consistent with every available source ruling segment. The GFM table below is a syntax-escaped rectangular projection; structured cells retain any spans. Consistency does not prove unique topology.\n\n${payload.table.markdown}`
             : `Rejected proposal ${regionId} against a fresh source parse: ${payload.reason_codes.join(", ")}. No table content was emitted.`;
           return {
             content: [{ type: "text", text: summary }],

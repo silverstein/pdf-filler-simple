@@ -49,7 +49,7 @@ function cellsFromReferences(packet, proposal) {
   }));
 }
 
-describe("verified-vision B2 source-replayed table proposal verifier", () => {
+describe("verified-vision B2-B4 source-replayed table proposal verifier", () => {
   let client;
   let transport;
   let proposals;
@@ -212,6 +212,9 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
       expect(result.structuredContent.reason_codes).toContain("TABLE_PROPOSAL_HEADER_UNSUPPORTED");
       expect(result.structuredContent.reason_codes).toContain("TABLE_PROPOSAL_TOPOLOGY_AMBIGUOUS");
       expect(result.structuredContent.table).toBeNull();
+      const responseText = result.content.map(part => part.text ?? "").join("\n");
+      expect(responseText).toContain("No table content was emitted");
+      expect(responseText).not.toContain("| ---");
     }
   }, 30_000);
 
@@ -229,8 +232,8 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
       page: 1,
       reason: "TABLE_TOPOLOGY_UNKNOWN",
       text_items: [
-        { id: "i1", text: "NA", reading_order_index: 0, line_id: "l1", bbox: { x: 10, y: 10, width: 10, height: 8 } },
-        { id: "i2", text: "ME", reading_order_index: 1, line_id: "l1", bbox: { x: 21, y: 10, width: 10, height: 8 } },
+        { id: "i1", text: "NA|\n", reading_order_index: 0, line_id: "l1", bbox: { x: 10, y: 10, width: 10, height: 8 } },
+        { id: "i2", text: "ME*", reading_order_index: 1, line_id: "l1", bbox: { x: 21, y: 10, width: 10, height: 8 } },
         { id: "i3", text: "VALUE", reading_order_index: 2, line_id: "l1", bbox: { x: 60, y: 10, width: 20, height: 8 } },
         { id: "i4", text: "North", reading_order_index: 3, line_id: "l2", bbox: { x: 10, y: 40, width: 20, height: 8 } },
         { id: "i5", text: "1200", reading_order_index: 4, line_id: "l2", bbox: { x: 60, y: 40, width: 20, height: 8 } },
@@ -261,8 +264,20 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
     expect(validateTableProposalVerificationResult(result)).toBe(result);
     expect(result.status).toBe("accepted");
     expect(result.reason_codes).toEqual([]);
-    expect(result.table.cells.map(cell => cell.text)).toEqual(["NAME", "VALUE", "North", "1200"]);
+    expect(result.table.cells.map(cell => cell.text)).toEqual(["NA|\nME*", "VALUE", "North", "1200"]);
     expect(result.table.content_origin).toBe("reparsed_pdf_text_layer");
+    expect(result.table).toMatchObject({
+      markdown_format: "gfm",
+      markdown_span_projection: "anchor_text_with_empty_continuation_cells",
+      markdown_bytes: Buffer.byteLength(result.table.markdown, "utf8"),
+    });
+    expect(result.table.markdown).toBe([
+      "| NA\\|&#10;ME\\* | VALUE |",
+      "| --- | --- |",
+      "| North | 1200 |",
+    ].join("\n"));
+    expect(result.table.markdown_sha256)
+      .toBe(createHash("sha256").update(result.table.markdown).digest("hex"));
     expect(result.claim_boundary).toContain("Consistency is not proof of unique topology");
   });
 
@@ -280,6 +295,13 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
     expect(authoredResult.structuredContent.status).toBe("accepted");
     expect(authoredResult.structuredContent.reason_codes).toEqual([]);
     expect(authoredResult.structuredContent.table).toMatchObject({ row_count: 4, column_count: 3 });
+    const authoredTable = authoredResult.structuredContent.table;
+    const spanningCell = authoredTable.cells.find(cell => cell.rowspan > 1 || cell.colspan > 1);
+    expect(spanningCell).toBeDefined();
+    expect(authoredTable.markdown).toContain(`| ${spanningCell.text} |  |`);
+    expect(authoredTable.markdown.split(spanningCell.text)).toHaveLength(2);
+    expect(authoredResult.content.map(part => part.text ?? "").join("\n"))
+      .toContain(authoredTable.markdown);
     expect(authoredResult.structuredContent.checks).toMatchObject({
       rectangular_grid: "passed",
       cut_line_consistency: "passed",
@@ -397,5 +419,22 @@ describe("verified-vision B2 source-replayed table proposal verifier", () => {
     const first = await verify(BORDERLESS, borderlessPacket, borderlessToken, borderlessCells);
     const second = await verify(BORDERLESS, borderlessPacket, borderlessToken, borderlessCells);
     expect(JSON.stringify(second.structuredContent)).toBe(JSON.stringify(first.structuredContent));
+  }, 30_000);
+
+  it("13. leaves default conversion and its typed abstention byte-identical", async () => {
+    const plain = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: LINES, max_markdown_bytes: 200000 },
+    });
+    const proposalsEnabled = await client.callTool({
+      name: "convert_pdf_to_markdown",
+      arguments: { pdf_path: LINES, max_markdown_bytes: 200000, emit_table_proposals: true },
+    });
+    expect(plain.structuredContent.markdown).toBe(proposalsEnabled.structuredContent.markdown);
+    expect(plain.structuredContent.markdown_sha256)
+      .toBe(proposalsEnabled.structuredContent.markdown_sha256);
+    expect(plain.structuredContent.gaps).toEqual(proposalsEnabled.structuredContent.gaps);
+    expect(plain.structuredContent.gaps.map(gap => gap.code)).toContain("TABLE_TOPOLOGY_UNKNOWN");
+    expect(plain.structuredContent.table_proposals).toBeUndefined();
   }, 30_000);
 });

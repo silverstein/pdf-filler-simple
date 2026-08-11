@@ -365,8 +365,11 @@ describe("layout Markdown renderer", () => {
     const serialized = JSON.stringify(pinnable);
     // Previously cb581702fc7339b3eea5f15f31e49c907639622ef7c571b22870538598853572,
     // before the extraction IR version in the provenance envelope became 1.5.0.
+    // B4 changes only the published table limitation: it names the opt-in
+    // verified-proposal route, its non-unique-topology boundary, and GFM's
+    // explicit empty-continuation span projection.
     expect(createHash("sha256").update(serialized).digest("hex"))
-      .toBe("6bffa4e751cf6251c29fac76bac3e470caaa26014f68e852be060cc2002f0781");
+      .toBe("cf7f82867694770ba416b95fe7aa2f884b2e0c2b1ad4f5127bcdc6f7197ef535");
     const body = result.markdown.split("\n\n## Conversion gaps\n\n", 1)[0];
     expect(JSON.stringify({
       body,
@@ -374,7 +377,7 @@ describe("layout Markdown renderer", () => {
     })).toBe(NON_RECT_EXPECTED);
     expect(result.renderer).toEqual({
       name: "pdf-tools.layout-markdown-renderer",
-      version: "1.14.0",
+      version: "1.15.0",
     });
     expect(result.gaps[0].message).toMatch(/beyond reconstructed ruled or bounded solid-mask table grids/);
     expect(result.limitations.some(value => value.includes("clean ruled-rectangle grid evidence"))).toBe(true);

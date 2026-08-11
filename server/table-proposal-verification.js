@@ -1,12 +1,13 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
+import { renderVerifiedTableMarkdown } from "./markdown-conversion.js";
 
 export const TABLE_PROPOSAL_VERIFIER = Object.freeze({
   name: "pdf-tools.table-proposal-verifier",
-  version: "0.2.0",
+  version: "0.3.0",
 });
 
 export const TABLE_PROPOSAL_CLAIM_BOUNDARY =
-  "Accepted cell content is constructed only from reparsed source text items, and the proposed grid is well formed and consistent with all source-replayed ruling geometry available. Consistency is not proof of unique topology; ambiguous or unsupported geometry is rejected.";
+  "Accepted cell content is constructed only from reparsed source text items, and the proposed grid is well formed and consistent with all source-replayed ruling geometry available. GFM output is a syntax-escaped rectangular projection; row and column spans remain authoritative only in the structured cells. Consistency is not proof of unique topology; ambiguous or unsupported geometry is rejected.";
 
 export const TABLE_PROPOSAL_REASON_CODES = Object.freeze([
   "TABLE_PROPOSAL_TOKEN_MISMATCH",
@@ -502,8 +503,8 @@ export function verifyTableProposalAgainstRegion({
       colspan: cell.colspan,
       item_ids: sourceItems.map(item => item.id),
       // Never introduce separator characters that were not present in a
-      // source text item. B4 may project source-backed whitespace later; B2's
-      // proof surface is exact item-text concatenation only.
+      // source text item. B4's Markdown projection applies syntax escaping but
+      // keeps this structured proof surface as exact item-text concatenation.
       text: sourceFragments.join(""),
     };
   });
@@ -527,6 +528,19 @@ export function verifyTableProposalAgainstRegion({
     });
   }
 
+  const table = {
+    row_count: Math.max(...tableCells.map(cell => cell.row + cell.rowspan)),
+    column_count: Math.max(...tableCells.map(cell => cell.column + cell.colspan)),
+    cells: tableCells,
+    content_origin: "reparsed_pdf_text_layer",
+  };
+  const markdown = renderVerifiedTableMarkdown(table);
+  table.markdown = markdown;
+  table.markdown_format = "gfm";
+  table.markdown_span_projection = "anchor_text_with_empty_continuation_cells";
+  table.markdown_bytes = Buffer.byteLength(markdown, "utf8");
+  table.markdown_sha256 = createHash("sha256").update(markdown, "utf8").digest("hex");
+
   return {
     verifier: { ...TABLE_PROPOSAL_VERIFIER },
     status: "accepted",
@@ -540,12 +554,7 @@ export function verifyTableProposalAgainstRegion({
     },
     source_reparsed: true,
     checks,
-    table: {
-      row_count: Math.max(...tableCells.map(cell => cell.row + cell.rowspan)),
-      column_count: Math.max(...tableCells.map(cell => cell.column + cell.colspan)),
-      cells: tableCells,
-      content_origin: "reparsed_pdf_text_layer",
-    },
+    table,
     claim_boundary: TABLE_PROPOSAL_CLAIM_BOUNDARY,
   };
 }
@@ -577,6 +586,18 @@ export function validateTableProposalVerificationResult(result) {
       "accepted table proposal must pass every verifier check");
     assertion(result.table.content_origin === "reparsed_pdf_text_layer",
       "accepted table content origin mismatch");
+    const expectedMarkdown = renderVerifiedTableMarkdown(result.table);
+    assertion(result.table.markdown === expectedMarkdown,
+      "accepted table Markdown projection mismatch");
+    assertion(result.table.markdown_format === "gfm",
+      "accepted table Markdown format mismatch");
+    assertion(result.table.markdown_span_projection === "anchor_text_with_empty_continuation_cells",
+      "accepted table Markdown span projection mismatch");
+    assertion(result.table.markdown_bytes === Buffer.byteLength(expectedMarkdown, "utf8"),
+      "accepted table Markdown byte count mismatch");
+    assertion(result.table.markdown_sha256
+      === createHash("sha256").update(expectedMarkdown, "utf8").digest("hex"),
+    "accepted table Markdown digest mismatch");
   } else {
     assertion(result.reason_codes.length > 0, "rejected table proposal must carry a reason");
     assertion(result.table === null, "rejected table proposal cannot carry a table");

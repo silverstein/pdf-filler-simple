@@ -989,6 +989,11 @@ const tableProposalVerification = object({
     column_count: { type: "integer", minimum: 1 },
     cells: arrayOf(verifiedTableCell),
     content_origin: { const: "reparsed_pdf_text_layer" },
+    markdown: string,
+    markdown_format: { const: "gfm" },
+    markdown_span_projection: { const: "anchor_text_with_empty_continuation_cells" },
+    markdown_bytes: { type: "integer", minimum: 1 },
+    markdown_sha256: sha256Digest,
   })),
   claim_boundary: { const: TABLE_PROPOSAL_CLAIM_BOUNDARY },
 });
@@ -1075,7 +1080,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     {
       renderer: object({
         name: { const: "pdf-tools.layout-markdown-renderer" },
-        version: { const: "1.14.0" },
+        version: { const: "1.15.0" },
       }),
       conversion_status: enumString(["complete", "partial", "failed"]),
       markdown: string,

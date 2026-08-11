@@ -140,7 +140,11 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // only source identity plus structural item assignments, reparses the current
 // PDF, and publishes an explicit non-unique-topology claim boundary. Previously
 // a4d831d49d97c8605c06bda0fccad7bcbd399106b9fb980040a1b5f25e7a1e4b.
-const TOOL_CONTRACT_SHA256 = "c245597fbea9a4bae0d143d823da77c73c055b7424e5817606ec88aa4ec1beec";
+// 2026-08-11: B4 adds a deterministic source-backed GFM projection to accepted
+// verifier output, including format, span policy, byte count, and digest. The
+// input schema and read-only annotations are unchanged. Previously
+// c245597fbea9a4bae0d143d823da77c73c055b7424e5817606ec88aa4ec1beec.
+const TOOL_CONTRACT_SHA256 = "edbba3a6444b7603c9e8336a496f5c82b55d8d9ed674b7dbdbca28240386fb52";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

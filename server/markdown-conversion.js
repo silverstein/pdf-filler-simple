@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.14.0",
+  version: "1.15.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.6.0";
 
@@ -87,7 +87,7 @@ const LIMITATIONS = Object.freeze([
   "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different source font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. A missing prose-to-variable space is restored only when a multiword prose item, a separate uppercase letter from a different source font resource, and continuing prose from the original prose font share one baseline with distinct positive boundary gaps, and the same letter/font pair occurs in a nearby compact equation on the same page and column. An inline single-digit stacked fraction is rendered only when consecutive same-font source items, explicit source whitespace, smaller exactly aligned numerator and denominator digits, ordinary prose on both sides, and exactly one thin matching solid-mask bar agree. A small version-pinned registry may recover a legacy Computer Modern Type-3 character only after an exact official-metric family match, exact target and witness glyph-program matches, and a complete operator/text sequence binding. Two witnesses are required unless the source font subset cannot supply them, in which case the entry must declare that font's complete enrolled footprint and every code in it must be present and match. General equations, scripts, other fraction bars, unregistered raster variants, and other damaged mathematical glyphs remain source reading-order text rather than being guessed.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
-  "Tables are reconstructed only from complete text-item column geometry, clean ruled-rectangle grid evidence, or one unambiguous complete closed grid of bounded axis-aligned solid-mask rectangles. Every text item must fit exactly one cell, aligned partial dividers that evidence merged or spanning topology are rejected, and the first row must carry real header evidence because Markdown imposes header semantics. Incomplete grids and damaged mathematical glyphs are not interpreted; ambiguous content remains escaped reading-order text with a conversion gap. Cell artwork is omitted and reported as a vector-content gap; only independently qualified exact legacy glyph variants are recovered.",
+  "Tables are reconstructed directly only from complete text-item column geometry, clean ruled-rectangle grid evidence, or one unambiguous complete closed grid of bounded axis-aligned solid-mask rectangles. Every text item must fit exactly one cell, aligned partial dividers that evidence merged or spanning topology are rejected, and the first row must carry real header evidence because Markdown imposes header semantics. On an opt-in abstention path, a caller may submit item-to-cell assignments to the read-only verifier; accepted cell content is rebuilt only from a fresh source parse and the grid must agree with all available source-replayed ruling geometry. This proves source-backed content and consistency, not unique topology; ambiguous or unsupported geometry remains rejected. GFM cannot encode row or column spans, so accepted spans retain their authority in structured cells while Markdown places source text once at the anchor and leaves continuation slots empty. Incomplete grids and damaged mathematical glyphs are not interpreted; other ambiguous content remains escaped reading-order text with a conversion gap. Cell artwork is omitted and reported as a vector-content gap; only independently qualified exact legacy glyph variants are recovered.",
   "Vector paint operations beyond any reconstructed ruled or solid-mask table grid are not interpreted.",
   "OCR is not performed. Image-only text and text that exists only inside page images are omitted and reported as conversion gaps.",
   "Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.",
@@ -2030,9 +2030,12 @@ export function buildTableProposalRegion(page, run, reason, ordinal) {
 // second pass here would emit "\\|", which is an escaped backslash followed by
 // a live cell delimiter. Reuse the single existing escape.
 function escapeTableCell(value) {
+  const escapeFragment = fragment => escapePlainMarkdown(fragment)
+    .replace(/\r/g, "&#13;")
+    .replace(/\n/g, "&#10;");
   return Array.isArray(value)
-    ? value.map(fragment => escapePlainMarkdown(fragment)).join("<br>")
-    : escapePlainMarkdown(value);
+    ? value.map(escapeFragment).join("<br>")
+    : escapeFragment(value);
 }
 
 function renderTable(grid) {
@@ -2043,6 +2046,43 @@ function renderTable(grid) {
     ...body.map(row => `| ${row.map(escapeTableCell).join(" | ")} |`),
   ];
   return lines;
+}
+
+/**
+ * Project a verifier-accepted rectangular table through the same GFM escaping
+ * used by deterministic conversion. GFM has no span syntax, so structured
+ * cells retain the proposal's spans while covered Markdown slots stay empty.
+ * Source text appears exactly once, at the cell's anchor.
+ */
+export function renderVerifiedTableMarkdown(table) {
+  assertion(table && typeof table === "object" && !Array.isArray(table),
+    "verified table must be an object");
+  const { row_count: rowCount, column_count: columnCount, cells } = table;
+  assertion(Number.isSafeInteger(rowCount) && rowCount >= 1
+    && Number.isSafeInteger(columnCount) && columnCount >= 1
+    && rowCount * columnCount <= 10_000,
+  "verified table dimensions are invalid");
+  assertion(Array.isArray(cells) && cells.length >= 1, "verified table cells are invalid");
+  const grid = Array.from({ length: rowCount }, () => Array(columnCount).fill(null));
+  for (const cell of cells) {
+    assertion(cell && Number.isSafeInteger(cell.row) && Number.isSafeInteger(cell.column)
+      && Number.isSafeInteger(cell.rowspan) && cell.rowspan >= 1
+      && Number.isSafeInteger(cell.colspan) && cell.colspan >= 1
+      && cell.row >= 0 && cell.column >= 0
+      && cell.row + cell.rowspan <= rowCount
+      && cell.column + cell.colspan <= columnCount
+      && typeof cell.text === "string",
+    "verified table cell is invalid");
+    for (let row = cell.row; row < cell.row + cell.rowspan; row += 1) {
+      for (let column = cell.column; column < cell.column + cell.colspan; column += 1) {
+        assertion(grid[row][column] === null, "verified table cells overlap");
+        grid[row][column] = row === cell.row && column === cell.column ? cell.text : "";
+      }
+    }
+  }
+  assertion(grid.every(row => row.every(value => value !== null)),
+    "verified table cells do not cover the grid");
+  return renderTable(grid).join("\n");
 }
 
 const PAGE_NUMBER_LINE = /^(?:\d{1,4}|page\s+\d{1,4}(?:\s+of\s+\d{1,4})?|\d{1,4}\s+of\s+\d{1,4}|-\d{1,4}-)$/iu;
