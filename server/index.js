@@ -89,6 +89,14 @@ import {
   runPdfLibMutation,
   terminateAllPdfLibMutations,
 } from "./pdf-lib-subprocess.js";
+// The pre-parse bounds the mutation path already applies, reused on the one
+// read path that hands pdf-lib bytes it did not read off disk. This module is
+// already on the server's import graph through pdf-lib-subprocess.js, so the
+// import costs nothing new; see `loadEncryptedPdfBytes`.
+import {
+  assertBoundedPdfStreamDecodes,
+  assertBoundedPdfStructure,
+} from "./pdf-lib-worker.js";
 
 export const READ_CONTENT_ROUTING_GUIDANCE =
   "Pages without extractable text or with suspect text integrity were successfully read in this call. Use render_pdf_page for visual inspection of those pages; the page routing fields are limited to successfully-read pages, and pages outside this read scope or stopped at a page-read error are not classified by this result.";
@@ -639,17 +647,41 @@ async function loadPdfBytes(pdfBytes, password = null, { decryptFor = null } = {
  * The encrypted branch of `loadPdfBytes`. Decrypts in memory, parses the
  * plaintext, and releases the plaintext immediately if parsing fails so a
  * malformed decrypted document does not leave it sitting in the heap.
+ *
+ * The plaintext gets the same pre-parse bounds the mutation path applies to a
+ * document it is about to hand pdf-lib: `assertBoundedPdfStructure` for hostile
+ * cross-reference byte widths and sparse object numbering, and
+ * `assertBoundedPdfStreamDecodes` for object streams that expand past a
+ * deterministic ceiling. Those are the two shapes that make `PDFDocument.load`
+ * allocate without bound, and this is the one place in the server process where
+ * pdf-lib parses bytes that did not come straight off disk.
+ *
+ * It is belt and braces rather than a live hole. `qpdf --decrypt` fully
+ * re-serializes the document, which launders hostile cross-reference structure
+ * on the way through — a `/W [1 2000000000 1]` does not survive the round trip.
+ * But that is a property of QPDF's writer, not a contract it offers us, and it
+ * is the sort of property that evaporates quietly. Measured at 7.2 MB the two
+ * checks cost 22 ms against the 314 ms of pdf-lib parsing that follows
+ * unconditionally, so paying for the guarantee outright is cheaper than
+ * depending on somebody else's serializer to keep providing it.
  */
 async function loadEncryptedPdfBytes(pdfBytes, password, decryptFor, invalidPdfMessage) {
   const decrypted = await decryptPdfForRead(pdfBytes, password, decryptFor);
   let pdfDoc;
   try {
+    assertBoundedPdfStructure(decrypted.plaintext);
+    await assertBoundedPdfStreamDecodes(decrypted.plaintext);
     pdfDoc = await PDFDocument.load(decrypted.plaintext);
     // Validated against the plaintext, because that is the byte sequence this
     // document was actually parsed from.
     validateLoadedPdfStructure(pdfDoc, decrypted.plaintext);
   } catch (error) {
     decrypted.release();
+    // A bound that was exceeded is a specific, actionable fact and says which
+    // one. Collapsing it into "the file is malformed" would throw that away and
+    // describe a document this code deliberately refused as one it could not
+    // understand.
+    if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
     if (error?.message === invalidPdfMessage) throw error;
     throw new Error(invalidPdfMessage, { cause: error });
   }

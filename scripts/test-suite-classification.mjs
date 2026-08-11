@@ -217,6 +217,17 @@ export const REVIEWED_COMPUTED_MODULE_LOADS = Object.freeze([
     reason: "Loads a verified generated controller outside the checkout.",
   }),
   Object.freeze({
+    file: "test/pdf-read-permission-consistency.test.js",
+    count: 1,
+    kinds: Object.freeze(["dynamic-import"]),
+    fingerprints: Object.freeze([
+      "948c7080973dbfd1901b9e7904f3a2abcc2c968427f868cd50096046ad532df5",
+    ]),
+    reason: "Loads the committed QPDF runtime to build the matched pair of owner-locked AES-256 "
+      + "documents that differ only in /P bit 5, which is the only way to observe whether a tool "
+      + "consults the bit, and which cannot be committed as binaries.",
+  }),
+  Object.freeze({
     file: "test/qpdf-decrypt-isolation.test.js",
     count: 1,
     kinds: Object.freeze(["dynamic-import"]),
