@@ -112,7 +112,7 @@
     },
     {
       "name": "verify_table_proposal",
-      "description": "Reparse a local PDF and accept an untrusted table structure only when source coverage, reading order, header evidence, rectangular-grid consistency, and available ruling geometry agree; accepted content and GFM Markdown are rebuilt from the PDF text layer, while topology is verified as consistent rather than proven unique"
+      "description": "Check a suggested table against the original PDF and return it only when the text and layout match the document; unclear tables stay unconverted for review"
     },
     {
       "name": "render_pdf_page",

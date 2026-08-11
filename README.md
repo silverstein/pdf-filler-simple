@@ -189,7 +189,7 @@ the `.mcpb` manifest that ordinary model workflows discover.
 - `read_pdf_pages`
 - `read_pdf_layout`
 - `convert_pdf_to_markdown` (reconstructs evidence-backed tables and source-validated external http or https links; unsupported, ambiguous, internal, and action links stay escaped text reported as typed gaps)
-- `verify_table_proposal` (reparses the source and accepts an untrusted table structure only when source coverage, reading order, header evidence, rectangular-grid consistency, and available ruling geometry agree; accepted content and GFM Markdown are rebuilt from the PDF text layer, while topology is verified as consistent rather than proven unique)
+- `verify_table_proposal` (checks a suggested table against the original PDF and returns it only when the text and layout match the document; unclear tables stay unconverted for review)
 - `render_pdf_page`
 - `render_pdf_region`
 - `search_pdf_text`
