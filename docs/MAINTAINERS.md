@@ -114,6 +114,16 @@ Python, a model, or the network. A complete status means the requested
 text-layer slice was converted under this bounded contract, not that
 the original PDF's visual or semantic structure was fully recovered.
 
+For an abandoned born-digital table, a host may opt into proposal packets and
+submit a structural assignment to `verify_table_proposal`. Treat the assignment
+as untrusted: the verifier reparses the source and accepts only when coverage,
+order, independent header evidence, rectangular-grid consistency, available
+rulings, and non-ambiguity all pass. Accepted cell text comes exclusively from
+the reparsed PDF text layer. Its GFM table is a convenience projection;
+structured spans are authoritative. Never describe an accepted result as proof
+of the one uniquely correct or semantically correct topology. Rejections and
+ordinary conversions remain fail-closed and emit no inferred table.
+
 Filesystem operations and rasterization happen locally, and PDF Tools does not
 upload files to a separate PDF service. Text, images, and metadata returned
 through MCP may still be processed under the selected host or model provider's
@@ -268,7 +278,7 @@ mcp__<display_name, spaces underscored, non [A-Za-z0-9_-] stripped>__<tool_name>
 Identifiers over **64 characters** fail in the host. This shipped as a real
 defect (issue #44): the original benefit-led directory title
 `PDF Tools - Fill, Sign, Merge, Split, Extract` normalizes to 41 characters and
-pushes 15 of the current 42 packed tool identifiers past the ceiling.
+pushes 16 of the current 43 packed tool identifiers past the ceiling.
 
 The naming strategy is therefore **dual**:
 
@@ -284,7 +294,7 @@ Budgets are computed by `scripts/tool-identifier-budget.mjs` and gated in
 
 - `PDF Tools`: longest identifier 41, headroom 23
 - `PDF Tools: Fill, Sign & Edit`: longest identifier 57, headroom 7
-- Original long title: longest identifier 73, 15 identifiers over the limit
+- Original long title: longest identifier 73, 16 identifiers over the limit
 
 **The trap when adding a tool.** The shipped short brand has generous headroom,
 so a new long tool name will not break it and every host-facing check stays

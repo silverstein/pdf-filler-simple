@@ -58,6 +58,7 @@ const STRUCTURED_TOOLS = [
   "set_active_document",
   "split_pdf",
   "validate_pdf",
+  "verify_table_proposal",
 ].sort();
 const TEXT_ONLY_TOOLS = [
   "list_pdfs",
@@ -106,6 +107,7 @@ describe("output schema definitions", () => {
       "bulk_fill_from_csv",
       "compare_pdfs",
       "convert_pdf_to_markdown",
+      "verify_table_proposal",
       "detect_signature_zones",
       "fill_pdf",
       "fill_with_profile",
@@ -145,11 +147,11 @@ describe("output schema definitions", () => {
     expect(rejected.structuredContent.error.code).toBe("internal_validation_error");
   });
 
-  it("covers the exact 39 structured tools and no text-only tool", () => {
+  it("covers the exact 40 structured tools and no text-only tool", () => {
     expect(Object.keys(TOOL_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_ERROR_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
-    expect(STRUCTURED_TOOLS).toHaveLength(39);
+    expect(STRUCTURED_TOOLS).toHaveLength(40);
     expect(TEXT_ONLY_TOOLS).toHaveLength(4);
   });
 

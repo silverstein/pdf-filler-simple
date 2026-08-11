@@ -71,6 +71,7 @@ export const SHARE_FILES = [
   "server/qpdf-decrypt.js",
   "server/resource-uri.js",
   "server/stderr-suppression.js",
+  "server/table-proposal-verification.js",
   "server/type3-cm-pk-reference.js",
   "server/type3-cm-reference.js",
   "smart-install.sh",

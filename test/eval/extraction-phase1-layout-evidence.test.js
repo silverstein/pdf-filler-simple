@@ -83,6 +83,7 @@ describe("Phase 1 scorer-only layout occurrence oracle", () => {
       "layout_oracle_schema",
       "markdown_conversion_module", "output_schemas_module", "package_json", "package_lock",
       "pdf_comparison_module", "pdf_observations_module", "pdfjs_package", "scoring_oracle_schema",
+      "table_proposal_verification_module",
     ]);
     await expect(verifyLayoutOccurrenceOracle(retained)).resolves.toBe(true);
     const hostile = structuredClone(retained);
