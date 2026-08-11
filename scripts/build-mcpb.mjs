@@ -90,6 +90,7 @@ export const SERVER_FILES = [
   "qpdf-decrypt.js",
   "resource-uri.js",
   "stderr-suppression.js",
+  "table-proposal-verification.js",
   "type3-cm-pk-reference.js",
   "type3-cm-reference.js",
 ];

@@ -40,6 +40,7 @@ export const PHASE1_COMPANION_SOURCE_ROLES = Object.freeze([
   "request_schema",
   "response_schema",
   "runner_script",
+  "table_proposal_verification_module",
   "type3_cm_pk_reference_module",
   "type3_cm_reference_module",
 ]);
@@ -80,6 +81,7 @@ export const PHASE1_COMPANION_SOURCE_PATHS = Object.freeze({
   request_schema: "test/fixtures/eval/extraction/phase1/candidate-request.schema.json",
   response_schema: "test/fixtures/eval/extraction/phase1/candidate-response.schema.json",
   runner_script: "scripts/eval-run-extraction-candidates.mjs",
+  table_proposal_verification_module: "server/table-proposal-verification.js",
 });
 export const PHASE1_UNAVAILABLE_RESOURCE_FACTS = Object.freeze([
   "continuous_immutability",

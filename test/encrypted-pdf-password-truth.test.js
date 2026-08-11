@@ -41,6 +41,11 @@ const WRONG_PASSWORD = "encrypted-truth-wrong-2026";
 // Every tool that advertises a `password` argument and reads only through
 // PDF.js. The honest pdf-lib message is allowed to name these and nothing else.
 const PDFJS_PASSWORD_TOOLS = Object.freeze(["convert_pdf_to_markdown", "get_pdf_info", "read_pdf_layout"]);
+// PDF.js-backed password consumers that are truthful but are not suitable
+// destinations for the general pdf-lib refusal message. The verifier requires
+// a proposal packet as well as a password, so naming it as generic recovery
+// advice would send callers to a tool they cannot use from the refusal alone.
+const PDFJS_SPECIALIZED_PASSWORD_TOOLS = Object.freeze(["verify_table_proposal"]);
 
 // Tools that read through pdf-lib but decrypt first, via the vendored qpdf
 // runtime in server/qpdf-decrypt.js. They are read-only — none writes a PDF
@@ -389,7 +394,8 @@ describe.skipIf(!QPDF.available)("encrypted PDF password truthfulness (qpdf pres
     for (const tool of tools) {
       const description = tool.inputSchema?.properties?.password?.description;
       if (typeof description !== "string") continue;
-      if (PDFJS_PASSWORD_TOOLS.includes(tool.name)) {
+      if (PDFJS_PASSWORD_TOOLS.includes(tool.name)
+        || PDFJS_SPECIALIZED_PASSWORD_TOOLS.includes(tool.name)) {
         expect(description, `${tool.name} password description`).not.toMatch(/pdf-lib/);
         continue;
       }

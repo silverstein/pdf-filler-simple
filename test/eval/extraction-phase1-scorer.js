@@ -75,6 +75,7 @@ export const PHASE1_SCORER_LOCAL_SOURCE_PATHS = Object.freeze({
   score_schema: "test/fixtures/eval/extraction/phase1/score-report.schema.json",
   scorer_module: "test/eval/extraction-phase1-scorer.js",
   scoring_oracle: "test/fixtures/eval/extraction/phase1/scoring-oracle.v1.json",
+  table_proposal_verification_module: "server/table-proposal-verification.js",
 });
 const REQUIRED_SCORER_SOURCE_ROLES = Object.freeze(Object.keys(PHASE1_SCORER_LOCAL_SOURCE_PATHS).sort());
 const REQUIRED_SCORER_PARSED_JSON_ROLES = Object.freeze([

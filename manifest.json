@@ -111,6 +111,10 @@
       "description": "Convert supported local PDF text to deterministic Markdown with explicit partial and unsupported-content gaps, including evidence-backed tables and source-validated external http or https links; optionally enable counted compact-mode normalizations"
     },
     {
+      "name": "verify_table_proposal",
+      "description": "Check a suggested table against the original PDF and return it only when the text and layout match the document; unclear tables stay unconverted for review"
+    },
+    {
       "name": "render_pdf_page",
       "description": "Render one source-bound PDF.js page view to PNG with distinct raw page geometry, view geometry, renderer policy, and digest evidence"
     },

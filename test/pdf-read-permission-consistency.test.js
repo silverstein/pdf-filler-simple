@@ -149,6 +149,13 @@ const READ_CALL_RECIPES = Object.freeze({
   search_pdf_text: doc => ({ pdf_path: doc, query: "Name" }),
   set_active_document: doc => ({ pdf_path: doc }),
   validate_pdf: (doc, extras) => ({ pdf_path: doc, ...extras }),
+  verify_table_proposal: (doc, extras) => ({
+    pdf_path: doc,
+    password: extras.password,
+    region_id: "p1-t1",
+    proposal_token: "0".repeat(64),
+    cells: [{ row: 0, column: 0, rowspan: 1, colspan: 1, item_ids: [] }],
+  }),
 });
 
 const DOCUMENT_PARAMETERS = Object.freeze([

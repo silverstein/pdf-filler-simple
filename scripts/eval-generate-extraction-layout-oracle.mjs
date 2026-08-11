@@ -42,6 +42,7 @@ const SOURCE_PATHS = Object.freeze({
   pdf_observations_module: "server/pdf-observations.js",
   pdfjs_package: "node_modules/pdfjs-dist/package.json",
   scoring_oracle_schema: "test/fixtures/eval/extraction/phase1/scoring-oracle.schema.json",
+  table_proposal_verification_module: "server/table-proposal-verification.js",
 });
 
 function canonicalJson(value) {
