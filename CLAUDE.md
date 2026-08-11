@@ -98,14 +98,14 @@ the source's protection before it is staged. Two rules follow:
   `output_encryption` parameter, and no default to argue about. A document that
   cannot be faithfully re-protected fails the operation; nothing ever writes a
   decrypted copy of an encrypted document.
-- **A denied `/P` needs the owner password.** For a read, either password is
-  enough. For a write, if the document's permissions deny what the operation
-  does, only the owner password authorises it — the user password proves you may
-  open the document, not that you may override its owner. Each tool requires the
-  bit matching what it does: `modifyforms` to fill a form, `modifyassembly` for
-  page manipulation, `modify` for stamping (which draws into the page content
-  stream, so it is bit 4 and not the annotation bit). See
-  `ENCRYPTED_WRITE_OPERATIONS` in `server/qpdf-decrypt.js`.
+- **A denied `/P` needs the owner password.** If the document's permissions deny
+  what the operation does, only the owner password authorises it — the user
+  password proves you may open the document, not that you may override its
+  owner. Each tool requires the bit matching what it does: `modifyforms` to fill
+  a form, `modifyassembly` for page manipulation, `modify` for stamping (which
+  draws into the page content stream, so it is bit 4 and not the annotation
+  bit). See `ENCRYPTED_WRITE_OPERATIONS` in `server/qpdf-decrypt.js`. This is
+  the *write* rule; reads do not consult `/P` at all (see below).
 
 `merge_pdfs` refuses unless every source carries byte-identical protection,
 because N sources with different or absent encryption make "the source's
@@ -158,18 +158,31 @@ Isolation does **not** improve the memory picture; see the size-cap note below.
   containing a line break is refused outright: it cannot be represented in the
   single-line password file that keeps passwords off the command line.
 - **No password supplied, document opens with an empty user password** (the
-  owner-locked shape: opens freely, `/P` denies modification) → proceed only if
-  `/P` grants `extract`; otherwise refuse, naming the denied permission. qpdf
-  can decrypt, edit, and re-lock such a document with identical `/P` and `/R`
-  and no password at all, and PDF Tools must not become a tool for that.
+  owner-locked shape: opens freely, `/P` denies modification) → the *read*
+  proceeds; a *write* proceeds only if `/P` grants the bit it needs. qpdf can
+  decrypt, edit, and re-lock such a document with identical `/P` and `/R` and no
+  password at all, and PDF Tools must not become a tool for that — which is what
+  the write rule and "protection in, protection out" prevent.
 - Not encrypted → unchanged. pdf-lib is tried first, so no qpdf module is
   instantiated and there is no measurable cost.
 
-All three require `/P` bit 5 (`extract`, content copying), because all three
-copy document content out. The `accessibility` bit is not accepted as a
-substitute — it is granted almost universally and nothing can verify the caller
-is assistive technology — and neither is `modifyforms`, which authorizes filling
-a form, not reading what is already in it.
+**`/P` governs writes. It does not govern reads.** That is one rule, stated once
+in `pdfPermissionRefusal` in `server/qpdf-decrypt.js`, which is the only
+function in `server/` that reads `encryption.capabilities`. The read tools once
+required `/P` bit 5 (`extract`); the requirement was removed because it could
+not be applied to the family it belonged to. It only ever bound the three qpdf-
+backed reads, while every PDF.js-backed sibling — `read_pdf_content`,
+`read_pdf_layout`, `convert_pdf_to_markdown`, `render_pdf_page` and the rest —
+returned the same content regardless, PDF.js having no `/P` implementation at
+all. Extending it uniformly would have meant refusing `read_pdf_bytes`,
+`get_pdf_resource_uri` and `display_pdf`, which is refusing to show the user
+their own document; no reader on the market does that. And it cannot bite in any
+case: `/P` bit 10 (`accessibility`) is deprecated-and-required by ISO 32000-2,
+and qpdf cannot even produce an R4 or R6 document that denies it, so on anything
+encrypted with AES an owner who denies `extract` has granted extraction for
+accessibility in the same breath. The full argument is in the module header;
+`test/pdf-read-permission-consistency.test.js` pins the uniformity so a new read
+tool cannot join the family with different behaviour.
 
 **Size cap.** Encrypted inputs are capped at **16 MiB**, separate from and far
 below the 250 MiB `PDF_MUTATION_MAX_FILE_BYTES`. Decryption costs roughly

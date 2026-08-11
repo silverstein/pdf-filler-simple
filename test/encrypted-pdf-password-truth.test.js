@@ -308,8 +308,18 @@ describe.skipIf(!QPDF.available)("encrypted PDF password truthfulness (qpdf pres
         // the same drift guard, pointing the other way.
         expect(description, `${tool.name} password description`).not.toMatch(/cannot decrypt/i);
         expect(description, `${tool.name} password description`).not.toMatch(/never used/i);
-        // and must still state the limits that do apply.
-        expect(description, `${tool.name} password description`).toMatch(/permissions allow/i);
+        // This used to require the text "permissions allow", back when these
+        // three refused an owner-locked document whose `/P` denied extraction.
+        // They no longer do — `/P` governs writes only — so advertising that
+        // caveat would now be the drift, and the assertion is inverted to catch
+        // it coming back.
+        expect(description, `${tool.name} password description`)
+          .not.toMatch(/permissions allow|permissions deny/i);
+        // What has to stay true is the size bound and the promise that this is
+        // not a way to take a document's protection off.
+        expect(description, `${tool.name} password description`).toMatch(/16 MiB/);
+        expect(description, `${tool.name} password description`)
+          .toMatch(/never removes or weakens/i);
         continue;
       }
       expect(description, `${tool.name} password description`).toMatch(/pdf-lib/);

@@ -649,7 +649,7 @@ async function countFlateBytesWithinLimit(payload, maximumDecodedBytes) {
         throw resourceError(
           "unsafe_object_stream_expansion",
           `PDF object stream exceeds the ${maximumDecodedBytes}-byte decoded ceiling; `
-          + "mutation was stopped before parsing.",
+          + "the document was rejected before parsing.",
         );
       }
     }
@@ -673,7 +673,7 @@ export async function assertBoundedPdfStreamDecodes(bytes, {
     throw resourceError(
       "unsafe_object_stream_decode",
       `PDF object stream cannot be decoded within a deterministic byte budget (${detail}); `
-      + "mutation was stopped before parsing.",
+      + "the document was rejected before parsing.",
     );
   };
   for (const stream of collectPreparseStreamDecodes(bytes)) {
@@ -695,7 +695,7 @@ export async function assertBoundedPdfStreamDecodes(bytes, {
         throw resourceError(
           "unsafe_object_stream_expansion",
           `PDF object stream exceeds the ${maximumDecodedObjectStreamBytes}-byte decoded ceiling; `
-          + "mutation was stopped before parsing.",
+          + "the document was rejected before parsing.",
         );
       }
       continue;
@@ -734,7 +734,7 @@ function assertBoundedXRefStreamByteWidths(bytes) {
     throw resourceError(
       "unsafe_xref_byte_width",
       `PDF declares an unsafe cross-reference stream byte width (${detail}); `
-      + "mutation was stopped before parsing.",
+      + "the document was rejected before parsing.",
     );
   };
   // The loop bound pdf-lib derives is the numeric magnitude, so magnitude is
@@ -855,7 +855,7 @@ export function assertBoundedPdfStructure(bytes) {
   const reject = (kind, value) => {
     throw resourceError(
       "sparse_pdf_structure",
-      `PDF declares an unsafe sparse ${kind} (${value}); mutation was stopped before parsing.`,
+      `PDF declares an unsafe sparse ${kind} (${value}); the document was rejected before parsing.`,
     );
   };
   const integerValue = token => {

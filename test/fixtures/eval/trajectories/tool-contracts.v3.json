@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.10.0"
   },
-  "tools_sha256": "a1284bea0d56408fb9c3071a03bda1b605825389143b6e1120782de85e48c205",
+  "tools_sha256": "64fd39889ada86e48043c411f8f64e19a1658387155f46769da5b502d3c6d1fd",
   "tools": [
     {
       "name": "add_signature_field",
@@ -1283,7 +1283,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory to complete this read (encrypted inputs are limited to 16 MiB). Leave it unset for an unencrypted document. An encrypted document that opens without a password is still read only if its own permissions allow content extraction; PDF Tools does not override them."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory to complete this read (encrypted inputs are limited to 16 MiB). Leave it unset for an unencrypted document, or for an encrypted one that opens without a password. A document that needs a password cannot be read without it, and this tool never removes or weakens a document's protection."
           }
         },
         "required": [
@@ -1758,7 +1758,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory to complete this read (encrypted inputs are limited to 16 MiB). Leave it unset for an unencrypted document. An encrypted document that opens without a password is still read only if its own permissions allow content extraction; PDF Tools does not override them."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory to complete this read (encrypted inputs are limited to 16 MiB). Leave it unset for an unencrypted document, or for an encrypted one that opens without a password. A document that needs a password cannot be read without it, and this tool never removes or weakens a document's protection."
           }
         },
         "required": [

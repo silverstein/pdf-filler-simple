@@ -25,36 +25,109 @@
  * turns it into one. QPDF will decrypt an owner-locked document — one that
  * opens with an empty user password but whose `/P` denies modification —
  * without any password at all, and will re-lock it afterwards with an
- * identical `/P` and `/R`. Shipping that shape would make PDF Tools a
- * permissions-circumvention tool. So decryption is gated:
+ * identical `/P` and `/R`. Shipping *that* shape would make PDF Tools a
+ * permissions-circumvention tool, so no tool here removes, weakens or reveals
+ * a document's protection, and a document that arrives encrypted leaves
+ * encrypted or does not leave at all.
  *
- *   - a caller who supplies a password that the document accepts is acting on
- *     a credential they already hold, and proceeds *for a read*; but
- *   - a caller who supplies none, and merely benefits from the document's
- *     empty user password, proceeds only if the document's own `/P` grants the
- *     permission the operation needs, and is otherwise refused by name.
+ * The empty string counts as *no password*, so nothing that turns on whether a
+ * credential was supplied can be sidestepped by passing `""` to a document
+ * whose user password is empty.
  *
- * The empty string counts as *no password*, so the check above cannot be
- * sidestepped by passing `""` to a document whose user password is empty.
- *
- * The gates are evaluated here, between the worker's two phases. The worker
- * reports what the document says about itself and then waits; it is told to
- * decrypt only after this module has decided that it may. A refusal is
+ * The permission rule is evaluated here, between the worker's two phases. The
+ * worker reports what the document says about itself and then waits; it is told
+ * to decrypt only after this module has decided that it may. A refusal is
  * therefore a refusal to do the work, not a decision to throw the result away.
  *
- * ## Reads and writes are gated differently, on purpose
+ * ## THE PERMISSION RULE
  *
- * For a read, holding either password makes the caller the intended reader and
- * that is the end of it. For a write it is not. A document whose `/P` says
- * `modify: not allowed` is making an explicit statement about what may be done
- * to it, and the owner password is precisely the credential that exists to
- * authorise overriding that statement. So on the write path a *user* password
- * does not satisfy a permission the document denies: only the owner password
- * does, and authenticating as owner satisfies permissions by definition.
+ * `pdfPermissionRefusal` is the whole of it, and it is the only function in
+ * this tree that reads `encryption.capabilities`. In one sentence:
  *
- * Note that QPDF keeps reporting a document's declared capabilities as denied
- * even when the owner password matched, so the owner check has to be made
- * against `ownerPasswordMatched` rather than read out of the capabilities.
+ *   **`/P` governs writes. It does not govern reads.**
+ *
+ * A *write* may not proceed against a `/P` that denies the change it makes,
+ * unless the caller authenticated as owner. A *read* proceeds on a credential
+ * alone: whoever can open the document may read it, and a document that opens
+ * with an empty user password opens for everybody.
+ *
+ * The write half is unremarkable and is the same rule Acrobat applies. A
+ * document whose `/P` says `modify: not allowed` is making an explicit
+ * statement about what may be done to it, and the owner password is precisely
+ * the credential that exists to authorise overriding that statement, so a
+ * *user* password does not satisfy a permission the document denies. Note that
+ * QPDF keeps reporting a document's declared capabilities as denied even when
+ * the owner password matched, so the owner check is made against
+ * `ownerPasswordMatched` rather than read out of the capabilities.
+ *
+ * The read half is the part that needs the argument, because an earlier
+ * revision of this module did require `extract` (`/P` bit 5) for the three
+ * read-only tools, and that requirement has been removed. Four reasons, in
+ * descending order of how much they decide it.
+ *
+ * **1. A read gate cannot be made uniform without refusing to show the user
+ * their own document.** `/P` is only consulted where QPDF is, and QPDF is only
+ * reached from `loadEncryptedPdfBytes`. Everything else that reads a PDF here
+ * goes through PDF.js, which does not implement `/P` at all — measured, not
+ * assumed: on an owner-locked AES-256 document with `--extract=n`,
+ * `read_pdf_content` returned 33,173 characters while `read_pdf_fields`
+ * refused. Closing that would mean gating `read_pdf_content`,
+ * `read_pdf_pages`, `search_pdf_text`, `read_pdf_layout`,
+ * `convert_pdf_to_markdown`, `get_pdf_info`, `render_pdf_page` and
+ * `render_pdf_region` — and, because each of these hands over strictly more
+ * than any of them, also `read_pdf_bytes`, `get_pdf_resource_uri` and
+ * `display_pdf`. The last three are "give the host the file" and "show it to
+ * the user in the viewer". Refusing those is not a permission model, it is a
+ * refusal to be a PDF reader, and no reader on the market does it: Acrobat,
+ * Preview and Chrome all display owner-locked documents and grey out *Copy*.
+ * We have no Copy menu to grey out. Every tool here *is* the copy operation,
+ * so the reader convention has no analogue on this side except "refuse to
+ * function". A rule that cannot be applied to the whole family is not a rule,
+ * it is an inconsistency with a good conscience.
+ *
+ * **2. The accessibility bit makes the extract bit unenforceable on any
+ * modern document.** `/P` bit 10 authorises extraction for assistive
+ * technology, and ISO 32000-2 deprecated it and requires it set. That is not
+ * theory: QPDF cannot produce a counterexample. `--extract=n --accessibility=n`
+ * yields `accessibility: true, extract: false` at both R4 (AES-128) and R6
+ * (AES-256); only legacy R3 RC4 can deny it. So on every document produced this
+ * decade, an owner who denies `extract` has unavoidably granted extraction for
+ * accessibility in the same breath. Honour that carve-out and an extract gate
+ * is a no-op on AES; ignore it and we are stricter than the format's own
+ * authors, against a caller — a language model reading a document so it can
+ * answer its owner's questions about it — which is far closer to assistive
+ * technology than to copy-paste. There is no reading of bit 5 here that both
+ * bites and is defensible.
+ *
+ * **3. `/P` is a statement to a reader's user interface, not an access
+ * control.** It is defeated by the empty user password the document itself
+ * ships with, and it survives only where a reader volunteers to honour it. Two
+ * of the three PDF libraries this product is built on decline: PDF.js does not
+ * implement it, and QPDF decrypts owner-locked documents with no password at
+ * all — this repository's own test fixtures depend on that. Adopting a rule our
+ * own dependencies refuse to implement would put it in exactly one place, ours,
+ * where it is easiest to route around.
+ *
+ * **4. What was actually protected was a rounding error.** The gate could only
+ * ever apply to a document that is encrypted *and* opens without a password
+ * *and* sets `extract=n`. An unencrypted confidential document has no `/P` and
+ * got nothing. Within that slice, nine sibling tools returned the same content
+ * anyway, measured through the real server. The measured protective value was
+ * zero; the cost was a refusal a user
+ * answers with one `qpdf --decrypt`, having learned that the honest path is the
+ * slow one.
+ *
+ * The write gate keeps none of these problems, which is why it stays. It is
+ * *complete*: there is no sibling tool that writes a PDF without going through
+ * `decryptPdfForWrite`, so nothing routes around it. It is *enforceable*: we
+ * are the party producing the bytes, and refusing to produce them ends the
+ * matter. And it is *meaningful*: it is the difference between reading a
+ * document and altering someone else's, which is the line `/P` was actually
+ * written to draw.
+ *
+ * None of this loosens the credential rules. A document with a real user
+ * password still cannot be read without one, a wrong password is still a wrong
+ * password, and `""` is still not a credential.
  *
  * ## Protection in, protection out
  *
@@ -74,26 +147,15 @@
  *
  * ## Which permission bit
  *
- * The read tools require `extract` — `/P` bit 5, "copy or otherwise extract
- * text and graphics". Every one of them copies document content out of the
- * document: `read_pdf_fields` returns field names and their current values,
- * `validate_pdf` reports field names and whether each is filled, and
- * `extract_to_csv` writes field values to a CSV file on disk. That is
- * extraction under any reading of the bit.
+ * Only the write side has a mapping, because only the write side consults
+ * `/P`. Each mutation requires the bit that matches what it actually does to
+ * the file; see `ENCRYPTED_WRITE_OPERATIONS` for the mapping and why each one
+ * is what it is.
  *
- * Two nearby bits are deliberately *not* accepted as substitutes:
- *
- *   - `accessibility` (bit 10) is almost always granted and would make the
- *     check vacuous. It authorizes extraction for assistive technology, and
- *     nothing here can establish that the caller is assistive technology.
- *   - `modifyforms` (bit 9) authorizes filling a form, not reading what is
- *     already in it. A document may permit filling while denying extraction,
- *     and honouring `modifyforms` here would hand back the values that
- *     `extract` was set to withhold.
- *
- * The mutation tools each require the bit that matches what they actually do
- * to the file; see `ENCRYPTED_WRITE_OPERATIONS` for the mapping and why each
- * one is what it is.
+ * `ENCRYPTED_READ_OPERATIONS` carries no bit. It is still a security boundary,
+ * and adding an entry to it is still a security decision — it names the
+ * operations allowed to reach QPDF at all — but what it grants is decryption
+ * subject to a credential, not decryption subject to `/P`.
  *
  * ## Memory
  *
@@ -209,21 +271,23 @@ export const PDF_ENCRYPTED_MAX_FILE_BYTES = 16 * 1024 * 1024;
 export const PDF_DECRYPTION_TIMEOUT_MS = 30_000;
 
 /**
- * The operations allowed to decrypt, and the `/P` capability each one needs
- * when the caller supplied no password. Adding an entry here is a security
- * decision: it grants a tool the ability to read encrypted documents.
+ * The operations allowed to decrypt for a read. Adding an entry here is a
+ * security decision: it grants a tool the ability to read encrypted documents.
+ *
+ * There is deliberately no `capability` column. A read is authorised by a
+ * credential, never by `/P` — see THE PERMISSION RULE in the module header for
+ * why, and `pdfPermissionRefusal` for the code that says so. `activity` is the
+ * human description of what the grant buys, and exists so this table can be
+ * reviewed for what it actually permits rather than for what its keys suggest.
  */
 export const ENCRYPTED_READ_OPERATIONS = Object.freeze({
   read_pdf_fields: Object.freeze({
-    capability: "extract",
     activity: "read its form fields and their values",
   }),
   validate_pdf: Object.freeze({
-    capability: "extract",
     activity: "report which of its form fields are filled",
   }),
   extract_to_csv: Object.freeze({
-    capability: "extract",
     activity: "extract its form data to a CSV file",
   }),
 });
@@ -308,9 +372,14 @@ export const ENCRYPTED_WRITE_OPERATIONS = Object.freeze({
   }),
 });
 
-/** Human-readable names for the `/P` capabilities this module can require. */
+/**
+ * Human-readable names for the `/P` capabilities this module can require.
+ *
+ * `extract` is deliberately absent: it is not required by any operation, and
+ * listing a label for it would leave a ready-made slot for a read gate to be
+ * reintroduced without anyone re-reading THE PERMISSION RULE.
+ */
 const CAPABILITY_LABELS = Object.freeze({
-  extract: "content copying and extraction",
   modify: "modifying the document's contents",
   modifyforms: "filling in form fields",
   modifyassembly: "assembling the document's pages",
@@ -344,20 +413,6 @@ export const PDF_DECRYPTION_TIMEOUT_MESSAGE =
   + "stopped. How long decryption takes depends on how many objects a document contains rather "
   + "than on how large it is, so a small file can still exceed the limit. Decrypt the file first "
   + "(for example with qpdf) and retry with the decrypted copy.";
-
-/**
- * Refusal text for the owner-locked case. Names the denied permission, says
- * plainly that no password was supplied, and points at the one legitimate way
- * forward, without ever suggesting a way around the restriction.
- */
-export function pdfPermissionDeniedMessage(operation) {
-  const { activity, capability } = ENCRYPTED_READ_OPERATIONS[operation];
-  const label = CAPABILITY_LABELS[capability];
-  return `This PDF is encrypted and its permissions deny ${label} (/P '${capability}'), so `
-    + `PDF Tools will not ${activity}. It opens without a password, but that does not grant the `
-    + "denied permission, and PDF Tools does not override a document's own restrictions. "
-    + "If you hold the owner password, supply it in the 'password' parameter and retry.";
-}
 
 export const PDF_REPROTECT_FAILED_MESSAGE =
   "This PDF is encrypted and its protection could not be restored to the modified copy, so "
@@ -423,13 +478,19 @@ export const PDF_REPROTECTING_PASSWORD_DESCRIPTION =
 /**
  * Parameter text for the three read-only tools that can decrypt. They too
  * once advertised a password they could not use.
+ *
+ * It no longer carries the "only if its own permissions allow content
+ * extraction" caveat, because that is no longer true and was never true of the
+ * sibling read tools it sat beside. See THE PERMISSION RULE in the module
+ * header.
  */
 export const PDF_DECRYPTABLE_PASSWORD_DESCRIPTION =
   "Password for an encrypted PDF. Supply the user or owner password and the document is "
   + `decrypted in memory to complete this read (encrypted inputs are limited to `
   + `${PDF_ENCRYPTED_MAX_FILE_BYTES / (1024 * 1024)} MiB). Leave it unset for an unencrypted `
-  + "document. An encrypted document that opens without a password is still read only if its "
-  + "own permissions allow content extraction; PDF Tools does not override them.";
+  + "document, or for an encrypted one that opens without a password. A document that needs a "
+  + "password cannot be read without it, and this tool never removes or weakens a document's "
+  + "protection.";
 
 /**
  * The deadline one request runs under.
@@ -831,12 +892,11 @@ export async function decryptPdfForRead(pdfBytes, password, operation, options =
  * Decrypts an encrypted PDF so one of the mutation operations can change it.
  *
  * Identical to `decryptPdfForRead` in every respect but the permission rule.
- * For a read, holding either password makes the caller the intended reader and
- * that is enough. For a write it is not: if the document's `/P` denies the
- * permission the change needs, only the *owner* password authorises it.
- * Authenticating as owner satisfies permissions by definition, which is why
- * QPDF still reporting `modify: false` under an owner password is not consulted
- * once `ownerPasswordMatched` is true.
+ * A read proceeds for whoever can open the document. A write does not: if the
+ * document's `/P` denies the permission the change needs, only the *owner*
+ * password authorises it. Authenticating as owner satisfies permissions by
+ * definition, which is why QPDF still reporting `modify: false` under an owner
+ * password is not consulted once `ownerPasswordMatched` is true.
  *
  * The returned `encryption` is what the re-protection is later checked against.
  */
@@ -856,14 +916,58 @@ async function decryptPdfForWriteExclusively(pdfBytes, password, operation, { ti
   return runDecryptionWorker(
     pdfBytes,
     suppliedPassword,
-    encryption => writePermissionRefusal(encryption, suppliedPassword, operation, rules),
+    encryption => pdfPermissionRefusal({
+      intent: "write",
+      encryption,
+      suppliedPassword,
+      operation,
+    }),
     resolveDecryptionDeadlineMs(timeoutMs),
   );
 }
 
 /**
- * The write permission rule, separated so it can be read — and tested —
- * without a worker.
+ * THE PERMISSION RULE, in one function. Both intents are here so the asymmetry
+ * between them cannot drift apart, and so a reader looking for "where is this
+ * decided" finds one answer.
+ *
+ * `/P` governs writes. It does not govern reads. The module header carries the
+ * argument for the read half at length; the short version is that a read gate
+ * could only ever be applied to the one read path that happens to route through
+ * QPDF, while eight PDF.js-backed siblings and three that hand over the whole
+ * file returned the same content regardless, and that `/P` bit 10 makes bit 5
+ * unenforceable on anything encrypted with AES.
+ *
+ * This is also the only function in `server/` that reads
+ * `encryption.capabilities`, which `test/pdf-read-permission-consistency.test.js`
+ * asserts structurally. If a second reader of that field appears, the rule has
+ * grown a second home and this comment has become a lie.
+ *
+ * Returns the refusal, or `null` if the operation may proceed.
+ */
+export function pdfPermissionRefusal({ intent, encryption, suppliedPassword, operation }) {
+  if (intent === "read") {
+    // Deliberately empty. Whoever can open the document may read it; the
+    // credential check that decides "can open" has already happened inside
+    // QPDF, and a document that opens with an empty user password opens for
+    // everybody. `/P` is not consulted, and there is no branch here that could
+    // start consulting it without this comment having to be deleted first.
+    return null;
+  }
+  if (intent !== "write") {
+    throw new TypeError(`Permission intent must be 'read' or 'write', not '${intent}'.`);
+  }
+  const rules = ENCRYPTED_WRITE_OPERATIONS[operation];
+  if (!rules) {
+    throw new TypeError(`Operation '${operation}' is not permitted to rewrite encrypted PDFs.`);
+  }
+  return writePermissionRefusal(encryption, suppliedPassword, operation, rules);
+}
+
+/**
+ * The write half of `pdfPermissionRefusal`, separated so it can be read — and
+ * tested — without a worker. Call `pdfPermissionRefusal` from product code;
+ * this is not a second rule, it is the body of that one's write branch.
  *
  * Returns the refusal, or `null` if the mutation may proceed.
  */
@@ -1044,17 +1148,12 @@ async function decryptPdfForReadExclusively(pdfBytes, password, operation, { tim
   return runDecryptionWorker(
     pdfBytes,
     suppliedPassword,
-    // A reader holding either password is the intended reader, so any
-    // credential satisfies the permission check. The write path deliberately
-    // does not accept that; see `writePermissionRefusal`.
-    encryption => {
-      const credentialed = suppliedPassword !== null
-        && (encryption.ownerPasswordMatched || encryption.userPasswordMatched);
-      if (!credentialed && encryption.capabilities?.[rules.capability] !== true) {
-        return new PdfDecryptionError("permission_denied", pdfPermissionDeniedMessage(operation));
-      }
-      return null;
-    },
+    encryption => pdfPermissionRefusal({
+      intent: "read",
+      encryption,
+      suppliedPassword,
+      operation,
+    }),
     resolveDecryptionDeadlineMs(timeoutMs),
   );
 }

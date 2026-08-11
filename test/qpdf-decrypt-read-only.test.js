@@ -29,9 +29,9 @@ import {
   PDF_ENCRYPTED_MAX_FILE_BYTES,
   PdfDecryptionError,
   decryptPdfForRead,
+  decryptPdfForWrite,
   isQpdfRuntimeLoaded,
   normalizeSuppliedPassword,
-  pdfPermissionDeniedMessage,
 } from "../server/qpdf-decrypt.js";
 import { PDF_LIB_ENCRYPTED_MESSAGE } from "../server/helpers.js";
 
@@ -140,18 +140,56 @@ describe("encrypted-read scope rule", () => {
     ).rejects.toMatchObject({ reason: "password_rejected" });
   }, 30_000);
 
-  it("refuses the owner-locked document by name when /P denies extraction", async () => {
-    const rejection = await decryptPdfForRead(
-      await readFixture("ownerLockedNoExtract"),
-      null,
-      "read_pdf_fields",
-    ).catch(error => error);
-    expect(rejection).toBeInstanceOf(PdfDecryptionError);
-    expect(rejection.reason).toBe("permission_denied");
-    expect(rejection.message).toContain("extract");
-    // Must not coach the caller around the restriction.
-    expect(rejection.message).not.toMatch(/qpdf|decrypt the file|remove/i);
+  /*
+   * This assertion used to read "refuses the owner-locked document by name when
+   * /P denies extraction", and it was true of this one code path and of nothing
+   * else in the product. The gate it pinned refused `read_pdf_fields` while
+   * `read_pdf_content` returned the same document's full text, because PDF.js
+   * does not implement `/P` and never consulted it. A gate nine sibling tools
+   * walk around protects nothing and teaches the caller that the refusal is
+   * noise. The rule is now that `/P` governs writes only, so the property worth
+   * pinning here is the reverse one: the document is read, and it is read
+   * *because a credential was not required*, not because anything was
+   * overridden.
+   *
+   * See `test/pdf-read-permission-consistency.test.js` for the assertion that
+   * every read tool agrees, which is the part that could not be true before.
+   */
+  it("reads the owner-locked document, because /P does not govern reads", async () => {
+    const denied = await readFixture("ownerLockedNoExtract");
+    const result = await decryptPdfForRead(denied, null, "read_pdf_fields");
+    try {
+      // Derived, not restated: the document really does deny extraction, and
+      // really was read anyway with no password at all.
+      expect(result.encryption.capabilities.extract).toBe(false);
+      expect(result.encryption.userPasswordMatched).toBe(true);
+      expect(result.encryption.ownerPasswordMatched).toBe(false);
+      expect(result.plaintext.subarray(0, 5).toString("latin1")).toBe("%PDF-");
+      expect(result.plaintext.toString("latin1")).not.toContain("/Encrypt");
+    } finally {
+      result.release();
+    }
   }, 30_000);
+
+  it("still refuses to write to that same document without the owner password", async () => {
+    // The half of the old gate that survived, asserted here so the read change
+    // above cannot be mistaken for "permissions stopped mattering". `/P` denies
+    // `modifyforms`, and no credential short of the owner password satisfies it.
+    const denied = await readFixture("ownerLockedNoExtract");
+    const refusal = await decryptPdfForWrite(denied, null, "fill_pdf").catch(error => error);
+    expect(refusal).toBeInstanceOf(PdfDecryptionError);
+    expect(refusal.reason).toBe("write_permission_denied");
+    expect(refusal.message).toContain("modifyforms");
+    // Must not coach the caller around the restriction.
+    expect(refusal.message).not.toMatch(/qpdf|decrypt the file|remove/i);
+
+    const allowed = await decryptPdfForWrite(denied, OWNER_PASSWORD, "fill_pdf");
+    try {
+      expect(allowed.encryption.ownerPasswordMatched).toBe(true);
+    } finally {
+      allowed.release();
+    }
+  }, 60_000);
 
   it("treats the empty string as no password, but keeps whitespace passwords real", async () => {
     expect(normalizeSuppliedPassword("")).toBeNull();
@@ -161,15 +199,29 @@ describe("encrypted-read scope rule", () => {
     // without special handling because it is not the empty password.
     expect(normalizeSuppliedPassword("   ")).toBe("   ");
 
-    // The loophole this closes: an empty string is exactly the credential the
-    // owner-locked document accepts, so treating it as "supplied" would let
-    // any caller claim credentialed access and skip the /P check.
-    await expect(decryptPdfForRead(await readFixture("ownerLockedNoExtract"), "", "extract_to_csv"))
-      .rejects.toMatchObject({ reason: "permission_denied" });
-    // A whitespace password is a wrong password here, not an absent one, so it
-    // is refused as such rather than quietly falling back to the /P check.
+    // The distinction still has to hold on the read path even though nothing on
+    // it turns on `/P` any more, because it is what keeps "" from being
+    // reported as an accepted credential: `""` is absent, so the owner-locked
+    // document opens; `"   "` is a wrong password, so it does not, and the
+    // caller is told the truth about which happened rather than getting a
+    // silent success.
+    const empty = await decryptPdfForRead(
+      await readFixture("ownerLockedNoExtract"), "", "extract_to_csv",
+    );
+    try {
+      expect(empty.encryption.userPasswordMatched).toBe(true);
+      expect(empty.encryption.ownerPasswordMatched).toBe(false);
+    } finally {
+      empty.release();
+    }
     await expect(decryptPdfForRead(await readFixture("ownerLockedNoExtract"), "   ", "extract_to_csv"))
       .rejects.toMatchObject({ reason: "password_rejected" });
+
+    // And it is load-bearing on the write path, where `/P` does still decide:
+    // counting `""` as a supplied credential there would let any caller claim
+    // owner standing against a document whose user password is empty.
+    await expect(decryptPdfForWrite(await readFixture("ownerLockedNoExtract"), "", "fill_pdf"))
+      .rejects.toMatchObject({ reason: "write_permission_denied" });
   }, 60_000);
 
   it("refuses a password it cannot represent instead of silently truncating it", async () => {
@@ -181,22 +233,34 @@ describe("encrypted-read scope rule", () => {
     }
   }, 30_000);
 
-  it("reads the owner-locked document when its own /P grants extraction", async () => {
-    const result = await decryptPdfForRead(
-      await readFixture("ownerLockedExtractAllowed"),
-      null,
-      "extract_to_csv",
-    );
-    try {
-      expect(result.encryption.capabilities.extract).toBe(true);
-      expect(result.encryption.capabilities.modify).toBe(false);
-      expect(result.plaintext.subarray(0, 5).toString("latin1")).toBe("%PDF-");
-    } finally {
-      result.release();
+  it("reads an owner-locked document the same way whichever way its /P bit 5 points", async () => {
+    // The pair that makes the rule falsifiable: same encryption, same empty
+    // user password, same everything except `extract`. Identical plaintext out
+    // of both proves `/P` was not consulted, rather than consulted and
+    // satisfied.
+    const outcomes = [];
+    for (const name of ["ownerLockedNoExtract", "ownerLockedExtractAllowed"]) {
+      const result = await decryptPdfForRead(await readFixture(name), null, "extract_to_csv");
+      try {
+        outcomes.push({
+          name,
+          extract: result.encryption.capabilities.extract,
+          modify: result.encryption.capabilities.modify,
+          header: result.plaintext.subarray(0, 5).toString("latin1"),
+          decrypted: !result.plaintext.toString("latin1").includes("/Encrypt"),
+        });
+      } finally {
+        result.release();
+      }
     }
-  }, 30_000);
+    expect(outcomes.map(outcome => outcome.extract)).toEqual([false, true]);
+    expect(outcomes.every(outcome => outcome.modify === false)).toBe(true);
+    expect(outcomes.every(outcome => outcome.header === "%PDF-" && outcome.decrypted)).toBe(true);
+  }, 60_000);
 
-  it("lets the owner password override the owner's own restrictions", async () => {
+  it("never leaves the owner password worse off than supplying nothing", async () => {
+    // `/P` no longer gates a read, so the owner password cannot *unlock* one.
+    // What it must never do is turn a read that worked into one that does not.
     const result = await decryptPdfForRead(
       await readFixture("ownerLockedNoExtract"),
       OWNER_PASSWORD,
@@ -205,18 +269,25 @@ describe("encrypted-read scope rule", () => {
     try {
       expect(result.encryption.ownerPasswordMatched).toBe(true);
       expect(result.encryption.capabilities.extract).toBe(false);
+      expect(result.plaintext.subarray(0, 5).toString("latin1")).toBe("%PDF-");
     } finally {
       result.release();
     }
   }, 30_000);
 
-  it("grants decryption to exactly the three read-only operations", () => {
+  it("grants decryption to exactly the three read-only operations, and no /P bit to any", () => {
     expect(Object.keys(ENCRYPTED_READ_OPERATIONS).sort())
       .toEqual(["extract_to_csv", "read_pdf_fields", "validate_pdf"]);
-    // `extract` and not `accessibility`: the accessibility bit is granted by
-    // almost every producer and would make the permission check vacuous.
+    // The registry used to carry `capability: "extract"` per entry. It carries
+    // no capability now, and the absence is asserted rather than merely
+    // implied: re-adding one would be re-adding a read gate, and that is a
+    // decision that has to be made against the module header's argument rather
+    // than by filling in a field that looked empty.
     for (const rules of Object.values(ENCRYPTED_READ_OPERATIONS)) {
-      expect(rules.capability).toBe("extract");
+      expect(rules).not.toHaveProperty("capability");
+      expect(rules).not.toHaveProperty("capabilities");
+      expect(typeof rules.activity).toBe("string");
+      expect(rules.activity.length).toBeGreaterThan(0);
     }
   });
 
@@ -360,6 +431,59 @@ describe("cost of an unencrypted document", () => {
   });
 });
 
+describe("pre-parse bounds on the decrypted plaintext", () => {
+  /*
+   * The read path is the only place in the server process where pdf-lib parses
+   * bytes that did not come off disk, so the plaintext gets the same two
+   * pre-parse bounds the mutation path applies. This is defence in depth rather
+   * than a live hole: `qpdf --decrypt` re-serializes the document and launders
+   * hostile cross-reference structure, so no encrypted input reaching these
+   * checks is known to trip them. That makes a purely behavioural test
+   * impossible to write honestly, so the property is split in two — the guards
+   * really do reject, and the read path really does call them — and both halves
+   * are asserted rather than one of them assumed.
+   */
+  it("applies guards that genuinely reject, rather than functions that always pass", async () => {
+    const { assertBoundedPdfStructure, assertBoundedPdfStreamDecodes } =
+      await import("../server/pdf-lib-worker.js");
+    const sparse = Buffer.from(
+      "%PDF-1.7\nxref\n0 1\n0000000000 65535 f\n9999999 1\n0000000009 00000 n\n"
+      + "trailer\n<< /Size 2 >>\nstartxref\n0\n%%EOF\n",
+      "ascii",
+    );
+    expect(() => assertBoundedPdfStructure(sparse)).toThrow(
+      expect.objectContaining({ reason: "sparse_pdf_structure" }),
+    );
+    // And they pass a real document, so "rejects" is discrimination rather than
+    // refusal: this is the very plaintext the read path hands pdf-lib.
+    const decrypted = await decryptPdfForRead(await readFixture("aes256"), USER_PASSWORD, "read_pdf_fields");
+    try {
+      expect(() => assertBoundedPdfStructure(decrypted.plaintext)).not.toThrow();
+      await expect(assertBoundedPdfStreamDecodes(decrypted.plaintext)).resolves.toBeUndefined();
+    } finally {
+      decrypted.release();
+    }
+  }, 60_000);
+
+  it("runs both of them on the plaintext before pdf-lib ever sees it", async () => {
+    const source = await fs.readFile(path.join(REPO_ROOT, "server", "index.js"), "utf8");
+    const body = source.slice(
+      source.indexOf("async function loadEncryptedPdfBytes("),
+      source.indexOf("async function loadPdf("),
+    );
+    expect(body).toContain("assertBoundedPdfStructure(decrypted.plaintext)");
+    expect(body).toContain("await assertBoundedPdfStreamDecodes(decrypted.plaintext)");
+    // Order matters: a bound checked after parsing bounds nothing.
+    expect(body.indexOf("assertBoundedPdfStructure(decrypted.plaintext)"))
+      .toBeLessThan(body.indexOf("PDFDocument.load(decrypted.plaintext)"));
+    expect(body.indexOf("assertBoundedPdfStreamDecodes(decrypted.plaintext)"))
+      .toBeLessThan(body.indexOf("PDFDocument.load(decrypted.plaintext)"));
+    // And the specific refusal survives the catch-all rather than being
+    // rewritten as "the file is malformed".
+    expect(body).toContain("if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;");
+  });
+});
+
 describe("read-only decryption through the MCP server", () => {
   let client;
   let transport;
@@ -443,34 +567,47 @@ describe("read-only decryption through the MCP server", () => {
     expect(textOf(wrong)).not.toMatch(/qpdf|in\.pdf|invalid password/i);
   }, 60_000);
 
-  it("refuses the owner-locked document and names the denied permission", async () => {
+  /*
+   * Rewritten, not deleted. This asserted `read_pdf_fields` refusing the
+   * owner-locked document by name — true of that tool and false of the eight
+   * read tools beside it, which is the inconsistency the rule change resolves.
+   * What it asserts now is that the refusal is gone *and* that the read agrees
+   * with the same document read unencrypted, which is the stronger claim: a
+   * gate removed but a decryption that returns rubbish would have satisfied the
+   * old assertion's replacement and not this one.
+   */
+  it("reads the owner-locked document, and reads it correctly", async () => {
+    const plain = await client.callTool({
+      name: "read_pdf_fields",
+      arguments: { pdf_path: fixturePaths.plain },
+    });
     const denied = await client.callTool({
       name: "read_pdf_fields",
       arguments: { pdf_path: fixturePaths.ownerLockedNoExtract },
     });
-    expect(textOf(denied)).toBe(
-      `Error: ${pdfPermissionDeniedMessage("read_pdf_fields")}`,
-    );
-  }, 30_000);
+    expect(denied.isError).not.toBe(true);
+    expect(textOf(denied)).not.toMatch(/permissions deny|\/P '/);
+    expect(denied.structuredContent.fieldCount).toBe(plain.structuredContent.fieldCount);
+    expect(JSON.stringify(denied.structuredContent.fields))
+      .toBe(JSON.stringify(plain.structuredContent.fields));
+  }, 60_000);
 
-  it("extracts to CSV from an owner-locked document only when /P allows it", async () => {
-    const allowedCsv = path.join(temporaryRoot, "allowed.csv");
-    const allowed = await client.callTool({
-      name: "extract_to_csv",
-      arguments: { pdf_paths: [fixturePaths.ownerLockedExtractAllowed], output_csv: allowedCsv },
-    });
-    expect(allowed.isError).not.toBe(true);
-    expect(allowed.structuredContent.field_count).toBeGreaterThan(0);
-    expect(await fs.readFile(allowedCsv, "utf8")).toContain("_filename");
-
-    const deniedCsv = path.join(temporaryRoot, "denied.csv");
-    const denied = await client.callTool({
-      name: "extract_to_csv",
-      arguments: { pdf_paths: [fixturePaths.ownerLockedNoExtract], output_csv: deniedCsv },
-    });
-    expect(textOf(denied)).toContain("permissions deny");
-    // The refusal must not leave a partial artifact behind.
-    await expect(fs.access(deniedCsv)).rejects.toMatchObject({ code: "ENOENT" });
+  it("extracts to CSV from an owner-locked document whichever way its /P points", async () => {
+    const written = [];
+    for (const fixture of ["ownerLockedExtractAllowed", "ownerLockedNoExtract"]) {
+      const csvPath = path.join(temporaryRoot, `${fixture}.csv`);
+      const result = await client.callTool({
+        name: "extract_to_csv",
+        arguments: { pdf_paths: [fixturePaths[fixture]], output_csv: csvPath },
+      });
+      expect(result.isError, fixture).not.toBe(true);
+      expect(result.structuredContent.field_count, fixture).toBeGreaterThan(0);
+      written.push(await fs.readFile(csvPath, "utf8"));
+    }
+    // Same document, same fields, one bit apart. Comparing the two rules out a
+    // gate that merely moved somewhere quieter.
+    expect(written[0]).toContain("_filename");
+    expect(written[1].split("\n")[0]).toBe(written[0].split("\n")[0]);
   }, 60_000);
 
   it("writes an encrypted document back still encrypted", async () => {

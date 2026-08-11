@@ -114,7 +114,18 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // when the document's own permissions deny the change being made. No tool
 // gains or loses a parameter. Previously
 // b237e957d3eb3333442bc79f071dc8e9e74f6abee3880c835aa09b62487ce68d.
-const TOOL_CONTRACT_SHA256 = "565e4e6c9debad5b16b148acb5cac2814d93c1c3085b50fa7b62754acc8ec01a";
+//
+// 2026-08-10: read_pdf_fields and validate_pdf drop the "still read only if its
+// own permissions allow extraction" caveat from their password arguments,
+// because it is no longer true. `/P` governs writes and no longer governs
+// reads: the read gate bound the three qpdf-backed reads while every PDF.js-
+// backed sibling returned the same content regardless, and it could not be
+// extended to the rest of the family without refusing to display the user's own
+// document. The replacement text states the size limit and promises that the
+// tool never removes or weakens a document's protection. No tool gains or loses
+// a parameter, and no write description changes. Previously
+// 565e4e6c9debad5b16b148acb5cac2814d93c1c3085b50fa7b62754acc8ec01a.
+const TOOL_CONTRACT_SHA256 = "f4d6e1eca85676a0830821871e2775d7ccbde1ba5d5a8ee396068b862b28610b";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
