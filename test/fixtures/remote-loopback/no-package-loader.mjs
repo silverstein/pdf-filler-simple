@@ -2,6 +2,17 @@ let telemetryPort;
 
 export function initialize({ port }) {
   telemetryPort = port;
+  // Answer the preload's flush probe. Module-resolution telemetry is posted
+  // from this loader thread, so the main thread cannot know a denial has been
+  // counted just because the import already rejected. A MessagePort delivers
+  // in order, so an ack posted when this handler runs necessarily follows
+  // every attempt message posted before it.
+  port.on("message", message => {
+    if (message?.type === "telemetry_flush") {
+      port.postMessage({ type: "telemetry_flush_ack", id: message.id });
+    }
+  });
+  port.unref?.();
 }
 
 const FIXTURE_DIRECTORY = new URL("./", import.meta.url);
