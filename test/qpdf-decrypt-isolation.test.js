@@ -297,28 +297,64 @@ describe("the decryption deadline", () => {
   }, 120_000);
 });
 
+/*
+ * The ceiling on retained RSS across repeated decryption.
+ *
+ * This bound is deliberately absolute rather than a multiple of some earlier
+ * measurement in the same run. The previous version scaled its bound off the
+ * RSS delta of the *first* decrypt, which is not a measurement of the decrypt
+ * at all: it is a measurement of whether the allocator happened to already
+ * hold free pages. On macOS/arm64 that first delta measures 157-160 MiB; on a
+ * two-core Linux runner the identical call measured 17.6 MiB, and the bound
+ * derived from it failed a run whose memory behaviour was entirely normal.
+ * A threshold that moves with the noise it is supposed to be immune to can
+ * fail without a regression, and — worse — can pass while retention doubles,
+ * whenever the first sample happens to land high.
+ *
+ * What one leaked heap costs is the thing that makes an absolute number safe
+ * here. A single decrypt of the hostile fixture holds on the order of 150 MiB
+ * while it runs, so a genuine heap-per-request leak crosses this ceiling by
+ * roughly the fourth request and every request after it. There is no small
+ * leak this has to resolve; the failure it exists to catch is enormous.
+ *
+ * Measured, three runs of sixteen decrypts each, retained MiB above baseline:
+ *   158 162 169 175 180 183 187 | 84 86 85 86 86 88 89 89 89
+ *   157 170 175 183 186 189 193 | 86 86 87 90 91 92 93 93 93
+ *   160 164 168 171 175 178 185 | 81 83 83 83 85 87 88 89 89
+ * Retention climbs to ~190 MiB, a collection fires, and the remainder plateaus
+ * near 90 MiB: sixteen decrypts end up holding less than one does at its peak.
+ * The ceiling sits above the highest figure ever observed, with room for a run
+ * where no collection fires at all, and far below four stacked heaps.
+ *
+ * Its sensitivity floor, measured by injecting a retained allocation per
+ * request: 64 MiB each trips it at 683 MiB. Anything under roughly 40 MiB per
+ * request across these twelve would pass, which is the honest limit of this
+ * assertion. It is scoped to the failure named in the title and does not claim
+ * to detect a small steady leak.
+ */
+const RETAINED_RSS_CEILING_BYTES = 512 * 1024 * 1024;
+const REPEATED_DECRYPT_COUNT = 12;
+
 describe("memory across repeated decryptions", () => {
   it("plateaus rather than accumulating one QPDF heap per request", async () => {
     // The per-file cap is derived from the peak of a *single* decrypt, and is
     // only sufficient if repeated decryption does not stack. Isolation did not
     // change that property and must not be allowed to quietly break it.
     const baselineBytes = process.memoryUsage.rss();
-    const first = await decryptPdfForRead(hostileBytes, PASSWORD, "read_pdf_fields");
-    first.release();
-    const afterFirstBytes = process.memoryUsage.rss();
-    const oneDecryptDelta = afterFirstBytes - baselineBytes;
-
-    for (let index = 0; index < 4; index += 1) {
+    const retained = [];
+    for (let index = 0; index < REPEATED_DECRYPT_COUNT; index += 1) {
       const result = await decryptPdfForRead(hostileBytes, PASSWORD, "read_pdf_fields");
       result.release();
+      retained.push(process.memoryUsage.rss() - baselineBytes);
     }
-    const afterFiveBytes = process.memoryUsage.rss();
 
-    // Five decrypts must not cost five heaps. Measured, the fifth lands within
-    // a few percent of the first; the bound is twice that so a loaded machine's
-    // allocator behaviour cannot make it fail.
-    expect(oneDecryptDelta).toBeGreaterThan(0);
-    expect(afterFiveBytes - baselineBytes).toBeLessThan(oneDecryptDelta * 2);
+    // A run where nothing was allocated would satisfy any ceiling, so require
+    // evidence that the decrypts actually happened before believing the bound.
+    expect(Math.max(...retained)).toBeGreaterThan(0);
+    expect(retained).toHaveLength(REPEATED_DECRYPT_COUNT);
+    // Every point, not just the last: a run that spikes and then collects must
+    // not be able to hide the spike behind a tidy final sample.
+    expect(Math.max(...retained)).toBeLessThan(RETAINED_RSS_CEILING_BYTES);
   }, 180_000);
 });
 
