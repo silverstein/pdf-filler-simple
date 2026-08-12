@@ -97,7 +97,54 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // document fails anyway. Only read_pdf_layout, convert_pdf_to_markdown, and
 // get_pdf_info keep an unqualified password parameter, because only they work.
 // Previously 53d965e366b16adf2a0fa90dfe837ca98d29a8f41c1adf8b9e8f661ea3bb7d95.
-const TOOL_CONTRACT_SHA256 = "fef092d0e306a33839f249d0cf121519d723981aaf3872119d8668d2001cb62f";
+// 2026-08-10: read_pdf_fields and validate_pdf can now decrypt, through the
+// vendored qpdf runtime, so their password arguments stop saying the argument
+// is never used. The new text also states the encrypted-input size limit and
+// that a document which opens without a password is still read only if its own
+// permissions allow extraction. extract_to_csv gains no password parameter: it
+// takes a list of documents, and one password cannot serve a list. Every other
+// pdf-lib-only tool keeps the unchanged "cannot decrypt" text. Previously
+// fef092d0e306a33839f249d0cf121519d723981aaf3872119d8668d2001cb62f.
+//
+// 2026-08-10: the twelve mutation tools can now decrypt as well, so their
+// password arguments stop claiming pdf-lib cannot decrypt. The new text says
+// what those tools actually do — decrypt, change, and save the document with
+// exactly the encryption and permissions it already had — states the
+// encrypted-input size limit, and says that the owner password is required
+// when the document's own permissions deny the change being made. No tool
+// gains or loses a parameter. Previously
+// b237e957d3eb3333442bc79f071dc8e9e74f6abee3880c835aa09b62487ce68d.
+//
+// 2026-08-10: read_pdf_fields and validate_pdf drop the "still read only if its
+// own permissions allow extraction" caveat from their password arguments,
+// because it is no longer true. `/P` governs writes and no longer governs
+// reads: the read gate bound the three qpdf-backed reads while every PDF.js-
+// backed sibling returned the same content regardless, and it could not be
+// extended to the rest of the family without refusing to display the user's own
+// document. The replacement text states the size limit and promises that the
+// tool never removes or weakens a document's protection. No tool gains or loses
+// a parameter, and no write description changes. Previously
+// 565e4e6c9debad5b16b148acb5cac2814d93c1c3085b50fa7b62754acc8ec01a.
+//
+// 2026-08-10: compare_pdfs gains one advertised error code,
+// PDF_ENCRYPTED_COMPARISON_UNSUPPORTED. An encrypted comparison input was
+// reported three different ways depending on arguments the caller had no reason
+// to connect to encryption — "requires its password", the pdf-lib limit, or
+// "Internal output validation failed" when include_visual was false — and none
+// of them said which input it was or that no password can help. The refusal is
+// now one typed outcome. PDF_PARSE_FAILED would have been a lie: the document
+// parses. No input schema changes, so the trajectory tool-contract fixture is
+// unaffected. Previously
+// f4d6e1eca85676a0830821871e2775d7ccbde1ba5d5a8ee396068b862b28610b.
+// 2026-08-11: add the read-only verify_table_proposal B2 contract. It accepts
+// only source identity plus structural item assignments, reparses the current
+// PDF, and publishes an explicit non-unique-topology claim boundary. Previously
+// a4d831d49d97c8605c06bda0fccad7bcbd399106b9fb980040a1b5f25e7a1e4b.
+// 2026-08-11: B4 adds a deterministic source-backed GFM projection to accepted
+// verifier output, including format, span policy, byte count, and digest. The
+// input schema and read-only annotations are unchanged. Previously
+// c245597fbea9a4bae0d143d823da77c73c055b7424e5817606ec88aa4ec1beec.
+const TOOL_CONTRACT_SHA256 = "edbba3a6444b7603c9e8336a496f5c82b55d8d9ed674b7dbdbca28240386fb52";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
@@ -146,6 +193,7 @@ const TOOL_EFFECT_ANNOTATIONS = {
   read_pdf_content: CLOSED_READ,
   read_pdf_layout: CLOSED_READ,
   convert_pdf_to_markdown: CLOSED_IDEMPOTENT_OVERWRITE,
+  verify_table_proposal: CLOSED_READ,
   read_pdf_pages: CLOSED_READ,
   render_pdf_page: CLOSED_READ,
   render_pdf_region: CLOSED_READ,
@@ -342,6 +390,8 @@ describe("MCPB static declarations", () => {
       "pdfjs-worker.js",
       "pdf-lib-rss-monitor.js",
       "pdf-observations.js",
+      "qpdf-decrypt.js",
+      "qpdf-decrypt-worker.js",
       "resource-uri.js",
       "stderr-suppression.js",
     ]) {
@@ -351,7 +401,7 @@ describe("MCPB static declarations", () => {
     }
     // A new server file must be added to the list above, not silently shipped
     // in the mirror unchecked. Two already had been.
-    expect(mirrored).toHaveLength(19);
+    expect(mirrored).toHaveLength(22);
     const sourceUi = await fs.readFile(path.join(REPO_ROOT, "dist-ui", "index.html"));
     const shareUi = await fs.readFile(
       path.join(REPO_ROOT, "pdf-toolkit-mcp-share", "dist-ui", "index.html"),
@@ -391,7 +441,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
   });
 
   it("exposes the same uniquely named, fully annotated tool contract", () => {
-    expect(tools).toHaveLength(43);
+    expect(tools).toHaveLength(44);
     expect(new Set(names(tools)).size).toBe(tools.length);
     expect(sorted(names(tools))).toEqual(sorted(names(SOURCE_MANIFEST.tools)));
     expect(createHash("sha256").update(JSON.stringify(tools)).digest("hex"))
@@ -447,7 +497,7 @@ describe.each(RUNTIMES)("$name runtime discovery", runtime => {
     });
     expect(result.isError).not.toBe(true);
     expect(result.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.5.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.6.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       page_range: { start_page: 1, end_page: 1 },
     });

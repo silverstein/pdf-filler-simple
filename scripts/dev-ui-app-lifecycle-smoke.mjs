@@ -750,6 +750,43 @@ const server = http.createServer((request, response) => {
       "content-type": "text/html; charset=utf-8",
       "content-length": viewerHtml.length,
       "cache-control": "no-store",
+      // Serve the component under the policy a real sandboxed MCP Apps host
+      // applies. Until 2026-08-10 this harness sent no policy at all, so it
+      // permitted exactly what a real sandbox refuses: the viewer shipped a
+      // ~2.7 MB `data:` worker module, rendered blank in ChatGPT desktop, and
+      // every gate here stayed green. A permissive harness cannot detect a
+      // permission failure.
+      //
+      // Transcribed from the ChatGPT Mac desktop app, version 26.803.41515
+      // build 6321, observed 2026-08-10 for a component declaring no
+      // `_meta.ui.csp`. It is observed implementation, not a published
+      // contract, so re-check it before relying on the exact directives.
+      //
+      // The load-bearing directive is `worker-src`, which that host constructs
+      // as `'self' blob:` and never widens with resourceDomains. A `data:`
+      // worker is therefore refused twice: once by `worker-src` when pdf.js
+      // calls `new Worker()`, and again by `script-src`, which omits `data:`,
+      // when its fake-worker fallback dynamically imports the same URL. That
+      // is exactly the failure this smoke now reproduces.
+      //
+      // `D`, the host's built-in resource allowlist (jsdelivr, unpkg, esm.sh
+      // and similar), is deliberately omitted: the viewer must not depend on
+      // any external origin, so leaving it out keeps this honest.
+      "content-security-policy": [
+        "default-src 'self'",
+        "script-src 'self' 'wasm-unsafe-eval' 'unsafe-inline' 'unsafe-eval' blob:",
+        "worker-src 'self' blob:",
+        "style-src 'self' 'unsafe-inline'",
+        "style-src-elem 'self' 'unsafe-inline'",
+        "style-src-attr 'unsafe-inline'",
+        "img-src 'self' data:",
+        "font-src 'self'",
+        "connect-src 'self'",
+        "media-src 'self'",
+        "object-src 'none'",
+        "frame-src 'none'",
+        "base-uri 'self'",
+      ].join("; "),
     });
     response.end(viewerHtml);
     return;

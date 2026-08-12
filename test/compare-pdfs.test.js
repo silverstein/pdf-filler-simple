@@ -7,6 +7,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { PDFDocument, PDFName, PDFNumber, StandardFonts, degrees, rgb } from "pdf-lib";
 import { validateStructuredToolResult } from "../server/output-schemas.js";
+import {
+  pdfComparisonEncryptedError,
+  pdfComparisonEncryptedMessage,
+  publicPdfComparisonError,
+} from "../server/pdf-comparison.js";
+import { PDF_LIB_ENCRYPTED_MESSAGE } from "../server/helpers.js";
 import { createTestTempDirectory, removeTestTempDirectory } from "./helpers/temp-directory.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -16,6 +22,15 @@ const ENCRYPTED = path.join(
   REPO_ROOT,
   "test/fixtures/eval/extraction/oracles/layout-encrypted-qpdf-r4.pdf",
 );
+const ENCRYPTED_PROVENANCE = path.join(
+  REPO_ROOT,
+  "test/fixtures/eval/extraction/oracles/layout-encrypted-qpdf-r4.provenance.json",
+);
+
+// The generic text every internal-validation failure carries. compare_pdfs used
+// to answer an encrypted document with this, and no assertion below may ever be
+// satisfied by it again.
+const INTERNAL_VALIDATION_TEXT = "Internal output validation failed";
 
 const PAIRS = Object.freeze({
   identical: ["comparison-base.pdf", []],
@@ -367,6 +382,26 @@ describe("compare_pdfs deterministic product", () => {
     });
     expect(unknown.isError).toBe(true);
     expect(JSON.stringify(unknown)).not.toContain(inputSentinel);
+    /*
+     * A rejected argument produces this same text whatever else the caller
+     * varies, so it reads like a failure of the documents rather than of the
+     * call — which is exactly how an encrypted-comparison report was once
+     * misread as the encryption refusal being swallowed. The single most likely
+     * mistake is `password`, because every other tool in this server takes one
+     * and this tool takes two, so the refusal says so by name.
+     */
+    const unknownText = unknown.content?.map(part => part.text ?? "").join("\n") ?? "";
+    expect(unknownText).toContain("before_password");
+    expect(unknownText).toContain("after_password");
+    expect(unknownText).toMatch(/no single 'password' argument/);
+    expect(unknownText).toContain("absolute");
+    // Naming the accepted arguments is safe — they are in the published input
+    // schema. Naming the caller's own rejected key is not, and never happens.
+    const advertised = (await client.listTools()).tools
+      .find(item => item.name === "compare_pdfs");
+    for (const name of Object.keys(advertised.inputSchema.properties)) {
+      expect(unknownText, name).toContain(name);
+    }
 
     const pathSentinel = "PRIVATE_INTERNAL_PATH_SENTINEL";
     const missing = await client.callTool({
@@ -406,8 +441,243 @@ describe("compare_pdfs deterministic product", () => {
       },
     });
     expect(protectedResult.isError).toBe(true);
-    expect(protectedResult.structuredContent.error.code).toBe("PASSWORD_INCORRECT");
+    // A wrong password used to be reported as a wrong password, which implied
+    // the right one would work. It would not: no password makes an encrypted
+    // comparison run, so the refusal is the encryption one either way.
+    expect(protectedResult.structuredContent.error.code)
+      .toBe("PDF_ENCRYPTED_COMPARISON_UNSUPPORTED");
     expect(JSON.stringify(protectedResult)).not.toContain(passwordSentinel);
+  });
+
+  /*
+   * An encrypted comparison input is a real, user-correctable condition, and it
+   * used to be reported three different ways depending on arguments the caller
+   * had no reason to connect to encryption:
+   *
+   *   - no password              -> "A comparison input requires its password",
+   *                                 which asks for something that cannot help;
+   *   - correct password         -> the pdf-lib limit, with no side named;
+   *   - correct password and     -> "Internal output validation failed for
+   *     include_visual: false       compare_pdfs", because the observation's
+   *                                 RAW_PAGE_GEOMETRY_UNAVAILABLE reached the
+   *                                 comparison's structure channel, which had
+   *                                 never heard of it.
+   *
+   * All three are now one refusal that names the side, the cause, and what to
+   * do. These cases pin that, and every one of them asserts the absence of the
+   * internal-validation text so the third can never come back quietly.
+   */
+  describe("encrypted comparison inputs", () => {
+    let passwords;
+
+    beforeAll(async () => {
+      passwords = JSON.parse(await fs.readFile(ENCRYPTED_PROVENANCE, "utf8")).passwords;
+    });
+
+    const compare = async args => await client.callTool({
+      name: "compare_pdfs",
+      arguments: { max_output_characters: 200_000, ...args },
+    });
+    const textOf = result => result.content?.map(part => part.text ?? "").join("\n") ?? "";
+
+    it("refuses with the same named message however the encrypted input is reached", async () => {
+      const cases = [
+        ["both, no password", ["before", "after"], {
+          before_pdf_path: ENCRYPTED, after_pdf_path: ENCRYPTED,
+        }],
+        ["both, correct passwords", ["before", "after"], {
+          before_pdf_path: ENCRYPTED, after_pdf_path: ENCRYPTED,
+          before_password: passwords.user, after_password: passwords.user,
+        }],
+        // The case that produced the internal error: no render is requested, so
+        // the pdf-lib geometry step never refuses and the comparison used to
+        // complete and then fail its own semantics validator.
+        ["both, correct passwords, no visual", ["before", "after"], {
+          before_pdf_path: ENCRYPTED, after_pdf_path: ENCRYPTED,
+          before_password: passwords.user, after_password: passwords.user,
+          include_visual: false,
+        }],
+        ["before only", ["before"], {
+          before_pdf_path: ENCRYPTED, after_pdf_path: BASE,
+          before_password: passwords.user,
+        }],
+        ["after only", ["after"], {
+          before_pdf_path: BASE, after_pdf_path: ENCRYPTED,
+          after_password: passwords.user,
+        }],
+        ["both, wrong passwords", ["before", "after"], {
+          before_pdf_path: ENCRYPTED, after_pdf_path: ENCRYPTED,
+          before_password: passwords.wrong_password_oracle,
+          after_password: passwords.wrong_password_oracle,
+        }],
+      ];
+      for (const [label, sides, args] of cases) {
+        const result = await compare(args);
+        expect(result.isError, label).toBe(true);
+        // Asserted on the SERVED response, at the MCP boundary. A module that
+        // returns the right thing is not the same claim as a caller receiving
+        // it: the code and the text have to survive every classifier between
+        // the refusal and the wire.
+        expect(result.structuredContent.error.code, label)
+          .toBe("PDF_ENCRYPTED_COMPARISON_UNSUPPORTED");
+        // Literal phrases, deliberately not routed through the message helper,
+        // so a gutted or re-swallowed message cannot satisfy this by agreeing
+        // with itself.
+        expect(textOf(result), label)
+          .toContain("cannot compare an encrypted document");
+        expect(textOf(result), label)
+          .toContain("supplying a password here will not help");
+        // The two ways this has actually been swallowed before.
+        expect(textOf(result), label).not.toContain(INTERNAL_VALIDATION_TEXT);
+        expect(result.structuredContent.error.code, label).not.toBe("invalid_input");
+        expect(textOf(result), label)
+          .not.toContain("The compare_pdfs arguments or PDF inputs are invalid");
+        // And still exactly the server's own text, so tool and module agree.
+        expect(textOf(result), label).toBe(pdfComparisonEncryptedMessage(sides));
+        expect(JSON.stringify(result), label).not.toContain(passwords.user);
+        expect(JSON.stringify(result), label)
+          .not.toContain(passwords.wrong_password_oracle);
+      }
+    }, 120_000);
+
+    it("keeps the refusal classified when it arrives without its error code", () => {
+      /*
+       * `error.code` is an own property of an Error and does not survive a
+       * boundary that rebuilds the error from its message. When that happened
+       * the refusal fell through to `invalid_input`, "the arguments or PDF
+       * inputs are invalid" — a false statement about a call whose arguments
+       * were fine, and indistinguishable from a genuine argument mistake.
+       */
+      const carried = pdfComparisonEncryptedError(["before"]);
+      expect(publicPdfComparisonError(carried).code)
+        .toBe("PDF_ENCRYPTED_COMPARISON_UNSUPPORTED");
+      // Same refusal, rebuilt from text alone.
+      const stripped = new Error(pdfComparisonEncryptedMessage(["before"]));
+      expect(stripped.code).toBeUndefined();
+      expect(publicPdfComparisonError(stripped).code)
+        .toBe("PDF_ENCRYPTED_COMPARISON_UNSUPPORTED");
+      // And a real argument mistake must still classify as one, or the guard
+      // above would just be swallowing everything in the other direction.
+      expect(publicPdfComparisonError(new Error("Unknown compare_pdfs argument: nope.")).code)
+        .toBe("invalid_input");
+    });
+
+    it("translates the pdf-lib limit in the layer that is allowed to see it", async () => {
+      /*
+       * The other encryption signal is the shared pdf-lib "no decryption
+       * support" message, raised by the page renderer inside the PDF.js
+       * subprocess. It cannot be matched in server/pdf-comparison.js: that
+       * module's static import graph is closed and asserted by
+       * test/eval/extraction-phase1-generation-verifiers.test.js, and importing
+       * server/helpers.js for the constant would pull pdf-lib into the
+       * extraction scorer's graph. So server/index.js owns the translation, and
+       * both halves of that split are pinned here — otherwise the next edit
+       * "simplifies" one of them and the refusal silently degrades to
+       * invalid_input again.
+       */
+      const comparison = await fs.readFile(
+        path.join(REPO_ROOT, "server/pdf-comparison.js"), "utf8",
+      );
+      expect(comparison).not.toMatch(/from\s+"\.\/helpers\.js"/);
+      const server = await fs.readFile(path.join(REPO_ROOT, "server/index.js"), "utf8");
+      // Substring, never equality: a subprocess boundary may prefix the text,
+      // and an equality check that stops matching fails silently rather than
+      // loudly.
+      expect(server).toMatch(
+        /function comparisonSawPdfLibEncryptionLimit[\s\S]{0,400}?\.includes\(PDF_LIB_ENCRYPTED_MESSAGE\)/,
+      );
+      // Scoped to the comparison's own classifier. Other tools keep their own
+      // equality checks against this constant, and those are not this test's
+      // business.
+      const classifier = server.slice(
+        server.indexOf("function comparisonEncryptionFailure"),
+        server.indexOf("function comparisonInputIsEncrypted"),
+      );
+      expect(classifier.length).toBeGreaterThan(0);
+      expect(classifier).toContain("comparisonSawPdfLibEncryptionLimit(error)");
+      expect(classifier).not.toMatch(/message === PDF_LIB_ENCRYPTED_MESSAGE/);
+      // The constant it matches is the real one the family publishes.
+      expect(PDF_LIB_ENCRYPTED_MESSAGE).toMatch(/no decryption support/);
+    });
+
+    it("says which input, why it stops, and what the caller can do instead", () => {
+      // Derived from the message rather than restated beside it: a rewrite that
+      // drops any of these propositions fails here.
+      for (const [sides, subject] of [
+        [["before"], "The before comparison input is encrypted"],
+        [["after"], "The after comparison input is encrypted"],
+        [["before", "after"], "Both comparison inputs are encrypted"],
+        [[], "A comparison input is encrypted"],
+      ]) {
+        expect(pdfComparisonEncryptedMessage(sides)).toContain(subject);
+      }
+      const message = pdfComparisonEncryptedMessage(["before", "after"]);
+      // Why: the incidental pdf-lib step, named as the family names it.
+      expect(message).toMatch(/pdf-lib/);
+      expect(message).toMatch(/no decryption support/);
+      // And therefore why the password arguments are not the answer.
+      expect(message).toMatch(/supplying a password here will not help/);
+      expect(message).not.toMatch(/provide the correct password/i);
+      expect(message).not.toMatch(/ignoreEncryption/);
+      // That it stops rather than reporting a thinner comparison.
+      expect(message).toMatch(/it stops/);
+      // What to do, and where an encrypted document can actually be read. The
+      // named tools are exactly the ones the pdf-lib family message names, and
+      // test/encrypted-pdf-password-truth.test.js proves each of them opens an
+      // encrypted document with its password.
+      expect(message).toMatch(/Decrypt both documents first \(for example with qpdf\)/);
+      for (const tool of ["read_pdf_layout", "convert_pdf_to_markdown", "get_pdf_info"]) {
+        expect(PDF_LIB_ENCRYPTED_MESSAGE, tool).toContain(tool);
+        expect(message, tool).toContain(tool);
+      }
+      expect(message).not.toContain(INTERNAL_VALIDATION_TEXT);
+    });
+
+    it("reports missing raw page geometry as coverage, not as an internal fault", async () => {
+      /*
+       * The other half of the same defect, and the half that has nothing to do
+       * with encryption. `observe_document` reads raw page geometry with
+       * pdf-lib and falls back to PDF.js when it cannot, recording
+       * RAW_PAGE_GEOMETRY_UNAVAILABLE. The comparison copied that into its
+       * structure channel and then rejected it as an unknown reason, so any
+       * unprotected document pdf-lib cannot parse but PDF.js can — here, one
+       * whose %PDF- marker has been overwritten, the same damage the encrypted
+       * layout oracle carries deliberately — answered with "Internal output
+       * validation failed" instead of a partial comparison.
+       */
+      const damaged = path.join(tempDirectory, "damaged-header-base.pdf");
+      const bytes = Buffer.from(await fs.readFile(BASE));
+      bytes.write("xxxxx", 0, "latin1");
+      await fs.writeFile(damaged, bytes);
+      const result = await compare({
+        before_pdf_path: damaged,
+        after_pdf_path: path.join(FIXTURES, PAIRS.material_text[0]),
+        include_visual: false,
+      });
+      expect(textOf(result)).not.toContain(INTERNAL_VALIDATION_TEXT);
+      expect(result.isError).not.toBe(true);
+      expect(validateStructuredToolResult("compare_pdfs", result)).toBe(result);
+      expect(result.structuredContent.coverage.structure).toEqual({
+        status: "partial",
+        reason_codes: ["BEFORE_RAW_PAGE_GEOMETRY_UNAVAILABLE"],
+      });
+      expect(result.structuredContent.status).toBe("partial");
+      expect(result.structuredContent.summary.no_reported_changes).toBe(false);
+      expect(result.structuredContent.limitations)
+        .toContain("structure:BEFORE_RAW_PAGE_GEOMETRY_UNAVAILABLE");
+    }, 60_000);
+
+    it("still compares two unprotected documents, which is the advice it gives", async () => {
+      // The refusal tells the caller to compare decrypted copies. That has to
+      // remain a real route, so the same run proves it.
+      const result = await compare({
+        before_pdf_path: BASE,
+        after_pdf_path: path.join(FIXTURES, PAIRS.material_text[0]),
+      });
+      expect(result.isError).not.toBe(true);
+      expect(validateStructuredToolResult("compare_pdfs", result)).toBe(result);
+      expect(result.structuredContent.status).toEqual(expect.any(String));
+    }, 60_000);
   });
 
   it("fails rather than dropping raw changes at the structured-output cap", async () => {

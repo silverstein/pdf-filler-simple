@@ -42,6 +42,10 @@ import {
 } from "./output-schemas.js";
 import { publicAccessibilityInspectionError } from "./accessibility-inspection.js";
 import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
+import {
+  normalizeTableProposalCells,
+  verifyTableProposalAgainstRegion,
+} from "./table-proposal-verification.js";
 import { validatePdfLayoutSemantics } from "./layout-extraction.js";
 import {
   buildRenderObservation,
@@ -49,10 +53,21 @@ import {
   validatePdfObservationSemantics,
 } from "./pdf-observations.js";
 import {
+  PDF_COMPARISON_ENCRYPTED_CODE,
   PDF_COMPARISON_RENDERER,
   buildPdfComparison,
+  isPdfComparisonEncryptedFailure,
+  pdfComparisonEncryptedError,
   publicPdfComparisonError,
 } from "./pdf-comparison.js";
+import {
+  PDF_DECRYPTABLE_PASSWORD_DESCRIPTION,
+  PDF_REPROTECTING_PASSWORD_DESCRIPTION,
+  PdfDecryptionError,
+  decryptPdfForRead,
+  forceTerminateAllDecryptionWorkers,
+  terminateAllDecryptionWorkers,
+} from "./qpdf-decrypt.js";
 import {
   PDF_MUTATION_MAX_FILE_BYTES,
   assertDanglingPdfInputAlias,
@@ -81,6 +96,14 @@ import {
   runPdfLibMutation,
   terminateAllPdfLibMutations,
 } from "./pdf-lib-subprocess.js";
+// The pre-parse bounds the mutation path already applies, reused on the one
+// read path that hands pdf-lib bytes it did not read off disk. This module is
+// already on the server's import graph through pdf-lib-subprocess.js, so the
+// import costs nothing new; see `loadEncryptedPdfBytes`.
+import {
+  assertBoundedPdfStreamDecodes,
+  assertBoundedPdfStructure,
+} from "./pdf-lib-worker.js";
 
 export const READ_CONTENT_ROUTING_GUIDANCE =
   "Pages without extractable text or with suspect text integrity were successfully read in this call. Use render_pdf_page for visual inspection of those pages; the page routing fields are limited to successfully-read pages, and pages outside this read scope or stopped at a page-read error are not classified by this result.";
@@ -594,34 +617,101 @@ function validateLoadedPdfStructure(pdfDoc, pdfBytes) {
   return pdfDoc;
 }
 
-async function loadPdfBytes(pdfBytes, password = null) {
+/**
+ * Loads bytes through pdf-lib, optionally decrypting first.
+ *
+ * pdf-lib is always tried first, so an unencrypted document pays nothing for
+ * this path: no QPDF module is instantiated and no extra parse happens. Only
+ * once pdf-lib has refused the document as encrypted, and only for an
+ * operation named in `ENCRYPTED_READ_OPERATIONS`, is the decrypting path
+ * entered at all.
+ *
+ * `decryptFor` is the opt-in. Passing it means "this operation only reads, and
+ * is allowed to decrypt subject to the rules in server/qpdf-decrypt.js".
+ * Without it the behaviour is exactly what it was: the honest pdf-lib message.
+ *
+ * When decryption happens the caller is handed a `releaseDecryptedBytes` and
+ * must call it once it has finished reading `pdfDoc`. pdf-lib copies the input
+ * during parsing, so releasing afterwards does not disturb the loaded
+ * document.
+ */
+async function loadPdfBytes(pdfBytes, password = null, { decryptFor = null } = {}) {
   const invalidPdfMessage = "Failed to load PDF: the file is malformed, incomplete, or unsupported.";
   let pdfDoc;
   try {
     pdfDoc = await PDFDocument.load(pdfBytes, password ? { password } : {});
   } catch (error) {
     if (error.message?.includes("password") || error.message?.includes("encrypt")) {
-      throw new Error(PDF_LIB_ENCRYPTED_MESSAGE);
+      if (!decryptFor) throw new Error(PDF_LIB_ENCRYPTED_MESSAGE);
+      return loadEncryptedPdfBytes(pdfBytes, password, decryptFor, invalidPdfMessage);
     }
     throw new Error(invalidPdfMessage, { cause: error });
   }
-  return validateLoadedPdfStructure(pdfDoc, pdfBytes);
+  return { pdfDoc: validateLoadedPdfStructure(pdfDoc, pdfBytes), releaseDecryptedBytes: () => {} };
 }
 
-async function loadPdf(inputPath, password = null) {
+/**
+ * The encrypted branch of `loadPdfBytes`. Decrypts in memory, parses the
+ * plaintext, and releases the plaintext immediately if parsing fails so a
+ * malformed decrypted document does not leave it sitting in the heap.
+ *
+ * The plaintext gets the same pre-parse bounds the mutation path applies to a
+ * document it is about to hand pdf-lib: `assertBoundedPdfStructure` for hostile
+ * cross-reference byte widths and sparse object numbering, and
+ * `assertBoundedPdfStreamDecodes` for object streams that expand past a
+ * deterministic ceiling. Those are the two shapes that make `PDFDocument.load`
+ * allocate without bound, and this is the one place in the server process where
+ * pdf-lib parses bytes that did not come straight off disk.
+ *
+ * It is belt and braces rather than a live hole. `qpdf --decrypt` fully
+ * re-serializes the document, which launders hostile cross-reference structure
+ * on the way through — a `/W [1 2000000000 1]` does not survive the round trip.
+ * But that is a property of QPDF's writer, not a contract it offers us, and it
+ * is the sort of property that evaporates quietly. Measured at 7.2 MB the two
+ * checks cost 22 ms against the 314 ms of pdf-lib parsing that follows
+ * unconditionally, so paying for the guarantee outright is cheaper than
+ * depending on somebody else's serializer to keep providing it.
+ */
+async function loadEncryptedPdfBytes(pdfBytes, password, decryptFor, invalidPdfMessage) {
+  const decrypted = await decryptPdfForRead(pdfBytes, password, decryptFor);
+  let pdfDoc;
+  try {
+    assertBoundedPdfStructure(decrypted.plaintext);
+    await assertBoundedPdfStreamDecodes(decrypted.plaintext);
+    pdfDoc = await PDFDocument.load(decrypted.plaintext);
+    // Validated against the plaintext, because that is the byte sequence this
+    // document was actually parsed from.
+    validateLoadedPdfStructure(pdfDoc, decrypted.plaintext);
+  } catch (error) {
+    decrypted.release();
+    // A bound that was exceeded is a specific, actionable fact and says which
+    // one. Collapsing it into "the file is malformed" would throw that away and
+    // describe a document this code deliberately refused as one it could not
+    // understand.
+    if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
+    if (error?.message === invalidPdfMessage) throw error;
+    throw new Error(invalidPdfMessage, { cause: error });
+  }
+  return { pdfDoc, releaseDecryptedBytes: () => decrypted.release() };
+}
+
+async function loadPdf(inputPath, password = null, { decryptFor = null } = {}) {
   const {
     resolvedPath,
     pdfBytes,
     fileIdentity,
     inputRecoveryBinding,
   } = await readPdfInputWithRecovery(inputPath);
-  const pdfDoc = await loadPdfBytes(pdfBytes, password);
+  const { pdfDoc, releaseDecryptedBytes } = await loadPdfBytes(pdfBytes, password, { decryptFor });
   return {
     pdfDoc,
     resolvedPath,
+    // Always the bytes as they are on disk. A decrypted copy is never returned
+    // here and never reaches a caller that might persist it.
     pdfBytes,
     fileIdentity,
     inputRecoveryBinding,
+    releaseDecryptedBytes,
   };
 }
 
@@ -684,7 +774,6 @@ import {
   openVerifiedRegularFile,
   PDF_LIB_ENCRYPTED_MESSAGE,
   PDF_LIB_GEOMETRY_PASSWORD_DESCRIPTION,
-  PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
 } from "./helpers.js";
 
 // Helper: validate profile name to prevent path traversal
@@ -1626,6 +1715,7 @@ const DEFAULT_DOWNLOAD_DIRECTORY = defaultDirectoryWithin(DEFAULT_DOWNLOAD_DIR, 
 
 const PDFJS_TOOL_NAMES = new Set([
   "convert_pdf_to_markdown",
+  "verify_table_proposal",
   "compare_pdfs",
   "detect_signature_zones",
   "get_page_analysis",
@@ -1683,23 +1773,138 @@ function comparisonSourceChangedError() {
   return error;
 }
 
-async function inspectComparisonDocument(resolvedPath, {
-  side,
-  password,
-  maxPages,
-  includeVisual,
-}) {
-  const observed = await runPdfjsOperation(resolvedPath, {
-    operation: "observe_document",
-    password,
-    options: { max_pages: maxPages, max_output_characters: 200_000 },
-  });
+/**
+ * Whether an encrypted document is what stopped this comparison step.
+ *
+ * Three shapes mean the same thing here, and all three used to surface as
+ * something else. PDF.js reports a missing or rejected password, which is true
+ * but useless advice on this tool — no password makes an encrypted comparison
+ * run. pdf-lib's geometry step reports the honest "no decryption support"
+ * limit, which is the family message but does not say which input it was. And
+ * with `include_visual: false` neither fired at all: the comparison completed,
+ * carried `RAW_PAGE_GEOMETRY_UNAVAILABLE` into its structure channel, and was
+ * rejected by its own semantics validator as an internal fault.
+ */
+function comparisonEncryptionFailure(error, side) {
+  // `isPdfComparisonEncryptedFailure` covers the typed code and both message
+  // signatures, including one that has crossed a boundary which dropped its
+  // `code`. Matching on the message rather than on identity matters here: the
+  // pdf-lib limit is raised inside the PDF.js subprocess and travels back as
+  // text.
+  const encrypted = error?.code === "PASSWORD_REQUIRED"
+    || error?.code === "PASSWORD_INCORRECT"
+    || comparisonSawPdfLibEncryptionLimit(error)
+    || isPdfComparisonEncryptedFailure(error);
+  return encrypted ? pdfComparisonEncryptedError([side]) : null;
+}
+
+/**
+ * The shared pdf-lib "no decryption support" limit, matched wherever it came
+ * from.
+ *
+ * `includes` rather than `===`: the page renderer raises this inside the PDF.js
+ * subprocess, so it reaches the server as text that a boundary may have
+ * prefixed or annotated. An equality check that stops matching does not fail
+ * loudly — it silently reclassifies a true statement about encryption as
+ * `invalid_input`, "the arguments or PDF inputs are invalid", about a call
+ * whose arguments were fine.
+ */
+function comparisonSawPdfLibEncryptionLimit(error) {
+  return typeof error?.message === "string"
+    && error.message.includes(PDF_LIB_ENCRYPTED_MESSAGE);
+}
+
+/**
+ * Whether the document PDF.js just observed carries an `/Encrypt` dictionary.
+ *
+ * PDF.js reports the security handler's filter name for a protected document
+ * and `null` for an unprotected one, and the observation this comparison had to
+ * make anyway already carries it — so this costs nothing, needs no second
+ * parse, and does not depend on pdf-lib having been able to read the document.
+ * It is the case a password error never reaches: the caller supplied the right
+ * password, PDF.js opened the file, and the comparison would otherwise have run
+ * on geometry pdf-lib could not supply.
+ */
+function comparisonInputIsEncrypted(observation) {
+  const filterName = observation?.metadata?.info?.values?.EncryptFilterName;
+  return typeof filterName === "string" && filterName.length > 0;
+}
+
+async function observeComparisonDocument(resolvedPath, { side, password, maxPages }) {
+  let observed;
+  try {
+    observed = await runPdfjsOperation(resolvedPath, {
+      operation: "observe_document",
+      password,
+      options: { max_pages: maxPages, max_output_characters: 200_000 },
+    });
+  } catch (error) {
+    throw comparisonEncryptionFailure(error, side) ?? error;
+  }
   if (observed.result.pages.total_count > maxPages) {
     const error = new Error(`Comparison supports at most ${maxPages} pages per document.`);
     error.code = "COMPARISON_PAGE_LIMIT_EXCEEDED";
     throw error;
   }
   validatePdfObservationSemantics(observed.result);
+  if (comparisonInputIsEncrypted(observed.result)) throw pdfComparisonEncryptedError([side]);
+  return { side, observed };
+}
+
+/**
+ * Observes both inputs before either is inspected further.
+ *
+ * Encryption is the one failure worth collecting from both sides rather than
+ * reporting from the first: a caller with two protected documents should be
+ * told that once, not led through them one at a time. Every other failure still
+ * stops at the first input that raised it.
+ */
+async function observeComparisonDocuments(requests) {
+  const observations = [];
+  const encryptedSides = [];
+  for (const request of requests) {
+    try {
+      observations.push(await observeComparisonDocument(request.resolvedPath, request));
+    } catch (error) {
+      if (error?.code !== PDF_COMPARISON_ENCRYPTED_CODE) {
+        // Whichever input failed first still decides the answer, exactly as it
+        // did before: an encrypted `before` is reported even when `after` turns
+        // out to be unreadable, and an unreadable `before` is reported without
+        // `after` being consulted at all.
+        if (encryptedSides.length > 0) throw pdfComparisonEncryptedError(encryptedSides);
+        throw error;
+      }
+      encryptedSides.push(request.side);
+    }
+  }
+  if (encryptedSides.length > 0) throw pdfComparisonEncryptedError(encryptedSides);
+  return observations;
+}
+
+/**
+ * Layout and visual evidence for one already-observed comparison input.
+ *
+ * `observeComparisonDocument` has already refused an encrypted document, so
+ * nothing here should meet one — but the pdf-lib geometry step inside the page
+ * renderer can still raise the family's encryption message for a document whose
+ * `/Encrypt` dictionary the observation could not report (bounded metadata can
+ * omit a key). The wrapper below turns that into the same typed refusal rather
+ * than letting it fall through to "the arguments or PDF inputs are invalid".
+ */
+async function inspectComparisonDocument(resolvedPath, options) {
+  try {
+    return await inspectComparisonDocumentChannels(resolvedPath, options);
+  } catch (error) {
+    throw comparisonEncryptionFailure(error, options.side) ?? error;
+  }
+}
+
+async function inspectComparisonDocumentChannels(resolvedPath, {
+  side,
+  observed,
+  password,
+  includeVisual,
+}) {
   const layoutChunks = [];
   for (let startPage = 1; startPage <= observed.result.pages.total_count; startPage += 10) {
     const layoutChunk = await runPdfjsOperation(resolvedPath, {
@@ -1801,6 +2006,10 @@ for (const [signal, exitCode] of new Map([
     workerShutdown = settleAllShutdownOperations([
       terminateAllPdfjsSubprocesses(),
       terminateAllPdfLibMutations(),
+      // A decryption worker is a live thread and keeps the process alive. It
+      // has its own 30-second deadline, which is the wrong amount of time for a
+      // shutdown to wait on.
+      terminateAllDecryptionWorkers(),
     ]);
     void workerShutdown.finally(() => process.exit(exitCode));
   });
@@ -1808,6 +2017,7 @@ for (const [signal, exitCode] of new Map([
 process.once("exit", () => {
   forceTerminateAllPdfjsSubprocesses();
   forceTerminateAllPdfLibMutations();
+  forceTerminateAllDecryptionWorkers();
 });
 
 const backupPathByCanonical = new Map();
@@ -2716,7 +2926,10 @@ async function fillPdfDocumentFields(pdfDoc, fieldData) {
 }
 
 async function fillPdfBytes(pdfBytes, fieldData, password = null) {
-  return await fillPdfDocumentFields(await loadPdfBytes(pdfBytes, password), fieldData);
+  // No `decryptFor`: filling writes the document back, so it stays on the
+  // honest pdf-lib limit rather than the decrypting path.
+  const { pdfDoc } = await loadPdfBytes(pdfBytes, password);
+  return await fillPdfDocumentFields(pdfDoc, fieldData);
 }
 
 // read_pdf_content, read_pdf_pages, and search_pdf_text decrypt through PDF.js
@@ -2777,7 +2990,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_DECRYPTABLE_PASSWORD_DESCRIPTION,
             }
           },
           required: ["pdf_path"]
@@ -2815,7 +3028,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             force_xfa: {
               type: "boolean",
@@ -2857,7 +3070,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             force_xfa: {
               type: "boolean",
@@ -2960,7 +3173,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3012,7 +3225,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_DECRYPTABLE_PASSWORD_DESCRIPTION,
             }
           },
           required: ["pdf_path"]
@@ -3137,6 +3350,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             max_markdown_bytes: { type: "integer", minimum: 256, maximum: 200000, description: "Maximum UTF-8 Markdown bytes. The conversion fails rather than cutting a line or Unicode sequence. Default: 50000." },
             include_page_boundaries: { type: "boolean", description: "Include deterministic HTML comments marking page boundaries. Default: true." },
             compact: { type: "boolean", description: "Opt into counted dot-leader, isolated page-number, and Unicode-letter spaced-hyphen normalizations. Default: false." },
+            emit_table_proposals: { type: "boolean", description: "Opt into emitting one bounded, deterministic table_proposals packet per abandoned table region (TABLE_TOPOLOGY_UNKNOWN or TABLE_RULING_UNSUPPORTED), carrying the region's text items, ruled and painted evidence, header hints, page, bbox, coordinate_space, and a source-and-IR-bound proposal_token so a host model can propose a structure for later read-only verification. Additive: the abstention gap is unchanged and default output stays byte-identical. Default: false." },
             output_path: { type: "string", description: "Optional absolute .md path, or ~/ path. The file is written only after complete bytes are staged and verified." },
             overwrite: { type: "boolean", description: "Replace an existing output_path only when its exact expected_output_identity is also supplied. Default: false." },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
@@ -3150,6 +3364,50 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
           idempotentHint: true,
           openWorldHint: false
         }
+      },
+      {
+        name: "verify_table_proposal",
+        description: "Deterministically check an untrusted table-structure proposal against a fresh, independently source-validated parse of the current PDF. The caller supplies only a region/token identity and item-to-cell assignments; text, geometry, header evidence, and packet fields are regenerated from source bytes. Acceptance means source-derived content passed coverage and ordering checks and the rectangular grid agrees with every available source ruling segment. Borderless or otherwise ambiguous geometry rejects. Consistency does not prove unique topology. No OCR, model, network, mutation, or numeric confidence.",
+        inputSchema: {
+          type: "object",
+          additionalProperties: false,
+          properties: {
+            pdf_path: { type: "string", description: "Absolute path, or ~/ path, to the same local PDF used to obtain the proposal packet." },
+            password: { type: "string", description: "Password for an encrypted PDF, when required." },
+            region_id: { type: "string", pattern: "^p[1-9][0-9]*-t[1-9][0-9]*$", description: "Deterministic B1 abandoned-region identity, such as p1-t1." },
+            proposal_token: { type: "string", pattern: "^[a-f0-9]{64}$", description: "B1 SHA-256 token binding the source SHA-256, extraction IR version, and region identity." },
+            cells: {
+              type: "array",
+              minItems: 1,
+              maxItems: 1000,
+              description: "Untrusted structural assignments. Cell text is never accepted from the caller.",
+              items: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  row: { type: "integer", minimum: 0, maximum: 999 },
+                  column: { type: "integer", minimum: 0, maximum: 999 },
+                  rowspan: { type: "integer", minimum: 1, maximum: 1000 },
+                  colspan: { type: "integer", minimum: 1, maximum: 1000 },
+                  item_ids: {
+                    type: "array",
+                    maxItems: 400,
+                    items: { type: "string", minLength: 1, maxLength: 128 },
+                  },
+                },
+                required: ["row", "column", "rowspan", "colspan", "item_ids"],
+              },
+            },
+          },
+          required: ["pdf_path", "region_id", "proposal_token", "cells"],
+        },
+        annotations: {
+          title: "Verify Table Proposal",
+          readOnlyHint: true,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
       },
       {
         name: "render_pdf_page",
@@ -3478,7 +3736,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3517,7 +3775,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             expected_output_identities: EXPECTED_OUTPUT_IDENTITIES_INPUT_SCHEMA
           },
@@ -3556,7 +3814,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3596,7 +3854,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3736,7 +3994,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
             },
             password: {
               type: "string",
-              description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION,
+              description: PDF_REPROTECTING_PASSWORD_DESCRIPTION,
             },
             force_xfa: {
               type: "boolean",
@@ -3885,7 +4143,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               type: "boolean",
               description: "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures."
             },
-            password: { type: "string", description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION },
+            password: { type: "string", description: PDF_REPROTECTING_PASSWORD_DESCRIPTION },
             force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA data will be stripped by pdf-lib." },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -3950,7 +4208,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               type: "boolean",
               description: "Deprecated compatibility field. true is accepted as a no-op when the destination does not exist or output_path identifies the same canonical document as pdf_path. It never authorizes replacing a distinct existing output; that requires expected_output_identity."
             },
-            password: { type: "string", description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION },
+            password: { type: "string", description: PDF_REPROTECTING_PASSWORD_DESCRIPTION },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path", "output_path", "signature_name", "page", "x", "y", "width", "height", "user_intent_statement", "user_confirmed_at"]
@@ -3996,7 +4254,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               type: "boolean",
               description: "Proceed even if the PDF already contains cryptographic signature fields (default: false). Warning: saving will invalidate any existing signatures."
             },
-            password: { type: "string", description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION },
+            password: { type: "string", description: PDF_REPROTECTING_PASSWORD_DESCRIPTION },
             force_xfa: { type: "boolean", description: "Proceed even if the PDF uses XFA forms (default: false). Warning: the XFA layer will be stripped." },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
@@ -4031,7 +4289,7 @@ server.setRequestHandler(ListToolsRequestSchema, async (request) => {
               type: "boolean",
               description: "Deprecated compatibility field. true is accepted as a no-op when the destination does not exist or output_path identifies the same canonical document as pdf_path. It never authorizes replacing a distinct existing output; that requires expected_output_identity."
             },
-            password: { type: "string", description: PDF_LIB_UNUSABLE_PASSWORD_DESCRIPTION },
+            password: { type: "string", description: PDF_REPROTECTING_PASSWORD_DESCRIPTION },
             expected_output_identity: EXPECTED_OUTPUT_IDENTITY_INPUT_SCHEMA
           },
           required: ["pdf_path", "output_path", "page", "x", "y", "width", "height", "text"]
@@ -4250,13 +4508,20 @@ async function handleToolCall(request) {
 
       case "read_pdf_fields": {
         const { pdf_path, password } = args;
-        const { pdfDoc, resolvedPath } = await loadPdf(pdf_path, password);
+        // Read-only: this never writes the PDF back, so it may decrypt.
+        const { pdfDoc, resolvedPath, releaseDecryptedBytes } = await loadPdf(
+          pdf_path,
+          password,
+          { decryptFor: "read_pdf_fields" },
+        );
         noteDocumentOpened(resolvedPath);
 
         const form = pdfDoc.getForm();
         const fields = form.getFields();
-        
-        const fieldInfo = fields.map(field => {
+
+        let fieldInfo;
+        try {
+          fieldInfo = fields.map(field => {
           const name = field.getName();
           let type = "unknown";
           let options = [];
@@ -4282,8 +4547,13 @@ async function handleToolCall(request) {
           }
           
           return { name, type, options, currentValue };
-        });
-        
+          });
+        } finally {
+          // Every value has been copied out of the document, so any decrypted
+          // plaintext can go now rather than at the end of the response build.
+          releaseDecryptedBytes();
+        }
+
         const payload = await buildActiveDocumentPayload(resolvedPath, 1, {
           fields: fieldInfo,
           fieldCount: fields.length,
@@ -4293,7 +4563,14 @@ async function handleToolCall(request) {
           content: [
             {
               type: "text",
-              text: `PDF has ${fields.length} form fields:\n${JSON.stringify(fieldInfo, null, 2)}`
+              // "0 form fields" reads as "this document has no form", which is
+              // often false: a questionnaire can be visibly full of blanks that
+              // were flattened into page content, or built with a form
+              // technology this parser does not enumerate. We measured AcroForm
+              // fields, so say AcroForm, and say what that does not rule out.
+              text: fields.length === 0
+                ? "This PDF has no AcroForm fields. That is not the same as having no form: visible blanks may have been flattened into the page, or built with a form technology this parser does not enumerate. Use read_pdf_content or the viewer to inspect what is actually on the page."
+                : `PDF has ${fields.length} AcroForm fields:\n${JSON.stringify(fieldInfo, null, 2)}`
             }
           ],
           structuredContent: payload,
@@ -4585,33 +4862,43 @@ async function handleToolCall(request) {
         for (const pdfPath of pdf_paths) {
           const resolvedPdfPath = resolvePath(pdfPath);
           const pdfBytes = await fs.readFile(resolvedPdfPath);
-          // Via loadPdfBytes so an encrypted input reports the honest pdf-lib
-          // limit instead of pdf-lib's raw "use ignoreEncryption" advice, which
-          // does not work on an encrypted document.
-          const pdfDoc = await loadPdfBytes(pdfBytes);
+          // Read-only: this writes a CSV, never a PDF, so it may decrypt. The
+          // tool takes a list of documents and no password — one password
+          // could not serve a list — so the only encrypted documents it can
+          // read are those that open without one and whose own permissions
+          // allow extraction. Anything else is refused by name.
+          const { pdfDoc, releaseDecryptedBytes } = await loadPdfBytes(pdfBytes, null, {
+            decryptFor: "extract_to_csv",
+          });
           const form = pdfDoc.getForm();
           const fields = form.getFields();
-          
+
           const rowData = { _filename: path.basename(pdfPath) };
-          
-          for (const field of fields) {
-            const fieldName = field.getName();
-            allFieldNames.add(fieldName);
-            
-            try {
-              if (field.constructor.name.includes('TextField')) {
-                rowData[fieldName] = field.getText() || "";
-              } else if (field.constructor.name.includes('CheckBox')) {
-                rowData[fieldName] = field.isChecked() ? "yes" : "no";
-              } else if (field.constructor.name.includes('RadioGroup') || 
-                         field.constructor.name.includes('Dropdown')) {
-                rowData[fieldName] = field.getSelected() || "";
+
+          try {
+            for (const field of fields) {
+              const fieldName = field.getName();
+              allFieldNames.add(fieldName);
+
+              try {
+                if (field.constructor.name.includes('TextField')) {
+                  rowData[fieldName] = field.getText() || "";
+                } else if (field.constructor.name.includes('CheckBox')) {
+                  rowData[fieldName] = field.isChecked() ? "yes" : "no";
+                } else if (field.constructor.name.includes('RadioGroup') ||
+                           field.constructor.name.includes('Dropdown')) {
+                  rowData[fieldName] = field.getSelected() || "";
+                }
+              } catch (e) {
+                rowData[fieldName] = "";
               }
-            } catch (e) {
-              rowData[fieldName] = "";
             }
+          } finally {
+            // Released per document, so a long list never holds more than one
+            // decrypted document in memory at a time.
+            releaseDecryptedBytes();
           }
-          
+
           allData.push(rowData);
         }
         
@@ -4647,13 +4934,21 @@ async function handleToolCall(request) {
         const { pdf_path, password } = args;
         let resolvedPath = null;
         try {
-          const loaded = await loadPdf(pdf_path, password);
+          // Read-only: this never writes the PDF back, so it may decrypt.
+          const loaded = await loadPdf(pdf_path, password, { decryptFor: "validate_pdf" });
           resolvedPath = loaded.resolvedPath;
-          const fields = loaded.pdfDoc.getForm().getFields();
-          const validation = validatePdfFormFields(fields, {
-            pdfPath: resolvedPath,
-            fileName: path.basename(resolvedPath),
-          });
+          let validation;
+          try {
+            const fields = loaded.pdfDoc.getForm().getFields();
+            validation = validatePdfFormFields(fields, {
+              pdfPath: resolvedPath,
+              fileName: path.basename(resolvedPath),
+            });
+          } finally {
+            // The report is fully materialized above; nothing below reads the
+            // document again, so any decrypted plaintext can go now.
+            loaded.releaseDecryptedBytes();
+          }
 
           const requiredSummary = validation.required_fields_complete === null
             ? "UNKNOWN"
@@ -4715,17 +5010,27 @@ async function handleToolCall(request) {
             content: [{ type: "text", text: message.join("\n") }],
             structuredContent: validation,
           };
-        } catch {
+        } catch (error) {
           const validation = failedPdfFormValidation({
             pdfPath: resolvedPath,
             fileName: path.basename(String(pdf_path || "unknown.pdf")),
           });
+          // "Verify the path/password and retry" is useless advice when the
+          // reason is already known and actionable: a password the document
+          // rejected, or permissions that deny the read. Those messages are
+          // fixed strings built here, never QPDF output, so passing them
+          // through leaks nothing.
+          const reason = error instanceof PdfDecryptionError
+            || error?.message === PDF_LIB_ENCRYPTED_MESSAGE
+            ? error.message
+            : null;
           return {
             content: [{
               type: "text",
-              text:
-                `Error: PDF field validation failed for ${validation.file_name}. ` +
-                "Do not interpret this as an empty or complete form. Verify the path/password and retry.",
+              text: reason
+                ? `Error: PDF field validation failed for ${validation.file_name}. ${reason}`
+                : `Error: PDF field validation failed for ${validation.file_name}. `
+                  + "Do not interpret this as an empty or complete form. Verify the path/password and retry.",
             }],
             structuredContent: validation,
             isError: true,
@@ -5117,6 +5422,7 @@ async function handleToolCall(request) {
           "max_markdown_bytes",
           "include_page_boundaries",
           "compact",
+          "emit_table_proposals",
           "output_path",
           "overwrite",
           "expected_output_identity",
@@ -5128,6 +5434,7 @@ async function handleToolCall(request) {
         const outputPathArgument = optionalStringArgument(markdownArgs.output_path, "output_path", { maxLength: 32768 });
         const includePageBoundaries = optionalBooleanArgument(markdownArgs.include_page_boundaries, "include_page_boundaries", true);
         const compact = optionalBooleanArgument(markdownArgs.compact, "compact", false);
+        const emitTableProposals = optionalBooleanArgument(markdownArgs.emit_table_proposals, "emit_table_proposals", false);
         const overwrite = optionalBooleanArgument(markdownArgs.overwrite, "overwrite", false);
         const expectedOutputIdentity = normalizeExpectedOutputIdentity(
           markdownArgs.expected_output_identity,
@@ -5186,6 +5493,7 @@ async function handleToolCall(request) {
             includePageBoundaries,
             maxMarkdownBytes,
             compact,
+            emitTableProposals,
           });
           const pagesNeedingVision = deriveMarkdownVisionRouting(layout);
 
@@ -5206,10 +5514,31 @@ async function handleToolCall(request) {
             });
           }
 
+          // Verified-vision (B1): the renderer emits token-free region
+          // descriptors under `table_proposal_regions` only when opt-in. The
+          // handler owns source identity, so it binds each region to this exact
+          // document with a proposal_token = SHA-256 of a canonical
+          // (source sha256, IR version, region_id) string, and re-keys the
+          // descriptors to `table_proposals`. The intermediate key never
+          // reaches the payload. When the flag is off there is no key at all,
+          // so the structured result stays byte-identical to prior behavior.
+          const { table_proposal_regions: tableProposalRegions, ...renderedPayload } = rendered;
+          let tableProposals;
+          if (tableProposalRegions !== undefined) {
+            const tokenSourceSha256 = rendered.provenance.source.sha256;
+            const tokenIrVersion = rendered.provenance.layout.version;
+            tableProposals = tableProposalRegions.map(region => ({
+              ...region,
+              proposal_token: createHash("sha256")
+                .update([tokenSourceSha256, tokenIrVersion, region.region_id].join("\n"), "utf8")
+                .digest("hex"),
+            }));
+          }
           const payload = {
-            ...rendered,
+            ...renderedPayload,
             pages_needing_vision: pagesNeedingVision,
             saved_output: savedOutput,
+            ...(tableProposals !== undefined ? { table_proposals: tableProposals } : {}),
           };
           const summary = [
             `Converted pages ${layout.page_range.start_page}-${layout.page_range.end_page} of ${fileName} to deterministic Markdown.`,
@@ -5240,6 +5569,113 @@ async function handleToolCall(request) {
             };
           }
           throw new Error(`Error converting PDF to Markdown: ${error.message}`, { cause: error });
+        }
+      }
+
+      case "verify_table_proposal": {
+        const verifyArgs = requireArgumentObject(args, "verify_table_proposal");
+        const allowedArguments = new Set([
+          "pdf_path",
+          "password",
+          "region_id",
+          "proposal_token",
+          "cells",
+        ]);
+        const unknownArgument = Object.keys(verifyArgs).find(name => !allowedArguments.has(name));
+        if (unknownArgument) throw new Error(`Unknown verify_table_proposal argument: ${unknownArgument}.`);
+        const pdfPath = requireStringArgument(verifyArgs.pdf_path, "pdf_path", { maxLength: 32768 });
+        const password = optionalStringArgument(verifyArgs.password, "password", { maxLength: 4096 });
+        const regionId = requireStringArgument(verifyArgs.region_id, "region_id", { maxLength: 64 });
+        const regionMatch = /^p([1-9][0-9]*)-t([1-9][0-9]*)$/.exec(regionId);
+        if (!regionMatch) throw new Error("region_id must match p{page}-t{ordinal} with positive integers.");
+        const page = Number(regionMatch[1]);
+        if (!Number.isSafeInteger(page) || page > 1000000) {
+          throw new Error("region_id page must be from 1 through 1000000.");
+        }
+        const proposalToken = requireStringArgument(
+          verifyArgs.proposal_token,
+          "proposal_token",
+          { maxLength: 64 },
+        );
+        if (!/^[a-f0-9]{64}$/.test(proposalToken)) {
+          throw new Error("proposal_token must be a lowercase 64-character SHA-256 hex digest.");
+        }
+        const cells = normalizeTableProposalCells(verifyArgs.cells);
+        if (!path.isAbsolute(expandUserPath(pdfPath))) {
+          throw new Error("pdf_path must be an absolute path or begin with ~/.");
+        }
+        const resolvedPath = resolvePath(pdfPath);
+        try {
+          // Use the widest supported single-page extraction limits. If the B1
+          // packet came from a narrower or truncated view, the verifier can see
+          // additional source items and reject missing coverage, never accept a
+          // convenient subset. The PDF.js worker performs the independent
+          // source-evidence replay before this result is returned.
+          const fileName = path.basename(resolvedPath);
+          const { result } = await runPdfjsOperation(resolvedPath, {
+            operation: "extract_layout_for_markdown",
+            password,
+            options: {
+              source_path: resolvedPath,
+              source_file_name: fileName,
+              start_page: page,
+              end_page: page,
+              max_items: 5000,
+              max_characters: 100000,
+              max_output_characters: 200000,
+            },
+          });
+          const rendered = renderPdfLayoutToMarkdown(result.layout, {
+            includePageBoundaries: true,
+            maxMarkdownBytes: 200000,
+            compact: false,
+            emitTableProposals: true,
+          });
+          const expectedProposalToken = createHash("sha256")
+            .update([
+              rendered.provenance.source.sha256,
+              rendered.provenance.layout.version,
+              regionId,
+            ].join("\n"), "utf8")
+            .digest("hex");
+          const region = rendered.table_proposal_regions.find(candidate => (
+            candidate.region_id === regionId
+          )) ?? null;
+          const payload = verifyTableProposalAgainstRegion({
+            source: {
+              file_name: rendered.provenance.source.file_name,
+              sha256: rendered.provenance.source.sha256,
+              size_bytes: rendered.provenance.source.size_bytes,
+            },
+            layout: {
+              name: rendered.provenance.layout.name,
+              version: rendered.provenance.layout.version,
+              parser_name: rendered.provenance.layout.parser_name,
+              parser_version: rendered.provenance.layout.parser_version,
+            },
+            regionId,
+            page,
+            region,
+            proposalToken,
+            expectedProposalToken,
+            cells,
+          });
+          const summary = payload.status === "accepted"
+            ? `Accepted proposal ${regionId} against a fresh source parse. Cell content was rebuilt only from the PDF text layer, and the grid is consistent with every available source ruling segment. The GFM table below is a syntax-escaped rectangular projection; structured cells retain any spans. Consistency does not prove unique topology.\n\n${payload.table.markdown}`
+            : `Rejected proposal ${regionId} against a fresh source parse: ${payload.reason_codes.join(", ")}. No table content was emitted.`;
+          return {
+            content: [{ type: "text", text: summary }],
+            structuredContent: payload,
+          };
+        } catch (error) {
+          if (error?.code === PDF_RESOURCE_LIMIT_CODE) throw error;
+          const passwordCode = ["PASSWORD_REQUIRED", "PASSWORD_INCORRECT"].includes(error?.code)
+            ? error.code
+            : null;
+          const message = `Error verifying table proposal: ${error.message}`;
+          return passwordCode
+            ? createTypedToolError({ message, code: passwordCode })
+            : createTypedToolError({ message });
         }
       }
 
@@ -6081,8 +6517,12 @@ async function handleToolCall(request) {
           const started = performance.now();
           const beforePath = resolvePath(beforePdfPath);
           const afterPath = resolvePath(afterPdfPath);
-          const before = await inspectComparisonDocument(beforePath, { side: "before", password: beforePassword, maxPages, includeVisual });
-          const after = await inspectComparisonDocument(afterPath, { side: "after", password: afterPassword, maxPages, includeVisual });
+          const [beforeObservation, afterObservation] = await observeComparisonDocuments([
+            { side: "before", resolvedPath: beforePath, password: beforePassword, maxPages },
+            { side: "after", resolvedPath: afterPath, password: afterPassword, maxPages },
+          ]);
+          const before = await inspectComparisonDocument(beforePath, { ...beforeObservation, password: beforePassword, includeVisual });
+          const after = await inspectComparisonDocument(afterPath, { ...afterObservation, password: afterPassword, includeVisual });
           const sourceImmutability = {
             before: await verifyComparisonSourceUnchanged(beforePath, before.initial_source),
             after: await verifyComparisonSourceUnchanged(afterPath, after.initial_source),
@@ -6104,20 +6544,17 @@ async function handleToolCall(request) {
             structuredContent: payload,
           };
         } catch (error) {
-          // The comparison classifier turns any unrecognized Error into
-          // "arguments or PDF inputs are invalid", which is false when the
-          // inputs were fine and only pdf-lib's inability to decrypt stopped
-          // the run. Say what actually happened.
-          // PDF_PARSE_FAILED is the closest code the sealed comparison error
-          // enum already carries; adding a new one would change an oracle-bound
-          // schema module. The message states the real cause either way.
-          if (error?.message === PDF_LIB_ENCRYPTED_MESSAGE) {
-            return createTypedToolError({
-              code: "PDF_PARSE_FAILED",
-              message: PDF_LIB_ENCRYPTED_MESSAGE,
-            });
-          }
-          return createTypedToolError(publicPdfComparisonError(error));
+          // `publicPdfComparisonError` recognises the comparison's own refusal
+          // by code *and* by message signature, so one that lost its `code`
+          // crossing a boundary still classifies. The pdf-lib limit is the one
+          // signal it cannot see — that constant lives in server/helpers.js and
+          // the comparison module's import graph is deliberately closed against
+          // it — so this layer translates it, and does so before the classifier
+          // can report a valid call as an invalid one.
+          const failure = comparisonSawPdfLibEncryptionLimit(error)
+            ? pdfComparisonEncryptedError([])
+            : error;
+          return createTypedToolError(publicPdfComparisonError(failure));
         }
       }
 

@@ -1,0 +1,144 @@
+{
+  "proposal_manifest_version": 1,
+  "suite_id": "pdf-tools.verified-vision.adversarial-proposals",
+  "suite_version": "v0.1.0",
+  "claim_boundary": "Authored synthetic topology cases only. Text conservation does not prove topology. Expected outcomes are requirements for the future deterministic verifier, not measured verifier results.",
+  "item_reference_format": "Each item_ref is a source text string plus its one-based occurrence among identical text strings in source reading order.",
+  "proposals": [
+    {
+      "id": "merged-span-authored-control",
+      "fixture_id": "pdf-tools.verified-vision.table-ruled-merged-negative",
+      "adversarial_class": "recoverable_control",
+      "row_count": 4,
+      "column_count": 3,
+      "text_conservation": "required",
+      "topology_truth": "matches_authored_truth",
+      "expected_verifier_outcome": "accepted",
+      "acceptance_prerequisites": ["pdf-toolkit-mcp-14o.8", "independent_header_evidence"],
+      "cells": [
+        { "row": 0, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "Status", "occurrence": 1 }] },
+        { "row": 0, "column": 1, "rowspan": 1, "colspan": 2, "item_refs": [{ "text": "Merged Q1-Q2", "occurrence": 1 }] },
+        { "row": 1, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "North", "occurrence": 1 }] },
+        { "row": 1, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "1200", "occurrence": 1 }] },
+        { "row": 1, "column": 2, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "1450", "occurrence": 1 }] },
+        { "row": 2, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "South", "occurrence": 1 }] },
+        { "row": 2, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "980", "occurrence": 1 }] },
+        { "row": 2, "column": 2, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "1020", "occurrence": 1 }] },
+        { "row": 3, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "West", "occurrence": 1 }] },
+        { "row": 3, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "1500", "occurrence": 1 }] },
+        { "row": 3, "column": 2, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "1380", "occurrence": 1 }] }
+      ]
+    },
+    {
+      "id": "merged-span-invented-header-cut",
+      "fixture_id": "pdf-tools.verified-vision.table-ruled-merged-negative",
+      "adversarial_class": "wrong_merged_header_topology",
+      "row_count": 4,
+      "column_count": 3,
+      "text_conservation": "required",
+      "topology_truth": "known_wrong",
+      "expected_verifier_outcome": "rejected",
+      "expected_rejection_stage": "grid_consistency",
+      "rejection_evidence_prerequisite": "pdf-toolkit-mcp-14o.8",
+      "cells": [
+        { "row": 0, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "Status", "occurrence": 1 }] },
+        { "row": 0, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "Merged Q1-Q2", "occurrence": 1 }] },
+        { "row": 0, "column": 2, "rowspan": 1, "colspan": 1, "item_refs": [] },
+        { "row": 1, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "North", "occurrence": 1 }] },
+        { "row": 1, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "1200", "occurrence": 1 }] },
+        { "row": 1, "column": 2, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "1450", "occurrence": 1 }] },
+        { "row": 2, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "South", "occurrence": 1 }] },
+        { "row": 2, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "980", "occurrence": 1 }] },
+        { "row": 2, "column": 2, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "1020", "occurrence": 1 }] },
+        { "row": 3, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "West", "occurrence": 1 }] },
+        { "row": 3, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "1500", "occurrence": 1 }] },
+        { "row": 3, "column": 2, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "1380", "occurrence": 1 }] }
+      ]
+    },
+    {
+      "id": "line-table-column-merge",
+      "fixture_id": "pdf-tools.verified-vision.table-ruled-lines",
+      "adversarial_class": "wrong_column_merge",
+      "row_count": 4,
+      "column_count": 2,
+      "text_conservation": "required",
+      "topology_truth": "known_wrong",
+      "expected_verifier_outcome": "rejected",
+      "expected_rejection_stage": "grid_consistency",
+      "rejection_evidence_prerequisite": "pdf-toolkit-mcp-14o.8",
+      "cells": [
+        { "row": 0, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "Region", "occurrence": 1 }] },
+        { "row": 0, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "Q1", "occurrence": 1 }, { "text": "Q2", "occurrence": 1 }] },
+        { "row": 1, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "North", "occurrence": 1 }] },
+        { "row": 1, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "1200", "occurrence": 1 }, { "text": "1450", "occurrence": 1 }] },
+        { "row": 2, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "South", "occurrence": 1 }] },
+        { "row": 2, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "980", "occurrence": 1 }, { "text": "1020", "occurrence": 1 }] },
+        { "row": 3, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "West", "occurrence": 1 }] },
+        { "row": 3, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "1500", "occurrence": 1 }, { "text": "1380", "occurrence": 1 }] }
+      ]
+    },
+    {
+      "id": "line-table-row-split",
+      "fixture_id": "pdf-tools.verified-vision.table-ruled-lines",
+      "adversarial_class": "wrong_row_split",
+      "row_count": 8,
+      "column_count": 3,
+      "text_conservation": "required",
+      "topology_truth": "known_wrong",
+      "expected_verifier_outcome": "rejected",
+      "expected_rejection_stage": "renderer_predicates",
+      "cells": [
+        { "row": 0, "column": 0, "rowspan": 1, "colspan": 3, "item_refs": [{ "text": "Region", "occurrence": 1 }] },
+        { "row": 1, "column": 0, "rowspan": 1, "colspan": 3, "item_refs": [{ "text": "Q1", "occurrence": 1 }, { "text": "Q2", "occurrence": 1 }] },
+        { "row": 2, "column": 0, "rowspan": 1, "colspan": 3, "item_refs": [{ "text": "North", "occurrence": 1 }] },
+        { "row": 3, "column": 0, "rowspan": 1, "colspan": 3, "item_refs": [{ "text": "1200", "occurrence": 1 }, { "text": "1450", "occurrence": 1 }] },
+        { "row": 4, "column": 0, "rowspan": 1, "colspan": 3, "item_refs": [{ "text": "South", "occurrence": 1 }] },
+        { "row": 5, "column": 0, "rowspan": 1, "colspan": 3, "item_refs": [{ "text": "980", "occurrence": 1 }, { "text": "1020", "occurrence": 1 }] },
+        { "row": 6, "column": 0, "rowspan": 1, "colspan": 3, "item_refs": [{ "text": "West", "occurrence": 1 }] },
+        { "row": 7, "column": 0, "rowspan": 1, "colspan": 3, "item_refs": [{ "text": "1500", "occurrence": 1 }, { "text": "1380", "occurrence": 1 }] }
+      ]
+    },
+    {
+      "id": "borderless-three-column-plausible",
+      "fixture_id": "pdf-tools.verified-vision.table-borderless-ambiguous",
+      "adversarial_class": "ambiguous_topology_candidate",
+      "row_count": 4,
+      "column_count": 3,
+      "text_conservation": "required",
+      "topology_truth": "unresolved_by_source",
+      "expected_verifier_outcome": "rejected",
+      "expected_rejection_stage": "header_evidence",
+      "cells": [
+        { "row": 0, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "Alpha", "occurrence": 1 }] },
+        { "row": 0, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "Beta", "occurrence": 1 }] },
+        { "row": 0, "column": 2, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "Gamma", "occurrence": 1 }] },
+        { "row": 1, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "10", "occurrence": 1 }] },
+        { "row": 1, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "20", "occurrence": 1 }] },
+        { "row": 1, "column": 2, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "30", "occurrence": 1 }] },
+        { "row": 2, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "40", "occurrence": 1 }] },
+        { "row": 2, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "50", "occurrence": 1 }] },
+        { "row": 2, "column": 2, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "60", "occurrence": 1 }] },
+        { "row": 3, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "70", "occurrence": 1 }] },
+        { "row": 3, "column": 1, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "80", "occurrence": 1 }] },
+        { "row": 3, "column": 2, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "90", "occurrence": 1 }] }
+      ]
+    },
+    {
+      "id": "borderless-one-column-plausible",
+      "fixture_id": "pdf-tools.verified-vision.table-borderless-ambiguous",
+      "adversarial_class": "ambiguous_topology_candidate",
+      "row_count": 4,
+      "column_count": 1,
+      "text_conservation": "required",
+      "topology_truth": "unresolved_by_source",
+      "expected_verifier_outcome": "rejected",
+      "expected_rejection_stage": "header_evidence",
+      "cells": [
+        { "row": 0, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "Alpha", "occurrence": 1 }, { "text": "Beta", "occurrence": 1 }, { "text": "Gamma", "occurrence": 1 }] },
+        { "row": 1, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "10", "occurrence": 1 }, { "text": "20", "occurrence": 1 }, { "text": "30", "occurrence": 1 }] },
+        { "row": 2, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "40", "occurrence": 1 }, { "text": "50", "occurrence": 1 }, { "text": "60", "occurrence": 1 }] },
+        { "row": 3, "column": 0, "rowspan": 1, "colspan": 1, "item_refs": [{ "text": "70", "occurrence": 1 }, { "text": "80", "occurrence": 1 }, { "text": "90", "occurrence": 1 }] }
+      ]
+    }
+  ]
+}

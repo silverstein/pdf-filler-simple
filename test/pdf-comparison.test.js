@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import {
+  PDF_COMPARISON_COVERAGE_REASONS,
+  PDF_COMPARISON_SIDES,
   alignComparisonPages,
   derivePdfComparisonCoverage,
   diffComparisonRgba,
   normalizeComparisonText,
 } from "../server/pdf-comparison.js";
+import { PDF_OBSERVATION_COVERAGE_REASONS } from "../server/pdf-observations.js";
 
 function page(pageNumber, text, { width = 100, height = 100, rotation = 0 } = {}) {
   return {
@@ -388,5 +391,57 @@ describe("PDF comparison primitives", () => {
       .toEqual({ status: "unavailable", reason_codes: ["VISUAL_RENDERER_UNAVAILABLE"] });
     expect(derivePdfComparisonCoverage([document("before"), document("after")], false).visual)
       .toEqual({ status: "unavailable", reason_codes: ["VISUAL_NOT_REQUESTED"] });
+  });
+
+  /*
+   * `derivePdfComparisonCoverage` copies every reason a document observation
+   * carries into a comparison channel with the side's name in front, and
+   * `validatePdfComparisonSemantics` then rejects any reason the comparison
+   * does not recognise. So the comparison's vocabulary has to be a superset of
+   * the observation's, and for three reasons it was not:
+   * RAW_PAGE_GEOMETRY_UNAVAILABLE, FORM_FIELD_PAGE_GEOMETRY_PARTIAL and
+   * ANNOTATION_PAGE_PARSE_PARTIAL. A document raising any of them turned a
+   * valid comparison into "Internal output validation failed for compare_pdfs".
+   *
+   * Both sides of this are read from the modules that own them, so a reason
+   * added to an observation and forgotten here fails immediately instead of
+   * waiting for a document that happens to raise it.
+   */
+  it("recognises every reason a document observation can hand it, on both sides", () => {
+    const observationReasons = Object.values(PDF_OBSERVATION_COVERAGE_REASONS).flat();
+    expect(observationReasons.length).toBeGreaterThan(0);
+    expect(new Set(observationReasons).size).toBe(observationReasons.length);
+    expect(PDF_COMPARISON_SIDES).toEqual(["before", "after"]);
+    for (const side of PDF_COMPARISON_SIDES) {
+      for (const reason of observationReasons) {
+        const prefixed = `${side.toUpperCase()}_${reason}`;
+        expect(PDF_COMPARISON_COVERAGE_REASONS.has(prefixed), prefixed).toBe(true);
+      }
+    }
+    // And the prefixing really is what the derivation does, so the check above
+    // is testing the same strings the comparison will actually produce.
+    const supported = { status: "supported", reason_codes: [] };
+    const document = side => ({
+      side,
+      observation: {
+        coverage: {
+          pages: { status: "partial", reason_codes: [...PDF_OBSERVATION_COVERAGE_REASONS.pages] },
+          metadata: supported,
+          form_fields: supported,
+          annotations: supported,
+        },
+      },
+      layout: { truncation: { truncated: false }, pages: [] },
+      renders: [],
+    });
+    const derived = derivePdfComparisonCoverage(
+      [document("before"), document("after")],
+      false,
+    );
+    expect(derived.structure.reason_codes.length)
+      .toBe(PDF_OBSERVATION_COVERAGE_REASONS.pages.length * 2);
+    for (const reason of derived.structure.reason_codes) {
+      expect(PDF_COMPARISON_COVERAGE_REASONS.has(reason), reason).toBe(true);
+    }
   });
 });

@@ -13,7 +13,7 @@ import {
 } from "./type3-cm-pk-reference.js";
 
 const IR_NAME = "pdf-tools.extraction-ir";
-const IR_VERSION = "1.5.0";
+const IR_VERSION = "1.6.0";
 /*
  * IR_VERSION pin sweep (all must remain aligned):
  * - server/layout-extraction.js: IR_VERSION and EXTRACTION_IR_IDENTITY
@@ -25,6 +25,9 @@ const IR_VERSION = "1.5.0";
  * - pdf-toolkit-mcp-share/server/layout-extraction.js, markdown-conversion.js,
  *   and output-schemas.js
  *
+ * 1.6.0: bounded, typed, source-replayed axis-aligned ruling segments preserve
+ * the straight-line geometry needed by verified-vision grid checks.
+ *
  * 1.5.0: the Type-3 glyph evidence key is the stored image-mask sample grid.
  * The published digests under glyph_sha256 and witness_glyph_sha256 all
  * changed, and those two fields plus glyph_evidence_version replaced the
@@ -34,8 +37,10 @@ const INTERNAL_SOURCE_REPLAY = Symbol("pdf-layout-internal-source-replay");
 const INTERNAL_MARKDOWN_PROJECTION = Symbol("pdf-layout-internal-markdown-projection");
 
 const RULED_RECT_PAGE_LIMIT = 512;
+const RULING_SEGMENT_PAGE_LIMIT = 1024;
 const RULED_RECT_AXIS_TOLERANCE = 0.5;
 const RULED_RECT_MIN_SIZE = 5;
+const RULING_SEGMENT_MIN_LENGTH = 2;
 const DRAW_OPS = Object.freeze({ moveTo: 0, lineTo: 1, curveTo: 2, quadraticCurveTo: 3, closePath: 4 });
 
 /**
@@ -3130,6 +3135,102 @@ function rectPaintVerb(pdfjsLib, paintOp, pendingClip) {
   return null;
 }
 
+function pathIncludesStroke(pdfjsLib, paintOp) {
+  return [
+    "stroke",
+    "closeStroke",
+    "fillStroke",
+    "eoFillStroke",
+    "closeFillStroke",
+    "closeEOFillStroke",
+  ].some(name => paintOp === pdfjsLib.OPS?.[name]);
+}
+
+function straightPathSegments(commands) {
+  const segments = [];
+  let start = null;
+  let point = null;
+  for (const command of commands) {
+    if (command.opcode === DRAW_OPS.moveTo) {
+      start = [command.coordinates[0], command.coordinates[1]];
+      point = start;
+    } else if (command.opcode === DRAW_OPS.lineTo) {
+      const next = [command.coordinates[0], command.coordinates[1]];
+      if (point) segments.push([point, next]);
+      point = next;
+    } else if (command.opcode === DRAW_OPS.curveTo) {
+      point = [command.coordinates[4], command.coordinates[5]];
+    } else if (command.opcode === DRAW_OPS.quadraticCurveTo) {
+      point = [command.coordinates[2], command.coordinates[3]];
+    } else if (command.opcode === DRAW_OPS.closePath) {
+      if (point && start) segments.push([point, start]);
+      point = start;
+    }
+  }
+  return segments;
+}
+
+function transformedRulingSegment(segment, transform, operatorIndex) {
+  const first = applyViewportPoint(transform, segment[0][0], segment[0][1]);
+  const second = applyViewportPoint(transform, segment[1][0], segment[1][1]);
+  if (![...first, ...second].every(Number.isFinite)) return null;
+  const dx = Math.abs(second[0] - first[0]);
+  const dy = Math.abs(second[1] - first[1]);
+  let orientation;
+  if (dy <= RULED_RECT_AXIS_TOLERANCE && dx >= RULING_SEGMENT_MIN_LENGTH) orientation = "horizontal";
+  else if (dx <= RULED_RECT_AXIS_TOLERANCE && dy >= RULING_SEGMENT_MIN_LENGTH) orientation = "vertical";
+  else return null;
+  const ordered = orientation === "horizontal"
+    ? [...[first, second]].sort((left, right) => left[0] - right[0] || left[1] - right[1])
+    : [...[first, second]].sort((left, right) => left[1] - right[1] || left[0] - right[0]);
+  return {
+    orientation,
+    x1: round(ordered[0][0]),
+    y1: round(ordered[0][1]),
+    x2: round(ordered[1][0]),
+    y2: round(ordered[1][1]),
+    source_operator_index: operatorIndex,
+  };
+}
+
+function deduplicateRulingSegments(candidates) {
+  const ordered = [...candidates].sort((left, right) => (
+    left.source_operator_index - right.source_operator_index
+      || left.orientation.localeCompare(right.orientation)
+      || left.y1 - right.y1
+      || left.x1 - right.x1
+      || left.y2 - right.y2
+      || left.x2 - right.x2
+  ));
+  const buckets = new Map();
+  const unique = [];
+  for (const candidate of ordered) {
+    const fields = candidate.orientation === "horizontal"
+      ? ["y1", "x1", "x2"] : ["x1", "y1", "y2"];
+    const grid = fields.map(field => Math.round(candidate[field] / RULED_RECT_AXIS_TOLERANCE));
+    let duplicate = false;
+    for (let first = -1; first <= 1 && !duplicate; first += 1) {
+      for (let second = -1; second <= 1 && !duplicate; second += 1) {
+        for (let third = -1; third <= 1 && !duplicate; third += 1) {
+          const key = `${candidate.orientation}:${grid[0] + first}:${grid[1] + second}:${grid[2] + third}`;
+          duplicate = (buckets.get(key) ?? []).some(existing => (
+            ["x1", "y1", "x2", "y2"].every(field => (
+              Math.abs(existing[field] - candidate[field]) <= RULED_RECT_AXIS_TOLERANCE
+            ))
+          ));
+        }
+      }
+    }
+    if (duplicate) continue;
+    const key = `${candidate.orientation}:${grid[0]}:${grid[1]}:${grid[2]}`;
+    const bucket = buckets.get(key) ?? [];
+    bucket.push(candidate);
+    buckets.set(key, bucket);
+    unique.push(candidate);
+  }
+  return unique;
+}
+
 function rectGridKey(rect) {
   return [rect.x, rect.y, rect.width, rect.height].map(value => Math.round(value / RULED_RECT_AXIS_TOLERANCE));
 }
@@ -3186,6 +3287,7 @@ function deriveOperatorEvidence(pdfjsLib, operators, viewportTransform) {
   let pathConstructOps = 0;
   let pathSegments = 0;
   const candidates = [];
+  const rulingCandidates = [];
   const displayTransform = Array.isArray(viewportTransform) && viewportTransform.length === 6
     ? viewportTransform : identityTransform();
 
@@ -3226,8 +3328,14 @@ function deriveOperatorEvidence(pdfjsLib, operators, viewportTransform) {
       pathSegments += commands.length;
       const paintOp = argumentsForPath?.[0];
       const verb = rectPaintVerb(pdfjsLib, paintOp, pendingClip);
+      const combinedTransform = multiplyTransforms(displayTransform, currentTransform);
+      if (buffer !== null && pathIncludesStroke(pdfjsLib, paintOp)) {
+        for (const segment of straightPathSegments(commands)) {
+          const ruling = transformedRulingSegment(segment, combinedTransform, operatorIndex);
+          if (ruling) rulingCandidates.push(ruling);
+        }
+      }
       if (verb !== null && buffer !== null) {
-        const combinedTransform = multiplyTransforms(displayTransform, currentTransform);
         for (const segments of rectangleSubpaths(commands)) {
           const rect = transformedRectangle(segments, combinedTransform);
           if (rect) candidates.push({ ...rect, verb, operator_index: operatorIndex });
@@ -3240,12 +3348,21 @@ function deriveOperatorEvidence(pdfjsLib, operators, viewportTransform) {
   const unique = deduplicateRectangles(candidates);
   const returned = unique.slice(0, RULED_RECT_PAGE_LIMIT).map(({ operator_index: _operatorIndex, ...rect }) => rect);
   const truncated = unique.length > returned.length;
+  const uniqueRulingSegments = deduplicateRulingSegments(rulingCandidates);
+  const returnedRulingSegments = uniqueRulingSegments.slice(0, RULING_SEGMENT_PAGE_LIMIT);
   return {
     ruled_rects: {
       status: truncated ? "truncated" : "available",
       observed_count: unique.length,
       returned_count: returned.length,
       items: returned,
+    },
+    ruling_segments: {
+      status: "available",
+      truncated: uniqueRulingSegments.length > returnedRulingSegments.length,
+      observed_count: uniqueRulingSegments.length,
+      returned_count: returnedRulingSegments.length,
+      items: returnedRulingSegments,
     },
     operator_counts: {
       image_paint_ops: imagePaintOps,
@@ -3367,6 +3484,16 @@ function unavailablePaintedRectangles() {
     status: "unavailable",
     truncated: false,
     observed_count: 0,
+    returned_count: 0,
+    items: [],
+  };
+}
+
+function unavailableRulingSegments({ truncated = false, observedCount = 0 } = {}) {
+  return {
+    status: "unavailable",
+    truncated,
+    observed_count: observedCount,
     returned_count: 0,
     items: [],
   };
@@ -3508,6 +3635,23 @@ function markOutputBudget(payload, maxOutputCharacters) {
   if (JSON.stringify(payload).length <= maxOutputCharacters) return payload;
   for (let index = payload.pages.length - 1; index >= 0 && JSON.stringify(payload).length > maxOutputCharacters; index -= 1) {
     const page = payload.pages[index];
+    if (page.ruling_segments.items.length === 0) continue;
+    page.ruling_segments = unavailableRulingSegments({
+      truncated: true,
+      observedCount: page.ruling_segments.observed_count,
+    });
+    page.extraction_status = page.extraction_status === "failed" ? "failed" : "partial";
+    page.needs_visual_inspection = true;
+    if (!page.limitations.includes("Ruling-segment detail was omitted to satisfy max_output_characters.")) {
+      page.limitations.push("Ruling-segment detail was omitted to satisfy max_output_characters.");
+    }
+  }
+  if (JSON.stringify(payload).length <= maxOutputCharacters) {
+    payload.extraction_status = payload.pages.every(page => page.extraction_status === "complete") ? "complete" : "partial";
+    return payload;
+  }
+  for (let index = payload.pages.length - 1; index >= 0 && JSON.stringify(payload).length > maxOutputCharacters; index -= 1) {
+    const page = payload.pages[index];
     if (page.painted_rectangles.items.length === 0) continue;
     page.painted_rectangles = {
       status: "unavailable",
@@ -3552,6 +3696,10 @@ function markOutputBudget(payload, maxOutputCharacters) {
       returned_count: 0,
       items: [],
     };
+    page.ruling_segments = unavailableRulingSegments({
+      truncated: true,
+      observedCount: page.ruling_segments.observed_count,
+    });
     page.flow_text = "";
     page.spatial_text = "";
     page.reading_order = {
@@ -3772,6 +3920,50 @@ export function validatePdfLayoutSemantics(payload, {
         && rect.x >= 0 && rect.y >= 0 && rect.width >= 0 && rect.height >= 0
         && ["fill", "stroke", "clip", "none"].includes(rect.verb),
       `page ${page.page} ruled rectangle geometry or verb is invalid`);
+    }
+    const rulingSegments = page.ruling_segments;
+    semanticAssertion(rulingSegments && typeof rulingSegments === "object" && !Array.isArray(rulingSegments),
+      `page ${page.page} ruling-segment evidence is malformed`);
+    semanticAssertion(["available", "unavailable"].includes(rulingSegments.status)
+      && typeof rulingSegments.truncated === "boolean"
+      && Number.isSafeInteger(rulingSegments.observed_count) && rulingSegments.observed_count >= 0
+      && Number.isSafeInteger(rulingSegments.returned_count) && rulingSegments.returned_count >= 0
+      && rulingSegments.returned_count <= rulingSegments.observed_count
+      && Array.isArray(rulingSegments.items)
+      && rulingSegments.items.length === rulingSegments.returned_count
+      && rulingSegments.returned_count <= RULING_SEGMENT_PAGE_LIMIT,
+    `page ${page.page} ruling-segment accounting is invalid`);
+    if (rulingSegments.status === "available") {
+      semanticAssertion(rulingSegments.returned_count === Math.min(rulingSegments.observed_count, RULING_SEGMENT_PAGE_LIMIT)
+        && rulingSegments.truncated === (rulingSegments.observed_count > rulingSegments.returned_count),
+      `page ${page.page} ruling-segment availability is inconsistent`);
+    } else {
+      semanticAssertion(rulingSegments.returned_count === 0 && rulingSegments.items.length === 0,
+        `page ${page.page} unavailable ruling segments leaked geometry`);
+      semanticAssertion(rulingSegments.truncated === true
+        || page.errors.some(error => error.stage === "operators" || error.stage === "page" || error.stage === "ruled_rects"),
+      `page ${page.page} unavailable ruling segments lack an operator failure or typed omission`);
+    }
+    let priorRulingOperator = -1;
+    for (const segment of rulingSegments.items) {
+      semanticAssertion(["horizontal", "vertical"].includes(segment.orientation)
+        && Number.isFinite(segment.x1)
+        && Number.isFinite(segment.y1)
+        && Number.isFinite(segment.x2)
+        && Number.isFinite(segment.y2)
+        && Number.isSafeInteger(segment.source_operator_index)
+        && segment.source_operator_index >= priorRulingOperator,
+      `page ${page.page} ruling-segment geometry or source order is invalid`);
+      priorRulingOperator = segment.source_operator_index;
+      if (segment.orientation === "horizontal") {
+        semanticAssertion(Math.abs(segment.y2 - segment.y1) <= RULED_RECT_AXIS_TOLERANCE
+          && segment.x2 - segment.x1 >= RULING_SEGMENT_MIN_LENGTH,
+        `page ${page.page} horizontal ruling segment is not normalized`);
+      } else {
+        semanticAssertion(Math.abs(segment.x2 - segment.x1) <= RULED_RECT_AXIS_TOLERANCE
+          && segment.y2 - segment.y1 >= RULING_SEGMENT_MIN_LENGTH,
+        `page ${page.page} vertical ruling segment is not normalized`);
+      }
     }
     const operatorCounts = page.operator_counts;
     semanticAssertion(operatorCounts === null || (
@@ -4133,9 +4325,11 @@ export function validatePdfLayoutSemantics(payload, {
       || page.link_annotations.truncated === true;
     const hasDegradedPaintedRectangles = page.painted_rectangles.status !== "available"
       || page.painted_rectangles.truncated === true;
+    const hasDegradedRulingSegments = page.ruling_segments.status !== "available"
+      || page.ruling_segments.truncated === true;
     const expectedExtraction = expectedTextLayerStatus === "failed"
       ? "failed"
-      : page.truncation.truncated || hasInvalidGeometry || hasRawGeometryGap || expectedImageStatus === "failed" || expectedModality !== "text-layer-candidate" || hasAnnotationError || hasDegradedLinks || hasDegradedPaintedRectangles
+      : page.truncation.truncated || hasInvalidGeometry || hasRawGeometryGap || expectedImageStatus === "failed" || expectedModality !== "text-layer-candidate" || hasAnnotationError || hasDegradedLinks || hasDegradedPaintedRectangles || hasDegradedRulingSegments
         ? "partial" : "complete";
     semanticAssertion(page.extraction_status === expectedExtraction, `page ${page.page} extraction status mismatch`);
     semanticAssertion(page.needs_visual_inspection === (expectedExtraction !== "complete" || expectedModality !== "text-layer-candidate"), `page ${page.page} visual-inspection status mismatch`);
@@ -4150,6 +4344,8 @@ export function validatePdfLayoutSemantics(payload, {
         && page.link_annotations.truncated === false
         && page.painted_rectangles.status === "available"
         && page.painted_rectangles.truncated === false
+        && page.ruling_segments.status === "available"
+        && page.ruling_segments.truncated === false
         && page.raw_items.every(item => item.geometry_valid), `page ${page.page} complete status overclaims evidence`);
     }
     if (page.text_layer_status === "failed") semanticAssertion(page.extraction_status === "failed", `page ${page.page} failed text status mismatch`);
@@ -4189,6 +4385,23 @@ function replayOutputBudgetIndependently(seedPayload, maxOutputCharacters) {
   replay.id_scope.max_output_characters = maxOutputCharacters;
   replay.limits.max_output_characters = maxOutputCharacters;
   if (JSON.stringify(replay).length <= maxOutputCharacters) return replay;
+  for (let index = replay.pages.length - 1; index >= 0 && JSON.stringify(replay).length > maxOutputCharacters; index -= 1) {
+    const page = replay.pages[index];
+    if (page.ruling_segments.items.length === 0) continue;
+    page.ruling_segments = unavailableRulingSegments({
+      truncated: true,
+      observedCount: page.ruling_segments.observed_count,
+    });
+    page.extraction_status = page.extraction_status === "failed" ? "failed" : "partial";
+    page.needs_visual_inspection = true;
+    if (!page.limitations.includes("Ruling-segment detail was omitted to satisfy max_output_characters.")) {
+      page.limitations.push("Ruling-segment detail was omitted to satisfy max_output_characters.");
+    }
+  }
+  if (JSON.stringify(replay).length <= maxOutputCharacters) {
+    replay.extraction_status = replay.pages.every(page => page.extraction_status === "complete") ? "complete" : "partial";
+    return replay;
+  }
   for (let index = replay.pages.length - 1; index >= 0 && JSON.stringify(replay).length > maxOutputCharacters; index -= 1) {
     const page = replay.pages[index];
     if (page.painted_rectangles.items.length === 0) continue;
@@ -4233,6 +4446,10 @@ function replayOutputBudgetIndependently(seedPayload, maxOutputCharacters) {
       returned_count: 0,
       items: [],
     };
+    page.ruling_segments = unavailableRulingSegments({
+      truncated: true,
+      observedCount: page.ruling_segments.observed_count,
+    });
     page.flow_text = "";
     page.spatial_text = "";
     page.reading_order = {
@@ -4435,6 +4652,7 @@ export async function validatePdfLayoutSourceEvidence(payload, {
               && outputPage.has_image_operations === null
               && outputPage.has_vector_paint_operations === null
               && sameJson(outputPage.ruled_rects, { status: "unavailable", observed_count: 0, returned_count: 0, items: [] })
+              && sameJson(outputPage.ruling_segments, unavailableRulingSegments())
               && outputPage.text_integrity.status === "unavailable"
               && outputPage.text_integrity.signals.length === 0
               && outputPage.operator_counts === null
@@ -4512,8 +4730,9 @@ export async function validatePdfLayoutSourceEvidence(payload, {
           item.str,
           sourceType3Recoveries.get(sourceIndex) ?? [],
         );
-        // Dedicated source replay: ruled_rects, text_integrity, and operator_counts
-        // are all replay-proven from the second parse; none are semantic-only.
+        // Dedicated source replay: ruled_rects, ruling_segments,
+        // text_integrity, and operator_counts are all replay-proven from the
+        // second parse; none are semantic-only.
         const sourceTextIntegrity = deriveTextIntegrity(sourceEntries, textContent === null);
         sourceEvidenceAssertion(
           sameJson(outputPage.text_integrity, sourceTextIntegrity),
@@ -4667,8 +4886,18 @@ export async function validatePdfLayoutSourceEvidence(payload, {
             const expectedRuledErrors = sourceOperatorEvidence.ruled_rects.status === "truncated"
               ? [errorRecord("ruled_rects", Object.assign(new Error(`Ruled rectangle evidence exceeded the per-page limit of ${RULED_RECT_PAGE_LIMIT}.`), { name: "RULED_RECT_PAGE_LIMIT" }))]
               : [];
+            const rulingOutputOmitted = outputPage.ruling_segments.status === "unavailable"
+              && outputPage.ruling_segments.truncated === true
+              && !outputPage.errors.some(error => error.stage === "operators" || error.stage === "page" || error.stage === "ruled_rects");
+            const expectedRulingSegments = (outputOmitted || rulingOutputOmitted)
+              ? unavailableRulingSegments({
+                truncated: true,
+                observedCount: sourceOperatorEvidence.ruling_segments.observed_count,
+              })
+              : sourceOperatorEvidence.ruling_segments;
             sourceEvidenceAssertion(
               sameJson(outputPage.ruled_rects, sourceOperatorEvidence.ruled_rects)
+                && sameJson(outputPage.ruling_segments, expectedRulingSegments)
                 && sameJson(outputPage.operator_counts, sourceOperatorEvidence.operator_counts)
                 && sameJson(outputPage.errors.filter(error => error.stage === "ruled_rects"), expectedRuledErrors),
               `page ${outputPage.page} dedicated operator evidence differs from independently reparsed source`,
@@ -4680,6 +4909,7 @@ export async function validatePdfLayoutSourceEvidence(payload, {
                 && outputPage.ruled_rects.observed_count === 0
                 && outputPage.ruled_rects.returned_count === 0
                 && outputPage.ruled_rects.items.length === 0
+                && sameJson(outputPage.ruling_segments, unavailableRulingSegments())
                 && outputPage.operator_counts === null
                 && sameJson(outputPage.errors.filter(error => error.stage === "ruled_rects"), [expectedError]),
               `page ${outputPage.page} failed dedicated operator evidence differs from independently reparsed source`,
@@ -4691,6 +4921,7 @@ export async function validatePdfLayoutSourceEvidence(payload, {
             outputPage.has_image_operations === null
               && outputPage.has_vector_paint_operations === null
               && sameJson(outputPage.ruled_rects, { status: "unavailable", observed_count: 0, returned_count: 0, items: [] })
+              && sameJson(outputPage.ruling_segments, unavailableRulingSegments())
               && outputPage.operator_counts === null
               && sameJson(outputPage.painted_rectangles, unavailablePaintedRectangles())
               && outputPage.errors.some(outputError => sameJson(outputError, expectedError)),
@@ -4717,11 +4948,13 @@ export async function validatePdfLayoutSourceEvidence(payload, {
     if (!enforceOutputBudget) {
       sourceEvidenceAssertion(
         payload.pages.every(page => !page.truncation.reasons.includes("max_output_characters")
-          && !(page.painted_rectangles.status === "unavailable" && page.painted_rectangles.truncated)),
+          && !(page.painted_rectangles.status === "unavailable" && page.painted_rectangles.truncated)
+          && !(page.ruling_segments.status === "unavailable" && page.ruling_segments.truncated)),
         "internal Markdown evidence contains a public output-budget omission",
       );
     } else if (payload.pages.some(page => page.truncation.reasons.includes("max_output_characters")
-      || (page.painted_rectangles.status === "unavailable" && page.painted_rectangles.truncated))) {
+      || (page.painted_rectangles.status === "unavailable" && page.painted_rectangles.truncated)
+      || (page.ruling_segments.status === "unavailable" && page.ruling_segments.truncated))) {
       const replaySeed = await extractPdfLayout({
         pdfjsLib,
         pdfBytes: sourceBytes,
@@ -4830,6 +5063,7 @@ export async function extractPdfLayout({
       let hasImageOperations = null;
       let hasVectorPaintOperations = null;
       let ruledRects = { status: "unavailable", observed_count: 0, returned_count: 0, items: [] };
+      let rulingSegments = unavailableRulingSegments();
       let operatorCounts = null;
       let paintedRectangles = unavailablePaintedRectangles();
       let type3GlyphRecoveries = new Map();
@@ -4869,6 +5103,7 @@ export async function extractPdfLayout({
           try {
             const operatorEvidence = deriveOperatorEvidence(pdfjsLib, operators, viewport?.transform ?? null);
             ruledRects = operatorEvidence.ruled_rects;
+            rulingSegments = operatorEvidence.ruling_segments;
             operatorCounts = operatorEvidence.operator_counts;
             if (ruledRects.status === "truncated") {
               const limitError = Object.assign(new Error(`Ruled rectangle evidence exceeded the per-page limit of ${RULED_RECT_PAGE_LIMIT}.`), {
@@ -4879,6 +5114,7 @@ export async function extractPdfLayout({
           } catch (error) {
             if (isFatalParserResourceError(error)) throw error;
             ruledRects = { status: "failed", observed_count: 0, returned_count: 0, items: [] };
+            rulingSegments = unavailableRulingSegments();
             operatorCounts = null;
             errors.push(errorRecord("ruled_rects", error));
           }
@@ -5074,7 +5310,7 @@ export async function extractPdfLayout({
       const pageTruncated = firstOmittedSourceIndex !== null;
       let extractionStatus = "complete";
       if (textLayerStatus === "failed") extractionStatus = "failed";
-      else if (pageTruncated || invalidGeometry || !pdfLibPages || imageDetectionStatus === "failed" || modalityHint !== "text-layer-candidate" || errors.some(error => error.stage === "annotations") || linkAnnotations.truncated === true || paintedRectangles.status !== "available" || paintedRectangles.truncated === true) extractionStatus = "partial";
+      else if (pageTruncated || invalidGeometry || !pdfLibPages || imageDetectionStatus === "failed" || modalityHint !== "text-layer-candidate" || errors.some(error => error.stage === "annotations") || linkAnnotations.truncated === true || paintedRectangles.status !== "available" || paintedRectangles.truncated === true || rulingSegments.status !== "available" || rulingSegments.truncated === true) extractionStatus = "partial";
       const needsVisualInspection = extractionStatus !== "complete" || modalityHint !== "text-layer-candidate";
       if (hasImageOperations) limitations.push("Image paint operations were detected, but no image was rendered or OCRed; this is not raster-content proof.");
       if (hasVectorPaintOperations) limitations.push("Vector paint operations were detected but not interpreted.");
@@ -5096,6 +5332,7 @@ export async function extractPdfLayout({
         has_image_operations: hasImageOperations,
         has_vector_paint_operations: hasVectorPaintOperations,
         ruled_rects: ruledRects,
+        ruling_segments: rulingSegments,
         text_integrity: textIntegrity,
         operator_counts: operatorCounts,
         painted_rectangles: paintedRectangles,

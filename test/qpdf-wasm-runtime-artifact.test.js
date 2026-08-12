@@ -193,22 +193,69 @@ describe("qpdf-wasm runtime provenance", () => {
     expect(QPDF_WASM_RUNTIME_PROVENANCE_PATH).toBe("vendor/qpdf-wasm/runtime.provenance.json");
   });
 
-  it("does not claim the runtime is wired into any tool", async () => {
-    expect(QPDF_WASM_RUNTIME_PROVENANCE.integration_status).toMatch(/No PDF Tools tool loads/);
-    /*
-     * `server/` already names qpdf in prose, telling a user to decrypt an
-     * encrypted file externally before retrying. What must stay absent is any
-     * reference to the packaged runtime itself: this phase ships the artifact
-     * and nothing more, so the moment a server module reaches for it the
-     * provenance claim above stops being true.
-     */
+  /*
+   * This assertion used to require that *no* `server/` module referenced the
+   * runtime, which was the correct statement while the artifact shipped
+   * unintegrated. Read-only decryption made it false on purpose, so it was
+   * narrowed rather than dropped: the runtime is reachable, from exactly one
+   * module.
+   *
+   * Which module changed when decryption was moved off the server's thread.
+   * QPDF-WASM's `callMain` is synchronous and cannot be interrupted by the
+   * thread that called it, so the only way to enforce a deadline on it is to
+   * destroy the thread — which means the runtime has to be loaded somewhere
+   * destroyable. It is now loaded by `server/qpdf-decrypt-worker.js` and by
+   * nothing else, and that module is a worker entry point: it is not on the
+   * server's import graph and never executes on the server's thread.
+   *
+   * The single-module property is still the thing worth guarding, and it is now
+   * two facts rather than one. The runtime is reachable from exactly one
+   * module; and that module is started from exactly one place, the wrapper
+   * where the password rules, the permission rules, the size cap and the
+   * deadline live. A second `server/` module loading the runtime, or a second
+   * one starting the worker, would bypass all of it — which is why both have to
+   * fail here rather than in review.
+   */
+  it("is reachable from exactly one server module, started from exactly one other", async () => {
+    expect(QPDF_WASM_RUNTIME_PROVENANCE.integration_status)
+      .toMatch(/server\/qpdf-decrypt-worker\.js/);
+    const referencing = [];
+    const starting = [];
     for (const filename of await fs.readdir(path.join(REPO_ROOT, "server"))) {
       const source = await fs.readFile(path.join(REPO_ROOT, "server", filename), "utf8");
-      for (const forbidden of ["qpdf-wasm", "qpdf.mjs", "qpdf.wasm", QPDF_WASM_RUNTIME_DIRECTORY]) {
-        expect(source, `server/${filename} reaches for the unintegrated qpdf runtime`)
-          .not.toContain(forbidden);
+      for (const marker of ["qpdf-wasm", "qpdf.mjs", "qpdf.wasm", QPDF_WASM_RUNTIME_DIRECTORY]) {
+        if (source.includes(marker)) {
+          referencing.push(`server/${filename}`);
+          break;
+        }
+      }
+      if (filename !== "qpdf-decrypt-worker.js" && source.includes("qpdf-decrypt-worker.js")) {
+        starting.push(`server/${filename}`);
       }
     }
+    expect(referencing).toEqual(["server/qpdf-decrypt-worker.js"]);
+    expect(starting).toEqual(["server/qpdf-decrypt.js"]);
+
+    const worker = await fs.readFile(
+      path.join(REPO_ROOT, "server", "qpdf-decrypt-worker.js"),
+      "utf8",
+    );
+    // The module and its filesystem stay inside the worker: nothing it exports,
+    // and nothing it posts back across the thread boundary, hands a caller the
+    // raw Emscripten object or `FS`.
+    expect(worker).not.toMatch(/export[^\n]*\b(createQpdf|FS)\b/);
+    expect(worker).not.toMatch(/postMessage\([^)]*\b(qpdf|FS)\b/);
+    // Passwords reach QPDF through a file in the module's private in-memory
+    // filesystem, never through argv, where they would be readable from the
+    // process command line and echoed by QPDF's own usage diagnostics.
+    expect(worker).toContain("--password-file=");
+    expect(worker).not.toMatch(/"--password=|`--password=/);
+
+    // The wrapper builds no QPDF command line at all now, so the argv property
+    // above cannot be quietly re-broken from the other side of the boundary.
+    const wrapper = await fs.readFile(path.join(REPO_ROOT, "server", "qpdf-decrypt.js"), "utf8");
+    expect(wrapper).not.toMatch(/["'`]--password/);
+    expect(wrapper).not.toMatch(/callMain/);
   });
 });
 

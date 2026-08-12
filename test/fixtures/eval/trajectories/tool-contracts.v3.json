@@ -5,7 +5,7 @@
     "name": "pdf-tools",
     "version": "0.10.0"
   },
-  "tools_sha256": "53c4f2e1bd63613694f7ca93fe2387219e1e04e3beceaaeeb2faf1cd1f0b69ee",
+  "tools_sha256": "988b3b85c04f65bb25a1fc2f60a7c231afd587cfe4ace70847bc01317c3dee68",
   "tools": [
     {
       "name": "add_signature_field",
@@ -50,7 +50,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory, changed, and then saved with exactly the encryption and permissions it already had (encrypted inputs are limited to 16 MiB). The protection is never removed, changed, or added by this tool. Leave it unset for an unencrypted document. If the document's own permissions deny the change being made, the owner password is required, because that is the credential which authorises overriding them."
           },
           "force_xfa": {
             "type": "boolean",
@@ -132,7 +132,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory, changed, and then saved with exactly the encryption and permissions it already had (encrypted inputs are limited to 16 MiB). The protection is never removed, changed, or added by this tool. Leave it unset for an unencrypted document. If the document's own permissions deny the change being made, the owner password is required, because that is the credential which authorises overriding them."
           },
           "force_xfa": {
             "type": "boolean",
@@ -243,7 +243,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory, changed, and then saved with exactly the encryption and permissions it already had (encrypted inputs are limited to 16 MiB). The protection is never removed, changed, or added by this tool. Leave it unset for an unencrypted document. If the document's own permissions deny the change being made, the owner password is required, because that is the credential which authorises overriding them."
           },
           "expected_output_identity": {
             "type": "object",
@@ -345,7 +345,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory, changed, and then saved with exactly the encryption and permissions it already had (encrypted inputs are limited to 16 MiB). The protection is never removed, changed, or added by this tool. Leave it unset for an unencrypted document. If the document's own permissions deny the change being made, the owner password is required, because that is the credential which authorises overriding them."
           },
           "expected_output_identity": {
             "type": "object",
@@ -409,7 +409,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory, changed, and then saved with exactly the encryption and permissions it already had (encrypted inputs are limited to 16 MiB). The protection is never removed, changed, or added by this tool. Leave it unset for an unencrypted document. If the document's own permissions deny the change being made, the owner password is required, because that is the credential which authorises overriding them."
           },
           "force_xfa": {
             "type": "boolean",
@@ -561,6 +561,10 @@
           "compact": {
             "type": "boolean",
             "description": "Opt into counted dot-leader, isolated page-number, and Unicode-letter spaced-hyphen normalizations. Default: false."
+          },
+          "emit_table_proposals": {
+            "type": "boolean",
+            "description": "Opt into emitting one bounded, deterministic table_proposals packet per abandoned table region (TABLE_TOPOLOGY_UNKNOWN or TABLE_RULING_UNSUPPORTED), carrying the region's text items, ruled and painted evidence, header hints, page, bbox, coordinate_space, and a source-and-IR-bound proposal_token so a host model can propose a structure for later read-only verification. Additive: the abstention gap is unchanged and default output stays byte-identical. Default: false."
           },
           "output_path": {
             "type": "string",
@@ -788,7 +792,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory, changed, and then saved with exactly the encryption and permissions it already had (encrypted inputs are limited to 16 MiB). The protection is never removed, changed, or added by this tool. Leave it unset for an unencrypted document. If the document's own permissions deny the change being made, the owner password is required, because that is the credential which authorises overriding them."
           },
           "force_xfa": {
             "type": "boolean",
@@ -851,7 +855,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory, changed, and then saved with exactly the encryption and permissions it already had (encrypted inputs are limited to 16 MiB). The protection is never removed, changed, or added by this tool. Leave it unset for an unencrypted document. If the document's own permissions deny the change being made, the owner password is required, because that is the credential which authorises overriding them."
           },
           "expected_output_identity": {
             "type": "object",
@@ -1089,7 +1093,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory, changed, and then saved with exactly the encryption and permissions it already had (encrypted inputs are limited to 16 MiB). The protection is never removed, changed, or added by this tool. Leave it unset for an unencrypted document. If the document's own permissions deny the change being made, the owner password is required, because that is the credential which authorises overriding them."
           },
           "expected_output_identity": {
             "type": "object",
@@ -1183,7 +1187,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory, changed, and then saved with exactly the encryption and permissions it already had (encrypted inputs are limited to 16 MiB). The protection is never removed, changed, or added by this tool. Leave it unset for an unencrypted document. If the document's own permissions deny the change being made, the owner password is required, because that is the credential which authorises overriding them."
           },
           "force_xfa": {
             "type": "boolean",
@@ -1283,7 +1287,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory to complete this read (encrypted inputs are limited to 16 MiB). Leave it unset for an unencrypted document, or for an encrypted one that opens without a password. A document that needs a password cannot be read without it, and this tool never removes or weakens a document's protection."
           }
         },
         "required": [
@@ -1488,7 +1492,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory, changed, and then saved with exactly the encryption and permissions it already had (encrypted inputs are limited to 16 MiB). The protection is never removed, changed, or added by this tool. Leave it unset for an unencrypted document. If the document's own permissions deny the change being made, the owner password is required, because that is the credential which authorises overriding them."
           },
           "expected_output_identity": {
             "type": "object",
@@ -1565,7 +1569,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory, changed, and then saved with exactly the encryption and permissions it already had (encrypted inputs are limited to 16 MiB). The protection is never removed, changed, or added by this tool. Leave it unset for an unencrypted document. If the document's own permissions deny the change being made, the owner password is required, because that is the credential which authorises overriding them."
           },
           "expected_output_identity": {
             "type": "object",
@@ -1702,7 +1706,7 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory, changed, and then saved with exactly the encryption and permissions it already had (encrypted inputs are limited to 16 MiB). The protection is never removed, changed, or added by this tool. Leave it unset for an unencrypted document. If the document's own permissions deny the change being made, the owner password is required, because that is the credential which authorises overriding them."
           },
           "expected_output_identities": {
             "type": "array",
@@ -1758,12 +1762,93 @@
           },
           "password": {
             "type": "string",
-            "description": "Accepted but never used: this operation reads the PDF with pdf-lib, which cannot decrypt encrypted PDFs. Decrypt the document before calling this tool."
+            "description": "Password for an encrypted PDF. Supply the user or owner password and the document is decrypted in memory to complete this read (encrypted inputs are limited to 16 MiB). Leave it unset for an unencrypted document, or for an encrypted one that opens without a password. A document that needs a password cannot be read without it, and this tool never removes or weakens a document's protection."
           }
         },
         "required": [
           "pdf_path"
         ]
+      }
+    },
+    {
+      "name": "verify_table_proposal",
+      "input_schema": {
+        "type": "object",
+        "properties": {
+          "pdf_path": {
+            "type": "string",
+            "description": "Absolute path, or ~/ path, to the same local PDF used to obtain the proposal packet."
+          },
+          "password": {
+            "type": "string",
+            "description": "Password for an encrypted PDF, when required."
+          },
+          "region_id": {
+            "type": "string",
+            "pattern": "^p[1-9][0-9]*-t[1-9][0-9]*$",
+            "description": "Deterministic B1 abandoned-region identity, such as p1-t1."
+          },
+          "proposal_token": {
+            "type": "string",
+            "pattern": "^[a-f0-9]{64}$",
+            "description": "B1 SHA-256 token binding the source SHA-256, extraction IR version, and region identity."
+          },
+          "cells": {
+            "type": "array",
+            "minItems": 1,
+            "maxItems": 1000,
+            "description": "Untrusted structural assignments. Cell text is never accepted from the caller.",
+            "items": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "row": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 999
+                },
+                "column": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 999
+                },
+                "rowspan": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "colspan": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "item_ids": {
+                  "type": "array",
+                  "maxItems": 400,
+                  "items": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 128
+                  }
+                }
+              },
+              "required": [
+                "row",
+                "column",
+                "rowspan",
+                "colspan",
+                "item_ids"
+              ]
+            }
+          }
+        },
+        "required": [
+          "pdf_path",
+          "region_id",
+          "proposal_token",
+          "cells"
+        ],
+        "additionalProperties": false
       }
     }
   ]

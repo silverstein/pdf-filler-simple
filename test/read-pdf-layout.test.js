@@ -911,6 +911,22 @@ function rectPath(paintOp, x = 10, y = 20, width = 20, height = 30) {
   ];
 }
 
+function linePath(paintOp, x1, y1, x2, y2) {
+  return [
+    paintOp,
+    [new Float32Array([0, x1, y1, 1, x2, y2])],
+    new Float32Array([Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)]),
+  ];
+}
+
+function curvePath(paintOp) {
+  return [
+    paintOp,
+    [new Float32Array([0, 10, 20, 2, 20, 30, 30, 40, 50, 60])],
+    new Float32Array([10, 20, 50, 60]),
+  ];
+}
+
 function fakeOperatorFixture(operations, argsArray) {
   return { operations, argsArray };
 }
@@ -1122,6 +1138,57 @@ describe("PDF.js factory directory contract", () => {
 });
 
 describe("Extraction IR v1.2.0 evidence blocks", () => {
+  it("captures only normalized stroke-bearing axis-aligned ruling segments with typed cap accounting", async () => {
+    const basic = await runFake([fakeOperatorFixture(
+      [2, 2, 2, 2, 2],
+      [
+        linePath(4, 30, 40, 10, 40),
+        linePath(4, 20, 60, 20, 20),
+        linePath(4, 10.2, 40.2, 30.2, 40.2),
+        linePath(4, 10, 10, 30, 30),
+        curvePath(4),
+      ],
+    )]);
+    expect(basic.result.pages[0].ruling_segments).toEqual({
+      status: "available",
+      truncated: false,
+      observed_count: 2,
+      returned_count: 2,
+      items: [
+        { orientation: "horizontal", x1: 10, y1: 752, x2: 30, y2: 752, source_operator_index: 0 },
+        { orientation: "vertical", x1: 20, y1: 732, x2: 20, y2: 772, source_operator_index: 1 },
+      ],
+    });
+
+    const operations = [];
+    const argsArray = [];
+    for (let index = 0; index < 1025; index += 1) {
+      operations.push(2);
+      argsArray.push(linePath(4, 10, index * 0.6, 20, index * 0.6));
+    }
+    const capped = await runFake([fakeOperatorFixture(operations, argsArray)]);
+    expect(capped.result.pages[0].ruling_segments).toMatchObject({
+      status: "available",
+      truncated: true,
+      observed_count: 1025,
+      returned_count: 1024,
+    });
+    expect(capped.result.pages[0].ruling_segments.items).toHaveLength(1024);
+
+    const outputBounded = await runFake(
+      [fakeOperatorFixture(operations, argsArray)],
+      { maxOutputCharacters: 20000 },
+    );
+    expect(outputBounded.result.pages[0].ruling_segments).toEqual({
+      status: "unavailable",
+      truncated: true,
+      observed_count: 1025,
+      returned_count: 0,
+      items: [],
+    });
+    expect(JSON.stringify(outputBounded.result).length).toBeLessThanOrEqual(20000);
+  });
+
   it("tracks CTM/Form scopes, classifies paints, drops degenerate paths, deduplicates, and counts operators", async () => {
     const fixture = fakeOperatorFixture(
       [10, 12, 2, 11, 74, 2, 75, 29, 2, 1, 5, 13, 2],
@@ -1280,12 +1347,13 @@ describe("Extraction IR v1.2.0 evidence blocks", () => {
   });
 
   it("rejects independent replay forgeries for every new evidence block and is deterministic", async () => {
-    const fixture = fakeOperatorFixture([2, 1], [rectPath(3), null]);
+    const fixture = fakeOperatorFixture([2, 1], [rectPath(4), null]);
     const first = await runFake([{ ...fixture, items: [textItem({ text: "evidence", x: 50, top: 50 })] }]);
     const second = await runFake([{ ...fixture, items: [textItem({ text: "evidence", x: 50, top: 50 })] }]);
     expect(second.result).toEqual(first.result);
     const mutations = [
       layout => { layout.pages[0].ruled_rects.items[0].x += 1; },
+      layout => { layout.pages[0].ruling_segments.items[0].x1 += 1; },
       layout => { layout.pages[0].text_integrity.status = "suspect"; },
       layout => { layout.pages[0].operator_counts.path_segments += 1; },
     ];
@@ -1336,14 +1404,14 @@ describe("read_pdf_layout MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(JSON.stringify(first.structuredContent)).toBe(JSON.stringify(second.structuredContent));
     expect(first.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.5.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.6.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       source: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
       id_scope: {
         kind: "source_parser_ir_options",
         source_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         parser_version: "5.4.624",
-        ir_version: "1.5.0",
+        ir_version: "1.6.0",
         max_output_characters: 200000,
       },
       page_range: { requested_start_page: 1, requested_end_page: 1, start_page: 1, end_page: 1, total_pages: 1 },

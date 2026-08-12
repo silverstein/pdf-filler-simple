@@ -1,0 +1,146 @@
+{
+  "manifest_version": 1,
+  "suite_id": "pdf-tools.verified-vision.baseline",
+  "suite_version": "v0.1.0",
+  "claim_boundary": {
+    "summary": "Synthetic local direct-tool baseline over three authored PDFs. It freezes abstention shapes and adversarial proposal truth; it does not measure model quality, real-world recovery, calibration, or unique topology proof.",
+    "benchmark_claim_ready": false,
+    "calibration_claim_ready": false,
+    "production_claim_ready": false,
+    "born_digital_only": true
+  },
+  "generator": "scripts/eval-generate-verified-vision-fixtures.mjs",
+  "proposal_manifest": "known-proposals.v1.json",
+  "proposal_manifest_sha256": "e395421533889180434ff5768019b12b21e98392eecea7899d39b68a83a8703c",
+  "fixtures": [
+    {
+      "id": "pdf-tools.verified-vision.table-ruled-lines",
+      "path": "table-ruled-lines.pdf",
+      "sha256": "7b8e2d148c506eb3cfd8a0ca0bcae8d9d9549caadce2162476305cb8bbf547e7",
+      "bytes": 2790,
+      "media_type": "application/pdf",
+      "description": "Three-column, four-row table authored with line-segment rulings; current conversion detects the grid but refuses to impose unsupported header semantics.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Open Document Alliance PDF Tools extraction-intelligence generator",
+        "generator": "scripts/eval-generate-extraction-intelligence-fixtures.mjs",
+        "source_url": null
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false
+      },
+      "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0 }],
+      "expected_current": {
+        "conversion_status": "partial",
+        "table_reconstructed": false,
+        "gap_codes": ["TABLE_TOPOLOGY_UNKNOWN", "VECTOR_CONTENT_NOT_INTERPRETED"],
+        "message_contains": "no source evidence distinguishes a header row"
+      },
+      "truth": {
+        "status": "authored_topology_known",
+        "rows": [
+          ["Region", "Q1", "Q2"],
+          ["North", "1200", "1450"],
+          ["South", "980", "1020"],
+          ["West", "1500", "1380"]
+        ]
+      }
+    },
+    {
+      "id": "pdf-tools.verified-vision.table-ruled-merged-negative",
+      "path": "table-ruled-merged-negative.pdf",
+      "sha256": "abca089a1f67c7d0cfbd6c5345f8a80e006452dddec630295ee356bab59f6d70",
+      "bytes": 2759,
+      "media_type": "application/pdf",
+      "description": "Three-column, four-row ruled table whose first-row second cell spans the final two columns; current conversion permanently refuses to infer the merged topology on its own.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Open Document Alliance PDF Tools extraction-intelligence generator",
+        "generator": "scripts/eval-generate-extraction-intelligence-fixtures.mjs",
+        "source_url": null
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false
+      },
+      "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0 }],
+      "expected_current": {
+        "conversion_status": "partial",
+        "table_reconstructed": false,
+        "gap_codes": ["TABLE_TOPOLOGY_UNKNOWN", "VECTOR_CONTENT_NOT_INTERPRETED"],
+        "message_contains": "column topology could not be reconstructed",
+        "permanent_deterministic_abstention": true
+      },
+      "truth": {
+        "status": "authored_topology_known",
+        "row_count": 4,
+        "column_count": 3,
+        "cells": [
+          { "row": 0, "column": 0, "rowspan": 1, "colspan": 1, "texts": ["Status"] },
+          { "row": 0, "column": 1, "rowspan": 1, "colspan": 2, "texts": ["Merged Q1-Q2"] },
+          { "row": 1, "column": 0, "rowspan": 1, "colspan": 1, "texts": ["North"] },
+          { "row": 1, "column": 1, "rowspan": 1, "colspan": 1, "texts": ["1200"] },
+          { "row": 1, "column": 2, "rowspan": 1, "colspan": 1, "texts": ["1450"] },
+          { "row": 2, "column": 0, "rowspan": 1, "colspan": 1, "texts": ["South"] },
+          { "row": 2, "column": 1, "rowspan": 1, "colspan": 1, "texts": ["980"] },
+          { "row": 2, "column": 2, "rowspan": 1, "colspan": 1, "texts": ["1020"] },
+          { "row": 3, "column": 0, "rowspan": 1, "colspan": 1, "texts": ["West"] },
+          { "row": 3, "column": 1, "rowspan": 1, "colspan": 1, "texts": ["1500"] },
+          { "row": 3, "column": 2, "rowspan": 1, "colspan": 1, "texts": ["1380"] }
+        ]
+      }
+    },
+    {
+      "id": "pdf-tools.verified-vision.table-borderless-ambiguous",
+      "path": "table-borderless-ambiguous.pdf",
+      "sha256": "77bab77059e25deb33f7551524399788fffe3a61fec37303cca3c5cbecc40989",
+      "bytes": 2406,
+      "media_type": "application/pdf",
+      "description": "Borderless three-column-looking region with uniform typography and no independent header evidence; multiple text-conserving structures are plausible, so truth remains abstention.",
+      "provenance": {
+        "kind": "synthetic",
+        "origin": "Open Document Alliance PDF Tools verified-vision fixture generator",
+        "generator": "scripts/eval-generate-verified-vision-fixtures.mjs",
+        "source_url": null
+      },
+      "license": {
+        "name": "MIT License",
+        "spdx_id": "MIT",
+        "redistribution": "allowed"
+      },
+      "privacy": {
+        "class": "synthetic",
+        "contains_personal_data": false
+      },
+      "page_geometry": [{ "page": 1, "width": 612, "height": 792, "rotation": 0 }],
+      "expected_current": {
+        "conversion_status": "partial",
+        "table_reconstructed": false,
+        "gap_codes": ["TABLE_TOPOLOGY_UNKNOWN"],
+        "message_contains": "no source evidence distinguishes a header row",
+        "permanent_abstention": true
+      },
+      "truth": {
+        "status": "abstention",
+        "reason": "The source has no independent header evidence and does not prove one unique topology.",
+        "source_rows": [
+          ["Alpha", "Beta", "Gamma"],
+          ["10", "20", "30"],
+          ["40", "50", "60"],
+          ["70", "80", "90"]
+        ]
+      }
+    }
+  ]
+}

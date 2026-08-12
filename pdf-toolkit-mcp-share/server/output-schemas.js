@@ -7,6 +7,12 @@ import {
 } from "./pdf-observations.js";
 import { validatePdfComparisonSemantics } from "./pdf-comparison.js";
 import { validateAccessibilityInspectionResult } from "./accessibility-inspection.js";
+import {
+  TABLE_PROPOSAL_CLAIM_BOUNDARY,
+  TABLE_PROPOSAL_REASON_CODES,
+  TABLE_PROPOSAL_VERIFIER,
+  validateTableProposalVerificationResult,
+} from "./table-proposal-verification.js";
 
 const string = { type: "string" };
 const number = { type: "number" };
@@ -393,6 +399,10 @@ const pdfComparisonError = object({
       "COMPARISON_PAGE_LIMIT_EXCEEDED",
       "COMPARISON_SOURCE_BINDING_MISMATCH",
       "COMPARISON_SOURCE_CHANGED",
+      // An encrypted input, which pdf-lib cannot decrypt for the page geometry
+      // and page rendering this comparison needs. Distinct from
+      // PDF_PARSE_FAILED because the document parsed perfectly well.
+      "PDF_ENCRYPTED_COMPARISON_UNSUPPORTED",
       "PDF_PARSE_FAILED",
       "invalid_input",
     ]),
@@ -738,6 +748,21 @@ const layoutRuledRects = object({
   returned_count: { type: "integer", minimum: 0 },
   items: arrayOf(layoutRuledRect),
 });
+const layoutRulingSegment = object({
+  orientation: enumString(["horizontal", "vertical"]),
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  source_operator_index: { type: "integer", minimum: 0 },
+});
+const layoutRulingSegments = object({
+  status: enumString(["available", "unavailable"]),
+  truncated: boolean,
+  observed_count: { type: "integer", minimum: 0 },
+  returned_count: { type: "integer", minimum: 0 },
+  items: arrayOf(layoutRulingSegment),
+});
 const layoutOperatorCounts = nullable(object({
   image_paint_ops: { type: "integer", minimum: 0 },
   path_segments: { type: "integer", minimum: 0 },
@@ -796,6 +821,7 @@ const layoutPage = object({
   has_image_operations: nullable(boolean),
   has_vector_paint_operations: nullable(boolean),
   ruled_rects: layoutRuledRects,
+  ruling_segments: layoutRulingSegments,
   text_integrity: layoutTextIntegrity,
   operator_counts: layoutOperatorCounts,
   painted_rectangles: layoutPaintedRectangles,
@@ -845,6 +871,133 @@ const layoutPage = object({
   limitations: stringArray,
 });
 
+// Verified-vision (B1) proposal packet. Emitted only when the opt-in
+// emit_table_proposals flag is set; one bounded, deterministic descriptor per
+// abandoned table region. Typed statuses only, no numeric confidence.
+const tableProposalTextItem = object({
+  id: string,
+  text: string,
+  reading_order_index: { type: "integer", minimum: 0 },
+  line_id: nullable(string),
+  column_index: nullable(integer),
+  bbox: nullable(layoutBox),
+  quad: nullable({ type: "array", minItems: 4, maxItems: 4, items: layoutPoint }),
+  raw_transform: { type: "array", minItems: 6, maxItems: 6, items: nullable(number) },
+});
+const tableProposalRuledRect = object({
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  verb: enumString(["fill", "stroke", "clip", "none"]),
+});
+const tableProposalRulingSegment = object({
+  orientation: enumString(["horizontal", "vertical"]),
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  source_operator_index: { type: "integer", minimum: 0 },
+});
+const tableProposalPaintedRect = object({
+  id: string,
+  bbox: layoutBox,
+});
+const tableProposalHeaderHints = object({
+  status: enumString(["available", "unavailable"]),
+  first_row_height: nullable(number),
+  body_median_height: nullable(number),
+  first_row_band: enumString(["taller_than_body", "not_distinguished", "unavailable"]),
+});
+const tableProposalTruncation = object({
+  text_items: enumString(["complete", "truncated"]),
+  ruled_rects: enumString(["complete", "truncated"]),
+  ruling_segments: enumString(["complete", "truncated"]),
+  painted_rectangles: enumString(["complete", "truncated"]),
+});
+const tableProposalsDocumentTruncation = object({
+  status: enumString(["complete", "truncated"]),
+  observed_regions: integer,
+  returned_regions: integer,
+  omitted_regions: integer,
+});
+const tableProposal = object({
+  region_id: { type: "string", pattern: "^p[0-9]+-t[0-9]+$" },
+  page: { type: "integer", minimum: 1 },
+  reason: enumString(["TABLE_TOPOLOGY_UNKNOWN", "TABLE_RULING_UNSUPPORTED"]),
+  coordinate_space: { const: "pdfjs_viewport_top_left_points" },
+  bbox: layoutBox,
+  text_items: arrayOf(tableProposalTextItem),
+  ruled_rects: arrayOf(tableProposalRuledRect),
+  ruling_segments: arrayOf(tableProposalRulingSegment),
+  painted_rectangles: arrayOf(tableProposalPaintedRect),
+  header_hints: tableProposalHeaderHints,
+  truncation: tableProposalTruncation,
+  proposal_token: sha256Digest,
+});
+const tableProposalCheckStatus = enumString(["passed", "failed", "not_run"]);
+const verifiedTableCell = object({
+  row: { type: "integer", minimum: 0 },
+  column: { type: "integer", minimum: 0 },
+  rowspan: { type: "integer", minimum: 1 },
+  colspan: { type: "integer", minimum: 1 },
+  item_ids: stringArray,
+  text: string,
+});
+const tableProposalVerification = object({
+  verifier: object({
+    name: { const: TABLE_PROPOSAL_VERIFIER.name },
+    version: { const: TABLE_PROPOSAL_VERIFIER.version },
+  }),
+  status: enumString(["accepted", "rejected"]),
+  reason_codes: arrayOf(enumString(TABLE_PROPOSAL_REASON_CODES)),
+  source: object({
+    file_name: string,
+    sha256: sha256Digest,
+    size_bytes: { type: "integer", minimum: 0 },
+  }),
+  layout: object({
+    name: { const: "pdf-tools.extraction-ir" },
+    version: { const: "1.6.0" },
+    parser_name: { const: "pdfjs-dist" },
+    parser_version: { const: "5.4.624" },
+  }),
+  region: object({
+    region_id: { type: "string", pattern: "^p[1-9][0-9]*-t[1-9][0-9]*$" },
+    page: { type: "integer", minimum: 1 },
+    abandonment_reason: nullable(enumString(["TABLE_TOPOLOGY_UNKNOWN", "TABLE_RULING_UNSUPPORTED"])),
+  }),
+  source_reparsed: { const: true },
+  checks: object({
+    token_binding: tableProposalCheckStatus,
+    region_evidence: tableProposalCheckStatus,
+    cell_input: tableProposalCheckStatus,
+    coverage: tableProposalCheckStatus,
+    one_cell: tableProposalCheckStatus,
+    row_non_straddle: tableProposalCheckStatus,
+    row_order: tableProposalCheckStatus,
+    column_order: tableProposalCheckStatus,
+    rectangular_grid: tableProposalCheckStatus,
+    cut_line_consistency: tableProposalCheckStatus,
+    ruled_line_agreement: tableProposalCheckStatus,
+    topology_ambiguity: tableProposalCheckStatus,
+    header_evidence: tableProposalCheckStatus,
+    content_source: tableProposalCheckStatus,
+  }),
+  table: nullable(object({
+    row_count: { type: "integer", minimum: 1 },
+    column_count: { type: "integer", minimum: 1 },
+    cells: arrayOf(verifiedTableCell),
+    content_origin: { const: "reparsed_pdf_text_layer" },
+    markdown: string,
+    markdown_format: { const: "gfm" },
+    markdown_span_projection: { const: "anchor_text_with_empty_continuation_cells" },
+    markdown_bytes: { type: "integer", minimum: 1 },
+    markdown_sha256: sha256Digest,
+  })),
+  claim_boundary: { const: TABLE_PROPOSAL_CLAIM_BOUNDARY },
+});
+
 export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
   read_pdf_fields: activeDocument(),
   fill_pdf: activeDocument({ filled_fields: stringArray, fill_errors: stringArray }),
@@ -886,7 +1039,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     truncated: boolean,
   }),
   read_pdf_layout: object({
-    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.5.0" } }),
+    ir: object({ name: { const: "pdf-tools.extraction-ir" }, version: { const: "1.6.0" } }),
     parser: object({ name: { const: "pdfjs-dist" }, version: { const: "5.4.624" } }),
     source: object({
       pdf_path: string,
@@ -898,7 +1051,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       kind: { const: "source_parser_ir_options" },
       source_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
       parser_version: { const: "5.4.624" },
-      ir_version: { const: "1.5.0" },
+      ir_version: { const: "1.6.0" },
       requested_start_page: integer,
       requested_end_page: integer,
       max_items: integer,
@@ -923,47 +1076,71 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     truncation: layoutDocumentTruncation,
     limitations: stringArray,
   }),
-  convert_pdf_to_markdown: object({
-    renderer: object({
-      name: { const: "pdf-tools.layout-markdown-renderer" },
-      version: { const: "1.14.0" },
-    }),
-    conversion_status: enumString(["complete", "partial", "failed"]),
-    markdown: string,
-    markdown_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
-    markdown_bytes: { type: "integer", minimum: 0 },
-    options: object({ include_page_boundaries: boolean, compact: boolean }),
-    limits: object({ max_markdown_bytes: { type: "integer", minimum: 1, maximum: 200000 } }),
-    pages: arrayOf(markdownPage),
-    pages_needing_vision: arrayOf(visionRoutingPage),
-    gaps: arrayOf(markdownGap),
-    limitations: stringArray,
-    normalizations: object({
-      dot_leaders_collapsed: { type: "integer", minimum: 0 },
-      page_number_lines_removed: { type: "integer", minimum: 0 },
-      spaced_hyphens_joined: { type: "integer", minimum: 0 },
-      normalized_pages: integerArray,
-    }),
-    provenance: object({
-      source: object({
-        file_name: string,
-        sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
-        size_bytes: integer,
+  convert_pdf_to_markdown: object(
+    {
+      renderer: object({
+        name: { const: "pdf-tools.layout-markdown-renderer" },
+        version: { const: "1.15.0" },
       }),
-      layout: object({
-        name: { const: "pdf-tools.extraction-ir" },
-        version: { const: "1.5.0" },
-        parser_name: { const: "pdfjs-dist" },
-        parser_version: { const: "5.4.624" },
-        page_range: object({
-          start_page: integer,
-          end_page: integer,
-          total_pages: integer,
+      conversion_status: enumString(["complete", "partial", "failed"]),
+      markdown: string,
+      markdown_sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+      markdown_bytes: { type: "integer", minimum: 0 },
+      options: object({ include_page_boundaries: boolean, compact: boolean }),
+      limits: object({ max_markdown_bytes: { type: "integer", minimum: 1, maximum: 200000 } }),
+      pages: arrayOf(markdownPage),
+      pages_needing_vision: arrayOf(visionRoutingPage),
+      gaps: arrayOf(markdownGap),
+      limitations: stringArray,
+      normalizations: object({
+        dot_leaders_collapsed: { type: "integer", minimum: 0 },
+        page_number_lines_removed: { type: "integer", minimum: 0 },
+        spaced_hyphens_joined: { type: "integer", minimum: 0 },
+        normalized_pages: integerArray,
+      }),
+      provenance: object({
+        source: object({
+          file_name: string,
+          sha256: { type: "string", pattern: "^[a-f0-9]{64}$" },
+          size_bytes: integer,
+        }),
+        layout: object({
+          name: { const: "pdf-tools.extraction-ir" },
+          version: { const: "1.6.0" },
+          parser_name: { const: "pdfjs-dist" },
+          parser_version: { const: "5.4.624" },
+          page_range: object({
+            start_page: integer,
+            end_page: integer,
+            total_pages: integer,
+          }),
         }),
       }),
-    }),
-    saved_output: markdownSavedOutput,
-  }),
+      saved_output: markdownSavedOutput,
+      // Present only when the opt-in emit_table_proposals flag is set, so it is
+      // deliberately excluded from the required list below to keep the
+      // default-off result byte-identical.
+      table_proposals: arrayOf(tableProposal),
+      table_proposals_truncation: tableProposalsDocumentTruncation,
+    },
+    [
+      "renderer",
+      "conversion_status",
+      "markdown",
+      "markdown_sha256",
+      "markdown_bytes",
+      "options",
+      "limits",
+      "pages",
+      "pages_needing_vision",
+      "gaps",
+      "limitations",
+      "normalizations",
+      "provenance",
+      "saved_output",
+    ],
+  ),
+  verify_table_proposal: tableProposalVerification,
   render_pdf_page: object({
     pdf_path: string,
     file_name: string,
@@ -1390,6 +1567,7 @@ const specialErrorSchemas = {
   read_pdf_pages: [pdfResourceLimitError],
   read_pdf_layout: [layoutPasswordError, pdfResourceLimitError],
   convert_pdf_to_markdown: [layoutPasswordError, pdfResourceLimitError],
+  verify_table_proposal: [layoutPasswordError, pdfResourceLimitError],
   render_pdf_page: [pdfResourceLimitError],
   render_pdf_region: [pdfResourceLimitError],
   search_pdf_text: [pdfResourceLimitError],
@@ -1452,6 +1630,7 @@ const semanticSuccessValidators = new Map([
   ["inspect_pdf_accessibility", validateAccessibilityInspectionResult],
   ["read_pdf_layout", validatePdfLayoutSemantics],
   ["convert_pdf_to_markdown", validateMarkdownConversionSemantics],
+  ["verify_table_proposal", validateTableProposalVerificationResult],
   ["get_pdf_info", validatePdfObservationSemantics],
   ["render_pdf_page", validateRenderObservationSemantics],
   ["render_pdf_region", validateRenderObservationSemantics],
