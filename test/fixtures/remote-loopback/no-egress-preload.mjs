@@ -48,15 +48,51 @@ Object.defineProperty(globalThis, "__PDF_LOOPBACK_EGRESS_RECEIPT", {
 });
 
 const { port1, port2 } = new MessageChannel();
+const flushWaiters = new Map();
+let nextFlushId = 0;
 port1.on("message", message => {
   if (message?.type === "unreviewed_module_import_attempt") {
     telemetry.unreviewed_module_import_attempts += 1;
     if (message.bare_package === true) {
       telemetry.bare_package_import_attempts += 1;
     }
+    return;
+  }
+  if (message?.type === "telemetry_flush_ack") {
+    const resolve = flushWaiters.get(message.id);
+    flushWaiters.delete(message.id);
+    resolve?.();
   }
 });
 port1.unref();
+
+// Every other counter here is incremented synchronously, in this thread, by the
+// guard that denied the attempt. The two module-import counters are not: the
+// resolve hook runs on the loader thread and reports across this port, so the
+// import can have already rejected while its telemetry is still in flight.
+// Reading the receipt after a setImmediate assumed that a single turn of this
+// loop was enough for a cross-thread delivery. Usually it is. On a loaded
+// two-core runner it was not, and the calibration reported zero attempts for
+// exactly those two probes - a security calibration failing to prove its own
+// guards were live. Wait for a round trip instead of for a tick.
+Object.defineProperty(globalThis, "__PDF_LOOPBACK_EGRESS_FLUSH", {
+  value() {
+    const id = nextFlushId;
+    nextFlushId += 1;
+    return new Promise(resolve => {
+      flushWaiters.set(id, resolve);
+      // The port is unreffed so it cannot hold the process open on its own;
+      // hold it only for as long as this round trip is outstanding.
+      port1.ref();
+      port1.postMessage({ type: "telemetry_flush", id });
+    }).finally(() => {
+      if (flushWaiters.size === 0) port1.unref();
+    });
+  },
+  configurable: false,
+  enumerable: false,
+  writable: false,
+});
 register("./no-package-loader.mjs", import.meta.url, {
   data: { port: port2 },
   transferList: [port2],

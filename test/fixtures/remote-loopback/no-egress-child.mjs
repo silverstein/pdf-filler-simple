@@ -143,7 +143,7 @@ async function productRun() {
         policy_version: "synthetic-policy-v1",
       },
     )).status);
-    await new Promise(resolve => setImmediate(resolve));
+    await globalThis.__PDF_LOOPBACK_EGRESS_FLUSH();
     emit({
       mode: "product",
       statuses,
@@ -190,7 +190,7 @@ async function calibrationRun() {
       });
     }
   }
-  await new Promise(resolve => setImmediate(resolve));
+  await globalThis.__PDF_LOOPBACK_EGRESS_FLUSH();
   emit({
     mode: "calibration",
     denials,
@@ -289,7 +289,7 @@ async function dynamicLoaderCalibrationRun() {
       });
     }
   }
-  await new Promise(resolve => setImmediate(resolve));
+  await globalThis.__PDF_LOOPBACK_EGRESS_FLUSH();
   emit({
     mode: "dynamic_loader_calibration",
     denials,
