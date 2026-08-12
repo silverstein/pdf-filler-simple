@@ -6,6 +6,7 @@ import {
   existsSync,
   mkdtempSync,
   readFileSync,
+  readdirSync,
   realpathSync,
   rmSync,
   statSync,
@@ -88,6 +89,101 @@ export function validatePackedDiscovery(tools) {
     || !tools.some(tool => tool.name === "inspect_pdf_accessibility")) {
     throw new Error(`Packed server discovery differs from the current ${expected}-tool contract`);
   }
+}
+
+/**
+ * Every package inside the extracted MCPB, keyed by the path
+ * `package-lock.json` would use, paired with the manifest that shipped.
+ */
+export function packedPackageManifests(extensionDir, relativeRoot = "node_modules") {
+  const directory = path.join(extensionDir, ...relativeRoot.split("/"));
+  if (!existsSync(directory)) return new Map();
+  const manifests = new Map();
+  const collect = packagePath => {
+    const manifestPath = path.join(extensionDir, ...packagePath.split("/"), "package.json");
+    if (existsSync(manifestPath)) manifests.set(packagePath, JSON.parse(readFileSync(manifestPath, "utf8")));
+    for (const [nested, manifest] of packedPackageManifests(extensionDir, `${packagePath}/node_modules`)) {
+      manifests.set(nested, manifest);
+    }
+  };
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    if (entry.name.startsWith("@")) {
+      for (const scoped of readdirSync(path.join(directory, entry.name), { withFileTypes: true })) {
+        if (scoped.isDirectory()) collect(`${relativeRoot}/${entry.name}/${scoped.name}`);
+      }
+      continue;
+    }
+    collect(`${relativeRoot}/${entry.name}`);
+  }
+  return manifests;
+}
+
+/*
+ * The MCPB is the artifact that carries its dependencies inside it, so it is
+ * the artifact whose bill can be checked against them directly. Two claims are
+ * checked, both against the shipped code rather than against the generator:
+ *
+ *   - every packaged dependency's licence in the bill is the string that
+ *     package declares about itself, or an explicit NOASSERTION if it declares
+ *     nothing. Two thirds of the components used to say nothing whatever,
+ *     because the generator only spoke when `package-lock.json` did.
+ *
+ *   - the bill's `scope` matches physical presence. Everything staged is
+ *     `required`; anything the lock names but the archive does not carry is
+ *     `excluded`. The six `@napi-rs/canvas-*` targets that are deliberately
+ *     dropped used to be marked `optional` beside the five that ship.
+ */
+export function validatePackedSbomLicences(sbom, extensionDir) {
+  if (!Array.isArray(sbom?.components) || sbom.components.length < 50) {
+    throw new Error("Packed SBOM does not describe a plausible component set");
+  }
+  const componentsByPath = new Map();
+  for (const component of sbom.components) {
+    const packagePath = component.properties
+      ?.find(property => property.name === "pdf-tools:npm-package-path")?.value;
+    if (packagePath) componentsByPath.set(packagePath, component);
+  }
+  const silent = sbom.components.filter(component => !(component.licenses?.length > 0));
+  if (silent.length > 0) {
+    throw new Error(`Packed SBOM has components with no licence at all: ${silent.map(c => c.name).join(", ")}`);
+  }
+  const packed = packedPackageManifests(extensionDir);
+  if (packed.size < 50) {
+    throw new Error(`Packed MCPB carries too few packages to check licences against: ${packed.size}`);
+  }
+  for (const [packagePath, manifest] of packed) {
+    const component = componentsByPath.get(packagePath);
+    if (!component) throw new Error(`Packaged dependency has no SBOM component: ${packagePath}`);
+    const reported = component.licenses.map(entry =>
+      entry.expression ?? entry.license?.id ?? entry.license?.name);
+    const declared = typeof manifest.license === "string" && manifest.license.trim() !== ""
+      ? [manifest.license.trim()]
+      : Array.isArray(manifest.licenses)
+        ? manifest.licenses.map(entry => (typeof entry === "string" ? entry : entry?.type))
+        : manifest.license?.type
+          ? [manifest.license.type]
+          : ["NOASSERTION"];
+    if (JSON.stringify(reported) !== JSON.stringify(declared)) {
+      throw new Error(
+        `Packed SBOM licence for ${packagePath} is not what the packaged code declares: `
+        + `${JSON.stringify(reported)} != ${JSON.stringify(declared)}`,
+      );
+    }
+    if (component.scope !== "required") {
+      throw new Error(`Packed SBOM marks a component that ships inside the archive as ${component.scope}: ${packagePath}`);
+    }
+  }
+  const excluded = [...componentsByPath].filter(([, component]) => component.scope === "excluded");
+  for (const [packagePath] of excluded) {
+    if (packed.has(packagePath)) throw new Error(`Packed SBOM excludes a component that ships: ${packagePath}`);
+  }
+  return {
+    packed: packed.size,
+    excluded: excluded.length,
+    noAssertion: sbom.components.filter(component =>
+      component.licenses.length === 1 && component.licenses[0].license?.name === "NOASSERTION").length,
+  };
 }
 
 export function validateAccessibilitySmokeResult(result, expectedSource) {
@@ -183,6 +279,13 @@ async function main() {
       }
     }
 
+    const sbomPath = path.join(extensionDir, "SBOM.cdx.json");
+    if (!existsSync(sbomPath)) throw new Error("Packed MCPB ships no SBOM.cdx.json");
+    const licenceEvidence = validatePackedSbomLicences(
+      JSON.parse(readFileSync(sbomPath, "utf8")),
+      extensionDir,
+    );
+
     const tools = await client.listTools();
     const prompts = await client.listPrompts();
     const resources = await client.listResources();
@@ -232,7 +335,7 @@ async function main() {
       arguments: { pdf_path: fixturePath, max_output_characters: 200000 },
     });
     if (layout.isError
-      || layout.structuredContent?.ir?.version !== "1.5.0"
+      || layout.structuredContent?.ir?.version !== "1.6.0"
       || layout.structuredContent?.source?.size_bytes !== statSync(fixturePath).size) {
       throw new Error("Packed read_pdf_layout contract smoke failed");
     }
@@ -241,7 +344,7 @@ async function main() {
       arguments: { pdf_path: fixturePath, max_markdown_bytes: 200000 },
     });
     if (markdown.isError
-      || markdown.structuredContent?.renderer?.version !== "1.14.0"
+      || markdown.structuredContent?.renderer?.version !== "1.15.0"
       || markdown.structuredContent?.markdown_bytes !== Buffer.byteLength(markdown.structuredContent?.markdown || "", "utf8")
       || markdown.structuredContent?.markdown_sha256 !== sha256(Buffer.from(markdown.structuredContent?.markdown || "", "utf8"))) {
       throw new Error("Packed convert_pdf_to_markdown contract smoke failed");
@@ -362,7 +465,10 @@ async function main() {
     console.log(
       `Packed MCPB smoke passed on ${process.platform}/${process.arch}: ${tools.tools.length} tools, ` +
         `${prompts.prompts.length} prompts, canonical resources, verified PDF-lib mutation, ` +
-        `source-bound accessibility and compare_pdfs, native raster image.`,
+        `source-bound accessibility and compare_pdfs, native raster image, ` +
+        `${licenceEvidence.packed} packaged dependencies whose bill licences match their own ` +
+        `manifests (${licenceEvidence.excluded} locked-but-not-shipped components marked excluded, ` +
+        `${licenceEvidence.noAssertion} truthfully asserting no licence).`,
     );
     console.log(JSON.stringify({ accessibility_receipt: accessibilityReceipt }));
   } finally {

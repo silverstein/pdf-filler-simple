@@ -27,7 +27,7 @@ template discovery is also unsupported and deterministically returns JSON-RPC
 
 ### Tools
 
-The runtime returns 43 uniquely named tools. Every tool has an object input
+The runtime returns 44 uniquely named tools. Every tool has an object input
 schema plus `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, and
 `openWorldHint` annotations. Annotations are user-interface hints, never an
 authorization boundary; path allowlists and signature-intent checks remain the
@@ -36,7 +36,7 @@ every tool in both runtime copies. The handler evidence and classification
 rules are recorded in
 [`TOOL_ANNOTATION_AUDIT_2026-07-21.md`](TOOL_ANNOTATION_AUDIT_2026-07-21.md).
 
-The source manifest lists all 43 tools. The packed MCPB manifest lists the 42
+The source manifest lists all 44 tools. The packed MCPB manifest lists the 43
 normal model-workflow tools and omits `read_pdf_bytes`, whose runtime metadata
 marks it `ui.visibility: ["app"]`. `tools_generated: true` explicitly tells MCPB
 hosts that runtime discovery includes an additional tool. That visibility hint
@@ -45,7 +45,7 @@ a generic MCP client can still discover and call `read_pdf_bytes`. It is not an
 authorization or confidentiality boundary. Filesystem allowlists and the tool's
 bounded reads remain the enforced controls.
 
-Thirty-nine tool handlers advertise strict `outputSchema` contracts and return
+Forty tool handlers advertise strict `outputSchema` contracts and return
 `structuredContent`. They also return a human-readable `content` text block so
 non-Apps and older clients remain usable. Successful structured output is
 validated before it leaves the server, with separate generic and tool-specific
@@ -77,7 +77,7 @@ exact-output-identity preconditions. New evaluation suites must bind v3
 explicitly. The grader selects the allowlisted contract and trust registry
 declared by each suite, so historical evidence remains valid under its original
 stack and is not silently rescored. The six existing trajectory jobs do not
-constitute behavioral trajectory coverage of all 43 tools.
+constitute behavioral trajectory coverage of all 44 tools.
 `get_pdf_identity` is covered by its contract, handler, filesystem-race, and
 agent-workflow tests rather than by those six retained jobs.
 
@@ -142,8 +142,11 @@ were observed under this policy. It never sets an equivalence claim, and an
 empty reported set is not proof that the files are semantically identical.
 
 Comparison refuses page-cap prefixes, changed sources, malformed PDFs,
-password failures, output-cap truncation, unknown input fields, and invalid
-internal semantics. Public errors use stable typed messages and do not include
+encrypted inputs, output-cap truncation, unknown input fields, and invalid
+internal semantics. Encryption is a single refusal rather than a password
+failure: PDF.js decrypts the text, form, annotation and metadata channels, but
+raw page geometry and page rendering go through pdf-lib, which cannot decrypt,
+so no password makes a comparison run and the refusal says so. Public errors use stable typed messages and do not include
 input paths, passwords, or lower-level parser and filesystem text. Native raw
 RGBA is the only visual comparison sensor; an unavailable native renderer is
 typed partial coverage rather than a system-renderer substitution.
@@ -195,7 +198,28 @@ omitted and reported as a vector-content gap. It does not
 run OCR, render image content, or use an external model. Raster, mixed,
 vector, failed, caller-limit-truncated, invalid-geometry, and output-omission
 cases are represented as typed gaps and
-cannot receive a complete conversion status. The converter consumes
+cannot receive a complete conversion status. With `emit_table_proposals: true`,
+each abandoned table region also carries one bounded packet containing source
+text items, ruled and painted geometry, header hints, typed truncation, and a
+token bound to the source hash, extraction-IR version, and region identity.
+Document-level observed, returned, and omitted counts make the 50-region cap
+explicit. This option is additive and default-off: it does not remove the
+abstention gap or change ordinary output.
+
+The read-only `verify_table_proposal` tool accepts only that region/token
+identity and untrusted item-to-cell assignments. It reparses the current PDF,
+regenerates all content and evidence, and requires complete one-cell coverage,
+conservative order, independent header evidence, a well-formed rectangular
+grid, consistent cuts, agreement with every available source ruling, and
+non-ambiguous topology. Rejection emits no cells or Markdown. Acceptance emits
+only freshly source-derived cells plus a deterministic GFM projection; because
+GFM cannot encode spans, structured spans remain authoritative while the
+projection uses anchor text and empty continuation cells. This proves
+source-backed content and consistency with the replayed evidence, not that the
+topology is unique or semantically correct. No OCR, model, network call, or
+numeric confidence is part of verification.
+
+The converter consumes
 source-validated evidence before the public `read_pdf_layout` response
 projection, so that response's 200,000-character cap cannot erase conversion
 input. Conversion remains bounded by caller item, character, page, deadline,

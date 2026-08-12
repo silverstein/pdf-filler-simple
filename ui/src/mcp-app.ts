@@ -39,9 +39,23 @@ import {
   parsePdfToolLoadData,
 } from "./tool-result";
 
-// PDF.js worker — inline as blob URL for single-file build
-import PdfWorker from "pdfjs-dist/build/pdf.worker.mjs?url";
-pdfjsLib.GlobalWorkerOptions.workerSrc = PdfWorker;
+// Bundle the worker INTO this component rather than pointing pdf.js at a
+// separate URL.
+//
+// `?url` made Vite emit the worker as a ~2.7 MB `data:text/javascript` module
+// and set it as workerSrc. ChatGPT desktop's component sandbox refuses to load
+// a secondary `data:` module, so `new Worker(dataUrl, {type:"module"})` failed,
+// pdf.js fell back to its fake worker, and that fallback re-imported the same
+// rejected URL. The user saw "Setting up fake worker failed: Failed to fetch
+// dynamically imported module". Claude Desktop happened to allow it, which is
+// why this survived until the viewer was first run on a non-Anthropic host.
+//
+// Importing the module for its side effect registers
+// globalThis.pdfjsWorker.WorkerMessageHandler at the top level, which is the
+// branch pdf.js takes when it needs no URL at all. Nothing is fetched, so no
+// host CSP or sandbox policy is involved. Do not reintroduce `?url` here; a
+// regression test asserts the built bundle contains no data: worker URL.
+import "pdfjs-dist/build/pdf.worker.mjs";
 
 const MAX_CHUNK_BYTES = 524288; // 512KB — must match server
 const MAX_MODEL_CONTEXT_LENGTH = 15000;
@@ -209,6 +223,7 @@ const loadingTextEl = $("loading-text");
 const progressBar = $("progress-bar");
 const errorEl = $("error");
 const errorMessageEl = $("error-message");
+const errorDetailEl = $("error-detail");
 const viewerEl = $("viewer");
 const canvasContainerEl = document.querySelector(".canvas-container") as HTMLElement;
 const canvasEl = $("pdf-canvas") as HTMLCanvasElement;
@@ -274,8 +289,47 @@ function showLoading(text: string) {
   viewerEl.style.display = "none";
 }
 
+// Runtime facts that identify which build is failing and why an asset load was
+// refused. Derived at runtime on purpose rather than injected at build time:
+// this repository gates on two clean builds being byte-identical, and baking a
+// timestamp or ambient commit into the bundle would break that.
+//
+// The workerSrc line is the one that matters. When the viewer shipped a
+// `data:` worker it rendered blank on a sandboxed host and the message said
+// only "Failed to fetch dynamically imported module", with no indication of
+// which asset or why. Reporting the scheme and length, rather than 2.7 MB of
+// base64, turns that into a one-glance diagnosis.
+function describeViewerEnvironment(): string {
+  const parts: string[] = [];
+  try {
+    if (pdfjsLib.version) parts.push(`pdf.js ${pdfjsLib.version}`);
+  } catch { /* version is best-effort */ }
+  try {
+    const source = pdfjsLib.GlobalWorkerOptions?.workerSrc;
+    if (source) {
+      const text = String(source);
+      const scheme = /^[a-z][a-z0-9+.-]*:/i.exec(text)?.[0] ?? "relative";
+      parts.push(`workerSrc ${scheme} (${text.length} chars)`);
+    } else {
+      parts.push("workerSrc unset");
+    }
+  } catch { /* workerSrc is best-effort */ }
+  parts.push(
+    (globalThis as { pdfjsWorker?: unknown }).pdfjsWorker
+      ? "worker registered in-realm"
+      : "worker NOT registered in-realm",
+  );
+  return parts.join(" · ");
+}
+
 function showError(message: string) {
   errorMessageEl.textContent = message;
+  const detail = describeViewerEnvironment();
+  errorDetailEl.textContent = detail;
+  errorDetailEl.style.display = detail ? "block" : "none";
+  // Also to the console, where a host's devtools or log capture will keep it
+  // even if the surface is torn down.
+  console.error(`[viewer] ${message} | ${detail}`);
   loadingEl.style.display = "none";
   errorEl.style.display = "block";
   viewerEl.style.display = "none";

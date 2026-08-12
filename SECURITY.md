@@ -108,7 +108,12 @@ not access accounts or data that are not yours.
 - Production dependencies are deliberately few, and `pdfjs-dist` is pinned to
   an exact version for host-compatibility reasons documented in `CLAUDE.md`.
 - Dependabot is enabled for version updates and security alerts.
-- Released artifacts are built reproducibly and ship a CycloneDX SBOM.
+- Released artifacts are built reproducibly and ship a CycloneDX SBOM. It
+  covers the locked npm graph and the QPDF WebAssembly runtime's native
+  components, and it is generated rather than maintained by hand. Every
+  component states licence terms: for npm packages, the declaration read out of
+  the tarball the lockfile pins, or an explicit `NOASSERTION` when a package
+  declares none. No licence is ever inferred from licence text.
 - Mutating tools enforce input size limits before parser allocation and write
   output through staged, journaled, hash-verified transactions.
 - Malformed-document behavior is covered by an adversarial test campaign in

@@ -93,8 +93,14 @@ describe("share packager server coverage", () => {
  * `pdf-toolkit-mcp-share/server/`, which has to stay byte-identical to
  * `server/`, so the exception would have to be made twice. It ships from
  * `vendor/qpdf-wasm/runtime/` instead, at that identical path in the checkout,
- * in the MCPB, and in the share ZIP — and no module under `server/` imports
- * it, so the import-graph property below is unaffected by its presence.
+ * in the MCPB, and in the share ZIP.
+ *
+ * `server/qpdf-decrypt.js` loads it, but through a dynamic import resolved
+ * against `import.meta.url` rather than a static `from "..."` specifier, so
+ * the import-graph property below — which only follows static relative
+ * specifiers between shipped `server/` modules — is unaffected. What guarantees
+ * the runtime is actually present next to that module in every packaged tree is
+ * the allow-list coverage asserted here, not the graph walk.
  */
 describe("qpdf-wasm runtime packager coverage", () => {
   const RUNTIME_DIR = path.join(REPO_ROOT, ...QPDF_WASM_RUNTIME_DIRECTORY.split("/"));

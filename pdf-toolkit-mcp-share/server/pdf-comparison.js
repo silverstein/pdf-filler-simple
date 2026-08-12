@@ -1,5 +1,8 @@
 import { createHash } from "node:crypto";
-import { validatePdfObservationSemantics } from "./pdf-observations.js";
+import {
+  PDF_OBSERVATION_COVERAGE_REASONS,
+  validatePdfObservationSemantics,
+} from "./pdf-observations.js";
 
 export const PDF_COMPARISON_SCHEMA_VERSION = "1.0";
 export const PDF_COMPARISON_ENGINE = Object.freeze({
@@ -31,29 +34,38 @@ export const PDF_COMPARISON_CHANNELS = Object.freeze([
   "visual",
 ]);
 
-const PDF_COMPARISON_COVERAGE_REASONS = new Set([
+export const PDF_COMPARISON_SIDES = Object.freeze(["before", "after"]);
+
+// Reasons the comparison raises itself, rather than inheriting from a document
+// observation. `TEXT_EXTRACTION_TRUNCATED` is per side because it describes one
+// document's layout extraction; the visual reasons describe the run.
+const PDF_COMPARISON_OWN_COVERAGE_REASONS = Object.freeze([
   "VISUAL_NOT_REQUESTED",
   "VISUAL_RENDERER_UNAVAILABLE",
   "VISUAL_ALIGNED_PAGE_COMPARISON_SKIPPED",
-  ...["BEFORE", "AFTER"].flatMap(side => [
-    `${side}_PAGE_LIMIT_REACHED`,
-    `${side}_PAGE_PARSE_UNAVAILABLE`,
-    `${side}_PAGE_PARSE_PARTIAL`,
-    `${side}_OUTPUT_LIMIT_PAGES_OMITTED`,
-    `${side}_METADATA_PARSE_UNAVAILABLE`,
-    `${side}_METADATA_LIMIT_REACHED`,
-    `${side}_OUTPUT_LIMIT_METADATA_OMITTED`,
-    `${side}_FORM_FIELD_PARSE_UNAVAILABLE`,
-    `${side}_FORM_FIELD_PAGE_LIMIT_REACHED`,
-    `${side}_FIELD_LIMIT_REACHED`,
-    `${side}_WIDGET_OBSERVATION_LIMIT_REACHED`,
-    `${side}_OUTPUT_LIMIT_FORM_FIELDS_OMITTED`,
-    `${side}_ANNOTATION_PARSE_UNAVAILABLE`,
-    `${side}_ANNOTATION_PAGE_LIMIT_REACHED`,
-    `${side}_ANNOTATION_LIMIT_REACHED`,
-    `${side}_OUTPUT_LIMIT_ANNOTATIONS_OMITTED`,
-    `${side}_TEXT_EXTRACTION_TRUNCATED`,
-  ]),
+]);
+const PDF_COMPARISON_OWN_SIDED_COVERAGE_REASONS = Object.freeze([
+  "TEXT_EXTRACTION_TRUNCATED",
+]);
+
+/*
+ * Built from the observation vocabulary rather than restated beside it.
+ *
+ * `derivePdfComparisonCoverage` copies every reason a document observation
+ * carries into a comparison channel with the side's name in front, so this set
+ * has to be a superset of that vocabulary or the comparison's own semantics
+ * validator rejects a payload it just built. It was not: three observation
+ * reasons — `RAW_PAGE_GEOMETRY_UNAVAILABLE`, `FORM_FIELD_PAGE_GEOMETRY_PARTIAL`
+ * and `ANNOTATION_PAGE_PARSE_PARTIAL` — were missing, and any document that
+ * raised one turned a valid comparison into "Internal output validation
+ * failed". Deriving the set closes all three and cannot drift again.
+ */
+export const PDF_COMPARISON_COVERAGE_REASONS = new Set([
+  ...PDF_COMPARISON_OWN_COVERAGE_REASONS,
+  ...PDF_COMPARISON_SIDES.flatMap(side => [
+    ...Object.values(PDF_OBSERVATION_COVERAGE_REASONS).flat(),
+    ...PDF_COMPARISON_OWN_SIDED_COVERAGE_REASONS,
+  ].map(reason => `${side.toUpperCase()}_${reason}`)),
 ]);
 
 export const PDF_COMPARISON_RENDERER = Object.freeze({
@@ -1038,8 +1050,126 @@ export function buildPdfComparison({
   return result;
 }
 
+export const PDF_COMPARISON_ENCRYPTED_CODE = "PDF_ENCRYPTED_COMPARISON_UNSUPPORTED";
+
+/**
+ * The phrase every encrypted-comparison refusal contains, used to recognise one
+ * that has lost its `code`.
+ *
+ * `error.code` is an own property of an Error instance and does not survive
+ * anything that rebuilds the error from its message — a structured clone, a
+ * subprocess or worker boundary, a transport that carries `{ message }`. When
+ * that happens the refusal falls through every branch below and is re-reported
+ * as `invalid_input`, "the arguments or PDF inputs are invalid", which is both
+ * wrong and exactly the class of useless refusal this work exists to remove.
+ * Matching the text as well as the code means the classification survives a
+ * boundary that the code does not.
+ */
+const PDF_COMPARISON_ENCRYPTED_SIGNATURE =
+  "compare_pdfs cannot compare an encrypted document";
+
+/**
+ * Whether this failure is an encrypted comparison input, however it arrived.
+ *
+ * Two signals, not one: the typed code, and this module's own refusal text as a
+ * substring, so a wrapper that prefixes or annotates the message cannot turn a
+ * true statement about encryption into a false one about arguments.
+ *
+ * The *other* encryption signal — the shared pdf-lib "no decryption support"
+ * limit raised by the page renderer — is deliberately not matched here. It
+ * belongs to `server/helpers.js`, and this module's static import graph is
+ * closed and asserted by the extraction scorer
+ * (`test/eval/extraction-phase1-generation-verifiers.test.js`), which must not
+ * transitively acquire pdf-lib. `server/index.js` owns that translation
+ * instead, converting the pdf-lib limit into a typed refusal before it ever
+ * reaches this classifier.
+ */
+export function isPdfComparisonEncryptedFailure(error) {
+  if (error?.code === PDF_COMPARISON_ENCRYPTED_CODE) return true;
+  const message = typeof error?.message === "string" ? error.message : "";
+  return message.includes(PDF_COMPARISON_ENCRYPTED_SIGNATURE);
+}
+
+/**
+ * The refusal for an encrypted comparison input.
+ *
+ * `compare_pdfs` reads text, form fields, annotations and metadata through
+ * PDF.js, which decrypts, but it takes each page's raw geometry — and, when the
+ * visual channel is requested, every rendered page — through pdf-lib, which has
+ * no decryption support at all. So the password arguments genuinely cannot make
+ * this comparison run, and the message says that instead of asking for a
+ * password again or reporting an internal fault.
+ *
+ * The named alternatives are the three tools that accept a password and read
+ * entirely through PDF.js, which is the same set `PDF_LIB_ENCRYPTED_MESSAGE`
+ * names; `test/encrypted-pdf-password-truth.test.js` proves each of them really
+ * does open an encrypted document with the password, so the advice cannot rot
+ * into naming a tool that does not work.
+ *
+ * `sides` is whichever of the two inputs were found encrypted, in comparison
+ * order. An empty list is allowed: it means an encrypted input was detected
+ * somewhere in the run without the side being attributable, which is better
+ * reported vaguely than reported as an internal error.
+ */
+export function pdfComparisonEncryptedMessage(sides) {
+  const named = sides.length === 0
+    ? "A comparison input is encrypted"
+    : sides.length === PDF_COMPARISON_SIDES.length
+      ? "Both comparison inputs are encrypted"
+      : `The ${sides[0]} comparison input is encrypted`;
+  return `${named}, and compare_pdfs cannot compare an encrypted document. It reads text, form `
+    + "fields, annotations and metadata with PDF.js, which does decrypt, but it takes every page's "
+    + "raw geometry — and every rendered page, when the visual channel is requested — through "
+    + "pdf-lib, which has no decryption support, so supplying a password here will not help. "
+    + "Rather than report a comparison of whichever channels survive, it stops. Decrypt both "
+    + "documents first (for example with qpdf) and compare the decrypted copies. To read an "
+    + "encrypted PDF as it is, use read_pdf_layout, convert_pdf_to_markdown, or get_pdf_info, "
+    + "which accept a password and decrypt with PDF.js.";
+}
+
+export function pdfComparisonEncryptedError(sides) {
+  const ordered = PDF_COMPARISON_SIDES.filter(side => sides.includes(side));
+  const error = new Error(pdfComparisonEncryptedMessage(ordered));
+  error.code = PDF_COMPARISON_ENCRYPTED_CODE;
+  error.encryptedSides = Object.freeze(ordered);
+  return error;
+}
+
+/**
+ * The catch-all, which has to earn its place because it is where every
+ * unrecognised failure lands.
+ *
+ * "The compare_pdfs arguments or PDF inputs are invalid" on its own is the same
+ * useless-refusal shape as the bugs above: true, and no help at all. The
+ * argument that is actually wrong is nearly always the password, because every
+ * other tool in this server takes `password` and this one does not — and a
+ * rejected unknown argument produces this text identically for every other
+ * argument the caller varies, which makes it read like a failure of the
+ * document rather than of the call.
+ *
+ * The accepted names are published in the tool's own input schema, so repeating
+ * them here reveals nothing. What must NOT appear is anything the caller sent:
+ * an unknown argument's *name* is caller data and is deliberately never echoed,
+ * which `test/compare-pdfs.test.js` pins with a sentinel.
+ */
+export const PDF_COMPARISON_INVALID_INPUT_MESSAGE =
+  "The compare_pdfs arguments or PDF inputs are invalid. It accepts only before_pdf_path, "
+  + "after_pdf_path, before_password, after_password, mode, max_pages, include_visual and "
+  + "max_output_characters, and rejects any other argument. Note that the passwords are named "
+  + "before_password and after_password — compare_pdfs takes two documents, so it has no single "
+  + "'password' argument. Both paths must be absolute paths on this machine.";
+
 export function publicPdfComparisonError(error) {
   const code = error?.code;
+  // Checked first, and by evidence rather than by code alone, so a refusal that
+  // crossed a boundary which dropped its `code` is still reported as what it is
+  // instead of falling through to the catch-all below.
+  if (isPdfComparisonEncryptedFailure(error)) {
+    return {
+      code: PDF_COMPARISON_ENCRYPTED_CODE,
+      message: pdfComparisonEncryptedMessage(error.encryptedSides ?? []),
+    };
+  }
   if (code === "COMPARISON_PAGE_LIMIT_EXCEEDED") {
     return { code, message: "A comparison input exceeds the requested whole-document page limit." };
   }
@@ -1078,7 +1208,7 @@ export function publicPdfComparisonError(error) {
     return { code: "PDF_PARSE_FAILED", message: "A comparison input could not be parsed as a supported PDF." };
   }
   if (error instanceof TypeError || typeof error?.message === "string") {
-    return { code: "invalid_input", message: "The compare_pdfs arguments or PDF inputs are invalid." };
+    return { code: "invalid_input", message: PDF_COMPARISON_INVALID_INPUT_MESSAGE };
   }
   return { code: "tool_execution_failed", message: "The PDFs could not be compared." };
 }

@@ -10,7 +10,22 @@ import {
   QPDF_WASM_RUNTIME_FILES,
   verifyQpdfWasmRuntime,
 } from "./scripts/qpdf-wasm-runtime.mjs";
+import {
+  QPDF_WASM_BUILD_TOOL_COMPONENT,
+  QPDF_WASM_RUNTIME_COMPONENT_BOM_REF,
+  QPDF_WASM_SBOM_COMPONENTS,
+  QPDF_WASM_SBOM_DEPENDENCIES,
+} from "./scripts/qpdf-wasm-sbom.mjs";
+import {
+  deriveNpmComponentLicensing,
+  licenseEntryForDeclaredString,
+  verifyNpmLicenseProvenanceCoverage,
+} from "./scripts/npm-license-provenance.mjs";
 export { QPDF_WASM_RUNTIME_FILES } from "./scripts/qpdf-wasm-runtime.mjs";
+export {
+  QPDF_WASM_RUNTIME_COMPONENT_BOM_REF,
+  QPDF_WASM_SBOM_COMPONENTS,
+} from "./scripts/qpdf-wasm-sbom.mjs";
 
 const SCRIPT_PATH = fileURLToPath(import.meta.url);
 const PROJECT_ROOT = path.dirname(SCRIPT_PATH);
@@ -52,15 +67,19 @@ export const SHARE_FILES = [
   "server/pdf-lib-worker.js",
   "server/pdfjs-subprocess.js",
   "server/pdfjs-worker.js",
+  "server/qpdf-decrypt-worker.js",
+  "server/qpdf-decrypt.js",
   "server/resource-uri.js",
   "server/stderr-suppression.js",
+  "server/table-proposal-verification.js",
   "server/type3-cm-pk-reference.js",
   "server/type3-cm-reference.js",
   "smart-install.sh",
   /*
    * The QPDF WebAssembly runtime and its complete notice directory, derived
    * from the committed provenance record rather than transcribed. It is
-   * packaged and licence-complete; nothing under `server/` imports it yet.
+   * packaged and licence-complete, and `server/qpdf-decrypt.js` loads it to
+   * decrypt password-protected documents.
    */
   ...QPDF_WASM_RUNTIME_FILES,
 ];
@@ -184,46 +203,158 @@ function dependencyPathsForPackage(lock, packagePath) {
   return [...new Set(paths)].sort(compareCodePoints);
 }
 
-export function generateCycloneDxSbom(lock, sharePackage) {
+/**
+ * What the application itself directly requires: its locked npm dependencies,
+ * plus the QPDF WebAssembly runtime, which is not an npm package but does ship
+ * inside both artifacts and is loaded by `server/qpdf-decrypt-worker.js`.
+ */
+function rootDependsOn(lock) {
+  return [
+    ...dependencyPathsForPackage(lock, "").map(packageBomRef),
+    QPDF_WASM_RUNTIME_COMPONENT_BOM_REF,
+  ];
+}
+
+/**
+ * One npm component, licence and all. Built in exactly one place so that
+ * `validateCycloneDxSbom` can re-derive it from the same pinned records and
+ * compare, rather than re-listing the fields it expects to find.
+ */
+function npmComponent(packagePath, lockedPackage, installedPackagePaths) {
+  const name = packageNameFromLockPath(packagePath);
+  const { scope, basis } = componentScope(packagePath, lockedPackage, installedPackagePaths);
+  const { licenses, properties: licenseProperties } =
+    deriveNpmComponentLicensing(name, lockedPackage.version);
+  const properties = [
+    { name: "pdf-tools:npm-package-path", value: packagePath },
+    { name: "pdf-tools:npm-scope-basis", value: basis },
+  ];
+  if (lockedPackage.optional) {
+    properties.push({ name: "pdf-tools:npm-optional-dependency", value: "true" });
+  }
+  if (lockedPackage.os) {
+    properties.push({ name: "pdf-tools:npm-os", value: JSON.stringify(lockedPackage.os) });
+  }
+  if (lockedPackage.cpu) {
+    properties.push({ name: "pdf-tools:npm-cpu", value: JSON.stringify(lockedPackage.cpu) });
+  }
+  return {
+    type: "library",
+    "bom-ref": packageBomRef(packagePath),
+    name,
+    version: lockedPackage.version,
+    scope,
+    hashes: [integrityHash(lockedPackage.integrity)],
+    purl: packagePurl(name, lockedPackage.version),
+    licenses,
+    externalReferences: [{ type: "distribution", url: lockedPackage.resolved }],
+    properties: [...properties, ...licenseProperties],
+  };
+}
+
+/*
+ * CycloneDX `scope` is a statement about the artifact the bill describes, not
+ * about the lockfile, and the two shipped artifacts differ:
+ *
+ *   - The MCPB carries an installed `node_modules` inside it, so it can say
+ *     precisely which components are present. Anything staged is `required` —
+ *     CycloneDX reserves `optional` for code that is "not capable of being
+ *     called due to it not being installed", which is false of a package that
+ *     ships inside the archive. Anything the lock names but the archive does
+ *     not carry is `excluded`, which is the construct the specification
+ *     provides for a component documented but not reachable at runtime. Before
+ *     this, the MCPB's bill marked all eleven `@napi-rs/canvas-*` targets
+ *     `optional` because the lockfile said so, while five of them were
+ *     physically inside the archive and six were not there at all: it
+ *     understated the code that ships and overstated the code that does not.
+ *
+ *   - The share ZIP carries no `node_modules`; it ships a lockfile that `npm
+ *     ci` resolves on the user's machine. Its bill describes an install
+ *     specification, so npm's own optionality is exactly the right statement
+ *     and is kept.
+ *
+ * Either way the basis is written into the component, so nobody has to guess
+ * which reading applies.
+ */
+function componentScope(packagePath, lockedPackage, installedPackagePaths) {
+  if (!installedPackagePaths) {
+    return {
+      scope: lockedPackage.optional ? "optional" : "required",
+      basis: lockedPackage.optional
+        ? "npm optionalDependency in the lockfile this artifact ships; the artifact contains no "
+          + "installed tree, so presence is decided by `npm ci` on the target machine"
+        : "required by the lockfile this artifact ships; the artifact contains no installed tree, so "
+          + "the package is installed by `npm ci` on the target machine",
+    };
+  }
+  return installedPackagePaths.has(packagePath)
+    ? {
+      scope: "required",
+      basis: "installed inside this artifact at the recorded package path",
+    }
+    : {
+      scope: "excluded",
+      basis: "named by the reviewed lockfile but deliberately not carried inside this artifact, so it "
+        + "is documented rather than claimed as shipped code",
+    };
+}
+
+/*
+ * The bill is assembled from three pinned records, none of them written down
+ * here. The npm components come from `package-lock.json`;
+ * their licence terms come from
+ * `vendor/npm-licenses/npm-license-provenance.json`; the native components
+ * come from `vendor/qpdf-wasm/runtime.provenance.json` by way of
+ * `scripts/qpdf-wasm-sbom.mjs`. None of it is written down here, because a
+ * hand-maintained component list drifts from its lock the first time anyone
+ * bumps a version — which is exactly how the QPDF WebAssembly runtime came to
+ * ship with notices, hashes and provenance but no SBOM component at all, and
+ * how seventy of a hundred and twelve npm components came to ship with no
+ * licence at all.
+ *
+ * @param {object} lock the locked graph the bill describes
+ * @param {object} sharePackage the manifest of the application being described
+ * @param {{ installedPackagePaths?: Set<string> }} [options] the lock package
+ *   paths actually present inside the artifact, when the artifact carries an
+ *   installed tree. Omitted for the share ZIP, which ships a lockfile instead.
+ */
+export function generateCycloneDxSbom(lock, sharePackage, options = {}) {
+  const { installedPackagePaths } = options;
+  /*
+   * Fails before anything is written if the committed licence evidence does
+   * not cover the locked graph exactly. A dependency added, removed or bumped
+   * without the evidence following stops the build here rather than producing
+   * a component that says nothing about its terms.
+   */
+  verifyNpmLicenseProvenanceCoverage(lock);
   const rootRef = `pkg:npm/${encodeURIComponent(sharePackage.name)}@${encodeURIComponent(sharePackage.version)}`;
   const packageEntries = Object.entries(lock.packages)
     .filter(([packagePath]) => packagePath !== "")
     .sort(([left], [right]) => compareCodePoints(left, right));
-  const components = packageEntries.map(([packagePath, lockedPackage]) => {
-    const name = packageNameFromLockPath(packagePath);
-    const component = {
-      type: "library",
-      "bom-ref": packageBomRef(packagePath),
-      name,
-      version: lockedPackage.version,
-      scope: lockedPackage.optional ? "optional" : "required",
-      hashes: [integrityHash(lockedPackage.integrity)],
-      purl: packagePurl(name, lockedPackage.version),
-      externalReferences: [{ type: "distribution", url: lockedPackage.resolved }],
-      properties: [
-        { name: "pdf-tools:npm-package-path", value: packagePath },
-      ],
-    };
-    if (lockedPackage.license) component.licenses = [{ expression: lockedPackage.license }];
-    if (lockedPackage.os) {
-      component.properties.push({ name: "pdf-tools:npm-os", value: JSON.stringify(lockedPackage.os) });
-    }
-    if (lockedPackage.cpu) {
-      component.properties.push({ name: "pdf-tools:npm-cpu", value: JSON.stringify(lockedPackage.cpu) });
-    }
-    return component;
-  });
+  const components = packageEntries.map(([packagePath, lockedPackage]) =>
+    npmComponent(packagePath, lockedPackage, installedPackagePaths));
   const dependencies = [
     {
       ref: rootRef,
-      dependsOn: dependencyPathsForPackage(lock, "").map(packageBomRef),
+      dependsOn: rootDependsOn(lock),
     },
     ...packageEntries.map(([packagePath]) => ({
       ref: packageBomRef(packagePath),
       dependsOn: dependencyPathsForPackage(lock, packagePath).map(packageBomRef),
     })),
+    ...QPDF_WASM_SBOM_DEPENDENCIES.map(entry => ({ ref: entry.ref, dependsOn: [...entry.dependsOn] })),
   ];
-  const lockDigest = sha256(`${JSON.stringify(lock)}\n`);
+  /*
+   * The identity seed is the reviewed graph plus the artifact inventory the
+   * bill describes, so the MCPB's bill — which says which components are
+   * physically inside it — cannot carry the same serial number as the share
+   * ZIP's, which describes an install specification. Identical inputs still
+   * produce identical identities.
+   */
+  const inventoryDigest = installedPackagePaths
+    ? sha256([...installedPackagePaths].sort(compareCodePoints).join("\n"))
+    : "install-specification";
+  const lockDigest = sha256(`${JSON.stringify(lock)}\n${inventoryDigest}\n`);
   const sbom = {
     $schema: "http://cyclonedx.org/schema/bom-1.6.schema.json",
     bomFormat: "CycloneDX",
@@ -237,20 +368,35 @@ export function generateCycloneDxSbom(lock, sharePackage) {
         name: sharePackage.name,
         version: sharePackage.version,
         purl: rootRef,
-        licenses: [{ expression: sharePackage.license }],
+        // Routed through the same classifier the dependencies use, so the
+        // application's own licence is asserted as an SPDX identifier only if
+        // the pinned SPDX list actually contains it.
+        licenses: [licenseEntryForDeclaredString(sharePackage.license).entry],
       },
       properties: [
-        { name: "pdf-tools:evidence-validation", value: "deterministic structural and lock-coverage validation" },
+        {
+          name: "pdf-tools:evidence-validation",
+          value: "deterministic structural, lock-coverage and native-provenance-coverage validation",
+        },
       ],
+      /*
+       * The Emscripten build image belongs here rather than in `components`:
+       * it produced the WebAssembly runtime but is not inside any shipped
+       * artifact. Its statically linked runtime libraries are components; the
+       * compiler is not.
+       */
+      tools: { components: [QPDF_WASM_BUILD_TOOL_COMPONENT] },
     },
-    components,
+    components: [...components, ...QPDF_WASM_SBOM_COMPONENTS],
     dependencies,
   };
-  validateCycloneDxSbom(sbom, lock, sharePackage);
+  validateCycloneDxSbom(sbom, lock, sharePackage, options);
   return sbom;
 }
 
-export function validateCycloneDxSbom(sbom, lock, sharePackage) {
+export function validateCycloneDxSbom(sbom, lock, sharePackage, options = {}) {
+  const { installedPackagePaths } = options;
+  verifyNpmLicenseProvenanceCoverage(lock);
   if (sbom.$schema !== "http://cyclonedx.org/schema/bom-1.6.schema.json" ||
       sbom.bomFormat !== "CycloneDX" || sbom.specVersion !== "1.6" || sbom.version !== 1) {
     throw new Error("SBOM is not structurally identified as CycloneDX 1.6 JSON.");
@@ -263,37 +409,91 @@ export function validateCycloneDxSbom(sbom, lock, sharePackage) {
   const packagePaths = Object.keys(lock.packages)
     .filter(packagePath => packagePath !== "")
     .sort(compareCodePoints);
-  if (sbom.components?.length !== packagePaths.length) {
-    throw new Error(`SBOM component coverage mismatch: ${sbom.components?.length} != ${packagePaths.length}.`);
+  /*
+   * The expected total is the npm graph plus the native graph, each counted
+   * from its own pinned record. Neither number is written down.
+   */
+  const expectedComponentCount = packagePaths.length + QPDF_WASM_SBOM_COMPONENTS.length;
+  if (sbom.components?.length !== expectedComponentCount) {
+    throw new Error(`SBOM component coverage mismatch: ${sbom.components?.length} != ${expectedComponentCount}.`);
   }
   const componentsByRef = new Map(sbom.components.map(component => [component["bom-ref"], component]));
-  if (componentsByRef.size !== packagePaths.length) throw new Error("SBOM contains duplicate component references.");
+  if (componentsByRef.size !== expectedComponentCount) {
+    throw new Error("SBOM contains duplicate component references.");
+  }
+
+  for (const nativeComponent of QPDF_WASM_SBOM_COMPONENTS) {
+    const component = componentsByRef.get(nativeComponent["bom-ref"]);
+    if (!component || !sameJson(component, nativeComponent)) {
+      throw new Error(
+        `SBOM native component does not exactly cover ${nativeComponent["bom-ref"]}. `
+        + "Regenerate it from vendor/qpdf-wasm/runtime.provenance.json rather than editing it.",
+      );
+    }
+  }
+  if (!sameJson(sbom.metadata?.tools?.components, [QPDF_WASM_BUILD_TOOL_COMPONENT])) {
+    throw new Error("SBOM does not record the pinned QPDF WebAssembly build toolchain as build tooling.");
+  }
 
   for (const packagePath of packagePaths) {
     const lockedPackage = lock.packages[packagePath];
     const component = componentsByRef.get(packageBomRef(packagePath));
-    const pathProperty = component?.properties?.find(property => property.name === "pdf-tools:npm-package-path")?.value;
-    if (!component || pathProperty !== packagePath || component.version !== lockedPackage.version ||
-        component.name !== packageNameFromLockPath(packagePath) ||
-        component.externalReferences?.[0]?.url !== lockedPackage.resolved ||
-        !sameJson(component.hashes, [integrityHash(lockedPackage.integrity)])) {
+    /*
+     * Re-derived from the lock and the committed licence evidence rather than
+     * spot-checked field by field. A field-by-field check can only ever assert
+     * the fields somebody remembered to list, and the licence half is exactly
+     * the half that went unlisted for as long as it was missing.
+     */
+    if (!component || !sameJson(component, npmComponent(packagePath, lockedPackage, installedPackagePaths))) {
       throw new Error(`SBOM component does not exactly cover ${packagePath}.`);
     }
   }
 
+  /*
+   * No component may be silent about its terms. A package that declares no
+   * licence still carries an explicit NOASSERTION and a property saying what
+   * was looked for, so an empty `licenses` array can only mean the generator
+   * skipped the question.
+   */
+  for (const component of sbom.components) {
+    if (!Array.isArray(component.licenses) || component.licenses.length === 0) {
+      throw new Error(`SBOM component states no licence at all: ${component["bom-ref"]}.`);
+    }
+  }
+  if (!Array.isArray(sbom.metadata?.component?.licenses) || sbom.metadata.component.licenses.length === 0) {
+    throw new Error("SBOM metadata component states no licence at all.");
+  }
+
   const rootRef = sbom.metadata.component["bom-ref"];
   const dependencyEntries = new Map((sbom.dependencies || []).map(entry => [entry.ref, entry.dependsOn]));
-  if (dependencyEntries.size !== packagePaths.length + 1) {
+  if (dependencyEntries.size !== expectedComponentCount + 1) {
     throw new Error("SBOM dependency graph does not cover the root and every locked component exactly once.");
   }
-  for (const [packagePath, ref] of [["", rootRef], ...packagePaths.map(value => [value, packageBomRef(value)])]) {
+  /*
+   * Native components hang off the runtime that ships them, not off the root,
+   * so the graph says what is inside what rather than listing them loose
+   * beside the npm packages.
+   */
+  const expectedEdges = [
+    { ref: rootRef, label: "root", dependsOn: rootDependsOn(lock) },
+    ...packagePaths.map(packagePath => ({
+      ref: packageBomRef(packagePath),
+      label: packagePath,
+      dependsOn: dependencyPathsForPackage(lock, packagePath).map(packageBomRef),
+    })),
+    ...QPDF_WASM_SBOM_DEPENDENCIES.map(entry => ({
+      ref: entry.ref,
+      label: entry.ref,
+      dependsOn: entry.dependsOn,
+    })),
+  ];
+  for (const { ref, label, dependsOn: expected } of expectedEdges) {
     const actual = dependencyEntries.get(ref);
-    const expected = dependencyPathsForPackage(lock, packagePath).map(packageBomRef);
     if (!actual || !sameJson(
       [...actual].sort(compareCodePoints),
       [...expected].sort(compareCodePoints),
     )) {
-      throw new Error(`SBOM dependency edges do not exactly cover ${packagePath || "root"}.`);
+      throw new Error(`SBOM dependency edges do not exactly cover ${label}.`);
     }
     for (const dependencyRef of actual) {
       if (!componentsByRef.has(dependencyRef)) {
@@ -460,7 +660,9 @@ async function stageSharePackage(stageRoot, sharePackage, shareLock) {
       path: SBOM_FILENAME,
       format: "CycloneDX",
       spec_version: "1.6",
-      validation: "deterministic structural and exact lock component/dependency coverage; not external schema validation",
+      validation: "deterministic structural checks, exact lock component/dependency coverage, and exact "
+        + "coverage of the native components derived from vendor/qpdf-wasm/runtime.provenance.json; "
+        + "not external schema validation",
       sha256: sha256(sbomBytes),
     },
     files: fileHashes,
