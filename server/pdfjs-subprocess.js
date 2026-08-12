@@ -1,9 +1,20 @@
 import { spawn } from "node:child_process";
-import { createHash } from "node:crypto";
-import { chmod, mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { createHash, randomBytes } from "node:crypto";
+import {
+  closeSync,
+  fsyncSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import { chmod, lstat, mkdtemp, realpath, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 
 export const PDF_RESOURCE_LIMIT_CODE = "PDF_RESOURCE_LIMIT_EXCEEDED";
 
@@ -16,13 +27,16 @@ const DEFAULT_MAX_OLD_SPACE_MB = 384;
 const MAX_REQUEST_BYTES = 64 * 1024;
 const MAX_QUEUED_OPERATIONS = 8;
 const TERMINATION_GRACE_MS = 1000;
+const OPERATION_SHUTDOWN_TIMEOUT_MS = 15_000;
 const PDFJS_OPERATIONS = new Set([
   "analyze_pages",
   "detect_signature_zones",
   "extract_layout",
   "extract_layout_for_markdown",
+  "observe_document",
   "read_content",
   "read_pages",
+  "render_comparison_page",
   "render_page",
   "render_region",
   "search_text",
@@ -32,7 +46,52 @@ const WORKER_ERROR = Symbol("pdfjs-worker-error");
 
 let activeOperationCount = 0;
 const queuedOperations = [];
+const activeOperations = new Set();
 const activeChildren = new Set();
+const activeThreadWorkers = new Set();
+const activeThreadSystemChildren = new Set();
+let inProcessWorkerModulePromise = null;
+let inProcessWorkerModule = null;
+let inProcessCanvasGuardInstalled = false;
+// The native-canvas attempt this process armed, if any: { markerPath, token }.
+// The token is held only in memory, which is what makes ownership decidable -
+// no other process can ever present it, so no other process can clear a marker
+// it does not own.
+let activeNativeCanvasAttempt = null;
+// Why the last native-canvas load was refused, for the renderer error path.
+// It cannot travel on the thrown error: @napi-rs/canvas catches whatever dlopen
+// throws and reports its own "Cannot find native binding" instead, discarding
+// ours. This is read back through a bound probe, see pdfjs-worker.js.
+let lastNativeCanvasBlockReason = null;
+let shutdownInProgress = false;
+let shutdownTerminal = false;
+let gracefulShutdownPromise = null;
+
+export function selectPdfjsIsolationMode({
+  electronVersion = process.versions.electron ?? null,
+  processType = process.type ?? null,
+  hasElectronParentPort = process.parentPort != null,
+  executable = process.execPath,
+} = {}) {
+  const executableName = typeof executable === "string" ? basename(executable) : "";
+  const embeddedElectronHost = typeof electronVersion === "string"
+    || processType === "utility"
+    || hasElectronParentPort
+    || /(?:^electron$|^claude(?: helper(?: \(plugin\))?)?(?:\.exe)?$)/i.test(executableName);
+  return embeddedElectronHost ? "in_process" : "subprocess";
+}
+
+const DEFAULT_ISOLATION_MODE = selectPdfjsIsolationMode();
+console.error("[PDF Tools] PDF.js execution host", JSON.stringify({
+  argv0: basename(process.argv0 ?? ""),
+  electron: typeof process.versions.electron === "string",
+  executable: basename(process.execPath),
+  mode: DEFAULT_ISOLATION_MODE,
+  parent_port: process.parentPort != null,
+  process_type: typeof process.type === "string" ? process.type : null,
+  utility_arg: [...process.execArgv, ...process.argv]
+    .some(argument => /^--(?:type=utility|utility-sub-type=)/.test(argument)),
+}));
 
 function exactKeys(value, expected, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -225,7 +284,8 @@ function parseWorkerResponse(bytes, operation) {
         exactKeys(response.binary, ["bytes", "mime_type", "sha256"], "PDF.js worker binary");
         boundedInteger(response.binary.bytes, "worker binary bytes", 1, DEFAULT_MAX_BINARY_BYTES);
         if (
-          response.binary.mime_type !== "image/png"
+          !new Set(["image/png", "application/x-pdf-tools-rgba"])
+            .has(response.binary.mime_type)
           || !/^[a-f0-9]{64}$/.test(response.binary.sha256)
         ) {
           throw new TypeError("The worker binary descriptor is invalid.");
@@ -258,6 +318,34 @@ function parseWorkerResponse(bytes, operation) {
   throw subprocessFailure("The isolated PDF worker returned an unknown response shape.");
 }
 
+function validateThreadMessage(message, operation, maxResultBytes, maxBinaryBytes) {
+  try {
+    exactKeys(message, ["binary", "frame"], "PDF.js thread response");
+    const encoded = Buffer.from(JSON.stringify(message.frame), "utf8");
+    if (encoded.length > maxResultBytes) {
+      throw resourceLimitError("worker_output_limit");
+    }
+    const parsed = parseWorkerResponse(encoded, operation);
+    const binaryBytes = message.binary === null ? Buffer.alloc(0) : Buffer.from(message.binary);
+    return parsed.binary === null
+      ? parsed.result
+      : {
+          ...parsed.result,
+          binary: validateBinaryResult(
+            binaryBytes,
+            parsed.binary,
+            parsed.result,
+            maxBinaryBytes,
+          ),
+        };
+  } catch (error) {
+    if (error?.code === PDF_RESOURCE_LIMIT_CODE || error?.code === "PDFJS_SUBPROCESS_FAILED") {
+      throw error;
+    }
+    throw subprocessFailure("The isolated PDF worker thread returned an invalid response.", error);
+  }
+}
+
 function validateBinaryResult(binaryBytes, descriptor, result, maximumBytes) {
   if (descriptor === null) {
     if (binaryBytes.length !== 0) {
@@ -272,21 +360,25 @@ function validateBinaryResult(binaryBytes, descriptor, result, maximumBytes) {
   ) {
     throw subprocessFailure("The isolated PDF worker returned mismatched binary output.");
   }
-  if (
-    binaryBytes.length < 24
-    || !binaryBytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
-  ) {
-    throw subprocessFailure("The isolated PDF worker returned invalid PNG output.");
+  if (!Number.isSafeInteger(result.width) || !Number.isSafeInteger(result.height)) {
+    throw subprocessFailure("The isolated PDF worker returned invalid binary dimensions.");
   }
-  const pngWidth = binaryBytes.readUInt32BE(16);
-  const pngHeight = binaryBytes.readUInt32BE(20);
-  if (
-    !Number.isSafeInteger(result.width)
-    || !Number.isSafeInteger(result.height)
-    || result.width !== pngWidth
-    || result.height !== pngHeight
-  ) {
-    throw subprocessFailure("The isolated PDF worker returned mismatched PNG dimensions.");
+  if (descriptor.mime_type === "application/x-pdf-tools-rgba") {
+    if (binaryBytes.length !== result.width * result.height * 4) {
+      throw subprocessFailure("The isolated PDF worker returned mismatched RGBA dimensions.");
+    }
+  } else {
+    if (
+      binaryBytes.length < 24
+      || !binaryBytes.subarray(0, PNG_SIGNATURE.length).equals(PNG_SIGNATURE)
+    ) {
+      throw subprocessFailure("The isolated PDF worker returned invalid PNG output.");
+    }
+    const pngWidth = binaryBytes.readUInt32BE(16);
+    const pngHeight = binaryBytes.readUInt32BE(20);
+    if (result.width !== pngWidth || result.height !== pngHeight) {
+      throw subprocessFailure("The isolated PDF worker returned mismatched PNG dimensions.");
+    }
   }
   return Buffer.from(binaryBytes);
 }
@@ -304,6 +396,7 @@ function removeQueuedOperation(waiter) {
 
 function releaseOperationSlot() {
   activeOperationCount = Math.max(0, activeOperationCount - 1);
+  if (shutdownInProgress) return;
   while (queuedOperations.length > 0 && activeOperationCount < 1) {
     const waiter = queuedOperations.shift();
     if (waiter.settled) continue;
@@ -317,6 +410,7 @@ function releaseOperationSlot() {
 
 async function acquireOperationSlot(deadlineAt, signal) {
   if (signal?.aborted) throw abortError();
+  if (shutdownInProgress) throw resourceLimitError("worker_shutdown_in_progress");
   if (activeOperationCount < 1) {
     activeOperationCount += 1;
     return releaseOperationSlot;
@@ -327,6 +421,7 @@ async function acquireOperationSlot(deadlineAt, signal) {
   return await new Promise((resolve, reject) => {
     const waiter = {
       onAbort: null,
+      reject: null,
       resolve,
       settled: false,
       signal,
@@ -340,6 +435,7 @@ async function acquireOperationSlot(deadlineAt, signal) {
       signal?.removeEventListener("abort", waiter.onAbort);
       reject(error);
     };
+    waiter.reject = rejectWaiter;
     waiter.onAbort = () => rejectWaiter(abortError());
     signal?.addEventListener("abort", waiter.onAbort, { once: true });
     waiter.timer = setTimeout(
@@ -500,6 +596,736 @@ async function runSpawnedWorker({
   });
 }
 
+async function runThreadWorker({
+  environment,
+  maxBinaryBytes,
+  maxOldSpaceMb,
+  maxResultBytes,
+  operationDirectory,
+  platform,
+  request,
+  signal,
+  spawnProcess,
+  timeoutMs,
+  workerClass,
+  workerPath,
+}) {
+  return await new Promise((resolve, reject) => {
+    let worker;
+    let settled = false;
+    let timedOut = false;
+    let aborted = false;
+    let response = null;
+    let workerError = null;
+    let deadlineTimer = null;
+    let terminationPromise = null;
+    let terminationStarted = false;
+    const systemChildren = new Set();
+
+    const terminateSystemChildren = async () => {
+      await Promise.all([...systemChildren].map(async child => {
+        let cleanupTimer;
+        const closed = new Promise((resolve, reject) => {
+          child.once("close", resolve);
+          cleanupTimer = setTimeout(
+            () => reject(resourceLimitError("system_renderer_cleanup_unproven")),
+            TERMINATION_GRACE_MS,
+          );
+          cleanupTimer.unref();
+        });
+        signalChild(child, "SIGKILL");
+        try {
+          await closed;
+        } finally {
+          clearTimeout(cleanupTimer);
+        }
+      }));
+    };
+
+    const validateQuickLookRequest = async args => {
+      try {
+        if (
+          args.length !== 6
+          || args[0] !== "-t"
+          || args[1] !== "-s"
+          || !/^\d{1,5}$/.test(args[2])
+          || Number(args[2]) < 1
+          || Number(args[2]) > 8192
+          || args[3] !== "-o"
+          || basename(args[4]) === args[4]
+          || basename(args[5]) !== "source.pdf"
+          || !basename(args[4]).startsWith("pdf-tools-system-render-")
+        ) {
+          throw new Error("invalid Quick Look request shape");
+        }
+        const [
+          canonicalOperationDirectory,
+          canonicalOutputDirectory,
+          canonicalSourcePath,
+          outputStats,
+          sourceStats,
+        ] = await Promise.all([
+          realpath(operationDirectory),
+          realpath(args[4]),
+          realpath(args[5]),
+          lstat(args[4]),
+          lstat(args[5]),
+        ]);
+        if (
+          outputStats.isSymbolicLink()
+          || !outputStats.isDirectory()
+          || sourceStats.isSymbolicLink()
+          || !sourceStats.isFile()
+          || sourceStats.size < 1
+          || sourceStats.size > 250 * 1024 * 1024
+          || dirname(canonicalOutputDirectory) !== canonicalOperationDirectory
+          || dirname(canonicalSourcePath) !== canonicalOutputDirectory
+        ) {
+          throw new Error("Quick Look paths leave the operation directory");
+        }
+      } catch {
+        throw subprocessFailure(
+          "The PDF.js worker requested an invalid Quick Look workspace.",
+        );
+      }
+    };
+
+    const runSystemCommand = async message => {
+      exactKeys(
+        message,
+        ["args", "command", "id", "kind", "timeout_ms"],
+        "PDF.js system-command frame",
+      );
+      if (
+        platform !== "darwin"
+        || !new Set(["/usr/bin/qlmanage", "/usr/bin/sips"]).has(message.command)
+        || !Array.isArray(message.args)
+        || message.args.length > 128
+        || message.args.some(argument => typeof argument !== "string" || argument.length > 32_768)
+      ) {
+        throw subprocessFailure("The PDF.js worker requested an unsupported system command.");
+      }
+      boundedInteger(message.id, "PDF.js system-command id", 1, 2 ** 31 - 1);
+      boundedInteger(message.timeout_ms, "PDF.js system-command timeout", 100, 30_000);
+      if (shutdownInProgress || terminationStarted) throw abortError();
+      if (message.command === "/usr/bin/qlmanage") {
+        await validateQuickLookRequest(message.args);
+      }
+      if (shutdownInProgress || terminationStarted) throw abortError();
+      if (systemChildren.size >= 1) {
+        throw resourceLimitError("system_renderer_concurrency_limit");
+      }
+      return await new Promise((resolveCommand, rejectCommand) => {
+        let child;
+        let settled = false;
+        let timedOut = false;
+        let outputOverflow = false;
+        let childError = null;
+        let stdoutBytes = 0;
+        let stderrBytes = 0;
+        let deadline = null;
+        const finishCommand = error => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(deadline);
+          if (child) {
+            systemChildren.delete(child);
+            activeThreadSystemChildren.delete(child);
+          }
+          if (error) rejectCommand(error);
+          else resolveCommand();
+        };
+        try {
+          child = spawnProcess(message.command, message.args, {
+            cwd: operationDirectory,
+            detached: false,
+            env: childEnvironment(environment, platform, operationDirectory),
+            shell: false,
+            stdio: ["ignore", "pipe", "pipe"],
+            windowsHide: true,
+          });
+        } catch (error) {
+          rejectCommand(error);
+          return;
+        }
+        systemChildren.add(child);
+        activeThreadSystemChildren.add(child);
+        child.stdout.on("data", chunk => {
+          stdoutBytes += chunk.length;
+          if (stdoutBytes > DEFAULT_MAX_STDERR_BYTES) {
+            outputOverflow = true;
+            signalChild(child, "SIGKILL");
+          }
+        });
+        child.stderr.on("data", chunk => {
+          stderrBytes += chunk.length;
+          if (stderrBytes > DEFAULT_MAX_STDERR_BYTES) {
+            outputOverflow = true;
+            signalChild(child, "SIGKILL");
+          }
+        });
+        child.once("error", error => {
+          childError = error;
+          if (!child.pid) finishCommand(error);
+          else signalChild(child, "SIGKILL");
+        });
+        child.once("close", (code, signalName) => {
+          if (childError) {
+            finishCommand(childError);
+          } else if (timedOut) {
+            finishCommand(resourceLimitError("system_renderer_timeout"));
+          } else if (outputOverflow) {
+            finishCommand(resourceLimitError("system_renderer_output_limit"));
+          } else if (code !== 0 || signalName !== null) {
+            finishCommand(subprocessFailure("The macOS system PDF renderer could not render this page."));
+          } else {
+            finishCommand(null);
+          }
+        });
+        deadline = setTimeout(() => {
+          timedOut = true;
+          signalChild(child, "SIGKILL");
+        }, message.timeout_ms);
+        deadline.unref();
+      });
+    };
+
+    const replyToSystemCommand = (id, status, error = null) => {
+      try {
+        worker.postMessage({
+          kind: "system_command_result",
+          id,
+          status,
+          error: error === null
+            ? null
+            : {
+                name: typeof error?.name === "string" ? error.name.slice(0, 256) : "Error",
+                code: typeof error?.code === "string" ? error.code.slice(0, 256) : null,
+                message: typeof error?.message === "string"
+                  ? error.message.slice(0, 4096)
+                  : "The macOS system PDF renderer could not complete this operation.",
+              },
+        });
+      } catch {}
+    };
+
+    const finish = async code => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(deadlineTimer);
+      signal?.removeEventListener?.("abort", onAbort);
+      if (worker) activeThreadWorkers.delete(worker);
+      try {
+        if (terminationPromise) {
+          await terminationPromise;
+        } else if (systemChildren.size > 0) {
+          await terminateSystemChildren();
+        }
+      } catch (error) {
+        reject(resourceLimitError("system_renderer_cleanup_unproven", error));
+        return;
+      }
+      if (aborted) {
+        reject(abortError());
+        return;
+      }
+      if (timedOut) {
+        reject(resourceLimitError("wall_timeout"));
+        return;
+      }
+      if (workerError?.code === "PDFJS_SUBPROCESS_FAILED") {
+        reject(workerError);
+        return;
+      }
+      if (workerError || code !== 0 || response === null) {
+        reject(resourceLimitError("worker_memory_or_signal_limit", workerError));
+        return;
+      }
+      try {
+        resolve(validateThreadMessage(
+          response,
+          request.operation,
+          maxResultBytes,
+          maxBinaryBytes,
+        ));
+      } catch (error) {
+        reject(error);
+      }
+    };
+
+    const terminate = reason => {
+      if (!worker || terminationStarted) return;
+      terminationStarted = true;
+      if (reason === "timeout") timedOut = true;
+      if (reason === "abort") aborted = true;
+      terminationPromise = terminateSystemChildren()
+        .finally(() => worker.terminate());
+    };
+    const onAbort = () => terminate("abort");
+
+    try {
+      worker = new workerClass(workerPath, {
+        env: childEnvironment(environment, platform, operationDirectory),
+        resourceLimits: {
+          maxOldGenerationSizeMb: maxOldSpaceMb,
+        },
+        workerData: {
+          pdf_tools_worker: "pdfjs",
+          request,
+        },
+      });
+      activeThreadWorkers.add(worker);
+    } catch (error) {
+      reject(subprocessFailure("The isolated PDF worker thread could not be started.", error));
+      return;
+    }
+    worker.on("message", message => {
+      try {
+        if (message?.kind === "system_command") {
+          const id = message.id;
+          void runSystemCommand(message).then(
+            () => replyToSystemCommand(id, "ok"),
+            error => replyToSystemCommand(id, "error", error),
+          );
+          return;
+        }
+        exactKeys(message, ["kind", "response"], "PDF.js thread message");
+        if (message.kind !== "response" || response !== null) {
+          throw subprocessFailure("The isolated PDF worker thread returned an invalid response sequence.");
+        }
+        response = message.response;
+      } catch (error) {
+        workerError = error?.code === "PDFJS_SUBPROCESS_FAILED"
+          ? error
+          : subprocessFailure(
+              "The isolated PDF worker thread returned an invalid control message.",
+              error,
+            );
+        terminate("protocol");
+      }
+    });
+    worker.once("messageerror", error => {
+      workerError = subprocessFailure(
+        "The isolated PDF worker thread returned an unreadable control message.",
+        error,
+      );
+      terminate("protocol");
+    });
+    worker.once("error", error => {
+      workerError = error;
+    });
+    worker.once("exit", code => {
+      void finish(code);
+    });
+    signal?.addEventListener?.("abort", onAbort, { once: true });
+    deadlineTimer = setTimeout(() => terminate("timeout"), timeoutMs);
+    deadlineTimer.unref();
+  });
+}
+
+async function loadInProcessWorkerModule() {
+  inProcessWorkerModulePromise ??= import("./pdfjs-worker.js").then(worker => {
+    worker.bindPdfjsWorkerSystemRendererControllerProbe(() => shutdownInProgress);
+    worker.bindPdfjsWorkerNativeCanvasBlockReasonProbe(() => lastNativeCanvasBlockReason);
+    inProcessWorkerModule = worker;
+    return worker;
+  });
+  return await inProcessWorkerModulePromise;
+}
+
+// Native canvas inside an embedded (Electron) host.
+//
+// History, because the reasoning matters more than the switch. The block was
+// inherited from the worker-thread path, and that one was itself precautionary:
+// it came from an Electron documentation warning that loading native modules
+// from a worker can crash the process, not from an observed crash. The one
+// canvas failure actually measured was macOS-specific and was not a crash at all
+// - ERR_DLOPEN_FAILED because the binding's code signature has a different Team
+// ID from the host process (docs/CLAUDE_DESKTOP_TEST_RUN_2026-04-23.md:394).
+// That has no Windows analogue.
+//
+// Blocking it is what leaves an embedded host with no renderer when there is no
+// system fallback, which is the Windows shape. An earlier version of this
+// comment claimed "the renderer policy already falls back to the system
+// renderer, so an unsafe native attempt degrades rather than failing the call."
+// That is FALSE off macOS: index.js's pdfjsRendererPolicy() returns bare
+// "native" for every non-darwin platform, so on Windows and Linux there is
+// nothing to degrade to.
+//
+// Measured 2026-08-06 on Windows 11 / Claude Desktop 1.25927.0, and independently
+// in CI (run 31051499142, artifact windows-render-probe.json: block in force ->
+// error, block lifted -> renderer "native-canvas"): with the block lifted the
+// binding loads and renders, with no host instability observed.
+//
+// That is not enough on its own to trust a default, because the failure this
+// guards against is a hard host crash that no in-process handler can catch. So
+// the default stays OFF on every platform. What follows is the durable recovery
+// a default would need, kept load-bearing for the opt-in users who are the only
+// available source of the soak evidence a flip requires.
+//
+// A win32 default was implemented and reverted once. The adversarial review that
+// killed it found the crash-survival latch cleared its marker the moment dlopen
+// returned, so it covered only the link step - the one step two positive
+// datapoints already existed for. The instability this guards against, in a
+// Chromium process that already has its own Skia, characteristically appears at
+// first draw. The mechanism also had no ownership, so two servers sharing one
+// home directory could erase each other's in-flight marker, and concurrency was
+// the exact condition named publicly on issue #42 as a prerequisite for
+// flipping. Both defects are addressed below.
+
+// Platforms where native canvas is ON by default inside an embedded host.
+// EMPTY ON PURPOSE. This array is the switch; adding "win32" is the whole flip,
+// and it must not be added until every gate is met:
+//
+//   - >= 20 renders across page sizes, plus a concurrent pair, on a real
+//     Windows Claude Desktop with no host crash
+//   - isolation mode observed as "in_process" for each, because a run that took
+//     the subprocess path never installed this guard and proves nothing about it
+//   - this latch fault-injected (test/embedded-native-canvas-latch.test.js) and
+//     observed latching off after at least one real host crash
+//   - a Linux datapoint before Linux is added; macOS retested or excluded
+//
+// macOS is excluded on its own merits regardless: largest installed base, a
+// working system-renderer fallback it can degrade to, and the only platform with
+// an observed canvas-attributed failure.
+const NATIVE_CANVAS_DEFAULT_PLATFORMS = [];
+
+// Marker phases. Both mean "a process entered a window it might not return
+// from"; they differ only in which window, which is worth recording because it
+// is the first thing anyone debugging a latched install will want to know.
+const NATIVE_CANVAS_PHASE_LINKING = "linking";
+const NATIVE_CANVAS_PHASE_DRAWING = "drawing";
+
+// Where the crash-survival marker lives. Mirrors index.js's PROFILES_DIR so it
+// sits with the rest of this server's durable state. An unsubstituted manifest
+// template is treated as absent rather than creating a directory named "${...}".
+export function nativeCanvasMarkerPath(env = process.env) {
+  const configured = typeof env.DEFAULT_PROFILES_DIR === "string"
+    && env.DEFAULT_PROFILES_DIR
+    && !env.DEFAULT_PROFILES_DIR.includes("${")
+    ? env.DEFAULT_PROFILES_DIR
+    : join(homedir(), ".pdf-toolkit-files");
+  return join(configured, "native-canvas-attempt.json");
+}
+
+function writeNativeCanvasMarker(markerPath, phase, token) {
+  mkdirSync(dirname(markerPath), { recursive: true });
+  // Write to a temp file and rename over the target, rather than truncating the
+  // target in place.
+  //
+  // Truncating is not survivable where it matters. `openSync(path, "w")` empties
+  // the file immediately, so a host that hard-crashes between the truncate and
+  // the completed write leaves a zero-length marker - and an empty marker reads
+  // as "no marker". For the arm that is harmless, because a crash there means
+  // dlopen never ran and nothing needs latching. For the phase advance it is a
+  // hole straight through the mechanism: it destroys a valid `linking` marker in
+  // order to write `drawing`, and a crash inside that window is exactly the
+  // link-to-first-draw crash this exists to catch. Renaming is atomic, so the
+  // marker on disk is always either the previous valid one or the new valid one.
+  const tempPath = `${markerPath}.${process.pid}.${token.slice(0, 8)}.tmp`;
+  const handle = openSync(tempPath, "w");
+  try {
+    writeFileSync(handle, JSON.stringify({
+      phase,
+      token,
+      pid: process.pid,
+      attempted_at: new Date().toISOString(),
+      platform: process.platform,
+      arch: process.arch,
+    }));
+    // fsync the contents before the rename, otherwise the rename can land while
+    // the bytes are still only in the page cache.
+    fsyncSync(handle);
+  } finally {
+    closeSync(handle);
+  }
+  // If the write above threw, this is never reached and the temp file is left
+  // behind. That is inert: nothing ever reads a `.tmp` path, and the caller
+  // treats the throw as "could not arm" and refuses the load.
+  renameSync(tempPath, markerPath);
+}
+
+function processIsAlive(pid) {
+  if (!Number.isInteger(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    // EPERM means the pid exists but belongs to another user, which is still
+    // alive for our purposes.
+    return error?.code === "EPERM";
+  }
+}
+
+// "clear"      - no evidence of an unfinished attempt; proceed.
+// "latched"    - a previous process armed a marker and never came back. Refuse,
+//                durably, until an operator intervenes.
+// "concurrent" - another *live* process is mid-attempt. Refuse this load, but do
+//                not treat it as a crash: nothing has died.
+//
+// The one imprecision worth naming: if a crashed process's pid has since been
+// reused by an unrelated live process, this reports "concurrent" rather than
+// "latched". That still refuses the load, and the next boot with that pid gone
+// latches correctly. It fails toward retryable rather than toward loading.
+export function nativeCanvasLatchState(markerPath = nativeCanvasMarkerPath()) {
+  let raw;
+  try {
+    raw = readFileSync(markerPath, "utf8");
+  } catch {
+    return "clear";
+  }
+  if (raw.trim() === "") return "clear";
+  let record;
+  try {
+    record = JSON.parse(raw);
+  } catch {
+    // An unparseable marker is still evidence that some process armed one and
+    // did not clean up. Treat it as a latch rather than reasoning past it.
+    return "latched";
+  }
+  if (
+    record?.phase !== NATIVE_CANVAS_PHASE_LINKING
+    && record?.phase !== NATIVE_CANVAS_PHASE_DRAWING
+  ) {
+    return "latched";
+  }
+  // Our own in-flight attempt, re-entered. Not a latch, and not a competitor.
+  if (activeNativeCanvasAttempt && record.token === activeNativeCanvasAttempt.token) {
+    return "clear";
+  }
+  return processIsAlive(record.pid) ? "concurrent" : "latched";
+}
+
+function armNativeCanvasAttempt(markerPath) {
+  try {
+    const token = randomBytes(16).toString("hex");
+    writeNativeCanvasMarker(markerPath, NATIVE_CANVAS_PHASE_LINKING, token);
+    activeNativeCanvasAttempt = { markerPath, token };
+    return true;
+  } catch {
+    // If the marker cannot be written, a crash cannot be detected, so the load
+    // must not be attempted at all. Failing closed is the point of the exercise.
+    activeNativeCanvasAttempt = null;
+    return false;
+  }
+}
+
+function advanceNativeCanvasAttempt(phase) {
+  const attempt = activeNativeCanvasAttempt;
+  if (!attempt) return;
+  try {
+    writeNativeCanvasMarker(attempt.markerPath, phase, attempt.token);
+  } catch {
+    // The linking-phase marker is still on disk and still attributable to this
+    // process, so a crash from here is still caught. Nothing to recover.
+  }
+}
+
+function clearNativeCanvasAttempt() {
+  const attempt = activeNativeCanvasAttempt;
+  if (!attempt) return;
+  activeNativeCanvasAttempt = null;
+  let record;
+  try {
+    record = JSON.parse(readFileSync(attempt.markerPath, "utf8"));
+  } catch {
+    // Gone, or unreadable. If it is unreadable it may belong to someone else,
+    // so leave it: a stale marker costs a conservative latch, erasing another
+    // process's in-flight marker costs a missed crash.
+    return;
+  }
+  if (record?.token !== attempt.token) return;
+  try {
+    rmSync(attempt.markerPath, { force: true });
+  } catch {
+    // A stale marker only costs a conservative latch on the next boot.
+  }
+}
+
+// Called when the request that triggered a native-canvas load has completed,
+// either way. Completion means this process survived both the link and the first
+// draw, which is the entire window the marker exists to cover.
+//
+// It does not cover teardown. Covering teardown would mean holding the marker to
+// process exit, which cannot distinguish a canvas-attributed crash from a user
+// force-quitting the host - and force-quit is common enough that it would latch
+// off nearly every install. That limit is real and is not claimed away.
+export function settleNativeCanvasAttempt() {
+  clearNativeCanvasAttempt();
+}
+
+// Policy, in order:
+//   PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=0      always blocks (kill switch)
+//   PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=force  always allows, bypassing the latch,
+//                                           so a latched install can be
+//                                           recovered without deleting state by
+//                                           hand
+//   PDF_TOOLS_EMBEDDED_NATIVE_CANVAS=1      opt in, still subject to the latch
+//   platform in NATIVE_CANVAS_DEFAULT_PLATFORMS   same, and currently never
+//   everything else                         blocks
+//
+// "=1" deliberately respects the latch. In the reverted design the flag bypassed
+// it, which left the entire mechanism dead code for as long as the default was
+// off - it could only ever run on a population that did not yet exist. Binding
+// the flag to the latch instead means today's Windows opt-in users exercise the
+// recovery path, which is where the evidence for a future flip has to come from.
+export function embeddedNativeCanvasAllowed({
+  env = process.env,
+  platform = process.platform,
+  markerPath = null,
+} = {}) {
+  const override = env.PDF_TOOLS_EMBEDDED_NATIVE_CANVAS;
+  if (override === "0") return false;
+  if (override === "force") return true;
+  const requested = override === "1"
+    || NATIVE_CANVAS_DEFAULT_PLATFORMS.includes(platform);
+  if (!requested) return false;
+  return nativeCanvasLatchState(markerPath ?? nativeCanvasMarkerPath(env)) === "clear";
+}
+
+// The reason a load was refused, for the renderer error path to turn into
+// remediation the user can act on. Null when nothing has been refused.
+export function nativeCanvasBlockReason() {
+  return lastNativeCanvasBlockReason;
+}
+
+function refuseNativeCanvasLoad(reason) {
+  lastNativeCanvasBlockReason = reason;
+  const error = new Error(
+    "The native canvas binding is disabled in this embedded PDF host.",
+  );
+  error.code = "PDFJS_EMBEDDED_NATIVE_CANVAS_DISABLED";
+  return error;
+}
+
+function installInProcessCanvasNativeGuard({ dlopen = null } = {}) {
+  if (inProcessCanvasGuardInstalled) return;
+  inProcessCanvasGuardInstalled = true;
+  // Installed unconditionally, unlike the previous version which returned early
+  // when canvas was allowed. The guard is no longer only a blocker: on an
+  // allowed load it is what arms and phases the crash marker, so skipping it
+  // when allowed would skip the entire recovery mechanism.
+  const originalDlopen = dlopen ?? process.dlopen;
+  process.dlopen = function guardedDlopen(module, filename, ...args) {
+    const normalizedFilename = String(filename ?? "").replaceAll("\\", "/");
+    const isNativeCanvas = normalizedFilename.includes("/node_modules/@napi-rs/canvas")
+      || /\/skia\.[^/]+\.node$/i.test(normalizedFilename);
+    if (!isNativeCanvas) {
+      return originalDlopen.call(this, module, filename, ...args);
+    }
+
+    // Re-evaluated per load rather than cached at install time, so a latch
+    // written by a previous boot is honoured and an operator override takes
+    // effect without a restart of this code path.
+    const markerPath = nativeCanvasMarkerPath();
+    const latchState = nativeCanvasLatchState(markerPath);
+    if (!embeddedNativeCanvasAllowed({ markerPath })) {
+      throw refuseNativeCanvasLoad(
+        latchState === "clear" ? "disabled_by_policy" : latchState,
+      );
+    }
+    if (!armNativeCanvasAttempt(markerPath)) {
+      throw refuseNativeCanvasLoad("marker_unwritable");
+    }
+
+    lastNativeCanvasBlockReason = null;
+    try {
+      const loaded = originalDlopen.call(this, module, filename, ...args);
+      // The link survived. The remaining exposure is the first draw, so the
+      // marker stays on disk and only changes phase. settleNativeCanvasAttempt()
+      // clears it once the request that triggered this load completes.
+      advanceNativeCanvasAttempt(NATIVE_CANVAS_PHASE_DRAWING);
+      return loaded;
+    } catch (error) {
+      // A raised error is survival: the host is intact, so this must not latch
+      // and permanently disable a recoverable environment problem such as a
+      // missing VC++ runtime or an architecture mismatch.
+      clearNativeCanvasAttempt();
+      throw error;
+    }
+  };
+}
+
+// Test seam. The guard rewrites process.dlopen, which is process-global and
+// installed once, so a suite cannot exercise it without a way to inject a fake
+// loader and put the real one back.
+export function __installCanvasGuardForTest({ dlopen }) {
+  inProcessCanvasGuardInstalled = false;
+  activeNativeCanvasAttempt = null;
+  lastNativeCanvasBlockReason = null;
+  const savedDlopen = process.dlopen;
+  installInProcessCanvasNativeGuard({ dlopen });
+  const guarded = process.dlopen;
+  return {
+    guardedDlopen: guarded,
+    restore() {
+      process.dlopen = savedDlopen;
+      inProcessCanvasGuardInstalled = false;
+      activeNativeCanvasAttempt = null;
+      lastNativeCanvasBlockReason = null;
+    },
+  };
+}
+
+async function runInProcessWorker({
+  maxBinaryBytes,
+  maxResultBytes,
+  request,
+  signal,
+}) {
+  // Both isolated PDF.js paths were measured to crash Claude's embedded
+  // UtilityProcess. Its process.execPath is Claude Helper (Plugin) rather than
+  // a Node binary, so relaunching it produced SIGTRAP helper crashes, and
+  // ELECTRON_RUN_AS_NODE=1 exited 133 on a direct probe. The Node worker-thread
+  // fallback made Electron create a helper process and crash as well, which is
+  // specific to this library's native-canvas probe and browser-like runtime
+  // classification. It is NOT a general claim that the host cannot create a
+  // Node worker: PDF-lib keeps a worker_thread boundary on this same host and
+  // has completed live rotate, merge, and split mutations there.
+  //
+  // This compatibility path retains source binding, allowed-directory checks,
+  // request, path, queue, output, and binary bounds, native-canvas blocking,
+  // and macOS system-child reaping. It is not a separate heap or process
+  // boundary and cannot forcibly stop synchronous parser work.
+  if (signal?.aborted) throw abortError();
+  installInProcessCanvasNativeGuard();
+  const workerModule = await loadInProcessWorkerModule();
+  if (shutdownInProgress) throw resourceLimitError("worker_shutdown_in_progress");
+  let operationResult;
+  try {
+    operationResult = await workerModule.executePdfjsWorkerRequest(request);
+  } finally {
+    // The request that triggered any native-canvas load has now completed, one
+    // way or the other. Either outcome means this process survived the link and
+    // the first draw, so the crash marker has done its job and comes off. A
+    // thrown error is survival too: the host is intact enough to report it.
+    settleNativeCanvasAttempt();
+  }
+  if (signal?.aborted) throw abortError();
+  const encodedResult = Buffer.from(JSON.stringify(operationResult.result), "utf8");
+  if (encodedResult.length > maxResultBytes) {
+    throw resourceLimitError("worker_output_limit");
+  }
+  if (operationResult.binary === null) return operationResult.result;
+  const binary = Buffer.from(operationResult.binary);
+  const descriptor = {
+    bytes: binary.length,
+    mime_type: request.operation === "render_comparison_page"
+      ? "application/x-pdf-tools-rgba"
+      : "image/png",
+    sha256: createHash("sha256").update(binary).digest("hex"),
+  };
+  return {
+    ...operationResult.result,
+    binary: validateBinaryResult(
+      binary,
+      descriptor,
+      operationResult.result,
+      maxBinaryBytes,
+    ),
+  };
+}
+
 export async function runPdfjsSubprocess(request, {
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxResultBytes = DEFAULT_MAX_RESULT_BYTES,
@@ -511,6 +1337,10 @@ export async function runPdfjsSubprocess(request, {
   environment = process.env,
   platform = process.platform,
   spawnProcess = spawn,
+  isolationMode = DEFAULT_ISOLATION_MODE,
+  workerClass = Worker,
+  beforeSpawn = null,
+  removeOperationDirectory = rm,
   signal = null,
 } = {}) {
   const requestBytes = validateRequest(request);
@@ -521,34 +1351,77 @@ export async function runPdfjsSubprocess(request, {
   boundedInteger(maxOldSpaceMb, "maxOldSpaceMb", 64, 4096);
   nonEmptyString(workerPath, "workerPath");
   nonEmptyString(executable, "executable");
+  if (beforeSpawn !== null && typeof beforeSpawn !== "function") {
+    throw new TypeError("beforeSpawn must be a function or null.");
+  }
+  if (typeof removeOperationDirectory !== "function") {
+    throw new TypeError("removeOperationDirectory must be a function.");
+  }
+  if (!["in_process", "subprocess", "worker_thread"].includes(isolationMode)) {
+    throw new TypeError("isolationMode must be in_process, subprocess, or worker_thread.");
+  }
+  if (shutdownInProgress) throw resourceLimitError("worker_shutdown_in_progress");
 
   const deadlineAt = Date.now() + timeoutMs;
-  const releaseSlot = await acquireOperationSlot(deadlineAt, signal);
+  let settleOperation;
+  const operationSettlement = new Promise(resolve => {
+    settleOperation = resolve;
+  });
+  activeOperations.add(operationSettlement);
+  let releaseSlot = null;
   let operationDirectory = null;
   let operationError = null;
   let result;
   try {
+    releaseSlot = await acquireOperationSlot(deadlineAt, signal);
+    if (shutdownInProgress) throw resourceLimitError("worker_shutdown_in_progress");
     operationDirectory = await mkdtemp(join(tmpdir(), "pdf-tools-pdfjs-"));
     await chmod(operationDirectory, 0o700);
+    if (shutdownInProgress) throw resourceLimitError("worker_shutdown_in_progress");
+    if (signal?.aborted) throw abortError();
+    if (beforeSpawn !== null) await beforeSpawn();
+    if (shutdownInProgress) throw resourceLimitError("worker_shutdown_in_progress");
     if (signal?.aborted) throw abortError();
     const remainingMs = deadlineAt - Date.now();
     if (remainingMs < 100) throw resourceLimitError("worker_queue_timeout");
-    result = await runSpawnedWorker({
-      environment,
-      executable,
-      maxBinaryBytes,
-      maxOldSpaceMb,
-      maxResultBytes,
-      maxStderrBytes,
-      operationDirectory,
-      platform,
-      request,
-      requestBytes,
-      signal,
-      spawnProcess,
-      timeoutMs: remainingMs,
-      workerPath,
-    });
+    result = isolationMode === "in_process"
+      ? await runInProcessWorker({
+          maxBinaryBytes,
+          maxResultBytes,
+          request,
+          signal,
+        })
+      : isolationMode === "worker_thread"
+        ? await runThreadWorker({
+          environment,
+          maxBinaryBytes,
+          maxOldSpaceMb,
+          maxResultBytes,
+          operationDirectory,
+          platform,
+          request,
+          signal,
+          spawnProcess,
+          timeoutMs: remainingMs,
+          workerClass,
+          workerPath,
+        })
+      : await runSpawnedWorker({
+          environment,
+          executable,
+          maxBinaryBytes,
+          maxOldSpaceMb,
+          maxResultBytes,
+          maxStderrBytes,
+          operationDirectory,
+          platform,
+          request,
+          requestBytes,
+          signal,
+          spawnProcess,
+          timeoutMs: remainingMs,
+          workerPath,
+        });
   } catch (error) {
     operationError = error;
   }
@@ -556,15 +1429,18 @@ export async function runPdfjsSubprocess(request, {
   let cleanupError = null;
   if (operationDirectory !== null) {
     try {
-      await rm(operationDirectory, { force: true, recursive: true });
+      await removeOperationDirectory(operationDirectory, { force: true, recursive: true });
     } catch (error) {
       cleanupError = error;
     }
   }
-  releaseSlot();
-  if (cleanupError) {
-    throw resourceLimitError("operation_directory_cleanup_unproven", cleanupError);
-  }
+  if (releaseSlot !== null) releaseSlot();
+  const finalCleanupError = cleanupError
+    ? resourceLimitError("operation_directory_cleanup_unproven", cleanupError)
+    : null;
+  activeOperations.delete(operationSettlement);
+  settleOperation(finalCleanupError);
+  if (finalCleanupError) throw finalCleanupError;
   if (operationError) throw operationError;
   return result;
 }
@@ -588,22 +1464,149 @@ export function createPdfjsSubprocessRequest({
   return request;
 }
 
-export async function terminateAllPdfjsSubprocesses() {
-  await Promise.all([...activeChildren].map(async ({ child }) => {
-    const closed = new Promise(resolve => child.once("close", resolve));
-    signalChild(child, "SIGTERM");
+function terminateTrackedChild(child) {
+  return new Promise(resolve => {
+    if (child.exitCode !== null || child.signalCode !== null) {
+      resolve();
+      return;
+    }
     const escalation = setTimeout(
       () => signalChild(child, "SIGKILL"),
       TERMINATION_GRACE_MS,
     );
     escalation.unref();
-    await closed;
-    clearTimeout(escalation);
-  }));
+    child.once("close", () => {
+      clearTimeout(escalation);
+      resolve();
+    });
+    signalChild(child, "SIGTERM");
+  });
+}
+
+export async function settleAllShutdownOperations(operations) {
+  if (
+    !Array.isArray(operations)
+    || operations.some(operation => operation === null || typeof operation?.then !== "function")
+  ) {
+    throw new TypeError("shutdown operations must be promises.");
+  }
+  const settled = await Promise.allSettled(operations);
+  const failure = settled.find(outcome => outcome.status === "rejected")?.reason ?? null;
+  if (failure !== null) throw failure;
+}
+
+function poisonPdfjsShutdown() {
+  shutdownTerminal = true;
+  shutdownInProgress = true;
+  if (inProcessWorkerModule !== null) {
+    inProcessWorkerModule.poisonPdfjsWorkerSystemRenderer();
+  } else if (inProcessWorkerModulePromise !== null) {
+    void inProcessWorkerModulePromise.then(
+      worker => worker.poisonPdfjsWorkerSystemRenderer(),
+      () => {},
+    );
+  }
+}
+
+export function terminateAllPdfjsSubprocesses({
+  reopenAfterSuccessfulDrain = false,
+  shutdownTimeoutMs = OPERATION_SHUTDOWN_TIMEOUT_MS,
+} = {}) {
+  if (typeof reopenAfterSuccessfulDrain !== "boolean") {
+    throw new TypeError("reopenAfterSuccessfulDrain must be a boolean.");
+  }
+  boundedInteger(shutdownTimeoutMs, "shutdownTimeoutMs", 1, 60_000);
+  if (!reopenAfterSuccessfulDrain) poisonPdfjsShutdown();
+  if (gracefulShutdownPromise !== null) return gracefulShutdownPromise;
+  if (shutdownTerminal && reopenAfterSuccessfulDrain) {
+    return Promise.reject(resourceLimitError("worker_shutdown_terminal"));
+  }
+  shutdownInProgress = true;
+  const shutdownError = resourceLimitError("worker_shutdown_in_progress");
+  for (const waiter of [...queuedOperations]) waiter.reject(shutdownError);
+  const operations = [...activeOperations];
+  const childTerminations = [...activeChildren]
+    .map(({ child }) => terminateTrackedChild(child));
+  const threadTerminations = [...activeThreadWorkers]
+    .map(worker => Promise.resolve().then(() => worker.terminate()));
+  const threadChildTerminations = [...activeThreadSystemChildren]
+    .map(child => terminateTrackedChild(child));
+  let inProcessWorkerAtShutdown = null;
+  let inProcessTermination = [];
+  if (inProcessWorkerModule !== null) {
+    inProcessWorkerAtShutdown = Promise.resolve(inProcessWorkerModule);
+    inProcessTermination = [inProcessWorkerModule.beginPdfjsWorkerSystemShutdown({
+      terminal: shutdownTerminal,
+    })];
+  } else if (inProcessWorkerModulePromise !== null) {
+    inProcessWorkerAtShutdown = inProcessWorkerModulePromise;
+    inProcessTermination = [inProcessWorkerModulePromise.then(
+      worker => worker.beginPdfjsWorkerSystemShutdown({ terminal: shutdownTerminal }),
+    )];
+  }
+  gracefulShutdownPromise = (async () => {
+    let timer;
+    try {
+      const timeout = new Promise((_, reject) => {
+        timer = setTimeout(
+          () => reject(resourceLimitError("worker_shutdown_timeout")),
+          shutdownTimeoutMs,
+        );
+        timer.unref();
+      });
+      const settled = await Promise.race([
+        Promise.allSettled([
+          ...childTerminations,
+          ...threadTerminations,
+          ...threadChildTerminations,
+          ...inProcessTermination,
+          ...operations,
+        ]),
+        timeout,
+      ]);
+      const failure = settled.find(outcome => outcome.status === "rejected")?.reason
+        ?? settled.find(outcome => outcome.status === "fulfilled" && outcome.value instanceof Error)
+          ?.value
+        ?? null;
+      if (failure !== null) throw failure;
+      if (reopenAfterSuccessfulDrain && shutdownTerminal) {
+        throw resourceLimitError("worker_shutdown_terminal");
+      }
+      if (reopenAfterSuccessfulDrain) {
+        if (activeOperations.size !== 0 || queuedOperations.length !== 0) {
+          throw resourceLimitError("worker_shutdown_incomplete");
+        }
+        shutdownInProgress = false;
+        if (inProcessWorkerAtShutdown !== null) {
+          inProcessWorkerModule.reopenPdfjsWorkerSystemRenderer();
+        }
+      }
+    } catch (error) {
+      poisonPdfjsShutdown();
+      throw error;
+    } finally {
+      clearTimeout(timer);
+      gracefulShutdownPromise = null;
+    }
+  })();
+  return gracefulShutdownPromise;
 }
 
 export function forceTerminateAllPdfjsSubprocesses() {
+  poisonPdfjsShutdown();
   for (const { child } of activeChildren) {
     signalChild(child, "SIGKILL");
+  }
+  for (const worker of activeThreadWorkers) {
+    void worker.terminate();
+  }
+  for (const child of activeThreadSystemChildren) {
+    signalChild(child, "SIGKILL");
+  }
+  if (inProcessWorkerModulePromise !== null) {
+    void inProcessWorkerModulePromise.then(
+      worker => worker.forceTerminateAllPdfjsWorkerSystemChildren(),
+      () => {},
+    );
   }
 }

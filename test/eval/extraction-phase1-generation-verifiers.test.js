@@ -39,7 +39,7 @@ afterEach(async () => {
 });
 
 async function temporaryRoot() {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "phase1-fresh-verifier-"));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "phase1-fresh-verifier-")));
   temporaryRoots.push(root);
   return root;
 }

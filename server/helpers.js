@@ -20,6 +20,26 @@ import {
 } from "pdf-lib";
 
 const PDF_LIB_ENCRYPTED_ERROR_MESSAGE = new EncryptedPDFError().message;
+
+// pdf-lib 1.17.1 ships no decryption at all: PDFDocument.load has no password
+// option, and { ignoreEncryption: true } yields an unusable document. Any
+// operation that reaches pdf-lib therefore fails on an encrypted PDF no matter
+// what password the caller supplies, so the error must say that instead of
+// asking for the password again. PDF.js does decrypt, so the read tools that
+// route only through PDF.js are named as the working alternative.
+export const PDF_LIB_ENCRYPTED_MESSAGE =
+  "This PDF is encrypted and this operation cannot decrypt it: it reads the file with pdf-lib, "
+  + "which has no decryption support, so supplying a password here will not help. "
+  + "Decrypt the file first (for example with qpdf) and retry. "
+  + "To read an encrypted PDF as it is, use read_pdf_layout, convert_pdf_to_markdown, "
+  + "or get_pdf_info, which accept a password and decrypt with PDF.js.";
+
+// Parameter text for tools that decrypt with PDF.js for one part of their work
+// but still load page geometry through pdf-lib, which stops on encryption.
+export const PDF_LIB_GEOMETRY_PASSWORD_DESCRIPTION =
+  "Password for encrypted PDFs. PDF.js uses it, but this operation also loads page geometry with "
+  + "pdf-lib, which cannot decrypt PDFs, so an encrypted document still fails with the correct password.";
+
 const PDF_FIELD_VALIDATION_SCHEMA_VERSION = "1.0";
 const UNSUPPORTED_DIRECTORY_FSYNC_ERRORS = new Set([
   "EINVAL",
@@ -596,15 +616,45 @@ export function failedPdfFormValidation({ pdfPath = null, fileName = null } = {}
 // separate command arguments. Keep the marker explicit so ordinary MCP hosts
 // can continue using environment variables without treating unrelated CLI
 // arguments as filesystem permissions.
+// A host may hand us a path that still contains a placeholder. Two kinds arrive
+// and they are not the same thing.
+//
+// `${HOME}` and `${USERPROFILE}` are *resolvable*: they name the running user's
+// home directory, which this process already knows. Claude Desktop expands them
+// in manifest-authored env strings but not inside `user_config` default values,
+// so a user who never opened the settings sends us a literal `${HOME}/Documents`
+// on every platform. Measured on Windows Claude Desktop 1.26832.0, and on macOS
+// 1.26832.0 by replaying the host's own substitution against a real install —
+// the substitution code is shared, so this is not a per-platform accident.
+// test/host-mcp-config-substitution.test.js binds the manifest shape that makes
+// it true.
+//
+// `${user_config.*}` is *unresolvable*: it means the host did not substitute the
+// user's configuration and we genuinely do not know what was intended. That must
+// still be rejected, because guessing a boundary the user never chose is the
+// fail-open this replaced.
+export function expandHostPlaceholders(value) {
+  if (typeof value !== "string" || !value.includes("${")) return value;
+  return value
+    .replaceAll("${HOME}", homedir())
+    .replaceAll("${USERPROFILE}", homedir());
+}
+
 export function parseAllowedDirectoryArgs(argv = []) {
   const markerIndex = argv.indexOf("--allowed-directories");
   if (markerIndex === -1) return null;
 
-  return argv
-    .slice(markerIndex + 1)
-    .filter(argument => typeof argument === "string")
-    .map(argument => argument.trim())
-    .filter(argument => argument && !argument.includes("${"));
+  const values = [];
+  for (const argument of argv.slice(markerIndex + 1)) {
+    if (typeof argument !== "string") continue;
+    // Stop at the next option so an unrelated flag can never be mistaken for a
+    // filesystem permission.
+    if (argument.startsWith("--")) break;
+    const trimmed = expandHostPlaceholders(argument.trim());
+    if (!trimmed || trimmed.includes("${")) continue;
+    values.push(trimmed);
+  }
+  return values;
 }
 
 // Validate a signature name to prevent path traversal or weird filenames.
@@ -1601,6 +1651,38 @@ const PDF_OUTPUT_LOCK_CANDIDATE_PATTERN = /^\.pdf-tools-output-transaction\.lock
 const PDF_OUTPUT_STALE_LOCK_PATTERN = /^\.pdf-tools-output-transaction\.lock\.stale-[a-f0-9-]+$/;
 const PDF_OUTPUT_LOCK_OWNER_NAME = "owner.json";
 const NOFOLLOW_READ_FLAGS = fsConstants.O_RDONLY | (fsConstants.O_NOFOLLOW ?? 0);
+
+// Open a canonical path for reading and prove the descriptor is the same
+// regular file that was inspected a moment earlier. O_NOFOLLOW refuses a final
+// component that became a symlink after canonicalization; the device/inode
+// compare refuses a replacement that reused the name in the window between the
+// lstat and the open (CWE-367). The caller owns closing the returned handle.
+//
+// fsOps is injected so this window can be forced in a test: a filesystem whose
+// open() reaches a different inode than the preceding lstat() must be rejected
+// here rather than read.
+export async function openVerifiedRegularFile(fsOps, canonicalPath) {
+  const beforeStat = await fsOps.lstat(canonicalPath);
+  if (beforeStat.isSymbolicLink() || !beforeStat.isFile()) {
+    throw new Error(`Not a regular file: ${path.basename(canonicalPath)}`);
+  }
+  const handle = await fsOps.open(canonicalPath, NOFOLLOW_READ_FLAGS);
+  try {
+    const descriptorStat = await handle.stat();
+    if (
+      !descriptorStat.isFile()
+      || descriptorStat.dev !== beforeStat.dev
+      || descriptorStat.ino !== beforeStat.ino
+    ) {
+      throw new Error("The file changed while it was being opened. Retry the request.");
+    }
+    return { handle, stat: descriptorStat };
+  } catch (error) {
+    await handle.close().catch(() => {});
+    throw error;
+  }
+}
+
 const RECOVERY_DIRECTORY_GUARD_FAILURE = Symbol("recoveryDirectoryGuardFailure");
 const JOURNAL_EXPECTATION_FAILURE = Symbol("journalExpectationFailure");
 const JOURNAL_PUBLISHED_EXPECTATION = Symbol("journalPublishedExpectation");
@@ -1662,6 +1744,10 @@ async function bindAtomicOutputDirectory(
     };
   } catch (error) {
     if (error?.code === "ATOMIC_OUTPUT_DIRECTORY_CHANGED") throw error;
+    // A refusal is not a race. Rewrapping it as a directory change would tell
+    // the caller to retry an operation the policy will never allow, and would
+    // hide the real reason it stopped.
+    if (error?.code === "path_policy_denied") throw error;
     throw atomicOutputDirectoryChangedError(error);
   }
 }
@@ -1697,6 +1783,10 @@ async function assertAtomicOutputDirectory(binding, assertPathAllowed, fileSyste
     await assertPathAllowed(canonicalAfter);
   } catch (error) {
     if (error?.code === "ATOMIC_OUTPUT_DIRECTORY_CHANGED") throw error;
+    // A refusal is not a race. Rewrapping it as a directory change would tell
+    // the caller to retry an operation the policy will never allow, and would
+    // hide the real reason it stopped.
+    if (error?.code === "path_policy_denied") throw error;
     throw atomicOutputDirectoryChangedError(error);
   }
 }
@@ -3869,6 +3959,132 @@ export const PAGE_ANALYSIS_MUTATION_GUIDANCE =
   "likely_blank is a conservative heuristic, not authorization to delete or reorder a page. " +
   "Visually inspect every blank candidate with render_pdf_page before mutation.";
 
+// Ported from firecrawl/pdf-inspector (MIT): src/detector.rs. These are PDF.js
+// measurement thresholds, not raw PDF operator thresholds. Keep them named so
+// the fixture corpus and boundary tests pin the routing contract.
+export const MIN_TEXT_CHARS = 25;
+export const MIN_TEXT_CHARS_WITH_IMAGES = 100;
+export const IMAGE_DOMINATED_MIN_PAINTS = 1;
+export const VECTOR_SEGMENT_MIN = 1000;
+export const TEXT_PAGE_RATIO_THRESHOLD = 0.6;
+
+export const PAGE_CLASSIFICATION_REASONS = Object.freeze([
+  "no_text_layer",
+  "image_dominated",
+  "vector_only_text",
+  "suspected_text_integrity",
+  "analysis_unavailable",
+]);
+
+const ROUTING_TEXT_LENGTH = Symbol("routingTextLength");
+
+// Ported from firecrawl/pdf-inspector (MIT): src/text_quality.rs. Keep this
+// synchronized with layout-extraction.js because get_page_analysis and
+// read_pdf_content receive PDF.js text items rather than the extraction IR.
+function codePointIsPrivateUse(codePoint) {
+  return (codePoint >= 0xe000 && codePoint <= 0xf8ff)
+    || (codePoint >= 0xf0000 && codePoint <= 0xffffd)
+    || (codePoint >= 0x100000 && codePoint <= 0x10fffd);
+}
+
+function itemTextIntegrityForRouting(text) {
+  const codePoints = [...text];
+  let replacementCharacters = 0;
+  let longestReplacementRun = 0;
+  let replacementSpans = 0;
+  let replacementRun = 0;
+  let privateUse = 0;
+  let privateUseRuns = 0;
+  let privateRun = 0;
+  for (const character of codePoints) {
+    const codePoint = character.codePointAt(0);
+    if (character === "\uFFFD") {
+      replacementCharacters += 1;
+      replacementRun += 1;
+      longestReplacementRun = Math.max(longestReplacementRun, replacementRun);
+    } else if (replacementRun > 0) {
+      if (replacementRun >= 2) replacementSpans += 1;
+      replacementRun = 0;
+    }
+    if (codePointIsPrivateUse(codePoint)) {
+      privateUse += 1;
+      privateRun += 1;
+    } else if (privateRun > 0) {
+      if (privateRun >= 3) privateUseRuns += 1;
+      privateRun = 0;
+    }
+  }
+  if (replacementRun >= 2) replacementSpans += 1;
+  if (privateRun >= 3) privateUseRuns += 1;
+  const replacementSignal = longestReplacementRun >= 2 || replacementCharacters >= 3;
+  let c1ControlTokens = 0;
+  for (const token of text.matchAll(/\S+/gu)) {
+    const tokenCodePoints = [...token[0]];
+    const c1Count = tokenCodePoints.filter(character => {
+      const codePoint = character.codePointAt(0);
+      return codePoint >= 0x80 && codePoint <= 0x9f;
+    }).length;
+    if (tokenCodePoints.length >= 5 && c1Count >= 2 && c1Count * 20 >= tokenCodePoints.length) c1ControlTokens += 1;
+  }
+  const privateUseSignal = privateUseRuns > 0
+    || (codePoints.length >= 5 && privateUse >= 2 && privateUse * 2 >= codePoints.length);
+  return {
+    replacementCharacters: replacementSignal ? replacementCharacters : 0,
+    longestReplacementRun,
+    replacementSpans: replacementSignal ? replacementSpans : 0,
+    privateUseRuns: privateUseSignal ? Math.max(1, privateUseRuns) : 0,
+    c1ControlTokens,
+  };
+}
+
+function nonAlphanumericDominanceForRouting(text) {
+  const codePoints = [...text];
+  let total = 0;
+  let alphanumeric = 0;
+  for (let index = 0; index < codePoints.length;) {
+    if ([".", "_", "·"].includes(codePoints[index])) {
+      let end = index + 1;
+      while (end < codePoints.length && [".", "_", "·"].includes(codePoints[end])) end += 1;
+      if (end - index >= 3) {
+        index = end;
+        continue;
+      }
+    }
+    const character = codePoints[index++];
+    if (/\s/u.test(character)) continue;
+    total += 1;
+    if (/^[\p{L}\p{N}]$/u.test(character)) alphanumeric += 1;
+  }
+  return total >= 50 && alphanumeric * 2 < total;
+}
+
+export function deriveTextIntegrityForRouting(texts, unavailable = false) {
+  if (unavailable) return { status: "unavailable", signals: [] };
+  const itemTexts = (texts ?? []).map(text => String(text ?? ""));
+  const pageText = itemTexts.join("\n");
+  const itemSignals = itemTexts.map(itemTextIntegrityForRouting);
+  const characters = [...pageText].length;
+  const replacementCharacters = itemSignals.reduce((sum, signal) => sum + signal.replacementCharacters, 0);
+  const replacementSpans = itemSignals.reduce((sum, signal) => sum + signal.replacementSpans, 0);
+  const longestReplacementRun = Math.max(0, ...itemSignals.map(signal => signal.longestReplacementRun));
+  const privateUseRuns = itemSignals.reduce((sum, signal) => sum + signal.privateUseRuns, 0);
+  const c1ControlTokens = itemSignals.reduce((sum, signal) => sum + signal.c1ControlTokens, 0);
+  const replacementSuspect = (characters <= 80 && longestReplacementRun >= 2)
+    || (replacementCharacters >= 12 && replacementCharacters / Math.max(1, characters) >= 0.05)
+    || (replacementSpans >= 3 && replacementSpans / Math.max(1, characters) >= 0.025)
+    || (longestReplacementRun >= 8 && longestReplacementRun / Math.max(1, characters) >= 0.025);
+  const signals = [];
+  if (replacementCharacters > 0) signals.push({ kind: "replacement_characters", count: replacementCharacters });
+  if (privateUseRuns > 0) signals.push({ kind: "private_use_runs", count: privateUseRuns });
+  if (c1ControlTokens > 0) signals.push({ kind: "c1_control_tokens", count: c1ControlTokens });
+  if (nonAlphanumericDominanceForRouting(pageText)) signals.push({ kind: "non_alphanumeric_dominance", count: 1 });
+  return {
+    status: replacementSuspect || privateUseRuns > 0 || c1ControlTokens > 0 || signals.some(signal => signal.kind === "non_alphanumeric_dominance")
+      ? "suspect" : "ok",
+    signals,
+  };
+}
+
 function initialPageAnalysis(page, index) {
   const { width, height } = page.getSize();
   const metrics = getPageDisplayMetrics({
@@ -3883,12 +4099,16 @@ function initialPageAnalysis(page, index) {
     text_snippet: null,
     has_images: null,
     has_graphics: null,
+    image_op_count: null,
+    path_op_count: null,
+    path_segment_count: null,
     content_analysis_status: "not_analyzed",
     text_extraction_status: "not_analyzed",
     image_detection_status: "not_analyzed",
     graphics_detection_status: "not_analyzed",
     blank_status: "unknown",
     analysis_error_codes: [],
+    text_integrity: { status: "unavailable", signals: [] },
     analysis_provenance: {
       dimensions: "pdf-lib",
       text: null,
@@ -3898,13 +4118,184 @@ function initialPageAnalysis(page, index) {
   };
 }
 
+function measuredRoutingTextLength(page) {
+  return Number.isSafeInteger(page?.[ROUTING_TEXT_LENGTH])
+    ? page[ROUTING_TEXT_LENGTH]
+    : page?.text_length;
+}
+
+function pageMeasurementsAvailable(page) {
+  return page?.text_extraction_status === "complete"
+    && page?.image_detection_status === "complete"
+    && page?.graphics_detection_status === "complete"
+    && Number.isSafeInteger(measuredRoutingTextLength(page))
+    && Number.isSafeInteger(page?.image_op_count)
+    && Number.isSafeInteger(page?.path_op_count)
+    && Number.isSafeInteger(page?.path_segment_count);
+}
+
+/**
+ * Return the deterministic, evidence-backed routing classification for one
+ * page. Failed or not-yet-run measurements are never converted into zeros.
+ */
+export function classifyPageRouting(page, {
+  minTextChars = MIN_TEXT_CHARS,
+  minTextCharsWithImages = MIN_TEXT_CHARS_WITH_IMAGES,
+  imageDominatedMinPaints = IMAGE_DOMINATED_MIN_PAINTS,
+  vectorSegmentMin = VECTOR_SEGMENT_MIN,
+} = {}) {
+  if (page?.content_analysis_status === "not_analyzed") {
+    return {
+      text_bearing: null,
+      reasons: [],
+    };
+  }
+  if (!pageMeasurementsAvailable(page)) {
+    return {
+      text_bearing: null,
+      reasons: ["analysis_unavailable"],
+    };
+  }
+
+  const textLength = measuredRoutingTextLength(page);
+  const hasImages = page.image_op_count >= imageDominatedMinPaints;
+  const textThreshold = hasImages ? minTextCharsWithImages : minTextChars;
+  const textBearing = textLength >= textThreshold;
+  const reasons = [];
+  if (!textBearing) {
+    reasons.push(hasImages ? "image_dominated" : "no_text_layer");
+  }
+  if (page.path_segment_count >= vectorSegmentMin && textLength < 30) {
+    reasons.push("vector_only_text");
+  }
+  if (page.text_integrity?.status === "suspect") {
+    reasons.push("suspected_text_integrity");
+  }
+  return { text_bearing: textBearing, reasons };
+}
+
+function pageHasImageEvidence(page) {
+  return Number.isSafeInteger(page?.image_op_count) && page.image_op_count > 0;
+}
+
+function pageHasVectorEvidence(page, routing) {
+  return routing.reasons.includes("vector_only_text")
+    || (Number.isSafeInteger(page?.path_segment_count) && page.path_segment_count > 0);
+}
+
+/** Roll up per-page routing decisions without inventing confidence scores. */
+export function rollupPageClassification(pages, pagesAnalyzed = null) {
+  if (!Array.isArray(pages)) throw new TypeError("pages must be an array.");
+  const pagesNotAnalyzed = pages
+    .filter(page => page.content_analysis_status === "not_analyzed")
+    .map(page => page.page);
+  const analyzedPages = pages.filter(page => page.content_analysis_status !== "not_analyzed");
+  const decisions = analyzedPages.map(page => ({ page, routing: classifyPageRouting(page) }));
+  const pagesNeedingVision = decisions
+    .filter(({ routing }) => routing.reasons.length > 0)
+    .map(({ page, routing }) => ({ page: page.page, reasons: routing.reasons }));
+  const analyzedCount = pagesAnalyzed === null ? analyzedPages.length : pagesAnalyzed;
+  const available = decisions.filter(({ routing }) => routing.text_bearing !== null);
+  const textBearingPages = available.filter(({ routing }) => routing.text_bearing);
+  const imagePages = available.filter(({ page }) => pageHasImageEvidence(page));
+  const nonTextPages = available.filter(({ routing }) => !routing.text_bearing);
+  const unavailable = decisions.some(({ routing }) => routing.reasons.includes("analysis_unavailable"));
+  const provesMixed = textBearingPages.length > 0
+    && nonTextPages.length > 0;
+  const textRatio = available.length > 0 ? textBearingPages.length / available.length : null;
+
+  let documentKind = "unknown";
+  if (unavailable) {
+    // Fail closed: a page whose measurements ran and failed can never be
+    // absorbed into a confident text_based summary. Available evidence may
+    // still prove the document mixed; anything less stays unknown.
+    documentKind = provesMixed ? "mixed" : "unknown";
+  } else if (textRatio !== null && textRatio >= TEXT_PAGE_RATIO_THRESHOLD) {
+    documentKind = "text_based";
+  } else if (textBearingPages.length > 0 && pagesNeedingVision.length > 0) {
+    documentKind = "mixed";
+  } else if (textBearingPages.length === 0 && imagePages.length > 0) {
+    const imageReasonCount = pagesNeedingVision.filter(entry => entry.reasons.includes("image_dominated")).length;
+    const vectorReasonCount = pagesNeedingVision.filter(entry => entry.reasons.includes("vector_only_text")).length;
+    documentKind = vectorReasonCount > imageReasonCount ? "vector_heavy" : "image_based";
+  } else if (available.length > 0 && nonTextPages.length === available.length) {
+    const vectorReasonCount = pagesNeedingVision.filter(entry => entry.reasons.includes("vector_only_text")).length;
+    const imageReasonCount = pagesNeedingVision.filter(entry => entry.reasons.includes("image_dominated")).length;
+    if (vectorReasonCount > imageReasonCount && vectorReasonCount > 0) documentKind = "vector_heavy";
+    else if (imageReasonCount > 0) documentKind = "image_based";
+    else if (available.every(({ page }) => !pageHasImageEvidence(page) && !pageHasVectorEvidence(page, classifyPageRouting(page)))) documentKind = "empty";
+  }
+
+  return {
+    document_kind: documentKind,
+    pages_analyzed: analyzedCount,
+    pages_needing_vision: pagesNeedingVision,
+    pages_not_analyzed: pagesNotAnalyzed,
+  };
+}
+
 function markPageUnavailable(page, errorCode) {
   page.content_analysis_status = "unavailable";
   page.text_extraction_status = "failed";
   page.image_detection_status = "failed";
   page.graphics_detection_status = "failed";
   page.blank_status = "unknown";
+  page.image_op_count = null;
+  page.path_op_count = null;
+  page.path_segment_count = null;
+  page.text_integrity = { status: "unavailable", signals: [] };
   page.analysis_error_codes.push(errorCode);
+}
+
+function drawOpsCommandCount(buffer) {
+  if (buffer === null || buffer === undefined) return 0;
+  if (!Array.isArray(buffer) && !ArrayBuffer.isView(buffer)) {
+    throw new Error("Invalid constructPath DrawOPS buffer in operator list.");
+  }
+  let index = 0;
+  let count = 0;
+  while (index < buffer.length) {
+    const opcode = Number(buffer[index++]);
+    const coordinateCount = opcode === 2 ? 6
+      : opcode === 3 ? 4
+        : opcode === 0 || opcode === 1 ? 2
+          : opcode === 4 ? 0
+            : null;
+    if (coordinateCount === null || index + coordinateCount > buffer.length) {
+      throw new Error("Invalid constructPath DrawOPS buffer in operator list.");
+    }
+    index += coordinateCount;
+    count += 1;
+  }
+  return count;
+}
+
+function countOperatorMeasurements(pdfjsLib, operators, imageOps, graphicsOps) {
+  if (!Array.isArray(operators?.fnArray)) throw new Error("PDF.js operator list unavailable");
+  const fnArray = operators.fnArray;
+  const argsArray = Array.isArray(operators.argsArray) ? operators.argsArray : null;
+  const constructPath = pdfjsLib.OPS?.constructPath;
+  let pathOpCount = 0;
+  let pathSegmentCount = 0;
+  for (let index = 0; index < fnArray.length; index += 1) {
+    if (fnArray[index] !== constructPath) continue;
+    pathOpCount += 1;
+    if (!argsArray) throw new Error("PDF.js constructPath arguments unavailable");
+    const args = argsArray[index];
+    if (!Array.isArray(args)) throw new Error("PDF.js constructPath arguments malformed");
+    const pathData = args[1];
+    if (!Array.isArray(pathData) && !ArrayBuffer.isView(pathData)) {
+      throw new Error("PDF.js constructPath data unavailable");
+    }
+    const drawOps = pathData[0];
+    pathSegmentCount += drawOpsCommandCount(drawOps);
+  }
+  return {
+    imageOpCount: fnArray.filter(fn => imageOps.includes(fn)).length,
+    graphicsOpCount: fnArray.filter(fn => graphicsOps.includes(fn)).length,
+    pathOpCount,
+    pathSegmentCount,
+  };
 }
 
 function finalizePageAnalysis(page) {
@@ -4033,7 +4424,11 @@ export async function analyzePdfPages({
           try {
             const content = await pdfjsPage.getTextContent();
             const fullText = content.items.map(item => item.str).join("");
+            pageResult.text_integrity = deriveTextIntegrityForRouting(
+              content.items.filter(item => typeof item?.str === "string").map(item => item.str),
+            );
             pageResult.text_length = fullText.length;
+            pageResult[ROUTING_TEXT_LENGTH] = fullText.trim().length;
             pageResult.text_snippet = fullText.slice(0, 100);
             pageResult.text_extraction_status = "complete";
             pageResult.analysis_provenance.text = "pdfjs";
@@ -4052,8 +4447,12 @@ export async function analyzePdfPages({
               throw new Error("PDF.js content operators unavailable");
             }
             const ops = await pdfjsPage.getOperatorList();
-            pageResult.has_images = ops.fnArray.some(fn => imageOps.includes(fn));
-            pageResult.has_graphics = ops.fnArray.some(fn => graphicsOps.includes(fn));
+            const measurements = countOperatorMeasurements(pdfjsLib, ops, imageOps, graphicsOps);
+            pageResult.image_op_count = measurements.imageOpCount;
+            pageResult.path_op_count = measurements.pathOpCount;
+            pageResult.path_segment_count = measurements.pathSegmentCount;
+            pageResult.has_images = measurements.imageOpCount > 0;
+            pageResult.has_graphics = measurements.graphicsOpCount > 0;
             pageResult.image_detection_status = "complete";
             pageResult.graphics_detection_status = "complete";
             pageResult.analysis_provenance.images = "pdfjs";
@@ -4095,6 +4494,7 @@ export async function analyzePdfPages({
     : intentionallyPartial
       ? "partial"
       : "complete";
+  const classification = rollupPageClassification(pages, pagesToAnalyze);
 
   return {
     total_pages: pages.length,
@@ -4108,6 +4508,7 @@ export async function analyzePdfPages({
     analysis_errors: analysisErrors,
     retry_guidance: unknownPages.length > 0 ? PAGE_ANALYSIS_RETRY_GUIDANCE : null,
     mutation_guidance: PAGE_ANALYSIS_MUTATION_GUIDANCE,
+    classification,
     pages,
   };
 }

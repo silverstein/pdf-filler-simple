@@ -289,21 +289,236 @@ not an estimate of veraPDF accuracy or PDF/UA coverage. The safe repair guidance
 is diagnostic only: correcting identification metadata cannot make an otherwise
 inaccessible document conformant.
 
-Artifact authenticity is not complete. The official detached signature and
+Version 1 artifact authenticity is not complete. The official detached signature and
 fingerprint are pinned, but the signature was not verified because no trusted
 signing key was established in the disposable environment. HTTPS plus recorded
 hashes prevents unnoticed drift after this observation but does not replace a
 trusted signature chain.
+
+## Version 2 installer provenance candidate
+
+Version 1 and its recorded trial remain frozen evidence. The separately
+versioned `formal-corpus.v2.json` adds an installer-authenticity precondition
+without changing the two-file corpus or widening its PDF/UA-1 scope.
+
+The official [veraPDF installation documentation](https://docs.verapdf.org/install/)
+publishes the full primary OpenPGP fingerprint
+`13DD102B4DD69354D12DE5A83184863278B17FE7` and links the public key at
+`https://software.verapdf.org/keys/KEY`. Version 2 pins that URL, the exact
+5,613-byte key, its SHA-256, the detached signature and installer SHA-256
+values, and the exact `/usr/bin/gpgv` executable identity used by the evidence
+host. The key, detached signature, installer, verifier, validator, runtime, and
+corpus stay outside the repository and outside the extension.
+
+Acquire the exact v2 artifacts without importing the key into a user keyring:
+
+```bash
+umask 077
+mkdir -p /external/cache/verapdf-v2
+curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+  --output /external/cache/verapdf-v2/KEY \
+  https://software.verapdf.org/keys/KEY
+test "$(wc -c < /external/cache/verapdf-v2/KEY)" -eq 5613
+printf '%s  %s\n' \
+  30f1dc7fb7c9f3d9796dd9f9dd5d344ebbcf45bef9632d9c47c39cdf254249f2 \
+  /external/cache/verapdf-v2/KEY | sha256sum --check --strict
+
+curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+  --output /external/cache/verapdf-v2/verapdf-greenfield-1.30.2-installer.zip.asc \
+  https://software.verapdf.org/releases/1.30/verapdf-greenfield-1.30.2-installer.zip.asc
+test "$(wc -c < /external/cache/verapdf-v2/verapdf-greenfield-1.30.2-installer.zip.asc)" -eq 659
+printf '%s  %s\n' \
+  f33175e402f28c42e80866aa62aa337c5d7d7a16a4ea1ae4ff50b0f13343ff26 \
+  /external/cache/verapdf-v2/verapdf-greenfield-1.30.2-installer.zip.asc |
+  sha256sum --check --strict
+
+curl --proto '=https' --tlsv1.2 --fail --location --silent --show-error \
+  --output /external/cache/verapdf-v2/verapdf-greenfield-1.30.2-installer.zip \
+  https://software.verapdf.org/releases/1.30/verapdf-greenfield-1.30.2-installer.zip
+printf '%s  %s\n' \
+  6cc6341cb1af644044054b81f00a6590a7918abb18f762243de115258bcad838 \
+  /external/cache/verapdf-v2/verapdf-greenfield-1.30.2-installer.zip |
+  sha256sum --check --strict
+```
+
+A candidate v2 run uses only an isolated binary keyring decoded from the pinned
+ASCII-armored key. It supplies a disposable home and a minimal environment to
+`gpgv`, requires one exact status sequence, and checks the complete primary
+fingerprint, signature timestamp, public-key algorithm, digest algorithm, and
+signature class. Any malformed, missing, duplicate, fatal, or unexpected status
+fails closed. Installer authenticity must pass before the runner creates an
+evidence generation or invokes veraPDF.
+
+Before invocation, an external supervisor must attest the clean repository and
+capture a closed source/runtime receipt. The supervisor obtains `git rev-parse
+HEAD`, `git rev-parse 'HEAD^{tree}'`, and an empty `git status
+--porcelain=v1 --untracked-files=normal`; computes SHA-256 and byte size for the
+v2 CLI, v2 runner, imported v1 helper, and v2 contract; and records the
+realpath, SHA-256, size, and `process.version` for the Node executable. The
+receipt has this exact top-level shape:
+
+```bash
+test -z "$(git status --porcelain=v1 --untracked-files=normal)"
+git rev-parse HEAD
+git rev-parse 'HEAD^{tree}'
+sha256sum \
+  scripts/eval-run-accessibility-formal-v2.mjs \
+  test/eval/accessibility-formal-v2.js \
+  test/eval/accessibility-formal.js \
+  test/fixtures/eval/accessibility/formal-corpus.v2.json
+wc -c \
+  scripts/eval-run-accessibility-formal-v2.mjs \
+  test/eval/accessibility-formal-v2.js \
+  test/eval/accessibility-formal.js \
+  test/fixtures/eval/accessibility/formal-corpus.v2.json
+node -p 'process.version'
+node -p 'require("node:fs").realpathSync(process.execPath)'
+node -e 'const fs=require("node:fs");const crypto=require("node:crypto");const p=fs.realpathSync(process.execPath);const b=fs.readFileSync(p);console.log(crypto.createHash("sha256").update(b).digest("hex"), b.length)'
+```
+
+```json
+{
+  "receipt_version": 1,
+  "receipt_kind": "pdf_tools_accessibility_formal_v2_source_runtime",
+  "publication_authorized": false,
+  "captured_at": "2026-07-30T00:00:00.000Z",
+  "capture_method": "external_supervisor_git_sha256_node_identity_v1",
+  "repository": {
+    "commit": "40 lowercase hexadecimal characters",
+    "tree": "40 lowercase hexadecimal characters",
+    "clean_attested": true
+  },
+  "files": {
+    "cli": {"relative_path": "scripts/eval-run-accessibility-formal-v2.mjs", "sha256": "64 lowercase hexadecimal characters", "size": 1},
+    "runner": {"relative_path": "test/eval/accessibility-formal-v2.js", "sha256": "64 lowercase hexadecimal characters", "size": 1},
+    "v1_helper": {"relative_path": "test/eval/accessibility-formal.js", "sha256": "64 lowercase hexadecimal characters", "size": 1},
+    "contract": {"relative_path": "test/fixtures/eval/accessibility/formal-corpus.v2.json", "sha256": "64 lowercase hexadecimal characters", "size": 1}
+  },
+  "node": {
+    "executable_realpath": "/absolute/supervisor-observed/node",
+    "executable_sha256": "64 lowercase hexadecimal characters",
+    "executable_size": 1,
+    "version": "v22.0.0"
+  }
+}
+```
+
+The displayed sizes and versions are shape examples, not pinned values. Replace
+them with the exact supervisor observations. Create the receipt as an owned
+mode-0600 single-link file no larger than 65,536 bytes and retain the original
+outside the run. The runner exact-matches its current source files and live
+Node executable to the receipt, copies the receipt into the private generation,
+and binds its hash and source/runtime summary into the qualification index.
+The Git attestation remains the external supervisor's assertion. A modified
+runner can forge self-observation, so a separately retained supervisor receipt
+is part of qualification.
+
+Prepare a private, owner-only generation root and run:
+
+```bash
+mkdir -m 700 /external/evidence/accessibility-v2
+node scripts/eval-run-accessibility-formal-v2.mjs \
+  --source-receipt /external/evidence/pdf-tools-source-runtime.v1.json \
+  --corpus-dir /external/cache/pdfua-corpus \
+  --public-key /external/cache/verapdf-v2/KEY \
+  --signature /external/cache/verapdf-v2/verapdf-greenfield-1.30.2-installer.zip.asc \
+  --verifier /usr/bin/gpgv \
+  --validator /external/verapdf/verapdf \
+  --validator-artifact /external/cache/verapdf-v2/verapdf-greenfield-1.30.2-installer.zip \
+  --runtime-archive /external/cache/OpenJDK21U-jre_x64_linux_hotspot_21.0.11_10.tar.gz \
+  --java-home /external/temurin-jre \
+  --generation-root /external/evidence/accessibility-v2
+```
+
+The CLI writes only the whitelisted, non-publishable public projection to
+standard output. Raw signature status, signature diagnostics, validator
+reports, and the qualification index remain in a new mode-0700 private
+generation. Files are created mode 0600 with no-follow and exclusive flags,
+synced, closed, reopened, rehashed, and bound by an index written last. A
+partial generation without that final index is not qualified evidence.
+
+For each corpus input, the runner verifies the source bytes, writes them to a
+mode-0600 exclusive no-follow file under the stable disposable runtime home,
+reopens and rehashes that staged file, and invokes veraPDF only on the staged
+path. It checks the staged inode and bytes again after execution. A persistent
+swap at the original corpus path therefore cannot change the bytes attributed
+to that validator job.
+
+The runner retains open handles and exact device, inode, mode, and owner
+identities for both the generation root and the generation directory. It proves
+path and handle agreement before and after every artifact write, before the
+index, around directory sync, and before return. Each file is chmodded through
+its open handle before file sync, then bound to the same single-link inode
+through lstat and no-follow reopen. Generation writes accept safe basenames
+only, and directory sync uses the retained handle.
+
+These checks are not equivalent to `openat`. Node does not expose an `openat`
+primitive for path creation relative to the retained directory handle. A
+same-user actor can therefore target the short proof-to-open micro-race and
+restore the expected path before the post-write proof. This candidate detects
+persistent root and generation replacement, but does not claim to resist that
+transient attack.
+
+Qualification process limits are recursively exact fields in the v2 contract.
+They separately cap stdout, stderr, and aggregate bytes and set the timeout,
+SIGTERM-to-SIGKILL grace, and process-group-empty proof timeout. Callers cannot
+override them through the qualification API. The private index records the
+limits used.
+
+The runner launches each external executable in a dedicated process group.
+Timeout or output-limit termination sends SIGTERM to the complete group, waits
+the contract grace, then sends SIGKILL if needed. A surviving or ambiguously
+inspected descendant fails qualification. A low-probability process-group ID
+reuse remains an operational risk on a busy shared host because this slice does
+not use a cgroup or pidfd supervisor. The runner checks every pinned input and
+both complete installed-tree digests before signature verification, after
+signature verification, after validator preflight, after each fixture, and
+before the index is written.
+
+On failure, the CLI writes only a closed JSON envelope to standard error with
+`publication_authorized: false` and a reviewed path-free code. Unknown errors
+map to `EVALUATION_FAILED`. It emits no message, cause, stack, input value,
+private generation name, signer identity, raw GnuPG status, or diagnostic.
+On a completed run, standard output remains only the public projection.
+
+A qualifying v2 run permits only this bounded statement:
+
+> The pinned veraPDF installer signature was verified against the exact OpenPGP key and fingerprint published by veraPDF's official installation documentation.
+
+This statement is anchored to the key and fingerprint served by veraPDF's
+official HTTPS documentation. It is not an independently certified public-key
+infrastructure chain. The offline run does not refresh key revocation state.
+The evidence host kernel, operating system, loader, dynamic libraries, and
+Node runtime remain part of the trusted computing base. The source receipt pins
+the Node executable, not the complete host. Pre-run, post-run, inode, and handle
+checks detect persistent drift, but do not resist a same-user actor able to
+substitute and restore bytes during execution or exploit the Node
+proof-to-open micro-race.
+
+Synthetic parser and source-order tests cover the post-input authenticity gate.
+A full post-input cryptographic failure run still requires the exact external
+key, signature, installer, validator, and runtime artifacts on the evidence
+host. Until that external run is retained, the control-flow result is
+candidate evidence rather than executed cryptographic proof.
+
+Signature verification authenticates the pinned installer only. It does not
+establish validator correctness, complete machine-rule coverage, PDF/UA
+conformance, WCAG conformance, legal compliance, certification, or document
+accessibility. The v2 pilot still covers only two PDF/UA-1
+version-identification files and no human-verifiable requirement. Its public
+projection therefore carries `publication_authorized: false`, and every
+conformance, compliance, and certification state remains `not_established`.
 
 ## Required next evidence layers
 
 A future conformance lane should be added only as separately reviewed,
 versioned evidence adapters:
 
-1. Establish and document a trusted veraPDF signing key, verify the pinned
-   release signature, expand known-good/known-defect coverage across rule
-   families, and calibrate repair guidance. Treat validator crashes, skipped
-   rules, unknown profiles, and incomplete reports as unavailable evidence.
+1. Independently establish signing-key trust and current revocation status
+   beyond the v2 HTTPS key pin, expand known-good/known-defect coverage across
+   rule families, and calibrate repair guidance. Treat validator crashes,
+   skipped rules, unknown profiles, and incomplete reports as unavailable
+   evidence.
 2. Build standard-edition-specific human checklists derived from licensed
    normative requirements and appropriate supporting protocols. Retain the
    exact document hash, reviewer identity, competence/role, date, scope,

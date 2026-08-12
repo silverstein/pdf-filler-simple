@@ -98,7 +98,8 @@ content, so the complete workflow is not necessarily zero egress.
 - Read existing PDF text layers for summarization, question answering, and research workflows
 - Extract structured data to CSV
 - Inspect page-level details like orientation, text presence, images, and likely blank pages
-- Review metadata such as page count, dimensions, form fields, and file size
+- Review source-bound page geometry, bounded metadata, form widgets, ordinary annotations, and file identity
+- Inspect exactly eight shallow catalog-level accessibility signals with explicit missing or unavailable states and required human review
 
 PDF Tools does not currently bundle an OCR engine. Text reads use the PDF.js
 text layer. If the selected `read_pdf_content` result contains no text, the tool
@@ -107,6 +108,22 @@ Page and region rendering produces raster images, not recognized text. A mixed
 text/raster PDF, or raster pages after page 1, may therefore contain content the
 broad text read does not recognize. Optional local OCR remains a planned
 improvement rather than a shipped capability.
+
+`get_pdf_info` binds these observations to the exact race-aware source
+SHA-256, keeps widget annotations separate from ordinary annotations, and
+returns link or action targets only as inert values. Page and region renders
+report page geometry, coordinate spaces, renderer policy, the PNG SHA-256,
+and raw RGBA SHA-256 availability.
+
+`inspect_pdf_accessibility` is a bounded structural-review screen for an
+unencrypted local PDF. It does not run veraPDF, assess tag semantics or
+assistive-technology behavior, or establish PDF/UA, WCAG, certification,
+legal, or document-accessibility conclusions.
+
+Region-render inputs are top-left PDF.js viewport points after CropBox,
+rotation, and UserUnit. They are not MediaBox-relative signing-zone
+coordinates. The macOS Quick Look fallback renders whole pages and regions in
+that same view and reports raw pixels unavailable.
 
 ## Great Fit For
 
@@ -159,6 +176,10 @@ improvement rather than a shipped capability.
 
 ## Core Tools
 
+This list is complete: it names every tool the server registers. One of them,
+`read_pdf_bytes`, is available only to the in-app viewer and is not packed into
+the `.mcpb` manifest that ordinary model workflows discover.
+
 ### Viewer and Reading
 
 - `display_pdf`
@@ -167,7 +188,8 @@ improvement rather than a shipped capability.
 - `read_pdf_content`
 - `read_pdf_pages`
 - `read_pdf_layout`
-- `convert_pdf_to_markdown`
+- `convert_pdf_to_markdown` (reconstructs evidence-backed tables and source-validated external http or https links; unsupported, ambiguous, internal, and action links stay escaped text reported as typed gaps)
+- `verify_table_proposal` (checks a suggested table against the original PDF and returns it only when the text and layout match the document; unclear tables stay unconverted for review)
 - `render_pdf_page`
 - `render_pdf_region`
 - `search_pdf_text`
@@ -206,15 +228,17 @@ improvement rather than a shipped capability.
 ### Extraction and Analysis
 
 - `extract_to_csv`
+- `compare_pdfs`
 - `get_pdf_identity`
 - `get_pdf_info`
+- `inspect_pdf_accessibility`
 - `get_page_analysis`
 
 ### Active Document and Host Helpers
 
 - `get_active_document`
 - `set_active_document`
-- `get_pdf_resource_uri`
+- `get_allowed_directories`
 - `read_pdf_bytes`
 - `reveal_in_finder`
 
@@ -286,9 +310,9 @@ be silently omitted.
 
 ### Maintainer Docs
 
-- `docs/MAINTAINERS.md` — architecture and operations
-- `docs/RELEASE.md` — release checklist
-- `docs/SUPPORT.md` — issue triage
+- `docs/MAINTAINERS.md`: architecture and operations
+- `docs/RELEASE.md`: release checklist
+- `docs/SUPPORT.md`: issue triage
 
 </details>
 
@@ -302,3 +326,14 @@ be silently omitted.
 ## License
 
 MIT
+
+### Third-party notices
+
+The MCPB and the share ZIP both carry a vendored QPDF WebAssembly runtime at
+`vendor/qpdf-wasm/runtime/`. No tool loads it yet; it is packaged ahead of the
+integration that will use it. qpdf is Apache-2.0, and the complete notice set
+(qpdf, zlib, libjpeg-turbo, the Emscripten generated runtime, musl,
+compiler-rt, libc++, libc++abi and libunwind) ships beside it in
+`vendor/qpdf-wasm/runtime/licenses/`, bound to its SHA-256 hashes by
+`licenses/manifest.json`. The npm dependencies keep their own licences inside
+`node_modules/`, including the PDF.js, Foxit and Liberation font notices.

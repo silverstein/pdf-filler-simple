@@ -1,0 +1,179 @@
+{
+  "schema_version": 1,
+  "generated_by": "scripts/generate-type3-cm-reference.mjs",
+  "sources": [
+    {
+      "url": "https://mirrors.ctan.org/fonts/cm/tfm.zip",
+      "sha256": "9c0f99fa34c7d801c40f6b5ff60bc28f200e8ef6ffb2fe75e54ca835c67fc04c"
+    },
+    {
+      "url": "https://mirrors.ctan.org/fonts/cm/ps-type3.zip",
+      "sha256": "ef38efbd58774b454b190e17c8b5ca0fde13dd5d5ff2282bf0dc0313197f1033"
+    },
+    {
+      "url": "https://mirrors.ctan.org/fonts/cm/mf.zip",
+      "sha256": "b22c69034d9f3f7a9bf22673544bdeaace5656973cf7fb1a395a857148943076"
+    }
+  ],
+  "generator": {
+    "ghostscript": "10.07.1",
+    "qpdf": "qpdf version 12.3.2\nRun qpdf --copyright to see copyright and license information."
+  },
+  "outputs": {
+    "server/type3-cm-reference.js": "59ddf76aa7cfca1247cd2eb44c0768bfb4f7f326d7847280bb63103b5959cfda",
+    "pdf-toolkit-mcp-share/server/type3-cm-reference.js": "59ddf76aa7cfca1247cd2eb44c0768bfb4f7f326d7847280bb63103b5959cfda",
+    "test/fixtures/eval/extraction/type3-cm-reference.pdf": "6df7c4f585808954531b0a4824bb32dfaa5571812575aad90b9895fb8eea5844"
+  },
+  "fixture_drawn_slots": {
+    "computer-modern-math-italic": [
+      1,
+      11,
+      14,
+      15,
+      17,
+      18,
+      21,
+      22,
+      23,
+      25,
+      26,
+      27,
+      28,
+      33,
+      39,
+      58,
+      59,
+      61
+    ],
+    "computer-modern-math-symbol": [
+      0,
+      1,
+      6,
+      20,
+      21,
+      33,
+      48,
+      106,
+      112
+    ],
+    "computer-modern-math-extension": [
+      0,
+      1,
+      2,
+      3,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      26,
+      27,
+      82,
+      90
+    ]
+  },
+  "fixture_family_resolving_slots": {
+    "computer-modern-math-italic": [
+      1,
+      11,
+      14,
+      15,
+      17,
+      18,
+      21,
+      22,
+      23,
+      25,
+      26,
+      27,
+      28,
+      33,
+      39,
+      58,
+      59,
+      61
+    ],
+    "computer-modern-math-symbol": [
+      0,
+      1,
+      6,
+      20,
+      21,
+      33,
+      48,
+      106,
+      112
+    ],
+    "computer-modern-math-extension": [
+      0,
+      1,
+      2,
+      3,
+      16,
+      17,
+      18,
+      19,
+      20,
+      21,
+      26,
+      27,
+      82,
+      90
+    ]
+  },
+  "fixture_undrawable_slots": {
+    "computer-modern-math-italic": [],
+    "computer-modern-math-symbol": [],
+    "computer-modern-math-extension": []
+  },
+  "reviewed_slot_labels": {
+    "computer-modern-math-italic": {
+      "1": "Delta",
+      "11": "alpha",
+      "14": "delta",
+      "15": "epsilon",
+      "17": "eta",
+      "18": "theta",
+      "21": "lambda",
+      "22": "mu",
+      "23": "nu",
+      "25": "pi",
+      "26": "rho",
+      "27": "sigma",
+      "28": "tau",
+      "33": "omega",
+      "39": "variant-phi",
+      "58": "period",
+      "59": "comma",
+      "61": "slash"
+    },
+    "computer-modern-math-symbol": {
+      "0": "minus",
+      "1": "centered-dot",
+      "6": "plus-or-minus",
+      "20": "less-or-equal",
+      "21": "greater-or-equal",
+      "33": "right-arrow",
+      "48": "prime",
+      "106": "vertical",
+      "112": "square-root"
+    },
+    "computer-modern-math-extension": {
+      "0": "big-left-parenthesis",
+      "1": "big-right-parenthesis",
+      "2": "big-left-bracket",
+      "3": "big-right-bracket",
+      "16": "Big-left-parenthesis",
+      "17": "Big-right-parenthesis",
+      "18": "bigg-left-parenthesis",
+      "19": "bigg-right-parenthesis",
+      "20": "bigg-left-bracket",
+      "21": "bigg-right-bracket",
+      "26": "bigg-left-curly-brace",
+      "27": "bigg-right-curly-brace",
+      "82": "textstyle-integral",
+      "90": "displaystyle-integral"
+    }
+  }
+}

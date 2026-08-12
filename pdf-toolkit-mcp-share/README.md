@@ -46,7 +46,21 @@ installer uses `npm ci --omit=dev --engine-strict`, so an install fails instead
 of silently resolving a newer dependency graph.
 
 `SBOM.cdx.json` is a deterministic CycloneDX 1.6 inventory of the complete
-locked production graph. `SHARE-PROVENANCE.json` binds the lockfile, SBOM, and
+locked production graph plus the native components of the bundled QPDF
+WebAssembly runtime, each derived from its own pinned record.
+
+Every component states its licence terms. For npm packages the terms are the
+ones the package declares about itself, read out of the exact registry tarball
+the lockfile pins and marked `acknowledgement: "declared"`. A declaration the
+pinned SPDX licence list recognises is reported as a `license.id`; a compound
+declaration keeps its own operators as an SPDX `expression`, so a dual licence
+is never reduced to one half; anything else is reported as a `license.name`,
+which asserts nothing about SPDX. A package that declares no licence at all
+says `NOASSERTION` explicitly and carries a property saying what was looked for.
+Licence text that ships without naming an identifier is pointed at and hashed,
+never read and guessed at.
+
+`SHARE-PROVENANCE.json` binds the lockfile, SBOM, and
 packaged source files to SHA-256 digests. The SBOM is structurally and
 lock-coverage validated during packaging; this is not a claim of validation by
 an external CycloneDX schema validator.
@@ -84,16 +98,21 @@ host gate; a Linux-only smoke run does not establish Windows compatibility.
 Once installed, ask Claude in Cursor:
 - *"Read the form fields in this PDF file"*
 - *"Fill this W-9 form with my business information"* 
-- *"List all PDFs in my Documents folder"*
+- *"List the PDFs in my Documents folder"*
 - *"Create a profile with my personal info for future forms"*
 - *"Fill 50 PDFs using data from this spreadsheet"*
 - *"Read the content of this PDF document"*
 - *"Render page 1 of this scanned invoice so you can inspect it visually"*
+- *"Compare these two contract versions and cite every material change in both files"*
 - *"Merge these contracts and show me the result"*
 - *"Split this report every 10 pages"*
 - *"Rotate page 3 by 90 degrees"*
 
 ## Tools Available
+This page names a selection, not the whole surface: the server registers 43
+tools. The root `README.md` lists every one, and `docs/OUTPUT_SCHEMAS.md`
+carries their structured output contracts.
+
 - **display_pdf** - Interactive PDF viewer with search and form sidebar
 - **list_pdfs** - List PDF files in directories
 - **read_pdf_fields** - Read form fields from PDFs
@@ -106,14 +125,16 @@ Once installed, ask Claude in Cursor:
 - **read_pdf_content** - Read the PDF.js text layer; a wholly textless selected extraction may return only page 1 as an image for host/model vision
 - **read_pdf_pages** - Read a bounded page range with page-numbered structured output
 - **read_pdf_layout** - Extract bounded local text geometry and conservative reading order without OCR or table inference
-- **convert_pdf_to_markdown** - Convert supported PDF text to deterministic Markdown with explicit partial and unsupported-content gaps
-- **render_pdf_page** - Render a page to PNG for visual inspection of scanned/image-heavy PDFs
-- **render_pdf_region** - Render a bounded PDF region to PNG for focused visual inspection
+- **convert_pdf_to_markdown** - Convert supported PDF text to deterministic Markdown with explicit partial and unsupported-content gaps. Reconstructs a table only when every row fills every recurring column and the first row carries real header evidence, and emits a link only for a source-validated external http or https target. Unsupported table structures and link targets stay escaped text reported as a typed gap.
+- **render_pdf_page** - Render a source-bound PDF.js page view with distinct raw geometry, view geometry, renderer policy, and digest evidence
+- **render_pdf_region** - Render a bounded PDF.js viewport region; these inputs are not MediaBox-relative signing coordinates
 - **search_pdf_text** - Search extracted PDF text and return page-numbered snippets
 - **merge_pdfs** / **split_pdf** - Combine and split documents
 - **rotate_pdf_pages** / **reorder_pdf_pages** - Organize scanned or shuffled pages
 - **get_pdf_identity** - Bind plans and provenance to the canonical path, byte length, and SHA-256 for a PDF up to 250 MiB without parsing its document structure
-- **get_pdf_info** / **get_page_analysis** - Inspect pages, blank detection, orientation, and metadata
+- **get_pdf_info** - Observe bounded source-bound page geometry, metadata, form widgets, and inert ordinary annotations with explicit coverage
+- **compare_pdfs** - Compare two immutable PDFs (up to 20 pages each) across seven typed channels with page alignment, source-bound evidence, and reversible material/noise decisions; it never claims document equivalence
+- **get_page_analysis** - Inspect blank detection, orientation, and page-content routing
 
 ### Current Extraction Boundary
 
@@ -145,3 +166,19 @@ This MCP server lets Claude directly:
 - Render scanned PDF pages or regions for visual inspection
 
 Perfect for W-9s, job applications, contracts, invoices, research papers, and general PDF processing.
+
+## Third-party notices
+This bundle carries a vendored QPDF WebAssembly runtime at
+`vendor/qpdf-wasm/runtime/`. It decrypts password-protected documents for the
+tools that read and write them. qpdf is Apache-2.0, and the complete notice set
+(qpdf, zlib, libjpeg-turbo, the Emscripten generated runtime, musl,
+compiler-rt, libc++, libc++abi and libunwind) is in
+`vendor/qpdf-wasm/runtime/licenses/`,
+bound to its SHA-256 hashes by that directory's `manifest.json`. Keep the
+directory intact if you redistribute this bundle. The npm dependencies keep
+their own licences inside `node_modules/` after installation, and
+`SBOM.cdx.json` inventories both: the locked npm packages, and a component for
+each of those native pieces hung off the WebAssembly runtime that ships them.
+The Emscripten image that compiled the runtime is recorded there as build
+tooling rather than as a shipped component, because it is not inside the
+artifact.

@@ -171,12 +171,25 @@ Representative jobs include inspect-and-answer, form fill and validation,
 structured extraction, compare-and-explain, page-plan transformation,
 accessibility assessment, prepare-for-signature, and multi-document packet work.
 
+### Agent-workflow planning protocol v4
+
+The public v4 planning-protocol core, its synthetic no-model rehearsal, its
+private-input boundary, and its relationship to historical v3 evidence are
+documented in `docs/AGENT_WORKFLOW_PROTOCOL_V4.md`.
+
+Public synthetic calibration proves only deterministic protocol wiring. A real
+planning campaign requires frozen private cases and oracles, a reviewed model
+host, an accepted case-free canary, and separate seal, measured-campaign, and
+publication authorities. Planning-response evidence does not replace
+configured-MCP trajectories or native-host product evidence.
+
 ### Executable trajectory contracts v1 and v2
 
 The first executable L5 contract lives in the frozen
-`test/fixtures/eval/trajectories/jobs.v1.json`. The current 40-tool contract is
-`test/fixtures/eval/trajectories/jobs.v2.json`. Both version the same six
-public-safe jobs:
+`test/fixtures/eval/trajectories/jobs.v1.json`. The newest executable job set is
+`test/fixtures/eval/trajectories/jobs.v2.json`, which binds the frozen 40-tool
+`tool-contracts.v2.json` projection rather than the live runtime surface. Both
+version the same six public-safe jobs:
 inspect-and-answer, fill-and-validate, compare-and-explain, safe page mutation,
 prepare-for-signature, and path-policy error recovery. Each job declares:
 
@@ -192,8 +205,9 @@ prepare-for-signature, and path-policy error recovery. Each job declares:
 The six job IDs deliberately remain `pdf-tools.trajectory.v1.*` in v2 because
 they are stable task identities, not evidence-version identities. V2 trial,
 run, event, step, and result IDs use a separate namespace. The v2 suite validates
-every invoked tool against the complete 40-tool runtime contract, but these six
-jobs are not behavioral trajectory coverage for all 40 tools. In particular,
+every invoked tool against the complete 40-tool v2 contract, but these six
+jobs are not behavioral trajectory coverage for even those 40 tools, and the
+live runtime surface has grown past them. In particular,
 `get_pdf_identity` has separate contract, handler, and workflow tests and is not
 invoked by the six retained trajectory jobs.
 

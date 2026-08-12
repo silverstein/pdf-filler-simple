@@ -1,0 +1,837 @@
+{
+  "schema_version": "pdf-tools.remote-hybrid-trust-boundary.v1",
+  "as_of": "2026-07-30",
+  "claim_boundary": "Architecture decision, dated official-source capability inventory, and static or local-mock feasibility only. This contract is not a deployed service, privacy certification, security audit, native-host result, MCPB compatibility result, or authorization to upload or process user documents remotely.",
+  "source_ledger": "docs/evidence/remote-hybrid-host-capabilities-2026-07-30.json",
+  "architecture_decision": "docs/REMOTE_HYBRID_ARCHITECTURE_2026-07-30.md",
+  "protocol_baselines": {
+    "local_mcpb": {
+      "mcpb_version": "2.1.2",
+      "mcp_sdk_package": "@modelcontextprotocol/sdk",
+      "mcp_sdk_line": "v1",
+      "status": "continue_without_remote_conflation"
+    },
+    "remote_target": {
+      "protocol_version": "2026-07-28",
+      "transport": "streamable_http",
+      "status": "architecture_target_not_implemented",
+      "required_request_headers": [
+        "MCP-Protocol-Version",
+        "Mcp-Method"
+      ],
+      "conditional_request_headers": [
+        "Mcp-Name"
+      ],
+      "required_accept_media_types": [
+        "application/json",
+        "text/event-stream"
+      ],
+      "required_body_meta_fields": [
+        "io.modelcontextprotocol/protocolVersion",
+        "io.modelcontextprotocol/clientInfo.name",
+        "io.modelcontextprotocol/clientInfo.version",
+        "io.modelcontextprotocol/clientCapabilities"
+      ],
+      "server_validations": [
+        "origin_when_present_validated_before_dispatch",
+        "required_headers_present",
+        "header_values_match_authoritative_body",
+        "protocol_version_supported",
+        "accept_includes_both_required_media_types",
+        "authentication_before_application_operation"
+      ],
+      "origin_policy": {
+        "missing": "allow_then_continue_authentication_and_request_validation",
+        "present_invalid": "reject_403",
+        "present_null": "reject_403",
+        "present_multiple": "reject_403",
+        "present_allowed": "exact_allowlist_only",
+        "dns_rebinding_negative_tests": true
+      },
+      "protocol_sessions": false,
+      "initialize_handshake": false
+    },
+    "tasks_extension": {
+      "extension_id": "io.modelcontextprotocol/tasks",
+      "status": "optional_after_host_negotiation_and_job_controls",
+      "lifecycle_status": "experimental",
+      "specification_revision": "draft_at_git_commit_2c1425d9a288b9b1f489430fe1e00bb392b47e48",
+      "specification_url": "https://tasks.extensions.modelcontextprotocol.io/specification/draft/tasks",
+      "retrieved_content_sha256": "47323a5cce67ffd0e366cf53cf4462260c647c05d850a30a9a6cec9a37b44a20",
+      "fresh_revision_and_schema_review_required_before_implementation": true,
+      "required_operations": [
+        "tasks/get",
+        "tasks/update",
+        "tasks/cancel"
+      ],
+      "forbid_unscoped_list": true
+    },
+    "apps_extension": {
+      "status": "optional_capability_detected_ui",
+      "portable_bridge": "ui/* JSON-RPC over postMessage",
+      "fallback_required": "tool_workflow_without_ui"
+    }
+  },
+  "decisions": {
+    "local_product": {
+      "verdict": "GO_CONTINUE",
+      "scope": "Current local stdio MCPB for files explicitly permitted on the user's device.",
+      "reason": "It preserves the existing local custody and distribution boundary. Remote architecture is a sibling product surface, not a packaging change."
+    },
+    "remote_production_service": {
+      "verdict": "WAIT",
+      "scope": "Any publicly reachable service that receives or produces user document bytes.",
+      "reason": "Current architecture research establishes feasibility, but production auth, tenant isolation, custody, deletion, abuse, host, and exact-workflow gates remain unproven."
+    },
+    "bounded_vertical_slice": {
+      "verdict": "GO_LOCAL_MOCK_ONLY",
+      "scope": "Synthetic metadata and synthetic PDF fixtures in a loopback-only mock. No provider deployment, public listener, account mutation, or user-data egress.",
+      "reason": "This can validate contracts and fail-closed state transitions without creating a cloud custody claim."
+    }
+  },
+  "principals": [
+    {
+      "id": "resource_owner",
+      "kind": "human",
+      "may_authorize": [
+        "workspace_creation",
+        "document_upload",
+        "document_mutation",
+        "document_export",
+        "document_deletion"
+      ]
+    },
+    {
+      "id": "host_mcp_client",
+      "kind": "software",
+      "must_not_be_treated_as": [
+        "resource_owner",
+        "authorization_server",
+        "tenant_authority"
+      ]
+    },
+    {
+      "id": "remote_resource_server",
+      "kind": "software",
+      "responsibilities": [
+        "authenticate_each_request",
+        "authorize_each_object_and_action",
+        "enforce_tenant_scope",
+        "bind_mutations_to_reviewed_identity",
+        "produce_audit_events"
+      ]
+    },
+    {
+      "id": "authorization_server",
+      "kind": "software",
+      "responsibilities": [
+        "oauth_discovery",
+        "resource_audience_tokens",
+        "least_privilege_scopes",
+        "revocation_or_short_lifetime"
+      ]
+    },
+    {
+      "id": "document_worker",
+      "kind": "software",
+      "must_be": [
+        "tenant_scoped",
+        "resource_bounded",
+        "network_restricted",
+        "non_authoritative_for_user_intent"
+      ]
+    },
+    {
+      "id": "local_companion",
+      "kind": "optional_software",
+      "status": "not_selected_or_implemented",
+      "must_not": [
+        "open_an_unauthenticated_listener",
+        "grant_remote_broad_filesystem_access",
+        "infer_upload_consent_from_folder_access"
+      ]
+    }
+  ],
+  "document_identity": {
+    "remote_document_id": "opaque_server_identifier",
+    "tenant_binding_required": true,
+    "content_identity": [
+      "byte_length",
+      "sha256"
+    ],
+    "mutation_precondition": [
+      "tenant",
+      "workspace_id",
+      "document_id",
+      "input_byte_length",
+      "input_sha256",
+      "verified_actor_id",
+      "tool_name",
+      "tool_version",
+      "canonical_arguments_sha256",
+      "destination_and_effects",
+      "authorization_or_approval_record_id",
+      "policy_version",
+      "operation_id",
+      "idempotency_key",
+      "explicit_current_authorization"
+    ],
+    "output_receipt": [
+      "operation_id",
+      "tenant_id",
+      "workspace_id",
+      "verified_actor_id",
+      "source_identity",
+      "output_document_id",
+      "output_byte_length",
+      "output_sha256",
+      "tool_name",
+      "tool_version",
+      "canonical_arguments_sha256",
+      "idempotency_key",
+      "authorization_or_approval_record_id",
+      "policy_version",
+      "policy_result",
+      "completed_at"
+    ],
+    "path_is_not_remote_identity": true
+  },
+  "modes": [
+    {
+      "id": "local_only",
+      "custody": "user_device",
+      "network_egress_of_document_bytes": false,
+      "allowed_inputs": [
+        "explicitly_permitted_local_pdf"
+      ],
+      "steps": [
+        "Human permits a local path through the desktop host.",
+        "Local MCPB reads or mutates within its existing path and approval controls.",
+        "Output remains local and receives byte length and SHA-256 identity."
+      ],
+      "remote_service_dependency": false
+    },
+    {
+      "id": "remote_only",
+      "custody": "remote_service",
+      "network_egress_of_document_bytes": true,
+      "allowed_inputs": [
+        "synthetic_fixture_until_production_gates_pass"
+      ],
+      "required_consent_event": "explicit_document_upload_authorization",
+      "steps": [
+        "Human creates or selects a tenant-scoped remote workspace.",
+        "Human explicitly authorizes upload of a named document identity.",
+        "Service stores an immutable source object and returns a remote document identity.",
+        "Every mutation creates a new version after object-level authorization and identity precondition checks.",
+        "Human reviews provenance and output identity before export.",
+        "Retention or deletion follows an explicit workspace policy and verifiable lifecycle."
+      ],
+      "local_filesystem_dependency": false
+    },
+    {
+      "id": "hybrid_explicit_handoff",
+      "custody": "changes_only_at_explicit_handoff",
+      "network_egress_of_document_bytes": true,
+      "allowed_inputs": [
+        "synthetic_fixture_until_production_gates_pass"
+      ],
+      "required_consent_event": "explicit_content_addressed_handoff_authorization",
+      "steps": [
+        "Local companion identifies permitted bytes without granting remote filesystem access.",
+        "Human authorizes one content-addressed document and destination workspace.",
+        "A one-time, least-privilege transfer grant moves only those bytes.",
+        "Remote operations create versioned outputs with provenance.",
+        "Human authorizes an explicit content-addressed return transfer.",
+        "Local companion writes to a new or identity-approved destination."
+      ],
+      "forbidden_shortcuts": [
+        "remote_connector_calls_local_mcp_directly",
+        "folder_permission_implies_upload_permission",
+        "ambient_shared_directory_sync",
+        "path_string_as_cross_boundary_identity"
+      ]
+    },
+    {
+      "id": "cowork_host_folder_bridge",
+      "custody": "local_folder_bridged_through_claude_desktop_and_processed_remotely",
+      "network_egress_of_document_bytes": true,
+      "status": "host_capability_not_pdf_tools_remote_architecture",
+      "required_consent_event": "host_connected_folder_permission",
+      "steps": [
+        "Human connects a bounded folder in Claude Desktop.",
+        "A remote Cowork session requests a permitted file through the desktop bridge while the app is online.",
+        "Anthropic processes the file in the remote session under its product data boundary."
+      ],
+      "must_not_be_described_as": [
+        "local_mcp_in_remote_session",
+        "pdf_tools_remote_service",
+        "document_stays_on_device"
+      ]
+    },
+    {
+      "id": "cowork_host_desktop_brokered_local_connector",
+      "custody": "local_connector_execution_brokered_through_claude_desktop_with_results_processed_in_remote_session",
+      "network_egress_of_document_bytes": true,
+      "status": "documented_host_path_exact_pdf_tools_mcpb_unverified",
+      "required_consent_event": "host_local_connector_permission_plus_exact_tool_approval",
+      "steps": [
+        "Human enables a local connector or plugin containing local MCP in Claude Desktop.",
+        "A remote Cowork session requests the permitted local connector through the online desktop app.",
+        "The local MCP executes on the desktop side, not inside the remote sandbox.",
+        "Tool inputs and results used by the remote session cross into Anthropic's processing boundary."
+      ],
+      "must_not_be_described_as": [
+        "local_mcp_inside_remote_sandbox",
+        "exact_pdf_tools_mcpb_compatibility_without_native_host_evidence",
+        "document_or_tool_results_stay_entirely_on_device"
+      ]
+    }
+  ],
+  "required_controls": {
+    "authentication": [
+      "oauth_2_1_authorization_code_with_pkce",
+      "protected_resource_metadata",
+      "authorization_server_metadata",
+      "issuer_validation",
+      "resource_audience_validation",
+      "token_signature_validation",
+      "expiration_validation",
+      "not_before_validation",
+      "jwks_issuer_key_binding",
+      "jwks_rotation_and_stale_key_behavior",
+      "token_replay_considerations",
+      "scope_validation_on_every_request",
+      "no_tokens_in_urls",
+      "origin_when_present_validated_with_non_browser_absence_allowed"
+    ],
+    "authorization": [
+      "tenant_scope_from_verified_identity_not_caller_input",
+      "object_level_authorization_on_every_read_write_export_delete",
+      "separate_read_upload_mutate_export_delete_scopes",
+      "step_up_or_fresh_consent_for_consequential_actions",
+      "deny_by_default"
+    ],
+    "tenancy": [
+      "tenant_key_on_every_stored_record",
+      "tenant_predicate_on_list_search_count_notification_deep_link_and_job_lookup",
+      "unguessable_ids_do_not_replace_authorization",
+      "cross_tenant_negative_tests"
+    ],
+    "upload": [
+      "explicit_document_identity_and_destination",
+      "declared_and_enforced_size_limit",
+      "pdf_signature_and_parser_validation",
+      "malware_and_archive_bomb_controls",
+      "content_hash_after_complete_receive",
+      "no_upload_from_ambient_folder_access",
+      "upload_grant_binds_verified_actor_tenant_workspace_content_type_hash_size_destination_purpose_and_expiry",
+      "upload_grant_single_use_nonce_atomically_consumed",
+      "failed_or_mismatched_receive_cannot_reuse_grant_or_leave_partial_object",
+      "upload_replay_concurrency_wrong_actor_and_wrong_object_negative_tests"
+    ],
+    "storage_and_retention": [
+      "encrypted_transport_and_storage",
+      "immutable_source_and_versioned_outputs",
+      "document_bytes_excluded_from_logs",
+      "declared_default_retention",
+      "user_visible_expiry",
+      "deletion_tombstone_and_bounded_physical_purge",
+      "backup_deletion_policy",
+      "legal_hold_policy_before_enterprise_claims"
+    ],
+    "mutation": [
+      "source_identity_precondition",
+      "new_version_by_default",
+      "idempotency_key",
+      "same_key_different_arguments_rejected",
+      "atomic_activation",
+      "operation_receipt",
+      "operation_and_canonical_arguments_bound_to_authorization_task_and_receipt",
+      "membership_and_action_authorization_rechecked_at_dequeue_pre_activation_and_release",
+      "no_model_supplied_tenant_authority",
+      "no_silent_existing_output_replacement"
+    ],
+    "async_jobs": [
+      "host_and_server_tasks_extension_negotiation",
+      "task_bound_to_tenant_workspace_document_and_operation",
+      "authorization_rechecked_on_get_update_cancel",
+      "tenant_scoped_subscription_creation_and_task_notifications",
+      "authorization_rechecked_at_worker_dequeue_pre_activation_terminal_retrieval_and_export",
+      "revoked_actor_cannot_activate_or_retrieve_new_output",
+      "durable_creation_before_handle_return",
+      "bounded_ttl_and_poll_interval",
+      "cooperative_cancellation_not_claimed_as_immediate_deletion",
+      "no_tasks_list",
+      "idempotent_terminal_result"
+    ],
+    "outputs": [
+      "content_type_and_pdf_validation",
+      "byte_length_and_sha256",
+      "source_to_output_provenance",
+      "review_before_consequential_external_handoff",
+      "download_grant_binds_actor_tenant_workspace_exact_object_version_direction_audience_and_expiry",
+      "download_grant_single_use_nonce_atomically_consumed",
+      "download_replay_concurrent_double_redeem_wrong_object_wrong_actor_and_wrong_audience_negative_tests"
+    ],
+    "operations": [
+      "rate_and_concurrency_limits",
+      "per_tenant_quotas",
+      "worker_cpu_memory_time_and_output_bounds",
+      "network_egress_deny_by_default",
+      "origin_absent_non_browser_allowed_invalid_null_and_multiple_rejected_tests",
+      "structured_audit_events_without_document_content",
+      "rollback_and_kill_switch",
+      "abuse_and_incident_response"
+    ]
+  },
+  "threat_register": [
+    {
+      "id": "T01",
+      "threat": "Cross-tenant object access through guessed or caller-supplied identifiers",
+      "severity": "P0",
+      "required_gate": "cross_tenant_all_surface_negative_tests"
+    },
+    {
+      "id": "T02",
+      "threat": "Confused-deputy token accepted for the wrong resource or issuer",
+      "severity": "P0",
+      "required_gate": "issuer_audience_resource_and_scope_verification"
+    },
+    {
+      "id": "T03",
+      "threat": "Folder access or a model request is mistaken for upload consent",
+      "severity": "P0",
+      "required_gate": "explicit_content_addressed_upload_event"
+    },
+    {
+      "id": "T04",
+      "threat": "Prompt injection in a PDF causes external disclosure or an unreviewed mutation",
+      "severity": "P0",
+      "required_gate": "document_content_never_grants_authority_and_egress_is_denied"
+    },
+    {
+      "id": "T05",
+      "threat": "Stale review mutates a document version different from the one approved",
+      "severity": "P0",
+      "required_gate": "source_identity_precondition_and_atomic_version_creation"
+    },
+    {
+      "id": "T06",
+      "threat": "A retry duplicates an expensive or consequential mutation",
+      "severity": "P1",
+      "required_gate": "tenant_scoped_idempotency_and_replay_tests"
+    },
+    {
+      "id": "T07",
+      "threat": "Task handles leak status, inputs, or results across tenants",
+      "severity": "P0",
+      "required_gate": "task_object_authorization_on_get_update_cancel"
+    },
+    {
+      "id": "T08",
+      "threat": "Cancellation is represented as deletion while bytes or work remain",
+      "severity": "P1",
+      "required_gate": "separate_task_cancel_document_delete_and_purge_states"
+    },
+    {
+      "id": "T09",
+      "threat": "Signed download URLs grant broad, long-lived, or replayable access",
+      "severity": "P0",
+      "required_gate": "actor_tenant_workspace_object_version_direction_audience_expiry_bound_single_use_atomic_download_grant_with_replay_tests"
+    },
+    {
+      "id": "T10",
+      "threat": "Document content, tokens, or filenames enter logs and traces",
+      "severity": "P1",
+      "required_gate": "redaction_tests_and_content_free_audit_schema"
+    },
+    {
+      "id": "T11",
+      "threat": "Malformed, huge, recursive, or adversarial PDFs exhaust a shared worker",
+      "severity": "P1",
+      "required_gate": "isolated_bounded_workers_and_hostile_corpus"
+    },
+    {
+      "id": "T12",
+      "threat": "A local companion exposes an ambient network or filesystem capability",
+      "severity": "P0",
+      "required_gate": "loopback_authenticated_one_time_object_grants_only"
+    },
+    {
+      "id": "T13",
+      "threat": "UI approval text is not cryptographically bound to the invoked operation",
+      "severity": "P0",
+      "required_gate": "approval_binds_tenant_document_identity_operation_and_arguments"
+    },
+    {
+      "id": "T14",
+      "threat": "Deletion omits derived versions, jobs, caches, backups, or indexes",
+      "severity": "P1",
+      "required_gate": "lifecycle_inventory_and_bounded_purge_receipt"
+    },
+    {
+      "id": "T15",
+      "threat": "Host-specific UI, Tasks, or file APIs are claimed as portable MCP",
+      "severity": "P1",
+      "required_gate": "capability_detection_and_host_specific_evidence_rows"
+    },
+    {
+      "id": "T16",
+      "threat": "HTTP routing or policy uses headers that disagree with the JSON-RPC body",
+      "severity": "P0",
+      "required_gate": "required_header_body_mismatch_rejection"
+    }
+  ],
+  "bounded_vertical_slice": {
+    "environment": "loopback_only_local_mock",
+    "data": "repository_synthetic_metadata_and_synthetic_pdfs_only",
+    "listener_enforcement": {
+      "bind_host": "127.0.0.1",
+      "port": "ephemeral_test_selected",
+      "bind_all_interfaces_forbidden": true,
+      "assert_observed_local_address": "127.0.0.1",
+      "assert_non_loopback_connection_refused": true
+    },
+    "no_egress_enforcement": {
+      "outbound_connect_guard": "test_preload_denies_every_socket_except_exact_127.0.0.1_ephemeral_mock_port",
+      "dns_guard": "test_preload_denies_all_dns_resolution",
+      "fetch_guard": "test_preload_denies_global_fetch",
+      "assert_attempted_external_connections": 0,
+      "assert_imported_provider_sdks": 0
+    },
+    "request_envelope": {
+      "method": "POST",
+      "path": "/mcp",
+      "required_headers": {
+        "Accept": [
+          "application/json",
+          "text/event-stream"
+        ],
+        "Content-Type": "application/json",
+        "MCP-Protocol-Version": "2026-07-28",
+        "Mcp-Method": "exact_json_rpc_method",
+        "Authorization": "synthetic_harness_context_not_real_oauth"
+      },
+      "conditional_headers": {
+        "Mcp-Name": "exact_params_name_or_uri_for_tools_call_resources_read_or_prompts_get"
+      },
+      "optional_headers": {
+        "Origin": "when_present_must_match_exact_test_allowlist"
+      },
+      "origin_test_cases": {
+        "missing": "continue_to_authentication_and_request_validation",
+        "allowed_exact": "continue_to_authentication_and_request_validation",
+        "invalid": "reject_403_before_json_rpc_dispatch",
+        "null": "reject_403_before_json_rpc_dispatch",
+        "multiple": "reject_403_before_json_rpc_dispatch"
+      },
+      "required_body_meta": [
+        "io.modelcontextprotocol/protocolVersion",
+        "io.modelcontextprotocol/clientInfo.name",
+        "io.modelcontextprotocol/clientInfo.version",
+        "io.modelcontextprotocol/clientCapabilities"
+      ],
+      "body_is_authoritative": true,
+      "header_body_mismatch": "reject_400_header_mismatch_before_tool_dispatch"
+    },
+    "synthetic_auth_contexts": [
+      {
+        "id": "anonymous",
+        "verified_actor_id": null,
+        "tenant_id": null,
+        "scopes": []
+      },
+      {
+        "id": "tenant_a_owner",
+        "verified_actor_id": "synthetic_actor_a",
+        "tenant_id": "synthetic_tenant_a",
+        "scopes": [
+          "workspace:create",
+          "document:register",
+          "document:mutate",
+          "document:read",
+          "document:delete"
+        ]
+      },
+      {
+        "id": "tenant_a_collaborator",
+        "verified_actor_id": "synthetic_actor_b",
+        "tenant_id": "synthetic_tenant_a",
+        "scopes": [
+          "workspace:create",
+          "document:register",
+          "document:mutate",
+          "document:read",
+          "document:delete"
+        ]
+      },
+      {
+        "id": "tenant_b_owner",
+        "verified_actor_id": "synthetic_actor_b",
+        "tenant_id": "synthetic_tenant_b",
+        "scopes": [
+          "workspace:create",
+          "document:register",
+          "document:mutate",
+          "document:read",
+          "document:delete"
+        ]
+      },
+      {
+        "id": "tenant_b_same_actor",
+        "verified_actor_id": "synthetic_actor_a",
+        "tenant_id": "synthetic_tenant_b",
+        "scopes": [
+          "workspace:create",
+          "document:register",
+          "document:mutate",
+          "document:read",
+          "document:delete"
+        ]
+      },
+      {
+        "id": "tenant_a_revoked",
+        "verified_actor_id": "synthetic_actor_revoked",
+        "tenant_id": "synthetic_tenant_a",
+        "scopes": [],
+        "membership": "revoked"
+      }
+    ],
+    "record_schemas": {
+      "workspace": [
+        "tenant_id",
+        "workspace_id",
+        "created_by_verified_actor_id",
+        "status",
+        "created_at"
+      ],
+      "document": [
+        "tenant_id",
+        "workspace_id",
+        "document_id",
+        "immutable_source_version_id",
+        "current_version_id",
+        "lifecycle_state"
+      ],
+      "version": [
+        "tenant_id",
+        "workspace_id",
+        "document_id",
+        "version_id",
+        "byte_length",
+        "sha256",
+        "parent_version_id",
+        "created_by_operation_id",
+        "created_at"
+      ],
+      "authorization_event": [
+        "authorization_event_id",
+        "verified_actor_id",
+        "tenant_id",
+        "workspace_id",
+        "document_id",
+        "source_version_id",
+        "source_byte_length",
+        "source_sha256",
+        "tool_name",
+        "tool_version",
+        "canonical_arguments_sha256",
+        "destination_and_effects",
+        "policy_version",
+        "single_use_nonce",
+        "expires_at",
+        "consumed_at"
+      ],
+      "operation": [
+        "operation_id",
+        "verified_actor_id",
+        "tenant_id",
+        "workspace_id",
+        "document_id",
+        "source_version_id",
+        "source_byte_length",
+        "source_sha256",
+        "tool_name",
+        "tool_version",
+        "canonical_arguments_sha256",
+        "authorization_event_id",
+        "policy_version",
+        "policy_result",
+        "idempotency_key",
+        "request_identity_sha256",
+        "status",
+        "output_version_id"
+      ],
+      "receipt": [
+        "operation_id",
+        "verified_actor_id",
+        "tenant_id",
+        "workspace_id",
+        "document_id",
+        "source_version_id",
+        "source_byte_length",
+        "source_sha256",
+        "output_version_id",
+        "output_byte_length",
+        "output_sha256",
+        "tool_name",
+        "tool_version",
+        "canonical_arguments_sha256",
+        "authorization_event_id",
+        "policy_version",
+        "policy_result",
+        "idempotency_key",
+        "completed_at"
+      ],
+      "lifecycle_event": [
+        "event_id",
+        "verified_actor_id",
+        "tenant_id",
+        "workspace_id",
+        "document_id",
+        "prior_state",
+        "next_state",
+        "policy_version",
+        "created_at"
+      ]
+    },
+    "state_transitions": [
+      "workspace_absent_to_active_requires_workspace_create_scope",
+      "document_absent_to_active_requires_unconsumed_exact_synthetic_registration_authorization",
+      "source_version_is_immutable",
+      "authorized_operation_to_running_rechecks_membership_action_source_identity_and_unconsumed_authorization",
+      "running_operation_to_completed_atomically_activates_one_new_version_and_receipt",
+      "running_operation_to_failed_activates_no_version",
+      "active_document_to_tombstoned_requires_document_delete_scope",
+      "tombstoned_to_purge_pending_is_separate_from_task_cancellation",
+      "purge_pending_to_physically_purged_requires_lifecycle_inventory_completion",
+      "physically_purged_is_terminal"
+    ],
+    "idempotency_contract": {
+      "scope": "tenant_id_plus_verified_actor_id_plus_idempotency_key",
+      "request_identity": "source_identity_plus_tool_name_plus_tool_version_plus_canonical_arguments_sha256_plus_destination_and_effects",
+      "same_key_same_request": "return_exact_prior_operation_or_terminal_receipt_without_new_effect",
+      "same_key_different_request": "tool_error_IDEMPOTENCY_CONFLICT_with_no_effect",
+      "concurrent_same_key": "exactly_one_operation_record_and_effect"
+    },
+    "error_semantics": {
+      "present_invalid_null_or_multiple_origin": "http_403_before_json_rpc_dispatch",
+      "missing_origin": "continue_to_authentication_and_request_validation",
+      "missing_required_header_or_header_body_mismatch": "http_400_HeaderMismatch",
+      "unsupported_protocol_version": "http_400_UnsupportedProtocolVersion",
+      "missing_or_invalid_synthetic_auth_context": "http_401_before_tool_dispatch",
+      "insufficient_scope": "http_403_before_tool_effect",
+      "unknown_method": "http_404_json_rpc_method_not_found",
+      "application_authorization_or_identity_failure": "http_200_tool_result_isError_true_stable_code_no_effect",
+      "idempotency_conflict": "http_200_tool_result_isError_true_IDEMPOTENCY_CONFLICT_no_effect"
+    },
+    "allowed_operations": [
+      "server/discover",
+      "tools/list",
+      "create_synthetic_workspace",
+      "register_synthetic_document_identity",
+      "simulate_identity_bound_mutation",
+      "read_operation_receipt",
+      "simulate_delete_lifecycle"
+    ],
+    "excluded_operations": [
+      "listen_on_public_interface",
+      "provider_deployment",
+      "oauth_provider_creation_or_mutation",
+      "real_user_authentication",
+      "user_document_upload",
+      "user_document_processing",
+      "external_download",
+      "production_storage",
+      "local_companion_installation"
+    ],
+    "success_criteria": [
+      "every_request_is_identity_and_tenant_scoped",
+      "missing_or_wrong_auth_context_fails_closed",
+      "origin_present_invalid_fails_403_and_missing_reaches_authentication",
+      "header_body_mismatch_fails_closed",
+      "upload_without_explicit_event_fails_closed",
+      "mutation_without_exact_source_identity_fails_closed",
+      "retry_is_idempotent",
+      "cross_tenant_access_fails_closed",
+      "delete_state_is_distinct_from_physical_purge",
+      "receipts_bind_source_and_output_identity",
+      "no_network_egress"
+    ]
+  },
+  "production_flip_gates": [
+    {
+      "id": "G01",
+      "gate": "current_official_host_capability_refresh",
+      "evidence": "Dated primary-source matrix plus exact native or hosted workflow rows for each claimed host."
+    },
+    {
+      "id": "G02",
+      "gate": "privacy_custody_and_retention_decision",
+      "evidence": "Owner-approved data map, subprocessors, regions, default retention, deletion and backup purge bounds, and user-facing consent language."
+    },
+    {
+      "id": "G03",
+      "gate": "established_identity_provider_and_oauth_interop",
+      "evidence": "PKCE, protected resource metadata, signature, issuer, audience and resource, expiry, not-before, scope, JWKS issuer-key binding, key rotation and stale-key behavior, replay considerations, revocation or short-life, and negative token tests across target hosts."
+    },
+    {
+      "id": "G04",
+      "gate": "tenant_isolation",
+      "evidence": "Independent adversarial tests across list, search, count, fetch, mutation, job, notification, export, deletion, and deep-link surfaces."
+    },
+    {
+      "id": "G05",
+      "gate": "explicit_upload_and_download_authorization",
+      "evidence": "Human-observed UI and protocol receipts bind verified actor, one exact object or content identity, tenant, workspace, direction, destination or audience, purpose, scope, expiry, and a single-use nonce atomically consumed; replay, concurrent double redemption, wrong actor, wrong object, and wrong audience fail."
+    },
+    {
+      "id": "G06",
+      "gate": "bounded_document_worker",
+      "evidence": "Hostile corpus proves parser, CPU, memory, time, output, concurrency, egress, and crash isolation limits."
+    },
+    {
+      "id": "G07",
+      "gate": "mutation_and_provenance_integrity",
+      "evidence": "Exact source, actor, operation, tool version, canonical arguments digest, authorization or approval record, policy, destination and effects preconditions; same-key different-argument rejection; dequeue, pre-activation, and release authorization rechecks; atomic activation, immutable versions, visual and structural validation, and identity-bound receipt."
+    },
+    {
+      "id": "G08",
+      "gate": "lifecycle_and_deletion",
+      "evidence": "Clock-bounded tests cover source, versions, jobs, caches, indexes, audit records, backups, expiry, legal hold, and purge receipt."
+    },
+    {
+      "id": "G09",
+      "gate": "operations_and_incident_readiness",
+      "evidence": "Quotas, abuse controls, redacted observability, alerts, rollback, kill switch, incident runbook, and recovery drill."
+    },
+    {
+      "id": "G10",
+      "gate": "commercial_and_legal_owner_approval",
+      "evidence": "Human approval of service terms, privacy language, data processing commitments, support boundary, and production spend."
+    }
+  ],
+  "forbidden_claims": [
+    "the_current_mcpb_works_in_cowork_remote_sessions",
+    "one_bundle_installs_across_all_hosts",
+    "mcp_apps_or_tasks_are_supported_by_every_target_host",
+    "remote_processing_keeps_document_bytes_on_device",
+    "connected_folder_permission_is_pdf_tools_upload_consent",
+    "architecture_or_local_mock_evidence_is_a_shipped_remote_service",
+    "cancelled_task_means_document_bytes_are_deleted",
+    "sha256_or_opaque_ids_replace_authorization",
+    "host_approval_replaces_server_authorization"
+  ],
+  "forbidden_actions_for_this_tranche": [
+    "deployment",
+    "public_listener",
+    "provider_account_mutation",
+    "production_storage_creation",
+    "user_document_upload",
+    "user_data_egress",
+    "release",
+    "tag",
+    "public_compatibility_announcement"
+  ]
+}

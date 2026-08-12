@@ -2,7 +2,14 @@ import { createHash } from "node:crypto";
 import { closeSync, writeSync } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
+import { Readable } from "node:stream";
 import { fileURLToPath } from "node:url";
+import {
+  isMainThread,
+  parentPort as threadParentPort,
+  workerData as threadWorkerData,
+} from "node:worker_threads";
+import { createInflate } from "node:zlib";
 import {
   PDFArray,
   PDFDict,
@@ -26,9 +33,21 @@ import {
   detectExistingSignatures,
   drawSignatureFieldOnPage,
   parsePageRanges,
+  PDF_LIB_ENCRYPTED_MESSAGE,
   stampSignatureOnPage,
   stampTextOnPage,
 } from "./helpers.js";
+import {
+  AccessibilityInspectionError,
+  inspectPdfAccessibilityBytes,
+  validateAccessibilityInspectionResult,
+} from "./accessibility-inspection.js";
+import {
+  decryptPdfForWrite,
+  ENCRYPTED_WRITE_OPERATIONS,
+  mergeProtectionRefusal,
+  reprotectPdfAfterWrite,
+} from "./qpdf-decrypt.js";
 import {
   PDF_MERGE_MAX_TOTAL_BYTES,
   PDF_MUTATION_MAX_FILE_BYTES,
@@ -45,6 +64,24 @@ const MAX_STAGE_TOTAL_BYTES = 1024 * 1024 * 1024;
 const MAX_OUTPUTS = 1000;
 const MAX_REASONABLE_OBJECT_NUMBER = 2_000_000;
 const MAX_STRUCTURE_TOKEN_BYTES = 128;
+// ISO 32000-1:2008, Table 17: every element of a cross-reference stream's /W
+// array is the byte count of one cross-reference field. Eight bytes already
+// exceed the integer precision pdf-lib accumulates those bytes into, so no
+// conforming producer can need more.
+const MAX_XREF_FIELD_BYTES = 8;
+// pdf-lib's PDFXRefStreamParser consumes W[0] + W[1] + W[2] bytes per entry.
+const MAX_XREF_ENTRY_BYTES = 3 * MAX_XREF_FIELD_BYTES;
+// Only the first three /W elements ever become loop bounds, so retaining a
+// short prefix checks everything that matters and keeps a /W array with
+// millions of hostile elements from being materialized by this guard itself.
+const MAX_TRACKED_XREF_WIDTHS = 8;
+// A hostile file can nest dictionaries as deeply as its bytes allow, so the
+// per-dictionary tracking below keeps only a bounded window of open frames.
+const MAX_TRACKED_DICT_DEPTH = 512;
+// A PDF real, which pdf-lib will still coerce into a loop bound. The lexer
+// classifies anything containing a decimal point as a word, so byte widths
+// have to be recognized here rather than only from integer tokens.
+const PDF_REAL_NUMBER = /^[+-]?(?:\d+\.?\d*|\.\d+)$/;
 const MAX_STREAM_FILTER_CHAIN_LENGTH = 4;
 const MAX_EXPANDING_FILTER_STAGES = 2;
 const MAX_PARSED_DIRECT_DEPTH = 256;
@@ -52,6 +89,15 @@ const MAX_PARSED_CONTAINER_VISITS = 1_000_000;
 const MAX_PDF_GRAPH_EDGES = 2_000_000;
 const MAX_PDF_GRAPH_PENDING = 1_000_000;
 const MAX_SPEC_NULL_REFERENCE_SAMPLE = 32;
+// Object streams contain serialized non-stream objects, and pdf-lib's writer
+// groups only 50 objects into each one. A decoded object stream above 16 MiB is
+// therefore far outside ordinary writer output. More importantly, the pinned
+// parser eagerly materializes it before our post-parse 128 MiB stream probe can
+// run: a measured 256 MiB object stream drove RSS above 4.3 GiB. Keeping this
+// ceiling at 16 MiB leaves useful headroom inside the worker's 384 MiB V8 old-
+// space budget while preserving large PDFs whose bulk lives in image/content
+// streams rather than in one serialized-object container.
+const MAX_DECODED_OBJECT_STREAM_BYTES = 16 * 1024 * 1024;
 const MIN_DECODED_STREAM_BUDGET_BYTES = 16 * 1024 * 1024;
 const MAX_DECODED_STREAM_BUDGET_BYTES = 128 * 1024 * 1024;
 const MAX_DECODE_EXPANSION_RATIO = 512;
@@ -94,6 +140,7 @@ const OPERATIONS = new Set([
   "bulk_fill_from_csv",
   "fill_pdf",
   "fill_with_profile",
+  "inspect_pdf_accessibility",
   "merge_pdfs",
   "prepare_signing_packet",
   "reorder_pdf_pages",
@@ -103,6 +150,7 @@ const OPERATIONS = new Set([
 const OPTION_KEYS = new Map([
   ["fill_pdf", ["field_data"]],
   ["fill_with_profile", ["field_data"]],
+  ["inspect_pdf_accessibility", []],
   ["bulk_fill_from_csv", ["records"]],
   ["merge_pdfs", []],
   ["split_pdf", ["page_ranges"]],
@@ -183,6 +231,9 @@ function validateRequest(request) {
   if (request.password !== null
       && (typeof request.password !== "string" || request.password.length < 1 || request.password.length > 4096)) {
     throw new TypeError("password is invalid.");
+  }
+  if (request.operation === "inspect_pdf_accessibility" && request.password !== null) {
+    throw new TypeError("inspect_pdf_accessibility does not accept a password.");
   }
   if (!request.options || typeof request.options !== "object" || Array.isArray(request.options)) {
     throw new TypeError("options must be an object.");
@@ -354,12 +405,45 @@ function decodePdfName(bytes, start, end) {
   return value;
 }
 
+const PDF_ENDSTREAM_KEYWORD = Buffer.from("endstream", "ascii");
+
+// Resolve the end of one stream payload the way pdf-lib's own parser does:
+// trust a direct /Length only when the bytes it points past really are the
+// endstream keyword, and otherwise fall back to searching for that keyword.
+// A payload that misleads this also misleads pdf-lib, so the two views of a
+// document cannot be made to disagree about where structure resumes.
+function resolvePdfStreamPayload(bytes, offset, declaredLength) {
+  let start = offset;
+  if (bytes[start] === 0x0d) start += 1;
+  if (bytes[start] === 0x0a) start += 1;
+  if (declaredLength !== null && start + declaredLength <= bytes.length) {
+    let probe = start + declaredLength;
+    while (probe < bytes.length && isPdfWhitespace(bytes[probe])) probe += 1;
+    if (bytes.subarray(probe, probe + PDF_ENDSTREAM_KEYWORD.length)
+      .equals(PDF_ENDSTREAM_KEYWORD)) {
+      return { payloadStart: start, payloadEnd: start + declaredLength, resumeAt: probe };
+    }
+  }
+  const found = bytes.indexOf(PDF_ENDSTREAM_KEYWORD, start);
+  const end = found < 0 ? bytes.length : found;
+  return { payloadStart: start, payloadEnd: end, resumeAt: end };
+}
+
 // This lexer retains only a bounded token and a handful of parser states. It
 // deliberately ignores comments and PDF string objects, where structural
 // spellings are data. Whitespace and comments may be arbitrarily long, so a
 // sparse declaration cannot evade the guard by crossing a fixed-size overlap.
-function* pdfStructureTokens(bytes) {
+//
+// By default stream payloads are tokenized too, because pdf-lib resynchronizes
+// inside a payload whose /Length lies and will parse object headers out of it.
+// skipStreamPayloads is for the cross-reference byte-width pass, which needs
+// the structural view pdf-lib's parser itself acts on: a single unpaired "<"
+// or "(" in compressed payload bytes otherwise swallows every following token
+// up to the next ">" or ")", which is enough to hide a whole xref dictionary.
+function* pdfStructureTokens(bytes, { skipStreamPayloads = false } = {}) {
   let offset = 0;
+  let expectLengthValue = false;
+  let declaredLength = null;
   while (offset < bytes.length) {
     const byte = bytes[offset];
     if (isPdfWhitespace(byte)) {
@@ -396,11 +480,15 @@ function* pdfStructureTokens(bytes) {
       while (offset < bytes.length && !isPdfWhitespace(bytes[offset]) && !isPdfDelimiter(bytes[offset])) {
         offset += 1;
       }
-      yield {
+      const nameToken = {
         type: "name",
         value: decodePdfName(bytes, start, offset),
         overlong: offset - start > MAX_STRUCTURE_TOKEN_BYTES,
       };
+      yield nameToken;
+      if (skipStreamPayloads) {
+        expectLengthValue = !nameToken.overlong && nameToken.value === "Length";
+      }
       continue;
     }
     if (isPdfDelimiter(byte)) {
@@ -424,16 +512,342 @@ function* pdfStructureTokens(bytes) {
     }
     const length = offset - start;
     if (digitLength === 0) allDigits = false;
-    yield {
+    const token = {
       type: allDigits ? "integer" : "word",
       value: bytes.subarray(start, Math.min(offset, start + MAX_STRUCTURE_TOKEN_BYTES)).toString("latin1"),
       overlong: length > MAX_STRUCTURE_TOKEN_BYTES,
       digitLength: allDigits ? digitLength : 0,
     };
+    if (!skipStreamPayloads) {
+      yield token;
+      continue;
+    }
+    if (expectLengthValue) {
+      yield token;
+      expectLengthValue = false;
+      const value = token.type === "integer" && token.digitLength <= 15
+        ? Number(token.value)
+        : null;
+      declaredLength = Number.isSafeInteger(value) && value >= 0 ? value : null;
+      continue;
+    }
+    if (token.type === "word" && !token.overlong && token.value === "stream") {
+      const { payloadStart, payloadEnd, resumeAt } = resolvePdfStreamPayload(
+        bytes,
+        offset,
+        declaredLength,
+      );
+      yield { ...token, payloadStart, payloadEnd };
+      offset = resumeAt;
+      declaredLength = null;
+      continue;
+    }
+    yield token;
+  }
+}
+
+function collectPreparseStreamDecodes(bytes) {
+  const streams = [];
+  const dictionaries = [];
+  let lastClosedDictionary = null;
+  const markMalformedValue = frame => {
+    if (frame?.pendingKey === "Type") frame.typeAmbiguous = true;
+    if (frame?.pendingKey === "Filter") frame.filterAmbiguous = true;
+    if (frame) frame.pendingKey = null;
+  };
+  for (const token of pdfStructureTokens(bytes, { skipStreamPayloads: true })) {
+    const frame = dictionaries.at(-1);
+    if (token.type === "delimiter" && token.value === "<<") {
+      markMalformedValue(frame);
+      dictionaries.push({
+        type: null,
+        typeAmbiguous: false,
+        filters: null,
+        filterAmbiguous: false,
+        filterArray: false,
+        pendingKey: null,
+      });
+      lastClosedDictionary = null;
+      continue;
+    }
+    if (token.type === "delimiter" && token.value === ">>") {
+      const closing = dictionaries.pop() ?? null;
+      markMalformedValue(closing);
+      lastClosedDictionary = closing;
+      continue;
+    }
+    if (frame?.filterArray) {
+      if (token.type === "delimiter" && token.value === "]") {
+        frame.filterArray = false;
+        frame.pendingKey = null;
+      } else if (token.type === "name" && !token.overlong) {
+        frame.filters.push(token.value);
+      } else {
+        frame.filterAmbiguous = true;
+      }
+      lastClosedDictionary = null;
+      continue;
+    }
+    if (frame?.pendingKey === "Type") {
+      if (token.type === "name" && !token.overlong) frame.type = token.value;
+      else frame.typeAmbiguous = true;
+      frame.pendingKey = null;
+      lastClosedDictionary = null;
+      continue;
+    }
+    if (frame?.pendingKey === "Filter") {
+      if (token.type === "name" && !token.overlong) {
+        frame.filters = [token.value];
+        frame.pendingKey = null;
+      } else if (token.type === "delimiter" && token.value === "[") {
+        frame.filters = [];
+        frame.filterArray = true;
+      } else {
+        frame.filterAmbiguous = true;
+        frame.pendingKey = null;
+      }
+      lastClosedDictionary = null;
+      continue;
+    }
+    if (frame && token.type === "name" && !token.overlong
+        && (token.value === "Type" || token.value === "Filter")) {
+      frame.pendingKey = token.value;
+      lastClosedDictionary = null;
+      continue;
+    }
+    if (token.type === "word" && token.value === "stream"
+        && Number.isSafeInteger(token.payloadStart)
+        && Number.isSafeInteger(token.payloadEnd)) {
+      if (lastClosedDictionary) {
+        streams.push({
+          ...lastClosedDictionary,
+          payloadStart: token.payloadStart,
+          payloadEnd: token.payloadEnd,
+        });
+      }
+      lastClosedDictionary = null;
+      continue;
+    }
+    lastClosedDictionary = null;
+  }
+  return streams;
+}
+
+async function countFlateBytesWithinLimit(payload, maximumDecodedBytes) {
+  const source = Readable.from((function* compressedChunks() {
+    for (let offset = 0; offset < payload.length; offset += DECODE_INSPECTION_CHUNK_BYTES) {
+      yield payload.subarray(offset, offset + DECODE_INSPECTION_CHUNK_BYTES);
+    }
+  })());
+  const decoder = createInflate({ chunkSize: DECODE_INSPECTION_CHUNK_BYTES });
+  source.pipe(decoder);
+  let decodedBytes = 0;
+  try {
+    for await (const chunk of decoder) {
+      decodedBytes += chunk.length;
+      if (decodedBytes > maximumDecodedBytes) {
+        throw resourceError(
+          "unsafe_object_stream_expansion",
+          `PDF object stream exceeds the ${maximumDecodedBytes}-byte decoded ceiling; `
+          + "the document was rejected before parsing.",
+        );
+      }
+    }
+    return decodedBytes;
+  } finally {
+    source.destroy();
+    decoder.destroy();
+  }
+}
+
+export async function assertBoundedPdfStreamDecodes(bytes, {
+  maximumDecodedObjectStreamBytes = MAX_DECODED_OBJECT_STREAM_BYTES,
+} = {}) {
+  if (!(bytes instanceof Uint8Array)
+      || !Number.isSafeInteger(maximumDecodedObjectStreamBytes)
+      || maximumDecodedObjectStreamBytes < 1
+      || maximumDecodedObjectStreamBytes > MAX_DECODED_OBJECT_STREAM_BYTES) {
+    throw new TypeError("Decoded object-stream inspection options are invalid.");
+  }
+  const rejectUnsupportedObjectStream = detail => {
+    throw resourceError(
+      "unsafe_object_stream_decode",
+      `PDF object stream cannot be decoded within a deterministic byte budget (${detail}); `
+      + "the document was rejected before parsing.",
+    );
+  };
+  for (const stream of collectPreparseStreamDecodes(bytes)) {
+    if (stream.typeAmbiguous) {
+      rejectUnsupportedObjectStream("indirect or malformed Type");
+    }
+    const objectStream = stream.type === "ObjStm";
+    // Content and image streams are not decoded eagerly by PDFDocument.load;
+    // they remain covered by the existing parsed-stream probe. Re-decoding
+    // them here would add full-document work without closing the object-stream
+    // allocation gap this preflight exists to cover.
+    if (!objectStream) continue;
+    if (stream.filterAmbiguous) {
+      rejectUnsupportedObjectStream("indirect or malformed Filter");
+    }
+    const filters = stream.filters?.map(value => FILTER_NAME_ALIASES.get(value) ?? value) ?? [];
+    if (filters.length === 0) {
+      if (stream.payloadEnd - stream.payloadStart > maximumDecodedObjectStreamBytes) {
+        throw resourceError(
+          "unsafe_object_stream_expansion",
+          `PDF object stream exceeds the ${maximumDecodedObjectStreamBytes}-byte decoded ceiling; `
+          + "the document was rejected before parsing.",
+        );
+      }
+      continue;
+    }
+    if (filters.length !== 1 || filters[0] !== "FlateDecode") {
+      rejectUnsupportedObjectStream("unsupported Filter chain");
+    }
+    try {
+      await countFlateBytesWithinLimit(
+        bytes.subarray(stream.payloadStart, stream.payloadEnd),
+        maximumDecodedObjectStreamBytes,
+      );
+    } catch (error) {
+      if (error?.code === RESOURCE_CODE) throw error;
+      // A malformed stream that fails before reaching the ceiling remains the
+      // parser's responsibility. The preflight exists only to prevent an
+      // otherwise valid expanding decode from allocating past its budget.
+    }
+  }
+}
+
+// pdf-lib 1.17.1 reads a cross-reference stream's /W byte widths straight
+// into the loop bounds of PDFXRefStreamParser.parseEntries without any range
+// check, so /W [1 2000000000 1] spins that loop for billions of iterations on
+// a one-kilobyte file while resident memory stays flat. The RSS monitor cannot
+// see a flat-memory spin, which leaves only the subprocess deadline between a
+// hostile document and a wedged worker. The defect is Hopding/pdf-lib#1776
+// (CWE-190); the fix in PR #1781 is unmerged and the issue was closed
+// untouched by a stale bot, so the bound has to live on our side of the
+// parser. The reasoning ported from that PR is the ISO 32000-1:2008 Table 17
+// range check below; the premature end-of-stream handling it also adds is not
+// reproducible from here, because a bounded /W can never read past a bounded
+// entry count.
+function assertBoundedXRefStreamByteWidths(bytes) {
+  const rejectByteWidth = detail => {
+    throw resourceError(
+      "unsafe_xref_byte_width",
+      `PDF declares an unsafe cross-reference stream byte width (${detail}); `
+      + "the document was rejected before parsing.",
+    );
+  };
+  // The loop bound pdf-lib derives is the numeric magnitude, so magnitude is
+  // what has to be bounded. A non-canonical spelling such as 1.0 stays
+  // acceptable; 2000000000.0 does not.
+  const byteWidthNumber = token => {
+    if (token.overlong) return Number.POSITIVE_INFINITY;
+    if (token.type === "integer") return Number(token.value);
+    if (token.type === "word" && PDF_REAL_NUMBER.test(token.value)) return Number(token.value);
+    return null;
+  };
+  const assertByteWidths = widths => {
+    let entryBytes = 0;
+    for (let index = 0; index < widths.length; index += 1) {
+      const { raw, value } = widths[index];
+      if (!Number.isFinite(value) || value < 0 || value > MAX_XREF_FIELD_BYTES) {
+        rejectByteWidth(`/W[${index}] = ${raw}`);
+      }
+      if (index < 3) entryBytes += value;
+    }
+    if (entryBytes > MAX_XREF_ENTRY_BYTES) {
+      rejectByteWidth(`/W implies a ${entryBytes}-byte entry`);
+    }
+  };
+  const dictStack = [];
+  let untrackedDictDepth = 0;
+  let expectTypeValue = false;
+  let widthState = "idle";
+  let widthFrame = null;
+  let widthDepth = 0;
+  let widthValues = null;
+  let widthMalformed = false;
+  const resetWidthCollection = () => {
+    widthState = "idle";
+    widthFrame = null;
+    widthDepth = 0;
+    widthValues = null;
+    widthMalformed = false;
+  };
+
+  for (const token of pdfStructureTokens(bytes, { skipStreamPayloads: true })) {
+    // Bind each /W array to the dictionary that declares it so a CIDFont /W
+    // glyph-width array, whose legitimate elements are far larger than eight,
+    // is never mistaken for a cross-reference stream's byte widths. The widths
+    // are checked when the dictionary closes, because /Type /XRef may be
+    // written after /W.
+    if (expectTypeValue) {
+      if (token.type === "name" && !token.overlong && token.value === "XRef") {
+        const frame = dictStack.at(-1);
+        if (frame) frame.xrefStream = true;
+      }
+      expectTypeValue = false;
+    }
+    if (widthState === "bracket") {
+      if (token.type === "delimiter" && token.value === "[") {
+        widthState = "collect";
+        widthDepth = 1;
+        widthValues = [];
+        widthMalformed = false;
+      } else {
+        resetWidthCollection();
+      }
+    } else if (widthState === "collect") {
+      if (token.type === "delimiter" && token.value === "[") {
+        widthDepth += 1;
+        widthMalformed = true;
+      } else if (token.type === "delimiter" && token.value === "]") {
+        widthDepth -= 1;
+        if (widthDepth === 0) {
+          if (widthFrame && !widthMalformed) widthFrame.widths = widthValues;
+          resetWidthCollection();
+        }
+      } else if (widthDepth === 1) {
+        // A non-numeric element makes pdf-lib's own W.lookup(idx, PDFNumber)
+        // throw inside the constructor, before parseEntries runs, so such an
+        // array needs no bound from here.
+        const value = byteWidthNumber(token);
+        if (value === null) widthMalformed = true;
+        else if (widthValues.length < MAX_TRACKED_XREF_WIDTHS) {
+          widthValues.push({ raw: token.value, value });
+        }
+      }
+    }
+    if (token.type === "delimiter" && token.value === "<<") {
+      if (dictStack.length < MAX_TRACKED_DICT_DEPTH) {
+        dictStack.push({ xrefStream: false, widths: null });
+      } else {
+        untrackedDictDepth += 1;
+      }
+    } else if (token.type === "delimiter" && token.value === ">>") {
+      if (untrackedDictDepth > 0) {
+        untrackedDictDepth -= 1;
+      } else {
+        const frame = dictStack.pop();
+        if (frame === widthFrame) resetWidthCollection();
+        if (frame?.xrefStream && frame.widths) assertByteWidths(frame.widths);
+      }
+    }
+    if (token.type === "name" && !token.overlong) {
+      if (token.value === "Type") expectTypeValue = true;
+      if (token.value === "W" && dictStack.length > 0) {
+        widthState = "bracket";
+        widthFrame = dictStack.at(-1);
+        widthDepth = 0;
+        widthValues = null;
+        widthMalformed = false;
+      }
+    }
   }
 }
 
 export function assertBoundedPdfStructure(bytes) {
+  assertBoundedXRefStreamByteWidths(bytes);
   const densityLimit = Math.min(
     MAX_REASONABLE_OBJECT_NUMBER,
     Math.max(100_000, bytes.length * 32),
@@ -441,7 +855,7 @@ export function assertBoundedPdfStructure(bytes) {
   const reject = (kind, value) => {
     throw resourceError(
       "sparse_pdf_structure",
-      `PDF declares an unsafe sparse ${kind} (${value}); mutation was stopped before parsing.`,
+      `PDF declares an unsafe sparse ${kind} (${value}); the document was rejected before parsing.`,
     );
   };
   const integerValue = token => {
@@ -1404,6 +1818,7 @@ export async function savePdfDocumentSafely(document, options = {}) {
   let verified;
   let graphAfterSave;
   try {
+    await assertBoundedPdfStreamDecodes(bytes);
     verified = await PDFDocument.load(bytes, { updateMetadata: false });
     graphAfterSave = enforceSafeParsedPdfGraph(
       verified,
@@ -1447,12 +1862,13 @@ export async function savePdfDocumentSafely(document, options = {}) {
 
 export async function loadPdfForMutation(bytes, password) {
   assertBoundedPdfStructure(bytes);
+  await assertBoundedPdfStreamDecodes(bytes);
   let document;
   try {
     document = await PDFDocument.load(bytes, password ? { password } : {});
   } catch (error) {
     if (error.message?.includes("password") || error.message?.includes("encrypt")) {
-      throw new Error("PDF is password-protected. Please provide the correct password using the 'password' parameter.");
+      throw new Error(PDF_LIB_ENCRYPTED_MESSAGE);
     }
     throw new Error("Failed to load PDF: the file is malformed, incomplete, or unsupported.", { cause: error });
   }
@@ -1474,7 +1890,6 @@ export async function loadPdfForMutation(bytes, password) {
   return document;
 }
 
-const loadPdf = loadPdfForMutation;
 
 async function reopenSource(binding) {
   return withBoundedPdfFileSafely(
@@ -1497,6 +1912,35 @@ async function reopenSource(binding) {
       return source.bytes;
     },
   );
+}
+
+async function inspectAccessibilitySource(bytes, binding) {
+  assertBoundedPdfStructure(bytes);
+  await assertBoundedPdfStreamDecodes(bytes);
+  let document;
+  try {
+    document = await PDFDocument.load(bytes, { updateMetadata: false });
+  } catch {
+    // The pure primitive owns fixed encrypted abstention and malformed-result
+    // classification. It never includes a parser diagnostic in either path.
+    return inspectPdfAccessibilityBytes(bytes, {
+      source_file_name: path.basename(binding.canonical_path),
+    });
+  }
+  assertSafeParsedPdfDecodeChains(document);
+  assertSafeParsedPdfComplexity(document);
+  enforceSafeParsedPdfGraph(document);
+  try {
+    validatePageTree(document);
+  } catch (error) {
+    throw new AccessibilityInspectionError(
+      "PDF_ACCESSIBILITY_INSPECTION_UNAVAILABLE",
+      "PDF accessibility signal inspection is unavailable for this malformed document.",
+    );
+  }
+  return validateAccessibilityInspectionResult(await inspectPdfAccessibilityBytes(bytes, {
+    source_file_name: path.basename(binding.canonical_path),
+  }));
 }
 
 function formInfo(document) {
@@ -1560,13 +2004,153 @@ function fillFields(document, data, { objectErrors = false } = {}) {
   return { filledFields, errors };
 }
 
-async function execute(request) {
+/*
+ * Encrypted documents on the write path.
+ *
+ * All three phases — decrypt, mutate, re-protect — run here, inside the
+ * isolated pdf-lib worker, and that placement is forced rather than chosen.
+ * A mutation's output is written to the private stage directory on disk before
+ * the parent ever sees it, so if protection were restored anywhere later than
+ * this process the staged file would be plaintext on disk. Re-protection
+ * therefore has to happen before `stageOutputs`, which puts QPDF in here; and
+ * once QPDF is in here, decrypting here too keeps the plaintext from ever
+ * crossing a process boundary.
+ *
+ * QPDF itself still runs on its own thread, exactly as it does for the
+ * read-only tools: `server/qpdf-decrypt.js` starts one worker per phase and
+ * destroys it. That is not merely inherited. A synchronous `callMain` on this
+ * thread would block the RSS monitor's heartbeat, and the parent kills a child
+ * whose monitor stalls for 250 ms — well under the ~1.6 s a legitimate
+ * near-cap decrypt takes — so running QPDF inline here would turn ordinary
+ * encrypted documents into spurious resource-limit kills.
+ *
+ * Where the plaintext is, at every moment:
+ *
+ *   - The ciphertext is read from disk into this process, as before.
+ *   - It is transferred into a QPDF thread, decrypted inside the WebAssembly
+ *     heap, and the plaintext is transferred back here. That thread is then
+ *     destroyed.
+ *   - pdf-lib parses and mutates the plaintext in this process's heap.
+ *   - The mutated plaintext and the original ciphertext are transferred into a
+ *     second QPDF thread, which restores the original protection and is then
+ *     destroyed.
+ *   - Only the re-protected ciphertext reaches `stageOutputs`, and so only
+ *     ciphertext is ever written to disk.
+ *
+ * On every failure path — a refusal, a deadline, an RSS breach, SIGTERM,
+ * SIGKILL — this process dies or unwinds with the plaintext still only in
+ * memory, and the parent removes the operation directory regardless. There is
+ * no path on which a decrypted document is staged, and no fallback that writes
+ * plaintext when re-protection fails: an encrypted input yields an encrypted
+ * output or no output at all.
+ */
+function createProtection(request) {
+  return {
+    operation: request.operation,
+    password: request.password,
+    // Every source gets an entry, encrypted or not, because `merge_pdfs` has
+    // to be able to tell "all protected the same way" from "some protected".
+    sources: new Map(),
+  };
+}
+
+/**
+ * Loads one mutation source, decrypting it first if pdf-lib refuses it as
+ * encrypted.
+ *
+ * pdf-lib is always tried first, so an unencrypted document pays nothing: no
+ * QPDF module is instantiated and no extra parse happens. The encrypted branch
+ * is entered only after pdf-lib has said the document is encrypted, which is
+ * the same detection the read path uses.
+ */
+async function loadMutationSource(protection, bytes) {
+  if (!ENCRYPTED_WRITE_OPERATIONS[protection.operation]) {
+    // Not a mutation that may decrypt; behave exactly as before.
+    return loadPdfForMutation(bytes, protection.password);
+  }
+  const known = protection.sources.get(bytes);
+  if (known?.plaintext) return loadPdfForMutation(known.plaintext, null);
+  try {
+    const document = await loadPdfForMutation(bytes, protection.password);
+    if (!protection.sources.has(bytes)) protection.sources.set(bytes, null);
+    return document;
+  } catch (error) {
+    if (error?.message !== PDF_LIB_ENCRYPTED_MESSAGE) throw error;
+  }
+  const decrypted = await decryptPdfForWrite(bytes, protection.password, protection.operation);
+  protection.sources.set(bytes, {
+    reference: bytes,
+    encryption: decrypted.encryption,
+    plaintext: decrypted.plaintext,
+    release: decrypted.release,
+    // The rebuild-style operations bind a copied page's null-reference
+    // provenance to a digest of the bytes its source was parsed from. For a
+    // decrypted document those bytes are the plaintext, not the file on disk,
+    // so the on-disk digest would not describe what pdf-lib actually read.
+    // The binding to the file itself is not weakened by this: `reopenSource`
+    // and the parent's `revalidateSources` both still verify the encrypted
+    // source by device, inode, size and digest.
+    parsedSha256: createHash("sha256").update(decrypted.plaintext).digest("hex"),
+  });
+  return loadPdfForMutation(decrypted.plaintext, null);
+}
+
+/**
+ * The digest of the bytes a source was actually parsed from: the plaintext for
+ * a decrypted document, and the file's own digest otherwise.
+ */
+function parsedSourceAuthority(protection, bytes, binding) {
+  return protection.sources.get(bytes)?.parsedSha256 ?? binding.sha256;
+}
+
+/** The protection every output of this request must carry, or `null`. */
+function requiredProtection(protection) {
+  const opened = [...protection.sources.values()];
+  const refusal = mergeProtectionRefusal(opened.map(entry => entry?.encryption ?? null));
+  if (refusal) throw refusal;
+  return opened.find(entry => entry !== null) ?? null;
+}
+
+/**
+ * Restores the source's protection onto every output, before anything is
+ * staged. Returns the bytes that will actually be written.
+ */
+async function protectOutputs(protection, outputs) {
+  const required = requiredProtection(protection);
+  if (!required) return outputs;
+  const protectedOutputs = [];
+  for (const bytes of outputs) {
+    protectedOutputs.push(await reprotectPdfAfterWrite(
+      bytes,
+      required.reference,
+      protection.password,
+      required.encryption,
+    ));
+    // The mutated bytes are a decrypted copy of the document and are no longer
+    // needed once they have been protected. Overwriting them here is the same
+    // best-effort narrowing the decrypted source gets: it shortens the window
+    // in which plaintext is readable in this process rather than closing it.
+    if (ArrayBuffer.isView(bytes)) bytes.fill(0);
+  }
+  return protectedOutputs;
+}
+
+/** Overwrites every decrypted buffer this request produced. */
+function releaseProtection(protection) {
+  for (const entry of protection.sources.values()) {
+    try { entry?.release?.(); } catch { /* Already released. */ }
+  }
+}
+
+async function execute(request, protection) {
   const sourceBytes = await Promise.all(request.sources.map(reopenSource));
   const options = request.options;
   let outputs = [];
   let result = {};
-  if (["fill_pdf", "fill_with_profile"].includes(request.operation)) {
-    const document = await loadPdf(sourceBytes[0], request.password);
+  if (request.operation === "inspect_pdf_accessibility") {
+    result = await inspectAccessibilitySource(sourceBytes[0], request.sources[0]);
+  } else if (["fill_pdf", "fill_with_profile"].includes(request.operation)) {
+    const document = await loadMutationSource(protection, sourceBytes[0]);
     const expectedPageCount = document.getPageCount();
     const expectedPageRotations = normalizedPageRotations(document);
     const fill = fillFields(document, options.field_data);
@@ -1578,7 +2162,7 @@ async function execute(request) {
   } else if (request.operation === "bulk_fill_from_csv") {
     const rows = [];
     for (const record of options.records) {
-      const document = await loadPdf(sourceBytes[0], request.password);
+      const document = await loadMutationSource(protection, sourceBytes[0]);
       const expectedPageCount = document.getPageCount();
       const expectedPageRotations = normalizedPageRotations(document);
       const fill = fillFields(document, record);
@@ -1595,19 +2179,19 @@ async function execute(request) {
     let pages = 0;
     const expectedPageRotations = [];
     for (const [sourceIndex, bytes] of sourceBytes.entries()) {
-      const source = await loadPdf(bytes, request.password);
+      const source = await loadMutationSource(protection, bytes);
       if (sourceBytes.length > 1) metadata.push(captureMergeDescriptiveMetadata(source));
       else {
         copyPdfDocumentMetadataForRebuiltOutput(
           target,
           source,
-          request.sources[sourceIndex].sha256,
+          parsedSourceAuthority(protection, bytes, request.sources[sourceIndex]),
         );
       }
       const indices = source.getPageIndices();
       expectedPageRotations.push(...normalizedPageRotations(source));
       await copyPdfPagesForRebuiltOutput(target, source, indices, {
-        sourceAuthorityLabel: request.sources[sourceIndex].sha256,
+        sourceAuthorityLabel: parsedSourceAuthority(protection, bytes, request.sources[sourceIndex]),
       });
       pages += indices.length;
     }
@@ -1621,21 +2205,21 @@ async function execute(request) {
     })];
     result = { total_pages: pages, omitted_fields: consensus.omittedFields, form_info: formInfo(target) };
   } else if (request.operation === "split_pdf") {
-    const source = await loadPdf(sourceBytes[0], request.password);
+    const source = await loadMutationSource(protection, sourceBytes[0]);
     const ranges = parsePageRanges(options.page_ranges, source.getPageCount());
     for (const [start, end] of ranges) {
       const target = await PDFDocument.create();
       copyPdfDocumentMetadataForRebuiltOutput(
         target,
         source,
-        request.sources[0].sha256,
+        parsedSourceAuthority(protection, sourceBytes[0], request.sources[0]),
       );
       await copyPdfPagesForRebuiltOutput(
         target,
         source,
         Array.from({ length: end - start + 1 }, (_, index) => start - 1 + index),
         {
-          sourceAuthorityLabel: request.sources[0].sha256,
+          sourceAuthorityLabel: parsedSourceAuthority(protection, sourceBytes[0], request.sources[0]),
         },
       );
       if (target.getPageCount() < 1) throw new Error("split_pdf produced an empty effective page range.");
@@ -1647,7 +2231,7 @@ async function execute(request) {
     }
     result = { ranges };
   } else if (request.operation === "rotate_pdf_pages") {
-    const document = await loadPdf(sourceBytes[0], request.password);
+    const document = await loadMutationSource(protection, sourceBytes[0]);
     const all = document.getPages();
     const expectedPageCount = all.length;
     const expectedPageRotations = normalizedPageRotations(document);
@@ -1671,7 +2255,7 @@ async function execute(request) {
     })];
     result = { rotated_pages: targetIndices.length, form_info: formInfo(document) };
   } else if (["reorder_pdf_pages", "apply_page_plan"].includes(request.operation)) {
-    const source = await loadPdf(sourceBytes[0], request.password);
+    const source = await loadMutationSource(protection, sourceBytes[0]);
     const order = options.page_order;
     if (!Array.isArray(order) || order.length < 1) throw new Error("page_order has no effective output pages.");
     const total = source.getPageCount();
@@ -1694,10 +2278,10 @@ async function execute(request) {
     copyPdfDocumentMetadataForRebuiltOutput(
       target,
       source,
-      request.sources[0].sha256,
+      parsedSourceAuthority(protection, sourceBytes[0], request.sources[0]),
     );
     await copyPdfPagesForRebuiltOutput(target, source, order.map(page => page - 1), {
-      sourceAuthorityLabel: request.sources[0].sha256,
+      sourceAuthorityLabel: parsedSourceAuthority(protection, sourceBytes[0], request.sources[0]),
       mutatePage(page, index) {
         const rotation = options.rotations?.[String(order[index])];
         if (rotation) page.setRotation(degrees((page.getRotation().angle + rotation) % 360));
@@ -1714,7 +2298,7 @@ async function execute(request) {
       form_info: formInfo(target),
     };
   } else {
-    const document = await loadPdf(sourceBytes[0], request.password);
+    const document = await loadMutationSource(protection, sourceBytes[0]);
     const expectedPageCount = document.getPageCount();
     const expectedPageRotations = normalizedPageRotations(document);
     assertMayResave(document, options.allow_resign, request.operation === "apply_signature" ? "re-sign" : "modify");
@@ -1748,6 +2332,12 @@ async function execute(request) {
     })];
   }
   if (outputs.length > MAX_OUTPUTS) throw resourceError("too_many_outputs", "Mutation produced too many outputs.");
+  if (request.operation === "inspect_pdf_accessibility" && outputs.length !== 0) {
+    throw new TypeError("Read-only inspection cannot stage output.");
+  }
+  if (request.operation !== "inspect_pdf_accessibility" && outputs.length < 1) {
+    throw new TypeError("Mutation operations must stage at least one output.");
+  }
   return { outputs, result };
 }
 
@@ -1793,17 +2383,74 @@ async function stageOutputs(stageDirectory, outputBytes) {
   return manifest;
 }
 
-export async function executePdfLibMutationRequest(request) {
+export async function executePdfLibOperationRequest(request) {
   validateRequest(request);
-  const { outputs, result } = await execute(request);
-  const manifest = await stageOutputs(request.stage_directory, outputs);
+  const protection = createProtection(request);
+  try {
+    const { outputs, result } = await execute(request, protection);
+    // Protection is restored before anything reaches the stage, so a decrypted
+    // document is never written to disk even momentarily. A failure here
+    // stages nothing at all rather than falling back to plaintext.
+    const manifest = await stageOutputs(
+      request.stage_directory,
+      await protectOutputs(protection, outputs),
+    );
+    return {
+      protocol_version: PROTOCOL_VERSION,
+      operation: request.operation,
+      status: "ok",
+      manifest,
+      result,
+    };
+  } finally {
+    releaseProtection(protection);
+  }
+}
+
+export async function executePdfLibMutationRequest(request) {
+  if (request?.operation === "inspect_pdf_accessibility") {
+    throw new TypeError("Read-only inspection is not a mutation request.");
+  }
+  return executePdfLibOperationRequest(request);
+}
+
+function errorResponse(error, request) {
   return {
     protocol_version: PROTOCOL_VERSION,
-    operation: request.operation,
-    status: "ok",
-    manifest,
-    result,
+    operation: request?.operation ?? null,
+    status: "error",
+    error: {
+      name: error?.name ?? "Error",
+      code: error?.code ?? null,
+      message: error?.message ?? String(error),
+      reason: error?.reason ?? null,
+    },
   };
+}
+
+function boundedControlBytes(response) {
+  const bytes = Buffer.from(JSON.stringify(response), "utf8");
+  if (bytes.length > MAX_CONTROL_BYTES) {
+    throw resourceError(
+      "control_output_too_large",
+      "Mutation control output is too large.",
+    );
+  }
+  return bytes;
+}
+
+async function threadMain() {
+  const request = threadWorkerData?.request ?? null;
+  let response;
+  try {
+    response = await executePdfLibOperationRequest(request);
+    boundedControlBytes(response);
+  } catch (error) {
+    response = errorResponse(error, request);
+    boundedControlBytes(response);
+  }
+  threadParentPort.postMessage({ kind: "response", response });
+  threadParentPort.close();
 }
 
 async function main() {
@@ -1821,23 +2468,10 @@ async function main() {
       chunks.push(Buffer.from(chunk));
     }
     request = JSON.parse(Buffer.concat(chunks).toString("utf8"));
-    const response = await executePdfLibMutationRequest(request);
-    const bytes = Buffer.from(JSON.stringify(response), "utf8");
-    if (bytes.length > MAX_CONTROL_BYTES) throw resourceError("control_output_too_large", "Mutation control output is too large.");
-    writeSync(1, bytes);
+    const response = await executePdfLibOperationRequest(request);
+    writeSync(1, boundedControlBytes(response));
   } catch (error) {
-    const response = {
-      protocol_version: PROTOCOL_VERSION,
-      operation: request?.operation ?? null,
-      status: "error",
-      error: {
-        name: error?.name ?? "Error",
-        code: error?.code ?? null,
-        message: error?.message ?? String(error),
-        reason: error?.reason ?? null,
-      },
-    };
-    writeSync(1, Buffer.from(JSON.stringify(response), "utf8"));
+    writeSync(1, boundedControlBytes(errorResponse(error, request)));
     exitCode = 1;
   } finally {
     await monitor.stop();
@@ -1845,7 +2479,15 @@ async function main() {
   }
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+if (
+  !isMainThread
+  && threadWorkerData?.pdf_tools_worker === "pdf-lib"
+  && threadParentPort
+) {
+  threadMain().catch(error => {
+    throw error;
+  });
+} else if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
   main().catch(error => {
     writeSync(2, Buffer.from(String(error?.stack ?? error).slice(0, 64 * 1024), "utf8"));
     closeSync(0);

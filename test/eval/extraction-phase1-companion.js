@@ -6,6 +6,7 @@ import { hashTrustedRegularFile } from "./extraction-phase1-artifacts.js";
 export const PHASE1_EXECUTION_COMPANION_ID = "pdf-tools.extraction-phase1-execution-companion.v1";
 export const PHASE1_CROSS_DEVICE_RECEIPT_ID = "pdf-tools.extraction-phase1-cross-device-receipt.v1";
 export const PHASE1_COMPANION_SOURCE_ROLES = Object.freeze([
+  "accessibility_inspection_module",
   "artifact_config_schema",
   "artifact_inventory_schema",
   "artifact_module",
@@ -25,7 +26,9 @@ export const PHASE1_COMPANION_SOURCE_ROLES = Object.freeze([
   "mcp_sdk_package",
   "package_json",
   "package_lock",
+  "pdf_comparison_module",
   "pdf_lib_package",
+  "pdf_observations_module",
   "pdfjs_package",
   "plan_schema",
   "protocol_module",
@@ -37,8 +40,12 @@ export const PHASE1_COMPANION_SOURCE_ROLES = Object.freeze([
   "request_schema",
   "response_schema",
   "runner_script",
+  "table_proposal_verification_module",
+  "type3_cm_pk_reference_module",
+  "type3_cm_reference_module",
 ]);
 export const PHASE1_COMPANION_SOURCE_PATHS = Object.freeze({
+  accessibility_inspection_module: "server/accessibility-inspection.js",
   artifact_config_schema: "test/fixtures/eval/extraction/phase1/artifact-config.schema.json",
   artifact_inventory_schema: "test/fixtures/eval/extraction/phase1/artifact-inventory.schema.json",
   artifact_module: "test/eval/extraction-phase1-artifacts.js",
@@ -53,11 +60,15 @@ export const PHASE1_COMPANION_SOURCE_PATHS = Object.freeze({
   generation_verifier_common_module: "test/eval/extraction-phase1-generation-verifier-common.js",
   layout_evidence_module: "test/eval/extraction-phase1-layout-evidence.js",
   layout_extraction_module: "server/layout-extraction.js",
+  type3_cm_reference_module: "server/type3-cm-reference.js",
+  type3_cm_pk_reference_module: "server/type3-cm-pk-reference.js",
   layout_output_schemas_module: "server/output-schemas.js",
   markdown_conversion_module: "server/markdown-conversion.js",
   mcp_sdk_package: "node_modules/@modelcontextprotocol/sdk/package.json",
   package_json: "package.json",
   package_lock: "package-lock.json",
+  pdf_comparison_module: "server/pdf-comparison.js",
+  pdf_observations_module: "server/pdf-observations.js",
   pdf_lib_package: "node_modules/pdf-lib/package.json",
   pdfjs_package: "node_modules/pdfjs-dist/package.json",
   plan_schema: "test/fixtures/eval/extraction/phase1/run-plan.schema.json",
@@ -70,6 +81,7 @@ export const PHASE1_COMPANION_SOURCE_PATHS = Object.freeze({
   request_schema: "test/fixtures/eval/extraction/phase1/candidate-request.schema.json",
   response_schema: "test/fixtures/eval/extraction/phase1/candidate-response.schema.json",
   runner_script: "scripts/eval-run-extraction-candidates.mjs",
+  table_proposal_verification_module: "server/table-proposal-verification.js",
 });
 export const PHASE1_UNAVAILABLE_RESOURCE_FACTS = Object.freeze([
   "continuous_immutability",

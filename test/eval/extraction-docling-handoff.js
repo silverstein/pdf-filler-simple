@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { spawnSync } from "node:child_process";
-import { constants as fsConstants } from "node:fs";
+import { constants as fsConstants, readFileSync } from "node:fs";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -239,6 +239,13 @@ async function prepareDoclingMacHandoffCore({
   testOnlyUv = null,
   testOnlyBootstrapRoot = null,
   testOnlySupervisorBuild = null,
+  // Re-measuring the supervisor calibration requires a handoff, and the
+  // attestation gate refuses a handoff until the calibration is fresh. That is
+  // circular: the first calibration predates the gate, so the gate now blocks
+  // its own renewal. This option breaks the deadlock for measurement only. The
+  // resulting handoff is marked and must never be treated as qualifying
+  // evidence.
+  calibrationBootstrap = false,
   testCapability = null,
 } = {}) {
   if (!cacheRoot || !sidecarRoot || !Array.isArray(protectedRoots) || protectedRoots.length < 1
@@ -315,14 +322,36 @@ async function prepareDoclingMacHandoffCore({
         Object.entries(DOCLING_SUPERVISOR_POLICY_V1)
           .filter(([key]) => key !== "calibration_attestation_sha256"),
       ))
-    || calibrationAttestation.supervisor?.source?.sha256 !== supervisorSource.sha256
-    || calibrationAttestation.supervisor?.source?.bytes !== supervisorSource.bytes.length
-    || calibrationAttestation.supervisor?.controller?.sha256 !== supervisorController.sha256
-    || calibrationAttestation.supervisor?.controller?.bytes !== supervisorController.bytes.length
     || !/^[a-f0-9]{64}$/.test(calibrationAttestation.calibration_source?.sha256 ?? "")
     || !Number.isInteger(calibrationAttestation.calibration_source?.bytes)
     || calibrationAttestation.calibration_source.bytes < 1) {
     throw new Error("Docling supervisor policy lacks its exact reviewed calibration attestation");
+  }
+  // Source drift is a distinct state from a malformed or absent attestation.
+  // The supervisor is actively developed, so its reviewed calibration goes
+  // stale whenever the source legitimately moves. Reporting that as an
+  // ordinary failure is what buries real defects: it turned four suites red
+  // with a message that reads like corruption. Type it instead, so callers can
+  // report "needs re-approval" and a red test still means a real defect.
+  const attestationDrift = [
+    ["supervisor source", calibrationAttestation.supervisor?.source, supervisorSource],
+    ["supervisor controller", calibrationAttestation.supervisor?.controller, supervisorController],
+  ].filter(([, recorded, actual]) => recorded?.sha256 !== actual.sha256
+    || recorded?.bytes !== actual.bytes.length);
+  if (attestationDrift.length > 0) {
+    const detail = attestationDrift
+      .map(([label, recorded, actual]) => `${label} recorded ${recorded?.bytes ?? "none"} bytes `
+        + `${String(recorded?.sha256 ?? "none").slice(0, 12)}, actual ${actual.bytes.length} bytes `
+        + `${actual.sha256.slice(0, 12)}`)
+      .join("; ");
+    if (!calibrationBootstrap) {
+      const stale = new Error(
+        "Docling supervisor calibration attestation is stale and needs review: "
+        + `${detail}. This is a re-approval requirement, not a product defect.`,
+      );
+      stale.code = "EVAL_ATTESTATION_STALE";
+      throw stale;
+    }
   }
   let observedSupervisorBuild;
   let supervisorBinaryBytes;
@@ -599,6 +628,12 @@ async function prepareDoclingMacHandoffCore({
     },
     claim_boundary: "Unexecuted private evaluation handoff only. No benchmark, package, product, redistribution, or release claim is authorized.",
   };
+  // The bootstrap marker must survive in the durable receipt bytes, not only
+  // on the in-memory result, or a bootstrap handoff's receipt is
+  // byte-indistinguishable from a qualifying one. Present only when true, so
+  // ordinary receipts keep their exact current shape, and archived receipts
+  // without the field remain valid non-bootstrap receipts.
+  if (calibrationBootstrap === true) receipt.calibration_bootstrap = true;
   const receiptBytes = Buffer.from(`${canonicalJson(receipt)}\n`);
   const trustedSchema = JSON.parse(sourceInputs.find(item => item.role === "handoff_schema").bytes);
   const validation = new AjvJsonSchemaValidator().getValidator(trustedSchema)(receipt);
@@ -610,7 +645,88 @@ async function prepareDoclingMacHandoffCore({
     receipt_sha256: sha256(receiptBytes),
     bootstrap_sha256: sha256(Buffer.from(DOCLING_BOOTSTRAP_V1)),
     protected_roots_json: canonicalJson([...protectedRoots].map(value => path.resolve(value)).sort()),
+    // Present and true only when the attestation gate was bypassed to re-measure
+    // the calibration. Consumers that produce qualifying or scored evidence must
+    // refuse a handoff carrying this marker.
+    calibration_bootstrap: calibrationBootstrap === true,
   };
+}
+
+/**
+ * Whether the reviewed Docling supervisor calibration attestation still matches
+ * the sources it attests to. Pure and cheap, so suites can gate themselves at
+ * module load instead of failing deep inside a fixture build. A stale result is
+ * a re-approval requirement, not a product defect.
+ */
+export function doclingCalibrationStatus(repoRoot = REPO_ROOT) {
+  // The attestation and both supervisor sources are committed fixtures. If any
+  // of them is missing or unparseable, that is repository or evidence-store
+  // corruption, not staleness, so this throws and the gated suites fail red.
+  // Only a successfully computed comparison may report drift as a skip.
+  const attestationPath = path.join(
+    repoRoot,
+    "test/fixtures/eval/extraction/phase1/docling-supervisor-calibration-attestation.v1.json",
+  );
+  const attestationBytes = readFileSync(attestationPath);
+  const attestation = JSON.parse(attestationBytes);
+  // A maintainer-authorized retirement record supersedes the staleness
+  // comparison entirely: the retired measurement is permanently
+  // unreproducible, so the gated suites skip on the retirement itself. The
+  // record must bind the exact attestation bytes it retires; a mismatch or a
+  // dangling record is evidence-store corruption and stays red.
+  let retirementBytes = null;
+  try {
+    retirementBytes = readFileSync(path.join(
+      repoRoot,
+      "test/fixtures/eval/extraction/phase1/docling-supervisor-calibration-retirement.v1.json",
+    ));
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+  }
+  if (retirementBytes !== null) {
+    const retirement = JSON.parse(retirementBytes);
+    if (retirement.protocol !== "pdf-tools.docling-supervisor-calibration-retirement.v1"
+      || retirement.retired !== true
+      || typeof retirement.reason !== "string" || retirement.reason.length < 1) {
+      throw new Error("Docling calibration retirement record is malformed");
+    }
+    if (retirement.retires_attestation?.sha256 !== sha256(attestationBytes)
+      || retirement.retires_attestation?.bytes !== attestationBytes.length) {
+      throw new Error(
+        "Docling calibration retirement record does not bind the exact attestation it claims to retire",
+      );
+    }
+    return {
+      current: false,
+      retired: true,
+      reason: `Docling supervisor calibration was retired on ${retirement.retired_on}: `
+        + "its measurement is permanently unreproducible and the suites gate on the "
+        + "retirement. This is a recorded maintainer decision, not a product defect.",
+    };
+  }
+  const bindings = [
+    ["supervisor source", attestation.supervisor?.source, "test/eval/native/docling-macos-supervisor.c"],
+    ["supervisor controller", attestation.supervisor?.controller, "test/eval/docling-macos-supervisor.js"],
+  ];
+  for (const [label, recorded] of bindings) {
+    // A structurally hollow attestation is corruption, not drift. Mirror the
+    // core handoff's structural checks so it cannot masquerade as staleness.
+    if (!/^[a-f0-9]{64}$/.test(recorded?.sha256 ?? "")
+      || !Number.isInteger(recorded?.bytes) || recorded.bytes < 1) {
+      throw new Error(`Docling calibration attestation is malformed: ${label} binding is missing or invalid`);
+    }
+  }
+  const drift = bindings.filter(([, recorded, relativePath]) => {
+    const bytes = readFileSync(path.join(repoRoot, relativePath));
+    return recorded.sha256 !== sha256(bytes) || recorded.bytes !== bytes.length;
+  }).map(([label]) => label);
+  return drift.length === 0
+    ? { current: true, reason: null }
+    : {
+      current: false,
+      reason: `Docling supervisor calibration attestation is stale for ${drift.join(" and ")}; `
+        + "sealed evidence needs human re-approval, this is not a product defect.",
+    };
 }
 
 export async function prepareDoclingMacHandoff(options = {}) {

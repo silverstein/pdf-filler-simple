@@ -160,7 +160,7 @@ async function configuredReport(caseIds, mode = "ideal", {
   maxStdoutBytes = null,
   maxReportBytes = null,
 } = {}) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-phase1-score-"));
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-phase1-score-")));
   temporaryRoots.push(root);
   const [registry, plan] = await Promise.all([readJson(PATHS.registry), readJson(PATHS.plan)]);
   const candidate = registry.candidates.find(item => item.id === "candidate.direct_pdf.v1");
@@ -236,7 +236,7 @@ describe("structured extraction Phase 1 pure scorer", () => {
   });
 
   it("executes, persists, reloads, and independently rescores the all-not-run report", async () => {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-phase1-score-cli-"));
+    const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-phase1-score-cli-")));
     temporaryRoots.push(root);
     const executionRoot = path.join(root, "executions");
     const scoreRoot = path.join(root, "scores");

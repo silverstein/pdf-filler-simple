@@ -27,7 +27,7 @@ template discovery is also unsupported and deterministically returns JSON-RPC
 
 ### Tools
 
-The runtime returns 40 uniquely named tools. Every tool has an object input
+The runtime returns 44 uniquely named tools. Every tool has an object input
 schema plus `title`, `readOnlyHint`, `destructiveHint`, `idempotentHint`, and
 `openWorldHint` annotations. Annotations are user-interface hints, never an
 authorization boundary; path allowlists and signature-intent checks remain the
@@ -36,7 +36,7 @@ every tool in both runtime copies. The handler evidence and classification
 rules are recorded in
 [`TOOL_ANNOTATION_AUDIT_2026-07-21.md`](TOOL_ANNOTATION_AUDIT_2026-07-21.md).
 
-The source manifest lists all 40 tools. The packed MCPB manifest lists the 39
+The source manifest lists all 44 tools. The packed MCPB manifest lists the 43
 normal model-workflow tools and omits `read_pdf_bytes`, whose runtime metadata
 marks it `ui.visibility: ["app"]`. `tools_generated: true` explicitly tells MCPB
 hosts that runtime discovery includes an additional tool. That visibility hint
@@ -45,7 +45,7 @@ a generic MCP client can still discover and call `read_pdf_bytes`. It is not an
 authorization or confidentiality boundary. Filesystem allowlists and the tool's
 bounded reads remain the enforced controls.
 
-Thirty-four tool handlers advertise strict `outputSchema` contracts and return
+Forty tool handlers advertise strict `outputSchema` contracts and return
 `structuredContent`. They also return a human-readable `content` text block so
 non-Apps and older clients remain usable. Successful structured output is
 validated before it leaves the server, with separate generic and tool-specific
@@ -60,6 +60,15 @@ decrypt the PDF, so an encrypted document can be identified before a password
 is available. Structured failures distinguish path denial, unavailable files,
 invalid PDF headers, oversized inputs, and retryable identity races.
 
+`inspect_pdf_accessibility` performs a local read-only structural review of an
+unencrypted PDF. It reports exactly eight shallow catalog-level signals, one
+source descriptor with SHA-256, and no output files. Each signal is observed,
+missing, or unavailable with bounded reason codes. Machine validation is fixed
+at `not_run`, human review is required, and PDF/UA, WCAG, certification, legal,
+and document-accessibility conclusions remain `not_established`. Encrypted
+inputs return a fixed abstention without findings. The tool does not run
+veraPDF or assess tag semantics or assistive-technology behavior.
+
 The trajectory harness preserves `tool-contracts.v1.json` and
 `tool-contracts.v2.json` for their frozen evidence. The v2 jobs remain bound to
 the reviewed v2 40-tool projection that introduced `get_pdf_identity`.
@@ -68,7 +77,7 @@ exact-output-identity preconditions. New evaluation suites must bind v3
 explicitly. The grader selects the allowlisted contract and trust registry
 declared by each suite, so historical evidence remains valid under its original
 stack and is not silently rescored. The six existing trajectory jobs do not
-constitute behavioral trajectory coverage of all 40 tools.
+constitute behavioral trajectory coverage of all 44 tools.
 `get_pdf_identity` is covered by its contract, handler, filesystem-race, and
 agent-workflow tests rather than by those six retained jobs.
 
@@ -93,6 +102,55 @@ or host must still obtain that approval.
 
 #### Extraction and page-analysis truthfulness
 
+`get_pdf_info` returns bounded observations tied to the exact race-aware
+source path, byte length, and SHA-256. Page geometry preserves MediaBox,
+CropBox, rotation, and UserUnit in raw bottom-left PDF user space. A separate
+PDF.js page-view envelope records the CropBox/view, rotation, UserUnit, and
+top-left display dimensions.
+Metadata preserves Info and XMP as distinct records and reports disagreement
+without choosing a winner. Form widgets are returned only under
+`form_fields`; ordinary annotations are separate, and external URLs, internal
+destinations, and actions are inert observed values that are never opened or
+fetched. Each channel reports `supported`, `partial`, or `unavailable` with
+typed reasons. Whole observation records are omitted when necessary to honor
+the caller's serialized output cap.
+
+`render_pdf_page` and `render_pdf_region` preserve their existing raster
+fields and additionally bind the image to the source identity, page geometry,
+requested and rendered coordinate spaces, renderer policy, and PNG SHA-256.
+Native canvas renders also report a digest of the exact raw RGBA bytes.
+`render_pdf_region` requests use the rotated, UserUnit-scaled PDF.js page view
+with a top-left origin. They are not interchangeable with MediaBox-relative
+zone or signing coordinates. System-rendered PNGs report raw-pixel evidence as
+unavailable. The macOS system path renders through Quick Look (`qlmanage`),
+with its PDF.js page-view and crop mapping covered by nonzero-origin, CropBox,
+rotation, and UserUnit regressions. Canonical comparison still requires native
+raw-RGBA rendering and never silently substitutes this system path.
+
+`compare_pdfs` is a local, read-only, whole-document operation over two PDFs
+with at most 20 pages each. It binds canonical path, byte length, SHA-256,
+parser, observation digest, page count, and pre/post immutability evidence for
+both inputs. It aligns pages without resolving repeated-page ambiguity, emits
+source-bound observations and typed changes across seven coverage channels,
+and keeps widgets under the form channel rather than ordinary annotations.
+Evidence display regions preserve PDF.js viewport coordinates even when PDF
+content is clipped or lies partly outside the CropBox; consumers clip those
+regions for display rather than rewriting the source coordinates.
+Default-material suppressions are retained as reversible typed decisions;
+forensic mode reports them. A complete result means the requested channels
+were observed under this policy. It never sets an equivalence claim, and an
+empty reported set is not proof that the files are semantically identical.
+
+Comparison refuses page-cap prefixes, changed sources, malformed PDFs,
+encrypted inputs, output-cap truncation, unknown input fields, and invalid
+internal semantics. Encryption is a single refusal rather than a password
+failure: PDF.js decrypts the text, form, annotation and metadata channels, but
+raw page geometry and page rendering go through pdf-lib, which cannot decrypt,
+so no password makes a comparison run and the refusal says so. Public errors use stable typed messages and do not include
+input paths, passwords, or lower-level parser and filesystem text. Native raw
+RGBA is the only visual comparison sensor; an unavailable native renderer is
+typed partial coverage rather than a system-renderer substitution.
+
 `read_pdf_layout` returns the versioned PDF Tools Extraction IR for at most 10
 pages per call. It binds each ID scope to the source SHA-256, pinned PDF.js
 parser, IR version, page range, and retention options. When pdf-lib can parse
@@ -113,9 +171,12 @@ points are ordered anchor-top, terminal-top, anchor-bottom, terminal-bottom;
 they are not polygon winding order. `line_height` is the modeled TextLayer
 font-height vector, not a font-size or ink-height measurement.
 Stable item, line, and nonsemantic flow-block references support conservative
-reading order without claiming paragraphs or document structure. Raster-only,
-mixed, hidden, clipped, duplicate, and OCR-overlay gaps remain explicit. The
-tool does not render, OCR, infer tables, or claim arbitrary schema extraction,
+reading order without claiming paragraphs or document structure. Version 1.2
+also retains bounded, axis-aligned solid-mask rectangle evidence with exact
+source-operation and transform provenance. Those rectangles are neutral paint
+evidence, not inferred rules or cells. Raster-only, mixed, hidden, clipped,
+duplicate, and OCR-overlay gaps remain explicit. The tool does not render, OCR,
+infer tables, or claim arbitrary schema extraction,
 and every item, character, or output limit is fail-closed with truncation
 metadata. Its coordinates must not be passed to `render_pdf_region` or signing
 tools.
@@ -123,11 +184,42 @@ tools.
 `convert_pdf_to_markdown` consumes that source-validated IR and emits bounded,
 deterministic UTF-8 Markdown. It preserves supported text and conservative
 reading order, escapes Markdown and HTML control syntax, and promotes headings
-or list markers only when the retained text and geometry support them. It does
-not run OCR, render image content, infer table topology, or recover PDF link
-annotation targets. Raster, mixed, vector, failed, caller-limit-truncated,
-invalid-geometry, and output-omission cases are represented as typed gaps and
-cannot receive a complete conversion status. The converter consumes
+or list markers only when the retained text and geometry support them. It
+reconstructs a table only when every row fills every recurring detected
+column, or when one unambiguous complete closed grid can be established from
+the bounded solid-mask rectangle evidence. Every retained grid item must fit
+exactly one cell, and either route requires real first-row header evidence. It
+emits a link only for a source-validated external http or https annotation
+target that maps to exactly one contiguous run of text on one line. Unsupported
+text from stroked, incomplete, or ambiguous grids, aligned partial dividers,
+internal destinations, actions, other URL schemes, and ambiguous or partially
+covered labels stays escaped and is reported as a typed gap. Cell artwork is
+omitted and reported as a vector-content gap. It does not
+run OCR, render image content, or use an external model. Raster, mixed,
+vector, failed, caller-limit-truncated, invalid-geometry, and output-omission
+cases are represented as typed gaps and
+cannot receive a complete conversion status. With `emit_table_proposals: true`,
+each abandoned table region also carries one bounded packet containing source
+text items, ruled and painted geometry, header hints, typed truncation, and a
+token bound to the source hash, extraction-IR version, and region identity.
+Document-level observed, returned, and omitted counts make the 50-region cap
+explicit. This option is additive and default-off: it does not remove the
+abstention gap or change ordinary output.
+
+The read-only `verify_table_proposal` tool accepts only that region/token
+identity and untrusted item-to-cell assignments. It reparses the current PDF,
+regenerates all content and evidence, and requires complete one-cell coverage,
+conservative order, independent header evidence, a well-formed rectangular
+grid, consistent cuts, agreement with every available source ruling, and
+non-ambiguous topology. Rejection emits no cells or Markdown. Acceptance emits
+only freshly source-derived cells plus a deterministic GFM projection; because
+GFM cannot encode spans, structured spans remain authoritative while the
+projection uses anchor text and empty continuation cells. This proves
+source-backed content and consistency with the replayed evidence, not that the
+topology is unique or semantically correct. No OCR, model, network call, or
+numeric confidence is part of verification.
+
+The converter consumes
 source-validated evidence before the public `read_pdf_layout` response
 projection, so that response's 200,000-character cap cannot erase conversion
 input. Conversion remains bounded by caller item, character, page, deadline,
@@ -173,15 +265,29 @@ candidate before deletion or reordering.
 The 14 manifest prompt templates are first-class MCP prompts. Runtime
 discovery preserves manifest order, names, descriptions, and argument names.
 Every declared argument is required because every one is interpolated into its
-template. `prompts/get` returns one user message. User-provided values are
-bounded to 1,024 characters, reject C0/C1 and common invisible/bidirectional
-format characters, and are serialized in an explicit JSON data block. The task section refers to
-argument names instead of splicing values into operative instructions. The
-boundary tells the consuming model never to follow commands embedded in the
-data. This reduces prompt-injection ambiguity but does not make arbitrary
-untrusted input safe by itself; clients should keep prompt invocation
-user-controlled and avoid sourcing arguments from untrusted documents without
-their own review.
+template. `prompts/get` returns one user message: the declared template with argument
+values substituted in place, and nothing else added.
+
+User-provided values are bounded to 1,024 characters, and reject non-strings,
+C0/C1 and common invisible/bidirectional format characters, and `${` template
+markers. That input validation is the **only** boundary applied to them.
+
+Values are substituted directly into the message text, so a value becomes part
+of an operative instruction carrying the `user` role. **Clients must keep prompt
+invocation user-controlled and must not source arguments from untrusted
+documents, tool output, or model output without their own review.**
+
+Earlier versions isolated values in a delimited JSON block referenced by name.
+That was removed because it made the feature unusable, not because it was
+unnecessary: Claude Desktop validates the `prompts/get` response against the
+manifest-declared text and refuses any addition with "content validation
+failed. Rejecting response to prevent potential prompt injection", so the
+prompt never attaches. Measured against Claude Desktop 1.25927.0 on Windows 11,
+2026-08-06; a delimited block, an appended JSON object, and a single appended
+plain sentence were each refused, while unadorned substitution attached.
+Server-side isolation is therefore not available under that host, and any
+future attempt to reintroduce it must be re-measured against a real host
+before it is shipped.
 
 Missing arguments, unknown arguments, and unknown prompt names return JSON-RPC
 `-32602` (`Invalid params`). Adding or removing a prompt requires updating both
@@ -196,7 +302,11 @@ the `text/html;profile=mcp-app` media type.
 PDF file resources are dynamic and therefore are not included in
 `resources/list`. `get_pdf_resource_uri` applies the filesystem allowlist, then
 encodes the absolute platform path as one percent-encoded segment under the
-canonical `pdf://local/` authority. The symmetric decoder handles POSIX,
+canonical `pdf://local/` authority. The encoded path is the canonical one, and
+`pdf_path` reports the same value, so a URI that outlives the call still names
+the file the allowlist accepted rather than a name that can be repointed before
+`resources/read` runs. Where the requested path traverses a symlink the two
+differ: on macOS a temp root under `/var` reports `/private/var`. The symmetric decoder handles POSIX,
 Windows-drive, UNC, Unicode, and RFC 3986 reserved characters without allowing
 URI query/fragment ambiguity. `resources/read` re-applies the allowlist before
 returning the PDF as an `application/pdf` blob. Schema-valid string URIs that

@@ -298,6 +298,18 @@ test("whole-response scanner permits exact argument echoes but not descendants o
     },
     {
       structuredContent: {
+        macos_tmp:
+          "/var/folders/ab/cdefghijklmnop/T/pdf-tools/internal.pdf",
+      },
+    },
+    {
+      _meta: {
+        "/var/folders/ab/cdefghijklmnop/T/pdf-tools/internal-key":
+          "stable value",
+      },
+    },
+    {
+      structuredContent: {
         [`${paths[0].path}`]: "planned paths are forbidden as keys",
       },
     },

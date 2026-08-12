@@ -29,10 +29,18 @@ const textFixture = path.join(fixtureDirectory, "synthetic-text-two-page.pdf");
 const rasterFixture = path.join(fixtureDirectory, "synthetic-raster-only.pdf");
 const mutationDirectory = path.join(fixtureDirectory, "mutation-output");
 const toolNames = [];
-const EXPECTED_TOOL_CONTRACT_SHA256 = "4f5c1299b4fab3b415fa6eb7cff4c802b832a4d0d6bbe9fbbc8db1bd109bccdc";
+const EXPECTED_TOOL_CONTRACT_SHA256 = "53d965e366b16adf2a0fa90dfe837ca98d29a8f41c1adf8b9e8f661ea3bb7d95";
+const ACCESSIBILITY_CONCLUSION_KEYS = Object.freeze([
+  "certification",
+  "document_accessibility",
+  "legal_compliance",
+  "pdfua_conformance",
+  "wcag_conformance",
+]);
 let toolContractSha256;
 let structuredToolCount;
 let markdownHash;
+let accessibilityReceipt;
 
 function textContent(result) {
   return (result.content || [])
@@ -68,8 +76,8 @@ let rasterHash;
 try {
   const tools = await first.client.listTools();
   toolNames.push(...tools.tools.map(tool => tool.name).sort());
-  assert(toolNames.length === 40, `Expected 40 tools, received ${toolNames.length}`);
-  assert(new Set(toolNames).size === 40, "Tool names were not unique");
+  assert(toolNames.length === 43, `Expected 43 tools, received ${toolNames.length}`);
+  assert(new Set(toolNames).size === 43, "Tool names were not unique");
   toolContractSha256 = createHash("sha256")
     .update(JSON.stringify(tools.tools))
     .digest("hex");
@@ -78,7 +86,7 @@ try {
     `Tool contract digest drifted: ${toolContractSha256}`,
   );
   structuredToolCount = tools.tools.filter(tool => tool.outputSchema).length;
-  assert(structuredToolCount === 35, `Expected 35 structured tools, received ${structuredToolCount}`);
+  assert(structuredToolCount === 38, `Expected 38 structured tools, received ${structuredToolCount}`);
 
   const listed = await first.client.callTool({
     name: "list_pdfs",
@@ -94,7 +102,11 @@ try {
     arguments: { pdf_path: textFixture },
   });
   assert(!info.isError, "get_pdf_info failed for the text fixture");
-  assert(/Pages:\s*2\b/.test(textContent(info)), "get_pdf_info did not report two pages");
+  assert(
+    info.structuredContent?.pages?.total_count === 2
+      && info.structuredContent?.pages?.observed_count === 2,
+    "get_pdf_info did not report two observed pages",
+  );
 
   const identity = await first.client.callTool({
     name: "get_pdf_identity",
@@ -119,6 +131,50 @@ try {
     identity.structuredContent?.pdf_parsed === false,
     "get_pdf_identity did not declare parser-independent operation",
   );
+
+  const accessibility = await first.client.callTool({
+    name: "inspect_pdf_accessibility",
+    arguments: { pdf_path: textFixture },
+  });
+  assert(!accessibility.isError, "inspect_pdf_accessibility failed for the text fixture");
+  assert(
+    accessibility.structuredContent?.source?.file_name === path.basename(textFixture)
+      && accessibility.structuredContent?.source?.size_bytes === textFixtureBytes.length
+      && accessibility.structuredContent?.source?.sha256
+        === createHash("sha256").update(textFixtureBytes).digest("hex"),
+    "inspect_pdf_accessibility did not bind its result to the exact fixture bytes",
+  );
+  assert(
+    accessibility.structuredContent?.checks?.length === 8
+      && accessibility.structuredContent?.summary?.total === 8
+      && accessibility.structuredContent?.machine_profile_validation?.status === "not_run"
+      && accessibility.structuredContent?.human_review?.status === "required"
+      && Object.keys(accessibility.structuredContent?.conclusions || {}).sort().length
+        === ACCESSIBILITY_CONCLUSION_KEYS.length
+      && Object.keys(accessibility.structuredContent?.conclusions || {}).sort()
+        .every((key, index) => key === ACCESSIBILITY_CONCLUSION_KEYS[index])
+      && Object.values(accessibility.structuredContent?.conclusions || {})
+        .every(value => value === "not_established"),
+    "inspect_pdf_accessibility did not preserve its bounded review and conclusion contract",
+  );
+  accessibilityReceipt = {
+    schema_version: "pdf-tools.accessibility-smoke-receipt/1.0.0",
+    tool: "inspect_pdf_accessibility",
+    source: {
+      file_name: accessibility.structuredContent.source.file_name,
+      size_bytes: accessibility.structuredContent.source.size_bytes,
+      sha256: accessibility.structuredContent.source.sha256,
+    },
+    check_count: accessibility.structuredContent.checks.length,
+    summary_total: accessibility.structuredContent.summary.total,
+    machine_profile_validation: accessibility.structuredContent.machine_profile_validation.status,
+    human_review: accessibility.structuredContent.human_review.status,
+    conclusions: Object.fromEntries(
+      ACCESSIBILITY_CONCLUSION_KEYS.map(
+        key => [key, accessibility.structuredContent.conclusions[key]],
+      ),
+    ),
+  };
 
   const textRead = await first.client.callTool({
     name: "read_pdf_content",
@@ -158,8 +214,9 @@ try {
     },
   });
   assert(
-    textContent(denied).includes("only allowed to access"),
-    "Path outside the configured directory was not denied with the policy error",
+    denied.isError
+      && denied.structuredContent?.error?.code === "path_policy_denied",
+    `Path outside the configured directory was not denied with the typed policy error: ${textContent(denied)}`,
   );
 
   const split = await first.client.callTool({
@@ -183,13 +240,17 @@ assert(mutationFiles.length === 2, `Expected two mutation outputs, received ${mu
 const fresh = await connect("fresh-session");
 try {
   const tools = await fresh.client.listTools();
-  assert(tools.tools.length === 40, "Fresh session did not discover 40 tools");
+  assert(tools.tools.length === 43, "Fresh session did not discover 43 tools");
   const info = await fresh.client.callTool({
     name: "get_pdf_info",
     arguments: { pdf_path: path.join(mutationDirectory, mutationFiles[1]) },
   });
   assert(!info.isError, "Fresh-session get_pdf_info call failed");
-  assert(/Pages:\s*1\b/.test(textContent(info)), "Fresh-session mutation output was not one page");
+  assert(
+    info.structuredContent?.pages?.total_count === 1
+      && info.structuredContent?.pages?.observed_count === 1,
+    "Fresh-session mutation output was not one observed page",
+  );
 } finally {
   await fresh.transport.close();
 }
@@ -200,7 +261,7 @@ process.stdout.write(`${JSON.stringify({
   tool_contract_sha256: toolContractSha256,
   structured_tool_count: structuredToolCount,
   text_only_tool_count: toolNames.length - structuredToolCount,
-  same_session_calls: 8,
+  same_session_calls: 9,
   fresh_session_calls: 1,
   configured_directory_allowed: true,
   outside_directory_denied: true,
@@ -208,4 +269,5 @@ process.stdout.write(`${JSON.stringify({
   markdown_sha256: markdownHash,
   raster_png_sha256: rasterHash,
   mutation_files: mutationFiles,
+  accessibility_receipt: accessibilityReceipt,
 }, null, 2)}\n`);

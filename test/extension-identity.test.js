@@ -35,11 +35,27 @@ const MANIFEST = JSON.parse(
 );
 
 const temporaryRoots = [];
+// Enablement is read from the Claude settings directory. Without a fixture
+// settings directory these tests read the real machine's state, so the same
+// fixture reported different upgrade cleanliness on a host that happens to have
+// a disabled legacy install. Every synthetic root now carries its own empty
+// settings directory, which keeps the result a property of the fixture.
+const settingsDirectories = new Map();
+
 async function makeExtensionsDirectory(ids) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-extensions-"));
-  temporaryRoots.push(root);
+  const base = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-extensions-")));
+  temporaryRoots.push(base);
+  const root = path.join(base, "extensions");
+  const settings = path.join(base, "settings");
+  await fs.mkdir(root, { recursive: true });
+  await fs.mkdir(settings, { recursive: true });
+  settingsDirectories.set(root, settings);
   for (const id of ids) await fs.mkdir(path.join(root, id), { recursive: true });
   return root;
+}
+
+function fixtureSettings(root) {
+  return settingsDirectories.get(root) ?? undefined;
 }
 
 afterEach(async () => {
@@ -106,7 +122,7 @@ describe("upgrade state discovery", () => {
       "ant.dir.gh.silverstein.pdf-filler-simple",
       "local.mcpb.open-document-alliance.pdf-toolkit",
     ]);
-    const { installs } = await discoverInstalls({ manifest: MANIFEST, extensionsDirectory: root });
+    const { installs } = await discoverInstalls({ manifest: MANIFEST, extensionsDirectory: root, settingsDirectory: fixtureSettings(root) });
     expect(installs.map(i => i.id)).toEqual([
       "ant.dir.gh.silverstein.pdf-filler-simple",
       "local.mcpb.open-document-alliance.pdf-toolkit",
@@ -125,14 +141,14 @@ describe("upgrade state discovery", () => {
       "ant.dir.ant.anthropic.filesystem",
       "local.mcpb.open-document-alliance.pdf-toolkit",
     ]);
-    const { installs } = await discoverInstalls({ manifest: MANIFEST, extensionsDirectory: root });
+    const { installs } = await discoverInstalls({ manifest: MANIFEST, extensionsDirectory: root, settingsDirectory: fixtureSettings(root) });
     expect(summarizeUpgradeState(installs).clean).toBe(true);
   });
 
   it("treats a lone legacy install as not clean", async () => {
     // Pre-upgrade state: the Directory install alone still needs migrating.
     const root = await makeExtensionsDirectory(["ant.dir.gh.silverstein.pdf-filler-simple"]);
-    const { installs } = await discoverInstalls({ manifest: MANIFEST, extensionsDirectory: root });
+    const { installs } = await discoverInstalls({ manifest: MANIFEST, extensionsDirectory: root, settingsDirectory: fixtureSettings(root) });
     expect(summarizeUpgradeState(installs)).toMatchObject({ legacy_count: 1, clean: false });
   });
 

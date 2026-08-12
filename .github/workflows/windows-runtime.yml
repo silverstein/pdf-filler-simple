@@ -1,0 +1,117 @@
+# Windows runtime evidence (class A: headless CI runner, not Claude Desktop).
+#
+# Two jobs. The MCPB is built from the exact checked-out commit on a Linux
+# runner, because the isolated build helper spawns npm in ways Windows Node
+# refuses (.cmd spawn hardening) and the builder is not a Windows-supported
+# surface. The Windows job then downloads that artifact, verifies its exact
+# SHA-256 end to end, and boots it over MCP stdio on real win32-x64: tool
+# discovery, prompts, canonical resources, a PDF-lib mutation, and ordinary
+# native rasterization. The embedded-host renderer question (rendering
+# expected unavailable by design) stays with the "Windows render proof"
+# probe workflow.
+#
+# Standard runners are free for this public repository. The trigger is
+# workflow_dispatch only so runs stay deliberate; the evidence value is the
+# run at an exact SHA, not continuous execution.
+#
+# Claim boundary: this proves the packed server's runtime behavior under
+# Windows Node on GitHub's runner image. It is not Windows Claude Desktop
+# host evidence. The Linux-built artifact hash is recorded and compared
+# informationally against the qualified macOS-built release artifact; byte
+# identity across build hosts is reported as data, never assumed.
+name: Windows runtime evidence
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-mcpb:
+    name: build MCPB on ubuntu-latest
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      artifact_sha256: ${{ steps.hash.outputs.sha256 }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Record exact identity
+        run: |
+          echo "commit=$(git rev-parse HEAD)"
+          echo "tree=$(git rev-parse HEAD^{tree})"
+          node --version
+
+      - name: Install exact locked dependencies
+        run: npm ci
+
+      - name: Build MCPB from this exact commit
+        run: npm run build:mcpb
+
+      - name: Record built artifact identity
+        id: hash
+        run: |
+          ls -la pdf-toolkit-mcp.mcpb
+          sha256sum pdf-toolkit-mcp.mcpb | tee linux-built-artifact.sha256
+          echo "sha256=$(cut -d' ' -f1 linux-built-artifact.sha256)" >> "$GITHUB_OUTPUT"
+
+      - name: Upload artifact for the Windows job
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: mcpb-artifact
+          path: |
+            pdf-toolkit-mcp.mcpb
+            linux-built-artifact.sha256
+          if-no-files-found: error
+          retention-days: 7
+
+  packed-runtime:
+    name: packed runtime on windows-latest
+    runs-on: windows-latest
+    needs: build-mcpb
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: mcpb-artifact
+
+      - name: Verify artifact identity end to end
+        shell: bash
+        run: |
+          sha256sum -c linux-built-artifact.sha256
+          echo "expected=${{ needs.build-mcpb.outputs.artifact_sha256 }}"
+          [ "$(cut -d' ' -f1 linux-built-artifact.sha256)" = "${{ needs.build-mcpb.outputs.artifact_sha256 }}" ]
+
+      - name: Install exact locked dependencies (smoke harness)
+        shell: bash
+        run: npm ci
+
+      - name: Packed stdio smoke on win32-x64
+        shell: bash
+        run: npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb
+
+      # test/deep-malformed-native-windows-portable.test.js is gated to win32 in
+      # scripts/node-test-files.mjs and omitted on darwin and linux, so it does
+      # not run in local verification or in the macOS release gate. Without this
+      # step it ran nowhere at all: twelve tests that existed and never executed.
+      - name: Native test partition on win32-x64
+        shell: bash
+        run: npm run test:node-native
+
+      - name: Layout diagnostic probe (always, full responses)
+        if: always()
+        shell: bash
+        run: node .github/workflows/windows-layout-probe.mjs pdf-toolkit-mcp.mcpb

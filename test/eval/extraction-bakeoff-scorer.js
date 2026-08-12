@@ -176,6 +176,78 @@ function regionKey(region) {
   return `R${startRow}C${startColumn}:R${endRow}C${endColumn}`;
 }
 
+const MAX_PROJECTED_TABLE_ROWS = 200;
+const MAX_PROJECTED_TABLE_COLUMNS = 64;
+
+function splitTableCells(line) {
+  const trimmed = line.trim();
+  if (!trimmed.startsWith("|") || !trimmed.endsWith("|") || trimmed.length < 2) return null;
+  // Split on unescaped delimiters only, so an escaped pipe inside a cell stays
+  // part of that cell rather than creating a column.
+  return trimmed.slice(1, -1).split(/(?<!\\)\|/u).map(cell => cell.trim());
+}
+
+function isDelimiterRow(cells) {
+  return Array.isArray(cells)
+    && cells.length > 0
+    && cells.every(cell => /^:?-{3,}:?$/u.test(cell));
+}
+
+/**
+ * Project the first GFM table on a page back into the scorer's candidate table
+ * shape. Bounded and conservative: it reads one table, requires the delimiter
+ * row and every body row to have exactly the header's column count, and
+ * reports no merged regions because GFM cannot express them. A page with no
+ * conforming table projects to null, which scores as absent rather than as a
+ * wrong topology.
+ */
+export function projectMarkdownTable(markdown, page) {
+  const source = String(markdown ?? "");
+  const marker = /^<!-- PDF page ([1-9][0-9]*) -->\s*$/gm;
+  const matches = [...source.matchAll(marker)];
+  if (matches.length === 0) return null;
+  const index = matches.findIndex(match => Number(match[1]) === page);
+  if (index === -1) return null;
+  const start = matches[index].index + matches[index][0].length;
+  const end = matches[index + 1]?.index ?? source.length;
+  let body = source.slice(start, end);
+  const metadata = body.search(/^## Conversion (?:gaps|limitations)\s*$/m);
+  if (metadata >= 0) body = body.slice(0, metadata);
+
+  const lines = body.split(/\r?\n/);
+  for (let cursor = 0; cursor + 1 < lines.length; cursor += 1) {
+    const header = splitTableCells(lines[cursor]);
+    if (header === null) continue;
+    if (!isDelimiterRow(splitTableCells(lines[cursor + 1]))) continue;
+    if (splitTableCells(lines[cursor + 1]).length !== header.length) return null;
+    if (header.length > MAX_PROJECTED_TABLE_COLUMNS) {
+      throw new Error("Projected Markdown table exceeds its column ceiling");
+    }
+    const rows = [header];
+    for (let row = cursor + 2; row < lines.length; row += 1) {
+      const cells = splitTableCells(lines[row]);
+      if (cells === null) break;
+      if (cells.length !== header.length) return null;
+      rows.push(cells);
+      if (rows.length > MAX_PROJECTED_TABLE_ROWS) {
+        throw new Error("Projected Markdown table exceeds its row ceiling");
+      }
+    }
+    return {
+      page,
+      row_count: rows.length,
+      column_count: header.length,
+      merged_regions: [],
+      cells: rows.flatMap((cells, rowIndex) => cells.map((value, columnIndex) => ({
+        row: rowIndex + 1,
+        column: columnIndex + 1,
+        value: unescapeMarkdown(value),
+      }))),
+    };
+  }
+  return null;
+}
+
 export function scoreTable(expected, candidate) {
   if (expected === null) return { applicable: false };
   const retainedCells = (candidate?.cells ?? []).filter(cell => cell.present !== false);
@@ -289,10 +361,21 @@ function scoreSystemCase(fixture, caseRecord, { kind }) {
   const rasterDisclosure = kind === "markdown"
     ? markdownDisclosure(payload, /ocr not performed|ocr_not_performed|image-only|text_layer_empty/)
     : doclingDisclosure(payload, /ocr|image-only|raster/);
+  // Now that Markdown tables are actually projected and scored above, this
+  // measures whether the remaining table limits are disclosed, not whether
+  // tables are unsupported. Vocabulary covers the typed gap code and the
+  // current limitation wording.
   const tableDisclosure = kind === "markdown"
-    ? markdownDisclosure(payload, /table topology|table structure.*not/)
+    ? markdownDisclosure(
+      payload,
+      /table_topology_unknown|table topology|column topology|table structure.*not|merged or spanning cells/,
+    )
     : doclingDisclosure(payload, /table topology|table structure|table.*unsupported/);
-  const candidateTable = kind === "markdown" ? null : (payload.tables?.[0] ?? null);
+  const candidateTable = kind === "markdown"
+    ? (fixture.expected.table === null
+      ? null
+      : projectMarkdownTable(payload.markdown, fixture.expected.table.page))
+    : (payload.tables?.[0] ?? null);
   return {
     transcript: { pages, totals: summarizePages(pages) },
     table: scoreTable(fixture.expected.table, candidateTable),

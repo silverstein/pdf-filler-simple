@@ -10,6 +10,7 @@ const GIB = 1024 ** 3;
 const SHA256 = /^[a-f0-9]{64}$/;
 const REQUIRED_OPTIONS = [
   "--attempt-source-root",
+  "--calibration-bootstrap",
   "--finalization",
   "--finalization-sha256",
   "--output",
@@ -43,13 +44,49 @@ function options(argv) {
     if (!REQUIRED_OPTIONS.includes(name) || Object.hasOwn(result, name) || !value) {
       throw new Error(`Unknown, duplicate, or empty option: ${name}`);
     }
-    result[name] = name.endsWith("-sha256") ? value : path.resolve(value);
+    result[name] = name.endsWith("-sha256") || name === "--calibration-bootstrap"
+      ? value
+      : path.resolve(value);
   }
   if (!SHA256.test(result["--receipt-sha256"])
     || !SHA256.test(result["--finalization-sha256"])) {
     throw new Error("Calibration requires out-of-band SHA-256 bindings");
   }
+  // The calibration mode is an explicit caller decision, never inferred from
+  // the receipt: a caller must state whether this run re-measures a stale
+  // calibration through the bootstrap bypass.
+  if (!["true", "false"].includes(result["--calibration-bootstrap"])) {
+    throw new Error("--calibration-bootstrap must be exactly true or false");
+  }
   return result;
+}
+
+/**
+ * The calibration-mode trust contract. A bootstrap re-measurement must consume
+ * a bootstrap-marked receipt, and an ordinary calibration must never consume
+ * one: a mismatch in either direction means the caller's stated intent and the
+ * receipt's provenance disagree, and the run is refused before any staging.
+ */
+export function assertCalibrationModeContract(calibrationBootstrap, receipt) {
+  const present = receipt != null && Object.hasOwn(receipt, "calibration_bootstrap");
+  if (present && receipt.calibration_bootstrap !== true) {
+    // The honest pipeline can only mint the literal boolean true; any other
+    // present value is malformed provenance, not an unmarked receipt.
+    throw new Error(
+      "calibration_bootstrap may only be present as the literal true; this receipt is malformed",
+    );
+  }
+  const marked = present;
+  if (calibrationBootstrap && !marked) {
+    throw new Error(
+      "Bootstrap re-measurement requires a calibration-bootstrap-marked receipt; this receipt is unmarked",
+    );
+  }
+  if (!calibrationBootstrap && marked) {
+    throw new Error(
+      "A calibration-bootstrap receipt cannot feed an ordinary calibration; pass --calibration-bootstrap true for a re-measurement",
+    );
+  }
 }
 
 async function privateDirectory(filename, label) {
@@ -283,6 +320,8 @@ export async function calibrateDoclingSupervisor(rawOptions) {
     throw new Error("Calibration receipt differs from its out-of-band SHA-256");
   }
   const receipt = JSON.parse(receiptBytes);
+  const calibrationBootstrap = rawOptions["--calibration-bootstrap"] === "true";
+  assertCalibrationModeContract(calibrationBootstrap, receipt);
   const receiptSha256 = sha256(receiptBytes);
   const finalizationBytes = await stableFile(
     finalizationPath,
@@ -398,6 +437,10 @@ export async function calibrateDoclingSupervisor(rawOptions) {
   const report = {
     protocol: "pdf-tools.docling-macos-supervisor-calibration.v1",
     claim_boundary: "Private non-scored calibration only. This is not benchmark or product evidence.",
+    // Present only for a bootstrap re-measurement, so the taint survives in
+    // the report bytes and an ordinary calibration report keeps its exact
+    // historical shape.
+    ...(calibrationBootstrap ? { calibration_bootstrap: true } : {}),
     calibration_source: {
       bytes: calibrationSourceBytes.length,
       sha256: sha256(calibrationSourceBytes),
@@ -433,7 +476,13 @@ export async function calibrateDoclingSupervisor(rawOptions) {
   };
   const bytes = Buffer.from(`${canonicalJson(report)}\n`);
   await writeExclusive(outputPath, bytes);
-  return { output: outputPath, bytes: bytes.length, sha256: sha256(bytes), recommended_policy: recommendedPolicy };
+  return {
+    output: outputPath,
+    bytes: bytes.length,
+    sha256: sha256(bytes),
+    recommended_policy: recommendedPolicy,
+    ...(calibrationBootstrap ? { calibration_bootstrap: true, qualifying: false } : {}),
+  };
 }
 
 async function main() {

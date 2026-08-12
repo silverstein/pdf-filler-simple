@@ -44,6 +44,11 @@ async function main() {
     bootstrap_sha256: result.bootstrap_sha256,
     protected_roots_json: result.protected_roots_json,
     execution_state: result.receipt.execution_state,
+    // This CLI cannot mint a bootstrap handoff today, but if that ever
+    // changes, its envelope must not be the one surface that drops the taint.
+    ...(result.receipt.calibration_bootstrap === true
+      ? { calibration_bootstrap: true, qualifying: false }
+      : {}),
   })}\n`);
 }
 

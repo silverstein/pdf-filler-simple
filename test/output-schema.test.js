@@ -24,6 +24,7 @@ const STRUCTURED_TOOLS = [
   "apply_signature",
   "apply_text",
   "bulk_fill_from_csv",
+  "compare_pdfs",
   "create_signature",
   "convert_pdf_to_markdown",
   "detect_signature_zones",
@@ -33,9 +34,12 @@ const STRUCTURED_TOOLS = [
   "fill_pdf",
   "fill_with_profile",
   "get_active_document",
+  "get_allowed_directories",
   "get_page_analysis",
   "get_pdf_identity",
+  "get_pdf_info",
   "get_pdf_resource_uri",
+  "inspect_pdf_accessibility",
   "list_signatures",
   "load_signature",
   "merge_pdfs",
@@ -54,9 +58,9 @@ const STRUCTURED_TOOLS = [
   "set_active_document",
   "split_pdf",
   "validate_pdf",
+  "verify_table_proposal",
 ].sort();
 const TEXT_ONLY_TOOLS = [
-  "get_pdf_info",
   "list_pdfs",
   "list_profiles",
   "load_profile",
@@ -101,11 +105,15 @@ describe("output schema definitions", () => {
       "apply_signature",
       "apply_text",
       "bulk_fill_from_csv",
+      "compare_pdfs",
       "convert_pdf_to_markdown",
+      "verify_table_proposal",
       "detect_signature_zones",
       "fill_pdf",
       "fill_with_profile",
       "get_page_analysis",
+      "get_pdf_info",
+      "inspect_pdf_accessibility",
       "merge_pdfs",
       "prepare_signing_packet",
       "read_pdf_content",
@@ -139,12 +147,12 @@ describe("output schema definitions", () => {
     expect(rejected.structuredContent.error.code).toBe("internal_validation_error");
   });
 
-  it("covers the exact 35 structured tools and no text-only tool", () => {
+  it("covers the exact 40 structured tools and no text-only tool", () => {
     expect(Object.keys(TOOL_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_ERROR_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
     expect(Object.keys(TOOL_SUCCESS_OUTPUT_SCHEMAS).sort()).toEqual(STRUCTURED_TOOLS);
-    expect(STRUCTURED_TOOLS).toHaveLength(35);
-    expect(TEXT_ONLY_TOOLS).toHaveLength(5);
+    expect(STRUCTURED_TOOLS).toHaveLength(40);
+    expect(TEXT_ONLY_TOOLS).toHaveLength(4);
   });
 
   it("uses current-host-compatible object schemas that compile with the pinned SDK", () => {
@@ -414,6 +422,49 @@ describe("live output schema contract", () => {
         required_field_validation_status: "failed",
       },
     });
+  });
+
+  it("accepts scoped routing facts on a read-content worker failure", () => {
+    const result = {
+      isError: true,
+      structuredContent: {
+        status: "failed",
+        error: { error_schema_version: 1, code: "tool_execution_failed" },
+        pages_read: 1,
+        read_pages_without_text: [1],
+        pages_with_suspected_text_integrity: [],
+        page_read_error: { page: 2, code: "PDFJS_PAGE_READ_FAILED" },
+      },
+    };
+    expect(validateStructuredToolResult("read_pdf_content", result)).toBe(result);
+  });
+
+  it("accepts scoped routing facts on a read-content resource-limit failure", () => {
+    const result = {
+      isError: true,
+      structuredContent: {
+        status: "failed",
+        error: { error_schema_version: 1, code: "PDF_RESOURCE_LIMIT_EXCEEDED" },
+        pages_read: 1,
+        read_pages_without_text: [1],
+        pages_with_suspected_text_integrity: [],
+        page_read_error: null,
+      },
+    };
+    expect(validateStructuredToolResult("read_pdf_content", result)).toBe(result);
+  });
+
+  it("rejects a read-content worker failure that omits read provenance", () => {
+    const rejected = validateStructuredToolResult("read_pdf_content", {
+      isError: true,
+      structuredContent: {
+        status: "failed",
+        error: { error_schema_version: 1, code: "tool_execution_failed" },
+        read_pages_without_text: [1],
+      },
+    });
+    expect(rejected).not.toBe(rejected.structuredContent);
+    expect(rejected.structuredContent.error.code).toBe("internal_validation_error");
   });
 
   it("preserves its rich typed failure for an empty malformed content read", async () => {

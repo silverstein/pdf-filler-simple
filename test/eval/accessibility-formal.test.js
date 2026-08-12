@@ -31,7 +31,7 @@ function sha256(bytes) {
 }
 
 async function temporaryDirectory(prefix) {
-  const directory = await fs.mkdtemp(path.join(os.tmpdir(), prefix));
+  const directory = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), prefix)));
   temporaryDirectories.push(directory);
   return directory;
 }
@@ -192,7 +192,7 @@ describe("installed toolchain tree binding", () => {
   const roots = [];
 
   async function makeTree() {
-    const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-tree-"));
+    const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-tree-")));
     roots.push(root);
     await fs.mkdir(path.join(root, "bin"), { recursive: true });
     await fs.mkdir(path.join(root, "config"), { recursive: true });

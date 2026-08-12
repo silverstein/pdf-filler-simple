@@ -2,9 +2,9 @@
   "manifest_version": "0.3",
   "name": "pdf-toolkit",
   "display_name": "PDF Tools",
-  "description": "A local PDF workflow for Claude Desktop: fill forms, sign/date PDFs, fetch PDF URLs, merge/split files, extract data, and analyze documents.",
+  "description": "Open any PDF already on your computer and work with it: read and search it in an interactive viewer, fill and sign forms, extract text and data, merge, split, and compare documents. Your files never leave your machine.",
   "long_description": "PDF Tools turns Claude Desktop into a complete PDF workstation with local file operations. Claude can fetch PDFs from URLs, inspect them visually, fill forms, manage pages, add signature/date zones, apply local signatures or text, extract structured data, and return document content to the selected MCP host for analysis.\n\nThis package targets Claude Desktop and other local MCP hosts today. It does not yet include a remote Claude/Cowork connector.\n\n**Interactive PDF Viewer:**\n• View PDFs with page navigation, zoom, search, text selection, and fullscreen\n• See form fields in a sidebar with fill status\n• Use visual page management to reorder, rotate, and remove pages before saving\n• Switch into Sign mode to work with signature/date zones on the PDF\n\n**Sign Mode & Local Signatures:**\n• Detect signature, initials, printed-name, and date zones with visible coordinates Claude can reason from\n• Draw or reuse saved local signatures\n• Place signatures, dates, or other text on detected or custom zones\n• Inspect a region, preview it, and turn it into a typed signing zone when the automatic detector is not enough\n• Keep edits local, with active-document tracking and automatic backup behavior for same-file mutations\n\n**URL-to-PDF Workflows:**\n• Fetch PDFs from HTTP(S) URLs to the user's local machine, including cases where Claude's WebFetch is blocked\n• Open downloaded PDFs immediately in the viewer for fill, sign, page management, extraction, or analysis\n• Use page-bounded reads, text search, page renders, and region renders instead of one brittle all-document operation\n\n**Forms & Reusable Profiles:**\n• Fill W-9s, 1099s, rental applications, waivers, and any fillable PDF\n• Save personal or business details as reusable profiles\n• List, load, and apply saved profiles so repeated forms take seconds instead of minutes\n• Bulk fill many PDFs from CSV data and validate required fields before submission\n\n**Page Organization Tools:**\n• Merge multiple PDFs into one document\n• Split PDFs by exact page ranges or regular intervals\n• Rotate and reorder pages, or apply a full page plan in one pass\n• Keep the original intact by saving organized output as a new file\n\n**Extraction, Rendering & Analysis:**\n• Read existing PDF text layers for summarization, question answering, and research workflows\n• Read specific page ranges and search PDF text with page-numbered snippets\n• Convert supported born-digital page ranges to deterministic Markdown with explicit coverage gaps\n• Render full pages or bounded regions to PNG for host/model vision on scanned or image-heavy documents\n• If a selected `read_pdf_content` extraction has no text, return a rendered image of page 1 when available\n• Keep rendering and text recognition distinct: page and region renders are raster images, not OCR text\n• Treat mixed text/raster documents and raster pages after page 1 as potentially unrecognized by broad text reads\n• Extract structured data to CSV\n• Inspect page-level details like orientation, text presence, images, and likely blank pages\n• Review metadata such as page count, dimensions, form fields, and file size\n\n**Local file operations and host-aware privacy:** PDF Tools reads, renders, edits, and saves files on the user's machine and does not upload them to a separate PDF service. Text, images, or metadata returned through MCP may be processed under the selected host or model provider's data terms. Claude Desktop users choose which folders PDF Tools may read from or write to.\n\n**Works with many PDF types:** Forms, contracts, research papers, technical manuals, invoices, financial statements, scanned documents, municipal packets, and encrypted PDFs. The local runtime does not currently bundle OCR; optional local OCR remains planned rather than shipped.\n\n**Best for:** People who need more than a viewer: operators processing forms, lawyers organizing contracts, accountants handling tax documents, researchers reviewing papers, and anyone who wants local PDF file operations with their chosen MCP host.",
-  "version": "0.8.6",
+  "version": "0.10.0",
   "author": {
     "name": "Open Document Alliance",
     "url": "https://github.com/Open-Document-Alliance",
@@ -18,7 +18,36 @@
   "documentation": "https://github.com/Open-Document-Alliance/PDF-Tools/blob/master/README.md",
   "support": "https://github.com/Open-Document-Alliance/PDF-Tools/issues",
   "license": "MIT",
-  "keywords": ["pdf", "markdown", "merge", "split", "rotate", "reorder", "viewer", "interactive", "search", "research", "academic", "analyze", "compare", "extract", "documentation", "contracts", "forms", "fill", "sign", "signature", "date", "url", "download", "render", "w9", "1099", "tax", "invoice"],
+  "keywords": [
+    "pdf",
+    "markdown",
+    "merge",
+    "split",
+    "rotate",
+    "reorder",
+    "viewer",
+    "interactive",
+    "search",
+    "research",
+    "academic",
+    "analyze",
+    "compare",
+    "extract",
+    "documentation",
+    "contracts",
+    "forms",
+    "fill",
+    "sign",
+    "signature",
+    "date",
+    "url",
+    "download",
+    "render",
+    "w9",
+    "1099",
+    "tax",
+    "invoice"
+  ],
   "icon": "icon.png",
   "tools": [
     {
@@ -27,7 +56,7 @@
     },
     {
       "name": "list_pdfs",
-      "description": "List all PDF files in a directory"
+      "description": "List PDF files in a directory, sorted by name, up to 200 per call"
     },
     {
       "name": "read_pdf_fields",
@@ -79,15 +108,19 @@
     },
     {
       "name": "convert_pdf_to_markdown",
-      "description": "Convert supported local PDF text to deterministic Markdown with explicit partial and unsupported-content gaps"
+      "description": "Convert supported local PDF text to deterministic Markdown with explicit partial and unsupported-content gaps, including evidence-backed tables and source-validated external http or https links; optionally enable counted compact-mode normalizations"
+    },
+    {
+      "name": "verify_table_proposal",
+      "description": "Check a suggested table against the original PDF and return it only when the text and layout match the document; unclear tables stay unconverted for review"
     },
     {
       "name": "render_pdf_page",
-      "description": "Render one PDF page to PNG for visual reasoning on scanned or image-heavy documents"
+      "description": "Render one source-bound PDF.js page view to PNG with distinct raw page geometry, view geometry, renderer policy, and digest evidence"
     },
     {
       "name": "render_pdf_region",
-      "description": "Render a bounded PDF region to PNG using top-left point coordinates"
+      "description": "Render a bounded source-bound PDF.js viewport region to PNG; these coordinates are not MediaBox-relative signing coordinates"
     },
     {
       "name": "search_pdf_text",
@@ -122,12 +155,20 @@
       "description": "Rearrange the pages of a PDF in a new order"
     },
     {
+      "name": "inspect_pdf_accessibility",
+      "description": "Inspect eight shallow catalog-level accessibility signals with source binding, fixed limitations, and required human review"
+    },
+    {
+      "name": "compare_pdfs",
+      "description": "Deterministically compare two whole local PDFs with source-bound semantic, text, structure, form, annotation, metadata, and optional visual evidence"
+    },
+    {
       "name": "get_pdf_info",
-      "description": "Get metadata about a PDF: page count, file size, dimensions, form fields"
+      "description": "Observe bounded source-bound PDF page geometry, metadata, form widgets, and inert ordinary annotations with explicit coverage"
     },
     {
       "name": "apply_page_plan",
-      "description": "Reorder, rotate, and delete PDF pages in one pass — saves as a new file"
+      "description": "Reorder, rotate, and delete PDF pages in one pass, saving as a new file"
     },
     {
       "name": "get_page_analysis",
@@ -135,11 +176,15 @@
     },
     {
       "name": "fetch_pdf_from_url",
-      "description": "Download a PDF from an HTTP(S) URL to the user's local machine — works when Claude's WebFetch is blocked"
+      "description": "Download a PDF from an HTTP(S) URL to the user's local machine. Works when Claude's WebFetch is blocked"
     },
     {
       "name": "create_signature",
       "description": "Save a reusable typed-name or image signature to ~/.pdf-toolkit-files/signatures/"
+    },
+    {
+      "name": "get_allowed_directories",
+      "description": "Report which folders this server may read and write, which configuration layer supplied them, and where the stored configuration file lives"
     },
     {
       "name": "list_signatures",
@@ -159,15 +204,15 @@
     },
     {
       "name": "add_signature_field",
-      "description": "Draw a visible 'Sign here' placeholder box on a PDF page (marks location — does NOT sign)"
+      "description": "Draw a visible 'Sign here' placeholder box on a PDF page (marks location only; does NOT sign)"
     },
     {
       "name": "apply_signature",
-      "description": "Stamp a saved signature at a specific location — requires explicit human intent (user_intent_statement + user_confirmed_at). Basic local stamp, not cryptographic signing."
+      "description": "Stamp a saved signature at a specific location. Requires explicit human intent (user_intent_statement + user_confirmed_at). Basic local stamp, not cryptographic signing."
     },
     {
       "name": "prepare_signing_packet",
-      "description": "Fill form fields AND add sign-here placeholder boxes in one pass — returns a pending-signatures manifest"
+      "description": "Fill form fields AND add sign-here placeholder boxes in one pass, returning a pending-signatures manifest"
     },
     {
       "name": "detect_signature_zones",
@@ -175,90 +220,105 @@
     },
     {
       "name": "apply_text",
-      "description": "Stamp a plain text string at a location (for date zones or arbitrary text fills — no intent required)"
+      "description": "Stamp a plain text string at a location (for date zones or arbitrary text fills; no intent required)"
     },
     {
       "name": "reveal_in_finder",
-      "description": "Open the OS file manager with the given file selected — used by the viewer to surface the active PDF or its backup"
+      "description": "Open the OS file manager with the given file selected. Used by the viewer to surface the active PDF or its backup"
     }
   ],
   "prompts": [
     {
       "name": "view_and_analyze_pdf",
       "description": "Open and analyze any PDF document",
-      "arguments": ["focus"],
-      "text": "I'll open your PDF in the interactive viewer and analyze it, focusing on ${arguments.focus}. I can extract key findings, summarize sections, answer questions about specific pages, pull out structured data, and identify form fields if present."
+      "arguments": [
+        "focus"
+      ],
+      "text": "Use PDF Tools to open a PDF stored on this computer and analyze it, focusing on ${arguments.focus}. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Then extract key findings, summarize sections, answer questions about specific pages, pull out structured data, and identify form fields if present."
     },
     {
       "name": "research_paper_analysis",
       "description": "Analyze & summarize research papers",
-      "arguments": ["focus_area"],
-      "text": "I'll open your research paper in the interactive viewer and analyze it, focusing on ${arguments.focus_area}. I can extract key findings and methodology, identify research gaps, create chapter-by-chapter summaries, pull out all citations, and generate a literature review outline."
+      "arguments": [
+        "focus_area"
+      ],
+      "text": "Use PDF Tools to analyze a research paper stored on this computer, focusing on ${arguments.focus_area}. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Extract the key findings and methodology, identify research gaps, summarize it chapter by chapter, pull out the citations, and draft a literature review outline."
     },
     {
       "name": "contract_comparison",
       "description": "Compare legal documents & contracts",
-      "arguments": ["comparison_focus"],
-      "text": "I'll compare multiple contracts or legal documents, focusing on ${arguments.comparison_focus}. I'll highlight changed clauses, modified terms, added/removed sections, pricing differences, liability changes, and create a comparison summary."
+      "arguments": [
+        "comparison_focus"
+      ],
+      "text": "Use PDF Tools to compare contracts or legal documents stored on this computer, focusing on ${arguments.comparison_focus}. If I haven't given you their paths, start by listing the PDFs in my default folder so I can pick them. Highlight changed clauses, modified terms, added or removed sections, pricing differences, and liability changes, then summarize the comparison."
     },
     {
       "name": "financial_report_extraction",
       "description": "Extract data from financial statements",
-      "arguments": ["output_format"],
-      "text": "I'll extract and analyze data from your financial PDFs including all tables and key metrics. I'll convert the data to ${arguments.output_format} format for analysis, with specific page references for all extracted information."
+      "arguments": [
+        "output_format"
+      ],
+      "text": "Use PDF Tools to extract and analyze data from financial PDFs stored on this computer, including tables and key metrics. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Convert what you extract to ${arguments.output_format} format, cite the page for the values you extract, and tell me plainly about anything you could not extract."
     },
     {
       "name": "document_qa_session",
       "description": "Interactive Q&A about your documents",
-      "arguments": ["initial_question"],
-      "text": "Let's discuss your PDF document. Starting with: ${arguments.initial_question}. I can find specific information, explain complex sections, cross-reference different parts, extract quotes with page numbers, and answer 'what if' scenarios."
+      "arguments": [
+        "initial_question"
+      ],
+      "text": "Use PDF Tools to open a PDF stored on this computer so we can discuss it. My first question is: ${arguments.initial_question}. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Find specific information, explain complex sections, cross-reference different parts, and quote passages with their page numbers."
     },
     {
       "name": "bulk_invoice_processing",
       "description": "Process multiple invoices into structured data",
-      "arguments": ["folder_path", "output_format"],
-      "text": "I'll process all invoice PDFs in ${arguments.folder_path} and create a unified dataset in ${arguments.output_format} format. I'll extract vendor names, invoice numbers, dates, line items, totals, tax amounts, and payment terms."
+      "arguments": [
+        "folder_path",
+        "output_format"
+      ],
+      "text": "Use PDF Tools to process the invoice PDFs in the folder ${arguments.folder_path} on this computer and build a unified dataset in ${arguments.output_format} format. Start by listing the PDFs in that folder so I can see what you found. Extract vendor names, invoice numbers, dates, line items, totals, tax amounts, and payment terms, and tell me about any invoice you could not read."
     },
     {
       "name": "technical_documentation_summary",
       "description": "Summarize technical manuals & documentation",
-      "arguments": ["summary_type"],
-      "text": "I'll analyze your technical documentation and create ${arguments.summary_type}. I'll extract code examples, create reference guides, identify implementation steps, and summarize troubleshooting sections."
+      "arguments": [
+        "summary_type"
+      ],
+      "text": "Use PDF Tools to analyze technical documentation stored on this computer and create ${arguments.summary_type}. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Extract the code examples, build a reference guide, identify the implementation steps, and summarize the troubleshooting sections."
     },
     {
       "name": "fill_w9_business",
       "description": "Fill W-9 for business entity",
-      "text": "I'll open your W-9 in the interactive viewer so you can see it, then fill it for your business. I need: Business legal name, DBA/trade name (if different), business type (LLC/Corp/Partnership), tax classification, EIN, and business address. I'll properly check the correct tax classification boxes and ensure the form meets IRS requirements."
+      "text": "Use PDF Tools to fill out a W-9 stored on this computer for my business. If I haven't already given you the file, start by listing the PDFs in my default folder so I can point you at the right form, then read its fields. Ask me for the business legal name, the DBA or trade name if it differs, the business type (LLC, corporation, partnership), the tax classification, the EIN, and the business address. Check the correct tax classification boxes and tell me about any required field you could not fill."
     },
     {
       "name": "batch_invoices",
       "description": "Process multiple invoices",
-      "text": "I'll help you batch process invoices. Point me to the folder containing your invoice PDFs. I can: extract all amounts and dates, create a summary spreadsheet, identify missing information, calculate totals by vendor/date/category. What specific data do you need extracted?"
+      "text": "Use PDF Tools to batch process invoice PDFs stored on this computer. If I haven't already named them, start by listing the PDFs in my default folder so I can confirm which ones to use, or I'll name the folder they are in. Extract the amounts and dates, build a summary spreadsheet, flag missing information, total them by vendor, date, and category, and tell me about any invoice you could not read. Ask me which fields matter most before you start."
     },
     {
       "name": "rental_application",
       "description": "Fill rental application",
-      "text": "I'll open your rental application in the viewer and help complete it. Have ready: personal info, employment history (3 years), income verification, previous addresses (3 years), references, vehicle info, and emergency contact. I'll ensure all required fields are filled and flag any that need supporting documents."
+      "text": "Use PDF Tools to help me complete a rental application stored on this computer. If I haven't already given you the file, start by listing the PDFs in my default folder so I can point you at the right form, then read its fields. I'll have ready my personal details, three years of employment history, income verification, three years of previous addresses, references, vehicle information, and an emergency contact. Fill every required field and flag the ones that need supporting documents."
     },
     {
       "name": "extract_1099_data",
       "description": "Extract data from 1099 forms",
-      "text": "I'll extract all data from your 1099 forms (1099-NEC, 1099-MISC, 1099-DIV, 1099-INT, etc.) and create a tax summary. I'll organize by payer, identify the type of income, sum totals by category, and format it for easy import into tax software."
+      "text": "Use PDF Tools to extract the data from 1099 forms stored on this computer (1099-NEC, 1099-MISC, 1099-DIV, 1099-INT and similar) and build a tax summary. If I haven't already named them, start by listing the PDFs in my default folder so I can confirm which ones to use. Organize by payer, identify the type of income, total each category, format it for import into tax software, and tell me about anything you could not read."
     },
     {
       "name": "merge_documents",
       "description": "Combine multiple PDFs into one document",
-      "text": "I'll merge your PDF files into a single document. Just tell me which files to combine and where to save the result. I'll preserve the page order and show you the merged result in the viewer so you can verify it looks right. PDF file operations happen locally; content I inspect is handled under your MCP host or model provider's data terms."
+      "text": "Use PDF Tools to merge PDF files stored on this computer into one document. If I haven't already named them, start by listing the PDFs in my default folder so I can choose which ones to combine, then ask me where to save the result. Preserve the page order, and afterwards report the page count and the output path so I can check it. File operations happen locally; content you inspect is handled under my MCP host or model provider's data terms."
     },
     {
       "name": "split_large_document",
       "description": "Split a PDF into smaller files",
-      "text": "I'll split your PDF into separate files. You can specify exact page ranges (e.g., pages 1-10, 11-20) or split at regular intervals (e.g., every 5 pages). I'll save each section as its own PDF file. Great for breaking up large reports, separating chapters, or extracting specific sections."
+      "text": "Use PDF Tools to split a PDF stored on this computer into separate files. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. I'll either give you exact page ranges (for example pages 1-10 and 11-20) or ask you to split at a regular interval (for example every 5 pages). Save each section as its own PDF and tell me where you wrote them."
     },
     {
       "name": "organize_scanned_pages",
       "description": "Rotate and reorder scanned PDF pages",
-      "text": "I'll help fix up your scanned PDF. I can rotate sideways or upside-down pages (90°, 180°, or 270°), and reorder pages that were scanned out of sequence. I'll show you the result in the viewer so you can confirm everything looks right before saving."
+      "text": "Use PDF Tools to fix up a scanned PDF stored on this computer. If I haven't given you a path, start by listing the PDFs in my default folder so I can pick one. Rotate the pages I tell you are sideways or upside-down (90, 180, or 270 degrees) and reorder pages that were scanned out of sequence. Tell me the page order and rotations you plan to apply before you save, so I can confirm them."
     }
   ],
   "user_config": {

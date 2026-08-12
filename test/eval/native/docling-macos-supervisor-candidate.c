@@ -450,7 +450,12 @@ int main(int argc, char **argv) {
       for (size_t offset = 0; offset < (size_t)bytes; offset += 4096) {
         memory[offset] = (unsigned char)(offset & 0xff);
       }
-      sleep_ms(3000);
+      /* Hold the resident pages until the supervisor kills this process.
+       * A fixed self-exit raced the sampler on loaded hosts: the descendant
+       * could vanish before its footprint was observed over the limit. The
+       * supervised outcome must be decided by the containment check, and the
+       * outer deadline still bounds a supervisor that fails to act. */
+      sleep_ms(60000);
       free((void *)memory);
       _exit(0);
     }

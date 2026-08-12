@@ -4,6 +4,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { PDFDocument, PDFName } from "pdf-lib";
 import { generateAccessibilityFixtures } from "../../scripts/eval-generate-accessibility-fixtures.mjs";
 import { runAccessibilityEvaluation } from "../../scripts/eval-run-accessibility.mjs";
 import {
@@ -24,6 +25,13 @@ const REPO_ROOT = path.resolve(__dirname, "..", "..");
 const MANIFEST_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "accessibility", "manifest.v1.json");
 const SCHEMA_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "accessibility", "manifest.schema.json");
 const TAXONOMY_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "accessibility", "claim-taxonomy.v1.json");
+const ENCRYPTED_FIXTURE = path.join(
+  REPO_ROOT,
+  "test",
+  "fixtures",
+  "golden-forms",
+  "encrypted-rotated-signature.pdf",
+);
 const temporaryDirectories = [];
 
 function sha256(bytes) {
@@ -221,6 +229,33 @@ describe("accessibility structural screen and claim gate v1", () => {
     expect(assessment.claims.pdfua_conformance.status).toBe("not_established");
   });
 
+  it("retains bounded absent-versus-false diagnostic resolution without raw values", async () => {
+    const directory = await temporaryDirectory("pdf-tools-accessibility-diagnostics-");
+    const explicitFalsePath = path.join(directory, "explicit-false.pdf");
+    const document = await PDFDocument.create();
+    document.addPage([300, 200]);
+    document.catalog.set(PDFName.of("MarkInfo"), document.context.obj({ Marked: false }));
+    document.catalog.set(
+      PDFName.of("ViewerPreferences"),
+      document.context.obj({ DisplayDocTitle: false }),
+    );
+    await fs.writeFile(explicitFalsePath, await document.save({ addDefaultPage: false }));
+
+    const explicitFalse = await screenPdfAccessibility(explicitFalsePath);
+    const untaggedFixture = manifest.fixtures.find(item => item.id.endsWith(".untagged"));
+    const absent = await screenPdfAccessibility(
+      await resolveAccessibilityFixturePath(MANIFEST_PATH, untaggedFixture),
+    );
+    const actual = (assessment, id) => assessment.screen.findings
+      .find(item => item.id === id)?.actual;
+
+    expect(actual(explicitFalse, "catalog_marked")).toBe("FALSE");
+    expect(actual(explicitFalse, "display_document_title")).toBe("FALSE");
+    expect(actual(absent, "catalog_marked")).toBe("ABSENT_OR_WRONG_TYPE");
+    expect(actual(absent, "display_document_title")).toBe("ABSENT_OR_WRONG_TYPE");
+    expect(JSON.stringify(explicitFalse)).not.toContain(explicitFalsePath);
+  });
+
   it("does not treat a self-declared PDF/UA identifier as proof", async () => {
     const fixture = manifest.fixtures.find(item => item.id.endsWith(".claim-only"));
     const assessment = await screenPdfAccessibility(await resolveAccessibilityFixturePath(MANIFEST_PATH, fixture));
@@ -273,6 +308,10 @@ describe("accessibility structural screen and claim gate v1", () => {
     const invalid = await screenPdfAccessibility(invalidPath);
     expect(invalid.screen.status).toBe("fail");
     expect(invalid.screen.failures).toEqual(["parseable_pdf"]);
+    expect(invalid.screen.findings[0].actual).toBe("PARSE_FAILED");
+    expect(invalid.screen.limitations[0]).toBe(
+      "No accessibility properties beyond basic PDF parseability were inspected because strict parsing failed.",
+    );
     expect(invalid.claims.pdfua_conformance.status).toBe("not_established");
 
     const report = await runAccessibilityEvaluation({ manifestPath: MANIFEST_PATH });
@@ -286,5 +325,46 @@ describe("accessibility structural screen and claim gate v1", () => {
       tagged_pdf_structure: { false_positives: 0, false_negatives: 0 },
     });
     expect(report.results.every(result => result.assessment.claims.pdfua_conformance.status === "not_established")).toBe(true);
+  });
+
+  it("records encrypted fixtures as bounded abstentions instead of aborting the campaign", async () => {
+    const directory = await temporaryDirectory("pdf-tools-accessibility-encrypted-");
+    const syntheticDirectory = path.join(directory, "synthetic");
+    await fs.cp(
+      path.join(path.dirname(MANIFEST_PATH), "synthetic"),
+      syntheticDirectory,
+      { recursive: true },
+    );
+    await fs.copyFile(TAXONOMY_PATH, path.join(directory, "claim-taxonomy.v1.json"));
+    const encryptedBytes = await fs.readFile(ENCRYPTED_FIXTURE);
+    await fs.writeFile(path.join(syntheticDirectory, "encrypted.pdf"), encryptedBytes);
+    const copiedManifest = structuredClone(manifest);
+    copiedManifest.fixtures = [structuredClone(manifest.fixtures[0]), {
+      ...structuredClone(manifest.fixtures[0]),
+      id: "pdf-tools.accessibility.v1.encrypted-abstention",
+      path: "synthetic/encrypted.pdf",
+      sha256: sha256(encryptedBytes),
+      partition: "adversarial",
+      description: "Encrypted fixture used to verify bounded evaluation abstention.",
+    }];
+    const manifestPath = path.join(directory, "manifest.v1.json");
+    await fs.writeFile(manifestPath, JSON.stringify(copiedManifest));
+
+    const report = await runAccessibilityEvaluation({ manifestPath });
+    expect(report.passed).toBe(false);
+    expect(report.results).toHaveLength(2);
+    const encrypted = report.results.find(result => result.id.endsWith(".encrypted-abstention"));
+    expect(encrypted).toMatchObject({
+      evaluation_status: "abstained",
+      expectation_met: false,
+      exact_failures_match: false,
+      exact_rule_families_match: false,
+      assessment: null,
+      abstention: {
+        code: "PDF_ENCRYPTED_INSPECTION_UNAVAILABLE",
+        message:
+          "Encrypted PDF inspection is unavailable because this operation does not accept a password.",
+      },
+    });
   });
 });

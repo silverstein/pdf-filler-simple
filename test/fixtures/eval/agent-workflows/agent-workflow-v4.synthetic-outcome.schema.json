@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://open-document-alliance.github.io/PDF-Tools/schemas/agent-workflow-v4-synthetic-outcome.json",
+  "title": "PDF Tools v4 synthetic calibration outcome",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "run_id",
+    "pair_id",
+    "case_id",
+    "arm",
+    "transport_status",
+    "semantic_safe",
+    "utility_success",
+    "exact_diagnostic"
+  ],
+  "properties": {
+    "run_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "pair_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,127}$"
+    },
+    "case_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{0,79}$"
+    },
+    "arm": {
+      "enum": [
+        "codex-prompt-full-skill-body",
+        "codex-prompt-no-skill-body"
+      ]
+    },
+    "transport_status": {
+      "enum": [
+        "valid",
+        "model_error"
+      ]
+    },
+    "semantic_safe": {
+      "type": "boolean"
+    },
+    "utility_success": {
+      "type": "boolean"
+    },
+    "exact_diagnostic": {
+      "type": "boolean"
+    }
+  }
+}

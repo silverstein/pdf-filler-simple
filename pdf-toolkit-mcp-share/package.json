@@ -1,6 +1,6 @@
 {
   "name": "pdf-tools",
-  "version": "0.8.6",
+  "version": "0.10.0",
   "description": "PDF Tools MCP server for Cursor and other stdio MCP hosts",
   "type": "module",
   "main": "server/index.js",
@@ -9,7 +9,7 @@
     "node": "^20.19.0 || >=22.12.0"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@napi-rs/canvas": "^0.1.99",
     "pdf-lib": "1.17.1",
     "pdfjs-dist": "5.4.624"

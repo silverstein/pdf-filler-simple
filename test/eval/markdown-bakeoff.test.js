@@ -5,11 +5,13 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { classifyEvidencePrecondition } from "../helpers/evidence-preconditions.js";
 import { prepareDoclingMacHandoffForTest } from "./extraction-docling-handoff.js";
 import {
   canonicalJson,
   runMarkdownBakeoff,
+  validateMarkdownDiscovery,
   validateFixtureBindings,
   validateMarkdownResult,
 } from "../../scripts/eval-run-markdown-bakeoff.mjs";
@@ -48,11 +50,12 @@ async function handle(message) {
     return;
   }
   if (message.method === "tools/list") {
-    const tools = Array.from({ length: 39 }, (_, index) => ({
+    const tools = Array.from({ length: 40 }, (_, index) => ({
       name: "fixture_tool_" + String(index + 1).padStart(2, "0"),
       inputSchema: { type: "object" },
     }));
     tools.push({ name: "convert_pdf_to_markdown", inputSchema: { type: "object" } });
+    tools.push({ name: "inspect_pdf_accessibility", inputSchema: { type: "object" } });
     send(message.id, { tools });
     return;
   }
@@ -63,7 +66,7 @@ async function handle(message) {
     const pageBoundaries = Array.from({ length: pageCount }, (_, index) => "<!-- PDF page " + (index + 1) + " -->");
     const markdown = pageBoundaries.join("\n\n") + "\n\nINV-1001 fixture evidence\n";
     const value = {
-      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.0.0" },
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.15.0" },
       conversion_status: "complete",
       markdown,
       markdown_sha256: digest(Buffer.from(markdown)),
@@ -112,6 +115,25 @@ process.stdin.on("data", chunk => {
 });
 `;
 
+describe("Markdown bakeoff discovery binding", () => {
+  const currentTools = [
+    ...Array.from({ length: 41 }, (_, index) => ({ name: `fixture_tool_${index}` })),
+    { name: "convert_pdf_to_markdown" },
+    { name: "inspect_pdf_accessibility" },
+  ];
+
+  it("accepts only the current 43-tool discovery", () => {
+    expect(() => validateMarkdownDiscovery(currentTools)).not.toThrow();
+    expect(() => validateMarkdownDiscovery(currentTools.slice(1))).toThrow(/43-tool contract/);
+  });
+
+  it("requires both current lane tools", () => {
+    expect(() => validateMarkdownDiscovery(
+      currentTools.map(tool => tool.name === "inspect_pdf_accessibility" ? { name: "stale_tool" } : tool),
+    )).toThrow(/43-tool contract/);
+  });
+});
+
 async function createFakeArtifact(root, label = "approved", mutateSource = false) {
   const staging = path.join(root, `packed-staging-${label}`);
   const server = path.join(staging, "server");
@@ -129,7 +151,10 @@ async function createFakeArtifact(root, label = "approved", mutateSource = false
       FAKE_PACKED_SERVER.replace("const MUTATE_SOURCE = false;", `const MUTATE_SOURCE = ${mutateSource};`),
     ),
     fs.writeFile(path.join(server, "output-schemas.js"), "export const schemas = {};\n"),
+    fs.writeFile(path.join(server, "pdfjs-subprocess.js"), "export const subprocess = {};\n"),
+    fs.writeFile(path.join(server, "pdfjs-worker.js"), "export const worker = {};\n"),
     fs.writeFile(path.join(server, "layout-extraction.js"), "export const layout = {};\n"),
+    fs.writeFile(path.join(server, "type3-cm-reference.js"), "export const reference = {};\n"),
     fs.writeFile(path.join(server, "markdown-conversion.js"), "export const markdown = {};\n"),
     fs.writeFile(path.join(server, "markdown-output-transaction.js"), "export const transaction = {};\n"),
   ]);
@@ -142,7 +167,7 @@ function resultFor(binding) {
   const markdown = "<!-- PDF page 1 -->\n\nFixture text\n";
   return {
     structuredContent: {
-      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.0.0" },
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version: "1.15.0" },
       conversion_status: "complete",
       markdown,
       markdown_sha256: sha256(Buffer.from(markdown)),
@@ -178,7 +203,68 @@ function resultFor(binding) {
   };
 }
 
+// Independent of the Docling handoff setup below, so a blocked or skipped
+// packed bakeoff can never again hide a stale renderer version pin. Runs
+// standalone with -t "renderer version".
+describe("Markdown bakeoff renderer version binding", () => {
+  const markdown = "# Title\n";
+  const sourceBytes = Buffer.from("%PDF-1.7\n", "utf8");
+  const binding = {
+    fixture: { id: "renderer-version-guard" },
+    retained: {
+      filename: "guard.pdf",
+      sha256: createHash("sha256").update(sourceBytes).digest("hex"),
+      bytes: sourceBytes.length,
+    },
+    pageCount: 1,
+  };
+  const resultFor = version => ({
+    isError: false,
+    structuredContent: {
+      renderer: { name: "pdf-tools.layout-markdown-renderer", version },
+      options: { include_page_boundaries: true },
+      limits: { max_markdown_bytes: 200000 },
+      provenance: {
+        source: {
+          file_name: binding.retained.filename,
+          sha256: binding.retained.sha256,
+          size_bytes: binding.retained.bytes,
+        },
+        layout: {
+          parser_name: "pdfjs-dist",
+          parser_version: "5.4.624",
+          page_range: { start_page: 1, end_page: 1, total_pages: 1 },
+        },
+      },
+      saved_output: null,
+      markdown,
+      markdown_bytes: Buffer.byteLength(markdown, "utf8"),
+      markdown_sha256: createHash("sha256").update(Buffer.from(markdown, "utf8")).digest("hex"),
+      conversion_status: "complete",
+      pages: [{
+        page: 1,
+        conversion_status: "complete",
+        markdown_bytes: Buffer.byteLength(markdown, "utf8"),
+        line_count: 1,
+        rendered_line_count: 1,
+        gaps: [],
+      }],
+      gaps: [],
+      limitations: [],
+    },
+  });
+
+  it("accepts the current renderer version and rejects all superseded ones", () => {
+    expect(validateMarkdownResult(resultFor("1.15.0"), binding).renderer.version).toBe("1.15.0");
+    for (const stale of ["1.0.0", "1.1.0", "1.2.0", "1.3.0", "1.4.0", "1.5.0", "1.6.0", "1.7.0", "1.8.0", "1.9.0", "1.10.0", "1.11.0", "1.12.0", "1.13.0", "1.14.0"]) {
+      expect(() => validateMarkdownResult(resultFor(stale), binding), stale)
+        .toThrow(/Markdown result evidence is invalid/u);
+    }
+  });
+});
+
 describe("packed Markdown bakeoff runner", () => {
+  let evidenceSkipReason = null;
   let root;
   let bindings;
   let fixtureRoot;
@@ -187,55 +273,69 @@ describe("packed Markdown bakeoff runner", () => {
   let options;
 
   beforeAll(async () => {
-    root = await fs.realpath(
-      await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-markdown-bakeoff-")),
-    );
-    await fs.chmod(root, 0o700);
-    const outputRoot = path.join(root, "output");
-    await fs.mkdir(outputRoot, { mode: 0o700 });
-    const manifestBytes = await fs.readFile(SOURCE_MANIFEST);
-    const receiptSchemaBytes = await fs.readFile(RECEIPT_SCHEMA);
-    manifest = JSON.parse(manifestBytes.toString("utf8"));
-    const fixturePaths = manifest.fixtures.map(fixture => path.resolve(
-      path.dirname(SOURCE_MANIFEST),
-      fixture.path,
-    ));
-    const uvPath = path.join(root, "uv-test-binary");
-    const uvVersion = "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)";
-    await fs.writeFile(uvPath, `#!/bin/sh\nprintf '%s\\n' '${uvVersion}'\n`, { mode: 0o700, flag: "wx" });
-    const handoff = await prepareDoclingMacHandoffForTest({
-      cacheRoot: path.join(root, "Library/Caches/oda-pdf-tools-extraction"),
-      sidecarRoot: path.join(root, "Sites/pdf-tools-extraction-sidecars"),
-      protectedRoots: [path.join(root, "Documents"), path.join(root, "Dropbox")],
-      fixturePaths,
-      testOnlyHost: {
-        platform: "darwin",
-        architecture: "arm64",
-        os_build: "25G5065a",
-        kernel_release: "25.6.0",
-        node_version: process.version,
-      },
-      testOnlySupervisorBuild: {
-        binaryBytes: Buffer.from("pdf-tools-test-only-supervisor-binary\n"),
-      },
-      testOnlyUv: { path: uvPath, version: uvVersion },
-    });
-    receipt = handoff.receipt;
-    fixtureRoot = path.join(path.dirname(handoff.receiptPath), "fixtures");
-    bindings = validateFixtureBindings(manifest, receipt);
-    const artifactPath = await createFakeArtifact(root);
-    const artifactBytes = await fs.readFile(artifactPath);
-    options = {
-      "--artifact": artifactPath,
-      "--artifact-sha256": sha256(artifactBytes),
-      "--manifest": SOURCE_MANIFEST,
-      "--manifest-sha256": sha256(manifestBytes),
-      "--output": path.join(outputRoot, "report.json"),
-      "--receipt": handoff.receiptPath,
-      "--receipt-sha256": handoff.receipt_sha256,
-      "--receipt-schema": RECEIPT_SCHEMA,
-      "--receipt-schema-sha256": sha256(receiptSchemaBytes),
-    };
+    try {
+      root = await fs.realpath(
+        await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-markdown-bakeoff-")),
+      );
+      await fs.chmod(root, 0o700);
+      const outputRoot = path.join(root, "output");
+      await fs.mkdir(outputRoot, { mode: 0o700 });
+      const manifestBytes = await fs.readFile(SOURCE_MANIFEST);
+      const receiptSchemaBytes = await fs.readFile(RECEIPT_SCHEMA);
+      manifest = JSON.parse(manifestBytes.toString("utf8"));
+      const fixturePaths = manifest.fixtures.map(fixture => path.resolve(
+        path.dirname(SOURCE_MANIFEST),
+        fixture.path,
+      ));
+      const uvPath = path.join(root, "uv-test-binary");
+      const uvVersion = "uv 0.11.29 (901092ee1 2026-07-15 aarch64-apple-darwin)";
+      await fs.writeFile(uvPath, `#!/bin/sh\nprintf '%s\\n' '${uvVersion}'\n`, { mode: 0o700, flag: "wx" });
+      const handoff = await prepareDoclingMacHandoffForTest({
+        cacheRoot: path.join(root, "Library/Caches/oda-pdf-tools-extraction"),
+        sidecarRoot: path.join(root, "Sites/pdf-tools-extraction-sidecars"),
+        protectedRoots: [path.join(root, "Documents"), path.join(root, "Dropbox")],
+        fixturePaths,
+        testOnlyHost: {
+          platform: "darwin",
+          architecture: "arm64",
+          os_build: "25G5065a",
+          kernel_release: "25.6.0",
+          node_version: process.version,
+        },
+        testOnlySupervisorBuild: {
+          binaryBytes: Buffer.from("pdf-tools-test-only-supervisor-binary\n"),
+        },
+        testOnlyUv: { path: uvPath, version: uvVersion },
+      });
+      receipt = handoff.receipt;
+      fixtureRoot = path.join(path.dirname(handoff.receiptPath), "fixtures");
+      bindings = validateFixtureBindings(manifest, receipt);
+      const artifactPath = await createFakeArtifact(root);
+      const artifactBytes = await fs.readFile(artifactPath);
+      options = {
+        "--artifact": artifactPath,
+        "--artifact-sha256": sha256(artifactBytes),
+        "--manifest": SOURCE_MANIFEST,
+        "--manifest-sha256": sha256(manifestBytes),
+        "--output": path.join(outputRoot, "report.json"),
+        "--receipt": handoff.receiptPath,
+        "--receipt-sha256": handoff.receipt_sha256,
+        "--receipt-schema": RECEIPT_SCHEMA,
+        "--receipt-schema-sha256": sha256(receiptSchemaBytes),
+      };
+    } catch (error) {
+      // An unmet evidence precondition is reported as a skip that names
+      // what is required. Anything else still fails.
+      const classified = classifyEvidencePrecondition(error);
+      if (classified === null) throw error;
+      evidenceSkipReason = classified.kind === "stale"
+        ? `sealed evidence needs re-approval: ${classified.reason}`
+        : `host is not provisioned: ${classified.reason}`;
+    }
+  });
+
+  beforeEach(context => {
+    if (evidenceSkipReason) context.skip(evidenceSkipReason);
   });
 
   afterAll(async () => {

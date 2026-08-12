@@ -15,7 +15,9 @@ const REPOSITORY_FILES = [".gitattributes", "README.md", "config.json", "docling
 function sha256(value) { return createHash("sha256").update(value).digest("hex"); }
 
 async function setup({ failDownload = false, unexpectedLocalCache = false } = {}) {
-  const root = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-model-helper-"));
+  // Canonical path: the helper requires a real mode-0700 directory, and on
+  // macOS os.tmpdir() resolves under a symlinked /var.
+  const root = await fs.realpath(await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-model-helper-")));
   roots.push(root);
   const parent = path.join(root, "models");
   const models = path.join(parent, "fresh-target");

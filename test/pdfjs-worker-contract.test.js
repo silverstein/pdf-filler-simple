@@ -5,20 +5,28 @@ import { promises as fs } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { PDFDocument, PDFName, PDFNumber } from "pdf-lib";
 import {
   hashBoundedPdfFileSafely,
 } from "../server/bounded-pdf-file.js";
+import { diffComparisonRgba } from "../server/pdf-comparison.js";
 import {
   createPdfjsSubprocessRequest,
   runPdfjsSubprocess,
 } from "../server/pdfjs-subprocess.js";
 import {
+  readContentFromDocument,
   runRendererPolicy,
   runSystemCommand,
 } from "../server/pdfjs-worker.js";
+import { createTestTempDirectory } from "./helpers/temp-directory.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
+const TYPE3_REFERENCE_PDF = path.join(
+  REPO_ROOT,
+  "test/fixtures/eval/extraction/type3-cm-reference.pdf",
+);
 const roots = [];
 const hosts = new Set();
 
@@ -106,6 +114,31 @@ async function run(operation, options, password = null, source = null) {
 }
 
 describe.sequential("one-shot PDF.js worker contracts", () => {
+  it("preserves textless pages when a later page read fails", async () => {
+    const pageOne = {
+      async getTextContent() {
+        return { items: [{ str: " \n\t " }] };
+      },
+      cleanup() {},
+    };
+    const document = {
+      numPages: 2,
+      async getPage(pageNumber) {
+        if (pageNumber === 1) return pageOne;
+        throw new Error("forced page load failure");
+      },
+    };
+    await expect(readContentFromDocument(document, { max_pages: null })).resolves.toMatchObject({
+      pages_without_text: [1],
+      pages_read: 1,
+      page_read_error: {
+        page: 2,
+        code: "PDFJS_PAGE_READ_FAILED",
+      },
+      page_previews: [{ page: 1, char_count: 0, text: "" }],
+    });
+  });
+
   it("projects text extraction without returning an unbounded page-text graph", async () => {
     const content = await run("read_content", { max_pages: 1 });
     expect(content).toMatchObject({
@@ -151,13 +184,37 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
     };
     const layout = await run("extract_layout", common);
     expect(layout.layout).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.0.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.6.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       pages: expect.any(Array),
     });
     const markdownLayout = await run("extract_layout_for_markdown", common);
     expect(markdownLayout.layout.parser.version).toBe("5.4.624");
     expect(markdownLayout.layout.page_range.start_page).toBe(1);
+  });
+
+  it("preserves exact Type-3 glyph evidence inside the isolated worker", async () => {
+    const result = await run("extract_layout_for_markdown", {
+      source_path: TYPE3_REFERENCE_PDF,
+      source_file_name: path.basename(TYPE3_REFERENCE_PDF),
+      start_page: 1,
+      end_page: 1,
+      max_items: 5000,
+      max_characters: 100_000,
+      max_output_characters: 200_000,
+    }, null, await sourceBinding(TYPE3_REFERENCE_PDF));
+    const recoveredItems = result.layout.pages[0].raw_items
+      .filter(item => Array.isArray(item.glyph_recoveries));
+    expect(recoveredItems).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source_text: "\u0000\u0006!\u0015p",
+        text: "−\u0006!\u0015p",
+        glyph_recoveries: [expect.objectContaining({
+          registry_id: "cmsy-ctan-type3-minus-v1",
+          target_unicode: "−",
+        })],
+      }),
+    ]));
   });
 
   it("returns PNG bytes only on the separately bounded binary channel", async () => {
@@ -199,9 +256,54 @@ describe.sequential("one-shot PDF.js worker contracts", () => {
         scale_override: null,
       });
       expect(Buffer.isBuffer(systemPage.binary)).toBe(true);
-      expect(systemPage.renderer).toBe("macos-sips");
+      expect(systemPage.renderer).toBe("macos-quicklook");
     }
   });
+
+  it("binds comparison masking to the producer's exact unrounded viewport", async () => {
+    const root = await createTestTempDirectory(REPO_ROOT, "pdfjs-comparison-view");
+    roots.push(root);
+    const pdfPath = path.join(root, "fractional-raster-boundary.pdf");
+    const pdf = await PDFDocument.create();
+    pdf.addPage([100.0000001, 50.2]);
+    const nonAssociativePage = pdf.addPage([67.32371565966767, 50]);
+    nonAssociativePage.node.set(
+      PDFName.of("UserUnit"),
+      PDFNumber.of(1.0001428571428572),
+    );
+    await fs.writeFile(pdfPath, await pdf.save());
+
+    const renderPage = async page => await run("render_comparison_page", {
+      page,
+      max_dimension_px: null,
+      renderer_policy: "native",
+      scale_override: 1.5,
+    }, null, await sourceBinding(pdfPath));
+    const roundedBoundary = await renderPage(1);
+    expect(roundedBoundary.page_view.width_points).toBe(100);
+    expect(roundedBoundary.comparison_view.raw_width_pixels).toBeGreaterThan(150);
+    expect(roundedBoundary.width).toBe(151);
+
+    const rendered = await renderPage(2);
+    expect(rendered.page_view).toMatchObject({
+      width_points: 67.333333,
+      user_unit: 1.000143,
+    });
+    expect(rendered.comparison_view.raw_width_pixels).toBe(101);
+    expect(rendered.width).toBe(101);
+    expect(rendered.width).toBe(Math.ceil(rendered.comparison_view.raw_width_pixels));
+
+    const before = { ...rendered, binary: Buffer.from(rendered.binary) };
+    const after = { ...rendered, binary: Buffer.from(rendered.binary) };
+    for (const [x, y] of [[2, 2], [9, 2]]) {
+      const offset = (y * rendered.width + x) * 4;
+      after.binary[offset] = before.binary[offset] > 127 ? 0 : 255;
+    }
+    expect(diffComparisonRgba(before, after)).toMatchObject({ raw_changed_pixels: 2 });
+    expect(diffComparisonRgba(before, after, [[0, 0, 3, 3]])).toMatchObject({
+      raw_changed_pixels: 1,
+    });
+  }, 30_000);
 
   it("runs page operators and signature text heuristics inside the worker", async () => {
     const analysis = await run("analyze_pages", { max_pages: 200 });
@@ -242,7 +344,23 @@ setInterval(() => {}, 1000);
     );
   });
 
-  it("kills and reaps an active system renderer before the worker exits on SIGTERM", async () => {
+  // Each terminal signal promises one exit code, and a shutdown that kills its
+  // own renderer child must not report itself as a crash. Both halves failed on
+  // Node 20 before the shutdown fault guard landed, on every one of these three
+  // signals: the deliberately killed child rejected the host's top-level await,
+  // and Node's fatal path beat the deliberate exit, so an orderly shutdown left
+  // exit code 1 and a stack trace on stderr. Node 22 happened to win the same
+  // race the other way, which is why only Node 20 ever showed it. Read the exit
+  // status and the host's real stderr off the process rather than restating
+  // either, so the runtime that loses the race cannot pass.
+  it.each([
+    ["SIGHUP", 129],
+    ["SIGINT", 130],
+    ["SIGTERM", 143],
+  ])("kills and reaps an active system renderer before the worker exits on %s", async (
+    signal,
+    expectedExitCode,
+  ) => {
     if (process.platform === "win32") return;
     const { root, filename: rendererPath } = await fixtureScript(`
 import fs from "node:fs";
@@ -269,15 +387,22 @@ await runSystemCommand(process.execPath, [
     const host = spawn(process.execPath, [hostPath], {
       cwd: root,
       env: { HOME: root, LANG: "C", PATH: process.env.PATH ?? "" },
-      stdio: "ignore",
+      stdio: ["ignore", "ignore", "pipe"],
     });
     hosts.add(host);
+    const stderrChunks = [];
+    host.stderr.on("data", chunk => stderrChunks.push(chunk));
     const rendererPid = Number((await waitForFile(pidPath)).trim());
     const closed = once(host, "close");
-    expect(host.kill("SIGTERM")).toBe(true);
+    expect(host.kill(signal)).toBe(true);
     const [exitCode, exitSignal] = await closed;
     hosts.delete(host);
-    expect({ exitCode, exitSignal }).toEqual({ exitCode: 143, exitSignal: null });
+    const stderr = Buffer.concat(stderrChunks).toString("utf8");
+    expect({ exitCode, exitSignal, stderr }).toEqual({
+      exitCode: expectedExitCode,
+      exitSignal: null,
+      stderr: "",
+    });
     expect(() => process.kill(rendererPid, 0)).toThrow(
       expect.objectContaining({ code: "ESRCH" }),
     );

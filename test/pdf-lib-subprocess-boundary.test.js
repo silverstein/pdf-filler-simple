@@ -7,10 +7,12 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+import { PDFDocument } from "pdf-lib";
 import {
   PDF_RESOURCE_LIMIT_CODE,
   createPdfLibMutationRequest,
   runPdfLibMutation,
+  selectPdfLibIsolationMode,
   terminateAllPdfLibMutations,
 } from "../server/pdf-lib-subprocess.js";
 import { makeDeepMalformedFixtures } from "./helpers/deep-malformed-fixtures.js";
@@ -57,6 +59,13 @@ async function worker(body, { monitor = true } = {}) {
     monitor ? monitoredWorkerBody(body) : body,
     { mode: 0o600 },
   );
+  return { root, workerPath, ...fixture };
+}
+
+async function threadWorker(body) {
+  const { root, ...fixture } = await fixtureRoot();
+  const workerPath = path.join(root, "thread-worker.mjs");
+  await fs.writeFile(workerPath, body, { mode: 0o600 });
   return { root, workerPath, ...fixture };
 }
 
@@ -125,6 +134,37 @@ process.stdout.write(JSON.stringify({
 `;
 }
 
+function successThreadWorker(extra = "") {
+  return `
+import { createHash } from "node:crypto";
+import fs from "node:fs/promises";
+import { parentPort, workerData } from "node:worker_threads";
+const request = workerData.request;
+const filename = "output-0001.pdf";
+const outputPath = request.stage_directory + "/" + filename;
+const bytes = Buffer.from("%PDF-1.7\\noutput\\n%%EOF\\n");
+await fs.writeFile(outputPath, bytes, { flag: "wx", mode: 0o600 });
+${extra}
+const stats = await fs.lstat(outputPath, { bigint: true });
+parentPort.postMessage({
+  kind: "response",
+  response: {
+    protocol_version: 1,
+    operation: request.operation,
+    status: "ok",
+    manifest: [{
+      filename,
+      size_bytes: bytes.length,
+      sha256: createHash("sha256").update(bytes).digest("hex"),
+      file_identity: { device: String(stats.dev), inode: String(stats.ino) },
+    }],
+    result: { operation: request.operation },
+  },
+});
+parentPort.close();
+`;
+}
+
 async function waitForMarker(markerPath) {
   for (let attempt = 0; attempt < 50; attempt += 1) {
     try {
@@ -147,6 +187,178 @@ afterEach(async () => {
 });
 
 describe.sequential("pdf-lib subprocess boundary", () => {
+  it("never relaunches an Electron host executable as Node", () => {
+    expect(selectPdfLibIsolationMode({
+      electronVersion: "39.0.0",
+      processType: "utility",
+      hasElectronParentPort: true,
+      executable: "/Applications/Claude.app/Contents/Frameworks/Claude Helper (Plugin)",
+    })).toBe("worker_thread");
+    expect(selectPdfLibIsolationMode({
+      electronVersion: null,
+      processType: null,
+      hasElectronParentPort: false,
+      executable: process.execPath,
+    })).toBe("subprocess");
+  });
+
+  it("uses the staged protocol without spawning in an embedded host", async () => {
+    const fixture = await threadWorker(successThreadWorker());
+    const result = await runPdfLibMutation({
+      operation: "rotate_pdf_pages",
+      sources: [fixture.source],
+      password: null,
+      options: OPTIONS.rotate_pdf_pages,
+    }, async ({ result, outputs, atomicTransition }) => {
+      expect((await outputs[0].readBytes()).subarray(0, 5).toString()).toBe("%PDF-");
+      await atomicTransition("journal_prepared");
+      return result.operation;
+    }, {
+      isolationMode: "worker_thread",
+      workerPath: fixture.workerPath,
+      spawnProcess() {
+        throw new Error("Embedded mutation must not launch process.execPath.");
+      },
+    });
+    expect(result).toBe("rotate_pdf_pages");
+  });
+
+  it.each([
+    [
+      "malformed control output",
+      `import { parentPort } from "node:worker_threads";
+parentPort.postMessage({ unexpected: true });
+parentPort.close();`,
+      "malformed_control_output",
+    ],
+    ["wall timeout", `setInterval(() => {}, 1000);`, "timeout"],
+  ])("fails closed on worker-thread %s", async (_label, body, reason) => {
+    const fixture = await threadWorker(body);
+    await expect(runPdfLibMutation({
+      operation: "rotate_pdf_pages",
+      sources: [fixture.source],
+      password: null,
+      options: OPTIONS.rotate_pdf_pages,
+    }, async () => {
+      throw new Error("must not consume");
+    }, {
+      isolationMode: "worker_thread",
+      timeoutMs: 150,
+      workerPath: fixture.workerPath,
+    })).rejects.toMatchObject({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason,
+    });
+  });
+
+  it("terminates a worker thread when its host RSS delta exceeds the budget", async () => {
+    const fixture = await threadWorker(`setInterval(() => {}, 1000);`);
+    let rssReads = 0;
+    await expect(runPdfLibMutation({
+      operation: "rotate_pdf_pages",
+      sources: [fixture.source],
+      password: null,
+      options: OPTIONS.rotate_pdf_pages,
+    }, async () => {
+      throw new Error("must not consume");
+    }, {
+      isolationMode: "worker_thread",
+      rssLimitCalculator: () => 1024,
+      rssReader: () => {
+        rssReads += 1;
+        return rssReads === 1 ? 1024 : 4096;
+      },
+      timeoutMs: 2000,
+      workerPath: fixture.workerPath,
+    })).rejects.toMatchObject({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason: "rss_limit_exceeded",
+    });
+  });
+
+  it("executes a real pdf-lib rotation in the bounded worker thread", async () => {
+    const { root } = await fixtureRoot();
+    const sourcePath = path.join(root, "real-source.pdf");
+    const sourceBytes = await fs.readFile(path.join(REPO_ROOT, "example-fw9.pdf"));
+    await fs.writeFile(sourcePath, sourceBytes, { mode: 0o600 });
+    const stats = await fs.lstat(sourcePath, { bigint: true });
+    const source = {
+      canonical_path: sourcePath,
+      file_identity: { device: String(stats.dev), inode: String(stats.ino) },
+      size_bytes: sourceBytes.length,
+      sha256: createHash("sha256").update(sourceBytes).digest("hex"),
+    };
+    const rotations = await runPdfLibMutation({
+      operation: "rotate_pdf_pages",
+      sources: [source],
+      password: null,
+      options: { pages: [1], degrees: 90 },
+    }, async ({ outputs, atomicTransition }) => {
+      const output = await PDFDocument.load(await outputs[0].readBytes());
+      const values = output.getPages().map(page => page.getRotation().angle);
+      await atomicTransition("journal_prepared");
+      return values;
+    }, { isolationMode: "worker_thread" });
+    expect(rotations[0]).toBe(90);
+  });
+
+  it("admits only one embedded mutation worker at a time", async () => {
+    const first = await threadWorker(`setInterval(() => {}, 1000);`);
+    const second = await threadWorker(successThreadWorker());
+    const firstCall = runPdfLibMutation({
+      operation: "rotate_pdf_pages",
+      sources: [first.source],
+      password: null,
+      options: OPTIONS.rotate_pdf_pages,
+    }, async () => {
+      throw new Error("must not consume");
+    }, {
+      isolationMode: "worker_thread",
+      timeoutMs: 250,
+      workerPath: first.workerPath,
+    });
+    await expect(runPdfLibMutation({
+      operation: "rotate_pdf_pages",
+      sources: [second.source],
+      password: null,
+      options: OPTIONS.rotate_pdf_pages,
+    }, async () => {
+      throw new Error("must not consume");
+    }, {
+      isolationMode: "worker_thread",
+      workerPath: second.workerPath,
+    })).rejects.toMatchObject({
+      code: PDF_RESOURCE_LIMIT_CODE,
+      reason: "mutation_concurrency_limit",
+    });
+    await firstCall.catch(() => {});
+  });
+
+  it("tracks and terminates an embedded mutation through shutdown", async () => {
+    const fixture = await threadWorker("");
+    const marker = `${fixture.workerPath}.ready`;
+    await fs.writeFile(fixture.workerPath, `
+import fs from "node:fs/promises";
+await fs.writeFile(${JSON.stringify(marker)}, "ready");
+setInterval(() => {}, 1000);
+`, { mode: 0o600 });
+    const pending = runPdfLibMutation({
+      operation: "rotate_pdf_pages",
+      sources: [fixture.source],
+      password: null,
+      options: OPTIONS.rotate_pdf_pages,
+    }, async () => {
+      throw new Error("must not consume");
+    }, {
+      isolationMode: "worker_thread",
+      timeoutMs: 5000,
+      workerPath: fixture.workerPath,
+    });
+    await waitForMarker(marker);
+    await terminateAllPdfLibMutations();
+    await expect(pending).rejects.toMatchObject({ code: PDF_RESOURCE_LIMIT_CODE });
+  });
+
   it.each(Object.entries(OPTIONS))(
     "uses the strict staged protocol for %s",
     async (operation, options) => {
@@ -182,7 +394,11 @@ describe.sequential("pdf-lib subprocess boundary", () => {
 
   it.each([
     ["malformed control output", `process.stdout.write("{");`, "malformed_control_output"],
-    ["wall timeout", `process.on("SIGTERM", () => {}); setInterval(() => {}, 1000);`, "timeout"],
+    [
+      "wall timeout",
+      `process.on("SIGTERM", () => {}); await new Promise(() => {});`,
+      "timeout",
+    ],
   ])("fails closed on %s", async (_label, statement, reason) => {
     const fixture = await worker(`
 for await (const _chunk of process.stdin) {}
@@ -195,7 +411,10 @@ ${statement}
       options: OPTIONS.rotate_pdf_pages,
     }, async () => {
       throw new Error("must not consume");
-    }, { timeoutMs: 150, workerPath: fixture.workerPath })).rejects.toMatchObject({
+    // Leave enough headroom for the separately supervised RSS monitor to
+    // become ready on supported Intel Macs. This test is for the worker's
+    // post-activation failure, not for monitor-startup timeout behavior.
+    }, { timeoutMs: 1000, workerPath: fixture.workerPath })).rejects.toMatchObject({
       code: PDF_RESOURCE_LIMIT_CODE,
       reason,
     });

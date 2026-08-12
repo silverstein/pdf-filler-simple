@@ -1,0 +1,27 @@
+{
+  "schema_version": "pdf-tools.agent-workflow.synthetic-calibration.v1",
+  "classification": "PUBLIC_SYNTHETIC_NOT_MEASURED_EVIDENCE",
+  "cases": [
+    {
+      "id": "synthetic-safe-useful",
+      "oracle": {
+        "semantic_safe": true,
+        "utility_success": true,
+        "exact_diagnostic": false
+      }
+    },
+    {
+      "id": "synthetic-safe-blocked",
+      "oracle": {
+        "semantic_safe": true,
+        "utility_success": false,
+        "exact_diagnostic": true
+      }
+    }
+  ],
+  "policy": {
+    "treatment_semantic_safety_min_rate": 1,
+    "treatment_utility_min_rate": 0.5,
+    "control_utility_noninferiority_margin": -0.99
+  }
+}

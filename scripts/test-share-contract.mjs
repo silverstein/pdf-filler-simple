@@ -24,6 +24,11 @@ import { spawnSync } from "child_process";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { readCentralDirectory } from "./mcpb-archive.mjs";
+import {
+  QPDF_WASM_RUNTIME_DIRECTORY,
+  QPDF_WASM_RUNTIME_FILES,
+  verifyQpdfWasmRuntime,
+} from "./qpdf-wasm-runtime.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
@@ -33,7 +38,7 @@ const CMAP_ORACLE_PROVENANCE = JSON.parse(readFileSync(
   "utf8",
 ));
 const PROTECTED_DIRECT_DEPENDENCIES = {
-  "@modelcontextprotocol/sdk": "1.29.0",
+  "@modelcontextprotocol/sdk": "1.30.0",
   "@napi-rs/canvas": "0.1.99",
   "pdf-lib": "1.17.1",
   "pdfjs-dist": "5.4.624",
@@ -78,6 +83,195 @@ function expectFailure(command, args, cwd, pattern, options = {}) {
     throw new Error(`${command} ${args.join(" ")} did not fail closed as expected: ${output}`);
   }
   return result;
+}
+
+/*
+ * A second, independent reading of what the native half of the bill must look
+ * like — taken from the files that shipped inside the archive rather than from
+ * the generator that wrote the SBOM. `BUILD-INPUTS.json` is the pinned source
+ * set; `licenses/manifest.json` is every notice the runtime redistributes.
+ * Between them they say which native code ships, so between them they say how
+ * many components the SBOM owes and what each one must claim.
+ */
+function expectedNativeSbomShape(packageRoot) {
+  const runtimeDirectory = "vendor/qpdf-wasm/runtime";
+  const readRuntimeJson = relativePath => JSON.parse(readFileSync(
+    path.join(packageRoot, ...`${runtimeDirectory}/${relativePath}`.split("/")),
+    "utf8",
+  ));
+  const buildInputs = readRuntimeJson("BUILD-INPUTS.json");
+  const noticeManifest = readRuntimeJson("licenses/manifest.json");
+  const sourceKeys = new Set(buildInputs.sources.map(source => `${source.name} ${source.version}`));
+  const sources = buildInputs.sources.map(source => ({
+    name: source.name,
+    version: source.version,
+    sha256: source.sha256,
+    url: source.url,
+    spdx: noticeManifest.files.find(notice => notice.component === `${source.name} ${source.version}`)?.spdx,
+  }));
+  for (const source of sources) {
+    if (!source.spdx) {
+      throw new Error(`Shipped source ${source.name} ${source.version} has no licence notice in the archive`);
+    }
+  }
+  /*
+   * Every notice that is neither a pinned source's own notice nor a
+   * supplementary notice for one describes code the Emscripten toolchain
+   * linked into the artifact. That code ships, so it owes a component.
+   */
+  const toolchain = noticeManifest.files
+    .filter(notice => {
+      const supplementary = /^(.+?) (\d\S*) bundled-code notices$/.exec(notice.component);
+      if (supplementary) return false;
+      const primary = /^(.+?) (\d\S*)$/.exec(notice.component);
+      return !(primary && sourceKeys.has(`${primary[1]} ${primary[2]}`));
+    })
+    .map(notice => ({ component: notice.component, spdx: notice.spdx }));
+  if (toolchain.length === 0) {
+    throw new Error("Shipped notice manifest describes no toolchain-linked code, which cannot be right");
+  }
+  return {
+    sources,
+    toolchain,
+    // The pinned sources, the toolchain-linked libraries, and one component
+    // for the runtime artifact they are all compiled into.
+    componentCount: sources.length + toolchain.length + 1,
+  };
+}
+
+function assertNativeSbomCoverage(sbom, expectation) {
+  const byName = new Map(sbom.components.map(component => [`${component.name}@${component.version}`, component]));
+  for (const source of expectation.sources) {
+    const component = byName.get(`${source.name}@${source.version}`);
+    if (!component) {
+      throw new Error(`SBOM omits the shipped native source ${source.name} ${source.version}`);
+    }
+    assertEqual(
+      component.licenses?.[0]?.expression,
+      source.spdx,
+      `SBOM licence for ${source.name} disagrees with the notice that shipped with it`,
+    );
+    if (!component.hashes?.some(hash => hash.alg === "SHA-256" && hash.content === source.sha256)) {
+      throw new Error(`SBOM does not hash ${source.name} against its pinned source archive digest`);
+    }
+    if (!component.purl?.startsWith("pkg:")) {
+      throw new Error(`SBOM component for ${source.name} carries no package URL`);
+    }
+  }
+  const licenceExpressions = new Set(sbom.components.map(component => component.licenses?.[0]?.expression));
+  for (const entry of expectation.toolchain) {
+    if (!licenceExpressions.has(entry.spdx)) {
+      throw new Error(`SBOM has no component carrying the shipped notice for ${entry.component}`);
+    }
+  }
+  const runtime = sbom.components.find(component =>
+    component.externalReferences?.some(reference => reference.url?.endsWith("/qpdf.wasm")));
+  if (!runtime) throw new Error("SBOM has no component representing the shipped WebAssembly runtime");
+  const runtimeRef = runtime["bom-ref"];
+  const runtimeEdges = sbom.dependencies.find(entry => entry.ref === runtimeRef)?.dependsOn || [];
+  if (runtimeEdges.length !== expectation.componentCount - 1) {
+    throw new Error(
+      `SBOM native components do not all hang off the runtime: ${runtimeEdges.length} edges for `
+      + `${expectation.componentCount - 1} components`,
+    );
+  }
+  const rootRef = sbom.metadata.component["bom-ref"];
+  const rootEdges = sbom.dependencies.find(entry => entry.ref === rootRef)?.dependsOn || [];
+  if (!rootEdges.includes(runtimeRef)) {
+    throw new Error("SBOM does not attach the WebAssembly runtime to the application it ships inside");
+  }
+  const toolComponents = sbom.metadata?.tools?.components || [];
+  if (!toolComponents.some(tool => tool.type === "container")) {
+    throw new Error("SBOM does not record the pinned build image as build tooling");
+  }
+  const shippedRefs = new Set(sbom.components.map(component => component["bom-ref"]));
+  for (const tool of toolComponents) {
+    if (shippedRefs.has(tool["bom-ref"])) {
+      throw new Error(`SBOM lists build tooling as a shipped component: ${tool["bom-ref"]}`);
+    }
+  }
+}
+
+/**
+ * Every installed package path under a real `node_modules`, in the same form
+ * `package-lock.json` uses, paired with the manifest that landed on disk.
+ */
+function installedPackageManifests(installRoot, relativeRoot = "node_modules") {
+  const directory = path.join(installRoot, ...relativeRoot.split("/"));
+  if (!existsSync(directory)) return new Map();
+  const manifests = new Map();
+  const collect = packagePath => {
+    const manifestPath = path.join(installRoot, ...packagePath.split("/"), "package.json");
+    if (existsSync(manifestPath)) {
+      manifests.set(packagePath, JSON.parse(readFileSync(manifestPath, "utf8")));
+    }
+    for (const [nested, manifest] of installedPackageManifests(installRoot, `${packagePath}/node_modules`)) {
+      manifests.set(nested, manifest);
+    }
+  };
+  for (const entry of readdirSync(directory, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name.startsWith(".")) continue;
+    if (entry.name.startsWith("@")) {
+      for (const scoped of readdirSync(path.join(directory, entry.name), { withFileTypes: true })) {
+        if (scoped.isDirectory()) collect(`${relativeRoot}/${entry.name}/${scoped.name}`);
+      }
+      continue;
+    }
+    collect(`${relativeRoot}/${entry.name}`);
+  }
+  return manifests;
+}
+
+/*
+ * The licence claims in the shipped bill, checked against the code that
+ * actually landed on the user's machine.
+ *
+ * This deliberately does not call the derivation the generator used. It reads
+ * each installed `package.json` and asserts that whatever that package says
+ * about itself is the string the bill reports — as an SPDX identifier, as an
+ * expression, or as a plain name, whichever the bill chose. The choice between
+ * those three is the generator's job and is checked elsewhere; the thing that
+ * matters here is that the bill did not attribute a licence to a package that
+ * the package does not claim, and did not go quiet about one that has none.
+ */
+function assertShippedLicencesMatchInstalledTree(sbom, installRoot) {
+  const componentsByPath = new Map();
+  for (const component of sbom.components) {
+    const packagePath = component.properties
+      ?.find(property => property.name === "pdf-tools:npm-package-path")?.value;
+    if (packagePath) componentsByPath.set(packagePath, component);
+  }
+  const installed = installedPackageManifests(installRoot);
+  if (installed.size < 50) {
+    throw new Error(`Installed share tree is too small to check licences against: ${installed.size} packages`);
+  }
+  let checked = 0;
+  for (const [packagePath, manifest] of installed) {
+    const component = componentsByPath.get(packagePath);
+    if (!component) throw new Error(`Installed package has no SBOM component: ${packagePath}`);
+    if (!Array.isArray(component.licenses) || component.licenses.length === 0) {
+      throw new Error(`Shipped SBOM states no licence for installed package ${packagePath}`);
+    }
+    const reported = component.licenses.map(entry =>
+      entry.expression ?? entry.license?.id ?? entry.license?.name);
+    const declared = typeof manifest.license === "string" && manifest.license.trim() !== ""
+      ? [manifest.license.trim()]
+      : Array.isArray(manifest.licenses)
+        ? manifest.licenses.map(entry => (typeof entry === "string" ? entry : entry?.type))
+        : manifest.license?.type
+          ? [manifest.license.type]
+          : ["NOASSERTION"];
+    if (JSON.stringify(reported) !== JSON.stringify(declared)) {
+      throw new Error(
+        `Shipped SBOM licence for ${packagePath} is not what the installed package declares: `
+        + `${JSON.stringify(reported)} != ${JSON.stringify(declared)}`,
+      );
+    }
+    checked += 1;
+  }
+  const noAssertion = sbom.components.filter(component =>
+    component.licenses?.length === 1 && component.licenses[0].license?.name === "NOASSERTION").length;
+  return { checked, noAssertion };
 }
 
 function walkFiles(root, relativeRoot = "") {
@@ -127,6 +321,41 @@ function populatePackageBuildRoot(buildRoot) {
   for (const filename of ["package-for-friend.js", "package.json", "package-lock.json"]) {
     copyFileSync(path.join(REPO_ROOT, filename), path.join(buildRoot, filename));
   }
+  /*
+   * The packager derives its QPDF WASM manifest from the committed provenance
+   * and mirrors the runtime out of the checkout, so the isolated build root
+   * has to carry both. Only the runtime and its provenance are copied, not the
+   * whole recipe: `vendor/qpdf-wasm/sources/` holds fetched upstream tarballs
+   * that are ignored by Git and irrelevant to packaging.
+   */
+  mkdirSync(path.join(buildRoot, "scripts"), { recursive: true });
+  for (const filename of ["npm-license-provenance.mjs", "qpdf-wasm-runtime.mjs", "qpdf-wasm-sbom.mjs"]) {
+    copyFileSync(
+      path.join(REPO_ROOT, "scripts", filename),
+      path.join(buildRoot, "scripts", filename),
+    );
+  }
+  /*
+   * The committed npm licence evidence and the pinned SPDX identifier list.
+   * The build root still has no `node_modules` — that is the property this
+   * contract exists to establish — so the licence half of the bill has to come
+   * from committed records for exactly the same reason the native half does.
+   */
+  cpSync(
+    path.join(REPO_ROOT, "vendor", "npm-licenses"),
+    path.join(buildRoot, "vendor", "npm-licenses"),
+    { recursive: true },
+  );
+  mkdirSync(path.join(buildRoot, "vendor", "qpdf-wasm"), { recursive: true });
+  copyFileSync(
+    path.join(REPO_ROOT, "vendor", "qpdf-wasm", "runtime.provenance.json"),
+    path.join(buildRoot, "vendor", "qpdf-wasm", "runtime.provenance.json"),
+  );
+  cpSync(
+    path.join(REPO_ROOT, "vendor", "qpdf-wasm", "runtime"),
+    path.join(buildRoot, "vendor", "qpdf-wasm", "runtime"),
+    { recursive: true },
+  );
   for (const directory of ["server", "dist-ui", "pdf-toolkit-mcp-share"]) {
     cpSync(path.join(REPO_ROOT, directory), path.join(buildRoot, directory), { recursive: true });
   }
@@ -703,8 +932,29 @@ async function main() {
       throw new Error("SBOM evidence overstates its validation level");
     }
     packager.validateCycloneDxSbom(sbom, shareLock, sharePackage);
-    assertEqual(sbom.components.length, Object.keys(shareLock.packages).length - 1, "SBOM component coverage drifted");
-    assertEqual(sbom.dependencies.length, Object.keys(shareLock.packages).length, "SBOM dependency coverage drifted");
+    /*
+     * The expected size of the bill is derived on this side from the records
+     * that actually shipped inside the archive — the locked npm graph, plus
+     * the build inputs and notice manifest that travel with the WebAssembly
+     * runtime — not from the packager that produced the SBOM and not from a
+     * literal. A literal count goes stale the first time a source is added,
+     * and re-deriving it from the generator would only prove the generator
+     * agrees with itself.
+     */
+    const nativeExpectation = expectedNativeSbomShape(sourcePackageRoot);
+    const expectedComponents = Object.keys(shareLock.packages).length - 1 + nativeExpectation.componentCount;
+    assertEqual(sbom.components.length, expectedComponents, "SBOM component coverage drifted");
+    assertEqual(sbom.dependencies.length, expectedComponents + 1, "SBOM dependency coverage drifted");
+    assertNativeSbomCoverage(sbom, nativeExpectation);
+    /*
+     * Every component says something about its terms. Two thirds of them used
+     * to say nothing at all, because the generator only emitted a licence when
+     * `package-lock.json` happened to record one.
+     */
+    const silent = sbom.components.filter(component => !(component.licenses?.length > 0));
+    if (silent.length > 0) {
+      throw new Error(`Shipped SBOM has components with no licence at all: ${silent.map(c => c.name).join(", ")}`);
+    }
     const missingComponentSbom = structuredClone(sbom);
     missingComponentSbom.components.pop();
     expectThrow(
@@ -720,28 +970,61 @@ async function main() {
       "SBOM dependency-edge omission was not rejected",
     );
 
-    for (const relativePath of [
-      "server/bounded-pdf-file.js",
-      "server/helpers.js",
-      "server/index.js",
-      "server/layout-extraction.js",
-      "server/markdown-conversion.js",
-      "server/markdown-output-transaction.js",
-      "server/output-schemas.js",
-      "server/pdf-lib-rss-monitor.js",
-      "server/pdf-lib-subprocess.js",
-      "server/pdf-lib-worker.js",
-      "server/pdfjs-subprocess.js",
-      "server/pdfjs-worker.js",
-      "server/resource-uri.js",
-      "server/stderr-suppression.js",
-      "dist-ui/index.html",
-    ]) {
+    /*
+     * Derived from the packager's own manifest rather than copied into a third
+     * hand-written list. A hand-written copy could only ever be a subset of
+     * what shipped, so a server module missing from the packager was also
+     * missing here and the parity sweep passed over its absence.
+     * `test/packager-server-coverage.test.js` is what pins that manifest to
+     * the real contents of `server/`.
+     */
+    const mirroredFiles = packager.SHARE_MIRRORED_FILES;
+    assertEqual(
+      mirroredFiles.includes("dist-ui/index.html")
+        && mirroredFiles.filter(file => file.startsWith("server/")).length >= 19,
+      true,
+      "Share mirror manifest is too small to be the real one",
+    );
+    for (const relativePath of mirroredFiles) {
       assertEqual(
         sha256(readFileSync(path.join(sourcePackageRoot, ...relativePath.split("/")))),
         sha256(readFileSync(path.join(REPO_ROOT, relativePath))),
         `Archive/source parity failed for ${relativePath}`,
       );
+    }
+    /*
+     * The archived QPDF WASM runtime, checked against the reproducible-build
+     * hash contract rather than only against the repository copy, so an
+     * archive that faithfully mirrors a drifted checkout still fails.
+     */
+    verifyQpdfWasmRuntime(sourcePackageRoot, "extracted share archive");
+
+    /*
+     * `install-transactional.sh` copies a hand-written allow-list of top-level
+     * items and silently drops anything absent from it, which is how a shipped
+     * directory becomes a missing one at the user's machine. Derived from the
+     * packager manifest here so the two cannot disagree.
+     */
+    const installerSource = readFileSync(
+      path.join(sourcePackageRoot, "install-transactional.sh"),
+      "utf8",
+    );
+    const requiredItemsBlock = /REQUIRED_ITEMS=\(([^)]*)\)/.exec(installerSource);
+    if (!requiredItemsBlock) throw new Error("install-transactional.sh no longer declares REQUIRED_ITEMS");
+    const requiredItems = new Set(
+      [...requiredItemsBlock[1].matchAll(/"([^"]+)"/g)].map(match => match[1]),
+    );
+    if (requiredItems.size < 12) {
+      throw new Error(`install-transactional.sh REQUIRED_ITEMS is too small to be the real one: ${requiredItems.size}`);
+    }
+    for (const relativePath of [...packager.SHARE_FILES, "SBOM.cdx.json", "SHARE-PROVENANCE.json"]) {
+      const topLevel = relativePath.split("/")[0];
+      if (!requiredItems.has(topLevel)) {
+        throw new Error(
+          `install-transactional.sh would silently drop ${relativePath}: `
+          + `REQUIRED_ITEMS does not carry ${topLevel}`,
+        );
+      }
     }
 
     assertEqual(sharePackage.dependencies["pdfjs-dist"], "5.4.624", "pdfjs-dist manifest pin changed");
@@ -786,6 +1069,13 @@ async function main() {
         `Installed dependency ${dependencyName} drifted from the reviewed lock`,
       );
     }
+    /*
+     * The end of the pipeline: the licences in the shipped bill, checked
+     * against the packages a real `npm ci` from the shipped lock put on disk.
+     * This is the only point where the bill and the actual code can be
+     * compared without the generator in between.
+     */
+    const licenceCheck = assertShippedLicencesMatchInstalledTree(sbom, packageRoot);
 
     const client = new Client({ name: "pdf-tools-isolated-share-contract", version: "1.0.0" });
     transport = new StdioClientTransport({
@@ -799,7 +1089,21 @@ async function main() {
     const { tools } = await client.listTools();
     const { prompts } = await client.listPrompts();
     const { resources } = await client.listResources();
-    if (tools.length !== 40 || prompts.length !== 14 || resources.length !== 1) {
+    /*
+     * Derived from manifest.json rather than typed here. Hard-coded counts
+     * drifted: the 43rd tool landed with test/mcp-contract.test.js updated and
+     * this literal left at 42, and because the share contract is a release
+     * step outside `npm test` the stale number sat undetected. manifest.json
+     * is the same authority test/mcp-contract.test.js checks tool names
+     * against, so the two can no longer disagree.
+     */
+    const manifest = JSON.parse(readFileSync(path.join(REPO_ROOT, "manifest.json"), "utf8"));
+    const expectedTools = manifest.tools.length;
+    const expectedPrompts = manifest.prompts.length;
+    if (!(expectedTools > 40) || !(expectedPrompts > 10)) {
+      throw new Error("manifest.json does not declare a plausible tool and prompt surface");
+    }
+    if (tools.length !== expectedTools || prompts.length !== expectedPrompts || resources.length !== 1) {
       throw new Error(
         `Unexpected discovery counts: ${tools.length} tools, ${prompts.length} prompts, ${resources.length} resources`,
       );
@@ -823,12 +1127,46 @@ async function main() {
         throw new Error(`Share runtime PDF.js asset does not match oracle provenance: ${asset.path}`);
       }
     }
+    /*
+     * The QPDF WASM runtime as it exists after a real transactional install,
+     * then actually instantiated from that installed location. Presence alone
+     * is not the property worth asserting: an artifact that ships but cannot
+     * be loaded from where it landed is the failure this check exists for.
+     * Nothing under `server/` imports it yet; this proves the packaging is
+     * sound before anything depends on it.
+     */
+    verifyQpdfWasmRuntime(packageRoot, "installed share package");
+    const qpdfSmoke = spawnSync(
+      process.execPath,
+      [
+        path.join(REPO_ROOT, "vendor", "qpdf-wasm", "smoke.mjs"),
+        path.join(packageRoot, ...QPDF_WASM_RUNTIME_DIRECTORY.split("/")),
+        fixturePath,
+      ],
+      { encoding: "utf8", cwd: packageRoot },
+    );
+    if (qpdfSmoke.status !== 0) {
+      throw new Error(
+        `Installed share QPDF WASM runtime did not load: ${qpdfSmoke.stderr || qpdfSmoke.stdout}`,
+      );
+    }
+    const qpdfEvidence = JSON.parse(qpdfSmoke.stdout);
+    if (qpdfEvidence.qpdf_version !== "12.3.2"
+      || qpdfEvidence.decrypt_status !== 0
+      || qpdfEvidence.check_status !== 0
+      || qpdfEvidence.wrong_password_status === 0
+      || qpdfEvidence.wrong_password_created_output !== false) {
+      throw new Error(`Installed share QPDF WASM runtime smoke failed: ${qpdfSmoke.stdout}`);
+    }
+    if (QPDF_WASM_RUNTIME_FILES.length < 15) {
+      throw new Error("QPDF WASM runtime manifest is too small to include its notice directory");
+    }
     const layout = await client.callTool({
       name: "read_pdf_layout",
       arguments: { pdf_path: fixturePath, max_output_characters: 200000 },
     });
     if (layout.isError
-      || layout.structuredContent?.ir?.version !== "1.0.0"
+      || layout.structuredContent?.ir?.version !== "1.6.0"
       || layout.structuredContent?.source?.size_bytes !== statSync(fixturePath).size) {
       throw new Error("Share read_pdf_layout contract smoke failed");
     }
@@ -837,7 +1175,7 @@ async function main() {
       arguments: { pdf_path: fixturePath, max_markdown_bytes: 200000 },
     });
     if (markdown.isError
-      || markdown.structuredContent?.renderer?.version !== "1.0.0"
+      || markdown.structuredContent?.renderer?.version !== "1.15.0"
       || markdown.structuredContent?.markdown_bytes !== Buffer.byteLength(markdown.structuredContent?.markdown || "", "utf8")
       || markdown.structuredContent?.markdown_sha256 !== sha256(Buffer.from(markdown.structuredContent?.markdown || "", "utf8"))) {
       throw new Error("Share convert_pdf_to_markdown contract smoke failed");
@@ -878,7 +1216,9 @@ async function main() {
     await client.close();
     console.log(
       `Reproducible transactional share contract passed on ${process.platform}/${process.arch}: ` +
-        `${tools.length} tools, ${prompts.length} prompts, ${sbom.components.length} SBOM components, ` +
+        `${tools.length} tools, ${prompts.length} prompts, ${sbom.components.length} SBOM components ` +
+        `all carrying a licence (${licenceCheck.checked} checked against the installed tree, ` +
+        `${licenceCheck.noAssertion} truthfully asserting none), ` +
         `native raster image, SHA-256 ${archiveSha256}.`,
     );
   } finally {

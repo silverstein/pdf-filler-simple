@@ -32,10 +32,10 @@
  * the frozen body, the retirement becomes stale and the suite says so instead
  * of skipping silently forever.
  *
- * The successor is tracked in bead pdf-toolkit-mcp-igr.2. A v4 protocol was
- * designed extensively in private evidence (revisions r2 through r15, including
- * canaries, a seatbelt proof, and no-model rehearsals) but has never landed in
- * this repository, so there is currently no runnable successor here.
+ * The successor is tracked in bead pdf-toolkit-mcp-igr.2.1. A public v4
+ * no-inference protocol core now exists, but it is deliberately preseal and
+ * does not yet provide a sealed runnable measured campaign. Retirement remains
+ * appropriate until v4 replaces every retired responsibility.
  */
 
 import { createHash } from "node:crypto";
@@ -62,8 +62,9 @@ export const V3_FROZEN_SKILL_SHA256 =
 export const V3_RETIREMENT_REASON =
   "Protocol v3 was invalidated by its own freeze rule when the pinned workflow "
   + "SKILL.md changed after first model inference (commit 94d1cb4). Its sealed "
-  + "campaign evidence remains valid for the body it measured. A successor "
-  + "protocol has not landed in this repository. See bead pdf-toolkit-mcp-igr.2.";
+  + "campaign evidence remains valid only for the body it measured. The public "
+  + "v4 core is preseal and has not replaced the measured campaign. See bead "
+  + "pdf-toolkit-mcp-igr.2.1.";
 
 /**
  * Current retirement state.

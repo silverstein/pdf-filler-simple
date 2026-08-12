@@ -1,0 +1,14 @@
+{
+  "fixture_id": "pdf-tools.extraction.intelligence.routing-mixed",
+  "truth_version": "v1",
+  "pages_needing_vision": [2],
+  "page_reasons": {
+    "2": ["no_text_layer"]
+  },
+  "baseline": {
+    "surface": "convert_pdf_to_markdown and read_pdf_layout structured results",
+    "field": "pages_needing_vision",
+    "status": "absent",
+    "note": "The exact routing truth is recorded before W1; the current baseline exposes no routing field."
+  }
+}

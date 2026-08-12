@@ -5,6 +5,7 @@ import fs from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 import {
   PDF_MERGE_MAX_TOTAL_BYTES,
   PDF_MUTATION_MAX_FILE_BYTES,
@@ -16,9 +17,11 @@ import {
   PDF_LIB_RSS_MAGIC,
   PDF_LIB_RSS_PROTOCOL_VERSION,
   PDF_LIB_RSS_READY,
+  PDF_LIB_RSS_SAMPLE_INTERVAL_MS,
   PDF_LIB_RSS_SAMPLE,
   PDF_LIB_RSS_TERMINAL,
 } from "./pdf-lib-rss-monitor.js";
+import { validateAccessibilityInspectionResult } from "./accessibility-inspection.js";
 
 export const PDF_RESOURCE_LIMIT_CODE = "PDF_RESOURCE_LIMIT_EXCEEDED";
 export const PDF_LIB_MUTATION_TOOL_NAMES = new Set([
@@ -34,6 +37,9 @@ export const PDF_LIB_MUTATION_TOOL_NAMES = new Set([
   "reorder_pdf_pages",
   "rotate_pdf_pages",
   "split_pdf",
+]);
+export const PDF_LIB_READ_ONLY_OPERATIONS = new Set([
+  "inspect_pdf_accessibility",
 ]);
 
 const PROTOCOL_VERSION = 1;
@@ -63,7 +69,9 @@ const OPERATION_SHUTDOWN_TIMEOUT_MS = 15_000;
 // The V8 old-space flag is not a hard RSS ceiling: PDF buffers and native
 // decoder allocations live outside that heap. Keep aggregate admission low.
 const MAX_ACTIVE_MUTATIONS = 2;
+const MAX_ACTIVE_THREAD_MUTATIONS = 1;
 const activeChildren = new Set();
+const activeThreadWorkers = new Set();
 const activeOperations = new Set();
 let activeMutationReservations = 0;
 let shutdownInProgress = false;
@@ -87,6 +95,29 @@ const OPTION_KEYS = new Map([
     "allow_resign", "audit_line", "font_style", "modification_at", "placement", "text",
   ]],
 ]);
+
+export function selectPdfLibIsolationMode({
+  electronVersion = process.versions.electron ?? null,
+  processType = process.type ?? null,
+  hasElectronParentPort = process.parentPort != null,
+  executable = process.execPath,
+} = {}) {
+  const executableName = typeof executable === "string" ? path.basename(executable) : "";
+  const embeddedElectronHost = typeof electronVersion === "string"
+    || processType === "utility"
+    || hasElectronParentPort
+    || /(?:^electron$|^claude(?: helper(?: \(plugin\))?)?(?:\.exe)?$)/i.test(executableName);
+  return embeddedElectronHost ? "worker_thread" : "subprocess";
+}
+
+const DEFAULT_ISOLATION_MODE = selectPdfLibIsolationMode();
+console.error("[PDF Tools] PDF-lib execution host", JSON.stringify({
+  electron: typeof process.versions.electron === "string",
+  executable: path.basename(process.execPath),
+  mode: DEFAULT_ISOLATION_MODE,
+  parent_port: process.parentPort != null,
+  process_type: typeof process.type === "string" ? process.type : null,
+}));
 
 function exactKeys(value, expected, label) {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
@@ -152,6 +183,23 @@ export function createPdfLibMutationRequest({ operation, sources, options, passw
   return { operation, sources, options, password };
 }
 
+export function createPdfLibInspectionRequest(request) {
+  exactKeys(request, ["operation", "sources"], "pdf-lib inspection request");
+  if (!PDF_LIB_READ_ONLY_OPERATIONS.has(request.operation)) {
+    throw new TypeError(`Unsupported read-only operation: ${request.operation}.`);
+  }
+  if (!Array.isArray(request.sources) || request.sources.length !== 1) {
+    throw new TypeError("Read-only inspection requires exactly one source.");
+  }
+  request.sources.forEach(validateSource);
+  return {
+    operation: request.operation,
+    sources: request.sources,
+    options: {},
+    password: null,
+  };
+}
+
 function collector(maximum, overflow) {
   const chunks = [];
   let observed = 0;
@@ -169,6 +217,40 @@ function collector(maximum, overflow) {
     },
     result: () => ({ bytes: Buffer.concat(chunks), observed, overflowed }),
   };
+}
+
+function validateWorkerResponse(response, expectedOperation) {
+  if (response?.status === "error") {
+    try {
+      exactKeys(response, ["error", "operation", "protocol_version", "status"], "worker error");
+      exactKeys(response.error, ["code", "message", "name", "reason"], "worker error detail");
+    } catch (error) {
+      throw resourceError("malformed_control_output", error);
+    }
+    if (response.protocol_version !== PROTOCOL_VERSION || response.operation !== expectedOperation) {
+      throw resourceError("mismatched_control_output");
+    }
+    if (response.error.code === PDF_RESOURCE_LIMIT_CODE) {
+      throw resourceError(response.error.reason ?? "worker_resource_limit");
+    }
+    const error = new Error(response.error.message);
+    error.name = response.error.name;
+    if (response.error.code !== null) error.code = response.error.code;
+    throw error;
+  }
+  try {
+    exactKeys(response, ["manifest", "operation", "protocol_version", "result", "status"], "worker response");
+  } catch (error) {
+    throw resourceError("malformed_control_output", error);
+  }
+  if (
+    response.status !== "ok"
+    || response.protocol_version !== PROTOCOL_VERSION
+    || response.operation !== expectedOperation
+  ) {
+    throw resourceError("mismatched_control_output");
+  }
+  return response;
 }
 
 const MIB = 1024 * 1024;
@@ -306,6 +388,7 @@ async function waitForWorker(
   maximumOldSpaceMb,
   expectedOperation,
   maximumRssBytes,
+  abortSignal,
 ) {
   let terminationReason = null;
   let childError = null;
@@ -338,10 +421,15 @@ async function waitForWorker(
     }, TERMINATION_GRACE_MS);
     escalation.unref();
   };
+  const abort = () => terminate("operation_cancelled");
   const closed = new Promise(resolve => child.once(
     "close",
     (code, signal) => resolve({ code, signal }),
   ));
+  if (abortSignal) {
+    abortSignal.addEventListener("abort", abort, { once: true });
+    if (abortSignal.aborted) abort();
+  }
   const stdout = collector(MAX_STDOUT_BYTES, () => terminate("stdout_overflow"));
   const stderr = collector(MAX_STDERR_BYTES, () => terminate("stderr_overflow"));
   const monitorStream = child.stdio?.[3];
@@ -352,6 +440,7 @@ async function waitForWorker(
     terminate("rss_monitor_pipe_missing");
     await closed;
     if (escalation) clearTimeout(escalation);
+    if (abortSignal) abortSignal.removeEventListener("abort", abort);
     throw resourceError("rss_monitor_pipe_missing");
   }
   const resetStallDeadline = () => {
@@ -455,18 +544,19 @@ async function waitForWorker(
     // The first-wins termination reason is reported after the child and every
     // inherited pipe have closed.
   }
-  const { code, signal } = await closed;
+  const { code, signal: exitSignal } = await closed;
   clearTimeout(deadline);
   if (startupDeadline) clearTimeout(startupDeadline);
   if (stallDeadline) clearTimeout(stallDeadline);
   if (stallGraceDeadline) clearTimeout(stallGraceDeadline);
   if (terminalCloseDeadline) clearTimeout(terminalCloseDeadline);
   if (escalation) clearTimeout(escalation);
+  if (abortSignal) abortSignal.removeEventListener("abort", abort);
   const out = stdout.result();
   const err = stderr.result();
-  if (terminationReason || signal || out.overflowed || err.overflowed) {
+  if (terminationReason || exitSignal || out.overflowed || err.overflowed) {
     throw resourceError(
-      terminationReason ?? `worker_signal_${signal}`,
+      terminationReason ?? `worker_signal_${exitSignal}`,
       childError,
     );
   }
@@ -487,37 +577,112 @@ async function waitForWorker(
     throw resourceError("malformed_control_output", error);
   }
   if (response?.status === "error") {
-    try {
-      exactKeys(response, ["error", "operation", "protocol_version", "status"], "worker error");
-      exactKeys(response.error, ["code", "message", "name", "reason"], "worker error detail");
-    } catch (error) {
-      throw resourceError("malformed_control_output", error);
-    }
-    if (response.protocol_version !== PROTOCOL_VERSION || response.operation !== expectedOperation) {
-      throw resourceError("mismatched_control_output");
-    }
-    if (response.error.code === PDF_RESOURCE_LIMIT_CODE) {
-      throw resourceError(response.error.reason ?? "worker_resource_limit");
-    }
-    const error = new Error(response.error.message);
-    error.name = response.error.name;
-    if (response.error.code !== null) error.code = response.error.code;
-    throw error;
+    return validateWorkerResponse(response, expectedOperation);
   }
   if (code !== 0) throw resourceError(`worker_exit_${code}_heap_${maximumOldSpaceMb}`);
-  try {
-    exactKeys(response, ["manifest", "operation", "protocol_version", "result", "status"], "worker response");
-  } catch (error) {
-    throw resourceError("malformed_control_output", error);
-  }
-  if (
-    response.status !== "ok"
-    || response.protocol_version !== PROTOCOL_VERSION
-    || response.operation !== expectedOperation
-  ) {
-    throw resourceError("mismatched_control_output");
-  }
-  return response;
+  return validateWorkerResponse(response, expectedOperation);
+}
+
+async function waitForThreadWorker(
+  worker,
+  timeoutMs,
+  expectedOperation,
+  maximumRssBytes,
+  baselineRssBytes,
+  rssReader,
+  signal,
+) {
+  return await new Promise((resolve, reject) => {
+    let settled = false;
+    let response = null;
+    let workerError = null;
+    let terminationReason = null;
+    let terminationPromise = null;
+    let deadline = null;
+    let rssMonitor = null;
+    const finish = code => {
+      if (settled) return;
+      settled = true;
+      if (deadline) clearTimeout(deadline);
+      if (rssMonitor) clearInterval(rssMonitor);
+      if (signal) signal.removeEventListener("abort", abort);
+      activeThreadWorkers.delete(worker);
+      const settle = async () => {
+        if (terminationPromise) {
+          try { await terminationPromise; } catch {}
+        }
+        if (terminationReason !== null) {
+          reject(resourceError(terminationReason, workerError));
+          return;
+        }
+        if (workerError || code !== 0 || response === null) {
+          reject(resourceError("worker_memory_or_signal_limit", workerError));
+          return;
+        }
+        try {
+          resolve(validateWorkerResponse(response, expectedOperation));
+        } catch (error) {
+          reject(error);
+        }
+      };
+      void settle();
+    };
+    const terminate = reason => {
+      if (terminationReason !== null) return;
+      terminationReason = reason;
+      try {
+        terminationPromise = worker.terminate();
+      } catch (error) {
+        workerError ??= error;
+      }
+    };
+    const abort = () => terminate("operation_cancelled");
+    worker.on("message", message => {
+      try {
+        exactKeys(message, ["kind", "response"], "worker thread message");
+        if (message.kind !== "response" || response !== null) {
+          throw new Error("Worker thread response sequence is invalid.");
+        }
+        const encoded = Buffer.from(JSON.stringify(message.response), "utf8");
+        if (encoded.length < 1 || encoded.length > MAX_STDOUT_BYTES) {
+          throw new Error("Worker thread response exceeds its control limit.");
+        }
+        response = message.response;
+      } catch (error) {
+        workerError = error;
+        terminate("malformed_control_output");
+      }
+    });
+    worker.once("messageerror", error => {
+      workerError = error;
+      terminate("malformed_control_output");
+    });
+    worker.once("error", error => {
+      workerError = error;
+    });
+    worker.once("exit", finish);
+    if (signal) {
+      signal.addEventListener("abort", abort, { once: true });
+      if (signal.aborted) abort();
+    }
+    deadline = setTimeout(() => terminate("timeout"), timeoutMs);
+    deadline.unref();
+    rssMonitor = setInterval(() => {
+      try {
+        const currentRssBytes = rssReader();
+        if (!Number.isSafeInteger(currentRssBytes) || currentRssBytes < 1) {
+          throw new Error("RSS reading is invalid.");
+        }
+        if (currentRssBytes - baselineRssBytes > maximumRssBytes) {
+          terminate("rss_limit_exceeded");
+        }
+      } catch (error) {
+        workerError = error;
+        terminate("rss_monitor_unavailable");
+      }
+    }, PDF_LIB_RSS_SAMPLE_INTERVAL_MS);
+    rssMonitor.unref();
+  });
 }
 
 async function hashFile(filePath) {
@@ -538,11 +703,26 @@ async function hashFile(filePath) {
   }
 }
 
-async function validateStage(stageDirectory, response, operation) {
+async function validateStage(stageDirectory, response, operation, sources) {
+  const readOnly = PDF_LIB_READ_ONLY_OPERATIONS.has(operation);
   if (response.operation !== operation || !Array.isArray(response.manifest)
-      || response.manifest.length < 1 || response.manifest.length > 1000
+      || (readOnly ? response.manifest.length !== 0 : response.manifest.length < 1)
+      || response.manifest.length > 1000
       || !response.result || typeof response.result !== "object" || Array.isArray(response.result)) {
     throw resourceError("invalid_stage_manifest");
+  }
+  if (readOnly) {
+    try {
+      validateAccessibilityInspectionResult(response.result);
+      const source = sources[0];
+      if (response.result.source.file_name !== path.basename(source.canonical_path)
+          || response.result.source.size_bytes !== source.size_bytes
+          || response.result.source.sha256 !== source.sha256) {
+        throw new TypeError("Read-only result source binding does not match the request.");
+      }
+    } catch (error) {
+      throw resourceError("invalid_read_only_result", error);
+    }
   }
   const names = await fs.readdir(stageDirectory);
   const expectedNames = response.manifest.map(entry => entry.filename).sort();
@@ -628,7 +808,7 @@ async function readStageOutput(output) {
   }
 }
 
-async function revalidateSources(sources) {
+async function revalidateSources(sources, { requirePdfHeader = true } = {}) {
   for (const source of sources) {
     const current = await hashBoundedPdfFileSafely(
       source.canonical_path,
@@ -637,6 +817,7 @@ async function revalidateSources(sources) {
         assertPathAllowed(candidate) {
           if (path.resolve(candidate) !== source.canonical_path) throw new Error("Source path binding changed.");
         },
+        requirePdfHeader,
       },
     );
     if (current.canonicalPath !== source.canonical_path
@@ -649,19 +830,33 @@ async function revalidateSources(sources) {
   }
 }
 
-export async function runPdfLibMutation(request, consumeStage, {
+async function runPdfLibOperation(request, consumeStage, {
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maximumOldSpaceMb = DEFAULT_OLD_SPACE_MB,
   rssLimitCalculator = calculatePdfLibRssLimit,
+  isolationMode = DEFAULT_ISOLATION_MODE,
   workerPath = fileURLToPath(new URL("./pdf-lib-worker.js", import.meta.url)),
   executable = process.execPath,
   environment = process.env,
   platform = process.platform,
   spawnProcess = spawn,
+  workerClass = Worker,
+  rssReader = () => process.memoryUsage.rss(),
   beforeSpawn = null,
-} = {}) {
-  const base = createPdfLibMutationRequest(request);
-  if (typeof consumeStage !== "function") throw new TypeError("consumeStage must be a function.");
+  signal = null,
+} = {}, operationKind) {
+  const readOnly = operationKind === "read_only";
+  if (!readOnly && operationKind !== "mutation") {
+    throw new TypeError("PDF-lib operation kind is invalid.");
+  }
+  const base = readOnly
+    ? createPdfLibInspectionRequest(request)
+    : createPdfLibMutationRequest(request);
+  if (readOnly ? consumeStage !== null : typeof consumeStage !== "function") {
+    throw new TypeError(readOnly
+      ? "Read-only inspection cannot consume staged output."
+      : "consumeStage must be a function.");
+  }
   if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10 * 60 * 1000) {
     throw new TypeError("timeoutMs must be a positive bounded integer.");
   }
@@ -671,13 +866,26 @@ export async function runPdfLibMutation(request, consumeStage, {
   if (typeof rssLimitCalculator !== "function") {
     throw new TypeError("rssLimitCalculator must be a function.");
   }
+  if (!["subprocess", "worker_thread"].includes(isolationMode)) {
+    throw new TypeError("isolationMode must be subprocess or worker_thread.");
+  }
+  if (typeof rssReader !== "function") {
+    throw new TypeError("rssReader must be a function.");
+  }
   if (beforeSpawn !== null && typeof beforeSpawn !== "function") {
     throw new TypeError("beforeSpawn must be a function.");
   }
+  if (signal !== null && !(signal instanceof AbortSignal)) {
+    throw new TypeError("signal must be an AbortSignal or null.");
+  }
+  if (signal?.aborted) throw resourceError("operation_cancelled");
   if (shutdownInProgress) {
     throw resourceError("mutation_shutdown_in_progress");
   }
-  if (activeMutationReservations >= MAX_ACTIVE_MUTATIONS) {
+  const activeLimit = isolationMode === "worker_thread"
+    ? MAX_ACTIVE_THREAD_MUTATIONS
+    : MAX_ACTIVE_MUTATIONS;
+  if (activeMutationReservations >= activeLimit) {
     throw resourceError("mutation_concurrency_limit");
   }
   activeMutationReservations += 1;
@@ -725,32 +933,84 @@ export async function runPdfLibMutation(request, consumeStage, {
     // setup. Recheck immediately before the synchronous spawn boundary so the
     // drain cannot miss a child created after its snapshot.
     if (shutdownInProgress) throw resourceError("mutation_shutdown_in_progress");
-    const child = spawnProcess(executable, [
-      `--max-old-space-size=${maximumOldSpaceMb}`,
-      workerPath,
-    ], {
-      cwd: operationDirectory,
-      detached: false,
-      env: childEnvironment(environment, operationDirectory, platform),
-      stdio: ["pipe", "pipe", "pipe", "pipe"],
-      windowsHide: true,
-    });
-    activeChildren.add(child);
+    if (signal?.aborted) throw resourceError("operation_cancelled");
     let response;
-    try {
-      response = await waitForWorker(
-        child,
-        requestBytes,
+    if (isolationMode === "worker_thread") {
+      let baselineRssBytes;
+      try {
+        baselineRssBytes = rssReader();
+      } catch (error) {
+        throw resourceError("rss_monitor_unavailable", error);
+      }
+      if (!Number.isSafeInteger(baselineRssBytes) || baselineRssBytes < 1) {
+        throw resourceError("rss_monitor_unavailable");
+      }
+      let worker;
+      try {
+        worker = new workerClass(workerPath, {
+          env: childEnvironment(environment, operationDirectory, platform),
+          resourceLimits: {
+            maxOldGenerationSizeMb: maximumOldSpaceMb,
+          },
+          workerData: {
+            pdf_tools_worker: "pdf-lib",
+            request: framed,
+          },
+        });
+      } catch (error) {
+        throw resourceError("worker_spawn_failed", error);
+      }
+      activeThreadWorkers.add(worker);
+      response = await waitForThreadWorker(
+        worker,
         timeoutMs,
-        maximumOldSpaceMb,
         base.operation,
+        // Worker threads have an independent V8 heap but share host RSS.
+        // Admit only one and bound its process-wide RSS growth from a fresh
+        // baseline while the parent event loop remains available to terminate it.
         maximumRssBytes,
+        baselineRssBytes,
+        rssReader,
+        signal,
       );
-    } finally {
-      activeChildren.delete(child);
+    } else {
+      const child = spawnProcess(executable, [
+        `--max-old-space-size=${maximumOldSpaceMb}`,
+        workerPath,
+      ], {
+        cwd: operationDirectory,
+        detached: false,
+        env: childEnvironment(environment, operationDirectory, platform),
+        stdio: ["pipe", "pipe", "pipe", "pipe"],
+        windowsHide: true,
+      });
+      activeChildren.add(child);
+      try {
+        response = await waitForWorker(
+          child,
+          requestBytes,
+          timeoutMs,
+          maximumOldSpaceMb,
+          base.operation,
+          maximumRssBytes,
+          signal,
+        );
+      } finally {
+        activeChildren.delete(child);
+      }
     }
-    const outputs = await validateStage(stageDirectory, response, base.operation);
-    await revalidateSources(base.sources);
+    const outputs = await validateStage(
+      stageDirectory,
+      response,
+      base.operation,
+      base.sources,
+    );
+    await revalidateSources(base.sources, { requirePdfHeader: !readOnly });
+    if (readOnly) {
+      if (outputs.length !== 0) throw resourceError("read_only_operation_staged_output");
+      await cleanup();
+      return response.result;
+    }
     let releasedBeforeActivation = false;
     const atomicTransition = async transition => {
       if (transition !== "journal_prepared" || releasedBeforeActivation) return;
@@ -780,6 +1040,14 @@ export async function runPdfLibMutation(request, consumeStage, {
   }
 }
 
+export function runPdfLibMutation(request, consumeStage, options = {}) {
+  return runPdfLibOperation(request, consumeStage, options, "mutation");
+}
+
+export function runPdfLibInspection(request, options = {}) {
+  return runPdfLibOperation(request, null, options, "read_only");
+}
+
 function terminateChild(child) {
   return new Promise(resolve => {
     const timer = setTimeout(() => {
@@ -795,11 +1063,12 @@ function terminateChild(child) {
   });
 }
 
-export function terminateAllPdfLibMutations() {
+export function terminateAllPdfLibOperations() {
   if (gracefulShutdownPromise) return gracefulShutdownPromise;
   shutdownInProgress = true;
   const operations = [...activeOperations];
   const childTerminations = [...activeChildren].map(terminateChild);
+  const threadTerminations = [...activeThreadWorkers].map(worker => worker.terminate());
   gracefulShutdownPromise = (async () => {
     let timer;
     try {
@@ -811,7 +1080,7 @@ export function terminateAllPdfLibMutations() {
         timer.unref();
       });
       await Promise.race([
-        Promise.allSettled([...childTerminations, ...operations]),
+        Promise.allSettled([...childTerminations, ...threadTerminations, ...operations]),
         timeout,
       ]);
     } finally {
@@ -825,9 +1094,20 @@ export function terminateAllPdfLibMutations() {
   return gracefulShutdownPromise;
 }
 
-export function forceTerminateAllPdfLibMutations() {
+export function terminateAllPdfLibMutations() {
+  return terminateAllPdfLibOperations();
+}
+
+export function forceTerminateAllPdfLibOperations() {
   shutdownInProgress = true;
   for (const child of activeChildren) {
     try { child.kill("SIGKILL"); } catch {}
   }
+  for (const worker of activeThreadWorkers) {
+    void worker.terminate().catch(() => {});
+  }
+}
+
+export function forceTerminateAllPdfLibMutations() {
+  return forceTerminateAllPdfLibOperations();
 }

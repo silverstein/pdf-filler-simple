@@ -9,6 +9,7 @@
     "protocol": { "const": "pdf-tools.docling-macos-handoff.v1" },
     "handoff_id": { "$ref": "#/$defs/sha256" },
     "execution_state": { "const": "not_run" },
+    "calibration_bootstrap": { "const": true },
     "identity": {
       "type": "object",
       "additionalProperties": false,

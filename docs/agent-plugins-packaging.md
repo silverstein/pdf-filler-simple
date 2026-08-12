@@ -1,0 +1,196 @@
+# Agent Plugins 1.0.0 packaging
+
+- **Status:** proposal, with the portable filesystem-boundary work implemented
+- **Bead:** child of `pdf-toolkit-mcp-22v.1` (portable skills, plugins, and MCP App workflows across agent hosts)
+- **Branch:** `agent/agent-plugins-packaging`, branched from `master@5284fac`
+- **Spec version reviewed:** Agent Plugins 1.0.0, published 2026-08-06
+
+## What the standard is
+
+Agent Plugins is an open, vendor-neutral specification for packaging agent extensions into a distributable directory. Vercel wrote the proposal; AWS, Anysphere, GitHub, Microsoft, OpenAI, and Vercel refined it and staff the technical steering committee. Launch clients are ChatGPT, Codex, Cursor, GitHub Copilot, Kiro, and VS Code.
+
+The specification is deliberately small:
+
+- A plugin is a directory with `plugin.json` at its root.
+- The manifest schema is closed. The only permitted top-level fields are `$schema`, `name`, `version`, `description`, `author`, `homepage`, `repository`, `license`, `keywords`, and `extensions`.
+- Version 1 defines exactly two component types: Agent Skills discovered at `skills/<name>/SKILL.md`, and MCP servers configured in `mcp.json`.
+- Component locations are fixed. The manifest cannot remap them or carry inline component configuration.
+- Client-specific data belongs under a reverse-domain namespace, either as a key in `extensions` or as a top-level directory of the same name.
+- Package paths must resolve inside the plugin root. An MCP `command` must be a single token, either a bare executable name or a plugin-relative `./` path.
+- Only `${PLUGIN_ROOT}` and `${PLUGIN_DATA}` are expanded, and only in `args`, `env` values, and `cwd`. All other placeholder-like text stays literal.
+- Failures are scoped: an invalid skill is skipped, an invalid MCP entry is skipped, and only an invalid `plugin.json` rejects the plugin.
+
+The standard defines no hooks, no agents, no commands, no user configuration, no credential or OAuth configuration, no install or build lifecycle, and no registry.
+
+## Why this matters for PDF Tools
+
+Two reasons, in order of weight.
+
+**The workflow skill stops being optional.** Today `plugins/pdf-tools-workflow` ships the evidence-first workflow — inspect, compare, plan, authorize, transform, validate, return — against an MCP connection the user has to configure separately. A conformant plugin can carry `skills/` and `mcp.json` in one directory, so the guardrails and the non-claims install with the server rather than beside it. That discipline is a larger part of this product's value than any individual tool.
+
+**The MCP Apps viewer is portable in principle, and was not in practice until 2026-08-10.** `server/index.js` serves `ui://pdf-toolkit/viewer` with `mimeType: "text/html;profile=mcp-app"` and attaches `_meta.ui.resourceUri` to the tools that benefit from it. MCP Apps is the official MCP extension for host-rendered UI, and OpenAI's own guidance now treats `_meta.ui.resourceUri` as the primary field, with `_meta["openai/outputTemplate"]` and `window.openai` demoted to compatibility aliases. We are on the current field, so the wiring is correct on any MCP Apps host.
+
+The component itself was not. An earlier version of this paragraph claimed the viewer "already travels" and that it was "not a Claude Desktop exclusive". The first run on a non-Anthropic host disproved it: the viewer built its pdf.js worker as a `data:` module through Vite's `?url` import, ChatGPT desktop's component sandbox refused that secondary load, and the viewer rendered nothing while the MCP tool call succeeded. Claude Desktop happened to permit the same load, which is precisely why the claim survived. See issue #131.
+
+The worker is now bundled in-realm and the component fetches nothing, with a regression test in `test/viewer-compat.test.js` asserting the built bundle carries no `data:` worker URL. **Treat rendering on any specific host as unverified until it has been observed there.** A component that mounts is not a component that renders, and no server-side test can tell the difference.
+
+### Verified MCP Apps client matrix (2026-08-06)
+
+Source: the community-maintained matrix at https://modelcontextprotocol.io/extensions/client-matrix plus each vendor's own documentation. Re-verify before any public claim; this decays quickly.
+
+| Host | MCP Apps UI | Evidence |
+|---|---|---|
+| Claude web + desktop | Yes | Client matrix |
+| ChatGPT | Yes | Client matrix; OpenAI UI docs |
+| VS Code + GitHub Copilot | Yes | VS Code blog, 2026-01-26 |
+| Microsoft 365 Copilot | Yes | GA announced 2026-04-07 |
+| Cursor | Yes, with a live defect | Cursor 2.6 changelog, 2026-03-03 |
+| Goose, Postman, MCPJam | Yes | Client matrix |
+| Kiro, JetBrains | No evidence found | Absent from the matrix |
+| GitHub Copilot outside VS Code | No evidence found | No matrix row |
+
+**On ChatGPT and Codex.** These are one application. OpenAI merged them on 2026-07-09 into a single desktop app with Chat, Work, and Codex modes; the standalone Codex app no longer exists and the previous ChatGPT desktop app was renamed ChatGPT Classic. Any source that reports Codex and ChatGPT as separate clients with different MCP Apps behavior predates the merge and should not be relied on — including openai/codex#21019, which was filed in May against the standalone Codex Desktop build, and the client matrix's separate rows.
+
+The merged desktop app is therefore our primary non-Anthropic host target and it renders MCP Apps UI. The Codex **CLI** remains a separate terminal program and does not render HTML components; that distinction is unaffected by the merge.
+
+This does not relax the degradation requirement. OpenAI's guidance still requires tools to be usable without a component, and our bounded reads and page/region renders already satisfy it. But we should not plan around a viewer-less OpenAI surface that no longer exists.
+
+**Cursor** renders MCP Apps but carries an open regression in which the client advertises `io.modelcontextprotocol/ui` and never issues `resources/read`, so widgets silently fall back to text — reported against project-scoped servers, with global scope working, unresolved as of 2026-07-29. Cursor is a lower-priority target; record the scope used if it is ever trialed, and treat silent text fallback as an expected client failure mode rather than a defect in this server.
+
+## Current packaging inventory
+
+| Artifact | Consumer | Contents |
+|---|---|---|
+| `manifest.mcpb.json` | Claude Desktop MCPB | Server config, `user_config`, tool list |
+| `plugins/pdf-tools-workflow/.claude-plugin/plugin.json` | Claude Code | Skill-only plugin |
+| `plugins/pdf-tools-workflow/.codex-plugin/plugin.json` | Codex (pre-standard) | Same skill plus an `interface` block |
+| `.claude-plugin/marketplace.json` | Claude Code | Marketplace entry |
+| `.agents/plugins/marketplace.json` | `.agents` convention | Marketplace entry |
+
+Four packaging descriptions of one product, and the server ships separately from the skill in every one of them.
+
+## Conformance gaps
+
+### 1. `${HOME}` and `${user_config.*}` do not exist
+
+The MCPB server configuration is:
+
+```json
+"args": ["${__dirname}/server/index.js", "--allowed-directories", "${user_config.allowed_directories}"],
+"env": {
+  "DEFAULT_PROFILES_DIR": "${HOME}/.pdf-toolkit-files",
+  "ALLOWED_DIRECTORIES": "${user_config.allowed_directories}"
+}
+```
+
+Under Agent Plugins, `${__dirname}` becomes `${PLUGIN_ROOT}`, but `${HOME}` and every `${user_config.*}` reference stay **literal text**. The specification expands nothing else and defines no user-configuration mechanism.
+
+It is worse than a missing expansion. §9.1 says the client "MAY inherit, omit, or sanitize ambient variables" and that "plugins claiming conformance MUST NOT depend on a base-environment variable" unless the specification requires it or the configuration supplies it explicitly. **`HOME` may not be present at all.** `os.homedir()`, `%USERPROFILE%`, and `$XDG_CONFIG_HOME` are therefore all non-conformant to depend on.
+
+This supersedes an earlier draft of this document, which proposed resolving `~/.pdf-toolkit-files` server-side through the home directory. That is not conformant. The only guaranteed writable, persistent, per-install location is `${PLUGIN_DATA}`, which §9.1 requires the client to create before launch, keep writable, and preserve across plugin updates.
+
+The cost of that is real and must be stated rather than hidden: `PLUGIN_DATA` is per-installed-plugin, so under Agent Plugins a signature or profile saved in one client is not visible in another. The honest resolution is a documented precedence — use an explicitly configured store path when supplied, otherwise `${PLUGIN_DATA}`, and keep the home-directory store only for the MCPB build where `${HOME}` is a supported expansion. Do not silently pick one and let users discover the split.
+
+### 2. Native dependencies with no install lifecycle
+
+`@napi-rs/canvas` resolves to one of eleven platform packages, and the specification has no install or build hook.
+
+**Resolved: vendor into the plugin directory, no npm.** An earlier draft weighed publishing a scoped npm package and launching via `command: "npx"`. That was the wrong call — npm is not an Agent Plugins distribution channel at all (distribution is a git repo, a local directory, or a client marketplace; there is no registry), and `npx` would require a publish and a network round-trip at first run. `command: "node"` with the server carried under `${PLUGIN_ROOT}` needs neither.
+
+The bundle is built by `scripts/build-agent-plugin.mjs` (`npm run build:plugin`), which reuses the MCPB build's `prepareCleanStage` verbatim — the same locked production dependencies, integrity-verified native canvas packages, secret scan, and symlink ban that gate the shipped `.mcpb`. It then drops the MCPB `manifest.json`, writes `plugin.json` and `mcp.json`, and copies the workflow skill. Reusing the stage rather than reimplementing it is deliberate: a second bundler would drift from the first.
+
+Coverage matches the MCPB — the same five native platforms — so rasterization works everywhere the MCPB does, at roughly 175 MB unpacked. A smaller no-render variant (server plus a `PDF_RENDERER_UNAVAILABLE` message on the two render tools, ~33 MB) is a planned `--platforms` flag on the same builder, not yet implemented. `pdf-tools` and `pdf-toolkit-mcp` are both taken on npm by unrelated projects, which is now moot.
+
+### 3. Package containment
+
+Every path the client reads from the package must resolve inside the plugin root. Runtime paths the user supplies — the PDFs they ask us to open — are explicitly out of scope for that rule, so the existing allowed-directories model is unaffected. Anything fetched at first run rather than shipped in the package would be affected.
+
+## Phase 1 — conformant skills-only plugin (this branch)
+
+The existing workflow plugin becomes conformant by adding a root `plugin.json` next to the client-specific manifests. No rename, no `mcp.json`, no behavior change for existing Claude Code users, and nothing that depends on an unpublished npm package.
+
+```text
+plugins/pdf-tools-workflow/
+├── plugin.json              # Agent Plugins 1.0.0 (new)
+├── .claude-plugin/
+│   └── plugin.json          # Claude Code (unchanged)
+├── .codex-plugin/
+│   └── plugin.json          # pre-standard Codex (retire after verification)
+└── skills/
+    └── pdf-tools-workflow/
+        └── SKILL.md
+```
+
+This is immediately loadable by every launch client and is fully reversible.
+
+Open validation items for phase 1:
+
+- `skills/pdf-tools-workflow/agents/openai.yaml` is not a directory the Agent Skills specification names (`scripts/`, `references/`, `assets/`). Confirm clients tolerate it before assuming the skill loads everywhere.
+- The SKILL.md non-claims list should narrow the viewer language: the component renders on MCP Apps hosts, and Cursor and Copilot are unverified.
+
+## Phase 2 — server-bearing plugin (gated)
+
+Adding `mcp.json` is gated on the portable allowed-directories work and a published package. Target shape:
+
+```json
+{
+  "$schema": "https://agent-plugins.org/schemas/1.0.0/mcp.schema.json",
+  "mcpServers": {
+    "pdf-tools": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["-y", "@open-document-alliance/pdf-tools@<version>", "--cache-dir", "${PLUGIN_DATA}/cache"],
+      "cwd": "${PLUGIN_ROOT}"
+    }
+  }
+}
+```
+
+### Portable allowed-directories requirements
+
+**Implementation status.** Requirements 1, 2, 3, and 7 are implemented on this branch, along with the non-greedy argument parsing in requirement 8. The allowed set is now established only by explicit configuration, an unexpanded placeholder is treated as absent configuration rather than as a reason to substitute defaults, the private store is no longer a general user-path allowance, and refusals name neither the allowed set nor the attempted path.
+
+The `${PLUGIN_DATA}` config-file layer is now implemented too, along with the self-escalation guard from requirement 5. `${PLUGIN_DATA}/config.json` is the lowest precedence layer, below the CLI flag and the environment variable, and layers are never merged. On first run the server writes a template with an empty list, and every refusal names that exact path, so a fresh install is actionable rather than merely safe. A set that would reach the config file is refused whole rather than trimmed, because an allowed set containing its own config lets a write tool rewrite the boundary on the next launch.
+
+Widening deliberately remains a human action: the config file is edited by the operator, not by a tool. A tool that can widen its own sandbox is a privilege-escalation path, and document text is untrusted input this server already refuses to take instructions from.
+
+Still unimplemented: a read-only tool reporting the active set and its source, runtime narrowing, and roots intersection (requirements 4 and 6). The read-only tool is the next useful increment; it was kept out of the config work because adding a tool moves the tool-contract digest and the pinned tool count, which deserves its own change.
+
+One consequence to carry into release notes: a host that previously relied on the implicit home-folder grant now receives a refusal until directories are configured. That is the intended behavior, and it is a behavior change for existing installs.
+
+1. Precedence, highest first: an explicit CLI flag, then `ALLOWED_DIRECTORIES` in the environment, then a config file under `${PLUGIN_DATA}`. The highest layer that supplies a set wins outright. Layers are never merged, because a union across sources produces a boundary nobody chose.
+2. **No implicit default grant.** When no layer supplies a set, the server serves no file tools and says so actionably. It does not fall back to the user's home folders. The Documents, Downloads, and Desktop defaults in the MCPB manifest are a *host-presented* default the user can see and edit before approving; a server-side constant on a host with no configuration UI is not the same thing and must not be treated as equivalent consent.
+3. **Unresolved host configuration fails closed.** A value that still contains an unexpanded placeholder means the host did not configure us. That is a refusal, not a reason to substitute a default.
+4. A tool may read the allowed set and may narrow it at runtime. **Widening requires a restart and an edit the agent cannot perform.** A tool that can widen its own sandbox is a privilege-escalation path, and document text is untrusted input the server already refuses to take instructions from (`server/index.js:1238`). An in-process approval prompt is not an authorization boundary.
+5. The config file and its directory are denied to every tool, compared by canonical path and by `(dev, ino)` rather than by string prefix, so a symlink alias cannot reach it.
+6. If MCP roots are honored, they **intersect** the established set and never replace it. Roots are client-declared, and the protocol constrains nothing about what a client may declare.
+7. Refusals are identical regardless of which precedence layer supplied the set, and identical across every tool.
+8. Tests cover each precedence layer, the empty-configuration refusal, the unexpanded-placeholder refusal, and the narrowing/widening asymmetry — on a host with no user-configuration mechanism at all.
+
+This is a security boundary, not plumbing. It should carry its own bead and its own tests, and it must not be inferred from the MCPB behavior by analogy.
+
+## Acceptance gates
+
+Per the product decision gate, a new host adapter is accepted only with evidence. For this work that means:
+
+- The package validates against the published `plugin.schema.json` and, in phase 2, `mcp.schema.json`.
+- The skill loads and the documented workflow runs on at least one non-Anthropic launch client, with the transcript retained.
+- The viewer either renders on that client or the limitation is documented per host — no aggregate claim.
+- Every dependency added for packaging has its license, version, and intended use recorded before it lands.
+- Existing Claude Desktop MCPB behavior is unchanged by phase 1, verified rather than assumed.
+
+## What this does not claim
+
+- It does not claim Cursor or GitHub Copilot support for the MCP Apps viewer.
+- It does not claim any host renders the viewer without a per-host test.
+- It does not claim the standard replaces MCP. MCP remains the connectivity layer; Agent Plugins is packaging only.
+- It does not claim Anthropic clients read root `plugin.json` today. Claude Code reads `.claude-plugin/plugin.json`; support for the standard has been described publicly as forthcoming, not shipped.
+
+## References
+
+- Agent Plugins specification 1.0.0 — https://github.com/agentplugins/agent-plugins-spec
+- Introducing Agent Plugins — https://vercel.com/blog/introducing-agent-plugins
+- MCP Apps — https://blog.modelcontextprotocol.io/posts/2026-01-26-mcp-apps/
+- Adding UI to an MCP server (OpenAI) — https://developers.openai.com/plugins/build/chatgpt-ui
+- Agent Skills specification — https://agentskills.io/specification
+- Claude Code plugins reference — https://code.claude.com/docs/en/plugins-reference

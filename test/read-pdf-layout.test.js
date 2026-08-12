@@ -3,6 +3,7 @@ import { once } from "node:events";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
@@ -11,9 +12,16 @@ import { PDFDocument, PDFName, PDFNumber, StandardFonts, degrees } from "pdf-lib
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   extractPdfLayout,
+  inspectType3GlyphEvidenceForPage,
+  pdfjsFactoryDirectory,
+  type3CharProcSha256,
+  type3FontPaintOrientation,
+  type3GlyphEvidenceSha256,
+  uniqueComputerModernFamily,
   validatePdfLayoutSemantics,
   validatePdfLayoutSourceEvidence,
 } from "../server/layout-extraction.js";
+import { CM_CODEPOINTS, CM_WITNESS_CODEPOINTS } from "../server/type3-cm-reference.js";
 import {
   TOOL_OUTPUT_SCHEMAS,
   TOOL_SUCCESS_OUTPUT_SCHEMAS,
@@ -22,6 +30,7 @@ import {
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const require = createRequire(import.meta.url);
 const TWO_COLUMN = path.join(REPO_ROOT, "test/fixtures/eval/extraction/synthetic/two-column-order.pdf");
 const MIXED = path.join(REPO_ROOT, "test/fixtures/eval/extraction/synthetic/mixed-text-raster.pdf");
 const ROTATED_CROP = path.join(REPO_ROOT, "test/fixtures/golden-forms/rotated-signature.pdf");
@@ -37,6 +46,839 @@ const HORIZONTAL_GEOMETRY_PROVENANCE = {
   ascent_source: "style_ascent",
   ascent_ratio: 0.905,
 };
+
+describe("qualified legacy Type-3 glyph evidence", () => {
+  const streamObject = (data) => Buffer.concat([
+    Buffer.from(`<< /Length ${data.length} >>\nstream\n`, "latin1"),
+    data,
+    Buffer.from("\nendstream", "latin1"),
+  ]);
+
+  function assemblePdf(bodies) {
+    const header = Buffer.from("%PDF-1.4\n%\xE2\xE3\xCF\xD3\n", "latin1");
+    const chunks = [header];
+    const offsets = [];
+    let offset = header.length;
+    bodies.forEach((body, index) => {
+      const prefix = Buffer.from(`${index + 1} 0 obj\n`, "latin1");
+      const suffix = Buffer.from("\nendobj\n", "latin1");
+      offsets.push(offset);
+      chunks.push(prefix, body, suffix);
+      offset += prefix.length + body.length + suffix.length;
+    });
+    let xref = `xref\n0 ${bodies.length + 1}\n0000000000 65535 f \n`;
+    for (const value of offsets) xref += `${String(value).padStart(10, "0")} 00000 n \n`;
+    xref += `trailer\n<< /Size ${bodies.length + 1} /Root 1 0 R >>\n`
+      + `startxref\n${offset}\n%%EOF\n`;
+    chunks.push(Buffer.from(xref, "latin1"));
+    return new Uint8Array(Buffer.concat(chunks));
+  }
+
+  const minusCharProc = () => ({
+    fnArray: [49, 10, 12, 91, 11],
+    argsArray: [
+      [52, 0, 5, 15, 46, 18],
+      null,
+      [41, 0, 0, 3, 5.1, 14.9],
+      [
+        94,
+        [new Float32Array([0, 0, 1, 1, 0, 0, 1, 1, 0, 1, 1, 1, 1, 0, 1])],
+        new Float32Array([0, 0, 41, 3]),
+      ],
+      null,
+    ],
+  });
+
+  it("pins the exact reviewed glyph program and refuses a one-value near match", () => {
+    expect(type3CharProcSha256(minusCharProc())).toBe(
+      "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
+    );
+    const nearMatch = minusCharProc();
+    nearMatch.argsArray[3][1][0][14] = 0;
+    expect(type3CharProcSha256(nearMatch)).not.toBe(
+      "b32276d22e1dd4133c20888ade044d27e59f2cbdfca0901c3b9d46006ed7dee9",
+    );
+    expect(type3CharProcSha256({ fnArray: [49], argsArray: [new Float32Array(100001)] })).toBeNull();
+  });
+
+  /**
+   * The shipped recovery key: the stored sample grid of a Type-3 glyph's inline
+   * image mask, cropped to its ink. `minusCharProc` is a real dvipdfmx-shaped
+   * Type-3 glyph: one 41x3 inline image mask, placed by a `cm` inside a `q`/`Q`,
+   * under a y-flipping FontMatrix. Everything asserted below is a property of
+   * the decoded mask, and everything varied below is a property of the producer.
+   */
+  describe("producer-independent Type-3 glyph shape key", () => {
+    // PDF.js operator numbers, taken from the pinned build rather than typed,
+    // so an upstream renumbering fails here instead of silently keying on the
+    // wrong operators. The module itself is kept so the built fixtures below
+    // are parsed by the same pinned build the server uses.
+    let pdfjsLib = null;
+    let OPS = null;
+    beforeAll(async () => {
+      pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      ({ OPS } = pdfjsLib);
+    });
+    const FLIPPED = [1, 0, 0, -1, 0, 0];
+    const packageDirectory = path.dirname(require.resolve("pdfjs-dist/package.json"));
+    /*
+     * The fourth argument is the font's unanimous CharProc-local determinant
+     * sign, which `type3FontPaintOrientation` computes over the whole
+     * /CharProcs dictionary and which the mask lane requires. Every fixture
+     * below is a one-glyph font, so the font's sign is just that glyph's own:
+     * `FLIPPED` over a positive-scale `cm` composes to -1, an upright
+     * FontMatrix over the same `cm` to +1. The two are equal-and-opposite on
+     * purpose — passing each font its own sign is exactly what production
+     * does, and the keys still have to agree across them.
+     */
+    const FLIPPED_FONT = -1;
+    const UPRIGHT_FONT = 1;
+
+    it("keys the same raster identically across producer idiom and placement", () => {
+      const key = type3GlyphEvidenceSha256(minusCharProc(), FLIPPED, OPS, FLIPPED_FONT);
+      expect(key).toMatch(/^[0-9a-f]{64}$/);
+
+      // Same mask, moved: a different producer would not put the bitmap at the
+      // same offset, and the old CharProc digest folded that offset in.
+      const moved = minusCharProc();
+      moved.argsArray[2] = [41, 0, 0, 3, 12, 30.25];
+      expect(type3GlyphEvidenceSha256(moved, FLIPPED, OPS, FLIPPED_FONT)).toBe(key);
+
+      // Same mask, no q/Q wrapper and different declared glyph metrics: the
+      // dvips idiom rather than the dvipdfmx one.
+      const bare = {
+        fnArray: [OPS.setCharWidthAndBounds, OPS.transform, OPS.constructPath],
+        argsArray: [[52, 0, 0, 0, 41, 3], [41, 0, 0, 3, 0, 0], minusCharProc().argsArray[3]],
+      };
+      expect(type3GlyphEvidenceSha256(bare, [1, 0, 0, 1, 0, 0], OPS, UPRIGHT_FONT)).toBe(key);
+
+      // The v1 CharProc digests of the same three programs all differ, which
+      // is exactly the portability defect this key exists to remove.
+      expect(new Set([minusCharProc(), moved, bare].map(type3CharProcSha256)).size).toBe(3);
+    });
+
+    /**
+     * The defect this replaces a pair of tests for.
+     *
+     * The withdrawn revision keyed on `sign(FontMatrix x CharProc cm)` and
+     * called the result the glyph's painted orientation. It is not: the text
+     * matrix and the page CTM are the other half of that product and neither is
+     * reachable from inside a CharProc. Two producers that render a
+     * pixel-identical glyph by splitting the y-flip differently between the
+     * FontMatrix and the text matrix — which is exactly how a dvipdfmx-shaped
+     * document and a Ghostscript-shaped one differ — got different keys.
+     *
+     * So this builds both documents rather than asserting on a hand-picked
+     * raster: the same eight mask bytes, reached through genuinely different
+     * producer idioms, landing on the page in exactly the same place.
+     */
+    describe("two producers, one bitmap", () => {
+      // An asymmetric 8x8 "F": not its own mirror in either axis, so a key that
+      // reorients the grid cannot pass these by accident.
+      const INK_ROWS = Object.freeze([0xfe, 0x80, 0x80, 0xf8, 0x80, 0x80, 0x80, 0x80]);
+
+      function buildType3MaskPdf({ fontMatrix, glyphName, charCode, charProc, textMatrix }) {
+        return assemblePdf([
+          Buffer.from("<< /Type /Catalog /Pages 2 0 R >>", "latin1"),
+          Buffer.from("<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "latin1"),
+          Buffer.from("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+            + "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>", "latin1"),
+          // No page-level `cm`, and a font size of 1, so the only placement the
+          // page contributes is the text matrix asserted on below.
+          streamObject(Buffer.from(
+            `BT /F1 1 Tf ${textMatrix.join(" ")} Tm `
+            + `<${charCode.toString(16).padStart(2, "0")}> Tj ET\n`,
+            "latin1",
+          )),
+          Buffer.from("<< /Type /Font /Subtype /Type3 /FontBBox [0 0 8 8] "
+            + `/FontMatrix [${fontMatrix.join(" ")}] /CharProcs 6 0 R `
+            + `/Encoding << /Type /Encoding /Differences [${charCode} /${glyphName}] >> `
+            + `/FirstChar ${charCode} /LastChar ${charCode} /Widths [10] `
+            + "/Resources << >> >>", "latin1"),
+          Buffer.from(`<< /${glyphName} 7 0 R >>`, "latin1"),
+          streamObject(charProc),
+        ]);
+      }
+
+      // dvipdfmx-shaped: a `q`/`Q` wrapper, an upright hundredths FontMatrix,
+      // the default /Decode, and raw binary samples (0 paints, so the bytes are
+      // the complement of the ink).
+      const dvipdfmxCharProc = (rows = INK_ROWS) => Buffer.concat([
+        Buffer.from("1000 0 0 0 800 800 d1\nq 800 0 0 800 0 0 cm\n"
+          + "BI /IM true /W 8 /H 8 /BPC 1 ID ", "latin1"),
+        Buffer.from(rows.map(row => ~row & 0xff)),
+        Buffer.from("\nEI\nQ\n", "latin1"),
+      ]);
+      // Ghostscript-shaped: no wrapper, a y-flipping unit FontMatrix, an
+      // inverted /Decode, and ASCIIHex-filtered samples (1 paints, so the bytes
+      // are the ink itself). Every byte of this program differs from the one
+      // above; the mask they decode to does not.
+      const ghostscriptCharProc = (rows = INK_ROWS) => Buffer.concat([
+        Buffer.from("10 0 0 -8 8 0 d1\n8 0 0 8 0 -8 cm\n"
+          + "BI /IM true /W 8 /H 8 /BPC 1 /D [1 0] /F /AHx ID ", "latin1"),
+        Buffer.from(`${Buffer.from(rows).toString("hex")}>`, "latin1"),
+        Buffer.from("\nEI\n", "latin1"),
+      ]);
+
+      const DVIPDFMX = Object.freeze({
+        fontMatrix: [0.01, 0, 0, 0.01, 0, 0],
+        glyphName: "shape",
+        charCode: 65,
+        textMatrix: [1, 0, 0, 1, 20, 60],
+      });
+      const GHOSTSCRIPT = Object.freeze({
+        fontMatrix: [1, 0, 0, -1, 0, 0],
+        glyphName: "Fbitmap",
+        charCode: 97,
+        textMatrix: [1, 0, 0, -1, 20, 68],
+      });
+
+      const compose = (outer, inner) => [
+        outer[0] * inner[0] + outer[2] * inner[1],
+        outer[1] * inner[0] + outer[3] * inner[1],
+        outer[0] * inner[2] + outer[2] * inner[3],
+        outer[1] * inner[2] + outer[3] * inner[3],
+        outer[0] * inner[4] + outer[2] * inner[5] + outer[4],
+        outer[1] * inner[4] + outer[3] * inner[5] + outer[5],
+      ];
+
+      /**
+       * Loads one built document through the pinned PDF.js and reports what the
+       * key is computed from, plus the two matrices that decide where the glyph
+       * actually lands. Nothing here is hand-typed: the CharProc operator list,
+       * the FontMatrix, and the text matrix all come back out of the parser.
+       */
+      async function measureBuiltDocument(bytes) {
+        const document = await pdfjsLib.getDocument({
+          data: bytes,
+          useWorkerFetch: false,
+          isEvalSupported: false,
+          cMapUrl: pdfjsFactoryDirectory(path.join(packageDirectory, "cmaps")),
+          cMapPacked: true,
+          standardFontDataUrl: pdfjsFactoryDirectory(path.join(packageDirectory, "standard_fonts")),
+        }).promise;
+        try {
+          const page = await document.getPage(1);
+          const operators = await page.getOperatorList();
+          let fontId = null;
+          let fontSize = null;
+          let textMatrix = null;
+          let pageTransforms = 0;
+          for (let index = 0; index < operators.fnArray.length; index += 1) {
+            const operation = operators.fnArray[index];
+            const args = operators.argsArray[index];
+            if (operation === OPS.setFont) [fontId, fontSize] = args;
+            if (operation === OPS.setTextMatrix) textMatrix = [...args[0]];
+            if (operation === OPS.transform) pageTransforms += 1;
+          }
+          const font = page.commonObjs.get(fontId);
+          const entries = Object.entries(font.charProcOperatorList ?? {});
+          expect(entries).toHaveLength(1);
+          const [, charProc] = entries[0];
+          // The CharProc-local matrix the mask lane's guard inspects: the
+          // FontMatrix composed with this glyph program's own `cm`.
+          let local = [...font.fontMatrix];
+          for (let index = 0; index < charProc.fnArray.length; index += 1) {
+            if (charProc.fnArray[index] === OPS.transform) {
+              local = compose(local, charProc.argsArray[index]);
+            }
+          }
+          return {
+            font_size: fontSize,
+            page_transform_count: pageTransforms,
+            font_matrix: [...font.fontMatrix],
+            local_matrix: local,
+            placement: compose(textMatrix, local),
+            // A one-glyph font, so its unanimous paint orientation is this
+            // glyph's own CharProc-local determinant sign.
+            evidence_sha256: type3GlyphEvidenceSha256(
+              charProc, font.fontMatrix, OPS, Math.sign(local[0] * local[3]),
+            ),
+            charproc_sha256: type3CharProcSha256(charProc),
+          };
+        } finally {
+          await document.destroy();
+        }
+      }
+
+      const measureIdiom = (idiom, charProc) =>
+        measureBuiltDocument(buildType3MaskPdf({ ...idiom, charProc }));
+
+      it("gives one bitmap one key across two producer idioms that paint it identically", async () => {
+        const dvipdfmx = await measureIdiom(DVIPDFMX, dvipdfmxCharProc());
+        const ghostscript = await measureIdiom(GHOSTSCRIPT, ghostscriptCharProc());
+
+        // Both documents put the same 8x8 mask on the same eight points of the
+        // page, at the same scale and the same way up, so any renderer produces
+        // identical pixels. Nothing outside the text matrix moves the glyph:
+        // there is no page-level `cm` and the font size is 1 in both.
+        for (const measured of [dvipdfmx, ghostscript]) {
+          expect(measured.page_transform_count).toBe(0);
+          expect(measured.font_size).toBe(1);
+        }
+        expect(dvipdfmx.placement).toEqual([8, 0, 0, 8, 20, 60]);
+        expect(ghostscript.placement).toEqual(dvipdfmx.placement);
+
+        // They are nonetheless different programs from different producers, and
+        // they split that identical placement across the FontMatrix, the `cm`
+        // and the text matrix in opposite ways. The withdrawn key read the sign
+        // of `local_matrix` and so separated them; this asserts the two signs
+        // really are opposite, so the test cannot pass vacuously.
+        expect(dvipdfmx.font_matrix).not.toEqual(ghostscript.font_matrix);
+        expect(Math.sign(dvipdfmx.local_matrix[3]))
+          .toBe(-Math.sign(ghostscript.local_matrix[3]));
+        expect(dvipdfmx.charproc_sha256).not.toBe(ghostscript.charproc_sha256);
+
+        expect(dvipdfmx.evidence_sha256).toMatch(/^[0-9a-f]{64}$/);
+        expect(ghostscript.evidence_sha256).toBe(dvipdfmx.evidence_sha256);
+      });
+
+      it("still separates two bitmaps that differ, in either axis or in ink", async () => {
+        const baseline = (await measureIdiom(DVIPDFMX, dvipdfmxCharProc())).evidence_sha256;
+        const keyOf = async rows => {
+          // Measured through both producers every time, so a variant that only
+          // one idiom separates would fail here rather than look distinct.
+          const first = await measureIdiom(DVIPDFMX, dvipdfmxCharProc(rows));
+          const second = await measureIdiom(GHOSTSCRIPT, ghostscriptCharProc(rows));
+          expect(second.evidence_sha256).toBe(first.evidence_sha256);
+          return first.evidence_sha256;
+        };
+
+        const oneBitFewer = [...INK_ROWS];
+        oneBitFewer[0] &= ~0x02;
+        const upsideDown = [...INK_ROWS].reverse();
+        const backToFront = INK_ROWS.map(row => {
+          let flipped = 0;
+          for (let bit = 0; bit < 8; bit += 1) if (row & (1 << bit)) flipped |= 128 >> bit;
+          return flipped;
+        });
+
+        const distinct = await Promise.all([oneBitFewer, upsideDown, backToFront].map(keyOf));
+        // Reversing the stored rows or the stored columns is a different
+        // bitmap, not a different view of this one, and must not collide with
+        // it or with each other.
+        expect(new Set([baseline, ...distinct]).size).toBe(4);
+      });
+
+      /**
+       * The attack the grid key on its own cannot see, and the safeguard that
+       * does: reflection relative to a font's own siblings.
+       *
+       * Nothing above distinguishes a glyph from its mirror image, and it must
+       * not: an upright document and a y-flipped one are two producers writing
+       * the same character. But mirroring is not always a re-orientation of the
+       * same character. In Computer Modern it is usually a DIFFERENT enrolled
+       * character — every cmex parenthesis and bracket pair is one raster and
+       * its mirror — so a CharProc that stores the `]` raster and negates the x
+       * scale of its own `cm` paints a `[` while keying as `]`. Reproduced on
+       * the Shannon reference document by editing exactly that one number and
+       * leaving the mask bytes byte-identical: it kept emitting `]` eleven
+       * times, with no gap reported.
+       *
+       * The two documents below are the same font twice, holding the same two
+       * copies of the same 8x8 mask, differing only in whether the second
+       * glyph's `cm` is reflected. Absolute orientation is not consulted and
+       * cannot be — the page's text matrix is not visible from a CharProc — so
+       * the whole of the evidence is that one glyph disagrees with its
+       * siblings.
+       */
+      describe("one font, one glyph reflected relative to its siblings", () => {
+        function buildTwoGlyphType3MaskPdf({ mirrorSecondGlyph }) {
+          const proc = placement => Buffer.concat([
+            Buffer.from(`1000 0 0 0 800 800 d1\nq ${placement} cm\n`
+              + "BI /IM true /W 8 /H 8 /BPC 1 ID ", "latin1"),
+            Buffer.from(INK_ROWS.map(row => ~row & 0xff)),
+            Buffer.from("\nEI\nQ\n", "latin1"),
+          ]);
+          return assemblePdf([
+            Buffer.from("<< /Type /Catalog /Pages 2 0 R >>", "latin1"),
+            Buffer.from("<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "latin1"),
+            Buffer.from("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+              + "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>", "latin1"),
+            streamObject(Buffer.from("BT /F1 1 Tf 1 0 0 1 20 60 Tm <4142> Tj ET\n", "latin1")),
+            Buffer.from("<< /Type /Font /Subtype /Type3 /FontBBox [0 0 8 8] "
+              + "/FontMatrix [0.01 0 0 0.01 0 0] /CharProcs 6 0 R "
+              + "/Encoding << /Type /Encoding /Differences [65 /upright /sibling] >> "
+              + "/FirstChar 65 /LastChar 66 /Widths [10 10] /Resources << >> >>", "latin1"),
+            Buffer.from("<< /upright 7 0 R /sibling 8 0 R >>", "latin1"),
+            streamObject(proc("800 0 0 800 0 0")),
+            // Same eight mask bytes either way. The only difference between the
+            // two documents is the sign of this one number, and the matching
+            // translation that puts the reflected ink back in the same box.
+            streamObject(proc(mirrorSecondGlyph ? "-800 0 0 800 800 0" : "800 0 0 800 0 0")),
+          ]);
+        }
+
+        async function measureFont(mirrorSecondGlyph) {
+          const document = await pdfjsLib.getDocument({
+            data: buildTwoGlyphType3MaskPdf({ mirrorSecondGlyph }),
+            useWorkerFetch: false,
+            isEvalSupported: false,
+            cMapUrl: pdfjsFactoryDirectory(path.join(packageDirectory, "cmaps")),
+            cMapPacked: true,
+            standardFontDataUrl: pdfjsFactoryDirectory(path.join(packageDirectory, "standard_fonts")),
+          }).promise;
+          try {
+            const page = await document.getPage(1);
+            const operators = await page.getOperatorList();
+            let fontId = null;
+            for (let index = 0; index < operators.fnArray.length; index += 1) {
+              if (operators.fnArray[index] === OPS.setFont) [fontId] = operators.argsArray[index];
+            }
+            const font = page.commonObjs.get(fontId);
+            expect(Object.keys(font.charProcOperatorList ?? {})).toEqual(["upright", "sibling"]);
+            const orientation = type3FontPaintOrientation(font, OPS);
+            const keyFor = (glyphId, assumedOrientation) => type3GlyphEvidenceSha256(
+              font.charProcOperatorList[glyphId], font.fontMatrix, OPS, assumedOrientation,
+            );
+            return {
+              orientation,
+              upright: keyFor("upright", orientation),
+              sibling: keyFor("sibling", orientation),
+              // What the sibling keys as when its OWN sign is taken for its
+              // font's convention, which is all a per-glyph check could ever
+              // ask. The reflected `cm` makes that sign -1 and the unreflected
+              // one +1, so this is the mask-lane key in both documents.
+              sibling_self_signed: keyFor("sibling", mirrorSecondGlyph ? -1 : 1),
+              operator_upright: type3CharProcSha256(font.charProcOperatorList.upright),
+              operator_sibling: type3CharProcSha256(font.charProcOperatorList.sibling),
+            };
+          } finally {
+            await document.destroy();
+          }
+        }
+
+        it("keys both glyphs on the grid when the font agrees with itself", async () => {
+          const uniform = await measureFont(false);
+          // A real, unanimous convention, and both glyphs reach the mask lane.
+          expect(uniform.orientation).toBe(1);
+          expect(uniform.upright).toMatch(/^[0-9a-f]{64}$/);
+          // Same stored grid, so the same key. This is the behaviour the whole
+          // producer-independent scheme exists for and it is not weakened.
+          expect(uniform.sibling).toBe(uniform.upright);
+          expect(uniform.upright).not.toBe(uniform.operator_upright);
+        });
+
+        it("refuses the grid key to a whole font that disagrees with itself", async () => {
+          const uniform = await measureFont(false);
+          const mirrored = await measureFont(true);
+
+          // The mask bytes are untouched, so the reflected glyph's stored grid
+          // is still bit-for-bit the upright one's. Keyed on its own sign it
+          // would collide with the upright glyph exactly as before — which is
+          // the defect, since the ink now paints mirrored.
+          expect(mirrored.sibling_self_signed).toBe(uniform.upright);
+
+          // The font has no convention, so no glyph of it is grid-keyed.
+          expect(mirrored.orientation).toBeNull();
+          expect(mirrored.sibling).not.toBe(uniform.upright);
+          expect(mirrored.upright).not.toBe(uniform.upright);
+          // Not silence: both fall to the placement-bearing operator lane,
+          // which is domain-separated from every mask-keyed registry entry and
+          // therefore recovers nothing.
+          expect(mirrored.sibling).toMatch(/^[0-9a-f]{64}$/);
+          expect(mirrored.sibling).not.toBe(mirrored.operator_sibling);
+          expect(mirrored.sibling).not.toBe(mirrored.upright);
+        });
+      });
+    });
+
+    it("refuses to conflate a different raster or a different grid", () => {
+      const key = type3GlyphEvidenceSha256(minusCharProc(), FLIPPED, OPS, FLIPPED_FONT);
+      const oneBit = minusCharProc();
+      oneBit.argsArray[3][1][0][14] = 0;
+      expect(type3GlyphEvidenceSha256(oneBit, FLIPPED, OPS, FLIPPED_FONT)).not.toBe(key);
+      const wider = minusCharProc();
+      wider.argsArray[3][2] = new Float32Array([0, 0, 82, 3]);
+      expect(type3GlyphEvidenceSha256(wider, FLIPPED, OPS, FLIPPED_FONT)).not.toBe(key);
+      // A mask key and an operator-lane key are domain-separated and cannot
+      // collide even when they cover the same glyph program.
+      expect(key).not.toBe(type3CharProcSha256(minusCharProc()));
+    });
+
+    /**
+     * A mask with no ink has no shape, so it cannot be keyed as one. Left
+     * unguarded it cropped to 0x0 and every blank glyph of every font hashed to
+     * the single digest of an empty buffer.
+     */
+    it("sends an inkless mask to the placement-bearing operator lane", () => {
+      // A degenerate loop: two coincident vertical edges of opposite winding,
+      // which is a well-formed traced outline that fills nothing.
+      const blank = metrics => ({
+        fnArray: [OPS.setCharWidthAndBounds, OPS.transform, OPS.constructPath],
+        argsArray: [
+          metrics,
+          [41, 0, 0, 3, 0, 0],
+          [94, [new Float32Array([0, 0, 1, 1, 0, 0, 1, 0, 1, 4])], new Float32Array([0, 0, 41, 3])],
+        ],
+      });
+      const inked = type3GlyphEvidenceSha256(minusCharProc(), FLIPPED, OPS, FLIPPED_FONT);
+      const first = type3GlyphEvidenceSha256(blank([52, 0, 0, 0, 41, 3]), FLIPPED, OPS, FLIPPED_FONT);
+      const second = type3GlyphEvidenceSha256(blank([31, 0, 0, 0, 41, 3]), FLIPPED, OPS, FLIPPED_FONT);
+      expect(first).toMatch(/^[0-9a-f]{64}$/);
+      expect(first).not.toBe(inked);
+      // The mask lane ignores declared metrics, so two blank programs that
+      // differ only there proves the fallback actually happened.
+      expect(second).not.toBe(first);
+      expect(first).not.toBe(type3CharProcSha256(blank([52, 0, 0, 0, 41, 3])));
+    });
+
+    it("falls back to the exact operator digest for a program it cannot decode", () => {
+      const outline = { fnArray: [OPS.setCharWidthAndBounds, OPS.fill], argsArray: [[52, 0, 0, 0, 4, 4], null] };
+      const outlineKey = type3GlyphEvidenceSha256(outline, FLIPPED, OPS, FLIPPED_FONT);
+      expect(outlineKey).toMatch(/^[0-9a-f]{64}$/);
+      expect(outlineKey).not.toBe(type3CharProcSha256(outline));
+      // Two painted objects are not a single decodable mask, and a CharProc
+      // that rotates its own bitmap is outside the plain axis-aligned bitmap
+      // idiom the mask lane is held to. Both take the operator digest instead
+      // of being keyed on a guess.
+      const twice = minusCharProc();
+      twice.fnArray = [...twice.fnArray, 91];
+      twice.argsArray = [...twice.argsArray, minusCharProc().argsArray[3]];
+      expect(type3GlyphEvidenceSha256(twice, FLIPPED, OPS, FLIPPED_FONT)).toBe(
+        type3GlyphEvidenceSha256(
+          { fnArray: twice.fnArray, argsArray: twice.argsArray }, [0, 1, -1, 0, 0, 0], OPS, FLIPPED_FONT,
+        ),
+      );
+      const rotated = type3GlyphEvidenceSha256(minusCharProc(), [0, 1, -1, 0, 0, 0], OPS, FLIPPED_FONT);
+      expect(rotated).not.toBe(type3GlyphEvidenceSha256(minusCharProc(), FLIPPED, OPS, FLIPPED_FONT));
+      expect(type3GlyphEvidenceSha256(null, FLIPPED, OPS, FLIPPED_FONT)).toBeNull();
+    });
+  });
+
+  it("requires one unique official Computer Modern encoding family", () => {
+    expect(uniqueComputerModernFamily([[0, 52], [21, 52], [112, 55]]))
+      .toBe("computer-modern-math-symbol");
+    expect(uniqueComputerModernFamily([[11, 45], [25, 41], [26, 36], [33, 44]]))
+      .toBe("computer-modern-math-italic");
+    expect(uniqueComputerModernFamily([[58, 18], [59, 18], [61, 33]]))
+      .toBe("computer-modern-math-italic");
+    expect(uniqueComputerModernFamily([[0, 52]])).toBeNull();
+    expect(uniqueComputerModernFamily([[40, 32], [41, 32]])).toBeNull();
+  });
+
+  /**
+   * The linker's uniqueness pool is the WHOLE page's Type-3 fonts, not the
+   * recoverable subset of them.
+   *
+   * PDF.js hands back a glyph's code, advance and CharProc name but not the
+   * font dictionary it came from, so the raw font has to be re-identified from
+   * the page by matching those three. Two fonts on one page can answer to the
+   * same evidence, and when they do the honest answer is that the linker does
+   * not know which one it is holding.
+   *
+   * The two kinds of font that are themselves ineligible are exactly the ones
+   * it is tempting to drop from that pool: a font carrying its own /ToUnicode,
+   * whose producer-supplied mapping is deliberately left alone, and a font
+   * declaring codes past 127, which no official Computer Modern encoding
+   * reaches. Dropping either would silently resolve the ambiguity in favour of
+   * the recoverable font. They stay in the pool as competitors and stay
+   * ineligible themselves, and both halves are asserted below.
+   */
+  describe("whole-page Type-3 link competition", () => {
+    const MASK_ROWS = Object.freeze([0xfe, 0x80, 0x80, 0xf8, 0x80, 0x80, 0x80, 0x80]);
+    const charProcBody = Buffer.concat([
+      Buffer.from("1000 0 0 0 800 800 d1\nq 800 0 0 800 0 0 cm\n"
+        + "BI /IM true /W 8 /H 8 /BPC 1 ID ", "latin1"),
+      Buffer.from(MASK_ROWS.map(row => ~row & 0xff)),
+      Buffer.from("\nEI\nQ\n", "latin1"),
+    ]);
+    // A Type-3 font body with the shared identity the linker matches on: the
+    // same two codes, the same two advances and the same two CharProc names.
+    const type3Font = extra => Buffer.from("<< /Type /Font /Subtype /Type3 /FontBBox [0 0 8 8] "
+      + "/FontMatrix [0.01 0 0 0.01 0 0] /CharProcs 6 0 R "
+      + "/Encoding << /Type /Encoding /Differences [65 /upright /sibling] >> "
+      + `${extra} /Resources << >> >>`, "latin1");
+    const RECOVERABLE = "/FirstChar 65 /LastChar 66 /Widths [10 10]";
+    // Ineligible because PDF.js already maps it. `/Widths` is identical, so it
+    // is indistinguishable from the recoverable font on the linker's evidence.
+    const HAS_TO_UNICODE = `${RECOVERABLE} /ToUnicode 9 0 R`;
+    // Ineligible because no official Computer Modern encoding reaches past
+    // 127. Same two advances at the same two codes; the extra slots are the
+    // out-of-range declaration itself.
+    const OUT_OF_RANGE = `/FirstChar 65 /LastChar 200 /Widths [${["10", "10", ...Array(134).fill("7")].join(" ")}]`;
+
+    const TO_UNICODE_CMAP = Buffer.from(
+      "/CIDInit /ProcSet findresource begin 12 dict begin begincmap\n"
+      + "/CMapName /Custom def /CMapType 2 def\n"
+      + "1 begincodespacerange <00> <ff> endcodespacerange\n"
+      + "1 beginbfrange <41> <42> <0041> endbfrange\n"
+      + "endcmap CMapName currentdict /CMap defineresource pop end end\n", "latin1");
+
+    // `fonts` names exactly which of the two font dictionaries the page's
+    // /Resources offers, so a page can hold the recoverable font alone, the
+    // ineligible font alone, or both in competition.
+    function buildCompetitionPdf({ competitor, fonts, drawWith }) {
+      const resources = fonts.map(name => `/${name} ${name === "F1" ? "5" : "8"} 0 R`).join(" ");
+      return assemblePdf([
+        Buffer.from("<< /Type /Catalog /Pages 2 0 R >>", "latin1"),
+        Buffer.from("<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "latin1"),
+        Buffer.from("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+          + `/Resources << /Font << ${resources} >> >> /Contents 4 0 R >>`, "latin1"),
+        streamObject(Buffer.from(`BT /${drawWith} 1 Tf 1 0 0 1 20 60 Tm <4142> Tj ET\n`, "latin1")),
+        type3Font(RECOVERABLE),
+        Buffer.from("<< /upright 7 0 R /sibling 7 0 R >>", "latin1"),
+        streamObject(charProcBody),
+        type3Font(competitor ?? RECOVERABLE),
+        streamObject(TO_UNICODE_CMAP),
+      ]);
+    }
+
+    async function inspectCompetition(options) {
+      const bytes = buildCompetitionPdf(options);
+      const pdfLibDocument = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+      const packageDirectory = path.dirname(require.resolve("pdfjs-dist/package.json"));
+      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      const document = await pdfjsLib.getDocument({
+        data: bytes,
+        useWorkerFetch: false,
+        isEvalSupported: false,
+        cMapUrl: pdfjsFactoryDirectory(path.join(packageDirectory, "cmaps")),
+        cMapPacked: true,
+        standardFontDataUrl: pdfjsFactoryDirectory(path.join(packageDirectory, "standard_fonts")),
+      }).promise;
+      try {
+        const page = await document.getPage(1);
+        const [textContent, operators] = await Promise.all([
+          page.getTextContent({ includeMarkedContent: false, disableNormalization: false }),
+          page.getOperatorList(),
+        ]);
+        const inventory = inspectType3GlyphEvidenceForPage({
+          textContent,
+          operators,
+          pdfjsPage: page,
+          pdfLibPage: pdfLibDocument.getPage(0),
+          pdfjsLib,
+        });
+        return {
+          occurrence_count: inventory.occurrences.length,
+          unlinked: inventory.omissions
+            .filter(omission => omission.reason === "raw_type3_font_link_ambiguous_or_unavailable")
+            .reduce((total, omission) => total + omission.count, 0),
+        };
+      } finally {
+        await document.destroy();
+      }
+    }
+
+    it("links the recoverable font when it is the only Type-3 font on the page", async () => {
+      // The positive control. Without this the ambiguity assertions below
+      // could pass because the fixture never links at all.
+      const alone = await inspectCompetition({ competitor: null, fonts: ["F1"], drawWith: "F1" });
+      expect(alone.unlinked).toBe(0);
+      expect(alone.occurrence_count).toBe(2);
+    });
+
+    for (const [label, competitor] of [["a /ToUnicode font", HAS_TO_UNICODE], ["an out-of-range font", OUT_OF_RANGE]]) {
+      it(`refuses to link when ${label} answers to the same evidence`, async () => {
+        const contested = await inspectCompetition({ competitor, fonts: ["F1", "F2"], drawWith: "F1" });
+        // The competitor is never drawn and can never be recovered from. It
+        // still makes the drawn font's identity ambiguous, and ambiguous is
+        // reported rather than resolved.
+        expect(contested.occurrence_count).toBe(0);
+        expect(contested.unlinked).toBe(2);
+      });
+
+      it(`keeps ${label} ineligible when it is the only font on the page`, async () => {
+        // Alone, so nothing competes with it and the link is unambiguous. What
+        // refuses it here is its own ineligibility and nothing else.
+        const drawn = await inspectCompetition({ competitor, fonts: ["F2"], drawWith: "F2" });
+        expect(drawn.occurrence_count).toBe(0);
+        expect(drawn.unlinked).toBe(2);
+      });
+    }
+  });
+
+  /**
+   * A /Differences glyph name is bytes, and PDF names escape an irregular byte
+   * as `#` plus two hexadecimal digits in either letter case. pdf-lib's
+   * `decodeText()` unescapes digits and UPPERCASE A-F only, so the linker sees
+   * a different string from PDF.js exactly when a producer wrote lowercase hex
+   * — which dvips-era Ghostscript does for every Computer Modern glyph it
+   * names after its own raw encoding byte.
+   *
+   * Both readings are asserted, because they pull in opposite directions and a
+   * fix for one is the obvious way to break the other. `/#0b` is an escape
+   * pdf-lib missed and its glyph is really U+000B; `/#230b` is an escaped
+   * `#` and its glyph is really the three-character name `#0b`, which pdf-lib
+   * and PDF.js already agree on. Unescaping every residual `#hh` would link
+   * the first and break the second.
+   */
+  describe("hex-escaped Type-3 glyph names", () => {
+    const MASK_ROWS = Object.freeze([0xfe, 0x80, 0x80, 0xf8, 0x80, 0x80, 0x80, 0x80]);
+    const escapedCharProc = Buffer.concat([
+      Buffer.from("1000 0 0 0 800 800 d1\nq 800 0 0 800 0 0 cm\n"
+        + "BI /IM true /W 8 /H 8 /BPC 1 ID ", "latin1"),
+      Buffer.from(MASK_ROWS.map(row => ~row & 0xff)),
+      Buffer.from("\nEI\nQ\n", "latin1"),
+    ]);
+
+    /**
+     * One page, one Type-3 font, two drawn codes, and `names` written verbatim
+     * into both the /Differences array and the /CharProcs dictionary so the
+     * fixture varies nothing but the on-disk spelling of the glyph name.
+     */
+    function buildEscapedNamePdf(names) {
+      return assemblePdf([
+        Buffer.from("<< /Type /Catalog /Pages 2 0 R >>", "latin1"),
+        Buffer.from("<< /Type /Pages /Kids [3 0 R] /Count 1 >>", "latin1"),
+        Buffer.from("<< /Type /Page /Parent 2 0 R /MediaBox [0 0 100 100] "
+          + "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>", "latin1"),
+        streamObject(Buffer.from("BT /F1 1 Tf 1 0 0 1 20 60 Tm <4142> Tj ET\n", "latin1")),
+        Buffer.from("<< /Type /Font /Subtype /Type3 /FontBBox [0 0 8 8] "
+          + "/FontMatrix [0.01 0 0 0.01 0 0] /CharProcs 6 0 R "
+          + `/Encoding << /Type /Encoding /Differences [65 /${names[0]} /${names[1]}] >> `
+          + "/FirstChar 65 /LastChar 66 /Widths [10 10] /Resources << >> >>", "latin1"),
+        Buffer.from(`<< /${names[0]} 7 0 R /${names[1]} 7 0 R >>`, "latin1"),
+        streamObject(escapedCharProc),
+      ]);
+    }
+
+    async function inspectEscapedNames(names) {
+      const bytes = buildEscapedNamePdf(names);
+      const pdfLibDocument = await PDFDocument.load(bytes, { ignoreEncryption: true, updateMetadata: false });
+      const packageDirectory = path.dirname(require.resolve("pdfjs-dist/package.json"));
+      const pdfjsLib = await import("pdfjs-dist/legacy/build/pdf.mjs");
+      const document = await pdfjsLib.getDocument({
+        data: bytes,
+        useWorkerFetch: false,
+        isEvalSupported: false,
+        cMapUrl: pdfjsFactoryDirectory(path.join(packageDirectory, "cmaps")),
+        cMapPacked: true,
+        standardFontDataUrl: pdfjsFactoryDirectory(path.join(packageDirectory, "standard_fonts")),
+      }).promise;
+      try {
+        const page = await document.getPage(1);
+        const [textContent, operators] = await Promise.all([
+          page.getTextContent({ includeMarkedContent: false, disableNormalization: false }),
+          page.getOperatorList(),
+        ]);
+        const inventory = inspectType3GlyphEvidenceForPage({
+          textContent,
+          operators,
+          pdfjsPage: page,
+          pdfLibPage: pdfLibDocument.getPage(0),
+          pdfjsLib,
+        });
+        return {
+          occurrence_count: inventory.occurrences.length,
+          digests: inventory.occurrences.map(occurrence => occurrence.glyph_sha256),
+          unlinked: inventory.omissions
+            .filter(omission => omission.reason === "raw_type3_font_link_ambiguous_or_unavailable")
+            .reduce((total, omission) => total + omission.count, 0),
+        };
+      } finally {
+        await document.destroy();
+      }
+    }
+
+    it("links a font whose names are plain and keys both drawn glyphs", async () => {
+      // Positive control: no escape anywhere, so nothing below can pass
+      // because the fixture never links in the first place.
+      const plain = await inspectEscapedNames(["upright", "sibling"]);
+      expect(plain.unlinked).toBe(0);
+      expect(plain.occurrence_count).toBe(2);
+      expect(plain.digests.every(digest => typeof digest === "string" && digest.length === 64)).toBe(true);
+    });
+
+    it("links a font whose names are lowercase hex escapes pdf-lib leaves undecoded", async () => {
+      const escaped = await inspectEscapedNames(["#0b", "#0c"]);
+      expect(escaped.unlinked).toBe(0);
+      expect(escaped.occurrence_count).toBe(2);
+      // Same font, same rasters: resolving the name must not change what the
+      // glyph keys to, only whether the font can be found at all.
+      const plain = await inspectEscapedNames(["upright", "sibling"]);
+      expect(escaped.digests).toEqual(plain.digests);
+    });
+
+    it("links a font whose names really are three characters beginning with a hash", async () => {
+      // `/#230b` is an escaped hash, so the glyph's name is `#0b`. pdf-lib and
+      // PDF.js already agree here; re-unescaping the residual would break it.
+      const literal = await inspectEscapedNames(["#230b", "#230c"]);
+      expect(literal.unlinked).toBe(0);
+      expect(literal.occurrence_count).toBe(2);
+    });
+
+    it("keys nothing when one code's two readings both name a CharProcs entry", async () => {
+      // A font that writes /#230b for one code and /#0b for another gives
+      // pdf-lib the same string, `#0b`, for the first, whose two readings then
+      // both exist in /CharProcs. Which raster belongs to the code is no longer
+      // decidable, so no digest is offered for it.
+      const collided = await inspectEscapedNames(["#230b", "#0b"]);
+      expect(collided.occurrence_count).toBe(2);
+      expect(collided.digests[0]).toBeNull();
+    });
+  });
+
+  it("keeps ordinary punctuation and already-correct Unicode byte-for-byte unchanged", async () => {
+    const { result } = await runFake([{ items: [textItem({ text: "!:=,-−", x: 20, top: 20 })] }]);
+    const item = result.pages[0].raw_items[0];
+    expect(item.text).toBe("!:=,-−");
+    expect(item).not.toHaveProperty("source_text");
+    expect(item).not.toHaveProperty("glyph_recoveries");
+  });
+
+  it("binds the generated labeled reference to its checked-in provenance", async () => {
+    const fixture = path.join(REPO_ROOT, "test/fixtures/eval/extraction/type3-cm-reference.pdf");
+    const module = path.join(REPO_ROOT, "server/type3-cm-reference.js");
+    const shareModule = path.join(REPO_ROOT, "pdf-toolkit-mcp-share/server/type3-cm-reference.js");
+    const provenance = JSON.parse(await fs.readFile(
+      path.join(REPO_ROOT, "test/fixtures/eval/extraction/type3-cm-reference.provenance.json"),
+      "utf8",
+    ));
+    const digest = bytes => createHash("sha256").update(bytes).digest("hex");
+    expect(digest(await fs.readFile(fixture))).toBe(provenance.outputs["test/fixtures/eval/extraction/type3-cm-reference.pdf"]);
+    expect(digest(await fs.readFile(module))).toBe(provenance.outputs["server/type3-cm-reference.js"]);
+    expect(digest(await fs.readFile(shareModule))).toBe(provenance.outputs["pdf-toolkit-mcp-share/server/type3-cm-reference.js"]);
+    expect(provenance.reviewed_slot_labels["computer-modern-math-italic"][33]).toBe("omega");
+    expect(provenance.reviewed_slot_labels["computer-modern-math-symbol"][0]).toBe("minus");
+    expect(provenance.reviewed_slot_labels["computer-modern-math-symbol"][6]).toBe("plus-or-minus");
+    expect(provenance.reviewed_slot_labels["computer-modern-math-symbol"][33]).toBe("right-arrow");
+    // The fixture is the labeled artifact, so what it actually draws is pinned
+    // separately from what has been reviewed. Enrolling a slot must not quietly
+    // imply this PDF demonstrates it. Both slot sets are measured out of the
+    // emitted PDF by the generator, so this checks them against the shipped
+    // encoding tables rather than against a second copy of the same numbers:
+    // a wrong literal in the provenance cannot satisfy CM_CODEPOINTS.
+    const families = Object.keys(CM_CODEPOINTS);
+    expect(families).toEqual([
+      "computer-modern-math-italic",
+      "computer-modern-math-symbol",
+      "computer-modern-math-extension",
+    ]);
+    expect(Object.keys(provenance.fixture_drawn_slots)).toEqual(families);
+    for (const family of families) {
+      const enrolled = Object.keys(CM_CODEPOINTS[family]).map(Number).sort((left, right) => left - right);
+      const drawnSlots = provenance.fixture_drawn_slots[family];
+      const undrawableSlots = provenance.fixture_undrawable_slots[family];
+      // Every enrolled slot is accounted for exactly once: either the fixture
+      // draws it, or the CTAN ps-type3 widths cannot co-draw it without
+      // costing its font a family. Neither list may quietly lose a slot.
+      expect([...drawnSlots, ...undrawableSlots].sort((left, right) => left - right)).toEqual(enrolled);
+      // As of this revision the fixture draws all of them: the family's slots
+      // are partitioned across several embedded fonts, so nothing is left over.
+      expect(undrawableSlots).toEqual([]);
+      expect(drawnSlots).toEqual(enrolled);
+      expect(Object.keys(provenance.reviewed_slot_labels[family]).map(Number).sort((left, right) => left - right))
+        .toEqual(enrolled);
+      expect(drawnSlots.length).toBeGreaterThan(1);
+      // Drawn is still not the same claim as resolved. It happens to hold for
+      // every drawn slot in this revision, which has to be asserted rather
+      // than assumed, and is re-measured from the PDF itself in
+      // test/type3-glyph-inventory.test.js.
+      expect(provenance.fixture_family_resolving_slots[family]).toEqual(drawnSlots);
+    }
+    // Coarse regression guard on the size of the demonstration, so a
+    // regenerated fixture that silently drew fewer slots would fail here.
+    expect(Object.values(provenance.fixture_drawn_slots).flat()).toHaveLength(41);
+    // Both were corroboration-only until a reviewed raster backed them. They are
+    // enrolled now, and an enrolled codepoint is still usable as a witness, so
+    // no slot is witness-only.
+    expect(CM_WITNESS_CODEPOINTS["computer-modern-math-symbol"]).toBeUndefined();
+    expect(CM_CODEPOINTS["computer-modern-math-symbol"][6]).toBe("±");
+    expect(CM_CODEPOINTS["computer-modern-math-symbol"][33]).toBe("→");
+  });
+});
 
 function multiply(left, right) {
   return [
@@ -61,6 +903,34 @@ function textItem({ text, x, top, width = 60, direction = "ltr", hasEOL = true, 
   };
 }
 
+function rectPath(paintOp, x = 10, y = 20, width = 20, height = 30) {
+  return [
+    paintOp,
+    [new Float32Array([0, x, y, 1, x + width, y, 1, x + width, y + height, 1, x, y + height, 4])],
+    new Float32Array([x, y, x + width, y + height]),
+  ];
+}
+
+function linePath(paintOp, x1, y1, x2, y2) {
+  return [
+    paintOp,
+    [new Float32Array([0, x1, y1, 1, x2, y2])],
+    new Float32Array([Math.min(x1, x2), Math.min(y1, y2), Math.max(x1, x2), Math.max(y1, y2)]),
+  ];
+}
+
+function curvePath(paintOp) {
+  return [
+    paintOp,
+    [new Float32Array([0, 10, 20, 2, 20, 30, 30, 40, 50, 60])],
+    new Float32Array([10, 20, 50, 60]),
+  ];
+}
+
+function fakeOperatorFixture(operations, argsArray) {
+  return { operations, argsArray };
+}
+
 async function pdfBytes(pageCount = 1) {
   const document = await PDFDocument.create();
   for (let index = 0; index < pageCount; index += 1) document.addPage([612, 792]);
@@ -83,14 +953,48 @@ function fakePdfjs(pageConfigs, { requiredPassword = null, neverLoad = false } =
     },
     getOperatorList: async () => {
       if (config.operatorError) throw config.operatorError;
-      return { fnArray: config.operations ?? [] };
+      return {
+        fnArray: config.operations ?? [],
+        argsArray: config.argsArray ?? config.operatorArgs ?? (config.operations ?? []).map(() => null),
+      };
+    },
+    getAnnotations: async () => {
+      if (config.annotationError) throw config.annotationError;
+      return config.annotations ?? [];
     },
     cleanup: () => { state.page_cleanups += 1; },
   }));
   const pdfjs = {
     version: "5.4.624",
     PasswordResponses: { NEED_PASSWORD: 1, INCORRECT_PASSWORD: 2 },
-    OPS: { paintImageXObject: 1, constructPath: 2, fill: 3 },
+    OPS: {
+      save: 10,
+      restore: 11,
+      transform: 12,
+      clip: 29,
+      eoClip: 30,
+      paintFormXObjectBegin: 74,
+      paintFormXObjectEnd: 75,
+      paintImageXObject: 1,
+      paintJpegXObject: 5,
+      paintImageMaskXObject: 6,
+      paintImageMaskXObjectGroup: 7,
+      paintInlineImageXObject: 8,
+      paintInlineImageXObjectGroup: 9,
+      paintImageXObjectRepeat: 13,
+      paintImageMaskXObjectRepeat: 14,
+      constructPath: 2,
+      stroke: 4,
+      closeStroke: 15,
+      fill: 3,
+      eoFill: 16,
+      fillStroke: 17,
+      eoFillStroke: 18,
+      closeFillStroke: 19,
+      closeEOFillStroke: 20,
+      endPath: 21,
+      paintSolidColorImageMask: 76,
+    },
     Util: { transform: multiply },
     getDocument: documentOptions => {
       state.document_options = documentOptions;
@@ -211,6 +1115,258 @@ function shiftPageGeometryX(page, delta) {
     .join("\n");
 }
 
+describe("PDF.js factory directory contract", () => {
+  it("always ends factory directories with a forward slash, including Windows-shaped paths", () => {
+    // PDF.js validates factory URLs with a literal .endsWith("/") check, so
+    // the backslash-terminated paths fileURLToPath yields on Windows failed
+    // it and broke every layout operation on win32 (caught by the Windows
+    // runtime CI lane, run 30670798499).
+    expect(pdfjsFactoryDirectory("C:\\Users\\runner\\ext\\node_modules\\pdfjs-dist\\cmaps\\"))
+      .toBe("C:/Users/runner/ext/node_modules/pdfjs-dist/cmaps/");
+    expect(pdfjsFactoryDirectory("C:\\ext\\cmaps")).toBe("C:/ext/cmaps/");
+    expect(pdfjsFactoryDirectory("/opt/ext/node_modules/pdfjs-dist/cmaps/"))
+      .toBe("/opt/ext/node_modules/pdfjs-dist/cmaps/");
+    expect(pdfjsFactoryDirectory("/opt/ext/cmaps")).toBe("/opt/ext/cmaps/");
+    for (const value of [
+      pdfjsFactoryDirectory("C:\\a\\b\\"),
+      pdfjsFactoryDirectory("/a/b"),
+    ]) {
+      expect(value.endsWith("/")).toBe(true);
+      expect(value.includes("\\")).toBe(false);
+    }
+  });
+});
+
+describe("Extraction IR v1.2.0 evidence blocks", () => {
+  it("captures only normalized stroke-bearing axis-aligned ruling segments with typed cap accounting", async () => {
+    const basic = await runFake([fakeOperatorFixture(
+      [2, 2, 2, 2, 2],
+      [
+        linePath(4, 30, 40, 10, 40),
+        linePath(4, 20, 60, 20, 20),
+        linePath(4, 10.2, 40.2, 30.2, 40.2),
+        linePath(4, 10, 10, 30, 30),
+        curvePath(4),
+      ],
+    )]);
+    expect(basic.result.pages[0].ruling_segments).toEqual({
+      status: "available",
+      truncated: false,
+      observed_count: 2,
+      returned_count: 2,
+      items: [
+        { orientation: "horizontal", x1: 10, y1: 752, x2: 30, y2: 752, source_operator_index: 0 },
+        { orientation: "vertical", x1: 20, y1: 732, x2: 20, y2: 772, source_operator_index: 1 },
+      ],
+    });
+
+    const operations = [];
+    const argsArray = [];
+    for (let index = 0; index < 1025; index += 1) {
+      operations.push(2);
+      argsArray.push(linePath(4, 10, index * 0.6, 20, index * 0.6));
+    }
+    const capped = await runFake([fakeOperatorFixture(operations, argsArray)]);
+    expect(capped.result.pages[0].ruling_segments).toMatchObject({
+      status: "available",
+      truncated: true,
+      observed_count: 1025,
+      returned_count: 1024,
+    });
+    expect(capped.result.pages[0].ruling_segments.items).toHaveLength(1024);
+
+    const outputBounded = await runFake(
+      [fakeOperatorFixture(operations, argsArray)],
+      { maxOutputCharacters: 20000 },
+    );
+    expect(outputBounded.result.pages[0].ruling_segments).toEqual({
+      status: "unavailable",
+      truncated: true,
+      observed_count: 1025,
+      returned_count: 0,
+      items: [],
+    });
+    expect(JSON.stringify(outputBounded.result).length).toBeLessThanOrEqual(20000);
+  });
+
+  it("tracks CTM/Form scopes, classifies paints, drops degenerate paths, deduplicates, and counts operators", async () => {
+    const fixture = fakeOperatorFixture(
+      [10, 12, 2, 11, 74, 2, 75, 29, 2, 1, 5, 13, 2],
+      [
+        null,
+        [2, 0, 0, 2, 10, 20],
+        rectPath(3),
+        null,
+        [new Float32Array([1, 0, 0, 1, 50, 60]), null],
+        rectPath(4, 10, 20, 20, 30),
+        [],
+        null,
+        rectPath(21, 10, 20, 20, 30),
+        null,
+        null,
+        null,
+        rectPath(3, 10, 20, 4, 30),
+      ],
+    );
+    const { result } = await runFake([fixture]);
+    const page = result.pages[0];
+    expect(page.ruled_rects).toMatchObject({ status: "available", observed_count: 3, returned_count: 3 });
+    expect(page.ruled_rects.items.map(item => item.verb)).toEqual(["fill", "stroke", "clip"]);
+    expect(page.ruled_rects.items[0]).toEqual({ x: 30, y: 672, width: 40, height: 60, verb: "fill" });
+    expect(page.ruled_rects.items[1]).toEqual({ x: 60, y: 682, width: 20, height: 30, verb: "stroke" });
+    expect(page.ruled_rects.items[2]).toEqual({ x: 10, y: 742, width: 20, height: 30, verb: "clip" });
+    expect(page.operator_counts).toEqual({ image_paint_ops: 3, path_segments: 20, path_construct_ops: 4 });
+  });
+
+  it("treats a matrix-less Form XObject as identity instead of failing the page", async () => {
+    const fixture = fakeOperatorFixture(
+      [74, 2, 75],
+      [
+        [null, null],
+        rectPath(3, 30, 40, 20, 30),
+        null,
+      ],
+    );
+    const { result } = await runFake([fixture]);
+    const page = result.pages[0];
+    expect(page.ruled_rects).toMatchObject({ status: "available", observed_count: 1, returned_count: 1 });
+    expect(page.ruled_rects.items[0]).toEqual({ x: 30, y: 722, width: 20, height: 30, verb: "fill" });
+    expect(page.errors.some(error => error.stage === "ruled_rects")).toBe(false);
+  });
+
+  it("accepts an annotations-stage page error through structured-output validation (zyx.8)", async () => {
+    const { result } = await runFake([{ items: [], annotationError: new Error("synthetic annotation failure") }]);
+    const annotationEntry = result.pages[0].errors.find(error => error.stage === "annotations");
+    expect(annotationEntry).toMatchObject({ stage: "annotations", message: "synthetic annotation failure" });
+    const validated = validateStructuredToolResult("read_pdf_layout", {
+      content: [{ type: "text", text: "annotation-stage regression" }],
+      structuredContent: result,
+    });
+    expect(validated.structuredContent).toEqual(result);
+  });
+
+  it("leaves the CTM unchanged when restore underflows", async () => {
+    const fixture = fakeOperatorFixture(
+      [12, 11, 2],
+      [
+        [2, 0, 0, 2, 10, 20],
+        null,
+        rectPath(3),
+      ],
+    );
+    const { result } = await runFake([fixture]);
+    expect(result.pages[0].ruled_rects.items).toEqual([
+      { x: 30, y: 672, width: 40, height: 60, verb: "fill" },
+    ]);
+  });
+
+  it("keeps an unmatched restore inside a Form XObject from escaping its outer CTM", async () => {
+    const fixture = fakeOperatorFixture(
+      [12, 74, 11, 75, 2],
+      [
+        [2, 0, 0, 2, 10, 20],
+        [new Float32Array([1, 0, 0, 1, 50, 60]), null],
+        null,
+        null,
+        rectPath(3),
+      ],
+    );
+    const { result } = await runFake([fixture]);
+    expect(result.pages[0].ruled_rects.items).toEqual([
+      { x: 30, y: 672, width: 40, height: 60, verb: "fill" },
+    ]);
+  });
+
+  it("deduplicates on the half-point grid and reports a self-contained cap", async () => {
+    const duplicateFixture = fakeOperatorFixture(
+      [2, 2, 2],
+      [rectPath(3), rectPath(3, 10.2, 20.2, 20.2, 30.2), rectPath(3, 10, 20, 4, 30)],
+    );
+    const deduplicated = await runFake([duplicateFixture]);
+    expect(deduplicated.result.pages[0].ruled_rects).toMatchObject({
+      status: "available",
+      observed_count: 1,
+      returned_count: 1,
+    });
+
+    const operations = [];
+    const argsArray = [];
+    for (let index = 0; index < 513; index += 1) {
+      operations.push(2);
+      argsArray.push(rectPath(3, 10 + (index % 32) * 8, 20 + Math.floor(index / 32) * 8, 6, 6));
+    }
+    const capped = await runFake([fakeOperatorFixture(operations, argsArray)]);
+    const rects = capped.result.pages[0].ruled_rects;
+    expect(rects.status).toBe("truncated");
+    expect(rects.observed_count).toBe(513);
+    expect(rects.returned_count).toBe(512);
+    expect(rects.items).toHaveLength(512);
+    expect(capped.result.pages[0].errors).toEqual([
+      expect.objectContaining({ stage: "ruled_rects", code: "RULED_RECT_PAGE_LIMIT" }),
+    ]);
+  });
+
+  it("applies text-integrity thresholds over raw PDF.js item text", async () => {
+    const run = async text => (await runFake([{ items: [textItem({ text, x: 50, top: 50 })] }])).result.pages[0].text_integrity;
+    const runItems = async texts => (await runFake([{ items: texts.map((text, index) => textItem({ text, x: 50, top: 50 + index * 20 })) }])).result.pages[0].text_integrity;
+    expect((await run("\uFFFD")).status).toBe("ok");
+    expect((await run("\uFFFD\uFFFD"))).toMatchObject({ status: "suspect", signals: [{ kind: "replacement_characters", count: 2 }] });
+    expect((await run(`\uFFFD\uFFFD${"a".repeat(78)}`)).status).toBe("suspect");
+    expect((await run(`\uFFFD\uFFFD${"a".repeat(79)}`)).status).toBe("ok");
+    expect((await run(`${"\uFFFDa".repeat(12)}${"b".repeat(216)}`)).status).toBe("suspect");
+    expect((await run(`${"\uFFFDa".repeat(12)}${"b".repeat(217)}`)).status).toBe("ok");
+    expect((await run("\uE000\uE001\uE002ab")).status).toBe("suspect");
+    expect((await run("\uE000abcd")).status).toBe("ok");
+    expect((await run("\uE000a\uE001bc")).status).toBe("ok");
+    expect((await run("\uE000a\uE001b\uE002c")).status).toBe("suspect");
+    expect((await run("\uE000a\uE001bcd")).status).toBe("ok");
+    expect((await run("\uE000a\uE001b\uE002")).status).toBe("suspect");
+    expect((await run("\uE000a\uE001\uE002")).status).toBe("ok");
+    expect((await run("aa\u0080\u0081")).status).toBe("ok");
+    expect((await run("aaa\u0080\u0081")).status).toBe("suspect");
+    expect((await run("abcd\u0080")).status).toBe("ok");
+    expect((await run("abc\u0080\u0081")).status).toBe("suspect");
+    expect((await run(`${"a".repeat(38)}\u0080\u0081`)).status).toBe("suspect");
+    expect((await run(`${"a".repeat(39)}\u0080\u0081`)).status).toBe("ok");
+    expect((await runItems([
+      `\uFFFD\uFFFD${"a".repeat(38)}`,
+      `\uFFFD\uFFFD${"a".repeat(37)}`,
+      `\uFFFD\uFFFD${"a".repeat(37)}`,
+    ])).status).toBe("suspect");
+    expect((await runItems([
+      `\uFFFD\uFFFD${"a".repeat(38)}`,
+      `\uFFFD\uFFFD${"a".repeat(37)}`,
+      `\uFFFD\uFFFD${"a".repeat(38)}`,
+    ])).status).toBe("ok");
+    expect((await run(`${"\uFFFD".repeat(8)}${"a".repeat(312)}`)).status).toBe("suspect");
+    expect((await run(`${"\uFFFD".repeat(8)}${"a".repeat(313)}`)).status).toBe("ok");
+    expect((await run("!".repeat(50))).signals).toEqual([{ kind: "non_alphanumeric_dominance", count: 1 }]);
+    expect((await run(".".repeat(50))).status).toBe("ok");
+    expect((await run(`${"a".repeat(27)}${"!".repeat(27)}._·`)).status).toBe("ok");
+    expect((await run(`${"a".repeat(27)}${"!".repeat(27)}._`)).status).toBe("suspect");
+  });
+
+  it("rejects independent replay forgeries for every new evidence block and is deterministic", async () => {
+    const fixture = fakeOperatorFixture([2, 1], [rectPath(4), null]);
+    const first = await runFake([{ ...fixture, items: [textItem({ text: "evidence", x: 50, top: 50 })] }]);
+    const second = await runFake([{ ...fixture, items: [textItem({ text: "evidence", x: 50, top: 50 })] }]);
+    expect(second.result).toEqual(first.result);
+    const mutations = [
+      layout => { layout.pages[0].ruled_rects.items[0].x += 1; },
+      layout => { layout.pages[0].ruling_segments.items[0].x1 += 1; },
+      layout => { layout.pages[0].text_integrity.status = "suspect"; },
+      layout => { layout.pages[0].operator_counts.path_segments += 1; },
+    ];
+    for (const mutate of mutations) {
+      const forged = structuredClone(first.result);
+      mutate(forged);
+      const { pdfjs } = fakePdfjs([{ ...fixture, items: [textItem({ text: "evidence", x: 50, top: 50 })] }]);
+      await expect(validatePdfLayoutSourceEvidence(forged, { pdfjsLib: pdfjs, sourceBytes: first.bytes }))
+        .rejects.toThrow(/dedicated operator evidence|text-integrity evidence/);
+    }
+  });
+});
+
 describe("read_pdf_layout MCP tool", () => {
   let client;
   let transport;
@@ -248,14 +1404,14 @@ describe("read_pdf_layout MCP tool", () => {
     expect(first.isError).not.toBe(true);
     expect(JSON.stringify(first.structuredContent)).toBe(JSON.stringify(second.structuredContent));
     expect(first.structuredContent).toMatchObject({
-      ir: { name: "pdf-tools.extraction-ir", version: "1.0.0" },
+      ir: { name: "pdf-tools.extraction-ir", version: "1.6.0" },
       parser: { name: "pdfjs-dist", version: "5.4.624" },
       source: { sha256: expect.stringMatching(/^[a-f0-9]{64}$/) },
       id_scope: {
         kind: "source_parser_ir_options",
         source_sha256: expect.stringMatching(/^[a-f0-9]{64}$/),
         parser_version: "5.4.624",
-        ir_version: "1.0.0",
+        ir_version: "1.6.0",
         max_output_characters: 200000,
       },
       page_range: { requested_start_page: 1, requested_end_page: 1, start_page: 1, end_page: 1, total_pages: 1 },
@@ -623,6 +1779,91 @@ describe("read_pdf_layout MCP tool", () => {
       .rejects.toThrow(/operator evidence differs from reparsed source/);
   });
 
+  it("captures bounded solid-mask rectangles and binds them to source operators", async () => {
+    const config = {
+      items: [textItem({ text: "Cell", x: 110, top: 100 })],
+      operations: [10, 12, 76, 11],
+      operatorArgs: [null, [40, 0, 0, -0.5, 100, 700], [], null],
+    };
+    const { result, bytes } = await runFake([config]);
+    expect(result.pages[0].painted_rectangles).toEqual({
+      status: "available",
+      truncated: false,
+      observed_count: 1,
+      returned_count: 1,
+      items: [{
+        id: "p0001-r000003",
+        source_operation_index: 2,
+        source_kind: "solid_color_image_mask",
+        graphics_transform: [40, 0, 0, -0.5, 100, 700],
+        quad: [
+          { x: 100, y: 92 },
+          { x: 140, y: 92 },
+          { x: 140, y: 92.5 },
+          { x: 100, y: 92.5 },
+        ],
+        bbox: { x: 100, y: 92, width: 40, height: 0.5 },
+      }],
+    });
+    const { pdfjs } = fakePdfjs([config]);
+    await expect(validatePdfLayoutSourceEvidence(result, { pdfjsLib: pdfjs, sourceBytes: bytes }))
+      .resolves.toBe(result);
+
+    const translated = structuredClone(result);
+    const painted = translated.pages[0].painted_rectangles.items[0];
+    painted.graphics_transform[4] += 5;
+    painted.quad = painted.quad.map(point => ({ ...point, x: point.x + 5 }));
+    painted.bbox.x += 5;
+    expect(() => validatePdfLayoutSemantics(translated, { sourceBytes: bytes })).not.toThrow();
+    await expect(validatePdfLayoutSourceEvidence(translated, { pdfjsLib: pdfjs, sourceBytes: bytes }))
+      .rejects.toThrow(/painted_rectangles|operator evidence differs/);
+  });
+
+  it("retains the full painted-rectangle transform under large UserUnit scaling", async () => {
+    const graphicsTransform = [1.23456, 0, 0, -0.5, 100.12345, 700.67891];
+    const viewport = {
+      scale: 75,
+      width: 45_900,
+      height: 59_400,
+      transform: [75, 0, 0, -75, 0, 59_400],
+    };
+    const config = {
+      userUnit: 75,
+      viewport,
+      items: [textItem({ text: "Scaled", x: 110, top: 100 })],
+      operations: [10, 12, 76, 11],
+      operatorArgs: [null, graphicsTransform, [], null],
+    };
+    const { result, bytes } = await runFake([config]);
+    expect(result.pages[0].painted_rectangles.items[0].graphics_transform).toEqual(graphicsTransform);
+    expect(() => validatePdfLayoutSemantics(result, { sourceBytes: bytes })).not.toThrow();
+    const { pdfjs } = fakePdfjs([config]);
+    await expect(validatePdfLayoutSourceEvidence(result, { pdfjsLib: pdfjs, sourceBytes: bytes }))
+      .resolves.toBe(result);
+  });
+
+  it("caps painted rectangle evidence without accepting it as complete", async () => {
+    const operations = [];
+    const operatorArgs = [];
+    for (let index = 0; index < 501; index += 1) {
+      operations.push(10, 12, 76, 11);
+      operatorArgs.push(null, [20, 0, 0, -0.5, 20, 700 - index * 0.01], [], null);
+    }
+    const { result } = await runFake([{
+      items: [textItem({ text: "Bounded", x: 50, top: 50 })],
+      operations,
+      operatorArgs,
+    }]);
+    expect(result.pages[0].painted_rectangles).toMatchObject({
+      status: "available",
+      truncated: true,
+      observed_count: 501,
+      returned_count: 500,
+    });
+    expect(result.pages[0].extraction_status).toBe("partial");
+    expect(result.pages[0].needs_visual_inspection).toBe(true);
+  });
+
   it("fails closed on retention/output limits and keeps references non-dangling", async () => {
     const limited = await client.callTool({
       name: "read_pdf_layout",
@@ -875,6 +2116,80 @@ describe("Extraction IR hostile reconstruction", () => {
     expect(raw[2]).toMatchObject({ has_eol: true, text_kind: "empty", raw_width: 0, width: 0, bbox_status: "degenerate" });
     expect(raw[1].font).toEqual({ family: "Test Sans", ascent: 0.8, descent: -0.2, vertical: false });
     expect(result.pages[0].limitations.join(" ")).toContain("hidden, clipped, duplicated");
+  });
+
+  it("rejects invented glyph-recovery provenance", async () => {
+    const { result } = await runFake([{ items: [textItem({ text: "A", x: 10, top: 20 })] }]);
+    const forged = structuredClone(result);
+    const item = forged.pages[0].raw_items[0];
+    item.source_text = "A";
+    item.text = "−";
+    item.glyph_recoveries = [{
+      source_utf16_start: 0,
+      source_utf16_end: 1,
+      output_utf16_start: 0,
+      output_utf16_end: 1,
+      original_char_code: 0,
+      source_unicode: "A",
+      operator_unicode: "A",
+      target_unicode: "−",
+      binding_kind: "exact_text_scalar",
+      operator_advance_width: null,
+      operator_anchor_span_width: null,
+      operator_raw_transform: null,
+      font_name: item.font_name,
+      registry_id: "cmsy-pk-raster-minus-v1",
+      qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+      glyph_sha256: "3f6fdf2abc68f5693f9ea7cdec4d94214a57fb953fb66c747b86dd1f6293d807",
+      witness_glyph_sha256: [
+        "cf5071eb6c006bc80cf9399c28dc00f7e12d8e7f090942de46cb06d404481dd6",
+        "da5345f465509486a66762b6cf8918a3ba5c937f4ca8c7bc4657f4f905d0b4be",
+      ],
+      tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
+      glyph_evidence_version: "pdfjs-type3-glyph-evidence-v2",
+    }];
+    expect(() => validatePdfLayoutSemantics(forged)).toThrow(/registry evidence is invalid/);
+  });
+
+  it("replays the source operators instead of trusting a well-formed recovery claim", async () => {
+    const sourceItem = textItem({ text: "\u0000", x: 10, top: 20 });
+    const { result, bytes } = await runFake([{ items: [sourceItem] }]);
+    const forged = structuredClone(result);
+    const item = forged.pages[0].raw_items[0];
+    item.source_text = "\u0000";
+    item.text = "−";
+    item.glyph_recoveries = [{
+      source_utf16_start: 0,
+      source_utf16_end: 1,
+      output_utf16_start: 0,
+      output_utf16_end: 1,
+      original_char_code: 0,
+      source_unicode: "\u0000",
+      operator_unicode: "\u0000",
+      target_unicode: "−",
+      binding_kind: "exact_text_scalar",
+      operator_advance_width: null,
+      operator_anchor_span_width: null,
+      operator_raw_transform: null,
+      font_name: item.font_name,
+      registry_id: "cmsy-pk-raster-minus-v1",
+      qualification: "ctan-cm-encoding-plus-reviewed-pk-raster-v1",
+      glyph_sha256: "3f6fdf2abc68f5693f9ea7cdec4d94214a57fb953fb66c747b86dd1f6293d807",
+      witness_glyph_sha256: [
+        "cf5071eb6c006bc80cf9399c28dc00f7e12d8e7f090942de46cb06d404481dd6",
+        "da5345f465509486a66762b6cf8918a3ba5c937f4ca8c7bc4657f4f905d0b4be",
+      ],
+      tfm_reference_version: "ctan-cm-tfm-9c0f99fa34c7",
+      glyph_evidence_version: "pdfjs-type3-glyph-evidence-v2",
+    }];
+    forged.pages[0].lines[0].text = "−";
+    forged.pages[0].flow_text = "−";
+    forged.pages[0].spatial_text = forged.pages[0].spatial_text.replace("\u0000", "−");
+    expect(() => validatePdfLayoutSemantics(forged, { sourceBytes: bytes })).not.toThrow();
+    await expect(validatePdfLayoutSourceEvidence(forged, {
+      pdfjsLib: fakePdfjs([{ items: [sourceItem] }]).pdfjs,
+      sourceBytes: bytes,
+    })).rejects.toThrow(/differs from reparsed source/);
   });
 
   it("binds truncation to the exact parser-order TextItem prefix", async () => {
@@ -1205,6 +2520,7 @@ describe("Extraction IR hostile reconstruction", () => {
             rotate: 0,
             getViewport: () => ({ width: 612, height: 792, transform: [1, 0, 0, -1, 0, 792] }),
             getTextContent: () => new Promise(() => {}),
+            getAnnotations: async () => [],
             cleanup: () => { cleanup.page += 1; },
           }),
           destroy: async () => { cleanup.document += 1; },
@@ -1237,6 +2553,7 @@ describe("Extraction IR hostile reconstruction", () => {
               rotate: 0,
               getViewport: () => ({ width: 612, height: 792, transform: [1, 0, 0, -1, 0, 792] }),
               getTextContent: async () => { throw fatalError; },
+              getAnnotations: async () => [],
               cleanup: () => { fatalCleanup.page += 1; },
             }),
             destroy: async () => { fatalCleanup.document += 1; },
@@ -1284,6 +2601,7 @@ describe("Extraction IR hostile reconstruction", () => {
               rotate: 0,
               getViewport: () => ({ width: 612, height: 792, transform: [1, 0, 0, -1, 0, 792] }),
               getTextContent: async () => ({ items: [], styles: {} }),
+              getAnnotations: async () => [],
               getOperatorList: testCase.kind === "deadline"
                 ? () => new Promise(() => {})
                 : async () => { throw testCase.error; },
@@ -1722,5 +3040,31 @@ describe("Extraction IR hostile reconstruction", () => {
     page.flow_text = merged.text;
     page.spatial_text = `[${merged.id} x=${merged.x} y=${merged.y} w=${merged.width} h=${merged.height}] ${merged.text}`;
     expect(() => validatePdfLayoutSemantics(mutant)).toThrow(/baseline spread mismatch/);
+  });
+
+  it("splits source-order runs when a small first glyph would make the final baseline spread invalid", async () => {
+    const item = (text, x, top, size, hasEOL) => ({
+      ...textItem({
+        text,
+        x,
+        top,
+        width: 10,
+        hasEOL,
+        transform: [size, 0, 0, size, x, 792 - top - size],
+      }),
+      height: size,
+    });
+    const { result } = await runFake([{ items: [
+      item("A", 10, 98.6, 2, false),
+      item("B", 25, 87, 20, false),
+      item("C", 50, 89, 20, true),
+    ] }]);
+
+    expect(result.pages[0].reading_order.strategy).toBe("source_order_fallback");
+    expect(result.pages[0].lines.map(line => line.item_ids)).toEqual([
+      ["p0001-i000001", "p0001-i000002"],
+      ["p0001-i000003"],
+    ]);
+    expect(() => validatePdfLayoutSemantics(result)).not.toThrow();
   });
 });

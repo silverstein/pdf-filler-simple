@@ -1,0 +1,97 @@
+# Pull-request gate (Linux).
+#
+# Why this exists. Every other workflow in this repository is
+# workflow_dispatch only, on the deliberate reasoning recorded in
+# windows-render.yml and windows-runtime.yml: Windows runners bill at a
+# higher rate, and evidence is worth more at an exact SHA than continuously.
+# That reasoning is sound for Windows evidence and does not transfer to the
+# ordinary gate, because it assumes a human ran the gate before pushing.
+# Dependabot is the counter-example: it opens pull requests that no human
+# has run anything against, and three sat open with no signal at all.
+#
+# What it covers that `npm test` alone does not. The share contract, the
+# packed MCPB build, and the packed smoke are release steps that live
+# outside `npm test`. A forty-third tool once landed with the in-test
+# contract updated and those two release checks stale, so `npm run
+# smoke:mcpb` was broken on master and nobody knew until release. Running
+# them here is the point, not an extra.
+#
+# Node matrix. package.json declares `^20.19.0 || >=22.12.0`. Nothing
+# verified the 20 half of that claim before this workflow; the maintainer's
+# machine and both Windows jobs run 22. Either the claim holds on 20 or the
+# range should be narrowed, and this is what decides which.
+#
+# Platform boundary. This is a Linux runner. Suites that gate on
+# `process.platform === "darwin"` — the native-canvas mechanism campaigns,
+# the macOS supervisor and its exec budget, the system-renderer fallback —
+# skip here by design and remain macOS-only evidence. A green run on this
+# workflow is not a substitute for the maintainer's local qualification run;
+# it is a floor beneath incoming changes.
+name: Pull-request gate
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A second push to the same pull request makes the first run's answer
+# worthless, so cancel it rather than paying for both.
+concurrency:
+  group: pr-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  gate:
+    name: gate (node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      # Do not stop the 22 job because 20 failed, or vice versa: which of
+      # the two failed is the whole signal when the engines range is what
+      # is in question.
+      fail-fast: false
+      matrix:
+        node: ["20.19", "22.12"]
+
+    steps:
+      # Pinned by commit SHA, matching the two Windows workflows. A floating
+      # tag is a third party's mutable pointer into this repository's build.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: ${{ matrix.node }}
+          cache: npm
+
+      # `npm ci` installs from package-lock.json exactly. It must not be
+      # softened to `npm install` here: the build toolchain check compares
+      # installed versions against the lock and would then be comparing the
+      # lock against a tree npm was free to resolve differently.
+      - name: Install
+        run: npm ci
+
+      # PDF_TOOLS_TIMING_CALIBRATED=skip stands down two suites that assert
+      # wall-clock budgets calibrated to the maintainer's machine:
+      # deep-malformed-campaign (15 s per call, measured at 15001-15016 ms
+      # here) and fuzz-malformed-pdfs (one serial loop against a 180 s
+      # per-test bound). Both measure host throughput, and on a two-core
+      # shared runner they report the runner as a product failure. They are
+      # skipped rather than filtered out, so the run states plainly that 120
+      # tests did not execute. They remain maintainer-hardware evidence, the
+      # same claim boundary the Windows workflows draw.
+      - name: Test suite
+        run: npm test
+        env:
+          PDF_TOOLS_TIMING_CALIBRATED: skip
+
+      # Release steps that live outside `npm test`. See the header.
+      - name: Share contract
+        run: npm run test:contract:share
+
+      - name: Build MCPB
+        run: npm run build:mcpb
+
+      - name: Packed MCPB smoke
+        run: npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb

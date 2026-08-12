@@ -1,0 +1,57 @@
+# Windows render proof.
+#
+# There is no Windows host on the maintainer's network, so this job is the only
+# way to measure Windows behaviour of the PDF page renderer. It is deliberately
+# workflow_dispatch only: Windows runners bill at a higher rate than Linux, and
+# this repository batches pushes to control CI noise. Standard runners are
+# free for this public repository; the dispatch-only trigger keeps runs
+# deliberate rather than costly. Trigger it when Windows evidence is needed.
+name: Windows render proof
+
+on:
+  workflow_dispatch:
+    inputs:
+      embedded_native_canvas:
+        description: "Lift the embedded-host native canvas block (1 to lift)"
+        required: false
+        default: "1"
+
+permissions:
+  contents: read
+
+jobs:
+  render:
+    name: render on windows-latest
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install exact locked dependencies
+        run: npm ci
+
+      # Baseline capability: does the native canvas binding load and render at
+      # all on Windows, outside any embedded host?
+      - name: Ordinary Node host render
+        run: npx vitest run test/render-pdf-page.test.js
+
+      # The question that matters for Claude Desktop on Windows. An embedded
+      # Electron host has no macOS system renderer, so if the native canvas
+      # block stays in force there is no renderer at all.
+      - name: Embedded host render probe
+        env:
+          PDF_TOOLS_EMBEDDED_NATIVE_CANVAS: ${{ inputs.embedded_native_canvas }}
+        run: node .github/workflows/windows-render-probe.mjs
+
+      - name: Upload probe result
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: windows-render-probe
+          path: windows-render-probe.json
+          if-no-files-found: warn

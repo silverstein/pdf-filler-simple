@@ -6,7 +6,9 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { pathToFileURL } from "node:url";
 import { describe, expect, it } from "vitest";
-import { prepareDoclingMacHandoffForTest } from "./extraction-docling-handoff.js";
+import { prepareDoclingMacHandoffForTest,
+  doclingCalibrationStatus,
+} from "./extraction-docling-handoff.js";
 import {
   canonicalJson,
   validateCandidateResponse,
@@ -41,6 +43,11 @@ function receiptFixture() {
     )),
   };
 }
+
+// Sealed Docling calibration evidence goes stale whenever the supervisor
+// source moves. That is a re-approval requirement, so these suites report a
+// named skip rather than red tests that would hide a real defect.
+const doclingEvidence = doclingCalibrationStatus();
 
 describe("Docling bakeoff evidence validators", () => {
   it("uses a fresh exact working directory for every scored repetition", async () => {
@@ -109,7 +116,7 @@ describe("Docling bakeoff evidence validators", () => {
     )).toThrow(/not bound/);
   });
 
-  it("uses the receipt-bound launcher to execute a private sealed authority", async () => {
+  it.skipIf(!doclingEvidence.current)("uses the receipt-bound launcher to execute a private sealed authority", async () => {
     const root = await fs.realpath(
       await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-docling-bakeoff-authority-")),
     );

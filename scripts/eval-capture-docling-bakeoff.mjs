@@ -117,6 +117,20 @@ function validateSchema(value, schema, label) {
 }
 
 export function validateReceipt(receipt, schema) {
+  // A calibration-bootstrap handoff exists solely to re-measure a stale
+  // supervisor calibration. Its receipt must never feed a qualifying or
+  // scored capture, so this trust decision comes before shape validation.
+  // Refusing here is deliberate even though it also blocks a bootstrap
+  // re-measurement through this runner: re-measurement is currently
+  // impossible anyway because the staging orchestrator was never retained,
+  // and any rebuilt orchestrator must add its own explicitly tainted
+  // measurement mode under a reviewed decision rather than inherit this
+  // qualifying path.
+  if (receipt?.calibration_bootstrap === true) {
+    throw new Error(
+      "Docling receipt was produced by a calibration-bootstrap handoff and cannot produce qualifying or scored evidence",
+    );
+  }
   validateSchema(receipt, schema, "Docling receipt");
   const identityDigest = sha256(Buffer.from(
     `pdf-tools.docling-macos-handoff.v1\0${canonicalJson(receipt.identity)}`,

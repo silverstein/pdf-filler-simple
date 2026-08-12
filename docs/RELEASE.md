@@ -15,11 +15,40 @@ Update these files together:
 ```
 npm ci
 npm run test:all
+npm run qpdf-wasm:verify
 npm run build:mcpb
 npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb
 node package-for-friend.js
 npm run test:contract:share
 ```
+
+`qpdf-wasm:verify` is the only step here that needs Docker and the only one
+that takes about 45 minutes; under x86-64 emulation on Apple Silicon it is the
+long pole of the whole checklist. It rebuilds the vendored QPDF WebAssembly
+runtime twice from pinned sources with build-stage networking disabled and
+requires both results to equal `vendor/qpdf-wasm/expected-output.json` byte for
+byte. It is deliberately excluded from `npm test` and from `npm run test:all`,
+which instead run the sub-second
+`test/qpdf-wasm-runtime-artifact.test.js`: that suite pins the committed
+runtime to the same contract, to the pinned source hashes, and to the notice
+manifest, and loads the committed module to prove it still works — but it does
+not rebuild, so only this release step proves the artifact is still
+reproducible from source. Run it nightly if a release is not imminent. If the
+runtime has not changed since the last verified release, a recorded prior run
+is acceptable evidence; if `vendor/qpdf-wasm/` changed at all, it is not.
+
+If `package-lock.json` changed at all since the last release — anything added,
+removed or bumped — run `npm run vendor:npm-licenses` first and commit the
+regenerated `vendor/npm-licenses/`. It reads each pinned registry tarball, so
+it needs network access, and it is the only step that does. Both artifact
+builds fail closed if the committed licence evidence does not cover the lock
+exactly, so a forgotten regeneration stops the release rather than shipping a
+bill with silent components.
+
+Promote a rebuilt runtime with
+`node scripts/vendor-qpdf-wasm-runtime.mjs <extracted-build-directory>`, which
+regenerates `vendor/qpdf-wasm/runtime.provenance.json`. Never hand-edit that
+file.
 
 `build:mcpb` uses repository-pinned MCPB 2.1.2 to validate two clean production
 stages, installs the five locked native targets into each, and produces both
@@ -28,7 +57,12 @@ byte-identical output from isolated build processes, exact stage/archive content
 canonical re-encoding, normalized ZIP
 metadata, safe unique paths, the protected `pdfjs-dist@5.4.624` legacy runtime,
 and pinned MCPB 2.1.2 `info`/`unpack` consumption before atomically replacing
-the prior artifact. External `unzip -t` is an additional check when available,
+the prior artifact. Each stage also gets a generated `SBOM.cdx.json` at its
+archive root, covering the locked production graph and the QPDF WebAssembly
+runtime's native components, every one of them stating licence terms.
+`smoke:mcpb` checks those licences against the packaged code itself and
+requires the bill's `scope` to match what is physically inside the archive.
+External `unzip -t` is an additional check when available,
 not a Windows portability claim. The build reports its measured peak child RSS. Do not
 substitute a host-local global `mcpb pack` for release builds.
 

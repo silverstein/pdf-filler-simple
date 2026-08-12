@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   editDistance,
   projectMarkdownPages,
+  projectMarkdownTable,
   scoreDistinctFragments,
   scoreExtractionBakeoff,
   scoreTable,
@@ -131,6 +132,61 @@ describe("extraction bakeoff scorer", () => {
     expect(JSON.stringify(report)).not.toContain("Raster truth");
   });
 
+  it("scores a reconstructed Markdown table through the wired bakeoff path", () => {
+    const inputs = reports();
+    // Give the fixture a real expected table and a Markdown payload that
+    // actually reconstructs it. Before the projection was wired, candidateTable
+    // was hard-coded null for Markdown and this scored as absent.
+    inputs.manifest.fixtures[0].expected.table = {
+      page: 1,
+      row_count: 2,
+      column_count: 2,
+      merged_cells: [],
+      cells: [
+        { row: 1, column: 1, value: "Item" },
+        { row: 1, column: 2, value: "Qty" },
+        { row: 2, column: 1, value: "Paper" },
+        { row: 2, column: 2, value: "2" },
+      ],
+    };
+    inputs.markdownReport.cases[0].runs[0].result.markdown = [
+      "<!-- PDF page 1 -->",
+      "",
+      "# TITLE",
+      "Alpha beta",
+      "",
+      "| Item | Qty |",
+      "| --- | --- |",
+      "| Paper | 2 |",
+      "",
+      "---",
+      "",
+      "<!-- PDF page 2 -->",
+      "",
+      "[No source-backed text was available on this page.]",
+      "",
+      "## Conversion gaps",
+      "",
+      "- OCR not performed",
+      "",
+      "## Conversion limitations",
+      "",
+      "- OCR is not performed.",
+      "",
+    ].join("\n");
+    const report = scoreExtractionBakeoff({
+      ...inputs,
+      sourceBindings: { manifest_sha256: "c".repeat(64) },
+    });
+    const table = report.cases[0].systems.markdown.table;
+    expect(table.applicable).toBe(true);
+    expect(table.present).toBe(true);
+    expect(table.dimensions_exact).toBe(true);
+    expect(table.cells_exact).toBe(true);
+    expect(table.topology_exact).toBe(true);
+    expect(table.exact_cells).toBe(4);
+  });
+
   it("rejects case or source drift", () => {
     const inputs = reports();
     inputs.doclingReport.cases[0].source_sha256 = "d".repeat(64);
@@ -152,5 +208,120 @@ describe("extraction bakeoff scorer", () => {
       ...inputs,
       sourceBindings: { manifest_sha256: "c".repeat(64) },
     })).toThrow(/page projection does not match fixture truth pages/);
+  });
+});
+
+describe("Markdown table projection", () => {
+  const page = markdown => `<!-- PDF page 1 -->\n\n${markdown}\n\n## Conversion limitations\n\n- none\n`;
+
+  it("projects a conforming table into exact candidate topology", () => {
+    const table = projectMarkdownTable(page([
+      "| Region | Q1 | Q2 |",
+      "| --- | --- | --- |",
+      "| North | 1200 | 1450 |",
+      "| South | 980 | 1020 |",
+    ].join("\n")), 1);
+    expect(table).not.toBeNull();
+    expect(table.page).toBe(1);
+    expect(table.row_count).toBe(3);
+    expect(table.column_count).toBe(3);
+    expect(table.merged_regions).toEqual([]);
+    expect(table.cells).toHaveLength(9);
+    expect(table.cells[0]).toEqual({ row: 1, column: 1, value: "Region" });
+    expect(table.cells[8]).toEqual({ row: 3, column: 3, value: "1020" });
+  });
+
+  it("scores a projected table as exact against a matching expectation", () => {
+    const expected = {
+      page: 1,
+      row_count: 2,
+      column_count: 2,
+      merged_cells: [],
+      cells: [
+        { row: 1, column: 1, value: "Item" },
+        { row: 1, column: 2, value: "Qty" },
+        { row: 2, column: 1, value: "Paper" },
+        { row: 2, column: 2, value: "2" },
+      ],
+    };
+    const candidate = projectMarkdownTable(page([
+      "| Item | Qty |",
+      "| --- | --- |",
+      "| Paper | 2 |",
+    ].join("\n")), 1);
+    const score = scoreTable(expected, candidate);
+    expect(score.present).toBe(true);
+    expect(score.dimensions_exact).toBe(true);
+    expect(score.cells_exact).toBe(true);
+    expect(score.topology_exact).toBe(true);
+    expect(score.exact_cells).toBe(4);
+  });
+
+  it("returns null when the page has no conforming table", () => {
+    expect(projectMarkdownTable(page("Just prose, no table here."), 1)).toBeNull();
+    // A header row with no delimiter row is not a table.
+    expect(projectMarkdownTable(page("| Region | Q1 |\n| North | 1200 |"), 1)).toBeNull();
+    expect(projectMarkdownTable(page("| Region | Q1 |"), 1)).toBeNull();
+    expect(projectMarkdownTable("no page markers at all", 1)).toBeNull();
+    expect(projectMarkdownTable(page("| a | b |\n| --- | --- |\n| 1 | 2 |"), 4)).toBeNull();
+  });
+
+  it("keeps an escaped delimiter inside its cell and restores source text", () => {
+    const table = projectMarkdownTable(page([
+      "| Symbol | Meaning |",
+      "| --- | --- |",
+      "| a\\|b | pipe |",
+      "| c\\\\d | backslash |",
+      "| &lt;tag&gt; &amp; co | markup |",
+      "| https&#58;//example&#46;com | url |",
+    ].join("\n")), 1);
+    expect(table).not.toBeNull();
+    expect(table.column_count).toBe(2);
+    expect(table.row_count).toBe(5);
+    const valueAt = (row, column) => table.cells
+      .find(cell => cell.row === row && cell.column === column).value;
+    expect(valueAt(2, 1)).toBe("a|b");
+    expect(valueAt(3, 1)).toBe("c\\d");
+    expect(valueAt(4, 1)).toBe("<tag> & co");
+    expect(valueAt(5, 1)).toBe("https://example.com");
+  });
+
+  it("refuses a malformed table rather than guessing its topology", () => {
+    // Body row with fewer columns than the header.
+    expect(projectMarkdownTable(page([
+      "| a | b | c |",
+      "| --- | --- | --- |",
+      "| 1 | 2 |",
+    ].join("\n")), 1)).toBeNull();
+    // Delimiter row width disagrees with the header.
+    expect(projectMarkdownTable(page([
+      "| a | b | c |",
+      "| --- | --- |",
+      "| 1 | 2 | 3 |",
+    ].join("\n")), 1)).toBeNull();
+  });
+
+  it("reports no merged regions, because GFM cannot express them", () => {
+    const expected = {
+      page: 1,
+      row_count: 2,
+      column_count: 2,
+      merged_cells: ["R1C1:R1C2"],
+      cells: [
+        { row: 1, column: 1, value: "Span" },
+        { row: 1, column: 2, value: "" },
+        { row: 2, column: 1, value: "a" },
+        { row: 2, column: 2, value: "b" },
+      ],
+    };
+    const candidate = projectMarkdownTable(page([
+      "| Span |  |",
+      "| --- | --- |",
+      "| a | b |",
+    ].join("\n")), 1);
+    const score = scoreTable(expected, candidate);
+    expect(score.present).toBe(true);
+    expect(score.merged_regions_exact).toBe(false);
+    expect(score.topology_exact).toBe(false);
   });
 });

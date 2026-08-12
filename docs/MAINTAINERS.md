@@ -100,10 +100,29 @@ therefore remain unrecognized by a broad text read.
 `convert_pdf_to_markdown` renders only the source-validated, bounded local
 layout IR. It preserves supported text and conservative order, returns typed
 gaps for incomplete coverage, and optionally commits a verified UTF-8 `.md`
-file. It does not run OCR, recover PDF link annotations, infer table topology,
-or use Docling, Python, a model, or the network. A complete status means the
-requested text-layer slice was converted under this bounded contract, not that
+file. It reconstructs evidence-complete recurring-column tables that carry real
+header evidence. It can also reconstruct one unambiguous complete closed grid
+from bounded solid-mask rectangle evidence when every retained text item fits
+exactly one cell and the first row has real header evidence. It emits
+source-validated external http or https link annotations that map to exactly
+one contiguous run of text. Unsupported text from table structures and link
+targets, including stroked, incomplete, or ambiguous grids, aligned partial
+dividers, internal destinations, actions, other URL schemes, and ambiguous
+labels, stays escaped and is reported as a typed gap. Cell artwork is omitted
+and reported as a vector-content gap. It does not run OCR or use Docling,
+Python, a model, or the network. A complete status means the requested
+text-layer slice was converted under this bounded contract, not that
 the original PDF's visual or semantic structure was fully recovered.
+
+For an abandoned born-digital table, a host may opt into proposal packets and
+submit a structural assignment to `verify_table_proposal`. Treat the assignment
+as untrusted: the verifier reparses the source and accepts only when coverage,
+order, independent header evidence, rectangular-grid consistency, available
+rulings, and non-ambiguity all pass. Accepted cell text comes exclusively from
+the reparsed PDF text layer. Its GFM table is a convenience projection;
+structured spans are authoritative. Never describe an accepted result as proof
+of the one uniquely correct or semantically correct topology. Rejections and
+ordinary conversions remain fail-closed and emit no inferred table.
 
 Filesystem operations and rasterization happen locally, and PDF Tools does not
 upload files to a separate PDF service. Text, images, and metadata returned
@@ -113,12 +132,31 @@ packaging, tests, and release evidence ship together.
 
 ## Tool inventory (current)
 
-Tools are listed in `CLAUDE.md` and in `server/index.js`. Keep the list
-stable and in sync across:
+`manifest.json` owns the registered tool set and `server/output-schemas.js`
+owns which of those tools advertise an `outputSchema`. Five documents write a
+tool inventory down, and "keep them in sync" was never an instruction anyone
+could follow, because three of the five are deliberately partial. Two rules
+apply instead, and `test/documentation-claims.test.js` enforces both.
 
-- `CLAUDE.md` tool list
-- README tool list
-- Actual tool registrations in `server/index.js`
+**An inventory that presents itself as complete must be complete.** These
+enumerate exactly the registered set, and adding a tool without adding it here
+turns the suite red:
+
+- `README.md`, under `## Core Tools`
+- `AGENTS.md`, under `### Tools currently shipped`
+- `docs/OUTPUT_SCHEMAS.md`, the discovery matrix, which enumerates exactly the
+  tools carrying an `outputSchema` plus a named text-only remainder
+
+**A partial inventory must say so, and must name no tool that does not exist.**
+These are selections by design and may lag the registered set, but a phantom
+name in either is a false capability claim and fails the suite:
+
+- `CLAUDE.md`, under `## Core Available Tools`
+- `pdf-toolkit-mcp-share/README.md`, under `## Tools Available`
+
+The selection marker is itself load-bearing. Delete the sentence that says a
+list is partial and the completeness rule starts applying to it, so a selection
+cannot quietly be promoted into a false claim of the whole surface.
 
 ## Zone coordinates and the viewer page box
 
@@ -240,7 +278,7 @@ mcp__<display_name, spaces underscored, non [A-Za-z0-9_-] stripped>__<tool_name>
 Identifiers over **64 characters** fail in the host. This shipped as a real
 defect (issue #44): the original benefit-led directory title
 `PDF Tools - Fill, Sign, Merge, Split, Extract` normalizes to 41 characters and
-pushes 13 of the current 40 tool identifiers past the ceiling.
+pushes 16 of the current 43 packed tool identifiers past the ceiling.
 
 The naming strategy is therefore **dual**:
 
@@ -252,11 +290,11 @@ The naming strategy is therefore **dual**:
 
 Budgets are computed by `scripts/tool-identifier-budget.mjs` and gated in
 `test/mcp-contract.test.js`. Current margins against the longest tool name
-(`convert_pdf_to_markdown`, 23 characters):
+(`inspect_pdf_accessibility`, 25 characters):
 
-- `PDF Tools` — longest identifier 39, headroom 25
-- `PDF Tools: Fill, Sign & Edit` — longest identifier 55, headroom 9
-- Original long title — longest identifier 71, 13 identifiers over the limit
+- `PDF Tools`: longest identifier 41, headroom 23
+- `PDF Tools: Fill, Sign & Edit`: longest identifier 57, headroom 7
+- Original long title: longest identifier 73, 16 identifiers over the limit
 
 **The trap when adding a tool.** The shipped short brand has generous headroom,
 so a new long tool name will not break it and every host-facing check stays
@@ -515,7 +553,7 @@ copied from those source directories. Symlink or special-file inputs fail the
 build. The production graph is trimmed directly before packing, including the
 unused top-level PDF.js browser/type/resource trees, while
 `pdfjs-dist/legacy/build/` is required to remain present. Archive verification
-requires exact stage/archive path and byte parity, all five native bindings,
+requires exact stage/archive path and byte parity, all five native packages,
 safe unique paths, normalized metadata, required runtime files, absence of
 development/trimmed entries, exact canonical-byte re-encoding, and successful
 `info` plus `unpack` consumption by pinned MCPB 2.1.2. If the host has an
@@ -526,6 +564,38 @@ source examples do not create noisy false positives. The command prints the
 reproducible SHA-256. Do not release an
 artifact produced by a plain host-local `mcpb pack`: npm normally installs
 only the native optional dependency for the build machine.
+
+#### Canvas archive policy
+
+The production package remains pinned to `@napi-rs/canvas@0.1.99`. The
+canonical build accepts only that implementation version and exactly these
+reviewed runtime assets:
+
+| Target package | Required runtime assets |
+|---|---|
+| `@napi-rs/canvas-darwin-arm64` | `skia.darwin-arm64.node` |
+| `@napi-rs/canvas-darwin-x64` | `skia.darwin-x64.node` |
+| `@napi-rs/canvas-linux-x64-gnu` | `skia.linux-x64-gnu.node` |
+| `@napi-rs/canvas-win32-arm64-msvc` | `skia.win32-arm64-msvc.node` |
+| `@napi-rs/canvas-win32-x64-msvc` | `skia.win32-x64-msvc.node`, `icudtl.dat` |
+
+Public registry inventory for candidate `1.0.2` shows `icudtl.dat` in both
+Windows target packages. That observation is inventory-only evidence.
+Version `1.0.2` remains unevaluated and unauthorized for the production
+package. It must not enter the canonical build policy until the dependency,
+native execution, extracted-artifact, and supported-host gates are separately
+qualified.
+
+The static archive verifier binds the root lock declaration, one canonical
+implementation, exact native package identities and platform metadata,
+registry tarball sources, SRI records, canonical case-safe paths, package
+placement, and exact nonempty runtime asset bytes. It rejects aliases,
+duplicate or nested Canvas trees, case-fold path collisions, policy
+asset substitutions, and missing or unexpected native assets.
+
+Static archive conformance does not load a binary. It performs no `dlopen`,
+cross-architecture execution, extracted native smoke, clean-install
+qualification, or Claude Desktop run. Treat those as distinct evidence gates.
 
 Run `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb` on each release host. It
 extracts the finished artifact to a temporary clean directory, starts the
@@ -542,6 +612,24 @@ bundled server, lists its tools, and requires native `render_pdf_page` output.
   1.6 JSON SBOM covering every locked production component and dependency
   edge. Packaging performs structural and exact lock-coverage validation; it
   does not claim external CycloneDX schema validation.
+- The same SBOM is generated for the MCPB and staged at its archive root, so
+  both shipped artifacts carry the same bill rather than only the share ZIP.
+- Every SBOM component carries licence terms. The npm licence evidence lives in
+  `vendor/npm-licenses/npm-license-provenance.json`, generated by
+  `npm run vendor:npm-licenses` from the registry tarballs the lock pins, and
+  `vendor/npm-licenses/spdx-license-ids.json` pins the SPDX identifiers a
+  `license.id` claim is checked against. Never hand-edit either file.
+  **Any dependency add, removal or version bump requires re-running
+  `npm run vendor:npm-licenses` and committing the result** — packaging fails
+  closed if the record does not cover the lock exactly, and
+  `test/sbom-npm-licenses.test.js` fails if it disagrees with the installed
+  tree. The generator needs registry access; the gate does not.
+- CycloneDX `scope` describes the artifact, not the lockfile. The MCPB carries
+  an installed `node_modules`, so its bill marks what is inside it `required`
+  and what the lock names but the archive does not carry `excluded` — six of
+  the eleven `@napi-rs/canvas-*` targets are deliberately dropped. The share
+  ZIP ships a lockfile rather than an installed tree, so it keeps npm's own
+  optionality. Both record the basis in `pdf-tools:npm-scope-basis`.
 - Requires exact canonical record parity with the root lock for every
   production package, including dependency edges, engine/platform metadata,
   transitives, and platform-specific optional packages.
@@ -588,6 +676,66 @@ When publishing, update versions together:
 Do not commit binary artifacts (zip, mcpb) to main. Attach them to
 releases instead.
 
+## Native canvas inside an embedded host (Windows rendering)
+
+Page rasterization (`render_pdf_page`, `render_pdf_region`) needs the `@napi-rs/canvas` native binding. Inside an embedded Electron host such as Claude Desktop, loading it is blocked by default on every platform.
+
+| Value | Effect |
+|---|---|
+| unset | Blocked. The default on every platform. |
+| `1` | Opt in, **subject to the crash latch** below. |
+| `0` | Blocked unconditionally. Kill switch; beats everything. |
+| `force` | Allowed, bypassing the latch. How a latched install is recovered. |
+
+Set it where the server is configured. Under MCPB that is the extension manifest's `server.mcp_config.env`. A User-scope Windows environment variable does **not** reach the MCP server subprocess; the manifest is the only channel that works.
+
+`=1` deliberately respects the latch. In the reverted design the flag bypassed it, which meant the recovery mechanism could only ever run on a population that did not exist yet — the default was off, so nothing exercised it. Binding the flag to the latch instead puts today's Windows opt-in users on the same code path a future default would use, which is where the evidence for flipping has to come from.
+
+### The crash latch
+
+A `dlopen` that destabilises Electron hard-crashes the host rather than raising, so no in-process handler can see it and a naive retry crashes on every launch. Recovery therefore has to survive process death.
+
+The guard writes and `fsync`s a marker to `<profiles dir>/native-canvas-attempt.json` immediately before the load, and keeps it there through the first draw — it is cleared only when the request that triggered the load completes. A marker found at the next load means a previous process entered that window and never came back, so native canvas latches off for that install until someone sets `=force`.
+
+Three properties are worth knowing:
+
+- **A load that raises does not latch.** That is a recoverable environment problem such as a missing VC++ runtime; the host is intact and it must stay retryable.
+- **Markers are owned.** Each carries a random token held only in the arming process's memory, so no other server sharing the home directory can clear it. A marker whose pid is still alive reports `concurrent` — refused, but not latched, because nothing has died.
+- **Teardown is not covered, and this is not claimed away.** Holding the marker to process exit cannot distinguish a canvas crash from a user force-quitting the host, and force-quit is common enough that it would latch off nearly every install.
+
+`test/embedded-native-canvas-latch.test.js` drives the real guarded `process.dlopen` with an injected loader. Every guard in it has been checked to go red when removed, including the specific clear-on-link defect that got the first attempt reverted.
+
+### What is known
+
+CI run `31051499142` (artifact `windows-render-probe.json`, expires 2026-11-03) recorded, on a Windows runner: block in force gives an error and no renderer; block lifted gives `renderer: "native-canvas"`. That probe simulates the embedded host under plain Node (`.github/workflows/windows-render-probe.mjs:12-16`), so it cannot observe a `dlopen` that hard-crashes Electron rather than raising. A single manual session on Windows 11 with Claude Desktop 1.25927.0 on 2026-08-06 rendered successfully with the block lifted; that session was not captured to an evidence file, so treat it as an unreplicated observation.
+
+The block's origin is precautionary rather than measured. It was inherited from the worker-thread path, whose guard came from an Electron documentation warning (`94a2819`). The one canvas failure that was actually measured is macOS-specific and is not a crash: `ERR_DLOPEN_FAILED` because the binding's code signature has a different Team ID from the host process (`docs/CLAUDE_DESKTOP_TEST_RUN_2026-04-23.md:394`). That has no Windows analogue.
+
+Blocking it is what leaves Windows and Linux with no renderer at all, because `pdfjsRendererPolicy()` (`server/index.js:1541-1548`) returns a bare `"native"` policy off macOS with no system-renderer fallback to degrade to.
+
+### Why the default has not been flipped
+
+A win32 default was implemented and reverted after review, because the crash-survival latch backing it did not hold. All four code-level defects that review found are now fixed:
+
+| Defect in the reverted latch | Now |
+|---|---|
+| Cleared its marker the moment `dlopen` returned, covering only the link step — the one step there was already positive evidence for | The marker carries a phase and is cleared only when the request that triggered the load completes, so it spans link **and** first draw |
+| No lock and no ownership; two servers sharing a home directory could erase each other's in-flight marker | Each marker carries a token held only in the arming process's memory; a live foreign pid reports `concurrent` rather than being mistaken for a crash |
+| Remediation unreachable — `@napi-rs/canvas` swallows a `dlopen` throw into its own "Cannot find native binding" text, which `canvasDependencyError` then rewrites into the generic unavailable-renderer message | The reason travels out of band through a bound probe and is appended to the renderer error, so a latched install now says it is latched and how to recover |
+| Tests asserted the policy function against files the tests wrote; making arm and clear no-ops left them all passing | `test/embedded-native-canvas-latch.test.js` drives the real guarded `process.dlopen` with an injected loader, and every guard is checked to go red when removed |
+
+**The default is still off, and the remaining gates are evidence, not code.** No amount of local work can supply them:
+
+- ≥20 renders across page sizes, plus a concurrent pair, on a real Windows Claude Desktop with no host crash
+- isolation mode observed as `in_process` for each — a run that took the subprocess path never installed this guard and proves nothing about it
+- the latch observed actually latching after at least one real host crash
+- a latch arm in the Windows probe that can still record a result when the child crashes — a hard crash currently takes the probe's own result file with it, which is the one outcome the probe most needs to capture
+- a Linux datapoint before Linux is included; macOS retested or explicitly excluded
+
+The switch itself is `NATIVE_CANVAS_DEFAULT_PLATFORMS` in `server/pdfjs-subprocess.js`, deliberately an empty array. Adding `"win32"` is the entire flip, and a test fails if it is added, so it cannot happen quietly.
+
+Note also that `.github/workflows/windows-render.yml` is `workflow_dispatch` only, so none of this is gated on any PR or push.
+
 ## Manual test checklist
 
 Run these after any tool or packaging change:
@@ -616,11 +764,19 @@ Run these after any tool or packaging change:
 - `rotate_pdf_pages` with invalid angle 45° — clear error message
 - `reorder_pdf_pages` with reversed order — pages reversed in output
 - `reorder_pdf_pages` with duplicate page — rejection error
-- `get_pdf_info` on example-fw9.pdf — returns page count, size, form fields
-- `get_pdf_info` on a non-form PDF — returns "none" for form fields
+- `get_pdf_info` on example-fw9.pdf - verify exact source SHA-256, page geometry, form widgets, ordinary-annotation separation, and coverage
+- `get_pdf_info` on a non-form PDF - verify empty supported form and annotation channels rather than fabricated unavailability
+- `get_pdf_info` on an encrypted PDF - verify typed missing/wrong password errors do not expose password or document observations
+- `inspect_pdf_accessibility` on normal, explicit-false, and absent-signal fixtures: verify eight ordered checks, exact source binding, fixed `not_established` conclusions, required human review, and no file change
+- `inspect_pdf_accessibility` on malformed non-PDF input: verify a partial or indeterminate result, seven unavailable checks, and no parser diagnostic or path disclosure
+- `inspect_pdf_accessibility` on encrypted input: verify the fixed error, no findings, and no password or path disclosure
+- `render_pdf_page` and `render_pdf_region` - verify the PNG SHA-256 against returned image bytes and raw-pixel availability against the renderer
+- Render a fixture with nonzero MediaBox/CropBox origins, rotation, and UserUnit - verify native regions use PDF.js viewport points and the macOS system path fails closed
+- Precede one required/read-only field with 500 orphan Widget annotations - verify the real field retains flags `3`, every widget is counted, and coverage is partial
+- Exercise metadata with a 40,000-character key plus many escaped, control, and nested values - verify both metadata and global serialized caps
 - `npm test` — all parsePageRanges tests pass
 - `npm run build:ui` produces single-file HTML in `dist-ui/`
-- `npm run build:mcpb` builds successfully and reports all five native canvas bindings
+- `npm run build:mcpb` builds successfully and reports the statically verified packaged native asset paths
 - `npm run smoke:mcpb -- pdf-toolkit-mcp.mcpb` passes on macOS ARM64 and Windows x64
 - Inspect the reported SHA-256 and retain it with the release evidence
 

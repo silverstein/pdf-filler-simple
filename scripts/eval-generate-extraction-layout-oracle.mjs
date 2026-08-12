@@ -24,16 +24,25 @@ const PATHS = Object.freeze({
   layoutOracleSchema: path.join(PHASE1_ROOT, "layout-occurrence-oracle.schema.json"),
 });
 const SOURCE_PATHS = Object.freeze({
+  accessibility_inspection_module: "server/accessibility-inspection.js",
   generator_script: "scripts/eval-generate-extraction-layout-oracle.mjs",
   layout_evidence_module: "test/eval/extraction-phase1-layout-evidence.js",
   layout_extraction_module: "server/layout-extraction.js",
+  type3_cm_reference_module: "server/type3-cm-reference.js",
+  // The generated Computer Modern PK ground truth is a second enrollment
+  // source for the same recovery path, so a change to it changes what the
+  // oracle can observe just as surely as a change to the metric table does.
+  type3_cm_pk_reference_module: "server/type3-cm-pk-reference.js",
   layout_oracle_schema: "test/fixtures/eval/extraction/phase1/layout-occurrence-oracle.schema.json",
   markdown_conversion_module: "server/markdown-conversion.js",
   output_schemas_module: "server/output-schemas.js",
   package_json: "package.json",
   package_lock: "package-lock.json",
+  pdf_comparison_module: "server/pdf-comparison.js",
+  pdf_observations_module: "server/pdf-observations.js",
   pdfjs_package: "node_modules/pdfjs-dist/package.json",
   scoring_oracle_schema: "test/fixtures/eval/extraction/phase1/scoring-oracle.schema.json",
+  table_proposal_verification_module: "server/table-proposal-verification.js",
 });
 
 function canonicalJson(value) {

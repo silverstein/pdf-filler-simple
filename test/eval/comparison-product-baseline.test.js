@@ -9,8 +9,9 @@ import { scoreComparisonReport, validateComparisonReport } from "./comparison-sc
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const MANIFEST_PATH = path.join(REPO_ROOT, "test", "fixtures", "eval", "comparison", "manifest.v1.json");
 
-describe("current published PDF Tools primitive baseline", () => {
-  it("records real tool capabilities and preserves unsupported channels as misses", async () => {
+describe("current PDF Tools compare_pdfs baseline", () => {
+  // Hang ceiling, not a performance SLO: the fixed corpus makes 42 compare_pdfs calls plus bounded worker operations.
+  it("records the seven-channel product contract without promoting calibration to a benchmark claim", async () => {
     const manifest = await loadComparisonManifest(MANIFEST_PATH);
     const documents = new Map(manifest.documents.map(document => [document.id, document]));
     const report = await buildProductPrimitiveReport({
@@ -31,18 +32,19 @@ describe("current published PDF Tools primitive baseline", () => {
     const scored = scoreComparisonReport(manifest, report, buildControllerObservationRegistry(report));
     expect(scored.valid).toBe(true);
     expect(scored.passed).toBe(false);
-    expect(scored.aggregate.pairs_passed).toBe(1);
-    expect(scored.aggregate.event_metrics).toMatchObject({ tp: 1, fp: 5, fn: 8 });
-    expect(scored.aggregate.channel_metrics.visual).toMatchObject({ tp: 0, fp: 5, fn: 5 });
-    expect(scored.aggregate.channel_metrics.annotation.fn).toBe(1);
-    expect(scored.aggregate.channel_metrics.metadata.fn).toBe(2);
-    expect(report.pairs.every(pair => pair.channel_status.annotation === "unavailable")).toBe(true);
-    expect(report.pairs.every(pair => pair.channel_status.metadata === "unavailable")).toBe(true);
-    expect(report.pairs.every(pair => pair.tool_calls === 48)).toBe(true);
+    expect(scored.aggregate.pairs_total).toBe(7);
+    for (const channel of ["semantic", "text", "structure", "form_field", "annotation", "metadata"]) {
+      expect(scored.aggregate.channel_metrics[channel].f1, channel).toBe(1);
+    }
+    expect(report.pairs.every(pair => Object.values(pair.channel_status)
+      .every(status => status === "supported"))).toBe(true);
+    expect(report.pairs.every(pair => pair.tool_calls === 6)).toBe(true);
     expect(report.pairs.every(pair => pair.iteration_costs.length === 5)).toBe(true);
     expect(report.pairs.every(pair => pair.peak_rss_bytes === null
       && pair.resource_measurement_status === "unavailable")).toBe(true);
-    expect(report.engine.provenance).toContain("not executed");
+    expect(report.engine.provenance).toContain("compare_pdfs output gated");
+    expect(report.engine.network_requests).toBe(0);
+    expect(report.benchmark_claim_ready).toBe(false);
     expect(report.platform.host).toBe("local-test-host-stdio");
-  }, 120_000);
+  }, 240_000);
 });

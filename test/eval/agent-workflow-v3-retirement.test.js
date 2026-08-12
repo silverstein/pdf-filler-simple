@@ -38,7 +38,8 @@ describe("agent workflow v3 retirement", () => {
     const state = await v3RetirementState();
     expect(state.reason).toBe(V3_RETIREMENT_REASON);
     expect(state.reason).toMatch(/freeze rule/);
-    expect(state.reason).toMatch(/pdf-toolkit-mcp-igr\.2/);
+    expect(state.reason).toMatch(/public v4 core is preseal/);
+    expect(state.reason).toMatch(/pdf-toolkit-mcp-igr\.2\.1/);
   });
 
   it("keeps the v3 freeze constant untouched", async () => {

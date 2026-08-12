@@ -1,0 +1,185 @@
+{
+  "schema_version": "pdf-tools.remote-loopback-mock.v1",
+  "as_of": "2026-07-30",
+  "claim_boundary": "Test-only synthetic contract mock. This is not production service code, a deployed endpoint, OAuth evidence, host compatibility evidence, a privacy or security certification, authorization to process user files, or a PDF manipulation implementation.",
+  "architecture_schema_version": "pdf-tools.remote-hybrid-trust-boundary.v1",
+  "architecture_file_sha256": "44678af373a64debf7df3f3f4934be5b70c3ed5bc13e099e72fa4782e9d35ce7",
+  "operation_mapping": {
+    "direct_json_rpc_methods": [
+      "server/discover",
+      "tools/list"
+    ],
+    "tools_call_names": [
+      "create_synthetic_workspace",
+      "register_synthetic_document_identity",
+      "simulate_identity_bound_mutation",
+      "read_operation_receipt",
+      "simulate_delete_lifecycle"
+    ],
+    "fixture_authority_network_reachable": false
+  },
+  "trusted_fixture": {
+    "id": "comparison_base_v1",
+    "repository_path": "test/fixtures/eval/comparison/synthetic/comparison-base.pdf",
+    "identity_derived_from_committed_bytes": true,
+    "caller_supplied_bytes_paths_urls_base64_or_identity_forbidden": true
+  },
+  "runtime_guard_contract": {
+    "only_allowed_stream_socket": "exact_127.0.0.1_plus_test_selected_ephemeral_port",
+    "host_and_port_predicates_calibrated_independently": true,
+    "dns_fetch_tls_and_datagram_denied": true,
+    "bare_package_import_denied": true,
+    "unreviewed_node_file_and_bare_import_denied": true,
+    "runtime_loader_allows_only_exact_reviewed_parent_specifier_edges": true,
+    "process_get_builtin_module_denied": true,
+    "process_binding_and_linked_binding_denied": true,
+    "static_implementation_closure_allows_only_reviewed_local_and_node_imports": true,
+    "computed_import_require_eval_function_and_internal_loader_tokens_denied": true,
+    "subprocess_worker_and_cluster_escape_denied": true
+  },
+  "packaging_exclusion": {
+    "test_prefix_forbidden": true,
+    "scripts_prefix_forbidden": true,
+    "mock_config_exact_path_forbidden": true
+  },
+  "synthetic_constants": {
+    "policy_version": "synthetic-policy-v1",
+    "registration_tool": "register_synthetic_document_identity",
+    "registration_tool_version": "1",
+    "registration_destination_and_effects": "synthetic_remote_identity",
+    "mutation_tool": "synthetic_identity_mutator",
+    "mutation_tool_version": "1",
+    "mutation_destination_and_effects": "synthetic_output_version"
+  },
+  "request_identity_components": [
+    "tenant_id",
+    "workspace_id",
+    "document_id",
+    "source_version_id",
+    "source_byte_length",
+    "source_sha256",
+    "tool_name",
+    "tool_version",
+    "canonical_arguments_sha256",
+    "destination_and_effects"
+  ],
+  "generated_version_identity": {
+    "scope": "tenant_id_plus_workspace_id_plus_document_id_plus_version_id",
+    "caller_selected_source_ids_may_match_generated_id_shape": true,
+    "allocation": "bounded_deterministic_retry_until_exact_composite_key_is_absent",
+    "allocation_before_running_evidence": true,
+    "existing_version_overwrite": "forbidden"
+  },
+  "architecture_state_transitions": [
+    "workspace_absent_to_active_requires_workspace_create_scope",
+    "document_absent_to_active_requires_unconsumed_exact_synthetic_registration_authorization",
+    "source_version_is_immutable",
+    "authorized_operation_to_running_rechecks_membership_action_source_identity_and_unconsumed_authorization",
+    "running_operation_to_completed_atomically_activates_one_new_version_and_receipt",
+    "running_operation_to_failed_activates_no_version",
+    "active_document_to_tombstoned_requires_document_delete_scope",
+    "tombstoned_to_purge_pending_is_separate_from_task_cancellation",
+    "purge_pending_to_physically_purged_requires_lifecycle_inventory_completion",
+    "physically_purged_is_terminal"
+  ],
+  "architecture_idempotency_contract": {
+    "scope": "tenant_id_plus_verified_actor_id_plus_idempotency_key",
+    "request_identity": "source_identity_plus_tool_name_plus_tool_version_plus_canonical_arguments_sha256_plus_destination_and_effects",
+    "same_key_same_request": "return_exact_prior_operation_or_terminal_receipt_without_new_effect",
+    "same_key_different_request": "tool_error_IDEMPOTENCY_CONFLICT_with_no_effect",
+    "concurrent_same_key": "exactly_one_operation_record_and_effect"
+  },
+  "architecture_error_semantics": {
+    "present_invalid_null_or_multiple_origin": "http_403_before_json_rpc_dispatch",
+    "missing_origin": "continue_to_authentication_and_request_validation",
+    "missing_required_header_or_header_body_mismatch": "http_400_HeaderMismatch",
+    "unsupported_protocol_version": "http_400_UnsupportedProtocolVersion",
+    "missing_or_invalid_synthetic_auth_context": "http_401_before_tool_dispatch",
+    "insufficient_scope": "http_403_before_tool_effect",
+    "unknown_method": "http_404_json_rpc_method_not_found",
+    "application_authorization_or_identity_failure": "http_200_tool_result_isError_true_stable_code_no_effect",
+    "idempotency_conflict": "http_200_tool_result_isError_true_IDEMPOTENCY_CONFLICT_no_effect"
+  },
+  "mutation_linearization_order": [
+    "fresh_actor_membership_scope_tenant_workspace_and_active_object_check",
+    "tenant_actor_idempotency_lookup_or_conflict",
+    "exact_current_source_check",
+    "exact_unexpired_unconsumed_authorization_event_check",
+    "bounded_collision_free_output_version_id_allocation",
+    "synchronous_idempotency_event_and_source_reservation",
+    "permanent_authorization_event_consumption_and_running_operation_evidence",
+    "first_await_only_after_all_reservations",
+    "fresh_membership_scope_lifecycle_and_current_source_recheck",
+    "synchronous_output_version_pointer_completed_operation_and_receipt_activation"
+  ],
+  "terminal_replay": {
+    "success": "same_success_classification_exact_prior_operation_and_receipt",
+    "running_failure": "same_error_classification_and_stable_code_without_rerun",
+    "same_request_new_authorization_event": "return_prior_outcome_and_leave_new_event_unconsumed",
+    "revoked_tombstoned_or_physically_purged": "deny_before_prior_outcome_lookup"
+  },
+  "no_effect_oracle": {
+    "data_plane": [
+      "workspaces",
+      "documents_and_current_version_pointers",
+      "versions",
+      "receipts",
+      "lifecycle_events",
+      "effect_count"
+    ],
+    "evidence_plane": [
+      "authorization_events",
+      "operations",
+      "idempotency_reservations",
+      "event_reservations",
+      "source_reservations",
+      "lifecycle_inventory_attestations",
+      "current_membership",
+      "id_counters"
+    ],
+    "running_failure_allowed_evidence_delta": [
+      "one_consumed_authorization_event",
+      "one_failed_operation",
+      "one_terminal_idempotency_reservation",
+      "allocated_authorization_operation_and_version_ids"
+    ],
+    "running_failure_allowed_data_plane_delta": []
+  },
+  "lifecycle_semantics": {
+    "authorization_expiry_changes_document_lifecycle": false,
+    "unsupported_tasks_cancel_changes_document_lifecycle": false,
+    "physical_purge_requires_trusted_fixture_inventory_attestation": true,
+    "final_lifecycle_event_is_synthetic_purge_evidence": true
+  },
+  "response_contract": {
+    "result_type": "complete",
+    "server_info_meta": {
+      "name": "oda-pdf-tools-loopback-contract-mock",
+      "version": "1"
+    },
+    "discover_supported_versions": [
+      "2026-07-28"
+    ],
+    "discover_capabilities": {
+      "tools": {
+        "listChanged": false
+      }
+    },
+    "discover_ttl_ms": 0,
+    "discover_cache_scope": "public",
+    "tools_list_ttl_ms": 0,
+    "tools_list_cache_scope": "public",
+    "tool_descriptors_require_input_schema": true
+  },
+  "bounds": {
+    "max_request_bytes": 65536,
+    "max_response_bytes": 65536,
+    "max_string_bytes": 512,
+    "max_json_depth": 8,
+    "max_json_keys": 128,
+    "max_json_array_items": 128,
+    "max_records_per_type": 256,
+    "body_deadline_ms": 1000,
+    "shutdown_deadline_ms": 1000
+  }
+}
