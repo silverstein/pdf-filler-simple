@@ -977,17 +977,26 @@ async function loadInProcessWorkerModule() {
 // EMPTY ON PURPOSE. This array is the switch; adding "win32" is the whole flip,
 // and it must not be added until every gate is met:
 //
-//   - >= 20 renders across page sizes, plus a concurrent pair, on a real
-//     Windows Claude Desktop with no host crash
-//   - isolation mode observed as "in_process" for each, because a run that took
-//     the subprocess path never installed this guard and proves nothing about it
-//   - this latch fault-injected (test/embedded-native-canvas-latch.test.js) and
-//     observed latching off after at least one real host crash
-//   - a Linux datapoint before Linux is added; macOS retested or excluded
+//   [MET 2026-08-11] >= 20 renders across page sizes on a real Windows Claude
+//     Desktop with no host crash. 23 renders, 12 page sizes, two rotations.
+//   [MET 2026-08-11] isolation observed as in-process. Not by reading a log
+//     line - the flag A/B changes the outcome (=1 renders, =0 returns the typed
+//     unavailable error), and the guard only exists on the in-process path.
+//   [MET 2026-08-11] the latch observed latching after a real host crash: the
+//     process was hard-killed mid-draw, the marker survived, and the restart
+//     refused with the remediation text.
+//   [OPEN] a genuinely concurrent pair on a real host. The chat surface
+//     serialises tool calls and cannot batch two calls to one tool in a turn, so
+//     this has only been proven process-to-process in tests, not host-side.
 //
-// macOS is excluded on its own merits regardless: largest installed base, a
-// working system-renderer fallback it can degrade to, and the only platform with
-// an observed canvas-attributed failure.
+// macOS is excluded, and this is a decision rather than a missing measurement:
+// largest installed base, a working system-renderer fallback it can degrade to,
+// and the only platform with an observed canvas-attributed failure. Do not add
+// "darwin" here without new evidence that overturns that.
+//
+// Linux is not a criterion. There is no embedded Electron host to measure it on,
+// so waiting for a Linux datapoint would be waiting for something nobody intends
+// to produce. It stays off by absence, not by pending judgement.
 const NATIVE_CANVAS_DEFAULT_PLATFORMS = [];
 
 // Marker phases. Both mean "a process entered a window it might not return
@@ -1008,31 +1017,61 @@ export function nativeCanvasMarkerPath(env = process.env) {
   return join(configured, "native-canvas-attempt.json");
 }
 
-function writeNativeCanvasMarker(markerPath, phase, token) {
+function nativeCanvasMarkerPayload(phase, token) {
+  return JSON.stringify({
+    phase,
+    token,
+    pid: process.pid,
+    attempted_at: new Date().toISOString(),
+    platform: process.platform,
+    arch: process.arch,
+  });
+}
+
+// Create the marker, and fail if one already exists.
+//
+// This is what closes the race between reading the latch state and writing the
+// marker. Two servers sharing a home directory can both read "clear" before
+// either has written, and the previous version simply let the second overwrite
+// the first. That mattered: if the first then crashed mid-draw, the surviving
+// marker carried the second's token and a live pid, so the crash read as
+// `concurrent` rather than `latched` and went uncaught. With an exclusive
+// create only one process can win, and the loser refuses instead of erasing a
+// marker whose owner may be about to die under it.
+//
+// A plain truncating create is correct HERE, unlike the phase advance. The file
+// is new, so a crash mid-write leaves a zero-length marker, and empty correctly
+// reads as "no marker" - at this point dlopen has not run and nothing needs
+// latching. The advance cannot use this, because it is replacing a marker that
+// is already load-bearing.
+// The caller creates the directory first. Keeping mkdir out of here matters:
+// mkdirSync also raises EEXIST when a path component is a plain file, and this
+// function's EEXIST must mean one thing only - another process owns the marker.
+function createNativeCanvasMarker(markerPath, phase, token) {
+  const handle = openSync(markerPath, "wx");
+  try {
+    writeFileSync(handle, nativeCanvasMarkerPayload(phase, token));
+    fsyncSync(handle);
+  } finally {
+    closeSync(handle);
+  }
+}
+
+// Replace an existing marker atomically, for the phase advance.
+//
+// Truncating in place is not survivable here. `openSync(path, "w")` empties the
+// file immediately, so a host that hard-crashes between the truncate and the
+// completed write leaves a zero-length marker - and an empty marker reads as
+// "no marker". The advance destroys a valid `linking` marker in order to write
+// `drawing`, and a crash inside that window is exactly the link-to-first-draw
+// crash this whole mechanism exists to catch. Renaming is atomic, so what is on
+// disk is always either the previous valid marker or the new one.
+function replaceNativeCanvasMarker(markerPath, phase, token) {
   mkdirSync(dirname(markerPath), { recursive: true });
-  // Write to a temp file and rename over the target, rather than truncating the
-  // target in place.
-  //
-  // Truncating is not survivable where it matters. `openSync(path, "w")` empties
-  // the file immediately, so a host that hard-crashes between the truncate and
-  // the completed write leaves a zero-length marker - and an empty marker reads
-  // as "no marker". For the arm that is harmless, because a crash there means
-  // dlopen never ran and nothing needs latching. For the phase advance it is a
-  // hole straight through the mechanism: it destroys a valid `linking` marker in
-  // order to write `drawing`, and a crash inside that window is exactly the
-  // link-to-first-draw crash this exists to catch. Renaming is atomic, so the
-  // marker on disk is always either the previous valid one or the new valid one.
   const tempPath = `${markerPath}.${process.pid}.${token.slice(0, 8)}.tmp`;
   const handle = openSync(tempPath, "w");
   try {
-    writeFileSync(handle, JSON.stringify({
-      phase,
-      token,
-      pid: process.pid,
-      attempted_at: new Date().toISOString(),
-      platform: process.platform,
-      arch: process.arch,
-    }));
+    writeFileSync(handle, nativeCanvasMarkerPayload(phase, token));
     // fsync the contents before the rename, otherwise the rename can land while
     // the bytes are still only in the page cache.
     fsyncSync(handle);
@@ -1041,7 +1080,8 @@ function writeNativeCanvasMarker(markerPath, phase, token) {
   }
   // If the write above threw, this is never reached and the temp file is left
   // behind. That is inert: nothing ever reads a `.tmp` path, and the caller
-  // treats the throw as "could not arm" and refuses the load.
+  // treats the throw as "could not advance" and leaves the linking marker, which
+  // still latches.
   renameSync(tempPath, markerPath);
 }
 
@@ -1096,17 +1136,44 @@ export function nativeCanvasLatchState(markerPath = nativeCanvasMarkerPath()) {
   return processIsAlive(record.pid) ? "concurrent" : "latched";
 }
 
-function armNativeCanvasAttempt(markerPath) {
+// Returns "armed", "contended" (someone else holds the marker), or "unwritable".
+//
+// `force` exists to recover a latched install, and the latch it overrides IS a
+// marker on disk. Without removing it first the exclusive create below would
+// refuse and =force could not force anything, which would leave a crashed
+// install with no way back short of deleting state by hand.
+export function armNativeCanvasAttempt(markerPath, { force = false } = {}) {
+  if (force) {
+    try {
+      rmSync(markerPath, { force: true });
+    } catch {
+      // If it cannot be removed the create below fails and reports contended,
+      // which is the honest outcome.
+    }
+  }
+  // Re-entry, not contention. This process may load the binding more than once
+  // before the triggering request settles, and its own in-flight marker must not
+  // be mistaken for a competitor's - the exclusive create below would otherwise
+  // refuse us our own file.
+  const existing = activeNativeCanvasAttempt;
+  if (existing && existing.markerPath === markerPath && !force) return "armed";
+
   try {
-    const token = randomBytes(16).toString("hex");
-    writeNativeCanvasMarker(markerPath, NATIVE_CANVAS_PHASE_LINKING, token);
-    activeNativeCanvasAttempt = { markerPath, token };
-    return true;
+    mkdirSync(dirname(markerPath), { recursive: true });
   } catch {
+    activeNativeCanvasAttempt = null;
+    return "unwritable";
+  }
+  const token = randomBytes(16).toString("hex");
+  try {
+    createNativeCanvasMarker(markerPath, NATIVE_CANVAS_PHASE_LINKING, token);
+    activeNativeCanvasAttempt = { markerPath, token };
+    return "armed";
+  } catch (error) {
     // If the marker cannot be written, a crash cannot be detected, so the load
     // must not be attempted at all. Failing closed is the point of the exercise.
     activeNativeCanvasAttempt = null;
-    return false;
+    return error?.code === "EEXIST" ? "contended" : "unwritable";
   }
 }
 
@@ -1114,7 +1181,7 @@ function advanceNativeCanvasAttempt(phase) {
   const attempt = activeNativeCanvasAttempt;
   if (!attempt) return;
   try {
-    writeNativeCanvasMarker(attempt.markerPath, phase, attempt.token);
+    replaceNativeCanvasMarker(attempt.markerPath, phase, attempt.token);
   } catch {
     // The linking-phase marker is still on disk and still attributable to this
     // process, so a crash from here is still caught. Nothing to recover.
@@ -1224,8 +1291,14 @@ function installInProcessCanvasNativeGuard({ dlopen = null } = {}) {
         latchState === "clear" ? "disabled_by_policy" : latchState,
       );
     }
-    if (!armNativeCanvasAttempt(markerPath)) {
-      throw refuseNativeCanvasLoad("marker_unwritable");
+    // Arming is exclusive, so it can lose to another server that armed between
+    // the latch read above and this line. Losing is reported as contention, not
+    // as a crash: nothing has died, and the next attempt may well win.
+    const armed = armNativeCanvasAttempt(markerPath, {
+      force: process.env.PDF_TOOLS_EMBEDDED_NATIVE_CANVAS === "force",
+    });
+    if (armed !== "armed") {
+      throw refuseNativeCanvasLoad(armed === "contended" ? "concurrent" : "marker_unwritable");
     }
 
     lastNativeCanvasBlockReason = null;

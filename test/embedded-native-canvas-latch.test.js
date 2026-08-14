@@ -10,7 +10,7 @@
 // So everything here drives the real guarded process.dlopen with an injected
 // loader, and asserts on the marker the guard actually left on disk.
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import {
   chmodSync,
   existsSync,
@@ -26,6 +26,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
   __installCanvasGuardForTest,
+  armNativeCanvasAttempt,
   embeddedNativeCanvasAllowed,
   nativeCanvasBlockReason,
   nativeCanvasLatchState,
@@ -332,6 +333,104 @@ describe("ownership keeps two servers from erasing each other", () => {
     expect(() => guarded.call(process, {}, CANVAS_BINDING)).toThrow();
 
     expect(nativeCanvasBlockReason()).toBe("concurrent");
+  });
+});
+
+describe("arming is exclusive, which closes the check-then-write race", () => {
+  // nativeCanvasLatchState() reads and armNativeCanvasAttempt() writes, so two
+  // servers sharing a home directory can both read "clear" before either writes.
+  // The previous version let the second overwrite the first, and that lost real
+  // crashes: if the first died mid-draw, the surviving marker carried the
+  // second's token and a live pid, so the crash read as "concurrent" instead of
+  // "latched" and was never caught.
+  it("refuses to arm when another process already holds the marker", () => {
+    // A foreign marker, i.e. one this process did not arm. Arming twice from a
+    // single process is re-entry and is allowed, so contention can only be
+    // exercised against a marker we do not own.
+    writeFileSync(markerPath(), JSON.stringify({
+      phase: "linking", token: "not-ours", pid: process.pid,
+    }));
+
+    expect(armNativeCanvasAttempt(markerPath())).toBe("contended");
+  });
+
+  it("does not overwrite the incumbent marker when it loses", () => {
+    // The whole point of the exclusive create: the loser must leave the
+    // incumbent intact, because that incumbent may be about to crash under it.
+    writeFileSync(markerPath(), JSON.stringify({
+      phase: "linking", token: "not-ours", pid: process.pid,
+    }));
+
+    armNativeCanvasAttempt(markerPath());
+
+    expect(readMarker().token).toBe("not-ours");
+  });
+
+  it("allows re-entry within one process", () => {
+    expect(armNativeCanvasAttempt(markerPath())).toBe("armed");
+    // Same process, marker still in flight. This is not contention.
+    expect(armNativeCanvasAttempt(markerPath())).toBe("armed");
+  });
+
+  it("reports an unwritable directory as unwritable, not as contention", () => {
+    // mkdirSync also raises EEXIST when a path component is a plain file, so
+    // these two failures are easy to conflate and must not be.
+    process.env.DEFAULT_PROFILES_DIR = join(profilesDir, "blocked");
+    writeFileSync(join(profilesDir, "blocked"), "not a directory");
+
+    expect(armNativeCanvasAttempt(markerPath())).toBe("unwritable");
+  });
+
+  it("reports a create failure that is not contention as unwritable", () => {
+    // The directory exists, so mkdir succeeds and the failure comes from the
+    // exclusive create itself - the path that actually distinguishes EEXIST
+    // (someone else owns it) from every other error (we cannot write at all).
+    // Without this, conflating the two survives the suite untouched.
+    chmodSync(profilesDir, 0o500);
+    try {
+      expect(armNativeCanvasAttempt(markerPath())).toBe("unwritable");
+    } finally {
+      chmodSync(profilesDir, 0o700);
+    }
+  });
+
+  it("lets force take the marker from a crashed predecessor", () => {
+    writeFileSync(markerPath(), JSON.stringify({
+      phase: "drawing", token: "dead-process-token", pid: deadPid(),
+    }));
+
+    expect(armNativeCanvasAttempt(markerPath(), { force: true })).toBe("armed");
+    expect(readMarker().token).not.toBe("dead-process-token");
+  });
+
+  it("refuses a second live process end to end", async () => {
+    // A real second process, not a hand-written marker: it imports the module
+    // and arms through the same code path, then holds the marker while this
+    // process attempts its own load.
+    const moduleUrl = new URL("../server/pdfjs-subprocess.js", import.meta.url).href;
+    const child = spawn(process.execPath, [
+      "--input-type=module",
+      "--eval",
+      `import { armNativeCanvasAttempt } from ${JSON.stringify(moduleUrl)};
+       const outcome = armNativeCanvasAttempt(${JSON.stringify(markerPath())});
+       process.stdout.write(outcome);
+       setTimeout(() => {}, 10000);`,
+    ], { stdio: ["ignore", "pipe", "ignore"] });
+
+    const childOutcome = await new Promise(resolve => {
+      child.stdout.once("data", chunk => resolve(String(chunk)));
+    });
+    expect(childOutcome).toBe("armed");
+
+    try {
+      const guarded = install({ dlopen: () => "loaded" });
+      expect(() => guarded.call(process, {}, CANVAS_BINDING)).toThrow();
+      expect(nativeCanvasBlockReason()).toBe("concurrent");
+      // The child still owns its marker; this process must not have taken it.
+      expect(readMarker().pid).toBe(child.pid);
+    } finally {
+      child.kill("SIGKILL");
+    }
   });
 });
 
