@@ -378,14 +378,19 @@ default output is byte-identical to non-compact behavior. Links are emitted
 only for a source-validated external http or https annotation target that maps
 to exactly one contiguous run of text on one line; internal destinations,
 actions, other URL schemes, and ambiguous labels stay escaped text. It does
-not reconstruct general equations, subscripts, or fraction bars, but may restore
+not reconstruct general equations or fraction bars, but may restore
 a missing space after a separate `log` source item only in a short, tightly
 bounded math run with same-baseline variable evidence plus an independent
-local math-layout clue. A glyph run the source painted smaller and raised above
-the baseline of the text it is attached to is written as Unicode superscript
-characters when every character of the run has a real superscript form; this
-records how the page is set and does not distinguish an exponent from a
-footnote reference. A small version-pinned registry may recover a legacy
+local math-layout clue. A glyph run the source painted smaller and displaced
+from the baseline of the text it is attached to is written as Unicode
+superscript characters when it was raised and Unicode subscript characters when
+it was lowered, and only when every character of the run has a real form in
+that direction; this records how the page is set, does not distinguish an
+exponent from a footnote reference, and does not assert that a lowered digit is
+an index. Unicode has no subscript capitals and only some lowercase letters, so
+many lowered runs stay flat on coverage alone, and a script the source set
+without a font change and without leaving any of its base's advance unused is
+reported by the text layer as part of that base run and stays flat too. A small version-pinned registry may recover a legacy
 Computer Modern Type-3 character only after exact official-metric, glyph
 program, and operator/text sequence checks. It does
 not run OCR or use an external model. Unsupported visual or structural content
