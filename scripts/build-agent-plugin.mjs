@@ -29,7 +29,7 @@ import {
 } from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import { prepareCleanStage } from "./build-mcpb.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -39,6 +39,51 @@ const LAUNCHERS_SOURCE = path.join(REPO_ROOT, "scripts", "agent-plugin-launchers
 const PACKAGE_JSON = JSON.parse(
   (await import("fs")).readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
 );
+
+// The version a host displays must identify the bytes, not the last release.
+//
+// package.json only moves at release time, so every publish between releases
+// claimed the previous version while carrying different server code. That is not
+// hypothetical: the published plugin read 0.10.0 while built from ffe9130, which
+// is 86 commits past that tag and includes a signalled-shutdown behaviour change.
+// PROVENANCE.md recorded the truth, but nothing a host shows the user did.
+//
+// Build metadata after "+" is valid semver and is ignored for version precedence,
+// so a build made at a tag still reads 0.11.0 while one made after it reads
+// 0.11.0+94.g4953297.
+//
+// The count is git describe's, which means commits since the tag along its
+// default walk. `rev-list --count` and `--first-parent` answer different
+// questions and give different numbers for the same pair, so the measure is
+// named here rather than left for someone to guess.
+function derivePluginVersion(packageVersion) {
+  let described;
+  try {
+    described = execFileSync("git", ["describe", "--tags", "--always", "--dirty"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    // No git, or a checkout with no tags. A depth-1 CI clone does exactly this,
+    // which would silently restore the old behaviour, so it is announced rather
+    // than swallowed.
+    console.error(
+      "[plugin] git describe unavailable, version falls back to package.json. "
+        + "In CI this usually means the checkout needs fetch-depth: 0.",
+    );
+    return packageVersion;
+  }
+  const match = /-(\d+)-g([0-9a-f]+)(-dirty)?$/.exec(described);
+  if (!match) {
+    // Sitting exactly on a tag. A dirty tree still deserves a marker.
+    return described.endsWith("-dirty") ? `${packageVersion}+dirty` : packageVersion;
+  }
+  const [, commitsSinceTag, sha, dirty] = match;
+  return `${packageVersion}+${commitsSinceTag}.g${sha}${dirty ? ".dirty" : ""}`;
+}
+
+const PLUGIN_VERSION = derivePluginVersion(PACKAGE_JSON.version);
 
 const PLUGIN_MANIFEST_NAME = "pdf-tools";
 // Leads with the words a person actually types. A user asking to "open a PDF"
@@ -52,7 +97,7 @@ const PLUGIN_DESCRIPTION =
 const PLUGIN_MANIFEST = {
   $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   name: PLUGIN_MANIFEST_NAME,
-  version: PACKAGE_JSON.version,
+  version: PLUGIN_VERSION,
   description: PLUGIN_DESCRIPTION,
   author: {
     name: "Open Document Alliance",
@@ -77,7 +122,7 @@ const PLUGIN_MANIFEST = {
 // one, and it is emitted here so a release cannot silently drop it.
 const CODEX_MANIFEST = {
   name: PLUGIN_MANIFEST_NAME,
-  version: PACKAGE_JSON.version,
+  version: PLUGIN_VERSION,
   description: PLUGIN_DESCRIPTION,
   author: { name: "Open Document Alliance", url: "https://www.opendocuments.ai" },
   homepage: "https://github.com/Open-Document-Alliance/pdf-tools-plugin",
