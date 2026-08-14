@@ -57,7 +57,7 @@
   },
   "devDependencies": {
     "@anthropic-ai/mcpb": "2.1.2",
-    "@modelcontextprotocol/ext-apps": "1.7.4",
+    "@modelcontextprotocol/ext-apps": "1.7.5",
     "rolldown": "1.1.5",
     "vite": "^8.1.5",
     "vite-plugin-singlefile": "^2.3.3",
