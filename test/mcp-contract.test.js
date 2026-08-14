@@ -144,7 +144,12 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // verifier output, including format, span policy, byte count, and digest. The
 // input schema and read-only annotations are unchanged. Previously
 // c245597fbea9a4bae0d143d823da77c73c055b7424e5817606ec88aa4ec1beec.
-const TOOL_CONTRACT_SHA256 = "edbba3a6444b7603c9e8336a496f5c82b55d8d9ed674b7dbdbca28240386fb52";
+// 2026-08-14: the Markdown renderer identity published in the convert and
+// verify output schemas becomes 1.16.0, which writes a raised smaller source
+// glyph run as Unicode superscript characters. No tool name, description,
+// input schema, or read-only annotation changes. Previously
+// edbba3a6444b7603c9e8336a496f5c82b55d8d9ed674b7dbdbca28240386fb52.
+const TOOL_CONTRACT_SHA256 = "cefcfff3fc76324826e1eedcd4e2694d311cfcd1ab7daa9f43dc9e2f496eae5d";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,
