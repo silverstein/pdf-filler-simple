@@ -1,0 +1,106 @@
+#!/bin/sh
+
+# Start the packaged PDF Tools server with a compatible Node.js runtime.
+# GUI-launched agent hosts commonly provide HOME and a minimal PATH but do not
+# run interactive shell startup files, so NVM's `node` can otherwise disappear.
+
+launcher_dir=${0%/*}
+if [ "$launcher_dir" = "$0" ]; then
+  launcher_dir=.
+fi
+if ! plugin_root=$(CDPATH= cd -P "$launcher_dir/.." 2>/dev/null && pwd); then
+  echo "PDF Tools could not resolve its installed plugin directory." >&2
+  exit 1
+fi
+
+node_bin=
+saw_node=false
+
+is_compatible_node() {
+  "$1" "$plugin_root/bin/check-node-version.cjs" >/dev/null 2>&1
+}
+
+try_node() {
+  candidate=$1
+  if [ ! -x "$candidate" ]; then
+    return 1
+  fi
+  saw_node=true
+  if is_compatible_node "$candidate"; then
+    node_bin=$candidate
+    return 0
+  fi
+  return 1
+}
+
+path_node=$(command -v node 2>/dev/null || true)
+if [ -n "$path_node" ]; then
+  try_node "$path_node" || true
+fi
+
+if [ -z "$node_bin" ] && [ -n "${NVM_BIN:-}" ]; then
+  try_node "$NVM_BIN/node" || true
+fi
+
+nvm_directories=
+if [ -n "${NVM_DIR:-}" ]; then
+  nvm_directories=$NVM_DIR
+fi
+if [ -n "${HOME:-}" ]; then
+  for directory in "$HOME/.nvm" "$HOME/.config/nvm"; do
+    case ":$nvm_directories:" in
+      *":$directory:"*) ;;
+      *) nvm_directories="${nvm_directories}${nvm_directories:+:}${directory}" ;;
+    esac
+  done
+fi
+
+old_ifs=$IFS
+IFS=:
+for nvm_directory in $nvm_directories; do
+  IFS=$old_ifs
+  [ -n "$nvm_directory" ] || continue
+
+  # Ask NVM for the user's default when possible. Source only NVM itself, not
+  # .bashrc/.zshrc, so unrelated shell customizations cannot affect the server.
+  if [ -z "$node_bin" ] && [ -s "$nvm_directory/nvm.sh" ]; then
+    default_node=$(
+      NVM_DIR=$nvm_directory
+      export NVM_DIR
+      # Keep NVM's shell mutations inside this subshell. Only the selected
+      # executable path crosses back into the launcher.
+      # shellcheck disable=SC1090
+      . "$nvm_directory/nvm.sh" --no-use >/dev/null 2>&1 || exit 1
+      command -v nvm >/dev/null 2>&1 || exit 1
+      nvm which default 2>/dev/null
+    ) || true
+    if [ -n "$default_node" ]; then
+      try_node "$default_node" || true
+    fi
+  fi
+
+  # A default alias is not guaranteed. Fall back to any installed compatible
+  # version; no version path is hard-coded and nothing is downloaded.
+  if [ -z "$node_bin" ]; then
+    for candidate in "$nvm_directory"/versions/node/*/bin/node; do
+      try_node "$candidate" && break
+    done
+  fi
+
+  [ -z "$node_bin" ] || break
+  IFS=:
+done
+IFS=$old_ifs
+
+if [ -z "$node_bin" ]; then
+  if [ "$saw_node" = true ]; then
+    echo "PDF Tools found Node.js, but not a supported version." >&2
+  else
+    echo "PDF Tools could not find Node.js in PATH or your NVM installation." >&2
+  fi
+  echo "Install or select Node.js 20.19+ or 22.12+, then restart Codex." >&2
+  echo "If you use NVM, set a default with: nvm alias default <version>" >&2
+  exit 127
+fi
+
+exec "$node_bin" "$plugin_root/server/index.js" "$@"
