@@ -43,6 +43,7 @@ const SHIPPED_PATHS = [
   "package-lock.json",
   "icon.png",
   "LICENSE",
+  "scripts/agent-plugin-launchers/",
   "scripts/build-agent-plugin.mjs",
 ];
 
