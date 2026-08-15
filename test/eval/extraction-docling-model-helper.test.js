@@ -4,7 +4,15 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+// Every test here spawns a Python interpreter synchronously, several of them more
+// than once. Vitest's default ceiling is 5 seconds, which was never a decision
+// about this file: interpreter startup plus filesystem work exceeds it whenever
+// the box is busy, and the suite then reports a timeout that reads as a product
+// defect. Nothing here asserts speed, so the ceiling is raised to a value that
+// only trips if the helper has genuinely hung.
+vi.setConfig({ testTimeout: 60_000 });
 import { canonicalJson } from "./extraction-phase1-protocol.js";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..");
