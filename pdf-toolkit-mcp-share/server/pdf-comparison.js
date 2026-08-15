@@ -822,17 +822,23 @@ function detectFormChanges(state, includeVisual, alignments) {
   const afterByKey = grouped(afterItems);
   let changes = 0;
   // `appearance_state` (the widget `/AS`) is captured on every observation
-  // (output-schemas.js:263) but is deliberately NOT compared here. It is
-  // provably redundant with `value` for every record the observation produces:
-  // the pinned pdfjs 5.4.624 resolves a button widget's `fieldValue` from its
-  // `/AS`, so the observed `value` already reflects the displayed appearance
-  // state — even when a file's `/V` and `/AS` disagree, `value` follows `/AS` —
-  // and for non-button fields `appearance_state` falls back to that same
-  // `fieldValue`. So a change in a widget's displayed state is already reported
-  // through `value`; comparing `appearance_state` as well would only emit a
-  // second, duplicate form_field change for every checkbox/radio value change.
-  // The schema-captured/comparison-ignored mismatch is resolved by this note,
-  // and the redundancy is pinned by test/compare-pdfs-coverage.test.js.
+  // (output-schemas.js:263) but is NOT compared here, and adding it to this
+  // list would not help. For CHECKBOX widgets the pinned pdfjs 5.4.624 resolves
+  // `fieldValue` from `/AS`, so the observed `value` already reflects the
+  // displayed state (even when a file's `/V` and `/AS` disagree, `value`
+  // follows `/AS`); comparing `appearance_state` too would only duplicate that
+  // change. That redundancy is pinned by test/compare-pdfs-coverage.test.js.
+  //
+  // KNOWN GAP (not redundancy): for RADIO groups pdfjs does not expose
+  // per-widget `appearanceState`, and `fieldValue` is the shared parent `/V`
+  // for every widget. So `appearance_state` falls back to that same shared
+  // `fieldValue`, and a per-widget `/AS` change with an unchanged group `/V`
+  // changes neither `value` nor the fallback `appearance_state` — it is NOT
+  // detected. Adding `appearance_state` to `properties` cannot close this,
+  // because the observed value is the same fallback; detecting it requires
+  // capturing the real per-widget `/AS` in the observation layer. Tracked as a
+  // separate follow-up; named honestly in docs/MCP_CONTRACT.md rather than
+  // claimed as covered.
   const properties = ["type", "value", "default_value", "options", "flags", "widget_page",
     "widget_native_region", "widget_display_region", "rotation"];
   for (const key of new Set([...beforeByKey.keys(), ...afterByKey.keys()])) {

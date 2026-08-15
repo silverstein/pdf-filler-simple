@@ -174,14 +174,16 @@ describe("compare_pdfs coverage honesty", () => {
     }, 30_000);
   });
 
-  describe("Bug 3 — widget appearance state is redundant with value (documented exclusion)", () => {
+  describe("Bug 3 — checkbox appearance state is redundant with value; radio /AS is a named gap", () => {
     // The fixtures share an identical checkbox logical value (/V = Yes) in the
     // file and differ only in the file-level displayed appearance state (/AS:
     // "Yes" before, "Off" after). This measures the redundancy that justifies
-    // excluding appearance_state from the compared properties: the pinned pdfjs
-    // resolves the widget's observed `value` from its /AS, so the displayed
-    // state change is already reported — through `value` — and appearance_state
-    // would only duplicate it.
+    // excluding appearance_state from the compared properties FOR CHECKBOXES:
+    // the pinned pdfjs resolves the widget's observed `value` from its /AS, so
+    // the displayed state change is already reported — through `value` — and
+    // appearance_state would only duplicate it. Radio groups do NOT share this
+    // redundancy (per-widget /AS is not exposed; fieldValue is the shared
+    // group /V), which is a named coverage gap asserted below, not a claim.
     it("reports the displayed-state change through value and does not duplicate it", async () => {
       const result = await compare(
         fixture("coverage-appearance-before.pdf"),
@@ -204,8 +206,11 @@ describe("compare_pdfs coverage honesty", () => {
       // the compared set must be a documented decision, not an oversight.
       const source = await readFile(path.join(REPO_ROOT, "server/pdf-comparison.js"), "utf8");
       const properties = source.slice(source.indexOf("const properties = ["));
-      expect(source).toMatch(/appearance_state.*NOT compared|deliberately NOT compared/s);
-      expect(source).toMatch(/redundant with `value`/);
+      expect(source).toMatch(/appearance_state.*is NOT compared|deliberately NOT compared/s);
+      // The checkbox redundancy rationale is documented...
+      expect(source).toMatch(/For CHECKBOX widgets/);
+      // ...and the radio gap is named honestly, not claimed as covered.
+      expect(source).toMatch(/KNOWN GAP[\s\S]*RADIO/);
       // The compared list itself must not contain appearance_state.
       const list = properties.slice(0, properties.indexOf("]"));
       expect(list).not.toContain("appearance_state");

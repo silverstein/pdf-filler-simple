@@ -148,10 +148,15 @@ one drops them to `partial` (a scanned, image-only, or otherwise non-text
 page is therefore never reported as fully covered by the text channels), and
 any repeated/template page the aligner refuses to pair degrades the semantic,
 text, and structure channels to `partial` with a typed `REPEATED_PAGE_AMBIGUITY`
-reason rather than being silently skipped. A widget's displayed appearance
+reason rather than being silently skipped. A checkbox's displayed appearance
 state (`/AS`) is captured on the observation but intentionally not a separate
 compared property, because the parser folds it into the observed field value,
 so a change in it is already reported through that value rather than duplicated.
+This folding does not hold for radio groups: the parser reports the shared
+group value for every widget and does not expose per-widget `/AS`, so a change
+to an individual radio widget's displayed state while the group value is
+unchanged is **not currently detected** — a named coverage gap, not a claim of
+full form-appearance coverage.
 Evidence display regions preserve PDF.js viewport coordinates even when PDF
 content is clipped or lies partly outside the CropBox; consumers clip those
 regions for display rather than rewriting the source coordinates.
