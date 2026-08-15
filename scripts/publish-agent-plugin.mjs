@@ -51,12 +51,39 @@ if (!existsSync(BUILT_PLUGIN)) {
 // must not be the thing that quietly ships.
 const sourceVersion = JSON.parse(readFileSync(path.join(REPO_ROOT, "package.json"), "utf8")).version;
 const builtVersion = JSON.parse(readFileSync(path.join(BUILT_PLUGIN, "plugin.json"), "utf8")).version;
-if (sourceVersion !== builtVersion) {
+
+// The plugin version now carries build metadata identifying the commit it was
+// built from (0.11.0+99.g1fcd8da), so between releases it deliberately differs
+// from package.json. Comparing the two for equality made this refuse every
+// publish, which it did hourly until it was noticed.
+//
+// Compare the release component instead, and then check the embedded commit
+// against this tree's HEAD. That is a stricter staleness check than the equality
+// it replaces: the old test could not tell a fresh build from one made twenty
+// commits ago under the same version number, which is the drift the build
+// metadata was introduced to end.
+const releaseOf = value => String(value).split("+")[0];
+if (releaseOf(sourceVersion) !== releaseOf(builtVersion)) {
   console.error(
     `[publish] built plugin is ${builtVersion} but this tree is ${sourceVersion}. ` +
       `Rebuild with: npm run build:plugin`,
   );
   process.exit(1);
+}
+
+const embeddedCommit = /\+\d+\.g([0-9a-f]+)/.exec(builtVersion)?.[1];
+if (embeddedCommit) {
+  const headCommit = execFileSync("git", ["rev-parse", "HEAD"], {
+    cwd: REPO_ROOT,
+    encoding: "utf8",
+  }).trim();
+  if (!headCommit.startsWith(embeddedCommit)) {
+    console.error(
+      `[publish] built plugin came from ${embeddedCommit} but this tree is at ` +
+        `${headCommit.slice(0, 12)}. Rebuild with: npm run build:plugin`,
+    );
+    process.exit(1);
+  }
 }
 
 const dirty = git(["status", "--porcelain"]);
