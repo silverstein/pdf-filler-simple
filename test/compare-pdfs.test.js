@@ -223,8 +223,15 @@ describe("compare_pdfs deterministic product", () => {
       facet.after_evidence_id,
     ]).map(id => mixedResult.structuredContent.observations.find(observation => observation.id === id));
     expect(mixedVisualObservations.every(observation => observation.page === 2)).toBe(true);
+    // Bug 1: these fixtures draw a rectangle on a page, so that page's IR
+    // extraction_status is "partial" (mixed-content, not a clean text-layer
+    // candidate). The text channel cannot observe that non-text content, so
+    // semantic and text coverage now degrade to partial and the overall status
+    // is "partial" — the honest statement that text comparison alone did not
+    // fully cover the page. The visual channel still covers it and stays
+    // supported, which is what this test is really asserting.
     expect(mixedResult.structuredContent).toMatchObject({
-      status: "complete",
+      status: "partial",
       coverage: { visual: { status: "supported", reason_codes: [] } },
       resource_usage: {
         aligned_page_visual_comparisons_requested: 2,
@@ -255,10 +262,18 @@ describe("compare_pdfs deterministic product", () => {
       arguments: { before_pdf_path: BASE, after_pdf_path: BASE, include_visual: false },
     });
     expect(result.isError).not.toBe(true);
+    // Bug 1: comparison-base.pdf draws a status rectangle on its service page,
+    // so that page's IR extraction_status is "partial" (mixed-content). The
+    // text channel cannot observe non-text content, so even a document compared
+    // to itself no longer claims fully supported semantic/text coverage: the
+    // status is "partial" and no_reported_changes is false. An empty change set
+    // on incompletely covered channels is no longer reported as trivially green,
+    // which is the whole point of the coverage-honesty fix. equivalence_claim
+    // stays false regardless.
     expect(result.structuredContent).toMatchObject({
-      status: "complete",
+      status: "partial",
       coverage: { visual: { status: "unavailable", reason_codes: ["VISUAL_NOT_REQUESTED"] } },
-      summary: { no_reported_changes: true, equivalence_claim: false },
+      summary: { no_reported_changes: false, equivalence_claim: false },
     });
     const afterBytes = await fs.readFile(BASE);
     const afterStats = await fs.stat(BASE);
@@ -786,8 +801,14 @@ describe("compare_pdfs deterministic product", () => {
   it("fails closed on every reproduced envelope mutation", () => {
     expect(materialResult).toBeTruthy();
     const mutations = [
-      value => { value.status = "partial"; },
-      value => { value.coverage.text.status = "partial"; },
+      // Bug 1 made material_text's own coverage partial (its service page draws
+      // a rectangle, so extraction_status is "partial" and semantic/text
+      // coverage degrade). These two mutations previously moved a supported
+      // value to "partial"; that would now be a no-op that the envelope digest
+      // cannot catch, so they move it the other way — asserting the same
+      // fail-closed invariant against a payload whose valid state is partial.
+      value => { value.status = "complete"; },
+      value => { value.coverage.text.status = "supported"; },
       value => { value.coverage.text.reason_codes.push("MUTATED"); },
       value => { value.coverage.text = { status: "unavailable", reason_codes: [] }; },
       value => { value.coverage.text = { status: "supported", reason_codes: ["MUTATED"] }; },

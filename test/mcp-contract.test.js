@@ -173,7 +173,14 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // 2026-09-02: add the provider-neutral signing-preparation receipt and align the
 // combined extraction/signing feature line to 0.13.0. Tool names remain stable;
 // the preparation input/output schemas and runtime server version change.
-const TOOL_CONTRACT_SHA256 = "7f9fde99a3a88418a1f4011e4d47617da03991df03391bbeba3a0bff6bbf86ae";
+// 2026-08-15: the compare_pdfs comparison engine/schema version published in
+// its output schema becomes 0.2.0/1.1, because coverage now degrades (rather
+// than claiming supported) for a compared page whose IR text layer or
+// extraction failed/was partial and for repeated-page alignment ambiguity — a
+// wire-visible coverage-semantics change. No tool name, description, input
+// schema, or read-only annotation changes. The prior current-master digest was
+// 7f9fde99a3a88418a1f4011e4d47617da03991df03391bbeba3a0bff6bbf86ae.
+const TOOL_CONTRACT_SHA256 = "RECONCILE_AFTER_CURRENT_MASTER";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

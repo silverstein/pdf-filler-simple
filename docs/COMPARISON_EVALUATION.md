@@ -195,11 +195,19 @@ Candidate page-alignment records contain `before_page` or null, `after_page` or
 null, a `same`, `moved`, `inserted`, or `deleted` relation, stable content
 anchors, and an optional ambiguity group. V1 permits only one-to-one-plus-null
 alignments. Repeated or otherwise ambiguous pages retain the ambiguity rather
-than being guessed. Each before/after region is expressed separately in
-top-left PDF points and binds the page box and rotation used for conversion.
+than being guessed, and that ambiguity degrades the semantic, text, and
+structure channels to `partial` (typed `REPEATED_PAGE_AMBIGUITY`) rather than
+being silently skipped under supported coverage. Likewise, a compared page
+whose Extraction IR reports a failed or partial text layer or extraction drops
+the semantic and text channels to `unavailable` or `partial`: a scanned or
+image-only page is never scored as fully text-covered. Each before/after region
+is expressed separately in top-left PDF points and binds the page box and
+rotation used for conversion.
 
 Unknown and unavailable are first-class states. An empty change list is valid
-only when every channel required by the case completed successfully.
+only when every channel required by the case completed successfully; when a
+channel is degraded, `no_reported_changes` is fail-closed and does not report
+green.
 
 ## Deterministic scoring
 
