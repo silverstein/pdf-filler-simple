@@ -21,6 +21,25 @@ implements` on every runtime. That test compares what the server advertises
 against the manifest, so drift is caught rather than shipped, but the checklist
 sent you into a red gate to find out.
 
+### Fixtures the bump moves
+
+Three fixtures bind the version or the files that carry it. Regenerate each with
+its own command, in its own commit, so the bump and the re-pins stay legible:
+
+```
+node scripts/eval-generate-extraction-layout-oracle.mjs --write
+node scripts/eval-capture-tool-contracts.mjs
+```
+
+- The layout occurrence oracle binds `package.json` and `package-lock.json` by
+  digest. A bump alone fails ten `extraction-phase1-scorer` tests.
+- The pinned tool contract is regenerated from real MCP discovery and compared
+  byte for byte, so it carries the advertised server version. A bump alone fails
+  `trajectory-grader > regenerates the current version-pinned tool contract`.
+
+Do not hand-edit either fixture. Both have generators, and a hand-edit will
+diverge from what the generator produces on the next run.
+
 ## 2) Build artifacts
 
 ```
