@@ -45,6 +45,9 @@ const SHIPPED_PATHS = [
   "LICENSE",
   "scripts/agent-plugin-launchers/",
   "scripts/build-agent-plugin.mjs",
+  // Decides the version string written into the published plugin.json, so a
+  // change here changes published bytes with no change to any path above it.
+  "scripts/plugin-version.mjs",
 ];
 
 function git(args) {
