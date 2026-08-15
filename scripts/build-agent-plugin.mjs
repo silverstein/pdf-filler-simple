@@ -1,8 +1,9 @@
 // Build a self-contained Agent Plugins 1.0.0 plugin directory.
 //
 // The plugin is a directory that carries the server and its locked
-// dependencies, launched with `command: "node"` and no npm, no npx, and no
-// install step on the host. It reuses the MCPB build's staging verbatim —
+// dependencies, launched through a plugin-owned Node resolver with no npm, no
+// npx, and no install step on the host. It reuses the MCPB build's staging
+// verbatim —
 // locked production deps, integrity-verified native canvas packages, a secret
 // scan, and a symlink ban — so the two artifacts cannot drift. On top of that
 // stage it drops a root `plugin.json`, an `mcp.json`, and the workflow skill,
@@ -15,18 +16,74 @@
 // so rasterization works everywhere the MCPB does. A smaller no-render variant
 // is a planned build flag, not yet implemented.
 
-import { cpSync, mkdirSync, rmSync, writeFileSync, readdirSync, statSync, existsSync } from "fs";
+import {
+  chmodSync,
+  cpSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
 import { prepareCleanStage } from "./build-mcpb.mjs";
 
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const REPO_ROOT = path.resolve(SCRIPT_DIR, "..");
 const SKILLS_SOURCE = path.join(REPO_ROOT, "plugins", "pdf-tools-workflow", "skills");
+const LAUNCHERS_SOURCE = path.join(REPO_ROOT, "scripts", "agent-plugin-launchers");
 const PACKAGE_JSON = JSON.parse(
   (await import("fs")).readFileSync(path.join(REPO_ROOT, "package.json"), "utf8"),
 );
+
+// The version a host displays must identify the bytes, not the last release.
+//
+// package.json only moves at release time, so every publish between releases
+// claimed the previous version while carrying different server code. That is not
+// hypothetical: the published plugin read 0.10.0 while built from ffe9130, which
+// is 86 commits past that tag and includes a signalled-shutdown behaviour change.
+// PROVENANCE.md recorded the truth, but nothing a host shows the user did.
+//
+// Build metadata after "+" is valid semver and is ignored for version precedence,
+// so a build made at a tag still reads 0.11.0 while one made after it reads
+// 0.11.0+94.g4953297.
+//
+// The count is git describe's, which means commits since the tag along its
+// default walk. `rev-list --count` and `--first-parent` answer different
+// questions and give different numbers for the same pair, so the measure is
+// named here rather than left for someone to guess.
+function derivePluginVersion(packageVersion) {
+  let described;
+  try {
+    described = execFileSync("git", ["describe", "--tags", "--always", "--dirty"], {
+      cwd: REPO_ROOT,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+  } catch {
+    // No git, or a checkout with no tags. A depth-1 CI clone does exactly this,
+    // which would silently restore the old behaviour, so it is announced rather
+    // than swallowed.
+    console.error(
+      "[plugin] git describe unavailable, version falls back to package.json. "
+        + "In CI this usually means the checkout needs fetch-depth: 0.",
+    );
+    return packageVersion;
+  }
+  const match = /-(\d+)-g([0-9a-f]+)(-dirty)?$/.exec(described);
+  if (!match) {
+    // Sitting exactly on a tag. A dirty tree still deserves a marker.
+    return described.endsWith("-dirty") ? `${packageVersion}+dirty` : packageVersion;
+  }
+  const [, commitsSinceTag, sha, dirty] = match;
+  return `${packageVersion}+${commitsSinceTag}.g${sha}${dirty ? ".dirty" : ""}`;
+}
+
+const PLUGIN_VERSION = derivePluginVersion(PACKAGE_JSON.version);
 
 const PLUGIN_MANIFEST_NAME = "pdf-tools";
 // Leads with the words a person actually types. A user asking to "open a PDF"
@@ -40,7 +97,7 @@ const PLUGIN_DESCRIPTION =
 const PLUGIN_MANIFEST = {
   $schema: "https://agent-plugins.org/schemas/1.0.0/plugin.schema.json",
   name: PLUGIN_MANIFEST_NAME,
-  version: PACKAGE_JSON.version,
+  version: PLUGIN_VERSION,
   description: PLUGIN_DESCRIPTION,
   author: {
     name: "Open Document Alliance",
@@ -65,7 +122,7 @@ const PLUGIN_MANIFEST = {
 // one, and it is emitted here so a release cannot silently drop it.
 const CODEX_MANIFEST = {
   name: PLUGIN_MANIFEST_NAME,
-  version: PACKAGE_JSON.version,
+  version: PLUGIN_VERSION,
   description: PLUGIN_DESCRIPTION,
   author: { name: "Open Document Alliance", url: "https://www.opendocuments.ai" },
   homepage: "https://github.com/Open-Document-Alliance/pdf-tools-plugin",
@@ -100,12 +157,13 @@ const MCP_CONFIG = {
   mcpServers: {
     "pdf-tools": {
       type: "stdio",
-      command: "node",
-      // Spec expands only ${PLUGIN_ROOT} and ${PLUGIN_DATA}. Nothing here
-      // depends on ${HOME} or a host user-config mechanism, which is why the
-      // server was made to fail closed rather than grant home folders when it
-      // is handed no configuration.
-      args: ["${PLUGIN_ROOT}/server/index.js"],
+      // Codex and other GUI-launched hosts may sanitize PATH. The contained
+      // launcher resolves a compatible runtime from PATH or the user's Node
+      // version manager without depending on shell startup files. Codex adds
+      // `.cmd` through PATHEXT on Windows and executes this file directly on
+      // POSIX hosts, so the same manifest remains portable.
+      command: "./bin/pdf-tools-launch",
+      args: [],
       cwd: "${PLUGIN_ROOT}",
     },
   },
@@ -125,18 +183,51 @@ function directoryStats(root) {
   return { files, bytes };
 }
 
-// Launch the built server over stdio and confirm it lists tools. This proves
-// the bundle actually starts from its own directory — worker paths resolved by
-// adjacency, packages resolved from the bundled node_modules — without a host.
+function expandPluginValue(value, pluginDir) {
+  return value.replaceAll("${PLUGIN_ROOT}", pluginDir);
+}
+
+function pluginLaunchCommand(pluginDir) {
+  const config = JSON.parse(readFileSync(path.join(pluginDir, "mcp.json"), "utf8"));
+  const server = config?.mcpServers?.["pdf-tools"];
+  if (!server || server.type !== "stdio") {
+    throw new Error("built mcp.json does not contain the pdf-tools stdio server");
+  }
+  if (typeof server.command !== "string" || !server.command.startsWith("./")) {
+    throw new Error("built mcp.json must use a contained ./ launcher command");
+  }
+  let command = path.resolve(pluginDir, server.command.slice(2));
+  if (!command.startsWith(`${path.resolve(pluginDir)}${path.sep}`)) {
+    throw new Error("built mcp.json launcher command escapes the plugin directory");
+  }
+  if (process.platform === "win32" && existsSync(`${command}.cmd`)) command += ".cmd";
+  const args = (server.args ?? []).map(value => expandPluginValue(value, pluginDir));
+  const cwd = expandPluginValue(server.cwd ?? "${PLUGIN_ROOT}", pluginDir);
+  return { command, args, cwd };
+}
+
+// Launch the built server through the command in its generated mcp.json and
+// confirm it lists tools. This proves the package's real startup path works —
+// including the plugin-owned runtime resolver — rather than bypassing that
+// path with the Node executable that happened to run this build.
 function smokeLaunch(pluginDir) {
   return new Promise((resolve, reject) => {
-    const serverPath = path.join(pluginDir, "server", "index.js");
-    const child = spawn(process.execPath, [serverPath], {
-      cwd: pluginDir,
+    const { command, args, cwd } = pluginLaunchCommand(pluginDir);
+    const coreEnvironmentNames = [
+      "HOME", "LOGNAME", "PATH", "SHELL", "USER", "LANG", "LC_ALL", "TERM", "TMPDIR", "TZ",
+      "PATHEXT", "COMSPEC", "SYSTEMROOT", "SYSTEMDRIVE", "USERNAME", "USERDOMAIN", "USERPROFILE",
+      "HOMEDRIVE", "HOMEPATH", "PROGRAMFILES", "PROGRAMFILES(X86)", "PROGRAMW6432", "PROGRAMDATA",
+      "LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "POWERSHELL", "PWSH",
+    ];
+    const env = Object.fromEntries(coreEnvironmentNames.flatMap(name => (
+      process.env[name] === undefined ? [] : [[name, process.env[name]]]
+    )));
+    const child = spawn(command, args, {
+      cwd,
       // No allowed directories configured: the server starts and lists tools,
       // and refuses file operations until configured. That is the intended
       // fail-closed posture, and it is what a fresh install looks like.
-      env: { PATH: process.env.PATH ?? "" },
+      env,
       stdio: ["pipe", "pipe", "pipe"],
     });
     let stdout = "";
@@ -176,6 +267,9 @@ async function main() {
   if (!existsSync(SKILLS_SOURCE)) {
     throw new Error(`workflow skills not found at ${SKILLS_SOURCE}`);
   }
+  if (!existsSync(LAUNCHERS_SOURCE)) {
+    throw new Error(`Agent Plugin launchers not found at ${LAUNCHERS_SOURCE}`);
+  }
 
   const { stagingDir } = prepareCleanStage();
   try {
@@ -185,6 +279,13 @@ async function main() {
     writeFileSync(path.join(stagingDir, "plugin.json"), JSON.stringify(PLUGIN_MANIFEST, null, 2) + "\n");
     writeFileSync(path.join(stagingDir, "mcp.json"), JSON.stringify(MCP_CONFIG, null, 2) + "\n");
     cpSync(SKILLS_SOURCE, path.join(stagingDir, "skills"), { recursive: true });
+    cpSync(LAUNCHERS_SOURCE, path.join(stagingDir, "bin"), { recursive: true });
+    // Git preserves this bit on Unix, but the builder makes the artifact
+    // invariant explicit. Windows ignores the Unix mode and resolves the
+    // adjacent `.cmd` file instead.
+    chmodSync(path.join(stagingDir, "bin", "pdf-tools-launch"), 0o755);
+    chmodSync(path.join(stagingDir, "bin", "check-node-version.cjs"), 0o644);
+    chmodSync(path.join(stagingDir, "bin", "pdf-tools-launch.cmd"), 0o644);
 
     // Listing presentation for hosts that read a namespaced sibling manifest.
     const iconSource = path.join(REPO_ROOT, "icon.png");
@@ -207,7 +308,7 @@ async function main() {
 
     const { files, bytes } = directoryStats(outputDir);
     console.error(`[plugin] done: ${files} files, ${(bytes / 1024 / 1024).toFixed(1)} MB uncompressed`);
-    console.error(`[plugin] layout: plugin.json, mcp.json, .codex-plugin/, assets/, server/, skills/, node_modules/, dist-ui/`);
+    console.error(`[plugin] layout: plugin.json, mcp.json, .codex-plugin/, assets/, bin/, server/, skills/, node_modules/, dist-ui/`);
     console.error(`[plugin] note: a fresh install allows no directories. On first run the server`);
     console.error(`[plugin]       writes \${PLUGIN_DATA}/config.json and every refusal names that`);
     console.error(`[plugin]       path; the user lists their folders there and restarts.`);
