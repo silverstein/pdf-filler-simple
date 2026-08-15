@@ -9,6 +9,17 @@ Update these files together:
 - `package.json`
 - `manifest.json`
 - `manifest.mcpb.json`
+- `server/index.js` (the version the MCP server advertises, hand-written)
+- `pdf-toolkit-mcp-share/package.json`
+- `pdf-toolkit-mcp-share/package-lock.json` (the bundle's own version, not the
+  `>=0.10.0` engine ranges)
+- `pdf-toolkit-mcp-share/server/index.js` (same hand-written version, mirrored)
+
+The last four were missing from this list until 0.11.0, and bumping only the
+first three fails `mcp-contract > advertises only discovery surfaces it
+implements` on every runtime. That test compares what the server advertises
+against the manifest, so drift is caught rather than shipped, but the checklist
+sent you into a red gate to find out.
 
 ## 2) Build artifacts
 
