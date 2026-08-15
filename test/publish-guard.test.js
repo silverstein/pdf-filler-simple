@@ -107,14 +107,26 @@ function builtPlugin(root, version) {
   expect(JSON.parse(readFileSync(path.join(built, "plugin.json"), "utf8")).version).toBe(version);
 }
 
-/** A distribution repository seeded with content a sync would have to replace. */
-function distributionRepo() {
+/**
+ * A distribution repository seeded with content a sync would have to replace.
+ *
+ * With `withRemote`, it gets a bare origin on disk so the `--push` path can run
+ * to the end. Nothing here reaches a network: the remote is a directory.
+ */
+function distributionRepo({ withRemote = false } = {}) {
   const root = temporaryDirectory("pdf-tools-publish-dist-");
   mkdirSync(path.join(root, "plugins", "pdf-tools"), { recursive: true });
   writeFileSync(path.join(root, "plugins", "pdf-tools", "STALE.txt"), "previously published\n");
   git(root, ["init", "-q", "-b", "main"]);
   git(root, ["add", "-A"]);
   git(root, ["commit", "-qm", "seed"]);
+  if (!withRemote) return root;
+
+  const bare = path.join(temporaryDirectory("pdf-tools-publish-origin-"), "dist.git");
+  git(path.dirname(bare), ["init", "-q", "--bare", bare]);
+  git(root, ["remote", "add", "origin", bare]);
+  git(root, ["push", "-q", "origin", "HEAD:refs/heads/main"]);
+  git(root, ["branch", "-q", "--set-upstream-to=origin/main"]);
   return root;
 }
 
@@ -123,13 +135,13 @@ function distributionRepo() {
  * the push, and a dry run still performs the sync, so "would publish" is
  * observable without one.
  */
-function publishOutcome(sourceRoot, distRoot) {
+function publishOutcome(sourceRoot, distRoot, extraArgs = []) {
   // The publisher reports everything on stderr, including its successes.
   // spawnSync rather than execFileSync so a zero exit still yields stderr — the
   // success cases below are asserted on it, and execFileSync returns stdout only.
   const result = spawnSync(
     process.execPath,
-    [path.join(sourceRoot, "scripts", "publish-agent-plugin.mjs"), distRoot],
+    [path.join(sourceRoot, "scripts", "publish-agent-plugin.mjs"), distRoot, ...extraArgs],
     { cwd: sourceRoot, encoding: "utf8" },
   );
   if (result.error) throw result.error;
@@ -258,23 +270,50 @@ describe("agent plugin publish guard", () => {
     expect(outcome.stderr).toContain("uncommitted changes");
   });
 
-  it("records the commit it publishes from, and restores the dry-run tree", () => {
+  it("leaves the distribution repo untouched on a dry run", () => {
     const source = sourceTree({ commitsPastTag: 2 });
     builtPlugin(source, versionBuiltHere(source));
     const dist = distributionRepo();
-    const outcome = publishOutcome(source, dist);
+    const before = git(dist, ["rev-parse", "HEAD"]);
+
+    expect(publishOutcome(source, dist).code).toBe(0);
+    expect(git(dist, ["status", "--porcelain"])).toBe("");
+    expect(git(dist, ["rev-parse", "HEAD"])).toBe(before);
+  });
+
+  it("publishes the built bytes and records the commit they came from", () => {
+    const source = sourceTree({ commitsPastTag: 2 });
+    const version = versionBuiltHere(source);
+    builtPlugin(source, version);
+    const dist = distributionRepo({ withRemote: true });
+
+    const outcome = publishOutcome(source, dist, ["--push"]);
     expect(outcome.code).toBe(0);
 
-    // A dry run restores, so PROVENANCE.md is gone again — the assertion that it
-    // was written has to come from the run rather than from the tree.
-    expect(outcome.stderr).toContain("file(s) changed");
-    expect(git(dist, ["status", "--porcelain"])).toBe("");
+    // Asserting only that the run finished is the weaker claim it looks like:
+    // removing the cpSync that copies the build still leaves PROVENANCE.md as a
+    // change, so the script still reports a publish and exits 0. Read the
+    // published tree instead of the script's own account of it (L24).
+    const published = git(dist, ["show", "--name-only", "--format=", "HEAD"]).split("\n");
+    expect(published).toContain("plugins/pdf-tools/plugin.json");
+    expect(published).toContain("plugins/pdf-tools/PAYLOAD.txt");
+    expect(published).toContain("PROVENANCE.md");
+    expect(git(dist, ["show", "HEAD:plugins/pdf-tools/PAYLOAD.txt"])).toBe(`bytes for ${version}`);
+    // The stale content it replaced is gone, not merely shadowed.
+    expect(published).toContain("plugins/pdf-tools/STALE.txt");
 
-    // The bytes it would have stamped: HEAD, which the cases above are what make
-    // true. Without them a stale build reaches this line and the commit recorded
-    // here belongs to a tree those bytes never came from.
+    // PROVENANCE.md is the only thing identifying what this repo serves, and
+    // check-plugin-freshness.mjs reads this exact commit back out of it. The
+    // refusals above are what make it true rather than merely present.
+    const provenance = git(dist, ["show", "HEAD:PROVENANCE.md"]);
     const head = git(source, ["rev-parse", "HEAD"]);
-    expect(versionBuiltHere(source)).toContain(head.slice(0, 7));
+    expect(provenance).toContain(head);
+    expect(/\/commit\/([0-9a-f]{40})/.exec(provenance)?.[1]).toBe(head);
+    expect(provenance).toContain(`\`${version}\``);
+
+    // It reached the remote, not just the local checkout.
+    const bare = git(dist, ["remote", "get-url", "origin"]);
+    expect(git(dist, ["rev-parse", "HEAD"])).toBe(git(bare, ["rev-parse", "refs/heads/main"]));
   });
 });
 
