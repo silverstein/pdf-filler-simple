@@ -24,6 +24,7 @@ import {
 import { validateAccessibilityInspectionResult } from "./accessibility-inspection.js";
 
 export const PDF_RESOURCE_LIMIT_CODE = "PDF_RESOURCE_LIMIT_EXCEEDED";
+export const PDF_CONCURRENT_MODIFICATION_CODE = "CONCURRENT_MODIFICATION";
 export const PDF_LIB_MUTATION_TOOL_NAMES = new Set([
   "add_signature_field",
   "apply_page_plan",
@@ -139,6 +140,28 @@ function resourceError(reason, cause = null) {
   );
   error.name = "PdfResourceLimitError";
   error.code = PDF_RESOURCE_LIMIT_CODE;
+  error.reason = reason;
+  return error;
+}
+
+// A bound source that no longer matches is not a resource condition. Nothing
+// about the document was too large or too complex; something else wrote to it
+// while this operation ran in isolation. Reporting it through resourceError
+// told the caller to "try a smaller or simpler PDF" about a file whose only
+// problem was a second writer, and it gave one race two different answers:
+// whichever of this check and the commit-time identity checks in index.js
+// happened to notice first decided whether the caller saw a budget message or
+// CONCURRENT_MODIFICATION. Both are the same refusal and now say so. The code
+// and the `CODE: message` shape match backupIdentityError in index.js so the
+// two detectors are indistinguishable to a caller. `reason` is retained, as on
+// resourceError, so the boundary suites can still say which check fired.
+function concurrentModificationError(reason, message, cause = null) {
+  const error = new Error(
+    `${PDF_CONCURRENT_MODIFICATION_CODE}: ${message}`,
+    cause ? { cause } : undefined,
+  );
+  error.name = "PdfConcurrentModificationError";
+  error.code = PDF_CONCURRENT_MODIFICATION_CODE;
   error.reason = reason;
   return error;
 }
@@ -825,7 +848,10 @@ async function revalidateSources(sources, { requirePdfHeader = true } = {}) {
         || current.sha256 !== source.sha256
         || current.fileIdentity.device !== source.file_identity.device
         || current.fileIdentity.inode !== source.file_identity.inode) {
-      throw resourceError("source_drift_before_activation");
+      throw concurrentModificationError(
+        "source_drift_before_activation",
+        "The PDF changed while this mutation ran in isolation. Reload the current document and retry.",
+      );
     }
   }
 }
