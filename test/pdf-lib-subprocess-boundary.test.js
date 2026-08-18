@@ -9,6 +9,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { PDFDocument } from "pdf-lib";
 import {
+  PDF_CONCURRENT_MODIFICATION_CODE,
   PDF_RESOURCE_LIMIT_CODE,
   createPdfLibMutationRequest,
   runPdfLibMutation,
@@ -999,7 +1000,12 @@ await fs.writeFile(request.stage_directory + "/extra.pdf", bytes, { mode: 0o600 
       await fs.writeFile(fixture.sourcePath, "%PDF-1.7\nchanged\n%%EOF\n");
       await atomicTransition("journal_prepared");
     }, { workerPath: fixture.workerPath })).rejects.toMatchObject({
-      code: PDF_RESOURCE_LIMIT_CODE,
+      // Source drift is a concurrent modification, not a resource condition.
+      // The refusal is identical whichever layer makes it, so this must not
+      // drift back to PDF_RESOURCE_LIMIT_CODE: that told the caller to try a
+      // smaller PDF, and it made save-lifecycle's concurrency assertion depend
+      // on which detector machine load let win.
+      code: PDF_CONCURRENT_MODIFICATION_CODE,
       reason: "source_drift_before_activation",
     });
   });
