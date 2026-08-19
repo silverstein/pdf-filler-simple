@@ -591,6 +591,18 @@ const visionRoutingPage = object({
   page: integer,
   reasons: arrayOf(routingReason),
 });
+// A page that read fine as text -- so it is absent from pages_needing_vision,
+// which means "cannot be read without vision" -- and that the conversion
+// reported as carrying visual content it did not read. The codes are the exact
+// gap codes already reported for that page, not a new judgement about it.
+const unreadVisualGapCode = enumString([
+  "IMAGE_CONTENT_NOT_RENDERED",
+  "VECTOR_CONTENT_NOT_INTERPRETED",
+]);
+const unreadVisualContentPage = object({
+  page: integer,
+  gap_codes: arrayOf(unreadVisualGapCode),
+});
 const layoutRawPageSpace = object({
   basis: { const: "pdf_default_user_space" },
   unit: { const: "pdf_user_unit" },
@@ -1090,6 +1102,10 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
       limits: object({ max_markdown_bytes: { type: "integer", minimum: 1, maximum: 200000 } }),
       pages: arrayOf(markdownPage),
       pages_needing_vision: arrayOf(visionRoutingPage),
+      // Present only when at least one readable page reports unread visual
+      // content, so a document with none keeps its exact prior result. Like
+      // table_proposals, deliberately absent from the required list below.
+      pages_with_unread_visual_content: arrayOf(unreadVisualContentPage),
       gaps: arrayOf(markdownGap),
       limitations: stringArray,
       normalizations: object({

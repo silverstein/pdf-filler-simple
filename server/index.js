@@ -41,7 +41,10 @@ import {
   withToolOutputSchema,
 } from "./output-schemas.js";
 import { publicAccessibilityInspectionError } from "./accessibility-inspection.js";
-import { renderPdfLayoutToMarkdown } from "./markdown-conversion.js";
+import {
+  deriveUnreadVisualContentPages,
+  renderPdfLayoutToMarkdown,
+} from "./markdown-conversion.js";
 import {
   normalizeTableProposalCells,
   verifyTableProposalAgainstRegion,
@@ -5496,6 +5499,16 @@ async function handleToolCall(request) {
             emitTableProposals,
           });
           const pagesNeedingVision = deriveMarkdownVisionRouting(layout);
+          // The middle routing case. pages_needing_vision answers "can this
+          // page be read at all without vision?"; a mostly-text page with an
+          // uninterpreted plot answers yes and stays out of it, correctly.
+          // This projection answers the separate question the prose gap
+          // already answers and no machine-readable field did: which readable
+          // pages carry content the conversion reported and did not read.
+          const pagesWithUnreadVisualContent = deriveUnreadVisualContentPages(
+            rendered.pages,
+            pagesNeedingVision,
+          );
 
           let savedOutput = null;
           if (outputBinding) {
@@ -5537,6 +5550,11 @@ async function handleToolCall(request) {
           const payload = {
             ...renderedPayload,
             pages_needing_vision: pagesNeedingVision,
+            // Omitted when empty, so a document that reports no unread visual
+            // content keeps the exact structured result it had before.
+            ...(pagesWithUnreadVisualContent.length > 0
+              ? { pages_with_unread_visual_content: pagesWithUnreadVisualContent }
+              : {}),
             saved_output: savedOutput,
             ...(tableProposals !== undefined ? { table_proposals: tableProposals } : {}),
           };
@@ -5548,6 +5566,9 @@ async function handleToolCall(request) {
             ...(rendered.gaps.length > 0 ? [`Coverage gaps: ${rendered.gaps.map(gap => `page ${gap.page}: ${gap.code}`).join(", ")}.`] : []),
             ...(pagesNeedingVision.length > 0
               ? [`Vision routing: use render_pdf_page for pages ${pagesNeedingVision.map(entry => entry.page).join(", ")}.`]
+              : []),
+            ...(pagesWithUnreadVisualContent.length > 0
+              ? [`Unread visual content (pages ${pagesWithUnreadVisualContent.map(entry => entry.page).join(", ")}): read as text, and also carrying visual content this conversion reported and did not read. Use render_pdf_page if that content matters; what it depicts is not known here.`]
               : []),
             "No OCR, external model, hidden link-target recovery, or table inference beyond complete source-bound text, ruled, or painted grids was performed.",
             rendered.markdown,

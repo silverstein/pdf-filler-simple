@@ -10,6 +10,7 @@ import {
   validatePdfLayoutSourceEvidence,
 } from "../server/layout-extraction.js";
 import {
+  deriveUnreadVisualContentPages,
   renderPdfLayoutToMarkdown,
   validateMarkdownConversionSemantics,
 } from "../server/markdown-conversion.js";
@@ -1410,6 +1411,82 @@ describe("layout Markdown renderer", () => {
     expect(result.limitations.some(value => value.includes("clean ruled-rectangle grid evidence"))).toBe(true);
     expect(result.limitations.some(value => value.includes("Cell artwork is omitted and reported as a vector-content gap"))).toBe(true);
     expect(result.limitations.some(value => value.includes("Links are emitted only for source-validated http or https annotation targets"))).toBe(true);
+  });
+
+  it("projects unread visual content onto exactly the readable pages the source paints", async () => {
+    const layout = await validatedSyntheticLayout([
+      // Text only: nothing painted, so nothing to route.
+      { items: [textItem("Plain prose only", { top: 50 })] },
+      // Text plus an image paint: reads fine, carries unread visual content.
+      { items: [textItem("Prose beside a figure", { top: 50 })], operations: [1] },
+      // Image with no text: the strong routing field owns this page.
+      { items: [], operations: [1] },
+      // Text plus a vector paint: the Shannon page 40 shape.
+      { items: [textItem("Prose beside a plot", { top: 50 })], operations: [2] },
+    ]);
+    const result = renderPdfLayoutToMarkdown(layout);
+
+    // Independent oracle. The projection under test reads emitted gap codes;
+    // this reads the source paint evidence the extractor recorded, so a
+    // projection that dropped a code, shifted a page, or kept a routed page
+    // disagrees with it instead of agreeing by construction.
+    const paintedPages = layout.pages
+      .filter(page => page.modality_hint !== "unknown")
+      .map(page => ({
+        page: page.page,
+        gap_codes: [
+          ...page.has_image_operations ? ["IMAGE_CONTENT_NOT_RENDERED"] : [],
+          ...page.has_vector_paint_operations ? ["VECTOR_CONTENT_NOT_INTERPRETED"] : [],
+        ],
+      }))
+      .filter(entry => entry.gap_codes.length > 0);
+    // The one page the source painted and left textless is the one the strong
+    // field claims, so the projection must give it up.
+    const routed = layout.pages
+      .filter(page => page.modality_hint === "image-only-candidate")
+      .map(page => ({ page: page.page, reasons: ["no_text_layer", "image_dominated"] }));
+    expect(routed.length).toBe(1);
+    const expected = paintedPages.filter(
+      entry => !routed.some(route => route.page === entry.page),
+    );
+    expect(expected.length).toBe(paintedPages.length - routed.length);
+
+    expect(deriveUnreadVisualContentPages(result.pages, routed)).toEqual(expected);
+    // Both painted-and-readable pages survive, and they carry different codes,
+    // so neither code can be dropped without this failing.
+    expect(new Set(expected.flatMap(entry => entry.gap_codes)).size).toBe(2);
+    // A document whose painted pages are all routed projects nothing at all.
+    expect(deriveUnreadVisualContentPages(result.pages, paintedPages)).toEqual([]);
+
+    const payload = {
+      ...result,
+      pages_needing_vision: routed,
+      pages_with_unread_visual_content: expected,
+    };
+    expect(validateMarkdownConversionSemantics(payload, { layout })).toBe(payload);
+    const tampered = [
+      ["is not the exact projection", { ...payload, pages_with_unread_visual_content: expected.slice(1) }],
+      ["is not the exact projection", {
+        ...payload,
+        pages_with_unread_visual_content: expected.map(entry => ({ ...entry, page: entry.page + 1 })),
+      }],
+      ["is not the exact projection", { ...payload, pages_with_unread_visual_content: paintedPages }],
+      ["is not the exact projection", {
+        ...payload,
+        pages_with_unread_visual_content: expected.map(entry => ({ ...entry, gap_codes: [] })),
+      }],
+      ["must omit the field", {
+        ...payload,
+        pages_needing_vision: paintedPages,
+        pages_with_unread_visual_content: [],
+      }],
+    ];
+    for (const [message, candidate] of tampered) {
+      expect(() => validateMarkdownConversionSemantics(candidate, { layout })).toThrow(message);
+    }
+    // The renderer payload carries neither field, so it must stay acceptable
+    // exactly as the renderer produced it.
+    expect(validateMarkdownConversionSemantics(result, { layout })).toBe(result);
   });
 
   it("escapes block syntax at every physical line start, not just the first", async () => {
