@@ -14,6 +14,14 @@ Update these files together:
 - `pdf-toolkit-mcp-share/package-lock.json` (the bundle's own version, not the
   `>=0.10.0` engine ranges)
 - `pdf-toolkit-mcp-share/server/index.js` (same hand-written version, mirrored)
+- `package-lock.json` (the root lock's own `version` and `packages[""].version`)
+
+The root lock was missing until 0.12.0, by which point it still said 0.10.0.
+Nothing fails when it drifts, which is why it drifted through two releases, but
+it is not harmless: the layout occurrence oracle binds `package-lock.json` by
+digest, and npm rewrites that version field on the next `npm install`. A stale
+root lock therefore turns an unrelated install into a silent oracle
+invalidation, surfacing as scorer failures with no visible cause.
 
 The last four were missing from this list until 0.11.0, and bumping only the
 first three fails `mcp-contract > advertises only discovery surfaces it
