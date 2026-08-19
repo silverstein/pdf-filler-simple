@@ -142,7 +142,23 @@ function publishOutcome(sourceRoot, distRoot, extraArgs = []) {
   const result = spawnSync(
     process.execPath,
     [path.join(sourceRoot, "scripts", "publish-agent-plugin.mjs"), distRoot, ...extraArgs],
-    { cwd: sourceRoot, encoding: "utf8" },
+    {
+      cwd: sourceRoot,
+      encoding: "utf8",
+      // The publisher commits into the distribution repo, so it needs an author
+      // the same way the fixture helper does. Without this the run reaches
+      // "4 file(s) changed" and then dies on "Author identity unknown", which
+      // reads as the guard refusing when it is the host being assumed: it passes
+      // wherever a global git identity happens to exist and fails on a CI runner
+      // or any machine without one.
+      env: {
+        ...process.env,
+        GIT_AUTHOR_NAME: "fixture",
+        GIT_AUTHOR_EMAIL: "fixture@example.invalid",
+        GIT_COMMITTER_NAME: "fixture",
+        GIT_COMMITTER_EMAIL: "fixture@example.invalid",
+      },
+    },
   );
   if (result.error) throw result.error;
   // A signal death has a null status and must not read as a clean exit.
