@@ -58,7 +58,16 @@ jobs:
     steps:
       # Pinned by commit SHA, matching the two Windows workflows. A floating
       # tag is a third party's mutable pointer into this repository's build.
+      # fetch-depth: 0 rather than the default depth-1 shallow clone. A shallow
+      # checkout carries no tags and no history, so `git describe` cannot name
+      # the commit and any guard built on it fails closed in CI while passing on
+      # a full-history host - red on both runtimes for a reason that has nothing
+      # to do with the change under test. This gate asserts a repository's
+      # behaviour, so it has to check out the repository, not a snapshot of its
+      # tip.
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
         with:
