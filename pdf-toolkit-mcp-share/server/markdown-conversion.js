@@ -6,7 +6,7 @@ import {
 
 const RENDERER = Object.freeze({
   name: "pdf-tools.layout-markdown-renderer",
-  version: "1.16.0",
+  version: "1.17.0",
 });
 const SUPPORTED_LAYOUT_IR_VERSION = "1.6.0";
 
@@ -84,8 +84,8 @@ const GAP_CODES = new Set([
 const LIMITATIONS = Object.freeze([
   "Headings are emitted only from consistent enlarged font metrics, centered English-language source structure with section spacing, or numbered or lettered research-paper structure at an established body margin with spacing plus font, size, or exact small-caps evidence. Wrapped heading lines are joined only from matching font and height, a very small vertical gap, and bounded alignment. Narrow vertical labels and ambiguous, very short, or unsupported heading styles remain body text.",
   "A geometrically overlapping initial capital may be joined to its following uppercase word remainder. Line-end hyphens are preserved because source geometry cannot reliably distinguish a split word from an intentional compound. The source Extraction IR retains the original lines.",
-  "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different source font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. A missing prose-to-variable space is restored only when a multiword prose item, a separate uppercase letter from a different source font resource, and continuing prose from the original prose font share one baseline with distinct positive boundary gaps, and the same letter/font pair occurs in a nearby compact equation on the same page and column. An inline single-digit stacked fraction is rendered only when consecutive same-font source items, explicit source whitespace, smaller exactly aligned numerator and denominator digits, ordinary prose on both sides, and exactly one thin matching solid-mask bar agree. A small version-pinned registry may recover a legacy Computer Modern Type-3 character only after an exact official-metric family match, exact target and witness glyph-program matches, and a complete operator/text sequence binding. Two witnesses are required unless the source font subset cannot supply them, in which case the entry must declare that font's complete enrolled footprint and every code in it must be present and match. General equations, subscripts, other fraction bars, unregistered raster variants, and other damaged mathematical glyphs remain source reading-order text rather than being guessed.",
-  "A glyph run the source painted smaller and raised above the baseline of the text it is attached to is written as Unicode superscript characters. This records how the page is set and nothing more: a page raises a mathematical exponent and a footnote reference in exactly the same way, so this does not distinguish the two and does not assert that a raised digit is a power. A raised run is written only when every one of its characters has a real Unicode superscript form and the whole run is present on one line, so runs containing ordinary letters or symbols stay flat. A stacked fraction numerator is raised by the same amount but stands clear of the text before it, and is left alone.",
+  "A missing space after a separate source text item that is exactly the mathematical operator log is restored only in a short, compact left-to-right math run when a single-letter variable from a different source font resource follows on the same baseline with a small positive geometric gap and independent local math-layout evidence. A missing prose-to-variable space is restored only when a multiword prose item, a separate uppercase letter from a different source font resource, and continuing prose from the original prose font share one baseline with distinct positive boundary gaps, and the same letter/font pair occurs in a nearby compact equation on the same page and column. An inline single-digit stacked fraction is rendered only when consecutive same-font source items, explicit source whitespace, smaller exactly aligned numerator and denominator digits, ordinary prose on both sides, and exactly one thin matching solid-mask bar agree. A small version-pinned registry may recover a legacy Computer Modern Type-3 character only after an exact official-metric family match, exact target and witness glyph-program matches, and a complete operator/text sequence binding. Two witnesses are required unless the source font subset cannot supply them, in which case the entry must declare that font's complete enrolled footprint and every code in it must be present and match. General equations, other fraction bars, unregistered raster variants, and other damaged mathematical glyphs remain source reading-order text rather than being guessed.",
+  "A glyph run the source painted smaller and displaced from the baseline of the text it is attached to is written as Unicode superscript characters when it was raised and Unicode subscript characters when it was lowered. This records how the page is set and nothing more: a page raises a mathematical exponent and a footnote reference in exactly the same way, so this does not distinguish the two, does not assert that a raised digit is a power, and does not assert that a lowered one is an index. A displaced run is written only when every one of its characters has a real Unicode form in that direction and the whole run is present on one line, so a run stays flat entire rather than being written in part. Unicode subscript coverage is much thinner than superscript coverage, with no capital letters and only some lowercase ones, so many lowered runs stay flat for that reason alone. A stacked fraction numerator is raised by the same amount but stands clear of the text before it, and is left alone. Where the source set a displaced run without changing font and without leaving any of its base's advance unused, the text layer reports it as part of the base run and no displacement survives to be read, so that run stays flat too and is indistinguishable here from text the page never displaced. A line whose source items cannot all be located within its own extracted text, and a line the stacked-fraction projection rebuilt, keep the text they had rather than being partly rewritten.",
   "Lists are emitted only for literal bullet glyphs or decimal markers present in the source text.",
   "Links are emitted only for source-validated http or https annotation targets that map to exactly one contiguous run of text on one line. Internal destinations, actions, other schemes, ambiguous or partially covered labels, and links inside reconstructed tables remain escaped text reported as a conversion gap, and URL-looking source text is escaped to resist host autolinking.",
   "Tables are reconstructed directly only from complete text-item column geometry, clean ruled-rectangle grid evidence, or one unambiguous complete closed grid of bounded axis-aligned solid-mask rectangles. Every text item must fit exactly one cell, aligned partial dividers that evidence merged or spanning topology are rejected, and the first row must carry real header evidence because Markdown imposes header semantics. On an opt-in abstention path, a caller may submit item-to-cell assignments to the read-only verifier; accepted cell content is rebuilt only from a fresh source parse and the grid must agree with all available source-replayed ruling geometry. This proves source-backed content and consistency, not unique topology; ambiguous or unsupported geometry remains rejected. GFM cannot encode row or column spans, so accepted spans retain their authority in structured cells while Markdown places source text once at the anchor and leaves continuation slots empty. Incomplete grids and damaged mathematical glyphs are not interpreted; other ambiguous content remains escaped reading-order text with a conversion gap. Cell artwork is omitted and reported as a vector-content gap; only independently qualified exact legacy glyph variants are recovered.",
@@ -770,7 +770,7 @@ function hasAttachedSmallerOffsetScript(cells, variableIndex) {
 
 /**
  * The characters that have a genuine Unicode superscript form. This map is the
- * safety mechanism of the superscript projection, not a style choice: a raised
+ * safety mechanism of the script projection, not a style choice: a raised
  * token is transcribed only when every one of its characters can be written as
  * a real superscript character, so an arrow, a word, or a multi-letter marker
  * has no form here and is left exactly as the source emitted it. Nothing is
@@ -801,10 +801,65 @@ const SUPERSCRIPT_FORMS = new Map(Object.entries({
   i: "ⁱ",
 }));
 
-// Raised smaller glyph geometry, measured across the pinned legacy TeX corpus.
-// Script size sits near 0.74 of its base and its baseline near 0.36 of the base
-// height above it; the size and rise windows are widened around those
-// observations rather than fitted to one document.
+/**
+ * The characters that have a genuine Unicode subscript form, under exactly the
+ * same whole-run discipline as the superscript map above and with the same
+ * one-code-unit invariant.
+ *
+ * Coverage here is materially thinner, and the holes are the interesting part.
+ * Unicode encodes no subscript capital at all, and among lowercase letters only
+ * a e h i j k l m n o p r s t u v x exist: there is no b, c, d, f, g, q, w, y or
+ * z. The whole-run rule turns every hole into an abstention rather than an
+ * invention, which is the only honest option available. A source item whose
+ * text carries an interior space is left flat for the same reason, because a
+ * lowered space is not a character this map can write and dropping it would
+ * change what the page says.
+ */
+const SUBSCRIPT_FORMS = new Map(Object.entries({
+  0: "₀",
+  1: "₁",
+  2: "₂",
+  3: "₃",
+  4: "₄",
+  5: "₅",
+  6: "₆",
+  7: "₇",
+  8: "₈",
+  9: "₉",
+  "+": "₊",
+  "-": "₋",
+  "−": "₋",
+  "=": "₌",
+  "(": "₍",
+  ")": "₎",
+  a: "ₐ",
+  e: "ₑ",
+  h: "ₕ",
+  i: "ᵢ",
+  j: "ⱼ",
+  k: "ₖ",
+  l: "ₗ",
+  m: "ₘ",
+  n: "ₙ",
+  o: "ₒ",
+  p: "ₚ",
+  r: "ᵣ",
+  s: "ₛ",
+  t: "ₜ",
+  u: "ᵤ",
+  v: "ᵥ",
+  x: "ₓ",
+}));
+
+// Smaller-glyph script geometry, measured across the pinned legacy TeX corpus.
+// Script size sits near 0.74 of its base, and its baseline is displaced from
+// the base's by roughly a third of the base height: raised for a superscript,
+// lowered for a subscript. The size window is shared, and each direction's
+// displacement window is widened around its own observations rather than
+// fitted to one document. A subscript's drop is the more variable of the two
+// because the source scales it against the enclosing formula rather than
+// against the base item, so the observed band runs from an ordinary variable
+// index to the deeper drop a mathematical operator takes.
 //
 // The horizontal window is the one that carries real discriminating work, and
 // it is narrow on purpose. An attached script is set inside its base's advance
@@ -813,25 +868,69 @@ const SUPERSCRIPT_FORMS = new Map(Object.entries({
 // centered over a rule wider than itself, so it starts a visible distance after
 // whatever precedes it. Allowing a gap of up to a word space would transcribe
 // those numerators as superscripts, which is not what the page shows.
-const SUPERSCRIPT_HEIGHT_RATIO_MIN = 0.6;
-const SUPERSCRIPT_HEIGHT_RATIO_MAX = 0.82;
+//
+// The two ceilings differ, and the asymmetry is load-bearing rather than
+// sloppy. The numerator is the pressure on the raised window, and there is no
+// lowered counterpart to it: a denominator does not reach this rule at all. The
+// reason is not the one it looks like. A denominator is not preceded on its own
+// source line by the numerator it hangs under, so the two are never compared;
+// of the fraction bars on the corpus that carry text on both sides, all but
+// four have a denominator that is the first painted item on its line, which
+// this rule never examines because it only ever judges an item against the one
+// before it. In each of the four remaining cases the item beneath the bar is
+// prose or a full-size symbol rather than a small denominator digit, it is
+// level with its predecessor rather than below it, and it is the same size as
+// its predecessor, so the height window rejects it before the gap is consulted
+// and the rise window would reject it independently. So the lowered ceiling is
+// free to sit where the source actually needs it. It needs to be past 0.10: an
+// italic descender is kerned out further than an upright digit, and the
+// corpus's attached lowered runs reach 0.12 before they stop. The next lowered
+// candidate of any kind is at 0.67, where the base is punctuation or a whole
+// word rather than a symbol, so 0.15 sits inside a wide empty band and admits
+// nothing the source did not set attached.
+const SCRIPT_HEIGHT_RATIO_MIN = 0.6;
+const SCRIPT_HEIGHT_RATIO_MAX = 0.82;
 const SUPERSCRIPT_BASELINE_RISE_MIN = 0.28;
 const SUPERSCRIPT_BASELINE_RISE_MAX = 0.45;
+const SUBSCRIPT_BASELINE_RISE_MIN = -0.35;
+const SUBSCRIPT_BASELINE_RISE_MAX = -0.1;
 const SUPERSCRIPT_GAP_MIN = -0.1;
 const SUPERSCRIPT_GAP_MAX = 0.1;
-// Deliberately much wider than the attachment window above, and used only to
-// keep scanning a raised run for a reason to abstain. Widening a window that
-// can only suppress output is safe; widening the one that admits it is not.
-const SUPERSCRIPT_RUN_GAP_MIN = -0.35;
-const SUPERSCRIPT_RUN_GAP_MAX = 0.6;
-const SUPERSCRIPT_RUN_BASELINE_TOLERANCE = 0.1;
+const SUBSCRIPT_GAP_MIN = -0.1;
+const SUBSCRIPT_GAP_MAX = 0.15;
+// Deliberately much wider than the attachment windows above, and used only to
+// keep scanning a displaced run for a reason to abstain. Widening a window that
+// can only suppress output is safe; widening one that admits it is not.
+const SCRIPT_RUN_GAP_MIN = -0.35;
+const SCRIPT_RUN_GAP_MAX = 0.6;
+const SCRIPT_RUN_BASELINE_TOLERANCE = 0.1;
 
+// The two directions a source may set an attached smaller run, each carrying
+// its own displacement and attachment windows and its own alphabet. The signed
+// rise windows do not overlap and do not contain zero, so at most one entry can
+// describe any one pair of items.
+const SCRIPT_KINDS = Object.freeze([
+  Object.freeze({
+    forms: SUPERSCRIPT_FORMS,
+    riseMin: SUPERSCRIPT_BASELINE_RISE_MIN,
+    riseMax: SUPERSCRIPT_BASELINE_RISE_MAX,
+    gapMin: SUPERSCRIPT_GAP_MIN,
+    gapMax: SUPERSCRIPT_GAP_MAX,
+  }),
+  Object.freeze({
+    forms: SUBSCRIPT_FORMS,
+    riseMin: SUBSCRIPT_BASELINE_RISE_MIN,
+    riseMax: SUBSCRIPT_BASELINE_RISE_MAX,
+    gapMin: SUBSCRIPT_GAP_MIN,
+    gapMax: SUBSCRIPT_GAP_MAX,
+  }),
+]);
 
-function superscriptForm(value) {
+function scriptForm(kind, value) {
   if (typeof value !== "string" || value.length === 0) return null;
   let mapped = "";
   for (const character of value) {
-    const form = SUPERSCRIPT_FORMS.get(character);
+    const form = kind.forms.get(character);
     if (form === undefined) return null;
     mapped += form;
   }
@@ -866,55 +965,59 @@ function uprightBaselineY(item) {
 }
 
 /**
- * Whether the source painted `script` as a raised, smaller run attached to
- * `base`: script-sized, its baseline lifted by a script offset, and set with no
- * word gap.
+ * Which direction, if either, the source painted `script` in as a smaller run
+ * attached to `base`: script-sized, its baseline displaced by a script offset,
+ * and set with no word gap. Returns the matching entry of SCRIPT_KINDS, or null
+ * when the pair is not an attached script at all.
  *
- * This is a typographic observation and nothing more. The same geometry carries
- * a mathematical exponent and a footnote reference, and the page raises both
- * identically, so no geometric rule can separate them and this one does not
- * try. Deliberately not consulted: the base item's own text. Requiring the base
- * to end alphanumeric selects the footnote-marker population (a word followed
- * by a digit) and drops genuine raised runs whose base item follows an operator
- * or a comma.
+ * This is a typographic observation and nothing more. The same raised geometry
+ * carries a mathematical exponent and a footnote reference, and the page raises
+ * both identically, so no geometric rule can separate them and this one does
+ * not try. Deliberately not consulted: the base item's own text. Requiring the
+ * base to end alphanumeric selects the footnote-marker population (a word
+ * followed by a digit) and drops genuine raised runs whose base item follows an
+ * operator or a comma.
  *
  * hasAttachedSmallerOffsetScript encodes a related but different observation
  * for the log-spacing projection: it takes the absolute vertical offset between
  * advance-box tops, so it cannot tell a raised glyph from a lowered one, and it
- * is deliberately left alone here. This test needs the signed direction and the
- * true baseline, and folding the two together would either widen that
- * projection's evidence or narrow this one.
+ * is deliberately left alone here. That question is "is a script attached
+ * here at all", which either direction answers equally well; this one needs the
+ * signed direction and the true baseline, because the direction chooses which
+ * alphabet the run has to be written in.
  */
-function isRaisedSmallerScript(base, script) {
+function attachedScriptKind(base, script) {
   const baseHeight = base?.line_height;
   const scriptHeight = script?.line_height;
-  if (!Number.isFinite(baseHeight) || !Number.isFinite(scriptHeight) || !(baseHeight > 0)) return false;
+  if (!Number.isFinite(baseHeight) || !Number.isFinite(scriptHeight) || !(baseHeight > 0)) return null;
   const baseBaseline = uprightBaselineY(base);
   const scriptBaseline = uprightBaselineY(script);
-  if (baseBaseline === null || scriptBaseline === null) return false;
+  if (baseBaseline === null || scriptBaseline === null) return null;
   const gap = operatorVariableGap(base, script);
-  if (gap === null) return false;
+  if (gap === null) return null;
   const ratio = scriptHeight / baseHeight;
+  if (ratio < SCRIPT_HEIGHT_RATIO_MIN || ratio > SCRIPT_HEIGHT_RATIO_MAX) return null;
   const rise = (baseBaseline - scriptBaseline) / baseHeight;
-  return ratio >= SUPERSCRIPT_HEIGHT_RATIO_MIN
-    && ratio <= SUPERSCRIPT_HEIGHT_RATIO_MAX
-    && rise >= SUPERSCRIPT_BASELINE_RISE_MIN
-    && rise <= SUPERSCRIPT_BASELINE_RISE_MAX
-    && gap >= SUPERSCRIPT_GAP_MIN * baseHeight
-    && gap <= SUPERSCRIPT_GAP_MAX * baseHeight;
+  return SCRIPT_KINDS.find(candidate => rise >= candidate.riseMin
+    && rise <= candidate.riseMax
+    && gap >= candidate.gapMin * baseHeight
+    && gap <= candidate.gapMax * baseHeight) ?? null;
 }
 
 /**
- * Whether `next` continues the raised run that `script` started: painted on the
- * same lifted baseline and still attached. Used only to find the end of a run
- * so the whole run can be judged together.
+ * Whether `next` continues the displaced run that `script` started: painted on
+ * the same displaced baseline and still attached. Used only to find the end of
+ * a run so the whole run can be judged together.
  *
- * Deliberately no size condition. A recovered legacy glyph can report a font
- * metric quite unlike its neighbours' while sitting on exactly their baseline,
- * and missing such a member would leave the run looking complete when it is
- * not. This test can only cause abstention, so it is written to over-collect.
+ * Deliberately no size condition, and deliberately no direction condition
+ * either. A run's direction is fixed by the pair that opened it, and anything
+ * sharing that run's baseline belongs to it whatever its own metrics say. A
+ * recovered legacy glyph can report a font metric quite unlike its neighbours'
+ * while sitting on exactly their baseline, and missing such a member would
+ * leave the run looking complete when it is not. This test can only cause
+ * abstention, so it is written to over-collect.
  */
-function continuesRaisedRun(script, next) {
+function continuesScriptRun(script, next) {
   const height = script.line_height;
   if (!Number.isFinite(height) || !(height > 0)) return false;
   const scriptBaseline = uprightBaselineY(script);
@@ -922,9 +1025,9 @@ function continuesRaisedRun(script, next) {
   if (scriptBaseline === null || nextBaseline === null) return false;
   const gap = operatorVariableGap(script, next);
   return gap !== null
-    && Math.abs(nextBaseline - scriptBaseline) <= height * SUPERSCRIPT_RUN_BASELINE_TOLERANCE
-    && gap >= SUPERSCRIPT_RUN_GAP_MIN * height
-    && gap <= SUPERSCRIPT_RUN_GAP_MAX * height;
+    && Math.abs(nextBaseline - scriptBaseline) <= height * SCRIPT_RUN_BASELINE_TOLERANCE
+    && gap >= SCRIPT_RUN_GAP_MIN * height
+    && gap <= SCRIPT_RUN_GAP_MAX * height;
 }
 
 function paintedItems(page) {
@@ -934,7 +1037,7 @@ function paintedItems(page) {
 }
 
 /**
- * Plan the superscript projection for one line.
+ * Plan the script projection for one line.
  *
  * `items` is that line's source items in the order the line records them, and
  * `pageItems` is every painted item on the page. Attachment is judged over the
@@ -942,22 +1045,31 @@ function paintedItems(page) {
  * painted run, and a base never reaches across an explicit space item to claim
  * a script.
  *
- * A raised run is transcribed only in full, and only when this line holds all
- * of it. The source may split one raised run across several items and even
- * across the IR's line grouping, and transcribing the representable prefix
- * would emit a lifted opening parenthesis against a baseline closing one, which
- * misreports the page more badly than leaving the whole run flat. The run is
- * therefore followed across the whole page, which costs nothing in accuracy
- * because a genuinely line-final script has no attached same-baseline
- * neighbour anywhere.
+ * A displaced run is transcribed only in full, in the direction the pair that
+ * opened it was set, and only when this line holds all of it. The source may
+ * split one such run across several items and even across the IR's line
+ * grouping, and transcribing the representable prefix would emit a displaced
+ * opening parenthesis against a baseline closing one, which misreports the page
+ * more badly than leaving the whole run flat. The run is therefore followed
+ * across the whole page, which costs nothing in accuracy because a genuinely
+ * line-final script has no attached same-baseline neighbour anywhere.
  *
  * Returns the per-item projected forms and, when the caller's item list can be
- * located inside line.text, the rewritten line text. Because every projected
+ * located inside `baseText`, that text rewritten. Because every projected
  * character replaces exactly one source code unit, the rewritten text has the
- * same length as line.text and any offsets the caller already holds against the
- * original stay valid.
+ * same length as `baseText` and any offsets the caller already holds against it
+ * stay valid.
+ *
+ * `baseText` defaults to the line's own text and exists so a caller that has
+ * already spaced the line can hand that text in instead. Locating the items is
+ * a sequential scan for each item's exact text, so a projection that only
+ * inserts separators between items leaves every item findable and in order; one
+ * that rewrites item text or merges lines does not, and such a caller must not
+ * pass its result here. Where the scan fails the line keeps its text unchanged
+ * rather than being partly rewritten, which is why a line whose last source
+ * item carries a trailing space the line text dropped stays flat.
  */
-function superscriptLineProjection(line, items, pageItems) {
+function scriptLineProjection(line, items, pageItems, baseText = line.text) {
   const attached = items.filter(item => item
     && item.is_whitespace !== true
     && typeof item.text === "string"
@@ -965,14 +1077,15 @@ function superscriptLineProjection(line, items, pageItems) {
   const lineItemIds = new Set(attached.map(item => item.id));
   const forms = new Map();
   for (let index = 1; index < attached.length; index += 1) {
-    if (!isRaisedSmallerScript(attached[index - 1], attached[index])) continue;
+    const kind = attachedScriptKind(attached[index - 1], attached[index]);
+    if (kind === null) continue;
     const run = [];
     const claimed = new Set();
     for (let tail = attached[index]; tail !== null;) {
-      run.push([tail, lineItemIds.has(tail.id) ? superscriptForm(tail.text) : null]);
+      run.push([tail, lineItemIds.has(tail.id) ? scriptForm(kind, tail.text) : null]);
       claimed.add(tail.id);
       tail = pageItems.find(
-        item => !claimed.has(item.id) && continuesRaisedRun(tail, item),
+        item => !claimed.has(item.id) && continuesScriptRun(tail, item),
       ) ?? null;
     }
     while (index + 1 < attached.length && claimed.has(attached[index + 1].id)) index += 1;
@@ -980,15 +1093,15 @@ function superscriptLineProjection(line, items, pageItems) {
     for (const [item, form] of run) forms.set(item.id, form);
   }
   if (forms.size === 0) return { forms, text: null };
-  const offsets = itemOffsets(line, items);
+  const offsets = itemOffsets({ text: baseText }, items);
   if (offsets === null) return { forms, text: null };
-  let text = line.text;
+  let text = baseText;
   items.forEach((item, index) => {
     const form = forms.get(item.id);
     if (form === undefined) return;
     text = `${text.slice(0, offsets[index].start)}${form}${text.slice(offsets[index].end)}`;
   });
-  return { forms, text: text === line.text ? null : text };
+  return { forms, text: text === baseText ? null : text };
 }
 
 function projectedItemText(forms, item) {
@@ -1389,7 +1502,7 @@ function assignRowToColumns(row, anchors, pageItems) {
   // Emission only: column assignment and the newline rejection below both read
   // the raw source item, so the projection cannot move a cell or admit a run
   // this path would otherwise reject.
-  const { forms } = superscriptLineProjection(row.line, row.cells, pageItems);
+  const { forms } = scriptLineProjection(row.line, row.cells, pageItems);
   for (const item of row.cells) {
     const index = nearestAnchor(anchors, itemStartX(item));
     if (index === -1 || assigned.has(index)) return null;
@@ -1725,9 +1838,9 @@ function tryBuildRectGrid(page, run, clusters, itemById) {
 
     // Emission only. The structural grid, the header evidence, and the
     // newline rejection below all keep reading raw source text, so the
-    // superscript projection cannot change which grid is reconstructed.
-    const superscriptForms = new Map(lineRecords.flatMap(
-      record => [...superscriptLineProjection(record.line, record.allItems, pageItems).forms],
+    // script projection cannot change which grid is reconstructed.
+    const scriptForms = new Map(lineRecords.flatMap(
+      record => [...scriptLineProjection(record.line, record.allItems, pageItems).forms],
     ));
     const grid = cells.map(row => row.map(cell => {
       cell.sort((left, right) => (
@@ -1735,7 +1848,7 @@ function tryBuildRectGrid(page, run, clusters, itemById) {
           || left.item.bbox.x - right.item.bbox.x
       ));
       if (cell.some(entry => /[\r\n]/u.test(entry.item.text) || /[\r\n]/u.test(entry.line.text))) return null;
-      return cell.map(entry => projectedItemText(superscriptForms, entry.item).trim()).filter(Boolean).join(" ");
+      return cell.map(entry => projectedItemText(scriptForms, entry.item).trim()).filter(Boolean).join(" ");
     }));
     if (grid.some(row => row.some(value => value === null))) return { reason: "topology" };
 
@@ -1984,15 +2097,15 @@ function ruledGridSegment(page) {
       previousColumn = column;
     }
     const offsets = itemOffsets(line, allItems);
-    // Cell text is sliced out of the line, so the superscript projection is
+    // Cell text is sliced out of the line, so the script projection is
     // applied to the line text before slicing. It is length-preserving, which
     // is why the offsets recovered against the original string stay correct.
-    const superscript = superscriptLineProjection(line, allItems, pageItems);
-    const lineText = superscript.text ?? line.text;
+    const script = scriptLineProjection(line, allItems, pageItems);
+    const lineText = script.text ?? line.text;
     for (const group of groups) {
       const fragment = offsets === null
         ? allItems.slice(group.start, group.end + 1)
-          .map(item => projectedItemText(superscript.forms, item)).join(" ").trim()
+          .map(item => projectedItemText(script.forms, item)).join(" ").trim()
         : lineText.slice(offsets[group.start].start, offsets[group.end].end).trim();
       if (!fragment) return { segment: null, tableReason: "topology" };
       grid[tableRow][group.column].push({
@@ -2666,20 +2779,24 @@ function renderPage(page, {
         const proseMathText = mathText === null
           ? proseMathVariableSpacedText({ line, cells }, projectionOptions)
           : null;
-        const projectedText = fractionPlan.replacements.get(line.id) ?? mathText ?? proseMathText;
-        // Typographic fidelity only, and only where no structural projection
-        // already rewrote this line. The other projections splice spaces into
-        // line.text at offsets recovered from the original string, so composing
-        // them would require re-deriving those offsets against a rewritten
-        // line; one projection per line keeps every existing rewrite byte-exact.
-        // `joinable` deliberately still follows projectedText alone, because a
-        // superscript changes only which characters are emitted, not whether
-        // the line is a continuable flow.
-        const superscriptText = projectedText === null
-          ? superscriptLineProjection(line, cells, pageItems).text
+        const fractionText = fractionPlan.replacements.get(line.id) ?? null;
+        const projectedText = fractionText ?? mathText ?? proseMathText;
+        // Typographic fidelity only, and applied last so it composes with the
+        // spacing projections instead of being displaced by them. Those two
+        // only splice a separator between two source items, which leaves every
+        // item's own text intact and in order, so the script projection can
+        // recover its offsets against the spaced string just as well as against
+        // the original. The fraction replacement is excluded: it merges two
+        // source lines and rebuilds their text, so the items of neither line
+        // can be located in the result and a projection over it would be
+        // guesswork. `joinable` deliberately still follows projectedText alone,
+        // because a script form changes only which characters are emitted, not
+        // whether the line is a continuable flow.
+        const scriptText = fractionText === null
+          ? scriptLineProjection(line, cells, pageItems, projectedText ?? line.text).text
           : null;
         return {
-          text: renderLine(line, headings.get(line.id), projectedText ?? superscriptText ?? line.text),
+          text: renderLine(line, headings.get(line.id), scriptText ?? projectedText ?? line.text),
           sourceText: line.text,
           normalizable: true,
           line,
