@@ -153,7 +153,13 @@ const EXAMPLE_PDF = path.join(REPO_ROOT, "example-fw9.pdf");
 // lowered smaller glyph run and writes it as Unicode subscript characters. No
 // tool name, description, input schema, or read-only annotation changes.
 // Previously cefcfff3fc76324826e1eedcd4e2694d311cfcd1ab7daa9f43dc9e2f496eae5d.
-const TOOL_CONTRACT_SHA256 = "e5328f44d1f1f01a2f015d756cb13c1980b84c8042cdd1d8470699b9931b67ad";
+// 2026-08-19: the structured output gains pages_with_unread_visual_content,
+// which republishes the visual-content gap codes a page already reported in a
+// field a caller can act on. It adds no judgement the gaps did not already
+// carry. No tool name, description, input schema, or read-only annotation
+// changes. Previously
+// e5328f44d1f1f01a2f015d756cb13c1980b84c8042cdd1d8470699b9931b67ad.
+const TOOL_CONTRACT_SHA256 = "112518da26bdd0a3c9423f7eed1e925dc0453c62740ba5a5fc825286a51c125e";
 
 const CLOSED_READ = Object.freeze({
   readOnlyHint: true,

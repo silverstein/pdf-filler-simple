@@ -32,6 +32,29 @@ async function makeStructureFixture(targetPath) {
   await fs.writeFile(targetPath, await document.save({ useObjectStreams: false }));
 }
 
+// A page a reader would call text with a figure on it: enough prose that the
+// text layer is the page's substance, plus one raster paint the conversion
+// reports and does not read. That is the routing case pages_needing_vision
+// deliberately does not cover.
+async function makeFigureFixture(targetPath) {
+  const document = await PDFDocument.create();
+  const page = document.addPage([612, 792]);
+  const font = await document.embedFont(StandardFonts.Helvetica);
+  const raster = await document.embedPng(await fs.readFile(
+    path.join(REPO_ROOT, "test/fixtures/eval/extraction/source-images/raster-clean.png"),
+  ));
+  page.drawImage(raster, { x: 72, y: 260, width: 300, height: 200 });
+  for (let index = 0; index < 10; index += 1) {
+    page.drawText(`Paragraph line ${index} discussing the figure printed below it.`, {
+      x: 72,
+      y: 700 - index * 16,
+      size: 11,
+      font,
+    });
+  }
+  await fs.writeFile(targetPath, await document.save({ useObjectStreams: false }));
+}
+
 const GRID_COLUMNS = [72, 220, 360, 480];
 const GRID_ROWS = [
   ["Region", "Q1", "Q2", "Q3"],
@@ -235,6 +258,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
   let linkFixture;
   let rotatedLinkFixture;
   let hostileLinkFixture;
+  let figureFixture;
 
   beforeAll(async () => {
     temporaryRoot = await fs.mkdtemp(path.join(os.tmpdir(), "pdf-tools-markdown-"));
@@ -249,6 +273,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     linkFixture = path.join(temporaryRoot, "link.pdf");
     rotatedLinkFixture = path.join(temporaryRoot, "link-rotated.pdf");
     hostileLinkFixture = path.join(temporaryRoot, "link-hostile.pdf");
+    figureFixture = path.join(temporaryRoot, "text-with-figure.pdf");
     await makeStructureFixture(structureFixture);
     await makeDenseFixture(denseFixture);
     await makeGeometryFixture(geometryFixture);
@@ -260,6 +285,7 @@ describe("convert_pdf_to_markdown MCP tool", () => {
     await makeLinkFixture(linkFixture);
     await makeLinkFixture(rotatedLinkFixture, { rotation: 90, crop: true });
     await makeLinkFixture(hostileLinkFixture, { url: "https://example.com/a(b)c" });
+    await makeFigureFixture(figureFixture);
     transport = new StdioClientTransport({
       command: process.execPath,
       args: [path.join(REPO_ROOT, "server/index.js")],
@@ -608,6 +634,92 @@ describe("convert_pdf_to_markdown MCP tool", () => {
       cursor = index + fragment.length;
     }
   }, 30_000);
+
+  it("routes readable pages that carry visual content the conversion did not read", async () => {
+    // Oracle: read_pdf_layout reports the source paint evidence per page
+    // straight from the extractor. The field under test is built from emitted
+    // Markdown gap codes and from pages_needing_vision, so the two sides are
+    // computed from different evidence and can disagree.
+    const projectionFromSource = (layoutPages, pagesNeedingVision) => {
+      const routed = new Set(pagesNeedingVision.map(entry => entry.page));
+      return layoutPages
+        .filter(page => page.modality_hint !== "unknown" && !routed.has(page.page))
+        .map(page => ({
+          page: page.page,
+          gap_codes: [
+            ...page.has_image_operations ? ["IMAGE_CONTENT_NOT_RENDERED"] : [],
+            ...page.has_vector_paint_operations ? ["VECTOR_CONTENT_NOT_INTERPRETED"] : [],
+          ],
+        }))
+        .filter(entry => entry.gap_codes.length > 0);
+    };
+
+    const cases = [
+      [structureFixture, 1],
+      [figureFixture, 1],
+      [MIXED, 2],
+      [TABLE, 1],
+      [ROTATED_CROP, 1],
+    ];
+    const observed = [];
+    for (const [pdfPath, endPage] of cases) {
+      const [layout, markdown] = await Promise.all([
+        client.callTool({
+          name: "read_pdf_layout",
+          arguments: { pdf_path: pdfPath, end_page: endPage, max_output_characters: 200000 },
+        }),
+        client.callTool({
+          name: "convert_pdf_to_markdown",
+          arguments: { pdf_path: pdfPath, end_page: endPage, max_markdown_bytes: 200000 },
+        }),
+      ]);
+      expect(layout.isError, pdfPath).not.toBe(true);
+      expect(markdown.isError, pdfPath).not.toBe(true);
+      const content = markdown.structuredContent;
+      const expected = projectionFromSource(
+        layout.structuredContent.pages,
+        content.pages_needing_vision,
+      );
+      if (expected.length === 0) {
+        // A document with nothing to add keeps the exact result it had before
+        // this field existed: no empty array, no key.
+        expect(Object.hasOwn(content, "pages_with_unread_visual_content"), pdfPath).toBe(false);
+        expect(markdown.content?.[0]?.text ?? "", pdfPath).not.toContain("Unread visual content");
+      } else {
+        expect(content.pages_with_unread_visual_content, pdfPath).toEqual(expected);
+        // Every code claimed here is a gap the same result already reported
+        // for that page, so the field asserts nothing new.
+        for (const entry of content.pages_with_unread_visual_content) {
+          const reported = content.gaps
+            .filter(gap => gap.page === entry.page)
+            .map(gap => gap.code);
+          expect(reported, `${pdfPath} page ${entry.page}`)
+            .toEqual(expect.arrayContaining(entry.gap_codes));
+        }
+        // Non-overlap with the strong field is the whole point of a separate
+        // field: these pages read fine and are not claimed to need vision.
+        const routed = new Set(content.pages_needing_vision.map(entry => entry.page));
+        expect(content.pages_with_unread_visual_content
+          .filter(entry => routed.has(entry.page)), pdfPath).toEqual([]);
+        expect(markdown.content?.[0]?.text ?? "").toContain("Unread visual content");
+      }
+      observed.push({
+        pdfPath,
+        entries: content.pages_with_unread_visual_content ?? [],
+        routedWithPaint: layout.structuredContent.pages.filter(page =>
+          (page.has_image_operations || page.has_vector_paint_operations)
+          && content.pages_needing_vision.some(entry => entry.page === page.page)).length,
+      });
+    }
+
+    // The case list has to keep exercising all four situations, or the loop
+    // above could pass while covering only one of them.
+    const codes = new Set(observed.flatMap(item => item.entries).flatMap(entry => entry.gap_codes));
+    expect(codes.has("VECTOR_CONTENT_NOT_INTERPRETED")).toBe(true);
+    expect(codes.has("IMAGE_CONTENT_NOT_RENDERED")).toBe(true);
+    expect(observed.some(item => item.entries.length === 0)).toBe(true);
+    expect(observed.some(item => item.routedWithPaint > 0)).toBe(true);
+  }, 60_000);
 
   it("keeps rotated and cropped geometry bounded and deterministic", async () => {
     const request = {

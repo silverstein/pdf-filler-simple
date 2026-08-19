@@ -94,6 +94,40 @@ const LIMITATIONS = Object.freeze([
   "Unsafe control characters and malformed UTF-16 surrogates are replaced with the Unicode replacement character and reported as conversion gaps.",
 ]);
 
+// The two gap codes that report page content the conversion saw and did not
+// read. Every other gap code reports something about text, links, table
+// topology, or a retention limit, none of which is by itself a reason to look
+// at the page. Declared below LIMITATIONS on purpose: a contract test reads
+// the GAP_CODES block above literally as the published gap-code list, so a
+// second code list inside it would be read as a published gap code.
+const UNREAD_VISUAL_GAP_CODES = Object.freeze([
+  "IMAGE_CONTENT_NOT_RENDERED",
+  "VECTOR_CONTENT_NOT_INTERPRETED",
+]);
+
+/**
+ * Project already-reported gaps onto the one routing case no field covers: a
+ * page whose text read successfully -- so it is correctly absent from
+ * pages_needing_vision, which means "cannot be read without vision" -- and
+ * which the conversion nevertheless reported as carrying visual content it did
+ * not read. Shannon page 40 is that case: mostly text, plus plots inside a
+ * table that the converter reports and does not interpret.
+ *
+ * This infers nothing. It re-keys gap codes the result already carries so a
+ * host can route on them without parsing prose, and it asserts nothing about
+ * what the unread content depicts or where on the page it sits.
+ */
+export function deriveUnreadVisualContentPages(pages, pagesNeedingVision) {
+  const alreadyRouted = new Set((pagesNeedingVision ?? []).map(entry => entry.page));
+  return (pages ?? []).flatMap(page => {
+    if (alreadyRouted.has(page.page)) return [];
+    const gapCodes = UNREAD_VISUAL_GAP_CODES.filter(
+      code => (page.gaps ?? []).some(gap => gap.code === code),
+    );
+    return gapCodes.length > 0 ? [{ page: page.page, gap_codes: gapCodes }] : [];
+  });
+}
+
 function assertion(condition, message) {
   if (!condition) throw new Error(`Invalid Markdown conversion semantics: ${message}`);
 }
@@ -2998,6 +3032,23 @@ export function validateMarkdownConversionSemantics(result, { layout = null } = 
       flattenedGaps,
     );
     assertion(result.markdown === expectedMarkdown, "markdown does not match the bound layout IR");
+  }
+
+  // Additive routing projection owned by the handler, which is also the only
+  // layer that knows pages_needing_vision. The renderer payload carries
+  // neither field, so bind the projection only where its inputs exist. An
+  // empty projection must omit the key entirely, so a document with no unread
+  // visual content keeps the exact result it had before the field existed.
+  if (result.pages_needing_vision !== undefined
+    || result.pages_with_unread_visual_content !== undefined) {
+    const expectedUnread = deriveUnreadVisualContentPages(result.pages, result.pages_needing_vision);
+    if (expectedUnread.length === 0) {
+      assertion(result.pages_with_unread_visual_content === undefined,
+        "an empty unread-visual-content projection must omit the field");
+    } else {
+      assertion(sameJson(result.pages_with_unread_visual_content, expectedUnread),
+        "pages_with_unread_visual_content is not the exact projection of the reported page gaps");
+    }
   }
 
   // Verified-vision proposal packets are additive and optional. The renderer
