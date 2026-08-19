@@ -235,8 +235,9 @@ describe("external Shannon raised-glyph transcription", () => {
 
   it.runIf(Boolean(SOURCE))("reports the raised-glyph rule in its limitations", () => {
     const [chunk] = converted.chunks;
-    const limitation = chunk.limitations.find(value => value.includes("raised above the baseline"));
+    const limitation = chunk.limitations.find(value => value.includes("displaced from the baseline"));
     expect(limitation).toBeDefined();
+    expect(limitation).toMatch(/superscript characters when it was raised/i);
     expect(limitation).toMatch(/footnote reference/i);
     expect(limitation).toMatch(/does not distinguish/i);
   });

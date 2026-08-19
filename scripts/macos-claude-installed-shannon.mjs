@@ -11,14 +11,24 @@ if (!process.argv[2] || !process.argv[3]) {
   throw new Error("Usage: macos-claude-installed-shannon.mjs <installed-extension-dir> <shannon-pdf>");
 }
 
+// Pins recaptured 2026-08-15 against the shipped v0.11.0 MCPB
+// (sha256 24179fb68790014407d3af34bb1da68b15cfe31907f7ff733df45d013f3e2dd4),
+// unpacked and driven over stdio with the Shannon paper fetched from the URL in
+// test/fixtures/eval/shannon/manifest.v1.json.
+//
+// The previous pins were captured before the Type-3 recovery and superscript
+// work and had drifted a long way: 68 gaps against 26, and 434 replacement
+// characters against 6. Those two numbers are a quality measurement, so stale
+// pins here understate the product by a factor of four and seventy.
+//
 const EXPECTED_SOURCE_SHA256 = "6e4e3411984f3edf99dbfe8b941cb5e8a321379ff0cae6ae5c1f592ad8882ca8";
-const EXPECTED_MARKDOWN_SHA256 = "4cdc3a17728bb07100752ad841745a5ecf49a0aade0cd39af69bca899217e203";
-const EXPECTED_TOOL_CONTRACT_SHA256 = "53d965e366b16adf2a0fa90dfe837ca98d29a8f41c1adf8b9e8f661ea3bb7d95";
+const EXPECTED_MARKDOWN_SHA256 = "b9bd7ca7db26fe807f294565c39de8d4fe9337908afa74cd7e2896a800c92991";
+const EXPECTED_TOOL_CONTRACT_SHA256 = "cefcfff3fc76324826e1eedcd4e2694d311cfcd1ab7daa9f43dc9e2f496eae5d";
 const EXPECTED_PAGE_COUNT = 55;
-const EXPECTED_GAP_COUNT = 68;
-const EXPECTED_REPLACEMENT_CHARACTER_COUNT = 434;
+const EXPECTED_GAP_COUNT = 26;
+const EXPECTED_REPLACEMENT_CHARACTER_COUNT = 6;
 const EXPECTED_ALPHA_COUNT = 49;
-const EXPECTED_MARKDOWN_BYTES = 183927;
+const EXPECTED_MARKDOWN_BYTES = 187663;
 const PAGE_SPAN = 10;
 
 function sha256(bytes) {
@@ -59,7 +69,7 @@ const chunks = [];
 try {
   await client.connect(transport);
   const tools = await client.listTools();
-  assert(tools.tools.length === 43, `Expected 43 installed tools, received ${tools.tools.length}`);
+  assert(tools.tools.length === 44, `Expected 44 installed tools, received ${tools.tools.length}`);
   assert(
     sha256(Buffer.from(JSON.stringify(tools.tools))) === EXPECTED_TOOL_CONTRACT_SHA256,
     "Installed tool contract differs from the reviewed build",
@@ -81,7 +91,7 @@ try {
     });
     const value = result.structuredContent;
     assert(!result.isError && value, `Installed conversion failed for pages ${startPage}-${endPage}`);
-    assert(value.renderer?.version === "1.16.0", "Installed Markdown renderer version differs");
+    assert(value.renderer?.version === "1.17.0", "Installed Markdown renderer version differs");
     assert(value.provenance?.layout?.parser_version === "5.4.624", "Installed PDF parser version differs");
     assert(value.provenance?.source?.sha256 === sourceSha256, "Installed conversion source identity differs");
     assert(value.provenance?.layout?.page_range?.start_page === startPage, "Installed conversion start page differs");

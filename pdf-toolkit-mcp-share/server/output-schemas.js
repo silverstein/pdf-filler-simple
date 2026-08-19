@@ -1080,7 +1080,7 @@ export const TOOL_SUCCESS_OUTPUT_SCHEMAS = Object.freeze({
     {
       renderer: object({
         name: { const: "pdf-tools.layout-markdown-renderer" },
-        version: { const: "1.16.0" },
+        version: { const: "1.17.0" },
       }),
       conversion_status: enumString(["complete", "partial", "failed"]),
       markdown: string,

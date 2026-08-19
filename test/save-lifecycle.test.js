@@ -817,6 +817,31 @@ describe("canonical save lifecycle", () => {
     await fs.unlink(lockPath);
   }, 30_000);
 
+  /**
+   * Two writers, one document. Exactly one may commit; the other must be
+   * refused, must leave nothing behind, and must be told why.
+   *
+   * Two independent layers can notice the loser's document changed under it,
+   * and which one notices first is a genuine race decided by machine load:
+   *
+   *   - `revalidateSources` in server/pdf-lib-subprocess.js, when the isolated
+   *     worker returns and the bound input no longer hashes to what it bound.
+   *     Reached when the winner commits while the loser is still in isolation,
+   *     which is the common ordering on a slow or busy box.
+   *   - the identity checks in `persistPdfMutation` and the mutation lock in
+   *     server/index.js, reached when the loser gets past the first check and
+   *     the winner commits during the commit sequence itself. The common
+   *     ordering on an idle box, where both workers return together.
+   *
+   * This assertion used to pin the second ordering, so a two-core CI runner
+   * failed it while the product was behaving correctly. The fix was not to
+   * accept both messages -- that would let a real resource failure, a spawn
+   * failure or a timeout pass as a concurrency refusal, and this test would
+   * stop proving the loser was refused *for concurrency*. Instead the first
+   * layer was corrected to report the refusal it is actually making, so both
+   * orderings now produce one answer and the assertion holds on any hardware.
+   * Regressing either layer back to a resource-budget message fails here.
+   */
   it("creates only one H0 backup under concurrent first mutations", async () => {
     const pdfPath = path.join(TMP_DIR, "w9-working.pdf");
     const originalHash = await sha256(pdfPath);
@@ -850,9 +875,24 @@ describe("canonical save lifecycle", () => {
     expect((await fs.readdir(path.join(PROFILE_DIR, "backups"))).filter(entry => entry.endsWith(".pdf"))).toEqual([
       path.basename(backupPath),
     ]);
+    // The loser is refused at one of two points, and neither may leave a
+    // half-written document, an orphaned transaction directory or a second
+    // lineage behind. Whichever layer refused it, the tree looks the same.
+    expect((await fs.readdir(TMP_DIR)).filter(name => name.startsWith(".pdf-tools-"))).toEqual([]);
+    expect(
+      (await fs.readdir(path.join(PROFILE_DIR, "backups"))).filter(name => name.includes(".mutation-")),
+    ).toEqual([]);
+    expect(await topLevelPdfs()).toEqual(["w9-managed-source.pdf", "w9-working.pdf"]);
     const reopened = await PDFDocument.load(await fs.readFile(pdfPath));
     const value = reopened.getForm().getTextField(NAME_FIELD).getText();
     expect(value).toBe(left.isError === true ? "Concurrent right" : "Concurrent left");
+    // The server answered the loser rather than dying with it.
+    const active = await client.callTool({ name: "get_active_document", arguments: {} });
+    expect(active.structuredContent).toMatchObject({
+      active_path: pdfPath,
+      backup_path: backupPath,
+      last_mutation_tool: "fill_pdf",
+    });
   }, 30_000);
 
   it("makes a managed page-edit output canonical, then mutates that output in place", async () => {

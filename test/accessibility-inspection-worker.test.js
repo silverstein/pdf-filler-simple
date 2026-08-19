@@ -6,6 +6,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  PDF_CONCURRENT_MODIFICATION_CODE,
   PDF_RESOURCE_LIMIT_CODE,
   createPdfLibInspectionRequest,
   runPdfLibInspection,
@@ -301,7 +302,12 @@ await fs.writeFile(request.sources[0].canonical_path, Buffer.from(${JSON.stringi
         return spawn(command, args, options);
       },
     })).rejects.toMatchObject({
-      code: PDF_RESOURCE_LIMIT_CODE,
+      // Source drift is a concurrent modification, not a resource condition.
+      // The refusal is identical whichever layer makes it, so this must not
+      // drift back to PDF_RESOURCE_LIMIT_CODE: that told the caller to try a
+      // smaller PDF, and it made save-lifecycle's concurrency assertion depend
+      // on which detector machine load let win.
+      code: PDF_CONCURRENT_MODIFICATION_CODE,
       reason: "source_drift_before_activation",
     });
     expect(await fs.readFile(sourcePath)).toEqual(changed);

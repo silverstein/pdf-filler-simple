@@ -8,9 +8,13 @@
 //
 // The naive check, "is the published commit equal to HEAD", would fail after
 // every merge and teach everyone to ignore it. So this compares only the paths
-// that actually end up inside the plugin. A docs or test commit leaves the
+// that actually end up inside the plugin. A test-only commit leaves the
 // published bytes correct and this stays quiet; a change under server/ or
 // dist-ui/ does not, and this says so.
+//
+// The set of shipped paths is the whole discriminating power of this check, so
+// it lives in scripts/plugin-shipped-paths.mjs where a test can bind it to what
+// the builders actually copy. Do not reintroduce a private copy here.
 //
 // Usage: node scripts/check-plugin-freshness.mjs
 // Exit 0 when the published plugin carries every shipped change, 1 when it does
@@ -19,6 +23,8 @@
 import { execFileSync } from "child_process";
 import path from "path";
 import { fileURLToPath } from "url";
+
+import { shipsInPlugin } from "./plugin-shipped-paths.mjs";
 
 const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 // Read through the API rather than raw.githubusercontent.com. The raw host is
@@ -30,25 +36,6 @@ const PROVENANCE_API =
   "https://api.github.com/repos/Open-Document-Alliance/pdf-tools-plugin/contents/PROVENANCE.md";
 const PROVENANCE_RAW =
   "https://raw.githubusercontent.com/Open-Document-Alliance/pdf-tools-plugin/main/PROVENANCE.md";
-
-// Everything the plugin build copies into the artifact. Keep this in step with
-// scripts/build-agent-plugin.mjs; a path missing here is a change that can ship
-// without this gate noticing.
-const SHIPPED_PATHS = [
-  "server/",
-  "dist-ui/",
-  "vendor/",
-  "plugins/pdf-tools-workflow/",
-  "package.json",
-  "package-lock.json",
-  "icon.png",
-  "LICENSE",
-  "scripts/agent-plugin-launchers/",
-  "scripts/build-agent-plugin.mjs",
-  // Decides the version string written into the published plugin.json, so a
-  // change here changes published bytes with no change to any path above it.
-  "scripts/plugin-version.mjs",
-];
 
 function git(args) {
   return execFileSync("git", args, { cwd: REPO_ROOT, encoding: "utf8" }).trim();
@@ -106,8 +93,7 @@ try {
 const changed = git(["diff", "--name-only", `${published}..${head}`])
   .split("\n")
   .filter(Boolean)
-  .filter(file => SHIPPED_PATHS.some(prefix =>
-    prefix.endsWith("/") ? file.startsWith(prefix) : file === prefix));
+  .filter(shipsInPlugin);
 
 if (changed.length === 0) {
   const behind = git(["rev-list", "--count", `${published}..${head}`]);
